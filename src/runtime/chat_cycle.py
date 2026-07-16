@@ -735,23 +735,10 @@ class ChatCycleMixin:
             fe_plan=fe_plan,
             ti_report=ti_report,
         )
-        # Curiosity Tutor: trong qwen_first, không cho Tutor chen vào mọi câu mơ hồ.
-        # Nhưng nếu BẠN ra lệnh rõ kiểu "nghiên cứu sâu / hỏi sư phụ / Gemini search",
-        # thì đó là intent tất định, không phải semantic fallback. Cho nó đi theo
-        # đường Tutor nhẹ, tránh dựng cả lâu đài Deep Research API chỉ để đốt token
-        # như nhân loại đốt tiền cà phê.
-        explicit_tutor_research = False
-        try:
-            detector = getattr(self, "_looks_like_light_tutor_research_request", None)
-            explicit_tutor_research = bool(detector(user_text)) if callable(detector) else False
-        except Exception:
-            explicit_tutor_research = False
-        if semantic_policy.allow_tutor_prepass or explicit_tutor_research:
-            self._maybe_tutor_on_unclear_user(
-                user_text,
-                frame,
-                force_explicit_research=explicit_tutor_research,
-            )
+        # Curiosity Tutor: nếu Eris không hiểu/không phân loại nổi tin user → đi hỏi Gemini
+        # (chạy nền, không chặn trả lời). Chỉ chạy khi Master_Switch bật.
+        if semantic_policy.allow_tutor_prepass:
+            self._maybe_tutor_on_unclear_user(user_text, frame)
         else:
             # Qwen must see the real turn before Tutor/clarification logic gets a
             # chance to redirect it. Clear stale flags from a previous legacy turn.
@@ -1254,6 +1241,14 @@ class ChatCycleMixin:
                 "chưa chắc nên đang đi tra cứu và sẽ trả lời ngay khi xong. Đừng đưa ra bất kỳ "
                 "đáp án phỏng đoán nào ở câu này."
             )
+        else:
+            planned_ti_context = (
+                f"{planned_ti_context}\n\nKHẢ NĂNG TỰ TRA CỨU: Nếu câu hỏi cần dữ kiện mới, trạng thái hiện tại, "
+                "policy/giá/version/account/web mới, hoặc em thật sự không chắc, em được quyền "
+                "nói rất ngắn rằng em sẽ tra/search/kiểm tra rồi nhắn tiếp. Không lạm dụng cho "
+                "kiến thức phổ thông ổn định. Nếu nói sẽ tra, tuyệt đối không đoán đáp án trong "
+                "cùng câu."
+            )
         # The current user message is sent as the final user message below.
         # Passing it inside chat_history as well wastes one short-term slot
         # and can push out the previous turn during context shrink.
@@ -1548,6 +1543,9 @@ class ChatCycleMixin:
             ),
         )
         decision = self._apply_social_cognition_surface(decision, user_text=user_text, after_director=True)
+        self_search = getattr(self, "_maybe_start_self_declared_tutor_search", None)
+        if callable(self_search):
+            decision = self_search(decision, user_text=user_text, frame=frame)
         self._commit_chat_decision(decision, fe_plan, frame=frame)
         self.last_user_text_for_semantics = user_text
         return

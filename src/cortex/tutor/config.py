@@ -96,6 +96,10 @@ class TutorConfig:
     max_consecutive_failures: int = 3
     failure_cooldown_s: float = 1800.0
     captcha_pause_s: float = 3600.0
+    # Tra cứu nhẹ theo yêu cầu user. Không dùng Deep Research API.
+    research_answer_max_words: int = 280
+    research_prompt_max_chars: int = 395
+    research_persist_answers: bool = False
     # Khoe (share)
     share_window_s: float = 600.0
     share_novelty_threshold: float = 0.5
@@ -141,6 +145,9 @@ class TutorConfig:
             max_consecutive_failures=max(1, int(self.max_consecutive_failures)),
             failure_cooldown_s=max(0.0, float(self.failure_cooldown_s)),
             captcha_pause_s=max(0.0, float(self.captcha_pause_s)),
+            research_answer_max_words=max(80, min(600, int(self.research_answer_max_words))),
+            research_prompt_max_chars=max(220, min(395, int(self.research_prompt_max_chars))),
+            research_persist_answers=bool(self.research_persist_answers),
             share_window_s=max(0.0, float(self.share_window_s)),
             share_novelty_threshold=clamp01(self.share_novelty_threshold, 0.5),
         )
@@ -191,6 +198,9 @@ class TutorConfig:
             sel_response=_env_str("ERIS_TUTOR_SEL_RESPONSE", d.sel_response),
             sel_login_marker=_env_str("ERIS_TUTOR_SEL_LOGIN_MARKER", d.sel_login_marker),
             browser_channel=_env_str("ERIS_TUTOR_BROWSER_CHANNEL", d.browser_channel),
+            research_answer_max_words=_env_int("ERIS_TUTOR_RESEARCH_MAX_WORDS", d.research_answer_max_words),
+            research_prompt_max_chars=_env_int("ERIS_TUTOR_RESEARCH_PROMPT_MAX_CHARS", d.research_prompt_max_chars),
+            research_persist_answers=_env_bool("ERIS_TUTOR_RESEARCH_PERSIST", d.research_persist_answers),
             share_window_s=_env_float("ERIS_TUTOR_SHARE_WINDOW", 600.0),
             share_novelty_threshold=_env_float("ERIS_TUTOR_SHARE_NOVELTY", 0.5),
         )

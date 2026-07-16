@@ -179,22 +179,18 @@ class TestTutorWiringRuntime(unittest.TestCase):
         for stage in ("forming", "opening", "asking", "reading", "digesting", "done"):
             self.assertIn(stage, stages)
 
-    def test_request_tutor_answer_falls_back_to_search_web(self):
+    def test_request_tutor_answer_does_not_fall_back_to_search_web_api(self):
         action_result = SimpleNamespace(
             success=True,
-            data={
-                "answer": "Pytest ho tro fixtures va co he thong assert rewriting.",
-                "sources": "https://docs.pytest.org/",
-            },
+            data={"answer": "Không được dùng đường này.", "sources": "api"},
             message="",
         )
         runtime, daemon = self._build_runtime(answer_text="", action_result=action_result)
         self.assertIsNotNone(daemon)
 
-        answer = runtime.request_tutor_answer("pytest fixtures")
-        self.assertIn("fixtures", answer)
-        self.assertIn("docs.pytest.org", answer)
-        self.assertEqual(runtime.action_executor.calls, [("search_web", "pytest fixtures")])
+        answer = runtime.request_tutor_answer("pytest fixtures", research=True)
+        self.assertIsNone(answer)
+        self.assertEqual(runtime.action_executor.calls, [])
 
     def test_request_tutor_lookup_runs_full_episode_and_commits_memory(self):
         runtime, daemon = self._build_runtime(

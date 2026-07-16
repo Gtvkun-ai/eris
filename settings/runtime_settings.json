@@ -53,11 +53,11 @@
     "performance_acts_enabled": true,
     "interrupt_enabled": true,
     "protocol_enabled": true,
-    "segment_tts": true,
+    "segment_tts": false,
     "segment_dispatch": "inline",
-    "tts_task_manager": true,
-    "prefetch_workers": 2,
-    "max_tts_segments": 4,
+    "tts_task_manager": false,
+    "prefetch_workers": 1,
+    "max_tts_segments": 1,
     "min_split_chars": 72,
     "show_plan_enabled": true,
     "stage_replay_enabled": true,
@@ -71,7 +71,7 @@
     "volume": 1.0,
     "speed": 1.0,
     "stage_localize": true,
-    "audio_polish": true
+    "audio_polish": false
   },
   "pipeline": {
     "v3_enabled": true

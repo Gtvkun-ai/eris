@@ -55,6 +55,7 @@ def test_qwen_unclosed_think_uses_last_valid_json_object() -> None:
 
 
 def test_key_pool_stops_rotation_after_cross_key_429_burst(monkeypatch) -> None:
+    monkeypatch.setenv("ERIS_KEY_POOL_429_GLOBAL_GUARD", "1")
     monkeypatch.setenv("ERIS_KEY_POOL_429_BURST_KEYS", "2")
     monkeypatch.setenv("ERIS_KEY_POOL_429_BURST_WINDOW_S", "30")
     monkeypatch.setenv("ERIS_KEY_POOL_429_GLOBAL_COOLDOWN_S", "2")

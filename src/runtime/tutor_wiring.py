@@ -132,14 +132,17 @@ def build_tutor_daemon_from_runtime(runtime_owner: Any) -> Optional[Any]:
 
     runtime_owner.request_tutor_lookup = request_tutor_lookup
 
-    # API "tra rồi TRẢ LỜI ngay": dùng cho nhịp 2 của chat khi bạn hỏi câu kiến thức
-    # mà Eris chưa biết. Trả về nội dung câu trả lời (str) hoặc None nếu tra không ra.
-    # Theo policy nhẹ: CHỈ nhắn Tutor web/daemon. Không fallback sang Gemini API
-    # grounding/search_web, không Deep Research, không Google AI background. Ví tiền của
-    # người dùng không phải vật hiến tế cho kiến trúc hoành tráng.
-    def request_tutor_answer(topic, *, context="", kind_hint="durable"):
+    # API "tra rồi TRẢ LỜI ngay". Khi research=True hoặc search=True, dùng relay nhẹ:
+    # local/Gemma đặt câu hỏi cho Tutor Gemini Web, nhận raw answer, rồi local/heuristic
+    # chấm lại trước khi trả cho Eris. Không gọi Gemini API/Google grounding fallback.
+    def request_tutor_answer(topic, *, context="", research=False, search=False):
         try:
-            answer = daemon.ask_now(topic, context=context, kind_hint=kind_hint)
+            if search and callable(getattr(daemon, "search_now", None)):
+                answer = daemon.search_now(topic, context=context, critic_fn=generate_fn)
+            elif research and callable(getattr(daemon, "research_now", None)):
+                answer = daemon.research_now(topic, context=context, critic_fn=generate_fn)
+            else:
+                answer = daemon.ask_now(topic, context=context)
             if answer:
                 return answer
             _warn(logger, f"tutor request_answer không có kết quả topic={str(topic)[:120]!r}")

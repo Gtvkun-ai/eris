@@ -261,7 +261,7 @@ class TutorDaemon:
         self._remember_episode(episode)
         return episode
 
-    def ask_now(self, topic: str, *, context: str = "", now: Optional[float] = None, kind_hint: str = "durable") -> Optional[str]:
+    def ask_now(self, topic: str, *, context: str = "", now: Optional[float] = None) -> Optional[str]:
         """Hỏi gia sư NGAY và TRẢ VỀ nội dung câu trả lời (cho nhịp 2 của chat).
 
         Khác `run_once`: đây là lúc BẠN hỏi thẳng một câu kiến thức ⇒ luôn đi
@@ -292,7 +292,7 @@ class TutorDaemon:
                 created_ts=now,
                 updated_ts=now,
                 force=True,
-                kind_hint=str(kind_hint or "durable"),
+                kind_hint="durable",
             )
             episode = TutorEpisode(gap=gap, started_ts=now)
             self._emit(episode, "forming")
@@ -331,6 +331,204 @@ class TutorDaemon:
             self.risk_guard.note_success(now)
             self._remember_episode(episode)
             return str(getattr(answer, "text", "") or "").strip() or None
+        except Exception:
+            return None
+        finally:
+            self._run_lock.release()
+
+    def research_now(
+        self,
+        topic: str,
+        *,
+        context: str = "",
+        now: Optional[float] = None,
+        critic_fn: Optional[Callable[[str], str]] = None,
+    ) -> Optional[str]:
+        """Tra cứu bằng đúng Tutor web hiện có, rồi chấm lại bằng local/Gemma nếu có.
+
+        Flow mới: local/Gemma tạo prompt giao việc cho Tutor Gemini → Tutor trả raw
+        answer → local/Gemma/heuristic relay lọc claim yếu, nguồn, confidence → Eris
+        mới surface. Vẫn KHÔNG dùng Deep Research API, Google grounding API hay
+        background agent nhiều tầng. Đỡ biến một câu hỏi thành lễ hiến tế token.
+        """
+
+        if not self.config.enabled:
+            return None
+        topic = str(topic or "").strip()
+        if not topic:
+            return None
+        if not self._run_lock.acquire(blocking=False):
+            return None
+        try:
+            from cortex.tutor.research_relay import (
+                analyze_tutor_research_answer,
+                build_gemini_research_prompt,
+            )
+
+            now = float(now if now is not None else time.time())
+            if self.risk_guard.is_paused(now):
+                return None
+
+            gap = KnowledgeGap(
+                description=topic,
+                context=str(context or ""),
+                source="epistemic_uncertainty",
+                stake_relevance=0.78,
+                prediction_error=0.72,
+                created_ts=now,
+                updated_ts=now,
+                force=True,
+                kind_hint="research_relay",
+            )
+            episode = TutorEpisode(gap=gap, started_ts=now)
+            self._emit(episode, "forming")
+
+            prompt = build_gemini_research_prompt(
+                topic,
+                context=context,
+                max_words=getattr(self.config, "research_answer_max_words", 280),
+                max_chars=getattr(self.config, "research_prompt_max_chars", 395),
+            )
+            question = TutorQuestion(text=prompt, gap_id=gap.gap_id)
+            if not question.is_valid:
+                self._fail(episode, "formulation_failed", now)
+                return None
+            episode.question = question
+
+            try:
+                answer = self.backend.ask(question, on_stage=lambda stage: self._emit(episode, stage))
+            except Exception:
+                self._fail(episode, "network_error", now)
+                return None
+            episode.answer = answer
+            if answer is None or not getattr(answer, "ok", False) or not getattr(answer, "text", ""):
+                reason = getattr(answer, "fail_reason", None) or "empty_answer"
+                self._fail(episode, reason, now)
+                return None
+
+            relay = analyze_tutor_research_answer(
+                topic,
+                getattr(answer, "text", ""),
+                tutor_prompt=prompt,
+                critic_fn=critic_fn,
+                max_words=getattr(self.config, "research_answer_max_words", 280),
+            )
+            answer.text = relay.answer_text
+
+            # Chỉ lưu khi chủ dự án chủ động bật. Mặc định false để một lượt tra cứu
+            # không đẻ thêm lượt distill/model và không biến mọi kết quả web thành ký ức.
+            if bool(getattr(self.config, "research_persist_answers", False)):
+                self._emit(episode, "digesting")
+                try:
+                    episode.claims_committed = self.digest.digest(episode)
+                except Exception:
+                    episode.claims_committed = 0
+
+            episode.stage = "done"
+            episode.ended_ts = float(time.time())
+            self._emit(episode, "done")
+            self.logger.log_episode(episode.to_dict())
+            self.risk_guard.note_success(now)
+            self._remember_episode(episode)
+            return relay.answer_text or None
+        except Exception:
+            return None
+        finally:
+            self._run_lock.release()
+
+    def search_now(
+        self,
+        topic: str,
+        *,
+        context: str = "",
+        now: Optional[float] = None,
+        critic_fn: Optional[Callable[[str], str]] = None,
+    ) -> Optional[str]:
+        """Search web nhanh bằng Tutor Gemini, rồi guard lại trước khi surface.
+
+        Đây là bản "search bình thường": dùng khi user nói tra cứu/search/check,
+        hoặc câu có dữ kiện thời điểm như giá/lịch/phiên bản mới. Không ghi nhớ
+        mặc định, không Deep Research, không Google AI API. Một cái búa nhỏ cho
+        cái đinh nhỏ, cuối cùng văn minh cũng ló được cái móng tay.
+        """
+
+        if not self.config.enabled:
+            return None
+        topic = str(topic or "").strip()
+        if not topic:
+            return None
+        if not self._run_lock.acquire(blocking=False):
+            return None
+        try:
+            from cortex.tutor.research_relay import (
+                analyze_tutor_research_answer,
+                build_gemini_search_prompt,
+            )
+
+            now = float(now if now is not None else time.time())
+            if self.risk_guard.is_paused(now):
+                return None
+
+            gap = KnowledgeGap(
+                description=topic,
+                context=str(context or ""),
+                source="explicit_web_search",
+                stake_relevance=0.66,
+                prediction_error=0.58,
+                created_ts=now,
+                updated_ts=now,
+                force=True,
+                kind_hint="search_relay",
+            )
+            episode = TutorEpisode(gap=gap, started_ts=now)
+            self._emit(episode, "forming")
+
+            prompt = build_gemini_search_prompt(
+                topic,
+                context=context,
+                max_words=min(180, int(getattr(self.config, "research_answer_max_words", 280) or 280)),
+                max_chars=getattr(self.config, "research_prompt_max_chars", 395),
+            )
+            question = TutorQuestion(text=prompt, gap_id=gap.gap_id)
+            if not question.is_valid:
+                self._fail(episode, "formulation_failed", now)
+                return None
+            episode.question = question
+
+            try:
+                answer = self.backend.ask(question, on_stage=lambda stage: self._emit(episode, stage))
+            except Exception:
+                self._fail(episode, "network_error", now)
+                return None
+            episode.answer = answer
+            if answer is None or not getattr(answer, "ok", False) or not getattr(answer, "text", ""):
+                reason = getattr(answer, "fail_reason", None) or "empty_answer"
+                self._fail(episode, reason, now)
+                return None
+
+            relay = analyze_tutor_research_answer(
+                topic,
+                getattr(answer, "text", ""),
+                tutor_prompt=prompt,
+                critic_fn=critic_fn,
+                max_words=min(220, int(getattr(self.config, "research_answer_max_words", 280) or 280)),
+            )
+            answer.text = relay.answer_text
+
+            if bool(getattr(self.config, "research_persist_answers", False)):
+                self._emit(episode, "digesting")
+                try:
+                    episode.claims_committed = self.digest.digest(episode)
+                except Exception:
+                    episode.claims_committed = 0
+
+            episode.stage = "done"
+            episode.ended_ts = float(time.time())
+            self._emit(episode, "done")
+            self.logger.log_episode(episode.to_dict())
+            self.risk_guard.note_success(now)
+            self._remember_episode(episode)
+            return relay.answer_text or None
         except Exception:
             return None
         finally:

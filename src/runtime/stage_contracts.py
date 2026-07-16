@@ -238,6 +238,7 @@ class StageFrameBuilder:
 
         tts_source = performance.tts_text
         speech_contract = self.speech_contract_resolver.resolve(payload, text=tts_source)
+        prelocalized = False
         if self.localizer is not None and tts_source and speech_contract.can_translate:
             try:
                 tts_text = str(
@@ -247,6 +248,7 @@ class StageFrameBuilder:
                         prosody_style=performance.delivery_hint,
                     ) or ""
                 ).strip()
+                prelocalized = bool(tts_text and tts_text != tts_source)
             except Exception:
                 tts_text = tts_source
         else:
@@ -304,6 +306,9 @@ class StageFrameBuilder:
             style_hint=delivery.voice_style,
             notes_hint=prosody_notes,
         )
+        speech_payload = speech_contract.to_payload()
+        if prelocalized:
+            speech_payload["prelocalized"] = True
         stage_frame = StageFrame(
             turn_id=str(turn_id or uuid.uuid4().hex),
             segment_id=int(segment_id),
@@ -317,7 +322,7 @@ class StageFrameBuilder:
             prosody_notes=prosody.director_notes,
             delivery=delivery_payload,
             stage_act=autonomous_act.to_payload() if autonomous_act is not None else {},
-            speech_contract=speech_contract.to_payload(),
+            speech_contract=speech_payload,
             interruptible=bool(should_speak and str(channel or "").strip().lower() not in {"system_warning"}),
             body_only=bool(not should_speak and (motion or performance.actions)),
             source=f"decision:{str(getattr(decision, 'intent', '') or channel or 'unknown')}",

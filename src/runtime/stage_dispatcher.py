@@ -49,7 +49,7 @@ def _join_tts_segments(frames: list[StageFrame]) -> str:
     return " ".join(str(frame.tts_text or "").strip() for frame in frames if str(frame.tts_text or "").strip()).strip()
 
 
-def _speech_kwargs(frame) -> dict[str, str]:
+def _speech_kwargs(frame) -> dict[str, object]:
     """Truyền contract đã pin theo turn xuống backend TTS."""
     contract = getattr(frame, "speech_contract", None)
     if not isinstance(contract, dict):
@@ -58,6 +58,7 @@ def _speech_kwargs(frame) -> dict[str, str]:
         "language_hint": str(contract.get("language", "") or ""),
         "voice_family": str(contract.get("voice_family", "") or ""),
         "locale": str(contract.get("locale", "") or ""),
+        "prelocalized": bool(contract.get("prelocalized", False)),
     }
 
 

@@ -602,7 +602,7 @@ def _audio_cache_size() -> int:
         return 24
 
 
-def _speech_kwargs(frame: Any) -> dict[str, str]:
+def _speech_kwargs(frame: Any) -> dict[str, object]:
     """Truyền contract ngôn ngữ/voice đã pin của StageFrame xuống backend."""
     contract = getattr(frame, "speech_contract", None)
     if not isinstance(contract, dict):
@@ -611,6 +611,7 @@ def _speech_kwargs(frame: Any) -> dict[str, str]:
         "language_hint": str(contract.get("language", "") or ""),
         "voice_family": str(contract.get("voice_family", "") or ""),
         "locale": str(contract.get("locale", "") or ""),
+        "prelocalized": bool(contract.get("prelocalized", False)),
     }
 
 
