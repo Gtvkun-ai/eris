@@ -503,6 +503,14 @@ class SourceGroundingEngine:
         has_self_disclosure_clause = any(self._is_self_disclosure_clause(clause) for clause in grounding_clauses)
         has_web_marker = self._has_any(normalized, self.WEB_REFERENCE_MARKERS)
         web_ref = self._has_actionable_web_reference(normalized, text, clauses=grounding_clauses)
+        internal_capability_ref = self._is_internal_capability_inquiry(normalized)
+        if internal_capability_ref:
+            # Câu hỏi kiểu “Eris thấy được telemetry/thời gian/màn hình không?”
+            # phải đi qua capability registry của runtime, không bị chữ “hiện tại”
+            # kéo sang web_missing và tự nhận mù toàn phần.
+            web_ref = False
+            explicit_screen_request = False
+            notes.append("internal_capability_inquiry_uses_runtime_registry")
         if has_web_marker and not web_ref:
             notes.append("web_marker_demoted_to_user_text_transient_report")
 
@@ -618,6 +626,17 @@ class SourceGroundingEngine:
                         missing=["memory_packet"],
                     )
                 )
+
+        if internal_capability_ref:
+            candidates.append(
+                SourceCandidate(
+                    kind="runtime_state",
+                    confidence=0.88,
+                    reason="User hỏi về năng lực quan sát/tool của chính runtime; CapabilityRegistry là nguồn chính.",
+                    evidence_ids=["capability_registry_snapshot"],
+                    evidence_preview=["runtime capability availability"],
+                )
+            )
 
         if web_ref:
             candidates.append(
@@ -1493,6 +1512,28 @@ class SourceGroundingEngine:
             "la gi", "bao nhieu", "nhu the nao", "tim giup", "tra cuu", "search", "look up",
         ))
 
+    def _is_internal_capability_inquiry(self, normalized: str) -> bool:
+        """Nhận diện câu hỏi về chính runtime Eris, không phải yêu cầu tra web.
+
+        Chỉ bắt khi có cả dấu hiệu năng lực và đối tượng nội bộ. Nhờ vậy câu
+        “thời gian hiện tại là mấy giờ” vẫn có thể đi theo utility/tool phù hợp,
+        còn “Eris có biết thời gian hệ thống không?” dùng CapabilityRegistry.
+        """
+
+        norm = str(normalized or "")
+        if not norm:
+            return False
+        ability = any(marker in norm for marker in (
+            "co thay", "thay duoc", "co doc", "doc duoc", "co biet", "biet duoc",
+            "lam duoc gi", "co kha nang", "co chuc nang", "eris thay", "eris biet",
+        ))
+        internal = any(marker in norm for marker in (
+            "telemetry", "runtime", "active app", "ung dung dang active", "cua so",
+            "idle", "uia", "ui automation", "ocr", "man hinh", "meet", "camera",
+            "thoi gian he thong", "gio he thong", "tool", "quyen han",
+        ))
+        return ability and internal
+
     def _has_actionable_web_reference(self, normalized: str, raw_text: str, *, clauses: Sequence[str]) -> bool:
         """Chỉ route web khi user thật sự đòi dữ liệu hiện tại.
 
@@ -1547,8 +1588,8 @@ class SourceGroundingEngine:
             "current_screen": 88,
             "web": 76,
             "memory": 70,
+            "runtime_state": 68,
             "user_text": 60,
-            "runtime_state": 50,
             "unknown": 0,
         }
 

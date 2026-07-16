@@ -50,6 +50,11 @@ class AutonomousOpportunity:
     suggested_intent: str
     public_safe: bool = True
     reason: str = ""
+    # Phase 7: opportunity có thể được phát hiện trong post-chat grace. Khi đó
+    # nó ở trạng thái pending và TTL chỉ tính từ lúc thực sự eligible.
+    eligible_after_ms: int = 0
+    status: str = "eligible"
+    dedupe_key: str = ""
 
     def to_payload(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -264,6 +269,9 @@ class AutonomousOpportunityDetector:
                 suggested_intent=intent,
                 public_safe=True,
                 reason=reason,
+                eligible_after_ms=now,
+                status="eligible",
+                dedupe_key=f"{kind}:{scene.previous_name}->{scene.name}" if kind == "scene_transition" else kind,
             )
         )
 

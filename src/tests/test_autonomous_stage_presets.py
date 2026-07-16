@@ -11,6 +11,7 @@ from runtime.autonomous_performance import AutonomousPerformancePlanner
 from runtime.autonomous_scene_runtime import SceneRuntimeState
 from runtime.autonomous_speak_gate import AutonomousSpeakPermissionGate, SpeakGateConfig
 from runtime.autonomous_stage_presets import AutonomousStagePresetResolver
+from runtime.autonomous_version import AUTONOMOUS_STAGE_ARCHITECTURE_VERSION
 from runtime.content_engine import ContentEngine
 from runtime.coordinator import RuntimeCoordinator
 from runtime.director_context import DirectorContext, MachineState, SceneMode
@@ -166,7 +167,7 @@ def test_performance_act_carries_preset_and_respects_minimal_gesture_density():
     assert act.closing_hold_ms >= preset.closing_hold_min_ms
 
 
-def test_autonomous_prompt_v5_includes_resolved_preset_policy():
+def test_autonomous_prompt_v6_includes_resolved_preset_policy():
     preset = AutonomousStagePresetResolver().resolve(scene=SceneRuntimeState(name="media_companion"))
     coordinator = RuntimeCoordinator.__new__(RuntimeCoordinator)
     coordinator.last_autonomous_plan = SimpleNamespace(
@@ -193,7 +194,7 @@ def test_autonomous_prompt_v5_includes_resolved_preset_policy():
     block = coordinator._autonomous_stage_prompt_block()
     payload = json.loads(block.split("\n", 1)[1])
 
-    assert payload["contract"] == "autonomous_stage.v5"
+    assert payload["contract"] == AUTONOMOUS_STAGE_ARCHITECTURE_VERSION
     assert payload["stage_preset"]["preset_id"] == "media_companion.side_commentary.v1"
     assert payload["stage_preset"]["anti_spoiler"] is True
     assert payload["audience_feedback"]["mode"] == "low_intrusion"

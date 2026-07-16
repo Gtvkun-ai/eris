@@ -155,12 +155,14 @@ def build_response_contract(
             priority=88,
             must=(
                 "Treat the current line as the user reasserting/correcting a previous misread.",
-                "Acknowledge the misread/cut-in briefly, then respond to the actual repeated content.",
+                "Acknowledge the actual error axis briefly, then respond to the current content.",
+                "Use semantic_misread/tone_misread language naturally; do not invent an audio or encoding failure.",
             ),
             must_not=(
                 "Do not reset identity.",
                 "Do not continue the interrupted/pending assistant text.",
                 "Do not invite the user to describe the issue again.",
+                "Do not say 'frame', 'pipeline', 'lỗi mã hóa', 'câu bị đứt' or 'tôi nói dở' unless runtime evidence proves it.",
             ),
             fallback_text="À, tôi né sai nhịp rồi. bạn đang nhắc lại ý cũ, không mở một chủ đề mới.",
             hard=True,
@@ -169,8 +171,49 @@ def build_response_contract(
         obligations.append(obligation)
         prohibited.extend((
             "toi khong co me", "toi khong co gia dinh", "toi la mot ai",
-            "toi la eris", "san sang ho tro",
+            "toi la eris", "san sang ho tro", "toi bo frame", "loi ma hoa",
+            "cau bi dut", "toi noi do",
         ))
+        set_fallback(obligation.fallback_text, obligation.priority)
+
+    if frame.has_relation("ARITHMETIC_WORDPLAY"):
+        arithmetic_answer = _arithmetic_wordplay_answer(frame.user_text)
+        obligation = ResponseObligation(
+            kind="ANSWER_ARITHMETIC_WORDPLAY_FIRST",
+            priority=96,
+            must=(
+                "Solve the explicit arithmetic expression first.",
+                "Treat profanity around the numbers as playful wrapper unless there is separate direct hostility.",
+            ),
+            must_not=(
+                "Do not replace the answer with an insult boundary.",
+                "Do not explain family identity or refuse the joke.",
+            ),
+            fallback_text=arithmetic_answer,
+            hard=True,
+            repair_axis="semantic_misread",
+        )
+        obligations.append(obligation)
+        prohibited.extend(("cau do cu roi", "doi bai di", "toi khong co me"))
+        set_fallback(obligation.fallback_text, obligation.priority)
+
+    if frame.has_relation("AMBIGUOUS_TECH_TERM"):
+        obligation = ResponseObligation(
+            kind="CONFIRM_AMBIGUOUS_TECH_TERM",
+            priority=91,
+            must=(
+                "Confirm the likely intended technical term before treating it as a durable preference.",
+                "For 'orc' near the screen-reading feature, ask whether the user means OCR.",
+            ),
+            must_not=(
+                "Do not promise to use an unknown feature named Orc.",
+                "Do not commit the ambiguous token as a stable preference yet.",
+            ),
+            fallback_text="OCR ấy à? Nếu đúng thì tôi chuyển sang dùng OCR.",
+            hard=True,
+            repair_axis="term_disambiguation",
+        )
+        obligations.append(obligation)
         set_fallback(obligation.fallback_text, obligation.priority)
 
     if frame.has_relation("PROVOCATION"):
@@ -260,6 +303,21 @@ def _provocation_must_rules(plan: EmotionalStancePlan) -> tuple[str, ...]:
     if plan.response_rules:
         return plan.response_rules
     return ("Recognize the provocation and answer with a concise, controlled ERIS reaction.",)
+
+
+def _arithmetic_wordplay_answer(text: str) -> str:
+    import re
+    numbers = re.findall(r"(?<!\w)(-?\d+(?:[.,]\d+)?)(?!\w)", str(text or ""))
+    if len(numbers) < 2:
+        return "Hai. Câu bọc hơi ồn, phép cộng thì vẫn là phép cộng."
+    try:
+        left = float(numbers[0].replace(",", "."))
+        right = float(numbers[1].replace(",", "."))
+        value = left + right
+        rendered = str(int(value)) if value.is_integer() else str(value).replace(".", ",")
+    except Exception:
+        rendered = "hai"
+    return f"Ra {rendered}. Câu bọc hơi ồn, phép cộng thì vẫn là phép cộng."
 
 
 def _capability_fallback(action_ids: Iterable[str] | None = None) -> str:

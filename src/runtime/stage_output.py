@@ -33,12 +33,14 @@ def _max_segments() -> int:
 
 def _min_split_chars() -> int:
     from runtime.runtime_settings_store import runtime_int
-    return max(24, min(160, runtime_int("stage", "min_split_chars", default=72)))
+    return max(24, min(120, runtime_int("stage", "min_split_chars", default=58)))
 
 
 def _max_segment_chars() -> int:
     from runtime.runtime_settings_store import runtime_int
-    return max(120, min(1200, runtime_int("stage", "max_tts_segment_chars", default=420)))
+    # Gemini TTS ổn định hơn với nhịp 45–90 ký tự. Câu dài được chia trước
+    # provider thay vì đẩy một blob rồi trách key pool vì nghệ thuật kể chuyện.
+    return max(48, min(320, runtime_int("stage", "max_tts_segment_chars", default=88)))
 
 
 def _split_long_piece(text: str, max_chars: int) -> list[str]:
@@ -164,34 +166,38 @@ class StageOutputPipeline:
         ]
         if speech_beats:
             frames: list[StageFrame] = []
-            for index, beat in enumerate(speech_beats):
-                text = str(beat.get("text", "") or "").strip()
-                delivery = dict(frame.delivery) if isinstance(frame.delivery, dict) else {}
-                delivery["active_beat"] = dict(beat)
-                pause_after = int(beat.get("pause_after_ms", 0) or 0)
-                notes = frame.prosody_notes
-                if pause_after > 0:
-                    notes = f"{notes} End this beat with a short {pause_after}ms rhetorical pause.".strip()
-                plan = self.prosody.plan(
-                    text,
-                    emotion=str(beat.get("emotion", frame.emotion) or frame.emotion),
-                    style_hint=str(beat.get("tts_style", frame.prosody_style) or frame.prosody_style),
-                    notes_hint=notes,
-                )
-                frames.append(
-                    replace(
-                        frame,
-                        segment_id=index,
-                        display_text=text,
-                        tts_text=text,
-                        memory_text=text,
+            segment_index = 0
+            for beat in speech_beats:
+                beat_text = str(beat.get("text", "") or "").strip()
+                beat_parts = self.segmenter.split(beat_text) or ((beat_text,) if beat_text else ())
+                for part_index, text in enumerate(beat_parts):
+                    delivery = dict(frame.delivery) if isinstance(frame.delivery, dict) else {}
+                    delivery["active_beat"] = dict(beat)
+                    pause_after = int(beat.get("pause_after_ms", 0) or 0) if part_index == len(beat_parts) - 1 else 0
+                    notes = frame.prosody_notes
+                    if pause_after > 0:
+                        notes = f"{notes} End this beat with a short {pause_after}ms rhetorical pause.".strip()
+                    plan = self.prosody.plan(
+                        text,
                         emotion=str(beat.get("emotion", frame.emotion) or frame.emotion),
-                        motion=str(beat.get("motion_intent", frame.motion) or frame.motion),
-                        prosody_style=plan.style,
-                        prosody_notes=plan.director_notes,
-                        delivery=delivery,
+                        style_hint=str(beat.get("tts_style", frame.prosody_style) or frame.prosody_style),
+                        notes_hint=notes,
                     )
-                )
+                    frames.append(
+                        replace(
+                            frame,
+                            segment_id=segment_index,
+                            display_text=text,
+                            tts_text=text,
+                            memory_text=text,
+                            emotion=str(beat.get("emotion", frame.emotion) or frame.emotion),
+                            motion=str(beat.get("motion_intent", frame.motion) or frame.motion),
+                            prosody_style=plan.style,
+                            prosody_notes=plan.director_notes,
+                            delivery=delivery,
+                        )
+                    )
+                    segment_index += 1
             return tuple(frames)
 
         if not _enabled():

@@ -55,6 +55,9 @@ class SpeakPermit:
     reason: str
     cooldown_after_ms: int
     confidence: float = 0.0
+    # Phase 7: permit có thể bị defer thay vì bị opportunity chết âm thầm.
+    defer_until_ms: int | None = None
+    final_authority: bool = False
 
     def to_payload(self) -> dict[str, Any]:
         return asdict(self)
@@ -107,6 +110,14 @@ class AutonomousSpeakPermissionGate:
         now = int(now_ms if now_ms is not None else _now_ms())
         if opportunity is None:
             return self._deny("suppress", "no_opportunity")
+        eligible_after_ms = int(getattr(opportunity, "eligible_after_ms", 0) or 0)
+        if eligible_after_ms and now < eligible_after_ms:
+            return self._deny(
+                "body_only",
+                "opportunity_pending",
+                confidence=0.96,
+                defer_until_ms=eligible_after_ms,
+            )
         if now >= opportunity.expires_at_ms:
             return self._deny("suppress", "opportunity_expired")
 
@@ -226,6 +237,8 @@ class AutonomousSpeakPermissionGate:
             reason=f"{permit.reason}|preset={str(_get(stage_preset, 'preset_id', '') or 'scene')}",
             cooldown_after_ms=max(permit.cooldown_after_ms, preset_gap),
             confidence=permit.confidence,
+            defer_until_ms=permit.defer_until_ms,
+            final_authority=permit.final_authority,
         )
 
     def record_spoken(self, *, kind: str, at_ms: int | None = None) -> None:
@@ -240,7 +253,13 @@ class AutonomousSpeakPermissionGate:
             self.same_kind_streak = 1 if kind else 0
 
     @staticmethod
-    def _deny(mode: str, reason: str, *, confidence: float = 0.75) -> SpeakPermit:
+    def _deny(
+        mode: str,
+        reason: str,
+        *,
+        confidence: float = 0.75,
+        defer_until_ms: int | None = None,
+    ) -> SpeakPermit:
         return SpeakPermit(
             allowed=False,
             mode=mode,
@@ -249,6 +268,8 @@ class AutonomousSpeakPermissionGate:
             reason=reason,
             cooldown_after_ms=0,
             confidence=confidence,
+            defer_until_ms=defer_until_ms,
+            final_authority=False,
         )
 
 

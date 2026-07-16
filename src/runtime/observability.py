@@ -422,6 +422,10 @@ class ErisObservability:
         show_arc = getattr(plan, "show_arc_directive", None)
         stage_preset = getattr(plan, "stage_preset", None)
         audience_feedback = getattr(plan, "audience_feedback", None)
+        policy_decision = getattr(plan, "policy_decision", None)
+        architecture_version = str(getattr(plan, "architecture_version", "autonomous_stage.legacy") or "autonomous_stage.legacy")
+        policy_blockers = tuple(getattr(policy_decision, "blockers", ()) or ())
+        policy_conflicts = tuple(getattr(policy_decision, "conflict_flags", ()) or ())
         scene = getattr(getattr(plan, "scene", None), "name", "unknown")
         kind = str(getattr(selected, "kind", "none") or "none")
         reason = str(getattr(permit, "reason", "unknown") or "unknown")
@@ -451,11 +455,13 @@ class ErisObservability:
             tags={
                 "scene": scene, "kind": kind, "allowed": str(allowed).lower(),
                 "phase": phase, "arc_stage": arc_stage, "preset": preset_id,
-                "feedback": feedback_mode,
+                "feedback": feedback_mode, "architecture": architecture_version,
             },
             fields={
                 "reason": reason, "cadence": cadence, "arc_family": arc_family,
                 "line_shape": line_shape, "performance_lane": performance_lane,
+                "policy_blockers": list(policy_blockers),
+                "policy_conflicts": list(policy_conflicts),
             },
         )
         if allowed:
@@ -480,6 +486,12 @@ class ErisObservability:
             "autonomous_feedback_directive_total",
             tags={"mode": feedback_mode, "recent_outcome": recent_outcome, "scene": scene},
         )
+        if policy_conflicts:
+            self.increment(
+                "autonomous_policy_conflict_total",
+                tags={"scene": scene, "architecture": architecture_version},
+                fields={"conflicts": list(policy_conflicts)},
+            )
         self.log(
             "autonomous_plan",
             tags={
@@ -503,6 +515,42 @@ class ErisObservability:
                 "intrusion_pressure": intrusion_pressure,
                 "engagement_score": engagement_score,
                 "recent_outcome": recent_outcome,
+                "architecture_version": architecture_version,
+                "policy_blockers": list(policy_blockers),
+                "policy_conflicts": list(policy_conflicts),
+            },
+        )
+
+    def record_autonomous_audit(self, snapshot: Any) -> None:
+        """Ghi health của bài test dài hạn mà không lưu text hay prompt."""
+        if snapshot is None:
+            return
+        payload_fn = getattr(snapshot, "to_payload", None)
+        payload = payload_fn() if callable(payload_fn) else dict(snapshot or {})
+        status = str(payload.get("status", "unknown") or "unknown")
+        violations = list(payload.get("violations", []) or [])
+        self.gauge("autonomous_audit_lines_last_hour", float(payload.get("lines_last_hour", 0) or 0))
+        self.gauge("autonomous_audit_pending_permits", float(payload.get("pending_permits", 0) or 0))
+        self.gauge("autonomous_audit_orphaned_permits", float(payload.get("orphaned_permits", 0) or 0))
+        self.gauge("autonomous_audit_commit_ratio", float(payload.get("commit_ratio", 0.0) or 0.0))
+        if violations:
+            self.increment(
+                "autonomous_audit_violation_total",
+                tags={"status": status},
+                fields={"violations": violations},
+            )
+        self.log(
+            "autonomous_audit",
+            tags={"status": status, "version": str(payload.get("version", "unknown") or "unknown")},
+            fields={
+                "evaluations_total": int(payload.get("evaluations_total", 0) or 0),
+                "unique_permits_total": int(payload.get("unique_permits_total", 0) or 0),
+                "commits_total": int(payload.get("commits_total", 0) or 0),
+                "lines_last_hour": int(payload.get("lines_last_hour", 0) or 0),
+                "max_same_kind_streak": int(payload.get("max_same_kind_streak", 0) or 0),
+                "pending_permits": int(payload.get("pending_permits", 0) or 0),
+                "orphaned_permits": int(payload.get("orphaned_permits", 0) or 0),
+                "violations": violations,
             },
         )
 

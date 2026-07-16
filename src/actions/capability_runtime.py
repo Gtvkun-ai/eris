@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from actions.contracts import VALID_SYSTEM_ACTION_LIST
+from actions.capability_registry import _OBSERVATIONAL_CAPABILITY_IDS
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +150,8 @@ def refresh_runtime_capabilities(
             capability_id, True, "router_and_executor_ready", "runtime"
         )
 
+    statuses.update(_observational_statuses(owner))
+
     with _LOCK:
         _STATUSES = statuses
         _REVISION += 1
@@ -194,6 +197,74 @@ def capability_runtime_reason(capability_id: str) -> str:
 def capability_runtime_revision() -> int:
     with _LOCK:
         return _REVISION
+
+
+def _observational_statuses(owner: Any | None) -> dict[str, CapabilityRuntimeStatus]:
+    """Chụp năng lực quan sát thật; không suy từ prompt hay tên module."""
+    if owner is None:
+        return {
+            cap_id: CapabilityRuntimeStatus(cap_id, False, "runtime_owner_not_bound", "runtime")
+            for cap_id in _OBSERVATIONAL_CAPABILITY_IDS
+        }
+    telemetry = getattr(owner, "telemetry_service", None)
+    signal_snapshot = getattr(owner, "last_signal_snapshot", None)
+    screen_worker = getattr(owner, "screen_text_worker", None)
+    compressor = getattr(owner, "vision_semantic_compressor", None)
+    vision_enabled = os.environ.get("ERIS_VISION_COMPRESSOR_ENABLED", "1").strip().lower() not in {"0", "false", "off", "no"}
+    compressor_config = getattr(compressor, "config", None)
+    config_enabled = bool(getattr(compressor_config, "enabled", vision_enabled))
+    model_ready = bool(str(getattr(compressor_config, "model", "") or "").strip())
+    caption_client = getattr(compressor, "caption_client", None)
+    generic_client = getattr(compressor, "client", None)
+    client_ready = bool(
+        callable(getattr(caption_client, "caption_image", None))
+        or callable(getattr(generic_client, "chat_json", None))
+    )
+    semantic_ready = bool(
+        vision_enabled
+        and config_enabled
+        and model_ready
+        and client_ready
+        and callable(getattr(compressor, "compress", None))
+    )
+    return {
+        "observe_active_app": CapabilityRuntimeStatus(
+            "observe_active_app", telemetry is not None or signal_snapshot is not None,
+            "machine_runtime_snapshot" if telemetry is not None or signal_snapshot is not None else "telemetry_unavailable",
+            "machine_runtime",
+        ),
+        "observe_window_title": CapabilityRuntimeStatus(
+            "observe_window_title", telemetry is not None or signal_snapshot is not None,
+            "machine_runtime_snapshot" if telemetry is not None or signal_snapshot is not None else "telemetry_unavailable",
+            "machine_runtime",
+        ),
+        "observe_idle_state": CapabilityRuntimeStatus(
+            "observe_idle_state", telemetry is not None or signal_snapshot is not None,
+            "machine_runtime_snapshot" if telemetry is not None or signal_snapshot is not None else "telemetry_unavailable",
+            "machine_runtime",
+        ),
+        "read_uia_text": CapabilityRuntimeStatus(
+            "read_uia_text", screen_worker is not None,
+            "uia_worker_ready" if screen_worker is not None else "uia_worker_unavailable",
+            "screen_text_runtime",
+        ),
+        "semantic_screen_vision": CapabilityRuntimeStatus(
+            "semantic_screen_vision", semantic_ready,
+            "vision_compressor_ready" if semantic_ready else "vision_compressor_unavailable",
+            "vision_runtime",
+        ),
+        "camera_view": CapabilityRuntimeStatus(
+            "camera_view", False, "camera_stream_not_connected", "sensor",
+        ),
+        "meet_participants": CapabilityRuntimeStatus(
+            "meet_participants", False, "no_camera_or_semantic_meet_bridge", "sensor",
+        ),
+        "telemetry_summary": CapabilityRuntimeStatus(
+            "telemetry_summary", telemetry is not None,
+            "telemetry_service_ready" if telemetry is not None else "telemetry_service_unavailable",
+            "runtime",
+        ),
+    }
 
 
 def _remote_tool_credential_available(capability_id: str) -> tuple[bool, str]:

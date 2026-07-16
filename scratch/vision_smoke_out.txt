@@ -1,0 +1,8 @@
+[Config][INFO] [CONFIG] loaded 160 setting(s) from [đường dẫn nội bộ đã ẩn]
+[Config][INFO] [CONFIG] ERIS_REMOTE_PROVIDER='openai_compatible' source=.env
+[Config][INFO] [CONFIG] ERIS_LOCAL_LLM_ENGINE='remote' source=.env
+[Config][INFO] [CONFIG] ERIS_PRIVATE_MIND_PROVIDER='openai_compatible' source=.env
+[Config][INFO] [CONFIG] ERIS_PRIVATE_MIND_FRAGMENT_PROVIDER='openai_compatible' source=.env
+[Config][INFO] [CONFIG] ERIS_LLM_PROMPT_HARD_CAP_TOKENS='0' source=.env
+[Memory][INFO] Đã nạp 5 mảnh ký ức cốt lõi.
+[Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=1

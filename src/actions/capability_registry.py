@@ -29,7 +29,25 @@ class CapabilityDefinition:
     live_available: bool = True
 
 
+_OBSERVATIONAL_CAPABILITY_IDS = (
+    "observe_active_app",
+    "observe_window_title",
+    "observe_idle_state",
+    "read_uia_text",
+    "semantic_screen_vision",
+    "camera_view",
+    "meet_participants",
+    "telemetry_summary",
+)
+
+
 _CAPABILITY_DATA: dict[str, CapabilityDefinition] = {
+    "get_local_time": CapabilityDefinition(
+        id="get_local_time", public_name_vi="xem thời gian hệ thống",
+        description_vi="đọc giờ/ngày hiện tại từ runtime hệ thống",
+        example_phrases=("mấy giờ rồi", "hôm nay ngày mấy"),
+        visible_in_ui_group="observation",
+    ),
     "launch_app": CapabilityDefinition(
         id="launch_app", public_name_vi="mở ứng dụng",
         description_vi="mở app/chương trình có trong cấu hình runtime",
@@ -86,6 +104,46 @@ _CAPABILITY_DATA: dict[str, CapabilityDefinition] = {
         example_phrases=("đang phát bài gì",),
         runtime_flag="ERIS_NOW_PLAYING_ENABLED",
     ),
+    "observe_active_app": CapabilityDefinition(
+        id="observe_active_app", public_name_vi="biết ứng dụng đang active",
+        description_vi="nhận tên ứng dụng đang được focus từ machine runtime",
+        visible_in_ui_group="observation",
+    ),
+    "observe_window_title": CapabilityDefinition(
+        id="observe_window_title", public_name_vi="biết tiêu đề cửa sổ",
+        description_vi="nhận tiêu đề cửa sổ active khi hệ điều hành cung cấp",
+        visible_in_ui_group="observation",
+    ),
+    "observe_idle_state": CapabilityDefinition(
+        id="observe_idle_state", public_name_vi="biết trạng thái idle/gõ",
+        description_vi="nhận thời gian idle và tín hiệu user đang hoạt động/gõ",
+        visible_in_ui_group="observation",
+    ),
+    "read_uia_text": CapabilityDefinition(
+        id="read_uia_text", public_name_vi="đọc một phần chữ qua UI Automation",
+        description_vi="đọc text control mà Windows UI Automation cho phép; không đồng nghĩa nhìn toàn màn hình",
+        visible_in_ui_group="observation",
+    ),
+    "semantic_screen_vision": CapabilityDefinition(
+        id="semantic_screen_vision", public_name_vi="hiểu nội dung ảnh màn hình",
+        description_vi="phân tích semantic từ frame màn hình khi vision compressor thực sự khả dụng",
+        visible_in_ui_group="observation", live_available=False,
+    ),
+    "camera_view": CapabilityDefinition(
+        id="camera_view", public_name_vi="nhìn camera",
+        description_vi="nhìn video/khuôn mặt từ camera",
+        visible_in_ui_group="observation", live_available=False,
+    ),
+    "meet_participants": CapabilityDefinition(
+        id="meet_participants", public_name_vi="nhìn người trong Meet",
+        description_vi="nhận diện người/khuôn mặt trong cuộc gọi Meet",
+        visible_in_ui_group="observation", live_available=False,
+    ),
+    "telemetry_summary": CapabilityDefinition(
+        id="telemetry_summary", public_name_vi="đọc telemetry runtime",
+        description_vi="đọc snapshot như active app, idle, scene và health nội bộ đã được runtime cấp",
+        visible_in_ui_group="observation",
+    ),
 }
 
 
@@ -127,6 +185,7 @@ def iter_public_capabilities(
     include_unavailable: bool = True,
 ) -> tuple[CapabilityDefinition, ...]:
     ids = tuple(action_ids or VALID_SYSTEM_ACTION_LIST)
+    ids = tuple(dict.fromkeys((*ids, *_OBSERVATIONAL_CAPABILITY_IDS)))
     out: list[CapabilityDefinition] = []
     for action_id in ids:
         cap = _CAPABILITY_DATA.get(str(action_id))
@@ -172,7 +231,10 @@ def capability_surface_keywords(action_ids: Iterable[str] | None = None) -> tupl
     for cap in iter_public_capabilities(action_ids):
         words.extend((cap.id.replace("_", " "), cap.public_name_vi, cap.description_vi))
         words.extend(cap.example_phrases)
-    words.extend(("ứng dụng", "cửa sổ", "âm lượng", "volume", "media", "clipboard", "web", "thời tiết"))
+    words.extend((
+        "ứng dụng", "cửa sổ", "âm lượng", "volume", "media", "clipboard", "web", "thời tiết",
+        "thời gian", "giờ", "telemetry", "runtime", "idle", "UI Automation", "OCR", "màn hình", "Meet", "camera",
+    ))
     return tuple(dict.fromkeys(w for w in words if str(w or "").strip()))
 
 
@@ -264,4 +326,5 @@ __all__ = [
     "capability_definition",
     "canonicalize_action_id",
     "singing_capability_enabled",
+    "_OBSERVATIONAL_CAPABILITY_IDS",
 ]

@@ -8,6 +8,7 @@ câu Eris vừa nói, interrupt gần nhất và vài giả thuyết discourse. 
 """
 
 from dataclasses import dataclass, field
+import re
 from typing import Any
 
 from runtime.social_act import ChatAct, classify_chat_act_with_confidence, normalize_vi_ascii
@@ -80,6 +81,12 @@ def build_turn_frame(
     prev_user_norm = normalize_vi_ascii(prev_user)
 
     act, act_conf = classify_chat_act_with_confidence(raw_user, history=(prev_user, prev_assistant))
+    arithmetic_wordplay = _looks_like_arithmetic_wordplay(raw_user)
+    ambiguous_tech_term = _ambiguous_tech_term(user_norm)
+    # Task semantics thắng profanity boundary: "1 mẹ mày béo + 1 mẹ mày béo"
+    # vẫn là phép cộng bọc trong joke, không phải một lượt tấn công gia đình.
+    if arithmetic_wordplay:
+        act, act_conf = ChatAct.DIRECT_QUESTION, 0.94
     relations: list[TurnHypothesis] = []
     stances: list[TurnHypothesis] = []
 
@@ -88,6 +95,13 @@ def build_turn_frame(
 
     def stance(kind: str, conf: float, *evidence: str) -> None:
         stances.append(TurnHypothesis(kind, _clamp(conf), tuple(e for e in evidence if e)))
+
+    if arithmetic_wordplay:
+        rel("ARITHMETIC_WORDPLAY", 0.96, "numeric_expression_with_playful_wrapper")
+        stance("PLAYFUL_PROVOCATION", 0.66, "wordplay_not_direct_hostility")
+
+    if ambiguous_tech_term:
+        rel("AMBIGUOUS_TECH_TERM", 0.88, ambiguous_tech_term)
 
     if _is_meta_style_feedback(user_norm):
         rel("META_STYLE_FEEDBACK", 0.94, "user_criticizes_assistant_style")
@@ -103,7 +117,7 @@ def build_turn_frame(
         rel("THREAT_OR_COERCION", 0.96, "threat_or_coercive_marker")
         stance("HOSTILE_PROVOCATION", 0.94, "threat_requires_cold_boundary")
 
-    replacement = _has_replacement_shape(user_norm)
+    replacement = _has_replacement_shape(user_norm) or _has_soft_repair_challenge(user_norm)
     if replacement:
         rel("REASSERT_AFTER_MISREAD", 0.82, "toi_bao_la/toi_noi_la")
         if prev_user_norm and _token_overlap(user_norm, prev_user_norm) >= 0.28:
@@ -112,7 +126,7 @@ def build_turn_frame(
     if interrupt_event is not None:
         rel("REASSERT_AFTER_INTERRUPTION", 0.70 if replacement else 0.56, "recent_interrupt_event")
 
-    if act == ChatAct.INSULT_PROVOCATION or _is_family_provocation(user_norm):
+    if not arithmetic_wordplay and (act == ChatAct.INSULT_PROVOCATION or _is_family_provocation(user_norm)):
         rel("PROVOCATION", 0.90, "insult_or_family_provocation")
         previous_act, _ = classify_chat_act_with_confidence(prev_user, history=()) if prev_user else (ChatAct.NORMAL_CHAT, 0.0)
         if previous_act == ChatAct.INSULT_PROVOCATION:
@@ -140,7 +154,12 @@ def build_turn_frame(
         repair_reason = "reassert_after_interrupt"
     elif replacement:
         repair_target = "previous_assistant_turn"
-        repair_reason = "misread" if _assistant_looked_generic(prev_assistant_norm) or _assistant_literalized_family(prev_assistant_norm) else "reasserted_meaning"
+        if _assistant_literalized_family(prev_assistant_norm):
+            repair_reason = "semantic_misread"
+        elif _assistant_looked_generic(prev_assistant_norm):
+            repair_reason = "tone_misread"
+        else:
+            repair_reason = "semantic_misread"
     elif _is_meta_style_feedback(user_norm):
         repair_target = "previous_assistant_turn"
         repair_reason = "generic_reset"
@@ -185,6 +204,10 @@ def build_turn_frame(
         capability_snapshot_id=cap_snapshot,
         relationship_exposure=relationship_exposure,
         forbidden_draft_classes=tuple(dict.fromkeys(forbidden)),
+        metadata={
+            "arithmetic_wordplay": arithmetic_wordplay,
+            "ambiguous_tech_term": ambiguous_tech_term,
+        },
     )
 
 
@@ -203,8 +226,15 @@ def _is_capability_inquiry(norm: str) -> bool:
         "lam duoc gi", "lam dc gi", "lam duoc cai gi", "em lam duoc gi",
         "ban lam duoc gi", "eris lam duoc gi", "co the lam gi", "co kha nang gi",
         "chuc nang gi", "ho tro cai gi", "ho tro cai o gi", "gi thi toi moi hoi",
+        "thay duoc gi", "co thay duoc", "biet duoc gio", "biet thoi gian",
+        "co telemetry", "thay telemetry", "doc telemetry", "runtime thay duoc",
+        "co doc duoc man hinh", "co thay man hinh", "co thay meet", "co thay camera",
     )
-    return any(m in norm for m in markers)
+    if any(m in norm for m in markers):
+        return True
+    ability = any(m in norm for m in ("co doc duoc", "co thay", "co biet", "biet duoc", "eris thay", "eris biet"))
+    internal = any(m in norm for m in ("telemetry", "runtime", "man hinh", "meet", "camera", "uia", "ocr", "thoi gian he thong"))
+    return ability and internal
 
 
 def _is_challenge_previous_wording(norm: str) -> bool:
@@ -215,8 +245,34 @@ def _has_replacement_shape(norm: str) -> bool:
     markers = (
         "toi bao la", "toi noi la", "tao bao la", "tao noi la", "da bao la",
         "vua bao la", "y toi la", "y minh la", "toi dang noi la",
+        "toi hoi ra gi", "toi hoi ma", "lam gi co", "o toi hoi", "ơ toi hoi",
     )
     return any(m in norm for m in markers)
+
+
+def _looks_like_arithmetic_wordplay(text: str) -> bool:
+    raw = str(text or "")
+    if not raw or "+" not in raw:
+        return False
+    # Dùng raw text vì normalize_vi_ascii bỏ dấu '+'. Chỉ nhận biểu thức số
+    # đơn giản; không biến mọi câu có dấu cộng thành máy tính bỏ túi.
+    return bool(re.search(r"\b\d+(?:[.,]\d+)?\b[^+]{0,80}\+[^+]{0,80}\b\d+(?:[.,]\d+)?\b", raw))
+
+
+def _ambiguous_tech_term(norm: str) -> str:
+    tokens = set(norm.split())
+    if "orc" in tokens and "ocr" not in tokens:
+        return "orc_maybe_ocr"
+    return ""
+
+
+def _has_soft_repair_challenge(norm: str) -> bool:
+    markers = (
+        "o toi hoi", "ơ toi hoi", "toi hoi ra gi", "toi hoi ma",
+        "lam gi co", "co dau troi", "toi chi hoi", "biet mot xiu",
+        "biet 1 xiu", "khong duoc sao", "y do ma",
+    )
+    return any(marker in norm for marker in markers)
 
 
 def _is_family_provocation(norm: str) -> bool:

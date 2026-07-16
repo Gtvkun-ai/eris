@@ -43,6 +43,9 @@ _FORMAT_REPAIR_FALLBACK_LINES = (
 class ChatCycleMixin:
     def _enter_chat_cycle(self) -> None:
         self._chat_last_activity_at = time.time()
+        cancel_cycle = getattr(self, "_cancel_active_autonomous_cycle", None)
+        if callable(cancel_cycle):
+            cancel_cycle("enter_chat_mode")
         if not self.chat_mode:
             cancel_generation = getattr(getattr(self, "llm_service", None), "cancel_pending_requests", None)
             if callable(cancel_generation):

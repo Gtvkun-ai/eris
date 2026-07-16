@@ -330,19 +330,16 @@ def _build_tts_prompt(
             "- Never use old Vietnamese honorifics or the word 'Master'; say 'bạn' if a direct address is needed.\n\n"
         )
 
+    # Phase 7: prompt compact. Style/persona dài được nén thành các trục có
+    # tác dụng âm học; không gửi lại một bài luận cho từng segment ngắn.
     prompt = (
-        "# AUDIO PROFILE: Eris\n"
-        '## "The Desktop Companion"\n\n'
-        "## SCENE\n"
-        "A quiet desktop companion. Late at night. Eris is small, thoughtful,\n"
-        "and speaks as if half-talking to herself. Intimate, not performative.\n\n"
-        "## DIRECTOR'S NOTES\n"
-        "Style: Soft anime girl voice. Slightly breathy. Youthful but with interior depth.\n"
-        "Emotionally nuanced — not flat, not over-the-top. Warmth is subtle, not bubbly.\n"
-        "Apply this voice style to whatever language the transcript is in.\n\n"
-        "Pacing: Unhurried but responsive. Let tiny silences breathe; do not stall between short lines.\n"
+        "ERIS VOICE\n"
+        "Character: quiet anime desktop companion; youthful, close, crisp, subtly warm.\n"
+        "Delivery: emotionally nuanced, restrained, never bubbly or theatrical.\n"
+        "Pacing: responsive and natural; tiny rhetorical pauses only, no long stalls.\n"
+        "Rules: bracketed tags are silent acting directions; never read them aloud. "
+        "Do not add, omit, paraphrase, or explain words.\n"
         f"{_pace_directive()}\n"
-        f"{performance_rules}"
         f"{prosody_line}"
         f"{lang_line}"
         f"{transcript_title}\n"
@@ -761,34 +758,15 @@ def _synthesize_wav(
     from google import genai
     from google.genai import types
 
+    # Phase 7: TTS có budget riêng theo ký tự/hard provider limit. Không dùng
+    # token pressure của LLM, vì audio output không phải completion token.
+    from runtime.tts_budget import GLOBAL_TTS_REQUEST_BUDGET
+    GLOBAL_TTS_REQUEST_BUDGET.validate(
+        transcript=fallback_text,
+        prompt=prompt,
+        style_text="",
+    )
     tts_budget_plan = None
-    try:
-        from llm.token_budget import estimate_tokens
-        from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
-
-        estimated_prompt = estimate_tokens([{"role": "user", "content": prompt}])
-        tts_budget_plan = GLOBAL_TOKEN_PRESSURE_GOVERNOR.plan_request(
-            "gemini", lane="tts", prompt_tokens=estimated_prompt,
-            requested_output_tokens=768, optional_pass=False,
-            min_prompt_tokens=256, min_output_tokens=256,
-        )
-        # TTS là exact recitation. Cắt prompt âm thầm sẽ làm mất lời, nên khi một
-        # segment vượt hard budget phải fail rõ để StageOutputPipeline chia nhỏ.
-        if tts_budget_plan.prompt_limit < estimated_prompt:
-            exc = RuntimeError(
-                f"TTS segment vượt lane budget ({estimated_prompt}>{tts_budget_plan.prompt_limit}); "
-                "hãy chia segment ở stage trước khi synthesize"
-            )
-            fallback = _try_local_tts_fallback(
-                exc, fallback_text=fallback_text, language_hint=language_hint,
-            )
-            if fallback:
-                return fallback
-            raise exc
-    except RuntimeError:
-        raise
-    except Exception:
-        tts_budget_plan = None
 
     # Dùng key pool để tự động xoay key khi bị 429
     try:
@@ -813,7 +791,8 @@ def _synthesize_wav(
 
     last_exc = None
     pcm_data = None
-    attempted_indices: set[int] = set()
+    from runtime.tts_key_health import GLOBAL_TTS_KEY_LANE_HEALTH
+    attempted_indices: set[int] = set(GLOBAL_TTS_KEY_LANE_HEALTH.excluded_indices())
     for attempt in range(max_attempts):
         lease = None
         if pool is not None and pool.size > 0:
@@ -866,6 +845,7 @@ def _synthesize_wav(
                     pass
             if pool is not None and lease is not None:
                 pool.mark_success(lease=lease)
+                GLOBAL_TTS_KEY_LANE_HEALTH.record_success(getattr(lease, "index", None))
             if _tts_breaker_enabled():
                 GLOBAL_TTS_BREAKER.record_success(breaker_key)
             try:
@@ -884,6 +864,12 @@ def _synthesize_wav(
                 error_kind = None
             is_rate_limit = str(error_kind) == "rate_limit" or "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc)
             is_revoked = str(error_kind) == "key_revoked"
+            is_project_permission = str(error_kind) == "project_permission"
+            if lease is not None:
+                error_kind = GLOBAL_TTS_KEY_LANE_HEALTH.record_error(getattr(lease, "index", None), exc)
+                is_rate_limit = str(error_kind) == "rate_limit" or is_rate_limit
+                is_revoked = str(error_kind) == "key_revoked" or is_revoked
+                is_project_permission = str(error_kind) == "project_permission" or is_project_permission
             try:
                 from google.genai.errors import ClientError
                 if isinstance(exc, ClientError) and exc.code == 429:
@@ -923,6 +909,15 @@ def _synthesize_wav(
                     GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_rate_limit("gemini", retry_after_s=60.0, lane="tts")
                 except Exception:
                     pass
+
+            if is_project_permission and lease is not None:
+                logger.warning(
+                    "[TTS] Key index %s không có quyền TTS cho project/model; hard-disable riêng lane TTS.",
+                    getattr(lease, "index", "?"),
+                )
+                if attempt < max_attempts - 1:
+                    time.sleep(min(0.8, 0.15 * (2 ** attempt) + random.uniform(0.0, 0.12)))
+                    continue
 
             if is_revoked and pool is not None and lease is not None:
                 pool.mark_permanently_dead(lease=lease, reason="tts_key_reported_leaked")
