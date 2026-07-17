@@ -138,6 +138,29 @@ class ActionRouter:
         if self._starts_with_negation(norm):
             return self._blocked("project_execute_task", "negated")
 
+        # Workspace là repo được người dùng giao, không phải source Eris suy ra từ
+        # vị trí runtime. Lệnh có link/path rõ ràng được xử lý trước open_url.
+        source_match = re.search(
+            r"(?:https?://\S+|git@\S+|[A-Za-z]:[\\/][^\r\n<>\"|?*]+|[^\s\"]+\.zip)",
+            raw, flags=re.I,
+        )
+        source = source_match.group(0).rstrip(".,;)") if source_match else ""
+        edit_shape = bool(re.search(r"\b(?:sửa|sua|fix|làm|lam|triển khai|trien khai|refactor|patch|thêm|them|xóa|xoa)\b", raw, flags=re.I))
+        join_shape = bool(re.search(r"\b(?:vào|vao|gia nhập|gia nhap|join|clone|mở repo|mo repo|xem repo)\b", raw, flags=re.I))
+        if source and edit_shape:
+            return RouteCandidate("project_execute_task", raw, 0.98, ("workspace_source_and_code_task",))
+        if source and join_shape:
+            return RouteCandidate("workspace_join", source, 0.98, ("explicit_workspace_join",))
+
+        if re.search(r"^(?:eris\s+)?(?:liệt kê|liet ke|list|xem)\s+(?:các\s+|cac\s+)?workspace(?:\s+đã gia nhập|\s+da gia nhap)?\s*$", raw, flags=re.I):
+            return RouteCandidate("workspace_list", "", 0.97, ("explicit_workspace_list",))
+        switch_match = re.search(r"^(?:eris\s+)?(?:chuyển|chuyen|switch)\s+(?:sang\s+)?workspace\s+(.+?)\s*$", raw, flags=re.I)
+        if switch_match:
+            return RouteCandidate("workspace_switch", switch_match.group(1).strip(), 0.97, ("explicit_workspace_switch",))
+        leave_match = re.search(r"^(?:eris\s+)?(?:rời|roi|leave|gỡ|go)\s+workspace(?:\s+(.+?))?\s*$", raw, flags=re.I)
+        if leave_match:
+            return RouteCandidate("workspace_leave", (leave_match.group(1) or "").strip(), 0.96, ("explicit_workspace_leave",))
+
         read_match = re.search(r"^(?:eris\s+)?(?:doc|xem)\s+(?:file|tep)\s+([^?]+)$", norm)
         if read_match and not any(token in norm for token in ("dang mo", "dang chon", "hien tai")):
             path = raw[read_match.start(1):].strip().strip("\"'")

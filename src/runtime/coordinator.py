@@ -471,8 +471,11 @@ class RuntimeCoordinator(
             )
         except Exception as exc:
             self.logger.warning("Không khởi tạo được internal cognitive capabilities: %s", exc)
+        self.workspace_manager = None
         self.project_operations = None
         try:
+            from runtime.workspace_manager import WorkspaceManager
+            self.workspace_manager = WorkspaceManager(self, logger=self.logger)
             from runtime.project_operations import PROJECT_OPERATIONS_VERSION, ProjectOperationsRuntime
             self.project_operations = ProjectOperationsRuntime(self, logger=self.logger)
             binder = getattr(self.action_executor, "bind_project_runtime", None)
@@ -482,6 +485,11 @@ class RuntimeCoordinator(
                 "[project-ops] loaded version=%s capabilities=%s mode=autonomous_project_scope",
                 PROJECT_OPERATIONS_VERSION,
                 len(self.project_operations.contracts()),
+            )
+            self.logger.info(
+                "[workspace] eris_home=%s active=%s implicit_source_repo=false",
+                self.workspace_manager.home.root,
+                self.workspace_manager.active_workspace_id or "none",
             )
         except Exception as exc:
             self.logger.warning("Không khởi tạo được project operations runtime: %s", exc)

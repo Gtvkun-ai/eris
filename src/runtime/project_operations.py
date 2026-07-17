@@ -30,8 +30,9 @@ from typing import Any, Callable, Mapping, Sequence
 
 from actions.contracts import ActionExecutionResult, ActionExecutionStatus
 from llm.json_sanitizer import extract_last_valid_json_object, strip_reasoning_envelope
+from runtime.workspace_manager import WorkspaceManager, extract_workspace_source
 
-PROJECT_OPERATIONS_VERSION = "project_operations.v1.0"
+PROJECT_OPERATIONS_VERSION = "project_operations.v1.1"
 
 
 class ProjectOperationState(str, Enum):
@@ -155,6 +156,18 @@ PROJECT_CAPABILITY_CONTRACTS: dict[str, ProjectCapabilityContract] = {
     "project_execute_task": ProjectCapabilityContract(
         "project_execute_task", "tự hoàn thành tác vụ code", "tự inspect, lập patch, chạy test, verify, rollback và đóng gói", "project.execute_task", "high"
     ),
+    "workspace_join": ProjectCapabilityContract(
+        "workspace_join", "gia nhập workspace", "clone Git, đăng ký path local hoặc giải nén ZIP vào ErisLive", "workspace.join", "medium"
+    ),
+    "workspace_switch": ProjectCapabilityContract(
+        "workspace_switch", "chuyển workspace", "đặt một workspace đã đăng ký làm project active", "workspace.switch", "low"
+    ),
+    "workspace_list": ProjectCapabilityContract(
+        "workspace_list", "liệt kê workspace", "liệt kê workspace đã được người dùng giao cho Eris", "workspace.list", "low", reversible=False
+    ),
+    "workspace_leave": ProjectCapabilityContract(
+        "workspace_leave", "rời workspace", "gỡ workspace khỏi registry; mặc định không xóa dữ liệu", "workspace.leave", "medium"
+    ),
 }
 PROJECT_CAPABILITY_IDS = tuple(PROJECT_CAPABILITY_CONTRACTS)
 
@@ -192,6 +205,13 @@ class ProjectOperationsRuntime:
     def __init__(self, owner: Any, *, logger: Any | None = None, max_audit: int = 120) -> None:
         self.owner = owner
         self.logger = logger
+        manager = getattr(owner, "workspace_manager", None)
+        self.workspace_manager = manager if manager is not None else WorkspaceManager(owner, logger=logger)
+        if getattr(owner, "workspace_manager", None) is None:
+            try:
+                setattr(owner, "workspace_manager", self.workspace_manager)
+            except Exception:
+                pass
         self._lock = threading.RLock()
         self._audit: deque[ProjectActionResult] = deque(maxlen=max(30, int(max_audit)))
         self._handlers: dict[str, Callable[[str, str], ProjectActionResult]] = {
@@ -206,6 +226,10 @@ class ProjectOperationsRuntime:
             "project_rollback": self._rollback,
             "project_package_patch": self._package_patch,
             "project_execute_task": self._execute_task,
+            "workspace_join": self._workspace_join,
+            "workspace_switch": self._workspace_switch,
+            "workspace_list": self._workspace_list,
+            "workspace_leave": self._workspace_leave,
         }
 
     def contracts(self) -> tuple[ProjectCapabilityContract, ...]:
@@ -220,14 +244,25 @@ class ProjectOperationsRuntime:
         autonomy_mode = str(self._setting("autonomy_mode", "full") or "full").strip().lower()
         if autonomy_mode in {"off", "disabled", "none", "0", "false"}:
             return False, "project_autonomy_disabled"
-        root = self._project_root()
-        if not root.exists() or not root.is_dir():
-            return False, "project_root_unavailable"
-        if cap in {"project_git_diff", "project_apply_patch"} and shutil.which("git") is None:
-            return False, "git_executable_missing"
+        workspace_caps = {"workspace_join", "workspace_switch", "workspace_list", "workspace_leave"}
+        if cap in workspace_caps:
+            if cap == "workspace_join" and shutil.which("git") is None:
+                # Path local/ZIP vẫn dùng được; handler sẽ chỉ chặn Git URL.
+                return True, "workspace_runtime_ready_without_git_clone"
+            return True, "workspace_runtime_ready"
         if cap == "project_execute_task" and self._coding_client() is None:
             return False, "coding_llm_client_unavailable"
-        return True, "autonomous_project_runtime_ready"
+        root = self._active_project_root()
+        if root is None:
+            # execute_task có thể nhận link/path ngay trong câu lệnh và tự join.
+            if cap == "project_execute_task":
+                return True, "workspace_may_be_joined_from_task"
+            return False, "active_workspace_required"
+        if not root.exists() or not root.is_dir():
+            return False, "active_workspace_unavailable"
+        if cap in {"project_git_diff", "project_apply_patch"} and shutil.which("git") is None:
+            return False, "git_executable_missing"
+        return True, "autonomous_workspace_runtime_ready"
 
     def execute(self, capability_id: str, action_input: str = "") -> ProjectActionResult:
         cap = str(capability_id or "").strip()
@@ -254,6 +289,80 @@ class ProjectOperationsRuntime:
     def audit_snapshot(self, limit: int = 20) -> tuple[dict[str, Any], ...]:
         with self._lock:
             return tuple(item.to_dict() for item in list(self._audit)[-max(1, int(limit)):])
+
+    # ---------------------------- workspace operations ---------------------------
+
+    def _workspace_list(self, operation_id: str, action_input: str) -> ProjectActionResult:
+        del action_input
+        started = time.time()
+        records = [item.to_dict() for item in self.workspace_manager.list_workspaces()]
+        active_id = self.workspace_manager.active_workspace_id
+        evidence = (self._evidence(
+            _hash_id("workspace_registry", json.dumps(records, ensure_ascii=False, sort_keys=True)),
+            "workspace_registry",
+            f"count={len(records)} active={active_id or 'none'}",
+            self.workspace_manager.describe(),
+        ),)
+        return self._success(
+            operation_id, "workspace_list", started,
+            f"ErisLive có {len(records)} workspace; active: {active_id or 'chưa có'}.",
+            evidence, {"verification_key": "workspace_list", "workspaces": records,
+                       "active_workspace_id": active_id, **self.workspace_manager.describe()},
+        )
+
+    def _workspace_join(self, operation_id: str, action_input: str) -> ProjectActionResult:
+        started = time.time(); payload = _parse_payload(action_input)
+        raw = str(payload.get("source", payload.get("url", payload.get("path", payload.get("value", action_input)))) or "").strip()
+        source = extract_workspace_source(raw) or raw.strip().strip('"\'')
+        workspace_id = str(payload.get("workspace_id", "") or "").strip()
+        if _looks_like_remote_source(source) and shutil.which("git") is None:
+            raise RuntimeError("Máy chưa có git nên chưa thể clone link repo; path local và ZIP vẫn dùng được.")
+        record = self.workspace_manager.join(source, workspace_id=workspace_id, activate=True)
+        path = Path(record.path).expanduser().resolve()
+        verified = path.is_dir() and self.workspace_manager.active_workspace_id == record.workspace_id
+        if not verified:
+            raise RuntimeError("Workspace đã join nhưng không xác minh được trạng thái active.")
+        evidence = (self._evidence(
+            _hash_id("workspace", f"{record.workspace_id}|{record.path}"),
+            "workspace_join", f"id={record.workspace_id} type={record.source_type}",
+            record.to_dict(),
+        ),)
+        return self._success(
+            operation_id, "workspace_join", started,
+            f"Tôi đã gia nhập và chuyển sang workspace {record.display_name}.", evidence,
+            {"verification_key": "workspace_join", **record.to_dict(),
+             "eris_home": str(self.workspace_manager.home.root), "active": True},
+        )
+
+    def _workspace_switch(self, operation_id: str, action_input: str) -> ProjectActionResult:
+        started = time.time(); payload = _parse_payload(action_input)
+        ref = str(payload.get("workspace_id", payload.get("name", payload.get("value", action_input))) or "").strip()
+        record = self.workspace_manager.switch(ref)
+        evidence = (self._evidence(
+            _hash_id("workspace_switch", record.workspace_id), "workspace_switch",
+            f"active={record.workspace_id}", record.to_dict(),
+        ),)
+        return self._success(
+            operation_id, "workspace_switch", started,
+            f"Tôi đã chuyển active workspace sang {record.display_name}.", evidence,
+            {"verification_key": "workspace_switch", **record.to_dict(), "active": True},
+        )
+
+    def _workspace_leave(self, operation_id: str, action_input: str) -> ProjectActionResult:
+        started = time.time(); payload = _parse_payload(action_input)
+        ref = str(payload.get("workspace_id", payload.get("name", payload.get("value", ""))) or "").strip()
+        delete_copy = bool(payload.get("delete_managed_copy", False))
+        record = self.workspace_manager.leave(ref, delete_managed_copy=delete_copy)
+        evidence = (self._evidence(
+            _hash_id("workspace_leave", record.workspace_id), "workspace_leave",
+            f"left={record.workspace_id} deleted={delete_copy and record.managed_copy}", record.to_dict(),
+        ),)
+        return self._success(
+            operation_id, "workspace_leave", started,
+            f"Tôi đã rời workspace {record.display_name}; {'đã xóa bản sao được quản lý' if delete_copy and record.managed_copy else 'không xóa dữ liệu'}.",
+            evidence, {"verification_key": "workspace_leave", **record.to_dict(),
+                       "deleted_managed_copy": bool(delete_copy and record.managed_copy)},
+        )
 
     # ------------------------------ read operations ------------------------------
 
@@ -431,8 +540,7 @@ class ProjectOperationsRuntime:
     def _package_patch(self, operation_id: str, action_input: str) -> ProjectActionResult:
         started = time.time(); payload = _parse_payload(action_input)
         target_id = str(payload.get("operation_id", "") or "").strip() or self._latest_manifest_operation() or self._latest_snapshot_operation()
-        output_dir = self._project_root() / "patches"
-        output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir = self.workspace_manager.patch_output_dir()
         stamp = time.strftime("%Y%m%d_%H%M%S")
         zip_path = output_dir / f"eris_patch_{stamp}.zip"
         changed = self._changed_files(target_id)
@@ -462,6 +570,17 @@ class ProjectOperationsRuntime:
         task = str(payload.get("task", payload.get("value", action_input)) or "").strip()
         if not task:
             raise ValueError("Thiếu mô tả tác vụ project.")
+        source = str(payload.get("workspace_source", payload.get("repo", payload.get("url", ""))) or "").strip()
+        source = source or extract_workspace_source(task)
+        joined_workspace: dict[str, Any] = {}
+        if source:
+            joined = self.workspace_manager.join(source, workspace_id=str(payload.get("workspace_id", "") or ""), activate=True)
+            joined_workspace = joined.to_dict()
+        if self._active_project_root() is None:
+            raise RuntimeError(
+                "Chưa có active workspace. Hãy đưa link repo, path local, ZIP hoặc dùng workspace_join trước; "
+                "Eris không tự mở source code của chính mình."
+            )
 
         max_attempts = max(1, min(int(self._setting("max_repair_attempts", 2) or 2), 4))
         failure_context = ""
@@ -567,6 +686,7 @@ class ProjectOperationsRuntime:
              "questions_vi": _clean_string_list(final_plan.get("questions_vi"), limit=8),
              "unanswered_question_count": unanswered_count,
              "touched_files": final_apply.data.get("touched_files", []),
+             "workspace": joined_workspace or (self.workspace_manager.active_record().to_dict() if self.workspace_manager.active_record() else {}),
              "attempts": attempt_reports, "package": package_data})
 
     def _build_agent_context(self, task: str) -> str:
@@ -630,20 +750,18 @@ class ProjectOperationsRuntime:
 
     # --------------------------------- helpers ----------------------------------
 
+    def _active_project_root(self) -> Path | None:
+        """Chỉ trả workspace đã được join/switch rõ ràng; không fallback source."""
+        return self.workspace_manager.active_path()
+
     def _project_root(self) -> Path:
-        explicit = os.getenv("ERIS_PROJECT_ROOT", "").strip()
-        if explicit:
-            return Path(explicit).expanduser().resolve()
-        for attr in ("project_root", "repo_root"):
-            value = str(getattr(self.owner, attr, "") or "").strip()
-            if value:
-                return Path(value).expanduser().resolve()
-        memory_core = getattr(self.owner, "memory_core", None)
-        base_dir = str(getattr(memory_core, "base_dir", "") or "").strip()
-        if base_dir:
-            return Path(base_dir).expanduser().resolve().parent
-        source_root = Path(__file__).resolve().parents[1]
-        return source_root.parent if source_root.name.lower() == "src" else source_root
+        root = self._active_project_root()
+        if root is None:
+            raise RuntimeError(
+                "Chưa có active workspace. ErisLive là nhà runtime, không phải repo; "
+                "hãy gia nhập hoặc chọn một workspace trước."
+            )
+        return root
 
     def _guard(self) -> ProjectWorkspaceGuard:
         return ProjectWorkspaceGuard(self._project_root())
@@ -659,9 +777,7 @@ class ProjectOperationsRuntime:
 
     def _operation_dir(self, operation_id: str, *, create: bool = True) -> Path:
         safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", operation_id)
-        path = self._project_root() / ".eris" / "project_ops" / safe_id
-        if create:
-            path.mkdir(parents=True, exist_ok=True)
+        path = self.workspace_manager.operation_dir(safe_id, create=create)
         return path
 
     def _snapshot_files(self, operation_id: str, files: Sequence[str]) -> None:
@@ -754,17 +870,19 @@ class ProjectOperationsRuntime:
         return list(dict.fromkeys(files))
 
     def _latest_snapshot_operation(self) -> str:
-        base = self._project_root() / ".eris" / "project_ops"
+        base = self.workspace_manager.operation_dir("_probe", create=False).parent
         candidates = [p for p in base.glob("*/snapshot_manifest.json")] if base.is_dir() else []
         return max(candidates, key=lambda p: p.stat().st_mtime).parent.name if candidates else ""
 
     def _latest_manifest_operation(self) -> str:
-        base = self._project_root() / ".eris" / "project_ops"
+        base = self.workspace_manager.operation_dir("_probe", create=False).parent
         candidates = [p for p in base.glob("*/operation_manifest.json")] if base.is_dir() else []
         return max(candidates, key=lambda p: p.stat().st_mtime).parent.name if candidates else ""
 
     def _build_notes_vi(self, operation_id: str, changed: Sequence[str]) -> str:
-        lines = ["GÓI PATCH ERIS", f"Operation: {operation_id or 'không rõ'}", "", "File thay đổi:"]
+        active = self.workspace_manager.active_record()
+        workspace_name = active.display_name if active else "không rõ"
+        lines = ["GÓI PATCH WORKSPACE", f"Workspace: {workspace_name}", f"Operation: {operation_id or 'không rõ'}", "", "File thay đổi:"]
         lines.extend(f"- {item}" for item in changed)
         lines.extend(["", "Ghi chú:", "- Patch được tạo bởi ProjectOperationsRuntime.", "- Hãy chạy lại test trên máy đích sau khi chép patch vào repo."])
         return "\n".join(lines)
@@ -844,7 +962,7 @@ class ProjectOperationsRuntime:
         with self._lock:
             self._audit.append(result)
         try:
-            ledger = self._project_root() / "logs" / "project_ops_ledger.jsonl"
+            ledger = self.workspace_manager.ledger_path()
             ledger.parent.mkdir(parents=True, exist_ok=True)
             with ledger.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(result.to_dict(), ensure_ascii=False, default=str) + "\n")
@@ -858,6 +976,11 @@ class ProjectOperationsRuntime:
                 pass
         return result
 
+
+
+def _looks_like_remote_source(value: str) -> bool:
+    text = str(value or "").strip().lower()
+    return text.startswith(("http://", "https://", "git@", "ssh://", "git://", "file://"))
 
 def _parse_payload(value: str, *, keep_raw: bool = False) -> dict[str, Any]:
     text = str(value or "").strip()

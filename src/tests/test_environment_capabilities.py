@@ -18,6 +18,7 @@ from runtime.environment_capabilities import (
 )
 from screen.evidence_models import ActiveWindowInfo, ScreenTextBlock, ScreenTextSnapshot
 from screen.screen_evidence_store import ScreenEvidenceStore
+from runtime.workspace_manager import WorkspaceManager
 
 
 def _owner(tmp_path: Path):
@@ -51,7 +52,7 @@ def _owner(tmp_path: Path):
         content_metadata={},
         idle_seconds=2.0,
     )
-    return SimpleNamespace(
+    owner = SimpleNamespace(
         memory_core=SimpleNamespace(base_dir=str(project / "memory_core")),
         telemetry_service=SimpleNamespace(capture_snapshot=lambda **_: telemetry_snapshot),
         last_signal_snapshot=telemetry_snapshot,
@@ -61,8 +62,14 @@ def _owner(tmp_path: Path):
         inferred_pos_x=0.5,
         action_router=ActionRouter(),
         action_executor=ActionExecutor(),
-        runtime_settings={"capabilities": {"respect_runtime_availability": True}},
-    ), project
+        runtime_settings={
+            "capabilities": {"respect_runtime_availability": True},
+            "project_ops": {"eris_home": str(tmp_path / "ErisLive")},
+        },
+    )
+    owner.workspace_manager = WorkspaceManager(owner)
+    owner.workspace_manager.register_local(project, activate=True)
+    return owner, project
 
 
 def test_version_and_contracts_are_complete(tmp_path: Path):

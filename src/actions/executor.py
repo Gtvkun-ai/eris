@@ -244,6 +244,18 @@ class ActionExecutor:
     def _project_execute_task(self, action_input: str) -> ActionExecutionResult:
         return self._execute_project("project_execute_task", action_input)
 
+    def _workspace_join(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_project("workspace_join", action_input)
+
+    def _workspace_switch(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_project("workspace_switch", action_input)
+
+    def _workspace_list(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_project("workspace_list", action_input)
+
+    def _workspace_leave(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_project("workspace_leave", action_input)
+
     def _get_local_time(self, action_input: str) -> ActionExecutionResult:
         now = time.localtime()
         hhmm = time.strftime("%H:%M", now)

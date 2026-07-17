@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
+from runtime.workspace_manager import default_eris_home
+
 
 _DEFAULT_SETTINGS: dict[str, Any] = {
     "version": 1,
@@ -65,6 +67,11 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
     },
     "project_ops": {
         "enabled": True,
+        "eris_home": str(default_eris_home()),
+        "workspace_root": "",
+        "allow_implicit_source_repo": False,
+        "fallback_to_runtime_source": False,
+        "git_clone_timeout_seconds": 600,
         "autonomy_mode": "full",
         "ask_when_uncertain": True,
         "proceed_without_user_reply": True,
@@ -161,6 +168,11 @@ _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
     ("personality", "forbid_family_literalization"): ("ERIS_FORBID_FAMILY_LITERALIZATION", "bool"),
     ("personality", "forbid_generic_helper_reset"): ("ERIS_FORBID_GENERIC_HELPER_RESET", "bool"),
     ("project_ops", "enabled"): ("ERIS_PROJECT_OPS_ENABLED", "bool"),
+    ("project_ops", "eris_home"): ("ERIS_HOME", "str"),
+    ("project_ops", "workspace_root"): ("ERIS_WORKSPACES_ROOT", "str"),
+    ("project_ops", "allow_implicit_source_repo"): ("ERIS_ALLOW_IMPLICIT_SOURCE_REPO", "bool"),
+    ("project_ops", "fallback_to_runtime_source"): ("ERIS_FALLBACK_TO_RUNTIME_SOURCE", "bool"),
+    ("project_ops", "git_clone_timeout_seconds"): ("ERIS_GIT_CLONE_TIMEOUT_S", "int"),
     ("project_ops", "autonomy_mode"): ("ERIS_PROJECT_AUTONOMY_MODE", "str"),
     ("project_ops", "ask_when_uncertain"): ("ERIS_PROJECT_ASK_WHEN_UNCERTAIN", "bool"),
     ("project_ops", "proceed_without_user_reply"): ("ERIS_PROJECT_PROCEED_WITHOUT_REPLY", "bool"),
@@ -238,15 +250,13 @@ class RuntimeSettingsStore:
     """Thread-safe settings store với merge có whitelist theo schema mặc định."""
 
     def __init__(self, path: str | os.PathLike[str] | None = None, *, logger: Any = None) -> None:
-        raw_path = path or os.getenv("ERIS_RUNTIME_SETTINGS_PATH", "settings/runtime_settings.json")
-        resolved = Path(raw_path).expanduser()
-        if not resolved.is_absolute():
-            # Brain được Body chạy với WorkingDirectory=<repo root>. Dùng thêm
-            # ERIS_PROJECT_ROOT để đường settings vẫn đúng khi module bị chạy từ
-            # một cwd khác trong test/tooling. Không nhét file này vào src/.
-            project_root = str(os.getenv("ERIS_PROJECT_ROOT", "") or "").strip()
-            if project_root:
-                resolved = Path(project_root).expanduser() / resolved
+        raw_path = path or os.getenv("ERIS_RUNTIME_SETTINGS_PATH", "")
+        if raw_path:
+            resolved = Path(raw_path).expanduser()
+            if not resolved.is_absolute():
+                resolved = default_eris_home() / "config" / resolved
+        else:
+            resolved = default_eris_home() / "config" / "runtime_settings.json"
         self.path = resolved.resolve()
         self.logger = logger
         self._lock = threading.RLock()

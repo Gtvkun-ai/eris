@@ -139,6 +139,26 @@ _CAPABILITY_DATA: dict[str, CapabilityDefinition] = {
         description_vi="tự inspect, lập patch, sửa, chạy test, rollback nếu lỗi và đóng gói",
         risk_level="high", example_phrases=("sửa project này đi", "làm luôn rồi chạy test"), visible_in_ui_group="project",
     ),
+    "workspace_join": CapabilityDefinition(
+        id="workspace_join", public_name_vi="gia nhập workspace",
+        description_vi="nhận Git URL, path local hoặc ZIP rồi đăng ký dưới ErisLive",
+        risk_level="medium", example_phrases=("vào repo này", "gia nhập workspace"), visible_in_ui_group="project",
+    ),
+    "workspace_switch": CapabilityDefinition(
+        id="workspace_switch", public_name_vi="chuyển workspace",
+        description_vi="chuyển project đang active sang workspace đã đăng ký",
+        example_phrases=("chuyển sang workspace game",), visible_in_ui_group="project",
+    ),
+    "workspace_list": CapabilityDefinition(
+        id="workspace_list", public_name_vi="liệt kê workspace",
+        description_vi="xem các repo/project người dùng đã giao cho Eris",
+        example_phrases=("liệt kê workspace",), visible_in_ui_group="project",
+    ),
+    "workspace_leave": CapabilityDefinition(
+        id="workspace_leave", public_name_vi="rời workspace",
+        description_vi="gỡ workspace khỏi registry, mặc định giữ nguyên dữ liệu",
+        risk_level="medium", example_phrases=("rời workspace này",), visible_in_ui_group="project",
+    ),
     "launch_app": CapabilityDefinition(
         id="launch_app", public_name_vi="mở ứng dụng",
         description_vi="mở app/chương trình có trong cấu hình runtime",
@@ -404,6 +424,7 @@ def capability_surface_keywords(action_ids: Iterable[str] | None = None) -> tupl
         "thời gian", "giờ", "telemetry", "runtime", "idle", "UI Automation", "OCR", "màn hình", "Meet", "camera",
         "claim", "câu hỏi bỏ ngỏ", "memory candidate", "social state", "mâu thuẫn", "open loop",
         "project", "source", "symbol", "diff", "patch", "test", "rollback", "đóng gói zip",
+        "workspace", "gia nhập repo", "chuyển workspace", "ErisLive",
     ))
     return tuple(dict.fromkeys(w for w in words if str(w or "").strip()))
 

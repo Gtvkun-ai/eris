@@ -46,6 +46,10 @@ VALID_SYSTEM_ACTION_LIST = (
     "project_rollback",
     "project_package_patch",
     "project_execute_task",
+    "workspace_join",
+    "workspace_switch",
+    "workspace_list",
+    "workspace_leave",
 )
 
 VALID_SYSTEM_ACTIONS = set(VALID_SYSTEM_ACTION_LIST)
@@ -70,6 +74,7 @@ _OBSERVED_ACTIONS = {
     "project_find_symbol", "project_git_diff", "project_apply_patch",
     "project_run_tests", "project_run_command", "project_rollback",
     "project_package_patch", "project_execute_task",
+    "workspace_join", "workspace_switch", "workspace_list", "workspace_leave",
 }
 
 

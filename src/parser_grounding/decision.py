@@ -1545,7 +1545,10 @@ class ParserGroundingMixin:
         # giữ cap nhỏ để model không nhét một cuốn tiểu thuyết vào ô URL.
         if system_action in {"project_apply_patch", "project_execute_task"}:
             action_input = raw_action_input[:120000]
-        elif system_action in {"project_run_command", "project_run_tests", "project_package_patch"}:
+        elif system_action in {
+            "project_run_command", "project_run_tests", "project_package_patch",
+            "workspace_join", "workspace_switch", "workspace_leave",
+        }:
             action_input = raw_action_input[:8000]
         else:
             action_input = self._normalize_salvaged_text(raw_action_input)[:280]

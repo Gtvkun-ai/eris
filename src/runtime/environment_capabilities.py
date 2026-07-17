@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from actions.contracts import ActionExecutionResult, ActionExecutionStatus
+from runtime.workspace_manager import default_eris_home
 
 ENVIRONMENT_CAPABILITY_VERSION = "environment_capability.v1.0"
 
@@ -308,10 +309,10 @@ class EnvironmentCapabilityRuntime:
         if cap == "get_project_status":
             root = self._project_root()
             if root is None or not root.exists():
-                return False, "project_root_unavailable"
+                return False, "active_workspace_required"
             if shutil.which("git") is None:
                 return False, "git_executable_missing"
-            return True, "project_root_and_git_ready"
+            return True, "active_workspace_and_git_ready"
         return False, "unavailable"
 
     def execute(self, capability_id: str, action_input: str = "") -> EnvironmentActionResult:
@@ -459,37 +460,32 @@ class EnvironmentCapabilityRuntime:
         return None
 
     def _project_root(self) -> Path | None:
-        explicit = os.getenv("ERIS_PROJECT_ROOT", "").strip()
-        if explicit:
-            return Path(explicit).expanduser().resolve()
+        """Chỉ dùng workspace đã được người dùng join/switch rõ ràng."""
         owner = self.owner
-        for attr in ("project_root", "repo_root"):
-            value = _clean(getattr(owner, attr, "") if owner is not None else "", 1200)
-            if value:
-                try:
-                    return Path(value).expanduser().resolve()
-                except Exception:
-                    pass
-        memory_core = getattr(owner, "memory_core", None) if owner is not None else None
-        base_dir = _clean(getattr(memory_core, "base_dir", ""), 1200)
-        if base_dir:
+        manager = getattr(owner, "workspace_manager", None) if owner is not None else None
+        getter = getattr(manager, "active_path", None)
+        if callable(getter):
             try:
-                return Path(base_dir).expanduser().resolve().parent
+                return getter()
             except Exception:
-                pass
-        source_root = Path(__file__).resolve().parents[1]
-        if source_root.name.lower() == "src":
-            return source_root.parent
-        return source_root
+                return None
+        # Bootstrap dành cho bản chạy headless/tooling. Tên env cố ý là ACTIVE;
+        # không đọc ERIS_PROJECT_ROOT và không suy từ source hay memory path.
+        explicit = os.getenv("ERIS_ACTIVE_WORKSPACE_ROOT", "").strip()
+        if explicit:
+            try:
+                path = Path(explicit).expanduser().resolve()
+                return path if path.is_dir() else None
+            except Exception:
+                return None
+        return None
 
     def _candidate_log_dirs(self) -> tuple[Path, ...]:
         dirs: list[Path] = []
         explicit = os.getenv("ERIS_RUNTIME_LOG_DIR", "").strip()
         if explicit:
             dirs.append(Path(explicit).expanduser())
-        root = self._project_root()
-        if root is not None:
-            dirs.append(root / "logs")
+        dirs.append(default_eris_home() / "logs")
         dirs.extend((Path.cwd() / "logs", Path.cwd()))
         unique: list[Path] = []
         seen: set[str] = set()
