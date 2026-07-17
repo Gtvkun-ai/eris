@@ -93,6 +93,7 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "maintenance_budget": "small",
     },
     "stage": {
+        "performance_profile": "conversation",
         "performance_acts_enabled": True,
         "interrupt_enabled": True,
         "protocol_enabled": True,
@@ -191,6 +192,7 @@ _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
     ("stage", "interrupt_enabled"): ("ERIS_INTERRUPT_ENABLED", "bool"),
     ("stage", "protocol_enabled"): ("ERIS_STAGE_PROTOCOL", "bool"),
     ("stage", "segment_tts"): ("ERIS_STAGE_SEGMENT_TTS", "bool"),
+    ("stage", "performance_profile"): ("ERIS_STAGE_PROFILE", "str"),
     ("stage", "segment_dispatch"): ("ERIS_TTS_SEGMENT_DISPATCH", "str"),
     ("stage", "tts_task_manager"): ("ERIS_TTS_TASK_MANAGER", "bool"),
     ("stage", "prefetch_workers"): ("ERIS_TTS_PREFETCH_WORKERS", "int"),
@@ -594,6 +596,7 @@ def _coerce_setting(path: str, value: Any, expected: Any) -> tuple[bool, Any]:
         "personality.style_repair_mode": {"self_aware_dry", "direct", "soft"},
         "capabilities.source": {"registry"},
         "memory.maintenance_budget": {"small", "medium", "large"},
+        "stage.performance_profile": {"conversation", "recording", "custom"},
         "stage.segment_dispatch": {"inline", "queued"},
         "tts.language": {"vi", "ja", "en"},
         "tts.quality": {"balanced", "high"},

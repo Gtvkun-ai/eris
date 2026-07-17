@@ -58,7 +58,8 @@
     "tts_task_manager": true,
     "prefetch_workers": 2,
     "max_tts_segments": 4,
-    "min_split_chars": 72
+    "min_split_chars": 72,
+    "performance_profile": "conversation"
   },
   "tts": {
     "enabled": true,

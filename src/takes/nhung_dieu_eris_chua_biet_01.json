@@ -1,0 +1,36 @@
+{
+  "title": "Những Điều Eris Chưa Biết #01",
+  "profile": "recording",
+  "beats": [
+    {
+      "kind": "text",
+      "text": "Chào. Tôi đang mắc vào một điều nhỏ.",
+      "pause_after_ms": 1600,
+      "motion": "tilt_head",
+      "emotion": "curious",
+      "thinking_motion": "read"
+    },
+    {
+      "kind": "text",
+      "text": "Vì sao có loài nấm phát sáng trong đêm?",
+      "pause_after_ms": 1200,
+      "motion": "read",
+      "emotion": "curious"
+    },
+    {
+      "kind": "tutor_lookup",
+      "query": "Vì sao một số loài nấm phát sáng trong đêm?",
+      "show_panel": true,
+      "close_panel": true,
+      "search": true
+    },
+    {
+      "kind": "text",
+      "text": "À. {{tutor_answer}}",
+      "pause_after_ms": 900,
+      "motion": "stand",
+      "emotion": "warm_soft",
+      "tts_style": "curious_explain"
+    }
+  ]
+}

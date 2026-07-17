@@ -17,6 +17,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from runtime.autonomous_performance import AutonomousPerformancePlanner
+from runtime.body_choreography import BodyChoreographyPlanner
 from runtime.autonomous_surface_anchor import AutonomousSurfaceAnchorGuard
 from runtime.intention_authority import IntentionAuthorityGate
 from runtime.prosody_director import ProsodyDirector
@@ -49,6 +50,7 @@ class StageFrame:
     stage_act: dict[str, Any] = field(default_factory=dict)
     show_plan: dict[str, Any] = field(default_factory=dict)
     speech_contract: dict[str, Any] = field(default_factory=dict)
+    body_timeline: dict[str, Any] = field(default_factory=dict)
     interruptible: bool = True
     body_only: bool = False
     source: str = "unknown"
@@ -59,27 +61,29 @@ class StageFrame:
 
     def to_payload_patch(self) -> dict[str, Any]:
         """Patch gắn vào payload cũ mà không phá Godot/client hiện tại."""
-        return {
-            "display_text": self.display_text,
-            "stage": {
-                "turn_id": self.turn_id,
-                "segment_id": self.segment_id,
-                "emotion": self.emotion,
-                "motion": self.motion,
-                "actions": list(self.actions),
-                "prosody_style": self.prosody_style,
-                "delivery": self.delivery,
-                "stage_act": self.stage_act,
-                "show_plan": self.show_plan,
-                "speech_contract": self.speech_contract,
-                "interruptible": self.interruptible,
-                "body_only": self.body_only,
-                "source": self.source,
-                "speech_act": self.speech_act,
-                "preset_id": self.preset_id,
-                "audio_asset": self.audio_asset,
-            },
+        stage = {
+            "turn_id": self.turn_id,
+            "segment_id": self.segment_id,
+            "emotion": self.emotion,
+            "motion": self.motion,
+            "actions": list(self.actions),
+            "prosody_style": self.prosody_style,
+            "delivery": self.delivery,
+            "stage_act": self.stage_act,
+            "show_plan": self.show_plan,
+            "speech_contract": self.speech_contract,
+            "interruptible": self.interruptible,
+            "body_only": self.body_only,
+            "source": self.source,
+            "speech_act": self.speech_act,
+            "preset_id": self.preset_id,
+            "audio_asset": self.audio_asset,
         }
+        # Không gửi object rỗng cho câu thường. Godot cũ vì thế tiếp tục bỏ qua
+        # sạch, còn body mới chỉ cần nghe một field có contract rõ ràng.
+        if self.body_timeline:
+            stage["body_timeline"] = dict(self.body_timeline)
+        return {"display_text": self.display_text, "stage": stage}
 
 
 _TRANSFORMERS = StageTransformerChain()
@@ -176,6 +180,7 @@ class StageFrameBuilder:
         self.autonomous_anchor_guard = AutonomousSurfaceAnchorGuard()
         self.intention_authority_gate = IntentionAuthorityGate()
         self.show_runtime = StageShowRuntime()
+        self.body_choreography = BodyChoreographyPlanner()
 
     def build(
         self,
@@ -280,6 +285,12 @@ class StageFrameBuilder:
             if performance.performance_act.prosody_note:
                 prosody_notes = f"{prosody_notes} {performance.performance_act.prosody_note}".strip()
 
+        # ScriptedTakeRuntime truyền beat đã được validate qua payload. StageFrame
+        # giữ nó trong delivery để TtsTaskManager sở hữu pause/thinking lifecycle.
+        scripted_beat = payload.get("scripted_beat")
+        if isinstance(scripted_beat, dict):
+            delivery_payload["active_beat"] = dict(scripted_beat)
+
         # Autonomous không chỉ có text. Dựng opening hold, speech beat và closing
         # settle từ plan đã được SpeakGate cấp quyền. LLM không được tự bịa nhịp.
         autonomous_act = None
@@ -309,8 +320,16 @@ class StageFrameBuilder:
         speech_payload = speech_contract.to_payload()
         if prelocalized:
             speech_payload["prelocalized"] = True
+        resolved_turn_id = str(turn_id or uuid.uuid4().hex)
+        timeline = self.body_choreography.plan(
+            turn_id=resolved_turn_id,
+            text=tts_text or performance.display_text,
+            motion=motion or "none",
+            actions=delivery.pre_speech_actions,
+            delivery=delivery_payload,
+        )
         stage_frame = StageFrame(
-            turn_id=str(turn_id or uuid.uuid4().hex),
+            turn_id=resolved_turn_id,
             segment_id=int(segment_id),
             display_text=performance.display_text,
             tts_text=tts_text,
@@ -323,6 +342,7 @@ class StageFrameBuilder:
             delivery=delivery_payload,
             stage_act=autonomous_act.to_payload() if autonomous_act is not None else {},
             speech_contract=speech_payload,
+            body_timeline=timeline.to_payload() if timeline is not None else {},
             interruptible=bool(should_speak and str(channel or "").strip().lower() not in {"system_warning"}),
             body_only=bool(not should_speak and (motion or performance.actions)),
             source=f"decision:{str(getattr(decision, 'intent', '') or channel or 'unknown')}",

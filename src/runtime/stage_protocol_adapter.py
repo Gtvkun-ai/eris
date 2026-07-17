@@ -21,6 +21,9 @@ _AUDIO_EVENT_MAP = {
     "audio_cancelled": "stage_segment_cancelled",
     "audio_failed": "stage_segment_failed",
     "emotion_change": "stage_state",
+    "thinking_started": "thinking_started",
+    "thinking_finished": "thinking_finished",
+    "continuation_cancelled": "continuation_cancelled",
 }
 
 
@@ -43,6 +46,7 @@ def stage_segment_event(stage_frame: Any, *, segment_count: int = 1) -> StagePro
         "show_id": str((dict(getattr(stage_frame, "show_plan", {}) or {})).get("show_id", "") or ""),
         "show_plan_version": str((dict(getattr(stage_frame, "show_plan", {}) or {})).get("version", "") or ""),
         "segment_index": _seq(stage_frame),
+        "body_timeline": dict(getattr(stage_frame, "body_timeline", {}) or {}),
     }
     return StageProtocolEvent(
         type="stage_segment",
@@ -80,6 +84,8 @@ def playback_event(event: Any, *, stage_frame: Any = None) -> StageProtocolEvent
     legacy_type = str(getattr(event, "type", "") or "")
     protocol_type = _AUDIO_EVENT_MAP.get(legacy_type, legacy_type or "stage_event")
     frame = stage_frame
+    continuation_motion = _continuation_motion(legacy_type, frame)
+    continuation_timeline = _continuation_body_timeline(legacy_type, event, frame, continuation_motion)
     data = {
         "legacy_type": legacy_type,
         "segment_id": _event_seq(event, frame),
@@ -89,6 +95,13 @@ def playback_event(event: Any, *, stage_frame: Any = None) -> StageProtocolEvent
         "speech_act": str(getattr(frame, "speech_act", "") or ""),
         "preset_id": str(getattr(frame, "preset_id", "") or ""),
         "audio_asset": str(getattr(frame, "audio_asset", "") or ""),
+        "body_timeline": continuation_timeline,
+        "continuation_state": (
+            "thinking" if legacy_type == "thinking_started"
+            else "ready" if legacy_type == "thinking_finished"
+            else "cancelled" if legacy_type == "continuation_cancelled"
+            else ""
+        ),
     }
     return StageProtocolEvent(
         type=protocol_type,
@@ -97,7 +110,7 @@ def playback_event(event: Any, *, stage_frame: Any = None) -> StageProtocolEvent
         display_text=str(getattr(frame, "display_text", "") or ""),
         tts_text=str(getattr(event, "text", "") or getattr(frame, "tts_text", "") or ""),
         emotion=str(getattr(event, "emotion", "") or getattr(frame, "emotion", "") or ""),
-        motion=str(getattr(event, "motion", "") or getattr(frame, "motion", "") or ""),
+        motion=continuation_motion or str(getattr(event, "motion", "") or getattr(frame, "motion", "") or ""),
         interruptible=bool(getattr(frame, "interruptible", True)),
         reason=str(getattr(event, "reason", "") or ""),
         source=str(getattr(frame, "source", "") or ""),
@@ -112,6 +125,50 @@ def stage_state_event(*, event_type: str, reason: str = "", data: dict[str, Any]
         data=dict(data or {}),
     )
 
+
+
+def _continuation_motion(event_type: str, frame: Any) -> str:
+    if event_type == "thinking_started":
+        delivery = getattr(frame, "delivery", {})
+        beat = delivery.get("active_beat") if isinstance(delivery, dict) else {}
+        requested = str((beat or {}).get("thinking_motion", "") or "").strip().lower()
+        # Body 2D hiện có animation hữu hạn; map intent trung tính sang pose thật.
+        return {
+            "thinking_small": "read",
+            "read": "read",
+            "sad": "sad",
+            "sit": "sit",
+            "stand": "stand",
+        }.get(requested, "read")
+    if event_type in {"thinking_finished", "continuation_cancelled"}:
+        return "stand"
+    return ""
+
+
+def _continuation_body_timeline(event_type: str, event: Any, frame: Any, motion: str) -> dict[str, Any]:
+    if event_type not in {"thinking_started", "thinking_finished", "continuation_cancelled"}:
+        return {}
+    try:
+        duration = 0
+        if event_type == "thinking_started":
+            delivery = getattr(frame, "delivery", {})
+            beat = delivery.get("active_beat") if isinstance(delivery, dict) else {}
+            duration = max(0, int((beat or {}).get("pause_after_ms", 0) or 0))
+    except (TypeError, ValueError):
+        duration = 0
+    return {
+        "turn_id": str(getattr(event, "turn_id", "") or getattr(frame, "turn_id", "") or ""),
+        "duration_ms": duration,
+        "source": f"continuation:{event_type}",
+        "events": [{
+            "at_ms": 0,
+            "kind": "motion",
+            "name": motion or "stand",
+            "duration_ms": duration if event_type == "thinking_started" else 220,
+            "intent": "pose",
+            "facing": -1 if event_type == "thinking_started" else 0,
+        }],
+    }
 
 def _seq(stage_frame: Any) -> int:
     try:

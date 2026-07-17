@@ -22,19 +22,21 @@ from runtime.stage_contracts import StageFrame
 
 
 def _dispatch_mode() -> str:
-    # Env được ưu tiên để test/CLI có thể ép mode mà không cần ghi settings.
-    # Panel runtime vẫn là nguồn mặc định khi env không được đặt.
+    # Env mức thấp vẫn thắng để test một nhánh riêng. Nếu không có, profile có
+    # tên quyết định cả cụm thay vì để bốn toggle tự mâu thuẫn với nhau.
     env_value = os.environ.get("ERIS_TTS_SEGMENT_DISPATCH", "").strip().lower()
     if env_value in {"inline", "queued"}:
         return env_value
-    from runtime.runtime_settings_store import runtime_text
-    value = runtime_text("stage", "segment_dispatch", default="inline").strip().lower()
-    return value if value in {"inline", "queued"} else "inline"
+    from runtime.stage_profiles import active_stage_profile
+    return active_stage_profile().dispatch_mode
 
 
 def _task_manager_enabled() -> bool:
-    from runtime.runtime_settings_store import runtime_bool
-    return runtime_bool("stage", "tts_task_manager", default=False)
+    env_value = os.environ.get("ERIS_TTS_TASK_MANAGER", "").strip().lower()
+    if env_value:
+        return env_value not in {"0", "false", "off", "no", "none"}
+    from runtime.stage_profiles import active_stage_profile
+    return active_stage_profile().task_manager_enabled
 
 
 def _join_tts_segments(frames: list[StageFrame]) -> str:
@@ -87,6 +89,18 @@ def _opening_hold_ms(frame: StageFrame) -> int:
 
 
 class StageDispatcher:
+    def __init__(self, *, profile: object | None = None) -> None:
+        if isinstance(profile, str):
+            from runtime.stage_profiles import stage_profile
+            profile = stage_profile(profile)
+        self.profile = profile
+
+    def _profile(self):
+        if self.profile is not None:
+            return self.profile
+        from runtime.stage_profiles import active_stage_profile
+        return active_stage_profile()
+
     def dispatch_tts(
         self,
         frames: Iterable[StageFrame],
@@ -112,7 +126,12 @@ class StageDispatcher:
         if opening_hold > 0:
             time.sleep(opening_hold / 1000.0)
 
-        if _task_manager_enabled():
+        manager_enabled = (
+            _task_manager_enabled()
+            if os.environ.get("ERIS_TTS_TASK_MANAGER", "").strip()
+            else bool(getattr(self._profile(), "task_manager_enabled", False))
+        )
+        if manager_enabled:
             try:
                 manager = getattr(tts_engine, "task_manager", None)
                 if manager is None:
@@ -121,8 +140,19 @@ class StageDispatcher:
 
                     # Manager sống cùng engine để cancel_current/shutdown có thể
                     # chạm đúng queue đang phát khi user chen vào.
-                    manager = TtsTaskManager(audio_bus=StageAudioBus())
+                    manager = TtsTaskManager(
+                        audio_bus=StageAudioBus(),
+                        prefetch_workers=int(getattr(self._profile(), "prefetch_workers", 2) or 2),
+                        max_prefetch_segments=int(getattr(self._profile(), "max_prefetch_segments", 4) or 4),
+                    )
                     setattr(tts_engine, "task_manager", manager)
+                else:
+                    # Manager có thể đã được tạo ở conversation profile. Cập nhật
+                    # policy live khi chuyển sang recording, không bắt restart app.
+                    if hasattr(manager, "prefetch_workers"):
+                        manager.prefetch_workers = int(getattr(self._profile(), "prefetch_workers", 2) or 2)
+                    if hasattr(manager, "max_prefetch_segments"):
+                        manager.max_prefetch_segments = int(getattr(self._profile(), "max_prefetch_segments", 4) or 4)
                 scheduled = manager.dispatch_frames(
                     frame_list,
                     backend=tts_engine,
@@ -138,7 +168,12 @@ class StageDispatcher:
                 # Fallback giữ Eris có tiếng nói kể cả khi manager mới lỗi.
                 pass
 
-        if _dispatch_mode() == "inline" or len(frame_list) == 1:
+        dispatch_mode = (
+            _dispatch_mode()
+            if os.environ.get("ERIS_TTS_SEGMENT_DISPATCH", "").strip()
+            else str(getattr(self._profile(), "dispatch_mode", "inline") or "inline")
+        )
+        if dispatch_mode == "inline" or len(frame_list) == 1:
             return self._dispatch_inline(
                 frame_list,
                 tts_engine=tts_engine,

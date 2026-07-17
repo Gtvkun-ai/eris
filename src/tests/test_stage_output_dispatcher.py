@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 
 from runtime.stage_contracts import StageFrame
 from runtime.stage_dispatcher import StageDispatcher
@@ -34,6 +35,28 @@ def test_stage_output_pipeline_splits_long_tts_into_segments():
     assert [item.segment_id for item in frames] == list(range(len(frames)))
     assert {item.turn_id for item in frames} == {"turn-1"}
     assert frames[0].tts_text == "Khoan."
+
+
+def test_autonomous_beat_pause_is_only_kept_on_its_last_subsegment():
+    frame = _frame("Một beat dài có nhiều câu.")
+    frame = replace(
+        frame,
+        stage_act={
+            "beats": [{
+                "kind": "speech",
+                "text": "Câu thứ nhất đủ dài để tách. Câu thứ hai cũng thuộc cùng một beat.",
+                "pause_after_ms": 1400,
+                "pause_jitter_ms": 0,
+            }]
+        },
+    )
+
+    frames = StageOutputPipeline(profile="recording").frames_for_tts(frame)
+
+    assert len(frames) >= 2
+    pauses = [item.delivery["active_beat"]["pause_after_ms"] for item in frames]
+    assert pauses[:-1] == [0] * (len(pauses) - 1)
+    assert pauses[-1] == 1400
 
 
 def test_stage_dispatcher_inlines_segments_by_default_to_avoid_remote_tts_gaps():

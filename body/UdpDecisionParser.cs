@@ -464,6 +464,9 @@ public sealed class BodyTimeline
 
 	private static bool TryGetTimelineRoot(JsonElement root, out JsonElement timelineRoot)
 	{
+		// Payload legacy đặt timeline ở `stage.body_timeline` hoặc top-level.
+		// Stage protocol v2 lại bọc metadata trong `data.body_timeline`.
+		// Đọc đủ cả hai hình dạng để body không đứng im đúng lúc Eris đang "nghĩ".
 		if (
 			root.TryGetProperty("stage", out var stage)
 			&& stage.ValueKind == JsonValueKind.Object
@@ -474,6 +477,25 @@ public sealed class BodyTimeline
 		}
 		if (root.TryGetProperty("body_timeline", out timelineRoot) && timelineRoot.ValueKind == JsonValueKind.Object)
 			return true;
+
+		if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
+		{
+			if (data.TryGetProperty("body_timeline", out timelineRoot)
+				&& timelineRoot.ValueKind == JsonValueKind.Object)
+			{
+				return true;
+			}
+
+			// Chấp nhận thêm dạng `data.stage.body_timeline` để protocol có thể
+			// mở rộng mà frontend không lại phải đoán cấu trúc bằng thần giao cách cảm.
+			if (data.TryGetProperty("stage", out var dataStage)
+				&& dataStage.ValueKind == JsonValueKind.Object
+				&& dataStage.TryGetProperty("body_timeline", out timelineRoot)
+				&& timelineRoot.ValueKind == JsonValueKind.Object)
+			{
+				return true;
+			}
+		}
 
 		timelineRoot = default;
 		return false;

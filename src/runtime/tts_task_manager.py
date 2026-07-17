@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from runtime.stage_audio_bus import StageAudioBus
+from runtime.stage_continuation import StageContinuationRuntime
 
 logger = logging.getLogger("TTS.TaskManager")
 
@@ -60,8 +61,18 @@ class TtsDispatchPolicy:
 class TtsTaskManager:
     """Queue cấp lượt nói, tách khỏi engine Gemini cụ thể."""
 
-    def __init__(self, *, audio_bus: StageAudioBus | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        audio_bus: StageAudioBus | None = None,
+        prefetch_workers: int | None = None,
+        max_prefetch_segments: int | None = None,
+    ) -> None:
         self.audio_bus = audio_bus or StageAudioBus()
+        self.prefetch_workers = None if prefetch_workers is None else max(1, min(6, int(prefetch_workers)))
+        self.max_prefetch_segments = (
+            None if max_prefetch_segments is None else max(1, min(12, int(max_prefetch_segments)))
+        )
         self._lock = threading.RLock()
         self._generation = 0
         self._cancel_event = threading.Event()
@@ -72,6 +83,8 @@ class TtsTaskManager:
         self._pending_tasks: dict[tuple[str, int], TtsSegmentTask] = {}
         self._pending_callbacks: dict[tuple[str, int], Callable[[Any, Any], None] | None] = {}
         self._cache: OrderedDict[str, bytes] = OrderedDict()
+        # Sở hữu khoảng lặng giữa segment; cancel chung với queue audio.
+        self.continuation = StageContinuationRuntime()
 
     def dispatch_frames(
         self,
@@ -94,20 +107,23 @@ class TtsTaskManager:
         tasks = self._build_tasks(frames, valence=valence, arousal=arousal, stance=stance)
         if not tasks:
             return False
-        policy = _dispatch_policy(tasks)
+        policy = _dispatch_policy(
+            tasks,
+            prefetch_workers=self.prefetch_workers,
+            max_prefetch_segments=self.max_prefetch_segments,
+        )
         if policy.strategy == "inline":
             logger.debug("[tts-task-manager] fallback inline: %s", policy.reason)
             return False
 
         self.cancel_current(reason="replaced", only_interruptible=False)
-        cancel_event = threading.Event()
+        generation, cancel_event = self.continuation.begin_generation()
         playback_stop = threading.Event()
         executor = ThreadPoolExecutor(max_workers=policy.workers, thread_name_prefix="TTS-Prefetch")
         turn_segments = _turn_segments(tasks)
 
         with self._lock:
-            self._generation += 1
-            generation = self._generation
+            self._generation = generation
             self._cancel_event = cancel_event
             self._playback_stop = playback_stop
             self._executor = executor
@@ -183,6 +199,7 @@ class TtsTaskManager:
             self._pending_tasks = {}
             self._pending_callbacks = {}
 
+        self.continuation.cancel(reason=reason)
         cancel_event.set()
         playback_stop.set()
         if executor is not None:
@@ -364,6 +381,26 @@ class TtsTaskManager:
                 with self._lock:
                     if self._current_task is task:
                         self._current_task = None
+
+                # Chỉ chờ khi còn segment kế tiếp. Pause dài phát lifecycle
+                # thinking_started/thinking_finished để avatar/UI diễn đúng.
+                if task is not tasks[-1] and not cancel_event.is_set():
+                    def _emit_pause(event_type: str, reason: str) -> None:
+                        self.audio_bus.emit_lifecycle(
+                            event_type,
+                            stage_frame=task.frame,
+                            text=task.text,
+                            reason=reason,
+                            turn_segments=turn_segments,
+                            callback=on_event,
+                        )
+                    if not self.continuation.wait_after_frame(
+                        task.frame,
+                        generation=generation,
+                        cancel_event=cancel_event,
+                        emit=_emit_pause,
+                    ):
+                        break
         except Exception as exc:
             if not first_started:
                 first_started = True
@@ -386,10 +423,27 @@ class TtsTaskManager:
                     self._current_task = None
                     self._pending_tasks = {}
                     self._pending_callbacks = {}
+            self.continuation.complete(generation)
             try:
                 executor.shutdown(wait=False, cancel_futures=True)
             except TypeError:
                 executor.shutdown(wait=False)
+
+    def wait_until_idle(self, timeout: float | None = None) -> bool:
+        """Chờ queue hiện tại kết thúc, dùng cho ScriptedTakeRuntime.
+
+        Chat thường không gọi hàm này. Take runtime cần ranh giới thật giữa cụm
+        thoại và đạo cụ Tutor, nếu không panel mở giữa lúc câu trước còn đang nói.
+        """
+
+        with self._lock:
+            thread = self._playback_thread
+        if thread is None:
+            return True
+        if thread is threading.current_thread():
+            return False
+        thread.join(timeout=None if timeout is None else max(0.0, float(timeout)))
+        return not thread.is_alive()
 
     def _wait_future(self, future: Future[bytes], *, cancel_event: threading.Event) -> bytes:
         while not cancel_event.is_set():
@@ -514,11 +568,16 @@ def _read_audio_asset(frame: Any) -> bytes | None:
 
 
 def _prefetch_workers() -> int:
-    from runtime.runtime_settings_store import runtime_int
-    return max(1, min(6, runtime_int("stage", "prefetch_workers", default=2)))
+    from runtime.stage_profiles import active_stage_profile
+    return max(1, min(6, active_stage_profile().prefetch_workers))
 
 
-def _dispatch_policy(tasks: list[TtsSegmentTask]) -> TtsDispatchPolicy:
+def _dispatch_policy(
+    tasks: list[TtsSegmentTask],
+    *,
+    prefetch_workers: int | None = None,
+    max_prefetch_segments: int | None = None,
+) -> TtsDispatchPolicy:
     # Audio preset phải đi qua task manager để đọc file và vẫn phát lifecycle event.
     if any(str(getattr(task.frame, "audio_asset", "") or "").strip() for task in tasks):
         return TtsDispatchPolicy(strategy="prefetch", workers=1, reason="audio_preset")
@@ -528,7 +587,7 @@ def _dispatch_policy(tasks: list[TtsSegmentTask]) -> TtsDispatchPolicy:
 
     total_chars = sum(len(task.text) for task in tasks)
     segment_count = len(tasks)
-    max_segments = _max_prefetch_segments()
+    max_segments = max_prefetch_segments or _max_prefetch_segments()
     max_chars = _max_prefetch_chars()
     max_single = _max_prefetch_single_chars()
     if mode not in {"auto", "prefetch", "parallel", "queued"}:
@@ -553,7 +612,7 @@ def _dispatch_policy(tasks: list[TtsSegmentTask]) -> TtsDispatchPolicy:
                 reason=f"single_segment>{max_single}",
             )
 
-    workers = min(_prefetch_workers(), max(1, segment_count))
+    workers = min(prefetch_workers or _prefetch_workers(), max(1, segment_count))
     return TtsDispatchPolicy(strategy="prefetch", workers=workers, reason=f"segments={segment_count};chars={total_chars}")
 
 

@@ -56,3 +56,45 @@ def test_stage_frame_does_not_force_body_timeline_for_plain_reply():
     )
 
     assert "body_timeline" not in frame.to_payload_patch()["stage"]
+
+
+def test_segmenter_does_not_replay_same_body_timeline_on_every_segment():
+    from runtime.stage_output import StageOutputPipeline
+
+    builder = StageFrameBuilder()
+    frame = builder.build(
+        DummyDecision(),
+        payload={
+            "text": "Hah. Tôi đang cười đây. Nhưng đừng biến nó thành ba lần nhảy liên tiếp.",
+            "user_text": "cười đi",
+        },
+        turn_id="turn-segmented-laugh",
+    )
+    frames = StageOutputPipeline(profile="recording").frames_for_tts(frame)
+    assert frames[0].body_timeline
+    assert all(not item.body_timeline for item in frames[1:])
+
+
+def test_pause_after_ms_belongs_to_last_subsegment_of_one_beat():
+    from runtime.stage_output import StageOutputPipeline
+
+    builder = StageFrameBuilder()
+    frame = builder.build(
+        DummyDecision(),
+        payload={
+            "text": "Tôi có một điều cần nói. Nó gồm nhiều câu. Và tôi chỉ nên ngừng ở cuối beat.",
+            "scripted_beat": {
+                "kind": "speech",
+                "pause_after_ms": 1200,
+                "pause_jitter_ms": 0,
+                "take_beat_index": 3,
+            },
+        },
+        turn_id="turn-one-beat-many-segments",
+    )
+    frames = StageOutputPipeline(profile="recording").frames_for_tts(frame)
+    assert len(frames) >= 2
+    pauses = [item.delivery["active_beat"]["pause_after_ms"] for item in frames]
+    assert pauses[:-1] == [0] * (len(pauses) - 1)
+    assert pauses[-1] == 1200
+    assert all(item.delivery["active_beat"]["take_beat_index"] == 3 for item in frames)

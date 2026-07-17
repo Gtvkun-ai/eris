@@ -38,6 +38,7 @@ _LEGACY_ADVANCED_MAP: dict[str, tuple[str, ...]] = {
     "ERIS_PERFORMANCE_ACTS_ENABLED": ("stage", "performance_acts_enabled"),
     "ERIS_INTERRUPT_ENABLED": ("stage", "interrupt_enabled"),
     "ERIS_STAGE_PROTOCOL": ("stage", "protocol_enabled"),
+    "ERIS_STAGE_PROFILE": ("stage", "performance_profile"),
     "ERIS_STAGE_SEGMENT_TTS": ("stage", "segment_tts"),
     "ERIS_TTS_SEGMENT_DISPATCH": ("stage", "segment_dispatch"),
     "ERIS_TTS_TASK_MANAGER": ("stage", "tts_task_manager"),

@@ -22,18 +22,22 @@ _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?。！？])\s+")
 
 
 def _enabled() -> bool:
-    from runtime.runtime_settings_store import runtime_bool
-    return runtime_bool("stage", "segment_tts", default=True)
+    from runtime.stage_profiles import active_stage_profile
+    return active_stage_profile().logical_segment_tts
 
 
-def _max_segments() -> int:
-    from runtime.runtime_settings_store import runtime_int
-    return max(1, min(16, runtime_int("stage", "max_tts_segments", default=8)))
+def _max_segments(profile: object | None = None) -> int:
+    if profile is None:
+        from runtime.stage_profiles import active_stage_profile
+        profile = active_stage_profile()
+    return max(1, min(16, int(getattr(profile, "max_tts_segments", 8) or 8)))
 
 
-def _min_split_chars() -> int:
-    from runtime.runtime_settings_store import runtime_int
-    return max(24, min(120, runtime_int("stage", "min_split_chars", default=58)))
+def _min_split_chars(profile: object | None = None) -> int:
+    if profile is None:
+        from runtime.stage_profiles import active_stage_profile
+        profile = active_stage_profile()
+    return max(24, min(120, int(getattr(profile, "min_split_chars", 58) or 58)))
 
 
 def _max_segment_chars() -> int:
@@ -111,11 +115,14 @@ def _rebalance_to_limit(chunks: list[str], max_segments: int) -> list[str]:
 class SentenceSegmenter:
     """Chia text TTS thành các câu ngắn, không đụng vào text UI."""
 
+    def __init__(self, *, profile: object | None = None) -> None:
+        self.profile = profile
+
     def split(self, text: str) -> tuple[str, ...]:
         clean = " ".join(str(text or "").split()).strip()
         if not clean:
             return ()
-        if len(clean) < _min_split_chars():
+        if len(clean) < _min_split_chars(self.profile):
             return (clean,)
 
         # Chỉ tách khi dấu kết câu được theo sau bởi whitespace. Vì vậy dấu
@@ -139,16 +146,46 @@ class SentenceSegmenter:
         for part in merged:
             hard_chunks.extend(_split_long_piece(part, _max_segment_chars()))
 
-        balanced = _rebalance_to_limit(hard_chunks, _max_segments())
+        balanced = _rebalance_to_limit(hard_chunks, _max_segments(self.profile))
         return tuple(item for item in balanced if item)
 
 
 class StageOutputPipeline:
     """Base StageFrame -> tuple[StageFrame, ...]."""
 
-    def __init__(self) -> None:
-        self.segmenter = SentenceSegmenter()
+    def __init__(self, *, profile: object | None = None) -> None:
+        if isinstance(profile, str):
+            from runtime.stage_profiles import stage_profile
+            profile = stage_profile(profile)
+        self.profile = profile
+        self.segmenter = SentenceSegmenter(profile=profile)
         self.prosody = ProsodyDirector()
+
+    def _profile(self):
+        if self.profile is not None:
+            return self.profile
+        from runtime.stage_profiles import active_stage_profile
+        return active_stage_profile()
+
+    @staticmethod
+    def _segment_delivery(delivery: dict[str, object], *, index: int, count: int) -> dict[str, object]:
+        """Giữ pause ở cuối beat, không lặp pause sau từng câu con.
+
+        ``SentenceSegmenter`` có thể tách một beat JSON thành nhiều TTS segment.
+        Beat vẫn là đơn vị đạo diễn, vì thế pause/thinking chỉ thuộc segment cuối.
+        Metadata như ``take_beat_index`` vẫn được giữ trên mọi segment để UI biết
+        chúng cùng một beat.
+        """
+
+        copied = dict(delivery or {})
+        active = copied.get("active_beat")
+        if isinstance(active, dict):
+            active = dict(active)
+            if index < count - 1:
+                active["pause_after_ms"] = 0
+                active["pause_jitter_ms"] = 0
+            copied["active_beat"] = active
+        return copied
 
     def frames_for_tts(self, frame: StageFrame) -> tuple[StageFrame, ...]:
         # Một audio preset đã render ứng với toàn bộ câu. Tách segment sẽ làm
@@ -172,11 +209,19 @@ class StageOutputPipeline:
                 beat_parts = self.segmenter.split(beat_text) or ((beat_text,) if beat_text else ())
                 for part_index, text in enumerate(beat_parts):
                     delivery = dict(frame.delivery) if isinstance(frame.delivery, dict) else {}
-                    delivery["active_beat"] = dict(beat)
+                    active_beat = dict(beat)
+                    if part_index < len(beat_parts) - 1:
+                        active_beat["pause_after_ms"] = 0
+                        active_beat["pause_jitter_ms"] = 0
+                    delivery["active_beat"] = active_beat
                     pause_after = int(beat.get("pause_after_ms", 0) or 0) if part_index == len(beat_parts) - 1 else 0
                     notes = frame.prosody_notes
-                    if pause_after > 0:
+                    if 0 < pause_after <= 600:
                         notes = f"{notes} End this beat with a short {pause_after}ms rhetorical pause.".strip()
+                    elif pause_after > 600:
+                        # Pause dài do StageContinuationRuntime thực thi sau audio_done;
+                        # không bảo model TTS tự kéo im lặng trong cùng file audio.
+                        notes = f"{notes} End this beat cleanly; do not synthesize a long trailing silence.".strip()
                     plan = self.prosody.plan(
                         text,
                         emotion=str(beat.get("emotion", frame.emotion) or frame.emotion),
@@ -195,12 +240,14 @@ class StageOutputPipeline:
                             prosody_style=plan.style,
                             prosody_notes=plan.director_notes,
                             delivery=delivery,
+                            body_timeline=frame.body_timeline if segment_index == 0 else {},
                         )
                     )
                     segment_index += 1
             return tuple(frames)
 
-        if not _enabled():
+        profile = self._profile()
+        if not bool(getattr(profile, "logical_segment_tts", True)):
             return (frame,)
         segments = self.segmenter.split(frame.tts_text)
         if len(segments) <= 1:
@@ -223,6 +270,8 @@ class StageOutputPipeline:
                     memory_text=segment,
                     prosody_style=plan.style,
                     prosody_notes=plan.director_notes,
+                    delivery=self._segment_delivery(frame.delivery, index=index, count=len(segments)),
+                    body_timeline=frame.body_timeline if index == 0 else {},
                 )
             )
         return tuple(frames)
