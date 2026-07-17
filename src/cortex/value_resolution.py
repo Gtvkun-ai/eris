@@ -24,13 +24,6 @@ class ValueResolutionEngine:
                 severity=min(1.0, relation.repair_need),
                 proposed_resolution="Acknowledge correction ngắn, sửa hành vi trước khi giải thích.",
             ))
-        if inquiry.action == "search_web" and not permission.allowed_search:
-            conflicts.append(ValueConflict(
-                conflict_type="task_permission_conflict",
-                values_in_conflict=["task_completion", "permission"],
-                severity=0.82,
-                proposed_resolution="Không giả vờ có dữ liệu; xin nguồn hoặc trả giới hạn rõ.",
-            ))
         overread = float(getattr(getattr(frame, "tom", None), "global_overread_risk", 0.0) or 0.0)
         if overread > 0.60:
             conflicts.append(ValueConflict(

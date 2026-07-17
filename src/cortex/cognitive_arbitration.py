@@ -20,9 +20,7 @@ class CognitiveArbitrationEngine:
     def resolve(self, simulations: list[SimulatedActionOutcome], inquiry: InquiryPlan, permission: PermissionReport) -> ArbitrationResult:
         allowed = [x for x in simulations if not (x.action_type == "search" and not permission.allowed_search)]
         constrained = None
-        if inquiry.action == "search_web" and permission.allowed_search:
-            constrained = "search"
-        elif inquiry.action == "ask_user":
+        if inquiry.action == "ask_user":
             constrained = "ask"
         elif inquiry.action == "suppress_inquiry":
             constrained = None

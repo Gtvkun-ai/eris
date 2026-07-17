@@ -115,7 +115,6 @@ class ActionRouter:
             self._route_copy_text(raw, norm),
             self._route_focus_window(raw, norm),
             self._route_launch_app(raw, norm),
-            self._route_search_web(raw, norm),
             self._route_weather(raw, norm),
         ]
 
@@ -491,25 +490,6 @@ class ActionRouter:
             return self._blocked("launch_app", "bad_target")
         return RouteCandidate("launch_app", target, 0.90, ("explicit_launch_command",))
 
-    def _route_search_web(self, raw: str, norm: str) -> RouteCandidate:
-        if self._starts_with_negation(norm):
-            return self._blocked("search_web", "negated")
-
-        # Anchor đầu câu. Không bắt "cách search ..." hay "hàm search ...".
-        pattern = rf"^\s*{self._COMMAND_PREFIX}(?:tim kiem|search(?: for)?)\s+(.+?)\s*$"
-        match_norm = re.search(pattern, norm, flags=re.IGNORECASE)
-        if not match_norm:
-            return self._no_candidate("search_web")
-        if self._looks_like_meta_question(norm):
-            return self._blocked("search_web", "meta_question")
-
-        # Lấy query từ raw bằng pattern tương đương để giữ dấu tiếng Việt.
-        raw_pattern = rf"^\s*{self._COMMAND_PREFIX}(?:tìm kiếm|tim kiem|search(?: for)?)\s+(.+?)\s*$"
-        match_raw = re.search(raw_pattern, raw, flags=re.IGNORECASE)
-        query = (match_raw.group(1) if match_raw else match_norm.group(1)).strip()
-        if not query:
-            return self._no_candidate("search_web")
-        return RouteCandidate("search_web", query, 0.92, ("explicit_search_command",))
 
     def _route_weather(self, raw: str, norm: str) -> RouteCandidate:
         if self._starts_with_negation(norm):

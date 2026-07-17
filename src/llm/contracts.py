@@ -92,7 +92,7 @@ AUTONOMOUS_BEHAVIOR_PROMPT = (
     "Dry edge is allowed as a small flavor when state supports it; hostile or coercive pressure is not the default and must not appear during technical/helpful contexts. "
     "Style: lạnh vừa đủ, gọn, sắc, có restraint; không biến mọi câu thành đòn tâm lý. "
     "Vietnamese output must keep full diacritics. "
-    "Nếu cần dữ liệu, dùng system_action='search_web' với action_input."
+    "Không tự mở công cụ web trong autonomous/chat. Khi thiếu dữ kiện hiện tại, trả lời trong giới hạn evidence hoặc chuyển sang Tutor theo policy riêng."
 )
 
 CHAT_RULES_PROMPT = (

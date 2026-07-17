@@ -48,8 +48,6 @@ class _ExecutorStub:
     def _open_url(self):
         pass
 
-    def _search_web(self):
-        pass
 
     def _get_weather(self):
         pass
@@ -70,7 +68,6 @@ class CapabilityRuntimeTests(unittest.TestCase):
                 "capabilities": {
                     "respect_runtime_availability": True,
                     "open_url_enabled": True,
-                    "search_web_enabled": True,
                 }
             },
         )
@@ -80,8 +77,7 @@ class CapabilityRuntimeTests(unittest.TestCase):
             snapshot = runtime_capability_snapshot()
             statuses = snapshot["statuses"]
             self.assertTrue(statuses["open_url"]["available"])
-            self.assertFalse(statuses["search_web"]["available"])
-            self.assertEqual(statuses["search_web"]["reason"], "credential_missing")
+            self.assertNotIn("search_web", statuses)
             self.assertIn("open_url", live_capability_ids())
             self.assertNotIn("search_web", live_capability_ids())
 

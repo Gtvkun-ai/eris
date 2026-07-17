@@ -88,7 +88,7 @@ class BeliefCoreEngine:
         open_questions: list[str] = []
         if bool(_get(meaning, "needs_clarification", False)):
             open_questions.append("Ý định chính còn mơ hồ; chỉ hành động reversible hoặc clarification.")
-        if str(_get(knowledge, "error", "") or "").strip() and str(_get(knowledge, "action", "")) in {"search_web", "search_memory"}:
+        if str(_get(knowledge, "error", "") or "").strip() and str(_get(knowledge, "action", "")) == "search_memory":
             open_questions.append("Knowledge acquisition chưa có nguồn đủ chắc; không nâng belief thành active.")
         return BeliefReport(
             active_beliefs=active,

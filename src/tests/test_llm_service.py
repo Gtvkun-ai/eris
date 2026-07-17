@@ -136,7 +136,7 @@ class LlmServiceTests(unittest.TestCase):
         system_prompt = client.calls[0]["messages"][0]["content"]
         user_prompt = client.calls[0]["messages"][1]["content"]
         self.assertIn("autonomous mode", system_prompt.lower())
-        self.assertIn("search_web", system_prompt)
+        self.assertNotIn("search_web", system_prompt)
         self.assertIn("khong nhu thong bao he thong", _norm(system_prompt))
         self.assertIn("react to the nearest interaction rhythm", system_prompt)
         self.assertIn("speech evidence da loc", _norm(user_prompt))
@@ -710,7 +710,7 @@ class LlmServiceTests(unittest.TestCase):
 
         self.assertEqual(len(client.calls), 1)
 
-    def test_directive_allows_empty_text_for_system_action(self):
+    def test_directive_rejects_retired_web_system_action(self):
         client = _FakeClient(
             [
                 (
@@ -722,11 +722,10 @@ class LlmServiceTests(unittest.TestCase):
         )
         service = LlmService(client)
 
-        raw = service.generate_directive(telemetry_data="focus=general")
+        with self.assertRaises(FormatViolationException):
+            service.generate_directive(telemetry_data="focus=general")
 
         self.assertEqual(len(client.calls), 1)
-        self.assertIn('"system_action":"search_web"', raw)
-        self.assertIn('"text":""', raw)
 
     def test_directive_does_not_wrap_gemini_metadata_as_spoken_text(self):
         metadata = (

@@ -434,8 +434,8 @@ class CognitivePipeline:
             confidence=float(getattr(inquiry, "expected_value", 0.0) or 0.0),
         )
 
-        # Inquiry phải đi qua một acquisition result có source. Web action mặc
-        # định được hoãn sang ActionExecutor production; memory/pattern chạy ngay.
+        # Inquiry đi qua acquisition result có source. Direct web action đã bị
+        # loại; memory/pattern chạy nội bộ, nghiên cứu ngoài thuộc Tutor lane.
         knowledge = self.knowledge_acquisition.acquire(
             frame,
             inquiry,
@@ -676,8 +676,8 @@ class CognitivePipeline:
         )
         self._set_slot(frame, "execution", execution_result, actor="execution_layer", confidence=0.88)
 
-        # Kết quả search/tool thật quay lại KnowledgeAcquisition thay vì chết ở
-        # text surface. Belief candidate vẫn tentative cho tới commit protocol.
+        # Finalize acquisition nội bộ và scrub cache/action cũ nếu cần. Belief
+        # candidate vẫn tentative cho tới commit protocol.
         try:
             current_knowledge = frame.metadata.get("knowledge_acquisition")
             resolved_knowledge = self.knowledge_acquisition.resolve_from_execution(

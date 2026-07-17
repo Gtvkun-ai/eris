@@ -15,7 +15,6 @@ VALID_SYSTEM_ACTION_LIST = (
     "play_pause_media",
     "copy_text",
     "launch_app",
-    "search_web",
     "get_weather",
     # Năng lực nhận thức nội bộ read-only. Đây là action thật có evidence,
     # không phải prompt khoe rằng Eris "có thể tự kiểm tra".
@@ -62,7 +61,7 @@ class ActionExecutionStatus(str, Enum):
 
 
 _OBSERVED_ACTIONS = {
-    "get_local_time", "get_now_playing", "search_web", "get_weather",
+    "get_local_time", "get_now_playing", "get_weather",
     "review_discourse_claim", "inspect_unresolved_questions",
     "inspect_memory_candidates", "compare_recent_turns",
     "inspect_social_state", "detect_internal_contradictions",

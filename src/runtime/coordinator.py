@@ -10669,6 +10669,16 @@ class RuntimeCoordinator(
         authority = getattr(self, "_apply_v3_authority_guard", None)
         if callable(authority):
             decision = authority(decision, frame=frame, channel=str(getattr(frame, "channel", "") or ""))
+        # Phòng thủ tương thích: model/frame cũ có thể còn phát action đã nghỉ hưu.
+        # Bỏ action nhưng giữ nguyên câu trả lời, không cho lỗi executor chen vào chat.
+        if str(getattr(decision, "system_action", "") or "").strip() == "search_web":
+            decision.system_action = ""
+            decision.action_input = ""
+            decision.debug_trace = self._join_debug_trace(
+                getattr(decision, "debug_trace", ""),
+                "retired_search_web_suppressed",
+            )
+            return decision
         if self.action_executor is None or not decision.system_action:
             return decision
 
@@ -10694,7 +10704,6 @@ class RuntimeCoordinator(
         action_owns_text = {
             "get_local_time",
             "get_now_playing",
-            "search_web",
             "get_weather",
             "open_url",
             "focus_window",

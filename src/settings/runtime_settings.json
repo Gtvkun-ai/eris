@@ -34,7 +34,6 @@
     "media_enabled": true,
     "copy_text_enabled": true,
     "open_url_enabled": true,
-    "search_web_enabled": true,
     "weather_enabled": true,
     "now_playing_enabled": true
   },

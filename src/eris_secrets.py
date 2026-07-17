@@ -288,7 +288,7 @@ def get_agent_profile(
     Schema:
     {
       "agent_keys": {
-        "search_web": {"provider": "gemini", "slot": "search_web"}
+        "get_weather": {"provider": "gemini", "slot": "weather"}
       }
     }
     """

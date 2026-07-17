@@ -51,8 +51,6 @@ def public_action_text(result: ActionExecutionResult) -> str:
         if title:
             return _finish(result, f"Tôi thấy bài đang phát là {title}.")
         return _finish(result, result.message)
-    if action == "search_web":
-        return _finish(result, result.data.get("answer", "") or result.message or "")
     if action == "get_weather":
         return _finish(result, result.message)
 

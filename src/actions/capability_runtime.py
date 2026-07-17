@@ -57,7 +57,6 @@ _SETTING_KEYS = {
     "play_pause_media": "media_enabled",
     "copy_text": "copy_text_enabled",
     "open_url": "open_url_enabled",
-    "search_web": "search_web_enabled",
     "get_weather": "weather_enabled",
     "get_now_playing": "now_playing_enabled",
 }
@@ -80,8 +79,8 @@ def refresh_runtime_capabilities(
 ) -> dict[str, CapabilityRuntimeStatus]:
     """Tính lại availability từ object runtime đang sống.
 
-    Không ping mạng. Search/weather được coi là sẵn sàng khi executor có handler
-    và credential tương ứng tồn tại. Việc request thật vẫn có thể lỗi, nhưng câu
+    Không ping mạng. Weather được coi là sẵn sàng khi executor có handler và
+    credential tương ứng tồn tại. Việc request thật vẫn có thể lỗi, nhưng câu
     "em làm được gì" sẽ không khoe một tool còn chưa được nối hoặc chưa có key.
     """
 
@@ -178,7 +177,7 @@ def refresh_runtime_capabilities(
                 capability_id, False, "windows_only", "platform"
             )
             continue
-        if capability_id in {"search_web", "get_weather"}:
+        if capability_id == "get_weather":
             available, reason = _remote_tool_credential_available(capability_id)
             statuses[capability_id] = CapabilityRuntimeStatus(
                 capability_id, available, reason, "credentials"
@@ -334,8 +333,9 @@ def _remote_tool_credential_available(capability_id: str) -> tuple[bool, str]:
     try:
         from eris_secrets import get_agent_profile, get_secret
 
-        slot = "search_web" if capability_id == "search_web" else "weather"
-        profile = get_agent_profile(capability_id, default_provider="gemini", default_slot=slot)
+        # Direct web search đã bị loại khỏi runtime. Remote credential probe
+        # hiện chỉ còn phục vụ capability thời tiết.
+        profile = get_agent_profile(capability_id, default_provider="gemini", default_slot="weather")
         key = str(profile.get("api_key") or "").strip() or str(
             get_secret("GEMINI_API_KEY", "ERIS_REMOTE_API_KEY") or ""
         ).strip()

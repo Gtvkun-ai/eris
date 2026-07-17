@@ -195,13 +195,6 @@ _CAPABILITY_DATA: dict[str, CapabilityDefinition] = {
         example_phrases=("mở link này",),
         risk_level="medium", runtime_flag="ERIS_ACTION_OPEN_URL_ENABLED",
     ),
-    "search_web": CapabilityDefinition(
-        id="search_web", public_name_vi="tìm web",
-        description_vi="tra cứu web khi runtime/tool tương ứng khả dụng",
-        example_phrases=("search vụ này", "tìm thời sự"),
-        runtime_flag="ERIS_SEARCH_WEB_ENABLED", requires_tool="search_web",
-        visible_in_ui_group="knowledge",
-    ),
     "get_weather": CapabilityDefinition(
         id="get_weather", public_name_vi="xem thời tiết",
         description_vi="lấy dự báo/thời tiết theo địa điểm nếu có tool",

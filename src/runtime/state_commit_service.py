@@ -829,6 +829,11 @@ class StateCommitServiceMixin:
             decision.motion_target_x = 0.5
         return self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text)
     def _execute_system_action(self, decision: Decision, *, snapshot) -> Decision:
+        if str(getattr(decision, "system_action", "") or "").strip() == "search_web":
+            decision.system_action = ""
+            decision.action_input = ""
+            decision.debug_trace = f"{getattr(decision, 'debug_trace', '')} | retired_search_web_suppressed".strip(" |")
+            return decision
         if self.action_executor is None or not decision.system_action:
             return decision
 
@@ -845,7 +850,6 @@ class StateCommitServiceMixin:
         action_owns_text = {
             "get_local_time",
             "get_now_playing",
-            "search_web",
             "get_weather",
             "open_url",
             "focus_window",
@@ -884,14 +888,6 @@ class StateCommitServiceMixin:
                 return f"Tôi thấy bài đang phát là {title}."
             return "Tôi chưa đọc được tên bài đang phát từ media session hiện tại."
 
-        if result.action_name == "search_web":
-            if not result.success:
-                return result.message
-            answer = (result.data.get("answer", "") or result.message or "").strip()
-            query = (result.action_input or "một chủ đề lạ mặt").strip()
-            if answer:
-                return f"Tôi vừa kéo về một mẩu thế giới quanh {query}. {answer}"
-            return f"Tôi vừa lục lại mạng cho chủ đề {query}, nhưng thứ kéo về vẫn còn quá ít để nói cho ra hồn."
         if result.action_name == "open_url":
             return f"Tôi đã gửi yêu cầu mở {result.data.get('url', result.action_input)}."
         if result.action_name == "focus_window":

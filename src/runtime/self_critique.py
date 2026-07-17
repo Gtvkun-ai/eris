@@ -46,29 +46,6 @@ class CritiqueResult:
     drop: bool = False
 
 
-# ── Tín hiệu user muốn tra/hỏi nguồn ngoài (gián tiếp) ─────────────────────────
-# Giữ HẸP để tránh escalate lượt thường. Chỉ bắt khi user rõ ràng nhờ tra cứu.
-_LOOKUP_TRIGGERS = (
-    "hỏi gemini",
-    "hỏi sư phụ",
-    "sư phụ",
-    "nhờ gemini",
-    "kêu nó tra",
-    "kêu gemini",
-    "tra giúp",
-    "tra cứu",
-    "tra xem",
-    "search",
-    "google",
-    "tìm trên mạng",
-    "tìm giúp",
-    "tìm hộ",
-    "lên mạng",
-    "tin tức",
-    "mới nhất",
-    "cập nhật",
-    "check giúp",
-)
 _WEATHER_TRIGGERS = (
     "thời tiết",
     "weather",
@@ -454,10 +431,6 @@ class SelfCritiqueEscalationMixin:
                 needs_tool = True
                 tool_hint = "get_weather"
                 reasons.append("weather_requested_no_action")
-            elif any(trigger in lowered_user for trigger in _LOOKUP_TRIGGERS):
-                needs_tool = True
-                tool_hint = "search_web"
-                reasons.append("lookup_requested_no_action")
 
         # Qwen may explicitly ask for mentor support through structured tags.
         if semantic_policy.qwen_first and semantic_policy.requests_mentor_support(decision):
@@ -572,9 +545,9 @@ class SelfCritiqueEscalationMixin:
             return None
         system_prompt = (
             "Bạn là tầng metacognition của một trợ lý. Chấm chất lượng câu nháp. "
-            "Chỉ trả về JSON: {\"quality\": float 0..1, \"needs_tool\": bool, \"reason\": string ngắn}. "
+            "Chỉ trả về JSON: {\"quality\": float 0..1, \"reason\": string ngắn}. "
             "quality thấp nếu câu chung chung/sáo rỗng/không bám dữ kiện/né tránh. "
-            "needs_tool=true nếu cần tra web/hỏi nguồn ngoài mới trả lời đúng."
+            "Không đề xuất web tool; nghiên cứu ngoài thuộc Tutor policy riêng."
         )
         user_prompt = (
             (f"Người dùng nói: {user_text.strip()[:300]}\n" if user_text else "")
@@ -601,12 +574,12 @@ class SelfCritiqueEscalationMixin:
             raw = svc._extract_content(response) if hasattr(svc, "_extract_content") else str(response)
             payload = json.loads(re.search(r"\{.*\}", raw, flags=re.DOTALL).group(0))
             quality = float(payload.get("quality", 0.7))
-            needs_tool = bool(payload.get("needs_tool", False))
+            needs_tool = False
             reason = str(payload.get("reason", "")).strip()[:80]
             return CritiqueResult(
                 quality=max(0.0, min(1.0, quality)),
                 needs_tool=needs_tool,
-                tool_hint="search_web" if needs_tool else "",
+                tool_hint="",
                 reason=reason or "llm",
                 source="llm",
             )
@@ -629,9 +602,6 @@ class SelfCritiqueEscalationMixin:
         if not getattr(result, "success", False):
             return f"[{name}] thất bại: {getattr(result, 'message', '')}"
         data = getattr(result, "data", {}) or {}
-        if name == "search_web":
-            answer = (data.get("answer", "") or getattr(result, "message", "")).strip()
-            return f"[search_web] {answer}" if answer else f"[search_web] {getattr(result, 'message', '')}"
         if name == "get_weather":
             summary = data.get("summary", "") or getattr(result, "message", "")
             return f"[get_weather] {summary}"
@@ -678,6 +648,11 @@ class SelfCritiqueEscalationMixin:
         steps = 0
         while getattr(decision, "system_action", "") and steps < max_steps:
             action_name = decision.system_action
+            if action_name == "search_web":
+                decision.system_action = ""
+                decision.action_input = ""
+                decision.debug_trace = self._sc_join(decision.debug_trace, "retired_search_web_suppressed")
+                return decision
             result = executor.execute(action_name, decision.action_input)
             self._record_tool_grounding(result, action_name=action_name)
             steps += 1
@@ -695,7 +670,7 @@ class SelfCritiqueEscalationMixin:
                     logger.warning("[escalation] continuation regenerate error: %s", exc)
             if regenerated is None:
                 # Không sinh lại được → dùng text tất định của tool rồi dừng.
-                if not (decision.text or "").strip() or action_name in {"search_web", "get_weather"}:
+                if not (decision.text or "").strip() or action_name == "get_weather":
                     decision.text = self._action_result_to_text(result)
                 decision.system_action = ""
                 decision.action_input = ""
@@ -705,9 +680,14 @@ class SelfCritiqueEscalationMixin:
 
         # Hết lượt mà vẫn còn action treo → chạy tất định lần cuối rồi xoá.
         if getattr(decision, "system_action", ""):
+            if decision.system_action == "search_web":
+                decision.system_action = ""
+                decision.action_input = ""
+                decision.debug_trace = self._sc_join(decision.debug_trace, "retired_search_web_suppressed")
+                return decision
             result = executor.execute(decision.system_action, decision.action_input)
             self._record_tool_grounding(result, action_name=decision.system_action)
-            if not (decision.text or "").strip() or decision.system_action in {"search_web", "get_weather"}:
+            if not (decision.text or "").strip() or decision.system_action == "get_weather":
                 decision.text = self._action_result_to_text(result)
             decision.system_action = ""
             decision.action_input = ""

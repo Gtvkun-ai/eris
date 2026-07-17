@@ -2,32 +2,23 @@
 """Knowledge Acquisition bridge cho ERIS Cognitive Pipeline V3.
 
 Tầng này biến ``InquiryPlan`` thành một kết quả có nguồn, thay vì để
-``search_web``/``search_memory`` chỉ là nhãn đẹp nằm trong debug trace.
+``search_memory`` chỉ là nhãn đẹp nằm trong debug trace.
 
 Thiết kế cố ý hỗ trợ hai nhịp:
-- planning: thu memory/pattern ngay, hoặc tạo system action có kiểm soát;
+- planning: thu memory/pattern ngay; không tạo direct web system action;
 - execution/finalize: nhận kết quả tool thật và đóng lại acquisition result.
 
-Không tự gọi mạng trong hot path mặc định. Runtime hiện hữu đã có ActionExecutor,
-permission và recorder riêng; V3 chỉ định hành động, rồi hấp thụ kết quả thật. Nếu
-caller bật ``ERIS_V3_EAGER_KNOWLEDGE=1`` thì explicit web search có thể chạy sớm
-để wording layer dùng ngay kết quả. Con người gọi cùng một API hai lần vì hai
-pipeline cùng hăng hái là một truyền thống không đáng bảo tồn, nên mặc định là deferred.
+Direct web search đã bị loại khỏi hot path. Nghiên cứu ngoài chỉ đi qua Tutor
+policy riêng; V3 không được phát ``system_action`` mạng và không được thay câu chat
+bằng lỗi credential. Các hàm resolve cũ bên dưới chỉ còn phục vụ đọc trace/cache cũ.
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, is_dataclass
-import os
 import re
-import hashlib
 import time
 from typing import Any, Iterable, Optional
-
-try:
-    from runtime.runtime_settings_store import runtime_bool
-except Exception:  # pragma: no cover - this module is used by isolated tests too
-    runtime_bool = None
 
 
 def _get(obj: Any, name: str, default: Any = None) -> Any:
@@ -79,12 +70,6 @@ def _evidence_ids(frame: Any) -> tuple[str, ...]:
     return tuple(dict.fromkeys(ids))[:16]
 
 
-def _search_web_enabled() -> bool:
-    if callable(runtime_bool):
-        return runtime_bool("capabilities", "search_web_enabled", default=True)
-    return True
-
-
 @dataclass(slots=True)
 class KnowledgeSource:
     source_type: str
@@ -132,10 +117,10 @@ class KnowledgeAcquisitionEngine:
     """Thực thi/hoãn inquiry bằng các adapter production hiện có."""
 
     def __init__(self, *, eager_external_io: Optional[bool] = None) -> None:
-        if eager_external_io is None:
-            raw = os.getenv("ERIS_V3_EAGER_KNOWLEDGE", "0").strip().lower()
-            eager_external_io = raw in {"1", "true", "yes", "on", "y"}
-        self.eager_external_io = bool(eager_external_io)
+        # Giữ tham số để extension cũ không vỡ constructor. External I/O không còn
+        # thuộc engine này; Tutor là lane nghiên cứu duy nhất.
+        del eager_external_io
+        self.eager_external_io = False
 
     def acquire(
         self,
@@ -155,37 +140,17 @@ class KnowledgeAcquisitionEngine:
             elif action == "compare_patterns":
                 result = self._compare_patterns(frame, legacy_frame=legacy_frame, query=query)
             elif action == "search_web":
-                if not _search_web_enabled():
-                    result = KnowledgeAcquisitionResult(
-                        action=action,
-                        query=query,
-                        attempted=False,
-                        succeeded=False,
-                        deferred=False,
-                        error="disabled_by_runtime_settings",
-                    )
-                else:
-                    allowed = bool(_get(permission, "allowed_search", True))
-                    if not allowed:
-                        result = KnowledgeAcquisitionResult(
-                            action=action,
-                            query=query,
-                            attempted=False,
-                            succeeded=False,
-                            deferred=False,
-                            error="permission_denied",
-                        )
-                    elif self.eager_external_io:
-                        result = self._execute_web(runtime_owner, frame=frame, query=query)
-                    else:
-                        result = KnowledgeAcquisitionResult(
-                            action=action,
-                            query=query,
-                            attempted=False,
-                            succeeded=False,
-                            deferred=True,
-                            system_action="search_web",
-                        )
+                # Tương thích với frame/cache cũ: nuốt nhãn đã nghỉ hưu, tuyệt đối
+                # không tạo deferred system action rồi chen lỗi tool vào chat.
+                result = KnowledgeAcquisitionResult(
+                    action="infer_quietly",
+                    query=query,
+                    attempted=False,
+                    succeeded=False,
+                    deferred=False,
+                    system_action="",
+                    error="direct_web_search_removed",
+                )
             else:
                 result = KnowledgeAcquisitionResult(action=action, query=query)
         except Exception as exc:
@@ -201,78 +166,25 @@ class KnowledgeAcquisitionEngine:
         final_decision: Any = None,
         execution_result: Any = None,
     ) -> KnowledgeAcquisitionResult:
-        """Hấp thụ kết quả tool thật ở cuối turn vào canonical result."""
+        """Giữ API finalize nhưng không hấp thụ direct web tool nữa.
+
+        Frame/cache cũ có thể còn mang action ``search_web``. Ta scrub nó về
+        ``infer_quietly`` để không tạo belief từ lỗi credential hoặc text UI.
+        """
+        del frame, final_decision, execution_result
         result = self._coerce(existing)
-        action_name = str(_get(final_decision, "system_action", "") or _get(execution_result, "action_name", "") or "")
-        if action_name != "search_web" and result.action != "search_web":
-            return result
-
-        query = str(_get(final_decision, "action_input", "") or _get(execution_result, "action_input", "") or result.query or self._query_from_frame(frame))
-        success = _get(execution_result, "success", None)
-        if success is None:
-            # Direct-action route đã chạy tool trước khi Decision được tạo; text cuối
-            # chính là evidence tool surface. Không tuyên bố thành công nếu text rỗng.
-            text = _compact(_get(final_decision, "text", ""), 1600)
-            success = bool(text and "chưa cấu hình" not in text.lower() and "không thực" not in text.lower())
-        else:
-            text = _compact(_get(execution_result, "message", "") or _get(final_decision, "text", ""), 1600)
-        data = _get(execution_result, "data", {}) or {}
-        if not text and data:
-            text = _compact(data, 1600)
-
-        result.action = "search_web"
-        result.query = query
-        result.attempted = True
-        result.deferred = False
-        result.system_action = "search_web"
-        result.execution_phase = "execution"
-        result.succeeded = bool(success)
-        if result.succeeded and text:
-            source_id = "tool:search_web:" + hashlib.sha1(f"{query}\n{text}".encode("utf-8")).hexdigest()[:12]
-            source = KnowledgeSource(
-                source_type="web_search_tool",
-                source_id=source_id,
-                title=query[:180],
-                content=text,
-                confidence=0.82,
-                reliability=0.80,
-                evidence_ids=_evidence_ids(frame),
-                metadata={"tool_data": _plain(data), "action_name": action_name or "search_web"},
+        if result.action == "search_web" or result.system_action == "search_web":
+            return KnowledgeAcquisitionResult(
+                action="infer_quietly",
+                query=result.query,
+                attempted=False,
+                succeeded=False,
+                deferred=False,
+                system_action="",
+                error="direct_web_search_removed",
+                execution_phase="finalize",
             )
-            result.sources = [source]
-            result.distilled_facts = [text]
-            result.candidate_beliefs = [
-                {
-                    "claim": text,
-                    "confidence": 0.72,
-                    "source_ids": [source_id, *_evidence_ids(frame)],
-                    "status": "tentative",
-                    "domain": "world",
-                }
-            ]
-            result.error = ""
-        elif not result.error:
-            result.error = text or "search_web_failed"
         return result
-
-    def _execute_web(self, runtime_owner: Any, *, frame: Any, query: str) -> KnowledgeAcquisitionResult:
-        if not _search_web_enabled():
-            return KnowledgeAcquisitionResult(
-                action="search_web", query=query, attempted=False, error="disabled_by_runtime_settings"
-            )
-        executor = _get(runtime_owner, "action_executor", None)
-        execute = _get(executor, "execute", None)
-        if not callable(execute):
-            return KnowledgeAcquisitionResult(
-                action="search_web", query=query, deferred=True, system_action="search_web", error="action_executor_unavailable"
-            )
-        raw = execute("search_web", query)
-        return self.resolve_from_execution(
-            KnowledgeAcquisitionResult(action="search_web", query=query, attempted=True),
-            frame=frame,
-            execution_result=raw,
-            final_decision={"system_action": "search_web", "action_input": query, "text": _get(raw, "message", "")},
-        )
 
     def _search_memory(self, frame: Any, *, runtime_owner: Any, legacy_frame: Any, query: str) -> KnowledgeAcquisitionResult:
         sources: list[KnowledgeSource] = []

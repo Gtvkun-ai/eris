@@ -201,7 +201,7 @@ class EpistemicDrive(_Serializable):
 @dataclass(slots=True)
 class InquiryPlan(_Serializable):
     action: Literal[
-        "observe_more", "ask_user", "search_memory", "search_web", "compare_patterns", "infer_quietly", "suppress_inquiry"
+        "observe_more", "ask_user", "search_memory", "compare_patterns", "infer_quietly", "suppress_inquiry"
     ] = "infer_quietly"
     reason: str = ""
     expected_value: float = 0.0

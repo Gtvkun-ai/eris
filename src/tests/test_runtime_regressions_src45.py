@@ -78,13 +78,13 @@ def test_laugh_act_does_not_override_refusal_content():
     assert "audible_laugh_soft" not in result.actions
 
 
-def test_investigation_words_route_to_web_search():
+def test_investigation_words_do_not_route_to_direct_web_search():
     plan = InquiryPlannerEngine().plan(
         SimpleNamespace(user_text="Điều tra và kiểm chứng vụ điểm thi này", channel="chat"),
         SimpleNamespace(intrusion_risk=0.1, contradiction_pressure=0.0, knowledge_gap=0.5, inquiry_urgency=0.4),
         SimpleNamespace(needs_clarification=False),
     )
-    assert plan.action == "search_web"
+    assert plan.action != "search_web"
 
 
 def test_stale_failure_does_not_force_every_clean_turn_into_repair():

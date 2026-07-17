@@ -66,47 +66,52 @@ def test_full_pipeline_populates_canonical_graph_and_commit_protocol():
     assert "[V3_COGNITIVE_PLAN]" in pipeline.render_prompt_context(frame)
 
 
-def test_explicit_current_query_becomes_authoritative_search_action():
+def test_explicit_current_query_does_not_become_direct_web_action():
     pipeline, result = run_pipeline("tìm tin mới nhất về OpenAI")
     frame = result.frame
     knowledge = frame.metadata["knowledge_acquisition"]
-    assert frame.inquiry.action == "search_web"
-    assert frame.agency.intent == "search"
-    assert frame.permission.allowed_search is True
-    assert knowledge.deferred is True
-    assert frame.modality.system_action == "search_web"
+    assert frame.inquiry.action != "search_web"
+    assert frame.permission.allowed_search is False
+    assert knowledge.deferred is False
+    assert frame.modality.system_action in {None, ""}
 
-    legacy = SimpleNamespace(v3_cognitive_frame=frame, v3_authority={}, v3_knowledge=knowledge)
-    decision = Decision(text="Tôi sẽ đoán thử.", animation="stand", should_speak=True)
+    # Cache/model cũ còn nhả action đã nghỉ hưu cũng không được ghi đè lời chat.
+    frame.modality.system_action = "search_web"
+    frame.metadata["knowledge_acquisition"] = SimpleNamespace(
+        system_action="search_web", deferred=True, succeeded=False, query="tìm tin mới nhất về OpenAI"
+    )
+    legacy = SimpleNamespace(v3_cognitive_frame=frame, v3_authority={})
+    decision = Decision(
+        text="Tôi chưa có dữ kiện trực tiếp để khẳng định tin mới.",
+        animation="stand",
+        should_speak=True,
+        system_action="search_web",
+        action_input="tìm tin mới nhất về OpenAI",
+    )
     governed = V3AuthorityController().apply_to_decision(decision, legacy_frame=legacy, channel="chat")
-    assert governed.system_action == "search_web"
-    assert governed.action_input == "tìm tin mới nhất về OpenAI"
-    assert "v3_authority:search" in governed.reasoning_tags
+    assert governed.text == decision.text
+    assert governed.system_action == ""
+    assert governed.action_input == ""
 
 
-def test_execution_result_closes_knowledge_loop_and_builds_tool_grounded_belief():
+def test_retired_web_execution_result_is_not_promoted_to_belief():
     pipeline, result = run_pipeline("tìm tin mới nhất về OpenAI")
     frame = result.frame
     action_result = FakeActionResult(action_input="tìm tin mới nhất về OpenAI", data={"source": "fake"})
     final = Decision(
-        text=action_result.message,
+        text="Tôi chưa có dữ kiện trực tiếp để khẳng định tin mới.",
         animation="stand",
         should_speak=True,
         system_action="search_web",
         action_input=action_result.action_input,
     )
-    finalized = pipeline.finalize_from_legacy(
-        frame,
-        final_decision=final,
-        execution=action_result,
-    )
+    finalized = pipeline.finalize_from_legacy(frame, final_decision=final, execution=action_result)
     knowledge = finalized.frame.metadata["knowledge_acquisition"]
     assert finalized.finalized is True
-    assert knowledge.succeeded is True
+    assert knowledge.succeeded is False
     assert knowledge.deferred is False
-    assert knowledge.sources[0].source_type == "web_search_tool"
-    assert knowledge.candidate_beliefs
-    assert any(req.target == "belief_core" and "tool_grounded" in req.tags for req in frame.commit_requests)
+    assert not knowledge.sources
+    assert not any(req.target == "belief_core" and "tool_grounded" in req.tags for req in frame.commit_requests)
 
 
 def test_v3_authority_enforces_silence_and_body_plan():
@@ -168,15 +173,19 @@ def test_v3_frame_feeds_existing_daydream_scheduler_contract():
     assert all(packet.metadata.get("source") == "v3_cognitive_frame" for packet in packets)
 
 
-def test_eager_acquisition_uses_existing_action_executor_adapter():
+def test_eager_acquisition_flag_cannot_reenable_direct_web_executor():
     class Executor:
+        def __init__(self):
+            self.calls = []
+
         def execute(self, action_name, action_input):
-            assert action_name == "search_web"
+            self.calls.append((action_name, action_input))
             return FakeActionResult(action_input=action_input, data={"url": "source"})
 
     engine = KnowledgeAcquisitionEngine(eager_external_io=True)
     pipeline = CognitivePipeline(knowledge_acquisition=engine)
-    owner = SimpleNamespace(action_executor=Executor())
+    executor = Executor()
+    owner = SimpleNamespace(action_executor=executor)
     result = pipeline.run_from_signals(
         [RawSignal.from_chat("tra cứu tin mới nhất về OpenAI")],
         channel="chat",
@@ -184,13 +193,12 @@ def test_eager_acquisition_uses_existing_action_executor_adapter():
         runtime_owner=owner,
     )
     knowledge = result.frame.metadata["knowledge_acquisition"]
-    assert knowledge.succeeded is True
+    assert executor.calls == []
+    assert knowledge.succeeded is False
     assert knowledge.deferred is False
-    assert knowledge.distilled_facts
-    assert "knowledge_fact_1=" in pipeline.render_prompt_context(result.frame)
 
 
-def test_authority_runs_before_production_tool_execution():
+def test_authority_suppresses_retired_web_action_before_production_execution():
     from runtime.coordinator import RuntimeCoordinator
 
     class Executor:
@@ -221,8 +229,15 @@ def test_authority_runs_before_production_tool_execution():
         v3_tool_execution_result=None,
     )
     owner = Owner()
-    decision = Decision(text="", animation="stand", should_speak=True)
+    decision = Decision(
+        text="Tôi giữ câu trả lời hiện tại.",
+        animation="stand",
+        should_speak=True,
+        system_action="search_web",
+        action_input="tìm tin mới nhất về OpenAI",
+    )
     executed = owner._execute_system_action(decision, snapshot=None, frame=legacy)
-    assert owner.action_executor.calls == [("search_web", "tìm tin mới nhất về OpenAI")]
-    assert executed.text.endswith("Kết quả search production.")
-    assert legacy.v3_tool_execution_result.success is True
+    assert owner.action_executor.calls == []
+    assert executed.text == "Tôi giữ câu trả lời hiện tại."
+    assert executed.system_action == ""
+    assert legacy.v3_tool_execution_result is None

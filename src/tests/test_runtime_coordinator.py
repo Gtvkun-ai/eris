@@ -2711,7 +2711,7 @@ class RuntimeCoordinatorTests(unittest.TestCase):
 
         self.assertEqual(decision.intent, "no_speech")
 
-    def test_search_action_replaces_placeholder_text(self):
+    def test_retired_search_action_does_not_replace_chat_text(self):
         coordinator = self._make_coordinator(action_executor=_SearchActionExecutor())
         decision = Decision(
             text="Tôi đi tìm một mẩu để bàn.",
@@ -2725,8 +2725,9 @@ class RuntimeCoordinatorTests(unittest.TestCase):
             snapshot=SimpleNamespace(),
         )
 
-        self.assertIn("thói quen dùng AI", decision.text)
-        self.assertIn("action=search_web:ok", decision.debug_trace)
+        self.assertEqual(decision.text, "Tôi đi tìm một mẩu để bàn.")
+        self.assertEqual(decision.system_action, "")
+        self.assertIn("retired_search_web_suppressed", decision.debug_trace)
 
     def test_chat_ni_meta_softens_low_signal_message(self):
         coordinator = self._make_coordinator(

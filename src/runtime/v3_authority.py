@@ -125,13 +125,22 @@ class V3AuthorityController:
         max_intensity = _clamp(_get(permission, "max_intensity", 0.5), 0.5)
         reasons: list[str] = []
 
+        # Tombstone cho frame/model cũ. ``search_web`` từng được planner gắn chỉ
+        # vì thấy chữ "hôm nay", rồi lỗi credential ghi đè toàn bộ chat. Giờ action
+        # đó bị loại khỏi runtime; nếu còn sót trong cache thì chỉ bỏ action, giữ lời.
+        if str(getattr(repaired, "system_action", "") or "").strip() == "search_web":
+            repaired.system_action = ""
+            repaired.action_input = ""
+            reasons.append("retired_search_web_cleared")
+
         # Knowledge action là quyết định canonical, không phải gợi ý trang trí.
         knowledge_action = str(_get(knowledge, "system_action", "") or _get(modality, "system_action", "") or "")
         knowledge_deferred = bool(_get(knowledge, "deferred", False))
         knowledge_succeeded = bool(_get(knowledge, "succeeded", False))
         if knowledge_action and knowledge_deferred and not knowledge_succeeded:
-            allowed_search = bool(_get(permission, "allowed_search", False))
-            if knowledge_action != "search_web" or allowed_search:
+            if knowledge_action == "search_web":
+                reasons.append("retired_search_web_ignored")
+            else:
                 repaired.system_action = knowledge_action
                 repaired.action_input = str(_get(knowledge, "query", "") or _get(v3_frame, "user_text", "") or "")
                 reasons.append(f"system_action={knowledge_action}")

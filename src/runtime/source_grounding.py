@@ -995,7 +995,6 @@ class SourceGroundingEngine:
         report.allowed_sources = self._dedupe([source, "user_text", *report.allowed_sources])
         report.evidence_ids = self._dedupe([*report.evidence_ids, evidence_id])[:20]
         missing_by_action = {
-            "search_web": {"web_access_or_search_result", "web_result", "live_web_evidence"},
             "get_weather": {"web_access_or_search_result", "weather_result", "live_web_evidence"},
             "get_now_playing": {"runtime_state", "media_session"},
         }
@@ -1021,7 +1020,7 @@ class SourceGroundingEngine:
 
     @staticmethod
     def _tool_source_for_action(action_name: str) -> SourceKind:
-        if action_name in {"search_web", "get_weather"}:
+        if action_name == "get_weather":
             return "web"
         return "runtime_state"
 

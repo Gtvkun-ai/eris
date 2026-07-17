@@ -61,7 +61,6 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "media_enabled": True,
         "copy_text_enabled": True,
         "open_url_enabled": True,
-        "search_web_enabled": True,
         "weather_enabled": True,
         "now_playing_enabled": True,
     },

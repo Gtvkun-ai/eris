@@ -22,8 +22,6 @@ class PredictiveSimulationEngine:
         ambiguity = float(getattr(meaning, "ambiguity", 0.3) or 0.3)
 
         actions = ["practical_help", "ask", "stay_silent", "body_only", "repair"]
-        if permission.allowed_search:
-            actions.append("search")
         if permission.allowed_tease:
             actions.append("tease")
 
@@ -32,7 +30,6 @@ class PredictiveSimulationEngine:
             usefulness = {
                 "practical_help": 0.93 if chat else 0.48,
                 "ask": 0.80 if inquiry.action == "ask_user" else 0.36,
-                "search": 0.90 if inquiry.action == "search_web" else 0.62,
                 "repair": 0.94 if relation.repair_need > 0.4 else 0.48,
                 "stay_silent": 0.12 if chat else 0.70,
                 "body_only": 0.10 if chat else 0.58,
@@ -41,20 +38,18 @@ class PredictiveSimulationEngine:
             social_risk = {
                 "practical_help": 0.10,
                 "ask": 0.22 + ambiguity * 0.12,
-                "search": 0.12,
                 "repair": 0.08,
                 "stay_silent": 0.06,
                 "body_only": 0.06,
                 "tease": 0.22 + relation.rupture * 0.55,
             }.get(action, 0.2)
-            privacy_risk = inquiry.privacy_cost if action in {"ask", "search"} else 0.02
+            privacy_risk = inquiry.privacy_cost if action == "ask" else 0.02
             relation_cost = 0.62 if chat and action in {"stay_silent", "body_only"} else social_risk * 0.42
             if action == "tease" and relation.repair_need > 0.25:
                 relation_cost += 0.48
             continuity = {
                 "practical_help": 0.74,
                 "repair": 0.82,
-                "search": 0.68,
                 "ask": 0.52,
                 "stay_silent": 0.50,
                 "body_only": 0.46,
@@ -67,7 +62,6 @@ class PredictiveSimulationEngine:
             expected = {
                 "practical_help": "User receives concrete progress.",
                 "repair": "Correction is acknowledged and the failed action is replaced.",
-                "search": "Current claim is grounded by an external tool result.",
                 "ask": "Ambiguity is reduced at interruption cost.",
                 "stay_silent": "No interruption; may feel unresponsive in direct chat.",
                 "body_only": "Presence is preserved without speech.",
@@ -81,7 +75,7 @@ class PredictiveSimulationEngine:
                 privacy_risk=_clamp(privacy_risk),
                 relationship_cost=_clamp(relation_cost),
                 continuity_gain=_clamp(continuity),
-                confidence=0.76 if action in {"practical_help", "repair", "search"} else 0.68,
+                confidence=0.76 if action in {"practical_help", "repair"} else 0.68,
             ))
         return out
 
