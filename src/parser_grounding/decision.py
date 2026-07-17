@@ -7,6 +7,20 @@ from actions.contracts import VALID_SYSTEM_ACTIONS
 from failure_meta import normalize_failure_meta
 from guard_config import OFF_GUARD_MODE, STRICT_GUARD_MODE, get_guard_mode
 from llm.contracts import VALID_ANIMATIONS
+
+# Model thường mô tả biểu cảm bằng từ ngữ semantic (soft_smile, subtle_apology)
+# trong field ``animation`` dù Godot chỉ hiểu pose vật lý như stand/read. Thay vì
+# ném toàn bộ về ``stand`` rồi làm mất diễn xuất, parser hạ alias đó sang các
+# side-channel stage có cấu trúc. Base animation vẫn là stand để frontend cũ sống.
+_SEMANTIC_ANIMATION_STAGE_ALIASES: dict[str, dict[str, str]] = {
+    "soft_smile": {"nonverbal_cue": "small_smile", "stage_motion": "small_smile", "delivery_hint": "warm_soft"},
+    "subtle_apology": {"nonverbal_cue": "nod_small", "stage_motion": "blink_slow", "delivery_hint": "low_quiet"},
+    "soft_idle": {"stage_motion": "blink_slow", "delivery_hint": "warm_soft"},
+    "idle_warm": {"stage_motion": "small_smile", "delivery_hint": "warm_soft"},
+    "softened_gaze": {"stage_motion": "lean_in_small", "delivery_hint": "warm_soft"},
+    "gentle_pause": {"nonverbal_cue": "soft_breath", "delivery_hint": "low_quiet"},
+    "curious": {"nonverbal_cue": "tilt_head", "stage_motion": "tilt_head", "delivery_hint": "curious_soft"},
+}
 from runtime.no_fallback_policy import no_fallback_mode_enabled
 
 _SYSTEM_ACTION_ALIASES = {
@@ -394,8 +408,13 @@ class ParserGroundingMixin:
         )
 
         text = str(data.get("text", self.fallback["text"]))
+        raw_animation = str(data.get("animation", self.fallback["animation"]) or "").strip().lower()
+        semantic_stage = _SEMANTIC_ANIMATION_STAGE_ALIASES.get(raw_animation, {})
+        for field_name in ("delivery_hint", "nonverbal_cue", "stage_motion"):
+            if semantic_stage.get(field_name) and not str(data.get(field_name, "") or "").strip():
+                data[field_name] = semantic_stage[field_name]
         animation = self._sanitize_animation(
-            data.get("animation", self.fallback["animation"]),
+            raw_animation,
             fallback_text=text,
             user_hint=user_hint,
         )
@@ -994,6 +1013,9 @@ class ParserGroundingMixin:
                 "liec": "look_away",
                 "look_away": "look_away",
                 "look_down": "look_down",
+                "gentle_pause": "soft_breath",
+                "slight_pause": "soft_breath",
+                "softened_gaze": "small_smile",
             },
         )
 
@@ -1018,6 +1040,10 @@ class ParserGroundingMixin:
                 "nghieng_dau": "tilt_head",
                 "nhin_sang_ben": "look_away",
                 "liec": "look_away",
+                "subtle_lean_in": "lean_in_small",
+                "slight_lean_forward": "lean_in_small",
+                "lean_forward": "lean_in_small",
+                "softened_gaze": "lean_in_small",
             },
         )
 
@@ -1511,8 +1537,9 @@ class ParserGroundingMixin:
 
         text = raw_text
         original_text = text
+        raw_animation_value = str(decision.get("animation", self.fallback["animation"]) or "").strip().lower()
         animation = self._sanitize_animation(
-            decision.get("animation", self.fallback["animation"]),
+            raw_animation_value,
             fallback_text=text,
             user_hint=user_hint,
         )
@@ -1569,6 +1596,11 @@ class ParserGroundingMixin:
         delivery_hint = self._sanitize_delivery_hint(decision.get("delivery_hint", ""))
         nonverbal_cue = self._sanitize_nonverbal_cue(decision.get("nonverbal_cue", ""))
         stage_motion = self._sanitize_stage_motion(decision.get("stage_motion", ""))
+        semantic_stage = _SEMANTIC_ANIMATION_STAGE_ALIASES.get(raw_animation_value, {})
+        if semantic_stage:
+            delivery_hint = delivery_hint or semantic_stage.get("delivery_hint", "")
+            nonverbal_cue = nonverbal_cue or semantic_stage.get("nonverbal_cue", "")
+            stage_motion = stage_motion or semantic_stage.get("stage_motion", "")
 
         if not motion_intent:
             motion_intent = self._infer_motion_intent(
@@ -1829,8 +1861,13 @@ class ParserGroundingMixin:
         display_text = self._normalize_salvaged_text(extracted.get("text", cleaned))
         structured = self._infer_structured_action(display_text, user_hint=user_hint)
 
+        raw_animation = str(extracted.get("animation", "") or "").strip().lower()
+        semantic_stage = _SEMANTIC_ANIMATION_STAGE_ALIASES.get(raw_animation, {})
+        for field_name in ("delivery_hint", "nonverbal_cue", "stage_motion"):
+            if semantic_stage.get(field_name) and not str(extracted.get(field_name, "") or "").strip():
+                extracted[field_name] = semantic_stage[field_name]
         animation = self._sanitize_animation(
-            extracted.get("animation", ""),
+            raw_animation,
             fallback_text=display_text,
             user_hint=user_hint,
         )

@@ -504,6 +504,7 @@ class SourceGroundingEngine:
         has_web_marker = self._has_any(normalized, self.WEB_REFERENCE_MARKERS)
         web_ref = self._has_actionable_web_reference(normalized, text, clauses=grounding_clauses)
         internal_capability_ref = self._is_internal_capability_inquiry(normalized)
+        relational_reflection = self._is_relational_reflection(normalized)
         if internal_capability_ref:
             # Câu hỏi kiểu “Eris thấy được telemetry/thời gian/màn hình không?”
             # phải đi qua capability registry của runtime, không bị chữ “hiện tại”
@@ -511,6 +512,11 @@ class SourceGroundingEngine:
             web_ref = False
             explicit_screen_request = False
             notes.append("internal_capability_inquiry_uses_runtime_registry")
+        if relational_reflection:
+            # “Giá trị của sự hiện diện của em với tui” là một câu hỏi quan hệ,
+            # không phải yêu cầu tra giá thị trường chỉ vì có token ``giá``.
+            web_ref = False
+            notes.append("relational_reflection_uses_conversation_evidence")
         if has_web_marker and not web_ref:
             notes.append("web_marker_demoted_to_user_text_transient_report")
 
@@ -1534,6 +1540,37 @@ class SourceGroundingEngine:
         ))
         return ability and internal
 
+    def _is_relational_reflection(self, normalized: str) -> bool:
+        """Nhận diện câu hỏi về quan hệ/ấn tượng dựa trên hội thoại.
+
+        Nguồn đúng là user_text + lịch sử quan hệ. Không route web, không hạ
+        confidence vì thiếu search result, và cũng không biến cảm nhận thành fact
+        chắc chắn. Đây là inference có neo, không phải bảng giá chứng khoán.
+        """
+
+        norm = str(normalized or "")
+        if not norm:
+            return False
+        markers = (
+            "gia tri cua em", "gia tri cua su hien dien", "su hien dien cua em",
+            "em nghi gi ve tui", "em nghi gi ve toi", "em cam thay the nao ve tui",
+            "em cam thay the nao ve toi", "em thay tui la nguoi", "em thay toi la nguoi",
+            "than thiet hon", "gan gui hon", "moi quan he cua minh", "giua em va tui",
+            "giua em va toi",
+        )
+        return any(marker in norm for marker in markers)
+
+    @staticmethod
+    def _contains_token_or_phrase(normalized: str, marker: str) -> bool:
+        norm = str(normalized or "")
+        item = str(marker or "").strip()
+        if not norm or not item:
+            return False
+        # Phrase nhiều token dùng boundary hai đầu; token đơn tuyệt đối không
+        # match substring kiểu ``gia`` trong ``gia tri`` theo nghĩa web hay
+        # ``giao dien``. Tiếng Việt đã đủ khó, router không cần chơi thêm trò đó.
+        return bool(re.search(r"(?:^|\s)" + re.escape(item) + r"(?:\s|$)", norm))
+
     def _has_actionable_web_reference(self, normalized: str, raw_text: str, *, clauses: Sequence[str]) -> bool:
         """Chỉ route web khi user thật sự đòi dữ liệu hiện tại.
 
@@ -1549,7 +1586,7 @@ class SourceGroundingEngine:
             "moi nhat", "latest", "news", "tin tuc", "release", "gia", "price",
             "lich", "schedule", "ti gia", "ty gia", "exchange rate", "current version",
         )
-        if any(marker in norm for marker in strong_web_markers):
+        if any(self._contains_token_or_phrase(norm, marker) for marker in strong_web_markers):
             return True
         explicit_research_markers = (
             "tim", "tim kiem", "tim hieu", "tra cuu", "dieu tra", "kiem chung", "xac minh",

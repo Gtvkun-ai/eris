@@ -42,6 +42,13 @@ class Decision:
     director_finalized: bool = False
     director_trace_id: str = ""
     director_meta: dict[str, Any] | None = None
+    # Con dấu public cuối cùng. Director/guard có thể còn đánh giá candidate,
+    # nhưng sau khi FinalSpeechAuthority khóa thì các tầng delivery chỉ được đọc.
+    # Nếu một module hậu kỳ lỡ sửa câu, runtime sẽ phát hiện và khôi phục snapshot
+    # đã khóa thay vì để một câu "ma" chui ra UI/TTS.
+    final_speech_locked: bool = False
+    final_speech_digest: str = ""
+    final_speech_meta: dict[str, Any] | None = None
     # Bằng chứng action: request_sent khác observed_success.
     action_result_meta: dict[str, Any] | None = None
 
@@ -122,6 +129,9 @@ class Decision:
             "preset_emotion": self.preset_emotion,
         }
         payload["director_finalized"] = bool(self.director_finalized)
+        payload["final_speech_locked"] = bool(self.final_speech_locked)
+        if self.final_speech_digest:
+            payload["final_speech_digest"] = self.final_speech_digest
         if self.director_trace_id:
             payload["director_trace_id"] = self.director_trace_id
         if self.action_result_meta:

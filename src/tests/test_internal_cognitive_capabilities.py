@@ -81,7 +81,11 @@ def test_memory_candidate_inspection_does_not_promote_candidate_to_fact():
     result = InternalCognitiveCapabilityRuntime(owner).execute("inspect_memory_candidates")
     assert result.success is True
     assert result.data["active_count"] == 1
-    assert "chưa phải fact" in result.public_text
+    # Public surface không đọc nguyên thuật ngữ debug như candidate/fact.
+    assert "chưa sắp xếp xong" in result.public_text
+    assert "chắc chắn" in result.public_text
+    assert "candidate" not in result.public_text.lower()
+    assert "fact" not in result.public_text.lower()
     assert "User có thể thích" not in result.public_text
 
 

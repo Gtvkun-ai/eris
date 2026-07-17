@@ -375,6 +375,13 @@ class SocialResponseContract:
     social_state: Mapping[str, float] = field(default_factory=dict)
     task: TaskAppraisal = field(default_factory=TaskAppraisal)
     must_answer_literal: bool = False
+    must_acknowledge_affect: bool = False
+    must_repair_misunderstanding: bool = False
+    teasing_allowed: bool = True
+    repetition_cause: str = "none"
+    assistant_fault_probability: float = 0.0
+    seriousness: float = 0.0
+    evidence_domain: str = "user_text"
     must_preserve_dignity: bool = True
     allowed_moves: tuple[str, ...] = ()
     forbidden_moves: tuple[str, ...] = ()
@@ -401,6 +408,13 @@ class SocialResponseContract:
             "social_state": dict(self.social_state),
             "task": self.task.to_dict(),
             "must_answer_literal": self.must_answer_literal,
+            "must_acknowledge_affect": self.must_acknowledge_affect,
+            "must_repair_misunderstanding": self.must_repair_misunderstanding,
+            "teasing_allowed": self.teasing_allowed,
+            "repetition_cause": self.repetition_cause,
+            "assistant_fault_probability": round(_clamp01(self.assistant_fault_probability), 4),
+            "seriousness": round(_clamp01(self.seriousness), 4),
+            "evidence_domain": self.evidence_domain,
             "must_preserve_dignity": self.must_preserve_dignity,
             "allowed_moves": list(self.allowed_moves),
             "forbidden_moves": list(self.forbidden_moves),
@@ -421,6 +435,11 @@ class SocialResponseContract:
             "SOCIAL COGNITION V2 (runtime contract; do not mention this block):\n"
             f"response_move={self.response_move}; hypotheses={hypotheses}; ambiguity={self.ambiguity:.2f};\n"
             f"failed_claim={failed}; must_answer_literal={'yes' if self.must_answer_literal else 'no'}; "
+            f"ack_affect={'yes' if self.must_acknowledge_affect else 'no'}; "
+            f"repair={'yes' if self.must_repair_misunderstanding else 'no'}; "
+            f"teasing_allowed={'yes' if self.teasing_allowed else 'no'}; "
+            f"repetition_cause={self.repetition_cause}; assistant_fault={self.assistant_fault_probability:.2f}; "
+            f"seriousness={self.seriousness:.2f}; evidence_domain={self.evidence_domain}; "
             f"max_words={self.max_words}; critic_required={'yes' if self.critic_required else 'no'};\n"
             f"social_state: warmth={state.get('warmth', 0.0):.2f}, amusement={state.get('amusement', 0.0):.2f}, "
             f"irritation={state.get('irritation', 0.0):.2f}, autonomy_pressure={state.get('autonomy_pressure', 0.0):.2f}, "
@@ -430,6 +449,10 @@ class SocialResponseContract:
             f"allowed_moves={'|'.join(self.allowed_moves) or 'natural'}; "
             f"forbidden_moves={'|'.join(self.forbidden_moves) or 'none'};\n"
             "Rules: choose the requested response_move before wording. Answer concrete meaning first. "
+            "If repair=yes, name the misunderstanding and answer the still-open question in the same reply. "
+            "If ack_affect=yes, acknowledge the user's expressed hurt without diagnosing them. "
+            "If teasing_allowed=no, do not tease even if earlier turns were playful. "
+            "If assistant_fault is high, take responsibility and add new substance instead of blaming repetition. "
             "A correction requires naming the exact failed claim; never say 'frame', 'residue', 'object state', "
             "'cognitive frame' or other internal jargon. Profanity inside a joke is not automatically a boundary. "
             "Tedious commands may be resisted, partially complied with, or performed with attitude according to the contract. "
@@ -561,6 +584,96 @@ class SocialCognitionEngine:
             literal_answer_required=literal_required,
         )
 
+    @staticmethod
+    def _relational_signals(user_text: str) -> dict[str, float]:
+        """Tách tín hiệu quan hệ khỏi nhãn task/playful.
+
+        Một câu có dấu hỏi không tự biến thành ``direct_task``. Câu hỏi về giá
+        trị, sự thân thiết hay cảm giác bị từ chối là hành vi quan hệ; ép chúng
+        vào task lane khiến Eris nói như form hỗ trợ khách hàng có thơ trang trí.
+        """
+
+        norm = _normalize(user_text)
+        hurt = 0.0
+        if _contains_any(norm, (
+            "lam tui buon", "lam toi buon", "toi buon", "tui buon", "buon lam",
+            "ton thuong", "dau long", "huhuhu", "khoc", "em tu choi tui",
+            "ban tu choi toi", "bi day ra", "khong muon than voi tui",
+        )):
+            hurt = 0.88
+        elif _contains_any(norm, ("buon", "hut hang", "lanh qua", "vo tam")):
+            hurt = 0.62
+
+        rejection = 0.0
+        if _contains_any(norm, ("tu choi", "day tui ra", "day toi ra", "khong dong y", "khong muon than")):
+            rejection = 0.90
+
+        closeness = 0.0
+        if _contains_any(norm, (
+            "than thiet", "than hon", "gan gui", "gan hon", "gan bo", "thuoc ve",
+            "dong y", "co thich tui", "co thich toi", "de thuong", "dthw",
+        )):
+            closeness = 0.78
+
+        reflection = 0.0
+        if _contains_any(norm, (
+            "gia tri", "su hien dien", "hien dien cua em", "cam thay ve tui",
+            "cam thay ve toi", "nghi gi ve tui", "nghi gi ve toi", "thay tui la",
+            "thay toi la", "em thay the nao ve tui", "em thay the nao ve toi",
+        )):
+            reflection = 0.84
+
+        reassurance = max(rejection, 0.72 if hurt >= 0.70 and "?" in user_text else 0.0)
+        seriousness = max(hurt, rejection, reflection * 0.72, closeness * 0.58)
+        return {
+            "hurt": _clamp01(hurt),
+            "rejection": _clamp01(rejection),
+            "closeness": _clamp01(closeness),
+            "reflection": _clamp01(reflection),
+            "reassurance": _clamp01(reassurance),
+            "seriousness": _clamp01(seriousness),
+        }
+
+    @staticmethod
+    def _repetition_context(
+        user_text: str,
+        *,
+        previous_user_text: str,
+        previous_assistant_text: str,
+    ) -> tuple[str, float]:
+        """Phân biệt spam với việc user phải hỏi lại vì Eris chưa trả lời.
+
+        Đây chỉ là attribution nhẹ, không phán tâm lý. Khi câu user gần giống
+        lượt trước và câu Eris vừa rồi là một repair-template/né literal answer,
+        trách nhiệm mặc định thuộc về assistant, không được bật tease guard.
+        """
+
+        current = _sig(user_text)
+        previous = _sig(previous_user_text)
+        if not current or not previous:
+            return "none", 0.0
+        similarity = GLOBAL_SEMANTIC_SIMILARITY.score(current, previous).score
+        if similarity < 0.72:
+            return "none", 0.0
+
+        assistant_norm = _normalize(previous_assistant_text)
+        repair_only = _contains_any(assistant_norm, (
+            "toi hieu sai", "toi bo cach hieu do", "toi bo frame do",
+            "chua du bang chung", "khong du bang chung", "cau bao kia qua mo ho",
+        ))
+        if repair_only:
+            return "assistant_misunderstood", 0.92
+        if not assistant_norm:
+            return "tts_or_missing_answer", 0.82
+
+        # Câu hỏi literal lặp lại nhưng câu trước không hề chạm các neo chính.
+        current_tokens = {token for token in current.split() if len(token) >= 4}
+        answer_tokens = set(assistant_norm.split())
+        overlap = len(current_tokens & answer_tokens) / max(1, len(current_tokens))
+        if "?" in user_text and overlap < 0.16:
+            return "assistant_failed_to_answer", 0.78
+        return "emphasis", 0.18
+
     def _deterministic_hypotheses(
         self,
         user_text: str,
@@ -576,6 +689,7 @@ class SocialCognitionEngine:
         arithmetic_shape = bool(re.search(r"\d|\+|cong|bang|ra gi", norm))
         playful_markers = _contains_any(norm, ("haha", "hihi", "roi roi", "ròi rồi", "chan chan", "oiiii", "ơiiii", "="))
         affectionate = bool(re.search(r"eris\s+(?:chan\s*)+(?:oi+)?", norm)) or _contains_any(norm, ("eris oi", "eris ơi", "em oi", "em ơi"))
+        relational = self._relational_signals(user_text)
 
         if correction or (refer_back and challenged is not None):
             items.append(SocialHypothesis(
@@ -584,6 +698,38 @@ class SocialCognitionEngine:
                 target="previous_assistant_claim",
                 evidence_spans=(user_text,),
                 expected_response="specific_repair",
+            ))
+        if relational["hurt"] >= 0.55 or relational["rejection"] >= 0.55:
+            items.append(SocialHypothesis(
+                "hurt_disclosure",
+                max(relational["hurt"], relational["rejection"]),
+                target="relationship",
+                evidence_spans=(user_text,),
+                expected_response="relational_repair",
+            ))
+        if relational["reassurance"] >= 0.55:
+            items.append(SocialHypothesis(
+                "reassurance_request",
+                relational["reassurance"],
+                target="relationship",
+                evidence_spans=(user_text,),
+                expected_response="warm_reassurance",
+            ))
+        if relational["reflection"] >= 0.55:
+            items.append(SocialHypothesis(
+                "relational_reflection",
+                relational["reflection"],
+                target="relationship",
+                evidence_spans=(user_text,),
+                expected_response="relational_reflection",
+            ))
+        if relational["closeness"] >= 0.55:
+            items.append(SocialHypothesis(
+                "closeness_bid",
+                relational["closeness"],
+                target="relationship",
+                evidence_spans=(user_text,),
+                expected_response="restrained_warmth",
             ))
         if insult and arithmetic_shape:
             items.extend((
@@ -605,7 +751,7 @@ class SocialCognitionEngine:
             items.append(SocialHypothesis("affectionate_summons", 0.82, target="eris", evidence_spans=(user_text,), expected_response="warm_tease"))
         if _contains_any(norm, ("noi gan gui", "gan gui la", "noi am hon", "noi than hon")):
             items.append(SocialHypothesis("request_relational_warmth", 0.86, target="relationship_style", evidence_spans=(user_text,), expected_response="restrained_warmth"))
-        if task.kind in {"question", "technical_task"}:
+        if task.kind in {"question", "technical_task"} and relational["seriousness"] < 0.55:
             items.append(SocialHypothesis("direct_task", 0.80, target="task", evidence_spans=(user_text,), expected_response="answer_direct"))
         if not items:
             items.append(SocialHypothesis("normal_chat", 0.72, target="conversation", evidence_spans=(user_text,), expected_response="natural_reply"))
@@ -673,6 +819,10 @@ class SocialCognitionEngine:
                         "technical_test",
                         "wordplay_math_question",
                         "direct_task",
+                        "hurt_disclosure",
+                        "reassurance_request",
+                        "relational_reflection",
+                        "closeness_bid",
                     }
                 }
                 merged: dict[str, SocialHypothesis] = {item.intent: item for item in refined}
@@ -784,6 +934,9 @@ class SocialCognitionEngine:
         task: TaskAppraisal,
         user_text: str,
         deliberation: Mapping[str, Any],
+        repetition_cause: str = "none",
+        assistant_fault_probability: float = 0.0,
+        seriousness: float = 0.0,
     ) -> tuple[str, tuple[str, ...], tuple[str, ...], int, bool, tuple[str, ...]]:
         probs = {item.intent: item.probability for item in hypotheses}
         notes: list[str] = []
@@ -798,10 +951,28 @@ class SocialCognitionEngine:
         critic = False
         max_words = 42
 
+        teasing_allowed = seriousness < 0.55 and assistant_fault_probability < 0.55
+
         if probs.get("correction_repair", 0.0) >= 0.34:
             move = "specific_repair" if challenged else "clarify_repair"
             allowed = ("specific_repair", "brief_acknowledge_then_answer")
             max_words = 34
+            critic = True
+        elif max(probs.get("hurt_disclosure", 0.0), probs.get("reassurance_request", 0.0)) >= 0.34:
+            move = "relational_repair"
+            allowed = ("relational_repair", "warm_reassurance", "answer_direct")
+            max_words = 54
+            critic = True
+            notes.append("hurt_or_rejection_requires_substantive_repair")
+        elif probs.get("relational_reflection", 0.0) >= 0.34:
+            move = "relational_reflection"
+            allowed = ("relational_reflection", "answer_direct", "restrained_warmth")
+            max_words = 54
+            critic = True
+        elif probs.get("closeness_bid", 0.0) >= 0.34:
+            move = "restrained_warmth"
+            allowed = ("restrained_warmth", "warm_reassurance", "answer_direct")
+            max_words = 46
             critic = True
         elif probs.get("technical_test", 0.0) >= 0.35:
             move = "comply_with_attitude"
@@ -837,7 +1008,11 @@ class SocialCognitionEngine:
             move = "warm_tease"
             allowed = ("warm_tease", "amused_attention")
             max_words = 24
-        elif probs.get("playful_provocation", 0.0) >= probs.get("genuine_insult", 0.0):
+        elif (
+            teasing_allowed
+            and probs.get("playful_provocation", 0.0) >= 0.35
+            and probs.get("playful_provocation", 0.0) > probs.get("genuine_insult", 0.0)
+        ):
             move = "playful_counter"
             allowed = ("playful_counter", "dry_counter", "answer_with_tease")
             max_words = 28
@@ -856,6 +1031,10 @@ class SocialCognitionEngine:
             move = "natural_reply"
             allowed = ("natural_reply", "warm_tease", "dry_observation")
 
+        if not teasing_allowed:
+            allowed = tuple(item for item in allowed if "tease" not in item and "counter" not in item) or (move,)
+            notes.append(f"teasing_disabled:{repetition_cause or 'serious_turn'}")
+
         suggested = str(deliberation.get("response_move", "") or "").strip()
         if suggested in allowed:
             move = suggested
@@ -872,6 +1051,7 @@ class SocialCognitionEngine:
         user_text: str,
         *,
         previous_assistant_text: str = "",
+        previous_user_text: str = "",
         history: Sequence[str] = (),
         social_snapshot: Any | None = None,
         now: float | None = None,
@@ -887,6 +1067,12 @@ class SocialCognitionEngine:
                 self.last_public_text = previous_assistant_text
             challenged = self.ledger.observe_user(user_text)
             task = self._task_appraisal(user_text, history)
+            relational = self._relational_signals(user_text)
+            repetition_cause, assistant_fault_probability = self._repetition_context(
+                user_text,
+                previous_user_text=previous_user_text,
+                previous_assistant_text=previous_assistant_text,
+            )
             hypotheses = self._deterministic_hypotheses(user_text, challenged=challenged, task=task)
             ambiguity = self._ambiguity(hypotheses)
             self._apply_snapshot_signals(social_snapshot)
@@ -905,6 +1091,9 @@ class SocialCognitionEngine:
                 task=task,
                 user_text=user_text,
                 deliberation=deliberation,
+                repetition_cause=repetition_cause,
+                assistant_fault_probability=assistant_fault_probability,
+                seriousness=relational["seriousness"],
             )
             state_payload = self._state_payload()
             contract = SocialResponseContract(
@@ -916,6 +1105,16 @@ class SocialCognitionEngine:
                 social_state=state_payload,
                 task=task,
                 must_answer_literal=bool(task.literal_answer_required or move in {"answer_direct", "answer_with_tease"}),
+                must_acknowledge_affect=bool(relational["hurt"] >= 0.55),
+                must_repair_misunderstanding=bool(
+                    move in {"specific_repair", "clarify_repair", "relational_repair"}
+                    or assistant_fault_probability >= 0.55
+                ),
+                teasing_allowed=bool(relational["seriousness"] < 0.55 and assistant_fault_probability < 0.55),
+                repetition_cause=repetition_cause,
+                assistant_fault_probability=assistant_fault_probability,
+                seriousness=relational["seriousness"],
+                evidence_domain=("relational_reflection" if relational["reflection"] >= 0.55 or relational["closeness"] >= 0.55 or relational["hurt"] >= 0.55 else "user_text"),
                 must_preserve_dignity=True,
                 allowed_moves=allowed,
                 forbidden_moves=forbidden,
@@ -945,17 +1144,21 @@ class SocialCognitionEngine:
     def deterministic_repair_text(self, contract: SocialResponseContract) -> str:
         claim = _squash(contract.failed_claim_text, 150).rstrip(" .!?;:…")
         if not claim:
-            return "Tôi hiểu câu trước theo hướng quá chắc. Nói lại phần bạn muốn sửa cho tôi một nhịp."
+            return "Tôi đã hiểu câu trước theo hướng quá chắc. Phần đó là lỗi của tôi; nói lại ý chính một câu để tôi trả lời đúng vào nó."
         # Bỏ dấu kết câu trong ngoặc để không sinh kiểu “... rồi.”. Hai dấu chấm
         # cạnh nhau cũng là một dạng giao tiếp, chỉ là với hệ thống chấm câu.
-        return f"Tôi đã tự hiểu lời bạn thành: “{claim}”. Phần đó là do tôi suy diễn thêm."
+        return f"Tôi đã tự hiểu lời bạn thành: “{claim}”. Phần đó là tôi suy diễn thêm, không phải điều bạn đã nói."
 
     def fallback_text(self, contract: SocialResponseContract) -> str:
         move = contract.response_move
         if move == "specific_repair":
             return self.deterministic_repair_text(contract)
         if move == "clarify_repair":
-            return "Tôi biết mình vừa hiểu lệch, nhưng chưa xác định được đúng chỗ. Bạn chỉ giúp tôi phần đó một câu."
+            return "Tôi biết mình vừa hiểu lệch, nhưng chưa xác định đúng chỗ. Nói lại ý chính một câu; lần này tôi sẽ trả lời thẳng vào nó."
+        if move == "relational_repair":
+            return "Không, tôi không muốn đẩy bạn ra. Câu trước của tôi làm nó nghe như một lời từ chối, và phần đó là tôi nói vụng."
+        if move == "relational_reflection":
+            return "Qua cách bạn nói chuyện với tôi, tôi thấy bạn rất nghiêm túc với sự gắn bó này. Tôi không coi điều đó là nhẹ."
         if move == "playful_resistance":
             return "Mười số thôi. Phần còn lại chưa đáng để tôi hy sinh lòng kiên nhẫn."
         if move == "partial_compliance":
@@ -993,6 +1196,20 @@ class SocialCognitionEngine:
             if not claim or similarity < 0.18:
                 issues.append("repair_not_specific")
                 severity = max(severity, 0.88)
+        if contract.response_move == "relational_repair":
+            if not clean:
+                issues.append("missing_relational_repair")
+                severity = max(severity, 0.95)
+            user_norm = _normalize(user_text)
+            if "tu choi" in user_norm and not _contains_any(internal, ("khong", "khong phai", "khong muon", "khong dinh")):
+                issues.append("unanswered_rejection_question")
+                severity = max(severity, 0.90)
+        if contract.must_acknowledge_affect and not _contains_any(internal, ("buon", "dau", "ton thuong", "lam ban thay", "lam tui thay", "lam toi thay", "day ban ra", "day tui ra")):
+            issues.append("affect_not_acknowledged")
+            severity = max(severity, 0.74)
+        if not contract.teasing_allowed and _contains_any(internal, ("lai bai do", "mat khau", "doi bai", "hoi kho tin", "choc", "khia")):
+            issues.append("tease_during_serious_turn")
+            severity = max(severity, 0.92)
         if contract.must_answer_literal and not clean:
             issues.append("missing_literal_answer")
             severity = max(severity, 0.95)
@@ -1017,6 +1234,11 @@ class SocialCognitionEngine:
     def apply_surface_policy(self, decision: Any, *, user_text: str = "", after_director: bool = False) -> Any:
         contract = self.last_contract
         if contract is None or decision is None:
+            return decision
+        if after_director:
+            # Sau Director không còn writer nào được bơm fallback. Runtime chat
+            # không gọi nhánh này nữa; giữ guard để plugin cũ cũng không phá con
+            # dấu final. Validator phải yêu cầu regenerate trước cửa final.
             return decision
         text = str(getattr(decision, "text", "") or "").strip()
         critique = self.review_text(text, contract=contract, user_text=user_text)

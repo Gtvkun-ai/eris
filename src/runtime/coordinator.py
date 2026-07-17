@@ -803,6 +803,14 @@ class RuntimeCoordinator(
         # quá ngưỡng thì autonomous tự quay lại nhịp ambient (kể cả khi panel
         # vẫn mở). Đây thay cho công tắc cứng + idle-timeout cũ.
         self._chat_last_activity_at = 0.0
+        # Đồng hồ public thật: user turn, generation, text commit và audio.
+        # Không còn lấy riêng timestamp user rồi kết luận hội thoại đã chết ngay
+        # sau 20 giây model đang suy nghĩ.
+        try:
+            from runtime.interaction_clock import InteractionClock
+            self.interaction_clock = InteractionClock()
+        except Exception:
+            self.interaction_clock = None
         self._chat_fresh_seconds = max(
             0.0, float(os.getenv("ERIS_CHAT_FRESH_SEC", "20") or 0.0)
         )
@@ -846,6 +854,7 @@ class RuntimeCoordinator(
         except Exception:
             pass
         self.current_social_contract = None
+        self.current_conversation_lane = None
         self.last_user_intent = ""
         self.active_conversational_topic = ""
         self.last_system_action = ""
@@ -6873,6 +6882,13 @@ class RuntimeCoordinator(
 
         if event.type in {"audio_playback_started", "audio_playback_done"}:
             self._track_frontend_audio_event(event)
+            clock = getattr(self, "interaction_clock", None)
+            if clock is not None:
+                timestamp = float(getattr(event, "timestamp", time.time()) or time.time())
+                if event.type == "audio_playback_started":
+                    clock.mark_audio_started(timestamp)
+                else:
+                    clock.mark_audio_finished(timestamp)
             self._emit_stage_protocol_state(f"{event.type}_ack", data=event.to_meta())
             return
 
@@ -6880,6 +6896,9 @@ class RuntimeCoordinator(
             self._emit_stage_protocol_state("stage_ack_received", data=event.to_meta())
 
     def _handle_stage_interrupt_event(self, event) -> None:
+        clock = getattr(self, "interaction_clock", None)
+        if clock is not None:
+            clock.mark_interrupt(float(getattr(event, "timestamp", time.time()) or time.time()))
         text = str(getattr(event, "message", "") or "").strip()
         if text:
             self._capture_speech_interrupt_for_user(text, timestamp=float(getattr(event, "timestamp", time.time()) or time.time()))
@@ -7259,6 +7278,17 @@ class RuntimeCoordinator(
             public_text = str(decision.text or "").strip()
             memory_text = public_text
             blocked_kinds = ()
+
+        # PublicSurfaceCommitter là sanitizer cuối cùng nên phải chạy TRƯỚC con
+        # dấu. Khóa chính câu đã được làm sạch, không khóa bản raw rồi vô tình
+        # khôi phục phần protocol/debug mà sanitizer vừa loại bỏ.
+        decision.text = public_text
+        try:
+            from runtime.final_speech_authority import GLOBAL_FINAL_SPEECH_AUTHORITY
+            decision = GLOBAL_FINAL_SPEECH_AUTHORITY.seal(decision)
+        except Exception as exc:
+            self.logger.warning("[final speech] không khóa được Decision: %s", exc)
+
         # Repair lifetime chỉ giảm khi câu repair thật sự được commit ra public.
         repair_lifetime = getattr(self, "repair_state_controller", None)
         repair_appraisal = getattr(self, "current_repair_appraisal", None)
@@ -7277,6 +7307,9 @@ class RuntimeCoordinator(
             self.long_term_memory.append(decision.extracted_fact)
 
         self.last_chat_answer = public_text
+        clock = getattr(self, "interaction_clock", None)
+        if clock is not None and public_text:
+            clock.mark_assistant_text()
         self.last_system_action = decision.system_action
         invalid_for_semantic_history = _is_nonsemantic_fallback_decision(decision)
         # Fallback/service-error vẫn có thể hiện ra UI, nhưng không được đưa vào
@@ -7325,6 +7358,17 @@ class RuntimeCoordinator(
                 frame.final_decision["grounding_preempt_mode"] = grounding_preempt_mode
             self._set_cognitive_memory_update(frame, decision=decision, notes=("chat_commit",))
             self._commit_internal_state_for_frame(frame)
+            try:
+                from runtime.final_speech_authority import GLOBAL_FINAL_SPEECH_AUTHORITY
+                verification = GLOBAL_FINAL_SPEECH_AUTHORITY.verify_or_restore(decision)
+                if verification.restored:
+                    self.logger.error(
+                        "[final speech] downstream mutation bị khôi phục expected=%s actual=%s",
+                        verification.expected_digest[:12],
+                        verification.actual_digest[:12],
+                    )
+            except Exception as exc:
+                self.logger.warning("[final speech] verify failed: %s", exc)
             self._send_decision_to_body(decision, channel="chat")
             self._finalize_cognitive_frame(frame)
         trace_store = getattr(self, "director_trace_store", None)
@@ -9372,6 +9416,9 @@ class RuntimeCoordinator(
         window = float(getattr(self, "_chat_fresh_seconds", 0.0) or 0.0)
         if window <= 0.0:
             return False
+        clock = getattr(self, "interaction_clock", None)
+        if clock is not None:
+            return bool(clock.stale(window))
         last = float(getattr(self, "_chat_last_activity_at", 0.0) or 0.0)
         if last <= 0.0:
             return False

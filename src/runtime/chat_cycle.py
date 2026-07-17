@@ -340,6 +340,10 @@ class ChatCycleMixin:
             return
 
         self._chat_processing = True
+        clock = getattr(self, "interaction_clock", None)
+        if clock is not None:
+            clock.mark_user_turn(cycle_start)
+            clock.mark_generation_started(cycle_start)
         try:
             user_text = self._merge_rapid_chat_burst(user_text, first_timestamp=cycle_start)
             if not user_text:
@@ -384,6 +388,8 @@ class ChatCycleMixin:
                 speech_interrupt_reaction=speech_interrupt_reaction,
             )
         finally:
+            if clock is not None:
+                clock.mark_generation_finished()
             # Chỉ cập nhật sau khi lượt hiện tại đã dùng xong context, để
             # since_last_user_turn phản ánh lượt user TRƯỚC đó chứ không luôn = 0.
             self._temporal_last_user_turn_at = cycle_start
@@ -395,6 +401,7 @@ class ChatCycleMixin:
             self.current_social_appraisal = None
             self.current_feedback_social_appraisal = None
             self.current_social_contract = None
+            self.current_conversation_lane = None
             self._chat_processing = False
 
     def _run_chat_cycle_inner(
@@ -468,6 +475,7 @@ class ChatCycleMixin:
                 social_contract = social_engine.analyze(
                     user_text,
                     previous_assistant_text=str(getattr(self, "last_chat_answer", "") or ""),
+                    previous_user_text=str(getattr(self, "last_user_text_for_semantics", "") or ""),
                     history=social_history,
                     social_snapshot=preliminary_repair.social_snapshot,
                     now=cycle_start,
@@ -477,6 +485,18 @@ class ChatCycleMixin:
             except Exception as exc:
                 self.logger.warning("[social cognition v2] analyze failed: %s", exc)
                 self.current_social_contract = None
+
+        # Lời chào/repair xã hội ngắn đi fast lane: vẫn qua deterministic guard
+        # và FinalSpeechAuthority, nhưng không gọi thêm critic/candidate model.
+        # Mục tiêu là giảm độ trễ và tránh biên tập quá tay làm mất giọng.
+        try:
+            from runtime.conversation_lane import classify_conversation_lane
+
+            self.current_conversation_lane = classify_conversation_lane(user_text, social_contract)
+            user_turn.meta["conversation_lane"] = self.current_conversation_lane.to_dict()
+        except Exception as exc:
+            self.current_conversation_lane = None
+            self.logger.debug("[conversation lane] classify failed: %s", exc)
 
         pragmatic_result = self._prepare_pragmatic_social_turn(
             user_text,
@@ -713,6 +733,9 @@ class ChatCycleMixin:
 
         self.chat_mode = True
         self._chat_last_activity_at = time.time()
+        clock = getattr(self, "interaction_clock", None)
+        if clock is not None:
+            clock.mark_user_turn(cycle_start)
         self.logger.info("Người dùng: %s", user_text)
         self.logger.info(
             "[ni chat] drift=%.2f | level=%s | state=%s | streak=%d",
@@ -1167,9 +1190,17 @@ class ChatCycleMixin:
         pragmatic_context = pragmatic_result.to_prompt_context() if pragmatic_result.intercepted else ""
         repair_context = repair_appraisal.to_prompt_context()
         social_context = social_contract.to_prompt_block() if social_contract is not None else ""
+        try:
+            from runtime.persona_novelty import build_phrase_novelty_hint
+
+            phrase_novelty_context = build_phrase_novelty_hint(getattr(self, "chat_history", ()))
+        except Exception as exc:
+            phrase_novelty_context = ""
+            self.logger.debug("[phrase novelty] build hint failed: %s", exc)
         planned_ti_context = (
             f"{ti_report.prompt_context}\n{self._build_action_plan_context(frame.action_plan)}\n"
-            f"{turn_semantics_context}\n{pragmatic_context}\n{repair_context}\n{social_context}"
+            f"{turn_semantics_context}\n{pragmatic_context}\n{repair_context}\n{social_context}\n"
+            f"{phrase_novelty_context}"
         )
         if social_contract is not None:
             frame.metadata["social_cognition_v2"] = social_contract.to_dict()
@@ -1530,6 +1561,12 @@ class ChatCycleMixin:
         from runtime.dual_axis_repair import apply_repair_output_guard
 
         decision = apply_repair_output_guard(decision, repair_appraisal)
+        # Tutor/self-search có thể thay đổi nội dung câu (ví dụ chuyển thành
+        # "tôi sẽ tra"). Vì vậy nó phải chạy TRƯỚC cửa final, không được lén
+        # sửa Decision sau khi Director đã chấm xong.
+        self_search = getattr(self, "_maybe_start_self_declared_tutor_search", None)
+        if callable(self_search):
+            decision = self_search(decision, user_text=user_text, frame=frame)
         repair_candidate_override = repair_appraisal.candidate_count_hint >= 2
         decision = self._finalize_chat_director_decision(
             decision,
@@ -1539,13 +1576,13 @@ class ChatCycleMixin:
             skip_candidates=bool(
                 format_repair_fallback
                 or no_fallback_block
+                or bool(getattr(getattr(self, "current_conversation_lane", None), "fast", False))
                 or (not semantic_policy.generate_director_candidates and not repair_candidate_override)
             ),
         )
-        decision = self._apply_social_cognition_surface(decision, user_text=user_text, after_director=True)
-        self_search = getattr(self, "_maybe_start_self_declared_tutor_search", None)
-        if callable(self_search):
-            decision = self_search(decision, user_text=user_text, frame=frame)
+        # Không còn post-director writer. Social policy/repair được phép review
+        # candidate trước Director; sau đây chỉ có FinalSpeechAuthority ở commit
+        # khóa hoặc suppress, tuyệt đối không bơm một câu fallback mới.
         self._commit_chat_decision(decision, fe_plan, frame=frame)
         self.last_user_text_for_semantics = user_text
         return
@@ -1561,8 +1598,9 @@ class ChatCycleMixin:
         if engine is None or contract is None:
             return decision
         decision = engine.apply_surface_policy(decision, user_text=user_text)
+        fast_lane = bool(getattr(getattr(self, "current_conversation_lane", None), "fast", False))
         enabled = str(os.environ.get("ERIS_SOCIAL_CRITIC_REWRITE_ENABLED", "1") or "1").lower() not in {"0", "false", "off", "no"}
-        if not enabled or not bool(getattr(contract, "critic_required", False)):
+        if fast_lane or not enabled or not bool(getattr(contract, "critic_required", False)):
             return decision
         router = getattr(self, "social_model_router", None)
         if router is None:
@@ -2343,61 +2381,28 @@ class ChatCycleMixin:
         frame=None,
         speech_core=None,
     ) -> Decision | None:
+        """Chặn sớm duy nhất khi câu trước làm rò protocol/debug.
+
+        Những hiểu lầm xã hội thông thường KHÔNG còn bị trả bằng một câu template
+        rồi kết thúc turn. Social Cognition và Dual-Axis Repair đã đưa nghĩa vụ sửa
+        hiểu lầm vào prompt; main generator phải vừa nhận lỗi, vừa trả lời câu hỏi
+        còn treo. Nhờ vậy ``repair_ack_then_answer`` không bị cụt còn mỗi ``ack``.
+        """
         leak_kind = self._previous_public_turn_has_protocol_leak(previous_public_turn)
-        text = ""
-        repair_kind = leak_kind
-        if leak_kind and self._user_is_challenging_previous_public_turn(user_text):
-            if leak_kind == "prompt_leak":
-                text = (
-                    "Có. Câu vừa rồi lỗi thật. Tôi để phần hậu trường lọt ra ngoài "
-                    "thay vì nói một câu bình thường."
-                )
-            else:
-                text = (
-                    "Có. Câu vừa rồi lỗi thật. Nó dính phần hậu trường vào lời nói; "
-                    "đáng lẽ tôi phải nuốt lại trước khi gửi ra ngoài."
-                )
-        elif previous_public_turn is not None:
-            # Social Cognition V2 ưu tiên repair cụ thể bằng claim id. Không dùng
-            # template "tôi bỏ frame đó" khi user đang hỏi thẳng Eris đã hiểu sai gì.
-            social_contract = getattr(self, "current_social_contract", None)
-            social_engine = getattr(self, "social_cognition_v2", None)
-            if (
-                social_contract is not None
-                and str(getattr(social_contract, "response_move", "") or "") == "specific_repair"
-                and str(getattr(social_contract, "failed_claim_text", "") or "").strip()
-                and social_engine is not None
-            ):
-                text = social_engine.deterministic_repair_text(social_contract)
-                repair_kind = "social_cognition_specific_repair"
-            # Misread repair tổng quát: user phủ định câu public trước ("tôi có code đâu",
-            # "hả", "tôi chỉ nghe nhạc...") thì không thả qua LLM hỏi vòng. Sửa frame sai
-            # trước, vì đó là nhịp người hơn: bị bắt lỗi -> nhận lỗi -> bỏ giả định cũ.
-            if not text:
-                try:
-                    from runtime.banter_arbiter import BanterArbiter
-                    arbiter = getattr(self, "_banter_arbiter", None)
-                    if not isinstance(arbiter, BanterArbiter):
-                        arbiter = BanterArbiter()
-                        self._banter_arbiter = arbiter
-                    banter = arbiter.repair_correction(
-                        user_text=user_text,
-                        previous_text=str(getattr(previous_public_turn, "text", "") or ""),
-                        grounding=grounding_report,
-                        frame=frame,
-                        speech_core=speech_core,
-                        social_appraisal=getattr(self, "current_social_appraisal", None),
-                    )
-                    if banter.changed:
-                        text = banter.text
-                        repair_kind = banter.mode
-                except Exception as exc:
-                    try:
-                        self.logger.warning("[previous_public_turn_repair] banter repair failed: %s", exc)
-                    except Exception:
-                        pass
-        if not text:
+        if not (leak_kind and self._user_is_challenging_previous_public_turn(user_text)):
             return None
+
+        if leak_kind == "prompt_leak":
+            text = (
+                "Có. Câu vừa rồi lỗi thật. Tôi để phần hậu trường lọt ra ngoài "
+                "thay vì nói một câu bình thường."
+            )
+        else:
+            text = (
+                "Có. Câu vừa rồi lỗi thật. Nó dính phần hậu trường vào lời nói; "
+                "đáng lẽ tôi phải giữ phần đó ở bên trong."
+            )
+
         decision = Decision(
             text=text,
             intent="repair_previous_public_turn",
@@ -2405,8 +2410,11 @@ class ChatCycleMixin:
             animation="stand",
             should_speak=True,
             confidence=0.86,
-            parse_mode="public_turn_repair",
-            debug_trace=f"previous_public_turn_repair;kind={repair_kind or 'unknown'};turn_id={getattr(previous_public_turn, 'turn_id', '')}",
+            parse_mode="public_turn_protocol_repair",
+            debug_trace=(
+                "previous_public_turn_protocol_repair;"
+                f"kind={leak_kind};turn_id={getattr(previous_public_turn, 'turn_id', '')}"
+            ),
         )
         return self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text)
 

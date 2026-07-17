@@ -98,14 +98,14 @@ def test_too_cold_feedback_increases_warmth_and_move_memory():
     assert engine.outcome_memory.stats["dry_observation"].too_cold == 1
 
 
-def test_post_director_empty_answer_is_repaired_for_relational_request():
+def test_post_director_surface_policy_cannot_write_new_sentence():
     engine = _engine()
     contract = engine.analyze("nói gần gũi là nói như nào nè")
     assert contract.response_move == "restrained_warmth"
     decision = Decision(text="", animation="stand", should_speak=False)
     fixed = engine.apply_surface_policy(decision, user_text="nói gần gũi là nói như nào nè", after_director=True)
-    assert fixed.should_speak is True
-    assert fixed.text
+    assert fixed.should_speak is False
+    assert fixed.text == ""
 
 
 def test_low_irritation_does_not_allow_extreme_abuse():

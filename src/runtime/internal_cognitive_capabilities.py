@@ -477,10 +477,15 @@ class InternalCognitiveCapabilityRuntime:
         # Không surface raw memory trong autonomous/public mode. User hỏi summary
         # thì chỉ trả count/status; candidate chưa được phép đóng vai fact.
         if not active:
-            text = "Tôi đã kiểm tra. Hiện không có mảnh ký ức chưa xử lý nào."
+            text = "Tôi đã kiểm tra. Hiện không có ký ức nào đang mắc lại."
         else:
-            parts = [f"{count} {status}" for status, count in sorted(by_status.items())]
-            text = f"Tôi đã kiểm tra. Có {len(active)} mảnh ký ức chưa xử lý: {', '.join(parts)}. Chúng vẫn chỉ là candidate, chưa phải fact chắc."
+            # Public surface nói bằng ngôn ngữ của Eris; status kỹ thuật vẫn nằm
+            # trong evidence/meta cho panel debug. Không đọc ``failed/candidate``
+            # ra TTS như một dashboard vừa được cấp dây thanh quản.
+            text = (
+                f"Tôi đã kiểm tra. Có {len(active)} ký ức cũ chưa sắp xếp xong. "
+                "Tôi sẽ chưa coi chúng là điều chắc chắn."
+            )
         evidence_ids = [str(getattr(item, "id", "")) for item in active[:8] if str(getattr(item, "id", ""))]
         evidence = (CognitiveEvidence(
             "memory_candidate_store:snapshot",
@@ -609,8 +614,8 @@ class InternalCognitiveCapabilityRuntime:
         if question:
             loops.append("một câu hỏi chưa đóng")
         if candidates:
-            loops.append(f"{len(candidates)} memory candidate chưa xử lý")
-        text = "Tôi đã kiểm tra. " + ("Open loop hiện có: " + "; ".join(loops) + "." if loops else "Hiện không có open loop nhận thức nào đủ evidence.")
+            loops.append(f"{len(candidates)} ký ức cũ chưa sắp xếp")
+        text = "Tôi đã kiểm tra. " + ("Hiện còn: " + "; ".join(loops) + "." if loops else "Hiện không còn điều gì đáng giữ mở.")
         evidence = (CognitiveEvidence(
             "open_loops:snapshot",
             "internal_cognitive.aggregate",
