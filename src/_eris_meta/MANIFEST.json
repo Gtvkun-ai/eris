@@ -1,95 +1,16 @@
 {
-  "schema": "eris.patch.manifest.v1",
-  "base": "src(76).zip",
-  "patch_name": "ErisLive Workspace Runtime",
-  "cumulative": true,
-  "created_at_utc": "2026-07-17T03:25:09Z",
-  "test_summary": "89 passed; full suite has same 21 baseline collection errors",
+  "patch": "eris.take_sync_stage_lock.v1",
+  "base": "src(79) + performer_director + human_reaction_arc",
   "files": [
-    {
-      "path": "GHI_CHU_VI.md",
-      "size": 4612,
-      "sha256": "ab8537e5ccbad20cf96a639aae5eab896785be917cb38400f5e93a7e90062179"
-    },
-    {
-      "path": "_eris_meta/TEST_REPORT.txt",
-      "size": 852,
-      "sha256": "9a686cae2e0778db07827bb19bebc354c370fb862339022322c11a0d27b2aa9d"
-    },
-    {
-      "path": "_eris_meta/changes.patch",
-      "size": 128153,
-      "sha256": "5fe2ab6c1fd2338184fb1a3d5f00581b4cbcc22a575899c58eddd1249f9338a4"
-    },
-    {
-      "path": "actions/capability_registry.py",
-      "size": 25091,
-      "sha256": "ad83cab22e6c8838fde2c942d3c7bf4b4b8ebc97afe7c55834339f5df2ed22f5"
-    },
-    {
-      "path": "actions/capability_runtime.py",
-      "size": 14071,
-      "sha256": "d1e357f8229544ba0b8f634cc923297d54b49f193b356562c71c4993942c5b64"
-    },
-    {
-      "path": "actions/contracts.py",
-      "size": 5010,
-      "sha256": "0d879fd8367bcd9fdf0cc0b49c60eee9f1dd237183c3aa2a9643db2808b93132"
-    },
-    {
-      "path": "actions/executor.py",
-      "size": 35451,
-      "sha256": "d1b22c79fd6a6bfcf1b24a04efb9e79099df4d68f07db7e69179956541f31afc"
-    },
-    {
-      "path": "actions/router.py",
-      "size": 33750,
-      "sha256": "c09334576c1f641ed0585def2cd0c0edb302c5eab03c2a5bcf5bddf5e791078d"
-    },
-    {
-      "path": "parser_grounding/decision.py",
-      "size": 89082,
-      "sha256": "0c71e3d8003d9f6cb17e0ad5e5ddb1cd9e522a091a4368d2cc89f23869a1cd1f"
-    },
-    {
-      "path": "runtime/coordinator.py",
-      "size": 506982,
-      "sha256": "93e8db5caafffa97127b2b9fb38504ac9e82555b315fab6b68f3be37380ba526"
-    },
-    {
-      "path": "runtime/environment_capabilities.py",
-      "size": 46378,
-      "sha256": "9534acbdff296e2084e03ed8a041ab50e7062941fc02adff3111fbc656b414f5"
-    },
-    {
-      "path": "runtime/project_operations.py",
-      "size": 57035,
-      "sha256": "bf541de0ab7f1e41931618ba0fa8a552ba6602fd95eea38ad9849bba057b0869"
-    },
-    {
-      "path": "runtime/runtime_settings_store.py",
-      "size": 27499,
-      "sha256": "e5f0039be3bd71961c460034522032c9f192c986e6b48a536486d6d93679d151"
-    },
-    {
-      "path": "runtime/settings_protocol.py",
-      "size": 7483,
-      "sha256": "d81e5222aa3c7e74854bc6f22b1909b64532535ac1ee9dcafa424903991fbddd"
-    },
-    {
-      "path": "runtime/workspace_manager.py",
-      "size": 21250,
-      "sha256": "636e2d47029894630420c9466f2a23623eaab1b3951485f998904153182a5a25"
-    },
-    {
-      "path": "tests/test_environment_capabilities.py",
-      "size": 8822,
-      "sha256": "5f6965144aa109356025059ceae9f17e754b2d7002f1452641e2379782619714"
-    },
-    {
-      "path": "tests/test_project_operations.py",
-      "size": 11982,
-      "sha256": "4086168dc1686c3673d13ce616377254725e9e8afb8baee07a9c09c399fcdf3d"
-    }
-  ]
+    "runtime/stage_ownership.py",
+    "runtime/scripted_take.py",
+    "runtime/tts_task_manager.py",
+    "runtime/tts_engine.py",
+    "runtime/coordinator.py",
+    "tests/test_scripted_take.py",
+    "tests/test_stage_ownership.py",
+    "tests/test_tts_task_manager_start_sync.py",
+    "_eris_meta/README_TAKE_SYNC_STAGE_LOCK_VI.md"
+  ],
+  "focused_tests": "27 passed"
 }

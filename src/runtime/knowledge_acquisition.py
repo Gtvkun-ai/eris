@@ -24,6 +24,11 @@ import hashlib
 import time
 from typing import Any, Iterable, Optional
 
+try:
+    from runtime.runtime_settings_store import runtime_bool
+except Exception:  # pragma: no cover - this module is used by isolated tests too
+    runtime_bool = None
+
 
 def _get(obj: Any, name: str, default: Any = None) -> Any:
     if obj is None:
@@ -72,6 +77,12 @@ def _evidence_ids(frame: Any) -> tuple[str, ...]:
             if value:
                 ids.append(str(value))
     return tuple(dict.fromkeys(ids))[:16]
+
+
+def _search_web_enabled() -> bool:
+    if callable(runtime_bool):
+        return runtime_bool("capabilities", "search_web_enabled", default=True)
+    return True
 
 
 @dataclass(slots=True)
@@ -144,27 +155,37 @@ class KnowledgeAcquisitionEngine:
             elif action == "compare_patterns":
                 result = self._compare_patterns(frame, legacy_frame=legacy_frame, query=query)
             elif action == "search_web":
-                allowed = bool(_get(permission, "allowed_search", True))
-                if not allowed:
+                if not _search_web_enabled():
                     result = KnowledgeAcquisitionResult(
                         action=action,
                         query=query,
                         attempted=False,
                         succeeded=False,
                         deferred=False,
-                        error="permission_denied",
+                        error="disabled_by_runtime_settings",
                     )
-                elif self.eager_external_io:
-                    result = self._execute_web(runtime_owner, frame=frame, query=query)
                 else:
-                    result = KnowledgeAcquisitionResult(
-                        action=action,
-                        query=query,
-                        attempted=False,
-                        succeeded=False,
-                        deferred=True,
-                        system_action="search_web",
-                    )
+                    allowed = bool(_get(permission, "allowed_search", True))
+                    if not allowed:
+                        result = KnowledgeAcquisitionResult(
+                            action=action,
+                            query=query,
+                            attempted=False,
+                            succeeded=False,
+                            deferred=False,
+                            error="permission_denied",
+                        )
+                    elif self.eager_external_io:
+                        result = self._execute_web(runtime_owner, frame=frame, query=query)
+                    else:
+                        result = KnowledgeAcquisitionResult(
+                            action=action,
+                            query=query,
+                            attempted=False,
+                            succeeded=False,
+                            deferred=True,
+                            system_action="search_web",
+                        )
             else:
                 result = KnowledgeAcquisitionResult(action=action, query=query)
         except Exception as exc:
@@ -235,6 +256,10 @@ class KnowledgeAcquisitionEngine:
         return result
 
     def _execute_web(self, runtime_owner: Any, *, frame: Any, query: str) -> KnowledgeAcquisitionResult:
+        if not _search_web_enabled():
+            return KnowledgeAcquisitionResult(
+                action="search_web", query=query, attempted=False, error="disabled_by_runtime_settings"
+            )
         executor = _get(runtime_owner, "action_executor", None)
         execute = _get(executor, "execute", None)
         if not callable(execute):

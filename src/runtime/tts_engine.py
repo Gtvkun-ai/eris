@@ -146,15 +146,12 @@ def _remote_provider_is_gemini() -> bool:
 
 
 def _prelocalize_japanese_enabled() -> bool:
-    raw = os.environ.get("ERIS_TTS_PRELOCALIZE_JA")
-    if raw is not None and str(raw).strip():
-        return str(raw).strip().lower() in {"1", "true", "yes", "on"}
-    try:
-        from runtime.runtime_settings_store import runtime_bool
-
-        return runtime_bool("tts", "stage_localize", default=True)
-    except Exception:
-        return True
+    return os.environ.get("ERIS_TTS_PRELOCALIZE_JA", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _local_tts_fallback_enabled() -> bool:
@@ -1091,7 +1088,20 @@ def _apply_output_volume(wav_bytes: bytes) -> bytes:
         return wav_bytes
 
 
-def _play_wav_winsound(wav_bytes: bytes, stop_event: threading.Event) -> bool:
+def _notify_playback_started(callback) -> None:
+    if callback is None:
+        return
+    try:
+        callback()
+    except Exception as exc:
+        logger.debug("[TTS] playback start callback failed: %s", exc)
+
+
+def _play_wav_winsound(
+    wav_bytes: bytes,
+    stop_event: threading.Event,
+    on_started=None,
+) -> bool:
     if os.name != "nt":
         return False
     try:
@@ -1100,6 +1110,7 @@ def _play_wav_winsound(wav_bytes: bytes, stop_event: threading.Event) -> bool:
 
         duration = max(0.05, _wav_duration_seconds(wav_bytes))
         winsound.PlaySound(wav_bytes, winsound.SND_MEMORY | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+        _notify_playback_started(on_started)
         started_at = time.time()
         while (time.time() - started_at) < duration:
             if stop_event.is_set():
@@ -1112,10 +1123,10 @@ def _play_wav_winsound(wav_bytes: bytes, stop_event: threading.Event) -> bool:
         return False
 
 
-def _play_wav_bytes(wav_bytes: bytes, stop_event: threading.Event) -> None:
+def _play_wav_bytes(wav_bytes: bytes, stop_event: threading.Event, on_started=None) -> None:
     """Phát WAV bytes qua backend phù hợp. Windows ưu tiên winsound."""
     wav_bytes = _apply_output_volume(wav_bytes)
-    if _play_wav_winsound(wav_bytes, stop_event):
+    if _play_wav_winsound(wav_bytes, stop_event, on_started=on_started):
         return
     try:
         import sounddevice as sd
@@ -1137,6 +1148,7 @@ def _play_wav_bytes(wav_bytes: bytes, stop_event: threading.Event) -> None:
         chunk_size = sr // 10  # 100ms mỗi chunk
         idx = 0
         with sd.OutputStream(samplerate=sr, channels=channels, dtype="float32") as stream:
+            _notify_playback_started(on_started)
             while idx < len(arr) and not stop_event.is_set():
                 end = min(idx + chunk_size, len(arr))
                 stream.write(arr[idx:end])
@@ -1144,13 +1156,13 @@ def _play_wav_bytes(wav_bytes: bytes, stop_event: threading.Event) -> None:
 
     except ImportError:
         # Fallback: miniaudio
-        _play_wav_miniaudio(wav_bytes, stop_event)
+        _play_wav_miniaudio(wav_bytes, stop_event, on_started=on_started)
     except Exception as exc:
         logger.warning("[TTS] sounddevice playback lỗi, fallback miniaudio: %s", exc)
-        _play_wav_miniaudio(wav_bytes, stop_event)
+        _play_wav_miniaudio(wav_bytes, stop_event, on_started=on_started)
 
 
-def _play_wav_miniaudio(wav_bytes: bytes, stop_event: threading.Event) -> None:
+def _play_wav_miniaudio(wav_bytes: bytes, stop_event: threading.Event, on_started=None) -> None:
     """Phát WAV qua miniaudio (không cần sounddevice)."""
     import miniaudio
 
@@ -1176,6 +1188,7 @@ def _play_wav_miniaudio(wav_bytes: bytes, stop_event: threading.Event) -> None:
     )
     with device:
         device.start(stream)
+        _notify_playback_started(on_started)
         import time
         while device.is_active() and not stop_event.is_set():
             time.sleep(0.05)
@@ -1831,10 +1844,10 @@ class TtsEngine:
         )
         return self._worker.synthesize(req)
 
-    def play_audio(self, wav_bytes: bytes, stop_event: threading.Event) -> None:
-        """Backend API mới: phát WAV bytes, có cờ dừng từ task manager."""
+    def play_audio(self, wav_bytes: bytes, stop_event: threading.Event, on_started=None) -> None:
+        """Phát WAV và báo mốc thiết bị playback đã thật sự được khởi động."""
         if wav_bytes:
-            _play_wav_bytes(wav_bytes, stop_event)
+            _play_wav_bytes(wav_bytes, stop_event, on_started=on_started)
 
     def fallback_health_snapshot(self) -> dict[str, dict]:
         """Health của từng fallback provider để canary không coi TTS là một cục đen."""

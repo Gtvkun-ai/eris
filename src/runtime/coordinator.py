@@ -1964,8 +1964,33 @@ class RuntimeCoordinator(
             self.logger.warning("[deception] Không thể ghi lời đấu khẩu: %s", exc)
             return False
 
+    def _stage_channel_blocked(self, channel: str, *, requester_id: str = "") -> bool:
+        try:
+            from runtime.stage_ownership import stage_channel_blocked
+            return stage_channel_blocked(self, channel, requester_id=requester_id)
+        except Exception:
+            return False
+
+    def _cancel_scripted_take_for_user_input(self, reason: str) -> bool:
+        runtime = getattr(self, "scripted_take_runtime", None)
+        if runtime is None:
+            return False
+        status_getter = getattr(runtime, "status", None)
+        status = status_getter() if callable(status_getter) else None
+        if str(getattr(status, "state", "") or "") not in {"starting", "running"}:
+            return False
+        cancel = getattr(runtime, "cancel", None)
+        return bool(cancel(reason)) if callable(cancel) else False
+
     #Hàm này dựng text context để đưa vào prompt LLM.
     def _send_decision_to_body(self, decision: Decision, *, channel: str | None = None) -> None:
+        channel_name = str(channel or "").strip().lower()
+        if channel_name and self._stage_channel_blocked(channel_name):
+            self.logger.info(
+                "[stage ownership] suppressed channel=%s text=%r",
+                channel_name, str(getattr(decision, "text", "") or "")[:120],
+            )
+            return
         self._record_banter_capability_deception(decision)
         payload = decision.to_payload()
         payload.update(self._build_body_bias_payload())
@@ -1979,7 +2004,6 @@ class RuntimeCoordinator(
             self.private_life_digest = private_life_digest
         payload["emotion_debug"] = self._build_emotion_debug_payload()
         payload["depth_v2"] = self._build_depth_v2_block(private_mind_digest=full_private_digest)
-        channel_name = str(channel or "").strip().lower()
         if channel_name == "autonomous":
             plan = getattr(self, "last_autonomous_plan", None)
             if plan is not None:
@@ -4835,7 +4859,7 @@ class RuntimeCoordinator(
                 self._note_autonomous_spoken(now=spoken_at)
                 self._block_autonomous_presence_after_public_turn(now=spoken_at)
                 self.logger.info('[session_ritual] sent LLM greeting text="%s"', decision.text)
-                self._send_decision_to_body(decision)
+                self._send_decision_to_body(decision, channel="autonomous")
 
         updated_state = self.internal_state_engine.commit_session_ritual(
             internal_state,
@@ -6425,6 +6449,7 @@ class RuntimeCoordinator(
             return
 
         if msg_type == "chat":
+            self._cancel_scripted_take_for_user_input("user_chat")
             user_text = str(msg.get("message", "") or "").strip()
             user_timestamp = float(msg.get("timestamp") or time.time())
             self._capture_speech_interrupt_for_user(user_text, timestamp=user_timestamp)
@@ -6435,6 +6460,7 @@ class RuntimeCoordinator(
             return
 
         if msg_type == "force_speak":
+            self._cancel_scripted_take_for_user_input("user_force_speak")
             self._handle_force_speak_request()
             return
 
@@ -8920,7 +8946,7 @@ class RuntimeCoordinator(
         self._set_cognitive_memory_update(frame, decision=decision, notes=(note,))
         self._commit_internal_state_for_frame(frame, snapshot=snapshot, ti_report=ti_report)
         self._finalize_cognitive_frame(frame)
-        self._send_decision_to_body(decision)
+        self._send_decision_to_body(decision, channel="autonomous")
         elapsed = time.time() - cycle_start
         sleep_duration = self._choose_autonomous_sleep_duration(
             suppressed=False,
@@ -9401,7 +9427,7 @@ class RuntimeCoordinator(
         if not msg:
             return False
         self._handle_incoming(msg)
-        return self.chat_mode or not self.running
+        return self.chat_mode or not self.running or self._stage_channel_blocked("autonomous")
 
     def _conversation_went_stale(self) -> bool:
         """True nếu đang chat_mode nhưng lượt user cuối đã hết "tươi".
@@ -9437,6 +9463,10 @@ class RuntimeCoordinator(
         msg = self.transport.poll_json()
         if msg:
             self._handle_incoming(msg)
+
+        if self._stage_channel_blocked("autonomous"):
+            time.sleep(0.10)
+            return True
 
         if self.chat_mode:
             if self._conversation_went_stale():
@@ -9782,7 +9812,7 @@ class RuntimeCoordinator(
                     motion_decision.motion_facing,
                     ti_report.mode,
                 )
-                self._send_decision_to_body(motion_decision)
+                self._send_decision_to_body(motion_decision, channel="autonomous")
                 elapsed = time.time() - cycle_start
                 sleep_duration = self._choose_autonomous_sleep_duration(
                     suppressed=True,

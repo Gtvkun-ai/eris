@@ -4,6 +4,11 @@ from __future__ import annotations
 from typing import Any
 from runtime.canonical_cognition import PermissionReport, CanonicalTheoryOfMindReport, RelationalState, InquiryPlan
 
+try:
+    from runtime.runtime_settings_store import runtime_bool
+except Exception:  # pragma: no cover - permission engine should stay usable in isolation
+    runtime_bool = None
+
 
 def _get(obj: Any, name: str, default: Any = None) -> Any:
     if obj is None:
@@ -30,9 +35,12 @@ class PermissionEngine:
         overread_brake = tom.global_overread_risk > 0.62 or tom.global_confidence < 0.42
         memory_storable = not has_sensitive and explicit_user_chat
         raw_storable = False
-        allowed_search = inquiry.action == "search_web" and explicit_user_chat
+        search_enabled = True
+        if callable(runtime_bool):
+            search_enabled = runtime_bool("capabilities", "search_web_enabled", default=True)
+        allowed_search = search_enabled and inquiry.action == "search_web" and explicit_user_chat
         if knowledge is not None and bool(_get(knowledge, "succeeded", False)):
-            allowed_search = True
+            allowed_search = bool(search_enabled)
         tease = relation.teasing_permission > 0.48 and relation.repair_need < 0.25 and not overread_brake
         proactivity = str(_get(frame, "channel", "")) != "chat" and relation.trust > 0.45 and relation.repair_need < 0.35
         max_intensity = _clamp(0.68 - relation.privacy_sensitivity * 0.22 - relation.repair_need * 0.35 - (0.18 if overread_brake else 0.0), 0.42)
@@ -52,6 +60,8 @@ class PermissionEngine:
             reason_bits.append("overread brake")
         if relation.repair_need > 0.35:
             reason_bits.append("repair priority")
+        if not search_enabled and inquiry.action == "search_web":
+            reason_bits.append("search web disabled")
         return PermissionReport(
             public_sayable=public_sayable,
             prompt_sayable=public_sayable,

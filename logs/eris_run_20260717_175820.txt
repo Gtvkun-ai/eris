@@ -1,0 +1,106 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-17 17:58:20
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+17:58:21.313 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+17:58:21.313 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+17:58:21.339 [INFO] [Vision] Da khoi chay vision.py PID=14240
+17:58:23.631 [INFO] [vision.py] [LLM][INFO] Social parser client sẵn sàng: llama-3.1-8b-instant
+17:58:23.631 [INFO] [vision.py] [LLM][INFO] Social deliberator/critic client sẵn sàng: qwen/qwen3-32b
+17:58:24.271 [INFO] [vision.py] [Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=1
+17:58:24.274 [INFO] [vision.py] [Loop][INFO] [vtuber-stage] loaded version=vtuber_stage.v11 phases=8,9,10,11 status=intention_authority_ready session=stage_08f174f5f0e04005
+17:58:24.280 [INFO] [vision.py] [Loop][INFO] [internal-cognitive] loaded version=internal_cognitive.v1.0 capabilities=8 status=read_only_verified
+17:58:24.289 [INFO] [vision.py] [Loop][INFO] [project-ops] loaded version=project_operations.v1.1 capabilities=15 mode=autonomous_project_scope
+17:58:24.289 [INFO] [vision.py] [Loop][INFO] [workspace] eris_home=[đường dẫn nội bộ đã ẩn] active=none implicit_source_repo=false
+17:58:24.910 [INFO] [vision.py] [Loop][INFO] [social cognition v2] loaded version=social_cognition.v2.0 parser=llama-3.1-8b-instant critic=qwen/qwen3-32b
+17:58:25.460 [INFO] [vision.py] [Loop][INFO] [environment-capability] loaded version=environment_capability.v1.0 capabilities=6 status=read_only_verified
+17:58:31.238 [INFO] [Settings] Đang đọc trạng thái hai key pool...
+17:58:45.921 [INFO] [vision.py] [Loop][INFO] [startup] greeting=qwen_dynamic tone=quiet_background mode=hybrid
+17:58:46.557 [INFO] [Settings] Đã đọc trạng thái key pool thật từ Brain.
+17:58:58.412 [INFO] [vision.py] [Loop][INFO] [screen text] worker started backend=lazy-auto poll=1.2s
+17:58:58.597 [INFO] [vision.py] [Loop][INFO] [screen text] OCR backend resolved=uia_only
+17:58:59.529 [INFO] [vision.py] [Loop][INFO] [autonomous stage] scene=private_active opportunity=none permit=False/suppress reason=no_opportunity
+17:58:59.903 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=1 grounded=0 contradictions=no_direct_sensor_evidence,generic_or_content_free_claim unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+17:58:59.903 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+17:58:59.961 [INFO] [vision.py] [Loop][INFO] [wake route] level=call_vision_compressor reason=wake_governor_vision_only body_update=True sleep=5s
+17:58:59.961 [INFO] [vision.py] [Loop][INFO] Hoàn tất chu kỳ wake-gated trong 0.93s. Nghỉ 5s.
+17:59:01.809 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=1 concerns=1 judgment=yes confidence=0.53 pressure=0.32 surface=no mutations=2
+17:59:06.676 [INFO] [vision.py] [Loop][INFO] [autonomous stage] scene=private_active opportunity=none permit=False/suppress reason=no_opportunity
+17:59:06.761 [INFO] [vision.py] [Loop][INFO] [presence] wake=observe_only source=wake_governor_observe_only micro_presence=True reengagement_checked=True presence_allowed=False reengagement_allowed=False
+17:59:06.762 [INFO] [vision.py] [Loop][INFO] [presence.micro] stage=pre_gate owner=presence_probe checked=True candidate=True allowed=False rejected_by=presence_blocked_until generation_mode=none
+17:59:06.762 [INFO] [vision.py] [Loop][INFO] [presence.reengagement] stage=pre_gate owner=reengagement_probe checked=True candidate=True allowed=False rejected_by=presence_blocked_until generation_mode=none
+17:59:06.763 [INFO] [vision.py] [Loop][INFO] [presence.surface] stage=pre_gate micro=reject:presence_blocked_until reengagement=reject:presence_blocked_until final=no_surface final_rejected_by=presence_blocked_until
+17:59:06.836 [INFO] [vision.py] [Loop][INFO] [wake route] level=observe_only reason=wake_governor_observe_only body_update=False sleep=15s
+17:59:06.837 [INFO] [vision.py] [Loop][INFO] Hoàn tất chu kỳ wake-gated trong 0.66s. Nghỉ 15s.
+17:59:10.582 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=1 reason=enter_chat_mode
+17:59:10.583 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+17:59:16.616 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 45s (post-chat grace).
+17:59:17.010 [INFO] [vision.py] [Loop][INFO] [social cognition v2] move=natural_reply hypotheses=normal_chat:1.00 ambiguity=0.12 anger=0 failed_claim=none source=llama_social_parser+deterministic_anchors
+17:59:18.701 [INFO] [vision.py] [Loop][INFO] [ni light] mode=chat | local=0.00 | drift=0.08/thấp | conf=0.45 | reason=claim_guarded|focus_pattern_drift
+17:59:19.900 [INFO] [vision.py] [Loop][INFO] [shadow pipeline] budget=normal | v3_focus='có gì vui hôm nay không eris' | old_focus='có gì vui hôm nay không eris' | overlap=1.00 | ev=4 | 686.0ms
+17:59:19.916 [INFO] [vision.py] [Loop][INFO] Người dùng: có gì vui hôm nay không eris
+17:59:19.916 [INFO] [vision.py] [Loop][INFO] [ni chat] drift=0.08 | level=thấp | state=ON_GOAL | streak=1
+17:59:19.917 [INFO] [vision.py] [Loop][INFO] [ti chat] mode=chat_general | reason=Duy trì đối thoại trong giới hạn runtime.
+17:59:19.917 [INFO] [vision.py] [Loop][INFO] [fe chat] mode=grounded | tone=surface=cold_soft; stance=observant_guarded; attachment=guarded; instability=stable | intent=ordinary_dialogue | arc=quiet_observation
+17:59:20.393 [INFO] [vision.py] [Loop][INFO] [conversation dynamics] mode=settled | tension=0.00 | pressure=0.00 | flags=maintain_rhythm
+17:59:20.394 [INFO] [vision.py] [Loop][INFO] [relationship dynamics] event=repair:softens_rupture | trust=0.38 | familiarity=1.00 | attachment_vis=0.28 | rupture=0.10 | distance=1.00 | notes=engagement:continued_not_closeness:0.35,repair:softens_rupture
+17:59:20.395 [INFO] [vision.py] [Loop][INFO] [controlled slippage] mode=warm | lane=task | intuition=0.12 | misread=0.08 | notes=overread_correction=1.00,ordinary_chat_warm_floor
+17:59:20.396 [INFO] [vision.py] [Loop][INFO] [turn semantics/pre-grounding] repeated=False | count=1 | intent=none | action=pass_to_llm | spam=0.00 | identity=0.55 | correction=0.00
+17:59:20.400 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference
+17:59:20.408 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+17:59:20.409 [INFO] [vision.py] [Loop][INFO] [turn semantics] repeated=False | count=1 | intent=none | action=pass_to_llm | spam=0.00 | live=0.00 | prior_failure=0.00
+17:59:35.660 [INFO] [vision.py] [Vision][INFO] [CHAT PROMPT V2] prefix=a6df718e6e44 input=1761/3520 output=1280 static=515/560 dynamic=350/350 history=157/500 grounding=260/260 memory=240/240 state=220/220 spare=1390
+17:59:35.669 [INFO] [vision.py] [Vision][INFO] [LLM FINAL PROMPT] channel=chat stage=initial
+17:59:42.305 [INFO] [vision.py] [Vision][INFO] [chat reasoning] chars=0 content_chars=495 finish_reason=stop prompt_tokens=1333 completion_tokens=132
+17:59:42.305 [INFO] [vision.py] [Vision][INFO] [chat raw_api_text] {"text":"Có chứ: bạn vừa gọi tôi, vậy là hôm nay đã bớt nhạt một chút rồi.","intent":"social_chat","action":"respond","animation":"soft_smile","reasoning_tags":["light_social","thin_evidence"],"should_speak":true,"confidence":0.78,"direction":"center","target_x":0,"bounce_action":"none","extracted_fact":"","debug_trace":"light reply, no current claims","next_animation":"idle","system_action":"","action_input":"","delivery_hint":"warm_dry","nonverbal_cue":"small smile","stage_motion":"none"}
+17:59:42.306 [INFO] [vision.py] [Loop][INFO] [chat pre_parser] raw={"text": "Có chứ: bạn vừa gọi tôi, vậy là hôm nay đã bớt nhạt một chút rồi.", "intent": "social_chat", "action": "respond", "reasoning_tags": ["light_social", "thin_evidence"], "should_speak": true, "confidence": 0.78, "animation": "stand", "direction": 0, "target_x": -1.0, "bounce_action": "", "extracted_fact": "", "d...
+17:59:42.316 [INFO] [vision.py] [Loop][INFO] [chat after_parser] text="Có chứ: bạn vừa gọi tôi, vậy là hôm nay đã bớt nhạt một chút rồi." | animation=stand | parse_mode=json | trace=light reply, no current claims | LlmService sanitized decision-like JSON before parser. | parser=parse_mode=json | capability_violation=không phát hiện | grounding=không cần viết lại
+17:59:42.316 [INFO] [vision.py] [Loop][INFO] [chat pre_ti] text="Có chứ: bạn vừa gọi tôi, vậy là hôm nay đã bớt nhạt một chút rồi." | animation=stand | parse_mode=json | trace=light reply, no current claims | LlmService sanitized decision-like JSON before parser. | parser=parse_mode=json | capability_violation=không phát hiện | grounding=không cần viết lại
+17:59:42.328 [INFO] [vision.py] [Loop][INFO] [chat after_ti] text="Có chứ: bạn vừa gọi tôi, vậy là hôm nay đã bớt nhạt một chút rồi." | animation=stand | parse_mode=json | trace=light reply, no current claims | LlmService sanitized decision-like JSON before parser. | Ti guard_mode=log_only | Ti mode=chat_general | parser=parse_mode=json | capability_violation=không phát hiện | grounding=không cần viết lại
+17:59:45.184 [INFO] [vision.py] [Vision][INFO] [CHAT PROMPT V2] prefix=a6df718e6e44 input=1761/3520 output=1280 static=515/560 dynamic=350/350 history=157/500 grounding=260/260 memory=240/240 state=220/220 spare=1390
+17:59:45.200 [INFO] [vision.py] [Vision][INFO] [LLM FINAL PROMPT] channel=chat stage=initial
+17:59:49.832 [INFO] [vision.py] [Vision][INFO] [chat reasoning] chars=0 content_chars=558 finish_reason=stop prompt_tokens=1325 completion_tokens=174
+17:59:49.832 [INFO] [vision.py] [Vision][INFO] [chat raw_api_text] {"text":"Có chứ: hôm nay bạn vừa gọi tôi, thế là ngày này bớt vô danh đi một chút rồi. Còn tin vui khách quan thì tôi không có dữ kiện để bịa ra.","intent":"social_checkin","action":"reply","animation":"idle","reasoning_tags":["grounded","warm","lightly_dry"],"should_speak":true,"confidence":0.8,"direction":"center","target_x":null,"bounce_action":"none","extracted_fact":null,"debug_trace":"thin evidence, social reply","next_animation":"idle","system_action":"","action_input":"","delivery_hint":"calm","nonverbal_cue":"soft_pause","stage_motion":"none"}
+17:59:49.839 [INFO] [vision.py] [Loop][INFO] [chat after_escalation] text="Có chứ: hôm nay bạn vừa gọi tôi, thế là ngày này bớt vô danh đi một chút rồi. Còn tin vui khách quan thì tôi không có dữ kiện để bịa ra." | animation=stand | parse_mode=json | trace=thin evidence, social reply | LlmService sanitized decision-like JSON before parser. | Ti guard_mode=log_only | Ti mode=chat_general | qwen_constrained_rerun | parser=parse_mode=json | capability_violation=không phát hiện | grounding=không cần viết lại
+17:59:51.004 [INFO] [vision.py] [Loop][INFO] [director final] trace=9997b89a95a2 scene=social_sidecar candidates=1 selected=0 action=keep text='Chưa cấu hình API key riêng cho search_web.'
+17:59:52.213 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=0 60s vì tts_http_429; alive=9/10
+17:59:52.213 [INFO] [vision.py] [TTS][WARNING] [TTS] Key index 0 bị rate limit/hết quota (lượt 1/2).
+17:59:53.149 [INFO] [vision.py] [Loop][INFO] [cognitive_frame] id=chat-2 | channel=chat | broadcast=user_message:0.52 | speech=freeform/mirror | appraisal=tender_under_cold | action=user_requested/mirror | final=Chưa cấu hình API key riêng cho search_web. | commits=6/6 rejected=0 errors=0
+17:59:53.149 [INFO] [vision.py] [Loop][INFO] ERIS: Chưa cấu hình API key riêng cho search_web.
+18:00:06.657 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 45s (post-chat grace).
+18:00:07.710 [INFO] [vision.py] [Loop][INFO] [social cognition v2] move=natural_reply hypotheses=normal_chat:1.00 ambiguity=0.12 anger=0 failed_claim=none source=llama_social_parser+deterministic_anchors
+18:00:09.844 [INFO] [vision.py] [Loop][INFO] [ni light] mode=chat | local=0.00 | drift=0.08/thấp | conf=0.45 | reason=claim_guarded|focus_pattern_drift
+18:00:11.441 [INFO] [vision.py] [Loop][INFO] [shadow pipeline] budget=normal | v3_focus='có gì vui hôm nay không eris' | old_focus='thought=thought_694484; mode=memory_replay; topic=memory_replay:unresolved_memory_failed_candidate_failed_importance' | overlap=0.00 | ev=4 | 958.7ms
+18:00:11.460 [INFO] [vision.py] [Loop][INFO] Người dùng: có gì vui hôm nay không eris
+18:00:11.460 [INFO] [vision.py] [Loop][INFO] [ni chat] drift=0.08 | level=thấp | state=ON_GOAL | streak=1
+18:00:11.460 [INFO] [vision.py] [Loop][INFO] [ti chat] mode=chat_general | reason=Duy trì đối thoại trong giới hạn runtime.
+18:00:11.461 [INFO] [vision.py] [Loop][INFO] [fe chat] mode=grounded | tone=surface=cold_soft; stance=observant_guarded; attachment=guarded; instability=stable | intent=ordinary_dialogue | arc=quiet_observation
+18:00:11.960 [INFO] [vision.py] [Loop][INFO] [conversation dynamics] mode=settled | tension=0.00 | pressure=0.00 | flags=maintain_rhythm
+18:00:11.961 [INFO] [vision.py] [Loop][INFO] [relationship dynamics] event=repair:softens_rupture | trust=0.38 | familiarity=1.00 | attachment_vis=0.28 | rupture=0.08 | distance=1.00 | notes=engagement:continued_not_closeness:0.35,repair:softens_rupture
+18:00:11.962 [INFO] [vision.py] [Loop][INFO] [controlled slippage] mode=warm | lane=task | intuition=0.12 | misread=0.08 | notes=overread_correction=1.00,ordinary_chat_warm_floor
+18:00:11.963 [INFO] [vision.py] [Loop][INFO] [turn semantics/pre-grounding] repeated=False | count=1 | intent=none | action=pass_to_llm | spam=0.00 | identity=0.55 | correction=0.00
+18:00:11.969 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference
+18:00:11.975 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+18:00:11.975 [INFO] [vision.py] [Loop][INFO] [turn semantics] repeated=False | count=1 | intent=none | action=pass_to_llm | spam=0.00 | live=0.00 | prior_failure=0.00
+18:00:12.120 [INFO] [vision.py] [Vision][INFO] [CHAT PROMPT V2] prefix=a6df718e6e44 input=1793/3520 output=1280 static=515/560 dynamic=350/350 history=188/500 grounding=260/260 memory=240/240 state=220/220 spare=1390
+18:00:12.130 [INFO] [vision.py] [Vision][INFO] [LLM FINAL PROMPT] channel=chat stage=initial
+18:00:17.811 [INFO] [vision.py] [Vision][INFO] [chat reasoning] chars=0 content_chars=515 finish_reason=stop prompt_tokens=1363 completion_tokens=205
+18:00:17.811 [INFO] [vision.py] [Vision][INFO] [chat raw_api_text] {"text":"Có chứ: bạn vừa quay lại hỏi tôi một câu nhẹ tênh—thế là hôm nay bớt nghiêm trọng đi một chút.","intent":"social_chat","action":"respond","animation":"idle","reasoning_tags":["grounded","warm","no_web"],"should_speak":true,"confidence":0.78,"direction":"center","target_x":0,"bounce_action":"none","extracted_fact":null,"debug_trace":"light social reply","next_animation":"idle","system_action":"","action_input":null,"delivery_hint":"soft, lightly dry","nonverbal_cue":"small smile","stage_motion":"none"}
+18:00:17.812 [INFO] [vision.py] [Loop][INFO] [chat pre_parser] raw={"text": "Có chứ: bạn vừa quay lại hỏi tôi một câu nhẹ tênh—thế là hôm nay bớt nghiêm trọng đi một chút.", "intent": "social_chat", "action": "respond", "reasoning_tags": ["grounded", "warm", "no_web"], "should_speak": true, "confidence": 0.78, "animation": "stand", "direction": 0, "target_x": -1.0, "bounce_action": ""...
+18:00:17.827 [INFO] [vision.py] [Loop][INFO] [chat after_parser] text="Có chứ: bạn vừa quay lại hỏi tôi một câu nhẹ tênh—thế là hôm nay bớt nghiêm trọng đi một chút." | animation=stand | parse_mode=json | trace=light social reply | LlmService sanitized decision-like JSON before parser. | parser=parse_mode=json | capability_violation=không phát hiện | grounding=không cần viết lại
+18:00:17.827 [INFO] [vision.py] [Loop][INFO] [chat pre_ti] text="Có chứ: bạn vừa quay lại hỏi tôi một câu nhẹ tênh—thế là hôm nay bớt nghiêm trọng đi một chút." | animation=stand | parse_mode=json | trace=light social reply | LlmService sanitized decision-like JSON before parser. | parser=parse_mode=json | capability_violation=không phát hiện | grounding=không cần viết lại
+18:00:17.840 [INFO] [vision.py] [Loop][INFO] [chat after_ti] text="Có chứ: bạn vừa quay lại hỏi tôi một câu nhẹ tênh—thế là hôm nay bớt nghiêm trọng đi một chút." | animation=stand | parse_mode=json | trace=light social reply | LlmService sanitized decision-like JSON before parser. | Ti guard_mode=log_only | Ti mode=chat_general | parser=parse_mode=json | capability_violation=không phát hiện | grounding=không cần viết lại
+18:00:22.159 [INFO] [vision.py] [Vision][INFO] [CHAT PROMPT V2] prefix=a6df718e6e44 input=1793/3520 output=1280 static=515/560 dynamic=350/350 history=188/500 grounding=260/260 memory=240/240 state=220/220 spare=1390
+18:00:22.169 [INFO] [vision.py] [Vision][INFO] [LLM FINAL PROMPT] channel=chat stage=initial
+18:00:27.414 [INFO] [vision.py] [Vision][INFO] [chat reasoning] chars=0 content_chars=605 finish_reason=stop prompt_tokens=1355 completion_tokens=203
+18:00:27.414 [INFO] [vision.py] [Vision][INFO] [chat raw_api_text] {"text":"Chưa có nguồn tin trực tiếp để báo bạn chuyện ngoài kia, nhưng tin vui nhỏ là bạn vừa ghé qua gọi tôi. Muốn tôi bịa một mẩu vui tử tế, hay cùng bạn kiếm một việc đáng làm hôm nay?","intent":"social_check_in","action":"respond","animation":"idle_warm","reasoning_tags":["thin_evidence","social"],"should_speak":true,"confidence":0.8,"direction":"center","target_x":0,"bounce_action":"none","extracted_fact":null,"debug_trace":"warm check-in, no live news","next_animation":"idle","system_action":"","action_input":{},"delivery_hint":"gentle","nonverbal_cue":"soft_attention","stage_motion":"none"}
+18:00:27.421 [INFO] [vision.py] [Loop][INFO] [chat after_escalation] text="Chưa có nguồn tin trực tiếp để báo bạn chuyện ngoài kia, nhưng tin vui nhỏ là bạn vừa ghé qua gọi tôi. Muốn tôi bịa một mẩu vui tử tế, hay cùng bạn kiếm một việc đáng làm hôm nay?" | animation=stand | parse_mode=json | trace=warm check-in, no live news | LlmService sanitized decision-like JSON before parser. | Ti guard_mode=log_only | Ti mode=chat_general | qwen_constrained_rerun | parser=parse_mode=json | capability_violation=không phát hiện | grounding=không cần viết lại
+18:00:28.708 [INFO] [vision.py] [Loop][INFO] [director final] trace=92f7949672cb scene=social_sidecar candidates=1 selected=0 action=keep text='Chưa cấu hình API key riêng cho search_web.'
+18:00:31.365 [INFO] [vision.py] [Loop][INFO] [cognitive_frame] id=chat-3 | channel=chat | broadcast=cognitive_momentum:0.45 | speech=freeform/mirror | appraisal=tender_under_cold | action=user_requested/mirror | final=Chưa cấu hình API key riêng cho search_web. | commits=8/8 rejected=0 errors=0
+18:00:31.365 [INFO] [vision.py] [Loop][INFO] ERIS: Chưa cấu hình API key riêng cho search_web.
+18:00:40.920 [INFO] [Vision] Dang dung vision.py PID=14240...
+18:00:40.937 [INFO] [Vision] vision.py da thoat (PID=14240, code=-1, unexpected=False).
+18:00:40.965 [INFO] [RunLogger] Ket thuc phien chay.

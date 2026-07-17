@@ -34,7 +34,7 @@
     "media_enabled": true,
     "copy_text_enabled": true,
     "open_url_enabled": true,
-    "search_web_enabled": true,
+    "search_web_enabled": false,
     "weather_enabled": true,
     "now_playing_enabled": true
   },
@@ -75,6 +75,15 @@
   },
   "pipeline": {
     "v3_enabled": true
+  },
+  "tutor": {
+    "enabled": true,
+    "quick_search_enabled": false,
+    "research_enabled": false,
+    "self_search_enabled": false,
+    "low_confidence_clarify_threshold": 0.55,
+    "stale_result_guard_enabled": true,
+    "persist_research_memory": false
   },
   "hardening": {
     "profile": "development",

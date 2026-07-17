@@ -25,6 +25,7 @@ from runtime.stage_audio_bus import StageAudioEvent
 from runtime.stage_contracts import StageFrame, StageFrameBuilder
 from runtime.stage_dispatcher import StageDispatcher
 from runtime.stage_output import StageOutputPipeline
+from runtime.stage_ownership import stage_ownership_for
 from runtime.stage_protocol_adapter import playback_event, stage_segment_event, stage_state_event
 from runtime.take_reaction_director import TutorReactionDirector, clean_tutor_answer
 from runtime.workspace_manager import default_eris_home
@@ -238,6 +239,8 @@ class ScriptedTakeRuntime:
         self._status = ScriptedTakeStatus("idle")
         self._active_take_id = ""
         self._open_tutor: tuple[str, int, str] | None = None
+        self._segment_cursors: dict[str, int] = {}
+        self._published_segments: set[tuple[str, int]] = set()
         self.reaction_director = TutorReactionDirector(owner)
 
     def start_file(self, path: str | Path) -> ScriptedTakeStatus:
@@ -250,6 +253,11 @@ class ScriptedTakeRuntime:
             self._active_take_id = take_id
             self._status = ScriptedTakeStatus(
                 "starting", take_id=take_id, title=take.title, source_path=take.source_path,
+            )
+            self._segment_cursors[take_id] = 0
+            self._published_segments = set()
+            stage_ownership_for(self.owner).acquire(
+                owner_id=take_id, kind="scripted_take", blocks=("autonomous",), replace=True,
             )
             thread = threading.Thread(
                 target=self._run_guarded,
@@ -272,19 +280,29 @@ class ScriptedTakeRuntime:
             self._status = ScriptedTakeStatus(
                 "starting", take_id=take_id, title=take.title, source_path=take.source_path,
             )
+            self._segment_cursors[take_id] = 0
+            self._published_segments = set()
+            stage_ownership_for(self.owner).acquire(
+                owner_id=take_id, kind="scripted_take", blocks=("autonomous",), replace=True,
+            )
         self._run_guarded(take, take_id, cancel)
         return self.status()
 
     def cancel(self, reason: str = "cancelled") -> bool:
         with self._lock:
             thread = self._thread
-            active = thread is not None and thread.is_alive()
+            active = (
+                (thread is not None and thread.is_alive())
+                or self._status.state in {"starting", "running"}
+            )
             self._cancel.set()
             active_take_id = self._active_take_id
         self._cancel_tts(reason)
         self._close_open_tutor(expected_take_id=active_take_id)
         if active:
             self._set_status(state="cancelled", error=reason)
+        if active_take_id:
+            stage_ownership_for(self.owner).release(active_take_id)
         return active
 
     def status(self) -> ScriptedTakeStatus:
@@ -354,7 +372,12 @@ class ScriptedTakeRuntime:
             self._emit_take_state("scripted_take_failed", take_id, take, beat_index=current_index, error=str(exc))
             self._set_status(expected_take_id=take_id, state="failed", error=str(exc))
         finally:
+            stage_ownership_for(self.owner).release(take_id)
             with self._lock:
+                self._segment_cursors.pop(take_id, None)
+                self._published_segments = {
+                    key for key in self._published_segments if key[0] != take_id
+                }
                 if self._thread is threading.current_thread():
                     self._thread = None
 
@@ -398,16 +421,27 @@ class ScriptedTakeRuntime:
             # Mỗi JSON beat là một đơn vị đạo diễn. Nếu câu trong beat phải tách
             # thêm, cấp seq liên tục toàn take; không để beat sau quay lại seq=0.
             for subframe in pipeline.frames_for_tts(frame):
-                frames.append(replace(subframe, segment_id=len(frames)))
+                frames.append(replace(subframe, segment_id=self._allocate_segment_id(take_id)))
+
+        segment_count = len(frames)
+        frames = [
+            replace(
+                frame,
+                delivery={
+                    **(dict(frame.delivery or {}) if isinstance(frame.delivery, Mapping) else {}),
+                    "_scripted_segment_count": segment_count,
+                },
+            )
+            for frame in frames
+        ]
 
         engine = self._tts_engine()
         has_tts = engine is not None and bool(getattr(engine, "_ok", False)) and not cancel.is_set()
 
-        # Stage bus được biết trước toàn bộ segment để debug/prefetch. Godot thì
-        # không: text + body timeline chỉ được gửi lúc audio_start của đúng
-        # segment. Nếu phát cả nhóm ngay tại đây, bubble nhảy tới câu cuối và ba
-        # motion chồng lên nhau trước khi Eris kịp nói câu đầu. Rất hiệu quả nếu
-        # mục tiêu là dựng một con rối bị ma nhập, không phải performer.
+        # Không công bố segment nào trong lúc TTS còn synthesize/prefetch.
+        # Text, motion và body timeline chỉ được bước lên sân khấu tại audio_start
+        # của chính segment. Nếu phát cả nhóm tại đây, bubble nhảy tới câu cuối và
+        # motion chồng lên nhau trước khi Eris kịp nói câu đầu.
         self._emit_frames(
             frames,
             take_id=take_id,
@@ -431,7 +465,7 @@ class ScriptedTakeRuntime:
             # Backend TTS vừa mất khả năng queue sau khi ta đã quyết định sync
             # theo audio. Fail mềm về payload thường để take vẫn nhìn thấy được.
             for frame in frames:
-                self._send_frame_to_transport(
+                self._publish_frame(
                     frame, take_id=take_id, title=take.title, sync="dispatch_fallback"
                 )
             self._wait(cancel, sum(max(0, beat.pause_after_ms) for _, beat in group))
@@ -573,17 +607,50 @@ class ScriptedTakeRuntime:
         title: str,
         send_transport: bool = True,
     ) -> None:
-        bus = getattr(self.owner, "stage_event_bus", None)
+        if not send_transport:
+            return
         for frame in frames:
-            if bus is not None:
-                try:
-                    bus.emit(stage_segment_event(frame, segment_count=len(frames)))
-                except Exception:
-                    pass
-            if send_transport:
-                self._send_frame_to_transport(
-                    frame, take_id=take_id, title=title, sync="immediate_no_tts"
-                )
+            self._publish_frame(
+                frame, take_id=take_id, title=title, sync="immediate_no_tts",
+                segment_count=len(frames),
+            )
+
+    def _publish_frame(
+        self,
+        frame: StageFrame,
+        *,
+        take_id: str,
+        title: str,
+        sync: str,
+        segment_count: int | None = None,
+    ) -> bool:
+        """Công bố đúng một lần khi segment thật sự bước lên sân khấu."""
+
+        key = (str(take_id or getattr(frame, "turn_id", "") or ""), int(frame.segment_id))
+        with self._lock:
+            # Callback playback có thể về muộn sau cancel/replaced. Chỉ take đang
+            # thật sự giữ trạng thái running/starting mới được công bố segment.
+            if key[0] != self._active_take_id:
+                return False
+            if self._status.state not in {"starting", "running"}:
+                return False
+            if key in self._published_segments:
+                return False
+            self._published_segments.add(key)
+        count = segment_count
+        if count is None and isinstance(frame.delivery, Mapping):
+            try:
+                count = int(frame.delivery.get("_scripted_segment_count", 1) or 1)
+            except (TypeError, ValueError):
+                count = 1
+        bus = getattr(self.owner, "stage_event_bus", None)
+        if bus is not None:
+            try:
+                bus.emit(stage_segment_event(frame, segment_count=max(1, int(count or 1))))
+            except Exception:
+                pass
+        self._send_frame_to_transport(frame, take_id=take_id, title=title, sync=sync)
+        return True
 
     def _send_frame_to_transport(
         self,
@@ -770,10 +837,11 @@ class ScriptedTakeRuntime:
         if event_type == "audio_start" and frame is not None:
             with self._lock:
                 title = self._status.title
-            self._send_frame_to_transport(
+            self._publish_frame(
                 frame,
                 take_id=str(getattr(frame, "turn_id", "") or self._active_take_id),
                 title=title,
+                sync="audio_start",
             )
         elif event_type in {"thinking_started", "thinking_finished", "continuation_cancelled"}:
             self._send_lifecycle_to_transport(event, frame)
@@ -819,6 +887,12 @@ class ScriptedTakeRuntime:
         if delay_ms <= 0:
             return not cancel.is_set()
         return not cancel.wait(delay_ms / 1000.0)
+
+    def _allocate_segment_id(self, take_id: str) -> int:
+        with self._lock:
+            current = int(self._segment_cursors.get(take_id, 0) or 0)
+            self._segment_cursors[take_id] = current + 1
+            return current
 
     def _set_status(self, *, expected_take_id: str | None = None, **changes: Any) -> None:
         with self._lock:

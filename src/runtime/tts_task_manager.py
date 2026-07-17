@@ -15,6 +15,7 @@ Backend TTS chỉ nên biết cách sinh/phát audio.  Manager này nhận các
 from __future__ import annotations
 
 import hashlib
+import inspect
 import logging
 import os
 import threading
@@ -341,10 +342,6 @@ class TtsTaskManager:
                     previous_emotion=emotion_signature,
                     callback=on_event,
                 )
-                if not first_started:
-                    first_started = True
-                    _call_once(on_first_start)
-
                 with self._lock:
                     if generation != self._generation:
                         break
@@ -352,14 +349,29 @@ class TtsTaskManager:
                     self._pending_tasks.pop(task.key, None)
                     self._pending_callbacks.pop(task.key, None)
 
-                self.audio_bus.emit_lifecycle(
-                    "audio_start",
-                    stage_frame=task.frame,
-                    text=task.text,
-                    turn_segments=turn_segments,
-                    callback=on_event,
+                started_lock = threading.Lock()
+                started = False
+
+                def _mark_audio_started() -> None:
+                    nonlocal started, first_started
+                    with started_lock:
+                        if started:
+                            return
+                        started = True
+                    if not first_started:
+                        first_started = True
+                        _call_once(on_first_start)
+                    self.audio_bus.emit_lifecycle(
+                        "audio_start",
+                        stage_frame=task.frame,
+                        text=task.text,
+                        turn_segments=turn_segments,
+                        callback=on_event,
+                    )
+
+                _play_audio_with_start_callback(
+                    backend, wav_bytes, playback_stop, on_started=_mark_audio_started,
                 )
-                backend.play_audio(wav_bytes, playback_stop)
                 if playback_stop.is_set() or cancel_event.is_set():
                     self.audio_bus.emit_lifecycle(
                         "audio_cancelled",
@@ -521,6 +533,34 @@ class TtsTaskManager:
             limit = _audio_cache_size()
             while len(self._cache) > limit:
                 self._cache.popitem(last=False)
+
+
+def _play_audio_with_start_callback(
+    backend: Any,
+    wav_bytes: bytes,
+    stop_event: threading.Event,
+    *,
+    on_started: Callable[[], None],
+) -> None:
+    """Gọi backend mới tại mốc thiết bị bắt đầu phát, vẫn tương thích backend cũ."""
+
+    player = getattr(backend, "play_audio")
+    supports_callback = False
+    try:
+        params = tuple(inspect.signature(player).parameters.values())
+        supports_callback = (
+            any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params)
+            or any(param.name == "on_started" for param in params)
+        )
+    except (TypeError, ValueError):
+        supports_callback = False
+    if supports_callback:
+        player(wav_bytes, stop_event, on_started=on_started)
+        return
+    # Adapter cũ không có callback. Đây là độ chính xác tốt nhất có thể mà không
+    # bắt tất cả mock/provider cũ đổi chữ ký trong cùng một release.
+    on_started()
+    player(wav_bytes, stop_event)
 
 
 def _audio_asset_candidates(raw_path: str) -> tuple[Path, ...]:

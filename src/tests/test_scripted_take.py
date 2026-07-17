@@ -292,3 +292,109 @@ def test_template_answer_is_cleaned_before_tts():
     assert "**" not in spoken
     assert "Nguồn:" not in spoken
     assert "Côn trùng" in spoken
+
+
+def test_scripted_take_uses_monotonic_segment_ids_across_tutor_boundary():
+    owner = FakeOwner()
+    runtime = ScriptedTakeRuntime(owner)
+    take = ScriptedTakeDefinition(
+        title="Stable sequence",
+        beats=(
+            ScriptedTakeBeat(kind="text", text="Câu mở."),
+            ScriptedTakeBeat(kind="tutor_lookup", query="một câu hỏi"),
+            ScriptedTakeBeat(kind="text", text="Câu sau Tutor."),
+        ),
+    )
+
+    runtime.run_definition(take)
+
+    payloads = [p for p in owner.transport.payloads if p.get("parse_mode") == "scripted_take"]
+    assert [p["stage"]["segment_id"] for p in payloads] == [0, 1]
+
+
+def test_stage_segment_is_not_announced_before_audio_start():
+    owner = FakeOwner()
+    runtime = ScriptedTakeRuntime(owner)
+    builder = __import__("runtime.stage_contracts", fromlist=["StageFrameBuilder"]).StageFrameBuilder(language_hint="vi")
+    frame = builder.build(
+        SimpleNamespace(
+            text="Đúng nhịp.", intent="scripted_take", animation="stand",
+            should_speak=True, delivery_hint="", stage_motion="stand",
+        ),
+        payload={"text": "Đúng nhịp.", "should_speak": True, "scripted_beat": {}},
+        channel="scripted_take",
+        turn_id="take-stage-sync",
+        segment_id=0,
+    )
+    runtime._active_take_id = "take-stage-sync"
+    runtime._status = runtime._status.__class__("running", take_id="take-stage-sync", title="Sync")
+
+    runtime._emit_frames([frame], take_id="take-stage-sync", title="Sync", send_transport=False)
+    assert not [event for event in owner.stage_event_bus.events if event.get("type") == "stage_segment"]
+
+    from runtime.stage_audio_bus import StageAudioEvent
+    runtime._handle_tts_event(
+        StageAudioEvent(type="audio_start", turn_id="take-stage-sync", segment_id=0, text="Đúng nhịp."),
+        frame,
+    )
+    runtime._handle_tts_event(
+        StageAudioEvent(type="audio_start", turn_id="take-stage-sync", segment_id=0, text="Đúng nhịp."),
+        frame,
+    )
+
+    stage_events = [event for event in owner.stage_event_bus.events if event.get("type") == "stage_segment"]
+    payloads = [p for p in owner.transport.payloads if p.get("parse_mode") == "scripted_take"]
+    assert len(stage_events) == 1
+    assert len(payloads) == 1
+
+
+def test_take_holds_and_releases_exclusive_stage_ownership():
+    from runtime.stage_ownership import stage_ownership_for
+
+    class LeaseAwareOwner(FakeOwner):
+        def __init__(self):
+            super().__init__()
+            self.lease_seen = False
+
+        def request_tutor_answer(self, topic, **kwargs):
+            self.lease_seen = stage_ownership_for(self).snapshot().active
+            return super().request_tutor_answer(topic, **kwargs)
+
+    owner = LeaseAwareOwner()
+    runtime = ScriptedTakeRuntime(owner)
+    take = ScriptedTakeDefinition(
+        title="Lease",
+        beats=(ScriptedTakeBeat(kind="tutor_lookup", query="kiểm tra lease"),),
+    )
+
+    runtime.run_definition(take)
+
+    assert owner.lease_seen is True
+    assert stage_ownership_for(owner).snapshot().active is False
+
+
+def test_cancelled_take_rejects_late_audio_start_callback():
+    owner = FakeOwner()
+    runtime = ScriptedTakeRuntime(owner)
+    builder = __import__("runtime.stage_contracts", fromlist=["StageFrameBuilder"]).StageFrameBuilder(language_hint="vi")
+    frame = builder.build(
+        SimpleNamespace(
+            text="Không được xuất hiện muộn.", intent="scripted_take", animation="stand",
+            should_speak=True, delivery_hint="", stage_motion="stand",
+        ),
+        payload={"text": "Không được xuất hiện muộn.", "should_speak": True, "scripted_beat": {}},
+        channel="scripted_take",
+        turn_id="take-cancelled",
+        segment_id=0,
+    )
+    runtime._active_take_id = "take-cancelled"
+    runtime._status = runtime._status.__class__("cancelled", take_id="take-cancelled", title="Cancelled")
+
+    from runtime.stage_audio_bus import StageAudioEvent
+    runtime._handle_tts_event(
+        StageAudioEvent(type="audio_start", turn_id="take-cancelled", segment_id=0, text=frame.tts_text),
+        frame,
+    )
+
+    assert not [event for event in owner.stage_event_bus.events if event.get("type") == "stage_segment"]
+    assert not [payload for payload in owner.transport.payloads if payload.get("parse_mode") == "scripted_take"]

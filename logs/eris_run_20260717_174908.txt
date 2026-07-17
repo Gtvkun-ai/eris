@@ -1,0 +1,22 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-17 17:49:08
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+17:49:09.945 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+17:49:09.945 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+17:49:10.000 [INFO] [Vision] Da khoi chay vision.py PID=22360
+17:49:12.634 [INFO] [vision.py] [LLM][INFO] Social parser client sẵn sàng: llama-3.1-8b-instant
+17:49:12.634 [INFO] [vision.py] [LLM][INFO] Social deliberator/critic client sẵn sàng: qwen/qwen3-32b
+17:49:13.107 [INFO] [vision.py] [Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=1
+17:49:13.111 [INFO] [vision.py] [Loop][INFO] [vtuber-stage] loaded version=vtuber_stage.v11 phases=8,9,10,11 status=intention_authority_ready session=stage_60fd7dc564a44afe
+17:49:13.116 [INFO] [vision.py] [Loop][INFO] [internal-cognitive] loaded version=internal_cognitive.v1.0 capabilities=8 status=read_only_verified
+17:49:13.123 [INFO] [vision.py] [Loop][INFO] [project-ops] loaded version=project_operations.v1.1 capabilities=15 mode=autonomous_project_scope
+17:49:13.123 [INFO] [vision.py] [Loop][INFO] [workspace] eris_home=[đường dẫn nội bộ đã ẩn] active=none implicit_source_repo=false
+17:49:13.636 [INFO] [vision.py] [Loop][INFO] [social cognition v2] loaded version=social_cognition.v2.0 parser=llama-3.1-8b-instant critic=qwen/qwen3-32b
+17:49:14.126 [INFO] [vision.py] [Loop][INFO] [environment-capability] loaded version=environment_capability.v1.0 capabilities=6 status=read_only_verified
+17:49:29.214 [INFO] [Vision] Dang dung vision.py PID=22360...
+17:49:29.231 [INFO] [Vision] vision.py da thoat (PID=22360, code=-1, unexpected=False).
+17:49:29.240 [INFO] [RunLogger] Ket thuc phien chay.
