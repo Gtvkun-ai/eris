@@ -55,6 +55,12 @@ class ScriptedTakeBeat:
     answer_prefix: str = ""
     research: bool = False
     search: bool = False
+    # Recording mặc định phải deterministic. Chỉ khi live_lookup=true mới gọi
+    # Tutor/provider thật; nếu không cached/fallback answer là đạo cụ đã khóa.
+    live_lookup: bool = False
+    # Mỗi beat JSON là một bubble/nhịp đạo diễn. Chỉ tách câu khi tác giả take
+    # chủ động bật split_text; tránh "Khoan." thành một bubble cô độc.
+    split_text: bool = False
     lead_in: str = ""
     expectation: str = ""
     locked_summary: str = ""
@@ -207,6 +213,8 @@ class ScriptedTakeLoader:
             answer_prefix=_text(raw.get("answer_prefix"), 500),
             research=bool(raw.get("research", False)),
             search=bool(raw.get("search", False)),
+            live_lookup=bool(raw.get("live_lookup", raw.get("live_tutor", False))),
+            split_text=bool(raw.get("split_text", False)),
             lead_in=_text(raw.get("lead_in"), 120),
             expectation=_text(raw.get("expectation"), 500),
             locked_summary=_text(raw.get("locked_summary") or raw.get("summary"), 1000),
@@ -220,7 +228,8 @@ class ScriptedTakeLoader:
                 "kind", "text", "pause_after_ms", "pause_jitter_ms", "duration_ms", "motion", "motion_intent",
                 "emotion", "tts_style", "thinking_motion", "query", "topic", "tutor_lookup",
                 "show_panel", "close_panel", "cached_answer", "fallback_answer", "speak_answer", "answer_prefix",
-                "research", "search", "lead_in", "expectation", "locked_summary", "summary",
+                "research", "search", "live_lookup", "live_tutor", "split_text",
+                "lead_in", "expectation", "locked_summary", "summary",
                 "afterthought", "angle", "use_model_rewrite", "use_model", "max_sentences",
                 "response_hold_ms", "arc_phase",
             }},
@@ -418,9 +427,12 @@ class ScriptedTakeRuntime:
                 turn_id=take_id,
                 segment_id=beat_index,
             )
-            # Mỗi JSON beat là một đơn vị đạo diễn. Nếu câu trong beat phải tách
-            # thêm, cấp seq liên tục toàn take; không để beat sau quay lại seq=0.
-            for subframe in pipeline.frames_for_tts(frame):
+            # Mỗi JSON beat mặc định là một đơn vị sân khấu hoàn chỉnh: một
+            # bubble, một transcript TTS, một motion. Sentence splitter tổng quát
+            # từng xé "Khoan. Có những..." thành bubble "Khoan." rồi để audio
+            # tiếp tục đọc phần còn lại. Chỉ tách khi take ghi split_text=true.
+            subframes = pipeline.frames_for_tts(frame) if beat.split_text else (frame,)
+            for subframe in subframes:
                 frames.append(replace(subframe, segment_id=self._allocate_segment_id(take_id)))
 
         segment_count = len(frames)
@@ -495,6 +507,12 @@ class ScriptedTakeRuntime:
             self._emit_tutor_prop("open", take_id=take_id, beat_index=beat_index, query=query)
             self._emit_tutor_prop("asking", take_id=take_id, beat_index=beat_index, query=query)
         answer = beat.cached_answer
+        # Take quay phải lặp lại được. Nếu đã có fallback script thì dùng nó như
+        # knowledge prop đã khóa, thay vì treo sân khấu 70 giây vì provider timeout.
+        # Conversation profile hoặc live_lookup=true vẫn được gọi Tutor thật.
+        deterministic_recording = take.profile == "recording" and not beat.live_lookup
+        if not answer and deterministic_recording:
+            answer = beat.fallback_answer
         if not answer and not cancel.is_set():
             request = getattr(self.owner, "request_tutor_answer", None)
             if callable(request):

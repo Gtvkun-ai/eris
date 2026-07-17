@@ -23,8 +23,8 @@
       "kind": "tutor_lookup",
       "query": "Vì sao một số loài nấm phát sáng trong đêm? Ánh sáng đó có liên quan đến việc thu hút côn trùng và phát tán bào tử không?",
       "show_panel": true,
-      "search": true,
-      "fallback_answer": "Ở một số loài nấm phát sáng, ánh sáng theo nhịp ngày đêm có thể thu hút côn trùng và các động vật chân khớp; những sinh vật này có thể góp phần mang bào tử đi xa hơn. Cơ chế và chức năng không nhất thiết giống nhau ở mọi loài."
+      "fallback_answer": "Ở một số loài nấm phát sáng, ánh sáng theo nhịp ngày đêm có thể thu hút côn trùng và các động vật chân khớp; những sinh vật này có thể góp phần mang bào tử đi xa hơn. Cơ chế và chức năng không nhất thiết giống nhau ở mọi loài.",
+      "live_lookup": false
     },
     {
       "kind": "tutor_reaction",

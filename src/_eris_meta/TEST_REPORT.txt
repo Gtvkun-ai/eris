@@ -1,25 +1,3 @@
-ERISLIVE + WORKSPACE PATCH TEST REPORT
-Base: src(76).zip
-Patch type: cumulative; includes previous autonomous project operations
-
-Verification from clean base:
-- git apply --check: PASS
-- git apply: PASS
-- Selected integration suite: 89 passed
-
-Covered:
-- ErisHome directory tree
-- no implicit source/repo fallback
-- local workspace registration
-- Git URL clone into ErisLive/workspaces
-- active workspace persistence registry
-- router/executor/capability wiring
-- project inspect/apply/test/rollback/package
-- autonomous repair after test failure
-- project status and selected-file scope
-- runtime settings and decision parser compatibility
-
-Full-suite note:
-- Original src(76): 21 collection errors
-- Patched src(76): 21 collection errors
-- Same missing baseline dependencies/modules, including hypothesis and files absent from the supplied archive.
+17 passed in 3.58s  - tests/test_scripted_take.py
+32 passed in 3.74s  - scripted_take + stage dispatcher/contracts/ownership/transformers + TTS events/task start sync
+COMPILE_OK          - python -m compileall -q runtime tests

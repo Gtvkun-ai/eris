@@ -215,7 +215,29 @@ class StageDispatcher:
                 f"between the {len(frame_list)} sentence segments; do not insert long silence. "
                 "Treat punctuation as short intentional speech beats."
             ).strip()
-        inline_frame = replace(base, segment_id=0, tts_text=joined, prosody_notes=notes)
+        # Inline là một audio duy nhất cho nhiều logical segment. Contract cũ
+        # từng giữ display_text của frame đầu (thường chỉ là "Khoan.") và còn
+        # ép segment_id về 0. Kết quả: bubble đứng ở câu đầu; nhóm inline sau
+        # Tutor trùng ID nên bị dedupe, TTS vẫn đọc còn UI hoàn toàn im.
+        #
+        # Giữ ID thật của frame đầu trong group và công bố đúng transcript mà
+        # audio đang đọc. Không thể đổi bubble giữa một file audio nếu backend
+        # không có timestamp, nhưng ít nhất text và âm thanh phải cùng một sự thật.
+        inline_delivery = dict(base.delivery) if isinstance(base.delivery, dict) else {}
+        inline_delivery.update({
+            "_inline_joined": True,
+            "_inline_joined_segment_ids": [int(frame.segment_id) for frame in frame_list],
+            "_inline_joined_count": len(frame_list),
+        })
+        inline_frame = replace(
+            base,
+            segment_id=base.segment_id,
+            display_text=joined,
+            tts_text=joined,
+            memory_text=joined,
+            prosody_notes=notes,
+            delivery=inline_delivery,
+        )
 
         def event_callback(event, *, _frame=inline_frame):
             if on_event is not None:

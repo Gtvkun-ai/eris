@@ -398,3 +398,124 @@ def test_cancelled_take_rejects_late_audio_start_callback():
 
     assert not [event for event in owner.stage_event_bus.events if event.get("type") == "stage_segment"]
     assert not [payload for payload in owner.transport.payloads if payload.get("parse_mode") == "scripted_take"]
+
+
+def test_scripted_text_beat_is_one_bubble_by_default():
+    owner = FakeOwner()
+    runtime = ScriptedTakeRuntime(owner)
+    take = ScriptedTakeDefinition(
+        title="Atomic beat",
+        beats=(
+            ScriptedTakeBeat(
+                kind="text",
+                text="Khoan. Có những cây nấm tự bật đèn giữa rừng.",
+            ),
+        ),
+    )
+
+    runtime.run_definition(take)
+
+    payloads = [p for p in owner.transport.payloads if p.get("parse_mode") == "scripted_take"]
+    assert [p["text"] for p in payloads] == [
+        "Khoan. Có những cây nấm tự bật đèn giữa rừng."
+    ]
+
+
+def test_recording_take_uses_locked_fallback_without_calling_live_tutor():
+    owner = FakeOwner()
+    runtime = ScriptedTakeRuntime(owner)
+    take = ScriptedTakeDefinition(
+        title="Deterministic recording",
+        profile="recording",
+        beats=(
+            ScriptedTakeBeat(
+                kind="tutor_lookup",
+                query="vì sao nấm phát sáng",
+                fallback_answer="Câu trả lời đã khóa cho take.",
+                live_lookup=False,
+            ),
+            ScriptedTakeBeat(kind="text", text="À. {{tutor_answer}}"),
+        ),
+    )
+
+    runtime.run_definition(take)
+
+    assert owner.answers == []
+    spoken = [
+        p.get("text", "")
+        for p in owner.transport.payloads
+        if p.get("parse_mode") == "scripted_take"
+    ]
+    assert spoken == ["À. Câu trả lời đã khóa cho take."]
+
+
+def test_inline_fallback_keeps_unique_segment_id_and_truthful_bubble(monkeypatch):
+    """Tái hiện lỗi thật: audio gộp nhiều câu nhưng bubble chỉ hiện 'Khoan.'.
+
+    Nhóm sau Tutor từng bị reset segment_id=0 nên dedupe nuốt luôn bubble, dù TTS
+    vẫn đọc. Test này khóa cả hai failure mode vào một flow end-to-end.
+    """
+
+    from runtime.stage_audio_bus import StageAudioEvent
+
+    class InlineEngine:
+        _ok = True
+
+        def refresh_configuration(self):
+            return False
+
+        def speak(self, text, **kwargs):
+            callback = kwargs.get("on_event")
+            if callback is not None:
+                callback(StageAudioEvent(
+                    type="audio_start",
+                    turn_id=str(kwargs.get("turn_id", "")),
+                    segment_id=int(kwargs.get("segment_id", 0)),
+                    text=str(text),
+                ))
+                callback(StageAudioEvent(
+                    type="audio_done",
+                    turn_id=str(kwargs.get("turn_id", "")),
+                    segment_id=int(kwargs.get("segment_id", 0)),
+                    text=str(text),
+                ))
+
+    class InlineOwner(FakeOwner):
+        def __init__(self):
+            super().__init__()
+            self.engine = InlineEngine()
+
+        def _get_runtime_provider(self, name):
+            if name == "speech":
+                return SimpleNamespace(engine=self.engine)
+            return None
+
+    monkeypatch.setenv("ERIS_TTS_SEGMENT_DISPATCH", "inline")
+    owner = InlineOwner()
+    runtime = ScriptedTakeRuntime(owner)
+    take = ScriptedTakeDefinition(
+        title="Inline sync",
+        profile="recording",
+        beats=(
+            ScriptedTakeBeat(kind="text", text="Khoan. Có những cây nấm tự bật đèn giữa rừng."),
+            ScriptedTakeBeat(kind="text", text="Tôi không tin chúng làm vậy chỉ để trông đẹp."),
+            ScriptedTakeBeat(
+                kind="tutor_lookup",
+                query="vì sao nấm phát sáng",
+                fallback_answer="Một số loài có thể thu hút côn trùng.",
+            ),
+            ScriptedTakeBeat(kind="text", text="À. Một cái biển quảng cáo sống."),
+        ),
+    )
+
+    runtime.run_definition(take)
+
+    payloads = [p for p in owner.transport.payloads if p.get("parse_mode") == "scripted_take"]
+    assert [p["text"] for p in payloads] == [
+        "Khoan. Có những cây nấm tự bật đèn giữa rừng. Tôi không tin chúng làm vậy chỉ để trông đẹp.",
+        "À. Một cái biển quảng cáo sống.",
+    ]
+    segment_ids = [p["stage"]["segment_id"] for p in payloads]
+    assert segment_ids == [0, 2]
+    assert len(set(segment_ids)) == len(segment_ids)
+    assert payloads[0]["stage"]["delivery"]["_inline_joined"] is True
