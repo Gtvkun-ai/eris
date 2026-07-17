@@ -2708,6 +2708,20 @@ public partial class UdpListener : Node2D
 		return Path.Combine(GetRuntimeBaseDirForSettings(), "config", "secrets.json");
 	}
 
+	private static string GetRuntimeSettingsPath()
+	{
+		string configured = System.Environment.GetEnvironmentVariable("ERIS_RUNTIME_SETTINGS_PATH") ?? "";
+		if (!string.IsNullOrWhiteSpace(configured))
+		{
+			string expanded = System.Environment.ExpandEnvironmentVariables(configured.Trim());
+			return Path.IsPathRooted(expanded)
+				? expanded
+				: Path.Combine(GetRuntimeBaseDirForSettings(), expanded);
+		}
+		string documents = System.Environment.GetFolderPath(System.Environment.SpecialFolder.MyDocuments);
+		return Path.Combine(documents, "ErisLive", "config", "runtime_settings.json");
+	}
+
 	private static string GetSettingsBackupDir()
 	{
 		return Path.Combine(GetRuntimeBaseDirForSettings(), "backups", "settings");

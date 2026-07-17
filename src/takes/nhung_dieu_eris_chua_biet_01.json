@@ -4,33 +4,44 @@
   "beats": [
     {
       "kind": "text",
-      "text": "Chào. Tôi đang mắc vào một điều nhỏ.",
-      "pause_after_ms": 1600,
+      "text": "Khoan. Có những cây nấm tự bật đèn giữa rừng.",
+      "pause_after_ms": 520,
+      "motion": "recognition",
+      "emotion": "curious_warm",
+      "tts_style": "quiet_hook"
+    },
+    {
+      "kind": "text",
+      "text": "Tôi không tin chúng làm vậy chỉ để trông đẹp. Chúng đang dụ thứ gì tới?",
+      "pause_after_ms": 760,
       "motion": "tilt_head",
       "emotion": "curious",
+      "tts_style": "curious_question",
       "thinking_motion": "read"
     },
     {
-      "kind": "text",
-      "text": "Vì sao có loài nấm phát sáng trong đêm?",
-      "pause_after_ms": 1200,
-      "motion": "read",
-      "emotion": "curious"
-    },
-    {
       "kind": "tutor_lookup",
-      "query": "Vì sao một số loài nấm phát sáng trong đêm?",
+      "query": "Vì sao một số loài nấm phát sáng trong đêm? Ánh sáng đó có liên quan đến việc thu hút côn trùng và phát tán bào tử không?",
       "show_panel": true,
-      "close_panel": true,
-      "search": true
+      "search": true,
+      "fallback_answer": "Ở một số loài nấm phát sáng, ánh sáng theo nhịp ngày đêm có thể thu hút côn trùng và các động vật chân khớp; những sinh vật này có thể góp phần mang bào tử đi xa hơn. Cơ chế và chức năng không nhất thiết giống nhau ở mọi loài."
     },
     {
-      "kind": "text",
-      "text": "À. {{tutor_answer}}",
-      "pause_after_ms": 900,
-      "motion": "stand",
-      "emotion": "warm_soft",
-      "tts_style": "curious_explain"
+      "kind": "tutor_reaction",
+      "lead_in": "À...",
+      "expectation": "Tôi cứ tưởng ánh sáng ấy chỉ là một sản phẩm phụ.",
+      "locked_summary": "Nhưng ở một số loài, ánh sáng có thể thu hút côn trùng; rồi những vị khách đó lại góp phần mang bào tử đi xa hơn.",
+      "afterthought": "Một cái biển quảng cáo sống. Khá gian, với một cây nấm.",
+      "response_hold_ms": 480,
+      "pause_after_ms": 920,
+      "motion": "assimilate",
+      "emotion": "curious_warm",
+      "tts_style": "curious_discovery",
+      "close_panel": true
+    },
+    {
+      "kind": "pause",
+      "duration_ms": 420
     }
   ]
 }

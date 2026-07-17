@@ -1,0 +1,21 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-17 16:26:46
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+16:26:47.029 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+16:26:47.029 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+16:26:47.044 [INFO] [Vision] Da khoi chay vision.py PID=18288
+16:26:48.108 [INFO] [Settings] Đang đọc trạng thái hai key pool...
+16:26:49.982 [INFO] [vision.py] [LLM][INFO] Social parser client sẵn sàng: llama-3.1-8b-instant
+16:26:49.982 [INFO] [vision.py] [LLM][INFO] Social deliberator/critic client sẵn sàng: qwen/qwen3-32b
+16:26:50.932 [INFO] [vision.py] [Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=1
+16:26:50.947 [INFO] [vision.py] [Loop][INFO] [vtuber-stage] loaded version=vtuber_stage.v11 phases=8,9,10,11 status=intention_authority_ready session=stage_1ce5d619abed4282
+16:26:50.966 [INFO] [vision.py] [Loop][INFO] [internal-cognitive] loaded version=internal_cognitive.v1.0 capabilities=8 status=read_only_verified
+16:26:51.003 [INFO] [Vision] Dang dung vision.py PID=18288...
+16:26:51.005 [INFO] [vision.py] [Loop][INFO] [project-ops] loaded version=project_operations.v1.1 capabilities=15 mode=autonomous_project_scope
+16:26:51.005 [INFO] [vision.py] [Loop][INFO] [workspace] eris_home=[đường dẫn nội bộ đã ẩn] active=none implicit_source_repo=false
+16:26:51.029 [INFO] [Vision] vision.py da thoat (PID=18288, code=-1, unexpected=False).
+16:26:51.036 [INFO] [RunLogger] Ket thuc phien chay.

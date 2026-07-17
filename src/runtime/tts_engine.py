@@ -146,12 +146,15 @@ def _remote_provider_is_gemini() -> bool:
 
 
 def _prelocalize_japanese_enabled() -> bool:
-    return os.environ.get("ERIS_TTS_PRELOCALIZE_JA", "0").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    raw = os.environ.get("ERIS_TTS_PRELOCALIZE_JA")
+    if raw is not None and str(raw).strip():
+        return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+    try:
+        from runtime.runtime_settings_store import runtime_bool
+
+        return runtime_bool("tts", "stage_localize", default=True)
+    except Exception:
+        return True
 
 
 def _local_tts_fallback_enabled() -> bool:

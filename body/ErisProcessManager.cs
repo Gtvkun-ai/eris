@@ -220,6 +220,7 @@ public sealed class ErisProcessManager
 		// Cho phep Python tim base dir that (canh .exe khi da export) thay vi
 		// suy ra tu __file__ (bi sai trong bundle PyInstaller).
 		startInfo.Environment["ERIS_PROJECT_ROOT"] = GetRuntimeBaseDir();
+		startInfo.Environment["ERIS_RUNTIME_SETTINGS_PATH"] = GetRuntimeSettingsPath();
 		startInfo.Environment["ERIS_REMOTE_API_ENABLED"] = config.EnableRemoteCognitionApi ? "1" : "0";
 		startInfo.Environment["ERIS_TTS_ENABLED"] = config.EnableTts ? "1" : "0";
 		startInfo.Environment["ERIS_TTS_VOICE"] = string.IsNullOrWhiteSpace(config.TtsVoice) ? "Aoede" : config.TtsVoice.Trim();
@@ -273,6 +274,20 @@ public sealed class ErisProcessManager
 		}
 
 		return values;
+	}
+
+	private static string GetRuntimeSettingsPath()
+	{
+		string configured = System.Environment.GetEnvironmentVariable("ERIS_RUNTIME_SETTINGS_PATH") ?? "";
+		if (!string.IsNullOrWhiteSpace(configured))
+		{
+			string expanded = System.Environment.ExpandEnvironmentVariables(configured.Trim());
+			return Path.IsPathRooted(expanded)
+				? expanded
+				: Path.Combine(GetRuntimeBaseDir(), expanded);
+		}
+		string documents = System.Environment.GetFolderPath(System.Environment.SpecialFolder.MyDocuments);
+		return Path.Combine(documents, "ErisLive", "config", "runtime_settings.json");
 	}
 
 	private void AddSecretsFromObject(JsonElement source, Dictionary<string, string> values)

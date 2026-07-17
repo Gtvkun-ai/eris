@@ -211,10 +211,36 @@ class BodyChoreographyPlanner:
     ) -> list[BodyTimelineEvent]:
         end = max(650, duration - 180)
         values = (motion, *actions)
-        if _has_any(values, "audible_laugh", "laugh", "small_smile"):
+        # Cười thành tiếng mới đáng hop. ``small_smile`` là một dư âm nhẹ; map
+        # nó sang hop khiến Eris nhảy lên vì vừa hiểu một fact, rất mascot và
+        # hoàn toàn phá chất điềm của nhân vật.
+        if _has_any(values, "audible_laugh", "laugh_soft", "playful_laugh"):
             return [
                 BodyTimelineEvent(0, "hop", 220, intent="pose"),
                 BodyTimelineEvent(360, "stand", 360, intent="face", facing=-1),
+                BodyTimelineEvent(end, "stand", 180, intent="face", facing=0),
+            ]
+        if _has_any(values, "recognition", "noticed", "realization"):
+            return [
+                BodyTimelineEvent(0, "stand", 300, intent="face", facing=1),
+                BodyTimelineEvent(360, "read", 520, intent="pose", facing=1),
+                BodyTimelineEvent(end, "stand", 180, intent="face", facing=0),
+            ]
+        if _has_any(values, "belief_update", "contrast", "old_assumption"):
+            return [
+                BodyTimelineEvent(0, "stand", 420, intent="face", facing=-1),
+                BodyTimelineEvent(480, "read", 460, intent="pose", facing=-1),
+                BodyTimelineEvent(end, "stand", 180, intent="face", facing=0),
+            ]
+        if _has_any(values, "assimilate", "reframe", "curious_explain", "read"):
+            return [
+                BodyTimelineEvent(0, "read", 680, intent="pose", facing=1),
+                BodyTimelineEvent(max(760, end - 380), "stand", 320, intent="face", facing=1),
+                BodyTimelineEvent(end, "stand", 180, intent="face", facing=0),
+            ]
+        if _has_any(values, "small_smile", "afterthought", "soft_near", "lean_in_small", "settle"):
+            return [
+                BodyTimelineEvent(0, "stand", 520, intent="face", facing=1),
                 BodyTimelineEvent(end, "stand", 180, intent="face", facing=0),
             ]
         if _has_any(values, "look_away", "scoff", "blink_slow"):

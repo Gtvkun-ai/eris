@@ -19,6 +19,7 @@ class RuntimePreferenceTests(unittest.TestCase):
         self._old_root = os.environ.get("ERIS_PROJECT_ROOT")
         self._old_language = os.environ.get("ERIS_TTS_LANGUAGE")
         self._old_disable = os.environ.get("ERIS_DISABLE_DOTENV")
+        self._old_prelocalize = os.environ.get("ERIS_TTS_PRELOCALIZE_JA")
         os.environ.pop("ERIS_DISABLE_DOTENV", None)
 
     def tearDown(self) -> None:
@@ -26,6 +27,7 @@ class RuntimePreferenceTests(unittest.TestCase):
             ("ERIS_PROJECT_ROOT", self._old_root),
             ("ERIS_TTS_LANGUAGE", self._old_language),
             ("ERIS_DISABLE_DOTENV", self._old_disable),
+            ("ERIS_TTS_PRELOCALIZE_JA", self._old_prelocalize),
         ):
             if value is None:
                 os.environ.pop(name, None)
@@ -51,6 +53,29 @@ class LanguageNormalizationTests(unittest.TestCase):
         for value in ("ja", "jp", "Japanese", "ja-JP", "日本語"):
             with self.subTest(value=value):
                 self.assertEqual(tts_engine._normalize_language_hint(value), "ja")
+
+
+class JapanesePrelocalizeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._old_prelocalize = os.environ.get("ERIS_TTS_PRELOCALIZE_JA")
+
+    def tearDown(self) -> None:
+        if self._old_prelocalize is None:
+            os.environ.pop("ERIS_TTS_PRELOCALIZE_JA", None)
+        else:
+            os.environ["ERIS_TTS_PRELOCALIZE_JA"] = self._old_prelocalize
+
+    def test_stage_localize_runtime_setting_enables_prelocalize_by_default(self) -> None:
+        os.environ.pop("ERIS_TTS_PRELOCALIZE_JA", None)
+        with patch("runtime.runtime_settings_store.runtime_bool", return_value=True) as runtime_bool:
+            self.assertTrue(tts_engine._prelocalize_japanese_enabled())
+        runtime_bool.assert_called_once_with("tts", "stage_localize", default=True)
+
+    def test_explicit_prelocalize_env_overrides_runtime_setting(self) -> None:
+        os.environ["ERIS_TTS_PRELOCALIZE_JA"] = "0"
+        with patch("runtime.runtime_settings_store.runtime_bool", return_value=True) as runtime_bool:
+            self.assertFalse(tts_engine._prelocalize_japanese_enabled())
+        runtime_bool.assert_not_called()
 
 
 class TtsRefreshTests(unittest.TestCase):

@@ -26,6 +26,7 @@ from runtime.stage_contracts import StageFrame, StageFrameBuilder
 from runtime.stage_dispatcher import StageDispatcher
 from runtime.stage_output import StageOutputPipeline
 from runtime.stage_protocol_adapter import playback_event, stage_segment_event, stage_state_event
+from runtime.take_reaction_director import TutorReactionDirector, clean_tutor_answer
 from runtime.workspace_manager import default_eris_home
 
 
@@ -39,6 +40,7 @@ class ScriptedTakeBeat:
     kind: str
     text: str = ""
     pause_after_ms: int = 0
+    pause_jitter_ms: int = 0
     motion: str = ""
     emotion: str = ""
     tts_style: str = ""
@@ -47,10 +49,20 @@ class ScriptedTakeBeat:
     show_panel: bool = True
     close_panel: bool = True
     cached_answer: str = ""
+    fallback_answer: str = ""
     speak_answer: bool = False
     answer_prefix: str = ""
     research: bool = False
     search: bool = False
+    lead_in: str = ""
+    expectation: str = ""
+    locked_summary: str = ""
+    afterthought: str = ""
+    angle: str = ""
+    use_model_rewrite: bool = False
+    max_sentences: int = 2
+    response_hold_ms: int = 320
+    arc_phase: str = ""
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def active_beat_payload(self) -> dict[str, Any]:
@@ -58,11 +70,12 @@ class ScriptedTakeBeat:
             "kind": "speech",
             "text": self.text,
             "pause_after_ms": self.pause_after_ms,
-            "pause_jitter_ms": 0,
+            "pause_jitter_ms": self.pause_jitter_ms,
             "thinking_motion": self.thinking_motion,
             "motion_intent": self.motion,
             "emotion": self.emotion,
             "tts_style": self.tts_style,
+            "arc_phase": self.arc_phase,
             "pause_reason": "scripted_take_beat",
             "cancel_on_user_input": True,
         }
@@ -162,7 +175,9 @@ class ScriptedTakeLoader:
             kind = "text"
         if kind in {"tutor", "lookup"}:
             kind = "tutor_lookup"
-        if kind not in {"text", "pause", "tutor_lookup", "tutor_panel"}:
+        if kind in {"reaction", "tutor_response", "tutor_react"}:
+            kind = "tutor_reaction"
+        if kind not in {"text", "pause", "tutor_lookup", "tutor_panel", "tutor_reaction"}:
             raise ValueError(f"Beat {index} có kind không hỗ trợ: {kind!r}")
 
         text = _text(raw.get("text"), _MAX_TEXT)
@@ -177,6 +192,7 @@ class ScriptedTakeLoader:
             kind=kind,
             text=text,
             pause_after_ms=pause,
+            pause_jitter_ms=_int(raw.get("pause_jitter_ms", 0), 0, 0, 1200),
             motion=_text(raw.get("motion") or raw.get("motion_intent"), 80),
             emotion=_text(raw.get("emotion"), 80),
             tts_style=_text(raw.get("tts_style"), 80),
@@ -185,15 +201,27 @@ class ScriptedTakeLoader:
             show_panel=bool(raw.get("show_panel", True)),
             close_panel=bool(raw.get("close_panel", True)),
             cached_answer=_text(raw.get("cached_answer"), 4000),
+            fallback_answer=_text(raw.get("fallback_answer"), 4000),
             speak_answer=bool(raw.get("speak_answer", False)),
             answer_prefix=_text(raw.get("answer_prefix"), 500),
             research=bool(raw.get("research", False)),
             search=bool(raw.get("search", False)),
+            lead_in=_text(raw.get("lead_in"), 120),
+            expectation=_text(raw.get("expectation"), 500),
+            locked_summary=_text(raw.get("locked_summary") or raw.get("summary"), 1000),
+            afterthought=_text(raw.get("afterthought"), 500),
+            angle=_text(raw.get("angle"), 500),
+            use_model_rewrite=bool(raw.get("use_model_rewrite", raw.get("use_model", False))),
+            max_sentences=_int(raw.get("max_sentences", 2), 2, 1, 3),
+            response_hold_ms=_int(raw.get("response_hold_ms", 320), 320, 80, 2000),
+            arc_phase=_text(raw.get("arc_phase"), 80),
             metadata={str(k): v for k, v in raw.items() if str(k) not in {
-                "kind", "text", "pause_after_ms", "duration_ms", "motion", "motion_intent",
+                "kind", "text", "pause_after_ms", "pause_jitter_ms", "duration_ms", "motion", "motion_intent",
                 "emotion", "tts_style", "thinking_motion", "query", "topic", "tutor_lookup",
-                "show_panel", "close_panel", "cached_answer", "speak_answer", "answer_prefix",
-                "research", "search",
+                "show_panel", "close_panel", "cached_answer", "fallback_answer", "speak_answer", "answer_prefix",
+                "research", "search", "lead_in", "expectation", "locked_summary", "summary",
+                "afterthought", "angle", "use_model_rewrite", "use_model", "max_sentences",
+                "response_hold_ms", "arc_phase",
             }},
         )
 
@@ -210,6 +238,7 @@ class ScriptedTakeRuntime:
         self._status = ScriptedTakeStatus("idle")
         self._active_take_id = ""
         self._open_tutor: tuple[str, int, str] | None = None
+        self.reaction_director = TutorReactionDirector(owner)
 
     def start_file(self, path: str | Path) -> ScriptedTakeStatus:
         take = self.loader.load(path)
@@ -263,7 +292,12 @@ class ScriptedTakeRuntime:
             return self._status
 
     def _run_guarded(self, take: ScriptedTakeDefinition, take_id: str, cancel: threading.Event) -> None:
-        context: dict[str, str] = {"tutor_answer": "", "take_title": take.title}
+        context: dict[str, str] = {
+            "tutor_answer": "",
+            "tutor_answer_raw": "",
+            "tutor_summary": "",
+            "take_title": take.title,
+        }
         current_index = 0
         try:
             self._set_status(
@@ -290,12 +324,24 @@ class ScriptedTakeRuntime:
                     action = str(beat.metadata.get("action", beat.text or "open") or "open").strip().lower()
                     self._emit_tutor_prop(action, take_id=take_id, beat_index=index, query=beat.query)
                 elif beat.kind == "tutor_lookup":
-                    self._run_tutor_beat(take, take_id, index, beat, context, cancel)
+                    next_kind = take.beats[index + 1].kind if index + 1 < len(take.beats) else ""
+                    self._run_tutor_beat(
+                        take,
+                        take_id,
+                        index,
+                        beat,
+                        context,
+                        cancel,
+                        defer_close=next_kind == "tutor_reaction",
+                    )
+                elif beat.kind == "tutor_reaction":
+                    self._run_tutor_reaction_beat(take, take_id, index, beat, context, cancel)
                 index += 1
             if cancel.is_set():
                 self._emit_take_state("scripted_take_cancelled", take_id, take, beat_index=current_index)
                 self._set_status(expected_take_id=take_id, state="cancelled")
             else:
+                self._close_open_tutor(expected_take_id=take_id)
                 self._emit_take_state("scripted_take_finished", take_id, take, beat_index=len(take.beats) - 1)
                 self._set_status(
                     expected_take_id=take_id,
@@ -304,6 +350,7 @@ class ScriptedTakeRuntime:
                 )
         except Exception as exc:
             self._log("warning", "[scripted-take] failed: %s", exc)
+            self._close_open_tutor(expected_take_id=take_id)
             self._emit_take_state("scripted_take_failed", take_id, take, beat_index=current_index, error=str(exc))
             self._set_status(expected_take_id=take_id, state="failed", error=str(exc))
         finally:
@@ -353,13 +400,26 @@ class ScriptedTakeRuntime:
             for subframe in pipeline.frames_for_tts(frame):
                 frames.append(replace(subframe, segment_id=len(frames)))
 
-        self._emit_frames(frames, take_id=take_id, title=take.title)
         engine = self._tts_engine()
-        if engine is None or not getattr(engine, "_ok", False) or cancel.is_set():
+        has_tts = engine is not None and bool(getattr(engine, "_ok", False)) and not cancel.is_set()
+
+        # Stage bus được biết trước toàn bộ segment để debug/prefetch. Godot thì
+        # không: text + body timeline chỉ được gửi lúc audio_start của đúng
+        # segment. Nếu phát cả nhóm ngay tại đây, bubble nhảy tới câu cuối và ba
+        # motion chồng lên nhau trước khi Eris kịp nói câu đầu. Rất hiệu quả nếu
+        # mục tiêu là dựng một con rối bị ma nhập, không phải performer.
+        self._emit_frames(
+            frames,
+            take_id=take_id,
+            title=take.title,
+            send_transport=not has_tts,
+        )
+        if not has_tts:
             self._wait(cancel, sum(max(0, beat.pause_after_ms) for _, beat in group))
             return
+
         dispatcher = StageDispatcher(profile=take.profile)
-        dispatcher.dispatch_tts(
+        scheduled = dispatcher.dispatch_tts(
             frames,
             tts_engine=engine,
             valence=0.0,
@@ -367,6 +427,16 @@ class ScriptedTakeRuntime:
             stance="scripted_take",
             on_event=self._handle_tts_event,
         )
+        if not scheduled:
+            # Backend TTS vừa mất khả năng queue sau khi ta đã quyết định sync
+            # theo audio. Fail mềm về payload thường để take vẫn nhìn thấy được.
+            for frame in frames:
+                self._send_frame_to_transport(
+                    frame, take_id=take_id, title=take.title, sync="dispatch_fallback"
+                )
+            self._wait(cancel, sum(max(0, beat.pause_after_ms) for _, beat in group))
+            return
+
         manager = getattr(engine, "task_manager", None)
         waiter = getattr(manager, "wait_until_idle", None)
         if callable(waiter):
@@ -384,6 +454,7 @@ class ScriptedTakeRuntime:
         beat: ScriptedTakeBeat,
         context: dict[str, str],
         cancel: threading.Event,
+        defer_close: bool = False,
     ) -> None:
         query = _render_template(beat.query, context)
         if beat.show_panel:
@@ -399,10 +470,16 @@ class ScriptedTakeRuntime:
                     research=beat.research,
                     search=beat.search,
                 ) or "").strip()
+        if not answer:
+            answer = beat.fallback_answer
         if cancel.is_set():
             self._close_open_tutor(expected_take_id=take_id)
             return
-        context["tutor_answer"] = answer
+        clean_answer = clean_tutor_answer(answer, max_sentences=3)
+        context["tutor_answer_raw"] = answer
+        # Compatibility: template cũ {{tutor_answer}} vẫn chạy, nhưng không còn
+        # đọc bullet/URL/citation như một robot đang tuyên bố danh mục tài liệu.
+        context["tutor_answer"] = clean_answer
         if beat.show_panel:
             self._emit_tutor_prop(
                 "answered" if answer else "failed",
@@ -412,7 +489,7 @@ class ScriptedTakeRuntime:
                 answer=answer,
             )
         if beat.speak_answer and answer and not cancel.is_set():
-            spoken = f"{beat.answer_prefix} {answer}".strip()
+            spoken = f"{beat.answer_prefix} {clean_answer}".strip()
             speech_beat = ScriptedTakeBeat(
                 kind="text", text=spoken, pause_after_ms=beat.pause_after_ms,
                 motion=beat.motion or "read", emotion=beat.emotion or "curious",
@@ -421,40 +498,159 @@ class ScriptedTakeRuntime:
             self._run_text_group(take, take_id, [(beat_index, speech_beat)], context, cancel)
         elif beat.pause_after_ms > 0:
             self._wait(cancel, beat.pause_after_ms)
-        if beat.show_panel and beat.close_panel:
+        if beat.show_panel and beat.close_panel and not defer_close:
             self._emit_tutor_prop("close", take_id=take_id, beat_index=beat_index, query=query, answer=answer)
 
-    def _emit_frames(self, frames: list[StageFrame], *, take_id: str, title: str) -> None:
+    def _run_tutor_reaction_beat(
+        self,
+        take: ScriptedTakeDefinition,
+        take_id: str,
+        beat_index: int,
+        beat: ScriptedTakeBeat,
+        context: dict[str, str],
+        cancel: threading.Event,
+    ) -> None:
+        """Biến knowledge thành reaction arc thay vì đọc nguyên answer."""
+
+        raw_answer = context.get("tutor_answer_raw", "") or context.get("tutor_answer", "")
+        query = str((self._open_tutor or (take_id, beat_index, ""))[2] or beat.query or "")
+        reaction = self.reaction_director.direct(
+            query=query,
+            answer=raw_answer,
+            lead_in=beat.lead_in or "À...",
+            expectation=beat.expectation,
+            locked_summary=beat.locked_summary,
+            afterthought=beat.afterthought,
+            angle=beat.angle,
+            use_model=beat.use_model_rewrite,
+            max_sentences=beat.max_sentences,
+            response_hold_ms=beat.response_hold_ms,
+            final_pause_ms=beat.pause_after_ms or 760,
+            emotion=beat.emotion or "curious_warm",
+            motion=beat.motion or "assimilate",
+            tts_style=beat.tts_style or "curious_discovery",
+        )
+        context["tutor_summary"] = reaction.spoken_summary
+        context["tutor_answer"] = reaction.clean_answer or context.get("tutor_answer", "")
+
+        if self._open_tutor is not None:
+            self._emit_tutor_prop(
+                "assimilating",
+                take_id=take_id,
+                beat_index=beat_index,
+                query=query,
+                answer=raw_answer,
+            )
+        if not self._wait(cancel, reaction.pre_hold_ms):
+            return
+
+        speech_beats: list[tuple[int, ScriptedTakeBeat]] = []
+        for line in reaction.lines:
+            speech_beats.append((
+                beat_index,
+                ScriptedTakeBeat(
+                    kind="text",
+                    text=line.text,
+                    pause_after_ms=line.pause_after_ms,
+                    pause_jitter_ms=0,
+                    motion=line.motion,
+                    emotion=line.emotion,
+                    tts_style=line.tts_style,
+                    thinking_motion="thinking_small",
+                    arc_phase=line.phase,
+                    metadata={"reaction_source": reaction.source},
+                ),
+            ))
+        self._run_text_group(take, take_id, speech_beats, context, cancel)
+        if beat.close_panel:
+            self._close_open_tutor(expected_take_id=take_id)
+
+    def _emit_frames(
+        self,
+        frames: list[StageFrame],
+        *,
+        take_id: str,
+        title: str,
+        send_transport: bool = True,
+    ) -> None:
         bus = getattr(self.owner, "stage_event_bus", None)
-        transport = getattr(self.owner, "transport", None)
         for frame in frames:
             if bus is not None:
                 try:
                     bus.emit(stage_segment_event(frame, segment_count=len(frames)))
                 except Exception:
                     pass
-            sender = getattr(transport, "send_json", None)
-            if callable(sender):
-                payload = {
-                    "parse_mode": "scripted_take",
-                    "should_speak": True,
-                    "animation": frame.motion,
-                    "text": frame.display_text,
-                    "memory_text": frame.memory_text,
-                    "scripted_take": {
-                        "take_id": take_id,
-                        "title": title,
-                        "beat_index": int(
-                            ((frame.delivery.get("active_beat") or {}).get("take_beat_index", frame.segment_id))
-                            if isinstance(frame.delivery, dict) else frame.segment_id
-                        ),
-                    },
-                }
-                payload.update(frame.to_payload_patch())
-                try:
-                    sender(payload)
-                except Exception:
-                    pass
+            if send_transport:
+                self._send_frame_to_transport(
+                    frame, take_id=take_id, title=title, sync="immediate_no_tts"
+                )
+
+    def _send_frame_to_transport(
+        self,
+        frame: StageFrame,
+        *,
+        take_id: str,
+        title: str,
+        sync: str = "audio_start",
+    ) -> None:
+        transport = getattr(self.owner, "transport", None)
+        sender = getattr(transport, "send_json", None)
+        if not callable(sender):
+            return
+        payload = {
+            "parse_mode": "scripted_take",
+            "should_speak": True,
+            "animation": _legacy_body_animation(frame),
+            "text": frame.display_text,
+            "memory_text": frame.memory_text,
+            "scripted_take": {
+                "take_id": take_id,
+                "title": title,
+                "beat_index": int(
+                    ((frame.delivery.get("active_beat") or {}).get("take_beat_index", frame.segment_id))
+                    if isinstance(frame.delivery, dict) else frame.segment_id
+                ),
+                "arc_phase": str(
+                    ((frame.delivery.get("active_beat") or {}).get("arc_phase", ""))
+                    if isinstance(frame.delivery, dict) else ""
+                ),
+                "sync": sync,
+            },
+        }
+        payload.update(frame.to_payload_patch())
+        try:
+            sender(payload)
+        except Exception:
+            pass
+
+    def _send_lifecycle_to_transport(self, event: Any, frame: StageFrame | None) -> None:
+        """Đẩy các state không có câu nói sang Godot bằng hình dạng legacy-safe."""
+
+        if frame is None:
+            return
+        event_type = str(getattr(event, "type", "") or "")
+        protocol = playback_event(event, stage_frame=frame)
+        data = dict(protocol.data or {})
+        timeline = data.get("body_timeline") if isinstance(data.get("body_timeline"), Mapping) else {}
+        transport = getattr(self.owner, "transport", None)
+        sender = getattr(transport, "send_json", None)
+        if not callable(sender):
+            return
+        payload = protocol.to_payload()
+        # Body hiện tại đọc text/animation theo contract cũ nhưng đã hiểu
+        # body_timeline protocol v2. Gửi cả hai thay vì bắt frontend đoán tiếp.
+        payload.update({
+            "parse_mode": "scripted_take_lifecycle",
+            "should_speak": False,
+            "animation": protocol.motion or "stand",
+            "text": "",
+        })
+        if timeline:
+            payload["body_timeline"] = dict(timeline)
+        try:
+            sender(payload)
+        except Exception:
+            pass
 
     def _emit_tutor_prop(
         self,
@@ -570,6 +766,18 @@ class ScriptedTakeRuntime:
         self._handle_tts_event(end, frame)
 
     def _handle_tts_event(self, event: Any, frame: StageFrame | None = None) -> None:
+        event_type = str(getattr(event, "type", "") or "")
+        if event_type == "audio_start" and frame is not None:
+            with self._lock:
+                title = self._status.title
+            self._send_frame_to_transport(
+                frame,
+                take_id=str(getattr(frame, "turn_id", "") or self._active_take_id),
+                title=title,
+            )
+        elif event_type in {"thinking_started", "thinking_finished", "continuation_cancelled"}:
+            self._send_lifecycle_to_transport(event, frame)
+
         handler = getattr(self.owner, "_handle_tts_playback_event", None)
         if callable(handler):
             handler(event, stage_frame=frame)
@@ -630,6 +838,26 @@ class ScriptedTakeRuntime:
                 method(message, *args)
             except Exception:
                 pass
+
+
+
+def _legacy_body_animation(frame: StageFrame) -> str:
+    """Chọn animation thật cho payload Godot cũ, giữ motion abstract ở stage."""
+
+    timeline = getattr(frame, "body_timeline", {})
+    if isinstance(timeline, Mapping):
+        events = timeline.get("events")
+        if isinstance(events, list):
+            for item in events:
+                if isinstance(item, Mapping):
+                    name = str(item.get("name", "") or "").strip()
+                    if name:
+                        return name
+    motion = str(getattr(frame, "motion", "") or "").strip()
+    return motion if motion in {
+        "stand", "sit", "read", "stand_walk", "hop", "jump", "sleep",
+        "sad", "food", "affection", "clone", "divine", "idle",
+    } else "stand"
 
 
 def _render_template(text: str, context: Mapping[str, str]) -> str:

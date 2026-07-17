@@ -98,3 +98,54 @@ def test_pause_after_ms_belongs_to_last_subsegment_of_one_beat():
     assert pauses[:-1] == [0] * (len(pauses) - 1)
     assert pauses[-1] == 1200
     assert all(item.delivery["active_beat"]["take_beat_index"] == 3 for item in frames)
+
+
+def test_small_smile_is_subtle_and_does_not_turn_into_a_hop():
+    planner = BodyChoreographyPlanner()
+
+    timeline = planner.plan(
+        turn_id="t-soft",
+        text="Khá gian, với một cây nấm.",
+        motion="small_smile",
+        actions=(),
+        delivery={},
+    )
+
+    assert timeline is not None
+    names = [event["name"] for event in timeline.to_payload()["events"]]
+    assert "hop" not in names
+    assert names[0] == "stand"
+
+
+def test_reaction_arc_maps_to_recognition_then_assimilation_poses():
+    planner = BodyChoreographyPlanner()
+
+    recognized = planner.plan(
+        turn_id="t-recognize",
+        text="À...",
+        motion="recognition",
+        actions=(),
+        delivery={},
+    )
+    assimilated = planner.plan(
+        turn_id="t-assimilate",
+        text="Ở một số loài, ánh sáng có thể thu hút côn trùng.",
+        motion="assimilate",
+        actions=(),
+        delivery={},
+    )
+
+    assert recognized is not None
+    assert assimilated is not None
+    assert recognized.to_payload()["events"][0]["name"] == "stand"
+    assert assimilated.to_payload()["events"][0]["name"] == "read"
+
+
+def test_belief_update_looks_away_instead_of_hopping():
+    planner = BodyChoreographyPlanner()
+    timeline = planner.plan(turn_id="turn-belief", text="Tôi cứ tưởng khác.", motion="belief_update")
+    assert timeline is not None
+    names = [event.name for event in timeline.events]
+    assert "hop" not in names
+    assert names[:2] == ["stand", "read"]
+    assert timeline.events[0].facing == -1

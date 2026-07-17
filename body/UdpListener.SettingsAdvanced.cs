@@ -818,7 +818,7 @@ public partial class UdpListener : Node2D
 	{
 		try
 		{
-			string path = Path.Combine(GetRuntimeBaseDirForSettings(), "settings", "runtime_settings.json");
+			string path = GetRuntimeSettingsPath();
 			Directory.CreateDirectory(Path.GetDirectoryName(path) ?? GetRuntimeBaseDirForSettings());
 			JsonObject root = new JsonObject();
 			if (File.Exists(path))

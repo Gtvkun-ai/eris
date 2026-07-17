@@ -131,3 +131,164 @@ def test_stale_take_thread_cannot_overwrite_new_take_status():
 
     assert runtime.status().take_id == "take-new"
     assert runtime.status().state == "running"
+
+
+def test_loader_parses_tutor_reaction_arc(tmp_path: Path):
+    path = tmp_path / "reaction_take.json"
+    path.write_text(json.dumps({
+        "title": "Reaction",
+        "beats": [
+            {"tutor_lookup": "một câu hỏi"},
+            {
+                "kind": "tutor_reaction",
+                "lead_in": "À...",
+                "summary": "Hóa ra chuyện đó có nguyên nhân.",
+                "afterthought": "Khá khéo.",
+                "response_hold_ms": 410,
+            },
+        ],
+    }, ensure_ascii=False), encoding="utf-8")
+
+    take = ScriptedTakeLoader().load(path)
+
+    assert take.beats[1].kind == "tutor_reaction"
+    assert take.beats[1].locked_summary == "Hóa ra chuyện đó có nguyên nhân."
+    assert take.beats[1].afterthought == "Khá khéo."
+    assert take.beats[1].response_hold_ms == 410
+
+
+def test_tutor_reaction_keeps_panel_open_and_speaks_a_reaction_arc():
+    owner = FakeOwner()
+    runtime = ScriptedTakeRuntime(owner)
+    take = ScriptedTakeDefinition(
+        title="Human reaction",
+        beats=(
+            ScriptedTakeBeat(kind="tutor_lookup", query="vì sao nấm phát sáng"),
+            ScriptedTakeBeat(
+                kind="tutor_reaction",
+                lead_in="À...",
+                locked_summary="Ở một số loài, ánh sáng có thể thu hút côn trùng.",
+                afterthought="Một cái biển quảng cáo sống. Khá gian.",
+                response_hold_ms=80,
+                pause_after_ms=320,
+            ),
+        ),
+    )
+
+    status = runtime.run_definition(take)
+
+    assert status.state == "completed"
+    stages = [
+        p.get("tutor", {}).get("stage")
+        for p in owner.transport.payloads
+        if p.get("parse_mode") == "tutor_event"
+    ]
+    assert stages == ["open", "asking", "answered", "assimilating", "close"]
+
+    take_payloads = [p for p in owner.transport.payloads if p.get("parse_mode") == "scripted_take"]
+    take_texts = [p.get("text", "") for p in take_payloads]
+    assert take_texts == [
+        "À...",
+        "Ở một số loài, ánh sáng có thể thu hút côn trùng.",
+        "Một cái biển quảng cáo sống. Khá gian.",
+    ]
+    phases = [p["stage"]["delivery"]["active_beat"].get("arc_phase") for p in take_payloads]
+    assert phases == ["recognition", "reframe", "afterthought"]
+    assert stages.index("close") > stages.index("assimilating")
+
+
+
+def test_tutor_reaction_exposes_belief_update_when_expectation_exists():
+    owner = FakeOwner()
+    runtime = ScriptedTakeRuntime(owner)
+    take = ScriptedTakeDefinition(
+        title="Belief update",
+        beats=(
+            ScriptedTakeBeat(kind="tutor_lookup", query="vì sao nấm phát sáng"),
+            ScriptedTakeBeat(
+                kind="tutor_reaction",
+                lead_in="À...",
+                expectation="Tôi cứ tưởng ánh sáng ấy chỉ là một sản phẩm phụ.",
+                locked_summary="Nhưng ở một số loài, nó có thể thu hút côn trùng.",
+                afterthought="Khá gian, với một cây nấm.",
+                response_hold_ms=80,
+            ),
+        ),
+    )
+
+    runtime.run_definition(take)
+
+    payloads = [p for p in owner.transport.payloads if p.get("parse_mode") == "scripted_take"]
+    phases = [p["stage"]["delivery"]["active_beat"].get("arc_phase") for p in payloads]
+    assert phases == ["recognition", "contrast", "reframe", "afterthought"]
+    assert payloads[1]["text"].startswith("Tôi cứ tưởng")
+    assert payloads[1]["stage"]["motion"] == "belief_update"
+    assert payloads[1]["animation"] == "stand"
+    assert payloads[1]["stage"]["body_timeline"]["events"][0]["facing"] == -1
+
+
+def test_audio_start_is_the_transport_sync_point_for_segment_body_and_text():
+    owner = FakeOwner()
+    runtime = ScriptedTakeRuntime(owner)
+    builder = __import__("runtime.stage_contracts", fromlist=["StageFrameBuilder"]).StageFrameBuilder(language_hint="vi")
+    decision = SimpleNamespace(
+        text="À...", intent="scripted_take", animation="recognition",
+        should_speak=True, delivery_hint="soft_realization", stage_motion="recognition",
+    )
+    frame = builder.build(
+        decision,
+        payload={
+            "text": "À...",
+            "should_speak": True,
+            "stage_motion": "recognition",
+            "scripted_beat": {"arc_phase": "recognition", "take_beat_index": 2},
+        },
+        channel="scripted_take",
+        turn_id="take-sync",
+        segment_id=0,
+    )
+
+    runtime._active_take_id = "take-sync"
+    runtime._status = runtime._status.__class__("running", take_id="take-sync", title="Sync")
+    runtime._emit_frames([frame], take_id="take-sync", title="Sync", send_transport=False)
+    assert not [p for p in owner.transport.payloads if p.get("parse_mode") == "scripted_take"]
+
+    from runtime.stage_audio_bus import StageAudioEvent
+    runtime._handle_tts_event(
+        StageAudioEvent(type="audio_start", turn_id="take-sync", segment_id=0, text="À..."),
+        frame,
+    )
+
+    payloads = [p for p in owner.transport.payloads if p.get("parse_mode") == "scripted_take"]
+    assert len(payloads) == 1
+    assert payloads[0]["text"] == "À..."
+    assert payloads[0]["scripted_take"]["sync"] == "audio_start"
+    assert payloads[0]["stage"]["body_timeline"]
+
+
+def test_template_answer_is_cleaned_before_tts():
+    class MarkdownOwner(FakeOwner):
+        def request_tutor_answer(self, topic, **kwargs):
+            return "- **Ý chính:** Nấm phát sáng.\n- Côn trùng có thể giúp mang bào tử.\nNguồn: https://example.com/paper"
+
+    owner = MarkdownOwner()
+    runtime = ScriptedTakeRuntime(owner)
+    take = ScriptedTakeDefinition(
+        title="Clean",
+        beats=(
+            ScriptedTakeBeat(kind="tutor_lookup", query="nấm"),
+            ScriptedTakeBeat(kind="text", text="À. {{tutor_answer}}"),
+        ),
+    )
+
+    runtime.run_definition(take)
+
+    spoken = [
+        p.get("text", "")
+        for p in owner.transport.payloads
+        if p.get("parse_mode") == "scripted_take"
+    ][-1]
+    assert "http" not in spoken
+    assert "**" not in spoken
+    assert "Nguồn:" not in spoken
+    assert "Côn trùng" in spoken
