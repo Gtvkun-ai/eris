@@ -138,6 +138,19 @@ def refresh_runtime_capabilities(
                 )
             continue
 
+        if capability_id in _project_capability_ids():
+            runtime = getattr(owner, "project_operations", None) if owner is not None else None
+            if runtime is None:
+                statuses[capability_id] = CapabilityRuntimeStatus(
+                    capability_id, False, "project_operations_runtime_unavailable", "runtime"
+                )
+            else:
+                available, reason = runtime.availability(capability_id)
+                statuses[capability_id] = CapabilityRuntimeStatus(
+                    capability_id, bool(available), str(reason or ""), "project_operations_runtime"
+                )
+            continue
+
         if owner is None:
             # Trước khi Coordinator bind, không nói dối là available. Registry vẫn
             # hoạt động nhưng prompt sẽ ghi rõ snapshot chưa sẵn sàng.
@@ -237,6 +250,14 @@ def _environment_capability_ids() -> tuple[str, ...]:
     try:
         from runtime.environment_capabilities import ENVIRONMENT_CAPABILITY_IDS
         return tuple(ENVIRONMENT_CAPABILITY_IDS)
+    except Exception:
+        return ()
+
+
+def _project_capability_ids() -> tuple[str, ...]:
+    try:
+        from runtime.project_operations import PROJECT_CAPABILITY_IDS
+        return tuple(PROJECT_CAPABILITY_IDS)
     except Exception:
         return ()
 

@@ -19,6 +19,12 @@ public sealed class ErisServiceConfig
 	public string RemoteApiProvider { get; init; } = "gemini";
 	public string RemoteApiBaseUrl { get; init; } = "";
 	public string RemoteApiModelName { get; init; } = "";
+	public bool TutorEnabled { get; init; } = true;
+	public bool TutorQuickSearchEnabled { get; init; } = true;
+	public bool TutorResearchEnabled { get; init; } = true;
+	public bool TutorSelfSearchEnabled { get; init; } = true;
+	public bool TutorStaleGuardEnabled { get; init; } = true;
+	public bool TutorPersistResearchMemory { get; init; } = false;
 }
 
 public sealed class ErisProcessManager
@@ -226,6 +232,12 @@ public sealed class ErisProcessManager
 		startInfo.Environment["ERIS_REMOTE_MODEL"] = config.RemoteApiModelName ?? "";
 		startInfo.Environment["ERIS_LOCAL_STYLE_REWRITE_ENABLED"] = "0";
 		startInfo.Environment["ERIS_LOCAL_VISION_FACTS"] = "0";
+		startInfo.Environment["ERIS_TUTOR_ENABLED"] = config.TutorEnabled ? "1" : "0";
+		startInfo.Environment["ERIS_TUTOR_QUICK_SEARCH_ENABLED"] = config.TutorQuickSearchEnabled ? "1" : "0";
+		startInfo.Environment["ERIS_TUTOR_RESEARCH_ENABLED"] = config.TutorResearchEnabled ? "1" : "0";
+		startInfo.Environment["ERIS_TUTOR_SELF_SEARCH_ENABLED"] = config.TutorSelfSearchEnabled ? "1" : "0";
+		startInfo.Environment["ERIS_TUTOR_STALE_GUARD"] = config.TutorStaleGuardEnabled ? "1" : "0";
+		startInfo.Environment["ERIS_TUTOR_RESEARCH_PERSIST"] = config.TutorPersistResearchMemory ? "1" : "0";
 		if (!string.IsNullOrWhiteSpace(config.DefaultRemoteApiKey))
 		{
 			startInfo.Environment["ERIS_REMOTE_API_KEY"] = config.DefaultRemoteApiKey;

@@ -46,6 +46,12 @@ public partial class UdpListener : Node2D
 	private TextureRect _advancedTaskManagerSwitch;
 	private TextureRect _advancedStageLocalizeSwitch;
 	private TextureRect _advancedAudioPolishSwitch;
+	private TextureRect _advancedTutorEnabledSwitch;
+	private TextureRect _advancedTutorQuickSearchSwitch;
+	private TextureRect _advancedTutorResearchSwitch;
+	private TextureRect _advancedTutorSelfSearchSwitch;
+	private TextureRect _advancedTutorStaleGuardSwitch;
+	private TextureRect _advancedTutorPersistSwitch;
 
 	private string _advancedPreset = "Cân bằng";
 	private string _advancedReasoningEffort = "medium";
@@ -77,6 +83,12 @@ public partial class UdpListener : Node2D
 	private int _advancedMaxTtsSegments = 4;
 	private bool _advancedStageLocalize = true;
 	private bool _advancedAudioPolish = true;
+	private bool _advancedTutorEnabled = true;
+	private bool _advancedTutorQuickSearch = true;
+	private bool _advancedTutorResearch = true;
+	private bool _advancedTutorSelfSearch = true;
+	private bool _advancedTutorStaleGuard = true;
+	private bool _advancedTutorPersistResearchMemory = false;
 
 	private void SwitchSettingsMode(SettingsModePage page)
 	{
@@ -159,6 +171,12 @@ public partial class UdpListener : Node2D
 		_advancedTaskManagerSwitch = null;
 		_advancedStageLocalizeSwitch = null;
 		_advancedAudioPolishSwitch = null;
+		_advancedTutorEnabledSwitch = null;
+		_advancedTutorQuickSearchSwitch = null;
+		_advancedTutorResearchSwitch = null;
+		_advancedTutorSelfSearchSwitch = null;
+		_advancedTutorStaleGuardSwitch = null;
+		_advancedTutorPersistSwitch = null;
 		ResetDangerSettingsUiReferences();
 	}
 
@@ -317,20 +335,31 @@ public partial class UdpListener : Node2D
 
 		_advancedTaskManagerSwitch = AddAdvancedToggleRow(parent, 214f, "TTS Task Manager", () => _advancedTtsTaskManager, value => _advancedTtsTaskManager = value, "task manager");
 
-		_advancedPrefetchWorkersSelect = AddAdvancedOptionRow(parent, 244f, "Prefetch", new[] { "1", "2", "3", "4" }, _advancedPrefetchWorkers.ToString(), value =>
+		_advancedPrefetchWorkersSelect = AddAdvancedOptionRow(parent, 242f, "Prefetch", new[] { "1", "2", "3", "4" }, _advancedPrefetchWorkers.ToString(), value =>
 		{
 			_advancedPrefetchWorkers = ParseAdvancedInt(value, 2, 1, 8);
 			MarkAdvancedChanged("prefetch worker");
 		});
 
-		_advancedMaxSegmentsSelect = AddAdvancedOptionRow(parent, 284f, "Max segment", new[] { "2", "3", "4", "6" }, _advancedMaxTtsSegments.ToString(), value =>
+		_advancedMaxSegmentsSelect = AddAdvancedOptionRow(parent, 282f, "Max segment", new[] { "2", "3", "4", "6" }, _advancedMaxTtsSegments.ToString(), value =>
 		{
 			_advancedMaxTtsSegments = ParseAdvancedInt(value, 4, 1, 12);
 			MarkAdvancedChanged("max segment");
 		});
 
-		_advancedStageLocalizeSwitch = AddAdvancedMiniToggle(parent, new Vector2(18f, 320f), "Localize", () => _advancedStageLocalize, value => _advancedStageLocalize = value, "speech localize");
-		_advancedAudioPolishSwitch = AddAdvancedMiniToggle(parent, new Vector2(150f, 320f), "Audio polish", () => _advancedAudioPolish, value => _advancedAudioPolish = value, "audio polish");
+		_advancedStageLocalizeSwitch = AddAdvancedMiniToggle(parent, new Vector2(18f, 318f), "Localize", () => _advancedStageLocalize, value => _advancedStageLocalize = value, "speech localize");
+		_advancedAudioPolishSwitch = AddAdvancedMiniToggle(parent, new Vector2(150f, 318f), "Audio polish", () => _advancedAudioPolish, value => _advancedAudioPolish = value, "audio polish");
+
+		var tutorLine = CreateUiLabel("Tutor", 8, SettingsInkSoft);
+		tutorLine.Position = new Vector2(18f, 346f);
+		tutorLine.Size = new Vector2(46f, 18f);
+		StyleSettingsSingleLineLabel(tutorLine);
+		parent.AddChild(tutorLine);
+		_advancedTutorEnabledSwitch = AddAdvancedTinyToggle(parent, new Vector2(64f, 344f), "on", () => _advancedTutorEnabled, value => _advancedTutorEnabled = value, "tutor master");
+		_advancedTutorQuickSearchSwitch = AddAdvancedTinyToggle(parent, new Vector2(112f, 344f), "quick", () => _advancedTutorQuickSearch, value => _advancedTutorQuickSearch = value, "quick search");
+		_advancedTutorResearchSwitch = AddAdvancedTinyToggle(parent, new Vector2(178f, 344f), "deep", () => _advancedTutorResearch, value => _advancedTutorResearch = value, "research relay");
+		_advancedTutorSelfSearchSwitch = AddAdvancedTinyToggle(parent, new Vector2(238f, 344f), "self", () => _advancedTutorSelfSearch, value => _advancedTutorSelfSearch = value, "self search");
+		_advancedTutorStaleGuardSwitch = AddAdvancedTinyToggle(parent, new Vector2(286f, 344f), "stale", () => _advancedTutorStaleGuard, value => _advancedTutorStaleGuard = value, "stale guard");
 	}
 
 	private OptionButton AddAdvancedOptionRow(Control parent, float y, string label, string[] values, string selected, Action<string> onChanged)
@@ -416,6 +445,27 @@ public partial class UdpListener : Node2D
 		return toggle;
 	}
 
+	private TextureRect AddAdvancedTinyToggle(Control parent, Vector2 pos, string label, Func<bool> getter, Action<bool> setter, string changedName)
+	{
+		var text = CreateUiLabel(label, 7, SettingsInk);
+		text.Position = pos + new Vector2(0f, 18f);
+		text.Size = new Vector2(46f, 14f);
+		StyleSettingsSingleLineLabel(text);
+		parent.AddChild(text);
+
+		TextureRect toggle = null;
+		toggle = AddSettingsSwitch(parent, pos, getter(), () =>
+		{
+			bool value = !getter();
+			setter(value);
+			ApplySettingsSwitch(toggle, value);
+			MarkAdvancedChanged(changedName);
+		});
+		toggle.Size = new Vector2(30f, 18f);
+		toggle.CustomMinimumSize = toggle.Size;
+		return toggle;
+	}
+
 	private void MarkAdvancedChanged(string field)
 	{
 		if (!string.Equals(_advancedPreset, "Tùy chỉnh", StringComparison.OrdinalIgnoreCase))
@@ -489,6 +539,12 @@ public partial class UdpListener : Node2D
 		_advancedMaxTtsSegments = 4;
 		_advancedStageLocalize = true;
 		_advancedAudioPolish = true;
+		_advancedTutorEnabled = true;
+		_advancedTutorQuickSearch = true;
+		_advancedTutorResearch = true;
+		_advancedTutorSelfSearch = true;
+		_advancedTutorStaleGuard = true;
+		_advancedTutorPersistResearchMemory = false;
 		BuildSettingsPanelUi();
 		SetSettingsStatus("Đã khôi phục mặc định Advanced trong bản nháp. Bấm Lưu để ghi.");
 	}
@@ -549,6 +605,12 @@ public partial class UdpListener : Node2D
 		_advancedMaxTtsSegments = ReadAdvancedInt(root, "stage_max_tts_segments", _advancedMaxTtsSegments, 1, 12);
 		if (TryReadBool(root, "tts_stage_localize", out bool localize)) _advancedStageLocalize = localize;
 		if (TryReadBool(root, "tts_audio_polish", out bool polish)) _advancedAudioPolish = polish;
+		if (TryReadBool(root, "tutor_enabled", out bool tutorEnabled)) _advancedTutorEnabled = tutorEnabled;
+		if (TryReadBool(root, "tutor_quick_search", out bool tutorQuick)) _advancedTutorQuickSearch = tutorQuick;
+		if (TryReadBool(root, "tutor_research", out bool tutorResearch)) _advancedTutorResearch = tutorResearch;
+		if (TryReadBool(root, "tutor_self_search", out bool tutorSelf)) _advancedTutorSelfSearch = tutorSelf;
+		if (TryReadBool(root, "tutor_stale_guard", out bool tutorStale)) _advancedTutorStaleGuard = tutorStale;
+		if (TryReadBool(root, "tutor_persist_research_memory", out bool tutorPersist)) _advancedTutorPersistResearchMemory = tutorPersist;
 	}
 
 	private void LoadAdvancedSettingsFromSecrets(JsonElement root)
@@ -580,6 +642,12 @@ public partial class UdpListener : Node2D
 		_advancedMaxTtsSegments = ParseAdvancedInt(ReadSecretString(root, "ERIS_STAGE_MAX_TTS_SEGMENTS", _advancedMaxTtsSegments.ToString()), _advancedMaxTtsSegments, 1, 12);
 		_advancedStageLocalize = IsTruthy(ReadSecretString(root, "ERIS_TTS_STAGE_LOCALIZE", _advancedStageLocalize ? "1" : "0"));
 		_advancedAudioPolish = IsTruthy(ReadSecretString(root, "ERIS_TTS_AUDIO_POLISH", _advancedAudioPolish ? "1" : "0"));
+		_advancedTutorEnabled = IsTruthy(ReadSecretString(root, "ERIS_TUTOR_ENABLED", _advancedTutorEnabled ? "1" : "0"));
+		_advancedTutorQuickSearch = IsTruthy(ReadSecretString(root, "ERIS_TUTOR_QUICK_SEARCH_ENABLED", _advancedTutorQuickSearch ? "1" : "0"));
+		_advancedTutorResearch = IsTruthy(ReadSecretString(root, "ERIS_TUTOR_RESEARCH_ENABLED", _advancedTutorResearch ? "1" : "0"));
+		_advancedTutorSelfSearch = IsTruthy(ReadSecretString(root, "ERIS_TUTOR_SELF_SEARCH_ENABLED", _advancedTutorSelfSearch ? "1" : "0"));
+		_advancedTutorStaleGuard = IsTruthy(ReadSecretString(root, "ERIS_TUTOR_STALE_GUARD", _advancedTutorStaleGuard ? "1" : "0"));
+		_advancedTutorPersistResearchMemory = IsTruthy(ReadSecretString(root, "ERIS_TUTOR_RESEARCH_PERSIST", _advancedTutorPersistResearchMemory ? "1" : "0"));
 	}
 
 	private void AddAdvancedSettingsToState(JsonObject state)
@@ -612,6 +680,12 @@ public partial class UdpListener : Node2D
 		state["stage_max_tts_segments"] = _advancedMaxTtsSegments;
 		state["tts_stage_localize"] = _advancedStageLocalize;
 		state["tts_audio_polish"] = _advancedAudioPolish;
+		state["tutor_enabled"] = _advancedTutorEnabled;
+		state["tutor_quick_search"] = _advancedTutorQuickSearch;
+		state["tutor_research"] = _advancedTutorResearch;
+		state["tutor_self_search"] = _advancedTutorSelfSearch;
+		state["tutor_stale_guard"] = _advancedTutorStaleGuard;
+		state["tutor_persist_research_memory"] = _advancedTutorPersistResearchMemory;
 	}
 
 	private Dictionary<string, string> BuildAdvancedEnvironmentValues()
@@ -646,6 +720,12 @@ public partial class UdpListener : Node2D
 			["ERIS_STAGE_MAX_TTS_SEGMENTS"] = _advancedMaxTtsSegments.ToString(),
 			["ERIS_TTS_STAGE_LOCALIZE"] = _advancedStageLocalize ? "1" : "0",
 			["ERIS_TTS_AUDIO_POLISH"] = _advancedAudioPolish ? "1" : "0",
+			["ERIS_TUTOR_ENABLED"] = _advancedTutorEnabled ? "1" : "0",
+			["ERIS_TUTOR_QUICK_SEARCH_ENABLED"] = _advancedTutorQuickSearch ? "1" : "0",
+			["ERIS_TUTOR_RESEARCH_ENABLED"] = _advancedTutorResearch ? "1" : "0",
+			["ERIS_TUTOR_SELF_SEARCH_ENABLED"] = _advancedTutorSelfSearch ? "1" : "0",
+			["ERIS_TUTOR_STALE_GUARD"] = _advancedTutorStaleGuard ? "1" : "0",
+			["ERIS_TUTOR_RESEARCH_PERSIST"] = _advancedTutorPersistResearchMemory ? "1" : "0",
 		};
 	}
 
@@ -705,6 +785,15 @@ public partial class UdpListener : Node2D
 			["pipeline"] = new JsonObject
 			{
 				["v3_enabled"] = _advancedV3Pipeline,
+			},
+			["tutor"] = new JsonObject
+			{
+				["enabled"] = _advancedTutorEnabled,
+				["quick_search_enabled"] = _advancedTutorQuickSearch,
+				["research_enabled"] = _advancedTutorResearch,
+				["self_search_enabled"] = _advancedTutorSelfSearch,
+				["stale_result_guard_enabled"] = _advancedTutorStaleGuard,
+				["persist_research_memory"] = _advancedTutorPersistResearchMemory,
 			},
 			["stage"] = new JsonObject
 			{

@@ -20,6 +20,20 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Iterable, Sequence
 
+
+def _runtime_bool(*path: str, default: bool = True) -> bool:
+    """Đọc runtime_settings nếu có, fallback env/giá trị mặc định.
+
+    Detector search/research phải nghe công tắc UI, không phải tự ý mở browser như
+    một con mèo biết dùng Wi-Fi.
+    """
+
+    try:  # pragma: no cover - runtime store có thể chưa có trong unit test lẻ
+        from runtime.runtime_settings_store import runtime_bool
+        return bool(runtime_bool(*path, default=default))
+    except Exception:
+        return bool(default)
+
 try:  # pragma: no cover
     from cortex.tutor.secret_scrubber import scrub_secrets
 except Exception:  # pragma: no cover
@@ -367,28 +381,36 @@ def score_tutor_delegation(text: object, *, intent: str = "", meaning_missing: b
     - none: kiến thức phổ thông để main Terra tự trả lời.
     """
 
+    # Master switch phụ cho route chủ động. TutorConfig.enabled vẫn là cửa cuối,
+    # nhưng gate ở đây giúp Eris không hứa search khi UI đã tắt.
+    if not _runtime_bool("tutor", "enabled", default=True):
+        return TutorDelegationDecision(False, 0.0, "tutor_disabled", "none")
+
     research = score_research_need(text, intent=intent, meaning_missing=meaning_missing)
     if research.should_delegate:
-        return TutorDelegationDecision(True, research.score, research.reason, "research")
+        if _runtime_bool("tutor", "research_enabled", default=True):
+            return TutorDelegationDecision(True, research.score, research.reason, "research")
+        return TutorDelegationDecision(False, research.score, "research_disabled", "none")
 
     normalized = normalize_marker_text(text)
     if not normalized:
         return TutorDelegationDecision(False, 0.0, "empty", "none")
 
+    quick_enabled = _runtime_bool("tutor", "quick_search_enabled", default=True)
     if is_explicit_search_request(text):
-        return TutorDelegationDecision(True, 0.88, "explicit_search_cue", "quick_search")
+        return TutorDelegationDecision(bool(quick_enabled), 0.88, "explicit_search_cue" if quick_enabled else "quick_search_disabled", "quick_search" if quick_enabled else "none")
 
     # Fresh/current queries are dangerous for a frozen/common-knowledge answer.
     # Route only when the turn is actually world knowledge or the classifier is unsure.
     allowed_uncertain_intents = {"world_knowledge", "unclear", "unknown", "other", ""}
     intent_norm = str(intent or "").strip().lower()
     if needs_fresh_web(text) and intent_norm in allowed_uncertain_intents:
-        return TutorDelegationDecision(True, 0.78, "freshness_web_needed", "quick_search")
+        return TutorDelegationDecision(bool(quick_enabled), 0.78, "freshness_web_needed" if quick_enabled else "quick_search_disabled", "quick_search" if quick_enabled else "none")
 
     # Hỏi lái: không có chữ search, nhưng đang kiểm claim/status/policy trong miền
     # dễ thay đổi. Dùng quick_search, không kéo research relay dài dòng.
     if needs_external_verification(text) and intent_norm in allowed_uncertain_intents:
-        return TutorDelegationDecision(True, 0.74, "implicit_verification_risk", "quick_search")
+        return TutorDelegationDecision(bool(quick_enabled), 0.74, "implicit_verification_risk" if quick_enabled else "quick_search_disabled", "quick_search" if quick_enabled else "none")
 
     return TutorDelegationDecision(False, research.score, research.reason, "none")
 
@@ -438,6 +460,60 @@ def score_research_need(text: object, *, intent: str = "", meaning_missing: bool
 
     score = max(0.0, min(1.0, score))
     return TutorResearchDecision(score >= 0.58, score, ",".join(reasons))
+
+
+
+
+def anchor_resolution_needs_clarification(
+    resolution: FollowupAnchorResolution | object,
+    *,
+    confidence_floor: float = 0.55,
+    allow_standalone: bool = True,
+) -> bool:
+    """True nếu follow-up mơ hồ quá, nên hỏi lại thay vì search nhầm.
+
+    Luật này bảo vệ đúng case user nói “cái đó/ý trên” nhưng ledger không có anchor
+    đủ chắc. Search nhầm còn tệ hơn không search, vì nó sinh ra một đống nguồn đúng
+    cho câu hỏi sai. Một thành tựu bi thảm, nhưng rất phổ biến.
+    """
+
+    try:
+        conf = float(getattr(resolution, "confidence", 0.0) or 0.0)
+        risk = str(getattr(resolution, "misread_risk", "") or "").strip().lower()
+        note = str(getattr(resolution, "assumption_note", "") or "").strip().lower()
+        anchor_text = str(getattr(resolution, "anchor_text", "") or "").strip()
+        topic = str(getattr(resolution, "topic", "") or "").strip()
+    except Exception:
+        return True
+    if not topic:
+        return True
+    if allow_standalone and note == "query_standalone":
+        return False
+    if risk == "high":
+        return True
+    if conf < float(confidence_floor):
+        return True
+    # Reference follow-up mà không tìm được anchor thật thì nên hỏi lại, không cosplay
+    # trí nhớ hội thoại.
+    if note in {"no_prior_anchor_found", "empty"} and not anchor_text:
+        return True
+    return False
+
+
+def build_anchor_clarification_text(resolution: FollowupAnchorResolution | object = None) -> str:
+    """Một câu hỏi lại ngắn cho low-confidence anchor."""
+
+    try:
+        candidates = list(getattr(resolution, "candidates", ()) or ()) if resolution is not None else []
+    except Exception:
+        candidates = []
+    if candidates:
+        preview = str(getattr(candidates[0], "text", "") or "").strip()
+        if len(preview) > 90:
+            preview = preview[:87].rstrip() + "..."
+        if preview:
+            return f"Tôi chưa chắc bạn muốn tôi tra đúng phần “{preview}” hay phần khác. Chốt giúp tôi neo trước đã."
+    return "Tôi chưa chắc bạn muốn tôi tra phần nào. Chỉ rõ neo một câu đã, rồi tôi lục Tutor cho khỏi search nhầm."
 
 
 def build_lightweight_search_prompt(
@@ -532,6 +608,8 @@ __all__ = [
     "FollowupAnchorResolution",
     "TutorDelegationDecision",
     "TutorResearchDecision",
+    "anchor_resolution_needs_clarification",
+    "build_anchor_clarification_text",
     "build_lightweight_research_prompt",
     "build_lightweight_search_prompt",
     "compact_research_answer",

@@ -55,6 +55,12 @@ public partial class UdpListener : Node2D
 	[Export] public string RemoteApiProvider = "gemini";
 	[Export] public string RemoteApiBaseUrl = "https://generativelanguage.googleapis.com/v1beta";
 	[Export] public string RemoteApiModelName = "gemma-4-26b-a4b-it";
+	[Export] public bool TutorEnabled = true;
+	[Export] public bool TutorQuickSearchEnabled = true;
+	[Export] public bool TutorResearchEnabled = true;
+	[Export] public bool TutorSelfSearchEnabled = true;
+	[Export] public bool TutorStaleGuardEnabled = true;
+	[Export] public bool TutorPersistResearchMemory = false;
 	[ExportGroup("Desktop Overlay")]
 	[Export] public bool EnableDesktopOverlayWindow = true;
 	[Export] public bool KeepWindowAlwaysOnTop = true;

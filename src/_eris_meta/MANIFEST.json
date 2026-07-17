@@ -1,0 +1,63 @@
+{
+  "patch_name": "eris_project_full_autonomy_src76",
+  "source": "src(76).zip",
+  "file_count": 11,
+  "files": [
+    {
+      "path": "actions/capability_registry.py",
+      "sha256": "5177980b73a53535109fe2fb9c0cfd575369dd505262b724136f83c6864daed4",
+      "size_bytes": 23782
+    },
+    {
+      "path": "actions/capability_runtime.py",
+      "sha256": "d1e357f8229544ba0b8f634cc923297d54b49f193b356562c71c4993942c5b64",
+      "size_bytes": 14071
+    },
+    {
+      "path": "actions/contracts.py",
+      "sha256": "8ee9b94d5f8efdd8ec4613090cfa47098d3cf76f83246f8e1fcab9148ae9c5a1",
+      "size_bytes": 4840
+    },
+    {
+      "path": "actions/executor.py",
+      "sha256": "650fa6cc1a19f297e2a2b42d9f846276497a8e7012f27649ed236745d97feee1",
+      "size_bytes": 34865
+    },
+    {
+      "path": "actions/router.py",
+      "sha256": "b1bcb8e23dd44463252c868ecf72417d5f38dff098420f839ab6978cd636225b",
+      "size_bytes": 31961
+    },
+    {
+      "path": "parser_grounding/decision.py",
+      "sha256": "37d00f14a2b19e837e823689ce1c5382599238ee2b86f1dd1e2426caf91051cc",
+      "size_bytes": 88990
+    },
+    {
+      "path": "runtime/coordinator.py",
+      "sha256": "1ae61fa3f4bca36f02871ee26b52a1f620ba73426b5d03b5ea383cb84961a508",
+      "size_bytes": 506552
+    },
+    {
+      "path": "runtime/project_operations.py",
+      "sha256": "e3904ab8835bc8275107f44e8c4003194965f5b9be9251f40972975f2142069c",
+      "size_bytes": 49347
+    },
+    {
+      "path": "runtime/runtime_settings_store.py",
+      "sha256": "1bb17cfa5a7cbb48a1f1ad626feb1bffa8e090d1eda05fc59b944ce64ccb870d",
+      "size_bytes": 27115
+    },
+    {
+      "path": "runtime/settings_protocol.py",
+      "sha256": "d81e5222aa3c7e74854bc6f22b1909b64532535ac1ee9dcafa424903991fbddd",
+      "size_bytes": 7483
+    },
+    {
+      "path": "tests/test_project_operations.py",
+      "sha256": "87fef18a141d658901ddec612c8e86894cc6bb794ebf311e24fd70e1e809bad7",
+      "size_bytes": 8303
+    }
+  ],
+  "unified_patch_sha256": "6d66534aba11babcf784c57016447a92c5639bdae29e3111133387b65b4c4502"
+}

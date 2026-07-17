@@ -103,6 +103,7 @@ class ActionRouter:
         norm = self._normalize_vi(raw)
 
         candidates: list[RouteCandidate] = [
+            self._route_project_operation(raw, norm),
             self._route_internal_cognition(raw, norm),
             self._route_environment_read(raw, norm),
             self._route_open_url(raw, norm),
@@ -126,6 +127,57 @@ class ActionRouter:
         # vẫn là tie-breaker vì max giữ phần tử đầu khi bằng điểm.
         winner = max(valid, key=lambda c: c.confidence)
         return winner.action, winner.value
+
+    def _route_project_operation(self, raw: str, norm: str) -> RouteCandidate:
+        """Route lệnh project rõ ràng sang executor thật.
+
+        Lệnh sửa/làm project được chuyển cho ``project_execute_task`` để runtime
+        tự inspect -> edit -> test -> verify. Câu hỏi kiểu "nên sửa sao" vẫn đi
+        qua chat; không phải thấy chữ test là vồ lấy repo như một con mèo thiếu ngủ.
+        """
+        if self._starts_with_negation(norm):
+            return self._blocked("project_execute_task", "negated")
+
+        read_match = re.search(r"^(?:eris\s+)?(?:doc|xem)\s+(?:file|tep)\s+([^?]+)$", norm)
+        if read_match and not any(token in norm for token in ("dang mo", "dang chon", "hien tai")):
+            path = raw[read_match.start(1):].strip().strip("\"'")
+            return RouteCandidate("project_read_file", path, 0.95, ("explicit_project_file_read",))
+
+        symbol_match = re.search(r"^(?:eris\s+)?(?:tim|find)\s+(?:symbol|class|ham|function)\s+([A-Za-z_][A-Za-z0-9_]*)\s*$", norm)
+        if symbol_match:
+            raw_symbol = re.search(r"(?:symbol|class|hàm|ham|function)\s+([A-Za-z_][A-Za-z0-9_]*)\s*$", raw, flags=re.I)
+            symbol = raw_symbol.group(1) if raw_symbol else symbol_match.group(1)
+            return RouteCandidate("project_find_symbol", symbol, 0.96, ("explicit_symbol_search",))
+
+        text_match = re.search(r"^(?:eris\s+)?(?:tim|search)\s+(.+?)\s+(?:trong|o)\s+(?:project|repo|source)\s*$", norm)
+        if text_match:
+            return RouteCandidate("project_search_text", text_match.group(1).strip(), 0.93, ("explicit_project_search",))
+
+        if re.search(r"^(?:eris\s+)?(?:xem|doc|kiem)\s+(?:git\s+)?diff(?:\s+project|\s+repo)?\s*$", norm):
+            return RouteCandidate("project_git_diff", "current", 0.96, ("explicit_project_diff",))
+        if re.search(r"^(?:eris\s+)?(?:chay|run)\s+(?:lai\s+)?(?:test|pytest)(?:\s+.*)?$", norm):
+            target = re.sub(r"^(?:eris\s+)?(?:chay|run)\s+(?:lai\s+)?", "", raw, flags=re.I).strip()
+            return RouteCandidate("project_run_tests", target or "auto", 0.96, ("explicit_project_test",))
+        if re.search(r"^(?:eris\s+)?(?:rollback|hoan tac|khoi phuc)\s+(?:thay doi|patch|operation)?(?:\s+.*)?$", norm):
+            return RouteCandidate("project_rollback", "latest", 0.96, ("explicit_project_rollback",))
+        if re.search(r"^(?:eris\s+)?(?:dong goi|tao)\s+(?:patch\s+)?(?:zip|patch zip)(?:\s+.*)?$", norm):
+            return RouteCandidate("project_package_patch", "latest", 0.96, ("explicit_project_package",))
+        if re.search(r"^(?:eris\s+)?(?:liet ke|list)\s+(?:file|tep)(?:\s+trong)?\s+(?:project|repo|source)\s*$", norm):
+            return RouteCandidate("project_list_files", "", 0.95, ("explicit_project_list",))
+
+        # Toàn quyền project: khi user ra lệnh sửa/làm/hoàn thành rõ ràng, runtime
+        # tự tiếp tục kể cả không nhận được phản hồi duyệt tiếp theo.
+        command_shape = re.search(
+            r"^(?:eris\s+)?(?:sua|fix|lam|trien khai|hoan thanh|noi|them|xoa|refactor|viet lai|va|patch)\b",
+            norm,
+        )
+        project_anchor = any(token in norm for token in (
+            "project", "repo", "source", "src", "file", ".py", "runtime", "test", "patch", "code",
+        ))
+        advisory = any(token in norm for token in ("nen ", "co nen", "theo ban", "cach nao", "lam sao", "nhu the nao"))
+        if command_shape and project_anchor and not advisory:
+            return RouteCandidate("project_execute_task", raw, 0.91, ("explicit_autonomous_project_task",))
+        return self._no_candidate("project_operation")
 
     def _route_internal_cognition(self, raw: str, norm: str) -> RouteCandidate:
         """Chỉ route câu lệnh tự kiểm tra có động từ rõ ràng.

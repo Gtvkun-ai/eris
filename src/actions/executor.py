@@ -42,6 +42,7 @@ class ActionExecutor:
         self.observer = observer if observer is not None else DefaultActionObserver()
         self.cognitive_runtime = None
         self.environment_runtime = None
+        self.project_runtime = None
 
     def bind_cognitive_runtime(self, runtime) -> None:
         """Nối executor với runtime nhận thức sau khi Coordinator đã dựng xong.
@@ -55,6 +56,10 @@ class ActionExecutor:
     def bind_environment_runtime(self, runtime) -> None:
         """Nối executor với runtime đọc môi trường sau khi screen store đã dựng."""
         self.environment_runtime = runtime
+
+    def bind_project_runtime(self, runtime) -> None:
+        """Nối executor với runtime thao tác project autonomous."""
+        self.project_runtime = runtime
 
     #execute() là trung tâm điều phối
     '''
@@ -195,6 +200,49 @@ class ActionExecutor:
 
     def _get_project_status(self, action_input: str) -> ActionExecutionResult:
         return self._execute_environment("get_project_status", action_input)
+
+    def _execute_project(self, capability_id: str, action_input: str) -> ActionExecutionResult:
+        runtime = self.project_runtime
+        if runtime is None:
+            return ActionExecutionResult(
+                action_name=capability_id, action_input=action_input, success=False,
+                message="Runtime thao tác project chưa được nối.", error_kind="ProjectRuntimeUnavailable",
+            )
+        result = runtime.execute(capability_id, action_input)
+        return result.to_action_result(action_input=action_input)
+
+    def _project_list_files(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_project("project_list_files", action_input)
+
+    def _project_read_file(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_project("project_read_file", action_input)
+
+    def _project_search_text(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_project("project_search_text", action_input)
+
+    def _project_find_symbol(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_project("project_find_symbol", action_input)
+
+    def _project_git_diff(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_project("project_git_diff", action_input)
+
+    def _project_apply_patch(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_project("project_apply_patch", action_input)
+
+    def _project_run_tests(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_project("project_run_tests", action_input)
+
+    def _project_run_command(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_project("project_run_command", action_input)
+
+    def _project_rollback(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_project("project_rollback", action_input)
+
+    def _project_package_patch(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_project("project_package_patch", action_input)
+
+    def _project_execute_task(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_project("project_execute_task", action_input)
 
     def _get_local_time(self, action_input: str) -> ActionExecutionResult:
         now = time.localtime()

@@ -45,6 +45,12 @@ _LEGACY_ADVANCED_MAP: dict[str, tuple[str, ...]] = {
     "ERIS_STAGE_MAX_TTS_SEGMENTS": ("stage", "max_tts_segments"),
     "ERIS_TTS_STAGE_LOCALIZE": ("tts", "stage_localize"),
     "ERIS_TTS_AUDIO_POLISH": ("tts", "audio_polish"),
+    "ERIS_TUTOR_ENABLED": ("tutor", "enabled"),
+    "ERIS_TUTOR_QUICK_SEARCH_ENABLED": ("tutor", "quick_search_enabled"),
+    "ERIS_TUTOR_RESEARCH_ENABLED": ("tutor", "research_enabled"),
+    "ERIS_TUTOR_SELF_SEARCH_ENABLED": ("tutor", "self_search_enabled"),
+    "ERIS_TUTOR_STALE_GUARD": ("tutor", "stale_result_guard_enabled"),
+    "ERIS_TUTOR_RESEARCH_PERSIST": ("tutor", "persist_research_memory"),
 }
 
 
@@ -75,9 +81,9 @@ def normalize_settings_message(msg: Mapping[str, Any]) -> NormalizedSettingsMess
     raw = msg.get("settings")
     if isinstance(raw, Mapping):
         allowed_roots = {
-            "advanced": {"chat", "personality", "prompt", "memory", "stage", "tts", "pipeline"},
+            "advanced": {"chat", "personality", "project_ops", "prompt", "memory", "stage", "tts", "pipeline", "tutor"},
             "personality": {"personality"},
-            "runtime": {"chat", "personality", "capabilities", "prompt", "memory", "stage", "tts", "pipeline", "danger_zone"},
+            "runtime": {"chat", "personality", "capabilities", "project_ops", "prompt", "memory", "stage", "tts", "pipeline", "tutor", "danger_zone"},
         }.get(scope, set())
         patch = {str(k): v for k, v in raw.items() if str(k) in allowed_roots}
         rejected = tuple(str(k) for k in raw.keys() if str(k) not in allowed_roots)
@@ -137,6 +143,8 @@ def _normalize_legacy_value(key: str, value: Any) -> Any:
         "ERIS_MEMORY_DIGEST_MAINTENANCE", "ERIS_V3_PIPELINE", "ERIS_PERFORMANCE_ACTS_ENABLED",
         "ERIS_INTERRUPT_ENABLED", "ERIS_STAGE_PROTOCOL", "ERIS_STAGE_SEGMENT_TTS",
         "ERIS_TTS_TASK_MANAGER", "ERIS_TTS_STAGE_LOCALIZE", "ERIS_TTS_AUDIO_POLISH",
+        "ERIS_TUTOR_ENABLED", "ERIS_TUTOR_QUICK_SEARCH_ENABLED", "ERIS_TUTOR_RESEARCH_ENABLED",
+        "ERIS_TUTOR_SELF_SEARCH_ENABLED", "ERIS_TUTOR_STALE_GUARD", "ERIS_TUTOR_RESEARCH_PERSIST",
     }:
         return _bool(text)
     return text

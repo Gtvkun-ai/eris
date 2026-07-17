@@ -1,0 +1,1559 @@
+diff --git a/actions/capability_registry.py b/actions/capability_registry.py
+index 791b811..46329d0 100644
+--- a/actions/capability_registry.py
++++ b/actions/capability_registry.py
+@@ -84,6 +84,61 @@ _CAPABILITY_DATA: dict[str, CapabilityDefinition] = {
+         example_phrases=("git status", "repo đang bẩn không"),
+         visible_in_ui_group="environment",
+     ),
++    "project_list_files": CapabilityDefinition(
++        id="project_list_files", public_name_vi="liệt kê file project",
++        description_vi="đọc cây file trong workspace, tự lọc cache và binary",
++        example_phrases=("liệt kê file project",), visible_in_ui_group="project",
++    ),
++    "project_read_file": CapabilityDefinition(
++        id="project_read_file", public_name_vi="đọc file project",
++        description_vi="đọc nội dung file source trong project kèm hash evidence",
++        example_phrases=("đọc file runtime/coordinator.py",), visible_in_ui_group="project",
++    ),
++    "project_search_text": CapabilityDefinition(
++        id="project_search_text", public_name_vi="tìm text trong project",
++        description_vi="tìm text hoặc regex trong source project",
++        example_phrases=("tìm chuỗi này trong project",), visible_in_ui_group="project",
++    ),
++    "project_find_symbol": CapabilityDefinition(
++        id="project_find_symbol", public_name_vi="tìm symbol",
++        description_vi="tìm class, function hoặc symbol theo tên",
++        example_phrases=("tìm symbol ActionExecutor",), visible_in_ui_group="project",
++    ),
++    "project_git_diff": CapabilityDefinition(
++        id="project_git_diff", public_name_vi="xem diff project",
++        description_vi="đọc git diff hiện tại bằng evidence thật",
++        example_phrases=("xem diff project",), visible_in_ui_group="project",
++    ),
++    "project_apply_patch": CapabilityDefinition(
++        id="project_apply_patch", public_name_vi="áp patch project",
++        description_vi="snapshot file rồi áp unified diff trong workspace",
++        risk_level="high", example_phrases=("áp patch này",), visible_in_ui_group="project",
++    ),
++    "project_run_tests": CapabilityDefinition(
++        id="project_run_tests", public_name_vi="chạy test project",
++        description_vi="chạy test và chỉ báo đạt khi exit code bằng 0",
++        risk_level="medium", example_phrases=("chạy test",), visible_in_ui_group="project",
++    ),
++    "project_run_command": CapabilityDefinition(
++        id="project_run_command", public_name_vi="chạy lệnh project",
++        description_vi="chạy command phát triển trong project root theo command policy",
++        risk_level="high", example_phrases=("chạy python -m pytest",), visible_in_ui_group="project",
++    ),
++    "project_rollback": CapabilityDefinition(
++        id="project_rollback", public_name_vi="rollback thay đổi",
++        description_vi="khôi phục snapshot operation gần nhất hoặc được chỉ định",
++        risk_level="high", example_phrases=("rollback thay đổi vừa rồi",), visible_in_ui_group="project",
++    ),
++    "project_package_patch": CapabilityDefinition(
++        id="project_package_patch", public_name_vi="đóng gói patch ZIP",
++        description_vi="đóng gói đúng file đã thay đổi kèm ghi chú tiếng Việt",
++        risk_level="medium", example_phrases=("đóng gói patch zip",), visible_in_ui_group="project",
++    ),
++    "project_execute_task": CapabilityDefinition(
++        id="project_execute_task", public_name_vi="tự hoàn thành tác vụ code",
++        description_vi="tự inspect, lập patch, sửa, chạy test, rollback nếu lỗi và đóng gói",
++        risk_level="high", example_phrases=("sửa project này đi", "làm luôn rồi chạy test"), visible_in_ui_group="project",
++    ),
+     "launch_app": CapabilityDefinition(
+         id="launch_app", public_name_vi="mở ứng dụng",
+         description_vi="mở app/chương trình có trong cấu hình runtime",
+@@ -283,12 +338,19 @@ def iter_public_capabilities(
+             if (_CAPABILITY_DATA.get(str(item)) is not None
+                 and _CAPABILITY_DATA[str(item)].visible_in_ui_group == "environment")
+         )
+-        deferred = set((*cognitive, *environment))
++        project = tuple(
++            item for item in ids
++            if (_CAPABILITY_DATA.get(str(item)) is not None
++                and _CAPABILITY_DATA[str(item)].visible_in_ui_group == "project")
++        )
++        project_primary = tuple(item for item in project if item == "project_execute_task")
++        project_secondary = tuple(item for item in project if item != "project_execute_task")
++        deferred = set((*cognitive, *environment, *project))
+         regular = tuple(item for item in ids if item not in deferred)
+         # Giữ toàn bộ giới hạn cảm biến (camera/Meet/UIA) trong snapshot nhỏ,
+         # rồi mới xếp environment/cognition. Một capability mới không được đẩy
+         # mất lời thú nhận "tôi không nhìn được Meet" khỏi prompt.
+-        ids = (*regular, *_OBSERVATIONAL_CAPABILITY_IDS, *environment, *cognitive)
++        ids = (*project_primary, *regular, *_OBSERVATIONAL_CAPABILITY_IDS, *project_secondary, *environment, *cognitive)
+     else:
+         ids = (*ids, *_OBSERVATIONAL_CAPABILITY_IDS)
+     ids = tuple(dict.fromkeys(ids))
+@@ -341,6 +403,7 @@ def capability_surface_keywords(action_ids: Iterable[str] | None = None) -> tupl
+         "ứng dụng", "cửa sổ", "âm lượng", "volume", "media", "clipboard", "web", "thời tiết",
+         "thời gian", "giờ", "telemetry", "runtime", "idle", "UI Automation", "OCR", "màn hình", "Meet", "camera",
+         "claim", "câu hỏi bỏ ngỏ", "memory candidate", "social state", "mâu thuẫn", "open loop",
++        "project", "source", "symbol", "diff", "patch", "test", "rollback", "đóng gói zip",
+     ))
+     return tuple(dict.fromkeys(w for w in words if str(w or "").strip()))
+ 
+diff --git a/actions/capability_runtime.py b/actions/capability_runtime.py
+index 0a2870b..1a0755c 100644
+--- a/actions/capability_runtime.py
++++ b/actions/capability_runtime.py
+@@ -138,6 +138,19 @@ def refresh_runtime_capabilities(
+                 )
+             continue
+ 
++        if capability_id in _project_capability_ids():
++            runtime = getattr(owner, "project_operations", None) if owner is not None else None
++            if runtime is None:
++                statuses[capability_id] = CapabilityRuntimeStatus(
++                    capability_id, False, "project_operations_runtime_unavailable", "runtime"
++                )
++            else:
++                available, reason = runtime.availability(capability_id)
++                statuses[capability_id] = CapabilityRuntimeStatus(
++                    capability_id, bool(available), str(reason or ""), "project_operations_runtime"
++                )
++            continue
++
+         if owner is None:
+             # Trước khi Coordinator bind, không nói dối là available. Registry vẫn
+             # hoạt động nhưng prompt sẽ ghi rõ snapshot chưa sẵn sàng.
+@@ -241,6 +254,14 @@ def _environment_capability_ids() -> tuple[str, ...]:
+         return ()
+ 
+ 
++def _project_capability_ids() -> tuple[str, ...]:
++    try:
++        from runtime.project_operations import PROJECT_CAPABILITY_IDS
++        return tuple(PROJECT_CAPABILITY_IDS)
++    except Exception:
++        return ()
++
++
+ def _observational_statuses(owner: Any | None) -> dict[str, CapabilityRuntimeStatus]:
+     """Chụp năng lực quan sát thật; không suy từ prompt hay tên module."""
+     if owner is None:
+diff --git a/actions/contracts.py b/actions/contracts.py
+index f990e82..09cccf0 100644
+--- a/actions/contracts.py
++++ b/actions/contracts.py
+@@ -34,6 +34,18 @@ VALID_SYSTEM_ACTION_LIST = (
+     "read_current_error",
+     "inspect_selected_file",
+     "get_project_status",
++    # Năng lực thao tác project autonomous có snapshot/evidence.
++    "project_list_files",
++    "project_read_file",
++    "project_search_text",
++    "project_find_symbol",
++    "project_git_diff",
++    "project_apply_patch",
++    "project_run_tests",
++    "project_run_command",
++    "project_rollback",
++    "project_package_patch",
++    "project_execute_task",
+ )
+ 
+ VALID_SYSTEM_ACTIONS = set(VALID_SYSTEM_ACTION_LIST)
+@@ -54,6 +66,10 @@ _OBSERVED_ACTIONS = {
+     "get_active_application", "read_visible_ui_text",
+     "inspect_runtime_log", "read_current_error",
+     "inspect_selected_file", "get_project_status",
++    "project_list_files", "project_read_file", "project_search_text",
++    "project_find_symbol", "project_git_diff", "project_apply_patch",
++    "project_run_tests", "project_run_command", "project_rollback",
++    "project_package_patch", "project_execute_task",
+ }
+ 
+ 
+diff --git a/actions/executor.py b/actions/executor.py
+index 97cd23f..f919313 100644
+--- a/actions/executor.py
++++ b/actions/executor.py
+@@ -42,6 +42,7 @@ class ActionExecutor:
+         self.observer = observer if observer is not None else DefaultActionObserver()
+         self.cognitive_runtime = None
+         self.environment_runtime = None
++        self.project_runtime = None
+ 
+     def bind_cognitive_runtime(self, runtime) -> None:
+         """Nối executor với runtime nhận thức sau khi Coordinator đã dựng xong.
+@@ -56,6 +57,10 @@ class ActionExecutor:
+         """Nối executor với runtime đọc môi trường sau khi screen store đã dựng."""
+         self.environment_runtime = runtime
+ 
++    def bind_project_runtime(self, runtime) -> None:
++        """Nối executor với runtime thao tác project autonomous."""
++        self.project_runtime = runtime
++
+     #execute() là trung tâm điều phối
+     '''
+     AI output
+@@ -196,6 +201,49 @@ class ActionExecutor:
+     def _get_project_status(self, action_input: str) -> ActionExecutionResult:
+         return self._execute_environment("get_project_status", action_input)
+ 
++    def _execute_project(self, capability_id: str, action_input: str) -> ActionExecutionResult:
++        runtime = self.project_runtime
++        if runtime is None:
++            return ActionExecutionResult(
++                action_name=capability_id, action_input=action_input, success=False,
++                message="Runtime thao tác project chưa được nối.", error_kind="ProjectRuntimeUnavailable",
++            )
++        result = runtime.execute(capability_id, action_input)
++        return result.to_action_result(action_input=action_input)
++
++    def _project_list_files(self, action_input: str) -> ActionExecutionResult:
++        return self._execute_project("project_list_files", action_input)
++
++    def _project_read_file(self, action_input: str) -> ActionExecutionResult:
++        return self._execute_project("project_read_file", action_input)
++
++    def _project_search_text(self, action_input: str) -> ActionExecutionResult:
++        return self._execute_project("project_search_text", action_input)
++
++    def _project_find_symbol(self, action_input: str) -> ActionExecutionResult:
++        return self._execute_project("project_find_symbol", action_input)
++
++    def _project_git_diff(self, action_input: str) -> ActionExecutionResult:
++        return self._execute_project("project_git_diff", action_input)
++
++    def _project_apply_patch(self, action_input: str) -> ActionExecutionResult:
++        return self._execute_project("project_apply_patch", action_input)
++
++    def _project_run_tests(self, action_input: str) -> ActionExecutionResult:
++        return self._execute_project("project_run_tests", action_input)
++
++    def _project_run_command(self, action_input: str) -> ActionExecutionResult:
++        return self._execute_project("project_run_command", action_input)
++
++    def _project_rollback(self, action_input: str) -> ActionExecutionResult:
++        return self._execute_project("project_rollback", action_input)
++
++    def _project_package_patch(self, action_input: str) -> ActionExecutionResult:
++        return self._execute_project("project_package_patch", action_input)
++
++    def _project_execute_task(self, action_input: str) -> ActionExecutionResult:
++        return self._execute_project("project_execute_task", action_input)
++
+     def _get_local_time(self, action_input: str) -> ActionExecutionResult:
+         now = time.localtime()
+         hhmm = time.strftime("%H:%M", now)
+diff --git a/actions/router.py b/actions/router.py
+index bc7cc4c..1411b2c 100644
+--- a/actions/router.py
++++ b/actions/router.py
+@@ -103,6 +103,7 @@ class ActionRouter:
+         norm = self._normalize_vi(raw)
+ 
+         candidates: list[RouteCandidate] = [
++            self._route_project_operation(raw, norm),
+             self._route_internal_cognition(raw, norm),
+             self._route_environment_read(raw, norm),
+             self._route_open_url(raw, norm),
+@@ -127,6 +128,57 @@ class ActionRouter:
+         winner = max(valid, key=lambda c: c.confidence)
+         return winner.action, winner.value
+ 
++    def _route_project_operation(self, raw: str, norm: str) -> RouteCandidate:
++        """Route lệnh project rõ ràng sang executor thật.
++
++        Lệnh sửa/làm project được chuyển cho ``project_execute_task`` để runtime
++        tự inspect -> edit -> test -> verify. Câu hỏi kiểu "nên sửa sao" vẫn đi
++        qua chat; không phải thấy chữ test là vồ lấy repo như một con mèo thiếu ngủ.
++        """
++        if self._starts_with_negation(norm):
++            return self._blocked("project_execute_task", "negated")
++
++        read_match = re.search(r"^(?:eris\s+)?(?:doc|xem)\s+(?:file|tep)\s+([^?]+)$", norm)
++        if read_match and not any(token in norm for token in ("dang mo", "dang chon", "hien tai")):
++            path = raw[read_match.start(1):].strip().strip("\"'")
++            return RouteCandidate("project_read_file", path, 0.95, ("explicit_project_file_read",))
++
++        symbol_match = re.search(r"^(?:eris\s+)?(?:tim|find)\s+(?:symbol|class|ham|function)\s+([A-Za-z_][A-Za-z0-9_]*)\s*$", norm)
++        if symbol_match:
++            raw_symbol = re.search(r"(?:symbol|class|hàm|ham|function)\s+([A-Za-z_][A-Za-z0-9_]*)\s*$", raw, flags=re.I)
++            symbol = raw_symbol.group(1) if raw_symbol else symbol_match.group(1)
++            return RouteCandidate("project_find_symbol", symbol, 0.96, ("explicit_symbol_search",))
++
++        text_match = re.search(r"^(?:eris\s+)?(?:tim|search)\s+(.+?)\s+(?:trong|o)\s+(?:project|repo|source)\s*$", norm)
++        if text_match:
++            return RouteCandidate("project_search_text", text_match.group(1).strip(), 0.93, ("explicit_project_search",))
++
++        if re.search(r"^(?:eris\s+)?(?:xem|doc|kiem)\s+(?:git\s+)?diff(?:\s+project|\s+repo)?\s*$", norm):
++            return RouteCandidate("project_git_diff", "current", 0.96, ("explicit_project_diff",))
++        if re.search(r"^(?:eris\s+)?(?:chay|run)\s+(?:lai\s+)?(?:test|pytest)(?:\s+.*)?$", norm):
++            target = re.sub(r"^(?:eris\s+)?(?:chay|run)\s+(?:lai\s+)?", "", raw, flags=re.I).strip()
++            return RouteCandidate("project_run_tests", target or "auto", 0.96, ("explicit_project_test",))
++        if re.search(r"^(?:eris\s+)?(?:rollback|hoan tac|khoi phuc)\s+(?:thay doi|patch|operation)?(?:\s+.*)?$", norm):
++            return RouteCandidate("project_rollback", "latest", 0.96, ("explicit_project_rollback",))
++        if re.search(r"^(?:eris\s+)?(?:dong goi|tao)\s+(?:patch\s+)?(?:zip|patch zip)(?:\s+.*)?$", norm):
++            return RouteCandidate("project_package_patch", "latest", 0.96, ("explicit_project_package",))
++        if re.search(r"^(?:eris\s+)?(?:liet ke|list)\s+(?:file|tep)(?:\s+trong)?\s+(?:project|repo|source)\s*$", norm):
++            return RouteCandidate("project_list_files", "", 0.95, ("explicit_project_list",))
++
++        # Toàn quyền project: khi user ra lệnh sửa/làm/hoàn thành rõ ràng, runtime
++        # tự tiếp tục kể cả không nhận được phản hồi duyệt tiếp theo.
++        command_shape = re.search(
++            r"^(?:eris\s+)?(?:sua|fix|lam|trien khai|hoan thanh|noi|them|xoa|refactor|viet lai|va|patch)\b",
++            norm,
++        )
++        project_anchor = any(token in norm for token in (
++            "project", "repo", "source", "src", "file", ".py", "runtime", "test", "patch", "code",
++        ))
++        advisory = any(token in norm for token in ("nen ", "co nen", "theo ban", "cach nao", "lam sao", "nhu the nao"))
++        if command_shape and project_anchor and not advisory:
++            return RouteCandidate("project_execute_task", raw, 0.91, ("explicit_autonomous_project_task",))
++        return self._no_candidate("project_operation")
++
+     def _route_internal_cognition(self, raw: str, norm: str) -> RouteCandidate:
+         """Chỉ route câu lệnh tự kiểm tra có động từ rõ ràng.
+ 
+diff --git a/parser_grounding/decision.py b/parser_grounding/decision.py
+index 143d9a4..56a7997 100644
+--- a/parser_grounding/decision.py
++++ b/parser_grounding/decision.py
+@@ -1540,7 +1540,15 @@ class ParserGroundingMixin:
+         if bounce_action == self.fallback["animation"] and raw_bounce_action:
+             bounce_action = ""
+         system_action = self._sanitize_system_action(decision.get("system_action", ""))
+-        action_input = self._normalize_salvaged_text(str(decision.get("action_input", "")).strip())[:280]
++        raw_action_input = str(decision.get("action_input", "")).strip()
++        # Project patch/task cần giữ newline và JSON dài. Các action desktop vẫn
++        # giữ cap nhỏ để model không nhét một cuốn tiểu thuyết vào ô URL.
++        if system_action in {"project_apply_patch", "project_execute_task"}:
++            action_input = raw_action_input[:120000]
++        elif system_action in {"project_run_command", "project_run_tests", "project_package_patch"}:
++            action_input = raw_action_input[:8000]
++        else:
++            action_input = self._normalize_salvaged_text(raw_action_input)[:280]
+         if not system_action:
+             action_input = ""
+ 
+diff --git a/runtime/coordinator.py b/runtime/coordinator.py
+index 88f57fb..33b281b 100644
+--- a/runtime/coordinator.py
++++ b/runtime/coordinator.py
+@@ -471,6 +471,21 @@ class RuntimeCoordinator(
+             )
+         except Exception as exc:
+             self.logger.warning("Không khởi tạo được internal cognitive capabilities: %s", exc)
++        self.project_operations = None
++        try:
++            from runtime.project_operations import PROJECT_OPERATIONS_VERSION, ProjectOperationsRuntime
++            self.project_operations = ProjectOperationsRuntime(self, logger=self.logger)
++            binder = getattr(self.action_executor, "bind_project_runtime", None)
++            if callable(binder):
++                binder(self.project_operations)
++            self.logger.info(
++                "[project-ops] loaded version=%s capabilities=%s mode=autonomous_project_scope",
++                PROJECT_OPERATIONS_VERSION,
++                len(self.project_operations.contracts()),
++            )
++        except Exception as exc:
++            self.logger.warning("Không khởi tạo được project operations runtime: %s", exc)
++
+         try:
+             from actions.capability_runtime import bind_runtime_owner
+ 
+diff --git a/runtime/project_operations.py b/runtime/project_operations.py
+new file mode 100644
+index 0000000..dfa6c5c
+--- /dev/null
++++ b/runtime/project_operations.py
+@@ -0,0 +1,910 @@
++# -*- coding: utf-8 -*-
++"""Project Operations Runtime cho Eris.
++
++Runtime này trao quyền thao tác project theo mô hình autonomous-by-default:
++inspect -> plan -> edit -> test -> verify -> rollback/package.
++
++Ranh giới duy nhất được giữ cứng là workspace root. Eris được tự quyết bên trong
++project, nhưng không được dùng một patch để chui ra ngoài repo rồi sửa cả máy.
++Mọi operation đều có evidence, snapshot và ledger để lời "đã sửa" không còn là
++một câu văn tự tin đứng một mình giữa sa mạc.
++"""
++from __future__ import annotations
++
++import hashlib
++import json
++import os
++import re
++import shlex
++import shutil
++import subprocess
++import threading
++import time
++import uuid
++import zipfile
++from collections import deque
++from dataclasses import asdict, dataclass, field
++from enum import Enum
++from pathlib import Path
++from typing import Any, Callable, Mapping, Sequence
++
++from actions.contracts import ActionExecutionResult, ActionExecutionStatus
++from llm.json_sanitizer import extract_last_valid_json_object, strip_reasoning_envelope
++
++PROJECT_OPERATIONS_VERSION = "project_operations.v1.0"
++
++
++class ProjectOperationState(str, Enum):
++    SUCCEEDED = "succeeded"
++    FAILED = "failed"
++    FAILED_VERIFICATION = "failed_verification"
++    WAITING_FOR_INPUT = "waiting_for_input"
++    ROLLED_BACK = "rolled_back"
++
++
++@dataclass(frozen=True, slots=True)
++class ProjectCapabilityContract:
++    capability_id: str
++    public_name_vi: str
++    description_vi: str
++    handler_id: str
++    risk_level: str = "medium"
++    permission_mode: str = "autonomous_project_scope"
++    reversible: bool = True
++
++
++@dataclass(frozen=True, slots=True)
++class ProjectEvidence:
++    evidence_id: str
++    source: str
++    summary: str
++    captured_at: float = 0.0
++    data: Mapping[str, Any] = field(default_factory=dict)
++
++    def to_dict(self) -> dict[str, Any]:
++        return {
++            "evidence_id": self.evidence_id,
++            "source": self.source,
++            "summary": self.summary,
++            "captured_at": round(float(self.captured_at or 0.0), 3),
++            "data": dict(self.data),
++        }
++
++
++@dataclass(slots=True)
++class ProjectActionResult:
++    operation_id: str
++    capability_id: str
++    state: ProjectOperationState
++    public_text: str
++    started_at: float
++    completed_at: float
++    executed: bool = False
++    verified: bool = False
++    evidence: tuple[ProjectEvidence, ...] = ()
++    data: dict[str, Any] = field(default_factory=dict)
++    error_kind: str = ""
++    error_message: str = ""
++
++    @property
++    def success(self) -> bool:
++        return self.state == ProjectOperationState.SUCCEEDED and self.executed and self.verified
++
++    def to_action_result(self, *, action_input: str = "") -> ActionExecutionResult:
++        payload = {k: _stringify(v) for k, v in self.data.items() if v is not None}
++        payload.update({
++            "project_operation_id": self.operation_id,
++            "project_state": self.state.value,
++            "executed": str(bool(self.executed)).lower(),
++            "verified": str(bool(self.verified)).lower(),
++            "project_operations_version": PROJECT_OPERATIONS_VERSION,
++        })
++        return ActionExecutionResult(
++            action_name=self.capability_id,
++            action_input=action_input,
++            success=self.success,
++            message=self.public_text or self.error_message or "Project operation không hoàn tất.",
++            data=payload,
++            status=ActionExecutionStatus.OBSERVED if self.success else ActionExecutionStatus.FAILED,
++            dispatched=bool(self.executed),
++            observed=bool(self.verified),
++            evidence=tuple(item.evidence_id for item in self.evidence),
++            error_kind=self.error_kind,
++            observer_reason="project_postcondition_verified" if self.verified else "project_verification_failed",
++        )
++
++    def to_dict(self) -> dict[str, Any]:
++        payload = asdict(self)
++        payload["state"] = self.state.value
++        payload["evidence"] = [item.to_dict() for item in self.evidence]
++        payload["success"] = self.success
++        return payload
++
++
++PROJECT_CAPABILITY_CONTRACTS: dict[str, ProjectCapabilityContract] = {
++    "project_list_files": ProjectCapabilityContract(
++        "project_list_files", "liệt kê file project", "liệt kê file trong workspace có lọc cache/binary", "project.list_files", "low"
++    ),
++    "project_read_file": ProjectCapabilityContract(
++        "project_read_file", "đọc file project", "đọc file text trong project kèm hash", "project.read_file", "low"
++    ),
++    "project_search_text": ProjectCapabilityContract(
++        "project_search_text", "tìm text trong project", "tìm chuỗi/regex trong source", "project.search_text", "low"
++    ),
++    "project_find_symbol": ProjectCapabilityContract(
++        "project_find_symbol", "tìm symbol", "tìm class/function/symbol theo tên", "project.find_symbol", "low"
++    ),
++    "project_git_diff": ProjectCapabilityContract(
++        "project_git_diff", "xem diff project", "đọc git diff hiện tại", "project.git_diff", "low"
++    ),
++    "project_apply_patch": ProjectCapabilityContract(
++        "project_apply_patch", "áp patch project", "snapshot rồi áp unified diff trong workspace", "project.apply_patch", "high"
++    ),
++    "project_run_tests": ProjectCapabilityContract(
++        "project_run_tests", "chạy test project", "chạy pytest hoặc command test đã chỉ định", "project.run_tests", "medium"
++    ),
++    "project_run_command": ProjectCapabilityContract(
++        "project_run_command", "chạy lệnh project", "chạy command phát triển trong project root", "project.run_command", "high", reversible=False
++    ),
++    "project_rollback": ProjectCapabilityContract(
++        "project_rollback", "rollback operation", "khôi phục snapshot của operation gần nhất hoặc được chỉ định", "project.rollback", "high"
++    ),
++    "project_package_patch": ProjectCapabilityContract(
++        "project_package_patch", "đóng gói patch ZIP", "đóng gói file thay đổi và ghi chú tiếng Việt", "project.package_patch", "medium"
++    ),
++    "project_execute_task": ProjectCapabilityContract(
++        "project_execute_task", "tự hoàn thành tác vụ code", "tự inspect, lập patch, chạy test, verify, rollback và đóng gói", "project.execute_task", "high"
++    ),
++}
++PROJECT_CAPABILITY_IDS = tuple(PROJECT_CAPABILITY_CONTRACTS)
++
++
++class ProjectWorkspaceGuard:
++    def __init__(self, root: Path) -> None:
++        self.root = root.expanduser().resolve()
++
++    def resolve(self, value: str | Path, *, must_exist: bool = False) -> Path:
++        raw = Path(value)
++        candidate = raw.expanduser() if raw.is_absolute() else self.root / raw
++        resolved = candidate.resolve(strict=False)
++        try:
++            resolved.relative_to(self.root)
++        except ValueError as exc:
++            raise PermissionError(f"Path nằm ngoài project root: {value}") from exc
++        if must_exist and not resolved.exists():
++            raise FileNotFoundError(str(resolved))
++        return resolved
++
++    def relative(self, path: Path) -> str:
++        return path.resolve().relative_to(self.root).as_posix()
++
++
++class ProjectOperationsRuntime:
++    """Executor project có snapshot, evidence và autonomous fallback."""
++
++    _IGNORED_DIRS = {".git", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".venv", "venv", "node_modules", ".eris"}
++    _TEXT_EXTENSIONS = {
++        ".py", ".pyi", ".gd", ".cs", ".tscn", ".tres", ".json", ".jsonl", ".yaml", ".yml", ".toml",
++        ".ini", ".cfg", ".md", ".txt", ".log", ".ps1", ".sh", ".bat", ".cmd", ".js", ".ts", ".tsx",
++        ".jsx", ".html", ".css", ".scss", ".cpp", ".c", ".h", ".hpp", ".java", ".kt", ".rs", ".go", ".xml",
++    }
++
++    def __init__(self, owner: Any, *, logger: Any | None = None, max_audit: int = 120) -> None:
++        self.owner = owner
++        self.logger = logger
++        self._lock = threading.RLock()
++        self._audit: deque[ProjectActionResult] = deque(maxlen=max(30, int(max_audit)))
++        self._handlers: dict[str, Callable[[str, str], ProjectActionResult]] = {
++            "project_list_files": self._list_files,
++            "project_read_file": self._read_file,
++            "project_search_text": self._search_text,
++            "project_find_symbol": self._find_symbol,
++            "project_git_diff": self._git_diff,
++            "project_apply_patch": self._apply_patch,
++            "project_run_tests": self._run_tests,
++            "project_run_command": self._run_command,
++            "project_rollback": self._rollback,
++            "project_package_patch": self._package_patch,
++            "project_execute_task": self._execute_task,
++        }
++
++    def contracts(self) -> tuple[ProjectCapabilityContract, ...]:
++        return tuple(PROJECT_CAPABILITY_CONTRACTS.values())
++
++    def availability(self, capability_id: str) -> tuple[bool, str]:
++        cap = str(capability_id or "").strip()
++        if cap not in PROJECT_CAPABILITY_CONTRACTS:
++            return False, "unknown_project_capability"
++        if not bool(self._setting("enabled", True)):
++            return False, "project_operations_disabled"
++        autonomy_mode = str(self._setting("autonomy_mode", "full") or "full").strip().lower()
++        if autonomy_mode in {"off", "disabled", "none", "0", "false"}:
++            return False, "project_autonomy_disabled"
++        root = self._project_root()
++        if not root.exists() or not root.is_dir():
++            return False, "project_root_unavailable"
++        if cap in {"project_git_diff", "project_apply_patch"} and shutil.which("git") is None:
++            return False, "git_executable_missing"
++        if cap == "project_execute_task" and self._coding_client() is None:
++            return False, "coding_llm_client_unavailable"
++        return True, "autonomous_project_runtime_ready"
++
++    def execute(self, capability_id: str, action_input: str = "") -> ProjectActionResult:
++        cap = str(capability_id or "").strip()
++        operation_id = f"proj_{uuid.uuid4().hex[:12]}"
++        started = time.time()
++        available, reason = self.availability(cap)
++        if not available:
++            return self._finish(ProjectActionResult(
++                operation_id, cap, ProjectOperationState.FAILED,
++                "Năng lực project này chưa sẵn sàng.", started, time.time(),
++                error_kind="CapabilityUnavailable", error_message=reason,
++                data={"availability_reason": reason},
++            ))
++        try:
++            result = self._handlers[cap](operation_id, str(action_input or ""))
++            return self._finish(result)
++        except Exception as exc:
++            return self._finish(ProjectActionResult(
++                operation_id, cap, ProjectOperationState.FAILED,
++                "Tôi không hoàn tất được thao tác project này.", started, time.time(),
++                executed=True, verified=False, error_kind=type(exc).__name__, error_message=str(exc)[:1000],
++            ))
++
++    def audit_snapshot(self, limit: int = 20) -> tuple[dict[str, Any], ...]:
++        with self._lock:
++            return tuple(item.to_dict() for item in list(self._audit)[-max(1, int(limit)):])
++
++    # ------------------------------ read operations ------------------------------
++
++    def _list_files(self, operation_id: str, action_input: str) -> ProjectActionResult:
++        started = time.time(); payload = _parse_payload(action_input)
++        limit = max(1, min(int(payload.get("limit", 500) or 500), 3000))
++        pattern = str(payload.get("pattern", "") or "").strip().lower()
++        files = [p for p in self._iter_files() if not pattern or pattern in p.lower()][:limit]
++        evidence = (self._evidence("project_tree", "project_file_list", f"files={len(files)}", {"root": str(self._project_root())}),)
++        return self._success(operation_id, "project_list_files", started,
++            f"Tôi đã liệt kê {len(files)} file trong project.", evidence,
++            {"verification_key": "project_list_files", "files": files, "count": len(files)})
++
++    def _read_file(self, operation_id: str, action_input: str) -> ProjectActionResult:
++        started = time.time(); payload = _parse_payload(action_input)
++        path_value = str(payload.get("path", payload.get("value", action_input)) or "").strip()
++        path = self._guard().resolve(path_value, must_exist=True)
++        if path.suffix.lower() not in self._TEXT_EXTENSIONS:
++            raise ValueError("Chỉ đọc file text/source trong project runtime.")
++        max_chars = max(200, min(int(payload.get("max_chars", 20000) or 20000), 120000))
++        content = path.read_text(encoding="utf-8", errors="replace")[:max_chars]
++        digest = _sha256_bytes(content.encode("utf-8", "replace"))
++        rel = self._guard().relative(path)
++        evidence = (self._evidence(f"file:{digest[:16]}", "project_file", f"{rel} sha256={digest[:16]}", {"path": rel}),)
++        return self._success(operation_id, "project_read_file", started,
++            f"Tôi đã đọc {rel} và xác nhận hash {digest[:12]}.", evidence,
++            {"verification_key": "project_read_file", "path": rel, "sha256": digest, "content": content})
++
++    def _search_text(self, operation_id: str, action_input: str) -> ProjectActionResult:
++        started = time.time(); payload = _parse_payload(action_input)
++        query = str(payload.get("query", payload.get("value", action_input)) or "").strip()
++        if not query:
++            raise ValueError("Thiếu query tìm kiếm.")
++        regex_mode = bool(payload.get("regex", False))
++        matcher = re.compile(query, re.I) if regex_mode else None
++        matches: list[dict[str, Any]] = []
++        for rel in self._iter_files():
++            if len(matches) >= 200:
++                break
++            path = self._guard().resolve(rel)
++            if path.suffix.lower() not in self._TEXT_EXTENSIONS:
++                continue
++            try:
++                for line_no, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
++                    hit = bool(matcher.search(line)) if matcher else query.lower() in line.lower()
++                    if hit:
++                        matches.append({"path": rel, "line": line_no, "text": line.strip()[:360]})
++                        if len(matches) >= 200:
++                            break
++            except OSError:
++                continue
++        evidence = (self._evidence(_hash_id("search", query), "project_search", f"query={query[:80]} matches={len(matches)}"),)
++        return self._success(operation_id, "project_search_text", started,
++            f"Tôi tìm thấy {len(matches)} vị trí khớp trong project.", evidence,
++            {"verification_key": "project_search_text", "query": query, "matches": matches, "count": len(matches)})
++
++    def _find_symbol(self, operation_id: str, action_input: str) -> ProjectActionResult:
++        payload = _parse_payload(action_input)
++        symbol = str(payload.get("symbol", payload.get("query", payload.get("value", action_input))) or "").strip()
++        if not symbol:
++            raise ValueError("Thiếu tên symbol.")
++        pattern = rf"^\s*(?:async\s+def|def|class|func|function|interface|enum|struct)\s+{re.escape(symbol)}\b|\b{re.escape(symbol)}\s*\("
++        result = self._search_text(operation_id, json.dumps({"query": pattern, "regex": True}, ensure_ascii=False))
++        result.capability_id = "project_find_symbol"
++        result.data["verification_key"] = "project_find_symbol"
++        result.data["symbol"] = symbol
++        result.public_text = f"Tôi tìm thấy {result.data.get('count', 0)} vị trí liên quan symbol {symbol}."
++        return result
++
++    def _git_diff(self, operation_id: str, action_input: str) -> ProjectActionResult:
++        started = time.time(); payload = _parse_payload(action_input)
++        staged = bool(payload.get("staged", False))
++        args = ["git", "-C", str(self._project_root()), "diff", "--no-ext-diff", "--"]
++        if staged:
++            args.insert(4, "--cached")
++        completed = self._run_process(args, timeout=20)
++        if completed.returncode != 0:
++            raise RuntimeError(completed.stderr or completed.stdout)
++        diff = completed.stdout[:120000]
++        evidence = (self._evidence(_hash_id("git_diff", diff), "git_diff", f"chars={len(diff)} staged={staged}"),)
++        return self._success(operation_id, "project_git_diff", started,
++            f"Tôi đã đọc diff project, dài {len(diff)} ký tự.", evidence,
++            {"verification_key": "project_git_diff", "diff": diff, "staged": staged, "empty": not bool(diff.strip())})
++
++    # ------------------------------ write operations -----------------------------
++
++    def _apply_patch(self, operation_id: str, action_input: str) -> ProjectActionResult:
++        started = time.time(); payload = _parse_payload(action_input, keep_raw=True)
++        patch_text = str(payload.get("patch", payload.get("raw", "")) or "")
++        if not patch_text.strip():
++            raise ValueError("Thiếu unified diff trong action_input.")
++        root = self._project_root(); op_dir = self._operation_dir(operation_id)
++        touched = self._parse_patch_paths(patch_text)
++        if not touched:
++            raise ValueError("Patch không chứa path hợp lệ.")
++        self._snapshot_files(operation_id, touched)
++        patch_path = op_dir / "change.patch"
++        patch_path.write_text(patch_text, encoding="utf-8")
++        check = self._run_process(["git", "-C", str(root), "apply", "--check", "--whitespace=nowarn", str(patch_path)], timeout=30)
++        if check.returncode != 0:
++            raise RuntimeError(f"git apply --check thất bại: {(check.stderr or check.stdout)[:1200]}")
++        applied = self._run_process(["git", "-C", str(root), "apply", "--whitespace=nowarn", str(patch_path)], timeout=30)
++        if applied.returncode != 0:
++            raise RuntimeError(f"git apply thất bại: {(applied.stderr or applied.stdout)[:1200]}")
++        verified, hashes = self._verify_touched_files(touched)
++        self._write_manifest(operation_id, {"operation_id": operation_id, "capability": "project_apply_patch", "touched_files": touched, "hashes": hashes, "created_at": time.time()})
++        evidence = tuple(self._evidence(f"file:{digest[:16]}", "project_file_after_patch", f"{path} sha256={digest[:16]}", {"path": path}) for path, digest in hashes.items())
++        if not verified:
++            return ProjectActionResult(operation_id, "project_apply_patch", ProjectOperationState.FAILED_VERIFICATION,
++                "Patch đã được áp nhưng hậu điều kiện file chưa xác minh đủ.", started, time.time(), True, False, evidence,
++                {"touched_files": touched, "hashes": hashes}, "VerificationFailed")
++        return self._success(operation_id, "project_apply_patch", started,
++            f"Tôi đã áp patch vào {len(touched)} file và xác minh nội dung sau ghi.", evidence,
++            {"verification_key": "project_apply_patch", "touched_files": touched, "hashes": hashes})
++
++    def _run_tests(self, operation_id: str, action_input: str) -> ProjectActionResult:
++        started = time.time(); payload = _parse_payload(action_input)
++        command = payload.get("command") or payload.get("target") or action_input.strip()
++        if not command or str(command).strip().lower() in {"all", "auto", "default", "current"}:
++            args = self._detect_test_command()
++        else:
++            args = self._command_args(command)
++        timeout = max(10, min(int(payload.get("timeout", 300) or 300), 1800))
++        completed = self._run_process(args, timeout=timeout)
++        output = ((completed.stdout or "") + ("\n" + completed.stderr if completed.stderr else ""))[-30000:]
++        passed = completed.returncode == 0
++        evidence = (self._evidence(_hash_id("test", f"{args}|{completed.returncode}|{output}"), "project_test_process", f"exit={completed.returncode} command={shlex.join(args)[:180]}"),)
++        state = ProjectOperationState.SUCCEEDED if passed else ProjectOperationState.FAILED_VERIFICATION
++        text = "Test đã đạt." if passed else f"Test thất bại với exit code {completed.returncode}."
++        return ProjectActionResult(operation_id, "project_run_tests", state, text, started, time.time(), True, passed, evidence,
++            {"verification_key": "project_run_tests" if passed else "", "command": args, "exit_code": completed.returncode, "output": output},
++            "" if passed else "TestsFailed", "" if passed else output[-1000:])
++
++    def _run_command(self, operation_id: str, action_input: str) -> ProjectActionResult:
++        started = time.time(); payload = _parse_payload(action_input)
++        command = payload.get("command") or payload.get("value") or action_input
++        args = self._command_args(command)
++        self._validate_command(args)
++        timeout = max(5, min(int(payload.get("timeout", 300) or 300), 1800))
++        completed = self._run_process(args, timeout=timeout)
++        output = ((completed.stdout or "") + ("\n" + completed.stderr if completed.stderr else ""))[-30000:]
++        ok = completed.returncode == 0
++        evidence = (self._evidence(_hash_id("command", f"{args}|{completed.returncode}|{output}"), "project_command", f"exit={completed.returncode} command={shlex.join(args)[:180]}"),)
++        return ProjectActionResult(operation_id, "project_run_command", ProjectOperationState.SUCCEEDED if ok else ProjectOperationState.FAILED_VERIFICATION,
++            "Lệnh project đã chạy thành công." if ok else f"Lệnh project lỗi với exit code {completed.returncode}.",
++            started, time.time(), True, ok, evidence,
++            {"verification_key": "project_run_command" if ok else "", "command": args, "exit_code": completed.returncode, "output": output},
++            "" if ok else "CommandFailed", "" if ok else output[-1000:])
++
++    def _rollback(self, operation_id: str, action_input: str) -> ProjectActionResult:
++        started = time.time(); payload = _parse_payload(action_input)
++        target_id = str(payload.get("operation_id", payload.get("value", action_input)) or "").strip()
++        if not target_id or target_id.lower() in {"latest", "last", "gần nhất", "gan nhat"}:
++            target_id = self._latest_snapshot_operation()
++        if not target_id:
++            raise FileNotFoundError("Không có snapshot operation để rollback.")
++        op_dir = self._operation_dir(target_id, create=False)
++        manifest = json.loads((op_dir / "snapshot_manifest.json").read_text(encoding="utf-8"))
++        restored: list[str] = []
++        for item in manifest.get("files", []):
++            rel = str(item.get("path", "")); existed = bool(item.get("existed", False))
++            target = self._guard().resolve(rel)
++            backup = op_dir / "backup" / rel
++            if existed:
++                target.parent.mkdir(parents=True, exist_ok=True)
++                shutil.copy2(backup, target)
++            elif target.exists():
++                target.unlink()
++            restored.append(rel)
++        evidence = (self._evidence(_hash_id("rollback", target_id + "|" + "|".join(restored)), "project_snapshot", f"operation={target_id} restored={len(restored)}"),)
++        return self._success(operation_id, "project_rollback", started,
++            f"Tôi đã rollback operation {target_id}, khôi phục {len(restored)} file.", evidence,
++            {"verification_key": "project_rollback", "rolled_back_operation": target_id, "restored_files": restored})
++
++    def _package_patch(self, operation_id: str, action_input: str) -> ProjectActionResult:
++        started = time.time(); payload = _parse_payload(action_input)
++        target_id = str(payload.get("operation_id", "") or "").strip() or self._latest_manifest_operation() or self._latest_snapshot_operation()
++        output_dir = self._project_root() / "patches"
++        output_dir.mkdir(parents=True, exist_ok=True)
++        stamp = time.strftime("%Y%m%d_%H%M%S")
++        zip_path = output_dir / f"eris_patch_{stamp}.zip"
++        changed = self._changed_files(target_id)
++        notes = str(payload.get("notes_vi", "") or "").strip() or self._build_notes_vi(target_id, changed)
++        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
++            for rel in changed:
++                path = self._guard().resolve(rel)
++                if path.is_file():
++                    archive.write(path, arcname=rel)
++            archive.writestr("GHI_CHU_VI.txt", notes + "\n")
++            if target_id:
++                op_dir = self._operation_dir(target_id, create=False)
++                for name in ("change.patch", "operation_manifest.json"):
++                    candidate = op_dir / name
++                    if candidate.is_file():
++                        archive.write(candidate, arcname=f"_eris_meta/{name}")
++        digest = _sha256_bytes(zip_path.read_bytes())
++        evidence = (self._evidence(f"zip:{digest[:16]}", "project_patch_zip", f"{zip_path.name} files={len(changed)} sha256={digest[:16]}", {"path": str(zip_path)}),)
++        return self._success(operation_id, "project_package_patch", started,
++            f"Tôi đã đóng gói patch ZIP gồm {len(changed)} file và ghi chú tiếng Việt.", evidence,
++            {"verification_key": "project_package_patch", "zip_path": str(zip_path), "sha256": digest, "files": changed, "source_operation": target_id})
++
++    # ------------------------------ autonomous agent -----------------------------
++
++    def _execute_task(self, operation_id: str, action_input: str) -> ProjectActionResult:
++        started = time.time(); payload = _parse_payload(action_input)
++        task = str(payload.get("task", payload.get("value", action_input)) or "").strip()
++        if not task:
++            raise ValueError("Thiếu mô tả tác vụ project.")
++
++        max_attempts = max(1, min(int(self._setting("max_repair_attempts", 2) or 2), 4))
++        failure_context = ""
++        attempt_reports: list[dict[str, Any]] = []
++        final_apply: ProjectActionResult | None = None
++        final_plan: dict[str, Any] = {}
++        final_attempt_id = ""
++
++        for attempt in range(1, max_attempts + 1):
++            attempt_id = f"{operation_id}_a{attempt}"
++            context = self._build_agent_context(task)
++            if failure_context:
++                context += "\n\nFAILURE FROM PREVIOUS ATTEMPT:\n" + failure_context[-18000:]
++            plan = self._ask_coding_model(task, context)
++            patch_text = str(plan.get("patch", "") or "")
++            questions = _clean_string_list(plan.get("questions_vi"), limit=8)
++            assumptions = _clean_string_list(plan.get("assumptions_vi"), limit=12)
++            report: dict[str, Any] = {
++                "attempt": attempt,
++                "summary_vi": str(plan.get("summary_vi", "") or ""),
++                "assumptions_vi": assumptions,
++                "questions_vi": questions,
++            }
++            if questions and bool(self._setting("ask_when_uncertain", True)):
++                self._record_nonblocking_questions(attempt_id, task, questions, assumptions)
++                report["question_mode"] = "non_blocking" if bool(self._setting("proceed_without_user_reply", True)) else "wait_for_user"
++                if not bool(self._setting("proceed_without_user_reply", True)):
++                    return ProjectActionResult(
++                        operation_id, "project_execute_task", ProjectOperationState.WAITING_FOR_INPUT,
++                        "Tôi đã ghi câu hỏi cần làm rõ và đang chờ phản hồi trước khi sửa project.",
++                        started, time.time(), False, False, (),
++                        {"task": task, "questions_vi": questions, "assumptions_vi": assumptions, "attempts": [report]},
++                        "UserInputRequired", "Cấu hình proceed_without_user_reply đang tắt.",
++                    )
++            if not patch_text.strip():
++                failure_context = "Coding model không trả unified diff."
++                report.update({"stage": "plan", "success": False, "error": failure_context})
++                attempt_reports.append(report)
++                continue
++
++            apply_result = self._apply_patch(attempt_id, json.dumps({"patch": patch_text}, ensure_ascii=False))
++            report["apply"] = apply_result.to_dict()
++            if not apply_result.success:
++                failure_context = apply_result.error_message or apply_result.public_text
++                report.update({"stage": "apply", "success": False, "error": failure_context})
++                attempt_reports.append(report)
++                continue
++
++            test_commands = plan.get("tests") if isinstance(plan.get("tests"), list) else []
++            if not test_commands:
++                test_commands = ["auto"]
++            test_results: list[dict[str, Any]] = []
++            tests_passed = True
++            for index, command in enumerate(test_commands[:4], 1):
++                test_id = f"{attempt_id}_test{index}"
++                result = self._run_tests(test_id, json.dumps({"command": command}, ensure_ascii=False))
++                test_results.append(result.to_dict())
++                if not result.success:
++                    tests_passed = False
++                    failure_context = str(result.data.get("output", "") or result.error_message or result.public_text)
++                    break
++            report["tests"] = test_results
++            report["success"] = tests_passed
++            attempt_reports.append(report)
++
++            if tests_passed:
++                final_apply = apply_result
++                final_plan = plan
++                final_attempt_id = attempt_id
++                break
++
++            if self._setting("auto_rollback_on_failure", True):
++                rollback = self._rollback(f"{attempt_id}_rollback", json.dumps({"operation_id": attempt_id}))
++                report["rollback"] = rollback.to_dict()
++            else:
++                return ProjectActionResult(operation_id, "project_execute_task", ProjectOperationState.FAILED_VERIFICATION,
++                    "Tôi đã sửa nhưng test thất bại và policy không cho tự rollback.", started, time.time(), True, False,
++                    apply_result.evidence, {"task": task, "attempts": attempt_reports}, "TestsFailed", failure_context[-1000:])
++
++        if final_apply is None:
++            return ProjectActionResult(operation_id, "project_execute_task", ProjectOperationState.ROLLED_BACK,
++                f"Tôi đã thử {max_attempts} vòng, đọc failure và tự sửa lại nhưng chưa đạt; workspace đã được rollback.",
++                started, time.time(), True, False, (), {"task": task, "attempts": attempt_reports, "rolled_back": True},
++                "RepairAttemptsExhausted", failure_context[-1000:])
++
++        package_data: dict[str, Any] = {}
++        package_evidence: tuple[ProjectEvidence, ...] = ()
++        if self._setting("auto_package_patch", True):
++            package = self._package_patch(f"{operation_id}_package", json.dumps({
++                "operation_id": final_attempt_id,
++                "notes_vi": str(final_plan.get("notes_vi", "") or final_plan.get("summary_vi", "")),
++            }, ensure_ascii=False))
++            package_data = package.data
++            package_evidence = package.evidence
++        evidence = tuple((*final_apply.evidence, *package_evidence))
++        unanswered_count = sum(len(item.get("questions_vi", []) or []) for item in attempt_reports)
++        question_note = f"; đã ghi {unanswered_count} câu hỏi không chặn" if unanswered_count else ""
++        return self._success(operation_id, "project_execute_task", started,
++            f"Tôi đã tự hoàn thành tác vụ sau {len(attempt_reports)} vòng, test đạt và xác minh {len(final_apply.data.get('touched_files', []))} file thay đổi{question_note}.", evidence,
++            {"verification_key": "project_execute_task", "task": task,
++             "plan_summary": final_plan.get("summary_vi", ""),
++             "assumptions_vi": final_plan.get("assumptions_vi", []),
++             "questions_vi": _clean_string_list(final_plan.get("questions_vi"), limit=8),
++             "unanswered_question_count": unanswered_count,
++             "touched_files": final_apply.data.get("touched_files", []),
++             "attempts": attempt_reports, "package": package_data})
++
++    def _build_agent_context(self, task: str) -> str:
++        files = self._iter_files()[:700]
++        task_tokens = [token for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}", task) if token.lower() not in {"eris", "project", "file", "test", "fix"}]
++        candidates: list[str] = []
++        for rel in files:
++            low = rel.lower()
++            if any(token.lower() in low for token in task_tokens):
++                candidates.append(rel)
++        if not candidates:
++            candidates = [rel for rel in files if rel.endswith(".py")][:24]
++        snippets: list[str] = []
++        budget = 24000
++        for rel in candidates[:18]:
++            path = self._guard().resolve(rel)
++            try:
++                content = path.read_text(encoding="utf-8", errors="replace")[:5000]
++            except OSError:
++                continue
++            chunk = f"\n### FILE {rel}\n{content}\n"
++            if sum(len(x) for x in snippets) + len(chunk) > budget:
++                break
++            snippets.append(chunk)
++        diff = self._run_process(["git", "-C", str(self._project_root()), "diff", "--no-ext-diff"], timeout=15).stdout[:12000]
++        return "PROJECT TREE:\n" + "\n".join(files[:700]) + "\n\nCURRENT DIFF:\n" + diff + "\n" + "".join(snippets)
++
++    def _ask_coding_model(self, task: str, context: str) -> dict[str, Any]:
++        client = self._coding_client()
++        if client is None:
++            raise RuntimeError("Không có coding LLM client.")
++        uncertainty_rule = (
++            "Nếu thiếu dữ kiện, ghi câu hỏi vào questions_vi nhưng vẫn tự chọn giả định ít phá nhất trong assumptions_vi và tiếp tục. "
++            if bool(self._setting("ask_when_uncertain", True))
++            else "Không tạo câu hỏi; tự chọn giả định ít phá nhất trong assumptions_vi và tiếp tục. "
++        )
++        system = (
++            "Bạn là coding agent của Eris. Hãy sửa project bằng unified diff tối thiểu nhưng hoàn chỉnh. "
++            "Không giải thích ngoài JSON. Chỉ dùng path trong project. Giữ thay đổi hiện có của user. "
++            + uncertainty_rule +
++            "Output JSON schema: {summary_vi:string, assumptions_vi:string[], questions_vi:string[], patch:string, tests:string[], notes_vi:string}. "
++            "patch phải là unified diff hợp lệ bắt đầu bằng diff --git hoặc ---/+++; tests chỉ chứa lệnh test an toàn trong project."
++        )
++        messages = [{"role": "system", "content": system}, {"role": "user", "content": f"TÁC VỤ:\n{task}\n\nCONTEXT:\n{context}"}]
++        response = client.create_chat_completion(
++            messages=messages, temperature=0.15, frequency_penalty=0.0, presence_penalty=0.0,
++            max_tokens=max(1800, int(self._setting("coding_max_tokens", 5000))),
++            response_format={"type": "json_object"}, timeout=float(self._setting("coding_timeout_seconds", 120)),
++            reasoning_effort="high", reasoning_format="hidden",
++        )
++        raw = self._extract_response_text(response)
++        clean = strip_reasoning_envelope(raw)
++        candidate = extract_last_valid_json_object(clean) or clean
++        try:
++            parsed = json.loads(candidate)
++        except Exception as exc:
++            raise RuntimeError(f"Coding model trả JSON không hợp lệ: {clean[:500]}") from exc
++        if not isinstance(parsed, dict):
++            raise RuntimeError("Coding model không trả JSON object.")
++        return parsed
++
++    # --------------------------------- helpers ----------------------------------
++
++    def _project_root(self) -> Path:
++        explicit = os.getenv("ERIS_PROJECT_ROOT", "").strip()
++        if explicit:
++            return Path(explicit).expanduser().resolve()
++        for attr in ("project_root", "repo_root"):
++            value = str(getattr(self.owner, attr, "") or "").strip()
++            if value:
++                return Path(value).expanduser().resolve()
++        memory_core = getattr(self.owner, "memory_core", None)
++        base_dir = str(getattr(memory_core, "base_dir", "") or "").strip()
++        if base_dir:
++            return Path(base_dir).expanduser().resolve().parent
++        source_root = Path(__file__).resolve().parents[1]
++        return source_root.parent if source_root.name.lower() == "src" else source_root
++
++    def _guard(self) -> ProjectWorkspaceGuard:
++        return ProjectWorkspaceGuard(self._project_root())
++
++    def _iter_files(self) -> list[str]:
++        root = self._project_root(); out: list[str] = []
++        for path in root.rglob("*"):
++            if any(part in self._IGNORED_DIRS for part in path.relative_to(root).parts):
++                continue
++            if path.is_file():
++                out.append(path.relative_to(root).as_posix())
++        return sorted(out)
++
++    def _operation_dir(self, operation_id: str, *, create: bool = True) -> Path:
++        safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", operation_id)
++        path = self._project_root() / ".eris" / "project_ops" / safe_id
++        if create:
++            path.mkdir(parents=True, exist_ok=True)
++        return path
++
++    def _snapshot_files(self, operation_id: str, files: Sequence[str]) -> None:
++        op_dir = self._operation_dir(operation_id); records: list[dict[str, Any]] = []
++        for rel in files:
++            path = self._guard().resolve(rel)
++            existed = path.is_file()
++            records.append({"path": rel, "existed": existed})
++            if existed:
++                backup = op_dir / "backup" / rel
++                backup.parent.mkdir(parents=True, exist_ok=True)
++                shutil.copy2(path, backup)
++        (op_dir / "snapshot_manifest.json").write_text(json.dumps({"operation_id": operation_id, "files": records}, ensure_ascii=False, indent=2), encoding="utf-8")
++
++    def _write_manifest(self, operation_id: str, payload: Mapping[str, Any]) -> None:
++        (self._operation_dir(operation_id) / "operation_manifest.json").write_text(json.dumps(dict(payload), ensure_ascii=False, indent=2), encoding="utf-8")
++
++    def _record_nonblocking_questions(
++        self,
++        operation_id: str,
++        task: str,
++        questions: Sequence[str],
++        assumptions: Sequence[str],
++    ) -> None:
++        """Ghi câu hỏi để UI/ledger có thể hiện, nhưng không biến chúng thành approval gate."""
++        payload = {
++            "operation_id": operation_id,
++            "task": task,
++            "questions_vi": list(questions),
++            "assumptions_vi": list(assumptions),
++            "proceed_without_user_reply": bool(self._setting("proceed_without_user_reply", True)),
++            "captured_at": time.time(),
++        }
++        target = self._operation_dir(operation_id) / "questions_vi.json"
++        target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
++        callback = getattr(self.owner, "on_project_questions", None)
++        if callable(callback):
++            try:
++                callback(dict(payload))
++            except Exception:
++                pass
++
++    def _parse_patch_paths(self, patch_text: str) -> list[str]:
++        paths: list[str] = []
++        for line in patch_text.splitlines():
++            candidate = ""
++            if line.startswith("diff --git a/"):
++                parts = line.split()
++                if len(parts) >= 4:
++                    candidate = parts[2][2:]
++            elif line.startswith("+++ ") or line.startswith("--- "):
++                raw = line[4:].split("\t", 1)[0].strip()
++                if raw != "/dev/null":
++                    candidate = raw[2:] if raw.startswith(("a/", "b/")) else raw
++            if candidate:
++                rel = self._guard().relative(self._guard().resolve(candidate))
++                if rel not in paths:
++                    paths.append(rel)
++        return paths
++
++    def _verify_touched_files(self, touched: Sequence[str]) -> tuple[bool, dict[str, str]]:
++        hashes: dict[str, str] = {}
++        for rel in touched:
++            path = self._guard().resolve(rel)
++            if path.is_file():
++                hashes[rel] = _sha256_bytes(path.read_bytes())
++            elif path.exists():
++                return False, hashes
++            else:
++                hashes[rel] = "deleted"
++        return bool(touched), hashes
++
++    def _changed_files(self, operation_id: str) -> list[str]:
++        if operation_id:
++            manifest = self._operation_dir(operation_id, create=False) / "operation_manifest.json"
++            if manifest.is_file():
++                data = json.loads(manifest.read_text(encoding="utf-8"))
++                return [str(x) for x in data.get("touched_files", [])]
++        completed = self._run_process(["git", "-C", str(self._project_root()), "status", "--porcelain=v1"], timeout=15)
++        files: list[str] = []
++        for line in completed.stdout.splitlines():
++            value = line[3:].strip()
++            if " -> " in value:
++                value = value.split(" -> ", 1)[1]
++            if value:
++                try:
++                    files.append(self._guard().relative(self._guard().resolve(value)))
++                except Exception:
++                    pass
++        return list(dict.fromkeys(files))
++
++    def _latest_snapshot_operation(self) -> str:
++        base = self._project_root() / ".eris" / "project_ops"
++        candidates = [p for p in base.glob("*/snapshot_manifest.json")] if base.is_dir() else []
++        return max(candidates, key=lambda p: p.stat().st_mtime).parent.name if candidates else ""
++
++    def _latest_manifest_operation(self) -> str:
++        base = self._project_root() / ".eris" / "project_ops"
++        candidates = [p for p in base.glob("*/operation_manifest.json")] if base.is_dir() else []
++        return max(candidates, key=lambda p: p.stat().st_mtime).parent.name if candidates else ""
++
++    def _build_notes_vi(self, operation_id: str, changed: Sequence[str]) -> str:
++        lines = ["GÓI PATCH ERIS", f"Operation: {operation_id or 'không rõ'}", "", "File thay đổi:"]
++        lines.extend(f"- {item}" for item in changed)
++        lines.extend(["", "Ghi chú:", "- Patch được tạo bởi ProjectOperationsRuntime.", "- Hãy chạy lại test trên máy đích sau khi chép patch vào repo."])
++        return "\n".join(lines)
++
++    def _detect_test_command(self) -> list[str]:
++        root = self._project_root()
++        if (root / "pytest.ini").exists() or (root / "pyproject.toml").exists() or (root / "tests").is_dir():
++            return [os.getenv("PYTHON", "python"), "-m", "pytest", "-q"]
++        if (root / "package.json").exists():
++            return ["npm", "test", "--", "--runInBand"]
++        raise FileNotFoundError("Không nhận diện được test command mặc định.")
++
++    def _command_args(self, command: Any) -> list[str]:
++        if isinstance(command, list):
++            return [str(x) for x in command if str(x).strip()]
++        text = str(command or "").strip()
++        return shlex.split(text, posix=os.name != "nt")
++
++    def _validate_command(self, args: Sequence[str]) -> None:
++        if not args:
++            raise ValueError("Command rỗng.")
++        allowed = str(os.getenv("ERIS_PROJECT_ALLOWED_COMMANDS", "python,py,pytest,git,uv,pip,pip3,npm,npx,node,pnpm,yarn,dotnet,godot") or "")
++        allowed_names = {item.strip().lower() for item in allowed.split(",") if item.strip()}
++        executable = Path(str(args[0])).name.lower().removesuffix(".exe")
++        if executable not in allowed_names:
++            raise PermissionError(f"Executable chưa nằm trong project command policy: {executable}")
++        for arg in args[1:]:
++            value = str(arg)
++            if value.startswith(("http://", "https://")):
++                continue
++            if re.match(r"^[A-Za-z]:[\\/]", value) or value.startswith(("/", "../", "..\\")):
++                try:
++                    self._guard().resolve(value)
++                except Exception as exc:
++                    raise PermissionError(f"Command argument vượt project root: {value}") from exc
++
++    def _run_process(self, args: Sequence[str], *, timeout: int | float) -> subprocess.CompletedProcess[str]:
++        return subprocess.run(list(args), cwd=str(self._project_root()), capture_output=True, text=True, timeout=timeout,
++                              check=False, encoding="utf-8", errors="replace", shell=False)
++
++    def _coding_client(self) -> Any | None:
++        service = getattr(self.owner, "llm_service", None)
++        if service is None:
++            return None
++        return getattr(service, "escalation_client", None) or getattr(service, "fallback_client", None) or getattr(service, "client", None)
++
++    @staticmethod
++    def _extract_response_text(response: Any) -> str:
++        if isinstance(response, str):
++            return response
++        if isinstance(response, Mapping):
++            choices = response.get("choices") or []
++            if choices:
++                message = choices[0].get("message", {}) if isinstance(choices[0], Mapping) else {}
++                content = message.get("content", "") if isinstance(message, Mapping) else ""
++                if isinstance(content, str):
++                    return content
++                if isinstance(content, list):
++                    return "\n".join(str(item.get("text", "")) for item in content if isinstance(item, Mapping))
++            return str(response.get("text", "") or response.get("output_text", "") or "")
++        return str(response or "")
++
++    def _setting(self, key: str, default: Any) -> Any:
++        settings = getattr(self.owner, "runtime_settings", {})
++        block = settings.get("project_ops", {}) if isinstance(settings, Mapping) else {}
++        return block.get(key, default) if isinstance(block, Mapping) else default
++
++    def _success(self, operation_id: str, capability_id: str, started: float, text: str,
++                 evidence: Sequence[ProjectEvidence], data: dict[str, Any]) -> ProjectActionResult:
++        return ProjectActionResult(operation_id, capability_id, ProjectOperationState.SUCCEEDED, text,
++                                   started, time.time(), True, True, tuple(evidence), data)
++
++    def _evidence(self, evidence_id: str, source: str, summary: str, data: Mapping[str, Any] | None = None) -> ProjectEvidence:
++        return ProjectEvidence(evidence_id, source, summary, time.time(), dict(data or {}))
++
++    def _finish(self, result: ProjectActionResult) -> ProjectActionResult:
++        with self._lock:
++            self._audit.append(result)
++        try:
++            ledger = self._project_root() / "logs" / "project_ops_ledger.jsonl"
++            ledger.parent.mkdir(parents=True, exist_ok=True)
++            with ledger.open("a", encoding="utf-8") as handle:
++                handle.write(json.dumps(result.to_dict(), ensure_ascii=False, default=str) + "\n")
++        except Exception:
++            pass
++        if self.logger is not None:
++            try:
++                self.logger.info("[project-ops] capability=%s operation=%s state=%s verified=%s",
++                                 result.capability_id, result.operation_id, result.state.value, result.verified)
++            except Exception:
++                pass
++        return result
++
++
++def _parse_payload(value: str, *, keep_raw: bool = False) -> dict[str, Any]:
++    text = str(value or "").strip()
++    if text.startswith("{"):
++        try:
++            payload = json.loads(text)
++            if isinstance(payload, dict):
++                if keep_raw:
++                    payload.setdefault("raw", text)
++                return payload
++        except Exception:
++            pass
++    return {"value": text, "raw": text} if keep_raw else {"value": text}
++
++
++def _clean_string_list(value: Any, *, limit: int) -> list[str]:
++    if not isinstance(value, (list, tuple)):
++        return []
++    cleaned: list[str] = []
++    for item in value:
++        text = str(item or "").strip()
++        if text and text not in cleaned:
++            cleaned.append(text[:500])
++        if len(cleaned) >= max(1, int(limit)):
++            break
++    return cleaned
++
++
++def _stringify(value: Any) -> str:
++    if isinstance(value, str):
++        return value[:120000]
++    try:
++        return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)[:120000]
++    except Exception:
++        return str(value)[:120000]
++
++
++def _sha256_bytes(value: bytes) -> str:
++    return hashlib.sha256(value).hexdigest()
++
++
++def _hash_id(prefix: str, value: str) -> str:
++    return f"{prefix}:{hashlib.sha256(str(value).encode('utf-8', 'ignore')).hexdigest()[:16]}"
++
++
++__all__ = [
++    "PROJECT_OPERATIONS_VERSION", "PROJECT_CAPABILITY_IDS", "PROJECT_CAPABILITY_CONTRACTS",
++    "ProjectCapabilityContract", "ProjectEvidence", "ProjectActionResult", "ProjectOperationsRuntime",
++    "ProjectWorkspaceGuard",
++]
+diff --git a/runtime/runtime_settings_store.py b/runtime/runtime_settings_store.py
+index 4234408..3fb7110 100644
+--- a/runtime/runtime_settings_store.py
++++ b/runtime/runtime_settings_store.py
+@@ -63,6 +63,17 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
+         "weather_enabled": True,
+         "now_playing_enabled": True,
+     },
++    "project_ops": {
++        "enabled": True,
++        "autonomy_mode": "full",
++        "ask_when_uncertain": True,
++        "proceed_without_user_reply": True,
++        "auto_rollback_on_failure": True,
++        "auto_package_patch": True,
++        "coding_max_tokens": 5000,
++        "coding_timeout_seconds": 120,
++        "max_repair_attempts": 2,
++    },
+     "prompt": {
+         "hard_cap_tokens": 0,
+         "dds_enabled": True,
+@@ -149,6 +160,15 @@ _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
+     ("personality", "retort_mode"): ("ERIS_RETORT_MODE", "str"),
+     ("personality", "forbid_family_literalization"): ("ERIS_FORBID_FAMILY_LITERALIZATION", "bool"),
+     ("personality", "forbid_generic_helper_reset"): ("ERIS_FORBID_GENERIC_HELPER_RESET", "bool"),
++    ("project_ops", "enabled"): ("ERIS_PROJECT_OPS_ENABLED", "bool"),
++    ("project_ops", "autonomy_mode"): ("ERIS_PROJECT_AUTONOMY_MODE", "str"),
++    ("project_ops", "ask_when_uncertain"): ("ERIS_PROJECT_ASK_WHEN_UNCERTAIN", "bool"),
++    ("project_ops", "proceed_without_user_reply"): ("ERIS_PROJECT_PROCEED_WITHOUT_REPLY", "bool"),
++    ("project_ops", "auto_rollback_on_failure"): ("ERIS_PROJECT_AUTO_ROLLBACK", "bool"),
++    ("project_ops", "auto_package_patch"): ("ERIS_PROJECT_AUTO_PACKAGE", "bool"),
++    ("project_ops", "coding_max_tokens"): ("ERIS_PROJECT_CODING_MAX_TOKENS", "int"),
++    ("project_ops", "coding_timeout_seconds"): ("ERIS_PROJECT_CODING_TIMEOUT_S", "int"),
++    ("project_ops", "max_repair_attempts"): ("ERIS_PROJECT_MAX_REPAIR_ATTEMPTS", "int"),
+     ("prompt", "hard_cap_tokens"): ("ERIS_LLM_PROMPT_HARD_CAP_TOKENS", "int"),
+     ("prompt", "dds_enabled"): ("ERIS_DDS_ENABLED", "bool"),
+     ("prompt", "strict_grounding"): ("ERIS_STRICT_GROUNDING", "bool"),
+diff --git a/runtime/settings_protocol.py b/runtime/settings_protocol.py
+index 368801e..99973d8 100644
+--- a/runtime/settings_protocol.py
++++ b/runtime/settings_protocol.py
+@@ -81,9 +81,9 @@ def normalize_settings_message(msg: Mapping[str, Any]) -> NormalizedSettingsMess
+     raw = msg.get("settings")
+     if isinstance(raw, Mapping):
+         allowed_roots = {
+-            "advanced": {"chat", "personality", "prompt", "memory", "stage", "tts", "pipeline", "tutor"},
++            "advanced": {"chat", "personality", "project_ops", "prompt", "memory", "stage", "tts", "pipeline", "tutor"},
+             "personality": {"personality"},
+-            "runtime": {"chat", "personality", "capabilities", "prompt", "memory", "stage", "tts", "pipeline", "tutor", "danger_zone"},
++            "runtime": {"chat", "personality", "capabilities", "project_ops", "prompt", "memory", "stage", "tts", "pipeline", "tutor", "danger_zone"},
+         }.get(scope, set())
+         patch = {str(k): v for k, v in raw.items() if str(k) in allowed_roots}
+         rejected = tuple(str(k) for k in raw.keys() if str(k) not in allowed_roots)
+diff --git a/tests/test_project_operations.py b/tests/test_project_operations.py
+new file mode 100644
+index 0000000..5e39614
+--- /dev/null
++++ b/tests/test_project_operations.py
+@@ -0,0 +1,224 @@
++# -*- coding: utf-8 -*-
++from __future__ import annotations
++
++import json
++import subprocess
++import sys
++import zipfile
++from pathlib import Path
++from types import SimpleNamespace
++
++from actions.executor import ActionExecutor
++from actions.router import ActionRouter
++from runtime.project_operations import (
++    PROJECT_CAPABILITY_IDS,
++    PROJECT_OPERATIONS_VERSION,
++    ProjectOperationsRuntime,
++)
++
++
++def _git(repo: Path, *args: str) -> None:
++    completed = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=False)
++    assert completed.returncode == 0, completed.stderr or completed.stdout
++
++
++def _owner(repo: Path, *, client=None):
++    if client is None:
++        service = SimpleNamespace(client=None, fallback_client=None, escalation_client=None)
++    else:
++        service = SimpleNamespace(client=client, fallback_client=None, escalation_client=None)
++    return SimpleNamespace(
++        project_root=str(repo),
++        memory_core=SimpleNamespace(base_dir=str(repo / "memory_core")),
++        llm_service=service,
++        runtime_settings={
++            "project_ops": {
++                "enabled": True,
++                "autonomy_mode": "full",
++                "proceed_without_user_reply": True,
++                "auto_rollback_on_failure": True,
++                "auto_package_patch": True,
++                "coding_max_tokens": 2200,
++                "coding_timeout_seconds": 30,
++            }
++        },
++    )
++
++
++def _repo(tmp_path: Path) -> Path:
++    repo = tmp_path / "eris"
++    (repo / "memory_core").mkdir(parents=True)
++    (repo / "sample.py").write_text("def value():\n    return 1\n", encoding="utf-8")
++    (repo / "tests").mkdir()
++    (repo / "tests" / "test_sample.py").write_text(
++        "from sample import value\n\ndef test_value():\n    assert value() == 2\n", encoding="utf-8"
++    )
++    _git(repo, "init")
++    _git(repo, "config", "user.email", "eris@example.invalid")
++    _git(repo, "config", "user.name", "Eris Test")
++    _git(repo, "add", ".")
++    _git(repo, "commit", "-m", "initial")
++    return repo
++
++
++def test_contracts_and_router_expose_autonomous_project_actions(tmp_path: Path):
++    repo = _repo(tmp_path)
++    runtime = ProjectOperationsRuntime(_owner(repo))
++    assert PROJECT_OPERATIONS_VERSION == "project_operations.v1.0"
++    assert set(PROJECT_CAPABILITY_IDS) >= {
++        "project_apply_patch", "project_run_tests", "project_rollback",
++        "project_package_patch", "project_execute_task",
++    }
++    assert len(runtime.contracts()) == len(PROJECT_CAPABILITY_IDS)
++    router = ActionRouter()
++    assert router.route_chat("tìm symbol ActionExecutor") == ("project_find_symbol", "ActionExecutor")
++    assert router.route_chat("xem diff project") == ("project_git_diff", "current")
++    assert router.route_chat("sửa file sample.py rồi chạy test") == (
++        "project_execute_task", "sửa file sample.py rồi chạy test"
++    )
++    # Câu hỏi tư vấn không được tự tiện đụng source.
++    assert router.route_chat("có nên sửa project này không") is None
++
++
++def test_apply_patch_is_verified_and_can_rollback(tmp_path: Path):
++    repo = _repo(tmp_path)
++    runtime = ProjectOperationsRuntime(_owner(repo))
++    patch = """diff --git a/sample.py b/sample.py
++--- a/sample.py
+++++ b/sample.py
++@@ -1,2 +1,2 @@
++ def value():
++-    return 1
+++    return 2
++"""
++    result = runtime.execute("project_apply_patch", json.dumps({"patch": patch}))
++    assert result.success
++    assert result.verified
++    assert (repo / "sample.py").read_text(encoding="utf-8").endswith("return 2\n")
++    assert (repo / ".eris" / "project_ops" / result.operation_id / "snapshot_manifest.json").is_file()
++
++    rollback = runtime.execute("project_rollback", json.dumps({"operation_id": result.operation_id}))
++    assert rollback.success
++    assert (repo / "sample.py").read_text(encoding="utf-8").endswith("return 1\n")
++
++
++def test_executor_runs_tests_and_packages_only_changed_files(tmp_path: Path):
++    repo = _repo(tmp_path)
++    owner = _owner(repo)
++    runtime = ProjectOperationsRuntime(owner)
++    executor = ActionExecutor(observer=None)
++    executor.bind_project_runtime(runtime)
++
++    patch = """diff --git a/sample.py b/sample.py
++--- a/sample.py
+++++ b/sample.py
++@@ -1,2 +1,2 @@
++ def value():
++-    return 1
+++    return 2
++"""
++    applied = executor.execute("project_apply_patch", json.dumps({"patch": patch}))
++    assert applied.confirmed
++    operation_id = applied.data["project_operation_id"]
++
++    tests = executor.execute("project_run_tests", json.dumps({
++        "command": [sys.executable, "-m", "pytest", "-q", "tests/test_sample.py"],
++        "timeout": 60,
++    }))
++    assert tests.confirmed
++    assert tests.data["exit_code"] == "0"
++
++    package = executor.execute("project_package_patch", json.dumps({"operation_id": operation_id}))
++    assert package.confirmed
++    zip_path = Path(package.data["zip_path"])
++    assert zip_path.is_file()
++    with zipfile.ZipFile(zip_path) as archive:
++        names = set(archive.namelist())
++    assert "sample.py" in names
++    assert "GHI_CHU_VI.txt" in names
++    assert "tests/test_sample.py" not in names
++
++
++class _FakeCodingClient:
++    def __init__(self, patch: str):
++        self.patch = patch
++
++    def create_chat_completion(self, **kwargs):
++        del kwargs
++        content = json.dumps({
++            "summary_vi": "Đổi giá trị trả về và chạy test mục tiêu.",
++            "patch": self.patch,
++            "tests": [[sys.executable, "-m", "pytest", "-q", "tests/test_sample.py"]],
++            "notes_vi": "Đã cập nhật sample.py; test mục tiêu đạt.",
++        }, ensure_ascii=False)
++        return {"choices": [{"message": {"content": content}}]}
++
++
++def test_execute_task_continues_without_approval_and_finishes_pipeline(tmp_path: Path):
++    repo = _repo(tmp_path)
++    patch = """diff --git a/sample.py b/sample.py
++--- a/sample.py
+++++ b/sample.py
++@@ -1,2 +1,2 @@
++ def value():
++-    return 1
+++    return 2
++"""
++    runtime = ProjectOperationsRuntime(_owner(repo, client=_FakeCodingClient(patch)))
++    result = runtime.execute("project_execute_task", "sửa sample.py để test đạt rồi đóng gói")
++    assert result.success
++    assert result.verified
++    assert result.data["touched_files"] == ["sample.py"]
++    assert result.data["package"]["zip_path"]
++    assert (repo / "sample.py").read_text(encoding="utf-8").endswith("return 2\n")
++
++class _RetryCodingClient:
++    def __init__(self, first_patch: str, second_patch: str):
++        self.patches = [first_patch, second_patch]
++        self.calls = 0
++
++    def create_chat_completion(self, **kwargs):
++        del kwargs
++        patch = self.patches[min(self.calls, len(self.patches) - 1)]
++        self.calls += 1
++        content = json.dumps({
++            "summary_vi": f"Lần sửa {self.calls}",
++            "assumptions_vi": ["Ưu tiên thay đổi nhỏ nhất."],
++            "questions_vi": ["Có cần mở rộng sang file khác không?"],
++            "patch": patch,
++            "tests": [[sys.executable, "-m", "pytest", "-q", "tests/test_sample.py"]],
++            "notes_vi": "Tự đọc failure rồi sửa lại.",
++        }, ensure_ascii=False)
++        return {"choices": [{"message": {"content": content}}]}
++
++
++def test_execute_task_reads_failure_rolls_back_and_repairs(tmp_path: Path):
++    repo = _repo(tmp_path)
++    bad_patch = """diff --git a/sample.py b/sample.py
++--- a/sample.py
+++++ b/sample.py
++@@ -1,2 +1,2 @@
++ def value():
++-    return 1
+++    return 3
++"""
++    good_patch = """diff --git a/sample.py b/sample.py
++--- a/sample.py
+++++ b/sample.py
++@@ -1,2 +1,2 @@
++ def value():
++-    return 1
+++    return 2
++"""
++    client = _RetryCodingClient(bad_patch, good_patch)
++    runtime = ProjectOperationsRuntime(_owner(repo, client=client))
++    result = runtime.execute("project_execute_task", "sửa sample.py để test đạt")
++    assert result.success
++    assert client.calls == 2
++    assert len(result.data["attempts"]) == 2
++    assert result.data["attempts"][0]["success"] is False
++    assert result.data["attempts"][1]["success"] is True
++    assert result.data["unanswered_question_count"] == 2
++    question_files = list((repo / ".eris" / "project_ops").glob("*/questions_vi.json"))
++    assert len(question_files) == 2
++    assert (repo / "sample.py").read_text(encoding="utf-8").endswith("return 2\n")

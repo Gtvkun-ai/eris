@@ -43,6 +43,14 @@ def should_persist_research_answer(
     """
 
     persist_enabled = bool(getattr(config, "research_persist_answers", False))
+    try:
+        from runtime.runtime_settings_store import runtime_bool
+        # Runtime setting chỉ có quyền BẬT thêm persist, không được âm thầm tắt
+        # config test/explicit config đã bật. Không thì unit test thành trò bói file
+        # settings còn sót lại, một loại nghệ thuật không ai xin.
+        persist_enabled = persist_enabled or bool(runtime_bool("tutor", "persist_research_memory", default=False))
+    except Exception:
+        pass
     if not persist_enabled and not explicit_memory_request:
         return ResearchMemoryDecision(False, "persist_disabled", 0.0)
 

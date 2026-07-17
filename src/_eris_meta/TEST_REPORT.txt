@@ -1,0 +1,32 @@
+ERIS PROJECT AUTONOMY - TEST REPORT
+===================================
+
+1) Kiểm tra compile:
+   PYTHONDONTWRITEBYTECODE=1 python -m py_compile runtime/project_operations.py tests/test_project_operations.py
+   Kết quả: PASS
+
+2) Test mới và các vùng tích hợp liên quan:
+   PYTHONDONTWRITEBYTECODE=1 python -m pytest -q -p no:cacheprovider \
+     tests/test_project_operations.py \
+     tests/test_capability_phase7.py \
+     tests/test_environment_capabilities.py \
+     tests/test_action_router.py
+   Kết quả: 25 passed
+
+3) Kịch bản được test trực tiếp:
+   - registry/router nhận project actions
+   - apply patch thật + hash verification
+   - snapshot + rollback
+   - chạy pytest qua ActionExecutor
+   - ZIP chỉ chứa file thay đổi
+   - coding loop tự làm không cần approval
+   - lần sửa đầu test đỏ -> rollback -> đọc failure -> sửa lần hai -> test xanh
+   - câu hỏi không chắc chắn được ghi lại nhưng không chặn khi proceed_without_user_reply=true
+
+4) Đối chiếu test rộng:
+   - Bản đã sửa: 48 failed, 120 passed trên nhóm test rộng đã chạy.
+   - Bản gốc pristine: cùng đúng 48 test failure đó, 117 passed trên nhóm tương ứng.
+   - So sánh tên failure: trùng hoàn toàn, không phát sinh failure mới từ patch này.
+   - Các failure có sẵn thuộc những vùng cũ như key pool/TTS/decision parser/coordinator/vision grounding.
+
+Kết luận: vùng project autonomy và tích hợp trực tiếp đã đạt; patch không tạo thêm failure mới trong nhóm test đối chiếu.

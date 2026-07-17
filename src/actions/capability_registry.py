@@ -84,6 +84,61 @@ _CAPABILITY_DATA: dict[str, CapabilityDefinition] = {
         example_phrases=("git status", "repo đang bẩn không"),
         visible_in_ui_group="environment",
     ),
+    "project_list_files": CapabilityDefinition(
+        id="project_list_files", public_name_vi="liệt kê file project",
+        description_vi="đọc cây file trong workspace, tự lọc cache và binary",
+        example_phrases=("liệt kê file project",), visible_in_ui_group="project",
+    ),
+    "project_read_file": CapabilityDefinition(
+        id="project_read_file", public_name_vi="đọc file project",
+        description_vi="đọc nội dung file source trong project kèm hash evidence",
+        example_phrases=("đọc file runtime/coordinator.py",), visible_in_ui_group="project",
+    ),
+    "project_search_text": CapabilityDefinition(
+        id="project_search_text", public_name_vi="tìm text trong project",
+        description_vi="tìm text hoặc regex trong source project",
+        example_phrases=("tìm chuỗi này trong project",), visible_in_ui_group="project",
+    ),
+    "project_find_symbol": CapabilityDefinition(
+        id="project_find_symbol", public_name_vi="tìm symbol",
+        description_vi="tìm class, function hoặc symbol theo tên",
+        example_phrases=("tìm symbol ActionExecutor",), visible_in_ui_group="project",
+    ),
+    "project_git_diff": CapabilityDefinition(
+        id="project_git_diff", public_name_vi="xem diff project",
+        description_vi="đọc git diff hiện tại bằng evidence thật",
+        example_phrases=("xem diff project",), visible_in_ui_group="project",
+    ),
+    "project_apply_patch": CapabilityDefinition(
+        id="project_apply_patch", public_name_vi="áp patch project",
+        description_vi="snapshot file rồi áp unified diff trong workspace",
+        risk_level="high", example_phrases=("áp patch này",), visible_in_ui_group="project",
+    ),
+    "project_run_tests": CapabilityDefinition(
+        id="project_run_tests", public_name_vi="chạy test project",
+        description_vi="chạy test và chỉ báo đạt khi exit code bằng 0",
+        risk_level="medium", example_phrases=("chạy test",), visible_in_ui_group="project",
+    ),
+    "project_run_command": CapabilityDefinition(
+        id="project_run_command", public_name_vi="chạy lệnh project",
+        description_vi="chạy command phát triển trong project root theo command policy",
+        risk_level="high", example_phrases=("chạy python -m pytest",), visible_in_ui_group="project",
+    ),
+    "project_rollback": CapabilityDefinition(
+        id="project_rollback", public_name_vi="rollback thay đổi",
+        description_vi="khôi phục snapshot operation gần nhất hoặc được chỉ định",
+        risk_level="high", example_phrases=("rollback thay đổi vừa rồi",), visible_in_ui_group="project",
+    ),
+    "project_package_patch": CapabilityDefinition(
+        id="project_package_patch", public_name_vi="đóng gói patch ZIP",
+        description_vi="đóng gói đúng file đã thay đổi kèm ghi chú tiếng Việt",
+        risk_level="medium", example_phrases=("đóng gói patch zip",), visible_in_ui_group="project",
+    ),
+    "project_execute_task": CapabilityDefinition(
+        id="project_execute_task", public_name_vi="tự hoàn thành tác vụ code",
+        description_vi="tự inspect, lập patch, sửa, chạy test, rollback nếu lỗi và đóng gói",
+        risk_level="high", example_phrases=("sửa project này đi", "làm luôn rồi chạy test"), visible_in_ui_group="project",
+    ),
     "launch_app": CapabilityDefinition(
         id="launch_app", public_name_vi="mở ứng dụng",
         description_vi="mở app/chương trình có trong cấu hình runtime",
@@ -283,12 +338,19 @@ def iter_public_capabilities(
             if (_CAPABILITY_DATA.get(str(item)) is not None
                 and _CAPABILITY_DATA[str(item)].visible_in_ui_group == "environment")
         )
-        deferred = set((*cognitive, *environment))
+        project = tuple(
+            item for item in ids
+            if (_CAPABILITY_DATA.get(str(item)) is not None
+                and _CAPABILITY_DATA[str(item)].visible_in_ui_group == "project")
+        )
+        project_primary = tuple(item for item in project if item == "project_execute_task")
+        project_secondary = tuple(item for item in project if item != "project_execute_task")
+        deferred = set((*cognitive, *environment, *project))
         regular = tuple(item for item in ids if item not in deferred)
         # Giữ toàn bộ giới hạn cảm biến (camera/Meet/UIA) trong snapshot nhỏ,
         # rồi mới xếp environment/cognition. Một capability mới không được đẩy
         # mất lời thú nhận "tôi không nhìn được Meet" khỏi prompt.
-        ids = (*regular, *_OBSERVATIONAL_CAPABILITY_IDS, *environment, *cognitive)
+        ids = (*project_primary, *regular, *_OBSERVATIONAL_CAPABILITY_IDS, *project_secondary, *environment, *cognitive)
     else:
         ids = (*ids, *_OBSERVATIONAL_CAPABILITY_IDS)
     ids = tuple(dict.fromkeys(ids))
@@ -341,6 +403,7 @@ def capability_surface_keywords(action_ids: Iterable[str] | None = None) -> tupl
         "ứng dụng", "cửa sổ", "âm lượng", "volume", "media", "clipboard", "web", "thời tiết",
         "thời gian", "giờ", "telemetry", "runtime", "idle", "UI Automation", "OCR", "màn hình", "Meet", "camera",
         "claim", "câu hỏi bỏ ngỏ", "memory candidate", "social state", "mâu thuẫn", "open loop",
+        "project", "source", "symbol", "diff", "patch", "test", "rollback", "đóng gói zip",
     ))
     return tuple(dict.fromkeys(w for w in words if str(w or "").strip()))
 

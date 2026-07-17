@@ -34,6 +34,18 @@ VALID_SYSTEM_ACTION_LIST = (
     "read_current_error",
     "inspect_selected_file",
     "get_project_status",
+    # Năng lực thao tác project autonomous có snapshot/evidence.
+    "project_list_files",
+    "project_read_file",
+    "project_search_text",
+    "project_find_symbol",
+    "project_git_diff",
+    "project_apply_patch",
+    "project_run_tests",
+    "project_run_command",
+    "project_rollback",
+    "project_package_patch",
+    "project_execute_task",
 )
 
 VALID_SYSTEM_ACTIONS = set(VALID_SYSTEM_ACTION_LIST)
@@ -54,6 +66,10 @@ _OBSERVED_ACTIONS = {
     "get_active_application", "read_visible_ui_text",
     "inspect_runtime_log", "read_current_error",
     "inspect_selected_file", "get_project_status",
+    "project_list_files", "project_read_file", "project_search_text",
+    "project_find_symbol", "project_git_diff", "project_apply_patch",
+    "project_run_tests", "project_run_command", "project_rollback",
+    "project_package_patch", "project_execute_task",
 }
 
 

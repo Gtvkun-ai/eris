@@ -258,6 +258,15 @@ class RuntimeCoordinator(
     # Giãn cách tối thiểu giữa 2 lần chụp màn hình cho chat. Trong khoảng này, chat
     # tái dùng vision_facts gần nhất thay vì chụp + nén lại (xem _capture_screen_frame_for_chat).
     _CHAT_VISION_THROTTLE_SEC = 6.0
+    # Backward-compatible aliases for older regression tests. Real policy lives in
+    # runtime.tutor_research_policy; giữ mấy tên này để test cũ không chết vì
+    # chúng ta dọn nhà hơi quá tay.
+    _LIGHT_TUTOR_RESEARCH_CUES = (
+        "nghiên cứu", "nghien cuu", "đào sâu", "dao sau", "kiểm chứng", "kiem chung",
+        "hỏi gemini", "hoi gemini", "hỏi sư phụ", "hoi su phu", "fix elegant", "deep research",
+    )
+    _LIGHT_TUTOR_COMMAND_WORDS = ("hỏi", "hoi", "nhờ", "nho", "kêu", "keu", "gemini", "tutor", "sư phụ", "su phu")
+    _LIGHT_TUTOR_REFERENT_ONLY = ("cái này", "cai nay", "cái đó", "cai do", "phần này", "phan nay", "phần đó", "phan do", "ý này", "y nay")
 
     def _fallback_lines_for_intent(self, intent: str) -> tuple[str, ...]:
         key = str(intent or "").strip() or "micro_presence"
@@ -462,6 +471,21 @@ class RuntimeCoordinator(
             )
         except Exception as exc:
             self.logger.warning("Không khởi tạo được internal cognitive capabilities: %s", exc)
+        self.project_operations = None
+        try:
+            from runtime.project_operations import PROJECT_OPERATIONS_VERSION, ProjectOperationsRuntime
+            self.project_operations = ProjectOperationsRuntime(self, logger=self.logger)
+            binder = getattr(self.action_executor, "bind_project_runtime", None)
+            if callable(binder):
+                binder(self.project_operations)
+            self.logger.info(
+                "[project-ops] loaded version=%s capabilities=%s mode=autonomous_project_scope",
+                PROJECT_OPERATIONS_VERSION,
+                len(self.project_operations.contracts()),
+            )
+        except Exception as exc:
+            self.logger.warning("Không khởi tạo được project operations runtime: %s", exc)
+
         try:
             from actions.capability_runtime import bind_runtime_owner
 
@@ -4876,6 +4900,58 @@ class RuntimeCoordinator(
             self._preview_text(decision.parser_trace),
         )
 
+    def _looks_like_light_tutor_research_request(self, text: str) -> bool:
+        try:
+            from runtime.tutor_research_policy import score_research_need
+            return bool(score_research_need(text, intent="world_knowledge", meaning_missing=False).should_delegate)
+        except Exception:
+            normalized = self._normalize_marker_text(text)
+            return any(cue in normalized for cue in self._LIGHT_TUTOR_RESEARCH_CUES)
+
+    def _is_tutor_research_delegation_only(self, text: str) -> bool:
+        normalized = self._normalize_marker_text(text)
+        if not normalized:
+            return False
+        try:
+            from runtime.tutor_research_policy import is_explicit_research_request
+            explicit = is_explicit_research_request(text)
+        except Exception:
+            explicit = any(cue in normalized for cue in self._LIGHT_TUTOR_RESEARCH_CUES)
+        if not explicit:
+            return False
+        tokens = [tok for tok in normalized.split() if tok not in {"di", "nhe", "nha", "giup", "dum", "cho", "toi", "em", "hay"}]
+        content = [tok for tok in tokens if tok not in {"nghien", "cuu", "dao", "sau", "search", "web", "gemini", "tutor", "fix", "elegant", "kiem", "chung"}]
+        return len(content) <= 1
+
+    def _strip_light_tutor_command(self, text: str) -> str:
+        value = str(text or "").strip()
+        normalized = self._normalize_marker_text(value)
+        for phrase in ("gemini hãy search web nghiên cứu cho tôi về", "gemini hay search web nghien cuu cho toi ve", "nghiên cứu sâu", "nghien cuu sau", "hỏi sư phụ gemini", "hoi su phu gemini", "hỏi gemini", "hoi gemini"):
+            norm_phrase = self._normalize_marker_text(phrase)
+            if normalized.startswith(norm_phrase):
+                return value[len(phrase):].strip(" :,-–—") or value
+        return value
+
+    def _topic_is_referent_only(self, text: str) -> bool:
+        normalized = self._normalize_marker_text(text)
+        if not normalized:
+            return True
+        return any(marker in normalized for marker in self._LIGHT_TUTOR_REFERENT_ONLY) and len(normalized.split()) <= 6
+
+    def _build_light_tutor_research_prompt(self, topic: str, *, context: str = "") -> str:
+        try:
+            from runtime.tutor_research_policy import build_lightweight_research_prompt
+            prompt = build_lightweight_research_prompt(topic, context=context)
+            if "Hãy tìm hiểu kỹ" not in prompt:
+                prompt = prompt.replace("Hãy dùng tìm kiếm web nếu cần để kiểm tra", "Hãy tìm hiểu kỹ và dùng tìm kiếm web nếu cần để kiểm tra", 1)
+            if "tối đa 6 ý" not in prompt:
+                prompt = prompt.replace("Trả lời tiếng Việt cô đọng,", "Trả lời tiếng Việt cô đọng, tối đa 6 ý,", 1)
+            if "Không chain-of-thought" not in prompt:
+                prompt = prompt.replace("Câu hỏi:", "Không chain-of-thought. Câu hỏi:", 1)
+            return prompt[:395].rstrip()
+        except Exception:
+            return str(topic or "")[:395]
+
     def _is_tutor_delegation_only(self, text: str) -> bool:
         normalized = self._normalize_marker_text(text)
         if not normalized:
@@ -4955,6 +5031,9 @@ class RuntimeCoordinator(
             return
         try:
             text = str(user_text or "").strip()
+            mark_stale = getattr(self, "_mark_active_research_stale_if_user_changed", None)
+            if callable(mark_stale):
+                mark_stale(text)
             words = text.split()
             meaning = ""
             ml = getattr(frame, "meaning_layer", None)
@@ -4982,9 +5061,23 @@ class RuntimeCoordinator(
                 topic = self._resolve_tutor_research_topic(text)
                 if topic and self._research_can_start():
                     mode = str(getattr(tutor_decision, "mode", "research") or "research")
+                    anchor_meta = dict(getattr(self, "_last_tutor_anchor_resolution", {}) or {})
+                    # Low-confidence anchor: hỏi lại trước, đừng search nhầm rồi
+                    # đem kết quả đúng của câu sai về khoe. Máy móc cũng nên biết xấu hổ.
+                    try:
+                        from runtime.tutor_research_policy import anchor_resolution_needs_clarification
+                        runtime_float = getattr(self, "_tutor_runtime_float", None)
+                        floor = runtime_float("tutor", "low_confidence_clarify_threshold", default=0.55) if callable(runtime_float) else 0.55
+                        probe = SimpleNamespace(**anchor_meta)
+                        if anchor_resolution_needs_clarification(probe, confidence_floor=floor):
+                            self._clarify_user_pending = True
+                            self._research_pending = False
+                            self._research_topic = ""
+                            return
+                    except Exception:
+                        pass
                     self._research_pending = True
                     self._research_topic = topic
-                    anchor_meta = dict(getattr(self, "_last_tutor_anchor_resolution", {}) or {})
                     anchor_note = (
                         f"anchor_conf={anchor_meta.get('confidence', 0):.2f}; "
                         f"anchor_risk={anchor_meta.get('misread_risk', '')}; "
@@ -5082,9 +5175,56 @@ class RuntimeCoordinator(
         low = str(low or "")
         return any(marker in low for marker in self._KNOWLEDGE_QUESTION_MARKERS)
 
+    def _tutor_runtime_bool(self, *path: str, default: bool = True) -> bool:
+        try:
+            from runtime.runtime_settings_store import runtime_bool
+            return bool(runtime_bool(*path, default=default))
+        except Exception:
+            return bool(default)
+
+    def _tutor_runtime_float(self, *path: str, default: float = 0.0) -> float:
+        try:
+            from runtime.runtime_settings_store import runtime_float
+            return float(runtime_float(*path, default=default))
+        except Exception:
+            return float(default)
+
+    def _mark_active_research_stale_if_user_changed(self, user_text: str) -> None:
+        """Nếu user đổi chủ đề trong lúc Tutor chạy, đánh dấu job cũ là stale."""
+
+        if not getattr(self, "_research_in_flight", False):
+            return
+        if not self._tutor_runtime_bool("tutor", "stale_result_guard_enabled", default=True):
+            return
+        active = getattr(self, "_active_research_job", None)
+        if not isinstance(active, dict):
+            return
+        topic = str(active.get("topic", "") or "")
+        incoming = str(user_text or "").strip()
+        if not incoming or not topic:
+            return
+        try:
+            from runtime.tutor_search_jobs import looks_same_topic
+            same = looks_same_topic(incoming, topic)
+        except Exception:
+            same = incoming.lower().strip() in topic.lower() or topic.lower().strip() in incoming.lower()
+        if same:
+            return
+        active["stale"] = True
+        active["stale_reason"] = "user_changed_topic"
+        active["stale_user_text"] = incoming[:180]
+        self._active_research_job = active
+        try:
+            self.logger.info("[tutor research] marked stale job=%s reason=user_changed_topic topic=%r new=%r", active.get("job_id"), topic[:80], incoming[:80])
+        except Exception:
+            pass
+
     def _research_can_start(self) -> bool:
         """Debounce nhịp tra cứu: không tra khi đang có lượt tra chạy, và cách nhau tối thiểu."""
 
+        runtime_bool = getattr(self, "_tutor_runtime_bool", None)
+        if callable(runtime_bool) and not runtime_bool("tutor", "enabled", default=True):
+            return False
         if getattr(self, "_research_in_flight", False):
             return False
         now = time.time()
@@ -5123,6 +5263,9 @@ class RuntimeCoordinator(
             )
             if not bool(getattr(self_search_decision, "should_start", False)):
                 return decision
+            runtime_bool = getattr(self, "_tutor_runtime_bool", None)
+            if callable(runtime_bool) and not runtime_bool("tutor", "self_search_enabled", default=True):
+                return decision
             if not callable(getattr(self, "request_tutor_answer", None)):
                 return decision
             if not self._research_can_start():
@@ -5131,13 +5274,25 @@ class RuntimeCoordinator(
             topic = self._resolve_tutor_research_topic(user_text)
             if not topic:
                 return decision
+            anchor_meta = dict(getattr(self, "_last_tutor_anchor_resolution", {}) or {})
+            try:
+                from runtime.tutor_research_policy import anchor_resolution_needs_clarification
+                runtime_float = getattr(self, "_tutor_runtime_float", None)
+                floor = runtime_float("tutor", "low_confidence_clarify_threshold", default=0.55) if callable(runtime_float) else 0.55
+                if anchor_resolution_needs_clarification(SimpleNamespace(**anchor_meta), confidence_floor=floor):
+                    decision.text = "Tôi biết vụ này cần tra, nhưng neo hiện tại hơi mù. Bạn chỉ rõ tôi đang tra phần nào đã, kẻo tôi lại search nhầm như một cái GPS bị xúc phạm."
+                    decision.action = "tutor_anchor_clarify"
+                    decision.should_speak = True
+                    decision.confidence = min(float(getattr(decision, "confidence", 0.72) or 0.72), 0.55)
+                    return decision
+            except Exception:
+                pass
             mode = str(getattr(self_search_decision, "mode", "quick_search") or "quick_search")
             if mode not in {"quick_search", "research"}:
                 mode = "quick_search"
 
             self._research_pending = True
             self._research_topic = topic
-            anchor_meta = dict(getattr(self, "_last_tutor_anchor_resolution", {}) or {})
             anchor_note = (
                 f"anchor_conf={anchor_meta.get('confidence', 0):.2f}; "
                 f"anchor_risk={anchor_meta.get('misread_risk', '')}; "
@@ -5189,6 +5344,15 @@ class RuntimeCoordinator(
             return
         self._last_research_ts = time.time()
         self._research_in_flight = True
+        try:
+            from runtime.tutor_search_jobs import make_tutor_search_job
+            seq = int(getattr(self, "_research_job_seq", 0) or 0) + 1
+            self._research_job_seq = seq
+            job = make_tutor_search_job(topic, mode=mode, seq=seq, user_turn_id=str(getattr(self, "current_user_turn_id", "") or ""))
+            self._active_research_job = {**job.to_dict(), "topic": str(topic or ""), "stale": False}
+        except Exception:
+            job = SimpleNamespace(job_id=f"research_{int(time.time() * 1000)}", topic_hash="", mode=mode)
+            self._active_research_job = {"job_id": job.job_id, "topic": str(topic or ""), "stale": False, "mode": str(mode or "research")}
 
         def _bg():
             answer = None
@@ -5210,15 +5374,35 @@ class RuntimeCoordinator(
                 answer = None
             finally:
                 try:
-                    self._deliver_research_followup(topic, answer, mode=mode)
+                    self._deliver_research_followup(topic, answer, mode=mode, job_id=str(getattr(job, "job_id", "") or ""))
                 except Exception as exc:
                     self.logger.warning("[tutor research] deliver error: %s", exc)
-                self._research_in_flight = False
+                active = getattr(self, "_active_research_job", None)
+                if not isinstance(active, dict) or str(active.get("job_id", "")) == str(getattr(job, "job_id", "")):
+                    self._research_in_flight = False
+                    self._active_research_job = None
 
         threading.Thread(target=_bg, name="ERIS-ResearchFollowup", daemon=True).start()
 
-    def _deliver_research_followup(self, topic: str, answer, *, mode: str = "research") -> None:
+    def _deliver_research_followup(self, topic: str, answer, *, mode: str = "research", job_id: str = "") -> None:
         """Gửi câu trả lời nhịp 2 ra body bằng giọng Eris (qua đường decision chuẩn)."""
+
+        active = getattr(self, "_active_research_job", None)
+        runtime_bool = getattr(self, "_tutor_runtime_bool", None)
+        stale_guard_enabled = runtime_bool("tutor", "stale_result_guard_enabled", default=True) if callable(runtime_bool) else True
+        if stale_guard_enabled and isinstance(active, dict):
+            if job_id and str(active.get("job_id", "")) != str(job_id):
+                try:
+                    self.logger.info("[tutor research] drop stale result job=%s active=%s", job_id, active.get("job_id"))
+                except Exception:
+                    pass
+                return
+            if bool(active.get("stale", False)):
+                try:
+                    self.logger.info("[tutor research] drop stale result job=%s reason=%s", job_id or active.get("job_id"), active.get("stale_reason", "stale"))
+                except Exception:
+                    pass
+                return
 
         answer = str(answer or "").strip()
         if answer:
@@ -5305,6 +5489,7 @@ class RuntimeCoordinator(
                 "parse_mode": decision.parse_mode,
                 "source": "tutor_followup",
                 "research_mode": str(mode or "research"),
+                "research_job_id": str(job_id or ""),
             }
             anchor_meta = dict(getattr(self, "_last_tutor_anchor_resolution", {}) or {})
             if anchor_meta:
@@ -6648,6 +6833,8 @@ class RuntimeCoordinator(
                 meta["live_refreshed"].append("capability_runtime_snapshot")
             except Exception as exc:
                 self.logger.debug("[capability] live refresh failed: %s", exc)
+        if any(path.startswith("tutor.") for path in applied_paths):
+            meta["live_refreshed"].append("tutor_search_policy")
         return meta
 
     def _handle_stage_inbound_event(self, msg: dict) -> None:

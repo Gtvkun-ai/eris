@@ -1540,7 +1540,15 @@ class ParserGroundingMixin:
         if bounce_action == self.fallback["animation"] and raw_bounce_action:
             bounce_action = ""
         system_action = self._sanitize_system_action(decision.get("system_action", ""))
-        action_input = self._normalize_salvaged_text(str(decision.get("action_input", "")).strip())[:280]
+        raw_action_input = str(decision.get("action_input", "")).strip()
+        # Project patch/task cần giữ newline và JSON dài. Các action desktop vẫn
+        # giữ cap nhỏ để model không nhét một cuốn tiểu thuyết vào ô URL.
+        if system_action in {"project_apply_patch", "project_execute_task"}:
+            action_input = raw_action_input[:120000]
+        elif system_action in {"project_run_command", "project_run_tests", "project_package_patch"}:
+            action_input = raw_action_input[:8000]
+        else:
+            action_input = self._normalize_salvaged_text(raw_action_input)[:280]
         if not system_action:
             action_input = ""
 

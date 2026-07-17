@@ -259,6 +259,24 @@ class TutorRiskGuard:
 # Logger
 # =============================================================================
 
+def _scrub_payload(value: Any) -> Any:
+    """Scrub secret đệ quy cho log/panel payload.
+
+    Log cũ chỉ scrub top-level string; nested dict như research metrics/ledger có thể
+    lùa token vào trong. Một cái rây mà chỉ rây mặt trên thì đúng là thời trang bảo mật.
+    """
+
+    try:
+        if isinstance(value, str):
+            return scrub_identity(value)
+        if isinstance(value, dict):
+            return {str(k): _scrub_payload(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_scrub_payload(v) for v in value]
+    except Exception:
+        return "[unserializable]"
+    return value
+
 class TutorLogger:
     """Observability cho Tutor. KHÔNG bao giờ log định danh (email/cookie/HTML login)."""
 
@@ -269,7 +287,7 @@ class TutorLogger:
 
     def _emit(self, payload: dict[str, Any]) -> None:
         try:
-            safe = {k: (scrub_identity(v) if isinstance(v, str) else v) for k, v in payload.items()}
+            safe = _scrub_payload(payload)
             self.records.append(safe)
             if len(self.records) > self._max_records:
                 self.records = self.records[-self._max_records:]

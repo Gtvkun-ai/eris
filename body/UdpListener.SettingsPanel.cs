@@ -1590,6 +1590,7 @@ public partial class UdpListener : Node2D
 		env["ERIS_TTS_QUALITY"] = _settingsTtsQuality ?? "high";
 		env["ERIS_TTS_VOLUME"] = _settingsTtsVolume.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
 		env["ERIS_TTS_SPEED"] = _settingsTtsSpeed.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+		WriteAdvancedSettingsToSecrets(env);
 
 		// Ghi cả hai bản nháp. Đổi tab pool rồi lưu không còn làm mất phần đã sửa
 		// ở tab trước, cũng không bắt người dùng lưu riêng từng provider.
@@ -1614,6 +1615,7 @@ public partial class UdpListener : Node2D
 			["ERIS_TTS_VOLUME"] = _settingsTtsVolume.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
 			["ERIS_TTS_SPEED"] = _settingsTtsSpeed.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
 		};
+		AppendAdvancedSettingsToDotEnv(updates);
 
 		var lines = File.Exists(path)
 			? new List<string>(File.ReadAllLines(path, Encoding.UTF8))
