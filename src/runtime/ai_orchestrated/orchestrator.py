@@ -18,6 +18,7 @@ from runtime.no_fallback_policy import no_fallback_mode_enabled
 from semantic_authority import SemanticAuthorityPolicy
 
 from .contracts import AI_RUNTIME_VERSION, StateEvent
+from .identity import PendingStrategyUse, PRIMARY_RELATIONSHIP_ID
 
 
 
@@ -147,6 +148,9 @@ class AIChatOrchestrator:
         except Exception:
             pass
 
+        # Đảm bảo pending strategy của lượt trước đã vào single-writer trước khi
+        # observer dùng phản ứng user hiện tại để chấm hậu quả.
+        host.ai_state_reducer.wait_idle(0.15)
         mind_state = host.ai_state_reducer.snapshot()
         personality_context = mind_state.personality_prompt_context()
         relationship_context = mind_state.relationship.prompt_summary()
@@ -156,6 +160,8 @@ class AIChatOrchestrator:
             "user_text": user_text,
             "recent_public_history": host._chat_history_for_llm(limit=8)[:-1],
             "personality_summary": personality_context,
+            "identity": mind_state.identity.panel_view(),
+            "identity_summary": mind_state.identity_prompt_context(),
             "relationship_summary": relationship_context,
             "grounding_context": grounding_context,
             "memory_available": bool(str(memory_context or "").strip()),
@@ -250,6 +256,27 @@ class AIChatOrchestrator:
         decision = host._execute_system_action(decision, snapshot=snapshot, frame=None)
         public_text, assistant_meta = self._commit(decision)
         host.last_user_text_for_semantics = user_text
+
+        if public_text and chat_plan.strategy:
+            pending_strategy = PendingStrategyUse(
+                strategy_use_id=f"strategy:{turn_id}",
+                turn_seq=turn_seq,
+                strategy=chat_plan.strategy,
+                goal=chat_plan.topic,
+                context=tuple(
+                    item
+                    for item in (chat_plan.motive, chat_plan.value_focus, "chat")
+                    if str(item or "").strip()
+                ),
+                assistant_text=public_text,
+                relationship_scope=PRIMARY_RELATIONSHIP_ID,
+            )
+            host.ai_state_reducer.submit(
+                StateEvent.from_pending_strategy(
+                    pending_strategy,
+                    base_version=host.ai_state_reducer.snapshot().version,
+                )
+            )
 
         mechanical: list[Mapping[str, Any]] = []
         if isinstance(getattr(decision, "action_result_meta", None), Mapping):
@@ -389,6 +416,8 @@ class AIAutonomousOrchestrator:
             "event_kind": "startup",
             "personality": state.personality.panel_view(),
             "personality_summary": state.personality_prompt_context(),
+            "identity": state.identity.panel_view(),
+            "identity_summary": state.identity_prompt_context(),
             "relationship": state.relationship.to_dict(),
             "open_loops": list(state.open_loops),
             "latest_observation": dict(state.latest_observation),
@@ -474,6 +503,8 @@ class AIAutonomousOrchestrator:
             "vision_facts": list(vision_facts or ()),
             "personality": state.personality.panel_view(),
             "personality_summary": state.personality_prompt_context(),
+            "identity": state.identity.panel_view(),
+            "identity_summary": state.identity_prompt_context(),
             "relationship": state.relationship.to_dict(),
             "open_loops": list(state.open_loops),
             "latest_observation": dict(state.latest_observation),
@@ -491,6 +522,8 @@ class AIAutonomousOrchestrator:
                     "plan_id": f"force-speak-{int(time.time() * 1000)}",
                     "speak": True,
                     "motive": "user_force_speak",
+                    "strategy": "direct_presence",
+                    "value_focus": "continuity",
                     "topic": "Respond to the explicit request for presence with one short grounded line.",
                     "importance": 0.65,
                     "intrusion_risk": 0.05,
@@ -535,6 +568,20 @@ class AIAutonomousOrchestrator:
             return
         host.last_autonomous_spoken_at = time.time()
         host._note_autonomous_spoken()
+        if plan.strategy:
+            host.ai_state_reducer.submit(
+                StateEvent.from_pending_strategy(
+                    PendingStrategyUse(
+                        strategy_use_id=f"strategy:{turn_id}",
+                        turn_seq=turn_seq,
+                        strategy=plan.strategy,
+                        goal=plan.topic,
+                        context=tuple(item for item in (plan.motive, plan.value_focus, "force_speak") if str(item or "").strip()),
+                        assistant_text=text,
+                    ),
+                    base_version=host.ai_state_reducer.snapshot().version,
+                )
+            )
         if isinstance(getattr(decision, "action_result_meta", None), Mapping):
             host.ai_state_reducer.submit(
                 StateEvent.from_mechanical_outcome(
@@ -602,6 +649,8 @@ class AIAutonomousOrchestrator:
             "vision_facts": list(vision_facts or ()),
             "personality": state.personality.panel_view(),
             "personality_summary": state.personality_prompt_context(),
+            "identity": state.identity.panel_view(),
+            "identity_summary": state.identity_prompt_context(),
             "relationship": state.relationship.to_dict(),
             "open_loops": list(state.open_loops),
             "latest_observation": dict(state.latest_observation),
@@ -675,8 +724,23 @@ class AIAutonomousOrchestrator:
             return True
         host.last_autonomous_spoken_at = time.time()
         host._note_autonomous_spoken()
+        autonomous_turn_id = f"autonomous:{turn_seq}"
+        if plan.strategy:
+            host.ai_state_reducer.submit(
+                StateEvent.from_pending_strategy(
+                    PendingStrategyUse(
+                        strategy_use_id=f"strategy:{autonomous_turn_id}",
+                        turn_seq=turn_seq,
+                        strategy=plan.strategy,
+                        goal=plan.topic,
+                        context=tuple(item for item in (plan.motive, plan.value_focus, "autonomous") if str(item or "").strip()),
+                        assistant_text=text,
+                    ),
+                    base_version=host.ai_state_reducer.snapshot().version,
+                )
+            )
         host.ai_post_turn_observer.submit(
-            turn_id=f"autonomous:{turn_seq}",
+            turn_id=autonomous_turn_id,
             turn_seq=turn_seq,
             user_text="",
             assistant_text=text,

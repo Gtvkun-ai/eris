@@ -279,7 +279,10 @@ class SelfInterpretation:
 
 @dataclass(frozen=True, slots=True)
 class ConsequenceAssessment:
+    strategy_use_id: str = ""
     strategy: str = ""
+    target_goal: str = ""
+    context: str = "general"
     outcome: str = "unknown"
     reinforcement: float = 0.0
     confidence: float = 0.0
@@ -300,7 +303,10 @@ class ConsequenceAssessment:
         else:
             evidence = ()
         return cls(
+            strategy_use_id=compact(data.get("strategy_use_id", ""), 100),
             strategy=compact(data.get("strategy", ""), 100),
+            target_goal=compact(data.get("target_goal", ""), 180),
+            context=compact(data.get("context", "general"), 80).lower() or "general",
             outcome=compact(data.get("outcome", "unknown"), 120).lower() or "unknown",
             reinforcement=signed01(data.get("reinforcement", 0.0)),
             confidence=clamp01(data.get("confidence", 0.0)),

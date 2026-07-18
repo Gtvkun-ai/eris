@@ -19,6 +19,14 @@ import time
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Mapping, Sequence
 
+from .identity import (
+    Activation,
+    ConflictState,
+    IdentityProfile,
+    IdentitySignal,
+    PendingStrategyUse,
+    ValueChoice,
+)
 from .personality import (
     ConsequenceAssessment,
     PersonalityProfile,
@@ -27,7 +35,7 @@ from .personality import (
 )
 
 
-AI_RUNTIME_VERSION = "ai_orchestrated.v2.open_ended_personality"
+AI_RUNTIME_VERSION = "ai_orchestrated.v3.identity_kernel"
 
 
 def clamp01(value: Any, default: float = 0.0) -> float:
@@ -158,6 +166,11 @@ class CognitiveObservation:
     self_interpretation: SelfInterpretation = field(default_factory=SelfInterpretation)
     consequence: ConsequenceAssessment = field(default_factory=ConsequenceAssessment)
     trait_signals: tuple[TraitSignal, ...] = ()
+    identity_signals: tuple[IdentitySignal, ...] = ()
+    active_motives: tuple[Activation, ...] = ()
+    activated_defenses: tuple[Activation, ...] = ()
+    active_conflict: ConflictState = field(default_factory=ConflictState)
+    value_choice: ValueChoice = field(default_factory=ValueChoice)
     open_loop: str = ""
     memory_candidate: str = ""
     evidence: tuple[str, ...] = ()
@@ -210,6 +223,31 @@ class CognitiveObservation:
             )
         else:
             trait_signals = ()
+
+        raw_identity_signals = data.get("identity_signals", ())
+        if isinstance(raw_identity_signals, Sequence) and not isinstance(raw_identity_signals, str):
+            identity_signals = tuple(
+                signal
+                for signal in (
+                    IdentitySignal.from_mapping(item)
+                    for item in list(raw_identity_signals)[:14]
+                    if isinstance(item, Mapping)
+                )
+                if signal.dimension and signal.key and signal.delta != 0.0
+            )
+        else:
+            identity_signals = ()
+
+        def activations(name: str) -> tuple[Activation, ...]:
+            raw = data.get(name, ())
+            if not isinstance(raw, Sequence) or isinstance(raw, str):
+                return ()
+            return tuple(
+                item
+                for item in (Activation.from_mapping(value) for value in list(raw)[:4] if isinstance(value, Mapping))
+                if item.key and item.strength > 0.0
+            )
+
         return cls(
             turn_id=str(turn_id or f"turn-{turn_seq}"),
             turn_seq=max(0, int(turn_seq or 0)),
@@ -238,6 +276,15 @@ class CognitiveObservation:
                 data.get("consequence") if isinstance(data.get("consequence"), Mapping) else {}
             ),
             trait_signals=trait_signals,
+            identity_signals=identity_signals,
+            active_motives=activations("active_motives"),
+            activated_defenses=activations("activated_defenses"),
+            active_conflict=ConflictState.from_mapping(
+                data.get("active_conflict") if isinstance(data.get("active_conflict"), Mapping) else {}
+            ),
+            value_choice=ValueChoice.from_mapping(
+                data.get("value_choice") if isinstance(data.get("value_choice"), Mapping) else {}
+            ),
             open_loop=compact(data.get("open_loop", ""), 180),
             memory_candidate=compact(data.get("memory_candidate", ""), 260),
             evidence=evidence,
@@ -251,6 +298,11 @@ class CognitiveObservation:
         payload["self_interpretation"] = self.self_interpretation.to_dict()
         payload["consequence"] = self.consequence.to_dict()
         payload["trait_signals"] = [signal.to_dict() for signal in self.trait_signals]
+        payload["identity_signals"] = [signal.to_dict() for signal in self.identity_signals]
+        payload["active_motives"] = [item.to_dict() for item in self.active_motives]
+        payload["activated_defenses"] = [item.to_dict() for item in self.activated_defenses]
+        payload["active_conflict"] = self.active_conflict.to_dict()
+        payload["value_choice"] = self.value_choice.to_dict()
         payload["version"] = AI_RUNTIME_VERSION
         return payload
 
@@ -262,6 +314,8 @@ class IntentionPlan:
     channel: str
     speak: bool = False
     motive: str = "silence"
+    strategy: str = "direct_response"
+    value_focus: str = ""
     topic: str = ""
     importance: float = 0.0
     intrusion_risk: float = 0.0
@@ -299,6 +353,8 @@ class IntentionPlan:
             channel=str(channel or "autonomous"),
             speak=bool(data.get("speak", False)),
             motive=compact(data.get("motive", "silence"), 80).lower() or "silence",
+            strategy=compact(data.get("strategy", "direct_response"), 100).lower() or "direct_response",
+            value_focus=compact(data.get("value_focus", ""), 80).lower(),
             topic=compact(data.get("topic", ""), 240),
             importance=clamp01(data.get("importance", 0.0)),
             intrusion_risk=clamp01(data.get("intrusion_risk", 0.0)),
@@ -323,6 +379,7 @@ class RuntimeMindState:
     relationship: RelationshipState = field(default_factory=RelationshipState)
     appraisal: AppraisalState = field(default_factory=AppraisalState)
     personality: PersonalityProfile = field(default_factory=PersonalityProfile)
+    identity: IdentityProfile = field(default_factory=IdentityProfile)
     latest_observation: Mapping[str, Any] = field(default_factory=dict)
     latest_intention: Mapping[str, Any] = field(default_factory=dict)
     open_loops: tuple[str, ...] = ()
@@ -336,14 +393,28 @@ class RuntimeMindState:
         loops = tuple(compact(x, 180) for x in raw_loops[-8:] if compact(x, 180)) if isinstance(raw_loops, Sequence) and not isinstance(raw_loops, str) else ()
         raw_candidates = data.get("memory_candidates", ())
         candidates = tuple(dict(x) for x in raw_candidates[-12:] if isinstance(x, Mapping)) if isinstance(raw_candidates, Sequence) and not isinstance(raw_candidates, str) else ()
+        relationship = RelationshipState.from_mapping(
+            data.get("relationship") if isinstance(data.get("relationship"), Mapping) else {}
+        )
+        personality = PersonalityProfile.from_mapping(
+            data.get("personality") if isinstance(data.get("personality"), Mapping) else {}
+        )
+        raw_identity = data.get("identity") if isinstance(data.get("identity"), Mapping) else None
+        identity = (
+            IdentityProfile.from_mapping(raw_identity)
+            if raw_identity is not None
+            else IdentityProfile.from_legacy(
+                relationship=relationship.to_dict(),
+                strategy_reinforcement=personality.strategy_reinforcement,
+            )
+        )
         return cls(
             version=max(0, int(data.get("version", 0) or 0)),
             last_applied_turn_seq=max(0, int(data.get("last_applied_turn_seq", 0) or 0)),
-            relationship=RelationshipState.from_mapping(data.get("relationship") if isinstance(data.get("relationship"), Mapping) else {}),
+            relationship=relationship,
             appraisal=AppraisalState.from_mapping(data.get("appraisal") if isinstance(data.get("appraisal"), Mapping) else {}),
-            personality=PersonalityProfile.from_mapping(
-                data.get("personality") if isinstance(data.get("personality"), Mapping) else {}
-            ),
+            personality=personality,
+            identity=identity,
             latest_observation=dict(data.get("latest_observation", {})) if isinstance(data.get("latest_observation"), Mapping) else {},
             latest_intention=dict(data.get("latest_intention", {})) if isinstance(data.get("latest_intention"), Mapping) else {},
             open_loops=loops,
@@ -359,6 +430,7 @@ class RuntimeMindState:
             "relationship": self.relationship.to_dict(),
             "appraisal": self.appraisal.to_dict(),
             "personality": self.personality.to_dict(),
+            "identity": self.identity.to_dict(),
             "latest_observation": dict(self.latest_observation),
             "latest_intention": dict(self.latest_intention),
             "open_loops": list(self.open_loops),
@@ -368,7 +440,13 @@ class RuntimeMindState:
 
     def prompt_context(self) -> str:
         """Context ngắn cho Main AI: bản thân hiện tại + continuity, không có type label."""
-        parts = [self.personality.prompt_summary(limit=620), self.relationship.prompt_summary()]
+        parts = [
+            self.identity.prompt_summary(
+                personality_summary=self.personality.prompt_summary(limit=520),
+                limit=880,
+            ),
+            self.relationship.prompt_summary(),
+        ]
         latest = self.latest_observation
         if latest and float(latest.get("confidence", 0.0) or 0.0) >= 0.62:
             if bool(latest.get("repair_needed", False)):
@@ -379,7 +457,13 @@ class RuntimeMindState:
         return " ".join(part for part in parts if part)[:1100]
 
     def personality_prompt_context(self) -> str:
-        return self.personality.prompt_summary(limit=760)
+        return self.identity.prompt_summary(
+            personality_summary=self.personality.prompt_summary(limit=520),
+            limit=980,
+        )
+
+    def identity_prompt_context(self) -> str:
+        return self.personality_prompt_context()
 
 
 @dataclass(frozen=True, slots=True)
@@ -414,6 +498,23 @@ class StateEvent:
             source="ai_planner",
         )
 
+
+    @classmethod
+    def from_pending_strategy(
+        cls,
+        pending: PendingStrategyUse,
+        *,
+        base_version: int = -1,
+    ) -> "StateEvent":
+        return cls(
+            kind="pending_strategy",
+            turn_seq=pending.turn_seq,
+            turn_id=pending.strategy_use_id,
+            payload=pending.to_dict(),
+            base_version=base_version,
+            source="ai_planner",
+        )
+
     @classmethod
     def from_mechanical_outcome(
         cls,
@@ -439,6 +540,8 @@ __all__ = [
     "AI_RUNTIME_VERSION",
     "AppraisalState",
     "CognitiveObservation",
+    "IdentityProfile",
+    "IdentitySignal",
     "IntentionPlan",
     "RelationshipState",
     "RuntimeMindState",
@@ -447,6 +550,7 @@ __all__ = [
     "PersonalityProfile",
     "SelfInterpretation",
     "TraitSignal",
+    "PendingStrategyUse",
     "clamp01",
     "compact",
 ]

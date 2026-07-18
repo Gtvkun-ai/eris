@@ -26,6 +26,8 @@ from .contracts import (
     clamp01,
     compact,
 )
+from .identity import PendingStrategyUse
+from .identity_reducer import IdentityKernelReducer
 from .personality import (
     DEFAULT_CORE,
     DEFAULT_MOOD,
@@ -68,6 +70,7 @@ class StateReducer:
         self._state = initial_state or RuntimeMindState()
         self._persist = persist
         self._logger = logger
+        self._identity_reducer = IdentityKernelReducer(logger=logger)
         self._queue: queue.Queue[StateEvent | None] = queue.Queue()
         self._lock = threading.RLock()
         self._subscribers: list[Subscriber] = []
@@ -170,6 +173,8 @@ class StateReducer:
                 )
             elif event.kind == "mechanical_outcome":
                 new_state = self._reduce_mechanical_outcome(state, event)
+            elif event.kind == "pending_strategy":
+                new_state = self._reduce_pending_strategy(state, event)
             else:
                 self._log("debug", "[state reducer] unknown event ignored kind=%s", event.kind)
                 return False
@@ -251,6 +256,12 @@ class StateReducer:
             observation,
             now=now,
         )
+        identity = self._identity_reducer.reduce_observation(
+            state.identity,
+            observation,
+            relationship_state=updated_relation.to_dict(),
+            now=now,
+        )
 
         loops = list(state.open_loops)
         if observation.open_loop and observation.confidence >= 0.65:
@@ -280,6 +291,7 @@ class StateReducer:
             relationship=updated_relation,
             appraisal=appraisal,
             personality=personality,
+            identity=identity,
             latest_observation=observation.to_dict(),
             latest_intention=state.latest_intention,
             open_loops=tuple(loops[-8:]),
@@ -374,6 +386,10 @@ class StateReducer:
                 "last_turn_seq": observation.turn_seq,
                 "confidence": signal.confidence,
             }
+            # Streak/corroboration cũng là state thật. Trước đây nó vô tình được
+            # persist nhờ strategy_reinforcement legacy; khi tước quyền lane cũ,
+            # ta phải ghi bookkeeping một cách minh bạch.
+            changed = True
 
             # Core chỉ dịch sau hit mạnh thứ ba cùng hướng. Không có chuyện một câu
             # chat làm đổi bản sắc rồi panel tung pháo giấy.
@@ -461,33 +477,10 @@ class StateReducer:
                 }
             )
 
-        strategy = consequence.strategy.strip()
-        if strategy and consequence.confidence >= 0.62:
-            before = float(strategy_reinforcement.get(strategy, 0.0) or 0.0)
-            shift = consequence.reinforcement * consequence.confidence * 0.08
-            after = max(-1.0, min(1.0, before + shift))
-            if abs(after - before) >= 1e-8:
-                strategy_reinforcement[strategy] = after
-                changed = True
-                trajectory.append(
-                    {
-                        "timestamp": now,
-                        "turn_seq": observation.turn_seq,
-                        "turn_id": observation.turn_id,
-                        "event_kind": observation.event_kind,
-                        "category": "strategy",
-                        "trait": strategy,
-                        "before": round(before, 6),
-                        "after": round(after, 6),
-                        "applied_delta": round(after - before, 6),
-                        "confidence": consequence.confidence,
-                        "source": "consequence",
-                        "self_interpretation": interpretation.summary,
-                        "consequence": consequence.outcome,
-                        "reinforcement": consequence.reinforcement,
-                        "evidence": list(consequence.evidence[:5]),
-                    }
-                )
+        # Học chiến lược thuộc IdentityKernelReducer, nơi kết quả chỉ được chấm
+        # sau phản ứng thật ở lượt kế tiếp và được tách theo context. Trường
+        # strategy_reinforcement cũ được giữ read-only để migrate/rollback,
+        # không còn là nguồn học production.
 
         # Giữ ledger hữu hạn. 96 entry đủ để debug hướng gần đây mà không biến
         # memory state thành nhật ký đời người không có mục lục.
@@ -562,6 +555,22 @@ class StateReducer:
             if day >= cutoff:
                 result[str(key)] = max(0.0, float(value or 0.0))
         return result
+
+    def _reduce_pending_strategy(self, state: RuntimeMindState, event: StateEvent) -> RuntimeMindState:
+        pending = PendingStrategyUse.from_mapping(event.payload)
+        identity = self._identity_reducer.add_pending_strategy(
+            state.identity,
+            pending,
+            now=time.time(),
+        )
+        if identity.version == state.identity.version:
+            return state
+        return replace(
+            state,
+            version=state.version + 1,
+            identity=identity,
+            updated_at=time.time(),
+        )
 
     def _reduce_mechanical_outcome(self, state: RuntimeMindState, event: StateEvent) -> RuntimeMindState:
         payload = dict(event.payload)

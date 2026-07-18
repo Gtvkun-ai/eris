@@ -12,6 +12,7 @@ from typing import Any, Mapping, Sequence
 from actions.contracts import VALID_SYSTEM_ACTIONS
 
 from .contracts import CognitiveObservation, IntentionPlan
+from .identity import CONFLICT_TEMPLATES, DEFAULT_DEFENSES, DEFAULT_EMERGENT_VALUES, DEFAULT_MOTIVES, DEFAULT_RELATIONSHIP, DEFAULT_VALUES
 
 
 COGNITIVE_OBSERVATION_SCHEMA: dict[str, Any] = {
@@ -39,6 +40,11 @@ COGNITIVE_OBSERVATION_SCHEMA: dict[str, Any] = {
         "self_interpretation",
         "consequence",
         "trait_signals",
+        "identity_signals",
+        "active_motives",
+        "activated_defenses",
+        "active_conflict",
+        "value_choice",
         "open_loop",
         "memory_candidate",
         "evidence",
@@ -107,9 +113,12 @@ COGNITIVE_OBSERVATION_SCHEMA: dict[str, Any] = {
         "consequence": {
             "type": "object",
             "additionalProperties": False,
-            "required": ["strategy", "outcome", "reinforcement", "confidence", "evidence"],
+            "required": ["strategy_use_id", "strategy", "target_goal", "context", "outcome", "reinforcement", "confidence", "evidence"],
             "properties": {
+                "strategy_use_id": {"type": "string"},
                 "strategy": {"type": "string"},
+                "target_goal": {"type": "string"},
+                "context": {"type": "string"},
                 "outcome": {"type": "string"},
                 "reinforcement": {"type": "number", "minimum": -1.0, "maximum": 1.0},
                 "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
@@ -141,6 +150,78 @@ COGNITIVE_OBSERVATION_SCHEMA: dict[str, Any] = {
                 },
             },
         },
+        "identity_signals": {
+            "type": "array",
+            "maxItems": 14,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["dimension", "key", "delta", "confidence", "importance", "scope", "context", "evidence"],
+                "properties": {
+                    "dimension": {"type": "string", "enum": ["value", "motive", "defense", "belief", "relationship", "emergent_value", "imprint"]},
+                    "key": {"type": "string"},
+                    "delta": {"type": "number", "minimum": -1.0, "maximum": 1.0},
+                    "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                    "importance": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                    "scope": {"type": "string"},
+                    "context": {"type": "string"},
+                    "evidence": {"type": "array", "items": {"type": "string"}, "maxItems": 4},
+                },
+            },
+        },
+        "active_motives": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["key", "strength", "trigger"],
+                "properties": {
+                    "key": {"type": "string"},
+                    "strength": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                    "trigger": {"type": "string"},
+                },
+            },
+        },
+        "activated_defenses": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["key", "strength", "trigger"],
+                "properties": {
+                    "key": {"type": "string"},
+                    "strength": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                    "trigger": {"type": "string"},
+                },
+            },
+        },
+        "active_conflict": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["conflict_id", "activation", "left_pull", "right_pull", "chosen_side", "residue"],
+            "properties": {
+                "conflict_id": {"type": "string", "enum": ["", *CONFLICT_TEMPLATES]},
+                "activation": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "left_pull": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "right_pull": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "chosen_side": {"type": "string"},
+                "residue": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+            },
+        },
+        "value_choice": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["chosen", "rejected", "cost", "confidence", "evidence"],
+            "properties": {
+                "chosen": {"type": "string"},
+                "rejected": {"type": "string"},
+                "cost": {"type": "string"},
+                "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "evidence": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
+            },
+        },
         "open_loop": {"type": "string"},
         "memory_candidate": {"type": "string"},
         "evidence": {"type": "array", "items": {"type": "string"}, "maxItems": 4},
@@ -156,22 +237,31 @@ OBJECTIVE_OBSERVATION_SCHEMA: dict[str, Any] = {
     "required": [
         name
         for name in COGNITIVE_OBSERVATION_SCHEMA["required"]
-        if name not in {"self_interpretation", "trait_signals"}
+        if name not in {"self_interpretation", "trait_signals", "identity_signals", "active_motives", "activated_defenses", "active_conflict", "value_choice"}
     ],
     "properties": {
         name: value
         for name, value in COGNITIVE_OBSERVATION_SCHEMA["properties"].items()
-        if name not in {"self_interpretation", "trait_signals"}
+        if name not in {"self_interpretation", "trait_signals", "identity_signals", "active_motives", "activated_defenses", "active_conflict", "value_choice"}
     },
 }
 
 PERSONALITY_REFLECTION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["self_interpretation", "trait_signals", "notes"],
+    "required": [
+        "self_interpretation", "trait_signals", "identity_signals",
+        "active_motives", "activated_defenses", "active_conflict",
+        "value_choice", "notes"
+    ],
     "properties": {
         "self_interpretation": COGNITIVE_OBSERVATION_SCHEMA["properties"]["self_interpretation"],
         "trait_signals": COGNITIVE_OBSERVATION_SCHEMA["properties"]["trait_signals"],
+        "identity_signals": COGNITIVE_OBSERVATION_SCHEMA["properties"]["identity_signals"],
+        "active_motives": COGNITIVE_OBSERVATION_SCHEMA["properties"]["active_motives"],
+        "activated_defenses": COGNITIVE_OBSERVATION_SCHEMA["properties"]["activated_defenses"],
+        "active_conflict": COGNITIVE_OBSERVATION_SCHEMA["properties"]["active_conflict"],
+        "value_choice": COGNITIVE_OBSERVATION_SCHEMA["properties"]["value_choice"],
         "notes": {"type": "string"},
     },
 }
@@ -204,6 +294,8 @@ INTENTION_PLAN_SCHEMA: dict[str, Any] = {
         "plan_id",
         "speak",
         "motive",
+        "strategy",
+        "value_focus",
         "topic",
         "importance",
         "intrusion_risk",
@@ -218,6 +310,8 @@ INTENTION_PLAN_SCHEMA: dict[str, Any] = {
         "plan_id": {"type": "string"},
         "speak": {"type": "boolean"},
         "motive": {"type": "string"},
+        "strategy": {"type": "string"},
+        "value_focus": {"type": "string"},
         "topic": {"type": "string"},
         "importance": {"type": "number", "minimum": 0.0, "maximum": 1.0},
         "intrusion_risk": {"type": "number", "minimum": 0.0, "maximum": 1.0},
@@ -424,6 +518,8 @@ class AIRuntimeModelRouter:
                 + json.dumps(
                     {
                         "motive": planned_intention.motive,
+                        "strategy": planned_intention.strategy,
+                        "value_focus": planned_intention.value_focus,
                         "response_goal": planned_intention.topic,
                         "tool_intent": planned_intention.tool_intent,
                         "tool_input": planned_intention.tool_input,
@@ -546,6 +642,8 @@ class AIRuntimeModelRouter:
         context = {
             "current_personality": personality_context,
             "motive": plan.motive,
+            "strategy": plan.strategy,
+            "value_focus": plan.value_focus,
             "topic": plan.topic,
             "evidence_refs": list(plan.evidence_refs),
             "planned_performance_hint": plan.performance_hint or "neutral",
@@ -625,7 +723,9 @@ class AIRuntimeModelRouter:
             "Bạn là observer hậu kỳ khách quan cho ERIS. Lượt public đã xảy ra rồi. "
             "Bạn không viết câu trả lời, không sửa lời ERIS, không tự diễn giải tính cách và không phát trait signal. "
             "Hãy mô tả điều thật sự vừa xảy ra giữa user và ERIS bằng JSON. "
-            "consequence chỉ ghi chiến lược công khai ERIS vừa dùng, outcome quan sát được và mức chiến lược ấy được củng cố hay làm yếu. "
+            "consequence chỉ được đánh giá cho pending_strategy_for_evaluation trong current_state_summary, dựa vào phản ứng user hiện tại. "
+            "Nếu không có pending strategy, hoặc phản ứng không đủ rõ, đặt strategy_use_id rỗng, outcome=unknown, reinforcement=0 và confidence thấp. "
+            "Không tự chấm chiến lược của chính câu ERIS vừa nói; câu hiện tại chỉ được ghi thành pending ở runtime để chờ lượt sau. "
             "Tách trust quan hệ khỏi competence/factual reliability. User sửa kỹ thuật không mặc định là rupture. "
             "Chửi trong banter không mặc định hostility. Ẩn dụ không phải hành động vật lý. "
             "assistant_fault_probability chỉ cao khi câu ERIS hiện tại thật sự né, sai, hoặc trả lệch. "
@@ -644,12 +744,24 @@ class AIRuntimeModelRouter:
             if deep else
             "Chỉ đề xuất vài signal có nghĩa; không biến mọi lượt thành một bước ngoặt nhân cách. "
         )
+        allowed_values = ", ".join(sorted(DEFAULT_VALUES))
+        allowed_motives = ", ".join(sorted(DEFAULT_MOTIVES))
+        allowed_defenses = ", ".join(sorted(DEFAULT_DEFENSES))
+        allowed_emergent = ", ".join(sorted(DEFAULT_EMERGENT_VALUES))
+        allowed_relationship = ", ".join(sorted(DEFAULT_RELATIONSHIP))
         return (
             "Bạn là self-reflection lane của ERIS sau khi một observer khách quan đã ghi sự kiện. "
             "Bạn không viết lời public và không thay đổi observation khách quan. Bạn đứng từ góc nhìn ERIS để tạo một self_interpretation có thể sai, "
             "tự vệ, tò mò, cay đi, dịu lại hoặc mâu thuẫn. Đây là câu chuyện ERIS tự kể, không phải fact bí mật về user. "
             "Personality là quỹ đạo mở, không có đích tốt lên được định sẵn. Không dùng nhãn typology hoặc tên emergent-form trên panel làm nguyên nhân. "
             "Đề xuất trait_signals từ personality hiện tại + lựa chọn của ERIS + consequence thật. Trait có thể tăng hoặc giảm theo cả hướng tích hợp lẫn méo đi. "
+            "Đồng thời đọc Identity Kernel hiện tại để trả active_motives, activated_defenses, active_conflict và value_choice. "
+            "identity_signals chỉ đề xuất drift cho value, motive, defense, belief, relationship, emergent_value hoặc imprint; không tạo nhãn nhân vật. "
+            "Value chỉ dịch khi ERIS thật sự chọn nó và chấp nhận một cái giá; emergent value cần lựa chọn lặp lại; belief có thể sai và phải có evidence. "
+            "Defense là cách bảo vệ bản thân vừa được dùng, không phải lỗi đạo đức. Conflict phải giữ residue của phía không được chọn. "
+            f"Key value hợp lệ: {allowed_values}. Key motive hợp lệ: {allowed_motives}. "
+            f"Key defense hợp lệ: {allowed_defenses}. Key emergent_value hợp lệ: {allowed_emergent}. "
+            f"Key relationship hợp lệ: {allowed_relationship}. Belief key phải bắt đầu bằng self., user. hoặc world.; imprint key là theme ngắn dạng snake_case. "
             "Mood là phản ứng nhanh; temperament là chiến lược/khuynh hướng được củng cố; core chỉ cho milestone hiếm và phải cực kỳ chắc. "
             "Các dimension như resentment, distrust, possessiveness, control_seeking, emotional_dependency, hostile_humor và boundary_pressure là hợp lệ, "
             "nhưng chỉ phát signal khi observation, self-interpretation và consequence thực sự hỗ trợ. "
@@ -678,6 +790,8 @@ class AIRuntimeModelRouter:
             "assistant_text": payload.get("assistant_text", ""),
             "mechanical_outcomes": payload.get("mechanical_outcomes", []),
             "current_personality": (payload.get("current_state_summary", {}) or {}).get("personality", {}),
+            "current_identity": (payload.get("current_state_summary", {}) or {}).get("identity", {}),
+            "pending_strategy_for_evaluation": ((payload.get("current_state_summary", {}) or {}).get("identity", {}) or {}).get("pending_strategies", [])[:1],
             "recent_public_history": payload.get("recent_public_history", []),
         }
         started = time.perf_counter()
@@ -697,6 +811,11 @@ class AIRuntimeModelRouter:
         merged = observation.to_dict()
         merged["self_interpretation"] = reflected.get("self_interpretation", {})
         merged["trait_signals"] = reflected.get("trait_signals", [])
+        merged["identity_signals"] = reflected.get("identity_signals", [])
+        merged["active_motives"] = reflected.get("active_motives", [])
+        merged["activated_defenses"] = reflected.get("activated_defenses", [])
+        merged["active_conflict"] = reflected.get("active_conflict", {})
+        merged["value_choice"] = reflected.get("value_choice", {})
         reflection_notes = str(reflected.get("notes", "") or "").strip()
         if reflection_notes:
             merged["notes"] = " ".join(part for part in (observation.notes, reflection_notes) if part)[:220]
@@ -795,7 +914,9 @@ class AIRuntimeModelRouter:
         allowed = ", ".join(sorted(VALID_SYSTEM_ACTIONS))
         return (
             "Bạn là planner cấp cao của ERIS, không viết câu public. "
-            "Đọc user text, history, grounding, relationship summary và personality summary hiện tại; tạo mục tiêu trả lời ngắn trong topic. "
+            "Đọc user text, history, grounding, relationship summary và identity/personality summary hiện tại; tạo mục tiêu trả lời ngắn trong topic. "
+            "Chọn một strategy mô tả cách tiếp cận thực tế (ví dụ direct_answer, dry_correction, quiet_counter_tease, direct_repair, shared_curiosity). "
+            "value_focus là giá trị đang được ưu tiên trong lựa chọn này, hoặc rỗng nếu không có xung đột đáng kể. "
             "Personality summary là quán tính hành vi hiện tại, không phải vai diễn hay đích phát triển được định sẵn. "
             "Chỉ chọn tool_intent khi user thật sự yêu cầu hành động hoặc cần runtime lấy dữ kiện. "
             "Không dùng tool để xử lý tình cảm, ẩn dụ, banter hay câu hỏi có thể trả lời trực tiếp. "
@@ -820,6 +941,8 @@ class AIRuntimeModelRouter:
                     "plan_id": f"chat-plan-{int(time.time() * 1000)}",
                     "speak": True,
                     "motive": "respond_to_user",
+                    "strategy": "direct_answer",
+                    "value_focus": "",
                     "topic": "Answer the current user directly and naturally.",
                     "importance": 0.70,
                     "intrusion_risk": 0.0,
@@ -845,7 +968,8 @@ class AIRuntimeModelRouter:
     def _planner_prompt() -> str:
         return (
             "Bạn là intention planner của ERIS, không phải người viết câu public. "
-            "Từ snapshot đã cho, gồm cả personality hiện tại và strategy reinforcement, quyết định ERIS có một lý do đủ giá trị để chủ động nói hay không. "
+            "Từ snapshot đã cho, gồm cả identity, personality và strategy history hiện tại, quyết định ERIS có một lý do đủ giá trị để chủ động nói hay không. "
+            "Nếu nói, chọn strategy và value_focus rõ; autonomous discovery nên dùng strategy=share_discovery hoặc update_own_activity khi có artifact thật. "
             "Không ép ERIS về một phiên bản tốt hơn; chỉ dùng quỹ đạo hiện tại để chọn ý định hợp lý. "
             "Mặc định là im lặng. Chỉ speak=true khi có motive rõ: repair_previous_miss, "
             "important_open_loop, meaningful_environment_change, useful_followup, grounded_curiosity, "

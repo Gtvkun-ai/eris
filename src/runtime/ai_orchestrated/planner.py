@@ -23,6 +23,8 @@ class IntentionPlanner:
                 {
                     "speak": True,
                     "motive": "respond_to_user",
+                    "strategy": "direct_answer",
+                    "value_focus": "",
                     "topic": "Answer the current user directly and naturally.",
                     "importance": 0.70,
                     "intrusion_risk": 0.0,

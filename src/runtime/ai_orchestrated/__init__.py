@@ -11,6 +11,18 @@ from .contracts import (
     StateEvent,
     TraitSignal,
 )
+from .identity import (
+    Activation,
+    BeliefRecord,
+    ConflictState,
+    IdentityProfile,
+    IdentitySignal,
+    ImprintRecord,
+    PendingStrategyUse,
+    RelationshipIdentity,
+    StrategyRecord,
+    ValueChoice,
+)
 from .stage_planner import StagePlan, StagePlanner
 from .panel_adapter import build_ai_panel_payload
 from .views import build_cognitive_views
@@ -21,14 +33,24 @@ __all__ = [
     "AppraisalState",
     "CognitiveObservation",
     "ConsequenceAssessment",
+    "Activation",
+    "BeliefRecord",
+    "ConflictState",
+    "IdentityProfile",
+    "IdentitySignal",
+    "ImprintRecord",
     "IntentionPlan",
     "PersonalityProfile",
+    "PendingStrategyUse",
+    "RelationshipIdentity",
     "RelationshipState",
+    "StrategyRecord",
     "RuntimeMindState",
     "SelfInterpretation",
     "StagePlan",
     "StagePlanner",
     "TraitSignal",
+    "ValueChoice",
     "build_ai_panel_payload",
     "build_cognitive_views",
     "StateEvent",

@@ -26,6 +26,7 @@ def build_ai_panel_payload(state: RuntimeMindState) -> dict[str, Any]:
     appraisal = state.appraisal
     relation = state.relationship
     personality = state.personality.panel_view()
+    identity = state.identity.panel_view()
     observation = dict(state.latest_observation or {})
     intention = dict(state.latest_intention or {})
     views = build_cognitive_views(state)
@@ -45,6 +46,7 @@ def build_ai_panel_payload(state: RuntimeMindState) -> dict[str, Any]:
         "appraisal": appraisal.to_dict(),
         "relationship": relation.to_dict(),
         "personality": personality,
+        "identity": identity,
         "cognitive_views": views,
     }
     depth_v2 = {
@@ -55,6 +57,7 @@ def build_ai_panel_payload(state: RuntimeMindState) -> dict[str, Any]:
         "relationship": relation.to_dict(),
         "appraisal": appraisal.to_dict(),
         "personality": personality,
+        "identity": identity,
         "open_loops": list(state.open_loops),
         "latest_observation": observation,
         "latest_intention": intention,
@@ -67,6 +70,11 @@ def build_ai_panel_payload(state: RuntimeMindState) -> dict[str, Any]:
         "latest_intention": intention,
         "personality_direction_30d": personality.get("direction_30d", {}),
         "active_personality_forms": personality.get("active_forms", []),
+        "active_identity_forms": identity.get("active_forms", []),
+        "active_motives": identity.get("active_motives", []),
+        "activated_defenses": identity.get("active_defenses", []),
+        "active_conflict": identity.get("active_conflict", {}),
+        "value_choice": identity.get("latest_value_choice", {}),
         "self_interpretation": observation.get("self_interpretation", {}),
         "latest_observation": {
             key: observation.get(key)
@@ -85,7 +93,11 @@ def build_ai_panel_payload(state: RuntimeMindState) -> dict[str, Any]:
         "architecture": AI_RUNTIME_VERSION,
         "relationship_summary": relation.prompt_summary(),
         "personality_summary": personality.get("prompt_summary", ""),
+        "identity_summary": state.identity_prompt_context(),
         "personality_version": personality.get("version", 0),
+        "identity_version": identity.get("version", 0),
+        "identity_imprints": identity.get("imprints", [])[-6:],
+        "pending_strategies": identity.get("pending_strategies", [])[-3:],
         "recent_trajectory": personality.get("recent_trajectory", [])[-6:],
         "last_event": relation.last_event,
         "memory_candidates": [dict(item) for item in state.memory_candidates[-4:]],
