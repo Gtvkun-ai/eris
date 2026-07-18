@@ -74,8 +74,9 @@ class AttentionOverseer:
             n_ctx=min(n_ctx, 4096),
             n_gpu_layers=n_gpu_layers,
         )
-        social_parser_client = self.process_manager.build_social_parser_client()
-        social_critic_client = self.process_manager.build_social_critic_client()
+        social_models_enabled = str(os.environ.get("ERIS_SOCIAL_COGNITION_V2_ENABLED", "0") or "0").strip().lower() in {"1", "true", "yes", "on"}
+        social_parser_client = self.process_manager.build_social_parser_client() if social_models_enabled else None
+        social_critic_client = self.process_manager.build_social_critic_client() if social_models_enabled else None
         if escalation_client is not None:
             provider_label = getattr(escalation_client, "base_url", "") or escalation_client.__class__.__name__
             self.logger.info("Escalation client (bái sư) đã sẵn sàng: %s", provider_label)

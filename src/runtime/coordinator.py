@@ -825,7 +825,7 @@ class RuntimeCoordinator(
         self.repair_state_controller = RepairStateController()
         # Social Cognition V2 giữ discourse claim, social state và response move
         # theo phiên. Model nhỏ chỉ advisory; lỗi provider không làm mất contract.
-        social_v2_enabled = str(os.getenv("ERIS_SOCIAL_COGNITION_V2_ENABLED", "1") or "1").lower() not in {"0", "false", "off", "no"}
+        social_v2_enabled = str(os.getenv("ERIS_SOCIAL_COGNITION_V2_ENABLED", "0") or "0").lower() in {"1", "true", "on", "yes"}
         try:
             if not social_v2_enabled:
                 self.social_model_router = None

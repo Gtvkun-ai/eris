@@ -258,7 +258,6 @@ class TiGovernor:
         # Direct-action route đã được executor xử lý và điền kết quả thật. Ti
         # không được viết đè câu kết quả này bằng perception redirect.
         if str(getattr(decision, "parse_mode", "") or "") == "direct_action":
-            self._merge_debug_trace(decision, f"Ti guard_mode=skip_direct_action")
             return decision
 
         guard_mode = get_guard_mode()
@@ -268,9 +267,8 @@ class TiGovernor:
         except Exception:
             raw_final_passthrough = True
         if raw_final_passthrough:
-            self._log_guard_report(self._detect_risks(decision.text), decision=decision)
-            self._merge_debug_trace(decision, "Ti text edit disabled by final_passthrough")
-            self._merge_debug_trace(decision, f"Ti guard_mode={guard_mode}/audit_only")
+            # Ti chỉ còn lo motion metadata; không scan/tag/rewrite câu public.
+            pass
         elif guard_mode == OFF_GUARD_MODE:
             self._merge_debug_trace(decision, f"Ti guard_mode={guard_mode}")
         elif guard_mode == LOG_ONLY_GUARD_MODE:
@@ -324,7 +322,8 @@ class TiGovernor:
         if report.direction_hint and decision.direction == 0:
             decision.direction = report.direction_hint
 
-        self._merge_debug_trace(decision, f"Ti mode={report.mode}")
+        if not raw_final_passthrough:
+            self._merge_debug_trace(decision, f"Ti mode={report.mode}")
         return decision
 
     def _detect_risks(self, text: str) -> dict[str, object]:

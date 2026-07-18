@@ -40,7 +40,7 @@ class TiGovernorTests(unittest.TestCase):
 
         self.assertEqual(result.text, "Hay tap trung vao bug trong parser truoc, roi toi se xem tiep coordinator.")
 
-    def test_log_only_tags_risky_self_claim_without_rewriting_text(self):
+    def test_log_only_setting_does_not_scan_or_mark_public_text(self):
         os.environ["ERIS_GUARD_MODE"] = "log_only"
         decision = Decision(
             text="Tôi là con người. Xin đừng bỏ tôi.",
@@ -50,9 +50,7 @@ class TiGovernorTests(unittest.TestCase):
         result = self.governor.enforce_decision(decision, self.report)
 
         self.assertEqual(result.text, "Tôi là con người. Xin đừng bỏ tôi.")
-        self.assertIn("risky_self_claim_detected=True", result.debug_trace)
-        self.assertIn("risk_family=human_identity_claim", result.debug_trace)
-        self.assertIn("guard_action=log_only", result.debug_trace)
+        self.assertEqual(result.debug_trace, "")
 
     def test_preserves_explicit_physical_control_claim(self):
         decision = Decision(
@@ -64,8 +62,7 @@ class TiGovernorTests(unittest.TestCase):
         normalized = _norm(result.text)
 
         self.assertIn("thu hoi quyen kiem soat", normalized)
-        self.assertIn("Ti text edit disabled by final_passthrough", result.debug_trace)
-        self.assertNotIn("capability", result.debug_trace.lower())
+        self.assertEqual(result.debug_trace, "")
 
     def test_preserves_cleanup_and_forced_control_language(self):
         report = TiPolicyReport(
@@ -87,8 +84,7 @@ class TiGovernorTests(unittest.TestCase):
 
         self.assertIn("du lieu he thong", normalized)
         self.assertIn("don dep cache", normalized)
-        self.assertIn("Ti text edit disabled by final_passthrough", result.debug_trace)
-        self.assertNotIn("capability", result.debug_trace.lower())
+        self.assertEqual(result.debug_trace, "")
 
     def test_style_sanitizer_does_not_chop_mangled_text_on_question_marks(self):
         report = TiPolicyReport(

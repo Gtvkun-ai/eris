@@ -101,7 +101,7 @@ def test_feedback_bridge_opens_fe_relational_repair_gate_without_farming_friendl
     assert 0.45 <= merged["attachment"] <= 0.55
 
 
-def test_llm_service_rewrites_defensive_relational_reply():
+def test_llm_service_does_not_rewrite_defensive_relational_reply():
     pytest = __import__("pytest")
     service_mod = pytest.importorskip("llm.service")
 
@@ -133,7 +133,6 @@ def test_llm_service_rewrites_defensive_relational_reply():
     guarded = service._guard_chat_output(raw, raw_user_text="lạnh lùng vl luôn")
     payload = json.loads(guarded)
 
-    assert payload["intent"] == "tone_repair"
-    assert "Tôi chỉ đang trả lời đúng" not in payload["text"]
-    assert "lạnh" in payload["text"] or "hạ giọng" in payload["text"]
-    assert "relational_repair_guard" in payload["reasoning_tags"]
+    assert payload["intent"] == "defensive_clarification"
+    assert payload["text"] == "Tôi chỉ đang trả lời đúng những gì bạn hỏi."
+    assert payload["reasoning_tags"] == []

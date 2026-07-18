@@ -8,6 +8,7 @@ redact secret/protocol ở cửa xuất.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Any
 
 
@@ -30,19 +31,26 @@ def _join_trace(trace: str, marker: str) -> str:
     return f"{trace} | {marker}" if trace and marker else (trace or marker)
 
 
+def _verbose_audit_enabled() -> bool:
+    raw = str(os.environ.get("ERIS_VERBOSE_POLICY_AUDIT", "0") or "0").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def audit_only(decision: Any, stage: str, *, attempted_text: str = "") -> Any:
-    if decision is None:
+    """Quan sát mà không làm bẩn Decision public.
+
+    Trước đây mỗi lớp cũ đều gắn marker vào ``debug_trace`` và ``reasoning_tags``.
+    Các marker đó lại bị đưa vào memory/prompt ở lượt sau, khiến model chính phải
+    nói chuyện giữa một bãi biên bản nội bộ. Production giờ im lặng hoàn toàn;
+    chỉ bật ``ERIS_VERBOSE_POLICY_AUDIT=1`` khi thật sự cần truy vết legacy.
+    """
+    if decision is None or not _verbose_audit_enabled():
         return decision
     marker = f"generation_sovereignty:observation_only:{str(stage or 'unknown').strip()}"
     if attempted_text and attempted_text != str(getattr(decision, "text", "") or ""):
         marker += ":mutation_discarded"
     try:
         decision.debug_trace = _join_trace(getattr(decision, "debug_trace", ""), marker)
-    except Exception:
-        pass
-    try:
-        tags = tuple(getattr(decision, "reasoning_tags", ()) or ())
-        decision.reasoning_tags = tuple(dict.fromkeys((*tags, "generation_sovereignty", "final_passthrough")))
     except Exception:
         pass
     return decision

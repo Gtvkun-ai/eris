@@ -450,46 +450,13 @@ class LlmService:
         return any(pattern in normalized for pattern in patterns)
 
     def _build_chat_contract_prompt(self, raw_user_text: str, act: ChatAct | None = None) -> str:
-        """Policy động của đúng lượt hiện tại.
+        """No per-turn marker constitution.
 
-        Persona, schema JSON và evidence ladder đã nằm trong prefix tĩnh V2. Hàm
-        này chỉ giữ những gì thật sự thay đổi theo câu user, tránh bê nguyên một
-        bản hiến pháp 1.800 token vào mỗi request rồi ngạc nhiên khi model lạc ý.
+        Whole-turn interpretation belongs to the main model. Current evidence,
+        memory and public history are passed in their dedicated blocks instead
+        of being translated into Python labels and commands.
         """
-
-        semantic_policy = SemanticAuthorityPolicy.from_env()
-        act = act or classify_chat_act(raw_user_text)
-        clauses = [
-            f"chat_act={act.value}.",
-            CHAT_ACT_CONTRACTS.get(act, CHAT_ACT_CONTRACTS[ChatAct.NORMAL_CHAT]),
-            semantic_policy.prompt_block(),
-        ]
-        if act == ChatAct.DIRECT_QUESTION or self._looks_like_direct_question(raw_user_text):
-            clauses.append("answer_first=true; one concise clarification only when a grounded answer is impossible.")
-        if self._is_self_identity_question(raw_user_text):
-            clauses.append(
-                "identity_query=true: answer briefly from profile: ERIS is a bounded digital runtime presence "
-                "with memory and conversational rhythm; not human or omniscient."
-            )
-        if act in (ChatAct.NORMAL_CHAT, ChatAct.DIRECT_QUESTION, ChatAct.IDENTITY_REDUCTION):
-            clauses.append(
-                "voice_guard: do not collapse into generic assistant disclaimers; keep a direct answer and restrained ERIS voice."
-            )
-        try:
-            from runtime.turn_frame import build_turn_frame
-            from runtime.response_contract import build_response_contract
-
-            # Raw-only contract: bắt được capability/meta-style/provocation ngay cả
-            # khi previous_public_turn chưa được nối ở service. Context có lượt
-            # trước sẽ được thêm phía dưới.
-            turn_frame = build_turn_frame(user_text=raw_user_text)
-            contract = build_response_contract(turn_frame)
-            block = contract.to_prompt_block()
-            if block:
-                clauses.append(block)
-        except Exception:
-            pass
-        return " ".join(part for part in clauses if str(part or "").strip())
+        return ""
 
     def _chat_text_family(self, text: str) -> str:
         normalized = self._normalize_vietnamese_ascii(text or "")
@@ -680,43 +647,13 @@ class LlmService:
         return "Tôi nhận ra rồi. Vừa rồi tôi giữ giọng hơi quá tay."
 
     def _guard_chat_output(self, raw_json: str, *, raw_user_text: str) -> str:
-        """Guard chat wording without flattening ERIS.
+        """Compatibility no-op.
 
-        Most text rewriting stays disabled. One exception is relational tone feedback:
-        when user says ERIS felt cold/distant/robotic, a defensive answer makes the
-        rupture worse. Rewrite only that narrow failure into a small concession.
+        Main model output is not rewritten before parsing. Relational feedback,
+        provocation and style criticism belong in normal conversation context,
+        not in a Python phrase detector that swaps the sentence behind its back.
         """
-        if not self._looks_like_relational_feedback_text(raw_user_text):
-            return raw_json
-        payload = self._parse_json_object(raw_json)
-        if not isinstance(payload, dict):
-            return raw_json
-        text = self._coerce_text_value(payload.get("text", "")).strip()
-        intent = self._coerce_text_value(payload.get("intent", "")).strip()
-        normalized_intent = self._normalize_vietnamese_ascii(intent)
-        defensive_intent = any(
-            marker in normalized_intent
-            for marker in ("defensive", "boundary_setting", "clarification", "adjustment")
-        )
-        if not self._looks_like_defensive_relational_reply(text) and not defensive_intent:
-            return raw_json
-
-        payload["text"] = self._relational_repair_fallback_text(raw_user_text, text)
-        payload["intent"] = "tone_repair"
-        payload["action"] = {"type": "none"}
-        payload["should_speak"] = True
-        payload["confidence"] = max(self._coerce_confidence_value(payload.get("confidence", 0.0)), 0.78)
-        self._append_reasoning_tag(payload, "relational_repair_guard")
-        self._append_reasoning_tag(payload, "small_concession")
-        debug_trace = self._coerce_text_value(payload.get("debug_trace", "")).strip()
-        note = "LlmService rewrote defensive relational feedback response into guarded tone repair."
-        payload["debug_trace"] = f"{debug_trace} | {note}" if debug_trace else note
-        payload["system_action"] = ""
-        payload["action_input"] = ""
-        payload["delivery_hint"] = self._coerce_text_value(payload.get("delivery_hint", "")).strip()
-        payload["nonverbal_cue"] = self._coerce_text_value(payload.get("nonverbal_cue", "")).strip()
-        payload["stage_motion"] = self._coerce_text_value(payload.get("stage_motion", "")).strip()
-        return json.dumps(payload, ensure_ascii=False)
+        return raw_json
 
     def _contextual_service_fallback_text(self, messages: list[dict], *, channel: str) -> str:
         if channel != "chat":
@@ -2110,7 +2047,7 @@ class LlmService:
             "CRITICAL PUBLIC OUTPUT CONTRACT: Use your private reasoning channel fully, but put only "
             "one compact JSON object in the public content field. Public content must start with '{' "
             "and end with '}'. No analysis, markdown, code fences, or explanations may appear around "
-            "the JSON. Keep debug_trace compact: 3-8 words or one short marker."
+            "the JSON. Keep reasoning_tags as an empty list and debug_trace empty unless a real tool/transport failure must be reported."
         )
         messages = [dict(message) for message in messages]
         for message in messages:
@@ -2603,10 +2540,16 @@ class LlmService:
         text is allowed out.
         """
 
+        original_text = str(original_text or "").strip()
+        try:
+            from runtime.final_passthrough_policy import generation_sovereignty_enabled
+            if generation_sovereignty_enabled():
+                return original_text
+        except Exception:
+            pass
         client = self.style_client or self.client
         if client is None:
-            return ""
-        original_text = str(original_text or "").strip()
+            return original_text
 
         missing = ", ".join(str(item) for item in (missing_evidence or ()) if str(item or "").strip())
         source_text_label = "Original blocked text" if original_text else "No public draft existed; generate from guard signal"
@@ -2696,10 +2639,16 @@ class LlmService:
         claim màn hình/web và vẫn giữ giọng ERIS kìm nén. Không bao giờ làm câm:
         caller tự giữ bản gốc nếu hàm trả rỗng.
         """
+        original_text = str(original_text or "").strip()
+        try:
+            from runtime.final_passthrough_policy import generation_sovereignty_enabled
+            if generation_sovereignty_enabled():
+                return original_text
+        except Exception:
+            pass
         client = self.style_client or self.client
         if client is None:
-            return ""
-        original_text = str(original_text or "").strip()
+            return original_text
         if not original_text:
             return ""
         floor = max(0, int(min_words or 0))
@@ -2802,6 +2751,14 @@ class LlmService:
         compact = re.sub(r"\s+", " ", source[start:].strip())
         return compact[:420]
 
+    def _build_chat_style_block(self) -> str:
+        """Small stable voice anchor for direct chat only."""
+        return (
+            "Voice: ERIS. Natural Vietnamese, calm and observant, with restrained warmth "
+            "and a dry edge when it fits. Answer directly; avoid help-desk filler, forced disclaimers, "
+            "canned poetry, and repeated motifs."
+        )
+
     def _build_style_block(
         self,
         *,
@@ -2809,25 +2766,35 @@ class LlmService:
         appraisal_context: str = "",
         internal_state_context: str = "",
     ) -> str:
-        style_block = STYLE_FALLBACK_PROMPT
-        if "Persona target: INFJ 5w4 594" not in style_block:
-            style_block = f"Persona target: INFJ 5w4 594\n\n{style_block}"
-        fe_block = (fe_context or "").strip()
-        if fe_block and fe_block not in style_block:
-            style_block = f"{style_block}\n\n{fe_block}"
-        appraisal_block = (appraisal_context or "").strip()
+        """Compact autonomous/directive voice plus selected real state.
+
+        The old version repeated a long persona constitution before the actual
+        affect/appraisal blocks, so token budgeting often cut away the only state
+        that mattered. Keep the character anchor small and preserve the selected
+        runtime signals verbatim.
+        """
+        parts = [
+            (
+                "Voice: ERIS. Natural Vietnamese, calm and observant, with restrained warmth "
+                "and a dry edge when it fits. Autonomous speech should feel like a nearby presence, "
+                "not a system notification."
+            )
+        ]
+        fe_block = re.sub(r"\s+", " ", str(fe_context or "").strip())
+        appraisal_block = re.sub(r"\s+", " ", str(appraisal_context or "").strip())
+        state_block = re.sub(r"\s+", " ", str(internal_state_context or "").strip())
+        if fe_block:
+            parts.append(f"Selected affect/voice state: {fe_block[:700]}")
         if appraisal_block:
-            style_block = f"{style_block}\n\n{appraisal_block}"
-        state_block = (internal_state_context or "").strip()
+            parts.append(f"Pre-verbal appraisal state: {appraisal_block[:700]}")
         if state_block:
-            style_block = f"{style_block}\n\n{state_block}"
-        style_block = (
-            f"{style_block}\n\n"
+            parts.append(f"Persistent runtime state: {state_block[:900]}")
+        parts.append(
             "Style principle: speak concretely and naturally. If evidence is clear, use it; "
             "if evidence is thin, react to the nearest interaction rhythm without explaining the gap. "
             "Prefer short, dry, everyday Vietnamese over symbolic or policy-sanitized wording."
         )
-        return style_block
+        return "\n\n".join(parts)
 
     def _build_memory_context_block(self, memory_context: str = "") -> str:
         compact = re.sub(r"\n{3,}", "\n\n", (memory_context or "").strip())
@@ -4152,6 +4119,21 @@ class LlmService:
         use_chat_dds = (os.environ.get("ERIS_CHAT_HARD_BUDGET_USE_DDS", "0") or "0").strip().lower() in {
             "1", "true", "yes", "on"
         }
+        # Direct chat accepts only real operational recovery context. Synthetic
+        # Ni/Ti/Fe/appraisal/conversation labels are deliberately discarded here,
+        # so another caller cannot accidentally rebuild the old marker wall.
+        raw_ti_context = str(ti_context or "").strip()
+        ti_context = (
+            raw_ti_context
+            if raw_ti_context.startswith(("speech_interrupt:", "speech_interrupt_reaction:", "Format repair:"))
+            else ""
+        )
+        ni_context = ""
+        fe_context = ""
+        appraisal_context = ""
+        internal_state_context = ""
+        conversation_context = ""
+        defusing_context = ""
         if self._dds_enabled() and use_chat_dds:
             _distilled = self._maybe_distill_blocks(
                 {
@@ -4169,11 +4151,7 @@ class LlmService:
             ni_context = _distilled.get("ni_context", ni_context)
             ti_context = _distilled.get("ti_context", ti_context)
 
-        style_block = self._build_style_block(
-            fe_context=fe_context,
-            appraisal_context=appraisal_context,
-            internal_state_context=internal_state_context,
-        )
+        style_block = self._build_chat_style_block()
         effective_user_text = raw_user_text or user_message
         semantic_policy = SemanticAuthorityPolicy.from_env()
         act = (
@@ -4184,16 +4162,7 @@ class LlmService:
         chat_contract = self._build_chat_contract_prompt(effective_user_text, act=act)
         grounding_block = self._build_grounding_context_block(grounding_context)
         memory_block = self._build_memory_context_block(memory_context)
-        relational_repair_contract = self._build_relational_repair_contract(
-            "\n".join(
-                (
-                    style_block,
-                    conversation_context or "",
-                    internal_state_context or "",
-                    fe_context or "",
-                )
-            )
-        )
+        relational_repair_contract = ""
 
         # Prefix tĩnh đứng đầu và giữ nguyên giữa các turn để provider có thể
         # cache exact-prefix. Policy thay đổi theo lượt được tách sang block riêng.
@@ -4206,30 +4175,6 @@ class LlmService:
             dynamic_policy_parts.append(
                 f"{retry_context}\nRuntime failure flag: last_failure={failure_flag or 'format_error'}"
             )
-        previous_public_turn = getattr(reply_context, "previous_public_turn", None)
-        if previous_public_turn is not None:
-            previous_public_text = str(getattr(previous_public_turn, 'text', '') or '')
-            dynamic_policy_parts.append(
-                "Reply context: the current user message may react to the latest visible assistant turn.\n"
-                f"previous_public_turn.channel={getattr(previous_public_turn, 'channel', '')}\n"
-                f"previous_public_turn.parse_mode={getattr(previous_public_turn, 'parse_mode', '')}\n"
-                f"previous_public_turn.text={previous_public_text}"
-            )
-            try:
-                from runtime.turn_frame import build_turn_frame
-                from runtime.response_contract import build_response_contract
-
-                tf = build_turn_frame(
-                    user_text=effective_user_text,
-                    previous_assistant_text=previous_public_text,
-                )
-                dynamic_policy_parts.append(tf.to_prompt_context())
-                rc_block = build_response_contract(tf).to_prompt_block()
-                if rc_block:
-                    dynamic_policy_parts.append(rc_block)
-            except Exception:
-                pass
-
         state_style_parts = [style_block]
         if ni_context:
             state_style_parts.append(f"Ni context:\n{ni_context}")

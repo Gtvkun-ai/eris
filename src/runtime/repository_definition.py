@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Machine-readable repository definition for ERIS runtime v4."""
+"""Machine-readable repository definition for ERIS runtime v5."""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from typing import Any
 
-REPOSITORY_DEFINITION_VERSION = "eris.repository.v4.generation_sovereignty"
+REPOSITORY_DEFINITION_VERSION = "eris.repository.v5.lean_generation_sovereignty"
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,7 +17,9 @@ class RepositoryDefinition:
     second_generation_pass: str = "forbidden_after_valid_decision"
     deception_policy: str = "record_ground_truth_and_continuity_not_rewrite"
     output_hygiene: str = "secret_protocol_and_transport_only"
-    behavior_feedback_timing: str = "next_generation_pre_prompt"
+    behavior_feedback_timing: str = "memory_only_unless_explicitly_selected"
+    auxiliary_models: str = "disabled_by_default_observation_only"
+    heuristic_marker_blocks: str = "forbidden_in_main_chat_prompt"
 
     def to_payload(self) -> dict[str, Any]:
         return asdict(self)

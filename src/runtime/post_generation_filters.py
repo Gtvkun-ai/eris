@@ -557,12 +557,13 @@ class PostGenerationFiltersMixin:
         return fallback_decision
 
     def _apply_chat_final_guards(self, decision: Decision, *, user_text: str, frame=None, allow_reroll: bool = True) -> Decision:
-        feedback_markers = self._record_agent_mind_feedback_from_user(user_text, frame=frame)
         from runtime.final_passthrough_policy import audit_only, final_passthrough_enabled
         if final_passthrough_enabled():
-            if feedback_markers:
-                decision = self._trace_only_guard(decision, "agent_mind_feedback=" + ",".join(feedback_markers[:6]))
+            # Explicit user feedback may still become long-term preference memory,
+            # but its classifier markers never contaminate this turn's public text.
+            self._record_agent_mind_feedback_from_user(user_text, frame=frame)
             return audit_only(decision, "chat_final_guards")
+        feedback_markers = self._record_agent_mind_feedback_from_user(user_text, frame=frame)
         if feedback_markers:
             decision = self._trace_only_guard(decision, "agent_mind_feedback=" + ",".join(feedback_markers[:6]))
         state = None

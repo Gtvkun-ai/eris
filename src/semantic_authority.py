@@ -1,9 +1,8 @@
-"""Central policy for who is allowed to interpret a user turn.
+"""Single-owner policy for public chat generation.
 
-``qwen_first`` keeps Qwen as semantic authority while TurnFrame/contract/gate
-provide evidence and binding obligations. Policy now comes from
-``RuntimeSettingsStore``; env remains a bootstrap fallback, not twelve tiny
-kings ruling twelve different modules.
+The configured main model interprets the whole user turn and owns the first
+valid public Decision. Legacy markers, critics and directors may remain for
+telemetry or non-chat compatibility, but they are not fed back into chat text.
 """
 
 from __future__ import annotations
@@ -13,17 +12,17 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class SemanticAuthorityPolicy:
-    mode: str = "qwen_first"
+    mode: str = "primary_model"
     primary_reasoning_effort: str = "medium"
     support_confidence_threshold: float = 0.48
-    include_chat_act_markers_setting: bool = True
-    include_director_prompt_setting: bool = True
-    enforce_response_contract_setting: bool = True
-    director_candidate_mode: str = "adaptive"
-    critique_mode: str = "bounded_refine"
-    low_quality_fail_open_setting: bool = False
-    max_constrained_reruns: int = 1
-    allow_domain_fallback: bool = True
+    include_chat_act_markers_setting: bool = False
+    include_director_prompt_setting: bool = False
+    enforce_response_contract_setting: bool = False
+    director_candidate_mode: str = "off"
+    critique_mode: str = "off"
+    low_quality_fail_open_setting: bool = True
+    max_constrained_reruns: int = 0
+    allow_domain_fallback: bool = False
     final_passthrough_setting: bool = True
 
     @classmethod
@@ -33,29 +32,29 @@ class SemanticAuthorityPolicy:
 
             store = get_runtime_settings_store()
             chat = store.get("chat", default={}) or {}
-            mode = str(chat.get("semantic_authority_mode", "qwen_first") or "qwen_first").strip().lower()
+            mode = str(chat.get("semantic_authority_mode", "primary_model") or "primary_model").strip().lower()
             effort = str(chat.get("reasoning_effort", "medium") or "medium").strip().lower()
             threshold = float(chat.get("support_confidence_threshold", 0.48) or 0.48)
-            candidate_mode = str(chat.get("director_candidate_mode", "adaptive") or "adaptive").strip().lower()
-            critique_mode = str(chat.get("critique_mode", "bounded_refine") or "bounded_refine").strip().lower()
-            second_pass = str(chat.get("director_second_pass", "adaptive") or "adaptive").strip().lower()
+            candidate_mode = str(chat.get("director_candidate_mode", "off") or "off").strip().lower()
+            critique_mode = str(chat.get("critique_mode", "off") or "off").strip().lower()
+            second_pass = str(chat.get("director_second_pass", "off") or "off").strip().lower()
             # ``director_second_pass=off`` is a stronger local override.
             if second_pass == "off":
                 candidate_mode = "off"
             elif second_pass == "always" and candidate_mode != "off":
                 candidate_mode = "always"
             return cls(
-                mode=mode if mode in {"qwen_first", "legacy"} else "qwen_first",
+                mode=mode if mode in {"primary_model", "qwen_first", "legacy"} else "primary_model",
                 primary_reasoning_effort=effort if effort in {"low", "medium", "high"} else "medium",
                 support_confidence_threshold=max(0.05, min(0.95, threshold)),
-                include_chat_act_markers_setting=True,
-                include_director_prompt_setting=True,
-                enforce_response_contract_setting=bool(chat.get("response_contract_gate", True)),
-                director_candidate_mode=candidate_mode if candidate_mode in {"off", "adaptive", "always"} else "adaptive",
-                critique_mode=critique_mode if critique_mode in {"off", "advisory", "bounded_refine"} else "bounded_refine",
-                low_quality_fail_open_setting=bool(chat.get("low_quality_fail_open", False)),
-                max_constrained_reruns=max(0, min(2, int(chat.get("max_constrained_reruns", 1) or 0))),
-                allow_domain_fallback=bool(chat.get("auto_fallback", True)),
+                include_chat_act_markers_setting=False,
+                include_director_prompt_setting=False,
+                enforce_response_contract_setting=False,
+                director_candidate_mode="off",
+                critique_mode="off",
+                low_quality_fail_open_setting=True,
+                max_constrained_reruns=0,
+                allow_domain_fallback=False,
                 # Raw final passthrough là invariant kiến trúc, không đọc toggle.
                 final_passthrough_setting=True,
             )
@@ -74,26 +73,35 @@ class SemanticAuthorityPolicy:
 
     @property
     def qwen_first(self) -> bool:
-        return self.mode == "qwen_first"
+        return self.mode in {"primary_model", "qwen_first"}
+
+    @property
+    def primary_model_first(self) -> bool:
+        """Clear name for the production invariant; qwen_first stays as an import shim."""
+        return self.qwen_first
 
     @property
     def allow_pre_llm_intercepts(self) -> bool:
-        # qwen_first vẫn giữ Qwen làm semantic authority cho hội thoại mở, nhưng
-        # các intent tất định (memory slot, giờ máy, volume...) phải được route trước.
-        # Không làm vậy thì hỏi tên cũng biến thành thơ bí ẩn. Nhân loại đã khổ đủ.
-        return True
+        # Main model receives the turn first. Exact tools/actions are executed from
+        # its structured Decision instead of Python phrase detectors answering hộ.
+        return False
 
     @property
     def allow_tutor_prepass(self) -> bool:
         return not self.qwen_first
 
     @property
+    def allow_relational_pre_llm_intercept(self) -> bool:
+        """Không cho Python trả lời hộ model ở các lượt xã hội mở."""
+        return False
+
+    @property
     def include_chat_act_markers(self) -> bool:
-        return self.include_chat_act_markers_setting
+        return False
 
     @property
     def include_director_prompt(self) -> bool:
-        return self.include_director_prompt_setting
+        return False
 
     @property
     def final_passthrough(self) -> bool:
@@ -125,41 +133,12 @@ class SemanticAuthorityPolicy:
     def primary_uses_escalation_client(self) -> bool:
         return False if self.qwen_first else False
 
-    def requests_mentor_support(self, decision) -> bool:
-        tags = {
-            str(item or "").strip().lower().replace("-", "_")
-            for item in tuple(getattr(decision, "reasoning_tags", ()) or ())
-        }
-        explicit = bool(
-            tags
-            & {
-                "mentor_support",
-                "needs_support",
-                "support_needed",
-                "creative_support",
-                "knowledge_support",
-            }
-        )
-        try:
-            confidence = float(getattr(decision, "confidence", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            confidence = 0.0
-        text = str(getattr(decision, "text", "") or "").strip()
-        low_but_intentional = 0.0 < confidence < self.support_confidence_threshold
-        return explicit or (bool(text) and low_but_intentional)
-
     def prompt_block(self) -> str:
         if not self.qwen_first:
             return ""
         return (
-            "PRIMARY SEMANTIC AUTHORITY = QWEN. Interpret the whole user utterance together with "
-            "conversation history. Runtime intent labels, memory matches, turn-semantics labels, "
-            "emotion labels and keyword detectors are advisory evidence only; they are never commands. "
-            "Never let an isolated token override the grammatical and conversational meaning of the "
-            "complete message. Memory supplies facts, not a ready-made answer. Choose system_action "
-            "yourself only when a real tool is needed. If the answer is possible but your draft lacks "
-            "depth or ideas, keep the best honest draft, lower confidence and add reasoning tag "
-            "'mentor_support'. Qwen still writes the final public reply."
+            "The configured main model owns whole-turn meaning and final wording. "
+            "Use history, evidence and memory as context only; ignore runtime labels that conflict with the user's sentence."
         )
 
 

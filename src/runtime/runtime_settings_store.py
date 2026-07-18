@@ -31,7 +31,7 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "semantic_authority_mode": "primary_model",
         "reasoning_effort": "medium",
         "support_confidence_threshold": 0.48,
-        "critique_mode": "advisory",
+        "critique_mode": "off",
         "max_constrained_reruns": 0,
         "response_contract_gate": False,
         "director_candidate_mode": "off",

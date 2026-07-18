@@ -774,7 +774,6 @@ class ChatCycleMixin:
         # Một TurnFrame duy nhất cho cả prompt, critique và cửa cuối. Trước đây
         # mỗi tầng tự dựng lại frame nên cùng một câu có thể vừa là provocation,
         # vừa thành normal_chat tùy module nào đang cầm micro.
-        elegant_turn_context = ""
         try:
             from runtime.response_contract import build_response_contract
             from runtime.turn_frame import build_turn_frame
@@ -788,14 +787,6 @@ class ChatCycleMixin:
             elegant_response_contract = build_response_contract(elegant_turn_frame)
             self.current_elegant_turn_frame = elegant_turn_frame
             self.current_response_contract = elegant_response_contract
-            elegant_turn_context = "\n\n".join(
-                block
-                for block in (
-                    elegant_turn_frame.to_prompt_context(),
-                    elegant_response_contract.to_prompt_block(),
-                )
-                if str(block or "").strip()
-            )
             user_turn.meta["turn_frame_relations"] = [
                 {"kind": item.kind, "confidence": round(item.confidence, 4)}
                 for item in elegant_turn_frame.discourse_relations
@@ -1186,107 +1177,21 @@ class ChatCycleMixin:
             user_message=user_text,
             last_chat_answer=self.last_chat_answer,
         )
-        turn_semantics_context = str(getattr(turn_semantics_report, "prompt_context", "") or "")
-        pragmatic_context = pragmatic_result.to_prompt_context() if pragmatic_result.intercepted else ""
-        repair_context = repair_appraisal.to_prompt_context()
-        social_context = social_contract.to_prompt_block() if social_contract is not None else ""
-        try:
-            from runtime.persona_novelty import build_phrase_novelty_hint
-
-            phrase_novelty_context = build_phrase_novelty_hint(getattr(self, "chat_history", ()))
-        except Exception as exc:
-            phrase_novelty_context = ""
-            self.logger.debug("[phrase novelty] build hint failed: %s", exc)
-        try:
-            from runtime.behavior_observation import build_behavior_prompt_context
-
-            behavior_aftermath_context = build_behavior_prompt_context(self, limit=6)
-        except Exception as exc:
-            behavior_aftermath_context = ""
-            self.logger.debug("[behavior-observation] prompt context failed: %s", exc)
-        planned_ti_context = (
-            f"{ti_report.prompt_context}\n{self._build_action_plan_context(frame.action_plan)}\n"
-            f"{turn_semantics_context}\n{pragmatic_context}\n{repair_context}\n{social_context}\n"
-            f"{phrase_novelty_context}\n{behavior_aftermath_context}"
-        )
+        # Lean chat: chỉ đưa chỉ dẫn vận hành thật vào prompt. Các nhãn Ni/Ti/Fe,
+        # social move, repair score, novelty marker và behavior debt vẫn có thể
+        # được log/commit, nhưng không đứng giữa user và model chính.
+        planned_ti_context = ""
         if social_contract is not None:
             frame.metadata["social_cognition_v2"] = social_contract.to_dict()
             frame.debug_notes.append(f"social_move={social_contract.response_move}")
-        semantic_authority_context = semantic_policy.prompt_block()
-        if semantic_authority_context:
-            planned_ti_context = f"{semantic_authority_context}\n\n{planned_ti_context}"
-        if previous_public_context:
-            planned_ti_context = f"{planned_ti_context}\n\n{previous_public_context}"
+        # Chỉ interrupt thật mới được thêm vào prompt. Lịch sử public đã có trong
+        # chat_history; semantic/director/social marker không được nhân đôi rồi đứng
+        # giữa câu người dùng và model chính.
         if speech_interrupt_context:
-            planned_ti_context = f"{planned_ti_context}\n\n{speech_interrupt_context}"
+            planned_ti_context = speech_interrupt_context
 
-        # Director đi TRƯỚC answer pass: model nhận scene/evidence/budget ngay từ
-        # lần sinh Decision đầu tiên, thay vì nói xong rồi stage mới dọn hiện trường.
-        # Dùng PerformanceContextBuilder riêng cho guard block để không tiêu cooldown
-        # của ContentEngine chính hai lần trong cùng một turn.
-        if semantic_policy.include_director_prompt:
-            try:
-                from runtime.content_engine import ContentEngine
-                from runtime.director_context import DirectorContextBuilder
-                from runtime.performance_contract import DirectorContractBuilder, PerformanceContextBuilder
-
-                pre_payload = {
-                    "user_text": user_text,
-                    "intent": planned_speech_intent or planned_speech_act or "answer",
-                    "audience_mode": "private",
-                }
-                director_builder = getattr(self, "director_context_builder", None)
-                if director_builder is None:
-                    director_builder = DirectorContextBuilder()
-                    self.director_context_builder = director_builder
-                pre_director = director_builder.build(
-                    payload=pre_payload,
-                    frame=frame,
-                    channel="chat",
-                    user_text=user_text,
-                )
-                pre_performance = PerformanceContextBuilder(
-                    content_engine=ContentEngine(persist=False)
-                ).build(
-                    pre_director,
-                    payload=pre_payload,
-                    channel="chat",
-                )
-                pre_contract = DirectorContractBuilder().build(pre_director, pre_performance)
-                planned_ti_context = (
-                    f"{planned_ti_context}\n\n{pre_contract.to_generation_guard_block()}"
-                )
-                frame.debug_notes.append(
-                    f"director_pre_generation={pre_director.scene_mode.name}:{pre_performance.performance_intent}"
-                )
-            except Exception as exc:
-                self.logger.debug("[director pre-generation] skipped: %s", exc)
-
-        # Curiosity Tutor: Eris không hiểu ý bạn → câu trả lời lượt này thành câu hỏi
-        # làm rõ (thay vì đoán bừa hay lén tra Gemini). Giữ giọng Eris.
-        if getattr(self, "_clarify_user_pending", False):
-            planned_ti_context = (
-                f"{planned_ti_context}\n\nLÀM RÕ: Em chưa chắc hiểu ý bạn vừa nói. "
-                "Thay vì đoán hay bịa, hãy hỏi lại bạn MỘT câu ngắn, tự nhiên, đúng giọng "
-                "của em để làm rõ ý; đừng xin lỗi dài dòng."
-            )
-        # Nhịp 1 của tra cứu: Eris chưa biết câu kiến thức bạn vừa hỏi → báo "đợi em tra
-        # chút" rồi sẽ trả lời sau (nhịp 2 chạy ở thread nền). TUYỆT ĐỐI không đoán đáp án.
-        if getattr(self, "_research_pending", False):
-            planned_ti_context = (
-                f"{planned_ti_context}\n\nĐANG TRA CỨU: Em chưa chắc câu trả lời cho câu bạn "
-                "vừa hỏi và KHÔNG được bịa. Hãy nói ngắn gọn, tự nhiên, đúng giọng em rằng em "
-                "chưa chắc nên đang đi tra cứu và sẽ trả lời ngay khi xong. Đừng đưa ra bất kỳ "
-                "đáp án phỏng đoán nào ở câu này."
-            )
-        else:
-            planned_ti_context = (
-                f"{planned_ti_context}\n\nKHẢ NĂNG TỰ TRA CỨU: Nếu câu hỏi cần dữ kiện mới, trạng thái hiện tại, "
-                "policy/giá/version/account/web mới, hoặc em thật sự không chắc, em được quyền "
-                "nói rất ngắn rằng em sẽ tra/search/kiểm tra rồi nhắn tiếp. Không lạm dụng cho "
-                "kiến thức phổ thông ổn định. Nếu nói sẽ tra, tuyệt đối không đoán đáp án trong "
-                "cùng câu."
-            )
+        # Không tự hứa search/tra cứu hoặc hỏi lại chỉ vì marker. Tutor chỉ
+        # chạy khi user/tool route yêu cầu rõ; main model tự xử lý câu hiện tại.
         # The current user message is sent as the final user message below.
         # Passing it inside chat_history as well wastes one short-term slot
         # and can push out the previous turn during context shrink.
@@ -1329,7 +1234,7 @@ class ChatCycleMixin:
                 conversation_report=conversation_report,
                 relationship_report=relationship_report,
             )
-            if semantic_policy.allow_pre_llm_intercepts
+            if semantic_policy.allow_relational_pre_llm_intercept
             else None
         )
         if relational_seed_decision is not None:
@@ -1371,37 +1276,24 @@ class ChatCycleMixin:
             "chat_history": llm_chat_history,
             "user_message": chat_user_message,
             "raw_user_text": user_text,
-            "ni_context": ni_report.prompt_context,
+            "ni_context": "",
             "ti_context": planned_ti_context,
-            "fe_context": fe_plan.style_context,
-            "appraisal_context": self._build_appraisal_context(frame.appraisal, frame=frame),
-            "internal_state_context": self._build_internal_state_context(
-                sensed_internal_state, frame.self_state, user_text=user_text
-            ),
-            "conversation_context": self._merge_v3_prompt_context(
-                "\n\n".join(
-                    part
-                    for part in (
-                        conversation_report.prompt_context,
-                        relational_feedback.to_prompt_context(),
-                        elegant_turn_context,
-                    )
-                    if str(part or "").strip()
-                ),
-                frame,
-            ),
+            "fe_context": "",
+            "appraisal_context": "",
+            "internal_state_context": "",
+            "conversation_context": "",
             "memory_context": memory_context,
             "grounding_context": grounding_report.prompt_context,
             "screen_image_data_uri": screen_image_data_uri,
             "reply_context": getattr(self, "reply_context", None),
-            "defusing_context": getattr(frame.action_plan, "defusing_context", ""),
+            "defusing_context": "",
             "use_escalation_client": use_escalation,
             "reasoning_effort": reasoning_effort,
         }
         format_retry_context = ""
         format_failure_flag = ""
         format_errors = 0
-        max_format_retries = 2
+        max_format_retries = 1
         raw = None
         format_repair_fallback = False
         no_fallback_block = False
@@ -1438,10 +1330,8 @@ class ChatCycleMixin:
                         "fe_context": "",
                         "appraisal_context": "",
                         "internal_state_context": "",
-                        # Giữ TurnFrame/ResponseContract tối thiểu. Format retry
-                        # được phép bỏ mood/persona dài, không được quên user đang
-                        # sửa lỗi hay đang chọc chỉ vì JSON vừa hỏng.
-                        "conversation_context": elegant_turn_context,
+                        # Retry chỉ sửa transport JSON, không tái nhét TurnFrame/marker.
+                        "conversation_context": "",
                         "defusing_context": "",
                     })
                     self.last_failure = "format_error"
@@ -1563,13 +1453,14 @@ class ChatCycleMixin:
         self._log_decision_stage("chat", "pre_ti", decision)
         decision = self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text, vision_grounded=bool(screen_image_data_uri) or bool(getattr(self, "vision_facts", None)))
         self._log_decision_stage("chat", "after_ti", decision)
-        decision = self._maybe_escalate_chat_decision(
-            decision,
-            user_text=user_text,
-            snapshot=snapshot,
-            chat_generation_kwargs=chat_generation_kwargs,
-            ti_report=ti_report,
-        )
+        if semantic_policy.bounded_refine_enabled:
+            decision = self._maybe_escalate_chat_decision(
+                decision,
+                user_text=user_text,
+                snapshot=snapshot,
+                chat_generation_kwargs=chat_generation_kwargs,
+                ti_report=ti_report,
+            )
         self._log_decision_stage("chat", "after_escalation", decision)
         decision = self._execute_system_action(decision, snapshot=snapshot, frame=frame)
         decision = self._apply_chat_final_guards(decision, user_text=user_text, frame=frame)
@@ -1581,87 +1472,21 @@ class ChatCycleMixin:
             decision = audit_only(decision, "dual_axis_repair_output")
         else:
             decision = apply_repair_output_guard(decision, repair_appraisal)
-        # Tutor/self-search có thể thay đổi nội dung câu (ví dụ chuyển thành
-        # "tôi sẽ tra"). Vì vậy nó phải chạy TRƯỚC cửa final, không được lén
-        # sửa Decision sau khi Director đã chấm xong.
-        self_search = getattr(self, "_maybe_start_self_declared_tutor_search", None)
-        if callable(self_search):
-            decision = self_search(decision, user_text=user_text, frame=frame)
         # Lưới trung tâm: kể cả một module cũ còn lén sửa text, khôi phục đúng
         # Decision public từ lần parse đầu. Tool state/result vẫn được giữ.
         if raw_public_speech is not None:
             decision = raw_public_speech.restore(decision, stage="chat_cycle_precommit")
-        repair_candidate_override = repair_appraisal.candidate_count_hint >= 2
-        decision = self._finalize_chat_director_decision(
-            decision,
-            user_text=user_text,
-            frame=frame,
-            chat_generation_kwargs=chat_generation_kwargs,
-            skip_candidates=bool(
-                format_repair_fallback
-                or no_fallback_block
-                or bool(getattr(getattr(self, "current_conversation_lane", None), "fast", False))
-                or (not semantic_policy.generate_director_candidates and not repair_candidate_override)
-            ),
-        )
-        # Không còn post-director writer. Social policy/repair được phép review
-        # candidate trước Director; sau đây chỉ có FinalSpeechAuthority ở commit
-        # khóa hoặc suppress, tuyệt đối không bơm một câu fallback mới.
+        # Main model đã tạo Decision hợp lệ. Không đi vòng qua director/candidate
+        # pipeline ở chat production; stage vẫn nhận motion/tool metadata bình thường.
+        decision.director_finalized = True
+        decision.director_meta = {"repair_action": "main_model_final", "candidate_count": 1}
         self._commit_chat_decision(decision, fe_plan, frame=frame)
         self.last_user_text_for_semantics = user_text
         return
 
     def _apply_social_cognition_review(self, decision: Decision, *, user_text: str) -> Decision:
-        """Critic chỉ audit khi final_passthrough bật; không viết lại câu public.
-
-        Dù model phụ hỏng, deterministic surface policy vẫn chạy. Đây là fail-open
-        có kiểm soát, không phải fail-open kiểu phát đại một câu rồi cầu nguyện.
-        """
-        from runtime.final_passthrough_policy import audit_only, final_passthrough_enabled
-        if final_passthrough_enabled():
-            return audit_only(decision, "social_cognition_review")
-        engine = getattr(self, "social_cognition_v2", None)
-        contract = getattr(self, "current_social_contract", None)
-        if engine is None or contract is None:
-            return decision
-        decision = engine.apply_surface_policy(decision, user_text=user_text)
-        fast_lane = bool(getattr(getattr(self, "current_conversation_lane", None), "fast", False))
-        enabled = str(os.environ.get("ERIS_SOCIAL_CRITIC_REWRITE_ENABLED", "1") or "1").lower() not in {"0", "false", "off", "no"}
-        if fast_lane or not enabled or not bool(getattr(contract, "critic_required", False)):
-            return decision
-        router = getattr(self, "social_model_router", None)
-        if router is None:
-            return decision
-        try:
-            deterministic = engine.review_text(str(getattr(decision, "text", "") or ""), contract=contract, user_text=user_text)
-            model_critique = router.critique(
-                candidate_text=str(getattr(decision, "text", "") or ""),
-                user_text=user_text,
-                contract=contract.to_dict(),
-            )
-            severity = max(float(getattr(deterministic, "severity", 0.0) or 0.0), float(getattr(model_critique, "severity", 0.0) or 0.0))
-            issues = tuple(dict.fromkeys((*tuple(getattr(deterministic, "issues", ()) or ()), *tuple(getattr(model_critique, "issues", ()) or ()))))
-            if severity < 0.62 or not issues:
-                return decision
-            instruction = str(getattr(model_critique, "rewrite_instruction", "") or getattr(deterministic, "rewrite_instruction", "") or "")
-            rewrite = router.rewrite_with_main(
-                candidate_text=str(getattr(decision, "text", "") or ""),
-                user_text=user_text,
-                contract=contract.to_dict(),
-                instruction=instruction,
-            )
-            if rewrite.get("text"):
-                decision.text = rewrite["text"]
-                for field_name in ("delivery_hint", "nonverbal_cue", "stage_motion"):
-                    value = str(rewrite.get(field_name, "") or "").strip()
-                    if value:
-                        setattr(decision, field_name, value)
-                decision.reasoning_tags = tuple(dict.fromkeys((*tuple(getattr(decision, "reasoning_tags", ()) or ()), "social_qwen_critic", "terra_social_rewrite")))
-                decision.debug_trace = " | ".join(part for part in (str(getattr(decision, "debug_trace", "") or ""), f"social_rewrite:{','.join(issues)}") if part)
-            return engine.apply_surface_policy(decision, user_text=user_text)
-        except Exception as exc:
-            self.logger.debug("[social cognition v2] critic/rewrite skipped: %s", exc)
-            return engine.apply_surface_policy(decision, user_text=user_text)
+        """Legacy compatibility: social cognition no longer rewrites public text."""
+        return decision
 
     def _apply_social_cognition_surface(self, decision: Decision, *, user_text: str, after_director: bool = False) -> Decision:
         engine = getattr(self, "social_cognition_v2", None)

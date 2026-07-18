@@ -85,7 +85,7 @@ def test_primary_model_has_generation_sovereignty_and_no_post_rerun():
     assert policy.generate_director_candidates is False
     assert policy.bounded_refine_enabled is False
     assert "configured main model" in block
-    assert "may not regenerate, rewrite" in block
+    assert "owns whole-turn meaning and final wording" in block
     assert "QWEN" not in block
 
 
@@ -99,7 +99,7 @@ def test_repository_definition_is_machine_readable_and_forbids_final_mutation():
     assert payload["version"] == REPOSITORY_DEFINITION_VERSION
     assert payload["semantic_owner"] == "configured_main_model"
     assert payload["final_text_mutation"] == "forbidden"
-    assert payload["behavior_feedback_timing"] == "next_generation_pre_prompt"
+    assert payload["behavior_feedback_timing"] == "memory_only_unless_explicitly_selected"
 
 
 def test_behavior_summary_is_transport_safe_and_current_turn_ready():

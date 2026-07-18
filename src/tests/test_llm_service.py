@@ -211,7 +211,7 @@ class LlmServiceTests(unittest.TestCase):
         self.assertIn("ban muon", payload["text"])
         self.assertNotIn("INFJ_594", payload.get("debug_trace", ""))
 
-    def test_chat_contract_allows_dry_insult_response_without_erasing_personality(self):
+    def test_chat_prompt_uses_compact_voice_anchor_without_act_marker(self):
         client = _FakeClient(
             [
                 (
@@ -226,49 +226,44 @@ class LlmServiceTests(unittest.TestCase):
         service.generate_chat_reply(chat_history=[], user_message="mày chỉ là công cụ thôi")
 
         system_prompt = client.calls[0]["messages"][0]["content"]
-        self.assertIn("do not erase personality", system_prompt)
-        self.assertIn("short dry boundary", system_prompt)
+        self.assertIn("dry edge", system_prompt)
+        self.assertNotIn("chat_act=", system_prompt)
+        self.assertNotIn("insult_boundary", system_prompt)
+        self.assertEqual(len(client.calls), 1)
 
     def test_classifies_direct_insult_before_ambiguity(self):
         self.assertEqual(classify_chat_act("mày ngu thật"), ChatAct.INSULT_PROVOCATION)
 
-    def test_chat_insult_retries_uncertainty_dodge_once(self):
+    def test_chat_insult_keeps_first_valid_model_decision_without_retry(self):
         first = (
             '{"text":"Tôi chưa đủ chắc để đoán ý bạn.","animation":"stand",'
             '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
             '"debug_trace":"first","next_animation":"","system_action":"","action_input":""}'
         )
-        second = (
-            '{"text":"Đòn đó hơi thiếu trí tưởng tượng, thưa bạn.","animation":"stand",'
-            '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
-            '"debug_trace":"retry","next_animation":"","system_action":"","action_input":""}'
-        )
-        client = _FakeClient([first, second])
+        client = _FakeClient([first])
         service = LlmService(client)
 
         raw = service.generate_chat_reply(chat_history=[], user_message="mày ngu thật")
 
         payload = json.loads(raw)
-        self.assertEqual(payload["text"], "Đòn đó hơi thiếu trí tưởng tượng, thưa bạn.")
-        self.assertEqual(len(client.calls), 2)
-        self.assertIn("insult_boundary", client.calls[0]["messages"][0]["content"])
-        self.assertIn("Use dry boundary, not uncertainty dodge", client.calls[1]["messages"][-1]["content"])
+        self.assertEqual(payload["text"], "Tôi chưa đủ chắc để đoán ý bạn.")
+        self.assertEqual(len(client.calls), 1)
 
-    def test_chat_insult_falls_back_after_failed_retry(self):
+    def test_chat_insult_does_not_use_deterministic_python_fallback(self):
         dodge = (
             '{"text":"Tôi chưa đủ chắc để đoán ý bạn.","animation":"stand",'
             '"direction":0,"target_x":-1.0,"bounce_action":"","extracted_fact":"",'
             '"debug_trace":"dodge","next_animation":"","system_action":"","action_input":""}'
         )
-        client = _FakeClient([dodge, dodge])
+        client = _FakeClient([dodge])
         service = LlmService(client)
 
         raw = service.generate_chat_reply(chat_history=[], user_message="mày ngu thật")
 
         payload = json.loads(raw)
-        self.assertEqual(payload["text"], "Đòn đó hơi thiếu trí tưởng tượng, thưa bạn.")
-        self.assertIn("insult_boundary_fallback_after_uncertainty_retry", payload["debug_trace"])
-        self.assertEqual(len(client.calls), 2)
+        self.assertEqual(payload["text"], "Tôi chưa đủ chắc để đoán ý bạn.")
+        self.assertEqual(payload["debug_trace"], "dodge")
+        self.assertEqual(len(client.calls), 1)
 
     def _test_chat_insult_no_fallback_mode_keeps_second_dodge(self):
         dodge = (
@@ -542,7 +537,7 @@ class LlmServiceTests(unittest.TestCase):
         self.assertNotIn("data:image/jpeg;base64,abc", content)
         self.assertIn("ban thay man hinh khong", content)
 
-    def test_chat_reply_includes_conversation_context_when_present(self):
+    def test_chat_reply_discards_synthetic_conversation_context(self):
         client = _FakeClient(
             [
                 (
@@ -561,9 +556,9 @@ class LlmServiceTests(unittest.TestCase):
         )
 
         system_prompt = client.calls[0]["messages"][0]["content"]
-        self.assertIn("conversation_dynamics: guidance only", system_prompt)
-        self.assertIn("conversation_state: mode=repair", system_prompt)
-        self.assertIn("Chat contract", system_prompt)
+        self.assertNotIn("conversation_dynamics: guidance only", system_prompt)
+        self.assertNotIn("conversation_state: mode=repair", system_prompt)
+        self.assertNotIn("Chat contract", system_prompt)
 
     def test_chat_reply_includes_grounding_context_block(self):
         client = _FakeClient(
