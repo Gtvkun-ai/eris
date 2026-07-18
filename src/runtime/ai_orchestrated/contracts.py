@@ -1,0 +1,405 @@
+# -*- coding: utf-8 -*-
+"""Contracts cho kiến trúc AI-orchestrated của ERIS.
+
+Triết lý rất thẳng:
+- Main model sở hữu lời public.
+- Observer model diễn giải điều vừa xảy ra.
+- Planner model đề xuất ý định.
+- Reducer là nơi duy nhất được ghi state.
+- Runtime chỉ thực thi sự thật cơ học.
+
+Các contract trong file này không chứa câu public thay thế. Đây là ranh giới
+quan trọng nhất của kiến trúc, vì một "observer" biết viết lại lời thì chỉ là
+biên tập viên đội mũ mới.
+"""
+
+from __future__ import annotations
+
+import time
+from dataclasses import asdict, dataclass, field, replace
+from typing import Any, Mapping, Sequence
+
+
+AI_RUNTIME_VERSION = "ai_orchestrated.v1"
+
+
+def clamp01(value: Any, default: float = 0.0) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = default
+    if number != number:
+        number = default
+    return max(0.0, min(1.0, number))
+
+
+def compact(value: Any, limit: int = 220) -> str:
+    text = " ".join(str(value or "").split()).strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."
+
+
+@dataclass(frozen=True, slots=True)
+class RelationshipState:
+    """Một nguồn state quan hệ duy nhất.
+
+    Tách trust quan hệ khỏi độ tin cậy năng lực. User sửa code không còn bị diễn
+    thành một vết thương tình cảm, một tiến bộ nhỏ nhưng đáng lẽ hiển nhiên.
+    """
+
+    relational_trust: float = 0.42
+    competence_trust: float = 0.50
+    factual_reliability: float = 0.50
+    boundary_safety: float = 0.72
+    familiarity: float = 0.18
+    closeness: float = 0.20
+    playful_safety: float = 0.32
+    rupture: float = 0.0
+    repair_progress: float = 0.0
+    last_event: str = ""
+    last_turn_seq: int = 0
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, Any] | None) -> "RelationshipState":
+        data = payload or {}
+        return cls(
+            relational_trust=clamp01(data.get("relational_trust", 0.42), 0.42),
+            competence_trust=clamp01(data.get("competence_trust", 0.50), 0.50),
+            factual_reliability=clamp01(data.get("factual_reliability", 0.50), 0.50),
+            boundary_safety=clamp01(data.get("boundary_safety", 0.72), 0.72),
+            familiarity=clamp01(data.get("familiarity", 0.18), 0.18),
+            closeness=clamp01(data.get("closeness", 0.20), 0.20),
+            playful_safety=clamp01(data.get("playful_safety", 0.32), 0.32),
+            rupture=clamp01(data.get("rupture", 0.0)),
+            repair_progress=clamp01(data.get("repair_progress", 0.0)),
+            last_event=compact(data.get("last_event", ""), 80),
+            last_turn_seq=max(0, int(data.get("last_turn_seq", 0) or 0)),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**asdict(self), "version": AI_RUNTIME_VERSION}
+
+    def prompt_summary(self) -> str:
+        bits: list[str] = []
+        if self.familiarity >= 0.72:
+            bits.append("Hai người đã rất quen")
+        elif self.familiarity >= 0.42:
+            bits.append("Độ quen thuộc đang ở mức vừa")
+        if self.rupture >= 0.28:
+            bits.append("Còn một điểm quan hệ cần sửa trực tiếp")
+        elif self.closeness >= 0.62:
+            bits.append("Khoảng cách hiện tại khá gần")
+        if self.boundary_safety <= 0.38:
+            bits.append("Cần giữ ranh giới rõ hơn")
+        return ". ".join(bits[:2])
+
+
+@dataclass(frozen=True, slots=True)
+class AppraisalState:
+    pleasantness: float = 0.50
+    curiosity: float = 0.20
+    tenderness: float = 0.10
+    embarrassment: float = 0.0
+    irritation: float = 0.0
+    pressure: float = 0.0
+    novelty: float = 0.0
+    last_turn_seq: int = 0
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, Any] | None) -> "AppraisalState":
+        data = payload or {}
+        return cls(
+            pleasantness=clamp01(data.get("pleasantness", 0.50), 0.50),
+            curiosity=clamp01(data.get("curiosity", 0.20), 0.20),
+            tenderness=clamp01(data.get("tenderness", 0.10), 0.10),
+            embarrassment=clamp01(data.get("embarrassment", 0.0)),
+            irritation=clamp01(data.get("irritation", 0.0)),
+            pressure=clamp01(data.get("pressure", 0.0)),
+            novelty=clamp01(data.get("novelty", 0.0)),
+            last_turn_seq=max(0, int(data.get("last_turn_seq", 0) or 0)),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class CognitiveObservation:
+    """Nhận xét hậu kỳ của observer về một lượt đã thực sự xảy ra."""
+
+    turn_id: str
+    turn_seq: int
+    event_kind: str = "chat"
+    user_act: str = "unknown"
+    relationship_meaning: str = "neutral"
+    continuity: str = "new_or_neutral"
+    repair_needed: bool = False
+    assistant_fault_probability: float = 0.0
+    memory_worthy: bool = False
+    confidence: float = 0.0
+    ambiguity: float = 1.0
+    relational_delta: float = 0.0
+    competence_delta: float = 0.0
+    factual_delta: float = 0.0
+    boundary_delta: float = 0.0
+    familiarity_delta: float = 0.0
+    closeness_delta: float = 0.0
+    playful_safety_delta: float = 0.0
+    rupture_delta: float = 0.0
+    appraisal: AppraisalState = field(default_factory=AppraisalState)
+    open_loop: str = ""
+    memory_candidate: str = ""
+    evidence: tuple[str, ...] = ()
+    notes: str = ""
+    source: str = "none"
+    latency_ms: float = 0.0
+
+    @classmethod
+    def from_mapping(
+        cls,
+        payload: Mapping[str, Any] | None,
+        *,
+        turn_id: str,
+        turn_seq: int,
+        source: str = "model",
+        latency_ms: float = 0.0,
+    ) -> "CognitiveObservation":
+        data = payload or {}
+
+        def signed(name: str) -> float:
+            try:
+                value = float(data.get(name, 0.0) or 0.0)
+            except (TypeError, ValueError):
+                value = 0.0
+            if value != value:
+                value = 0.0
+            return max(-1.0, min(1.0, value))
+
+        raw_evidence = data.get("evidence", ())
+        evidence: tuple[str, ...]
+        if isinstance(raw_evidence, str):
+            evidence = (compact(raw_evidence, 140),) if raw_evidence.strip() else ()
+        elif isinstance(raw_evidence, Sequence):
+            evidence = tuple(
+                item for item in (compact(value, 140) for value in raw_evidence[:4]) if item
+            )
+        else:
+            evidence = ()
+        return cls(
+            turn_id=str(turn_id or f"turn-{turn_seq}"),
+            turn_seq=max(0, int(turn_seq or 0)),
+            event_kind=compact(data.get("event_kind", "chat"), 40).lower() or "chat",
+            user_act=compact(data.get("user_act", "unknown"), 60).lower() or "unknown",
+            relationship_meaning=compact(data.get("relationship_meaning", "neutral"), 80).lower() or "neutral",
+            continuity=compact(data.get("continuity", "new_or_neutral"), 80).lower() or "new_or_neutral",
+            repair_needed=bool(data.get("repair_needed", False)),
+            assistant_fault_probability=clamp01(data.get("assistant_fault_probability", 0.0)),
+            memory_worthy=bool(data.get("memory_worthy", False)),
+            confidence=clamp01(data.get("confidence", 0.0)),
+            ambiguity=clamp01(data.get("ambiguity", 1.0), 1.0),
+            relational_delta=signed("relational_delta"),
+            competence_delta=signed("competence_delta"),
+            factual_delta=signed("factual_delta"),
+            boundary_delta=signed("boundary_delta"),
+            familiarity_delta=signed("familiarity_delta"),
+            closeness_delta=signed("closeness_delta"),
+            playful_safety_delta=signed("playful_safety_delta"),
+            rupture_delta=signed("rupture_delta"),
+            appraisal=AppraisalState.from_mapping(data.get("appraisal") if isinstance(data.get("appraisal"), Mapping) else {}),
+            open_loop=compact(data.get("open_loop", ""), 180),
+            memory_candidate=compact(data.get("memory_candidate", ""), 260),
+            evidence=evidence,
+            notes=compact(data.get("notes", ""), 220),
+            source=str(source or "model"),
+            latency_ms=max(0.0, float(latency_ms or 0.0)),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["version"] = AI_RUNTIME_VERSION
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
+class IntentionPlan:
+    plan_id: str
+    created_at: float
+    channel: str
+    speak: bool = False
+    motive: str = "silence"
+    topic: str = ""
+    importance: float = 0.0
+    intrusion_risk: float = 0.0
+    confidence: float = 0.0
+    performance_hint: str = "neutral"
+    tool_intent: str = ""
+    tool_input: str = ""
+    evidence_refs: tuple[str, ...] = ()
+    notes: str = ""
+
+    @classmethod
+    def silence(cls, *, channel: str, reason: str = "no_valuable_intention") -> "IntentionPlan":
+        return cls(
+            plan_id=f"plan-{int(time.time() * 1000)}",
+            created_at=time.time(),
+            channel=channel,
+            speak=False,
+            motive="silence",
+            notes=reason,
+        )
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, Any] | None, *, channel: str) -> "IntentionPlan":
+        data = payload or {}
+        raw_refs = data.get("evidence_refs", ())
+        if isinstance(raw_refs, str):
+            refs = (compact(raw_refs, 120),) if raw_refs.strip() else ()
+        elif isinstance(raw_refs, Sequence):
+            refs = tuple(compact(x, 120) for x in raw_refs[:5] if compact(x, 120))
+        else:
+            refs = ()
+        return cls(
+            plan_id=compact(data.get("plan_id", ""), 80) or f"plan-{int(time.time() * 1000)}",
+            created_at=time.time(),
+            channel=str(channel or "autonomous"),
+            speak=bool(data.get("speak", False)),
+            motive=compact(data.get("motive", "silence"), 80).lower() or "silence",
+            topic=compact(data.get("topic", ""), 240),
+            importance=clamp01(data.get("importance", 0.0)),
+            intrusion_risk=clamp01(data.get("intrusion_risk", 0.0)),
+            confidence=clamp01(data.get("confidence", 0.0)),
+            performance_hint=compact(data.get("performance_hint", "neutral"), 60).lower() or "neutral",
+            tool_intent=compact(data.get("tool_intent", ""), 80),
+            tool_input=compact(data.get("tool_input", ""), 1200),
+            evidence_refs=refs,
+            notes=compact(data.get("notes", ""), 220),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["version"] = AI_RUNTIME_VERSION
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMindState:
+    version: int = 0
+    last_applied_turn_seq: int = 0
+    relationship: RelationshipState = field(default_factory=RelationshipState)
+    appraisal: AppraisalState = field(default_factory=AppraisalState)
+    latest_observation: Mapping[str, Any] = field(default_factory=dict)
+    latest_intention: Mapping[str, Any] = field(default_factory=dict)
+    open_loops: tuple[str, ...] = ()
+    memory_candidates: tuple[Mapping[str, Any], ...] = ()
+    updated_at: float = 0.0
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, Any] | None) -> "RuntimeMindState":
+        data = payload or {}
+        raw_loops = data.get("open_loops", ())
+        loops = tuple(compact(x, 180) for x in raw_loops[-8:] if compact(x, 180)) if isinstance(raw_loops, Sequence) and not isinstance(raw_loops, str) else ()
+        raw_candidates = data.get("memory_candidates", ())
+        candidates = tuple(dict(x) for x in raw_candidates[-12:] if isinstance(x, Mapping)) if isinstance(raw_candidates, Sequence) and not isinstance(raw_candidates, str) else ()
+        return cls(
+            version=max(0, int(data.get("version", 0) or 0)),
+            last_applied_turn_seq=max(0, int(data.get("last_applied_turn_seq", 0) or 0)),
+            relationship=RelationshipState.from_mapping(data.get("relationship") if isinstance(data.get("relationship"), Mapping) else {}),
+            appraisal=AppraisalState.from_mapping(data.get("appraisal") if isinstance(data.get("appraisal"), Mapping) else {}),
+            latest_observation=dict(data.get("latest_observation", {})) if isinstance(data.get("latest_observation"), Mapping) else {},
+            latest_intention=dict(data.get("latest_intention", {})) if isinstance(data.get("latest_intention"), Mapping) else {},
+            open_loops=loops,
+            memory_candidates=candidates,
+            updated_at=max(0.0, float(data.get("updated_at", 0.0) or 0.0)),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": AI_RUNTIME_VERSION,
+            "version": self.version,
+            "last_applied_turn_seq": self.last_applied_turn_seq,
+            "relationship": self.relationship.to_dict(),
+            "appraisal": self.appraisal.to_dict(),
+            "latest_observation": dict(self.latest_observation),
+            "latest_intention": dict(self.latest_intention),
+            "open_loops": list(self.open_loops),
+            "memory_candidates": [dict(x) for x in self.memory_candidates],
+            "updated_at": self.updated_at,
+        }
+
+    def prompt_context(self) -> str:
+        parts = [self.relationship.prompt_summary()]
+        latest = self.latest_observation
+        if latest and float(latest.get("confidence", 0.0) or 0.0) >= 0.62:
+            if bool(latest.get("repair_needed", False)):
+                parts.append("Lượt trước có dấu hiệu cần nhận và sửa thẳng")
+            meaning = compact(latest.get("relationship_meaning", ""), 80)
+            if meaning in {"closeness_bid", "request_reciprocity", "vulnerability"}:
+                parts.append("Người dùng đang chủ động mở khoảng cách gần hơn")
+        return ". ".join(part for part in parts if part)[:420]
+
+
+@dataclass(frozen=True, slots=True)
+class StateEvent:
+    kind: str
+    turn_seq: int
+    turn_id: str
+    payload: Mapping[str, Any]
+    base_version: int = -1
+    created_at: float = field(default_factory=time.time)
+    source: str = "runtime"
+
+    @classmethod
+    def from_observation(cls, observation: CognitiveObservation, *, base_version: int = -1) -> "StateEvent":
+        return cls(
+            kind="cognitive_observation",
+            turn_seq=observation.turn_seq,
+            turn_id=observation.turn_id,
+            payload=observation.to_dict(),
+            base_version=base_version,
+            source=observation.source,
+        )
+
+    @classmethod
+    def from_intention(cls, plan: IntentionPlan, *, turn_seq: int, base_version: int = -1) -> "StateEvent":
+        return cls(
+            kind="intention_plan",
+            turn_seq=max(0, int(turn_seq or 0)),
+            turn_id=plan.plan_id,
+            payload=plan.to_dict(),
+            base_version=base_version,
+            source="ai_planner",
+        )
+
+    @classmethod
+    def from_mechanical_outcome(
+        cls,
+        payload: Mapping[str, Any],
+        *,
+        turn_seq: int,
+        turn_id: str,
+        base_version: int = -1,
+    ) -> "StateEvent":
+        data = dict(payload or {})
+        data.setdefault("kind", data.get("action_name", "runtime_action"))
+        return cls(
+            kind="mechanical_outcome",
+            turn_seq=max(0, int(turn_seq or 0)),
+            turn_id=str(turn_id or f"mechanical-{turn_seq}"),
+            payload=data,
+            base_version=base_version,
+            source="runtime",
+        )
+
+
+__all__ = [
+    "AI_RUNTIME_VERSION",
+    "AppraisalState",
+    "CognitiveObservation",
+    "IntentionPlan",
+    "RelationshipState",
+    "RuntimeMindState",
+    "StateEvent",
+    "clamp01",
+    "compact",
+]

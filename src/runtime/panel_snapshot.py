@@ -88,6 +88,7 @@ def write_social_observation(
     observation: dict[str, Any],
     *,
     relationship_state: dict[str, Any] | None = None,
+    cognitive_views: dict[str, Any] | None = None,
 ) -> None:
     """Gắn telemetry social observer vào snapshot mà không đụng public output.
 
@@ -105,6 +106,8 @@ def write_social_observation(
         payload["social_observer"] = dict(observation or {})
         if relationship_state is not None:
             payload["relationship_state"] = dict(relationship_state)
+        if cognitive_views is not None:
+            payload["cognitive_views"] = dict(cognitive_views)
         add_signal("social_observer")
         with _lock:
             payload["signal_log"] = list(_signal_log)

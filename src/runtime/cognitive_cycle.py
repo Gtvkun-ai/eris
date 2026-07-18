@@ -148,9 +148,18 @@ class CognitiveCycleMixin:
 
     def run_loop(self):
         self.logger.info("--- Overseer telemetry mode; chat vision bật theo yêu cầu màn hình ---")
-        self._start_mental_process_loop()
-        self.cognitive_substrate.start()
-        if self.memory_state is not None:
+        if not bool(getattr(self, "ai_runtime_enabled", False)):
+            self._start_mental_process_loop()
+            self.cognitive_substrate.start()
+        if bool(getattr(self, "ai_runtime_enabled", False)):
+            try:
+                self.ai_autonomous_orchestrator.run_startup()
+            except Exception:
+                self.logger.warning(
+                    "[architecture C startup] failed; continuing. %s",
+                    traceback.format_exc().strip(),
+                )
+        elif self.memory_state is not None:
             self.logger.info("[session_ritual] startup restore begin")
             try:
                 report = self._restore_session_ritual_once()

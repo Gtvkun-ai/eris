@@ -436,6 +436,7 @@ class ParserGroundingMixin:
             "delivery_hint": data.get("delivery_hint", ""),
             "nonverbal_cue": data.get("nonverbal_cue", ""),
             "stage_motion": data.get("stage_motion", ""),
+            "performance_hint": data.get("performance_hint", ""),
             "failure_meta": data.get("failure_meta"),
         }, user_hint=user_hint)
 
@@ -761,6 +762,7 @@ class ParserGroundingMixin:
             "delivery_hint",
             "nonverbal_cue",
             "stage_motion",
+            "performance_hint",
         ]
         field_group = "|".join(re.escape(field) for field in fields)
         pattern = re.compile(
@@ -1392,6 +1394,7 @@ class ParserGroundingMixin:
         delivery_hint = self._sanitize_delivery_hint(decision.get("delivery_hint", ""))
         nonverbal_cue = self._sanitize_nonverbal_cue(decision.get("nonverbal_cue", ""))
         stage_motion = self._sanitize_stage_motion(decision.get("stage_motion", ""))
+        performance_hint = self._normalize_salvaged_text(str(decision.get("performance_hint", "") or "")).strip().lower()[:60]
         semantic_stage = _SEMANTIC_ANIMATION_STAGE_ALIASES.get(raw_animation_value, {})
         if semantic_stage:
             delivery_hint = delivery_hint or semantic_stage.get("delivery_hint", "")
@@ -1456,6 +1459,7 @@ class ParserGroundingMixin:
             "delivery_hint": delivery_hint,
             "nonverbal_cue": nonverbal_cue,
             "stage_motion": stage_motion,
+            "performance_hint": performance_hint,
             "failure_meta": failure_meta,
         }
 
@@ -1617,6 +1621,7 @@ class ParserGroundingMixin:
             "delivery_hint": extracted.get("delivery_hint", ""),
             "nonverbal_cue": extracted.get("nonverbal_cue", ""),
             "stage_motion": extracted.get("stage_motion", ""),
+            "performance_hint": extracted.get("performance_hint", ""),
         }, user_hint=user_hint)
 
     def parse_ai_json(self, raw_text: str, user_hint: str = ""):

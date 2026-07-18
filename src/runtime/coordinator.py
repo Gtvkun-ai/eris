@@ -868,6 +868,7 @@ class RuntimeCoordinator(
             self.social_cognition_v2 = None
             self.social_observer = None
             self.logger.warning("Không khởi tạo được social observer: %s", exc)
+
         try:
             from actions.capability_runtime import refresh_runtime_capabilities
             refresh_runtime_capabilities(owner=self)
@@ -1048,6 +1049,31 @@ class RuntimeCoordinator(
         self.ni_meta_auto_enabled = env_enabled and auto_cfg
         #Đảm bảo trong memory_state có internal_state. Nếu thiếu thì tạo mới.
         self._ensure_internal_state()
+
+        # Cài architecture C sau khi memory/state/thought runtime đã khởi tạo xong.
+        # Nếu cài sớm hơn, reducer sẽ load một state chưa tồn tại rồi tỏ ra rất
+        # tự tin về sự trống rỗng ấy, một phẩm chất đáng tránh ở cả người lẫn máy.
+        try:
+            from runtime.ai_orchestrated.bootstrap import install_ai_orchestrated_runtime
+            install_ai_orchestrated_runtime(self, llm_service)
+        except Exception as exc:
+            self.ai_runtime_enabled = False
+            self.ai_state_reducer = None
+            self.ai_model_router = None
+            self.ai_post_turn_observer = None
+            self.ai_intention_planner = None
+            self.ai_stage_planner = None
+            self.ai_chat_orchestrator = None
+            self.ai_autonomous_orchestrator = None
+            self.logger.warning("Không khởi tạo được architecture C: %s", exc)
+
+        if bool(getattr(self, "ai_runtime_enabled", False)):
+            # Legacy cognition vẫn import/test được, nhưng không chạy nền và không
+            # tiêu token/state song song với planner/observer mới.
+            self.mental_process_enabled = False
+            self.ni_meta_chat_enabled = False
+            self.ni_meta_auto_enabled = False
+            self.subconscious_runtime_enabled = False
 
 
     def _install_model_inference_queue(self) -> None:
@@ -2015,17 +2041,24 @@ class RuntimeCoordinator(
             )
             return
         payload = decision.to_payload()
-        payload.update(self._build_body_bias_payload())
-        raw_private_digest = getattr(self, "private_mind_digest", {}) or {}
-        full_private_digest = dict(raw_private_digest) if isinstance(raw_private_digest, dict) else {}
-        private_digest = self._private_mind_digest_for_payload()
-        if private_digest:
-            self.private_mind_digest = private_digest
-        private_life_digest = self._private_life_digest_for_payload()
-        if private_life_digest:
-            self.private_life_digest = private_life_digest
-        payload["emotion_debug"] = self._build_emotion_debug_payload()
-        payload["depth_v2"] = self._build_depth_v2_block(private_mind_digest=full_private_digest)
+        if bool(getattr(self, "ai_runtime_enabled", False)) and getattr(self, "ai_state_reducer", None) is not None:
+            from runtime.ai_orchestrated.panel_adapter import build_ai_panel_payload
+            ai_panel = build_ai_panel_payload(self.ai_state_reducer.snapshot())
+            payload.update(ai_panel)
+            private_digest = dict(ai_panel.get("private_mind_digest", {}) or {})
+            private_life_digest = dict(ai_panel.get("private_life_digest", {}) or {})
+        else:
+            payload.update(self._build_body_bias_payload())
+            raw_private_digest = getattr(self, "private_mind_digest", {}) or {}
+            full_private_digest = dict(raw_private_digest) if isinstance(raw_private_digest, dict) else {}
+            private_digest = self._private_mind_digest_for_payload()
+            if private_digest:
+                self.private_mind_digest = private_digest
+            private_life_digest = self._private_life_digest_for_payload()
+            if private_life_digest:
+                self.private_life_digest = private_life_digest
+            payload["emotion_debug"] = self._build_emotion_debug_payload()
+            payload["depth_v2"] = self._build_depth_v2_block(private_mind_digest=full_private_digest)
         if channel_name == "autonomous":
             plan = getattr(self, "last_autonomous_plan", None)
             if plan is not None:
@@ -5446,6 +5479,11 @@ class RuntimeCoordinator(
                 social_observer.shutdown()
             except Exception:
                 pass
+        try:
+            from runtime.ai_orchestrated.bootstrap import shutdown_ai_orchestrated_runtime
+            shutdown_ai_orchestrated_runtime(self)
+        except Exception:
+            pass
         self.transport.close()
 
     def _start_mental_process_loop(self) -> None:
@@ -9979,13 +10017,18 @@ class RuntimeCoordinator(
     def run_loop(self):
         self.logger.info("--- Overseer telemetry mode; chat vision bật theo yêu cầu màn hình ---")
         ritual_report = None
-        if self.memory_state is not None:
+        if bool(getattr(self, "ai_runtime_enabled", False)):
+            try:
+                self.ai_autonomous_orchestrator.run_startup()
+            except Exception:
+                self.logger.warning(
+                    "[architecture C startup] failed; continuing. %s",
+                    traceback.format_exc().strip(),
+                )
+        elif self.memory_state is not None:
             try:
                 ritual_report = self._restore_session_ritual_once()
                 if ritual_report.should_greet:
-                    # Preset runtime đã ghi đúng một dòng [startup] kèm id, tone
-                    # và audio mode. Chỉ log ở đây khi Qwen viết greeting động,
-                    # tránh hai dòng INFO kể cùng một việc.
                     preset_id = str(getattr(ritual_report, "greeting_preset_id", "") or "")
                     if not preset_id:
                         mode = str(getattr(ritual_report, "greeting_mode", "hybrid") or "hybrid")
@@ -10031,8 +10074,9 @@ class RuntimeCoordinator(
                 worker.start()
             except Exception as exc:
                 self.logger.warning("[screen text] start error: %s", exc)
-        self.cognitive_substrate.start()
-        self._start_mental_process_loop()
+        if not bool(getattr(self, "ai_runtime_enabled", False)):
+            self.cognitive_substrate.start()
+            self._start_mental_process_loop()
         while self.running:
             try:
                 should_continue = self._run_loop_iteration()

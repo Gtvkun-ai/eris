@@ -27,6 +27,10 @@ from runtime.workspace_manager import default_eris_home
 
 _DEFAULT_SETTINGS: dict[str, Any] = {
     "version": 1,
+    "architecture": {
+        "mode": "ai_orchestrated",
+        "startup_greeting": True,
+    },
     "chat": {
         "semantic_authority_mode": "primary_model",
         "reasoning_effort": "medium",
@@ -164,6 +168,8 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
 
 # Mapping này phục vụ migration, không phải nguồn schema chính.
 _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
+    ("architecture", "mode"): ("ERIS_RUNTIME_ARCHITECTURE", "str"),
+    ("architecture", "startup_greeting"): ("ERIS_AI_STARTUP_GREETING_ENABLED", "bool"),
     ("chat", "semantic_authority_mode"): ("ERIS_SEMANTIC_AUTHORITY", "str"),
     ("chat", "reasoning_effort"): ("ERIS_REASONING_EFFORT", "str"),
     ("chat", "support_confidence_threshold"): ("ERIS_QWEN_SUPPORT_CONFIDENCE", "float"),

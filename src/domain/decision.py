@@ -32,6 +32,9 @@ class Decision:
     delivery_hint: str = ""    # ví dụ: dry_tease, soft_tease, focused, low_quiet
     nonverbal_cue: str = ""    # ví dụ: laugh_soft, small_smile, sigh_soft
     stage_motion: str = ""     # ví dụ: look_away, tilt_head, blink_slow
+    # Preset duy nhất main model cần chọn trong architecture C. Runtime map preset
+    # này sang các field sân khấu ở trên.
+    performance_hint: str = ""
     # Metadata audio preset. Các field này do runtime gắn, không yêu cầu LLM sinh.
     speech_act: str = ""
     preset_id: str = ""
@@ -126,6 +129,7 @@ class Decision:
             "delivery_hint": self.delivery_hint,
             "nonverbal_cue": self.nonverbal_cue,
             "stage_motion": self.stage_motion,
+            "performance_hint": self.performance_hint,
             "speech_act": self.speech_act,
             "preset_id": self.preset_id,
             "audio_asset": self.audio_asset,

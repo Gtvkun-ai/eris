@@ -338,6 +338,19 @@ class ChatCycleMixin:
         speech_interrupt_event=None,
         speech_interrupt_reaction=None,
     ) -> None:
+        # Production path mới: main model nói, observer hiểu hậu kỳ, reducer giữ
+        # state. Không chạy Ni/Ti/Fe/appraisal/repair legacy trước GPT.
+        if bool(getattr(self, "ai_runtime_enabled", False)) and getattr(self, "ai_chat_orchestrator", None) is not None:
+            return self.ai_chat_orchestrator.run(
+                user_text,
+                cycle_start=cycle_start,
+                previous_public_context=previous_public_context,
+                previous_public_turn=previous_public_turn,
+                speech_interrupt_context=speech_interrupt_context,
+                speech_interrupt_event=speech_interrupt_event,
+                speech_interrupt_reaction=speech_interrupt_reaction,
+            )
+
         semantic_policy = SemanticAuthorityPolicy.from_env()
         if not self.chat_mode:
             self.chat_ni_state = NiStateMachine() # reset trạng thái Ni khi bắt đầu chat mới, để tránh mang theo drift state từ autonomous mode.

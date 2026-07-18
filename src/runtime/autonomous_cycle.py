@@ -74,6 +74,9 @@ class AutonomousCycleMixin:
         Returns True to keep looping, False to break the run_loop.
         """
 
+        if bool(getattr(self, "ai_runtime_enabled", False)) and getattr(self, "ai_autonomous_orchestrator", None) is not None:
+            return self.ai_autonomous_orchestrator.run_iteration()
+
         if not self.body_running_fn():
             self.stop()
             return False

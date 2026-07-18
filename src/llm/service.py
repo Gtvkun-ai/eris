@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import re
@@ -692,10 +693,30 @@ class LlmService:
 
     def _log_final_prompt(self, messages: list[dict], *, channel: str, stage: str) -> None:
         try:
-            dumped = json.dumps(messages, ensure_ascii=False, indent=2)
+            dumped = json.dumps(messages, ensure_ascii=False, separators=(",", ":"))
         except TypeError:
             dumped = repr(messages)
-        self.logger.info("[LLM FINAL PROMPT] channel=%s stage=%s\n%s", channel, stage, dumped[:12000])
+        digest = hashlib.sha256(dumped.encode("utf-8", errors="replace")).hexdigest()[:16]
+        roles = [str(item.get("role", "")) for item in messages if isinstance(item, dict)]
+        self.logger.info(
+            "[LLM PROMPT META] channel=%s stage=%s hash=%s chars=%s messages=%s roles=%s",
+            channel,
+            stage,
+            digest,
+            len(dumped),
+            len(messages),
+            ",".join(roles[:12]),
+        )
+        if str(os.getenv("ERIS_DEBUG_FULL_PROMPT", "0") or "0").strip().lower() in {
+            "1", "true", "yes", "on",
+        }:
+            self.logger.debug(
+                "[LLM FINAL PROMPT DEBUG] channel=%s stage=%s hash=%s\n%s",
+                channel,
+                stage,
+                digest,
+                dumped[:12000],
+            )
 
     def _preview_log_text(self, text: str, *, limit: int = 12000) -> str:
         preview = (text or "").replace("\n", "\\n").strip()

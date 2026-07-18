@@ -43,6 +43,9 @@ from runtime.speech_pipeline import SpeechIntentDecision
 
 class ForceSpeakCycleMixin:
     def _handle_force_speak_request(self) -> None:
+        if bool(getattr(self, "ai_runtime_enabled", False)) and getattr(self, "ai_autonomous_orchestrator", None) is not None:
+            return self.ai_autonomous_orchestrator.run_force_speak()
+
         cycle_start = time.time()
         snapshot = self.telemetry_service.capture_snapshot(
             mood_score=self.mood_score,
