@@ -93,6 +93,7 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
             return
         payload = dict(getattr(event, "payload", {}) or {})
         host.latest_cognitive_observation = dict(state.latest_observation)
+        host.latest_personality_profile = state.personality.to_dict()
         host.pending_social_repair = bool(state.latest_observation.get("repair_needed", False))
         # Panel đọc một state duy nhất, không ráp trust từ ba engine khác nhau.
         try:
@@ -136,8 +137,9 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     reducer.subscribe(on_state)
     try:
         host.logger.info(
-            "[architecture C] enabled version=ai_orchestrated.v1 state_version=%s observer=post_turn planner=ai single_writer=1",
+            "[architecture C] enabled version=ai_orchestrated.v2.open_ended_personality state_version=%s personality_version=%s observer=post_turn planner=ai single_writer=1",
             reducer.snapshot().version,
+            reducer.snapshot().personality.version,
         )
     except Exception:
         pass

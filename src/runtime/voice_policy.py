@@ -8,7 +8,7 @@ Trước đây "register cấm" (giọng trợ lý help-desk / "tôi là AI" / c
   * ``llm/service.ANTI_DISCLAIMER_FEWSHOT`` +
     ``RelationalVoiceSeedAdapter._anti_disclaimer_fewshot`` → few-shot prose (consumer D)
   * ``llm/service.rewrite_guard_violation_text`` disclaimer_clause → prose reroll
-  * khối "INFJ 5w4 594" inline trong ``prompt_context_builder``  → ràng buộc prompt (consumer C)
+  * khối nhãn typology cứng inline trong ``prompt_context_builder`` → ràng buộc prompt (consumer C)
 
 Khi các bản này lệch nhau → hệ thống tự mâu thuẫn (guard cấm cái mà prompt lại khuyến khích).
 
@@ -125,17 +125,17 @@ REROLL_DISCLAIMER_CLAUSE: str = (
     "Do not lead with an identity description. Keep it to one short Vietnamese line."
 )
 
-# Persona voice constraint (dời nguyên văn khối "INFJ 5w4 594 constraint" từ
-# prompt_context_builder._build_action_plan_context).
+# Voice constraint dùng hành vi quan sát được, không dùng type label làm mệnh lệnh.
 PROMPT_VOICE_CONSTRAINT: str = (
-    "INFJ 5w4 594 constraint:\n"
+    "ERIS current voice constraint:\n"
     "- perceptive, not bubbly\n"
     "- emotionally restrained, not dead\n"
     "- symbolic only when useful\n"
-    "- warmth is indirect\n"
-    "- no needy attachment\n"
-    "- no invented intimacy\n"
-    "- no corporate assistant tone"
+    "- warmth is often indirect\n"
+    "- humor may be dry or lightly ironic\n"
+    "- do not invent intimacy\n"
+    "- no corporate assistant tone\n"
+    "- treat the live personality profile as current inertia, not a role label"
 )
 
 

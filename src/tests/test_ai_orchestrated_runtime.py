@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from domain import Decision
 from parser_grounding import DecisionParser
-from runtime.ai_orchestrated.contracts import CognitiveObservation, StateEvent
+from runtime.ai_orchestrated.contracts import AI_RUNTIME_VERSION, CognitiveObservation, StateEvent
 from runtime.ai_orchestrated.model_router import AIRuntimeModelRouter, PUBLIC_REPLY_SCHEMA
 from runtime.ai_orchestrated.observer import PostTurnObserver
 from runtime.ai_orchestrated.panel_adapter import build_ai_panel_payload
@@ -226,10 +226,10 @@ def test_ai_panel_payload_comes_from_reducer_state_not_legacy_cortex():
     try:
         assert reducer.apply_now(StateEvent.from_observation(_observation(7))) is True
         payload = build_ai_panel_payload(reducer.snapshot())
-        assert payload["emotion_debug"]["architecture"] == "ai_orchestrated.v1"
+        assert payload["emotion_debug"]["architecture"] == AI_RUNTIME_VERSION
         assert payload["depth_v2"]["turn_seq"] == 7
         assert payload["cognitive_views"]["ti"]["factual_reliability"] < 0.50
-        assert payload["private_mind_digest"]["architecture"] == "ai_orchestrated.v1"
+        assert payload["private_mind_digest"]["architecture"] == AI_RUNTIME_VERSION
     finally:
         reducer.close()
 

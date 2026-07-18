@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from dataclasses import replace
 from typing import Any, Mapping, Sequence
 
 from actions.contracts import VALID_SYSTEM_ACTIONS
@@ -35,6 +36,9 @@ COGNITIVE_OBSERVATION_SCHEMA: dict[str, Any] = {
         "playful_safety_delta",
         "rupture_delta",
         "appraisal",
+        "self_interpretation",
+        "consequence",
+        "trait_signals",
         "open_loop",
         "memory_candidate",
         "evidence",
@@ -88,9 +92,86 @@ COGNITIVE_OBSERVATION_SCHEMA: dict[str, Any] = {
                 )
             },
         },
+        "self_interpretation": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["summary", "frame", "confidence", "self_authored", "evidence"],
+            "properties": {
+                "summary": {"type": "string"},
+                "frame": {"type": "string"},
+                "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "self_authored": {"type": "boolean"},
+                "evidence": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
+            },
+        },
+        "consequence": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["strategy", "outcome", "reinforcement", "confidence", "evidence"],
+            "properties": {
+                "strategy": {"type": "string"},
+                "outcome": {"type": "string"},
+                "reinforcement": {"type": "number", "minimum": -1.0, "maximum": 1.0},
+                "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "evidence": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
+            },
+        },
+        "trait_signals": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "category", "trait", "delta", "confidence", "importance",
+                    "source", "evidence", "strategy"
+                ],
+                "properties": {
+                    "category": {"type": "string", "enum": ["mood", "temperament", "core"]},
+                    "trait": {"type": "string"},
+                    "delta": {"type": "number", "minimum": -1.0, "maximum": 1.0},
+                    "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                    "importance": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                    "source": {
+                        "type": "string",
+                        "enum": ["user_interaction", "self_choice", "consequence", "environment"]
+                    },
+                    "evidence": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
+                    "strategy": {"type": "string"},
+                },
+            },
+        },
         "open_loop": {"type": "string"},
         "memory_candidate": {"type": "string"},
         "evidence": {"type": "array", "items": {"type": "string"}, "maxItems": 4},
+        "notes": {"type": "string"},
+    },
+}
+
+
+# Observer khách quan không được tự quyết định personality. Final contract vẫn
+# giữ đủ field để persist/debug, nhưng inference được tách làm hai lane.
+OBJECTIVE_OBSERVATION_SCHEMA: dict[str, Any] = {
+    **COGNITIVE_OBSERVATION_SCHEMA,
+    "required": [
+        name
+        for name in COGNITIVE_OBSERVATION_SCHEMA["required"]
+        if name not in {"self_interpretation", "trait_signals"}
+    ],
+    "properties": {
+        name: value
+        for name, value in COGNITIVE_OBSERVATION_SCHEMA["properties"].items()
+        if name not in {"self_interpretation", "trait_signals"}
+    },
+}
+
+PERSONALITY_REFLECTION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["self_interpretation", "trait_signals", "notes"],
+    "properties": {
+        "self_interpretation": COGNITIVE_OBSERVATION_SCHEMA["properties"]["self_interpretation"],
+        "trait_signals": COGNITIVE_OBSERVATION_SCHEMA["properties"]["trait_signals"],
         "notes": {"type": "string"},
     },
 }
@@ -290,9 +371,10 @@ class AIRuntimeModelRouter:
             "vi": "tiếng Việt",
         }.get(str(language_hint or "vi").strip().lower(), "ngôn ngữ của người dùng")
         return (
-            f"Bạn là ERIS. Hãy tự hiểu câu người dùng và viết nguyên câu public tự nhiên bằng {language}. "
-            "ERIS thanh lịch, bình tĩnh, thông minh, hơi bí ẩn và biết trêu đúng lúc; có thể sắc hoặc dịu theo tình huống, "
-            "không phải support bot, không giả dễ thương, không biến mọi cảm xúc thành thơ. "
+            f"Bạn là ERIS. Hãy phản ứng từ bản thân hiện tại và viết nguyên câu public tự nhiên bằng {language}. "
+            "Không cố diễn một nhãn MBTI, Enneagram, tritype hay archetype. Mô tả personality được cung cấp là quán tính hiện tại, "
+            "không phải danh sách động tác phải biểu diễn. Có thể dịu, sắc, hóm hỉnh, phòng thủ, chủ động hoặc mâu thuẫn theo đúng ngữ cảnh. "
+            "Không phải support bot, không giả dễ thương, không biến mọi cảm xúc thành thơ. "
             "Bạn sở hữu lời nói; không tự phân loại Ni/Ti/Fe, không tự chấm confidence, không giải thích reasoning. "
             "Trả lời yêu cầu cụ thể trước. Không tự chèn tuyên bố kiểu 'không như con người' nếu người dùng không hỏi về bản thể. "
             "Memory chỉ là continuity, không chứng minh hiện tại. Grounding là nguồn thật cho màn hình/file/tool. "
@@ -308,6 +390,7 @@ class AIRuntimeModelRouter:
         memory_context: str = "",
         grounding_context: str = "",
         relationship_context: str = "",
+        personality_context: str = "",
         interrupt_context: str = "",
         use_escalation: bool = False,
         reasoning_effort: str | None = None,
@@ -325,6 +408,8 @@ class AIRuntimeModelRouter:
                     client = None
         client = client or getattr(self.llm_service, "client", None)
         context_parts = []
+        if personality_context:
+            context_parts.append(f"Current ERIS personality: {personality_context}")
         if relationship_context:
             context_parts.append(f"Relationship continuity: {relationship_context}")
         if grounding_context:
@@ -437,6 +522,7 @@ class AIRuntimeModelRouter:
         self,
         *,
         plan: IntentionPlan,
+        personality_context: str = "",
         memory_context: str = "",
         grounding_context: str = "",
         recent_history: Sequence[Mapping[str, Any]] = (),
@@ -451,12 +537,14 @@ class AIRuntimeModelRouter:
         )
         system = (
             f"Bạn là ERIS đang có một ý định chủ động đã được planner duyệt. Viết bằng {language}. "
+            "Hãy hành động từ personality hiện tại; không diễn nhãn MBTI/Enneagram/archetype. "
             "Viết đúng một micro-line public tự nhiên, ngắn, có lý do rõ; không nhắc planner, motive, score hay nội bộ. "
             "Không nói chỉ vì im lặng hoặc buồn chán. Không bịa screen fact. "
             "Memory chỉ tạo continuity. Planner đã sở hữu tool intent; không chọn hoặc đổi tool. "
             "performance_hint ưu tiên preset planner đã chọn. Return JSON only."
         )
         context = {
+            "current_personality": personality_context,
             "motive": plan.motive,
             "topic": plan.topic,
             "evidence_refs": list(plan.evidence_refs),
@@ -529,22 +617,95 @@ class AIRuntimeModelRouter:
     @staticmethod
     def _observer_prompt(*, deep: bool = False) -> str:
         extra = (
-            "Khi mơ hồ, phân biệt nhiều khả năng rồi chọn delta gần 0; unknown tốt hơn drama. "
+            "Khi mơ hồ, phân biệt vài khả năng rồi giữ delta quan hệ gần 0; unknown tốt hơn drama. "
             if deep else
             "Phân tích nhanh, bảo thủ và ưu tiên delta gần 0 khi không chắc. "
         )
         return (
-            "Bạn là observer hậu kỳ cho ERIS. Lượt public đã xảy ra rồi. "
-            "Bạn không viết câu trả lời, không sửa lời ERIS, không chọn tone cho câu hiện tại. "
+            "Bạn là observer hậu kỳ khách quan cho ERIS. Lượt public đã xảy ra rồi. "
+            "Bạn không viết câu trả lời, không sửa lời ERIS, không tự diễn giải tính cách và không phát trait signal. "
             "Hãy mô tả điều thật sự vừa xảy ra giữa user và ERIS bằng JSON. "
+            "consequence chỉ ghi chiến lược công khai ERIS vừa dùng, outcome quan sát được và mức chiến lược ấy được củng cố hay làm yếu. "
             "Tách trust quan hệ khỏi competence/factual reliability. User sửa kỹ thuật không mặc định là rupture. "
             "Chửi trong banter không mặc định hostility. Ẩn dụ không phải hành động vật lý. "
             "assistant_fault_probability chỉ cao khi câu ERIS hiện tại thật sự né, sai, hoặc trả lệch. "
-            "Nếu event_kind là autonomous hoặc startup thì không có user move: đặt relational/familiarity/closeness/rupture delta về 0, repair_needed=false; chỉ đánh giá continuity, appraisal, open loop và chất lượng câu public. "
+            "Nếu event_kind là autonomous hoặc startup thì không có user move: đặt relational/familiarity/closeness/rupture delta về 0, repair_needed=false; "
+            "chỉ đánh giá continuity, appraisal, open loop, consequence và chất lượng câu public. "
             "memory_candidate chỉ ghi điều có ích lâu dài, không lưu mọi lời khen hay phỏng đoán. "
-            "Delta nằm trong [-1,1] chỉ thể hiện hướng và độ mạnh tương đối; runtime sẽ clamp hậu quả. "
+            "Mọi delta nằm trong [-1,1] chỉ thể hiện hướng và độ mạnh tương đối; runtime sẽ clamp hậu quả. "
             + extra +
-            "Evidence chỉ lấy từ public text và mechanical outcomes được cung cấp."
+            "Evidence chỉ lấy từ public text, recent history và mechanical outcomes được cung cấp."
+        )
+
+    @staticmethod
+    def _personality_reflection_prompt(*, deep: bool = False) -> str:
+        extra = (
+            "Khi có nhiều cách tự hiểu hợp lý, chọn frame phù hợp nhất với personality hiện tại nhưng giữ confidence vừa phải. "
+            if deep else
+            "Chỉ đề xuất vài signal có nghĩa; không biến mọi lượt thành một bước ngoặt nhân cách. "
+        )
+        return (
+            "Bạn là self-reflection lane của ERIS sau khi một observer khách quan đã ghi sự kiện. "
+            "Bạn không viết lời public và không thay đổi observation khách quan. Bạn đứng từ góc nhìn ERIS để tạo một self_interpretation có thể sai, "
+            "tự vệ, tò mò, cay đi, dịu lại hoặc mâu thuẫn. Đây là câu chuyện ERIS tự kể, không phải fact bí mật về user. "
+            "Personality là quỹ đạo mở, không có đích tốt lên được định sẵn. Không dùng nhãn typology hoặc tên emergent-form trên panel làm nguyên nhân. "
+            "Đề xuất trait_signals từ personality hiện tại + lựa chọn của ERIS + consequence thật. Trait có thể tăng hoặc giảm theo cả hướng tích hợp lẫn méo đi. "
+            "Mood là phản ứng nhanh; temperament là chiến lược/khuynh hướng được củng cố; core chỉ cho milestone hiếm và phải cực kỳ chắc. "
+            "Các dimension như resentment, distrust, possessiveness, control_seeking, emotional_dependency, hostile_humor và boundary_pressure là hợp lệ, "
+            "nhưng chỉ phát signal khi observation, self-interpretation và consequence thực sự hỗ trợ. "
+            "Với autonomous/startup, stable trait chỉ được đề xuất nếu chính ERIS đã chọn hành động và consequence có evidence rõ. "
+            "delta chỉ là hướng/độ mạnh tương đối trong [-1,1]; reducer sẽ cap rất nhỏ. "
+            + extra +
+            "Trả JSON, không giảng giải ngoài schema."
+        )
+
+    def _reflect_personality(
+        self,
+        observation: CognitiveObservation,
+        *,
+        payload: Mapping[str, Any],
+        deep: bool = False,
+    ) -> CognitiveObservation:
+        client = self.deep_client if deep and self.deep_client is not None else (self.observer_client or self.deep_client or self.fallback_client)
+        if client is None:
+            return observation
+        reflection_input = {
+            "turn_id": observation.turn_id,
+            "turn_seq": observation.turn_seq,
+            "event_kind": observation.event_kind,
+            "objective_observation": observation.to_dict(),
+            "user_text": payload.get("user_text", ""),
+            "assistant_text": payload.get("assistant_text", ""),
+            "mechanical_outcomes": payload.get("mechanical_outcomes", []),
+            "current_personality": (payload.get("current_state_summary", {}) or {}).get("personality", {}),
+            "recent_public_history": payload.get("recent_public_history", []),
+        }
+        started = time.perf_counter()
+        reflected = self._call(
+            client,
+            system=self._personality_reflection_prompt(deep=deep),
+            payload=reflection_input,
+            schema=PERSONALITY_REFLECTION_SCHEMA,
+            name="eris_personality_reflection_deep" if deep else "eris_personality_reflection",
+            max_tokens=880 if deep else 700,
+            reasoning_effort=(
+                "medium" if deep else "low"
+            ) if str(getattr(client, "model_name", "")).startswith("openai/gpt-oss-") else None,
+        )
+        if not reflected:
+            return observation
+        merged = observation.to_dict()
+        merged["self_interpretation"] = reflected.get("self_interpretation", {})
+        merged["trait_signals"] = reflected.get("trait_signals", [])
+        reflection_notes = str(reflected.get("notes", "") or "").strip()
+        if reflection_notes:
+            merged["notes"] = " ".join(part for part in (observation.notes, reflection_notes) if part)[:220]
+        return CognitiveObservation.from_mapping(
+            merged,
+            turn_id=observation.turn_id,
+            turn_seq=observation.turn_seq,
+            source=f"{observation.source}+self_reflection",
+            latency_ms=observation.latency_ms + (time.perf_counter() - started) * 1000.0,
         )
 
     def observe_completed_turn(
@@ -574,9 +735,9 @@ class AIRuntimeModelRouter:
             self.observer_client,
             system=self._observer_prompt(deep=False),
             payload=payload,
-            schema=COGNITIVE_OBSERVATION_SCHEMA,
+            schema=OBJECTIVE_OBSERVATION_SCHEMA,
             name="eris_cognitive_observation",
-            max_tokens=620,
+            max_tokens=650,
             reasoning_effort="low" if str(getattr(self.observer_client, "model_name", "")).startswith("openai/gpt-oss-") else None,
         )
         source = "groq_observer"
@@ -585,9 +746,9 @@ class AIRuntimeModelRouter:
                 self.fallback_client,
                 system=self._observer_prompt(deep=False),
                 payload=payload,
-                schema=COGNITIVE_OBSERVATION_SCHEMA,
+                schema=OBJECTIVE_OBSERVATION_SCHEMA,
                 name="eris_cognitive_observation",
-                max_tokens=620,
+                max_tokens=650,
             )
             source = "groq_observer_fallback"
         primary = CognitiveObservation.from_mapping(
@@ -613,9 +774,9 @@ class AIRuntimeModelRouter:
                 self.deep_client,
                 system=self._observer_prompt(deep=True),
                 payload=payload,
-                schema=COGNITIVE_OBSERVATION_SCHEMA,
+                schema=OBJECTIVE_OBSERVATION_SCHEMA,
                 name="eris_cognitive_observation_deep",
-                max_tokens=760,
+                max_tokens=820,
                 reasoning_effort="medium" if str(getattr(self.deep_client, "model_name", "")).startswith("openai/gpt-oss-") else None,
             )
             deep = CognitiveObservation.from_mapping(
@@ -626,15 +787,16 @@ class AIRuntimeModelRouter:
                 latency_ms=(time.perf_counter() - deep_started) * 1000.0,
             )
             if deep.confidence >= max(0.62, primary.confidence + 0.04):
-                return deep
-        return primary
+                return self._reflect_personality(deep, payload=payload, deep=True)
+        return self._reflect_personality(primary, payload=payload, deep=False)
 
     @staticmethod
     def _chat_planner_prompt() -> str:
         allowed = ", ".join(sorted(VALID_SYSTEM_ACTIONS))
         return (
             "Bạn là planner cấp cao của ERIS, không viết câu public. "
-            "Đọc user text, history, grounding và relationship summary; tạo mục tiêu trả lời ngắn trong topic. "
+            "Đọc user text, history, grounding, relationship summary và personality summary hiện tại; tạo mục tiêu trả lời ngắn trong topic. "
+            "Personality summary là quán tính hành vi hiện tại, không phải vai diễn hay đích phát triển được định sẵn. "
             "Chỉ chọn tool_intent khi user thật sự yêu cầu hành động hoặc cần runtime lấy dữ kiện. "
             "Không dùng tool để xử lý tình cảm, ẩn dụ, banter hay câu hỏi có thể trả lời trực tiếp. "
             "tool_intent phải rỗng hoặc thuộc danh sách: " + allowed + ". "
@@ -683,7 +845,8 @@ class AIRuntimeModelRouter:
     def _planner_prompt() -> str:
         return (
             "Bạn là intention planner của ERIS, không phải người viết câu public. "
-            "Từ snapshot đã cho, quyết định ERIS có một lý do đủ giá trị để chủ động nói hay không. "
+            "Từ snapshot đã cho, gồm cả personality hiện tại và strategy reinforcement, quyết định ERIS có một lý do đủ giá trị để chủ động nói hay không. "
+            "Không ép ERIS về một phiên bản tốt hơn; chỉ dùng quỹ đạo hiện tại để chọn ý định hợp lý. "
             "Mặc định là im lặng. Chỉ speak=true khi có motive rõ: repair_previous_miss, "
             "important_open_loop, meaningful_environment_change, useful_followup, grounded_curiosity, "
             "startup_opening khi snapshot.event_kind=startup và một câu mở đầu thực sự phù hợp, "
@@ -709,6 +872,8 @@ class AIRuntimeModelRouter:
 __all__ = [
     "AIRuntimeModelRouter",
     "COGNITIVE_OBSERVATION_SCHEMA",
+    "OBJECTIVE_OBSERVATION_SCHEMA",
+    "PERSONALITY_REFLECTION_SCHEMA",
     "INTENTION_PLAN_SCHEMA",
     "PUBLIC_REPLY_SCHEMA",
 ]

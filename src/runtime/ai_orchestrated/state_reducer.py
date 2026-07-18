@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Single-writer reducer cho state AI của ERIS.
+"""Single-writer reducer cho state AI và personality của ERIS.
 
-Observer, planner, chat và autonomous không được tự sửa state. Chúng nộp event
-vào đây. Một worker duy nhất áp event theo thứ tự turn, bỏ event cũ và lưu snapshot
-nguyên tử. Đây là phần ít hào nhoáng nhất nhưng ngăn cả repo tự ghi đè ký ức của
-mình, một thói quen mà trước đây các thread thực hiện khá nhiệt tình.
+Observer, planner, chat và autonomous chỉ nộp event. Reducer là nơi duy nhất
+được ghi state. Personality không bị kéo về một ``mature target``: delta được
+phép đi cả hai chiều, kể cả các vulnerability như resentment, possessiveness
+hay control_seeking. Thứ reducer bảo vệ là lịch sử, confidence, evidence, cap và
+thứ tự ghi, không phải một kết luận đạo đức đã chọn trước.
 """
 
 from __future__ import annotations
@@ -13,22 +14,47 @@ import queue
 import threading
 import time
 from dataclasses import replace
-from typing import Any, Callable, Mapping
+from datetime import date, datetime, timedelta
+from typing import Any, Callable, Mapping, Sequence
 
 from .contracts import (
     AppraisalState,
     CognitiveObservation,
-    IntentionPlan,
     RelationshipState,
     RuntimeMindState,
     StateEvent,
     clamp01,
     compact,
 )
+from .personality import (
+    DEFAULT_CORE,
+    DEFAULT_MOOD,
+    DEFAULT_TEMPERAMENT,
+    PersonalityProfile,
+    TraitSignal,
+    decay_profile,
+)
 
 
 PersistFn = Callable[[Mapping[str, Any]], None]
 Subscriber = Callable[[RuntimeMindState, StateEvent, bool], None]
+
+
+CONF_THRESHOLDS = {
+    "mood": 0.62,
+    "temperament": 0.75,
+    "core": 0.82,
+}
+PER_EVENT_MAX = {
+    "mood": 0.18,
+    "temperament": 0.012,
+    "core": 0.003,
+}
+PER_DAY_CAP = {
+    "mood": 0.60,
+    "temperament": 0.030,
+    "core": 0.008,
+}
 
 
 class StateReducer:
@@ -101,15 +127,20 @@ class StateReducer:
                 accepted = self._apply(event)
                 self._notify(event, accepted)
             except Exception as exc:  # noqa: BLE001
-                self._log("warning", "[state reducer] event failed kind=%s: %s", getattr(event, "kind", "?"), exc)
+                self._log(
+                    "warning",
+                    "[state reducer] event failed kind=%s: %s",
+                    getattr(event, "kind", "?"),
+                    exc,
+                )
             finally:
                 self._queue.task_done()
 
     def _apply(self, event: StateEvent) -> bool:
         with self._lock:
             state = self._state
-            # Event observation cũ tuyệt đối không được quay lại viết đè lượt mới.
-            # Intention autonomous có thể cùng turn_seq=0 nên được quản theo version.
+            # Observation cũ không được quay lại viết đè lượt mới. Intention có thể
+            # dùng cùng turn seq nên được quản bằng version, không bằng stale guard.
             if event.kind == "cognitive_observation" and event.turn_seq <= state.last_applied_turn_seq:
                 self._log(
                     "info",
@@ -120,7 +151,6 @@ class StateReducer:
                 )
                 return False
             if event.base_version >= 0 and event.base_version > state.version:
-                # Caller nhìn thấy một tương lai không tồn tại. Bỏ thay vì đoán.
                 self._log(
                     "warning",
                     "[state reducer] future base_version dropped base=%s current=%s",
@@ -160,11 +190,11 @@ class StateReducer:
             source=str(event.payload.get("source", event.source) or event.source),
             latency_ms=float(event.payload.get("latency_ms", 0.0) or 0.0),
         )
-        # Confidence thấp được lưu telemetry nhưng không được bẻ state dài hạn.
+        now = time.time()
+
+        # Confidence thấp vẫn nằm trong telemetry nhưng không được bẻ state dài hạn.
         weight = observation.confidence if observation.confidence >= 0.55 else 0.0
-        # Autonomous/startup không có user turn, nên observer không được tự sáng tác
-        # một biến động quan hệ từ câu ERIS tự nói. Nó vẫn được cập nhật appraisal,
-        # continuity và open-loop.
+        # Autonomous/startup không có user turn nên không tự sáng tác biến động quan hệ.
         relation_weight = weight if observation.event_kind in {"chat", "force_speak"} else 0.0
         relation = state.relationship
 
@@ -216,6 +246,12 @@ class StateReducer:
                 last_turn_seq=observation.turn_seq,
             )
 
+        personality = self._reduce_personality(
+            state.personality,
+            observation,
+            now=now,
+        )
+
         loops = list(state.open_loops)
         if observation.open_loop and observation.confidence >= 0.65:
             loops = [x for x in loops if x.casefold() != observation.open_loop.casefold()]
@@ -225,15 +261,17 @@ class StateReducer:
 
         candidates = list(state.memory_candidates)
         if observation.memory_worthy and observation.memory_candidate and observation.confidence >= 0.68:
-            candidates.append({
-                "turn_id": observation.turn_id,
-                "turn_seq": observation.turn_seq,
-                "text": observation.memory_candidate,
-                "confidence": observation.confidence,
-                "evidence": list(observation.evidence),
-                "source": observation.source,
-                "created_at": time.time(),
-            })
+            candidates.append(
+                {
+                    "turn_id": observation.turn_id,
+                    "turn_seq": observation.turn_seq,
+                    "text": observation.memory_candidate,
+                    "confidence": observation.confidence,
+                    "evidence": list(observation.evidence),
+                    "source": observation.source,
+                    "created_at": now,
+                }
+            )
             candidates = candidates[-12:]
 
         return RuntimeMindState(
@@ -241,12 +279,289 @@ class StateReducer:
             last_applied_turn_seq=max(state.last_applied_turn_seq, observation.turn_seq),
             relationship=updated_relation,
             appraisal=appraisal,
+            personality=personality,
             latest_observation=observation.to_dict(),
             latest_intention=state.latest_intention,
             open_loops=tuple(loops[-8:]),
             memory_candidates=tuple(candidates),
-            updated_at=time.time(),
+            updated_at=now,
         )
+
+    def _reduce_personality(
+        self,
+        original: PersonalityProfile,
+        observation: CognitiveObservation,
+        *,
+        now: float,
+    ) -> PersonalityProfile:
+        profile = decay_profile(original, now=now)
+        signals = self._resolve_signal_conflicts(observation.trait_signals)
+
+        core = dict(profile.core)
+        temperament = dict(profile.temperament)
+        mood = dict(profile.mood)
+        core_anchor = dict(profile.core_anchor)
+        temperament_attractor = dict(profile.temperament_attractor)
+        day_usage = self._prune_day_usage(dict(profile.day_usage))
+        corroboration = dict(profile.corroboration)
+        streaks = {str(key): dict(value) for key, value in profile.streaks.items()}
+        strategy_reinforcement = dict(profile.strategy_reinforcement)
+        trajectory = [dict(item) for item in profile.trajectory]
+
+        changed = False
+        today = date.today().isoformat()
+        interpretation = observation.self_interpretation
+        consequence = observation.consequence
+
+        for signal in signals:
+            category = signal.category
+            if category not in CONF_THRESHOLDS:
+                continue
+            target: dict[str, float]
+            defaults: Mapping[str, float]
+            if category == "mood":
+                target, defaults = mood, DEFAULT_MOOD
+            elif category == "temperament":
+                target, defaults = temperament, DEFAULT_TEMPERAMENT
+            else:
+                target, defaults = core, DEFAULT_CORE
+            if signal.trait not in defaults:
+                self._log(
+                    "debug",
+                    "[personality reducer] unknown trait skipped category=%s trait=%s",
+                    category,
+                    signal.trait,
+                )
+                continue
+
+            threshold = CONF_THRESHOLDS[category]
+            if signal.confidence < threshold:
+                continue
+
+            evidence = tuple(
+                dict.fromkeys(
+                    (
+                        *signal.evidence,
+                        *observation.evidence,
+                        *interpretation.evidence,
+                        *consequence.evidence,
+                    )
+                )
+            )
+            if category in {"temperament", "core"} and not evidence:
+                continue
+
+            # Turn không có user vẫn được tự phát triển, nhưng chỉ khi signal đến từ
+            # lựa chọn/hậu quả của chính ERIS và observer thực sự có outcome.
+            if observation.event_kind in {"autonomous", "startup"} and category != "mood":
+                if signal.source not in {"self_choice", "consequence"}:
+                    continue
+                if consequence.confidence < 0.75 or not consequence.evidence:
+                    continue
+
+            direction = 1 if signal.delta > 0 else -1
+            streak_key = f"{category}:{signal.trait}"
+            streak = dict(streaks.get(streak_key, {}))
+            last_ts = float(streak.get("last_ts", 0.0) or 0.0)
+            last_direction = int(streak.get("direction", 0) or 0)
+            within_window = now - last_ts <= 72 * 3600 if last_ts > 0.0 else False
+            count = int(streak.get("count", 0) or 0)
+            count = count + 1 if within_window and last_direction == direction else 1
+            streaks[streak_key] = {
+                "direction": direction,
+                "count": count,
+                "last_ts": now,
+                "last_turn_seq": observation.turn_seq,
+                "confidence": signal.confidence,
+            }
+
+            # Core chỉ dịch sau hit mạnh thứ ba cùng hướng. Không có chuyện một câu
+            # chat làm đổi bản sắc rồi panel tung pháo giấy.
+            if category == "core":
+                corr_key = f"{signal.trait}:{'positive' if direction > 0 else 'negative'}"
+                seen = int(corroboration.get(corr_key, 0) or 0) + 1
+                corroboration[corr_key] = seen
+                if seen < 3 or count < 2:
+                    continue
+
+            confidence_scale = self._confidence_scale(signal.confidence, category)
+            evidence_scale = 1.0 if evidence else 0.60
+            salience_scale = max(0.20, min(1.0, signal.importance))
+            interpretation_scale = (
+                0.72 + 0.28 * interpretation.confidence
+                if interpretation.summary and interpretation.confidence >= 0.45
+                else 0.68
+            )
+            outcome_scale = 1.0
+            if signal.source in {"self_choice", "consequence"}:
+                outcome_scale = 0.62 + 0.38 * (
+                    abs(consequence.reinforcement) * consequence.confidence
+                )
+
+            proposed = (
+                max(-1.0, min(1.0, signal.delta))
+                * PER_EVENT_MAX[category]
+                * confidence_scale
+                * evidence_scale
+                * salience_scale
+                * interpretation_scale
+                * outcome_scale
+            )
+            usage_key = f"{today}:{category}"
+            used = max(0.0, float(day_usage.get(usage_key, 0.0) or 0.0))
+            remaining = max(0.0, PER_DAY_CAP[category] - used)
+            applied = max(-remaining, min(remaining, proposed))
+            if abs(applied) < 1e-8:
+                continue
+
+            before = float(target.get(signal.trait, defaults[signal.trait]) or defaults[signal.trait])
+            after = clamp01(before + applied)
+            applied = after - before
+            if abs(applied) < 1e-8:
+                continue
+            target[signal.trait] = after
+            day_usage[usage_key] = used + abs(applied)
+            changed = True
+
+            # Hai event cùng hướng bắt đầu dịch attractor. Không có attractor "tốt";
+            # attractor chỉ là quỹ đạo đã được lặp và củng cố.
+            if category == "temperament" and count >= 2:
+                old_attractor = float(
+                    temperament_attractor.get(signal.trait, defaults[signal.trait])
+                    or defaults[signal.trait]
+                )
+                temperament_attractor[signal.trait] = clamp01(old_attractor + applied * 0.55)
+            elif category == "core":
+                # Core anchor chỉ thay cực nhẹ sau corroboration, giữ self-authorship
+                # mà không làm identity trôi như bong bóng xà phòng.
+                old_anchor = float(core_anchor.get(signal.trait, defaults[signal.trait]) or defaults[signal.trait])
+                core_anchor[signal.trait] = clamp01(old_anchor + applied * 0.15)
+
+            trajectory.append(
+                {
+                    "timestamp": now,
+                    "turn_seq": observation.turn_seq,
+                    "turn_id": observation.turn_id,
+                    "event_kind": observation.event_kind,
+                    "category": category,
+                    "trait": signal.trait,
+                    "before": round(before, 6),
+                    "after": round(after, 6),
+                    "applied_delta": round(applied, 6),
+                    "signal_delta": signal.delta,
+                    "confidence": signal.confidence,
+                    "importance": signal.importance,
+                    "source": signal.source,
+                    "strategy": signal.strategy or consequence.strategy,
+                    "self_interpretation": interpretation.summary,
+                    "interpretation_frame": interpretation.frame,
+                    "consequence": consequence.outcome,
+                    "reinforcement": consequence.reinforcement,
+                    "evidence": list(evidence[:5]),
+                }
+            )
+
+        strategy = consequence.strategy.strip()
+        if strategy and consequence.confidence >= 0.62:
+            before = float(strategy_reinforcement.get(strategy, 0.0) or 0.0)
+            shift = consequence.reinforcement * consequence.confidence * 0.08
+            after = max(-1.0, min(1.0, before + shift))
+            if abs(after - before) >= 1e-8:
+                strategy_reinforcement[strategy] = after
+                changed = True
+                trajectory.append(
+                    {
+                        "timestamp": now,
+                        "turn_seq": observation.turn_seq,
+                        "turn_id": observation.turn_id,
+                        "event_kind": observation.event_kind,
+                        "category": "strategy",
+                        "trait": strategy,
+                        "before": round(before, 6),
+                        "after": round(after, 6),
+                        "applied_delta": round(after - before, 6),
+                        "confidence": consequence.confidence,
+                        "source": "consequence",
+                        "self_interpretation": interpretation.summary,
+                        "consequence": consequence.outcome,
+                        "reinforcement": consequence.reinforcement,
+                        "evidence": list(consequence.evidence[:5]),
+                    }
+                )
+
+        # Giữ ledger hữu hạn. 96 entry đủ để debug hướng gần đây mà không biến
+        # memory state thành nhật ký đời người không có mục lục.
+        trajectory = trajectory[-96:]
+        if not changed and profile.last_decay_at == original.last_decay_at:
+            return original
+
+        return PersonalityProfile.from_mapping(
+            {
+                **profile.to_dict(),
+                "version": profile.version + (1 if changed else 0),
+                "core": core,
+                "temperament": temperament,
+                "mood": mood,
+                "core_anchor": core_anchor,
+                "temperament_attractor": temperament_attractor,
+                "day_usage": day_usage,
+                "corroboration": corroboration,
+                "streaks": streaks,
+                "strategy_reinforcement": strategy_reinforcement,
+                "trajectory": trajectory,
+                "last_decay_at": now,
+                "last_updated_at": now if changed else profile.last_updated_at,
+            }
+        )
+
+    @staticmethod
+    def _confidence_scale(confidence: float, category: str) -> float:
+        threshold = CONF_THRESHOLDS[category]
+        if confidence < threshold:
+            return 0.0
+        if confidence >= 0.92:
+            return 1.0
+        denominator = max(0.01, 0.92 - threshold)
+        return max(0.35, min(1.0, (confidence - threshold) / denominator))
+
+    def _resolve_signal_conflicts(
+        self,
+        signals: Sequence[TraitSignal],
+    ) -> tuple[TraitSignal, ...]:
+        grouped: dict[tuple[str, str], list[TraitSignal]] = {}
+        for signal in signals:
+            grouped.setdefault((signal.category, signal.trait), []).append(signal)
+        resolved: list[TraitSignal] = []
+        for key, group in grouped.items():
+            signs = {1 if item.delta > 0 else -1 for item in group if item.delta != 0.0}
+            if len(signs) <= 1:
+                resolved.extend(group)
+                continue
+            ordered = sorted(group, key=lambda item: item.confidence, reverse=True)
+            if len(ordered) >= 2 and ordered[0].confidence - ordered[1].confidence < 0.08:
+                self._log(
+                    "debug",
+                    "[personality reducer] ambiguous opposite signals skipped category=%s trait=%s",
+                    key[0],
+                    key[1],
+                )
+                continue
+            resolved.append(ordered[0])
+        return tuple(resolved)
+
+    @staticmethod
+    def _prune_day_usage(day_usage: dict[str, float]) -> dict[str, float]:
+        cutoff = date.today() - timedelta(days=14)
+        result: dict[str, float] = {}
+        for key, value in day_usage.items():
+            day_text = str(key).split(":", 1)[0]
+            try:
+                day = datetime.strptime(day_text, "%Y-%m-%d").date()
+            except Exception:
+                continue
+            if day >= cutoff:
+                result[str(key)] = max(0.0, float(value or 0.0))
+        return result
 
     def _reduce_mechanical_outcome(self, state: RuntimeMindState, event: StateEvent) -> RuntimeMindState:
         payload = dict(event.payload)
@@ -258,7 +573,9 @@ class StateReducer:
         relation = replace(
             relation,
             competence_trust=clamp01(relation.competence_trust + shift),
-            factual_reliability=clamp01(relation.factual_reliability + (0.008 if success else -0.012)),
+            factual_reliability=clamp01(
+                relation.factual_reliability + (0.008 if success else -0.012)
+            ),
             last_event=f"runtime:{kind}:{'ok' if success else 'failed'}",
         )
         return replace(

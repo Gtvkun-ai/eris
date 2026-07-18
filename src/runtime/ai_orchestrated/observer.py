@@ -115,12 +115,15 @@ class PostTurnObserver:
         )
         self._log(
             "info",
-            "[post observer] turn=%s act=%s meaning=%s conf=%.2f repair=%s source=%s latency=%.0fms",
+            "[post observer] turn=%s act=%s meaning=%s conf=%.2f repair=%s traits=%s frame=%s strategy=%s source=%s latency=%.0fms",
             observation.turn_seq,
             observation.user_act,
             observation.relationship_meaning,
             observation.confidence,
             observation.repair_needed,
+            len(observation.trait_signals),
+            observation.self_interpretation.frame,
+            observation.consequence.strategy or "none",
             observation.source,
             observation.latency_ms,
         )

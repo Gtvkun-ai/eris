@@ -17,7 +17,7 @@ from failure_meta import build_failure_meta
 from runtime.no_fallback_policy import no_fallback_mode_enabled
 from semantic_authority import SemanticAuthorityPolicy
 
-from .contracts import StateEvent
+from .contracts import AI_RUNTIME_VERSION, StateEvent
 
 
 
@@ -79,7 +79,7 @@ class AIChatOrchestrator:
 
         user_meta: dict[str, Any] = {
             "channel": "chat",
-            "architecture": "ai_orchestrated.v1",
+            "architecture": AI_RUNTIME_VERSION,
             "cognitive_observation_pending": True,
         }
         if speech_interrupt_event is not None and callable(getattr(speech_interrupt_event, "to_meta", None)):
@@ -148,12 +148,14 @@ class AIChatOrchestrator:
             pass
 
         mind_state = host.ai_state_reducer.snapshot()
-        relationship_context = mind_state.prompt_context()
+        personality_context = mind_state.personality_prompt_context()
+        relationship_context = mind_state.relationship.prompt_summary()
         grounding_context = str(getattr(grounding_report, "prompt_context", "") or "")
         planning_snapshot = {
             "event_kind": "chat",
             "user_text": user_text,
             "recent_public_history": host._chat_history_for_llm(limit=8)[:-1],
+            "personality_summary": personality_context,
             "relationship_summary": relationship_context,
             "grounding_context": grounding_context,
             "memory_available": bool(str(memory_context or "").strip()),
@@ -180,6 +182,7 @@ class AIChatOrchestrator:
                 memory_context=memory_context,
                 grounding_context=grounding_context,
                 relationship_context=relationship_context,
+                personality_context=personality_context,
                 interrupt_context=speech_interrupt_context,
                 use_escalation=use_escalation,
                 reasoning_effort=reasoning_effort,
@@ -194,6 +197,7 @@ class AIChatOrchestrator:
                     memory_context=memory_context,
                     grounding_context=grounding_context,
                     relationship_context=relationship_context,
+                    personality_context=personality_context,
                     interrupt_context=speech_interrupt_context,
                     use_escalation=use_escalation,
                     reasoning_effort=reasoning_effort,
@@ -300,7 +304,7 @@ class AIChatOrchestrator:
         assistant_meta: dict[str, Any] | None = None
         if bool(getattr(decision, "should_speak", False)) and public_text:
             assistant_meta = {
-                "architecture": "ai_orchestrated.v1",
+                "architecture": AI_RUNTIME_VERSION,
                 "system_action": host.last_system_action,
                 "parse_mode": str(getattr(decision, "parse_mode", "") or "json"),
             }
@@ -353,7 +357,7 @@ class AIAutonomousOrchestrator:
             if len(host.chat_history) > 32:
                 host.chat_history = host.chat_history[-32:]
         meta = {
-            "architecture": "ai_orchestrated.v1",
+            "architecture": AI_RUNTIME_VERSION,
             "channel": channel,
             "ai_turn_seq": int(turn_seq),
             "system_action": str(getattr(decision, "system_action", "") or ""),
@@ -383,6 +387,8 @@ class AIAutonomousOrchestrator:
         turn_seq = _next_ai_turn_seq(host)
         snapshot = {
             "event_kind": "startup",
+            "personality": state.personality.panel_view(),
+            "personality_summary": state.personality_prompt_context(),
             "relationship": state.relationship.to_dict(),
             "open_loops": list(state.open_loops),
             "latest_observation": dict(state.latest_observation),
@@ -407,7 +413,8 @@ class AIAutonomousOrchestrator:
 
         payload = host.ai_model_router.generate_autonomous_reply(
             plan=plan,
-            memory_context=state.prompt_context(),
+            personality_context=state.personality_prompt_context(),
+            memory_context=state.relationship.prompt_summary(),
             grounding_context="startup_event_only; no direct screen evidence",
             recent_history=host._chat_history_for_llm(limit=4),
             avoid_text=str(getattr(host, "last_text", "") or ""),
@@ -465,6 +472,8 @@ class AIAutonomousOrchestrator:
             "explicit_user_pull": True,
             "telemetry": snapshot.to_machine_context() if callable(getattr(snapshot, "to_machine_context", None)) else {},
             "vision_facts": list(vision_facts or ()),
+            "personality": state.personality.panel_view(),
+            "personality_summary": state.personality_prompt_context(),
             "relationship": state.relationship.to_dict(),
             "open_loops": list(state.open_loops),
             "latest_observation": dict(state.latest_observation),
@@ -497,6 +506,7 @@ class AIAutonomousOrchestrator:
 
         payload = host.ai_model_router.generate_autonomous_reply(
             plan=plan,
+            personality_context=state.personality_prompt_context(),
             memory_context=memory_context,
             grounding_context="\n".join(str(item) for item in (vision_facts or ())[-6:]),
             recent_history=host._chat_history_for_llm(limit=8),
@@ -590,6 +600,8 @@ class AIAutonomousOrchestrator:
             "time": now,
             "telemetry": snapshot.to_machine_context() if callable(getattr(snapshot, "to_machine_context", None)) else {},
             "vision_facts": list(vision_facts or ()),
+            "personality": state.personality.panel_view(),
+            "personality_summary": state.personality_prompt_context(),
             "relationship": state.relationship.to_dict(),
             "open_loops": list(state.open_loops),
             "latest_observation": dict(state.latest_observation),
@@ -623,6 +635,7 @@ class AIAutonomousOrchestrator:
             return host.running
         payload = host.ai_model_router.generate_autonomous_reply(
             plan=plan,
+            personality_context=state.personality_prompt_context(),
             memory_context=memory_context,
             grounding_context="\n".join(str(item) for item in (vision_facts or ())[-6:]),
             recent_history=host._chat_history_for_llm(limit=8),

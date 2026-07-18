@@ -19,8 +19,15 @@ import time
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Mapping, Sequence
 
+from .personality import (
+    ConsequenceAssessment,
+    PersonalityProfile,
+    SelfInterpretation,
+    TraitSignal,
+)
 
-AI_RUNTIME_VERSION = "ai_orchestrated.v1"
+
+AI_RUNTIME_VERSION = "ai_orchestrated.v2.open_ended_personality"
 
 
 def clamp01(value: Any, default: float = 0.0) -> float:
@@ -148,6 +155,9 @@ class CognitiveObservation:
     playful_safety_delta: float = 0.0
     rupture_delta: float = 0.0
     appraisal: AppraisalState = field(default_factory=AppraisalState)
+    self_interpretation: SelfInterpretation = field(default_factory=SelfInterpretation)
+    consequence: ConsequenceAssessment = field(default_factory=ConsequenceAssessment)
+    trait_signals: tuple[TraitSignal, ...] = ()
     open_loop: str = ""
     memory_candidate: str = ""
     evidence: tuple[str, ...] = ()
@@ -186,6 +196,20 @@ class CognitiveObservation:
             )
         else:
             evidence = ()
+
+        raw_signals = data.get("trait_signals", ())
+        if isinstance(raw_signals, Sequence) and not isinstance(raw_signals, str):
+            trait_signals = tuple(
+                signal
+                for signal in (
+                    TraitSignal.from_mapping(item)
+                    for item in list(raw_signals)[:10]
+                    if isinstance(item, Mapping)
+                )
+                if signal.category and signal.trait and signal.delta != 0.0
+            )
+        else:
+            trait_signals = ()
         return cls(
             turn_id=str(turn_id or f"turn-{turn_seq}"),
             turn_seq=max(0, int(turn_seq or 0)),
@@ -207,6 +231,13 @@ class CognitiveObservation:
             playful_safety_delta=signed("playful_safety_delta"),
             rupture_delta=signed("rupture_delta"),
             appraisal=AppraisalState.from_mapping(data.get("appraisal") if isinstance(data.get("appraisal"), Mapping) else {}),
+            self_interpretation=SelfInterpretation.from_mapping(
+                data.get("self_interpretation") if isinstance(data.get("self_interpretation"), Mapping) else {}
+            ),
+            consequence=ConsequenceAssessment.from_mapping(
+                data.get("consequence") if isinstance(data.get("consequence"), Mapping) else {}
+            ),
+            trait_signals=trait_signals,
             open_loop=compact(data.get("open_loop", ""), 180),
             memory_candidate=compact(data.get("memory_candidate", ""), 260),
             evidence=evidence,
@@ -217,6 +248,9 @@ class CognitiveObservation:
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
+        payload["self_interpretation"] = self.self_interpretation.to_dict()
+        payload["consequence"] = self.consequence.to_dict()
+        payload["trait_signals"] = [signal.to_dict() for signal in self.trait_signals]
         payload["version"] = AI_RUNTIME_VERSION
         return payload
 
@@ -288,6 +322,7 @@ class RuntimeMindState:
     last_applied_turn_seq: int = 0
     relationship: RelationshipState = field(default_factory=RelationshipState)
     appraisal: AppraisalState = field(default_factory=AppraisalState)
+    personality: PersonalityProfile = field(default_factory=PersonalityProfile)
     latest_observation: Mapping[str, Any] = field(default_factory=dict)
     latest_intention: Mapping[str, Any] = field(default_factory=dict)
     open_loops: tuple[str, ...] = ()
@@ -306,6 +341,9 @@ class RuntimeMindState:
             last_applied_turn_seq=max(0, int(data.get("last_applied_turn_seq", 0) or 0)),
             relationship=RelationshipState.from_mapping(data.get("relationship") if isinstance(data.get("relationship"), Mapping) else {}),
             appraisal=AppraisalState.from_mapping(data.get("appraisal") if isinstance(data.get("appraisal"), Mapping) else {}),
+            personality=PersonalityProfile.from_mapping(
+                data.get("personality") if isinstance(data.get("personality"), Mapping) else {}
+            ),
             latest_observation=dict(data.get("latest_observation", {})) if isinstance(data.get("latest_observation"), Mapping) else {},
             latest_intention=dict(data.get("latest_intention", {})) if isinstance(data.get("latest_intention"), Mapping) else {},
             open_loops=loops,
@@ -320,6 +358,7 @@ class RuntimeMindState:
             "last_applied_turn_seq": self.last_applied_turn_seq,
             "relationship": self.relationship.to_dict(),
             "appraisal": self.appraisal.to_dict(),
+            "personality": self.personality.to_dict(),
             "latest_observation": dict(self.latest_observation),
             "latest_intention": dict(self.latest_intention),
             "open_loops": list(self.open_loops),
@@ -328,7 +367,8 @@ class RuntimeMindState:
         }
 
     def prompt_context(self) -> str:
-        parts = [self.relationship.prompt_summary()]
+        """Context ngắn cho Main AI: bản thân hiện tại + continuity, không có type label."""
+        parts = [self.personality.prompt_summary(limit=620), self.relationship.prompt_summary()]
         latest = self.latest_observation
         if latest and float(latest.get("confidence", 0.0) or 0.0) >= 0.62:
             if bool(latest.get("repair_needed", False)):
@@ -336,7 +376,10 @@ class RuntimeMindState:
             meaning = compact(latest.get("relationship_meaning", ""), 80)
             if meaning in {"closeness_bid", "request_reciprocity", "vulnerability"}:
                 parts.append("Người dùng đang chủ động mở khoảng cách gần hơn")
-        return ". ".join(part for part in parts if part)[:420]
+        return " ".join(part for part in parts if part)[:1100]
+
+    def personality_prompt_context(self) -> str:
+        return self.personality.prompt_summary(limit=760)
 
 
 @dataclass(frozen=True, slots=True)
@@ -400,6 +443,10 @@ __all__ = [
     "RelationshipState",
     "RuntimeMindState",
     "StateEvent",
+    "ConsequenceAssessment",
+    "PersonalityProfile",
+    "SelfInterpretation",
+    "TraitSignal",
     "clamp01",
     "compact",
 ]

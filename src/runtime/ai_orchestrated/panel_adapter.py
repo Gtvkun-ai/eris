@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .contracts import RuntimeMindState
+from .contracts import AI_RUNTIME_VERSION, RuntimeMindState
 from .views import build_cognitive_views
 
 
@@ -25,6 +25,7 @@ def _mood_label(pleasantness: float, irritation: float) -> str:
 def build_ai_panel_payload(state: RuntimeMindState) -> dict[str, Any]:
     appraisal = state.appraisal
     relation = state.relationship
+    personality = state.personality.panel_view()
     observation = dict(state.latest_observation or {})
     intention = dict(state.latest_intention or {})
     views = build_cognitive_views(state)
@@ -33,7 +34,7 @@ def build_ai_panel_payload(state: RuntimeMindState) -> dict[str, Any]:
     mood = _mood_label(appraisal.pleasantness, appraisal.irritation)
 
     emotion_debug = {
-        "architecture": "ai_orchestrated.v1",
+        "architecture": AI_RUNTIME_VERSION,
         "summary": {
             "label": "vui / kho_chiu / trung_tinh",
             "value": mood,
@@ -43,25 +44,30 @@ def build_ai_panel_payload(state: RuntimeMindState) -> dict[str, Any]:
         },
         "appraisal": appraisal.to_dict(),
         "relationship": relation.to_dict(),
+        "personality": personality,
         "cognitive_views": views,
     }
     depth_v2 = {
-        "architecture": "ai_orchestrated.v1",
+        "architecture": AI_RUNTIME_VERSION,
         "live": bool(observation or intention),
         "state_version": state.version,
         "turn_seq": state.last_applied_turn_seq,
         "relationship": relation.to_dict(),
         "appraisal": appraisal.to_dict(),
+        "personality": personality,
         "open_loops": list(state.open_loops),
         "latest_observation": observation,
         "latest_intention": intention,
         "authority": views["authority"],
     }
     private_mind_digest = {
-        "architecture": "ai_orchestrated.v1",
+        "architecture": AI_RUNTIME_VERSION,
         "surface": False,
         "open_loops": list(state.open_loops[-5:]),
         "latest_intention": intention,
+        "personality_direction_30d": personality.get("direction_30d", {}),
+        "active_personality_forms": personality.get("active_forms", []),
+        "self_interpretation": observation.get("self_interpretation", {}),
         "latest_observation": {
             key: observation.get(key)
             for key in (
@@ -76,8 +82,11 @@ def build_ai_panel_payload(state: RuntimeMindState) -> dict[str, Any]:
         },
     }
     private_life_digest = {
-        "architecture": "ai_orchestrated.v1",
+        "architecture": AI_RUNTIME_VERSION,
         "relationship_summary": relation.prompt_summary(),
+        "personality_summary": personality.get("prompt_summary", ""),
+        "personality_version": personality.get("version", 0),
+        "recent_trajectory": personality.get("recent_trajectory", [])[-6:],
         "last_event": relation.last_event,
         "memory_candidates": [dict(item) for item in state.memory_candidates[-4:]],
     }
