@@ -116,11 +116,6 @@ def attach_behavior_signal(decision: Any, signal: BehaviorSignal) -> Any:
         decision.behavior_observation_meta = meta
     except Exception:
         pass
-    try:
-        tags = tuple(getattr(decision, "reasoning_tags", ()) or ())
-        decision.reasoning_tags = tuple(dict.fromkeys((*tags, f"observed:{signal.family}")))
-    except Exception:
-        pass
     return decision
 
 

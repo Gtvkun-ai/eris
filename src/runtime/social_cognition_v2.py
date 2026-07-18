@@ -1140,6 +1140,58 @@ class SocialCognitionEngine:
                     pass
             return contract
 
+    def ingest_observation(self, *, user_text: str, observation: Any, turn_id: str = "") -> None:
+        """Nhận event từ AI observer ở chế độ observe-only.
+
+        Hàm này chỉ cập nhật ledger/social state. Nó không tạo contract, không
+        review candidate và không sửa Decision public.
+        """
+        _ = turn_id
+        with self._lock:
+            now = time.time()
+            self._decay_state(now)
+            self.ledger.observe_user(user_text)
+            confidence = _clamp01(getattr(observation, "confidence", 0.0))
+            if confidence < 0.50:
+                return
+            closeness = _clamp01(getattr(observation, "closeness_bid", 0.0))
+            vulnerability = _clamp01(getattr(observation, "vulnerability", 0.0))
+            compliment = _clamp01(getattr(observation, "compliment", 0.0))
+            playfulness = _clamp01(getattr(observation, "playfulness", 0.0))
+            correction = _clamp01(getattr(observation, "correction", 0.0))
+            repair = _clamp01(getattr(observation, "repair_signal", 0.0))
+            hostility = _clamp01(getattr(observation, "hostility", 0.0))
+            acceptance = _clamp01(getattr(observation, "acceptance", 0.0))
+            boundary = _clamp01(getattr(observation, "boundary_probe", 0.0))
+            fault = _clamp01(getattr(observation, "assistant_fault_probability", 0.0))
+            weight = max(0.15, confidence)
+
+            self.state.warmth = _clamp01(
+                self.state.warmth + weight * (0.018 * closeness + 0.010 * vulnerability + 0.008 * compliment - 0.014 * hostility)
+            )
+            self.state.trust = _clamp01(
+                self.state.trust + weight * (0.016 * acceptance + 0.008 * closeness - 0.018 * hostility - 0.012 * fault)
+            )
+            self.state.familiarity = _clamp01(
+                self.state.familiarity + weight * 0.008 * max(acceptance, closeness, compliment)
+            )
+            self.state.amusement = _clamp01(
+                self.state.amusement + weight * (0.020 * playfulness - 0.012 * hostility)
+            )
+            self.state.play_contract = _clamp01(
+                self.state.play_contract + weight * (0.016 * playfulness - 0.018 * boundary - 0.012 * hostility)
+            )
+            self.state.irritation = _clamp01(
+                self.state.irritation + weight * (0.018 * hostility + 0.008 * boundary - 0.010 * playfulness)
+            )
+            self.state.rupture = _clamp01(
+                self.state.rupture + weight * (0.024 * max(correction, repair) + 0.018 * hostility - 0.016 * acceptance)
+            )
+            self.state.autonomy_pressure = _clamp01(
+                self.state.autonomy_pressure + weight * (0.012 * boundary + 0.010 * hostility - 0.006 * closeness)
+            )
+            self.state.last_updated_at = now
+
     # ----------------------------- output -------------------------------
     def deterministic_repair_text(self, contract: SocialResponseContract) -> str:
         claim = _squash(contract.failed_claim_text, 150).rstrip(" .!?;:…")

@@ -40,6 +40,14 @@ class AttentionOverseer:
         else:
             self.logger.info("Remote API dang tat; local model runtime da bi go khoi runtime nay.")
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        # Materialize runtime settings trước khi dựng provider clients. Nếu làm
+        # sau, panel có đổi model observer thì process vẫn ngoan cố dùng env cũ
+        # đến lần khởi động kế tiếp, một kiểu "live settings" khá giàu tính châm biếm.
+        try:
+            from runtime.runtime_settings_store import RuntimeSettingsStore
+            RuntimeSettingsStore().load(materialize_env=True)
+        except Exception as exc:
+            self.logger.debug("Runtime settings bootstrap trước provider bị bỏ qua: %s", exc)
         self.process_manager = RemoteModelProcessManager(
             logger=self.process_logger,
             project_root=project_root,
@@ -74,9 +82,15 @@ class AttentionOverseer:
             n_ctx=min(n_ctx, 4096),
             n_gpu_layers=n_gpu_layers,
         )
-        social_models_enabled = str(os.environ.get("ERIS_SOCIAL_COGNITION_V2_ENABLED", "0") or "0").strip().lower() in {"1", "true", "yes", "on"}
+        social_models_enabled = str(
+            os.environ.get(
+                "ERIS_SOCIAL_OBSERVER_ENABLED",
+                os.environ.get("ERIS_SOCIAL_COGNITION_V2_ENABLED", "1"),
+            ) or "1"
+        ).strip().lower() in {"1", "true", "yes", "on"}
         social_parser_client = self.process_manager.build_social_parser_client() if social_models_enabled else None
         social_critic_client = self.process_manager.build_social_critic_client() if social_models_enabled else None
+        social_fallback_client = self.process_manager.build_social_fallback_client() if social_models_enabled else None
         if escalation_client is not None:
             provider_label = getattr(escalation_client, "base_url", "") or escalation_client.__class__.__name__
             self.logger.info("Escalation client (bái sư) đã sẵn sàng: %s", provider_label)
@@ -88,6 +102,7 @@ class AttentionOverseer:
             escalation_client=escalation_client,
             social_parser_client=social_parser_client,
             social_critic_client=social_critic_client,
+            social_fallback_client=social_fallback_client,
             logger=self.logger,
         )
         self.logger.info("Mô hình đã sẵn sàng.")

@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Any
+import os
 import re
 
 from failure_meta import normalize_failure_meta
@@ -102,22 +103,21 @@ class Decision:
         return text, bool(self.should_speak)
 
     def to_payload(self) -> dict:
+        """Serialize only fields the body needs.
+
+        Old policy/debug markers are kept on ``Decision`` for internal compatibility,
+        but are not sent to Godot unless ``ERIS_EXPOSE_DEBUG_PAYLOAD=1``. This keeps
+        the stage protocol from becoming a second prompt-shaped dumping ground.
+        """
         text, should_speak = self._payload_text()
         payload = {
             "text": text,
-            "intent": self.intent,
-            "action": self.action,
             "animation": self.animation,
-            "reasoning_tags": list(self.reasoning_tags),
             "should_speak": should_speak,
-            "confidence": self.confidence,
             "direction": self.direction,
             "target_x": self.target_x,
             "bounce_action": self.bounce_action,
             "next_animation": self.next_animation,
-            "debug_trace": self.debug_trace,
-            "parser_trace": self.parser_trace,
-            "parse_mode": self.parse_mode,
             "system_action": self.system_action,
             "action_input": self.action_input,
             "motion_intent": self.resolve_motion_intent(),
@@ -131,28 +131,40 @@ class Decision:
             "audio_asset": self.audio_asset,
             "preset_emotion": self.preset_emotion,
         }
-        payload["director_finalized"] = bool(self.director_finalized)
-        payload["final_speech_locked"] = bool(self.final_speech_locked)
-        if self.final_speech_digest:
-            payload["final_speech_digest"] = self.final_speech_digest
-        if self.director_trace_id:
-            payload["director_trace_id"] = self.director_trace_id
         if self.action_result_meta:
             payload["action_result"] = dict(self.action_result_meta)
-        # Không gửi toàn bộ observation journal sang Godot; chỉ expose summary gọn
-        # khi cần debug panel. Semantic text vẫn là text đã khóa.
-        if isinstance(self.behavior_observation_meta, dict):
-            signals = [
-                item for item in self.behavior_observation_meta.get("signals", ())
-                if isinstance(item, dict)
-            ]
-            if signals:
-                payload["behavior_observation"] = {
-                    "policy": self.behavior_observation_meta.get("policy", "observe_only"),
-                    "families": [str(item.get("family", "unknown")) for item in signals[-8:]],
-                    "count": len(signals),
-                }
         failure_meta = normalize_failure_meta(self.failure_meta)
         if failure_meta is not None:
             payload["failure_meta"] = failure_meta
+
+        expose_debug = os.environ.get("ERIS_EXPOSE_DEBUG_PAYLOAD", "0").strip().lower() in {
+            "1", "true", "yes", "on",
+        }
+        if expose_debug:
+            payload.update({
+                "intent": self.intent,
+                "action": self.action,
+                "reasoning_tags": list(self.reasoning_tags),
+                "confidence": self.confidence,
+                "debug_trace": self.debug_trace,
+                "parser_trace": self.parser_trace,
+                "parse_mode": self.parse_mode,
+                "director_finalized": bool(self.director_finalized),
+                "final_speech_locked": bool(self.final_speech_locked),
+            })
+            if self.final_speech_digest:
+                payload["final_speech_digest"] = self.final_speech_digest
+            if self.director_trace_id:
+                payload["director_trace_id"] = self.director_trace_id
+            if isinstance(self.behavior_observation_meta, dict):
+                signals = [
+                    item for item in self.behavior_observation_meta.get("signals", ())
+                    if isinstance(item, dict)
+                ]
+                if signals:
+                    payload["behavior_observation"] = {
+                        "policy": self.behavior_observation_meta.get("policy", "observe_only"),
+                        "families": [str(item.get("family", "unknown")) for item in signals[-8:]],
+                        "count": len(signals),
+                    }
         return payload

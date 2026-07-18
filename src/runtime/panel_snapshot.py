@@ -83,6 +83,47 @@ def add_signal(kind: str) -> None:
         pass
 
 
+
+def write_social_observation(
+    observation: dict[str, Any],
+    *,
+    relationship_state: dict[str, Any] | None = None,
+) -> None:
+    """Gắn telemetry social observer vào snapshot mà không đụng public output.
+
+    Observer hoàn tất bất đồng bộ sau lượt nói, nên hàm này merge vào snapshot
+    hiện có thay vì dựng lại affect/N1. Một model phụ chậm không nên xóa bảng
+    đồng hồ chỉ vì nó vừa mang về một social event, điều tưởng hiển nhiên nhưng
+    máy tính thích biến hiển nhiên thành nghề toàn thời gian.
+    """
+    if not panel_snapshot_enabled():
+        return
+    try:
+        now = time.time()
+        payload = _read_existing_snapshot()
+        payload["ts"] = now
+        payload["social_observer"] = dict(observation or {})
+        if relationship_state is not None:
+            payload["relationship_state"] = dict(relationship_state)
+        add_signal("social_observer")
+        with _lock:
+            payload["signal_log"] = list(_signal_log)
+            path = _path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.replace(path)
+    except Exception:
+        pass
+
+
+def _read_existing_snapshot() -> dict[str, Any]:
+    try:
+        raw = json.loads(_path().read_text(encoding="utf-8"))
+        return dict(raw) if isinstance(raw, dict) else {}
+    except Exception:
+        return {}
+
 def write(
     *,
     appraisal: Any = None,

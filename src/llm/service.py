@@ -3,7 +3,6 @@ import logging
 import re
 import unicodedata
 import os
-from semantic_authority import SemanticAuthorityPolicy
 from runtime.social_act import (
     ChatAct,
     classify_chat_act as classify_social_chat_act,
@@ -201,6 +200,7 @@ class LlmService:
         escalation_client=None,
         social_parser_client=None,
         social_critic_client=None,
+        social_fallback_client=None,
         logger=None,
     ):
         self.client = client
@@ -217,6 +217,7 @@ class LlmService:
         # và không được phép làm turn chết nếu Groq lỗi.
         self.social_parser_client = social_parser_client
         self.social_critic_client = social_critic_client
+        self.social_fallback_client = social_fallback_client
         self.logger = logger or logging.getLogger(__name__)
         # Một governor dùng chung cho mọi LlmService instance trong process. Nó chỉ
         # giữ số token/429 ước lượng, tuyệt đối không giữ nội dung prompt hay API key.
@@ -313,45 +314,29 @@ class LlmService:
         origin: str = "",
         recoverable: bool = False,
     ) -> str:
-        should_speak = channel == "chat"
-        public_surface = "service_fallback" if should_speak else "silent"
-        failure_meta = self._failure_meta(
-            kind=kind,
-            stage=stage,
-            origin=origin or self._service_error_origin(channel=channel),
-            public_surface=public_surface,
-            recoverable=recoverable,
-        )
-        if no_fallback_mode_enabled():
-            return build_no_fallback_payload(
-                channel=channel,
-                reason=reason,
-                text="" if channel != "chat" else "",
-                should_speak=should_speak,
-                confidence=0.0,
-                reasoning_tags=("service_block",),
-            )
+        """Return transport metadata without inventing a public sentence."""
+        text = self._safe_fallback_text(fallback_text, channel=channel)
+        should_speak = bool(text)
         payload = {
-            "text": self._safe_fallback_text(fallback_text, channel=channel) if should_speak else "",
-            "intent": "fallback_reply",
-            "action": {"type": "none"},
-            "reasoning_tags": ["fallback", channel, "service_error"],
+            "text": text,
             "should_speak": should_speak,
-            "confidence": 0.1 if should_speak else 0.0,
             "animation": "stand",
+            "next_animation": "",
             "direction": 0,
             "target_x": -1.0,
             "bounce_action": "",
-            "extracted_fact": "",
-            "debug_trace": reason,
-            "next_animation": "",
             "system_action": "",
             "action_input": "",
             "delivery_hint": "",
             "nonverbal_cue": "",
             "stage_motion": "",
-            "parse_mode": "service_error",
-            "failure_meta": failure_meta,
+            "failure_meta": self._failure_meta(
+                kind=kind,
+                stage=stage,
+                origin=origin or self._service_error_origin(channel=channel),
+                public_surface="service_fallback" if should_speak else "silent",
+                recoverable=recoverable,
+            ),
         }
         return json.dumps(payload, ensure_ascii=False)
 
@@ -790,27 +775,15 @@ class LlmService:
         stage: str = "llm_response_parse",
         origin: str = "model_output",
     ) -> str:
-        if not text:
-            if channel == "chat":
-                text = "Câu đó lệch. Tôi rút lại một nhịp."
-            elif channel == "directive":
-                text = "Tôi vừa cắt một câu lệch trước khi nó ra ngoài."
-            else:
-                text = "Tôi vừa tự cắt một phản hồi lệch trước khi nó kịp đi xa."
+        """Block protocol leaks silently; the parser is not a dialogue author."""
         payload = {
-            "text": text.strip(),
-            "intent": "protocol_repair",
-            "action": {"type": "none"},
-            "reasoning_tags": ["fallback", channel, "protocol_repair"],
-            "should_speak": bool(text.strip()),
-            "confidence": 0.45 if channel == "chat" else 0.35,
+            "text": "",
+            "should_speak": False,
             "animation": "stand",
+            "next_animation": "",
             "direction": 0,
             "target_x": -1.0,
             "bounce_action": "",
-            "extracted_fact": "",
-            "debug_trace": reason,
-            "next_animation": "",
             "system_action": "",
             "action_input": "",
             "delivery_hint": "",
@@ -820,59 +793,31 @@ class LlmService:
                 kind=kind,
                 stage=stage,
                 origin=origin,
-                public_surface="protocol_repair",
+                public_surface="silent",
                 recoverable=False,
             ),
         }
         return json.dumps(payload, ensure_ascii=False)
 
     def _coerce_malformed_decision_payload(self, raw_text: str, *, channel: str) -> str:
-        """Salvage only speakable fields from truncated decision JSON.
-
-        The old path wrapped the whole malformed JSON into `text`, then the
-        parser leaked `", "intent": ...` to Godot. This method refuses to
-        surface raw schema text. If a clean text field exists, use only that;
-        otherwise degrade as a format failure unless the raw text itself leaks
-        prompt/contract surface.
-        """
+        """Salvage only a clean text field; never expose or narrate protocol failure."""
         if not self._looks_like_malformed_decision_json(raw_text):
             return ""
         text = self._json_string_field_from_raw(raw_text, "text").strip()
-        intent = self._json_string_field_from_raw(raw_text, "intent").strip() or "fallback_reply"
-        debug = self._json_string_field_from_raw(raw_text, "debug_trace").strip()
-        if not text:
-            if self._looks_like_prompt_leak(raw_text):
-                return self._build_protocol_surface_fallback(
-                    channel=channel,
-                    reason="LlmService blocked malformed decision JSON with leaked prompt surface.",
-                )
-            return self._build_service_error_fallback(
-                channel=channel,
-                reason="LlmService blocked malformed decision JSON without a safe text field.",
-                kind="format_violation",
-                stage="llm_response_parse",
-                origin="model_output",
-                recoverable=False,
-            )
-        if self._looks_like_prompt_leak(text):
+        if not text or self._looks_like_prompt_leak(text):
             return self._build_protocol_surface_fallback(
                 channel=channel,
-                reason="LlmService blocked malformed decision JSON with prompt-leak text field.",
+                reason="malformed_decision_without_safe_text",
+                kind="format_violation",
             )
         payload = {
             "text": text,
-            "intent": intent[:80],
-            "action": {"type": "none"},
-            "reasoning_tags": ["fallback", channel, "malformed_json_salvaged"],
             "should_speak": True,
-            "confidence": 0.35,
             "animation": "stand",
+            "next_animation": "",
             "direction": 0,
             "target_x": -1.0,
             "bounce_action": "",
-            "extracted_fact": "",
-            "debug_trace": (debug + " | " if debug else "") + "LlmService salvaged text from malformed decision JSON without exposing metadata.",
-            "next_animation": "",
             "system_action": "",
             "action_input": "",
             "delivery_hint": "",
@@ -882,7 +827,7 @@ class LlmService:
                 kind="format_violation",
                 stage="llm_response_parse",
                 origin="model_output",
-                public_surface="service_fallback" if channel == "chat" else "silent",
+                public_surface="service_fallback",
                 recoverable=True,
             ),
         }
@@ -1183,22 +1128,23 @@ class LlmService:
         return normalized
 
     def _is_valid_decision_payload(self, payload: dict | None) -> bool:
+        """Validate the compact public model contract.
+
+        Intent, confidence, reasoning tags and debug traces are runtime-owned
+        metadata. Accepting them as optional legacy extras is harmless, but they
+        are no longer required or generated by the main model.
+        """
         if not isinstance(payload, dict):
             return False
-        if self._is_valid_motion_payload(payload):
-            return True
         if not all(field in payload for field in DECISION_JSON_FIELDS):
-            if self._is_valid_cognition_payload(payload):
-                return True
-            return False
-        # DECISION_JSON_FIELDS now describes the full cognition schema, not
-        # only the old Godot motion fields. Validate the cognitive metadata
-        # before accepting the payload as already clean.
-        if not self._is_valid_cognition_payload(payload):
             return False
         if not self._is_valid_text_field(payload.get("text")):
             return False
+        if not isinstance(payload.get("should_speak"), bool):
+            return False
         if not self._is_valid_animation_field(payload.get("animation"), allow_empty=False):
+            return False
+        if not self._is_valid_animation_field(payload.get("next_animation"), allow_empty=True):
             return False
         if not self._is_valid_choice_number(payload.get("direction"), {-1, 0, 1}):
             return False
@@ -1207,12 +1153,6 @@ class LlmService:
         if not self._allows_motion_target(payload) and float(payload.get("target_x", -1.0)) != -1.0:
             return False
         if not self._is_valid_animation_field(payload.get("bounce_action"), allow_empty=True):
-            return False
-        if not self._is_valid_text_field(payload.get("extracted_fact")):
-            return False
-        if not self._is_valid_text_field(payload.get("debug_trace")):
-            return False
-        if not self._is_valid_animation_field(payload.get("next_animation"), allow_empty=True):
             return False
         if not self._is_valid_system_action_field(payload.get("system_action")):
             return False
@@ -1227,84 +1167,23 @@ class LlmService:
         return True
 
     def _is_valid_motion_payload(self, payload: dict | None) -> bool:
-        if not isinstance(payload, dict):
-            return False
-        required = {
-            "text",
-            "animation",
-            "direction",
-            "target_x",
-            "bounce_action",
-            "extracted_fact",
-            "debug_trace",
-            "next_animation",
-            "system_action",
-            "action_input",
-        }
-        if not required.issubset(payload.keys()):
-            return False
-        if not self._is_valid_text_field(payload.get("text")):
-            return False
-        if not self._is_valid_animation_field(payload.get("animation"), allow_empty=False):
-            return False
-        if not self._is_valid_choice_number(payload.get("direction"), {-1, 0, 1}):
-            return False
-        if not self._is_valid_target_x(payload.get("target_x")):
-            return False
-        if not self._allows_motion_target(payload) and float(payload.get("target_x", -1.0)) != -1.0:
-            return False
-        if not self._is_valid_animation_field(payload.get("bounce_action"), allow_empty=True):
-            return False
-        if not self._is_valid_text_field(payload.get("extracted_fact")):
-            return False
-        if not self._is_valid_text_field(payload.get("debug_trace")):
-            return False
-        if not self._is_valid_animation_field(payload.get("next_animation"), allow_empty=True):
-            return False
-        if not self._is_valid_system_action_field(payload.get("system_action")):
-            return False
-        if not self._is_valid_text_field(payload.get("action_input")):
-            return False
-        return True
+        # Compatibility alias for callers/tests using the old name.
+        return self._is_valid_decision_payload(payload)
 
     def _is_valid_cognition_payload(self, payload: dict | None) -> bool:
-        if not isinstance(payload, dict):
-            return False
-        required = {"text", "intent", "action", "animation", "reasoning_tags", "should_speak", "confidence"}
-        if not required.issubset(payload.keys()):
-            return False
-        if not self._is_valid_text_field(payload.get("text")):
-            return False
-        if not self._is_valid_text_field(payload.get("intent")):
-            return False
-        if not isinstance(payload.get("action"), (dict, str)):
-            return False
-        if not self._is_valid_animation_field(payload.get("animation"), allow_empty=False):
-            return False
-        if not isinstance(payload.get("reasoning_tags"), list):
-            return False
-        if not isinstance(payload.get("should_speak"), bool):
-            return False
-        confidence = payload.get("confidence")
-        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
-            return False
-        return 0.0 <= float(confidence) <= 1.0
+        # Legacy payloads may still arrive from cached/local providers. They are
+        # accepted only when the compact transport fields are also valid.
+        return self._is_valid_decision_payload(payload)
 
     def _is_decision_like_payload(self, payload: dict | None) -> bool:
         if not isinstance(payload, dict):
             return False
-        if "text" in payload and any(field in payload for field in ("intent", "action", "reasoning_tags", "should_speak", "confidence")):
-            return True
-        if all(field in payload for field in DECISION_JSON_FIELDS):
-            return True
         if "text" in payload and any(field in payload for field in DECISION_JSON_FIELDS if field != "text"):
             return True
         response = payload.get("response")
         if isinstance(response, list) and response and isinstance(response[0], dict):
             item = response[0]
-            return all(field in item for field in DECISION_JSON_FIELDS) or (
-                "text" in item and any(field in item for field in DECISION_JSON_FIELDS if field != "text")
-            )
+            return "text" in item and any(field in item for field in DECISION_JSON_FIELDS if field != "text")
         return False
 
     def _coerce_bool_value(self, value, *, fallback: bool) -> bool:
@@ -1464,18 +1343,20 @@ class LlmService:
         if isinstance(response, list) and response and isinstance(response[0], dict):
             source = response[0]
 
-        action = self._coerce_action_value(source.get("action", ""))
+        legacy_action = self._coerce_action_value(source.get("action", ""))
         animation = self._coerce_animation_value(
-            source.get("animation") or self._action_field(action, "animation", "pose"),
+            source.get("animation") or self._action_field(legacy_action, "animation", "pose"),
             allow_empty=False,
         )
-        direction = self._coerce_direction_value(source.get("direction", self._action_field(action, "direction", "facing", default=0)))
+        direction = self._coerce_direction_value(
+            source.get("direction", self._action_field(legacy_action, "direction", "facing", default=0))
+        )
         next_animation = self._coerce_animation_value(
-            source.get("next_animation") or self._action_field(action, "next_animation"),
+            source.get("next_animation") or self._action_field(legacy_action, "next_animation"),
             allow_empty=True,
         )
         bounce_action = self._coerce_animation_value(
-            source.get("bounce_action") or self._action_field(action, "bounce_action"),
+            source.get("bounce_action") or self._action_field(legacy_action, "bounce_action"),
             allow_empty=True,
         )
         allow_motion_target = (
@@ -1484,33 +1365,29 @@ class LlmService:
             or next_animation in {"stand_walk", "climb_top"}
         )
         target_x = self._coerce_target_x_value(
-            source.get("target_x", self._action_field(action, "target_x", "x", default=-1.0)),
+            source.get("target_x", self._action_field(legacy_action, "target_x", "x", default=-1.0)),
             allow_motion_target=allow_motion_target,
         )
-        debug_trace = self._coerce_text_value(source.get("debug_trace", "")).strip()
-        service_trace = "LlmService sanitized decision-like JSON before parser."
-        debug_trace = f"{debug_trace} | {service_trace}" if debug_trace else service_trace
         system_action = self._coerce_system_action_value(
-            source.get("system_action", "") or self._action_field(action, "system_action", "tool", "name", default="")
+            source.get("system_action", "")
+            or self._action_field(legacy_action, "system_action", "tool", "name", default="")
         )
         action_input = self._coerce_text_value(
-            source.get("action_input", "") or self._action_field(action, "action_input", "input", "query", "url", "argument", default="")
+            source.get("action_input", "")
+            or self._action_field(legacy_action, "action_input", "input", "query", "url", "argument", default="")
         )
 
         sanitized = {
             "text": self._coerce_text_value(source.get("text", "")),
-            "intent": self._coerce_text_value(source.get("intent", "")),
-            "action": action,
-            "reasoning_tags": self._coerce_reasoning_tags_value(source.get("reasoning_tags", [])),
-            "should_speak": self._coerce_bool_value(source.get("should_speak", bool(source.get("text", ""))), fallback=bool(source.get("text", ""))),
-            "confidence": self._coerce_confidence_value(source.get("confidence", 0.0)),
+            "should_speak": self._coerce_bool_value(
+                source.get("should_speak", bool(source.get("text", ""))),
+                fallback=bool(source.get("text", "")),
+            ),
             "animation": animation,
+            "next_animation": next_animation,
             "direction": direction,
             "target_x": target_x,
             "bounce_action": bounce_action,
-            "extracted_fact": self._coerce_text_value(source.get("extracted_fact", "")),
-            "debug_trace": debug_trace,
-            "next_animation": next_animation,
             "system_action": system_action,
             "action_input": action_input if system_action else "",
             "delivery_hint": self._coerce_text_value(source.get("delivery_hint", "")),
@@ -1585,58 +1462,38 @@ class LlmService:
         )
 
     def _safe_fallback_text(self, raw_text: str, *, channel: str) -> str:
-        if no_fallback_mode_enabled():
-            return ""
         text = (raw_text or "").strip()
+        if not text:
+            return ""
         if self._looks_like_prompt_leak(text) or self._looks_like_malformed_decision_json(text):
-            if channel == "chat":
-                return "Câu đó lệch. Tôi rút lại một nhịp."
-            if channel == "directive":
-                return "Tôi vừa cắt một câu lệch trước khi nó ra ngoài."
-            return "Tôi vừa tự cắt một phản hồi lệch trước khi nó kịp đi xa."
-        if not text or self._looks_like_provider_metadata(text) or self._looks_like_markdown_json_stub(text):
-            if channel == "chat":
-                # Service-error fallback must not pretend ERIS understood the
-                # user's current intent. A transport/model failure is evidence
-                # that the turn was not processed, not an invitation to fake
-                # continuity. Keep it plain and retryable.
-                return "Xin lỗi. Tôi đang có vấn đề đường truyền, bạn có thể nhắn lại."
-            return "Một câu nhỏ thôi, khỏi dựng sân khấu."
+            return ""
+        if self._looks_like_provider_metadata(text) or self._looks_like_markdown_json_stub(text):
+            return ""
         return text
 
     def _build_empty_text_fallback(self, *, channel: str) -> str:
-        if no_fallback_mode_enabled():
-            return build_no_fallback_payload(
-                channel=channel,
-                reason=f"empty_text_{channel}",
-                should_speak=(channel == "chat"),
-                confidence=0.0,
-                reasoning_tags=("empty_text_block",),
-            )
-        fallback_text = "Một câu nhỏ thôi, khỏi dựng sân khấu."
-        if channel == "chat":
-            fallback_text = "Xin lỗi. Tôi đang có vấn đề đường truyền, bạn có thể nhắn lại."
         payload = {
-            "text": fallback_text,
+            "text": "",
+            "should_speak": False,
             "animation": "stand",
+            "next_animation": "",
             "direction": 0,
             "target_x": -1.0,
             "bounce_action": "",
-            "extracted_fact": "",
-            "debug_trace": f"LlmService filled empty {channel} text with safe fallback.",
-            "next_animation": "",
             "system_action": "",
             "action_input": "",
+            "delivery_hint": "",
+            "nonverbal_cue": "",
+            "stage_motion": "",
+            "failure_meta": self._failure_meta(
+                kind="empty_text",
+                stage=f"empty_text_{channel}",
+                origin="model_output",
+                public_surface="silent",
+                recoverable=True,
+            ),
         }
         return json.dumps(payload, ensure_ascii=False)
-
-    def _decision_needs_non_empty_text(self, raw_text: str) -> bool:
-        payload = self._parse_json_object(raw_text)
-        if not isinstance(payload, dict):
-            return False
-        text = self._coerce_text_value(payload.get("text", "")).strip()
-        system_action = self._coerce_system_action_value(payload.get("system_action", ""))
-        return not text and not system_action
 
     def _decision_text_is_invalid(self, raw_text: str) -> bool:
         payload = self._parse_json_object(raw_text)
@@ -1644,6 +1501,8 @@ class LlmService:
             return False
         system_action = self._coerce_system_action_value(payload.get("system_action", ""))
         if system_action:
+            return False
+        if isinstance(payload.get("failure_meta"), dict):
             return False
         text = self._coerce_text_value(payload.get("text", "")).strip()
         inline_metadata = bool(re.search(r'[,\s]["\']?(?:intent|action|reasoning_tags|should_speak|confidence|debug_trace|delivery_hint|nonverbal_cue|stage_motion)["\']?\s*:', text))
@@ -1654,6 +1513,7 @@ class LlmService:
             or self._looks_like_prompt_leak(text)
             or inline_metadata
         )
+
 
     def _with_non_empty_text_rule(self, messages: list[dict]) -> list[dict]:
         rule = (
@@ -1767,11 +1627,8 @@ class LlmService:
         repair_user = (
             f"Channel: {channel}\n"
             "Return exactly one JSON object with fields:\n"
-            "text, intent, action, animation, reasoning_tags, should_speak, confidence, "
-            "direction, target_x, bounce_action, "
-            "extracted_fact, debug_trace, next_animation, system_action, action_input, "
-            "delivery_hint, nonverbal_cue, stage_motion.\n"
-            "action can be an object like {\"type\":\"none\"} or a whitelisted system action request.\n"
+            "text, should_speak, animation, next_animation, direction, target_x, bounce_action, "
+            "system_action, action_input, delivery_hint, nonverbal_cue, stage_motion.\n"
             "Do not put stage directions inside text; use delivery_hint/nonverbal_cue/stage_motion.\n"
             "If the raw answer is plain prose, put it into text and keep other fields safe.\n"
             "Raw assistant answer:\n"
@@ -2047,7 +1904,7 @@ class LlmService:
             "CRITICAL PUBLIC OUTPUT CONTRACT: Use your private reasoning channel fully, but put only "
             "one compact JSON object in the public content field. Public content must start with '{' "
             "and end with '}'. No analysis, markdown, code fences, or explanations may appear around "
-            "the JSON. Keep reasoning_tags as an empty list and debug_trace empty unless a real tool/transport failure must be reported."
+            "the JSON. Do not add intent, confidence, reasoning_tags, debug_trace, extracted_fact or any other audit fields."
         )
         messages = [dict(message) for message in messages]
         for message in messages:
@@ -2339,12 +2196,14 @@ class LlmService:
         if not self._generation_is_current(generation_epoch):
             self.logger.info("[LLM CANCEL] discard stale result channel=%s epoch=%d", channel, generation_epoch)
             return json.dumps({
-                "text": "", "intent": "cancelled_stale", "action": "",
-                "reasoning_tags": ["cancelled_stale"], "should_speak": False,
-                "confidence": 1.0, "animation": "stand", "direction": 0,
-                "target_x": -1.0, "bounce_action": "", "extracted_fact": "",
-                "debug_trace": "cancelled_stale_generation", "next_animation": "",
-                "system_action": "", "action_input": ""
+                "text": "", "should_speak": False, "animation": "stand",
+                "next_animation": "", "direction": 0, "target_x": -1.0,
+                "bounce_action": "", "system_action": "", "action_input": "",
+                "delivery_hint": "", "nonverbal_cue": "", "stage_motion": "",
+                "failure_meta": self._failure_meta(
+                    kind="cancelled", stage="generation_epoch", origin="runtime",
+                    public_surface="silent", recoverable=True,
+                ),
             }, ensure_ascii=False)
         raw = self._extract_content(response)
         self._log_reasoning_telemetry(channel, response, raw)
@@ -2962,38 +2821,24 @@ class LlmService:
             return "Tôi lên rồi. Chưa biết hôm nay có gì, nên tôi chưa phán."
 
     def _build_session_greeting_payload(
-        self,
-        *,
-        text: str,
-        reason: str,
-        confidence: float = 0.72,
-        quality_note: str = "",
+        self, *, text: str, reason: str = "", confidence: float = 0.0, quality_note: str = ""
     ) -> str:
-        payload = {
-            "text": re.sub(r"\s+", " ", str(text or "")).strip() or "Tôi lên rồi. Chưa biết hôm nay có gì, nên tôi chưa phán.",
-            "intent": "session_ritual",
-            "action": {"type": "none"},
-            "reasoning_tags": ["session_ritual", "greeting_cognition"],
-            "should_speak": True,
-            "confidence": max(0.0, min(1.0, float(confidence or 0.0))),
+        """Compatibility serializer for old callers; no semantic/audit fields."""
+        clean = re.sub(r"\s+", " ", str(text or "")).strip()
+        return json.dumps({
+            "text": clean,
+            "should_speak": bool(clean),
             "animation": "stand",
+            "next_animation": "",
             "direction": 0,
             "target_x": -1.0,
             "bounce_action": "",
-            "extracted_fact": "",
-            "debug_trace": reason if not quality_note else f"{reason} | {quality_note}",
-            "next_animation": "",
             "system_action": "",
             "action_input": "",
-            "motion_intent": "",
-            "motion_target_x": -1.0,
-            "motion_facing": 0,
             "delivery_hint": "",
             "nonverbal_cue": "",
             "stage_motion": "",
-            "parse_mode": "session_ritual",
-        }
-        return json.dumps(payload, ensure_ascii=False)
+        }, ensure_ascii=False)
 
     def _session_greeting_frame(self, telemetry_data: str):
         engine = self._fallback_greeting_engine()
@@ -3088,7 +2933,7 @@ class LlmService:
     def _generate_session_ritual_greeting(
         self,
         *,
-        telemetry_data: str,
+        telemetry_data: str = "",
         ti_context: str = "",
         ni_context: str = "",
         fe_context: str = "",
@@ -3098,120 +2943,39 @@ class LlmService:
         avoid_text: str = "",
         request_timeout: float | None = None,
     ) -> str:
-        frame = self._session_greeting_frame(telemetry_data)
-        engine = self._fallback_greeting_engine()
-        scorer = self._session_greeting_quality_scorer()
-        if frame is None or engine is None or scorer is None:
-            text = self._fallback_greeting_text(
-                telemetry_data=telemetry_data,
-                reason="missing_greeting_modules",
-                avoid_text=avoid_text,
-            )
-            return self._build_session_greeting_payload(
-                text=text,
-                reason="session_ritual_fallback;missing_greeting_modules",
-                confidence=0.66,
-            )
+        """Generate one startup line through a deliberately context-poor lane.
 
-        # Nhánh này chỉ là lưới an toàn nếu coordinator không phát preset trước.
-        # Với evidence mỏng, lấy thẳng catalog VTuber; tuyệt đối không quay về
-        # deterministic fallback cũ kiểu "Ừm. Lại gặp bạn.".
-        if frame.situation in {"low_evidence_start", "plain_return"} and not frame.active_anchor:
-            preset = None
-            if GreetingPresetResolver is not None:
-                try:
-                    preset = GreetingPresetResolver().resolve_or_default(
-                        frame,
-                        tone="quiet_background",
-                        force=True,
-                    )
-                except Exception:
-                    preset = None
-            text = preset.text if preset is not None else "Tôi lên rồi. Chưa biết hôm nay có gì, nên tôi chưa phán."
-            return self._build_session_greeting_payload(
-                text=text,
-                reason=f"session_ritual_catalog_fallback; situation={frame.situation}",
-                confidence=0.86,
-                quality_note=f"preset={getattr(preset, 'id', 'safe_default')}",
-            )
-
+        Startup has no trustworthy current scene yet. Feeding memory attractors,
+        Ni/Ti/Fe labels or telemetry-shaped prose into the first line made ERIS
+        greet the user as if an old subplot were already happening.
+        """
         system_prompt = (
-            "You are ERIS startup opening-line cognition. Generate candidate opening lines, not analysis. "
-            "The line must be concrete, short, and situated. Keep ERIS voice: guarded, dry, restrained. "
-            "Do not mention prompt, JSON, evidence, telemetry, rules, sentence length, or internal contracts. "
-            "Do not claim seeing the screen. Do not use decorative metaphors unless poetic_permission is high. "
-            "Every implied object must have an anchor in GREETING_FRAME. Never invent a task, hard part, bug, "
-            "schedule, user mischief, current activity, or reason for concern. Before returning a candidate, imagine "
-            "the user asks 'cụ thể là cái gì?'; reject the line if no concrete answer exists in active_anchor or session facts. "
-            "Return exactly one JSON object: {\"candidates\":[\"...\",\"...\",\"...\",\"...\",\"...\"]}."
+            f"{CACHEABLE_CHAT_PREFIX_V2}\n\n"
+            "STARTUP GREETING: Write one natural Vietnamese opening line because ERIS has just started. "
+            "There is no current screen evidence and no active task. Do not mention memory, unfinished work, "
+            "bugs, schedules, telemetry, rules, or an invented reason for the user's return. A plain greeting "
+            "or a small self-contained remark is enough. Usually one sentence under 18 words."
         )
-        if frame.active_anchor:
-            criteria = (
-                "Good opening criteria:\n"
-                "- this is the first line after ERIS restarts; reach for the open thread in active_anchor\n"
-                "- evoke that unfinished thing, as if the thought never fully stopped\n"
-                "- do NOT lead with 'chào'/hello; a greeting is optional and only if it falls out naturally\n"
-                "- no self-meta like 'tôi giữ câu này ngắn'\n"
-                "- no screen/window/tab claims\n"
-                "- no assistant-service phrasing\n"
-                "- no demand for user reply\n"
-                "- every reference must point to active_anchor; do not say 'phần khó nhất' unless the anchor names it\n"
-                "- 1 sentence, usually under 18 words\n"
-            )
-        else:
-            criteria = (
-                "Good opening criteria:\n"
-                "- a light, low-key opening line as bạn reopens ERIS\n"
-                "- a plain greeting is allowed but not required; an unforced remark works too\n"
-                "- do not force a hollow 'chào'\n"
-                "- no self-meta like 'tôi giữ câu này ngắn'\n"
-                "- no screen/window/tab claims\n"
-                "- no assistant-service phrasing\n"
-                "- no demand for user reply\n"
-                "- do not invent a task, problem, schedule, user intention, current activity, or 'gây chuyện' premise\n"
-                "- the only guaranteed fact is that ERIS has just started; personality must come from self-attitude, not fake context\n"
-                "- 1 sentence, usually under 18 words\n"
-            )
-        user_prompt = (
-            f"{frame.to_prompt_block()}\n\n"
-            f"{criteria}"
-            f"Avoid repeating: {re.sub(r'\\s+', ' ', str(avoid_text or '')).strip()[:120] or 'none'}\n"
-        )
+        avoid = re.sub(r"\s+", " ", str(avoid_text or "")).strip()[:160]
+        user_prompt = "ERIS vừa khởi động. Hãy nói câu mở đầu."
+        if avoid:
+            user_prompt += f" Tránh lặp nguyên văn câu gần đây: {avoid}"
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
         try:
-            self._log_final_prompt(messages, channel="directive", stage="session_greeting_candidates")
-            response = self.client.create_chat_completion(
+            self._log_final_prompt(messages, channel="directive", stage="startup_greeting_compact")
+            return self._complete_decision(
                 messages=messages,
-                temperature=0.35,
-                frequency_penalty=0.35,
-                presence_penalty=0.2,
-                max_tokens=220,
-                response_format={"type": "json_object"},
-                grammar=None,
-                timeout=request_timeout,
+                channel="directive",
+                request_timeout=request_timeout,
+                require_text=True,
+                allow_local_fallback=False,
             )
-            raw = self._extract_content(response)
-            self._log_raw_api_text("session_greeting", raw)
-            extracted = self._extract_first_json_object(raw) or raw
-            payload = self._parse_json_object(extracted)
-            candidates = self._extract_candidate_strings(payload)
         except Exception as exc:
-            candidates = []
-            self.logger.info("[session_greeting] candidate generation failed: %s", exc)
-
-        best = scorer.choose_best(candidates, frame, avoid_text=avoid_text)
-        return self._build_session_greeting_payload(
-            text=best.text,
-            reason=f"session_ritual_greeting_cognition; situation={frame.situation}; intent={frame.intent}",
-            confidence=max(0.68, best.score),
-            quality_note=(
-                f"quality={best.score:.2f}; reasons={','.join(best.reasons) or 'none'}; "
-                f"anchor={frame.active_anchor or 'none'}"
-            ),
-        )
+            self.logger.info("[session_greeting] compact lane failed: %s", exc)
+            return self._build_empty_text_fallback(channel="directive")
 
     def generate_directive(
         self,
@@ -4097,6 +3861,7 @@ class LlmService:
         ti_context: str = "",
         ni_context: str = "",
         fe_context: str = "",
+        social_context: str = "",
         appraisal_context: str = "",
         internal_state_context: str = "",
         conversation_context: str = "",
@@ -4130,6 +3895,7 @@ class LlmService:
         )
         ni_context = ""
         fe_context = ""
+        social_context = str(social_context or "").strip()
         appraisal_context = ""
         internal_state_context = ""
         conversation_context = ""
@@ -4152,23 +3918,12 @@ class LlmService:
             ti_context = _distilled.get("ti_context", ti_context)
 
         style_block = self._build_chat_style_block()
-        effective_user_text = raw_user_text or user_message
-        semantic_policy = SemanticAuthorityPolicy.from_env()
-        act = (
-            classify_chat_act(effective_user_text)
-            if semantic_policy.include_chat_act_markers
-            else ChatAct.NORMAL_CHAT
-        )
-        chat_contract = self._build_chat_contract_prompt(effective_user_text, act=act)
         grounding_block = self._build_grounding_context_block(grounding_context)
         memory_block = self._build_memory_context_block(memory_context)
-        relational_repair_contract = ""
 
         # Prefix tĩnh đứng đầu và giữ nguyên giữa các turn để provider có thể
         # cache exact-prefix. Policy thay đổi theo lượt được tách sang block riêng.
-        dynamic_policy_parts = [chat_contract]
-        if relational_repair_contract:
-            dynamic_policy_parts.append(relational_repair_contract)
+        dynamic_policy_parts = []
         if format_retry_context or last_failure:
             retry_context = str(format_retry_context or "").strip()
             failure_flag = str(last_failure or "").strip()
@@ -4180,6 +3935,8 @@ class LlmService:
             state_style_parts.append(f"Ni context:\n{ni_context}")
         if ti_context:
             state_style_parts.append(f"Ti context:\n{ti_context}")
+        if social_context:
+            state_style_parts.append(f"Relationship continuity (observed earlier; context only):\n{social_context}")
         if defusing_context:
             state_style_parts.append(f"Defusing context:\n{defusing_context}")
 
@@ -4260,173 +4017,11 @@ class LlmService:
             escalate=use_escalation_client,
             reasoning_effort=reasoning_effort,
         )
-        guarded = self._guard_chat_output(raw, raw_user_text=effective_user_text)
+        return raw
 
-        if (
-            semantic_policy.include_chat_act_markers
-            and act == ChatAct.INSULT_PROVOCATION
-            and self._chat_text_family(self._decision_payload_text(guarded)) == "uncertainty_dodge"
-        ):
-            retry_messages = [
-                *messages,
-                {
-                    "role": "system",
-                    "content": (
-                        "Reject previous draft. Use dry boundary, not uncertainty dodge. "
-                        "Return one short dry_cold insult_boundary line in the normal decision JSON schema."
-                    ),
-                },
-            ]
-            retry_raw = self._complete_decision(messages=retry_messages, channel="chat")
-            retry_guarded = self._guard_chat_output(retry_raw, raw_user_text=effective_user_text)
-            if self._chat_text_family(self._decision_payload_text(retry_guarded)) != "uncertainty_dodge":
-                return retry_guarded
-            can_llm_repair_chat_act = self.style_client is not None and self.style_client is not self.client
-            if can_llm_repair_chat_act:
-                repaired = self._repair_chat_act_payload_with_llm(
-                    retry_guarded,
-                    act=act,
-                    raw_user_text=effective_user_text,
-                    reason="insult_boundary_after_uncertainty_retry",
-                )
-                if self._chat_text_family(self._decision_payload_text(repaired)) != "uncertainty_dodge":
-                    return repaired
-            if not no_fallback_mode_enabled():
-                fallback_text = self._deterministic_chat_act_fallback_text(act, effective_user_text)
-                if fallback_text:
-                    return self._payload_with_repaired_chat_act_text(
-                        retry_guarded,
-                        act=act,
-                        text=fallback_text,
-                        reason="insult_boundary_fallback_after_uncertainty_retry",
-                    )
-            return retry_guarded
-
-        return guarded
-
-    def generate_director_candidates(
-        self,
-        *,
-        draft_payload: dict,
-        user_message: str,
-        director_contract_prompt: str,
-        conversation_context: str = "",
-        grounding_context: str = "",
-        memory_context: str = "",
-        candidate_count: int = 2,
-    ) -> list[dict]:
-        """Sinh đúng số biến thể mà AdaptiveCandidateController yêu cầu.
-
-        Pass này là tùy chọn. Khi token pressure cao hoặc vừa có 429, governor trả
-        ``allowed=False`` và Director giữ draft/deterministic candidates, thay vì
-        đốt thêm một request chỉ để diễn đạt cùng câu bằng ba kiểu tóc khác nhau.
-        """
-
-        from runtime.runtime_settings_store import runtime_text
-        candidate_mode = runtime_text("chat", "director_candidate_mode", default="adaptive").strip().lower()
-        if candidate_mode in {"0", "false", "no", "off", "disabled"}:
-            return []
-        try:
-            requested_count = max(0, min(3, int(candidate_count)))
-        except (TypeError, ValueError):
-            requested_count = 0
-        if requested_count < 2 or not isinstance(draft_payload, dict):
-            return []
-        draft_text = self._coerce_text_value(draft_payload.get("text", "")).strip()
-        if not draft_text:
-            return []
-        if self._looks_like_prompt_leak(draft_text) or self._looks_like_malformed_decision_json(draft_text):
-            return []
-
-        client = self.style_client or self.fallback_client or self.client
-        if client is None or not callable(getattr(client, "create_chat_completion", None)):
-            return []
-
-        compact_context = "\n".join(
-            part
-            for part in (
-                _compact_for_candidate_context(conversation_context, 360),
-                _compact_for_candidate_context(grounding_context, 360),
-                _compact_for_candidate_context(memory_context, 240),
-            )
-            if part
-        )
-        system_prompt = (
-            "Bạn là surface candidate generator của ERIS. Từ draft đã đúng ý, viết các biến thể ngắn hơn/sống hơn "
-            "nhưng giữ nguyên nghĩa và evidence. Không thêm fact, không nhắc runtime/key/quota/provider, không đưa "
-            "stage direction vào text. Trả đúng một JSON object."
-        )
-        user_prompt = (
-            f"{director_contract_prompt or '[DIRECTOR_CONTRACT unavailable]'}\n\n"
-            f"User: {user_message}\n\n"
-            f"Draft JSON: {json.dumps(draft_payload, ensure_ascii=False, separators=(',', ':'))}\n\n"
-            + (f"Continuity context, không dùng để thêm claim: {compact_context}\n\n" if compact_context else "")
-            + (
-                "Schema: {\"candidates\":[{\"text\":\"...\",\"intent\":\"...\","
-                "\"should_speak\":true,\"confidence\":0.0,\"delivery_hint\":\"...\","
-                "\"nonverbal_cue\":\"\",\"stage_motion\":\"...\",\"evidence_refs\":[]}]}\n"
-                f"Sinh đúng {requested_count} candidate tiếng Việt, nói được ngay. Candidate đầu gần draft; "
-                "các candidate sau thay nhịp/tone trong contract. Không analysis, markdown hay giải thích."
-            )
-        )
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-        requested_output = 180 + requested_count * 110
-        pressure_plan = self._pressure_plan_for_client(
-            client,
-            channel="director_candidates",
-            messages=messages,
-            output_tokens=requested_output,
-            optional_pass=True,
-        )
-        if not pressure_plan.allowed:
-            self.logger.info(
-                "[director_candidates] shed provider=%s pressure=%.2f level=%s",
-                pressure_plan.provider,
-                pressure_plan.snapshot.pressure,
-                pressure_plan.snapshot.level,
-            )
-            return []
-        allowed_count = min(requested_count, pressure_plan.snapshot.max_model_candidates)
-        if allowed_count < 2:
-            return []
-        if allowed_count != requested_count:
-            user_prompt = user_prompt.replace(
-                f"Sinh đúng {requested_count} candidate",
-                f"Sinh đúng {allowed_count} candidate",
-            )
-            messages[-1] = {"role": "user", "content": user_prompt}
-
-        from llm.token_budget import budget_existing_messages
-
-        governed_messages = budget_existing_messages(
-            messages,
-            total_tokens=pressure_plan.prompt_limit + pressure_plan.output_tokens,
-            output_reserve=pressure_plan.output_tokens,
-        )
-        try:
-            response = client.create_chat_completion(
-                messages=governed_messages,
-                temperature=0.45,
-                frequency_penalty=0.45,
-                presence_penalty=0.15,
-                max_tokens=pressure_plan.output_tokens,
-                response_format={"type": "json_object"},
-                grammar=None,
-            )
-            raw = self._extract_content(response)
-            cleaned = strip_reasoning_envelope(raw)
-            candidate_json = (
-                cleaned if self._parse_json_object(cleaned) is not None
-                else extract_last_valid_json_object(cleaned or raw)
-            )
-            payload = self._parse_json_object(candidate_json) or {}
-            return self._extract_candidate_payloads(payload)[:allowed_count]
-        except Exception as exc:  # noqa: BLE001
-            self.logger.debug("[director_candidates] skipped: %s", exc)
-            return []
+    def generate_director_candidates(self, **_kwargs) -> list[dict]:
+        """Retired compatibility endpoint: the main model owns the first valid Decision."""
+        return []
 
     def run_ni_meta_critic(
         self,

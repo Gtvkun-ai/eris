@@ -139,6 +139,8 @@ def build_panel_state() -> dict[str, Any]:
     tom = snap.get("tom_read") if isinstance(snap.get("tom_read"), dict) else None
     n1 = snap.get("n1") if isinstance(snap.get("n1"), dict) else None
     signal_log = snap.get("signal_log") if isinstance(snap.get("signal_log"), list) else []
+    social_observer = snap.get("social_observer") if isinstance(snap.get("social_observer"), dict) else {}
+    relationship_state = snap.get("relationship_state") if isinstance(snap.get("relationship_state"), dict) else {}
     channel = str(snap.get("channel") or "chat") if snap else "chat"
 
     return {
@@ -157,6 +159,8 @@ def build_panel_state() -> dict[str, Any]:
         "n2": {"live": dev["live"], "axes": dev["axes"], "sentence": dev["sentence"], "attachment": _attachment()},
         "interiority": _interiority(),
         "signal_log": signal_log,
+        "social_observer": social_observer,
+        "relationship_state": relationship_state,
         "context": _context_tags(),
         "flags": flags,
     }

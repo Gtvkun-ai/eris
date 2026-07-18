@@ -131,8 +131,20 @@ class ChatCycleMixin:
             self._relational_permission_session_id_value = session_id
         return session_id
 
-    def _prepare_pragmatic_social_turn(self, user_text: str, *, source_turn_id: str, now: float):
-        """Chạy pragmatic intercept nhưng tuyệt đối không trả lời thay Qwen."""
+    def _prepare_pragmatic_social_turn(
+        self,
+        user_text: str,
+        *,
+        source_turn_id: str,
+        now: float,
+        shadow_only: bool = False,
+    ):
+        """Chạy pragmatic intercept ở compatibility mode.
+
+        Khi AI social observer đang làm nguồn state chính, classifier cũ chỉ được
+        phép ghi telemetry. Nó không mutate permission state, không tạo event commit
+        và không được xem là một intercept thật.
+        """
         from runtime.pragmatic_intercept import intercept_social_turn
 
         state = self._ensure_relational_permission_state()
@@ -166,7 +178,7 @@ class ChatCycleMixin:
             session_id=self._relational_permission_session_id(),
             now=now,
             ttl_seconds=ttl_seconds,
-            mutate_state=bool(getattr(rollout, "apply", True)),
+            mutate_state=(not shadow_only) and bool(getattr(rollout, "apply", True)),
         )
         try:
             from runtime.observability import ensure_observability
@@ -175,6 +187,18 @@ class ChatCycleMixin:
         except Exception:
             pass
         self.current_social_rollout_decision = rollout
+
+        if shadow_only:
+            return replace(
+                result,
+                intercepted=False,
+                state_changed=False,
+                event_type="",
+                response_mode="normal",
+                reason="ai_observer_authoritative_shadow",
+                forbidden_patterns=(),
+                preferred_shapes=(),
+            )
 
         if rollout is not None and not bool(getattr(rollout, "apply", False)):
             # Giữ act/confidence để debug, nhưng downstream không được xem nó như
@@ -229,107 +253,6 @@ class ChatCycleMixin:
                 self.logger.debug("[pragmatic intercept] event request skipped: %s", exc)
             except Exception:
                 pass
-
-    def _build_relational_voice_stance(
-        self,
-        user_text: str,
-        *,
-        frame,
-        fe_plan,
-        ti_report,
-        conversation_report,
-        relationship_report,
-    ):
-        """Project the already-computed cognition reports into a CognitionStance.
-
-        Register is derived only from existing cheap signals (ti_report.mode +
-        classify_chat_act + a local code heuristic) — no extra model call.
-        """
-        from runtime.relational_voice_seed_adapter import (
-            CognitionStance,
-            classify_chat_register,
-            detect_relational_act,
-        )
-
-        try:
-            from llm.service import classify_chat_act
-            chat_act_name = classify_chat_act(user_text).value
-        except Exception:
-            chat_act_name = ""
-
-        adapter = self._ensure_relational_voice_seed_adapter()
-        scope = adapter.config.scope
-        ti_mode = str(getattr(ti_report, "mode", "") or "")
-        register = classify_chat_register(user_text, ti_mode=ti_mode, chat_act_name=chat_act_name)
-        act = detect_relational_act(user_text)
-
-        conv_state = getattr(conversation_report, "state", None)
-        rel_state = getattr(relationship_report, "state", None)
-        flags: tuple[str, ...] = ()
-        flag_imperatives: tuple[str, ...] = ()
-        conv_ctx = ""
-        if conv_state is not None:
-            flags = tuple(getattr(conv_state, "adaptation_flags", ()) or ())
-            try:
-                flag_imperatives = tuple(conv_state._flag_imperatives())
-            except Exception:
-                flag_imperatives = ()
-            try:
-                conv_ctx = conv_state.to_prompt_context()
-            except Exception:
-                conv_ctx = ""
-        try:
-            appraisal_ctx = self._build_appraisal_context(frame.appraisal, frame=frame)
-        except Exception:
-            appraisal_ctx = ""
-
-        return CognitionStance(
-            register=register,
-            scope=scope,
-            act=act,
-            fe_tone=str(getattr(fe_plan, "tone_label", "") or ""),
-            fe_intent=str(getattr(fe_plan, "intent_label", "") or ""),
-            appraisal_context=appraisal_ctx,
-            adaptation_flags=flags,
-            flag_imperatives=flag_imperatives,
-            preferred_distance=float(getattr(rel_state, "preferred_distance", 0.0) or 0.0),
-            attachment_visibility=float(getattr(rel_state, "attachment_visibility", 0.0) or 0.0),
-            trust=float(getattr(rel_state, "trust", 0.0) or 0.0),
-            conversation_prompt_context=conv_ctx,
-        )
-
-    def _build_relational_voice_seed_decision(
-        self,
-        user_text: str,
-        *,
-        frame,
-        fe_plan,
-        ti_report,
-        conversation_report,
-        relationship_report,
-    ):
-        # An optional pre-LLM path must never break the chat cycle. Any failure
-        # here falls through to the legacy generate_chat_reply path.
-        try:
-            from runtime.relational_voice_seed_adapter import should_use_voice_seed
-
-            stance = self._build_relational_voice_stance(
-                user_text,
-                frame=frame,
-                fe_plan=fe_plan,
-                ti_report=ti_report,
-                conversation_report=conversation_report,
-                relationship_report=relationship_report,
-            )
-            if not should_use_voice_seed(stance.register, stance.scope, stance.act):
-                return None
-            return self._ensure_relational_voice_seed_adapter().try_answer(user_text, stance=stance)
-        except Exception as exc:
-            try:
-                self.logger.warning("relational_voice_seed hook failed; using legacy path: %s", exc)
-            except Exception:
-                pass
-            return None
 
     def _run_chat_cycle(self, user_text: str, *, user_timestamp: float | None = None) -> None:
         cycle_start = time.time() if user_timestamp is None else float(user_timestamp)
@@ -424,10 +347,18 @@ class ChatCycleMixin:
             inferred_pos_x=self.inferred_pos_x,
         )
 
-        # Outcome của lượt trước chỉ thật sự biết khi user phản hồi ở lượt này.
-        # Nếu chờ finalize ngay trong turn trước thì OutcomeObserver chỉ đang đoán trong chân không,
-        # mà đoán trong chân không là thú vui nguy hiểm của chatbot.
-        self._observe_previous_turn_feedback(user_text)
+        social_observer = getattr(self, "social_observer", None)
+        observer_state_authority = bool(
+            social_observer is not None
+            and str(os.getenv("ERIS_SOCIAL_OBSERVER_STATE_AUTHORITY", "1") or "1").lower()
+            in {"1", "true", "yes", "on"}
+        )
+
+        # Khi AI observer làm nguồn social state, OutcomeObserver regex cũ không
+        # còn được ghi feedback vào frame trước. Nó chỉ là fallback khi lane model
+        # phụ bị tắt hoàn toàn.
+        if not observer_state_authority:
+            self._observe_previous_turn_feedback(user_text)
         user_turn_meta = {"channel": "chat"}
         if speech_interrupt_event is not None and callable(getattr(speech_interrupt_event, "to_meta", None)):
             user_turn_meta["speech_interrupt"] = speech_interrupt_event.to_meta()
@@ -440,10 +371,17 @@ class ChatCycleMixin:
         )
         memory_turn_id = f"session_turn:{user_turn.index}"
 
+        user_turn.meta["social_state_authority"] = (
+            "ai_observer" if observer_state_authority else "legacy_runtime"
+        )
+
+        # Classifier xã hội cũ chỉ còn shadow telemetry khi observer AI đang bật.
+        # Giữ adapter để code legacy không vỡ import, nhưng downstream nhận appraisal
+        # rỗng và vì vậy không được sửa Ti/Affect/history/memory của lượt hiện tại.
         # Dual-Axis Repair chạy sớm để Ti không nhìn một chữ "nhớ" rồi tự phong
         # cả lượt thành tình cảm. Đây mới là appraisal sơ bộ; sau Affect/Feedback
         # nó sẽ được refine lần nữa, không phải một regex đứng trên ban vàng.
-        from runtime.dual_axis_repair import DualAxisRepairAppraiser
+        from runtime.dual_axis_repair import DualAxisRepairAppraiser, RepairAppraisal
 
         # Một engine duy nhất tạo snapshot xã hội. DualAxisRepair chỉ là projection
         # tương thích, không còn tự giữ regex/threshold riêng.
@@ -451,40 +389,50 @@ class ChatCycleMixin:
         if repair_appraiser is None:
             repair_appraiser = DualAxisRepairAppraiser.for_host(self)
             self.dual_axis_repair_appraiser = repair_appraiser
-        preliminary_repair = repair_appraiser.appraise(
+        legacy_preliminary_repair = repair_appraiser.appraise(
             user_text=user_text,
             previous_assistant_text=self.last_chat_answer,
             previous_user_text=str(getattr(self, "last_user_text_for_semantics", "") or ""),
             phase="preliminary",
         )
+        if observer_state_authority:
+            user_turn.meta["legacy_social_appraisal_shadow"] = (
+                legacy_preliminary_repair.social_snapshot.to_dict()
+            )
+            preliminary_repair = RepairAppraisal.empty()
+        else:
+            preliminary_repair = legacy_preliminary_repair
+            user_turn.meta["social_appraisal_preliminary"] = (
+                preliminary_repair.social_snapshot.to_dict()
+            )
         self.current_repair_appraisal = preliminary_repair
         self.current_social_appraisal = preliminary_repair.social_snapshot
-        user_turn.meta["social_appraisal_preliminary"] = preliminary_repair.social_snapshot.to_dict()
 
-        # Social Cognition V2 chọn response move trước khi model chính viết câu.
-        # Lịch sử chỉ lấy text public; private mind không được giả làm bằng chứng xã hội.
+        # AI observer chạy song song với model chính. Nó chỉ đọc social event và
+        # cập nhật state sau public commit; không tạo response_move, không chặn và
+        # không sửa câu. Lượt hiện tại vẫn được GPT chính tự hiểu trực tiếp.
         social_contract = None
-        social_engine = getattr(self, "social_cognition_v2", None)
-        if social_engine is not None:
+        social_observer_ticket = None
+        if social_observer is not None:
             try:
                 social_history = tuple(
                     str(item.get("content", "") or "")
                     for item in (getattr(self, "chat_history", ()) or ())[-10:]
                     if isinstance(item, dict) and str(item.get("content", "") or "").strip()
                 )
-                social_contract = social_engine.analyze(
-                    user_text,
+                social_observer_ticket = social_observer.submit(
+                    user_text=user_text,
                     previous_assistant_text=str(getattr(self, "last_chat_answer", "") or ""),
                     previous_user_text=str(getattr(self, "last_user_text_for_semantics", "") or ""),
                     history=social_history,
-                    social_snapshot=preliminary_repair.social_snapshot,
-                    now=cycle_start,
+                    turn_id=memory_turn_id,
+                    metadata_target=user_turn.meta,
+                    previous_frame=getattr(self, "last_cognitive_frame", None),
                 )
-                self.current_social_contract = social_contract
-                user_turn.meta["social_cognition_v2"] = social_contract.to_dict()
+                user_turn.meta["social_observer_pending"] = True
             except Exception as exc:
-                self.logger.warning("[social cognition v2] analyze failed: %s", exc)
-                self.current_social_contract = None
+                self.logger.warning("[social observer] submit failed: %s", exc)
+                social_observer_ticket = None
 
         # Lời chào/repair xã hội ngắn đi fast lane: vẫn qua deterministic guard
         # và FinalSpeechAuthority, nhưng không gọi thêm critic/candidate model.
@@ -502,6 +450,7 @@ class ChatCycleMixin:
             user_text,
             source_turn_id=memory_turn_id,
             now=cycle_start,
+            shadow_only=observer_state_authority,
         )
         # Result chỉ sống trong turn hiện tại để final guard/director đọc.
         self.current_pragmatic_intercept_result = pragmatic_result
@@ -591,7 +540,7 @@ class ChatCycleMixin:
         )
         # Refine bằng affect + relational feedback. Trục epistemic và relational
         # được giữ riêng: user có thể vừa sửa claim sai, vừa mỉa/chọc thân mật.
-        repair_appraisal = repair_appraiser.appraise(
+        legacy_repair_appraisal = repair_appraiser.appraise(
             user_text=user_text,
             previous_assistant_text=self.last_chat_answer,
             previous_user_text=str(getattr(self, "last_user_text_for_semantics", "") or ""),
@@ -599,6 +548,13 @@ class ChatCycleMixin:
             relational_feedback=relational_feedback,
             phase="final",
         )
+        if observer_state_authority:
+            user_turn.meta["legacy_social_appraisal_final_shadow"] = (
+                legacy_repair_appraisal.social_snapshot.to_dict()
+            )
+            repair_appraisal = RepairAppraisal.empty()
+        else:
+            repair_appraisal = legacy_repair_appraisal
         self.current_repair_appraisal = repair_appraisal
         self.current_social_appraisal = repair_appraisal.social_snapshot
         if repair_appraisal.active and str(getattr(self, "last_system_action", "") or "").strip():
@@ -655,6 +611,8 @@ class ChatCycleMixin:
         )
         frame.metadata["social_appraisal"] = repair_appraisal.social_snapshot.to_dict()
         frame.social_appraisal = repair_appraisal.social_snapshot
+        if social_observer_ticket is not None:
+            frame.metadata["social_observer_ticket_id"] = social_observer_ticket.ticket_id
         repair_lifetime = getattr(self, "repair_state_controller", None)
         if repair_lifetime is not None:
             try:
@@ -848,6 +806,17 @@ class ChatCycleMixin:
                 getattr(sensed_internal_state, "relationship_dynamics", None),
                 relationship_event,
             )
+        if observer_state_authority:
+            # Relationship report cũ chỉ còn để quan sát/debug. State authoritative
+            # sẽ được AI observer nudge sau public commit, không phải classifier
+            # deterministic chen vào trước khi GPT nói.
+            relationship_report = replace(
+                relationship_report,
+                state=getattr(sensed_internal_state, "relationship_dynamics", relationship_report.state),
+                deltas={},
+                notes=tuple((*tuple(getattr(relationship_report, "notes", ()) or ()), "shadow_only:ai_observer_authoritative")),
+                prompt_context="",
+            )
         sensed_internal_state = replace(
             sensed_internal_state,
             conversation_dynamics=conversation_report.state,
@@ -925,21 +894,22 @@ class ChatCycleMixin:
             turn_semantics_report.identity_pressure,
             turn_semantics_report.correction_pressure,
         )
-        if repair_appraisal.suppress_previous_claim_for_turn:
-            try:
-                from memory.provenance_policy import GLOBAL_CONTESTED_CLAIMS
-                GLOBAL_CONTESTED_CLAIMS.mark(str(getattr(self, "last_chat_answer", "") or ""))
-            except Exception:
-                pass
-            self._invalidate_last_assistant_history(note=repair_appraisal.history_invalidation_note())
-            self.logger.info(
-                "[social appraisal] lowered previous claim authority | posture=%s contest=%.2f playful=%.2f",
-                repair_appraisal.response_strategy,
-                repair_appraisal.mismatch_score,
-                repair_appraisal.playful_score,
-            )
-        else:
-            self._maybe_invalidate_last_assistant_history(user_text)
+        if not observer_state_authority:
+            if repair_appraisal.suppress_previous_claim_for_turn:
+                try:
+                    from memory.provenance_policy import GLOBAL_CONTESTED_CLAIMS
+                    GLOBAL_CONTESTED_CLAIMS.mark(str(getattr(self, "last_chat_answer", "") or ""))
+                except Exception:
+                    pass
+                self._invalidate_last_assistant_history(note=repair_appraisal.history_invalidation_note())
+                self.logger.info(
+                    "[social appraisal] lowered previous claim authority | posture=%s contest=%.2f playful=%.2f",
+                    repair_appraisal.response_strategy,
+                    repair_appraisal.mismatch_score,
+                    repair_appraisal.playful_score,
+                )
+            else:
+                self._maybe_invalidate_last_assistant_history(user_text)
         self._append_chat_history("user", user_text)
         self.logger.info("[CHAT HISTORY] %s", self._chat_history_for_llm(limit=8))
         self.logger.info("[LAST USER INTENT] %s", self.last_user_intent or "<empty>")
@@ -1181,9 +1151,8 @@ class ChatCycleMixin:
         # social move, repair score, novelty marker và behavior debt vẫn có thể
         # được log/commit, nhưng không đứng giữa user và model chính.
         planned_ti_context = ""
-        if social_contract is not None:
-            frame.metadata["social_cognition_v2"] = social_contract.to_dict()
-            frame.debug_notes.append(f"social_move={social_contract.response_move}")
+        # Social observer không tạo contract cho prompt/public text. Kết quả của
+        # nó được commit hậu kỳ và có hiệu lực từ lượt kế tiếp.
         # Chỉ interrupt thật mới được thêm vào prompt. Lịch sử public đã có trong
         # chat_history; semantic/director/social marker không được nhân đôi rồi đứng
         # giữa câu người dùng và model chính.
@@ -1197,68 +1166,8 @@ class ChatCycleMixin:
         # and can push out the previous turn during context shrink.
         llm_chat_history = self._chat_history_for_llm(limit=16)[:-1]
         self.logger.info("[LLM CHAT HISTORY] %s", llm_chat_history[-8:])
-        memory_recall_decision = (
-            self._build_memory_recall_decision(user_text)
-            if semantic_policy.allow_pre_llm_intercepts
-            and repair_appraisal.social_snapshot.claim_policy.memory_write_allowed
-            else None
-        )
-        if memory_recall_decision is not None:
-            self._set_cognitive_action_plan(
-                frame,
-                should_speak=True,
-                speech_intent="user_requested",
-                speech_act="answer",
-                reason="Memory recall adapter answered before LLM chat.",
-                snapshot=snapshot,
-                user_text=user_text,
-                concrete_signals=self._concrete_screen_signals(snapshot),
-                ti_report=ti_report,
-                fe_plan=fe_plan,
-                notes=("memory_recall",),
-            )
-            memory_recall_decision = self._apply_chat_final_guards(
-                memory_recall_decision,
-                user_text=user_text,
-                frame=frame,
-            )
-            self._commit_chat_decision(memory_recall_decision, fe_plan, frame=frame)
-            self.last_user_text_for_semantics = user_text
-            return
-        relational_seed_decision = (
-            self._build_relational_voice_seed_decision(
-                user_text,
-                frame=frame,
-                fe_plan=fe_plan,
-                ti_report=ti_report,
-                conversation_report=conversation_report,
-                relationship_report=relationship_report,
-            )
-            if semantic_policy.allow_relational_pre_llm_intercept
-            else None
-        )
-        if relational_seed_decision is not None:
-            self._set_cognitive_action_plan(
-                frame,
-                should_speak=True,
-                speech_intent="user_requested",
-                speech_act="answer",
-                reason="Relational voice-seed path answered before LLM chat.",
-                snapshot=snapshot,
-                user_text=user_text,
-                concrete_signals=self._concrete_screen_signals(snapshot),
-                ti_report=ti_report,
-                fe_plan=fe_plan,
-                notes=("relational_voice_seed",),
-            )
-            relational_seed_decision = self._apply_chat_final_guards(
-                relational_seed_decision,
-                user_text=user_text,
-                frame=frame,
-            )
-            self._commit_chat_decision(relational_seed_decision, fe_plan, frame=frame)
-            self.last_user_text_for_semantics = user_text
-            return
+        # Memory is supplied as evidence/context; it no longer bypasses the main model.
+        # Relational voice-seed prepass retired: the main model owns the whole turn.
         if semantic_policy.qwen_first:
             # Qwen is always the first semantic pass. Medium thinking is the
             # baseline, not something unlocked by another keyword classifier.
@@ -1277,11 +1186,20 @@ class ChatCycleMixin:
             "user_message": chat_user_message,
             "raw_user_text": user_text,
             "ni_context": "",
-            "ti_context": planned_ti_context,
+            "ti_context": "",
             "fe_context": "",
+            "social_context": (
+                social_observer.build_prompt_context(self)
+                if (
+                    social_observer is not None
+                    and str(os.getenv("ERIS_SOCIAL_OBSERVER_PROMPT_CONTEXT", "1") or "1").lower()
+                    in {"1", "true", "yes", "on"}
+                )
+                else ""
+            ),
             "appraisal_context": "",
             "internal_state_context": "",
-            "conversation_context": "",
+            "conversation_context": planned_ti_context,
             "memory_context": memory_context,
             "grounding_context": grounding_report.prompt_context,
             "screen_image_data_uri": screen_image_data_uri,
@@ -1405,210 +1323,30 @@ class ChatCycleMixin:
         self._log_raw_llm_output("chat", raw)
         self._log_pre_parser("chat", raw)
         decision = self.parser.parse(raw, user_hint=user_text)
-        from runtime.final_passthrough_policy import (
-            PublicSpeechSnapshot,
-            final_passthrough_enabled,
-        )
-        raw_public_speech = (
-            PublicSpeechSnapshot.capture(decision)
-            if final_passthrough_enabled() and str(getattr(decision, "text", "") or "").strip()
-            else None
-        )
-        if format_repair_fallback:
-            decision.intent = "format_repair_fallback"
-            decision.action = "guarded_reply"
-            decision.reasoning_tags = ("format_repair", "deterministic_fallback")
-            decision.should_speak = True
-            decision.confidence = 0.45
-            decision.parse_mode = "format_repair_fallback"
-            decision.failure_meta = build_failure_meta(
-                kind="format_violation",
-                stage="chat_cycle_format_recovery",
-                origin="chat_cycle",
-                public_surface="service_fallback",
-                recoverable=True,
-            )
-            decision.debug_trace = self._join_debug_trace(
-                decision.debug_trace,
-                "format_violation_recovered",
-            )
         if no_fallback_block:
-            decision.intent = "no_fallback_block"
-            decision.action = "none"
-            decision.reasoning_tags = ("no_fallback_mode", "format_error")
-            decision.should_speak = True
-            decision.confidence = 0.0
-            decision.parse_mode = "no_fallback_block"
+            decision.should_speak = False
+            decision.text = ""
+            decision.parse_mode = "format_block_silent"
             decision.failure_meta = build_failure_meta(
                 kind="format_violation",
                 stage="chat_cycle_format_block",
                 origin="chat_cycle",
-                public_surface="blocked",
+                public_surface="silent",
                 recoverable=False,
             )
-        # Candidate selection được dời xuống sau TI/escalation/final guards. Nếu
-        # chọn ở đây rồi các tầng sau lại sửa text, ``selected_candidate`` chỉ còn
-        # là một tấm biên bản đẹp nhưng sai sự thật.
-        self._log_decision_stage("chat", "after_parser", decision)
-        self._log_decision_stage("chat", "pre_ti", decision)
-        decision = self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text, vision_grounded=bool(screen_image_data_uri) or bool(getattr(self, "vision_facts", None)))
-        self._log_decision_stage("chat", "after_ti", decision)
-        if semantic_policy.bounded_refine_enabled:
-            decision = self._maybe_escalate_chat_decision(
-                decision,
-                user_text=user_text,
-                snapshot=snapshot,
-                chat_generation_kwargs=chat_generation_kwargs,
-                ti_report=ti_report,
-            )
-        self._log_decision_stage("chat", "after_escalation", decision)
-        decision = self._execute_system_action(decision, snapshot=snapshot, frame=frame)
-        decision = self._apply_chat_final_guards(decision, user_text=user_text, frame=frame)
-        decision = self._apply_social_cognition_review(decision, user_text=user_text)
-        from runtime.dual_axis_repair import apply_repair_output_guard
-        from runtime.final_passthrough_policy import audit_only, final_passthrough_enabled
 
-        if final_passthrough_enabled():
-            decision = audit_only(decision, "dual_axis_repair_output")
-        else:
-            decision = apply_repair_output_guard(decision, repair_appraisal)
-        # Lưới trung tâm: kể cả một module cũ còn lén sửa text, khôi phục đúng
-        # Decision public từ lần parse đầu. Tool state/result vẫn được giữ.
-        if raw_public_speech is not None:
-            decision = raw_public_speech.restore(decision, stage="chat_cycle_precommit")
-        # Main model đã tạo Decision hợp lệ. Không đi vòng qua director/candidate
-        # pipeline ở chat production; stage vẫn nhận motion/tool metadata bình thường.
-        decision.director_finalized = True
-        decision.director_meta = {"repair_action": "main_model_final", "candidate_count": 1}
+        self._log_decision_stage("chat", "after_parser", decision)
+        # Ti may still normalize motion metadata, but it has no text-edit authority.
+        decision = self.ti_governor.enforce_decision(
+            decision,
+            ti_report,
+            user_hint=user_text,
+            vision_grounded=bool(screen_image_data_uri) or bool(getattr(self, "vision_facts", None)),
+        )
+        decision = self._execute_system_action(decision, snapshot=snapshot, frame=frame)
         self._commit_chat_decision(decision, fe_plan, frame=frame)
         self.last_user_text_for_semantics = user_text
         return
-
-    def _apply_social_cognition_review(self, decision: Decision, *, user_text: str) -> Decision:
-        """Legacy compatibility: social cognition no longer rewrites public text."""
-        return decision
-
-    def _apply_social_cognition_surface(self, decision: Decision, *, user_text: str, after_director: bool = False) -> Decision:
-        engine = getattr(self, "social_cognition_v2", None)
-        if engine is None:
-            return decision
-        try:
-            return engine.apply_surface_policy(decision, user_text=user_text, after_director=after_director)
-        except Exception as exc:
-            self.logger.debug("[social cognition v2] surface policy failed: %s", exc)
-            return decision
-
-    def _finalize_chat_director_decision(
-        self,
-        decision: Decision,
-        *,
-        user_text: str,
-        frame,
-        chat_generation_kwargs: dict,
-        skip_candidates: bool = False,
-    ) -> Decision:
-        """Tạo đúng một FinalDecision trước khi commit chat.
-
-        DirectorContext, content hook, candidate selection, hard gate và repair
-        đều đi qua ``DirectorGenerationPipeline``. Quyết định trả về được đóng
-        dấu ``director_finalized`` để precommit/stage output tái sử dụng metadata
-        thay vì chấm lại rồi vô tình cho kết quả khác.
-        """
-
-        from runtime.final_passthrough_policy import audit_only, final_passthrough_enabled
-        if final_passthrough_enabled():
-            decision.director_finalized = True
-            decision.director_meta = {"repair_action": "raw_passthrough", "candidate_count": 1}
-            return audit_only(decision, "director_finalize")
-
-        try:
-            from runtime.director_generation import DirectorGenerationPipeline
-            from runtime.director_trace import DirectorTraceStore
-
-            pipeline = getattr(self, "director_generation_pipeline", None)
-            if pipeline is None:
-                trace_store = getattr(self, "director_trace_store", None)
-                if trace_store is None:
-                    trace_store = DirectorTraceStore()
-                    self.director_trace_store = trace_store
-                pipeline = DirectorGenerationPipeline(
-                    director_builder=getattr(self, "director_context_builder", None),
-                    performance_builder=getattr(self, "performance_context_builder", None),
-                    contract_builder=getattr(self, "director_contract_builder", None),
-                    stage_scorer=getattr(self, "stage_scorer", None),
-                    content_harvester=getattr(self, "content_harvester", None),
-                    trace_store=trace_store,
-                    observability=getattr(self, "observability", None),
-                    rollout_controller=getattr(self, "rollout_controller", None),
-                    session_id=self._relational_permission_session_id(),
-                )
-                self.director_generation_pipeline = pipeline
-                # Chia sẻ instance để các đường autonomous/legacy dùng cùng
-                # session id, scorer và content state; không sinh thêm "Eris song
-                # sinh" chỉ vì lazy-init ở hai file khác nhau.
-                self.director_context_builder = pipeline.director_builder
-                self.performance_context_builder = pipeline.performance_builder
-                self.director_contract_builder = pipeline.contract_builder
-                self.stage_scorer = pipeline.stage_scorer
-                self.content_harvester = pipeline.content_harvester
-
-            prepared = pipeline.prepare(
-                runtime=self,
-                frame=frame,
-                payload=decision.to_payload(),
-                user_text=user_text,
-                channel="chat",
-                harvest_content=True,
-            )
-            final = pipeline.finalize(
-                draft_decision=decision,
-                prepared=prepared,
-                llm_service=None if skip_candidates else self.llm_service,
-                conversation_context=str(chat_generation_kwargs.get("conversation_context", "") or ""),
-                grounding_context=str(chat_generation_kwargs.get("grounding_context", "") or ""),
-                memory_context=str(chat_generation_kwargs.get("memory_context", "") or ""),
-                generate_candidates=not skip_candidates,
-            )
-            self.last_final_decision = final
-            self.logger.info(
-                "[director final] trace=%s scene=%s candidates=%d selected=%d action=%s text=%r",
-                final.trace.trace_id,
-                final.trace.scene_mode,
-                final.trace.candidate_count,
-                final.trace.selected_index,
-                final.trace.repair_action,
-                final.decision.text,
-            )
-            return final.to_decision()
-        except Exception as exc:  # noqa: BLE001
-            # Pipeline lỗi thì giữ Decision đã qua final guards; precommit legacy
-            # vẫn còn làm lưới an toàn. Không để telemetry/selection phụ giết chat.
-            self.logger.warning("[director final] fallback to legacy precommit: %s", exc)
-            return decision
-
-    def _maybe_apply_director_candidate_rerank(
-        self,
-        decision: Decision,
-        *,
-        user_text: str,
-        frame,
-        chat_generation_kwargs: dict,
-        skip: bool = False,
-    ) -> Decision:
-        """Compatibility shim cho plugin cũ.
-
-        Tên hàm được giữ để extension ngoài repo không vỡ import, nhưng mọi logic
-        đã chuyển vào ``_finalize_chat_director_decision``. Không còn một scorer
-        thứ hai sống bí mật dưới cái tên "rerank" nữa.
-        """
-
-        return self._finalize_chat_director_decision(
-            decision,
-            user_text=user_text,
-            frame=frame,
-            chat_generation_kwargs=chat_generation_kwargs,
-            skip_candidates=skip,
-        )
 
     def _recall_repair_suppression(self, user_text: str):
         """Recall ký ức sửa lỗi quan hệ/tâm lý và rút ra tín hiệu siết cho lượt này.
@@ -1637,87 +1375,34 @@ class ChatCycleMixin:
             return None
 
     def _build_chat_format_block_raw(self, exc: FormatViolationException, *, switched_api: bool = False) -> str:
-        """Block payload when every provider (gemma retries + Groq switch-API)
-        breaks the format contract. We refuse to fabricate a reassurance line and
-        surface an honest block instead.
-        """
         reason = str(getattr(exc, "reason", "") or exc)
-        if no_fallback_mode_enabled():
-            return build_no_fallback_payload(
-                channel="chat",
-                reason=reason,
-                should_speak=True,
-                confidence=0.0,
-                reasoning_tags=("format_block",),
-            )
         payload = {
-            "text": (
-                "Tôi chặn lượt này vì câu vừa rồi lệch khỏi đường nói sạch."
-            ),
-            "intent": "no_fallback_block",
-            "action": "none",
-            "reasoning_tags": [
-                "format_block",
-                "switch_api_exhausted" if switched_api else "format_error",
-            ],
-            "should_speak": True,
-            "confidence": 0.0,
+            "text": "",
+            "should_speak": False,
             "animation": "stand",
+            "next_animation": "",
             "direction": 0,
             "target_x": -1.0,
             "bounce_action": "",
-            "extracted_fact": "",
-            "debug_trace": f"format_violation_blocked: {reason[:180]}",
-            "next_animation": "",
             "system_action": "",
             "action_input": "",
-            "parse_mode": "no_fallback_block",
+            "delivery_hint": "",
+            "nonverbal_cue": "",
+            "stage_motion": "",
             "failure_meta": build_failure_meta(
                 kind="format_violation",
                 stage="chat_format_block",
                 origin="chat_cycle",
-                public_surface="blocked",
+                public_surface="silent",
                 recoverable=False,
             ),
         }
         return json.dumps(payload, ensure_ascii=False)
 
     def _build_chat_format_repair_fallback_raw(self, exc: FormatViolationException) -> str:
-        reason = str(getattr(exc, "reason", "") or exc)
-        if no_fallback_mode_enabled():
-            return build_no_fallback_payload(
-                channel="chat",
-                reason=reason,
-                should_speak=True,
-                confidence=0.0,
-                reasoning_tags=("format_block",),
-            )
-        payload = {
-            "text": random.choice(_FORMAT_REPAIR_FALLBACK_LINES),
-            "intent": "format_repair_fallback",
-            "action": "guarded_reply",
-            "animation": "stand",
-            "reasoning_tags": ["format_repair", "deterministic_fallback"],
-            "should_speak": True,
-            "confidence": 0.45,
-            "direction": 0,
-            "target_x": -1.0,
-            "bounce_action": "",
-            "extracted_fact": "",
-            "debug_trace": f"format_violation_recovered: {reason[:180]}",
-            "next_animation": "stand",
-            "system_action": "",
-            "action_input": "",
-            "parse_mode": "format_repair_fallback",
-            "failure_meta": build_failure_meta(
-                kind="format_violation",
-                stage="chat_format_repair",
-                origin="chat_cycle",
-                public_surface="service_fallback",
-                recoverable=True,
-            ),
-        }
-        return json.dumps(payload, ensure_ascii=False)
+        # Kept for extension compatibility. Invalid format is no longer turned
+        # into an in-character canned sentence.
+        return self._build_chat_format_block_raw(exc)
 
     @staticmethod
     def _join_debug_trace(*parts: str) -> str:

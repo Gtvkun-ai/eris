@@ -1,6 +1,6 @@
-# ERIS Repository Definition V4: Generation Sovereignty
+# ERIS Repository Definition V6: Model-owned Chat + AI Observers
 
-**Version contract:** `eris.repository.v4.generation_sovereignty`
+**Version contract:** `eris.repository.v6.model_owned_chat_ai_observers`
 
 ## 1. Chủ thể tạo lời nói
 
@@ -84,3 +84,25 @@ Tên class/key cũ được giữ alias để plugin, test và frontend cũ khô
 - Context hậu quả chỉ được đưa vào **trước** lần generation kế tiếp.
 - Stage payload có thể expose summary gọn, không expose evidence/private journal đầy đủ.
 - Contract machine-readable nằm tại `runtime/repository_definition.py`.
+
+
+## 8. Social observer bằng model phụ
+
+Social cognition production chạy như một cảm biến bất đồng bộ:
+
+- `openai/gpt-oss-20b`: observer chính, trả structured JSON;
+- `openai/gpt-oss-120b`: deep review khi ambiguity/repair cao;
+- `llama-3.1-8b-instant`: fallback khi lane OSS lỗi.
+
+Observer chạy song song với model chính. Bubble, TTS và `Decision` không chờ observer.
+Kết quả chỉ được áp dụng sau public commit vào:
+
+- relationship state với delta nhỏ và clamp;
+- OutcomeReport của frame trước;
+- session ledger / user-turn metadata;
+- panel snapshot;
+- context quan hệ cực ngắn cho lượt kế tiếp.
+
+Classifier social deterministic cũ mặc định chạy shadow/no-op khi observer AI có mặt.
+Nó không được mutate relational permission, hạ authority claim, vô hiệu lịch sử hoặc chặn memory commit.
+Runtime vẫn giữ sự thật cơ học như interrupt, tool receipt, TTS failure và exact transport state.

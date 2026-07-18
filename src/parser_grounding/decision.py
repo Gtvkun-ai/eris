@@ -73,65 +73,6 @@ class ParserGroundingMixin:
     def _contains_any_keyword(self, text: str, keywords) -> bool:
         return any(self._contains_keyword(text, keyword) for keyword in keywords)
 
-    def _is_embodied_command_request(self, text: str) -> bool:
-        normalized = self._normalize_keyword_text(text)
-        if not normalized:
-            return False
-
-        command_phrases = [
-            "đi dạo",
-            "tản bộ",
-            "di chuyển",
-            "đi qua",
-            "đi sang phải",
-            "đi sang trái",
-            "sang phải",
-            "sang trái",
-            "qua phải",
-            "qua trái",
-            "move",
-            "walk",
-            "run",
-            "nhìn sang phải",
-            "nhìn sang trái",
-            "quay mặt",
-            "quay sang",
-            "hướng sang",
-            "ra giữa",
-            "về giữa",
-            "center",
-            "middle",
-            "đọc",
-            "theo dõi",
-            "giám sát",
-            "monitor",
-            "xem tài liệu",
-            "nghiên cứu",
-            "sit down",
-            "ngồi xuống",
-            "sit",
-            "ngủ đi",
-            "nghỉ ngủ",
-            "sleep",
-            "ăn uống",
-            "food",
-            "ôm",
-            "vuốt ve",
-            "ân cần",
-            "chơi đàn",
-            "đánh đàn",
-            "piano",
-            "leo",
-            "climb",
-            "trèo",
-            "divine",
-            "phân tách",
-        ]
-        return self._contains_any_keyword(normalized, command_phrases)
-
-    def _should_infer_embodied_animation(self, text: str, user_hint: str = "") -> bool:
-        return bool((user_hint or "").strip()) and self._is_embodied_command_request(user_hint)
-
     def _preview_raw_response(self, raw_text: str):
         preview = (raw_text or "").replace("\n", "\\n").strip()
         if len(preview) > 240:
@@ -172,28 +113,6 @@ class ParserGroundingMixin:
                 matches.append(unit)
             previous_unit = unit
         return matches
-
-    def _infer_animation_reason(self, final_animation: str, text: str, user_hint: str = ""):
-        combined = f"{user_hint}\n{text}"
-        keyword_groups = [
-            ("stand_walk", ["đi dạo", "tản bộ", "di chuyển", "walk", "đi ", "di ", "move "]),
-            ("sleep", ["ngủ", "ngủ đông", "sleep"]),
-            ("read", ["đọc", "theo dõi", "giám sát", "monitor", "ide", "code", "dự án"]),
-            ("sad", ["buồn", "thất vọng", "chán"]),
-            ("sit", ["ngồi", "nghỉ"]),
-            ("affection", ["vui", "hài lòng", "thích", "ôm", "ân cần"]),
-            ("food", ["ăn", "uống", "đồ ăn", "food"]),
-            ("piano", ["piano", "chơi đàn", "đánh đàn"]),
-            ("climb", ["leo", "trèo", "climb"]),
-            ("divine", ["divine", "phân tách"]),
-        ]
-        for animation_name, keywords in keyword_groups:
-            if final_animation != animation_name:
-                continue
-            for keyword in keywords:
-                if self._contains_keyword(combined, keyword):
-                    return f"animation={final_animation} vì phát hiện từ khóa '{keyword}'"
-        return f"animation={final_animation} vì fallback mặc định hoặc không có từ khóa rõ ràng"
 
     def _build_parser_trace_summary(
         self,
@@ -294,46 +213,148 @@ class ParserGroundingMixin:
         candidate = re.sub(r",(\s*[}\]])", r"\1", candidate)
         return candidate.strip()
 
+    def _is_embodied_command_request(self, text: str) -> bool:
+        normalized = self._normalize_keyword_text(text)
+        if not normalized:
+            return False
+
+        command_phrases = [
+            "đi dạo",
+            "tản bộ",
+            "di chuyển",
+            "đi qua",
+            "đi sang phải",
+            "đi sang trái",
+            "sang phải",
+            "sang trái",
+            "qua phải",
+            "qua trái",
+            "move",
+            "walk",
+            "run",
+            "nhìn sang phải",
+            "nhìn sang trái",
+            "quay mặt",
+            "quay sang",
+            "hướng sang",
+            "ra giữa",
+            "về giữa",
+            "center",
+            "middle",
+            "đọc",
+            "theo dõi",
+            "giám sát",
+            "monitor",
+            "xem tài liệu",
+            "nghiên cứu",
+            "sit down",
+            "ngồi xuống",
+            "sit",
+            "ngủ đi",
+            "nghỉ ngủ",
+            "sleep",
+            "ăn uống",
+            "food",
+            "ôm",
+            "vuốt ve",
+            "ân cần",
+            "chơi đàn",
+            "đánh đàn",
+            "piano",
+            "leo",
+            "climb",
+            "trèo",
+            "divine",
+            "phân tách",
+        ]
+        return self._contains_any_keyword(normalized, command_phrases)
+
+    def _infer_animation_from_text(self, text: str):
+        return "stand"
+
+    def _infer_structured_action(self, text: str, user_hint: str = ""):
+        combined = f"{user_hint}\n{text}".lower()
+        direction = 0
+        target_x = -1.0
+        bounce_action = ""
+        next_animation = ""
+        animation = ""
+
+        if any(token in combined for token in ["bên phải", "ben phai", "phía phải", "phia phai", "qua phải", "qua ben phai", "sang phải", "sang ben phai", "đi phải", "di phai", "move right", "to the right"]):
+            direction = 1
+            target_x = 0.88
+        elif any(token in combined for token in ["bên trái", "ben trai", "phía trái", "phia trai", "qua trái", "qua ben trai", "sang trái", "sang ben trai", "đi trái", "di trai", "move left", "to the left"]):
+            direction = -1
+            target_x = 0.12
+        elif any(token in combined for token in ["ra giữa", "ra giua", "về giữa", "ve giua", "ở giữa", "o giua", "chính giữa", "chinh giua", "center", "middle"]):
+            target_x = 0.5
+
+        if any(token in combined for token in ["đi ", "di ", "đi qua", "di qua", "qua ", "sang ", "move ", "walk", "di chuyển", "di chuyen"]):
+            animation = "stand_walk"
+
+        action_keywords = [
+            ("piano", ["piano", "chơi đàn", "choi dan", "đánh đàn", "danh dan"]),
+            ("read", ["đọc", "doc", "nghiên cứu", "nghien cuu", "xem tài liệu", "xem tai lieu", "theo dõi", "theo doi", "giám sát", "giam sat"]),
+            ("sit_down", ["ngồi xuống", "ngoi xuong", "sit down"]),
+            ("sit", ["ngồi", "ngoi", "ngồi nghỉ", "ngoi nghi"]),
+            ("sleep", ["ngủ", "ngu", "ngủ đi", "ngu di", "nghỉ ngủ", "nghi ngu", "sleep"]),
+            ("food", ["ăn đi", "đang ăn", "muốn ăn", "uong", "uống", "đồ ăn", "do an", "food", "eat"]),
+            ("affection", ["ôm", "om", "vuốt ve", "vuot ve", "ân cần", "an can"]),
+            ("sad", ["buồn", "buon", "ủ rũ", "u ru"]),
+            ("divine", ["divine", "phân tách", "phan tach"]),
+            ("climb", ["leo", "trèo", "treo", "climb"]),
+        ]
+
+        for action_name, keywords in action_keywords:
+            if self._contains_any_keyword(combined, keywords):
+                if animation == "stand_walk":
+                    next_animation = action_name
+                else:
+                    animation = action_name
+                break
+
+        if animation == "stand_walk" and not next_animation:
+            next_animation = "stand"
+
+        return {
+            "animation": animation,
+            "direction": direction,
+            "target_x": target_x,
+            "bounce_action": bounce_action,
+            "next_animation": next_animation,
+        }
+
+
     def _patch_missing_decision_fields(self, payload: dict, *, parse_mode: str, user_hint: str = "") -> tuple[dict, bool]:
-        patched = self._apply_cognition_action_defaults(dict(payload or {}), user_hint=user_hint)
+        """Fill transport defaults without deriving semantics from user keywords."""
+        patched = self._apply_cognition_action_defaults(dict(payload or {}), user_hint="")
         fields_patched = False
 
         text = self._normalize_salvaged_text(str(patched.get("text", "") or ""))
-        if not text:
-            text = self._normalize_salvaged_text(str(patched.get("extracted_fact", "") or ""))
-        if not text and self._coerce_bool(patched.get("should_speak", True), fallback=True):
-            text = self.fallback["text"]
-            fields_patched = True
         patched["text"] = text
-
-        structured = self._infer_structured_action(text or user_hint, user_hint=user_hint)
         default_fields = {
             "intent": "",
             "action": "",
             "reasoning_tags": (),
             "should_speak": bool(text),
             "confidence": 0.0,
-            "animation": structured["animation"] or self.fallback["animation"],
-            "extracted_fact": patched.get("extracted_fact", ""),
-            "direction": structured["direction"],
-            "next_animation": structured["next_animation"],
-            "target_x": structured["target_x"],
-            "bounce_action": structured["bounce_action"],
+            "animation": self.fallback["animation"],
+            "extracted_fact": "",
+            "direction": 0,
+            "next_animation": "",
+            "target_x": -1.0,
+            "bounce_action": "",
             "debug_trace": "",
             "system_action": "",
             "action_input": "",
             "motion_intent": "",
-            "motion_target_x": structured["target_x"],
-            "motion_facing": structured["direction"],
+            "motion_target_x": -1.0,
+            "motion_facing": 0,
             "delivery_hint": "",
             "nonverbal_cue": "",
             "stage_motion": "",
             "parse_mode": parse_mode,
         }
-        # Chỉ thiếu field cấu trúc cốt lõi mới được gắn nhãn repair. Các field
-        # stage/motion/debug là optional; model bỏ chúng vẫn là JSON hợp lệ. Nếu
-        # tính mọi metadata vắng mặt là hard repair thì telemetry lại vu oan cho
-        # Qwen chỉ vì nó không khai đủ một tờ đơn hành chính dài hai trang.
         structural_fields = {"should_speak", "animation"}
         for key, default in default_fields.items():
             if key not in patched or patched.get(key) is None:
@@ -470,7 +491,6 @@ class ParserGroundingMixin:
         text = re.sub(r"^(trả lời trước|tra loi truoc)\s*:\s*", "", text, flags=re.IGNORECASE)
         text = re.sub(r"^(eris|assistant|ai|response)\s*:\s*", "", text, flags=re.IGNORECASE)
         text = self._cut_inline_metadata_from_public_text(text)
-        text = self._repair_sentence_boundaries(text)
         return text
 
     def _repair_sentence_boundaries(self, text: str) -> str:
@@ -554,37 +574,30 @@ class ParserGroundingMixin:
         return default
 
     def _apply_cognition_action_defaults(self, data: dict, user_hint: str = "") -> dict:
+        """Map explicit legacy action fields, without guessing from prose."""
         action = data.get("action")
         if not isinstance(action, dict):
-            if isinstance(action, str) and action.strip() and "system_action" not in data:
-                data["system_action"] = action.strip()
             return data
 
         merged = dict(data)
-        text = str(merged.get("text", "") or "")
-        structured = self._infer_structured_action(
-            " ".join(str(action.get(key, "")) for key in ("type", "name", "intent", "description", "motion_intent")),
-            user_hint=f"{user_hint}\n{text}",
-        )
-
         if "animation" not in merged or not str(merged.get("animation", "")).strip():
-            merged["animation"] = self._action_field(action, "animation", "pose", default=structured["animation"] or "stand")
+            merged["animation"] = self._action_field(action, "animation", "pose", default="stand")
         if "direction" not in merged:
-            merged["direction"] = self._action_field(action, "direction", "facing", default=structured["direction"])
+            merged["direction"] = self._action_field(action, "direction", "facing", default=0)
         if "target_x" not in merged:
-            merged["target_x"] = self._action_field(action, "target_x", "x", default=structured["target_x"])
+            merged["target_x"] = self._action_field(action, "target_x", "x", default=-1.0)
         if "next_animation" not in merged:
-            merged["next_animation"] = self._action_field(action, "next_animation", default=structured["next_animation"])
+            merged["next_animation"] = self._action_field(action, "next_animation", default="")
         if "bounce_action" not in merged:
-            merged["bounce_action"] = self._action_field(action, "bounce_action", default=structured["bounce_action"])
+            merged["bounce_action"] = self._action_field(action, "bounce_action", default="")
         if "motion_intent" not in merged:
-            merged["motion_intent"] = self._action_field(action, "motion_intent", "type", "name", default="")
+            merged["motion_intent"] = self._action_field(action, "motion_intent", default="")
         if "motion_target_x" not in merged:
-            merged["motion_target_x"] = self._action_field(action, "motion_target_x", "target_x", "x", default=merged.get("target_x", -1.0))
+            merged["motion_target_x"] = self._action_field(action, "motion_target_x", "target_x", "x", default=-1.0)
         if "motion_facing" not in merged:
-            merged["motion_facing"] = self._action_field(action, "motion_facing", "direction", "facing", default=merged.get("direction", 0))
+            merged["motion_facing"] = self._action_field(action, "motion_facing", "direction", "facing", default=0)
 
-        system_action = self._action_field(action, "system_action", "systemAction", "tool", "name", default="")
+        system_action = self._action_field(action, "system_action", "systemAction", "tool", default="")
         if system_action and not str(merged.get("system_action", "")).strip():
             merged["system_action"] = system_action
         action_input = self._action_field(action, "action_input", "input", "query", "url", "argument", default="")
@@ -700,18 +713,21 @@ class ParserGroundingMixin:
         return hits >= 2 or (hits >= 1 and instruction_shape >= 1)
 
     def _non_json_semantic_fallback_payload(self, *, parse_mode: str, raw_text: str, reason: str) -> dict:
+        # Protocol/debug leaks are blocked as transport failures. The parser does
+        # not compose an in-character apology or repair line.
         return {
             **self.fallback,
-            "text": "Cau do lech. Toi rut lai mot nhip.",
+            "text": "",
+            "should_speak": False,
             "debug_trace": self._build_parser_debug_trace(
                 parse_mode=parse_mode,
                 raw_text=raw_text,
                 reason=reason,
-                text="non_json_semantic_fallback",
+                text="blocked_protocol_surface",
                 animation=self.fallback["animation"],
             ),
             "parse_mode": parse_mode,
-            "intent": "protocol_repair",
+            "intent": "",
             "system_action": "",
             "action_input": "",
         }
@@ -1040,15 +1056,8 @@ class ParserGroundingMixin:
 
     def _sanitize_animation(self, value: str, fallback_text: str = "", user_hint: str = ""):
         animation = str(value or "").strip().strip('"').strip("'").lower()
-        if animation in {"", "null", "none", "nil"}:
-            animation = ""
         if animation in VALID_ANIMATIONS:
             return animation
-        inferred = ""
-        if self._should_infer_embodied_animation(fallback_text, user_hint=user_hint):
-            inferred = self._infer_structured_action(user_hint, user_hint="").get("animation", "")
-        if inferred in VALID_ANIMATIONS:
-            return inferred
         return self.fallback["animation"]
 
     def _sanitize_system_action(self, value: str):
@@ -1309,8 +1318,9 @@ class ParserGroundingMixin:
 
         raw_text = self._normalize_salvaged_text(source_text)
         if self._looks_like_prompt_or_contract_leak_text(raw_text) or self._looks_like_non_json_analysis_or_debug_text(raw_text):
-            raw_text = "Câu đó lệch. Tôi rút lại một nhịp."
-            decision["intent"] = "protocol_repair"
+            raw_text = ""
+            decision["should_speak"] = False
+            decision["intent"] = ""
             decision["debug_trace"] = str(decision.get("debug_trace", "") or "") + "; parser_blocked_prompt_leak"
         nested = self._try_extract_nested_decision_from_text(raw_text)
         if nested is not None:
@@ -1318,8 +1328,9 @@ class ParserGroundingMixin:
             decision = {**decision, **nested}
             raw_text = self._normalize_salvaged_text(str(decision.get("text", self.fallback["text"])))
             if self._looks_like_prompt_or_contract_leak_text(raw_text) or self._looks_like_non_json_analysis_or_debug_text(raw_text):
-                raw_text = "Câu đó lệch. Tôi rút lại một nhịp."
-                decision["intent"] = "protocol_repair"
+                raw_text = ""
+                decision["should_speak"] = False
+                decision["intent"] = ""
                 decision["debug_trace"] = str(decision.get("debug_trace", "") or "") + "; parser_blocked_nested_prompt_leak"
 
         text = raw_text
@@ -1330,9 +1341,7 @@ class ParserGroundingMixin:
             fallback_text=text,
             user_hint=user_hint,
         )
-        extracted_fact = self._normalize_salvaged_text(str(decision.get("extracted_fact", "")).strip())
-        if self._is_speculative_extracted_fact(extracted_fact):
-            extracted_fact = ""
+        extracted_fact = ""
 
         direction = self._sanitize_direction(decision.get("direction", 0))
 
@@ -1401,29 +1410,19 @@ class ParserGroundingMixin:
         if motion_facing == 0 and direction in {-1, 1}:
             motion_facing = direction
 
-        debug_trace = self._normalize_debug_trace(
-            decision.get("debug_trace", decision.get("_thought", ""))
-        )
-        intent = self._normalize_salvaged_text(str(decision.get("intent", "")).strip())[:80]
-        action = decision.get("action", "")
-        reasoning_tags = self._coerce_reasoning_tags(decision.get("reasoning_tags", ()))
+        # ``debug_trace`` is runtime-owned. Model-authored traces are discarded;
+        # parser diagnostics remain available through ``parser_trace``/logs.
+        debug_trace = ""
+        intent = ""
+        action = ""
+        reasoning_tags = ()
         should_speak = self._coerce_bool(decision.get("should_speak", bool(text)), fallback=bool(text))
-        confidence = self._coerce_confidence(decision.get("confidence", 0.0))
+        confidence = 0.0
         parse_mode = str(decision.get("parse_mode", "json")).strip() or "json"
         failure_meta = normalize_failure_meta(decision.get("failure_meta"))
         # Public text passthrough: parser không sửa lời thoại theo capability nữa.
         # system_action vẫn được sanitize/validate ở contract và executor riêng.
         changed = False
-        performance_overclaims = self._collect_performance_overclaims(text)
-        if performance_overclaims and any(
-            self._is_banter_overclaim(unit, user_hint=user_hint)
-            for unit in performance_overclaims
-        ):
-            reasoning_tags = tuple(dict.fromkeys((*reasoning_tags, "banter_capability_fantasy", "deception_candidate")))
-            debug_trace = self._normalize_debug_trace(
-                " | ".join(part for part in (debug_trace, "banter_overclaim_observed_no_rewrite") if part)
-            )
-
         parser_trace = self._build_parser_trace_summary(
             parse_mode=parse_mode,
             original_text=original_text,
@@ -1458,58 +1457,6 @@ class ParserGroundingMixin:
             "nonverbal_cue": nonverbal_cue,
             "stage_motion": stage_motion,
             "failure_meta": failure_meta,
-        }
-
-    def _infer_structured_action(self, text: str, user_hint: str = ""):
-        combined = f"{user_hint}\n{text}".lower()
-        direction = 0
-        target_x = -1.0
-        bounce_action = ""
-        next_animation = ""
-        animation = ""
-
-        if any(token in combined for token in ["bên phải", "ben phai", "phía phải", "phia phai", "qua phải", "qua ben phai", "sang phải", "sang ben phai", "đi phải", "di phai", "move right", "to the right"]):
-            direction = 1
-            target_x = 0.88
-        elif any(token in combined for token in ["bên trái", "ben trai", "phía trái", "phia trai", "qua trái", "qua ben trai", "sang trái", "sang ben trai", "đi trái", "di trai", "move left", "to the left"]):
-            direction = -1
-            target_x = 0.12
-        elif any(token in combined for token in ["ra giữa", "ra giua", "về giữa", "ve giua", "ở giữa", "o giua", "chính giữa", "chinh giua", "center", "middle"]):
-            target_x = 0.5
-
-        if any(token in combined for token in ["đi ", "di ", "đi qua", "di qua", "qua ", "sang ", "move ", "walk", "di chuyển", "di chuyen"]):
-            animation = "stand_walk"
-
-        action_keywords = [
-            ("piano", ["piano", "chơi đàn", "choi dan", "đánh đàn", "danh dan"]),
-            ("read", ["đọc", "doc", "nghiên cứu", "nghien cuu", "xem tài liệu", "xem tai lieu", "theo dõi", "theo doi", "giám sát", "giam sat"]),
-            ("sit_down", ["ngồi xuống", "ngoi xuong", "sit down"]),
-            ("sit", ["ngồi", "ngoi", "ngồi nghỉ", "ngoi nghi"]),
-            ("sleep", ["ngủ", "ngu", "ngủ đi", "ngu di", "nghỉ ngủ", "nghi ngu", "sleep"]),
-            ("food", ["ăn", "an", "uống", "uong", "đồ ăn", "do an", "food"]),
-            ("affection", ["ôm", "om", "vuốt ve", "vuot ve", "ân cần", "an can"]),
-            ("sad", ["buồn", "buon", "ủ rũ", "u ru"]),
-            ("divine", ["divine", "phân tách", "phan tach"]),
-            ("climb", ["leo", "trèo", "treo", "climb"]),
-        ]
-
-        for action_name, keywords in action_keywords:
-            if any(token in combined for token in keywords):
-                if animation == "stand_walk":
-                    next_animation = action_name
-                else:
-                    animation = action_name
-                break
-
-        if animation == "stand_walk" and not next_animation:
-            next_animation = "stand"
-
-        return {
-            "animation": animation,
-            "direction": direction,
-            "target_x": target_x,
-            "bounce_action": bounce_action,
-            "next_animation": next_animation,
         }
 
     def _salvage_non_json_response(self, cleaned: str, user_hint: str = ""):
@@ -1564,14 +1511,11 @@ class ParserGroundingMixin:
             )
 
         structured = self._infer_structured_action(display_text, user_hint=user_hint)
-        animation = structured["animation"]
-        if not animation:
-            animation = self.fallback["animation"]
-
+        animation = structured["animation"] or self.fallback["animation"]
         return self._finalize_decision({
             "text": display_text,
+            "should_speak": True,
             "animation": animation,
-            "extracted_fact": "",
             "direction": structured["direction"],
             "next_animation": structured["next_animation"],
             "target_x": structured["target_x"],
@@ -1579,7 +1523,7 @@ class ParserGroundingMixin:
             "debug_trace": self._build_parser_debug_trace(
                 parse_mode="salvaged_text",
                 raw_text=cleaned,
-                reason="Parser suy luận cấu trúc từ văn bản thô vì model không trả về JSON hợp lệ.",
+                reason="Parser preserved text and extracted only explicit body commands.",
                 text=display_text,
                 animation=animation,
             ),
@@ -1638,7 +1582,6 @@ class ParserGroundingMixin:
             return None
 
         display_text = self._normalize_salvaged_text(extracted.get("text", cleaned))
-        structured = self._infer_structured_action(display_text, user_hint=user_hint)
 
         raw_animation = str(extracted.get("animation", "") or "").strip().lower()
         semantic_stage = _SEMANTIC_ANIMATION_STAGE_ALIASES.get(raw_animation, {})
@@ -1650,19 +1593,14 @@ class ParserGroundingMixin:
             fallback_text=display_text,
             user_hint=user_hint,
         )
-        if animation == self.fallback["animation"] and structured["animation"]:
-            animation = structured["animation"]
-        extracted_fact = self._normalize_salvaged_text(extracted.get("extracted_fact", ""))
-        next_animation = extracted.get("next_animation", "").strip() or structured["next_animation"]
-        bounce_action = extracted.get("bounce_action", "").strip() or structured["bounce_action"]
+        extracted_fact = ""
+        next_animation = extracted.get("next_animation", "").strip()
+        bounce_action = extracted.get("bounce_action", "").strip()
         system_action = extracted.get("system_action", "").strip()
         action_input = extracted.get("action_input", "").strip()
 
-        direction = self._sanitize_direction(extracted.get("direction", structured["direction"]))
-        target_x = self._sanitize_target_x(
-            extracted.get("target_x", structured["target_x"]),
-            fallback=structured["target_x"],
-        )
+        direction = self._sanitize_direction(extracted.get("direction", 0))
+        target_x = self._sanitize_target_x(extracted.get("target_x", -1.0), fallback=-1.0)
 
         return self._finalize_decision({
             "text": display_text,
@@ -1680,100 +1618,6 @@ class ParserGroundingMixin:
             "nonverbal_cue": extracted.get("nonverbal_cue", ""),
             "stage_motion": extracted.get("stage_motion", ""),
         }, user_hint=user_hint)
-
-    def _infer_animation_reason(self, final_animation: str, text: str, user_hint: str = ""):
-        combined = f"{user_hint}\n{text}"
-        keyword_groups = [
-            ("stand_walk", ["đi dạo", "tản bộ", "di chuyển", "walk", "đi", "move"]),
-            ("sleep", ["ngủ", "sleep"]),
-            ("read", ["đọc", "theo dõi", "giám sát", "monitor", "ide", "code", "dự án"]),
-            ("sad", ["buồn", "thất vọng", "chán"]),
-            ("sit", ["ngồi", "nghỉ"]),
-            ("affection", ["vui", "hài lòng", "thích", "ôm", "ân cần"]),
-            ("food", ["đồ ăn", "ăn uống", "food"]),
-            ("piano", ["piano", "chơi đàn", "đánh đàn"]),
-            ("climb", ["leo", "trèo", "climb"]),
-            ("divine", ["divine", "phân tách"]),
-        ]
-        for animation_name, keywords in keyword_groups:
-            if final_animation != animation_name:
-                continue
-            for keyword in keywords:
-                if self._contains_keyword(combined, keyword):
-                    return f"animation={final_animation} vì phát hiện từ khóa '{keyword}'"
-        return f"animation={final_animation} vì fallback mặc định hoặc không có từ khóa rõ ràng"
-
-    def _infer_animation_from_text(self, text: str):
-        return "stand"
-
-    def _infer_structured_action(self, text: str, user_hint: str = ""):
-        combined = f"{user_hint}\n{text}"
-        embodied_source = user_hint if self._is_embodied_command_request(user_hint) else ""
-        direction = 0
-        target_x = -1.0
-        bounce_action = ""
-        next_animation = ""
-        animation = ""
-
-        if self._contains_any_keyword(combined, ["bên phải", "phía phải", "qua phải", "qua bên phải", "sang phải", "sang bên phải", "đi phải", "move right", "to the right"]):
-            direction = 1
-            target_x = 0.88
-        elif self._contains_any_keyword(combined, ["bên trái", "phía trái", "qua trái", "qua bên trái", "sang trái", "sang bên trái", "đi trái", "move left", "to the left"]):
-            direction = -1
-            target_x = 0.12
-        elif self._contains_any_keyword(combined, ["ra giữa", "về giữa", "ở giữa", "chính giữa", "center", "middle"]):
-            target_x = 0.5
-
-        if embodied_source and self._contains_any_keyword(
-            embodied_source,
-            [
-                "đi qua",
-                "đi sang phải",
-                "đi sang trái",
-                "sang phải",
-                "sang trái",
-                "qua phải",
-                "qua trái",
-                "di phai",
-                "di trai",
-                "move",
-                "walk",
-                "di chuyển",
-            ],
-        ):
-            animation = "stand_walk"
-
-        action_keywords = [
-            ("piano", ["piano", "chơi đàn", "đánh đàn"]),
-            ("read", ["đọc", "nghiên cứu", "xem tài liệu", "theo dõi", "giám sát"]),
-            ("sit_down", ["ngồi xuống", "sit down"]),
-            ("sit", ["ngồi xuống", "ngồi nghỉ", "sit"]),
-            ("sleep", ["ngủ", "ngủ đi", "nghỉ ngủ", "sleep"]),
-            ("food", ["đồ ăn", "ăn uống", "food"]),
-            ("affection", ["ôm", "vuốt ve", "ân cần"]),
-            ("sad", ["buồn", "ủ rũ"]),
-            ("divine", ["divine", "phân tách"]),
-            ("climb", ["leo", "trèo", "climb"]),
-        ]
-
-        for action_name, keywords in action_keywords:
-            if embodied_source and self._contains_any_keyword(embodied_source, keywords):
-                if animation == "stand_walk":
-                    next_animation = action_name
-                else:
-                    animation = action_name
-                break
-
-        if animation == "stand_walk" and not next_animation:
-            next_animation = "stand"
-
-        return {
-            "animation": animation,
-            "direction": direction,
-            "target_x": target_x,
-            "bounce_action": bounce_action,
-            "next_animation": next_animation,
-        }
 
     def parse_ai_json(self, raw_text: str, user_hint: str = ""):
         if not raw_text:

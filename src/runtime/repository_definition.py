@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Machine-readable repository definition for ERIS runtime v5."""
+"""Machine-readable repository definition for ERIS runtime v6."""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from typing import Any
 
-REPOSITORY_DEFINITION_VERSION = "eris.repository.v5.lean_generation_sovereignty"
+REPOSITORY_DEFINITION_VERSION = "eris.repository.v6.model_owned_chat_ai_observers"
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,7 +18,7 @@ class RepositoryDefinition:
     deception_policy: str = "record_ground_truth_and_continuity_not_rewrite"
     output_hygiene: str = "secret_protocol_and_transport_only"
     behavior_feedback_timing: str = "memory_only_unless_explicitly_selected"
-    auxiliary_models: str = "disabled_by_default_observation_only"
+    auxiliary_models: str = "enabled_observation_only_parallel_non_blocking"
     heuristic_marker_blocks: str = "forbidden_in_main_chat_prompt"
 
     def to_payload(self) -> dict[str, Any]:
@@ -28,8 +28,8 @@ class RepositoryDefinition:
         return (
             f"REPOSITORY_CONTRACT={self.version}. "
             "The configured main model owns semantic interpretation and the first valid public Decision. "
-            "Observers, memory, social cognition, critics and former guards may provide evidence before generation "
-            "or record consequences for a later turn. They may not regenerate, rewrite, suppress, shorten, or replace "
+            "Auxiliary social models run as parallel observers and may update bounded state or record consequences "
+            "for a later turn. They may not block generation, regenerate, rewrite, suppress, shorten, or replace "
             "semantic public text after a valid Decision exists. Deliberate deception is tracked with internal ground "
             "truth and continuity obligations, not corrected by a moralizing final editor. Output hygiene is limited "
             "to secrets, protocol leakage, malformed transport, and stage-tag separation."

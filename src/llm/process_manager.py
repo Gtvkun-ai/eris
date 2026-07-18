@@ -293,23 +293,41 @@ class RemoteModelProcessManager:
             return None
 
     def build_social_parser_client(self):
-        model = os.environ.get("ERIS_SOCIAL_PARSER_MODEL", "llama-3.1-8b-instant").strip()
+        model = (
+            os.environ.get("ERIS_SOCIAL_OBSERVER_MODEL")
+            or os.environ.get("ERIS_SOCIAL_PARSER_MODEL")
+            or "openai/gpt-oss-20b"
+        ).strip()
         client = self._build_groq_social_client(
             model_name=model,
-            enabled_env="ERIS_SOCIAL_PARSER_ENABLED",
+            enabled_env="ERIS_SOCIAL_OBSERVER_ENABLED",
         )
         if client is not None:
             self.logger.info("Social parser client sẵn sàng: %s", model)
         return client
 
     def build_social_critic_client(self):
-        model = os.environ.get("ERIS_SOCIAL_CRITIC_MODEL", "openai/gpt-oss-20b").strip()
+        model = (
+            os.environ.get("ERIS_SOCIAL_OBSERVER_DEEP_MODEL")
+            or os.environ.get("ERIS_SOCIAL_CRITIC_MODEL")
+            or "openai/gpt-oss-120b"
+        ).strip()
         client = self._build_groq_social_client(
             model_name=model,
-            enabled_env="ERIS_SOCIAL_CRITIC_ENABLED",
+            enabled_env="ERIS_SOCIAL_OBSERVER_DEEP_ENABLED",
         )
         if client is not None:
             self.logger.info("Social deliberator/critic client sẵn sàng: %s", model)
+        return client
+
+    def build_social_fallback_client(self):
+        model = os.environ.get("ERIS_SOCIAL_OBSERVER_FALLBACK_MODEL", "llama-3.1-8b-instant").strip()
+        client = self._build_groq_social_client(
+            model_name=model,
+            enabled_env="ERIS_SOCIAL_OBSERVER_FALLBACK_ENABLED",
+        )
+        if client is not None:
+            self.logger.info("Social observer fallback client sẵn sàng: %s", model)
         return client
 
     def build_escalation_client(self, *, model_path: str = "", n_ctx: int = 0, n_gpu_layers: int = 0):

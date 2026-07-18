@@ -68,7 +68,6 @@ from cortex.subconscious import build_phase1234567_workers
 from cortex.self_observation import SelfObservationEngine
 from cortex.self_model import SelfModelEngine
 from cortex.session_ritual import SessionRitualEngine
-from cortex.startup_anchor_gate import StartupAnchorGate
 from cortex.speech_core import SpeechCoreEngine
 from cortex.thought_stream import ThoughtStream
 from cortex.user_context_stream import RollingUserContext, UserContextStream
@@ -81,7 +80,6 @@ from cortex.vision_semantic_compressor import (
 from cortex.working_memory import WorkingMemoryEngine
 from domain import Decision
 from failure_meta import is_technical_failure_meta
-from runtime.greeting_preset_runtime import emit_session_ritual_preset
 from runtime.public_payload_policy import sanitize_body_payload
 from runtime.autonomous_wake_governor import AutonomousWakeGovernor, WakeDecision
 from runtime.autonomous_orchestrator import AutonomousPerformerOrchestrator, AutonomousPlan
@@ -108,19 +106,15 @@ from runtime.interrupt_ledger import InterruptLedger
 from runtime.voice_manager import VoiceManager
 from runtime.outcome_observer import OutcomeObserver
 from guard_config import guards_warn_only
-from runtime.post_generation_filters import PostGenerationFiltersMixin
 from runtime.private_mind_daemon import PrivateMindDaemon
 from runtime.private_life_daemon import PrivateLifeDaemon
 from runtime.presence_controller import MicroPresenceSynthesis, PresenceControllerMixin, SocialPresenceEvent
-from runtime.content_engine import ContentHarvester
-from runtime.performance_contract import DirectorContractBuilder, PerformanceContextBuilder
 from runtime.prompt_context_builder import PromptContextBuilderMixin
 from runtime.public_turn_ledger import PublicTurnLedger, infer_public_turn_channel, normalize_public_turn_channel
 from runtime.source_grounding import SourceGroundingEngine
 from runtime.vision_grounding import VisionGroundingPolicy, VisionGroundingReport
 from screen import build_screen_text_runtime
 from runtime.speech_pipeline import SPEECH_INTENTS, SpeechIntentDecision, SpeechPipelineMixin
-from runtime.director_context import DirectorContextBuilder
 from runtime.stage_contracts import StageFrameBuilder
 from runtime.stage_dispatcher import StageDispatcher
 from runtime.tts_sync_policy import (
@@ -132,9 +126,7 @@ from runtime.stage_output import StageOutputPipeline
 from runtime.stage_protocol import is_stage_inbound_type
 from runtime.stage_protocol_adapter import playback_event, show_plan_event, stage_segment_event, stage_state_event
 from runtime.vtuber_stage_version import VTUBER_STAGE_PHASES, VTUBER_STAGE_STATUS, VTUBER_STAGE_VERSION
-from runtime.stage_scorer import StageScorer
 from runtime.shadow_pipeline import ShadowPipelineMixin
-from runtime.self_critique import SelfCritiqueEscalationMixin
 from runtime.state_commit_service import StateCommitServiceMixin
 from runtime.subconscious_loop import SubconsciousLoop as RuntimeSubconsciousLoop
 from runtime.text_repeat_guard import TextRepeatGuardMixin
@@ -254,9 +246,7 @@ class RuntimeCoordinator(
     PresenceControllerMixin,
     TextRepeatGuardMixin,
     ForceSpeakSurfacePolicyMixin,
-    PostGenerationFiltersMixin,
     ShadowPipelineMixin,
-    SelfCritiqueEscalationMixin,
 ):
     #Đây là trung tâm điều phối.
     # Giãn cách tối thiểu giữa 2 lần chụp màn hình cho chat. Trong khoảng này, chat
@@ -823,41 +813,70 @@ class RuntimeCoordinator(
         self.chat_history = []
         self.last_chat_answer = ""
         self.repair_state_controller = RepairStateController()
-        # Social Cognition V2 giữ discourse claim, social state và response move
-        # theo phiên. Model nhỏ chỉ advisory; lỗi provider không làm mất contract.
-        social_v2_enabled = str(os.getenv("ERIS_SOCIAL_COGNITION_V2_ENABLED", "0") or "0").lower() in {"1", "true", "on", "yes"}
+        # Social observer dùng model phụ như cảm biến chạy song song. Nó được
+        # phép cập nhật ledger/state/panel, nhưng không có đường nào sửa Decision
+        # public. SocialCognitionEngine chỉ giữ state/ledger tương thích.
+        social_observer_enabled = str(
+            os.getenv(
+                "ERIS_SOCIAL_OBSERVER_ENABLED",
+                os.getenv("ERIS_SOCIAL_COGNITION_V2_ENABLED", "1"),
+            ) or "1"
+        ).lower() in {"1", "true", "on", "yes"}
         try:
-            if not social_v2_enabled:
+            if not social_observer_enabled:
                 self.social_model_router = None
                 self.social_cognition_v2 = None
-                self.logger.info("[social cognition v2] disabled by ERIS_SOCIAL_COGNITION_V2_ENABLED")
+                self.social_observer = None
+                self.logger.info("[social observer] disabled by ERIS_SOCIAL_OBSERVER_ENABLED")
             else:
                 from runtime.social_cognition_v2 import SOCIAL_COGNITION_VERSION, SocialCognitionEngine
                 from runtime.social_model_router import SocialModelRouter
+                from runtime.social_observer import SOCIAL_OBSERVER_VERSION, SocialObserverRuntime
 
                 self.social_model_router = SocialModelRouter(llm_service, logger=self.logger)
                 self.social_cognition_v2 = SocialCognitionEngine(
-                    model_router=self.social_model_router,
+                    model_router=None,
                     logger=self.logger,
                 )
-                parser_name = str(getattr(getattr(llm_service, "social_parser_client", None), "model_name", "deterministic") or "deterministic")
-                critic_name = str(getattr(getattr(llm_service, "social_critic_client", None), "model_name", "disabled") or "disabled")
+                observer_clients = (
+                    getattr(llm_service, "social_parser_client", None),
+                    getattr(llm_service, "social_critic_client", None),
+                    getattr(llm_service, "social_fallback_client", None),
+                )
+                self.social_observer = (
+                    SocialObserverRuntime(
+                        self.social_model_router,
+                        logger=self.logger,
+                        max_workers=int(os.getenv("ERIS_SOCIAL_OBSERVER_WORKERS", "2") or 2),
+                    )
+                    if any(client is not None for client in observer_clients)
+                    else None
+                )
+                parser_name = str(getattr(getattr(llm_service, "social_parser_client", None), "model_name", "unavailable") or "unavailable")
+                deep_name = str(getattr(getattr(llm_service, "social_critic_client", None), "model_name", "disabled") or "disabled")
+                fallback_name = str(getattr(getattr(llm_service, "social_fallback_client", None), "model_name", "disabled") or "disabled")
                 self.logger.info(
-                    "[social cognition v2] loaded version=%s parser=%s critic=%s",
+                    "[social observer] loaded version=%s social_state=%s primary=%s deep=%s fallback=%s mode=observe_only",
+                    SOCIAL_OBSERVER_VERSION,
                     SOCIAL_COGNITION_VERSION,
                     parser_name,
-                    critic_name,
+                    deep_name,
+                    fallback_name,
                 )
         except Exception as exc:
             self.social_model_router = None
             self.social_cognition_v2 = None
-            self.logger.warning("Không khởi tạo được Social Cognition V2: %s", exc)
+            self.social_observer = None
+            self.logger.warning("Không khởi tạo được social observer: %s", exc)
         try:
             from actions.capability_runtime import refresh_runtime_capabilities
             refresh_runtime_capabilities(owner=self)
         except Exception:
             pass
         self.current_social_contract = None
+        self.current_social_observation = None
+        self.latest_social_observation = None
+        self.pending_social_repair = False
         self.current_conversation_lane = None
         self.last_user_intent = ""
         self.active_conversational_topic = ""
@@ -1995,7 +2014,6 @@ class RuntimeCoordinator(
                 channel_name, str(getattr(decision, "text", "") or "")[:120],
             )
             return
-        self._record_banter_capability_deception(decision)
         payload = decision.to_payload()
         payload.update(self._build_body_bias_payload())
         raw_private_digest = getattr(self, "private_mind_digest", {}) or {}
@@ -2023,98 +2041,7 @@ class RuntimeCoordinator(
             payload["private_mind_digest"] = private_digest
         if isinstance(private_life_digest, dict) and private_life_digest:
             payload["private_life_digest"] = private_life_digest
-        # Director foundation: gom scene/evidence/budget rồi chấm quyền phát biểu
-        # trước khi dựng StageFrame.  Chat user chỉ được annotate; autonomous có
-        # thể bị kéo về body-only/suppress nếu câu yếu hoặc thiếu evidence.
-        final_meta = getattr(decision, "director_meta", None)
-        if bool(getattr(decision, "director_finalized", False)) and isinstance(final_meta, dict):
-            # Chat FinalDecision đã được chấm đúng một lần ngay trước commit.
-            # Tái sử dụng metadata ở đây để StageFrame/TTS nhìn thấy cùng kết quả,
-            # không harvest hook hoặc repair lần nữa.
-            payload["director"] = dict(final_meta.get("director") or {})
-            payload["performance_context"] = dict(final_meta.get("performance_context") or {})
-            payload["director_contract"] = dict(final_meta.get("director_contract") or {})
-            payload["selected_candidate"] = dict(final_meta.get("selected_candidate") or {})
-            payload["stage_score"] = dict(final_meta.get("stage_score") or {})
-            payload["scene_repair"] = dict(final_meta.get("scene_repair") or {})
-            perf = payload["performance_context"]
-            payload["delivery_hint"] = str(payload.get("delivery_hint") or perf.get("delivery_style", ""))
-            payload["stage_motion"] = str(payload.get("stage_motion") or perf.get("stage_motion", ""))
-        else:
-            try:
-                director_builder = getattr(self, "director_context_builder", None)
-                if director_builder is None:
-                    director_builder = DirectorContextBuilder()
-                    self.director_context_builder = director_builder
-                director_context = director_builder.build(
-                    payload=payload,
-                    frame=getattr(self, "last_cognitive_frame", None),
-                    channel=channel,
-                    user_text=str(payload.get("user_text", "") or ""),
-                )
-                harvester = getattr(self, "content_harvester", None)
-                if harvester is None:
-                    harvester = ContentHarvester()
-                    self.content_harvester = harvester
-                harvested_content = harvester.payloads(
-                    runtime=self,
-                    frame=getattr(self, "last_cognitive_frame", None),
-                    payload=payload,
-                    channel=channel,
-                )
-                payload["content_seeds"] = [
-                    seed for seed in harvested_content
-                    if isinstance(seed, dict) and bool(seed.get("public_ok", True))
-                ]
-                director_context.world_state["runtime_hints"] = [
-                    seed for seed in harvested_content
-                    if isinstance(seed, dict) and not bool(seed.get("public_ok", True))
-                ]
-                performance_builder = getattr(self, "performance_context_builder", None)
-                if performance_builder is None:
-                    performance_builder = PerformanceContextBuilder()
-                    self.performance_context_builder = performance_builder
-                performance_context = performance_builder.build(
-                    director_context,
-                    payload=payload,
-                    channel=channel,
-                )
-                try:
-                    director_context.world_state["content_hook"] = performance_context.content_hook or {}
-                    director_context.world_state["topic_stack"] = performance_builder.content_engine.topic_stack_payload()
-                except Exception:
-                    pass
-                contract_builder = getattr(self, "director_contract_builder", None)
-                if contract_builder is None:
-                    contract_builder = DirectorContractBuilder()
-                    self.director_contract_builder = contract_builder
-                director_contract = contract_builder.build(director_context, performance_context)
-                payload["performance_context"] = performance_context.to_payload()
-                payload["director_contract"] = director_contract.to_payload()
-                payload["director_contract_prompt"] = director_contract.to_prompt_block()
-                # Nếu Decision chưa khai stage metadata thì dùng contract làm mặc định.
-                # Cognition vẫn quyết nội dung; stage quyết cách biểu diễn.
-                payload["delivery_hint"] = str(payload.get("delivery_hint") or performance_context.delivery_style)
-                payload["stage_motion"] = str(payload.get("stage_motion") or performance_context.stage_motion)
-                stage_scorer = getattr(self, "stage_scorer", None)
-                if stage_scorer is None:
-                    stage_scorer = StageScorer()
-                    self.stage_scorer = stage_scorer
-                stage_score = stage_scorer.score_decision(
-                    decision,
-                    payload=payload,
-                    context=director_context,
-                    channel=channel,
-                )
-                payload["director"] = director_context.compact_payload()
-                payload = stage_scorer.apply_to_payload(
-                    payload,
-                    stage_score,
-                    channel=channel,
-                    context=director_context,
-                )
-            except Exception as exc:
-                self.logger.debug("[director] stage scoring skipped: %s", exc)
+        # Stage transport consumes the Decision directly; no director/scorer pass.
         from runtime.runtime_settings_store import runtime_text
         stage_language = runtime_text("tts", "language", default="vi").strip() or "vi"
         stage_builder = getattr(self, "stage_frame_builder", None)
@@ -4721,13 +4648,11 @@ class RuntimeCoordinator(
         }
 
     def _restore_session_ritual_once(self) -> SessionRitualReport:
-        """Run the startup continuity greeting once per runtime session.
+        """Restore continuity state, then use a clean one-line startup lane.
 
-        This block used to sit after a return statement in
-        _is_inner_thought_speech_act(), so it was unreachable and made the
-        coordinator look like it had been assembled by a caffeinated gremlin.
-        Keeping it as an explicit method matches run_loop(), which calls
-        _restore_session_ritual_once() during startup.
+        SessionRitualEngine may decide whether a greeting is appropriate, but it
+        no longer supplies memory loops, Ni/Ti/Fe labels, social markers or fake
+        scene anchors to the wording model.
         """
         if getattr(self, "_session_ritual_ran", False):
             return SessionRitualReport(restored=False, session_resumed=False, should_greet=False)
@@ -4735,7 +4660,6 @@ class RuntimeCoordinator(
 
         self._ensure_internal_state()
         internal_state = self._get_internal_state()
-
         snapshot = self.telemetry_service.capture_snapshot(
             mood_score=self.mood_score,
             inferred_pos_x=self.inferred_pos_x,
@@ -4758,131 +4682,34 @@ class RuntimeCoordinator(
             social_presence_event=social_presence_event,
         )
 
-        if emit_session_ritual_preset(self, report):
-            updated_state = self.internal_state_engine.commit_session_ritual(
-                internal_state,
-                session_ritual=report,
-            )
-            self._set_internal_state(updated_state)
-            self._save_memory_state()
-            return report
-
         if report.should_greet:
-            self.long_term_memory = self._memory_recall_texts(snapshot=snapshot)
-            memory_resonance = self._activate_memory_resonance(
-                snapshot=snapshot,
-                channel="session_ritual",
-                fragments=tuple(
-                    item
-                    for item in (
-                        report.active_goal,
-                        report.current_attractor,
-                        report.recent_cognition_direction,
-                        report.self_continuity,
-                        *tuple(report.unresolved_loops or ()),
-                    )
-                    if str(item or "").strip()
-                ),
-            )
-            memory_context = self._build_memory_context(snapshot, memory_resonance=memory_resonance)
-            ni_report = self.ni_engine.evaluate_autonomous(
-                snapshot=snapshot,
-                long_term_memory=self.long_term_memory,
-                last_text=self.last_text,
-                goal_state=getattr(internal_state, "goal_persistence", None),
-            )
-            ti_view = self.autonomous_ni_state.update(snapshot=snapshot, report=ni_report)
-            ti_report = self.ti_governor.evaluate_autonomous(
-                snapshot=snapshot,
-                ni_report=ni_report,
-                ni_state_label=ti_view["discrete_state"],
-                ni_state_streak=ti_view["streak_length"],
-                idle_cycles=self.idle_cycles,
-                last_text=self.last_text,
-            )
-            fe_plan = self.fe_renderer.evaluate_autonomous(
-                snapshot=snapshot,
-                ni_report=ni_report,
-                ti_report=ti_report,
-                style_memory=self.fe_style_memory,
-                internal_state=internal_state,
-                last_text=self.last_text,
-            )
-            greeting_source = "llm"
             try:
                 raw = self.llm_service.generate_directive(
-                    telemetry_data=self._build_speech_evidence_context(snapshot),
-                    ni_context=str(getattr(ni_report, "prompt_context", "") or ""),
-                    ti_context=self._build_session_ritual_ti_context(report, snapshot),
-                    fe_context=fe_plan.style_context,
-                    appraisal_context="session_ritual: startup greeting; express current attitude without reporting telemetry.",
-                    internal_state_context=self._build_internal_state_context(internal_state),
-                    memory_context=memory_context,
+                    telemetry_data="",
+                    ti_context="",
+                    ni_context="",
+                    fe_context="",
+                    appraisal_context="",
+                    internal_state_context="",
+                    memory_context="",
                     avoid_text=self.last_text,
                     speech_intent="session_ritual",
-                    vision_trace_marker="session_ritual",
+                    vision_trace_marker="",
                 )
                 self._log_raw_llm_output("session_ritual", raw)
                 decision = self.parser.parse(raw)
             except Exception as exc:
-                self.logger.warning("[session_ritual] LLM greeting failed: %s", exc)
-                greeting_source = "fallback_after_llm_error"
-                # Bỏ câu chào canned "bạn quay lại rồi." — degrade về IM thay vì
-                # template cố định mỗi lần khởi động.
-                decision = Decision(
-                    text="",
-                    animation="stand",
-                    should_speak=False,
-                    debug_trace="session_ritual_layer; fallback=silent_no_template",
-                )
-            if not decision.text.strip():
-                greeting_source = "fallback_after_empty_llm"
-                decision = Decision(
-                    text="",
-                    animation="stand",
-                    should_speak=False,
-                    debug_trace="session_ritual_layer; fallback=silent_no_template",
-                )
+                self.logger.warning("[session_ritual] compact greeting failed: %s", exc)
+                decision = Decision(text="", animation="stand", should_speak=False)
 
-            # LLM greeting vẫn qua Challengeability Check, nhưng từ policy
-            # final-passthrough trở đi gate chỉ audit. Không rewrite, không đổi
-            # audio_asset, không hạ preset. Nếu câu dựng tiền đề ảo, ledger/debug
-            # ghi lại; raw surface vẫn được phát nguyên văn.
-            if decision.text.strip() and getattr(report, "greeting_frame", None) is not None:
-                anchor_gate = StartupAnchorGate()
-                anchor_verdict = anchor_gate.validate(decision.text, report.greeting_frame)
-                if anchor_verdict.unsupported_presuppositions:
-                    decision.debug_trace = (
-                        f"{decision.debug_trace} | startup_anchor_audit="
-                        f"{','.join(anchor_verdict.unsupported_presuppositions)}"
-                    ).strip(" |")
-                    self.logger.info(
-                        "[startup-anchor] audit_only unsupported=%s text=%r",
-                        ",".join(anchor_verdict.unsupported_presuppositions),
-                        decision.text,
-                    )
-
-            if decision.text.strip():
-                decision.intent = decision.intent or "session_ritual"
-                decision.reasoning_tags = tuple(dict.fromkeys((*decision.reasoning_tags, "session_ritual", "startup_greeting")))
+            if str(getattr(decision, "text", "") or "").strip():
                 decision.should_speak = True
-                decision.confidence = decision.confidence or 0.72
-                decision.parse_mode = "session_ritual"
-                decision.debug_trace = (
-                    f"{decision.debug_trace} | session_ritual_layer; source={greeting_source}; tone={report.tone}"
-                    if decision.debug_trace
-                    else f"session_ritual_layer; source={greeting_source}; tone={report.tone}"
-                )
-                self.fe_style_memory = self.fe_renderer.remember_style(
-                    self.fe_style_memory,
-                    plan=fe_plan,
-                    rendered_text=decision.text,
-                )
+                decision.parse_mode = "session_ritual_compact"
                 self.last_text = decision.text
                 spoken_at = time.time()
                 self._note_autonomous_spoken(now=spoken_at)
                 self._block_autonomous_presence_after_public_turn(now=spoken_at)
-                self.logger.info('[session_ritual] sent LLM greeting text="%s"', decision.text)
+                self.logger.info('[session_ritual] sent compact greeting text="%s"', decision.text)
                 self._send_decision_to_body(decision, channel="autonomous")
 
         updated_state = self.internal_state_engine.commit_session_ritual(
@@ -4891,7 +4718,6 @@ class RuntimeCoordinator(
         )
         self._set_internal_state(updated_state)
         self._save_memory_state()
-
         return report
 
     def _apply_force_speak_no_evidence_topic_filter(
@@ -5529,7 +5355,6 @@ class RuntimeCoordinator(
         guard = getattr(self, "_apply_chat_final_guards", None)
         if callable(guard):
             decision = guard(decision, user_text=topic, frame=None, allow_reroll=False)
-        decision = self._apply_director_precommit_guard(decision, frame=None, channel="chat")
         try:
             from actions.capability_registry import canonicalize_action_id
             decision.system_action = canonicalize_action_id(decision.system_action)
@@ -5613,6 +5438,12 @@ class RuntimeCoordinator(
         if runtime is not None:
             try:
                 runtime.stop()
+            except Exception:
+                pass
+        social_observer = getattr(self, "social_observer", None)
+        if social_observer is not None:
+            try:
+                social_observer.shutdown()
             except Exception:
                 pass
         self.transport.close()
@@ -7155,88 +6986,6 @@ class RuntimeCoordinator(
         self._panel_state_cache = (now, state)
         return state
 
-    def _apply_director_precommit_guard(
-        self,
-        decision: Decision,
-        *,
-        frame: CognitiveFrame | None = None,
-        channel: str = "chat",
-    ) -> Decision:
-        """Chặn/sửa câu *trước* khi ghi chat history và memory.
-
-        Stage layer vốn đã chấm lại trong ``_send_decision_to_body``. Tuy nhiên nếu
-        chỉ chặn ở đó thì câu sai quyền vẫn kịp chui vào history/session ledger
-        trước khi bị tắt tiếng. Đây là kiểu an toàn đóng cửa sau khi dữ liệu đã
-        đi dạo một vòng trong nhà. Guard này dùng cùng DirectorContext +
-        StageScorer, rồi phản chiếu kết quả về chính ``Decision`` trước commit.
-        """
-
-        from runtime.final_passthrough_policy import audit_only, final_passthrough_enabled
-        if final_passthrough_enabled():
-            return audit_only(decision, f"director_precommit:{channel}")
-
-        if bool(getattr(decision, "director_finalized", False)):
-            # FinalDecision đã qua đúng cùng authority/scorer/repair ngay trước
-            # commit. Chấm lại ở đây vừa tốn thời gian vừa có thể đổi kết quả do
-            # scene/hook vừa tick thêm vài mili giây.
-            return decision
-
-        payload = decision.to_payload()
-        user_text = str(getattr(self, "current_stage_user_text", "") or "")
-        payload["user_text"] = user_text
-
-        director_builder = getattr(self, "director_context_builder", None)
-        if director_builder is None:
-            director_builder = DirectorContextBuilder()
-            self.director_context_builder = director_builder
-        director_context = director_builder.build(
-            payload=payload,
-            frame=frame or getattr(self, "last_cognitive_frame", None),
-            channel=channel,
-            user_text=user_text,
-        )
-
-        stage_scorer = getattr(self, "stage_scorer", None)
-        if stage_scorer is None:
-            stage_scorer = StageScorer()
-            self.stage_scorer = stage_scorer
-        score = stage_scorer.score_decision(
-            decision,
-            payload=payload,
-            context=director_context,
-            channel=channel,
-        )
-        guarded = stage_scorer.apply_to_payload(
-            payload,
-            score,
-            channel=channel,
-            context=director_context,
-        )
-
-        old_text = str(decision.text or "")
-        decision.text = str(guarded.get("text", "") or "")
-        decision.should_speak = bool(guarded.get("should_speak", False) and decision.text.strip())
-        decision.delivery_hint = str(guarded.get("delivery_hint", decision.delivery_hint) or "")
-        decision.nonverbal_cue = str(guarded.get("nonverbal_cue", decision.nonverbal_cue) or "")
-        decision.stage_motion = str(guarded.get("stage_motion", decision.stage_motion) or "")
-        decision.parse_mode = str(guarded.get("parse_mode", decision.parse_mode) or decision.parse_mode)
-
-        applied_action = str(
-            ((guarded.get("stage_score") or {}) if isinstance(guarded.get("stage_score"), dict) else {}).get(
-                "applied_action", "keep"
-            )
-            or "keep"
-        )
-        changed = decision.text != old_text or not decision.should_speak
-        if changed:
-            # Candidate bị sửa/chặn không còn là nguồn đáng tin để auto-commit
-            # extracted_fact. User fact thật vẫn đi qua MemoryCommitPolicy riêng.
-            decision.extracted_fact = ""
-            decision.reasoning_tags = tuple(dict.fromkeys((*decision.reasoning_tags, "director_precommit_guard")))
-            marker = f"director_precommit={score.decision}:{score.reason}:{applied_action}"
-            decision.debug_trace = " | ".join(part for part in (decision.debug_trace, marker) if part)
-        return decision
-
     _MEMORY_SUCCESS_CLAIM_MARKERS = (
         "đã lưu", "đã ghi nhớ", "đã cập nhật ký ức", "đã cập nhật bộ nhớ",
         "da luu", "da ghi nho", "da cap nhat ky uc", "da cap nhat bo nho",
@@ -7300,12 +7049,6 @@ class RuntimeCoordinator(
         return decision
 
     def _commit_chat_decision(self, decision: Decision, fe_plan, *, frame: CognitiveFrame | None = None) -> None:
-        try:
-            decision = self._apply_director_precommit_guard(decision, frame=frame, channel="chat")
-        except Exception as exc:
-            # Không để lỗi phụ của guard làm sập cả turn. Vẫn log rõ để test/ops
-            # bắt được, thay vì nuốt im rồi giả vờ mọi thứ rất chuyên nghiệp.
-            self.logger.warning("[director] precommit guard failed: %s", exc)
         authority = getattr(self, "_apply_v3_authority_guard", None)
         if callable(authority):
             decision = authority(decision, frame=frame, channel="chat")
@@ -7379,6 +7122,7 @@ class RuntimeCoordinator(
         # rỗng vào history; im lặng cũng không nên giả dạng thành văn bản.
         if memory_text:
             self._append_chat_history("assistant", memory_text, invalid=invalid_for_semantic_history)
+        assistant_meta_ref = None
         if bool(decision.should_speak) and public_text:
             assistant_meta = {
                 "intent": decision.intent,
@@ -7391,6 +7135,7 @@ class RuntimeCoordinator(
                     "counts_as_answer": False,
                     "invalid_for_semantic_context": True,
                 })
+            assistant_meta_ref = assistant_meta
             assistant_turn = self._ensure_session_turn_ledger().record_assistant(
                 public_text,
                 meta=assistant_meta,
@@ -7431,6 +7176,27 @@ class RuntimeCoordinator(
                 self.logger.warning("[final speech] verify failed: %s", exc)
             self._send_decision_to_body(decision, channel="chat")
             self._finalize_cognitive_frame(frame)
+
+        # Chỉ sau khi frame/state chính đã commit mới cho observer nudge state.
+        # Nếu future chưa xong, callback sẽ áp dụng sau; tuyệt đối không giữ bubble
+        # hay TTS chờ model phụ.
+        try:
+            observer_runtime = getattr(self, "social_observer", None)
+            ticket_id = str(
+                getattr(frame, "metadata", {}).get("social_observer_ticket_id", "")
+                if frame is not None else ""
+            )
+            if observer_runtime is not None and ticket_id:
+                observer_ticket = observer_runtime.take(ticket_id)
+                observer_runtime.complete(
+                    observer_ticket,
+                    host=self,
+                    assistant_text=public_text,
+                    assistant_meta=assistant_meta_ref,
+                )
+        except Exception as exc:
+            self.logger.debug("[social observer] completion scheduling failed: %s", exc)
+
         trace_store = getattr(self, "director_trace_store", None)
         trace_id = str(getattr(decision, "director_trace_id", "") or "")
         if trace_store is not None and trace_id:
@@ -10089,12 +9855,6 @@ class RuntimeCoordinator(
             self._log_raw_llm_output("directive_inner_thought", raw)
             self._log_pre_parser("directive_inner_thought", raw)
             decision = self.parser.parse(raw)
-            from runtime.final_passthrough_policy import PublicSpeechSnapshot, final_passthrough_enabled
-            raw_public_speech = (
-                PublicSpeechSnapshot.capture(decision)
-                if final_passthrough_enabled() and str(getattr(decision, "text", "") or "").strip()
-                else None
-            )
             self._log_decision_stage("directive_inner_thought", "after_parser", decision)
             decision.debug_trace = (
                 f"{decision.debug_trace} | inner_thought={speech_core.inner_thought.intent}"
@@ -10110,16 +9870,6 @@ class RuntimeCoordinator(
             decision = self.ti_governor.enforce_decision(decision, ti_report)
             self._log_decision_stage("directive_inner_thought", "after_ti", decision)
             decision = self._execute_system_action(decision, snapshot=snapshot, frame=frame)
-            decision = self._apply_post_generation_filters(
-                decision,
-                channel="autonomous",
-                speech_core=speech_core,
-                snapshot=snapshot,
-                momentum_topic=getattr(thought_surface, "topic_seed", ""),
-                frame=frame,
-            )
-            if raw_public_speech is not None:
-                decision = raw_public_speech.restore(decision, stage="coordinator_autonomous_inner_precommit")
             self._remember_inner_thought_rhythm(speech_core.inner_thought)
             self.fe_style_memory = self.fe_renderer.remember_style(
                 self.fe_style_memory,
@@ -10182,27 +9932,11 @@ class RuntimeCoordinator(
         self._log_raw_llm_output("directive", raw)
         self._log_pre_parser("directive", raw)
         decision = self.parser.parse(raw)
-        from runtime.final_passthrough_policy import PublicSpeechSnapshot, final_passthrough_enabled
-        raw_public_speech = (
-            PublicSpeechSnapshot.capture(decision)
-            if final_passthrough_enabled() and str(getattr(decision, "text", "") or "").strip()
-            else None
-        )
         self._log_decision_stage("directive", "after_parser", decision)
         self._log_decision_stage("directive", "pre_ti", decision)
         decision = self.ti_governor.enforce_decision(decision, ti_report)
         self._log_decision_stage("directive", "after_ti", decision)
         decision = self._execute_system_action(decision, snapshot=snapshot, frame=frame)
-        decision = self._apply_post_generation_filters(
-            decision,
-            channel="autonomous",
-            speech_core=speech_core,
-            snapshot=snapshot,
-            momentum_topic=getattr(speech_core.inner_thought, "topic_seed", ""),
-            frame=frame,
-        )
-        if raw_public_speech is not None:
-            decision = raw_public_speech.restore(decision, stage="coordinator_autonomous_precommit")
 
         self.fe_style_memory = self.fe_renderer.remember_style(
             self.fe_style_memory,

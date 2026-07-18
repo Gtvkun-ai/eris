@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Các lane model phụ cho Social Cognition V2.
+"""Router cho các model social observer trên Groq.
 
-- Llama 3.1 8B: parser nhanh, chỉ refine top-k hypothesis khi lượt mơ hồ.
-- Qwen3 32B: deliberator/critic cho repair, banter, từ chối, tức giận.
-- Terra (client chính): chỉ rewrite câu cuối khi critic phát hiện lỗi nặng.
+Production path chỉ dùng ``observe_turn``:
+- GPT-OSS 20B: observer chính, strict structured JSON.
+- GPT-OSS 120B: escalation hiếm khi ambiguity/repair cao.
+- Llama 3.1 8B: fallback khi lane OSS lỗi.
 
-Tất cả method đều fail-open. Provider chết thì contract deterministic vẫn chạy;
-không có chuyện API 429 kéo theo mất luôn khả năng đối nhân xử thế.
+Các method social cognition V2 cũ còn tồn tại để tương thích import, nhưng không
+có caller production. Không lane nào được viết, sửa, chặn hoặc chọn public text.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from runtime.social_cognition_v2 import SocialCritique, SocialHypothesis, TaskAppraisal
+from runtime.social_observer import SOCIAL_OBSERVATION_SCHEMA, SocialObservation
 
 
 def _message_content(payload: Any) -> str:
@@ -80,10 +82,34 @@ class SocialModelRouter:
         temperature: float = 0.1,
         reasoning_effort: str | None = None,
         source: str,
+        schema: Mapping[str, Any] | None = None,
+        strict_schema: bool = False,
     ) -> ModelLaneResult:
         if client is None:
             return ModelLaneResult(False, {}, source, "client_unavailable")
         try:
+            model_name = str(getattr(client, "model_name", "") or "").strip()
+            response_format: dict[str, Any]
+            if schema is not None and strict_schema and model_name.startswith("openai/gpt-oss-"):
+                response_format = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "eris_social_observation",
+                        "strict": True,
+                        "schema": dict(schema),
+                    },
+                }
+            elif schema is not None:
+                response_format = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "eris_social_observation",
+                        "strict": False,
+                        "schema": dict(schema),
+                    },
+                }
+            else:
+                response_format = {"type": "json_object"}
             raw = client.create_chat_completion(
                 messages=[
                     {"role": "system", "content": system},
@@ -93,7 +119,7 @@ class SocialModelRouter:
                 frequency_penalty=0.0,
                 presence_penalty=0.0,
                 max_tokens=max_tokens,
-                response_format={"type": "json_object"},
+                response_format=response_format,
                 reasoning_effort=reasoning_effort,
             )
             payload = _json_object(_message_content(raw))
@@ -117,6 +143,108 @@ class SocialModelRouter:
     @property
     def main_client(self) -> Any | None:
         return getattr(self.llm_service, "client", None)
+
+    @property
+    def fallback_client(self) -> Any | None:
+        return getattr(self.llm_service, "social_fallback_client", None)
+
+    @staticmethod
+    def _observer_system_prompt(*, deep: bool = False) -> str:
+        depth = (
+            "Resolve ambiguity carefully and prefer unknown/low confidence over a dramatic interpretation. "
+            if deep else
+            "Be fast and conservative. "
+        )
+        return (
+            "Bạn là social observer cho ERIS. Bạn KHÔNG viết câu trả lời, KHÔNG sửa lời ERIS, "
+            "KHÔNG chọn response move và KHÔNG phán động cơ bí mật của user. "
+            "Chỉ đọc evidence public rồi xuất một social event có cấu trúc. "
+            "Phân biệt lời khen, closeness bid, vulnerability, correction/repair, đùa thân mật và hostility thật. "
+            "Profanity trong banter không mặc định là hostility. Một câu hỏi ẩn dụ không phải yêu cầu hành động vật lý. "
+            "assistant_fault_probability chỉ cao khi lượt ERIS trước thực sự trả lệch/né/sai claim. "
+            + depth +
+            "Evidence phải là đoạn ngắn từ text public; không dùng private mind hay suy đoán bệnh lý."
+        )
+
+    def _observe_with_client(
+        self,
+        client: Any,
+        *,
+        user_text: str,
+        previous_assistant_text: str,
+        previous_user_text: str,
+        history: Sequence[str],
+        source: str,
+        deep: bool = False,
+    ) -> SocialObservation:
+        model_name = str(getattr(client, "model_name", "") or "")
+        result = self._call_json(
+            client,
+            system=self._observer_system_prompt(deep=deep),
+            user=json.dumps({
+                "user_text": user_text,
+                "previous_assistant_text": previous_assistant_text,
+                "previous_user_text": previous_user_text,
+                "recent_public_history": list(history)[-6:],
+            }, ensure_ascii=False),
+            max_tokens=420 if deep else 320,
+            temperature=0.0,
+            reasoning_effort="medium" if deep and model_name.startswith("openai/gpt-oss-") else (
+                "low" if model_name.startswith("openai/gpt-oss-") else None
+            ),
+            source=source,
+            schema=SOCIAL_OBSERVATION_SCHEMA,
+            strict_schema=model_name.startswith("openai/gpt-oss-"),
+        )
+        if not result.ok:
+            return SocialObservation(source=f"{source}:{result.error or 'failed'}")
+        return SocialObservation.from_mapping(result.payload, source=source)
+
+    def observe_turn(
+        self,
+        *,
+        user_text: str,
+        previous_assistant_text: str = "",
+        previous_user_text: str = "",
+        history: Sequence[str] = (),
+    ) -> SocialObservation:
+        """Phân tích social event; tuyệt đối không tạo public text."""
+        primary = self._observe_with_client(
+            self.parser_client,
+            user_text=user_text,
+            previous_assistant_text=previous_assistant_text,
+            previous_user_text=previous_user_text,
+            history=history,
+            source="groq_social_observer",
+            deep=False,
+        ) if self.parser_client is not None else SocialObservation(source="primary_unavailable")
+
+        if primary.confidence <= 0.0 and self.fallback_client is not None:
+            primary = self._observe_with_client(
+                self.fallback_client,
+                user_text=user_text,
+                previous_assistant_text=previous_assistant_text,
+                previous_user_text=previous_user_text,
+                history=history,
+                source="groq_social_fallback",
+                deep=False,
+            )
+
+        if primary.needs_deep_review and self.critic_client is not None:
+            deep = self._observe_with_client(
+                self.critic_client,
+                user_text=user_text,
+                previous_assistant_text=previous_assistant_text,
+                previous_user_text=previous_user_text,
+                history=history,
+                source="groq_social_deep",
+                deep=True,
+            )
+            # Deep lane chỉ thắng khi nó thật sự chắc hơn. Không phải cứ model to
+            # hơn là được quyền viết lại lịch sử, cái thói đó đã gây đủ chuyện rồi.
+            if deep.confidence >= max(0.58, primary.confidence + 0.03):
+                return deep
+        return primary
 
     def refine_hypotheses(
         self,
