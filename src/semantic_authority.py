@@ -24,6 +24,7 @@ class SemanticAuthorityPolicy:
     low_quality_fail_open_setting: bool = False
     max_constrained_reruns: int = 1
     allow_domain_fallback: bool = True
+    final_passthrough_setting: bool = True
 
     @classmethod
     def from_runtime(cls) -> "SemanticAuthorityPolicy":
@@ -55,6 +56,8 @@ class SemanticAuthorityPolicy:
                 low_quality_fail_open_setting=bool(chat.get("low_quality_fail_open", False)),
                 max_constrained_reruns=max(0, min(2, int(chat.get("max_constrained_reruns", 1) or 0))),
                 allow_domain_fallback=bool(chat.get("auto_fallback", True)),
+                # Raw final passthrough là invariant kiến trúc, không đọc toggle.
+                final_passthrough_setting=True,
             )
         except Exception:
             return cls()
@@ -93,24 +96,30 @@ class SemanticAuthorityPolicy:
         return self.include_director_prompt_setting
 
     @property
+    def final_passthrough(self) -> bool:
+        return bool(self.final_passthrough_setting)
+
+    @property
     def generate_director_candidates(self) -> bool:
-        return self.director_candidate_mode != "off"
+        return False if self.final_passthrough else self.director_candidate_mode != "off"
 
     @property
     def hard_only_final_guards(self) -> bool:
-        return False
+        return bool(self.final_passthrough)
 
     @property
     def enforce_response_contract(self) -> bool:
-        return self.enforce_response_contract_setting
+        return False if self.final_passthrough else self.enforce_response_contract_setting
 
     @property
     def low_quality_fail_open(self) -> bool:
-        return self.low_quality_fail_open_setting
+        return True if self.final_passthrough else self.low_quality_fail_open_setting
 
     @property
     def bounded_refine_enabled(self) -> bool:
-        return self.critique_mode == "bounded_refine" and self.max_constrained_reruns > 0
+        return False if self.final_passthrough else (
+            self.critique_mode == "bounded_refine" and self.max_constrained_reruns > 0
+        )
 
     @property
     def primary_uses_escalation_client(self) -> bool:

@@ -123,6 +123,10 @@ from runtime.speech_pipeline import SPEECH_INTENTS, SpeechIntentDecision, Speech
 from runtime.director_context import DirectorContextBuilder
 from runtime.stage_contracts import StageFrameBuilder
 from runtime.stage_dispatcher import StageDispatcher
+from runtime.tts_sync_policy import (
+    sync_text_with_tts_enabled,
+    tts_event_releases_deferred_text,
+)
 from runtime.stage_event_bus import StageEventBus
 from runtime.stage_output import StageOutputPipeline
 from runtime.stage_protocol import is_stage_inbound_type
@@ -1904,8 +1908,8 @@ class RuntimeCoordinator(
         Parser đã phân biệt đây là lời diễn, không phải ``system_action``. Eris
         được quyền giữ câu cá tính như “Tôi sẽ đóng cửa sổ của bạn ngay”, nhưng
         ground-truth vẫn được lưu để panel hiển thị rõ: câu ấy chưa thực thi thao
-        tác hệ điều hành. Chỉ tự bật deception cho đúng candidate này; không nới
-        capability guard trên các yêu cầu thao tác thật.
+        tác hệ điều hành. Chỉ tự bật deception cho đúng candidate này; lời thoại
+        vẫn được giữ nguyên, còn action thật do contract/executor quyết định.
         """
         tags = {str(tag or "").strip() for tag in (getattr(decision, "reasoning_tags", ()) or ())}
         if "deception_candidate" not in tags:
@@ -1971,16 +1975,16 @@ class RuntimeCoordinator(
         except Exception:
             return False
 
-    def _cancel_scripted_take_for_user_input(self, reason: str) -> bool:
-        runtime = getattr(self, "scripted_take_runtime", None)
-        if runtime is None:
+    def _supersede_tts_for_new_user_turn(self, reason: str) -> bool:
+        tts = getattr(self, "tts_engine", None)
+        supersede = getattr(tts, "supersede_all", None)
+        if not callable(supersede):
             return False
-        status_getter = getattr(runtime, "status", None)
-        status = status_getter() if callable(status_getter) else None
-        if str(getattr(status, "state", "") or "") not in {"starting", "running"}:
+        try:
+            return bool(supersede(reason=reason))
+        except Exception as exc:
+            self.logger.debug("[TTS] supersede failed: %s", exc)
             return False
-        cancel = getattr(runtime, "cancel", None)
-        return bool(cancel(reason)) if callable(cancel) else False
 
     #Hàm này dựng text context để đưa vào prompt LLM.
     def _send_decision_to_body(self, decision: Decision, *, channel: str | None = None) -> None:
@@ -2132,6 +2136,29 @@ class RuntimeCoordinator(
         payload["text"] = stage_frame.display_text
         payload["memory_text"] = stage_frame.memory_text
         payload.update(stage_frame.to_payload_patch())
+        # Observation xảy ra sau khi public surface đã xác định, nhưng trước khi
+        # dispatch. Nó chỉ ghi hậu quả cho lượt sau; không được mutate Decision.
+        try:
+            from runtime.behavior_observation import (
+                behavior_observation_summary,
+                record_public_behavior,
+            )
+
+            record_public_behavior(
+                self,
+                decision,
+                payload=payload,
+                channel=channel_name or str(channel or ""),
+                turn_id=str(getattr(decision, "director_trace_id", "") or ""),
+            )
+            # Decision.to_payload() chạy trước observation. Cập nhật summary tại
+            # đây để panel của chính lượt hiện tại cũng nhìn thấy tín hiệu mới,
+            # thay vì phải đợi lượt sau như một giao diện sống chậm hơn não.
+            observation_summary = behavior_observation_summary(decision)
+            if observation_summary:
+                payload["behavior_observation"] = observation_summary
+        except Exception as exc:
+            self.logger.debug("[behavior-observation] public record skipped: %s", exc)
         self._record_public_turn(decision, payload=payload, channel=channel)
         stage_output = getattr(self, "stage_output_pipeline", None)
         if stage_output is None:
@@ -2142,7 +2169,10 @@ class RuntimeCoordinator(
             payload["stage"]["segment_count"] = len(stage_frames)
             payload["stage"]["protocol"] = "eris.stage"
             payload["stage"]["protocol_version"] = 1
-        sync_text = os.environ.get("ERIS_TTS_SYNC_TEXT", "0").strip().lower() in {"1", "true", "yes", "on"}
+        # Mặc định bubble chỉ xuất hiện khi audio thật sự bắt đầu phát. Trước đây
+        # default=0 làm text hiện ngay, còn Gemini TTS bò tới sau vài giây như một
+        # bản lồng tiếng bị lệch timeline. Có thể opt-out bằng ERIS_TTS_SYNC_TEXT=0.
+        sync_text = sync_text_with_tts_enabled()
         text_payload_sent = False
         stage_payload_sent = False
         panel_payload_sent = False
@@ -2244,19 +2274,22 @@ class RuntimeCoordinator(
                 self.logger.warning("Failed to send panel state payload: %s", panel_exc)
 
         def handle_tts_event(event, event_stage_frame):
+            # Task manager có thể fail trong lúc synth trước khi on_first_start
+            # được gọi. Khi đó vẫn phải trả text ra UI thay vì để bubble mất luôn.
+            if sync_text and tts_event_releases_deferred_text(getattr(event, "type", "")):
+                send_text_payload()
             self._handle_tts_playback_event(event, stage_frame=event_stage_frame)
 
         # TTS: đọc to câu vừa nói với emotion context (valence/arousal/stance).
         speech_provider = self._get_runtime_provider("speech")
         _tts = getattr(speech_provider, "engine", None) if speech_provider is not None else None
         has_scheduled_tts = False
-        # Panel không phụ thuộc TTS. Nếu sync_text đang chờ remote audio, dữ liệu
+        # Panel không phụ thuộc TTS. Khi sync_text đang chờ remote audio, dữ liệu
         # cảm xúc/nhật ký vẫn phải hiện ngay chứ không đứng nhìn spinner như một
         # nghi thức tôn giáo của UI bất đồng bộ.
         send_panel_payload()
         if not sync_text:
-            # UI/chat không nên im vài giây chỉ vì remote TTS đang synthesize.
-            # TTS lifecycle event sẽ báo audio_start/audio_done riêng sau.
+            # Chế độ legacy: text hiện ngay, audio tới sau.
             send_text_payload()
         if _tts is not None and getattr(_tts, "_ok", False) and bool(payload.get("should_speak")):
             if stage_frames and sync_text:
@@ -4811,30 +4844,21 @@ class RuntimeCoordinator(
                     debug_trace="session_ritual_layer; fallback=silent_no_template",
                 )
 
-            # LLM greeting vẫn phải qua Challengeability Check. Một câu nghe hay
-            # nhưng không trả lời được "cụ thể là cái gì?" sẽ bị hạ về một câu
-            # hiện diện có cá tính và không dựng task/sự cố ảo.
+            # LLM greeting vẫn qua Challengeability Check, nhưng từ policy
+            # final-passthrough trở đi gate chỉ audit. Không rewrite, không đổi
+            # audio_asset, không hạ preset. Nếu câu dựng tiền đề ảo, ledger/debug
+            # ghi lại; raw surface vẫn được phát nguyên văn.
             if decision.text.strip() and getattr(report, "greeting_frame", None) is not None:
                 anchor_gate = StartupAnchorGate()
                 anchor_verdict = anchor_gate.validate(decision.text, report.greeting_frame)
-                if not anchor_verdict.accepted:
-                    original_text = decision.text
-                    decision.text = anchor_gate.safe_rewrite(
-                        report.greeting_frame,
-                        avoid_text=self.last_text,
-                    )
-                    decision.audio_asset = ""
-                    decision.preset_id = ""
-                    greeting_source = "anchor_rewrite"
+                if anchor_verdict.unsupported_presuppositions:
                     decision.debug_trace = (
-                        f"{decision.debug_trace} | startup_anchor_rewrite="
-                        f"{','.join(anchor_verdict.unsupported_presuppositions)}; "
-                        f"original={original_text[:120]}"
+                        f"{decision.debug_trace} | startup_anchor_audit="
+                        f"{','.join(anchor_verdict.unsupported_presuppositions)}"
                     ).strip(" |")
                     self.logger.info(
-                        "[startup-anchor] rewrite unsupported=%s original=%r rewritten=%r",
+                        "[startup-anchor] audit_only unsupported=%s text=%r",
                         ",".join(anchor_verdict.unsupported_presuppositions),
-                        original_text,
                         decision.text,
                     )
 
@@ -6449,10 +6473,12 @@ class RuntimeCoordinator(
             return
 
         if msg_type == "chat":
-            self._cancel_scripted_take_for_user_input("user_chat")
             user_text = str(msg.get("message", "") or "").strip()
             user_timestamp = float(msg.get("timestamp") or time.time())
             self._capture_speech_interrupt_for_user(user_text, timestamp=user_timestamp)
+            # VoiceManager đã supersede khi có text. Gọi thêm ở đây để cả engine
+            # giả/test double và chat không tạo InterruptEvent vẫn thu hồi audio cũ.
+            self._supersede_tts_for_new_user_turn("user_chat_supersede")
             self._run_chat_cycle(
                 user_text,
                 user_timestamp=user_timestamp,
@@ -6460,7 +6486,7 @@ class RuntimeCoordinator(
             return
 
         if msg_type == "force_speak":
-            self._cancel_scripted_take_for_user_input("user_force_speak")
+            self._supersede_tts_for_new_user_turn("user_force_speak")
             self._handle_force_speak_request()
             return
 
@@ -7145,6 +7171,10 @@ class RuntimeCoordinator(
         StageScorer, rồi phản chiếu kết quả về chính ``Decision`` trước commit.
         """
 
+        from runtime.final_passthrough_policy import audit_only, final_passthrough_enabled
+        if final_passthrough_enabled():
+            return audit_only(decision, f"director_precommit:{channel}")
+
         if bool(getattr(decision, "director_finalized", False)):
             # FinalDecision đã qua đúng cùng authority/scorer/repair ngay trước
             # commit. Chấm lại ở đây vừa tốn thời gian vừa có thể đổi kết quả do
@@ -7224,6 +7254,10 @@ class RuntimeCoordinator(
         if committed_count > 0:
             decision.reasoning_tags = tuple(dict.fromkeys((*decision.reasoning_tags, "memory_commit_confirmed")))
             return decision
+        from runtime.final_passthrough_policy import audit_only, final_passthrough_enabled
+        if final_passthrough_enabled():
+            decision.reasoning_tags = tuple(dict.fromkeys((*decision.reasoning_tags, "memory_commit_unconfirmed_audit")))
+            return audit_only(decision, "memory_commit_truth_guard")
         decision.text = "Tôi nhận được thông tin đó, nhưng lượt lưu chưa xác nhận thành công."
         decision.should_speak = True
         decision.extracted_fact = ""
@@ -10055,6 +10089,12 @@ class RuntimeCoordinator(
             self._log_raw_llm_output("directive_inner_thought", raw)
             self._log_pre_parser("directive_inner_thought", raw)
             decision = self.parser.parse(raw)
+            from runtime.final_passthrough_policy import PublicSpeechSnapshot, final_passthrough_enabled
+            raw_public_speech = (
+                PublicSpeechSnapshot.capture(decision)
+                if final_passthrough_enabled() and str(getattr(decision, "text", "") or "").strip()
+                else None
+            )
             self._log_decision_stage("directive_inner_thought", "after_parser", decision)
             decision.debug_trace = (
                 f"{decision.debug_trace} | inner_thought={speech_core.inner_thought.intent}"
@@ -10078,6 +10118,8 @@ class RuntimeCoordinator(
                 momentum_topic=getattr(thought_surface, "topic_seed", ""),
                 frame=frame,
             )
+            if raw_public_speech is not None:
+                decision = raw_public_speech.restore(decision, stage="coordinator_autonomous_inner_precommit")
             self._remember_inner_thought_rhythm(speech_core.inner_thought)
             self.fe_style_memory = self.fe_renderer.remember_style(
                 self.fe_style_memory,
@@ -10140,6 +10182,12 @@ class RuntimeCoordinator(
         self._log_raw_llm_output("directive", raw)
         self._log_pre_parser("directive", raw)
         decision = self.parser.parse(raw)
+        from runtime.final_passthrough_policy import PublicSpeechSnapshot, final_passthrough_enabled
+        raw_public_speech = (
+            PublicSpeechSnapshot.capture(decision)
+            if final_passthrough_enabled() and str(getattr(decision, "text", "") or "").strip()
+            else None
+        )
         self._log_decision_stage("directive", "after_parser", decision)
         self._log_decision_stage("directive", "pre_ti", decision)
         decision = self.ti_governor.enforce_decision(decision, ti_report)
@@ -10153,6 +10201,8 @@ class RuntimeCoordinator(
             momentum_topic=getattr(speech_core.inner_thought, "topic_seed", ""),
             frame=frame,
         )
+        if raw_public_speech is not None:
+            decision = raw_public_speech.restore(decision, stage="coordinator_autonomous_precommit")
 
         self.fe_style_memory = self.fe_renderer.remember_style(
             self.fe_style_memory,

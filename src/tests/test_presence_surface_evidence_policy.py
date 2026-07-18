@@ -3,12 +3,25 @@ from __future__ import annotations
 import os
 import sys
 import time
+
+import pytest
 from types import SimpleNamespace
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
 from cortex.surface_arbiter import SurfaceDecision
 from runtime.presence_controller import MicroPresenceCue, PresenceControllerMixin
+
+
+@pytest.fixture(autouse=True)
+def _legacy_surface_policy(monkeypatch):
+    # File này kiểm thử gate evidence cũ. Runtime production mặc định dùng
+    # final_passthrough; test riêng ở test_final_passthrough_deepclean.py kiểm
+    # chứng policy mới.
+    monkeypatch.setattr(
+        "runtime.final_passthrough_policy.final_passthrough_enabled",
+        lambda: False,
+    )
 
 
 class _Logger:

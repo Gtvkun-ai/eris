@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """stage_ownership.py — quyền sở hữu độc quyền bề mặt phát ngôn.
 
-Một scripted take, cuộc gọi hoặc cảnh biểu diễn có thể cần giữ sân khấu trong một
-khoảng hữu hạn.  Nếu không có lớp quyền sở hữu riêng, autonomous/chat/TTS đều có
+Một cuộc gọi hoặc tác vụ hệ thống hữu hạn có thể cần giữ sân khấu trong một
+khoảng ngắn.  Nếu không có lớp quyền sở hữu riêng, autonomous/chat/TTS đều có
 thể cùng gửi payload và tranh cùng một bubble, một queue audio.  Kết quả thường
 được con người mô tả rất chính xác bằng cụm "loạn hết cả lên".
 

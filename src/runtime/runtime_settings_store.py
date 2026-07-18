@@ -28,15 +28,15 @@ from runtime.workspace_manager import default_eris_home
 _DEFAULT_SETTINGS: dict[str, Any] = {
     "version": 1,
     "chat": {
-        "semantic_authority_mode": "qwen_first",
+        "semantic_authority_mode": "primary_model",
         "reasoning_effort": "medium",
         "support_confidence_threshold": 0.48,
-        "critique_mode": "bounded_refine",
-        "max_constrained_reruns": 1,
-        "response_contract_gate": True,
-        "director_candidate_mode": "adaptive",
-        "director_second_pass": "adaptive",
-        "low_quality_fail_open": False,
+        "critique_mode": "advisory",
+        "max_constrained_reruns": 0,
+        "response_contract_gate": False,
+        "director_candidate_mode": "off",
+        "director_second_pass": "off",
+        "low_quality_fail_open": True,
         "auto_fallback": True,
         "completion_chat_tokens": 1280,
         "chat_timeout_seconds": 30,
@@ -585,7 +585,7 @@ def _coerce_setting(path: str, value: Any, expected: Any) -> tuple[bool, Any]:
     # Whitelist/range theo field. Schema kiểu dữ liệu thôi chưa đủ, vì con người
     # rất sáng tạo trong việc nhập 9000 worker rồi hỏi sao máy nóng.
     enum_values: dict[str, set[str]] = {
-        "chat.semantic_authority_mode": {"qwen_first", "legacy"},
+        "chat.semantic_authority_mode": {"primary_model", "qwen_first", "legacy"},
         "chat.reasoning_effort": {"low", "medium", "high"},
         "chat.critique_mode": {"off", "advisory", "bounded_refine"},
         "chat.director_candidate_mode": {"off", "adaptive", "always"},
@@ -595,7 +595,7 @@ def _coerce_setting(path: str, value: Any, expected: Any) -> tuple[bool, Any]:
         "personality.style_repair_mode": {"self_aware_dry", "direct", "soft"},
         "capabilities.source": {"registry"},
         "memory.maintenance_budget": {"small", "medium", "large"},
-        "stage.performance_profile": {"conversation", "recording", "custom"},
+        "stage.performance_profile": {"conversation", "custom"},
         "stage.segment_dispatch": {"inline", "queued"},
         "tts.language": {"vi", "ja", "en"},
         "tts.quality": {"balanced", "high"},

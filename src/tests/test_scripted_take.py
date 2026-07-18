@@ -348,6 +348,67 @@ def test_stage_segment_is_not_announced_before_audio_start():
     assert len(payloads) == 1
 
 
+def test_tts_failure_still_surfaces_scripted_bubble(monkeypatch):
+    from runtime.stage_audio_bus import StageAudioEvent
+
+    class FailingEngine:
+        _ok = True
+
+        def refresh_configuration(self):
+            return False
+
+        def speak(self, text, **kwargs):
+            callback = kwargs.get("on_event")
+            if callback is not None:
+                callback(StageAudioEvent(
+                    type="audio_failed",
+                    turn_id=str(kwargs.get("turn_id", "")),
+                    segment_id=int(kwargs.get("segment_id", 0)),
+                    text=str(text),
+                    error="429 RESOURCE_EXHAUSTED",
+                ))
+
+    class TtsFailOwner(FakeOwner):
+        def __init__(self):
+            super().__init__()
+            self.engine = FailingEngine()
+
+        def _get_runtime_provider(self, name):
+            if name == "speech":
+                return SimpleNamespace(engine=self.engine)
+            return None
+
+    monkeypatch.setenv("ERIS_TTS_TASK_MANAGER", "0")
+    owner = TtsFailOwner()
+    runtime = ScriptedTakeRuntime(owner)
+    take = ScriptedTakeDefinition(
+        title="TTS fail visible",
+        profile="recording",
+        beats=(
+            ScriptedTakeBeat(kind="text", text="Khoan. Tôi tò mò cái này."),
+            ScriptedTakeBeat(
+                kind="tutor_lookup",
+                query="vì sao nấm phát sáng",
+                fallback_answer="Một số loài có thể thu hút côn trùng.",
+                show_panel=True,
+            ),
+        ),
+    )
+
+    runtime.run_definition(take)
+
+    payloads = [p for p in owner.transport.payloads if p.get("parse_mode") == "scripted_take"]
+    assert payloads
+    assert payloads[0]["text"] == "Khoan. Tôi tò mò cái này."
+    assert payloads[0]["scripted_take"]["sync"] == "audio_failed"
+    tutor_stages = [
+        p.get("tutor", {}).get("stage")
+        for p in owner.transport.payloads
+        if p.get("parse_mode") == "tutor_event"
+    ]
+    assert tutor_stages[:3] == ["open", "asking", "answered"]
+
+
 def test_take_holds_and_releases_exclusive_stage_ownership():
     from runtime.stage_ownership import stage_ownership_for
 

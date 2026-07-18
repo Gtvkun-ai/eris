@@ -20,6 +20,14 @@
       "thinking_motion": "read"
     },
     {
+      "kind": "text",
+      "text": "Từ từ. Tôi tò mò vụ này thật. Tôi sẽ tra thử Tutor một chút, bạn đợi tí nha.",
+      "pause_after_ms": 520,
+      "motion": "read",
+      "emotion": "curious_warm",
+      "tts_style": "soft_wait"
+    },
+    {
       "kind": "tutor_lookup",
       "query": "Vì sao một số loài nấm phát sáng trong đêm? Ánh sáng đó có liên quan đến việc thu hút côn trùng và phát tán bào tử không?",
       "show_panel": true,
@@ -28,9 +36,9 @@
     },
     {
       "kind": "tutor_reaction",
-      "lead_in": "À...",
+      "lead_in": "À. À thì ra là vậy.",
       "expectation": "Tôi cứ tưởng ánh sáng ấy chỉ là một sản phẩm phụ.",
-      "locked_summary": "Nhưng ở một số loài, ánh sáng có thể thu hút côn trùng; rồi những vị khách đó lại góp phần mang bào tử đi xa hơn.",
+      "locked_summary": "Tôi mới học được là ở một số loài, ánh sáng có thể thu hút côn trùng; rồi những vị khách đó lại góp phần mang bào tử đi xa hơn.",
       "afterthought": "Một cái biển quảng cáo sống. Khá gian, với một cây nấm.",
       "response_hold_ms": 480,
       "pause_after_ms": 920,

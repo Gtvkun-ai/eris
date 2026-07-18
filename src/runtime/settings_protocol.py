@@ -127,9 +127,9 @@ def _normalize_legacy_value(key: str, value: Any) -> Any:
     if key == "ERIS_NO_FALLBACK_MODE":
         return not _bool(text)
     if key == "ERIS_SELF_CRITIQUE_ENABLED":
-        return "bounded_refine" if _bool(text) else "off"
+        return "advisory" if _bool(text) else "off"
     if key == "ERIS_CHAT_DIRECTOR_SECOND_PASS":
-        return "always" if _bool(text) else "adaptive"
+        return "off"
     if key in {
         "ERIS_LLM_COMPLETION_CHAT_TOKENS", "ERIS_LLM_TIMEOUT_CHAT_S", "ERIS_LLM_MAX_CONCURRENCY",
         "ERIS_LLM_PROMPT_TOTAL_TOKENS", "ERIS_LLM_PROMPT_HARD_CAP_TOKENS", "ERIS_TTS_PREFETCH_WORKERS",

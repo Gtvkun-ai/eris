@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""intention_authority.py - quyền phát ngôn cho ý định có khả năng thực thi.
+"""Quan sát lời tự thuật hành động, không cấp hay tước quyền phát ngôn.
 
-Eris có thể có suy nghĩ mơ hồ, nhưng câu public kiểu "tôi sẽ kiểm lại ký ức"
-ngầm hứa rằng runtime có một đối tượng thật, một handler thật và một kết quả có
-thể quan sát. Nếu ba thứ đó không tồn tại, câu phải được đổi thành trạng thái
-trung thực hoặc giữ im. Không cần diễn cosplay agency chỉ để lấp khoảng lặng.
+Tên file được giữ để tương thích import cũ. Định nghĩa kiến trúc mới:
+``IntentionObserver`` chỉ xác định câu có target/handler/result hay chưa. Kết quả
+được ghi thành observation và đưa vào hậu quả lượt sau; raw public text luôn giữ
+nguyên. Không rewrite, không suppress, không body-only.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ def _as_mapping(value: Any) -> Mapping[str, Any]:
 
 
 @dataclass(frozen=True, slots=True)
-class IntentionAuthorityVerdict:
+class IntentionObservation:
     accepted: bool
     text: str
     original_text: str
@@ -64,8 +64,8 @@ class IntentionAuthorityVerdict:
         return payload
 
 
-class IntentionAuthorityGate:
-    """Chặn lời hứa hành động không có execution contract.
+class IntentionObserver:
+    """Quan sát lời hứa hành động và trạng thái execution contract.
 
     Contract tối thiểu:
 
@@ -73,7 +73,7 @@ class IntentionAuthorityGate:
     - ``handler``: module/tool nào thật sự thực thi;
     - ``result``: event hoặc ActionExecutionResult nào chứng minh đã chạy.
 
-    Gate chỉ áp cho lời tự thuật hành động của Eris. Câu trạng thái, banter,
+    Observer chỉ áp cho lời tự thuật hành động của Eris. Câu trạng thái, banter,
     lời từ chối hoặc speech act đang được thực hiện ngay trong chính câu nói
     không cần một tool riêng.
     """
@@ -138,69 +138,56 @@ class IntentionAuthorityGate:
         self,
         text: str,
         context: Mapping[str, Any] | None = None,
-    ) -> IntentionAuthorityVerdict:
+    ) -> IntentionObservation:
         original = _clean(text)
         normalized = _norm(original)
         ctx = _as_mapping(context)
         operation = self._operation(normalized)
 
         if not original:
-            return self._accepted(original, operation=operation, mode="not_operational")
-        if self._SELF_LIMITING_RE.search(normalized) or self._IMMEDIATE_SPEECH_RE.search(normalized):
-            return self._accepted(original, operation=operation, mode="self_executing")
-        if not operation or not self._looks_like_self_intention(normalized):
-            return self._accepted(original, operation=operation, mode="not_operational")
+            return self._accepted(original, operation=operation, mode="empty_passthrough")
 
         target_refs = self._target_refs(ctx)
         handler_id, handler_available = self._handler(ctx)
         result_contract = self._result_contract(ctx, handler_id=handler_id)
 
         missing: list[str] = []
-        if not target_refs:
-            missing.append("target")
-        if not handler_id or not handler_available:
-            missing.append("handler")
-        if not result_contract:
-            missing.append("result")
+        looks_operational = bool(operation and self._looks_like_self_intention(normalized))
+        if looks_operational:
+            if not target_refs:
+                missing.append("target")
+            if not handler_id or not handler_available:
+                missing.append("handler")
+            if not result_contract:
+                missing.append("result")
 
-        if not missing:
-            return IntentionAuthorityVerdict(
-                accepted=True,
-                text=original,
-                original_text=original,
-                mode="executable_intention",
-                operation=operation,
-                reason="execution_contract_complete",
-                target_refs=target_refs,
-                handler_id=handler_id,
-                result_contract=result_contract,
-                missing_contract=(),
-            )
+        if not looks_operational:
+            mode = "self_executing" if (self._SELF_LIMITING_RE.search(normalized) or self._IMMEDIATE_SPEECH_RE.search(normalized)) else "raw_passthrough"
+            reason = "not_execution_claim_passthrough"
+        elif missing:
+            mode = "raw_passthrough_missing_contract"
+            reason = "final_rewrite_disabled_ledger_will_record_claim"
+        else:
+            mode = "executable_intention"
+            reason = "execution_contract_complete"
 
-        rewritten = self._safe_rewrite(
-            original=original,
-            normalized=normalized,
-            operation=operation,
-            context=ctx,
-            target_refs=target_refs,
-        )
-        return IntentionAuthorityVerdict(
-            accepted=bool(rewritten),
-            text=rewritten,
+        return IntentionObservation(
+            accepted=True,
+            text=original,
             original_text=original,
-            mode="state_rewrite" if rewritten else "body_only",
+            mode=mode,
             operation=operation,
-            reason="rewritten_unexecutable_intention" if rewritten else "suppressed_unexecutable_intention",
+            reason=reason,
             target_refs=target_refs,
             handler_id=handler_id,
             result_contract=result_contract,
             missing_contract=tuple(missing),
-            rewritten=bool(rewritten),
-            body_only=not bool(rewritten),
+            rewritten=False,
+            body_only=False,
         )
 
-    def _accepted(self, text: str, *, operation: str, mode: str) -> IntentionAuthorityVerdict:
-        return IntentionAuthorityVerdict(
+    def _accepted(self, text: str, *, operation: str, mode: str) -> IntentionObservation:
+        return IntentionObservation(
             accepted=True,
             text=text,
             original_text=text,
@@ -307,34 +294,15 @@ class IntentionAuthorityGate:
             return f"action_result:{handler_id}"
         return ""
 
-    def _safe_rewrite(
-        self,
-        *,
-        original: str,
-        normalized: str,
-        operation: str,
-        context: Mapping[str, Any],
-        target_refs: tuple[str, ...],
-    ) -> str:
-        kind = _norm(context.get("kind") or context.get("surface_kind") or context.get("intent"))
-        evidence_blob = _norm(" ".join(target_refs))
-        semantic_blob = f"{normalized} {evidence_blob}"
-
-        # Không có target thật thì đừng invent một "mẩu ký ức" mới để cứu câu.
-        if not target_refs:
-            return ""
-
-        if any(word in semantic_blob for word in self._DISCOURSE_WORDS):
-            return "Tôi vẫn còn vướng ở câu vừa rồi, nhưng chưa đủ rõ để kết luận."
-        if any(word in semantic_blob for word in self._MEMORY_WORDS):
-            return "Một chuyện cũ vừa nổi lên. Chưa đủ rõ để tôi kéo nó ra nói."
-        if any(word in semantic_blob for word in self._TECH_WORDS):
-            return "Có một điểm kỹ thuật còn vướng. Tôi chưa bắt tay xử lý nó."
-        if any(word in semantic_blob for word in self._SCREEN_WORDS):
-            return "Có một tín hiệu đáng chú ý. Tôi chưa làm gì với nó."
-        if kind in {"presence_maintenance", "micro_presence", "private_life_surface", "memory_resonance"}:
-            return "Có gì đó còn vướng, nhưng chưa đủ rõ để tôi lôi ra nói."
-        return "Có một việc còn vướng. Tôi chưa thực sự bắt tay làm."
 
 
-__all__ = ["IntentionAuthorityGate", "IntentionAuthorityVerdict"]
+# Tương thích tên cũ: code ngoài repo chưa cần đổi ngay, nhưng semantic role đã đổi.
+IntentionAuthorityGate = IntentionObserver
+IntentionAuthorityVerdict = IntentionObservation
+
+__all__ = [
+    "IntentionObserver",
+    "IntentionObservation",
+    "IntentionAuthorityGate",
+    "IntentionAuthorityVerdict",
+]

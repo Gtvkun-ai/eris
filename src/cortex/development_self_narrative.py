@@ -14,7 +14,7 @@ phải "cùng một thực thể bị thay đổi" — nó là bản reset mỗi
 
 Adapter này nối ngõ cụt đó: lấy ``describe_for_user()`` (đã được gate bản-sắc nên
 chỉ phân kỳ trong Phong_Bì) và dựng một dòng prompt self-continuity. Đây là *bias
-giọng/khoảng cách*, KHÔNG phải fact — không chạm truth/capability guard, không đọc
+giọng/khoảng cách*, KHÔNG phải fact — không chạm truth grounding, không đọc
 ra như báo cáo.
 
 Gate sau ĐÚNG cờ master ``ERIS_DEVELOPMENT_GROWTH_ENABLED``. Tắt → trả "" → SelfModel

@@ -78,9 +78,9 @@
   },
   "tutor": {
     "enabled": true,
-    "quick_search_enabled": false,
-    "research_enabled": false,
-    "self_search_enabled": false,
+    "quick_search_enabled": true,
+    "research_enabled": true,
+    "self_search_enabled": true,
     "low_confidence_clarify_threshold": 0.55,
     "stale_result_guard_enabled": true,
     "persist_research_memory": false

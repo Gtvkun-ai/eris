@@ -1,36 +1,42 @@
 # -*- coding: utf-8 -*-
-"""Test Phase 11: ý định public phải có target + handler + result."""
+"""Test Phase 11: IntentionAuthority chỉ audit, không chỉnh final text."""
 
 from domain.decision import Decision
 from runtime.intention_authority import IntentionAuthorityGate
 from runtime.stage_contracts import StageFrameBuilder
 
 
-def test_unanchored_memory_review_is_suppressed():
+def test_unanchored_memory_review_passes_raw_and_records_missing_contract():
+    original = "Mình muốn rà lại những dấu vết còn sót, cho đầu óc gọn hơn."
     verdict = IntentionAuthorityGate().validate(
-        "Mình muốn rà lại những dấu vết còn sót, cho đầu óc gọn hơn.",
+        original,
         {
             "kind": "presence_maintenance",
             "evidence_refs": ("silent_cycles=10", "surface_seed=Mình muốn rà lại..."),
         },
     )
-    assert verdict.accepted is False
-    assert verdict.text == ""
-    assert verdict.body_only is True
+    assert verdict.accepted is True
+    assert verdict.text == original
+    assert verdict.rewritten is False
+    assert verdict.body_only is False
+    assert verdict.mode == "raw_passthrough_missing_contract"
     assert set(verdict.missing_contract) == {"target", "handler", "result"}
 
 
-def test_anchored_memory_intention_without_handler_becomes_honest_state():
+def test_anchored_memory_intention_without_handler_keeps_raw():
+    original = "Mình muốn kiểm lại vài mảnh ký ức còn sót, rồi mới yên tâm."
     verdict = IntentionAuthorityGate().validate(
-        "Mình muốn kiểm lại vài mảnh ký ức còn sót, rồi mới yên tâm.",
+        original,
         {
             "kind": "memory_resonance",
             "evidence_refs": ("memory_id=mem_42", "memory_activation:episode_42"),
         },
     )
     assert verdict.accepted is True
-    assert verdict.rewritten is True
-    assert "Một chuyện cũ vừa nổi lên" in verdict.text
+    assert verdict.rewritten is False
+    assert verdict.body_only is False
+    assert verdict.mode == "raw_passthrough_missing_contract"
+    assert verdict.text == original
     assert "handler" in verdict.missing_contract
     assert "result" in verdict.missing_contract
 
@@ -66,9 +72,10 @@ def test_immediate_speech_act_is_self_executing():
     assert verdict.mode == "self_executing"
 
 
-def test_stage_builder_applies_intention_authority_to_autonomous_text():
+def test_stage_builder_keeps_autonomous_raw_text_and_payload_audit():
+    original = "Mình muốn kiểm lại vài mảnh ký ức còn sót, rồi mới yên tâm."
     decision = Decision(
-        text="Mình muốn kiểm lại vài mảnh ký ức còn sót, rồi mới yên tâm.",
+        text=original,
         animation="stand",
         intent="presence_maintenance",
         should_speak=True,
@@ -87,13 +94,17 @@ def test_stage_builder_applies_intention_authority_to_autonomous_text():
         payload=payload,
         channel="autonomous",
     )
-    assert frame.display_text.startswith("Một chuyện cũ vừa nổi lên")
-    assert payload["intention_authority"]["rewritten"] is True
+    assert frame.display_text == original
+    assert payload["intention_authority"]["rewritten"] is False
+    assert payload["intention_authority"]["body_only"] is False
+    assert payload["intention_authority"]["mode"] == "raw_passthrough_missing_contract"
+    assert payload["intention_observation"] == payload["intention_authority"]
 
 
-def test_stage_builder_suppresses_unanchored_fake_intention():
+def test_stage_builder_no_longer_suppresses_unanchored_fake_intention():
+    original = "Mình muốn rà lại vài thứ rồi mới yên tâm."
     decision = Decision(
-        text="Mình muốn rà lại vài thứ rồi mới yên tâm.",
+        text=original,
         animation="stand",
         intent="presence_maintenance",
         should_speak=True,
@@ -112,7 +123,6 @@ def test_stage_builder_suppresses_unanchored_fake_intention():
         payload=payload,
         channel="autonomous",
     )
-    # AnchorGuard có thể hạ câu về một line im lặng an toàn trước khi gate ý định.
-    # Dù theo nhánh nào, output cuối không còn claim "sẽ rà/kiểm" giả.
-    assert "rà" not in frame.display_text.lower()
-    assert "kiểm" not in frame.display_text.lower()
+    assert frame.display_text == original
+    assert payload["intention_authority"]["rewritten"] is False
+    assert payload["intention_authority"]["body_only"] is False

@@ -159,13 +159,21 @@ class VoiceManager:
 
     def _cancel_audio(self, *, reason: str) -> bool:
         tts = self.tts_engine
+        # User đã giành lượt thì mọi audio cũ mất quyền phát, kể cả request remote
+        # còn đang synth và chưa từng emit audio_start. Epoch mới ngăn WAV cũ sống
+        # lại sau vài chục giây rate-limit/key rotation.
+        supersede = getattr(tts, "supersede_all", None)
+        if callable(supersede):
+            try:
+                result = supersede(reason=reason)
+                return True if result is None else bool(result)
+            except Exception:
+                return False
         cancel = getattr(tts, "cancel_current", None)
         if not callable(cancel):
             return False
         try:
-            result = cancel(reason=reason, only_interruptible=True)
-            # Một số backend trả None dù đã cancel; callable thành công vẫn tính là
-            # accepted. Chờ lifecycle audio_cancelled để biết kết quả cuối.
+            result = cancel(reason=reason, only_interruptible=False)
             return True if result is None else bool(result)
         except Exception:
             return False

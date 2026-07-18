@@ -558,6 +558,11 @@ class PostGenerationFiltersMixin:
 
     def _apply_chat_final_guards(self, decision: Decision, *, user_text: str, frame=None, allow_reroll: bool = True) -> Decision:
         feedback_markers = self._record_agent_mind_feedback_from_user(user_text, frame=frame)
+        from runtime.final_passthrough_policy import audit_only, final_passthrough_enabled
+        if final_passthrough_enabled():
+            if feedback_markers:
+                decision = self._trace_only_guard(decision, "agent_mind_feedback=" + ",".join(feedback_markers[:6]))
+            return audit_only(decision, "chat_final_guards")
         if feedback_markers:
             decision = self._trace_only_guard(decision, "agent_mind_feedback=" + ",".join(feedback_markers[:6]))
         state = None
@@ -2315,6 +2320,9 @@ class PostGenerationFiltersMixin:
         momentum_topic: str = "",
         frame=None,
     ) -> Decision:
+        from runtime.final_passthrough_policy import audit_only, final_passthrough_enabled
+        if final_passthrough_enabled():
+            return audit_only(decision, f"post_generation_filters:{channel}")
         guard_mode = get_guard_mode()
         authority = getattr(self, "_apply_v3_authority_guard", None)
         if guard_mode == OFF_GUARD_MODE:

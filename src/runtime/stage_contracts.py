@@ -18,8 +18,8 @@ from typing import Any
 
 from runtime.autonomous_performance import AutonomousPerformancePlanner
 from runtime.body_choreography import BodyChoreographyPlanner
-from runtime.autonomous_surface_anchor import AutonomousSurfaceAnchorGuard
-from runtime.intention_authority import IntentionAuthorityGate
+from runtime.autonomous_surface_anchor import AutonomousSurfaceAnchorObserver
+from runtime.intention_authority import IntentionObserver
 from runtime.prosody_director import ProsodyDirector
 from runtime.speech_delivery_planner import SpeechDeliveryPlanner, affect_signals_from
 from runtime.speech_contract import SpeechContractResolver
@@ -177,8 +177,10 @@ class StageFrameBuilder:
         self.delivery_planner = SpeechDeliveryPlanner()
         self.performance_planner = PerformanceRequestPlanner()
         self.autonomous_performance_planner = AutonomousPerformancePlanner()
-        self.autonomous_anchor_guard = AutonomousSurfaceAnchorGuard()
-        self.intention_authority_gate = IntentionAuthorityGate()
+        self.autonomous_anchor_observer = AutonomousSurfaceAnchorObserver()
+        self.autonomous_anchor_guard = self.autonomous_anchor_observer  # alias tương thích plugin cũ
+        self.intention_observer = IntentionObserver()
+        self.intention_authority_gate = self.intention_observer  # alias tương thích plugin cũ
         self.show_runtime = StageShowRuntime()
         self.body_choreography = BodyChoreographyPlanner()
 
@@ -195,14 +197,13 @@ class StageFrameBuilder:
         raw_text = str(payload.get("text", getattr(decision, "text", "")) or "")
         if str(channel or "").strip().lower() == "autonomous":
             plan_payload = payload.get("autonomous_plan") if isinstance(payload.get("autonomous_plan"), dict) else None
-            verdict = self.autonomous_anchor_guard.validate(raw_text, plan_payload)
+            verdict = self.autonomous_anchor_observer.validate(raw_text, plan_payload)
             payload["autonomous_anchor"] = verdict.to_payload()
+            # Observer chỉ mô tả khoản nợ bằng chứng. Semantic surface bất biến.
             raw_text = verdict.text
 
-            # Phase 11: neo nội dung chưa đủ. Một câu như "tôi sẽ rà lại ký
-            # ức" còn ngầm hứa có target, handler và result. Nếu runtime không
-            # có execution contract thật, hạ nó thành trạng thái trung thực hoặc
-            # body-only. Siêu nhận thức dùng trước khi nói sẽ rẻ hơn xin lỗi sau.
+            # Quan sát lời hứa thực thi để ghi hậu quả cho lượt sau. Không rewrite,
+            # không body-only, không giả làm một tầng đạo đức đứng sau model chính.
             opportunity = (
                 plan_payload.get("selected_opportunity")
                 if isinstance(plan_payload, dict) and isinstance(plan_payload.get("selected_opportunity"), dict)
@@ -221,11 +222,11 @@ class StageFrameBuilder:
                 "observable_result": payload.get("observable_result", ""),
                 "target_ref": payload.get("intent_target", ""),
             }
-            intention_verdict = self.intention_authority_gate.validate(raw_text, intention_context)
-            payload["intention_authority"] = intention_verdict.to_payload()
-            raw_text = intention_verdict.text
-            if not raw_text:
-                payload["should_speak"] = False
+            intention_observation = self.intention_observer.validate(raw_text, intention_context)
+            observation_payload = intention_observation.to_payload()
+            payload["intention_observation"] = observation_payload
+            payload["intention_authority"] = observation_payload  # khóa tương thích frontend/log cũ
+            raw_text = intention_observation.text
         surfaces = self.transformers.transform(raw_text)
         user_text = str(payload.get("user_text", "") or "")
         delivery_hint = str(payload.get("delivery_hint", getattr(decision, "delivery_hint", "")) or "").strip()
@@ -284,12 +285,6 @@ class StageFrameBuilder:
             delivery_payload["performance_act"] = act_payload
             if performance.performance_act.prosody_note:
                 prosody_notes = f"{prosody_notes} {performance.performance_act.prosody_note}".strip()
-
-        # ScriptedTakeRuntime truyền beat đã được validate qua payload. StageFrame
-        # giữ nó trong delivery để TtsTaskManager sở hữu pause/thinking lifecycle.
-        scripted_beat = payload.get("scripted_beat")
-        if isinstance(scripted_beat, dict):
-            delivery_payload["active_beat"] = dict(scripted_beat)
 
         # Autonomous không chỉ có text. Dựng opening hold, speech beat và closing
         # settle từ plan đã được SpeakGate cấp quyền. LLM không được tự bịa nhịp.

@@ -9,7 +9,7 @@ from runtime.tts_task_manager import TtsTaskManager
 
 def _frame() -> StageFrame:
     return StageFrame(
-        turn_id="take-sync",
+        turn_id="stage-sync",
         segment_id=0,
         display_text="Xin chào.",
         tts_text="Xin chào.",

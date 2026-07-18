@@ -1456,7 +1456,7 @@ public partial class UdpListener : Node2D
 	// Gõ lệnh DebugConsole rồi Enter hoặc bấm "Chạy". Cú pháp:
 	//   set <f>=<v> ...  |  buff <f>=<d> ...  |  rel <f>=<v> ...  |  trust <v>
 	//   yan on|off  |  stage <name>  |  mem [ep] <text>  |  show  |  reset [affect|rel|all]
-	//   take <file.json>|stop|status  |  stageprofile recording|conversation|custom
+	//   stageprofile conversation|custom
 	//   nối nhiều lệnh bằng ';'  vd: reset all; stage rooted; set tenderness=0.9
 
 	private static readonly Color DbgInk    = new(0.69f, 0.30f, 0.47f);
@@ -1516,7 +1516,7 @@ public partial class UdpListener : Node2D
 		{
 			Position           = new Vector2(innerX, PanelY + Pad),
 			Size               = new Vector2(innerW, 30f),
-			PlaceholderText    = "vd: take takes/ten_take.json",
+			PlaceholderText    = "vd: set attachment=0.8 trust=0.7",
 			ClearButtonEnabled = true,
 		};
 		StyleDebugLineEdit(_debugCommandInput);
@@ -1537,7 +1537,7 @@ public partial class UdpListener : Node2D
 
 		// Gợi ý cú pháp (nhiều dòng).
 			_debugCommandHintLabel = CreateUiLabel(
-				"take <file>|stop|status\nstageprofile recording|conversation\nset/buff/rel · yan · stage · reset\nmem [ep] <text> · nối bằng ';'",
+				"stageprofile conversation|custom\nset/buff/rel · yan · stage · reset\nmem [ep] <text> · nối bằng ';'",
 				9, new Color(0.58f, 0.36f, 0.48f));
 			_debugCommandHintLabel.Position     = new Vector2(innerX, btnY + 38f);
 			_debugCommandHintLabel.Size         = new Vector2(innerW, 50f);

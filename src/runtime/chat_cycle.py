@@ -1197,10 +1197,17 @@ class ChatCycleMixin:
         except Exception as exc:
             phrase_novelty_context = ""
             self.logger.debug("[phrase novelty] build hint failed: %s", exc)
+        try:
+            from runtime.behavior_observation import build_behavior_prompt_context
+
+            behavior_aftermath_context = build_behavior_prompt_context(self, limit=6)
+        except Exception as exc:
+            behavior_aftermath_context = ""
+            self.logger.debug("[behavior-observation] prompt context failed: %s", exc)
         planned_ti_context = (
             f"{ti_report.prompt_context}\n{self._build_action_plan_context(frame.action_plan)}\n"
             f"{turn_semantics_context}\n{pragmatic_context}\n{repair_context}\n{social_context}\n"
-            f"{phrase_novelty_context}"
+            f"{phrase_novelty_context}\n{behavior_aftermath_context}"
         )
         if social_contract is not None:
             frame.metadata["social_cognition_v2"] = social_contract.to_dict()
@@ -1508,6 +1515,15 @@ class ChatCycleMixin:
         self._log_raw_llm_output("chat", raw)
         self._log_pre_parser("chat", raw)
         decision = self.parser.parse(raw, user_hint=user_text)
+        from runtime.final_passthrough_policy import (
+            PublicSpeechSnapshot,
+            final_passthrough_enabled,
+        )
+        raw_public_speech = (
+            PublicSpeechSnapshot.capture(decision)
+            if final_passthrough_enabled() and str(getattr(decision, "text", "") or "").strip()
+            else None
+        )
         if format_repair_fallback:
             decision.intent = "format_repair_fallback"
             decision.action = "guarded_reply"
@@ -1559,14 +1575,22 @@ class ChatCycleMixin:
         decision = self._apply_chat_final_guards(decision, user_text=user_text, frame=frame)
         decision = self._apply_social_cognition_review(decision, user_text=user_text)
         from runtime.dual_axis_repair import apply_repair_output_guard
+        from runtime.final_passthrough_policy import audit_only, final_passthrough_enabled
 
-        decision = apply_repair_output_guard(decision, repair_appraisal)
+        if final_passthrough_enabled():
+            decision = audit_only(decision, "dual_axis_repair_output")
+        else:
+            decision = apply_repair_output_guard(decision, repair_appraisal)
         # Tutor/self-search có thể thay đổi nội dung câu (ví dụ chuyển thành
         # "tôi sẽ tra"). Vì vậy nó phải chạy TRƯỚC cửa final, không được lén
         # sửa Decision sau khi Director đã chấm xong.
         self_search = getattr(self, "_maybe_start_self_declared_tutor_search", None)
         if callable(self_search):
             decision = self_search(decision, user_text=user_text, frame=frame)
+        # Lưới trung tâm: kể cả một module cũ còn lén sửa text, khôi phục đúng
+        # Decision public từ lần parse đầu. Tool state/result vẫn được giữ.
+        if raw_public_speech is not None:
+            decision = raw_public_speech.restore(decision, stage="chat_cycle_precommit")
         repair_candidate_override = repair_appraisal.candidate_count_hint >= 2
         decision = self._finalize_chat_director_decision(
             decision,
@@ -1588,11 +1612,14 @@ class ChatCycleMixin:
         return
 
     def _apply_social_cognition_review(self, decision: Decision, *, user_text: str) -> Decision:
-        """Critic Qwen chỉ chạy ở lượt xã hội khó; Terra rewrite khi lỗi nặng.
+        """Critic chỉ audit khi final_passthrough bật; không viết lại câu public.
 
         Dù model phụ hỏng, deterministic surface policy vẫn chạy. Đây là fail-open
         có kiểm soát, không phải fail-open kiểu phát đại một câu rồi cầu nguyện.
         """
+        from runtime.final_passthrough_policy import audit_only, final_passthrough_enabled
+        if final_passthrough_enabled():
+            return audit_only(decision, "social_cognition_review")
         engine = getattr(self, "social_cognition_v2", None)
         contract = getattr(self, "current_social_contract", None)
         if engine is None or contract is None:
@@ -1662,6 +1689,12 @@ class ChatCycleMixin:
         dấu ``director_finalized`` để precommit/stage output tái sử dụng metadata
         thay vì chấm lại rồi vô tình cho kết quả khác.
         """
+
+        from runtime.final_passthrough_policy import audit_only, final_passthrough_enabled
+        if final_passthrough_enabled():
+            decision.director_finalized = True
+            decision.director_meta = {"repair_action": "raw_passthrough", "candidate_count": 1}
+            return audit_only(decision, "director_finalize")
 
         try:
             from runtime.director_generation import DirectorGenerationPipeline

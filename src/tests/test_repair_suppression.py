@@ -71,7 +71,7 @@ def test_resolve_is_tighten_only_even_when_user_grants_risk():
     assert tightened.psychological_suppression >= base.psychological_suppression
     # Truth/capability guards untouched.
     assert tightened.truth_guard == 1.0
-    assert tightened.capability_guard == 1.0
+    assert not hasattr(tightened, "capability_guard")
 
 
 def test_inactive_view_does_not_change_profile():

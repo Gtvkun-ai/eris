@@ -1,19 +1,9 @@
 # -*- coding: utf-8 -*-
-"""stage_profiles.py — profile nhịp sân khấu có tên, thay cho cụm công tắc rời.
+"""Profile nhịp phát TTS cho hội thoại thường.
 
-Hai profile dựng sẵn:
-
-``conversation``
-    Vẫn tách câu thành beat logic để protocol/body biết nhịp, nhưng gộp audio
-    thành một lượt TTS. Đây là mode nói chuyện thường, tránh khoảng hở remote TTS.
-
-``recording``
-    Phát từng beat qua queue + TtsTaskManager, prefetch song song và giữ pause
-    có chủ đích. Đây là mode quay take/TikTok.
-
-``custom``
-    Tôn trọng toàn bộ setting thấp tầng cũ. Giữ lại để debug, không bắt người dùng
-    phải chọn giữa hai preset như một menu máy giặt có tham vọng nghệ thuật.
+Repo không còn profile quay take/scripted performance. ``conversation`` là
+đường mặc định; ``custom`` chỉ giữ các nút kỹ thuật thấp tầng để debug queue.
+Giá trị ``recording`` cũ trong settings được di trú im lặng về conversation.
 """
 
 from __future__ import annotations
@@ -34,33 +24,20 @@ class StageRuntimeProfile:
     max_prefetch_segments: int
 
 
-_PRESETS: dict[str, StageRuntimeProfile] = {
-    "conversation": StageRuntimeProfile(
-        name="conversation",
-        logical_segment_tts=True,
-        dispatch_mode="inline",
-        task_manager_enabled=False,
-        prefetch_workers=1,
-        max_tts_segments=8,
-        min_split_chars=58,
-        max_prefetch_segments=4,
-    ),
-    "recording": StageRuntimeProfile(
-        name="recording",
-        logical_segment_tts=True,
-        dispatch_mode="queued",
-        task_manager_enabled=True,
-        prefetch_workers=3,
-        max_tts_segments=8,
-        min_split_chars=42,
-        max_prefetch_segments=8,
-    ),
-}
+_CONVERSATION = StageRuntimeProfile(
+    name="conversation",
+    logical_segment_tts=True,
+    dispatch_mode="inline",
+    task_manager_enabled=False,
+    prefetch_workers=1,
+    max_tts_segments=8,
+    min_split_chars=58,
+    max_prefetch_segments=4,
+)
+_PRESETS = {"conversation": _CONVERSATION}
 
 
 def _custom_profile() -> StageRuntimeProfile:
-    """Đọc profile thấp tầng cũ tại thời điểm gọi và chuẩn hóa một lần."""
-
     from runtime.runtime_settings_store import runtime_bool, runtime_int, runtime_text
 
     dispatch = runtime_text("stage", "segment_dispatch", default="inline").strip().lower()
@@ -79,33 +56,35 @@ def _custom_profile() -> StageRuntimeProfile:
     )
 
 
-def active_stage_profile() -> StageRuntimeProfile:
-    """Trả profile hiệu lực; env chỉ là override tạm cho CLI/test/take."""
+def _normalize_name(value: str) -> str:
+    name = str(value or "").strip().lower()
+    # Migration duy nhất cho settings cũ. Không tái kích hoạt profile quay take.
+    if name == "recording":
+        return "conversation"
+    return name
 
-    env_name = str(os.environ.get("ERIS_STAGE_PROFILE", "") or "").strip().lower()
+
+def active_stage_profile() -> StageRuntimeProfile:
+    env_name = _normalize_name(os.environ.get("ERIS_STAGE_PROFILE", ""))
     if env_name in _PRESETS:
         return _PRESETS[env_name]
+    if env_name == "custom":
+        return _custom_profile()
 
     from runtime.runtime_settings_store import runtime_text
-
-    name = runtime_text("stage", "performance_profile", default="conversation").strip().lower()
+    name = _normalize_name(runtime_text("stage", "performance_profile", default="conversation"))
     if name in _PRESETS:
         return _PRESETS[name]
-
-    # custom: các nút thấp tầng cũ vẫn còn tác dụng. Clamp tập trung để config
-    # hỏng không biến queue thành đàn châu chấu.
-    return _custom_profile()
-
+    if name == "custom":
+        return _custom_profile()
+    return _CONVERSATION
 
 
 def stage_profile(name: str) -> StageRuntimeProfile:
-    key = str(name or "").strip().lower()
+    key = _normalize_name(name)
     if key in _PRESETS:
         return _PRESETS[key]
     if key == "custom":
-        # Đọc custom tại thời điểm gọi để panel live apply có hiệu lực ngay.
-        # Không sửa os.environ tạm thời: hai thread đọc profile cùng lúc thì trò
-        # ảo thuật đó rất dễ biến thành race khó truy vết.
         return _custom_profile()
     return active_stage_profile()
 

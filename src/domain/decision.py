@@ -51,6 +51,9 @@ class Decision:
     final_speech_meta: dict[str, Any] | None = None
     # Bằng chứng action: request_sent khác observed_success.
     action_result_meta: dict[str, Any] | None = None
+    # Tín hiệu quan sát hậu quả hành vi. Không phải guard và không có quyền sửa text.
+    # Runtime dùng block này cho audit + context mềm ở lượt kế tiếp.
+    behavior_observation_meta: dict[str, Any] | None = None
 
     def resolve_motion_intent(self) -> str:
         intent = (self.motion_intent or "").strip().lower()
@@ -136,6 +139,19 @@ class Decision:
             payload["director_trace_id"] = self.director_trace_id
         if self.action_result_meta:
             payload["action_result"] = dict(self.action_result_meta)
+        # Không gửi toàn bộ observation journal sang Godot; chỉ expose summary gọn
+        # khi cần debug panel. Semantic text vẫn là text đã khóa.
+        if isinstance(self.behavior_observation_meta, dict):
+            signals = [
+                item for item in self.behavior_observation_meta.get("signals", ())
+                if isinstance(item, dict)
+            ]
+            if signals:
+                payload["behavior_observation"] = {
+                    "policy": self.behavior_observation_meta.get("policy", "observe_only"),
+                    "families": [str(item.get("family", "unknown")) for item in signals[-8:]],
+                    "count": len(signals),
+                }
         failure_meta = normalize_failure_meta(self.failure_meta)
         if failure_meta is not None:
             payload["failure_meta"] = failure_meta

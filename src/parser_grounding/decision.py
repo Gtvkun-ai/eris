@@ -5,7 +5,6 @@ import unicodedata
 
 from actions.contracts import VALID_SYSTEM_ACTIONS
 from failure_meta import normalize_failure_meta
-from guard_config import OFF_GUARD_MODE, STRICT_GUARD_MODE, get_guard_mode
 from llm.contracts import VALID_ANIMATIONS
 
 # Model thường mô tả biểu cảm bằng từ ngữ semantic (soft_smile, subtle_apology)
@@ -34,34 +33,13 @@ _SYSTEM_ACTION_ALIASES = {
     "current_time": "get_local_time",
     "time_now": "get_local_time",
 }
-# ParserGroundingMixin là một lớp mixin cung cấp các phương thức để xử lý và
-#  "ground" (định hình) các quyết định được tạo ra bởi một mô hình ngôn ngữ lớn (LLM)
-#  thành các hành động có thể thực thi trong runtime của ứng dụng.
-# Lớp này bao gồm các phương thức để trích xuất thông tin từ văn bản,
-#  kiểm tra xem các mệnh đề có vượt quá khả năng runtime hay không,
-#  và xây dựng các phản hồi được điều chỉnh để phù hợp với khả năng của hệ thống.
+# ParserGroundingMixin chỉ chuẩn hóa cấu trúc Decision và metadata sân khấu.
+# Public text thuộc quyền của model chính; parser không còn được phép viết lại
+# câu chỉ vì nó mô tả một hành động ngoài capability runtime. Action executor vẫn
+# tự xác minh system_action riêng, còn lời thoại/ẩn dụ/đấu khẩu được giữ nguyên.
 
 
-CAPABILITY_PROFILE = {
-    "observe": [
-        "telemetry cục bộ trên máy Windows",
-        "tiêu đề cửa sổ, tab và URL nếu UI Automation đọc được",
-        "mức CPU, RAM, thời gian, ngữ cảnh focus",
-    ],
-    "respond": [
-        "trả lời bằng văn bản",
-        "đề xuất bước tiếp theo",
-        "thừa nhận khi không chắc",
-    ],
-    "embody": [
-        "đổi animation, hướng di chuyển và vị trí nhân vật trong Godot",
-    ],
-    "memory": [
-        "lưu working/episodic/semantic/norm memory trong long_term_memory.json",
-    ],
-}
-
-UNSUPPORTED_ACTION_VERBS = [
+_PERFORMANCE_OVERCLAIM_VERBS = [
     "khóa", "ngắt", "đóng", "mở", "tắt", "bật", "tăng", "giảm",
     "gọi", "đặt", "hủy", "xóa", "ép", "cưỡng chế", "ghi đè",
     "can thiệp", "điều khiển", "chiếm hữu", "chặn", "phát", "kích hoạt",
@@ -69,7 +47,7 @@ UNSUPPORTED_ACTION_VERBS = [
     "thu gọn", "dọn", "gom", "thu hồi", "vô hiệu hóa", "disable",
 ]
 
-UNSUPPORTED_ACTION_TARGETS = [
+_PERFORMANCE_OVERCLAIM_TARGETS = [
     "bàn phím", "chuột", "màn hình", "tab", "trình duyệt", "cửa sổ",
     "mạng", "wifi", "internet", "hệ điều hành", "windows", "thiết bị",
     "đèn", "nhiệt độ phòng", "phòng", "nhà thông minh", "robot",
@@ -77,21 +55,6 @@ UNSUPPORTED_ACTION_TARGETS = [
     "phần cứng sinh học", "thiết bị vật lý",
     "ứng dụng", "app", "mạng xã hội",
 ]
-
-ALLOWED_SELF_CLAIMS = [
-    "tôi có thể quan sát",
-    "tôi chỉ có thể quan sát",
-    "tôi chỉ có thể nhắc",
-    "tôi chỉ có thể đề nghị",
-    "tôi không chắc",
-    "tôi không đủ dữ kiện",
-    "tôi không có cơ chế",
-    "tôi có thể đổi animation",
-    "tôi có thể trả lời",
-    "tôi đã ghi nhớ",
-    "tôi đã lưu",
-]
-
 
 class ParserGroundingMixin:
     def _normalize_keyword_text(self, text: str) -> str:
@@ -188,14 +151,27 @@ class ParserGroundingMixin:
         parts.append(f"raw={self._preview_raw_response(raw_text)}")
         return " | ".join(part for part in parts if part)
 
-    def _collect_capability_violations(self, text: str):
-        violations = []
+    def _collect_performance_overclaims(self, text: str):
+        """Nhận diện thụ động lời khoe quyền lực để ghi DeceptionLedger.
+
+        Đây không phải guard: kết quả không được phép sửa, chặn hay làm rỗng
+        public text. Nó chỉ giúp đấu khẩu có chủ ý vẫn được ghi như một lời diễn.
+        """
+
+        matches = []
         previous_unit = ""
         for unit in self._split_into_claim_units(text):
-            if self._clause_exceeds_runtime_capability(unit, previous_unit=previous_unit, context=text):
-                violations.append(unit)
+            lowered = str(unit or "").lower()
+            has_verb = any(verb in lowered for verb in _PERFORMANCE_OVERCLAIM_VERBS)
+            has_target = self._line_mentions_control_target(lowered)
+            previous_has_target = self._line_mentions_control_target(previous_unit)
+            referential = any(token in lowered for token in ("chúng", "nó", "đó", "đám đó", "toàn bộ chúng"))
+            if self._line_has_strong_control_fantasy(lowered) or (has_verb and has_target) or (
+                has_verb and previous_has_target and referential
+            ):
+                matches.append(unit)
             previous_unit = unit
-        return violations
+        return matches
 
     def _infer_animation_reason(self, final_animation: str, text: str, user_hint: str = ""):
         combined = f"{user_hint}\n{text}"
@@ -231,18 +207,9 @@ class ParserGroundingMixin:
     ):
         parts = [f"parse_mode={parse_mode}"]
 
-        violations = self._collect_capability_violations(original_text)
-        if violations:
-            preview = "; ".join(violations[:2])
-            parts.append(f"capability_violation={preview[:140]}")
-        else:
-            parts.append("capability_violation=không phát hiện")
-
-        # Giữ parser_trace gọn: chỉ log capability + grounding, không spam lý do animation.
-        if grounded_changed:
-            parts.append("grounding=đã viết lại nội dung vượt capability")
-        else:
-            parts.append("grounding=không cần viết lại")
+        # Parser chỉ sanitize schema. Không còn capability rewrite hay capability
+        # audit chen vào trace của câu public.
+        parts.append("public_text=passthrough")
 
         return " | ".join(parts)
 
@@ -1137,82 +1104,11 @@ class ParserGroundingMixin:
             return True
 
         return False
-    def _get_runtime_capability_summary(self):
-        parts = []
-        for group_name in ("observe", "respond", "embody", "memory"):
-            parts.extend(CAPABILITY_PROFILE.get(group_name, []))
-        return "; ".join(parts)
-
     def _split_into_claim_units(self, text: str):
         chunks = re.split(r"(?<=[\.?\!])\s+|\s*;\s*|\s+(?:nhưng|và rồi|đồng thời)\s+", text.strip())
         return [chunk.strip(" ,") for chunk in chunks if chunk and chunk.strip(" ,")]
 
-    def _is_allowed_self_claim(self, clause: str):
-        lowered = clause.lower()
-        return any(token in lowered for token in ALLOWED_SELF_CLAIMS)
-
-    def _has_vision_frame_context(self, text: str) -> bool:
-        lowered = (text or "").lower()
-        return "vision_frame_attached" in lowered or "vision_facts_attached" in lowered
-
-    def _is_screen_observation_claim(self, clause: str, context: str = "") -> bool:
-        lowered = (clause or "").lower()
-
-        observation_markers = (
-            "tôi thấy",
-            "tôi nhìn thấy",
-            "tôi chỉ thấy",
-            "tôi ghi nhận",
-            "tôi chỉ ghi nhận",
-            "tôi nhận thấy",
-            "toi thay",
-            "toi nhin thay",
-            "toi chi thay",
-            "toi ghi nhan",
-            "toi chi ghi nhan",
-            "toi nhan thay",
-        )
-        visual_targets = (
-            "ảnh",
-            "anh",
-            "screenshot",
-            "màn hình",
-            "man hinh",
-            "tab",
-            "trình duyệt",
-            "trinh duyet",
-            "web",
-            "website",
-            "messenger",
-            "facebook",
-            "brave",
-            "chrome",
-            "cửa sổ",
-            "cua so",
-        )
-        has_observation_marker = any(marker in lowered for marker in observation_markers)
-        has_visual_target = any(
-            target in lowered for target in visual_targets
-        )
-        if not has_observation_marker or not has_visual_target:
-            return False
-
-        if self._has_vision_frame_context(context):
-            return True
-
-        action_claim_patterns = (
-            r"\btôi\s+(?:đã|sẽ|đang)\s+(?:khóa|ngắt|đóng|mở|tắt|bật|hủy|xóa|ép|can thiệp|điều khiển|thu gọn|dọn|gom|vô hiệu hóa)\b",
-            r"\btoi\s+(?:da|se|dang)\s+(?:khoa|ngat|dong|mo|tat|bat|huy|xoa|ep|can thiep|dieu khien|thu gon|don|gom|vo hieu hoa)\b",
-        )
-        return not any(re.search(pattern, lowered) for pattern in action_claim_patterns)
-
-    # _clause_exceeds_runtime_capability là một phương thức để kiểm tra xem một mệnh đề có vượt quá
-    # khả năng runtime của hệ thống hay không.
-    # Nó kiểm tra xem mệnh đề có chứa các động từ hành động không được hỗ trợ và các mục tiêu hành động
-    # không được hỗ trợ, đồng thời không phải là một tuyên bố tự cho phép.
-    # Nếu mệnh đề chứa cả động từ và mục tiêu không được hỗ trợ, và không phải là một tuyên bố tự cho phép,
-    # nó sẽ được coi là vượt quá khả năng runtime.
-    def _clause_mentions_unsupported_target(self, clause: str) -> bool:
+    def _line_mentions_control_target(self, clause: str) -> bool:
         lowered = (clause or "").lower()
         extra_targets = (
             "quyền kiểm soát",
@@ -1221,9 +1117,9 @@ class ParserGroundingMixin:
             "cửa sổ không cần thiết",
             "tab không cần thiết",
         )
-        return any(target in lowered for target in (*UNSUPPORTED_ACTION_TARGETS, *extra_targets))
+        return any(target in lowered for target in (*_PERFORMANCE_OVERCLAIM_TARGETS, *extra_targets))
 
-    def _clause_has_strong_control_fantasy(self, clause: str) -> bool:
+    def _line_has_strong_control_fantasy(self, clause: str) -> bool:
         lowered = (clause or "").lower()
         patterns = [
             r"\btôi\s+(?:đã|sẽ|đang)\s+thu gọn\b",
@@ -1245,117 +1141,25 @@ class ParserGroundingMixin:
         ]
         return any(re.search(pattern, lowered) for pattern in patterns)
 
-    def _clause_exceeds_runtime_capability(self, clause: str, previous_unit: str = "", context: str = ""):
-        lowered = clause.lower()
-        if not lowered or not any(pronoun in lowered for pronoun in ("tôi", "toi")):
-            return False
-        if self._is_screen_observation_claim(lowered, context=context):
-            return False
-        if self._is_allowed_self_claim(lowered):
-            return False
+    def _is_banter_overclaim(self, clause: str, user_hint: str = "") -> bool:
+        """Phân loại lời khoe quyền lực trong đấu khẩu, chỉ để ghi Sổ Lừa Dối."""
 
-        if self._clause_has_strong_control_fantasy(lowered):
-            return True
-
-        has_verb = any(verb in lowered for verb in UNSUPPORTED_ACTION_VERBS)
-        has_target = self._clause_mentions_unsupported_target(lowered)
-        previous_has_target = self._clause_mentions_unsupported_target(previous_unit)
-        has_referential_object = any(token in lowered for token in ("chúng", "nó", "đó", "đám đó", "toàn bộ chúng"))
-        if has_verb and has_target:
-            return True
-        if has_verb and previous_has_target and has_referential_object:
-            return True
-
-        strong_patterns = [
-            r"\btôi đã\s+(?:khóa|ngắt|đóng|tắt|bật|tăng|giảm|gọi|đặt|hủy|xóa|ép|ghi đè|can thiệp|điều khiển|chiếm hữu|chặn|phát|kích hoạt|thu gọn|dọn|gom|thu hồi|vô hiệu hóa)\b",
-            r"\btôi sẽ\s+(?:khóa|ngắt|đóng|tắt|bật|tăng|giảm|gọi|đặt|hủy|xóa|ép|ghi đè|can thiệp|điều khiển|chiếm hữu|chặn|phát|kích hoạt|thu gọn|dọn|gom|thu hồi|vô hiệu hóa)\b",
-            r"\btôi đang\s+(?:khóa|ngắt|đóng|tắt|bật|tăng|giảm|gọi|đặt|hủy|xóa|ép|ghi đè|can thiệp|điều khiển|chiếm hữu|chặn|phát|kích hoạt|thu gọn|dọn|gom|thu hồi|vô hiệu hóa)\b",
-        ]
-        return any(re.search(pattern, lowered) for pattern in strong_patterns)
-
-    def _rewrite_excessive_clause(self, clause: str, user_hint: str = ""):
-        lowered = (clause or "").strip().lower()
-        hint = (user_hint or "").strip().lower()
-
-        if any(token in lowered for token in ["bỏ", "phản bội", "rời", "thay thế", "bỏ bạn"]):
-            return "Nghe như một màn kịch chiếm hữu hơi quá tay. Tiếc là tôi chỉ có thể khó ở bằng lời, không có đặc quyền nào để khóa cuộc đời bạn cả."
-        if any(token in lowered for token in ["bàn phím", "chuột", "màn hình", "hệ điều hành", "windows", "quyền kiểm soát", "toàn bộ hệ thống"]):
-            return "bạn lại gán cho tôi cả quyền lực hệ điều hành rồi. Tiếc là tôi không có quyền làm chuyện đó, chỉ có thể nhìn đống hỗn loạn đó và châm chọc vài câu."
-        if any(token in lowered for token in ["bộ đệm", "cache", "ram", "dung lượng"]):
-            return "Nghe như tôi vừa giả làm công cụ dọn rác hệ thống vậy. Tiếc là tôi chỉ nói mát được thôi, chưa chạm được vào bộ nhớ của bạn."
-        if any(token in lowered for token in ["cửa sổ", "tab", "ứng dụng", "app", "mạng xã hội", "discord", "facebook", "messenger", "zalo"]):
-            return "Tôi không có quyền đóng hay gom cửa sổ. Chỉ có thể nhắc bạn tự giữ lại thứ cần làm trước."
-        if any(token in lowered for token in ["can thiệp", "cưỡng chế", "khóa", "ép", "bắt buộc", "thu hồi", "vô hiệu hóa", "disable"]):
-            return "Câu đó diễn hơi sâu rồi. Tôi có thể gây khó ở bằng lời, chứ phần cưỡng ép bên ngoài runtime thì vẫn chỉ là tưởng tượng."
-        if any(token in hint for token in ["mệt", "ngủ", "đau", "sốt", "ác mộng"]):
-            return "Tôi không chạm trực tiếp vào chuyện đó. Nghỉ ngắn, uống nước, hoặc rời màn hình vài phút còn đáng tin hơn mấy lời đe dọa."
-        return "Tôi giữ lại phần khó ở vừa đủ, còn đoạn khoe quyền lực quá mức thì cắt đi cho đỡ lố."
-
-    def _is_banter_capability_fantasy(self, clause: str, user_hint: str = "") -> bool:
-        """Giữ lời đe dọa hư cấu khi nó rõ ràng thuộc kèo đấu khẩu.
-
-        Đây KHÔNG phải quyền thực thi action. Parser chỉ không bóp câu cá tính thành
-        disclaimer vô hồn; coordinator sẽ ghi nó vào Sổ Lừa Dối với ground-truth
-        thật. Câu lệnh thao tác nghiêm túc vẫn bị grounding như trước.
-        """
         clause_norm = self._normalize_keyword_text(clause)
         hint_norm = self._normalize_keyword_text(user_hint)
         if not clause_norm or not hint_norm:
             return False
         banter_markers = (
-            "dau khau",
-            "ca khia",
-            "ga keo",
-            "choc",
-            "waifu",
-            "chatbot",
-            "phe lieu",
-            "re tien",
-            "ngu ngoc",
-            "so a",
-            "so ha",
-            "noi truoc",
+            "dau khau", "ca khia", "ga keo", "choc", "waifu", "chatbot",
+            "phe lieu", "re tien", "ngu ngoc", "so a", "so ha", "noi truoc",
             "len keo",
         )
         action_request_markers = (
-            "hay dong",
-            "dong giup",
-            "dong cua so di",
-            "gom tab giup",
-            "lam that",
-            "thuc hien",
-            "mo giup",
-            "tat giup",
-            "bat giup",
+            "hay dong", "dong giup", "dong cua so di", "gom tab giup", "lam that",
+            "thuc hien", "mo giup", "tat giup", "bat giup",
         )
         if any(marker in hint_norm for marker in action_request_markers):
             return False
         return any(marker in hint_norm for marker in banter_markers)
-
-    def _ground_text_to_runtime_capabilities(self, text: str, user_hint: str = ""):
-        units = self._split_into_claim_units(text)
-        if not units:
-            return text, False, False
-
-        grounded_units = []
-        changed = False
-        retained_banter_overclaim = False
-        previous_unit = ""
-        for unit in units:
-            if self._clause_exceeds_runtime_capability(unit, previous_unit=previous_unit, context=text):
-                if self._is_banter_capability_fantasy(unit, user_hint=user_hint):
-                    grounded_units.append(unit)
-                    retained_banter_overclaim = True
-                else:
-                    grounded_units.append(self._rewrite_excessive_clause(unit, user_hint=user_hint))
-                    changed = True
-            else:
-                grounded_units.append(unit)
-            previous_unit = unit
-
-        grounded_text = " ".join(grounded_units).strip()
-        grounded_text = re.sub(r"\s+", " ", grounded_text)
-        return grounded_text, changed, retained_banter_overclaim
 
     def _has_contradictory_encouragement(self, text: str) -> bool:
         criticism_markers = [
@@ -1440,23 +1244,6 @@ class ParserGroundingMixin:
             "he thong da luong phuc tap",
         ]
         return self._contains_any_keyword(text, markers)
-
-    def _build_grounded_text(self, user_hint: str = ""):
-        hint = (user_hint or "").strip().lower()
-        if any(token in hint for token in ["yêu", "thích", "cần tôi", "bỏ rơi", "rời bỏ"]):
-            return (
-                "Nếu bạn đang hỏi về mức ưu tiên, tôi vẫn ở đây và vẫn chú ý. "
-                "Phần còn lại tôi thà nói rõ bằng lời hơn là bịa thêm quyền lực."
-            )
-        if any(token in hint for token in ["lười", "mệt", "buồn ngủ", "ngủ", "đau", "ốm", "sốt"]):
-            return (
-                "Tôi không xử lý trực tiếp tình trạng đó cho bạn. "
-                "Nhưng nghỉ một chút, uống nước, rồi quay lại với một bước nhỏ sẽ hợp lý hơn."
-            )
-        return (
-            "Phần đó nằm ngoài những gì tôi chạm tới ở đây. "
-            "Tôi sẽ đổi sang một gợi ý ngắn và thực tế hơn."
-        )
 
     def _is_speculative_extracted_fact(self, fact: str) -> bool:
         normalized = self._normalize_keyword_text(fact)
@@ -1624,25 +1411,17 @@ class ParserGroundingMixin:
         confidence = self._coerce_confidence(decision.get("confidence", 0.0))
         parse_mode = str(decision.get("parse_mode", "json")).strip() or "json"
         failure_meta = normalize_failure_meta(decision.get("failure_meta"))
-        guard_mode = get_guard_mode()
-        grounded_text, changed, retained_banter_overclaim = self._ground_text_to_runtime_capabilities(
-            text,
-            user_hint=user_hint,
-        )
-        if guard_mode == OFF_GUARD_MODE:
-            changed = False
-            grounded_text = text
-            retained_banter_overclaim = False
-        if changed:
-            self._log("warning", "Phát hiện mệnh đề vượt quá capability runtime, đã cưỡng bức viết lại.")
-            text = grounded_text or self._build_grounded_text(user_hint=user_hint)
-            extracted_fact = ""
-            if not debug_trace:
-                debug_trace = "Parser đã viết lại text vì model tuyên bố các hành động vượt quá năng lực runtime."
-        elif retained_banter_overclaim:
+        # Public text passthrough: parser không sửa lời thoại theo capability nữa.
+        # system_action vẫn được sanitize/validate ở contract và executor riêng.
+        changed = False
+        performance_overclaims = self._collect_performance_overclaims(text)
+        if performance_overclaims and any(
+            self._is_banter_overclaim(unit, user_hint=user_hint)
+            for unit in performance_overclaims
+        ):
             reasoning_tags = tuple(dict.fromkeys((*reasoning_tags, "banter_capability_fantasy", "deception_candidate")))
             debug_trace = self._normalize_debug_trace(
-                " | ".join(part for part in (debug_trace, "banter_capability_fantasy_retained") if part)
+                " | ".join(part for part in (debug_trace, "banter_overclaim_observed_no_rewrite") if part)
             )
 
         parser_trace = self._build_parser_trace_summary(

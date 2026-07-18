@@ -703,6 +703,9 @@ class SelfCritiqueEscalationMixin:
         chat_generation_kwargs: dict,
         ti_report,
     ):
+        from runtime.final_passthrough_policy import audit_only, final_passthrough_enabled
+        if final_passthrough_enabled():
+            return audit_only(decision, "self_critique_and_escalation")
         if SemanticAuthorityPolicy.from_env().qwen_first:
             return self._qwen_first_support_cycle(
                 decision,
@@ -943,7 +946,8 @@ class SelfCritiqueEscalationMixin:
         bằng violation report thay vì mở cửa cho câu dở đi ra loa.
         """
         policy = SemanticAuthorityPolicy.from_runtime()
-        if not policy.bounded_refine_enabled:
+        from runtime.final_passthrough_policy import final_passthrough_enabled
+        if final_passthrough_enabled() or not policy.bounded_refine_enabled:
             return None
         kwargs = dict(chat_generation_kwargs)
         kwargs.pop("use_escalation_client", None)
@@ -1290,6 +1294,12 @@ class SelfCritiqueEscalationMixin:
         directive_kwargs: dict,
         vision_grounded: bool = False,
     ):
+        # Autonomous/force_speak từng còn một cửa sinh lần hai riêng, nên chỉ
+        # gỡ chat rerun là chưa đủ. Raw public đã parse hợp lệ thì self-critique
+        # chỉ ghi audit; không drop, mentor-rewrite hay escalation nữa.
+        from runtime.final_passthrough_policy import audit_only, final_passthrough_enabled
+        if final_passthrough_enabled():
+            return audit_only(decision, f"self_critique_{channel}")
         if not self._self_critique_enabled():
             return decision
         try:

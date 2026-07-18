@@ -51,7 +51,7 @@ def test_autonomous_beat_pause_is_only_kept_on_its_last_subsegment():
         },
     )
 
-    frames = StageOutputPipeline(profile="recording").frames_for_tts(frame)
+    frames = StageOutputPipeline().frames_for_tts(frame)
 
     assert len(frames) >= 2
     pauses = [item.delivery["active_beat"]["pause_after_ms"] for item in frames]

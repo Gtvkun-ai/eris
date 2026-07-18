@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -39,6 +39,7 @@ from runtime.body_bias import BodyBiasProjector
 from runtime.no_fallback_policy import no_fallback_mode_enabled
 from runtime.presence_controller import SocialPresenceEvent
 from runtime.speech_pipeline import SpeechIntentDecision
+from runtime.final_passthrough_policy import PublicSpeechSnapshot, final_passthrough_enabled
 
 
 class ForceSpeakCycleMixin:
@@ -248,6 +249,11 @@ class ForceSpeakCycleMixin:
                     f"; seeds={' | '.join(synthesis.seeds[:3])}"
                 ),
             )
+            raw_public_speech = (
+                PublicSpeechSnapshot.capture(decision)
+                if final_passthrough_enabled() and str(getattr(decision, "text", "") or "").strip()
+                else None
+            )
             decision = self._apply_post_generation_filters(
                 decision,
                 channel="force_speak",
@@ -256,6 +262,8 @@ class ForceSpeakCycleMixin:
                 momentum_topic=getattr(speech_core.inner_thought, "topic_seed", ""),
                 frame=frame,
             )
+            if raw_public_speech is not None:
+                decision = raw_public_speech.restore(decision, stage="force_speak_micro_precommit")
             self._remember_inner_thought_rhythm(speech_core.inner_thought)
             self.fe_style_memory = self.fe_renderer.remember_style(
                 self.fe_style_memory,
@@ -284,6 +292,11 @@ class ForceSpeakCycleMixin:
                 self._build_speech_core_ti_context(ti_report, frame.action_plan, speech_core.inner_thought, speech_core),
                 frame,
             )
+            try:
+                from runtime.behavior_observation import append_behavior_prompt_context
+                inner_ti_context = append_behavior_prompt_context(self, inner_ti_context, limit=6)
+            except Exception:
+                pass
             raw = self.llm_service.generate_directive(
                 telemetry_data=telemetry_data,
                 ni_context="",
@@ -299,6 +312,11 @@ class ForceSpeakCycleMixin:
             self._log_raw_llm_output("force_speak_inner_thought", raw)
             self._log_pre_parser("force_speak_inner_thought", raw)
             decision = self.parser.parse(raw)
+            raw_public_speech = (
+                PublicSpeechSnapshot.capture(decision)
+                if final_passthrough_enabled() and str(getattr(decision, "text", "") or "").strip()
+                else None
+            )
             self._log_decision_stage("force_speak_inner_thought", "after_parser", decision)
             decision.debug_trace = (
                 f"{decision.debug_trace} | inner_thought={speech_core.inner_thought.intent}"
@@ -310,7 +328,13 @@ class ForceSpeakCycleMixin:
             decision = self.ti_governor.enforce_decision(decision, ti_report)
             self._log_decision_stage("force_speak_inner_thought", "after_ti", decision)
             decision = self._execute_system_action(decision, snapshot=snapshot, frame=frame)
-            if self._is_near_duplicate_text(decision.text or "", self.last_text) or self._is_generic_force_speak_ack(decision.text or ""):
+            if (
+                not final_passthrough_enabled()
+                and (
+                    self._is_near_duplicate_text(decision.text or "", self.last_text)
+                    or self._is_generic_force_speak_ack(decision.text or "")
+                )
+            ):
                 repair_ti_context = (
                     inner_ti_context
                     + "\nSpeechCore repair: the previous draft was generic or repeated. "
@@ -352,6 +376,8 @@ class ForceSpeakCycleMixin:
                 momentum_topic=getattr(speech_core.inner_thought, "topic_seed", ""),
                 frame=frame,
             )
+            if raw_public_speech is not None:
+                decision = raw_public_speech.restore(decision, stage="force_speak_inner_precommit")
             self._remember_inner_thought_rhythm(speech_core.inner_thought)
             self.fe_style_memory = self.fe_renderer.remember_style(
                 self.fe_style_memory,
@@ -393,6 +419,11 @@ class ForceSpeakCycleMixin:
             forced_ti_context += " Không có screen_facts mới; nói thật gọn, không dựng cảnh ngoài dữ kiện."
             self.logger.info("[force_speak] context menu requested immediate speech.")
         forced_ti_context = self._merge_v3_prompt_context(forced_ti_context, frame)
+        try:
+            from runtime.behavior_observation import append_behavior_prompt_context
+            forced_ti_context = append_behavior_prompt_context(self, forced_ti_context, limit=6)
+        except Exception:
+            pass
         raw = self.llm_service.generate_directive(
             telemetry_data=telemetry_data,
             ni_context="",
@@ -408,6 +439,11 @@ class ForceSpeakCycleMixin:
         self._log_raw_llm_output("force_speak", raw)
         self._log_pre_parser("force_speak", raw)
         decision = self.parser.parse(raw)
+        raw_public_speech = (
+            PublicSpeechSnapshot.capture(decision)
+            if final_passthrough_enabled() and str(getattr(decision, "text", "") or "").strip()
+            else None
+        )
         self._log_decision_stage("force_speak", "after_parser", decision)
         self._log_decision_stage("force_speak", "pre_ti", decision)
         decision = self.ti_governor.enforce_decision(decision, ti_report)
@@ -440,6 +476,8 @@ class ForceSpeakCycleMixin:
             momentum_topic=getattr(speech_core.inner_thought, "topic_seed", ""),
             frame=frame,
         )
+        if raw_public_speech is not None:
+            decision = raw_public_speech.restore(decision, stage="force_speak_precommit")
 
         self.fe_style_memory = self.fe_renderer.remember_style(
             self.fe_style_memory,

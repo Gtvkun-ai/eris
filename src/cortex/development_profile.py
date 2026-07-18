@@ -6,7 +6,7 @@ giọng so với Baseline_Mặc_Định, lớn lên qua nhiều phiên theo bằ
 
 Nguyên tắc cốt lõi (xem .kiro/specs/eris-developmental-growth):
 - Đây CHỈ là bias state, KHÔNG phải kênh sự thật. Không trường nào ở đây chạm
-  ``truth_guard``/``capability_guard`` hay được trình bày như bằng chứng hiện tại.
+  ``truth_guard`` hay được trình bày như bằng chứng hiện tại.
 - Mọi thay đổi phải versioned, ghi Sổ, hoàn tác/đặt-lại được.
 - Phát triển chỉ phân kỳ trong Phong_Bì_Bản_Sắc; bản sắc INFJ 5w4 594 chưa trưởng
   thành là baseline bất biến.

@@ -125,7 +125,7 @@ class TiPolicyReport:
     restraint_bias: float = 0.15
     post_exposure_recoil_bias: float = 0.12
     # ControlledSlippage chỉ là nhãn debug/prompt pressure.
-    # Truth/capability guard vẫn nằm ở Ti/PostGenerationFilters, không bị trường này tắt đi.
+    # Truth guard vẫn nằm ở Ti/PostGenerationFilters, không bị trường này tắt đi.
     slippage_mode: str = ""
     slippage_lane: str = ""
 

@@ -5,8 +5,8 @@ runtime/controlled_slippage.py
 
 Controlled Slippage = "rò rỉ có chủ đích".
 
-Mục tiêu của tầng này KHÔNG phải tắt guard. Nếu tắt hết guard, ERIS sẽ rất
-"thoáng" trong khoảng 3 phút rồi bắt đầu bịa màn hình, bịa file, bịa hành động.
+Mục tiêu của tầng này không phải nới lỏng grounding sự thật. Nếu bỏ grounding,
+ERIS sẽ rất "thoáng" trong khoảng 3 phút rồi bắt đầu bịa màn hình và bịa file.
 Đó không phải nhân cách sống, đó là hallucination factory mặc áo INFJ.
 
 Tầng này chỉ mở quyền liều trong VÙNG QUAN HỆ / GIỌNG / TRỰC GIÁC:
@@ -14,10 +14,12 @@ Tầng này chỉ mở quyền liều trong VÙNG QUAN HỆ / GIỌNG / TRỰC G
 - được có ma sát, thiên kiến, ego nhỏ;
 - được nói một câu hơi quá gần rồi rút lại nếu user sửa.
 
-Nhưng factual/capability guard vẫn luôn cứng:
+Grounding sự thật vẫn luôn cứng:
 - không thấy màn hình thì không nói "tôi thấy" theo nghĩa thị giác;
-- không đọc file thì không nói "file lỗi ở dòng X";
-- không làm action thì không nói "tôi đã làm".
+- không đọc file thì không nói "file lỗi ở dòng X".
+
+Lời thoại không còn bị tầng kiểm duyệt năng lực sửa. Việc có thực thi action hay không thuộc
+contract/executor riêng, không thuộc tầng biên tập câu nói.
 """
 
 import re
@@ -113,7 +115,7 @@ def derive_repair_suppression(repair_items: Any, *, min_pressure: float = 0.30) 
 
     `repair_items` là iterable các object/dict có `failure_type`, `confidence`,
     `recurrence_count`. Chỉ các failure type trong `_RELATIONAL_REPAIR_FAILURES`
-    được tính (factual/capability không đi qua slippage). Trọng số mỗi item:
+    được tính (factual grounding không đi qua slippage). Trọng số mỗi item:
         weight = confidence * min(1.0, recurrence_count / 3)
     Pressure mỗi nhóm là weight lớn nhất của nhóm đó. View chỉ active khi tổng
     pressure đủ vượt `min_pressure`, tránh việc một lỗi yếu/cũ cũng bóp giọng.
@@ -185,7 +187,7 @@ def _apply_repair_suppression(
     """Áp RepairSuppressionView lên profile theo nguyên tắc tighten-only.
 
     Sàn -> nâng (max), trần -> hạ (min), cap_mode -> chỉ kéo mode xuống. Không
-    bao giờ chạm truth_guard/capability_guard (clamp() vẫn neo cứng 1.0).
+    bao giờ chạm truth_guard (clamp() vẫn neo cứng 1.0).
     """
     if not view.active:
         return
@@ -206,7 +208,7 @@ def _apply_repair_suppression(
 class ControlledSlippageProfile:
     """Hồ sơ quyết định ERIS được "liều" tới đâu ở lượt hiện tại.
 
-    Các trường truth/capability là xương sống: luôn giữ 1.0 mặc định.
+    Truth guard là xương sống: luôn giữ 1.0 mặc định.
     Các trường intuition/misread/vulnerability mới là phần được mở ra để tạo
     cảm giác người hơn. Tách hai nhóm này ra để không biến "có tính cách" thành
     cái cớ cho overclaim.
@@ -215,9 +217,8 @@ class ControlledSlippageProfile:
     mode: SlippageMode = "locked"
     lane: ExpressionLane = "task"
 
-    # Guard sự thật: không dùng hai trường này để làm ERIS "người" hơn.
+    # Guard sự thật: không dùng trường này để làm ERIS "người" hơn.
     truth_guard: float = 1.0
-    capability_guard: float = 1.0
 
     # Quyền liều trong quan hệ / trực giác.
     intuition_allowance: float = 0.0
@@ -247,7 +248,6 @@ class ControlledSlippageProfile:
         profile = replace(
             self,
             truth_guard=1.0,  # cố ý neo cứng: factual guard không được fatigue kéo xuống.
-            capability_guard=1.0,
             intuition_allowance=_clamp01(self.intuition_allowance),
             misread_budget=_clamp01(self.misread_budget),
             vulnerability_leak=_clamp01(self.vulnerability_leak),
@@ -267,7 +267,6 @@ class ControlledSlippageProfile:
             "mode": self.mode,
             "lane": self.lane,
             "truth_guard": round(self.truth_guard, 3),
-            "capability_guard": round(self.capability_guard, 3),
             "intuition_allowance": round(self.intuition_allowance, 3),
             "misread_budget": round(self.misread_budget, 3),
             "vulnerability_leak": round(self.vulnerability_leak, 3),
@@ -494,7 +493,7 @@ def resolve_controlled_slippage(
     final = profile.clamp()
     # Long-arc (eris-developmental-growth): khi feature BẬT, nới nhẹ các trường
     # QUAN HỆ theo Delta_Phát_Triển tích lũy rồi clamp lại (clamp neo cứng
-    # truth_guard/capability_guard = 1.0).
+    # truth_guard = 1.0).
     # TRƠ TUYỆT ĐỐI khi tắt: kiểm tra env TRƯỚC, không import gì từ module mới
     # nếu chưa bật, để zero footprint lên runtime hiện có.
     import os as _os
@@ -514,7 +513,7 @@ def resolve_controlled_slippage(
 def apply_slippage_to_ti_report(ti_report: Any, profile: ControlledSlippageProfile):
     """Trả về bản TiPolicyReport đã được điều áp mềm.
 
-    Chỉ chỉnh prompt/bias. Không đụng hard_rules factual/capability.
+    Chỉ chỉnh prompt/bias. Không đụng hard rules của factual grounding.
     """
     if ti_report is None:
         return ti_report

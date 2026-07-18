@@ -2,7 +2,7 @@
 """tests/test_development_bias.py — DevelopmentBias adapters (task 6.1).
 
 Bất biến: bias chỉ chỉnh giọng/khoảng cách/độ-dám-đọc; KHÔNG đụng truth_guard/
-capability_guard; không tạo public text.
+không tạo public text.
 - R3.1, R7.3: apply_to_slippage giữ truth/capability guard = 1.0.
 - R7.4: tom boldness vẫn gated, trong [0,1].
 - R8.2: không đụng layer micro (các hàm này thuần, không sờ MentalProcessSystem).
@@ -38,13 +38,14 @@ def test_apply_to_slippage_nudges_relational_but_keeps_truth_guard():
     assert out.friction_permission >= base.friction_permission
     # Bất biến: guard sự thật không bị bias đụng.
     assert out.truth_guard == 1.0
-    assert out.capability_guard == 1.0
+    assert not hasattr(out, "capability_guard")
 
 
 def test_apply_to_slippage_zero_bias_keeps_guards():
     base = ControlledSlippageProfile(mode="warm")
     out = apply_to_slippage(base, DevelopmentBias())
-    assert out.truth_guard == 1.0 and out.capability_guard == 1.0
+    assert out.truth_guard == 1.0
+    assert not hasattr(out, "capability_guard")
 
 
 def test_effective_tom_boldness_gated():
@@ -67,11 +68,11 @@ def test_personality_offsets_warmth_and_closeness():
     attach=st.floats(min_value=0.0, max_value=0.45, allow_nan=False),
 )
 def test_property_truth_guard_invariant_under_any_bias(read_boldness, warmth, attach):
-    """Với mọi bias, truth_guard/capability_guard luôn = 1.0 sau khi áp."""
+    """Với mọi bias, truth_guard luôn = 1.0 và capability_guard không còn tồn tại sau khi áp."""
     base = ControlledSlippageProfile(mode="open", lane="relational")
     bias = DevelopmentBias(read_boldness=read_boldness, warmth_temperature=warmth, attachment_visibility=attach)
     out = apply_to_slippage(base, bias)
     assert out.truth_guard == 1.0
-    assert out.capability_guard == 1.0
+    assert not hasattr(out, "capability_guard")
     assert 0.0 <= out.intuition_allowance <= 1.0
     assert 0.0 <= effective_tom_boldness(0.5, bias) <= 1.0

@@ -3,7 +3,7 @@
 
 Nguyên tắc bất biến (R3, R7.3, R7.4):
 - Bias CHỈ chỉnh giọng/khoảng cách/độ-dám-đọc (vùng quan hệ).
-- KHÔNG bao giờ ghi ``truth_guard``/``capability_guard``: với ControlledSlippage,
+- KHÔNG bao giờ ghi ``truth_guard``: với ControlledSlippage,
   ta luôn gọi ``profile.clamp()`` ở cuối — clamp đã neo cứng hai guard về 1.0.
 - KHÔNG tạo public text; đây chỉ là điều chỉnh state.
 
@@ -49,7 +49,7 @@ def personality_offsets(bias: Any) -> dict[str, float]:
 
 def apply_to_slippage(profile: Any, bias: Any):
     """Nới nhẹ các trường QUAN HỆ của ControlledSlippageProfile theo bias, rồi
-    gọi ``clamp()``. Truth/capability guard được clamp neo về 1.0 nên bias không
+    gọi ``clamp()``. Truth guard được clamp neo về 1.0 nên bias không
     thể đụng tới (R3.1, R7.3). Trả về profile mới (hoặc nguyên bản nếu lỗi)."""
     if profile is None:
         return profile

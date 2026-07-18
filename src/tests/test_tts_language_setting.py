@@ -78,7 +78,38 @@ class JapanesePrelocalizeTests(unittest.TestCase):
         runtime_bool.assert_not_called()
 
 
+class TtsAttemptPolicyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._old_attempts = os.environ.get("ERIS_TTS_MAX_ATTEMPTS")
+
+    def tearDown(self) -> None:
+        if self._old_attempts is None:
+            os.environ.pop("ERIS_TTS_MAX_ATTEMPTS", None)
+        else:
+            os.environ["ERIS_TTS_MAX_ATTEMPTS"] = self._old_attempts
+
+    def test_tts_attempts_default_to_full_pool(self) -> None:
+        os.environ.pop("ERIS_TTS_MAX_ATTEMPTS", None)
+        self.assertGreaterEqual(tts_engine._tts_max_attempts(), 10_000)
+
+    def test_tts_attempts_accept_explicit_numeric_limit(self) -> None:
+        os.environ["ERIS_TTS_MAX_ATTEMPTS"] = "3"
+        self.assertEqual(tts_engine._tts_max_attempts(), 3)
+
+
 class TtsRefreshTests(unittest.TestCase):
+    def test_global_japanese_language_overrides_vietnamese_request_contract(self) -> None:
+        req = tts_engine._SpeakRequest(
+            text="Xin chào",
+            language_hint="vi",
+            locale="vi-VN",
+        )
+        worker = object.__new__(tts_engine._TtsWorker)
+        worker._language_hint = "ja"
+
+        self.assertEqual(worker._request_language(req), "ja")
+        self.assertEqual(worker._request_locale(req), "ja-JP")
+
     def test_worker_is_rebuilt_when_language_changes(self) -> None:
         class FakeWorker:
             def __init__(self, voice="", model="", language="") -> None:

@@ -44,6 +44,7 @@ from runtime.ambient_silence_policy import (
 )
 from runtime.presence_controller import SocialPresenceEvent
 from runtime.speech_pipeline import SpeechIntentDecision
+from runtime.final_passthrough_policy import PublicSpeechSnapshot, final_passthrough_enabled
 
 
 VISION_TRACE_MARKER = "vision_facts_attached"
@@ -523,6 +524,11 @@ class AutonomousCycleMixin:
                 self._build_speech_core_ti_context(ti_report, frame.action_plan, speech_core.inner_thought, speech_core),
                 frame,
             )
+            try:
+                from runtime.behavior_observation import append_behavior_prompt_context
+                inner_ti_context = append_behavior_prompt_context(self, inner_ti_context, limit=6)
+            except Exception:
+                pass
             raw = self.llm_service.generate_directive(
                 telemetry_data=telemetry_data,
                 ni_context="",
@@ -538,6 +544,11 @@ class AutonomousCycleMixin:
             self._log_raw_llm_output("directive_inner_thought", raw)
             self._log_pre_parser("directive_inner_thought", raw)
             decision = self.parser.parse(raw)
+            raw_public_speech = (
+                PublicSpeechSnapshot.capture(decision)
+                if final_passthrough_enabled() and str(getattr(decision, "text", "") or "").strip()
+                else None
+            )
             self._log_decision_stage("directive_inner_thought", "after_parser", decision)
             decision.debug_trace = (
                 f"{decision.debug_trace} | inner_thought={speech_core.inner_thought.intent}"
@@ -561,6 +572,8 @@ class AutonomousCycleMixin:
                 momentum_topic=getattr(thought_surface, "topic_seed", ""),
                 frame=frame,
             )
+            if raw_public_speech is not None:
+                decision = raw_public_speech.restore(decision, stage="autonomous_inner_precommit")
             self._remember_inner_thought_rhythm(speech_core.inner_thought)
             self.fe_style_memory = self.fe_renderer.remember_style(
                 self.fe_style_memory,
@@ -597,6 +610,11 @@ class AutonomousCycleMixin:
             self._build_llm_ti_context(ti_report, frame.action_plan),
             frame,
         )
+        try:
+            from runtime.behavior_observation import append_behavior_prompt_context
+            planned_ti_context = append_behavior_prompt_context(self, planned_ti_context, limit=6)
+        except Exception:
+            pass
         if self._process_pending_user_input():
             return self.running
 
@@ -616,6 +634,11 @@ class AutonomousCycleMixin:
         self._log_raw_llm_output("directive", raw)
         self._log_pre_parser("directive", raw)
         decision = self.parser.parse(raw)
+        raw_public_speech = (
+            PublicSpeechSnapshot.capture(decision)
+            if final_passthrough_enabled() and str(getattr(decision, "text", "") or "").strip()
+            else None
+        )
         self._log_decision_stage("directive", "after_parser", decision)
         self._log_decision_stage("directive", "pre_ti", decision)
         decision = self.ti_governor.enforce_decision(decision, ti_report, vision_grounded=bool(getattr(self, "vision_facts", None)))
@@ -637,6 +660,8 @@ class AutonomousCycleMixin:
             momentum_topic=getattr(speech_core.inner_thought, "topic_seed", ""),
             frame=frame,
         )
+        if raw_public_speech is not None:
+            decision = raw_public_speech.restore(decision, stage="autonomous_precommit")
 
         self.fe_style_memory = self.fe_renderer.remember_style(
             self.fe_style_memory,

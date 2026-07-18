@@ -861,6 +861,30 @@ class ScriptedTakeRuntime:
                 title=title,
                 sync="audio_start",
             )
+        elif event_type == "audio_failed" and frame is not None:
+            # If TTS quota/backend dies before audio_start, the take should still be visible:
+            # bubble + tutor prop are the stage script, not a side effect of successful audio.
+            with self._lock:
+                title = self._status.title
+            self._publish_frame(
+                frame,
+                take_id=str(getattr(frame, "turn_id", "") or self._active_take_id),
+                title=title,
+                sync="audio_failed",
+            )
+            self._send_lifecycle_to_transport(event, frame)
+        elif event_type == "audio_cancelled" and frame is not None:
+            reason = str(getattr(event, "reason", "") or "").strip().lower()
+            if reason in {"empty_audio", "tts_disabled"}:
+                with self._lock:
+                    title = self._status.title
+                self._publish_frame(
+                    frame,
+                    take_id=str(getattr(frame, "turn_id", "") or self._active_take_id),
+                    title=title,
+                    sync="audio_cancelled",
+                )
+            self._send_lifecycle_to_transport(event, frame)
         elif event_type in {"thinking_started", "thinking_finished", "continuation_cancelled"}:
             self._send_lifecycle_to_transport(event, frame)
 

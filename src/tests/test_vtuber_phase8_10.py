@@ -121,7 +121,7 @@ def test_phase9_format_director_selects_anchor_safe_formats():
     assert directive.max_beats == 2
 
 
-def test_phase9_anchor_guard_rewrites_hollow_task_claim():
+def test_phase9_anchor_guard_logs_hollow_task_claim_without_rewrite():
     verdict = AutonomousSurfaceAnchorGuard().validate(
         "Giao tôi phần khó nhất đi.",
         {
@@ -130,8 +130,9 @@ def test_phase9_anchor_guard_rewrites_hollow_task_claim():
             "show_format": {"anchor_policy": "require_surface_anchor"},
         },
     )
-    assert verdict.rewritten is True
-    assert verdict.text == "Yên lặng cũng được. Tôi chưa cần chen."
+    assert verdict.accepted is True
+    assert verdict.rewritten is False
+    assert verdict.text == "Giao tôi phần khó nhất đi."
     assert "hollow_task_premise" in verdict.unsupported
 
 

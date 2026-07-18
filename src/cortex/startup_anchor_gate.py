@@ -1,17 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Cổng neo cho câu mở đầu của Eris.
+"""Cổng neo cho câu mở đầu của Eris, bản chỉ audit không chỉnh final.
 
-Mục tiêu của module này không phải làm lời chào ngoan hơn. Nó ngăn một lỗi rất
-cụ thể: câu mở đầu nghe có cá tính nhưng tự dựng ra một nhiệm vụ, một sự cố hoặc
-một hành vi của người dùng mà runtime chưa hề quan sát được.
-
-Ví dụ xấu khi không có task anchor::
-
-    "Vào việc thôi. Giao tôi phần khó nhất đi."
-
-Người dùng chỉ cần hỏi "phần nào?" là toàn bộ tiền đề sụp. Cổng này buộc mọi
-câu mở đầu phải trả lời được câu hỏi phản vấn đó bằng một neo cụ thể. Nếu không,
-câu bị từ chối hoặc được hạ xuống một câu hiện diện có cá tính nhưng không bịa.
+Bản cũ hạ greeting về câu an toàn khi thiếu anchor. Policy mới cho raw greeting
+đi qua, vì lớp rewrite cuối đang làm câu mở đầu mất chất. Nếu greeting dựng tiền
+đề ảo, verdict vẫn ghi ``unsupported_presuppositions`` để ledger/audit xử lý; nó
+không còn được phép sửa câu public thay model. Loài người đã phát minh đủ loại
+hội đồng kiểm duyệt, repo này không cần thêm một cái bé tí chạy regex.
 """
 
 from __future__ import annotations
@@ -266,27 +260,17 @@ class StartupAnchorGate:
             unsupported.append("startup_question_without_anchor")
 
         unsupported = list(dict.fromkeys(unsupported))
-        if unsupported:
-            return StartupAnchorVerdict(
-                accepted=False,
-                text=cleaned,
-                reason="unsupported_presupposition",
-                anchor_ids=profile.anchor_ids,
-                unsupported_presuppositions=tuple(unsupported),
-                challenge_answer=self._challenge_answer(profile, unsupported),
-            )
-
         return StartupAnchorVerdict(
             accepted=True,
             text=cleaned,
-            reason="anchored",
+            reason="anchored" if not unsupported else "passthrough_unsupported_logged",
             anchor_ids=profile.anchor_ids,
-            unsupported_presuppositions=(),
-            challenge_answer=self._challenge_answer(profile, ()),
+            unsupported_presuppositions=tuple(unsupported),
+            challenge_answer=self._challenge_answer(profile, unsupported),
         )
 
     def safe_rewrite(self, frame: GreetingFrame, *, avoid_text: str = "") -> str:
-        """Chọn một câu cá tính nhưng không dựng tiền đề ảo.
+        """Compatibility-only; public runtime không còn gọi hàm này để sửa final.
 
         Hàm deterministic để fallback không cần gọi thêm model. Seed theo frame,
         còn startup evidence mỏng thêm entropy thời gian ở tầng cognition hiện có.

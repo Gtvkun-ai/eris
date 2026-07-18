@@ -24,17 +24,15 @@ def decision_from_session_ritual(report: Any) -> Decision | None:
         return None
 
     # Defense in depth: resolver đã lọc preset, nhưng report có thể được tạo bởi
-    # code cũ hoặc dữ liệu cache. Nếu câu không có neo, rewrite về câu hiện diện
-    # an toàn và bỏ audio asset vì WAV cũ không còn khớp chữ.
+    # code cũ hoặc dữ liệu cache. Gate chỉ audit; tuyệt đối không rewrite preset
+    # cuối nữa. Nếu câu thiếu neo, ghi trace để soi, còn text/audio vẫn đi nguyên.
     frame = getattr(report, "greeting_frame", None)
-    rewritten = False
+    anchor_audit = ""
     if frame is not None:
         gate = StartupAnchorGate()
         verdict = gate.validate(text, frame)
-        if not verdict.accepted:
-            text = gate.safe_rewrite(frame)
-            preset_id = f"{preset_id}:anchor_rewrite"
-            rewritten = True
+        if verdict.unsupported_presuppositions:
+            anchor_audit = "; startup_anchor_audit=" + ",".join(verdict.unsupported_presuppositions)
 
     return Decision(
         text=text,
@@ -44,12 +42,12 @@ def decision_from_session_ritual(report: Any) -> Decision | None:
         should_speak=True,
         confidence=1.0,
         parse_mode="session_ritual_preset",
-        debug_trace=f"session_ritual_layer; source=preset; preset_id={preset_id}; tone={getattr(report, 'tone', '')}",
+        debug_trace=f"session_ritual_layer; source=preset; preset_id={preset_id}; tone={getattr(report, 'tone', '')}{anchor_audit}",
         delivery_hint=str(getattr(report, "greeting_preset_prosody", "") or ""),
         stage_motion=str(getattr(report, "greeting_preset_motion", "") or ""),
         speech_act="greeting_start",
         preset_id=preset_id,
-        audio_asset=("" if rewritten else str(getattr(report, "greeting_audio_asset", "") or "")),
+        audio_asset=str(getattr(report, "greeting_audio_asset", "") or ""),
         preset_emotion=str(getattr(report, "greeting_preset_emotion", "") or ""),
     )
 

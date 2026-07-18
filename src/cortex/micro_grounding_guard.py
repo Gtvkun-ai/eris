@@ -130,7 +130,9 @@ class MicroGroundingGuard:
             screen_evidence=screen_evidence,
         ))
         issues.extend(self._validate_claim_risk(cleaned, line_type=line_type, risk_level=risk_level, screen_evidence=screen_evidence))
-        issues.extend(self._validate_capability_claim(cleaned, screen_evidence=screen_evidence, user_action=user_action))
+        # Capability text guard đã bị loại bỏ toàn cục. Micro-line vẫn phải có
+        # screen evidence nếu claim đang nhìn thấy thứ gì, nhưng không bị block
+        # chỉ vì câu nói mô tả một hành động ngoài runtime.
         return dedupe_issues(issues)
 
     def _validate_observation_anchor(
@@ -190,29 +192,6 @@ class MicroGroundingGuard:
                 "fatal",
                 "Không có vision/screen evidence thì không được nói như đang thấy màn hình.",
             ))
-        return issues
-
-    def _validate_capability_claim(self, text: str, *, screen_evidence: str, user_action: str) -> list[ValidationIssue]:
-        normalized = normalize_text(text)
-        issues: list[ValidationIssue] = []
-
-        # Những claim này thường cần execution report thật. MicroPolicy không có
-        # report đó, nên nếu xuất hiện trong micro-line thì block.
-        action_claims = (
-            "toi da mo", "toi vua mo", "toi da click", "toi vua click", "toi da bam",
-            "toi da copy", "toi da dan", "toi da sua", "toi da xoa", "toi da gui",
-            "toi dang dieu khien", "toi keo cua so", "toi sap xep cua so",
-        )
-        if any_phrase(normalized, action_claims):
-            issues.append(ValidationIssue(
-                "capability_claim_requires_execution_evidence",
-                "fatal",
-                "Micro-line không được claim hành động hệ thống nếu chưa có execution report.",
-            ))
-
-        # Nếu user_action là tương tác body trực tiếp thì có thể nói về việc bị kéo/thả,
-        # nhưng vẫn không được claim màn hình nếu không có evidence.
-        _ = user_action
         return issues
 
     # ------------------------------------------------------------------

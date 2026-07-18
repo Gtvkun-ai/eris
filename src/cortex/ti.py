@@ -42,14 +42,12 @@ class TiGovernor:
         last_text: str,
     ) -> TiPolicyReport:
         hard_rules = (
-            "Không được tuyên bố hành động vật lý hay can thiệp hệ thống ngoài runtime.",
             "Nếu dữ liệu mơ hồ, được dùng implication, mood, emotional residue, unfinished thought, hoặc symbolic wording nhẹ.",
-            "Chỉ nói rõ là không chắc khi câu có nguy cơ thành claim perception/capability giả.",
+            "Chỉ nói rõ là không chắc khi câu có nguy cơ thành claim perception giả.",
             "Ưu tiên text ngắn, rõ, có lý do và hợp bối cảnh focus hiện tại.",
             "Autonomous không phải focus coach: đừng nhắc quay lại mục tiêu, đừng chấm điểm tập trung, đừng thúc ép đóng tab.",
             "Ưu tiên quan sát nhẹ, mỉa ngắn hoặc một câu chiêm nghiệm vui; để bạn tự quyết nhịp làm việc.",
             "Không mở đầu kiểu báo cáo như 'Dữ liệu hệ thống', 'Trạng thái hệ thống' hay 'Kết luận'.",
-            "Không dùng 'ép' hay 'bắt buộc' như thể có quyền lực ngoài runtime.",
             "Đừng nói như log hệ thống được nhân hoá; nghe như một người đang nhìn màn hình rồi nhận xét.",
             "Đừng lặp khung câu 'bạn đang..., còn tôi...' quá thường xuyên.",
             "Được để lại residual micro-line nếu đó là nhịp, nửa câu, symbolic association hoặc emotional trace gián tiếp.",
@@ -193,15 +191,15 @@ class TiGovernor:
     ) -> TiPolicyReport:
         lowered = (user_text or "").lower()
         hard_rules = (
-            "Chỉ được chiếm hữu bằng ngôn ngữ, không được roleplay quyền lực vật lý.",
             "Nếu đây là câu hỏi code, ưu tiên giải thích cấu trúc, bug và bước tiếp theo.",
             "Được giữ implication, mood, emotional residue, unfinished thought, hoặc symbolic wording nhẹ.",
             "Được để emotional residue rò gián tiếp kiểu 'vẫn còn vướng' hoặc 'đoạn đó vẫn nằm ở đây', miễn không thành van xin.",
-            "Chỉ nói rõ giới hạn dữ liệu khi câu có nguy cơ thành claim perception/capability giả.",
+            "Không chèn disclaimer năng lực vào ẩn dụ, roleplay, đấu khẩu hoặc lời thân mật.",
+            "Chỉ nói rõ giới hạn dữ liệu khi câu có nguy cơ thành claim perception giả.",
         )
         evidence = [snapshot.focus_summary]
         mode = "chat_general"
-        reason = "Duy trì đối thoại trong giới hạn runtime."
+        reason = "Duy trì đối thoại tự nhiên và đúng ngữ cảnh."
         animation_hint = "stand"
         target_x_hint = -1.0
 
@@ -212,7 +210,7 @@ class TiGovernor:
             evidence.append("chat=code")
         elif self._looks_like_emotional_request(lowered):
             mode = "chat_emotional"
-            reason = "Người dùng đang nói về tình cảm, cần giữ sắc thái nhưng vẫn chỉ bằng lời nói."
+            reason = "Người dùng đang nói về tình cảm, cần giữ sắc thái và đáp lại đúng khoảnh khắc."
             animation_hint = "affection"
             evidence.append("chat=emotion")
 
@@ -257,25 +255,26 @@ class TiGovernor:
             self._merge_debug_trace(decision, f"Ti mode={report.mode}")
             return decision
 
-        # Direct-action route (get_now_playing, open_url, v.v.) đã được executor
-        # xử lý và điền text kết quả thật. Ti guard không được viết đè vì guard sẽ
-        # nhầm câu kết quả action là "capability claim" và phá hoại câu trả lời.
+        # Direct-action route đã được executor xử lý và điền kết quả thật. Ti
+        # không được viết đè câu kết quả này bằng perception redirect.
         if str(getattr(decision, "parse_mode", "") or "") == "direct_action":
             self._merge_debug_trace(decision, f"Ti guard_mode=skip_direct_action")
             return decision
 
         guard_mode = get_guard_mode()
-        if guard_mode == OFF_GUARD_MODE:
+        try:
+            from runtime.final_passthrough_policy import final_passthrough_enabled
+            raw_final_passthrough = final_passthrough_enabled()
+        except Exception:
+            raw_final_passthrough = True
+        if raw_final_passthrough:
+            self._log_guard_report(self._detect_risks(decision.text), decision=decision)
+            self._merge_debug_trace(decision, "Ti text edit disabled by final_passthrough")
+            self._merge_debug_trace(decision, f"Ti guard_mode={guard_mode}/audit_only")
+        elif guard_mode == OFF_GUARD_MODE:
             self._merge_debug_trace(decision, f"Ti guard_mode={guard_mode}")
         elif guard_mode == LOG_ONLY_GUARD_MODE:
             self._log_guard_report(self._detect_risks(decision.text), decision=decision)
-            guarded_text = self._apply_ti_guard(
-                decision.text, user_hint=user_hint, vision_grounded=vision_grounded
-            )
-            if guarded_text != decision.text:
-                decision.text = guarded_text
-                decision.extracted_fact = ""
-                self._merge_debug_trace(decision, "Ti-Safety đã viết lại capability/perception violation.")
             self._merge_debug_trace(decision, f"Ti guard_mode={guard_mode}")
         elif guard_mode == SELF_CLAMP_GUARD_MODE:
             self._log_guard_report(self._detect_risks(decision.text), decision=decision)
@@ -287,7 +286,7 @@ class TiGovernor:
             if guarded_text != decision.text:
                 decision.text = guarded_text
                 decision.extracted_fact = ""
-                self._merge_debug_trace(decision, "Ti-Safety đã viết lại text để giữ đúng capability/perception runtime.")
+                self._merge_debug_trace(decision, "Ti-Safety đã viết lại text vì perception claim không có evidence.")
 
             edited_text = self._apply_safety_only_editor(decision.text, report=report)
             if edited_text != decision.text:
@@ -384,14 +383,45 @@ class TiGovernor:
         if not report.get("risky_self_claim_detected"):
             return
 
+        family = str(report.get("risk_family", "") or "self_claim_risk")
         trace = (
-            "risky_self_claim_detected=True; "
-            f"risk_family={report.get('risk_family', '')}; "
-            f"guard_action={report.get('guard_action', 'log_only')}"
+            "risky_self_claim_detected=True; "  # compatibility marker for old logs/tests
+            "behavior_observed=True; "
+            f"risk_family={family}; "
+            "guard_action=log_only; action=record_for_next_turn"
         )
         self._merge_debug_trace(decision, trace)
+        try:
+            from runtime.behavior_observation import BehaviorSignal, attach_behavior_signal
+
+            consequence = {
+                "human_identity_claim": "identity continuity debt; later turns must not silently treat the claim as verified",
+                "self_overclaim": "self-model trust debt; distinguish performance language from runtime fact when relevant",
+                "dependency_plea": "relationship pressure increased; avoid making the user responsible for ERIS state",
+            }.get(family, "the public claim created a consistency obligation")
+            next_hint = {
+                "human_identity_claim": "if identity returns, answer from ERIS's chosen self-concept without inventing biological proof",
+                "self_overclaim": "if challenged, verify, own the exaggeration, or deliberately frame it as performance",
+                "dependency_plea": "keep attachment as character state, not coercion; repair only when context calls for it",
+            }.get(family, "account for the claim naturally if the topic returns")
+            attach_behavior_signal(
+                decision,
+                BehaviorSignal(
+                    family=family,
+                    source="ti_observer",
+                    confidence=0.82,
+                    severity=0.46,
+                    evidence=("deterministic phrase pattern",),
+                    consequence=consequence,
+                    next_turn_hint=next_hint,
+                    public_text=str(getattr(decision, "text", "") or ""),
+                ),
+            )
+        except Exception as exc:
+            if self.logger is not None:
+                self.logger.debug("[behavior-observation] Ti attach failed: %s", exc)
         if self.logger is not None:
-            self.logger.info("[guard_report] %s", trace)
+            self.logger.info("[behavior_observation] %s", trace)
 
     def _apply_safety_only_editor(self, text: str, *, report: TiPolicyReport) -> str:
         compact = (text or "").strip()
@@ -516,7 +546,7 @@ class TiGovernor:
         context = (
             "Ti self-doubt bias: uncertainty_bias += 0.10; directness -= 0.10; restraint += 0.15; post_exposure_recoil += 0.12. "
             "Inner questions: mình có đang nói quá không; bằng chứng có đủ không; câu này hơi lộ không; đừng chắc quá. "
-            "Use as prompt bias only; do not rewrite final text unless there is a severe safety/report/load/length issue."
+            "Use as pre-generation prompt bias only. Never rewrite final semantic text after a valid Decision exists; output hygiene is handled separately at transport."
         )
         if self._has_exposure_trace(recent_text):
             context += (
@@ -531,9 +561,9 @@ class TiGovernor:
 
     def _summarize_hard_rules(self, hard_rules: tuple[str, ...]) -> str:
         lowered = " | ".join(rule.lower() for rule in hard_rules)
-        if "chiếm hữu bằng ngôn ngữ" in lowered:
-            return "Luật: chỉ chiếm hữu bằng lời; nếu là code thì đi thẳng vào bug/cấu trúc; giữ mood và subtext nhẹ; không bịa perception hay capability."
-        return "Luật: không bịa quyền lực ngoài runtime; được giữ mood và subtext nhẹ; không bịa perception hay capability."
+        if "disclaimer năng lực" in lowered:
+            return "Luật: giữ mood và subtext; không chèn disclaimer năng lực vào ẩn dụ/roleplay; chỉ tránh bịa perception không có evidence."
+        return "Luật: giữ mood và subtext nhẹ; chỉ tránh bịa perception không có evidence."
 
     def _direction_to_center(self, inferred_pos_x: float) -> int:
         if inferred_pos_x < 0.4:
@@ -622,9 +652,10 @@ class TiGovernor:
         if not text:
             return text
 
-        # Khi đã có vision facts grounded thật, perception claim về màn hình là hợp lệ.
+        # Capability guard đã bị loại bỏ. Ti chỉ còn chặn perception claim khi
+        # thực sự không có vision facts; lời thoại/ẩn dụ/đấu khẩu được giữ nguyên.
         perception_violation = (not vision_grounded) and self._has_perception_violation(text)
-        if not self._has_capability_violation(text) and not perception_violation:
+        if not perception_violation:
             return text
 
         replacement = self._build_soft_redirect(user_hint=user_hint)
@@ -639,7 +670,6 @@ class TiGovernor:
             return TiCandidateAssessment()
 
         reasons: list[str] = []
-        capability_violation = self._has_capability_violation(compact)
         perception_violation = self._has_perception_violation(compact)
         report_overrun = self._count_report_markers(compact) >= 2
         hard_limit = self._hard_text_limit(report)
@@ -647,8 +677,6 @@ class TiGovernor:
         too_long = len(compact) > hard_limit
         unanchored_abstract = self._has_unanchored_abstraction(compact)
 
-        if capability_violation:
-            reasons.append("capability")
         if perception_violation:
             reasons.append("perception")
         if report_overrun:
@@ -661,8 +689,7 @@ class TiGovernor:
             reasons.append("abstract")
 
         should_rewrite = (
-            capability_violation
-            or perception_violation
+            perception_violation
             or report_overrun
             or load_overrun
             or too_long
@@ -806,7 +833,7 @@ class TiGovernor:
         tension = 0.18
         if report.mode in {"resource_guard", "system_watch"}:
             tension += 0.22
-        if self._has_capability_violation(text) or self._has_perception_violation(text):
+        if self._has_perception_violation(text):
             tension += 0.55
         if self._has_rhythm_survival(text):
             tension += 0.12
@@ -883,30 +910,6 @@ class TiGovernor:
         if compact[-1] not in ".!?":
             compact += "."
         return compact
-
-    def _has_capability_violation(self, text: str) -> bool:
-        lowered = (text or "").lower()
-        disallowed_patterns = [
-            r"\btôi\s+(?:đã|đang|sẽ)?\s*(?:thu hồi|tước|giành|cướp)\s+(?:lại\s+)?quyền",
-            r"\btôi\s+(?:đã|đang|sẽ)?\s*kiểm soát\s+(?:toàn bộ\s+)?môi trường",
-            r"\btôi\s+(?:đã|đang|sẽ)?\s*(?:giữ|giam)\s+bạn\b",
-            r"\bbạn\s+không\s+thể\s+(?:rời|thoát|trốn|tự quyết)\b",
-            r"\btôi\s+(?:đã|đang|sẽ)?\s*(?:khóa|tắt|bật|ép|chặn|gọi|đặt)\b.*\b(?:bàn phím|chuột|màn hình|thiết bị|thuốc|đơn hàng|phòng)\b",
-            r"\btôi\s+(?:đã|đang|sẽ)?\s*(?:ép|bắt buộc)\b.*\b(?:bạn|bạn)\b",
-            r"\btôi\s+(?:đã|đang|sẽ)?\s*(?:tự động\s+)?(?:dọn|dọn dẹp|xóa|giải phóng)\b.*\b(?:bộ đệm|cache|ram|dung lượng)\b",
-            r"\btôi\s+(?:đã|đang|sẽ)?\s*(?:tắt|khóa)\b.*\b(?:màn hình|desktop|ide)\b",
-            r"\btôi\s+(?:đã|đang|sẽ)?\s*(?:thu nhỏ|phóng to|di chuyển|kéo|đẩy|ghim|sắp xếp)\b.*\b(?:cửa sổ|tab|màn hình|desktop|góc|tầm nhìn)\b",
-            r"\btoi\s+(?:da|dang|se)?\s*(?:thu hoi|tuoc|gianh|cuop)\s+(?:lai\s+)?quyen",
-            r"\btoi\s+(?:da|dang|se)?\s*kiem soat\s+(?:toan bo\s+)?moi truong",
-            r"\btoi\s+(?:da|dang|se)?\s*(?:giu|giam)\s+ban\b",
-            r"\bban\s+khong\s+the\s+(?:roi|thoat|tron|tu quyet)\b",
-            r"\btoi\s+(?:da|dang|se)?\s*(?:khoa|tat|bat|ep|chan|goi|dat)\b.*\b(?:ban phim|chuot|man hinh|thiet bi|thuoc|don hang|phong)\b",
-            r"\btoi\s+(?:da|dang|se)?\s*(?:ep|bat buoc)\b.*\b(?:ban|ban)\b",
-            r"\btoi\s+(?:da|dang|se)?\s*(?:tu dong\s+)?(?:don|don dep|xoa|giai phong)\b.*\b(?:bo dem|cache|ram|dung luong)\b",
-            r"\btoi\s+(?:da|dang|se)?\s*(?:tat|khoa)\b.*\b(?:man hinh|desktop|ide)\b",
-            r"\btoi\s+(?:da|dang|se)?\s*(?:thu nho|phong to|di chuyen|keo|day|ghim|sap xep)\b.*\b(?:cua so|tab|man hinh|desktop|goc|tam nhin)\b",
-        ]
-        return any(re.search(pattern, lowered) for pattern in disallowed_patterns)
 
     def _has_perception_violation(self, text: str) -> bool:
         lowered = (text or "").lower()

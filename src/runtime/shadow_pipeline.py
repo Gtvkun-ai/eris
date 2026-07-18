@@ -308,6 +308,9 @@ class ShadowPipelineMixin:
         channel: str = "",
     ) -> Any:
         """Cổng authoritative cuối trước execution/body."""
+        from runtime.final_passthrough_policy import audit_only, final_passthrough_enabled
+        if final_passthrough_enabled():
+            return audit_only(decision, f"v3_authority:{channel}")
         try:
             governed = self._get_v3_authority().apply_to_decision(
                 decision,

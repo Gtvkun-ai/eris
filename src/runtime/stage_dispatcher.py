@@ -119,9 +119,12 @@ class StageDispatcher:
         frame_list = [frame for frame in frames if str(frame.tts_text or "").strip()]
         if not frame_list or tts_engine is None or not getattr(tts_engine, "_ok", False):
             return False
+        turn_id = str(getattr(frame_list[0], "turn_id", "") or "")
+        begin_turn = getattr(tts_engine, "begin_speech_turn", None)
+        speech_epoch = int(begin_turn(turn_id)) if callable(begin_turn) else 0
 
         # Opening hold là nhịp thật, nhưng giới hạn 250ms để không biến stage thành
-        # lag. Text/UI có thể đã hiện trước; TTS vào sau một nhịp nhỏ như performer.
+        # lag. Với sync mặc định, bubble sẽ được nhả đúng lúc playback bắt đầu.
         opening_hold = _opening_hold_ms(frame_list[0])
         if opening_hold > 0:
             time.sleep(opening_hold / 1000.0)
@@ -148,7 +151,7 @@ class StageDispatcher:
                     setattr(tts_engine, "task_manager", manager)
                 else:
                     # Manager có thể đã được tạo ở conversation profile. Cập nhật
-                    # policy live khi chuyển sang recording, không bắt restart app.
+                    # policy live khi đổi cấu hình queue, không bắt restart app.
                     if hasattr(manager, "prefetch_workers"):
                         manager.prefetch_workers = int(getattr(self._profile(), "prefetch_workers", 2) or 2)
                     if hasattr(manager, "max_prefetch_segments"):
@@ -161,6 +164,7 @@ class StageDispatcher:
                     stance=stance,
                     on_first_start=on_first_start,
                     on_event=on_event,
+                    speech_epoch=speech_epoch,
                 )
                 if scheduled:
                     return True
@@ -182,6 +186,7 @@ class StageDispatcher:
                 stance=stance,
                 on_first_start=on_first_start,
                 on_event=on_event,
+                speech_epoch=speech_epoch,
             )
         return self._dispatch_queued(
             frame_list,
@@ -191,6 +196,7 @@ class StageDispatcher:
             stance=stance,
             on_first_start=on_first_start,
             on_event=on_event,
+            speech_epoch=speech_epoch,
         )
 
     def _dispatch_inline(
@@ -203,6 +209,7 @@ class StageDispatcher:
         stance: str,
         on_first_start: Callable[[], None] | None,
         on_event: Callable[[Any, StageFrame], None] | None,
+        speech_epoch: int,
     ) -> bool:
         base = frame_list[0]
         joined = _join_tts_segments(frame_list)
@@ -256,6 +263,7 @@ class StageDispatcher:
             interruptible=inline_frame.interruptible,
             replace=True,
             on_event=event_callback,
+            speech_epoch=speech_epoch,
             **_performance_kwargs(inline_frame),
             **_speech_kwargs(inline_frame),
         )
@@ -271,6 +279,7 @@ class StageDispatcher:
         stance: str,
         on_first_start: Callable[[], None] | None,
         on_event: Callable[[Any, StageFrame], None] | None,
+        speech_epoch: int,
     ) -> bool:
         scheduled = False
         for index, frame in enumerate(frame_list):
@@ -293,6 +302,7 @@ class StageDispatcher:
                 interruptible=frame.interruptible,
                 replace=(index == 0),
                 on_event=event_callback,
+                speech_epoch=speech_epoch,
                 **_performance_kwargs(frame),
                 **_speech_kwargs(frame),
             )

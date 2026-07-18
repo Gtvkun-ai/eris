@@ -55,7 +55,7 @@ class RuntimeSettingsStoreTests(unittest.TestCase):
         )
         self.assertTrue(normalized.legacy_payload)
         self.assertEqual(normalized.patch["chat"]["reasoning_effort"], "high")
-        self.assertEqual(normalized.patch["chat"]["critique_mode"], "bounded_refine")
+        self.assertEqual(normalized.patch["chat"]["critique_mode"], "advisory")
         self.assertEqual(normalized.patch["chat"]["max_concurrency"], 6)
 
 

@@ -173,8 +173,8 @@ class StageOutputPipeline:
 
         ``SentenceSegmenter`` có thể tách một beat JSON thành nhiều TTS segment.
         Beat vẫn là đơn vị đạo diễn, vì thế pause/thinking chỉ thuộc segment cuối.
-        Metadata như ``take_beat_index`` vẫn được giữ trên mọi segment để UI biết
-        chúng cùng một beat.
+        Metadata của beat vẫn được giữ trên mọi segment để UI biết chúng
+        thuộc cùng một nhịp autonomous.
         """
 
         copied = dict(delivery or {})

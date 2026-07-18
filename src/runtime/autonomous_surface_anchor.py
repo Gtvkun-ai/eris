@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
-"""autonomous_surface_anchor.py - chặn câu autonomous có tiền đề ảo.
+"""Quan sát neo bề mặt cho câu autonomous, không chỉnh final.
 
-Startup đã có AnchorGate riêng. Module này áp cùng nguyên tắc cho các câu chủ
-động giữa phiên: nếu Eris nói về một bug, nhiệm vụ, tâm trạng, màn hình hay
-khán giả thì opportunity/evidence phải có neo tương ứng. Nếu không, câu được
-hạ xuống một micro-line trung tính có cá tính hoặc im hẳn.
+Module phát hiện tiền đề thiếu evidence và tạo metadata hậu quả. Nó không còn là
+guard: không rewrite, không suppress, không body-only.
 """
 
 from __future__ import annotations
@@ -26,7 +24,7 @@ def _clean(value: Any, limit: int = 280) -> str:
 
 
 @dataclass(frozen=True, slots=True)
-class AutonomousAnchorVerdict:
+class AutonomousAnchorObservation:
     accepted: bool
     text: str
     original_text: str
@@ -43,7 +41,7 @@ class AutonomousAnchorVerdict:
         return payload
 
 
-class AutonomousSurfaceAnchorGuard:
+class AutonomousSurfaceAnchorObserver:
     VERSION = "autonomous_anchor.v1"
 
     _TECH_MARKERS = ("bug", "loi", "test", "repo", "parser", "network", "tts", "phan kho", "nut that")
@@ -53,7 +51,7 @@ class AutonomousSurfaceAnchorGuard:
     _CONTINUITY_MARKERS = ("lai ", "tiep tuc", "van nhu", "nhu lan truoc")
     _HOLLOW_TASK_MARKERS = ("vao viec", "giao toi", "phan kho nhat", "bat dau tu dau", "dua viec day")
 
-    def validate(self, text: str, autonomous_plan: Mapping[str, Any] | None) -> AutonomousAnchorVerdict:
+    def validate(self, text: str, autonomous_plan: Mapping[str, Any] | None) -> AutonomousAnchorObservation:
         original = _clean(text)
         plan = autonomous_plan if isinstance(autonomous_plan, Mapping) else {}
         opportunity = plan.get("selected_opportunity") if isinstance(plan.get("selected_opportunity"), Mapping) else {}
@@ -92,36 +90,26 @@ class AutonomousSurfaceAnchorGuard:
             unsupported.append("missing_surface_anchor")
 
         unsupported = list(dict.fromkeys(unsupported))
-        if not unsupported:
-            return AutonomousAnchorVerdict(True, original, original, "anchored", kind, evidence, ())
-
-        rewritten = self.safe_rewrite(kind=kind, evidence=evidence, scene_name=scene_name)
-        return AutonomousAnchorVerdict(
-            accepted=bool(rewritten),
-            text=rewritten,
+        return AutonomousAnchorObservation(
+            accepted=True,
+            text=original,
             original_text=original,
-            reason="rewritten_unanchored" if rewritten else "suppressed_unanchored",
+            reason="anchored" if not unsupported else "passthrough_unsupported_logged",
             opportunity_kind=kind,
             evidence_refs=evidence,
             unsupported=tuple(unsupported),
-            rewritten=bool(rewritten),
+            rewritten=False,
         )
 
-    @staticmethod
-    def safe_rewrite(*, kind: str, evidence: tuple[str, ...], scene_name: str) -> str:
-        if kind in {"dead_air", "idle_presence", "presence_maintenance"}:
-            return "Yên lặng cũng được. Tôi chưa cần chen."
-        if kind == "scene_transition":
-            return "Nhịp vừa đổi. Tôi quan sát thêm."
-        if kind in {"return_after_idle", "session_return"}:
-            return "Bạn quay lại rồi. Tôi chưa đoán tiếp."
-        if kind in {"new_error", "repeated_error", "task_failure", "error_loop"}:
-            return "Có tín hiệu lỗi mới. Chưa đủ để kết luận nguyên nhân."
-        if kind in {"task_progress", "task_complete", "milestone"}:
-            return "Có tiến triển. Tôi ghi nhận, chưa tung hoa."
-        if evidence:
-            return "Có tín hiệu mới. Tôi chưa vội kết luận."
-        return ""
 
 
-__all__ = ["AutonomousAnchorVerdict", "AutonomousSurfaceAnchorGuard"]
+# Compatibility aliases for older imports.
+AutonomousAnchorVerdict = AutonomousAnchorObservation
+AutonomousSurfaceAnchorGuard = AutonomousSurfaceAnchorObserver
+
+__all__ = [
+    "AutonomousAnchorObservation",
+    "AutonomousSurfaceAnchorObserver",
+    "AutonomousAnchorVerdict",
+    "AutonomousSurfaceAnchorGuard",
+]

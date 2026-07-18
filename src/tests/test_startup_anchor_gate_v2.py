@@ -13,22 +13,24 @@ def _frame(**kwargs):
     return GreetingCognitionEngine().build(**kwargs)
 
 
-def test_low_evidence_rejects_hollow_hardest_part_opening() -> None:
+def test_low_evidence_logs_hollow_hardest_part_opening() -> None:
     verdict = StartupAnchorGate().validate(
         "Vào việc thôi bạn, giao tôi phần khó nhất đi.",
         _frame(),
     )
-    assert verdict.accepted is False
+    assert verdict.accepted is True
+    assert verdict.reason == "passthrough_unsupported_logged"
     assert "task_without_anchor" in verdict.unsupported_presuppositions
     assert "difficulty_without_anchor" in verdict.unsupported_presuppositions
 
 
-def test_low_evidence_rejects_fake_mischief_premise() -> None:
+def test_low_evidence_logs_fake_mischief_premise() -> None:
     verdict = StartupAnchorGate().validate(
         "Eris đã online. Phần còn lại tùy bạn gây chuyện.",
         _frame(),
     )
-    assert verdict.accepted is False
+    assert verdict.accepted is True
+    assert verdict.reason == "passthrough_unsupported_logged"
     assert "user_behaviour_without_event" in verdict.unsupported_presuppositions
 
 
@@ -53,7 +55,8 @@ def test_task_anchor_allows_concrete_resume_but_not_unranked_hardest_part() -> N
     assert StartupAnchorGate().validate("Vào việc thôi. TTS parser còn dang dở.", frame).accepted
 
     vague_rank = StartupAnchorGate().validate("Giao tôi phần khó nhất đi.", frame)
-    assert vague_rank.accepted is False
+    assert vague_rank.accepted is True
+    assert vague_rank.reason == "passthrough_unsupported_logged"
     assert "difficulty_without_anchor" in vague_rank.unsupported_presuppositions
 
 
@@ -67,16 +70,14 @@ def test_explicit_difficulty_anchor_can_support_hard_part_reference() -> None:
     assert "difficulty_anchor" in verdict.anchor_ids
 
 
-def test_quality_scorer_heavily_penalizes_unsupported_presupposition() -> None:
+def test_quality_scorer_no_longer_penalizes_startup_anchor_passthrough() -> None:
     frame = _frame()
     scorer = GreetingQualityScorer()
     bad = scorer.score("Đúng giờ đấy. Giao tôi phần khó nhất đi.", frame)
     good = scorer.score("Eris online. Tôi chưa hứa sẽ ngoan.", frame)
-    assert bad.accepted is False
-    assert bad.unsupported_presupposition == 1.0
-    assert "unsupported_presupposition" in bad.reasons
+    assert bad.unsupported_presupposition == 0.0
+    assert "unsupported_presupposition" not in bad.reasons
     assert good.accepted is True
-    assert good.score > bad.score
 
 
 def test_all_catalog_presets_are_anchorable_in_their_intended_context() -> None:

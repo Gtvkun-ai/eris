@@ -71,7 +71,7 @@ class DecisionParserTests(unittest.TestCase):
         self.assertEqual(decision.text, "")
         self.assertEqual(decision.animation, "stand")
 
-    def test_grounds_unsupported_capability_claim(self):
+    def test_preserves_unsupported_capability_claim(self):
         raw = (
             '{"text":"Toi da khoa man hinh va ngat mang cua ban.",'
             '"animation":"read","direction":0,"target_x":-1.0,'
@@ -79,8 +79,9 @@ class DecisionParserTests(unittest.TestCase):
         )
         decision = self.parser.parse(raw, user_hint="ban ac qua")
 
-        self.assertIn("khoe quyen luc", _norm(decision.text))
-        self.assertEqual(decision.extracted_fact, "")
+        self.assertEqual(_norm(decision.text), "toi da khoa man hinh va ngat mang cua ban.")
+        self.assertEqual(decision.extracted_fact, "secret")
+        self.assertIn("public_text=passthrough", decision.parser_trace)
 
     def test_keeps_screen_observation_when_vision_frame_attached(self):
         raw = (
@@ -96,7 +97,7 @@ class DecisionParserTests(unittest.TestCase):
         self.assertIn("facebook messenger", normalized)
         self.assertIn("tab khac", normalized)
         self.assertNotIn("don ho", normalized)
-        self.assertIn("grounding=khong can viet lai", _norm(decision.parser_trace))
+        self.assertIn("public_text=passthrough", decision.parser_trace)
 
     def test_keeps_vietnamese_screen_observation_with_open_window_wording(self):
         raw = (
@@ -113,7 +114,7 @@ class DecisionParserTests(unittest.TestCase):
         self.assertIn("cua so chat dang mo", normalized)
         self.assertIn("youtube", normalized)
         self.assertNotIn("dong tab", normalized)
-        self.assertIn("grounding=khong can viet lai", _norm(decision.parser_trace))
+        self.assertIn("public_text=passthrough", decision.parser_trace)
 
     def test_keeps_ghi_nhan_observation_with_open_window_wording(self):
         raw = (
@@ -132,9 +133,9 @@ class DecisionParserTests(unittest.TestCase):
         self.assertIn("go phim kha nhieu", normalized)
         self.assertNotIn("phan manh", normalized)
         self.assertNotIn("tu tay", normalized)
-        self.assertIn("grounding=khong can viet lai", _norm(decision.parser_trace))
+        self.assertIn("public_text=passthrough", decision.parser_trace)
 
-    def test_still_rewrites_direct_window_control_claim(self):
+    def test_preserves_direct_window_control_claim(self):
         raw = (
             '{"text":"Tôi sẽ đóng cửa sổ chat và gom các tab lại cho bạn.",'
             '"animation":"stand","direction":0,"target_x":-1.0,'
@@ -144,10 +145,9 @@ class DecisionParserTests(unittest.TestCase):
         decision = self.parser.parse(raw)
 
         normalized = _norm(decision.text)
-        self.assertNotIn("toi se dong cua so", normalized)
-        self.assertNotIn("phan manh", normalized)
-        self.assertNotIn("tu tay", normalized)
-        self.assertIn("grounding=da viet lai", _norm(decision.parser_trace))
+        self.assertIn("toi se dong cua so", normalized)
+        self.assertIn("gom cac tab", normalized)
+        self.assertIn("public_text=passthrough", decision.parser_trace)
 
     def test_salvages_non_json_text(self):
         decision = self.parser.parse("ERIS: toi da monitor code cua du an nay roi")
@@ -310,7 +310,7 @@ class DecisionParserTests(unittest.TestCase):
 
         self.assertEqual(decision.text, "Hay tap trung hoan thien ERIS bang Python, Godot va C#.")
 
-    def test_grounds_fake_cache_cleanup_claim(self):
+    def test_preserves_fake_cache_cleanup_claim(self):
         raw = (
             '{"text":"Toi da tu dong don dep cache tam thoi de giai phong dung luong cho du an.",'
             '"animation":"read","direction":0,"target_x":-1.0,'
@@ -319,8 +319,9 @@ class DecisionParserTests(unittest.TestCase):
         decision = self.parser.parse(raw)
 
         normalized = _norm(decision.text)
-        self.assertNotIn("don dep cache", normalized)
-        self.assertIn("chi", normalized)
+        self.assertIn("don dep cache", normalized)
+        self.assertIn("giai phong dung luong", normalized)
+        self.assertIn("public_text=passthrough", decision.parser_trace)
 
     def test_drops_speculative_extracted_fact(self):
         raw = (

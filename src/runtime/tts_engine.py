@@ -146,12 +146,11 @@ def _remote_provider_is_gemini() -> bool:
 
 
 def _prelocalize_japanese_enabled() -> bool:
-    return os.environ.get("ERIS_TTS_PRELOCALIZE_JA", "0").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    raw = os.environ.get("ERIS_TTS_PRELOCALIZE_JA")
+    if raw is not None and str(raw).strip():
+        return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+    from runtime.runtime_settings_store import runtime_bool
+    return runtime_bool("tts", "stage_localize", default=True)
 
 
 def _local_tts_fallback_enabled() -> bool:
@@ -732,10 +731,13 @@ def _tts_breaker_enabled() -> bool:
 
 
 def _tts_max_attempts() -> int:
+    raw = str(os.environ.get("ERIS_TTS_MAX_ATTEMPTS", "") or "").strip().lower()
+    if raw in {"", "full", "all", "pool", "max"}:
+        return 10_000
     try:
-        return max(1, min(4, int(os.environ.get("ERIS_TTS_MAX_ATTEMPTS", "2") or 2)))
+        return max(1, int(raw))
     except (TypeError, ValueError):
-        return 2
+        return 10_000
 
 
 def _same_language_locale(language_hint: str, locale: str = "") -> str:
@@ -743,6 +745,40 @@ def _same_language_locale(language_hint: str, locale: str = "") -> str:
         return str(locale).strip()
     lang = normalize_language(language_hint)
     return {"vi": "vi-VN", "ja": "ja-JP", "en": "en-US"}.get(lang, lang)
+
+
+def _tts_request_cancelled(cancel_event=None, authority_check=None) -> bool:
+    if cancel_event is not None:
+        try:
+            if cancel_event.is_set():
+                return True
+        except Exception:
+            pass
+    if callable(authority_check):
+        try:
+            if not bool(authority_check()):
+                return True
+        except Exception:
+            return True
+    return False
+
+
+def _raise_if_tts_cancelled(cancel_event=None, authority_check=None) -> None:
+    if _tts_request_cancelled(cancel_event, authority_check):
+        raise RuntimeError("tts_cancelled")
+
+
+def _cancel_aware_sleep(seconds: float, cancel_event=None, authority_check=None) -> None:
+    delay = max(0.0, float(seconds or 0.0))
+    if delay <= 0:
+        _raise_if_tts_cancelled(cancel_event, authority_check)
+        return
+    if cancel_event is not None and callable(getattr(cancel_event, "wait", None)):
+        if cancel_event.wait(delay):
+            raise RuntimeError("tts_cancelled")
+    else:
+        time.sleep(delay)
+    _raise_if_tts_cancelled(cancel_event, authority_check)
 
 
 def _synthesize_wav(
@@ -753,8 +789,11 @@ def _synthesize_wav(
     fallback_text: str = "",
     language_hint: str = "",
     locale: str = "",
+    cancel_event = None,
+    authority_check = None,
 ) -> bytes:
     """Gọi Gemini TTS, trả về WAV bytes (24kHz, mono, 16-bit PCM)."""
+    _raise_if_tts_cancelled(cancel_event, authority_check)
     from google import genai
     from google.genai import types
 
@@ -783,6 +822,7 @@ def _synthesize_wav(
     if _tts_breaker_enabled():
         permit = GLOBAL_TTS_BREAKER.allow(breaker_key)
         if not permit.allowed:
+            _raise_if_tts_cancelled(cancel_event, authority_check)
             exc = RuntimeError(f"TTS circuit breaker {permit.state.value}: {permit.reason}")
             fallback = _try_local_tts_fallback(exc, fallback_text=fallback_text, language_hint=language_hint)
             if fallback:
@@ -794,6 +834,7 @@ def _synthesize_wav(
     from runtime.tts_key_health import GLOBAL_TTS_KEY_LANE_HEALTH
     attempted_indices: set[int] = set(GLOBAL_TTS_KEY_LANE_HEALTH.excluded_indices())
     for attempt in range(max_attempts):
+        _raise_if_tts_cancelled(cancel_event, authority_check)
         lease = None
         if pool is not None and pool.size > 0:
             lease = pool.acquire(exclude_indices=attempted_indices)
@@ -831,6 +872,7 @@ def _synthesize_wav(
                     ),
                 ),
             )
+            _raise_if_tts_cancelled(cancel_event, authority_check)
             pcm_data = _extract_gemini_tts_pcm(response)
             if tts_budget_plan is not None:
                 try:
@@ -855,6 +897,8 @@ def _synthesize_wav(
                 pass
             break
         except Exception as exc:
+            if _tts_request_cancelled(cancel_event, authority_check) or str(exc) == "tts_cancelled":
+                raise RuntimeError("tts_cancelled") from None
             last_exc = exc
             try:
                 from llm.provider_errors import ProviderErrorKind, classify_provider_error
@@ -916,7 +960,10 @@ def _synthesize_wav(
                     getattr(lease, "index", "?"),
                 )
                 if attempt < max_attempts - 1:
-                    time.sleep(min(0.8, 0.15 * (2 ** attempt) + random.uniform(0.0, 0.12)))
+                    _cancel_aware_sleep(
+                        min(0.8, 0.15 * (2 ** attempt) + random.uniform(0.0, 0.12)),
+                        cancel_event, authority_check,
+                    )
                     continue
 
             if is_revoked and pool is not None and lease is not None:
@@ -926,7 +973,10 @@ def _synthesize_wav(
                     getattr(lease, "index", "?"),
                 )
                 if attempt < max_attempts - 1:
-                    time.sleep(min(1.5, 0.20 * (2 ** attempt) + random.uniform(0.0, 0.20)))
+                    _cancel_aware_sleep(
+                        min(1.5, 0.20 * (2 ** attempt) + random.uniform(0.0, 0.20)),
+                        cancel_event, authority_check,
+                    )
                     continue
 
             if is_rate_limit and pool is not None:
@@ -938,16 +988,23 @@ def _synthesize_wav(
                     max_attempts,
                 )
                 if may_rotate and attempt < max_attempts - 1:
-                    time.sleep(min(1.5, 0.20 * (2 ** attempt) + random.uniform(0.0, 0.20)))
+                    _cancel_aware_sleep(
+                        min(1.5, 0.20 * (2 ** attempt) + random.uniform(0.0, 0.20)),
+                        cancel_event, authority_check,
+                    )
                     continue
             elif (is_invalid_shape or is_transient) and attempt < max_attempts - 1:
-                time.sleep(min(1.5, 0.20 * (2 ** attempt) + random.uniform(0.0, 0.20)))
+                _cancel_aware_sleep(
+                    min(1.5, 0.20 * (2 ** attempt) + random.uniform(0.0, 0.20)),
+                    cancel_event, authority_check,
+                )
                 continue
             fallback = _try_local_tts_fallback(exc, fallback_text=fallback_text, language_hint=language_hint)
             if fallback:
                 return fallback
             raise
 
+    _raise_if_tts_cancelled(cancel_event, authority_check)
     if pcm_data is None:
         if last_exc:
             fallback = _try_local_tts_fallback(last_exc, fallback_text=fallback_text, language_hint=language_hint)
@@ -1244,6 +1301,7 @@ class _SpeakRequest:
         "voice_family",
         "locale",
         "on_event",
+        "speech_epoch",
     )
 
     def __init__(
@@ -1265,6 +1323,7 @@ class _SpeakRequest:
         voice_family: str = "",
         locale: str = "",
         on_event = None,
+        speech_epoch: int = 0,
     ):
         self.text = text
         self.valence = valence
@@ -1288,16 +1347,28 @@ class _SpeakRequest:
         self.voice_family = str(voice_family or "")
         self.locale = str(locale or "")
         self.on_event = on_event
+        try:
+            self.speech_epoch = int(speech_epoch)
+        except (TypeError, ValueError):
+            self.speech_epoch = 0
 
 
 class _TtsWorker:
-    def __init__(self, voice: str, model: str, language_hint: str) -> None:
+    def __init__(
+        self,
+        voice: str,
+        model: str,
+        language_hint: str,
+        *,
+        epoch_validator = None,
+    ) -> None:
         self._voice = voice
         self._model = model
         self._language_hint = language_hint
         self._localizer = SpeechLocalizer()
         self._prosody = ProsodyDirector()
         self._vocal_cache = VocalCache()
+        self._epoch_validator = epoch_validator
         self._queue: queue.Queue[Optional[_SpeakRequest]] = queue.Queue(maxsize=_queue_size())
         self._stop_event = threading.Event()
         self._current_stop = threading.Event()
@@ -1305,6 +1376,18 @@ class _TtsWorker:
         self._current_lock = threading.RLock()
         self._thread = threading.Thread(target=self._run, daemon=True, name="TTS-Worker")
         self._thread.start()
+
+
+    def _request_is_current(self, req: _SpeakRequest) -> bool:
+        validator = self._epoch_validator
+        if not callable(validator):
+            return True
+        try:
+            return bool(validator(req.speech_epoch, req.turn_id))
+        except Exception:
+            # Validator là lớp hardening. Nếu chính nó hỏng, fail closed để audio
+            # cũ không bò về phát sau khi hội thoại đã chuyển lượt.
+            return False
 
     def speak(self, req: _SpeakRequest, *, replace: bool = True) -> None:
         """Enqueue một đoạn TTS.
@@ -1389,7 +1472,13 @@ class _TtsWorker:
         return True
 
     def _request_language(self, req: _SpeakRequest) -> str:
-        return _normalize_language_hint(req.language_hint or self._language_hint)
+        configured = _normalize_language_hint(self._language_hint)
+        # Runtime TTS language is the hard voice identity. Stage/chat contracts can
+        # describe the source text, but they must not make fallback speak Vietnamese
+        # when the user pinned Eris to Japanese.
+        if configured in {"ja", "en"}:
+            return configured
+        return _normalize_language_hint(req.language_hint or configured)
 
     def _request_voice(self, req: _SpeakRequest) -> str:
         requested = str(req.voice_family or "").strip()
@@ -1398,9 +1487,16 @@ class _TtsWorker:
         return requested
 
     def _request_locale(self, req: _SpeakRequest) -> str:
-        return _same_language_locale(self._request_language(req), req.locale)
+        language = self._request_language(req)
+        configured = _normalize_language_hint(self._language_hint)
+        if configured in {"ja", "en"}:
+            return _same_language_locale(language)
+        return _same_language_locale(language, req.locale)
 
-    def _vocal_prefix_wav(self, req: _SpeakRequest, prefix: str, prosody_plan) -> bytes:
+    def _vocal_prefix_wav(
+        self, req: _SpeakRequest, prefix: str, prosody_plan,
+        *, cancel_event=None, authority_check=None,
+    ) -> bytes:
         """Lấy/sinh WAV cho prefix nghe được như "Hah... haha.".
 
         Prefix cache dùng prompt riêng, rất ngắn. Nếu cache miss thì sinh một lần
@@ -1410,6 +1506,9 @@ class _TtsWorker:
         if not prefix or not vocal_cache_enabled():
             return b""
         kind = str(getattr(req, "vocal_cache_kind", "") or "vocal_prefix")
+        if authority_check is None:
+            authority_check = lambda: self._request_is_current(req)
+        _raise_if_tts_cancelled(cancel_event, authority_check)
         language_hint = self._request_language(req)
         voice = self._request_voice(req)
         locale = self._request_locale(req)
@@ -1454,6 +1553,8 @@ class _TtsWorker:
                 fallback_text=prefix,
                 language_hint=language_hint,
                 locale=locale,
+                cancel_event=cancel_event,
+                authority_check=authority_check,
             )
             self._vocal_cache.put(key, wav_bytes)
             logger.debug("[TTS] Vocal cache stored kind=%s text=%r", kind, prefix)
@@ -1462,7 +1563,7 @@ class _TtsWorker:
             logger.debug("[TTS] Vocal cache synth miss failed: %s", exc)
             return b""
 
-    def synthesize(self, req: _SpeakRequest) -> bytes:
+    def synthesize(self, req: _SpeakRequest, *, cancel_event=None) -> bytes:
         """Sinh WAV cho một request nhưng chưa phát ra loa.
 
         Đây là cửa backend cho ``TtsTaskManager``: nhiều segment có thể synth song
@@ -1470,6 +1571,8 @@ class _TtsWorker:
         vẫn dùng đường ``speak`` tuần tự để tương thích với code hiện có.
         """
 
+        authority_check = lambda: self._request_is_current(req)
+        _raise_if_tts_cancelled(cancel_event, authority_check)
         language_hint = self._request_language(req)
         voice = self._request_voice(req)
         locale = self._request_locale(req)
@@ -1515,6 +1618,8 @@ class _TtsWorker:
                 fallback_text=text_to_speak,
                 language_hint=language_hint,
                 locale=locale,
+                cancel_event=cancel_event,
+                authority_check=authority_check,
             )
 
         logger.debug(
@@ -1524,7 +1629,11 @@ class _TtsWorker:
 
         prefix_wav = b""
         if prefix_is_separate:
-            prefix_wav = self._vocal_prefix_wav(req, vocal_prefix, prosody_plan)
+            prefix_wav = self._vocal_prefix_wav(
+                req, vocal_prefix, prosody_plan,
+                cancel_event=cancel_event, authority_check=authority_check,
+            )
+        _raise_if_tts_cancelled(cancel_event, authority_check)
         return _concat_wav_bytes(prefix_wav, main_wav) or main_wav or prefix_wav
 
     def _run(self) -> None:
@@ -1542,6 +1651,9 @@ class _TtsWorker:
             callback_called = False
             try:
                 try:
+                    if not self._request_is_current(req):
+                        self._emit(req, "audio_cancelled", reason="stale_turn_before_synthesis")
+                        continue
                     language_hint = self._request_language(req)
                     voice = self._request_voice(req)
                     locale = self._request_locale(req)
@@ -1587,6 +1699,8 @@ class _TtsWorker:
                             fallback_text=text_to_speak,
                             language_hint=language_hint,
                             locale=locale,
+                            cancel_event=self._current_stop,
+                            authority_check=lambda: self._request_is_current(req),
                         )
 
                     logger.debug(
@@ -1596,10 +1710,16 @@ class _TtsWorker:
 
                     prefix_wav = b""
                     if prefix_is_separate:
-                        prefix_wav = self._vocal_prefix_wav(req, vocal_prefix, prosody_plan)
+                        prefix_wav = self._vocal_prefix_wav(
+                            req, vocal_prefix, prosody_plan,
+                            cancel_event=self._current_stop,
+                            authority_check=lambda: self._request_is_current(req),
+                        )
                     wav_bytes = _concat_wav_bytes(prefix_wav, main_wav) or main_wav or prefix_wav
 
-                    if self._current_stop.is_set():
+                    if not self._request_is_current(req):
+                        self._emit(req, "audio_cancelled", reason="stale_turn_before_playback")
+                    elif self._current_stop.is_set():
                         self._emit(req, "audio_cancelled", reason="cancelled_before_playback")
                     else:
                         if req.on_start_play is not None:
@@ -1616,12 +1736,25 @@ class _TtsWorker:
                             self._emit(req, "audio_done")
 
                 except Exception as exc:
-                    self._emit(req, "audio_failed", error=str(exc))
-                    logger.warning("[TTS] Lỗi: %s", exc)
+                    cancelled = (
+                        str(exc) == "tts_cancelled"
+                        or self._current_stop.is_set()
+                        or not self._request_is_current(req)
+                    )
+                    if cancelled:
+                        self._emit(req, "audio_cancelled", reason="speech_superseded")
+                    else:
+                        self._emit(req, "audio_failed", error=str(exc))
+                        logger.warning("[TTS] Lỗi: %s", exc)
                     # _synthesize_wav đã đánh dấu đúng lease gây 429. Không được
                     # mark "key hiện tại" lần nữa ở đây vì thread khác có thể đã xoay pool.
             finally:
-                if not callback_called and req.on_start_play is not None:
+                if (
+                    not callback_called
+                    and req.on_start_play is not None
+                    and self._request_is_current(req)
+                    and not self._current_stop.is_set()
+                ):
                     try:
                         req.on_start_play()
                     except Exception as cb_exc:
@@ -1630,6 +1763,24 @@ class _TtsWorker:
                     if self._current_req is req:
                         self._current_req = None
 
+
+
+
+def _build_worker(voice: str, model: str, language_hint: str, *, epoch_validator=None):
+    """Dựng worker mới nhưng vẫn chịu được test double/adapter constructor cũ."""
+    try:
+        return _TtsWorker(
+            voice, model, language_hint, epoch_validator=epoch_validator
+        )
+    except TypeError as exc:
+        if "epoch_validator" not in str(exc):
+            raise
+        worker = _TtsWorker(voice, model, language_hint)
+        try:
+            setattr(worker, "_epoch_validator", epoch_validator)
+        except Exception:
+            pass
+        return worker
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
@@ -1642,6 +1793,11 @@ class TtsEngine:
         self._closed = False
         self._config_lock = threading.RLock()
         self._config_signature = ""
+        # Mỗi lượt nói công khai có một epoch. Request TTS hoàn tất muộn chỉ
+        # được phát nếu epoch của nó vẫn là epoch đang sở hữu loa.
+        self._speech_lock = threading.RLock()
+        self._speech_epoch = 0
+        self._speech_turn_id = ""
 
         if not _enabled():
             logger.info("[TTS] Đã tắt bởi runtime settings.")
@@ -1665,10 +1821,79 @@ class TtsEngine:
         voice = _voice()
         model = _model()
         lang = _language_hint()
-        self._worker = _TtsWorker(voice, model, lang)
+        self._worker = _build_worker(
+            voice, model, lang, epoch_validator=self.is_speech_epoch_current
+        )
         self._config_signature = f"{voice}|{model}|{lang}"
         self._ok = True
         logger.info("[TTS] Khởi động. Model=%s Voice=%s Language=%s", model, voice, lang)
+
+
+    def _cancel_backends(self, *, reason: str, only_interruptible: bool) -> bool:
+        """Hủy cả task-manager lẫn worker legacy.
+
+        Trước đây hàm public trả về ngay khi manager báo đã hủy, nên queue legacy
+        có thể vẫn sống sau khi đổi profile. Hai backend cùng tồn tại là chuyện
+        hợp lệ khi setting được đổi live; vì thế phải quét cả hai.
+        """
+        cancelled = False
+        manager = getattr(self, "task_manager", None)
+        if manager is not None and callable(getattr(manager, "cancel_current", None)):
+            try:
+                cancelled = bool(
+                    manager.cancel_current(
+                        reason=reason, only_interruptible=only_interruptible
+                    )
+                ) or cancelled
+            except Exception as exc:
+                logger.debug("[TTS] task manager cancel failed: %s", exc)
+        worker = self._worker
+        if worker is not None:
+            try:
+                cancelled = bool(
+                    worker.cancel_current(
+                        reason=reason, only_interruptible=only_interruptible
+                    )
+                ) or cancelled
+            except Exception as exc:
+                logger.debug("[TTS] worker cancel failed: %s", exc)
+        return cancelled
+
+    def begin_speech_turn(self, turn_id: str) -> int:
+        """Trao quyền phát loa cho một turn mới và hủy mọi turn cũ.
+
+        Gọi nhiều lần với cùng ``turn_id`` là idempotent, cần cho nhánh dispatcher
+        thử task-manager rồi fallback inline.
+        """
+        normalized = str(turn_id or "").strip()
+        with self._speech_lock:
+            if normalized and normalized == self._speech_turn_id:
+                return self._speech_epoch
+            self._speech_epoch += 1
+            epoch = self._speech_epoch
+            self._speech_turn_id = normalized
+        self._cancel_backends(reason="new_speech_turn", only_interruptible=False)
+        return epoch
+
+    def supersede_all(self, *, reason: str = "superseded") -> bool:
+        """Thu hồi quyền phát của mọi request cũ, kể cả synth remote đang treo."""
+        with self._speech_lock:
+            self._speech_epoch += 1
+            self._speech_turn_id = ""
+        return self._cancel_backends(reason=reason, only_interruptible=False)
+
+    def is_speech_epoch_current(self, epoch: int, turn_id: str = "") -> bool:
+        try:
+            expected = int(epoch)
+        except (TypeError, ValueError):
+            return False
+        normalized = str(turn_id or "").strip()
+        with self._speech_lock:
+            if expected != self._speech_epoch:
+                return False
+            if normalized and self._speech_turn_id and normalized != self._speech_turn_id:
+                return False
+            return True
 
     def refresh_configuration(self) -> bool:
         """Nạp lại language setting và dựng worker mới nếu dropdown đã đổi."""
@@ -1694,7 +1919,9 @@ class TtsEngine:
             old_worker = self._worker
             if old_worker is not None:
                 old_worker.shutdown()
-            self._worker = _TtsWorker(voice, model, lang)
+            self._worker = _build_worker(
+                voice, model, lang, epoch_validator=self.is_speech_epoch_current
+            )
             self._config_signature = signature
             self._ok = True
             logger.info("[TTS] Đã nạp lại setting. %s -> %s (Language=%s)", old_signature, signature, lang)
@@ -1721,6 +1948,7 @@ class TtsEngine:
         locale: str = "",
         replace: bool = True,
         on_event = None,
+        speech_epoch: int | None = None,
     ) -> None:
         """Phát TTS cho text với cảm xúc cho trước. Non-blocking."""
         self.refresh_configuration()
@@ -1749,6 +1977,11 @@ class TtsEngine:
                 except Exception as cb_exc:
                     logger.error("[TTS] Error in fallback on_start_play callback: %s", cb_exc)
             return
+        epoch = (
+            self.begin_speech_turn(turn_id)
+            if speech_epoch is None
+            else int(speech_epoch)
+        )
         self._worker.speak(
             _SpeakRequest(
                 clean,
@@ -1768,6 +2001,7 @@ class TtsEngine:
                 voice_family=voice_family,
                 locale=locale,
                 on_event=on_event,
+                speech_epoch=epoch,
             ),
             replace=replace,
         )
@@ -1785,17 +2019,10 @@ class TtsEngine:
             self._worker = None
 
     def cancel_current(self, *, reason: str = "cancelled", only_interruptible: bool = True) -> bool:
-        """Public API để runtime dừng TTS khi user cắt lượt."""
-        manager = getattr(self, "task_manager", None)
-        if manager is not None and callable(getattr(manager, "cancel_current", None)):
-            try:
-                if manager.cancel_current(reason=reason, only_interruptible=only_interruptible):
-                    return True
-            except Exception as exc:
-                logger.debug("[TTS] task manager cancel failed: %s", exc)
-        if not self._ok or self._worker is None:
-            return False
-        return self._worker.cancel_current(reason=reason, only_interruptible=only_interruptible)
+        """Dừng mọi backend audio đang tồn tại, không trả sớm sau manager."""
+        return self._cancel_backends(
+            reason=reason, only_interruptible=only_interruptible
+        )
 
     def synthesize(
         self,
@@ -1815,6 +2042,8 @@ class TtsEngine:
         language_hint: str = "",
         voice_family: str = "",
         locale: str = "",
+        cancel_event = None,
+        speech_epoch: int | None = None,
     ) -> bytes:
         """Backend API mới: text sạch -> WAV bytes, chưa phát ra loa."""
         self.refresh_configuration()
@@ -1823,6 +2052,11 @@ class TtsEngine:
         clean = _clean_text(text)
         if not clean:
             return b""
+        if speech_epoch is None:
+            with self._speech_lock:
+                epoch = self._speech_epoch
+        else:
+            epoch = int(speech_epoch)
         req = _SpeakRequest(
             clean,
             valence,
@@ -1841,8 +2075,9 @@ class TtsEngine:
             voice_family=voice_family,
             locale=locale,
             on_event=None,
+            speech_epoch=epoch,
         )
-        return self._worker.synthesize(req)
+        return self._worker.synthesize(req, cancel_event=cancel_event)
 
     def play_audio(self, wav_bytes: bytes, stop_event: threading.Event, on_started=None) -> None:
         """Phát WAV và báo mốc thiết bị playback đã thật sự được khởi động."""

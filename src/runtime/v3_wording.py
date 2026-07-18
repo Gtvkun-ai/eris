@@ -82,8 +82,8 @@ class V3WordingEngine:
             violations.append("empty_surface_text")
         parser_mode = str(_get(decision, "parse_mode", "") or "")
         parser_trace = str(_get(decision, "parser_trace", "") or "")
-        if "fail" in parser_mode.lower() or "capability_violation" in parser_trace.lower():
-            violations.append("parser_or_capability_violation")
+        if "fail" in parser_mode.lower():
+            violations.append("parser_failure")
         return LLMWordingResult(
             raw_text=raw,
             parsed_text=text or None,

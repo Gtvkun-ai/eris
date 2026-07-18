@@ -39,6 +39,7 @@ class TtsSegmentTask:
     valence: float
     arousal: float
     stance: str
+    speech_epoch: int = 0
 
     @property
     def key(self) -> tuple[str, int]:
@@ -97,6 +98,7 @@ class TtsTaskManager:
         stance: str,
         on_first_start: Callable[[], None] | None = None,
         on_event: Callable[[Any, Any], None] | None = None,
+        speech_epoch: int = 0,
     ) -> bool:
         """Nhận một lượt stage và bắt đầu synth/playback không blocking."""
 
@@ -105,7 +107,10 @@ class TtsTaskManager:
         if not callable(synthesize) or not callable(play_audio):
             return False
 
-        tasks = self._build_tasks(frames, valence=valence, arousal=arousal, stance=stance)
+        tasks = self._build_tasks(
+            frames, valence=valence, arousal=arousal, stance=stance,
+            speech_epoch=speech_epoch,
+        )
         if not tasks:
             return False
         policy = _dispatch_policy(
@@ -232,6 +237,7 @@ class TtsTaskManager:
         valence: float,
         arousal: float,
         stance: str,
+        speech_epoch: int = 0,
     ) -> list[TtsSegmentTask]:
         tasks: list[TtsSegmentTask] = []
         for index, frame in enumerate(frames):
@@ -250,6 +256,7 @@ class TtsTaskManager:
                     valence=float(valence),
                     arousal=float(arousal),
                     stance=str(stance or ""),
+                    speech_epoch=int(speech_epoch or 0),
                 )
             )
         return sorted(tasks, key=lambda task: task.order)
@@ -278,6 +285,8 @@ class TtsTaskManager:
             turn_id=str(getattr(task.frame, "turn_id", "") or ""),
             segment_id=int(task.order),
             interruptible=bool(getattr(task.frame, "interruptible", True)),
+            cancel_event=cancel_event,
+            speech_epoch=int(task.speech_epoch or 0),
             **_performance_kwargs(task.frame),
             **_speech_kwargs(task.frame),
         )
@@ -305,11 +314,25 @@ class TtsTaskManager:
             for task in tasks:
                 if cancel_event.is_set():
                     break
+                if not _speech_task_is_current(backend, task):
+                    self.audio_bus.emit_lifecycle(
+                        "audio_cancelled", stage_frame=task.frame, text=task.text,
+                        turn_segments=turn_segments, reason="stale_turn_before_wait",
+                        callback=on_event,
+                    )
+                    break
 
                 try:
                     wav_bytes = self._wait_future(futures[task.key], cancel_event=cancel_event)
                 except Exception as exc:
                     if cancel_event.is_set():
+                        break
+                    if not _speech_task_is_current(backend, task) or str(exc) == "tts_cancelled":
+                        self.audio_bus.emit_lifecycle(
+                            "audio_cancelled", stage_frame=task.frame, text=task.text,
+                            turn_segments=turn_segments, reason="speech_superseded",
+                            callback=on_event,
+                        )
                         break
                     if not first_started:
                         first_started = True
@@ -324,6 +347,13 @@ class TtsTaskManager:
                     )
                     continue
                 if cancel_event.is_set():
+                    break
+                if not _speech_task_is_current(backend, task):
+                    self.audio_bus.emit_lifecycle(
+                        "audio_cancelled", stage_frame=task.frame, text=task.text,
+                        turn_segments=turn_segments, reason="stale_turn_before_playback",
+                        callback=on_event,
+                    )
                     break
 
                 if not wav_bytes:
@@ -414,7 +444,12 @@ class TtsTaskManager:
                     ):
                         break
         except Exception as exc:
-            if not first_started:
+            if (
+                not first_started
+                and tasks
+                and not cancel_event.is_set()
+                and _speech_task_is_current(backend, tasks[0])
+            ):
                 first_started = True
                 _call_once(on_first_start)
             failed = self._current_task or (tasks[0] if tasks else None)
@@ -428,7 +463,12 @@ class TtsTaskManager:
             )
             logger.warning("[tts-task-manager] playback failed: %s", exc)
         finally:
-            if not first_started:
+            if (
+                not first_started
+                and tasks
+                and not cancel_event.is_set()
+                and _speech_task_is_current(backend, tasks[0])
+            ):
                 _call_once(on_first_start)
             with self._lock:
                 if generation == self._generation:
@@ -735,5 +775,15 @@ def _call_once(callback: Callable[[], None] | None) -> None:
     except Exception as exc:
         logger.debug("[tts-task-manager] on_first_start failed: %s", exc)
 
+
+
+def _speech_task_is_current(backend: Any, task: TtsSegmentTask) -> bool:
+    validator = getattr(backend, "is_speech_epoch_current", None)
+    if not callable(validator) or int(task.speech_epoch or 0) <= 0:
+        return True
+    try:
+        return bool(validator(task.speech_epoch, str(getattr(task.frame, "turn_id", "") or "")))
+    except Exception:
+        return False
 
 __all__ = ["TtsDispatchPolicy", "TtsSegmentTask", "TtsTaskManager"]

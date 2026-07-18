@@ -181,7 +181,7 @@ class DebugConsole:
             "lệnh debug (set/buff/rel nhận NHIỀU field 1 lần; nối lệnh bằng ';'): "
             "set <f> <v> [<f> <v> ...] | buff <f> <d> ... | rel <f> <v> ... | "
             "trust <v> | yan on|off | mem [ep] <text> | stage <name> | "
-            "show | reset [affect|rel] | take <file>|stop|status | stageprofile <mode>. "
+            "show | reset [affect|rel] | stageprofile <mode>. "
             "vd: set attachment=0.9 trust=0.8 tenderness=0.85; "
             f"affect: {', '.join(sorted(_AFFECT_FIELDS))}. "
             f"stage: {', '.join(_STAGE_PRESETS)}."
@@ -193,29 +193,11 @@ class DebugConsole:
             from runtime.stage_profiles import stage_profile_payload
             return f"stageprofile {stage_profile_payload()}"
         name = str(args[0] or "").strip().lower()
-        if name not in {"conversation", "recording", "custom"}:
-            return "cú pháp: stageprofile conversation|recording|custom"
+        if name not in {"conversation", "custom"}:
+            return "cú pháp: stageprofile conversation|custom"
         from runtime.runtime_settings_store import get_runtime_settings_store
         result = get_runtime_settings_store().apply_patch({"stage": {"performance_profile": name}})
         return f"stageprofile={name} revision={result.revision}"
-
-    def _cmd_take(self, args: list[str]) -> str:
-        runtime = getattr(self.coord, "scripted_take_runtime", None)
-        if runtime is None:
-            from runtime.scripted_take import ScriptedTakeRuntime
-            runtime = ScriptedTakeRuntime(self.coord)
-            self.coord.scripted_take_runtime = runtime
-        if not args:
-            return "cú pháp: take <file.json> | take stop | take status"
-        action = str(args[0] or "").strip().lower()
-        if action in {"stop", "cancel", "dung", "dừng"}:
-            stopped = runtime.cancel("debug_command")
-            return "take đã dừng" if stopped else "không có take đang chạy"
-        if action in {"status", "show"}:
-            return f"take {runtime.status().to_payload()}"
-        path = " ".join(args).strip()
-        status = runtime.start_file(path)
-        return f"take started id={status.take_id} title={status.title!r} file={status.source_path}"
 
     def _cmd_show(self, args: list[str]) -> str:
         s = self._state()

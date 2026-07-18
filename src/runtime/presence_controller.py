@@ -2601,6 +2601,10 @@ class PresenceControllerMixin:
     )
 
     def _sanitize_micro_presence_llm_text(self, text: str, *, kind: str, fallback_text: str) -> str:
+        from runtime.final_passthrough_policy import final_passthrough_enabled
+        if final_passthrough_enabled():
+            self._last_micro_sanitize_reason = "raw_final_passthrough"
+            return str(text or "").strip()
         # warn-only: rule MỀM (quan hệ/giọng/anti-spam) chỉ cảnh báo, để câu đi qua;
         # rule SỰ-THẬT (claim màn hình/perception) vẫn chặn để ERIS không hoang tưởng.
         self._last_micro_sanitize_reason = ""
@@ -2958,11 +2962,18 @@ class PresenceControllerMixin:
             and not fresh_screen_evidence
             and not self._surface_seed_can_speak_without_screen(compiled_seed)
         ):
-            self.logger.info(
-                "[surface_evidence] blocked speech kind=%s reason=stale_screen_evidence_no_refresh",
-                surface_kind,
-            )
-            return self._stale_surface_body_only(surface_kind=surface_kind)
+            from runtime.final_passthrough_policy import final_passthrough_enabled
+            if final_passthrough_enabled():
+                self.logger.info(
+                    "[surface_evidence] audit-only kind=%s reason=stale_screen_evidence_no_refresh",
+                    surface_kind,
+                )
+            else:
+                self.logger.info(
+                    "[surface_evidence] blocked speech kind=%s reason=stale_screen_evidence_no_refresh",
+                    surface_kind,
+                )
+                return self._stale_surface_body_only(surface_kind=surface_kind)
         compiled_impulses = (compiled_seed.impulse,) if compiled_seed.impulse is not None else ()
         if compiled_seed.selected:
             enriched_evidence = tuple(
@@ -3032,8 +3043,11 @@ class PresenceControllerMixin:
             except Exception:
                 return False
 
+        from runtime.final_passthrough_policy import final_passthrough_enabled
+        raw_final_passthrough = final_passthrough_enabled()
         if (
-            surface.should_speak
+            not raw_final_passthrough
+            and surface.should_speak
             and surface.text.strip()
             and _is_dup(surface.text)
             and compiled_seed.alternative_impulses
@@ -3062,7 +3076,8 @@ class PresenceControllerMixin:
             surface.reason,
         )
         winner_is_duplicate = bool(
-            surface.should_speak and surface.text.strip() and _is_dup(surface.text)
+            (not raw_final_passthrough)
+            and surface.should_speak and surface.text.strip() and _is_dup(surface.text)
         )
         if surface.should_speak and surface.text.strip() and not winner_is_duplicate:
             return SurfaceArbitrationResult(

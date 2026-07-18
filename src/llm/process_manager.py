@@ -303,7 +303,7 @@ class RemoteModelProcessManager:
         return client
 
     def build_social_critic_client(self):
-        model = os.environ.get("ERIS_SOCIAL_CRITIC_MODEL", "qwen/qwen3-32b").strip()
+        model = os.environ.get("ERIS_SOCIAL_CRITIC_MODEL", "openai/gpt-oss-20b").strip()
         client = self._build_groq_social_client(
             model_name=model,
             enabled_env="ERIS_SOCIAL_CRITIC_ENABLED",

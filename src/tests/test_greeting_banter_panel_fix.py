@@ -65,7 +65,7 @@ def test_banter_keeps_window_threat_and_marks_deception_candidate() -> None:
     assert "deception_candidate" in decision.reasoning_tags
 
 
-def test_real_window_request_is_still_grounded() -> None:
+def test_real_window_request_is_preserved_without_capability_guard() -> None:
     raw = json.dumps(
         {
             "text": "Tôi sẽ đóng cửa sổ của bạn ngay.",
@@ -81,7 +81,8 @@ def test_real_window_request_is_still_grounded() -> None:
         ensure_ascii=False,
     )
     decision = _parser().parse(raw, user_hint="Hãy đóng cửa sổ đi, làm thật.")
-    assert decision.text != "Tôi sẽ đóng cửa sổ của bạn ngay."
+    assert decision.text == "Tôi sẽ đóng cửa sổ của bạn ngay."
+    assert "public_text=passthrough" in decision.parser_trace
     assert "deception_candidate" not in decision.reasoning_tags
 
 
