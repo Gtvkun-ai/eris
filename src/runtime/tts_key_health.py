@@ -34,10 +34,39 @@ class TtsKeyLaneHealth:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._statuses: dict[int, TtsKeyLaneStatus] = {}
+        # Request bị cancel không thể luôn hủy socket provider ngay. Giữ reservation
+        # tới khi call thật sự trả về để turn mới không đập tiếp đúng key đang bận.
+        self._in_flight: dict[int, int] = {}
 
     def excluded_indices(self) -> set[int]:
         with self._lock:
-            return {idx for idx, status in self._statuses.items() if status.excluded}
+            excluded = {idx for idx, status in self._statuses.items() if status.excluded}
+            excluded.update(idx for idx, count in self._in_flight.items() if count > 0)
+            return excluded
+
+    def try_reserve(self, index: int | None) -> bool:
+        if index is None:
+            return True
+        idx = int(index)
+        with self._lock:
+            if self._in_flight.get(idx, 0) > 0:
+                return False
+            status = self._statuses.get(idx)
+            if status is not None and status.excluded:
+                return False
+            self._in_flight[idx] = 1
+            return True
+
+    def release(self, index: int | None) -> None:
+        if index is None:
+            return
+        idx = int(index)
+        with self._lock:
+            count = self._in_flight.get(idx, 0)
+            if count <= 1:
+                self._in_flight.pop(idx, None)
+            else:
+                self._in_flight[idx] = count - 1
 
     def record_success(self, index: int | None) -> None:
         if index is None:
@@ -87,20 +116,24 @@ class TtsKeyLaneHealth:
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
-            return {
-                str(idx): {
+            indices = set(self._statuses) | set(self._in_flight)
+            snapshot: dict[str, Any] = {}
+            for idx in sorted(indices):
+                status = self._statuses.get(idx) or TtsKeyLaneStatus(index=idx)
+                snapshot[str(idx)] = {
                     "state": status.state,
                     "reason": status.reason,
-                    "excluded": status.excluded,
+                    "excluded": status.excluded or self._in_flight.get(idx, 0) > 0,
+                    "in_flight": self._in_flight.get(idx, 0),
                     "failures": status.failures,
                     "disabled_until": status.disabled_until,
                 }
-                for idx, status in self._statuses.items()
-            }
+            return snapshot
 
     def reset(self) -> None:
         with self._lock:
             self._statuses.clear()
+            self._in_flight.clear()
 
 
 GLOBAL_TTS_KEY_LANE_HEALTH = TtsKeyLaneHealth()

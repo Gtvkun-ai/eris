@@ -43,6 +43,17 @@ _FORMAT_REPAIR_FALLBACK_LINES = (
 class ChatCycleMixin:
     def _enter_chat_cycle(self) -> None:
         self._chat_last_activity_at = time.time()
+        # ``chat_start`` đến ngay khi user bắt đầu lên tiếng, sớm hơn message ASR
+        # hoàn chỉnh vài trăm ms tới vài giây. Thu hồi quyền phát loa ở đây để Eris
+        # nhường lời ngay, thay vì đợi tới nhánh ``type=chat`` rồi mới cắt TTS.
+        # ``supersede_all`` còn tăng speech epoch, nên request synth cũ dù trả về
+        # muộn cũng không được bò lại phát sau câu mới.
+        supersede_tts = getattr(self, "_supersede_tts_for_new_user_turn", None)
+        if callable(supersede_tts):
+            try:
+                supersede_tts("user_speech_started")
+            except Exception as exc:
+                self.logger.debug("TTS early barge-in cancel failed: %s", exc)
         # User lên tiếng thì discovery nền phải nhường ngay. cancel_pending_requests
         # của main LLM không chạm Tutor web, nên nếu thiếu nhánh này Tutor vẫn ung
         # dung đọc tin trong lúc chat đang cần quota và sự chú ý.

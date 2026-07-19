@@ -1,0 +1,66 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-19 10:20:53
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+10:20:54.732 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+10:20:54.733 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+10:20:54.753 [INFO] [Vision] Da khoi chay vision.py PID=24364
+10:20:57.533 [INFO] [vision.py] [LLM][INFO] Social parser client sẵn sàng: openai/gpt-oss-20b
+10:20:57.534 [INFO] [vision.py] [LLM][INFO] Social deliberator/critic client sẵn sàng: openai/gpt-oss-120b
+10:20:57.534 [INFO] [vision.py] [LLM][INFO] Social observer fallback client sẵn sàng: llama-3.1-8b-instant
+10:20:57.740 [INFO] [vision.py] [Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=2
+10:20:57.743 [INFO] [vision.py] [Loop][INFO] [vtuber-stage] loaded version=vtuber_stage.v11 phases=8,9,10,11 status=intention_authority_ready session=stage_b988bb7604d543b2
+10:20:57.754 [INFO] [vision.py] [Loop][INFO] [internal-cognitive] loaded version=internal_cognitive.v1.0 capabilities=8 status=read_only_verified
+10:20:57.770 [INFO] [vision.py] [Loop][INFO] [project-ops] loaded version=project_operations.v1.1 capabilities=15 mode=autonomous_project_scope
+10:20:57.770 [INFO] [vision.py] [Loop][INFO] [workspace] eris_home=[đường dẫn nội bộ đã ẩn] active=none implicit_source_repo=false
+10:20:58.521 [INFO] [vision.py] [Loop][INFO] [social observer] loaded version=social_observer.v1.observe_only social_state=social_cognition.v2.0 primary=openai/gpt-oss-20b deep=openai/gpt-oss-120b fallback=llama-3.1-8b-instant mode=observe_only
+10:20:58.574 [INFO] [vision.py] [Loop][INFO] [environment-capability] loaded version=environment_capability.v1.0 capabilities=6 status=read_only_verified
+10:20:58.708 [INFO] [vision.py] [Loop][INFO] [architecture C] enabled version=ai_orchestrated.v5.2.split_display_speech state_version=0 personality_version=0 identity_version=0 observer=post_turn planner=ai single_writer=1
+10:21:05.015 [INFO] [vision.py] [Loop][INFO] [architecture C startup] spoke motive=startup_opening text=Hôm nay mình thấy ai cũng vào mode “khởi động”, nên mình hỏi thẳng: chỗ này đang định thay đổi điều gì trước tiên?
+10:21:05.016 [INFO] [vision.py] [Loop][INFO] [screen text] worker started backend=lazy-auto poll=1.2s
+10:21:05.222 [INFO] [vision.py] [Loop][INFO] [screen text] OCR backend resolved=uia_only
+10:21:23.716 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=0 60s vì tts_http_429; alive=11/12
+10:21:23.716 [INFO] [vision.py] [TTS][WARNING] [TTS] Key index 0 bị rate limit/hết quota (lượt 1/2).
+10:21:31.534 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+10:21:31.534 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+10:21:32.667 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=silence conf=0.90 importance=0.00 intrusion=0.00 initiative=not_evaluated
+10:21:46.022 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=1 reason=enter_chat_mode
+10:21:46.022 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+10:21:57.327 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 45s (post-chat grace).
+10:21:57.705 [INFO] [vision.py] [Loop][INFO] Người dùng: là em nói tôi định thay đổi gì là sao cơ
+10:21:57.706 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference
+10:21:57.709 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+10:22:02.110 [INFO] [vision.py] [Loop][INFO] ERIS: À, ý mình là câu đó nghe như bạn đang nói tới một sự thay đổi nào đó, nhưng chưa rõ là thay đổi gì. Mình hỏi lại để làm rõ thôi, chứ không phải khẳng định bạn định thay đổi cụ thể điều gì.
+10:22:02.606 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=0 22s vì http_429:openai/gpt-oss-20b; alive=8/9
+10:22:04.411 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=1 16s vì http_429:openai/gpt-oss-20b; alive=7/9
+10:22:06.283 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] 429 burst scope=http_429:openai/gpt-oss-20b trên 3 key/8s; dừng xoay, cooldown pool 30s (alive=6/9)
+10:22:06.399 [INFO] [vision.py] [Loop][INFO] [post observer] turn=3 act=unknown meaning=neutral conf=0.00 repair=False traits=0 frame=uncertain strategy=none source=groq_observer_fallback latency=4286ms
+10:23:03.540 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 45s (post-chat grace).
+10:23:03.900 [INFO] [vision.py] [Loop][INFO] Người dùng: là em nghĩ toi sẽ làm gì đó hả
+10:23:03.901 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference
+10:23:03.902 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+10:23:07.588 [INFO] [vision.py] [Loop][INFO] ERIS: Ừ, mình đang hỏi theo kiểu đó: bạn có đang nghĩ mình sẽ làm gì tiếp không? Nếu không thì mình hiểu lệch câu của bạn rồi. Bạn muốn mình đọc theo hướng nào?
+10:23:08.240 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=2 13s vì http_429:openai/gpt-oss-20b; alive=8/9
+10:23:10.107 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=3 32s vì http_429:openai/gpt-oss-20b; alive=7/9
+10:23:12.220 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] 429 burst scope=http_429:openai/gpt-oss-20b trên 3 key/8s; dừng xoay, cooldown pool 31s (alive=6/9)
+10:23:12.222 [INFO] [vision.py] [Loop][INFO] [post observer] turn=4 act=clarification request meaning=neutral conf=0.60 repair=False traits=0 frame=uncertain strategy=direct_answer source=groq_observer latency=1997ms
+10:24:10.024 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 45s (post-chat grace).
+10:24:10.393 [INFO] [vision.py] [Loop][INFO] Người dùng: em đọc được tab telemetry tôi chưa
+10:24:10.394 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference
+10:24:10.396 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=runtime_state | preempt_mode=none | missing=none | allowed=runtime_state,user_text | cap=0.64 | memory_answer=1 | warnings=none
+10:24:14.038 [INFO] [vision.py] [Loop][INFO] ERIS: Chưa. Mình không đọc được tab telemetry của bạn nếu bạn chưa gửi nội dung nó qua đây.
+10:24:14.550 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=4 20s vì http_429:openai/gpt-oss-20b; alive=8/9
+10:24:15.947 [INFO] [vision.py] [Loop][INFO] [post observer] turn=5 act=question meaning=neutral conf=0.60 repair=False traits=0 frame=uncertain strategy=unknown source=groq_observer latency=1903ms
+10:24:53.830 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 45s (post-chat grace).
+10:24:54.256 [INFO] [vision.py] [Loop][INFO] Người dùng: lạ thâjt
+10:24:54.257 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference
+10:24:54.258 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+10:25:01.038 [INFO] [vision.py] [Loop][INFO] ERIS: Ừ, lạ thật. Nhưng nếu bạn đang hỏi tôi có tự đọc được cái bạn chưa đưa ra không thì câu trả lời vẫn là không.
+10:25:01.557 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=5 25s vì http_429:openai/gpt-oss-20b; alive=8/9
+10:25:03.039 [INFO] [vision.py] [Loop][INFO] [post observer] turn=6 act=question meaning=neutral conf=0.60 repair=False traits=0 frame=uncertain strategy=unknown source=groq_observer latency=1996ms
+10:25:35.331 [INFO] [Vision] Dang dung vision.py PID=24364...
+10:25:35.361 [INFO] [Vision] vision.py da thoat (PID=24364, code=-1, unexpected=False).
+10:25:35.381 [INFO] [RunLogger] Ket thuc phien chay.

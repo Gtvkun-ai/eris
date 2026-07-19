@@ -1,14 +1,10 @@
 # -*- coding: utf-8 -*-
-"""speech_localizer.py — chuẩn hoá câu trước khi đưa vào TTS.
+"""speech_localizer.py — chuẩn hoá transcript trước khi đưa vào TTS.
 
-TTS engine chỉ nên làm một việc: ``text -> audio``.  Nếu nhét luôn dịch Nhật /
-rewrite anime vào engine thì rất khó debug: giọng lỗi do TTS, do dịch, hay do
-câu gốc?  Module này là lớp "localizer" mỏng đứng TRƯỚC TTS:
-
-    display_text tiếng Việt/Anh -> tts_text theo ngôn ngữ cần đọc.
-
-Hiện tại chỉ bật nhánh ``ja`` vì repo đang dùng giọng anime Nhật qua Gemini TTS.
-Nếu lỗi API/quota, localizer trả lại câu gốc để ERIS vẫn nói được thay vì câm.
+Bubble có thể là tiếng Việt trong khi voice contract yêu cầu tiếng Nhật. Bước
+localize vì thế là một phần của contract phát âm, không phải lớp trang trí có thể
+bị bỏ qua tùy hứng. Nếu không tạo được transcript Nhật hợp lệ, đường strict sẽ
+fail-closed thay vì đưa câu Việt cho TTS rồi cầu mong model tự dịch.
 """
 
 from __future__ import annotations
@@ -16,15 +12,31 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
+from typing import Callable, Iterable
+
+from runtime.speech_persona_polish import (
+    SpeechPersonaPolicy,
+    resolve_speech_persona_policy,
+    translation_respects_persona_boundaries,
+)
 
 logger = logging.getLogger("TTS.Localizer")
-
 
 _JAPANESE_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
 
 
+class SpeechLocalizationError(RuntimeError):
+    """Không tạo được transcript đúng ngôn ngữ đã pin cho turn."""
+
+
+class SpeechLocalizationCancelled(SpeechLocalizationError):
+    """Turn đã bị user chen ngang trong lúc localizer đang làm việc."""
+
+
 def _enabled() -> bool:
     from runtime.runtime_settings_store import runtime_bool
+
     return runtime_bool("tts", "stage_localize", default=True)
 
 
@@ -36,39 +48,15 @@ def _remote_provider_is_gemini() -> bool:
     return "generativelanguage.googleapis.com" in base_url or "googleapis.com" in base_url
 
 
-def _get_api_key() -> str:
-    """Lấy key Gemini cho bước dịch TTS, không phụ thuộc vào tts_engine.
+def _get_api_key_lease(*, exclude_indices: Iterable[int] = ()):
+    """Lấy key + lease, không lấy lại key pool đã thử trong cùng request."""
 
-    Giữ thứ tự gần giống engine cũ để không phá cấu hình hiện tại của ông.
-    """
-    for env_name in ("ERIS_TTS_API_KEY", "ERIS_SPEECH_API_KEY", "GEMINI_SPEECH_API_KEY", "GEMINI_API_KEY"):
-        key = os.environ.get(env_name, "").strip()
-        if key and not key.startswith("PASTE_"):
-            return key
-    if _remote_provider_is_gemini():
-        key = os.environ.get("ERIS_REMOTE_API_KEY", "").strip()
-        if key and not key.startswith("PASTE_"):
-            return key
-    try:
-        from llm.key_pool import get_key_pool
-
-        pool = get_key_pool("gemini")
-        if pool and pool.size > 0:
-            lease = pool.acquire(allow_cooling=True)
-            return lease.key if lease is not None else ""
-    except Exception:
-        pass
-    return ""
-
-
-
-def _get_api_key_lease():
-    """Lấy key + lease cho localizer để pool biết đúng key nào vừa lỗi.
-
-    Env key riêng không có lease nên chỉ trả (key, None, None). Pool key phải đi
-    qua acquire(), tuyệt đối không current_key() trong request path nữa.
-    """
-    for env_name in ("ERIS_TTS_API_KEY", "ERIS_SPEECH_API_KEY", "GEMINI_SPEECH_API_KEY", "GEMINI_API_KEY"):
+    for env_name in (
+        "ERIS_TTS_API_KEY",
+        "ERIS_SPEECH_API_KEY",
+        "GEMINI_SPEECH_API_KEY",
+        "GEMINI_API_KEY",
+    ):
         key = os.environ.get(env_name, "").strip()
         if key and not key.startswith("PASTE_"):
             return key, None, None
@@ -81,7 +69,7 @@ def _get_api_key_lease():
 
         pool = get_key_pool("gemini")
         if pool and pool.size > 0:
-            lease = pool.acquire()
+            lease = pool.acquire(exclude_indices=exclude_indices)
             if lease is not None:
                 return lease.key, pool, lease
     except Exception:
@@ -90,20 +78,68 @@ def _get_api_key_lease():
 
 
 def _already_japanese(text: str) -> bool:
-    return bool(_JAPANESE_RE.search(text or ""))
+    return bool(_JAPANESE_RE.search(str(text or "")))
+
+
+def _valid_japanese_translation(
+    source: str,
+    translated: str,
+    *,
+    persona_policy: SpeechPersonaPolicy | None = None,
+) -> bool:
+    clean_source = _normalize_transcript(source)
+    clean_out = _normalize_transcript(translated)
+    if not (clean_out and clean_out != clean_source and _already_japanese(clean_out)):
+        return False
+    policy = persona_policy or resolve_speech_persona_policy(clean_source)
+    return translation_respects_persona_boundaries(clean_source, clean_out, policy)
+
+
+def _localizer_max_attempts() -> int:
+    raw = str(os.environ.get("ERIS_TTS_LOCALIZER_MAX_ATTEMPTS", "2") or "2").strip()
+    try:
+        return max(1, min(4, int(raw)))
+    except (TypeError, ValueError):
+        return 2
+
+
+def _cancel_requested(cancel_event=None, authority_check: Callable[[], bool] | None = None) -> bool:
+    if cancel_event is not None and callable(getattr(cancel_event, "is_set", None)):
+        try:
+            if cancel_event.is_set():
+                return True
+        except Exception:
+            return True
+    if callable(authority_check):
+        try:
+            return not bool(authority_check())
+        except Exception:
+            return True
+    return False
+
+
+def _raise_if_cancelled(cancel_event=None, authority_check: Callable[[], bool] | None = None) -> None:
+    if _cancel_requested(cancel_event, authority_check):
+        raise SpeechLocalizationCancelled("speech_localization_cancelled")
 
 
 class SpeechLocalizer:
-    """Dịch/style câu public thành câu TTS.
-
-    Cache nhỏ theo process để các câu lặp không tốn thêm một call Gemini.  Đây
-    không phải memory; chỉ là chống gọi lại API cho cùng một câu trong runtime.
-    """
+    """Dịch/style câu public thành transcript TTS đúng language contract."""
 
     def __init__(self) -> None:
         self._cache: dict[tuple[str, str, str], str] = {}
+        self._logged_persona_policies: set[str] = set()
 
-    def localize(self, text: str, *, language_hint: str = "auto", prosody_style: str = "") -> str:
+    def localize(
+        self,
+        text: str,
+        *,
+        language_hint: str = "auto",
+        prosody_style: str = "",
+        strict: bool = False,
+        cancel_event=None,
+        authority_check: Callable[[], bool] | None = None,
+    ) -> str:
         clean = _normalize_transcript(text)
         if not clean:
             return ""
@@ -111,112 +147,271 @@ class SpeechLocalizer:
         lang = str(language_hint or "auto").strip().lower()
         if lang not in {"ja", "jp", "japanese"}:
             return clean
-        if not _enabled() or _already_japanese(clean):
+        if _already_japanese(clean):
+            return clean
+        if not _enabled():
+            if strict:
+                raise SpeechLocalizationError("japanese_localizer_disabled")
             return clean
 
         style = str(prosody_style or "").strip().lower()
-        key = (lang, style, clean)
-        if key in self._cache:
-            return self._cache[key]
+        persona_policy = resolve_speech_persona_policy(clean, prosody_style=style)
+        log_key = (
+            f"{persona_policy.profile}:{persona_policy.mode}:"
+            f"{persona_policy.warmth:.2f}:{persona_policy.cuteness:.2f}:"
+            f"{persona_policy.signature_ending}:"
+            f"{int(persona_policy.signature_ending_selected)}:"
+            f"{persona_policy.signature_ending_rate:.2f}"
+        )
+        if log_key not in self._logged_persona_policies:
+            self._logged_persona_policies.add(log_key)
+            logger.info(
+                "[TTS.Localizer] speech persona profile=%s mode=%s warmth=%.2f cuteness=%.2f "
+                "signature=%s selected=%s rate=%.2f",
+                persona_policy.profile,
+                persona_policy.mode,
+                persona_policy.warmth,
+                persona_policy.cuteness,
+                persona_policy.signature_ending,
+                persona_policy.signature_ending_selected,
+                persona_policy.signature_ending_rate,
+            )
+        key = (lang, f"{style}|{persona_policy.cache_key}", clean)
+        cached = self._cache.get(key)
+        if cached and _valid_japanese_translation(
+            clean, cached, persona_policy=persona_policy
+        ):
+            return cached
 
-        translated = self._translate_to_japanese(clean, prosody_style=style)
-        self._cache[key] = translated or clean
-        return self._cache[key]
+        try:
+            translated = self._translate_to_japanese(
+                clean,
+                prosody_style=style,
+                persona_policy=persona_policy,
+                cancel_event=cancel_event,
+                authority_check=authority_check,
+            )
+        except SpeechLocalizationCancelled:
+            raise
+        except SpeechLocalizationError:
+            if strict:
+                raise
+            return clean
 
-    def _translate_to_japanese(self, text: str, *, prosody_style: str = "") -> str:
-        # Localizer là lane phụ. Khi TPM/429 nóng, bỏ pass này thay vì chồng retry
-        # lên TTS chính rồi bắt key pool quay thêm một vòng vô nghĩa.
+        if not _valid_japanese_translation(
+            clean, translated, persona_policy=persona_policy
+        ):
+            if strict:
+                raise SpeechLocalizationError("japanese_localization_unavailable")
+            return clean
+        self._cache[key] = translated
+        return translated
+
+    def _translate_to_japanese(
+        self,
+        text: str,
+        *,
+        prosody_style: str = "",
+        persona_policy: SpeechPersonaPolicy | None = None,
+        cancel_event=None,
+        authority_check: Callable[[], bool] | None = None,
+    ) -> str:
+        _raise_if_cancelled(cancel_event, authority_check)
+
+        # Dịch Nhật là required lane khi contract đã pin ja. Budget vẫn nhỏ, nhưng
+        # không được optional-skip rồi lén trả transcript Việt xuống TTS.
         all_lane_budget = os.environ.get("ERIS_TOKEN_BUDGET_ALL_LANES", "1").strip().lower() not in {
-            "0", "false", "off", "no",
+            "0",
+            "false",
+            "off",
+            "no",
         }
         plan = None
         budgeted_text = str(text or "")
         if all_lane_budget:
             try:
                 from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
-                estimated_prompt = max(64, len(str(text or "")) // 3 + 180)
+
+                estimated_prompt = max(64, len(budgeted_text) // 3 + 180)
                 plan = GLOBAL_TOKEN_PRESSURE_GOVERNOR.plan_request(
                     "gemini",
                     lane="speech_localizer",
                     prompt_tokens=estimated_prompt,
-                    requested_output_tokens=384,
-                    optional_pass=True,
+                    requested_output_tokens=256,
+                    optional_pass=False,
                 )
                 if not plan.allowed:
-                    logger.info("[TTS.Localizer] Bỏ pass dịch do token pressure: %s", plan.reason)
-                    return text
+                    raise SpeechLocalizationError(f"speech_localizer_budget_denied:{plan.reason}")
                 from llm.token_budget import truncate_text_to_budget
+
                 budgeted_text = truncate_text_to_budget(
-                    budgeted_text, max(80, plan.prompt_limit - 220),
-                    marker="…[transcript localizer rút gọn]…", preserve_tail=True,
+                    budgeted_text,
+                    max(80, plan.prompt_limit - 220),
+                    marker="…[transcript localizer rút gọn]…",
+                    preserve_tail=True,
                 )
+            except SpeechLocalizationError:
+                raise
             except Exception:
                 plan = None
                 budgeted_text = str(text or "")
 
-        api_key, pool, lease = _get_api_key_lease()
-        if not api_key:
-            return text
-        try:
-            from google import genai
+        style_line = _style_line(prosody_style)
+        policy = persona_policy or resolve_speech_persona_policy(
+            text, prosody_style=prosody_style
+        )
+        persona_line = policy.prompt_directive()
+        prompt = (
+            "Translate the transcript into natural, spoken Japanese for Eris, a calm and thoughtful "
+            "desktop companion. Preserve the exact proposition, stance, implication, and relationship "
+            "distance of the source. Avoid titles such as ご主人様 or マスター; prefer natural Japanese "
+            "that omits second-person address when possible. "
+            "Do not add stage directions, quotes, explanations, romanization, or the original text. "
+            "Preserve line breaks as short breath groups and keep the same line order whenever possible.\n"
+            f"{persona_line}\n"
+            f"{style_line}\n\n"
+            "Transcript:\n"
+            f"{budgeted_text}"
+        )
 
-            client = genai.Client(api_key=api_key)
-            style_line = _style_line(prosody_style)
-            prompt = (
-                "Translate the transcript into natural, gentle, polite Japanese for a soft anime girl "
-                "desktop companion speaking to the user. Avoid titles such as ご主人様 or マスター; "
-                "prefer natural Japanese that omits second-person address when possible. Keep the meaning. Do not add stage "
-                "directions, quotes, explanations, romanization, or the original text. Preserve line "
-                "breaks as short breath groups; keep the same line order whenever possible.\n"
-                f"{style_line}\n\n"
-                "Transcript:\n"
-                f"{budgeted_text}"
-            )
-            response = client.models.generate_content(
-                model=os.environ.get("ERIS_TTS_LOCALIZER_MODEL", "gemini-2.5-flash").strip(),
-                contents=prompt,
-            )
-            out = _clean_translation_output(getattr(response, "text", "") or "")
+        attempts = _localizer_max_attempts()
+        attempted_indices: set[int] = set()
+        used_unpooled_key = False
+        last_exc: Exception | None = None
+
+        for attempt in range(attempts):
+            _raise_if_cancelled(cancel_event, authority_check)
+            health = None
+            reserved_index = None
             try:
-                if plan is not None:
-                    from llm.token_budget import estimate_tokens
-                    from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
-                    GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_request(
-                        "gemini", lane="speech_localizer",
-                        prompt_tokens=estimate_tokens([{"role": "user", "content": prompt}]),
-                        output_tokens=plan.output_tokens,
+                from runtime.tts_key_health import GLOBAL_TTS_KEY_LANE_HEALTH
+
+                health = GLOBAL_TTS_KEY_LANE_HEALTH
+                attempted_indices.update(health.excluded_indices())
+            except Exception:
+                health = None
+
+            while True:
+                api_key, pool, lease = _get_api_key_lease(exclude_indices=attempted_indices)
+                if lease is None:
+                    break
+                attempted_indices.add(int(lease.index))
+                if health is None or health.try_reserve(lease.index):
+                    reserved_index = int(lease.index) if health is not None else None
+                    break
+                lease = None
+                api_key = ""
+
+            # Khi không có pool, chỉ thử env key đúng một lần. Với pool, lease
+            # khác sẽ được chọn ở vòng attempt kế tiếp. Không biến retry thành
+            # việc gọi lại cùng một key đang 429 rồi tỏ vẻ bất ngờ.
+            if lease is None and api_key:
+                if used_unpooled_key:
+                    break
+                used_unpooled_key = True
+            if not api_key:
+                last_exc = SpeechLocalizationError("missing_gemini_key_for_japanese_localizer")
+                break
+
+            try:
+                from google import genai
+
+                client = genai.Client(api_key=api_key)
+                response = client.models.generate_content(
+                    model=os.environ.get("ERIS_TTS_LOCALIZER_MODEL", "gemini-2.5-flash").strip(),
+                    contents=prompt,
+                )
+                _raise_if_cancelled(cancel_event, authority_check)
+                out = _clean_translation_output(getattr(response, "text", "") or "")
+                if not _valid_japanese_translation(
+                    text, out, persona_policy=policy
+                ):
+                    raise SpeechLocalizationError(
+                        "localizer_returned_invalid_or_persona_boundary_violation"
                     )
-                if pool is not None and lease is not None:
-                    pool.mark_success(lease=lease)
-                from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
-                GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_success("gemini")
-            except Exception:
-                pass
-            return out or text
-        except Exception as exc:
-            try:
-                from llm.provider_errors import classify_provider_error
-                kind = classify_provider_error(exc)
-                if pool is not None and lease is not None:
-                    if str(kind) == "key_revoked":
-                        pool.mark_permanently_dead(lease=lease, reason="localizer_key_reported_leaked")
-                    elif str(kind) == "rate_limit":
-                        pool.mark_rate_limited(seconds=60.0, lease=lease, reason="localizer_http_429")
-                        try:
-                            from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
-                            GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_rate_limit("gemini", retry_after_s=60.0, lane="speech_localizer")
-                        except Exception:
-                            pass
-                    elif str(kind) == "project_permission":
-                        pool.mark_dead(3600.0, lease=lease, reason="localizer_project_permission")
-            except Exception:
-                pass
-            logger.warning("[TTS.Localizer] Dịch sang JP lỗi: %s", exc)
-            return text
+
+                try:
+                    if plan is not None:
+                        from llm.token_budget import estimate_tokens
+                        from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
+
+                        GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_request(
+                            "gemini",
+                            lane="speech_localizer",
+                            prompt_tokens=estimate_tokens([{"role": "user", "content": prompt}]),
+                            output_tokens=plan.output_tokens,
+                        )
+                    if pool is not None and lease is not None:
+                        pool.mark_success(lease=lease)
+                    from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
+
+                    GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_success("gemini")
+                except Exception:
+                    pass
+                return out
+            except SpeechLocalizationCancelled:
+                raise
+            except Exception as exc:
+                last_exc = exc
+                may_retry = attempt < attempts - 1
+                try:
+                    from llm.provider_errors import classify_provider_error
+
+                    kind = classify_provider_error(exc)
+                    if pool is not None and lease is not None:
+                        if str(kind) == "key_revoked":
+                            pool.mark_permanently_dead(lease=lease, reason="localizer_key_reported_leaked")
+                        elif str(kind) == "rate_limit":
+                            may_retry = bool(
+                                pool.mark_rate_limited(
+                                    seconds=60.0,
+                                    lease=lease,
+                                    reason="localizer_http_429:gemini-2.5-flash",
+                                )
+                            ) and may_retry
+                            try:
+                                from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
+
+                                GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_rate_limit(
+                                    "gemini",
+                                    retry_after_s=60.0,
+                                    lane="speech_localizer",
+                                )
+                            except Exception:
+                                pass
+                        elif str(kind) == "project_permission":
+                            pool.mark_dead(3600.0, lease=lease, reason="localizer_project_permission")
+                except Exception:
+                    pass
+
+                logger.warning(
+                    "[TTS.Localizer] Dịch sang JP lỗi lượt %d/%d: %s",
+                    attempt + 1,
+                    attempts,
+                    exc,
+                )
+                if not may_retry:
+                    break
+                delay = min(0.18, 0.05 * (attempt + 1))
+                if cancel_event is not None and callable(getattr(cancel_event, "wait", None)):
+                    if cancel_event.wait(delay):
+                        raise SpeechLocalizationCancelled("speech_localization_cancelled")
+                else:
+                    time.sleep(delay)
+            finally:
+                if health is not None:
+                    health.release(reserved_index)
+
+        if isinstance(last_exc, SpeechLocalizationError):
+            raise last_exc
+        raise SpeechLocalizationError(
+            f"japanese_localization_failed:{type(last_exc).__name__ if last_exc else 'unknown'}"
+        )
 
 
 def _normalize_transcript(text: str) -> str:
     """Giữ line break như nhịp thở, chỉ dọn khoảng trắng nội dòng."""
+
     raw = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
     lines = [" ".join(line.split()).strip() for line in raw.split("\n")]
     return "\n".join(line for line in lines if line).strip()
@@ -224,6 +419,7 @@ def _normalize_transcript(text: str) -> str:
 
 def _clean_translation_output(text: str) -> str:
     """Dọn output dịch nhưng không flatten nhiều dòng thành một dòng."""
+
     raw = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
     raw = raw.strip().strip('"').strip("'").strip()
     lines = [" ".join(line.split()).strip() for line in raw.split("\n")]
@@ -232,6 +428,7 @@ def _clean_translation_output(text: str) -> str:
 
 def _style_line(style: str) -> str:
     """Hint dịch tự nhiên theo prosody, không biến nghĩa câu."""
+
     style = str(style or "").strip().lower()
     if style == "dry_tease":
         return "Style hint: preserve a dry teasing edge; polite, short, slightly unimpressed."
@@ -254,4 +451,8 @@ def _style_line(style: str) -> str:
     return "Style hint: natural, restrained, and concise."
 
 
-__all__ = ["SpeechLocalizer"]
+__all__ = [
+    "SpeechLocalizationCancelled",
+    "SpeechLocalizationError",
+    "SpeechLocalizer",
+]

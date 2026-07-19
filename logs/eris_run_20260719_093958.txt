@@ -1,0 +1,28 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-19 09:39:58
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+09:39:59.408 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+09:39:59.408 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+09:39:59.477 [INFO] [Vision] Da khoi chay vision.py PID=22000
+09:40:00.743 [INFO] [Settings] Đang đọc trạng thái hai key pool...
+09:40:02.406 [INFO] [vision.py] [LLM][INFO] Social parser client sẵn sàng: openai/gpt-oss-20b
+09:40:02.406 [INFO] [vision.py] [LLM][INFO] Social deliberator/critic client sẵn sàng: openai/gpt-oss-120b
+09:40:02.407 [INFO] [vision.py] [LLM][INFO] Social observer fallback client sẵn sàng: llama-3.1-8b-instant
+09:40:02.669 [INFO] [vision.py] [Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=2
+09:40:02.673 [INFO] [vision.py] [Loop][INFO] [vtuber-stage] loaded version=vtuber_stage.v11 phases=8,9,10,11 status=intention_authority_ready session=stage_b01b36e71b3f40e4
+09:40:02.681 [INFO] [vision.py] [Loop][INFO] [internal-cognitive] loaded version=internal_cognitive.v1.0 capabilities=8 status=read_only_verified
+09:40:02.693 [INFO] [vision.py] [Loop][INFO] [project-ops] loaded version=project_operations.v1.1 capabilities=15 mode=autonomous_project_scope
+09:40:02.694 [INFO] [vision.py] [Loop][INFO] [workspace] eris_home=[đường dẫn nội bộ đã ẩn] active=none implicit_source_repo=false
+09:40:03.220 [INFO] [vision.py] [Loop][INFO] [social observer] loaded version=social_observer.v1.observe_only social_state=social_cognition.v2.0 primary=openai/gpt-oss-20b deep=openai/gpt-oss-120b fallback=llama-3.1-8b-instant mode=observe_only
+09:40:03.247 [INFO] [vision.py] [Loop][INFO] [environment-capability] loaded version=environment_capability.v1.0 capabilities=6 status=read_only_verified
+09:40:03.407 [INFO] [vision.py] [Loop][INFO] [architecture C] enabled version=ai_orchestrated.v5.2.split_display_speech state_version=0 personality_version=0 identity_version=0 observer=post_turn planner=ai single_writer=1
+09:40:10.574 [INFO] [vision.py] [Loop][INFO] [architecture C startup] spoke motive=startup_opening text=Chào, cứ coi đây là chỗ bắt đầu gọn thôi — tôi sẽ nói thẳng khi cần, và bỏ qua phần màu mè.
+09:40:10.580 [INFO] [vision.py] [Loop][INFO] [screen text] worker started backend=lazy-auto poll=1.2s
+09:40:10.809 [INFO] [vision.py] [Loop][INFO] [screen text] OCR backend resolved=uia_only
+09:40:13.650 [INFO] [Vision] Dang dung vision.py PID=22000...
+09:40:13.667 [INFO] [Vision] vision.py da thoat (PID=22000, code=-1, unexpected=False).
+09:40:13.678 [INFO] [RunLogger] Ket thuc phien chay.

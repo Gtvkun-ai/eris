@@ -304,10 +304,8 @@ def _build_tts_prompt(
                 )
             else:
                 lang_line = (
-                    "The transcript is in Vietnamese or English. Translate the transcript into natural, "
-                    "gentle Japanese first for a soft, polite anime girl desktop companion. "
-                    "Do not use old Vietnamese honorifics or the word 'Master'. "
-                    "Then read the Japanese translation aloud in Japanese. Do not read the original non-Japanese text.\n"
+                    "The transcript must already be Japanese. Read Japanese only. "
+                    "Do not translate, infer, or switch to Vietnamese or English.\n"
                 )
         elif language_hint == "vi":
             lang_line = (
@@ -326,6 +324,14 @@ def _build_tts_prompt(
     prosody_line = ""
     if prosody_notes:
         prosody_line = f"Line performance: {prosody_notes}\n"
+
+    signature_line = ""
+    if language_hint == "ja" and re.search(r"ですね[。！？…]*\s*$", str(text or "")):
+        signature_line = (
+            "Signature ending performance: keep です compact, let the final ね land with a small "
+            "140–220ms linger, a tiny lift into ね, then a gentle downward contour. Make it memorable but restrained; "
+            "do not turn it into a theatrical anime catchphrase.\n"
+        )
 
     performance_rules = ""
     transcript_title = "## TRANSCRIPT"
@@ -352,6 +358,7 @@ def _build_tts_prompt(
         "Do not add, omit, paraphrase, or explain words.\n"
         f"{_pace_directive()}\n"
         f"{prosody_line}"
+        f"{signature_line}"
         f"{lang_line}"
         f"{transcript_title}\n"
         f"{tagged_text}\n"
@@ -743,7 +750,10 @@ def _tts_breaker_enabled() -> bool:
 
 
 def _tts_max_attempts() -> int:
-    raw = str(os.environ.get("ERIS_TTS_MAX_ATTEMPTS", "") or "").strip().lower()
+    # Một câu không được đi tuần qua toàn bộ 12 key. Hai project là đủ để phân
+    # biệt key riêng lỗi với provider/lane đang nóng; sau đó fallback cùng ngôn
+    # ngữ xử lý nhanh hơn và user không phải nghe một khoảng im lặng khảo cổ học.
+    raw = str(os.environ.get("ERIS_TTS_MAX_ATTEMPTS", "2") or "2").strip().lower()
     if raw in {"", "full", "all", "pool", "max"}:
         return 10_000
     try:
@@ -848,11 +858,25 @@ def _synthesize_wav(
     for attempt in range(max_attempts):
         _raise_if_tts_cancelled(cancel_event, authority_check)
         lease = None
+        reserved_index = None
         if pool is not None and pool.size > 0:
-            lease = pool.acquire(exclude_indices=attempted_indices)
+            # Task manager cho turn mới synth song song với request cũ đang hấp hối.
+            # Không dùng lại đúng key còn in-flight, nếu không cải thiện latency bằng
+            # cách tự tạo thêm 429 là một màn ảo thuật khá vô ích.
+            while True:
+                lease = pool.acquire(exclude_indices=attempted_indices)
+                if lease is None:
+                    break
+                attempted_indices.add(lease.index)
+                if GLOBAL_TTS_KEY_LANE_HEALTH.try_reserve(lease.index):
+                    reserved_index = lease.index
+                    break
+                lease = None
             if lease is None:
                 wait_s = pool.next_available_in()
-                exc = RuntimeError(f"Gemini TTS key pool đang cooldown; thử lại sau khoảng {wait_s:.1f}s")
+                exc = RuntimeError(
+                    f"Gemini TTS key pool đang cooldown hoặc bận; thử lại sau khoảng {wait_s:.1f}s"
+                )
                 fallback = _try_local_tts_fallback(
                     exc,
                     fallback_text=fallback_text,
@@ -861,7 +885,6 @@ def _synthesize_wav(
                 if fallback:
                     return fallback
                 raise exc
-            attempted_indices.add(lease.index)
             api_key = lease.key
         else:
             api_key = _get_api_key()
@@ -1015,6 +1038,8 @@ def _synthesize_wav(
             if fallback:
                 return fallback
             raise
+        finally:
+            GLOBAL_TTS_KEY_LANE_HEALTH.release(reserved_index)
 
     _raise_if_tts_cancelled(cancel_event, authority_check)
     if pcm_data is None:
@@ -1500,6 +1525,42 @@ class _TtsWorker:
         language = self._request_language(req)
         return _same_language_locale(language, req.locale)
 
+    def _resolve_main_transcript(
+        self,
+        req: _SpeakRequest,
+        main_text_raw: str,
+        *,
+        cancel_event=None,
+        authority_check=None,
+    ) -> tuple[str, bool]:
+        """Khóa transcript theo language contract trước khi gọi provider audio.
+
+        ``prelocalized=True`` chỉ là metadata từ upstream, không phải bằng chứng.
+        Nếu contract là Nhật mà text vẫn còn Việt, localizer phải sửa hoặc fail
+        closed; không đẩy câu sai ngôn ngữ xuống Gemini TTS rồi mong nó tự hiểu.
+        """
+
+        language_hint = self._request_language(req)
+        text_to_speak = str(main_text_raw or "").strip()
+        if language_hint != "ja" or not text_to_speak:
+            return text_to_speak, bool(req.prelocalized)
+        if _contains_japanese_chars(text_to_speak):
+            return text_to_speak, True
+        if not _prelocalize_japanese_enabled():
+            raise RuntimeError("tts_japanese_transcript_not_localized")
+
+        text_to_speak = self._localizer.localize(
+            text_to_speak,
+            language_hint="ja",
+            prosody_style=req.prosody_style,
+            strict=True,
+            cancel_event=cancel_event,
+            authority_check=authority_check,
+        )
+        if not _contains_japanese_chars(text_to_speak):
+            raise RuntimeError("tts_japanese_localizer_returned_non_japanese")
+        return text_to_speak, True
+
     def _vocal_prefix_wav(
         self, req: _SpeakRequest, prefix: str, prosody_plan,
         *, cancel_event=None, authority_check=None,
@@ -1587,17 +1648,12 @@ class _TtsWorker:
         vocal_prefix = str(getattr(req, "vocal_prefix", "") or "").strip()
         main_text_raw = strip_audible_prefix(req.text, vocal_prefix) if vocal_prefix else req.text
         prefix_is_separate = bool(vocal_prefix and main_text_raw != req.text)
-        text_to_speak = main_text_raw
-        localized = bool(req.prelocalized)
-        if language_hint == "ja" and _prelocalize_japanese_enabled() and not req.prelocalized:
-            # Dịch/style chạy ở backend nhưng trả về WAV thuần. Manager không cần
-            # biết câu đã localize thế nào, chỉ cần audio bytes để xếp hàng phát.
-            text_to_speak = self._localizer.localize(
-                main_text_raw,
-                language_hint=language_hint,
-                prosody_style=req.prosody_style,
-            )
-            localized = text_to_speak != main_text_raw
+        text_to_speak, localized = self._resolve_main_transcript(
+            req,
+            main_text_raw,
+            cancel_event=cancel_event,
+            authority_check=authority_check,
+        )
         prosody_plan = self._prosody.plan(
             text_to_speak,
             stance=req.stance,
@@ -1668,17 +1724,12 @@ class _TtsWorker:
                     vocal_prefix = str(getattr(req, "vocal_prefix", "") or "").strip()
                     main_text_raw = strip_audible_prefix(req.text, vocal_prefix) if vocal_prefix else req.text
                     prefix_is_separate = bool(vocal_prefix and main_text_raw != req.text)
-                    text_to_speak = main_text_raw
-                    localized = bool(req.prelocalized)
-                    if language_hint == "ja" and _prelocalize_japanese_enabled() and not req.prelocalized:
-                        # Dịch/style TTS chạy trong worker nền để UI/runtime không bị
-                        # kẹt bởi một call Gemini phụ. Engine vẫn chỉ nhận text sạch.
-                        text_to_speak = self._localizer.localize(
-                            main_text_raw,
-                            language_hint=language_hint,
-                            prosody_style=req.prosody_style,
-                        )
-                        localized = text_to_speak != main_text_raw
+                    text_to_speak, localized = self._resolve_main_transcript(
+                        req,
+                        main_text_raw,
+                        cancel_event=self._current_stop,
+                        authority_check=lambda: self._request_is_current(req),
+                    )
                     prosody_plan = self._prosody.plan(
                         text_to_speak,
                         stance=req.stance,

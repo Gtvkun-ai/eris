@@ -28,7 +28,10 @@ _CONVERSATION = StageRuntimeProfile(
     name="conversation",
     logical_segment_tts=True,
     dispatch_mode="inline",
-    task_manager_enabled=False,
+    # Mỗi turn synth trong executor riêng. Khi user chen vào, generation mới có
+    # thể bắt đầu ngay dù HTTP request của turn cũ chưa chịu trả về. Worker legacy
+    # tuần tự từng khiến một request đã bị hủy vẫn chặn giọng của câu kế tiếp.
+    task_manager_enabled=True,
     prefetch_workers=1,
     max_tts_segments=8,
     min_split_chars=58,

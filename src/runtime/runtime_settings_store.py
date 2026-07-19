@@ -115,7 +115,9 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "protocol_enabled": True,
         "segment_tts": False,
         "segment_dispatch": "inline",
-        "tts_task_manager": False,
+        # Conversation profile dùng manager để một request synth cũ bị user hủy
+        # không chặn TTS của turn mới ở cùng worker tuần tự.
+        "tts_task_manager": True,
         "prefetch_workers": 1,
         "max_tts_segments": 1,
         "min_split_chars": 72,
@@ -132,6 +134,16 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "volume": 1.0,
         "speed": 1.0,
         "stage_localize": True,
+        # Làm mềm riêng transcript TTS, không sửa bubble/public meaning.
+        "speech_persona_polish": True,
+        "speech_persona_profile": "infj_5w4_subtle",
+        "speech_persona_warmth": 0.18,
+        "speech_persona_cuteness": 0.10,
+        # Signature chỉ áp vào transcript Nhật. Localizer quyết định theo câu và
+        # tích hợp bằng ngữ pháp, không nối chuỗi ``ですね`` một cách máy móc.
+        "signature_ending_enabled": True,
+        "signature_ending": "desu_ne",
+        "signature_ending_rate": 0.42,
         "audio_polish": False,
     },
     "pipeline": {
@@ -267,6 +279,13 @@ _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
     ("tts", "voice"): ("ERIS_TTS_VOICE", "str"),
     ("tts", "quality"): ("ERIS_TTS_QUALITY", "str"),
     ("tts", "stage_localize"): ("ERIS_TTS_STAGE_LOCALIZE", "bool"),
+    ("tts", "speech_persona_polish"): ("ERIS_TTS_SPEECH_PERSONA_POLISH", "bool"),
+    ("tts", "speech_persona_profile"): ("ERIS_TTS_SPEECH_PERSONA_PROFILE", "str"),
+    ("tts", "speech_persona_warmth"): ("ERIS_TTS_SPEECH_PERSONA_WARMTH", "float"),
+    ("tts", "speech_persona_cuteness"): ("ERIS_TTS_SPEECH_PERSONA_CUTENESS", "float"),
+    ("tts", "signature_ending_enabled"): ("ERIS_TTS_SIGNATURE_ENDING_ENABLED", "bool"),
+    ("tts", "signature_ending"): ("ERIS_TTS_SIGNATURE_ENDING", "str"),
+    ("tts", "signature_ending_rate"): ("ERIS_TTS_SIGNATURE_ENDING_RATE", "float"),
     ("tts", "audio_polish"): ("ERIS_TTS_AUDIO_POLISH", "bool"),
     ("pipeline", "v3_enabled"): ("ERIS_V3_PIPELINE", "bool"),
     ("tutor", "enabled"): ("ERIS_TUTOR_ENABLED", "bool"),
@@ -726,6 +745,9 @@ def _coerce_setting(path: str, value: Any, expected: Any) -> tuple[bool, Any]:
         "stage.min_split_chars": (24, 160),
         "tts.volume": (0.0, 2.0),
         "tts.speed": (0.5, 2.0),
+        "tts.speech_persona_warmth": (0.0, 0.5),
+        "tts.speech_persona_cuteness": (0.0, 0.35),
+        "tts.signature_ending_rate": (0.0, 0.8),
     }
     if path in ranges:
         lo, hi = ranges[path]
