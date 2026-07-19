@@ -112,11 +112,13 @@ def _startup_block_score(payload: Mapping[str, Any], *, now: float) -> float:
 
 
 def _runtime_signal_payloads(snapshot: Any, *, now: float) -> tuple[Mapping[str, Any], ...]:
-    """Rút signal runtime đủ nghĩa cho opening, không biến mọi con số thành tin nóng.
+    """Rút runtime signal và đánh dấu rõ signal nào đáng dùng để mở lời.
 
-    Runtime evidence ở đây là fact cơ học hiện tại: recent event, warning, app
-    foreground, hoặc mức tài nguyên thật sự đáng chú ý. Ambient tone/tease bias
-    chỉ là state điều khiển phong cách nên không được surface như fact về user.
+    Tên process, nhãn ``DEBUG``, PID, backend hay app foreground vẫn là fact cơ
+    học, nhưng chúng chỉ là *metadata*. Chúng có thể giúp giải thích khi user hỏi,
+    không được tự động trở thành premise xã hội cho câu chào. Chỉ warning, lỗi,
+    phục hồi, hoàn tất tác vụ, thay đổi kết nối hoặc áp lực tài nguyên thật sự mới
+    đủ ``opening_eligible``.
     """
 
     if snapshot is None:
@@ -125,7 +127,14 @@ def _runtime_signal_payloads(snapshot: Any, *, now: float) -> tuple[Mapping[str,
     items: list[Mapping[str, Any]] = []
     seen: set[str] = set()
 
-    def add(signal_id: str, text: Any, confidence: float = 0.72) -> None:
+    def add(
+        signal_id: str,
+        text: Any,
+        confidence: float = 0.72,
+        *,
+        kind: str = "runtime_event",
+        opening_eligible: bool = False,
+    ) -> None:
         compacted = _compact(text, 300)
         key = _norm(compacted)
         if len(compacted) < 2 or not key or key in seen:
@@ -138,25 +147,55 @@ def _runtime_signal_payloads(snapshot: Any, *, now: float) -> tuple[Mapping[str,
                 "text": compacted,
                 "confidence": round(max(0.0, min(1.0, confidence)), 3),
                 "captured_at": now,
+                "kind": kind,
+                "opening_eligible": bool(opening_eligible),
             }
         )
 
+    opening_markers = (
+        "warning", "error", "429", "cooldown", "failed", "failure",
+        "recovered", "recovery", "connected", "disconnected", "completed",
+        "finished", "done", "restored", "degraded", "blocked", "cancelled",
+    )
     for index, event in enumerate(tuple(getattr(snapshot, "recent_events", ()) or ())[:6]):
         normalized = _norm(event)
         if not normalized:
             continue
-        confidence = 0.78 if any(
-            marker in normalized
-            for marker in ("warning", "error", "429", "cooldown", "failed", "recovered", "connected", "disconnected")
-        ) else 0.66
-        add(f"recent_event_{index + 1}", event, confidence)
+        opening_eligible = any(marker in normalized for marker in opening_markers)
+        add(
+            f"recent_event_{index + 1}",
+            event,
+            0.78 if opening_eligible else 0.62,
+            kind="runtime_event" if opening_eligible else "runtime_metadata",
+            opening_eligible=opening_eligible,
+        )
 
     active_app = _compact(getattr(snapshot, "active_app", "") or getattr(snapshot, "active_window", ""), 180)
     focus_summary = _compact(getattr(snapshot, "focus_summary", ""), 240)
     if active_app and not _is_generic_window(active_app):
-        add("active_app", f"Foreground app: {active_app}", 0.64)
+        add(
+            "active_app",
+            f"Foreground app: {active_app}",
+            0.64,
+            kind="runtime_metadata",
+            opening_eligible=False,
+        )
     if focus_summary and _norm(focus_summary) not in {"unknown", "none", "active"}:
-        add("focus_summary", f"Focus: {focus_summary}", 0.62)
+        normalized_focus = _norm(focus_summary)
+        focus_eligible = any(
+            marker in normalized_focus
+            for marker in (
+                "warning", "error", "failed", "recovered", "cooldown", "429",
+                "queue blocked", "queue stalled", "latency spike", "disconnected",
+            )
+        )
+        add(
+            "focus_summary",
+            f"Focus: {focus_summary}",
+            0.72 if focus_eligible else 0.60,
+            kind="runtime_event" if focus_eligible else "runtime_metadata",
+            opening_eligible=focus_eligible,
+        )
 
     try:
         cpu = float(getattr(snapshot, "cpu_percent", 0.0) or 0.0)
@@ -167,9 +206,21 @@ def _runtime_signal_payloads(snapshot: Any, *, now: float) -> tuple[Mapping[str,
     except (TypeError, ValueError):
         ram = 0.0
     if cpu >= 82.0:
-        add("cpu_pressure", f"CPU usage is {cpu:.1f}%", 0.84)
+        add(
+            "cpu_pressure",
+            f"CPU usage is {cpu:.1f}%",
+            0.84,
+            kind="resource_pressure",
+            opening_eligible=True,
+        )
     if ram >= 86.0:
-        add("ram_pressure", f"RAM usage is {ram:.1f}%", 0.84)
+        add(
+            "ram_pressure",
+            f"RAM usage is {ram:.1f}%",
+            0.84,
+            kind="resource_pressure",
+            opening_eligible=True,
+        )
 
     return tuple(items[:10])
 
@@ -194,9 +245,7 @@ class StartupGroundingBundle:
             block_id = str(item.get("id", "") or "").strip()
             if block_id:
                 refs.append(f"screen:{block_id}")
-        if not refs and self.active_window and not _is_generic_window(self.active_window):
-            refs.append("screen:active_window_title")
-        for item in self.runtime_evidence[:4]:
+        for item in self.runtime_opening_evidence[:4]:
             signal_id = str(item.get("id", "") or "").strip()
             if signal_id:
                 refs.append(f"runtime:{signal_id}")
@@ -207,16 +256,30 @@ class StartupGroundingBundle:
         values = [float(item.get("confidence", 0.0) or 0.0) for item in self.evidence]
         if values:
             return max(values)
-        return 0.68 if self.active_window and not _is_generic_window(self.active_window) else 0.0
+        return 0.0
 
     @property
     def has_direct_screen_evidence(self) -> bool:
         return bool(
             not self.privacy_blocked
-            and (
-                any(str(item.get("text", "") or "").strip() for item in self.evidence)
-                or (self.active_window and not _is_generic_window(self.active_window))
-            )
+            and any(str(item.get("text", "") or "").strip() for item in self.evidence)
+        )
+
+    @property
+    def runtime_opening_evidence(self) -> tuple[Mapping[str, Any], ...]:
+        return tuple(
+            item
+            for item in self.runtime_evidence
+            if bool(item.get("opening_eligible", False))
+            and str(item.get("text", "") or "").strip()
+            and float(item.get("confidence", 0.0) or 0.0) >= 0.58
+        )
+
+    @property
+    def runtime_metadata(self) -> tuple[Mapping[str, Any], ...]:
+        return tuple(
+            item for item in self.runtime_evidence
+            if not bool(item.get("opening_eligible", False))
         )
 
     @property
@@ -229,11 +292,7 @@ class StartupGroundingBundle:
 
     @property
     def has_runtime_opening_anchor(self) -> bool:
-        return any(
-            str(item.get("text", "") or "").strip()
-            and float(item.get("confidence", 0.0) or 0.0) >= 0.58
-            for item in self.runtime_evidence
-        )
+        return bool(self.runtime_opening_evidence)
 
     @property
     def opening_source(self) -> str:
@@ -254,7 +313,8 @@ class StartupGroundingBundle:
             "privacy_blocked": self.privacy_blocked,
             "telemetry_surface_visible": self.telemetry_surface_visible,
             "visible_text": [dict(item) for item in self.evidence[:12]],
-            "runtime_evidence": [dict(item) for item in self.runtime_evidence[:8]],
+            "runtime_evidence": [dict(item) for item in self.runtime_opening_evidence[:8]],
+            "runtime_metadata": [dict(item) for item in self.runtime_metadata[:8]],
             "evidence_refs": list(self.evidence_refs),
             "opening_source": self.opening_source,
             "epistemic_policy": {
@@ -267,7 +327,8 @@ class StartupGroundingBundle:
                 "Use the strongest available source in this order: current screen, meaningful runtime signal, "
                 "continuity/memory supplied separately, then a personality-led greeting with no external factual claim. "
                 "A restrained inference or curious question is allowed when its basis is explicit. "
-                "Never invent that the user is starting, changing, fixing, or feeling something."
+                "Never invent that the user is starting, changing, fixing, or feeling something. Process/window names, "
+                "DEBUG labels, foreground state, PID and backend names are metadata, not conversational premises."
             ),
         }
 
@@ -285,7 +346,7 @@ class StartupGroundingBundle:
                 "startup_grounding: no direct screen text, but current runtime evidence is available.",
                 "runtime_evidence:",
             ]
-            for item in self.runtime_evidence[:8]:
+            for item in self.runtime_opening_evidence[:8]:
                 lines.append(
                     "- [{id}|confidence={confidence}] {text}".format(
                         id=item.get("id", "runtime"),
@@ -297,6 +358,7 @@ class StartupGroundingBundle:
                 (
                     "epistemic_contract:",
                     "- You may mention one exact runtime signal above.",
+                    "- Never turn process/window names, DEBUG labels, foreground state, PID or backend metadata into metaphor, mood, or a story about the user.",
                     "- Do not turn ordinary CPU/RAM/idle values into a dramatic event.",
                     "- A low-risk social inference must be hedged and tied to an explicit basis.",
                     "- If the runtime signal is too dull, use a personality-led greeting instead of forcing a technical remark.",
@@ -320,9 +382,9 @@ class StartupGroundingBundle:
                     text=item.get("text", ""),
                 )
             )
-        if self.runtime_evidence:
+        if self.runtime_opening_evidence:
             lines.append("runtime_evidence:")
-            for item in self.runtime_evidence[:8]:
+            for item in self.runtime_opening_evidence[:8]:
                 lines.append(
                     "- [{id}|confidence={confidence}] {text}".format(
                         id=item.get("id", "runtime"),
@@ -336,6 +398,7 @@ class StartupGroundingBundle:
                 "- You may directly mention a concrete visible item above.",
                 "- You may infer a low-risk mood/intent only as a hypothesis: state the basis, hedge it, and leave room for correction.",
                 "- Do not infer that the user plans to start/change/fix something merely from words such as startup, mode, runtime, or telemetry.",
+                "- Never poeticize process/window names, DEBUG labels, foreground state, PID, backend, or other runtime metadata.",
                 "- Do not claim a tool action, successful read, file edit, or runtime result unless a direct result is present.",
                 "- For a visible Telemetry panel, prefer one real status/metric/label/change on the panel over saying only that Telemetry is open.",
                 "- The opening must feel like ERIS noticed something, not like onboarding copy. Avoid 'Tôi ở đây', 'bắt đầu thôi', or generic service offers.",

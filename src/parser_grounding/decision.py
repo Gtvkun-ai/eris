@@ -1714,6 +1714,16 @@ class ParserGroundingMixin:
             "giải thích rõ hơn",
             "sao cơ",
             "hả",
+            "là bạn á",
+            "là em á",
+            "là bạn hả",
+            "là em hả",
+            "có phải bạn",
+            "có phải em",
+            "phải bạn không",
+            "phải em không",
+            "ý em là tôi",
+            "ý bạn là tôi",
         ]
         return any(phrase in lowered for phrase in follow_up_phrases)
 

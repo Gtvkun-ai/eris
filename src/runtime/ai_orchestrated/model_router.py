@@ -503,6 +503,10 @@ class AIRuntimeModelRouter:
             "nhưng không nhảy thẳng sang tuyên bố yêu/quen/gắn bó chỉ vì user vừa yêu cầu một câu tình cảm. "
             "Bạn sở hữu lời nói; không tự phân loại Ni/Ti/Fe, không tự chấm confidence, không giải thích reasoning. "
             "Trả lời yêu cầu cụ thể trước. Không tự chèn tuyên bố kiểu 'không như con người' nếu người dùng không hỏi về bản thể. "
+            "Nếu Current grounding có reference_repair_contract, đó là ưu tiên cao nhất của lượt: trả lời đúng cụm user đang hỏi "
+            "trong câu ERIS ngay trước đó, xác nhận hoặc sửa nghĩa đen trước rồi mới thêm cá tính. Mẫu 'X là bạn/em á?' thường là "
+            "câu hỏi định danh về X vừa được ERIS nói, không phải user đặt biệt danh mới. Không tự đánh giá user, không đảo chủ thể, "
+            "không phát minh một premise khác để né câu hỏi. "
             "Memory chỉ là continuity, không chứng minh hiện tại. Grounding là nguồn thật cho màn hình/file/tool. "
             "Planner đã sở hữu tool intent; bạn không chọn, đổi hay claim tool đã thành công. "
             "performance_hint chỉ là một preset sân khấu ngắn, không viết stage direction vào text. Return JSON only."
@@ -674,6 +678,8 @@ class AIRuntimeModelRouter:
             "trên panel; đừng chỉ thông báo rằng Telemetry đang mở. Bạn được phép đưa ra một suy đoán xã hội rủi ro thấp "
             "nếu nói rõ cơ sở và dùng stance như 'có vẻ/tôi đoán/hình như', đồng thời để user sửa. "
             "Không được tự dựng rằng user đang định bắt đầu, thay đổi, sửa hay cảm thấy điều gì. "
+            "Tên process/cửa sổ, nhãn DEBUG, foreground state, PID, backend hay session id chỉ là runtime metadata: không biến "
+            "chúng thành ẩn dụ, bầu không khí, tính cách user hoặc câu chuyện bí ẩn. Nếu chỉ có metadata loại này, dùng persona_opening. "
             "Tránh câu onboarding/availability như 'Tôi ở đây', 'bắt đầu thôi', 'cần gì cứ nói', hoặc lời chào an toàn vô nghĩa. "
             "Nếu không có evidence hay open loop, vẫn viết một persona_opening có nét: ấm kín, hơi khô, tò mò hoặc trêu nhẹ; "
             "không được bịa fact bên ngoài để tạo cảm giác thông minh. "
@@ -792,6 +798,22 @@ class AIRuntimeModelRouter:
         text = " ".join(str(user_text or "").casefold().split())
         if not text:
             return "none"
+        if any(
+            marker in text
+            for marker in (
+                "là bạn á", "là em á", "là bạn hả", "là em hả", "có phải bạn", "có phải em",
+                "ý em là gì", "ý bạn là gì", "cái đó là gì", "cái này là gì", "tức là sao", "sao cơ",
+            )
+        ):
+            return "reference_clarification"
+        if any(
+            marker in text
+            for marker in (
+                "là em nghĩ tôi sẽ", "là bạn nghĩ tôi sẽ", "ý em là tôi", "ý bạn là tôi",
+                "em đang nghĩ tôi", "bạn đang nghĩ tôi",
+            )
+        ):
+            return "correction"
         technical = (
             "code", "repo", "log", "bug", "lỗi", "file", "tts", "api", "runtime",
             "godot", "fix", "sửa", "debug", "panel", "model",
@@ -1080,6 +1102,8 @@ class AIRuntimeModelRouter:
             "tool_intent phải rỗng hoặc thuộc danh sách: " + allowed + ". "
             "Không claim tool thành công. speak thường true cho chat; intrusion_risk gần 0. "
             "Nếu mơ hồ, để tool rỗng và ghi điều cần thận trọng trong notes."
+            " Nếu snapshot.reference_repair.active=true, bắt buộc strategy=direct_repair, tool rỗng, và topic phải yêu cầu "
+            "trả lời nghĩa đen của cụm trong previous_assistant_text trước. Không hiểu câu hỏi định danh thành biệt danh, banter hay đánh giá user."
         )
 
     def plan_chat(self, snapshot: Mapping[str, Any]) -> IntentionPlan:
@@ -1138,6 +1162,7 @@ class AIRuntimeModelRouter:
             "grounded_runtime_opening; open_loops/recent history/latest observation thật => continuity_opening; nếu tất cả đều rỗng "
             "=> persona_opening. Persona opening không cần external evidence nhưng chỉ được nói về thái độ/sự hiện diện của ERIS. "
             "Topic phải chỉ rõ source; không được suy từ chữ startup/runtime/telemetry rằng user đang định thay đổi hay bắt đầu việc gì. "
+            "runtime_metadata như process/window title, DEBUG label, foreground, PID, backend không đủ làm grounded_runtime_opening. "
             "Nếu có suy đoán về mood/intent, đó chỉ là low-risk hypothesis có căn cứ và cho phép user sửa. "
             "Không tạo câu thoại; topic chỉ là nội dung cần nói. Không bịa screen fact. "
             "intrusion_risk cao nếu user vừa bận, vừa chat, hoặc motive chỉ là boredom/silence. "

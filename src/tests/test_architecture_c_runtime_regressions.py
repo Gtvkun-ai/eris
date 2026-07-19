@@ -607,7 +607,8 @@ def test_startup_grounding_uses_fresh_telemetry_tab_evidence() -> None:
     assert bundle.has_strong_opening_anchor is True
     assert bundle.telemetry_surface_visible is True
     assert bundle.evidence_refs[0] == "screen:telemetry-status"
-    assert "runtime:active_app" in bundle.evidence_refs
+    assert "runtime:active_app" not in bundle.evidence_refs
+    assert bundle.runtime_metadata[0]["id"] == "active_app"
     assert "TTS queue" in bundle.prompt_context()
     assert "low-risk" in bundle.prompt_context()
 
@@ -692,6 +693,7 @@ def test_startup_runtime_signal_beats_persona_when_screen_is_empty() -> None:
                 "source": "runtime",
                 "text": "TTS recovered after cooldown",
                 "confidence": 0.82,
+                "opening_eligible": True,
             },
         ),
     )
@@ -704,6 +706,111 @@ def test_startup_runtime_signal_beats_persona_when_screen_is_empty() -> None:
     assert bundle.has_runtime_opening_anchor is True
     assert forced.strategy == "grounded_runtime_opening"
     assert forced.evidence_refs == ("runtime:recent_event_1",)
+
+
+def test_startup_foreground_debug_metadata_does_not_become_opening_anchor() -> None:
+    from types import SimpleNamespace
+
+    from runtime.ai_orchestrated.startup_grounding import _runtime_signal_payloads, StartupGroundingBundle
+
+    payloads = _runtime_signal_payloads(
+        SimpleNamespace(
+            recent_events=(),
+            active_app="Eris (DEBUG)",
+            active_window="Eris (DEBUG)",
+            focus_summary="Eris debug window is foreground",
+            cpu_percent=12.0,
+            ram_percent=31.0,
+        ),
+        now=time.time(),
+    )
+    bundle = StartupGroundingBundle(runtime_evidence=payloads)
+
+    assert bundle.has_runtime_opening_anchor is False
+    assert bundle.opening_source == "persona"
+    assert {item["id"] for item in bundle.runtime_metadata} == {"active_app", "focus_summary"}
+    assert bundle.evidence_refs == ()
+
+
+def test_reference_repair_resolves_eris_debug_identity_question() -> None:
+    from runtime.ai_orchestrated.reference_repair import resolve_reference_repair
+
+    history = (
+        {
+            "role": "assistant",
+            "content": "Eris (DEBUG) đang ở foreground — nhìn khá đúng kiểu một bối cảnh chưa muốn nói hết ngay.",
+        },
+    )
+    repair = resolve_reference_repair("eris debug là bạn á", history)
+
+    assert repair.active is True
+    assert repair.kind == "clarify_previous_reference_identity"
+    assert repair.referenced_phrase == "eris debug"
+    assert "literal runtime/window meaning" in repair.instruction
+
+
+def test_reference_repair_overrides_planner_and_removes_tool_intent() -> None:
+    from runtime.ai_orchestrated.contracts import IntentionPlan
+    from runtime.ai_orchestrated.reference_repair import (
+        apply_reference_repair_to_plan,
+        resolve_reference_repair,
+    )
+
+    repair = resolve_reference_repair(
+        "eris debug là bạn á",
+        ({"role": "assistant", "content": "Eris (DEBUG) đang ở foreground."},),
+    )
+    original = IntentionPlan.from_mapping(
+        {
+            "speak": True,
+            "motive": "respond_to_user",
+            "strategy": "quiet_counter_tease",
+            "topic": "Tease the user about a nickname.",
+            "importance": 0.5,
+            "confidence": 0.5,
+            "tool_intent": "open_panel",
+            "tool_input": "debug",
+        },
+        channel="chat",
+    )
+    fixed = apply_reference_repair_to_plan(original, repair)
+
+    assert fixed.strategy == "direct_repair"
+    assert fixed.motive == "repair_previous_miss"
+    assert fixed.performance_hint == "repair"
+    assert fixed.tool_intent == ""
+    assert fixed.evidence_refs == ("history:last_assistant",)
+
+
+def test_reference_repair_detects_challenge_to_previous_assumption() -> None:
+    from runtime.ai_orchestrated.reference_repair import resolve_reference_repair
+
+    repair = resolve_reference_repair(
+        "là em nghĩ tôi sẽ làm gì đó hả",
+        ({"role": "assistant", "content": "Chỗ này đang định thay đổi điều gì trước tiên?"},),
+    )
+
+    assert repair.active is True
+    assert repair.kind == "challenge_previous_assumption"
+    assert "repair the assumption" in repair.instruction
+
+
+def test_parser_marks_identity_reference_as_follow_up() -> None:
+    from domain import Decision
+    from parser_grounding.service import DecisionParser
+
+    parser = DecisionParser(Decision(text="", animation="stand"))
+    message = parser.build_chat_user_message(
+        user_message="eris debug là bạn á",
+        last_chat_answer="Eris (DEBUG) đang ở foreground.",
+    )
+
+    assert "Câu trả lời trước của bạn" in message
+    assert "Eris (DEBUG)" in message
+
+
+def test_current_turn_anchor_prefers_reference_clarification_over_debug_keyword() -> None:
+    assert AIRuntimeModelRouter._current_user_move_hint("eris debug là bạn á") == "reference_clarification"
 
 
 def test_startup_continuity_beats_persona_without_screen_or_runtime() -> None:
@@ -748,6 +855,7 @@ def test_hardening_fingerprint_covers_startup_screen_grounding() -> None:
 
     assert "runtime/ai_orchestrated/orchestrator.py" in DEFAULT_AUTHORITY_FILES
     assert "runtime/ai_orchestrated/model_router.py" in DEFAULT_AUTHORITY_FILES
+    assert "runtime/ai_orchestrated/reference_repair.py" in DEFAULT_AUTHORITY_FILES
     assert "runtime/ai_orchestrated/startup_grounding.py" in DEFAULT_AUTHORITY_FILES
     assert "screen/screen_relevance_router.py" in DEFAULT_AUTHORITY_FILES
 

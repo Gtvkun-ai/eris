@@ -19,6 +19,7 @@ from semantic_authority import SemanticAuthorityPolicy
 
 from .contracts import AI_RUNTIME_VERSION, IntentionPlan, StateEvent
 from .identity import PendingStrategyUse, PRIMARY_RELATIONSHIP_ID
+from .reference_repair import apply_reference_repair_to_plan, resolve_reference_repair
 from .startup_grounding import (
     build_startup_fallback_text,
     collect_startup_grounding,
@@ -144,6 +145,10 @@ class AIChatOrchestrator:
         host.chat_mode = True
         host._chat_last_activity_at = time.time()
         host.logger.info("Người dùng: %s", user_text)
+        prior_public_history = tuple(host._chat_history_for_llm(limit=16))
+        if previous_public_context and not prior_public_history:
+            prior_public_history = ({"role": "assistant", "content": previous_public_context},)
+        reference_repair = resolve_reference_repair(user_text, prior_public_history)
         host._append_chat_history("user", user_text)
 
         host._chat_snapshot_for_vision = snapshot
@@ -173,6 +178,16 @@ class AIChatOrchestrator:
         personality_context = mind_state.personality_prompt_context()
         relationship_context = mind_state.relationship.prompt_summary()
         grounding_context = str(getattr(grounding_report, "prompt_context", "") or "")
+        if reference_repair.active:
+            grounding_context = "\n".join(
+                part for part in (grounding_context, reference_repair.prompt_context()) if part
+            )
+            host.logger.info(
+                "[reference repair] kind=%s confidence=%.2f phrase=%s",
+                reference_repair.kind,
+                reference_repair.confidence,
+                reference_repair.referenced_phrase or "<implicit>",
+            )
         discovery_runtime = getattr(host, "ai_discovery_runtime", None)
         telemetry_payload = snapshot.to_machine_context() if callable(getattr(snapshot, "to_machine_context", None)) else {}
         discovery_context = (
@@ -192,11 +207,13 @@ class AIChatOrchestrator:
             "memory_available": bool(str(memory_context or "").strip()),
             "interrupt_context": speech_interrupt_context,
             "discovery": discovery_context,
+            "reference_repair": reference_repair.to_dict(),
         }
         chat_plan = host.ai_intention_planner.plan_chat(
             planning_snapshot,
             turn_seq=turn_seq,
         )
+        chat_plan = apply_reference_repair_to_plan(chat_plan, reference_repair)
         discovery_id = ""
         if discovery_runtime is not None:
             chat_plan, discovery_grounding, discovery_id = discovery_runtime.bind_plan(chat_plan)
@@ -458,12 +475,13 @@ class AIAutonomousOrchestrator:
         # tức là Eris bị buộc phải "có chất riêng" trong khi mắt còn nhắm.
         startup_grounding = collect_startup_grounding(host)
         host.logger.info(
-            "[architecture C startup grounding] direct=%s strong=%s telemetry_tab=%s evidence=%s runtime=%s backend=%s wait=%.2fs notes=%s",
+            "[architecture C startup grounding] direct=%s strong=%s telemetry_tab=%s evidence=%s runtime_opening=%s metadata=%s backend=%s wait=%.2fs notes=%s",
             int(startup_grounding.has_direct_screen_evidence),
             int(startup_grounding.has_strong_opening_anchor),
             int(startup_grounding.telemetry_surface_visible),
             len(startup_grounding.evidence),
-            len(startup_grounding.runtime_evidence),
+            len(startup_grounding.runtime_opening_evidence),
+            len(startup_grounding.runtime_metadata),
             startup_grounding.backend or "unknown",
             startup_grounding.waited_seconds,
             ",".join(startup_grounding.notes) or "none",
