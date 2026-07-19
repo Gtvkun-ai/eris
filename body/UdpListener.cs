@@ -344,16 +344,6 @@ public partial class UdpListener : Node2D
 		};
 		GetNode<Control>("CanvasLayer/Control").AddChild(_privateMindPanel);
 		BuildPrivateMindPanelUi();
-		_anchorPanel = new Panel
-		{
-			Name = "AnchorPanel",
-			Visible = false,
-			CustomMinimumSize = AnchorPanelMinSize,
-			Size = AnchorPanelMinSize,
-			ZIndex = 98,
-		};
-		GetNode<Control>("CanvasLayer/Control").AddChild(_anchorPanel);
-		BuildAnchorPanelUi();
 		_depthPanel = new Panel
 		{
 			Name = "DepthPanel",
@@ -384,8 +374,6 @@ public partial class UdpListener : Node2D
 	_contextEmotionButton.Pressed += OnContextEmotionPressed;
 	if (_contextPrivateMindButton != null)
 		_contextPrivateMindButton.Pressed += OnContextPrivateMindPressed;
-	if (_contextAnchorButton != null)
-		_contextAnchorButton.Pressed += OnContextAnchorPressed;
 	if (_contextDepthButton != null)
 		_contextDepthButton.Pressed += OnContextDepthPressed;
 	if (_contextSettingsButton != null)
@@ -402,7 +390,6 @@ public partial class UdpListener : Node2D
 		// Cho phép kéo-di-chuyển các panel nổi (kéo từ vùng nền, không đụng nút con).
 		MakePanelDraggable(_emotionPanel);
 		MakePanelDraggable(_privateMindPanel);
-		MakePanelDraggable(_anchorPanel);
 		MakePanelDraggable(_chatPanel);
 		MakePanelDraggable(_tutorPanel);
 		MakePanelDraggable(_depthPanel);
@@ -498,7 +485,6 @@ public partial class UdpListener : Node2D
 			|| (_characterContextMenu?.Visible ?? false)
 			|| (_emotionPanel?.Visible ?? false)
 			|| (_privateMindPanel?.Visible ?? false)
-			|| (_anchorPanel?.Visible ?? false)
 			|| (_depthPanel?.Visible ?? false)
 			|| (_settingsPanel?.Visible ?? false)
 			|| _grabModeArmed
@@ -1204,13 +1190,6 @@ public partial class UdpListener : Node2D
 				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
 				container.MoveChild(_contextPrivateMindButton, Mathf.Max(0, closeIndex));
 			}
-			if (_contextAnchorButton == null)
-			{
-				_contextAnchorButton = new Button { Name = "AnchorButton" };
-				container.AddChild(_contextAnchorButton);
-				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
-				container.MoveChild(_contextAnchorButton, Mathf.Max(0, closeIndex));
-			}
 			if (_contextDepthButton == null)
 			{
 				_contextDepthButton = new Button { Name = "DepthButton" };
@@ -1239,7 +1218,6 @@ public partial class UdpListener : Node2D
 		ConfigureContextMenuButton(_contextForceSpeakButton, "Noi ngay", "res://asset/Resource/force.png");
 		ConfigureContextMenuButton(_contextEmotionButton, "Cam xuc", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextPrivateMindButton, "Nhật ký nội tâm", "res://asset/Resource/emotion.png");
-		ConfigureContextMenuButton(_contextAnchorButton, "Quan he & Belief", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextDepthButton, "Identity Runtime", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextSettingsButton, "Cai dat", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextExitButton, "Thoat ERIS", "res://asset/Resource/exit.png");
@@ -3740,8 +3718,6 @@ public partial class UdpListener : Node2D
 				SavePrivateMindState();
 				if (_privateMindPanel != null && _privateMindPanel.Visible)
 					RefreshPrivateMindPanel();
-				if (_anchorPanel != null && _anchorPanel.Visible)
-					RefreshAnchorPanel();
 			}
 		}
 		TryCaptureDepthV2Block(raw);
@@ -3943,7 +3919,6 @@ public partial class UdpListener : Node2D
 				&& root.TryGetProperty("menu", out var m) && m.ValueKind == JsonValueKind.Object)
 				menu = m;
 			return IsModernIdentityDigest(root)
-				|| PrivateMindAnchorHasContent(root)
 				|| ExtractCurrentThought(menu, root).Count > 0
 				|| ExtractFutureThought(menu, root).Count > 0
 				|| ExtractConcerns(menu).Count > 0
@@ -3956,27 +3931,6 @@ public partial class UdpListener : Node2D
 		}
 	}
 
-	private static bool PrivateMindAnchorHasContent(JsonElement root)
-	{
-		// Anchor/Mô Hình Ngài là dữ liệu panel riêng, không nhất thiết đi kèm
-		// current_thought/open_concerns. Nếu không tính nó là "content", body có thể
-		// bỏ qua digest chỉ đổi trục neo và panel đứng yên dù Python đã gửi đúng.
-		if (root.ValueKind != JsonValueKind.Object)
-			return false;
-		if (!root.TryGetProperty("anchor", out var anchor) || anchor.ValueKind != JsonValueKind.Object)
-			return false;
-		if (anchor.TryGetProperty("user_model", out var userModel) && userModel.ValueKind == JsonValueKind.Object)
-			return true;
-		if (anchor.TryGetProperty("significance", out var significance) && significance.ValueKind == JsonValueKind.Object)
-			return true;
-		if (anchor.TryGetProperty("attachment", out var attachment) && attachment.ValueKind == JsonValueKind.Object)
-			return true;
-		if (anchor.TryGetProperty("switches", out var switches) && switches.ValueKind == JsonValueKind.Object)
-			return true;
-		if (anchor.TryGetProperty("deception", out var deception) && deception.ValueKind == JsonValueKind.Object)
-			return true;
-		return anchor.TryGetProperty("shadow", out var shadow) && shadow.ValueKind == JsonValueKind.Object;
-	}
 
 	private void SavePrivateMindState()
 	{

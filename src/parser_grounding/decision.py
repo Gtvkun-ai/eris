@@ -1416,11 +1416,15 @@ class ParserGroundingMixin:
         # ``debug_trace`` is runtime-owned. Model-authored traces are discarded;
         # parser diagnostics remain available through ``parser_trace``/logs.
         debug_trace = ""
-        intent = ""
-        action = ""
-        reasoning_tags = ()
+        intent = self._normalize_salvaged_text(str(decision.get("intent", "") or ""))[:80]
+        action_value = decision.get("action", "")
+        action = self._normalize_salvaged_text(str(action_value or ""))[:80] if not isinstance(action_value, dict) else ""
+        reasoning_tags = self._coerce_reasoning_tags(decision.get("reasoning_tags", ()))
+        overclaims = self._collect_performance_overclaims(text)
+        if overclaims and any(self._is_banter_overclaim(clause, user_hint=user_hint) for clause in overclaims):
+            reasoning_tags = tuple(dict.fromkeys((*reasoning_tags, "banter_capability_fantasy", "deception_candidate")))
         should_speak = self._coerce_bool(decision.get("should_speak", bool(text)), fallback=bool(text))
-        confidence = 0.0
+        confidence = self._coerce_confidence(decision.get("confidence", 0.0), fallback=0.0)
         parse_mode = str(decision.get("parse_mode", "json")).strip() or "json"
         failure_meta = normalize_failure_meta(decision.get("failure_meta"))
         # Public text passthrough: parser không sửa lời thoại theo capability nữa.

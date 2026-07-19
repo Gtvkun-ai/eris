@@ -190,42 +190,23 @@ public partial class UdpListener : Node2D
 		bool clearAnchorUserModel,
 		bool resetAnchorControls)
 	{
-		// reset_anchor_state chỉ reset switch/override của Tác Giả. Không được xóa
-		// significance, attachment hay user model vốn không bị backend đụng tới.
-		if (resetAnchorControls && !clearAnchor && !clearAnchorUserModel && !clearPrivateMind)
-		{
-			_latestPrivateMindDebugJson = ApplyAnchorControlsBaselineToCache(_latestPrivateMindDebugJson);
-			PersistPrivateMindCacheAfterMaintenance();
-			_anchorSwitchOverrides.Clear();
-			ApplyAnchorResetAfterMaintenance();
-			return;
-		}
-
+		// Anchor/Shadow/Fe panel đã bị xoá. Các action cũ vẫn được chấp nhận
+		// để backend không gãy, nhưng UI chỉ làm sạch digest legacy rồi chờ
+		// Identity Runtime gửi snapshot mới. Một nguồn sự thật là đủ rồi.
 		_latestPrivateMindDebugJson = SanitizePrivateMindCache(
 			_latestPrivateMindDebugJson,
 			clearPrivateMind,
-			clearAnchor,
+			clearAnchor || resetAnchorControls,
 			clearAnchorUserModel);
 
 		PersistPrivateMindCacheAfterMaintenance();
-
 		if (clearPrivateMind)
 		{
 			_diaryConcernData.Clear();
 			_diaryConcernExpanded = false;
-			if (_privateMindSectionList != null && _privateMindText != null)
-				RefreshPrivateMindPanel();
 		}
-
-		if (clearAnchor || clearAnchorUserModel || resetAnchorControls)
-		{
-			_anchorSwitchOverrides.Clear();
-			_anchorData = new AnchorData();
-			if (resetAnchorControls && !clearAnchor)
-				ApplyAnchorResetAfterMaintenance();
-			else if (_anchorContent != null && _anchorRail != null)
-				RefreshAnchorPanel();
-		}
+		if (_privateMindSectionList != null && _privateMindText != null)
+			RefreshPrivateMindPanel();
 	}
 
 	private static string SanitizePrivateMindCache(
@@ -234,9 +215,7 @@ public partial class UdpListener : Node2D
 		bool clearAnchor,
 		bool clearAnchorUserModel)
 	{
-		if (string.IsNullOrWhiteSpace(raw))
-			return "";
-		if (clearPrivateMind && clearAnchor)
+		if (string.IsNullOrWhiteSpace(raw) || clearPrivateMind)
 			return "";
 
 		try
@@ -247,66 +226,18 @@ public partial class UdpListener : Node2D
 
 			JsonObject digest = SelectPrivateMindDigestNode(root);
 			if (digest == null)
-				return clearPrivateMind ? "" : raw;
-
-			if (clearPrivateMind)
-			{
-				if (digest["anchor"] is not JsonObject anchorObject)
-					return "";
-
-				JsonObject keptAnchor = CloneJsonNode(anchorObject) as JsonObject;
-				if (keptAnchor == null)
-					return "";
-				if (clearAnchorUserModel)
-					keptAnchor.Remove("user_model");
-
-				return new JsonObject
-				{
-					["anchor"] = keptAnchor,
-				}.ToJsonString();
-			}
+				return raw;
 
 			if (clearAnchor)
 				digest.Remove("anchor");
 			else if (clearAnchorUserModel && digest["anchor"] is JsonObject anchor)
 				anchor.Remove("user_model");
-
 			return root.ToJsonString();
 		}
 		catch (Exception ex)
 		{
 			GD.PrintErr($"[DangerZone][UI] Không sanitize được private-mind cache: {ex.Message}");
 			return "";
-		}
-	}
-
-	private static string ApplyAnchorControlsBaselineToCache(string raw)
-	{
-		if (string.IsNullOrWhiteSpace(raw))
-			return "";
-
-		try
-		{
-			JsonNode rootNode = JsonNode.Parse(raw);
-			if (rootNode is not JsonObject root)
-				return raw;
-
-			JsonObject digest = SelectPrivateMindDigestNode(root);
-			if (digest?["anchor"] is not JsonObject anchor)
-				return raw;
-
-			JsonObject switches = anchor["switches"] as JsonObject ?? new JsonObject();
-			anchor["switches"] = switches;
-			switches["shadow_enabled"] = false;
-			switches["deception_enabled"] = false;
-			switches["strict_grounding"] = true;
-			switches["safe_mode"] = true;
-			return root.ToJsonString();
-		}
-		catch (Exception ex)
-		{
-			GD.PrintErr($"[DangerZone][UI] Không cập nhật được anchor switch cache: {ex.Message}");
-			return raw;
 		}
 	}
 

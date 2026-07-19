@@ -1,3 +1,0 @@
-17 passed in 3.58s  - tests/test_scripted_take.py
-32 passed in 3.74s  - scripted_take + stage dispatcher/contracts/ownership/transformers + TTS events/task start sync
-COMPILE_OK          - python -m compileall -q runtime tests

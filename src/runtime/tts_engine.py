@@ -106,12 +106,24 @@ def _quality_mode() -> str:
 
 
 def _output_volume() -> float:
+    raw = os.environ.get("ERIS_TTS_VOLUME", "").strip()
+    if raw:
+        try:
+            return max(0.0, min(1.0, float(raw)))
+        except ValueError:
+            pass
     from runtime.runtime_settings_store import runtime_float
     value = runtime_float("tts", "volume", default=1.0)
     return max(0.0, min(1.0, value))
 
 
 def _speech_speed() -> float:
+    raw = os.environ.get("ERIS_TTS_SPEED", "").strip()
+    if raw:
+        try:
+            return max(0.85, min(1.15, float(raw)))
+        except ValueError:
+            pass
     from runtime.runtime_settings_store import runtime_float
     value = runtime_float("tts", "speed", default=1.0)
     return max(0.85, min(1.15, value))
@@ -1473,12 +1485,10 @@ class _TtsWorker:
 
     def _request_language(self, req: _SpeakRequest) -> str:
         configured = _normalize_language_hint(self._language_hint)
-        # Runtime TTS language is the hard voice identity. Stage/chat contracts can
-        # describe the source text, but they must not make fallback speak Vietnamese
-        # when the user pinned Eris to Japanese.
-        if configured in {"ja", "en"}:
-            return configured
-        return _normalize_language_hint(req.language_hint or configured)
+        # Contract của từng turn có quyền cao hơn cấu hình worker. Voice/provider
+        # không được tự dịch transcript sang ngôn ngữ khác. ``configured`` chỉ là
+        # fallback cho preview hoặc request legacy không mang speech contract.
+        return _normalize_language_hint(req.language_hint or configured or "vi")
 
     def _request_voice(self, req: _SpeakRequest) -> str:
         requested = str(req.voice_family or "").strip()
@@ -1488,9 +1498,6 @@ class _TtsWorker:
 
     def _request_locale(self, req: _SpeakRequest) -> str:
         language = self._request_language(req)
-        configured = _normalize_language_hint(self._language_hint)
-        if configured in {"ja", "en"}:
-            return _same_language_locale(language)
         return _same_language_locale(language, req.locale)
 
     def _vocal_prefix_wav(

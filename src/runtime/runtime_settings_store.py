@@ -32,6 +32,8 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "startup_greeting": True,
     },
     "chat": {
+        # Ngôn ngữ câu public là contract cognition riêng, không mượn cấu hình TTS.
+        "language": "vi",
         "semantic_authority_mode": "primary_model",
         "reasoning_effort": "medium",
         "support_confidence_threshold": 0.48,
@@ -188,6 +190,7 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
 _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
     ("architecture", "mode"): ("ERIS_RUNTIME_ARCHITECTURE", "str"),
     ("architecture", "startup_greeting"): ("ERIS_AI_STARTUP_GREETING_ENABLED", "bool"),
+    ("chat", "language"): ("ERIS_CHAT_LANGUAGE", "str"),
     ("chat", "semantic_authority_mode"): ("ERIS_SEMANTIC_AUTHORITY", "str"),
     ("chat", "reasoning_effort"): ("ERIS_REASONING_EFFORT", "str"),
     ("chat", "support_confidence_threshold"): ("ERIS_QWEN_SUPPORT_CONFIDENCE", "float"),
@@ -643,6 +646,7 @@ def _coerce_setting(path: str, value: Any, expected: Any) -> tuple[bool, Any]:
     # Whitelist/range theo field. Schema kiểu dữ liệu thôi chưa đủ, vì con người
     # rất sáng tạo trong việc nhập 9000 worker rồi hỏi sao máy nóng.
     enum_values: dict[str, set[str]] = {
+        "chat.language": {"vi", "ja", "en"},
         "chat.semantic_authority_mode": {"primary_model", "qwen_first", "legacy"},
         "chat.reasoning_effort": {"low", "medium", "high"},
         "chat.critique_mode": {"off", "advisory", "bounded_refine"},

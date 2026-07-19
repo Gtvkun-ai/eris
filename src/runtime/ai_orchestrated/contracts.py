@@ -35,7 +35,7 @@ from .personality import (
 )
 
 
-AI_RUNTIME_VERSION = "ai_orchestrated.v5.identity_expression_panel_sync"
+AI_RUNTIME_VERSION = "ai_orchestrated.v5.1.language_contract"
 
 
 def clamp01(value: Any, default: float = 0.0) -> float:

@@ -18,6 +18,7 @@ from types import SimpleNamespace
 #traceback: log lỗi chi tiết.
 #unicodedata: chuẩn hóa Unicode, ví dụ tiếng Việt dấu má, thứ mà máy tính ghét bằng một tình yêu thầm kín.
 from dataclasses import dataclass, replace
+from collections.abc import Mapping
 '''
 dataclass: tạo class dữ liệu gọn hơn.
 replace: copy dataclass và đổi vài field.
@@ -81,6 +82,7 @@ from cortex.working_memory import WorkingMemoryEngine
 from domain import Decision
 from failure_meta import is_technical_failure_meta
 from runtime.public_payload_policy import sanitize_body_payload
+from runtime.post_generation_filters import PostGenerationFiltersMixin
 from runtime.autonomous_wake_governor import AutonomousWakeGovernor, WakeDecision
 from runtime.autonomous_orchestrator import AutonomousPerformerOrchestrator, AutonomousPlan
 from runtime.autonomous_cycle import AutonomousCycleMixin
@@ -234,6 +236,7 @@ def _is_nonsemantic_fallback_decision(decision: Decision) -> bool:
 
 
 class RuntimeCoordinator(
+    PostGenerationFiltersMixin,
     CognitiveCycleMixin,
     ChatCycleMixin,
     AutonomousCycleMixin,
@@ -2088,7 +2091,10 @@ class RuntimeCoordinator(
             payload["private_life_digest"] = private_life_digest
         # Stage transport consumes the Decision directly; no director/scorer pass.
         from runtime.runtime_settings_store import runtime_text
-        stage_language = runtime_text("tts", "language", default="vi").strip() or "vi"
+        # Stage/TTS phải theo ngôn ngữ câu public của turn, không theo voice config.
+        stage_language = runtime_text("chat", "language", default="vi").strip().lower() or "vi"
+        if stage_language in {"", "auto"}:
+            stage_language = "vi"
         stage_builder = getattr(self, "stage_frame_builder", None)
         if stage_builder is None or str(getattr(stage_builder, "language_hint", "auto")) != stage_language:
             # StageFrame là lớp dịch giữa Decision và sân khấu.  Giữ lazy-init để
@@ -9301,10 +9307,15 @@ class RuntimeCoordinator(
         return (time.time() - last) >= window
 
     def _run_loop_iteration(self) -> bool:
-        """Run a single coordinator loop iteration.
+        """Run one loop iteration through Architecture C when it is active.
 
-        Returns True to keep looping, False to break the run_loop.
+        The legacy body of this method remains as an explicit rollback path only.
+        Keeping the delegation here is essential because methods defined on the
+        concrete class override the same helper in ``AutonomousCycleMixin``.
         """
+
+        if bool(getattr(self, "ai_runtime_enabled", False)) and getattr(self, "ai_autonomous_orchestrator", None) is not None:
+            return bool(self.ai_autonomous_orchestrator.run_iteration())
 
         if not self.body_running_fn():
             self.stop()

@@ -67,10 +67,14 @@ class NormalizedSettingsMessage:
 def normalize_settings_message(msg: Mapping[str, Any]) -> NormalizedSettingsMessage:
     scope = str(msg.get("scope", "runtime") or "runtime").strip().lower()
     if scope == "tts":
+        language = _language(msg.get("tts_language", "vi"))
         patch = {
+            # Body đang có một selector "Ngôn ngữ". Nó điều khiển cả transcript
+            # public lẫn TTS; hai tầng vẫn giữ contract riêng trong runtime.
+            "chat": {"language": language},
             "tts": {
                 "enabled": _bool(msg.get("tts_enabled", True)),
-                "language": _language(msg.get("tts_language", "vi")),
+                "language": language,
                 "voice": str(msg.get("tts_voice", "Aoede") or "Aoede").strip(),
                 "quality": str(msg.get("tts_quality", "high") or "high").strip().lower(),
                 "volume": _float(msg.get("tts_volume", 1.0), 1.0),
@@ -174,7 +178,7 @@ def _float(value: Any, fallback: float) -> float:
 def _language(value: Any) -> str:
     raw = str(value or "vi").strip().lower()
     aliases = {
-        "auto": "ja", "jp": "ja", "japanese": "ja", "ja-jp": "ja",
+        "auto": "vi", "jp": "ja", "japanese": "ja", "ja-jp": "ja",
         "vi-vn": "vi", "vietnamese": "vi",
         "en-us": "en", "english": "en",
     }

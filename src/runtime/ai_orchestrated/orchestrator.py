@@ -36,11 +36,24 @@ def architecture_c_enabled() -> bool:
 
 
 def _runtime_language() -> str:
+    """Ngôn ngữ câu public của Main AI.
+
+    Không đọc ``tts.language``: giọng/locale là tầng phát âm, không có quyền đổi
+    ngôn ngữ suy nghĩ của Eris. Bản cũ ghép hai contract này nên ``auto`` ở Body
+    bị chuẩn hóa thành ``ja`` và startup đột nhiên nói tiếng Nhật.
+    """
     try:
         from runtime.runtime_settings_store import runtime_text
-        return str(runtime_text("tts", "language", default="vi") or "vi").strip().lower() or "vi"
+        raw = str(runtime_text("chat", "language", default="vi") or "vi").strip().lower()
     except Exception:
-        return "vi"
+        raw = "vi"
+    aliases = {
+        "": "vi", "auto": "vi", "vn": "vi", "vi-vn": "vi", "vietnamese": "vi",
+        "jp": "ja", "ja-jp": "ja", "japanese": "ja",
+        "en-us": "en", "english": "en",
+    }
+    language = aliases.get(raw, raw)
+    return language if language in {"vi", "ja", "en"} else "vi"
 
 
 def _next_ai_turn_seq(host: Any, *, fallback: int = 1) -> int:
@@ -276,7 +289,7 @@ class AIChatOrchestrator:
         hint = str(getattr(decision, "performance_hint", "") or "").strip().lower()
         if not hint or hint == "neutral":
             hint = str(getattr(chat_plan, "performance_hint", "") or "neutral")
-        host.ai_stage_planner.apply(decision, hint, state=state, channel="chat")
+        host.ai_stage_planner.apply(decision, hint, state=mind_state, channel="chat")
         decision = host._execute_system_action(decision, snapshot=snapshot, frame=None)
         public_text, assistant_meta = self._commit(decision)
         if public_text and discovery_id and discovery_runtime is not None:

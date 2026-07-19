@@ -68,7 +68,7 @@ public partial class UdpListener : Node2D
 	private ulong _settingsNextRuntimeRefreshMs;
 	private bool _settingsTtsEnabled = true;
 	private string _settingsTtsVoice = "Aoede";
-	private string _settingsTtsLanguage = "auto";
+	private string _settingsTtsLanguage = "vi";
 	private string _settingsTtsQuality = "high";
 	private float _settingsTtsVolume = 1.00f;
 	private float _settingsTtsSpeed = 1.00f;
@@ -891,7 +891,7 @@ public partial class UdpListener : Node2D
 		parent.AddChild(tts);
 
 		_settingsVoiceSelect = AddSettingsOptionRow(parent, 78f, "Giọng", new[] { "Aoede", "Leda", "Achernar", "Kore", "Callirrhoe" }, _settingsTtsVoice);
-		_settingsLanguageSelect = AddSettingsOptionRow(parent, 118f, "Ngôn ngữ", new[] { "auto", "vi", "ja", "en" }, _settingsTtsLanguage);
+		_settingsLanguageSelect = AddSettingsOptionRow(parent, 118f, "Ngôn ngữ", new[] { "vi", "ja", "en" }, _settingsTtsLanguage);
 		_settingsQualitySelect = AddSettingsOptionRow(parent, 158f, "Chất lượng", new[] { "balanced", "high" }, _settingsTtsQuality);
 		_settingsVoiceSelect.ItemSelected += _ => ApplyLiveTtsSettingsFromPanel("giọng");
 		_settingsLanguageSelect.ItemSelected += _ => ApplyLiveTtsSettingsFromPanel("ngôn ngữ");
@@ -1783,8 +1783,8 @@ public partial class UdpListener : Node2D
 		string lang = (value ?? "").Trim().ToLowerInvariant();
 		return lang switch
 		{
-			"" => "ja",
-			"auto" => "ja",
+			"" => "vi",
+			"auto" => "vi",
 			"jp" => "ja",
 			"japanese" => "ja",
 			"ja-jp" => "ja",

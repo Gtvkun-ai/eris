@@ -428,6 +428,10 @@ class ApiKeyPool:
                 "global_cooldown_ms": int(max(0.0, self._global_cooldown_until - now) * 1000),
             }
 
+    def health_snapshot(self) -> dict[str, object]:
+        """Alias rõ nghĩa cho Settings UI; không bao giờ trả raw API key."""
+        return self.snapshot()
+
     def snapshot(self) -> dict[str, object]:
         """Trả health an toàn cho Settings UI, tuyệt đối không lộ raw API key.
 
