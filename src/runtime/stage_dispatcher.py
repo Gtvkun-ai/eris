@@ -88,6 +88,42 @@ def _opening_hold_ms(frame: StageFrame) -> int:
         return 0
 
 
+def _inline_frame(frame_list: list[StageFrame]) -> StageFrame | None:
+    """Gộp logical segments thành một performance/audio liền mạch."""
+
+    if not frame_list:
+        return None
+    base = frame_list[0]
+    joined = _join_tts_segments(frame_list)
+    if not joined:
+        return None
+    notes = base.prosody_notes
+    if len(frame_list) > 1:
+        notes = (
+            f"{notes} Perform the full transcript as one continuous human utterance across "
+            f"all {len(frame_list)} logical segments. Keep the same timbre, breath, volume, "
+            "and emotional trajectory across boundaries; never restart the voice as if a new "
+            "clip began. Let commas and em dashes become soft thought-pauses, and sentence "
+            "boundaries become brief natural breaths with a little vocal carry into the next "
+            "phrase. Pauses may be audible, but never use dead air, abrupt cuts, or metronomic timing."
+        ).strip()
+    inline_delivery = dict(base.delivery) if isinstance(base.delivery, dict) else {}
+    inline_delivery.update({
+        "_inline_joined": True,
+        "_inline_joined_segment_ids": [int(frame.segment_id) for frame in frame_list],
+        "_inline_joined_count": len(frame_list),
+    })
+    return replace(
+        base,
+        segment_id=base.segment_id,
+        display_text=joined,
+        tts_text=joined,
+        memory_text=joined,
+        prosody_notes=notes,
+        delivery=inline_delivery,
+    )
+
+
 class StageDispatcher:
     def __init__(self, *, profile: object | None = None) -> None:
         if isinstance(profile, str):
@@ -129,6 +165,18 @@ class StageDispatcher:
         if opening_hold > 0:
             time.sleep(opening_hold / 1000.0)
 
+        dispatch_mode = (
+            _dispatch_mode()
+            if os.environ.get("ERIS_TTS_SEGMENT_DISPATCH", "").strip()
+            else str(getattr(self._profile(), "dispatch_mode", "inline") or "inline")
+        )
+        dispatch_frames = frame_list
+        if dispatch_mode == "inline":
+            joined_frame = _inline_frame(frame_list)
+            if joined_frame is None:
+                return False
+            dispatch_frames = [joined_frame]
+
         manager_enabled = (
             _task_manager_enabled()
             if os.environ.get("ERIS_TTS_TASK_MANAGER", "").strip()
@@ -157,7 +205,7 @@ class StageDispatcher:
                     if hasattr(manager, "max_prefetch_segments"):
                         manager.max_prefetch_segments = int(getattr(self._profile(), "max_prefetch_segments", 4) or 4)
                 scheduled = manager.dispatch_frames(
-                    frame_list,
+                    dispatch_frames,
                     backend=tts_engine,
                     valence=valence,
                     arousal=arousal,
@@ -172,11 +220,6 @@ class StageDispatcher:
                 # Fallback giữ Eris có tiếng nói kể cả khi manager mới lỗi.
                 pass
 
-        dispatch_mode = (
-            _dispatch_mode()
-            if os.environ.get("ERIS_TTS_SEGMENT_DISPATCH", "").strip()
-            else str(getattr(self._profile(), "dispatch_mode", "inline") or "inline")
-        )
         if dispatch_mode == "inline" or len(frame_list) == 1:
             return self._dispatch_inline(
                 frame_list,
@@ -211,17 +254,9 @@ class StageDispatcher:
         on_event: Callable[[Any, StageFrame], None] | None,
         speech_epoch: int,
     ) -> bool:
-        base = frame_list[0]
-        joined = _join_tts_segments(frame_list)
-        if not joined:
+        inline_frame = _inline_frame(frame_list)
+        if inline_frame is None:
             return False
-        notes = base.prosody_notes
-        if len(frame_list) > 1:
-            notes = (
-                f"{notes} Read the transcript as one continuous turn with natural short pauses "
-                f"between the {len(frame_list)} sentence segments; do not insert long silence. "
-                "Treat punctuation as short intentional speech beats."
-            ).strip()
         # Inline là một audio duy nhất cho nhiều logical segment. Contract cũ
         # từng giữ display_text của frame đầu (thường chỉ là "Khoan.") và còn
         # ép segment_id về 0. Kết quả: bubble đứng ở câu đầu; nhóm inline sau
@@ -230,22 +265,6 @@ class StageDispatcher:
         # Giữ ID thật của frame đầu trong group và công bố đúng transcript mà
         # audio đang đọc. Không thể đổi bubble giữa một file audio nếu backend
         # không có timestamp, nhưng ít nhất text và âm thanh phải cùng một sự thật.
-        inline_delivery = dict(base.delivery) if isinstance(base.delivery, dict) else {}
-        inline_delivery.update({
-            "_inline_joined": True,
-            "_inline_joined_segment_ids": [int(frame.segment_id) for frame in frame_list],
-            "_inline_joined_count": len(frame_list),
-        })
-        inline_frame = replace(
-            base,
-            segment_id=base.segment_id,
-            display_text=joined,
-            tts_text=joined,
-            memory_text=joined,
-            prosody_notes=notes,
-            delivery=inline_delivery,
-        )
-
         def event_callback(event, *, _frame=inline_frame):
             if on_event is not None:
                 on_event(event, _frame)

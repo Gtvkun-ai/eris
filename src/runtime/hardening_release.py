@@ -41,6 +41,8 @@ DEFAULT_AUTHORITY_FILES = (
     "runtime/speech_persona_polish.py",
     "runtime/tts_engine.py",
     "runtime/runtime_settings_store.py",
+    "runtime/ai_orchestrated/orchestrator.py",
+    "runtime/ai_orchestrated/model_router.py",
     "runtime/ai_orchestrated/startup_grounding.py",
     "screen/screen_relevance_router.py",
     "runtime/tts_circuit_breaker.py",

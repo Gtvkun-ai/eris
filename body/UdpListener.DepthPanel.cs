@@ -9,8 +9,8 @@ public partial class UdpListener : Node2D
 	// Panel cũ "Chiều sâu" từng phụ thuộc Ni/Fe/ToM legacy. Từ Architecture C v5,
 	// nó trở thành bảng Identity & Life Runtime, đọc đúng một contract
 	// identity_runtime. Tên method/field cũ được giữ để không làm vỡ UdpListener.
-	private static readonly Vector2 DepthPanelMinSize = new(1240f, 820f);
-	private const float DepthPanelMargin = 14f;
+	private static readonly Vector2 DepthPanelMinSize = new(1400f, 820f);
+	private const float DepthPanelMargin = 8f;
 
 	private Panel _depthPanel;
 	private Button _contextDepthButton;
@@ -125,9 +125,9 @@ public partial class UdpListener : Node2D
 		var root = new VBoxContainer
 		{
 			Name = "IdentityRuntimeRoot",
-			OffsetLeft = 22f,
+			OffsetLeft = 18f,
 			OffsetTop = 14f,
-			OffsetRight = -22f,
+			OffsetRight = -18f,
 			OffsetBottom = -14f,
 		};
 		root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
@@ -152,8 +152,10 @@ public partial class UdpListener : Node2D
 
 		_depthLearningChip = NewChip("LEARNING ?", new Color(0.93f, 0.99f, 0.96f), IdentityGreen);
 		_depthLearningChip.CustomMinimumSize = new Vector2(180f, 36f);
+		_depthLearningChip.SizeFlagsHorizontal = Control.SizeFlags.ShrinkEnd;
 		_depthTurnChip = NewChip("TURN 0 · STATE 0", new Color(0.95f, 0.97f, 1f), IdentityBlue);
 		_depthTurnChip.CustomMinimumSize = new Vector2(180f, 36f);
+		_depthTurnChip.SizeFlagsHorizontal = Control.SizeFlags.ShrinkEnd;
 		header.AddChild(_depthLearningChip);
 		header.AddChild(_depthTurnChip);
 
@@ -234,11 +236,11 @@ public partial class UdpListener : Node2D
 		controls.AddThemeConstantOverride("separation", 10);
 		actionPad.AddChild(controls);
 		_depthFreezeButton = NewFooterButton("Đóng băng học", IdentityAsset("identity_action_freeze.png"), "❄", ToggleIdentityLearning, IdentityBlue);
-		controls.AddChild(_depthFreezeButton);
-		controls.AddChild(NewFooterButton("Xuất snapshot", IdentityAsset("identity_action_export.png"), "⇩", () => SendDebugCommand("identity snapshot"), new Color(0.42f, 0.48f, 0.88f, 1f)));
-		controls.AddChild(NewFooterButton("Reset mood", IdentityAsset("identity_action_reset_mood.png"), "☺", () => SendDebugCommand("identity reset mood"), IdentityPink));
-		controls.AddChild(NewFooterButton("Reset quan hệ", IdentityAsset("identity_action_reset_relationship.png"), "♧", () => SendDebugCommand("identity reset relationship"), IdentityAccent));
-		controls.AddChild(NewFooterButton("Reset discovery", IdentityAsset("identity_action_reset_discovery.png"), "✦", () => SendDebugCommand("identity reset discovery"), IdentityOrange));
+		controls.AddChild(WrapHBoxControl(_depthFreezeButton, 46f));
+		controls.AddChild(WrapHBoxControl(NewFooterButton("Xuất snapshot", IdentityAsset("identity_action_export.png"), "⇩", () => SendDebugCommand("identity snapshot"), new Color(0.42f, 0.48f, 0.88f, 1f)), 46f));
+		controls.AddChild(WrapHBoxControl(NewFooterButton("Reset mood", IdentityAsset("identity_action_reset_mood.png"), "☺", () => SendDebugCommand("identity reset mood"), IdentityPink), 46f));
+		controls.AddChild(WrapHBoxControl(NewFooterButton("Reset quan hệ", IdentityAsset("identity_action_reset_relationship.png"), "♧", () => SendDebugCommand("identity reset relationship"), IdentityAccent), 46f));
+		controls.AddChild(WrapHBoxControl(NewFooterButton("Reset discovery", IdentityAsset("identity_action_reset_discovery.png"), "✦", () => SendDebugCommand("identity reset discovery"), IdentityOrange), 46f));
 
 		BuildDepthScrollDecoration();
 		RefreshDepthTabStyle();
@@ -362,7 +364,27 @@ public partial class UdpListener : Node2D
 			button.AddThemeConstantOverride("icon_max_width", 26);
 		}
 		_depthTabButtons.Add(button);
-		parent.AddChild(button);
+		parent.AddChild(WrapHBoxControl(button, 46f));
+	}
+
+	private Control WrapHBoxControl(Control child, float height)
+	{
+		var slot = new Control
+		{
+			CustomMinimumSize = new Vector2(0f, height),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			SizeFlagsStretchRatio = 1f,
+			ClipContents = true,
+		};
+		child.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+		child.OffsetLeft = 0f;
+		child.OffsetTop = 0f;
+		child.OffsetRight = 0f;
+		child.OffsetBottom = 0f;
+		child.CustomMinimumSize = new Vector2(0f, height);
+		child.SizeFlagsHorizontal = Control.SizeFlags.Fill;
+		slot.AddChild(child);
+		return slot;
 	}
 
 
@@ -703,7 +725,7 @@ public partial class UdpListener : Node2D
 		var card = NewIdentityCard("Identity → Stage Expression", IdentityAsset("identity_card_stage.png"), "✧", IdentityPink, 245f);
 		card.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
 		card.SizeFlagsStretchRatio = 1.04f;
-		card.CustomMinimumSize = new Vector2(292f, 245f);
+		card.CustomMinimumSize = new Vector2(248f, 245f);
 		parent.AddChild(card);
 		var box = (VBoxContainer)card.GetChild(0);
 		var content = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
@@ -733,7 +755,7 @@ public partial class UdpListener : Node2D
 		var card = NewIdentityCard("Discovery sẵn sàng", IdentityAsset("identity_card_discovery.png"), "♢", IdentityOrange, 245f);
 		card.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
 		card.SizeFlagsStretchRatio = 0.96f;
-		card.CustomMinimumSize = new Vector2(272f, 245f);
+		card.CustomMinimumSize = new Vector2(248f, 245f);
 		parent.AddChild(card);
 		var box = (VBoxContainer)card.GetChild(0);
 		var badgeRow = new HBoxContainer();
@@ -778,7 +800,7 @@ public partial class UdpListener : Node2D
 		var card = NewIdentityCard("Quan hệ & belief", IdentityAsset("identity_card_relationship.png"), "♧", IdentityAccent, 245f);
 		card.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
 		card.SizeFlagsStretchRatio = 1.00f;
-		card.CustomMinimumSize = new Vector2(276f, 245f);
+		card.CustomMinimumSize = new Vector2(248f, 245f);
 		parent.AddChild(card);
 		var box = (VBoxContainer)card.GetChild(0);
 		AddRelationshipBar(box, "Tin tưởng", ReadFirstFloat(rel, "relational_trust", "trust"), IdentityPink, "♥");
@@ -1218,7 +1240,8 @@ public partial class UdpListener : Node2D
 		h.AddThemeConstantOverride("separation", 10);
 		row.AddChild(h);
 		var sequence = NewLabel($"{index + 1:00}", 10, IdentityMuted, true);
-		sequence.CustomMinimumSize = new Vector2(26f, 0f);
+		sequence.CustomMinimumSize = new Vector2(30f, 0f);
+		sequence.SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin;
 		sequence.HorizontalAlignment = HorizontalAlignment.Center;
 		h.AddChild(sequence);
 		h.AddChild(NewIconBadge(item.IconPath, item.FallbackGlyph, new Vector2(48f, 48f), item.Accent, true));
@@ -1695,6 +1718,9 @@ public partial class UdpListener : Node2D
 		label.HorizontalAlignment = HorizontalAlignment.Center;
 		label.VerticalAlignment = VerticalAlignment.Center;
 		label.CustomMinimumSize = new Vector2(112f, 32f);
+		label.SizeFlagsHorizontal = Control.SizeFlags.ShrinkEnd;
+		label.ClipText = true;
+		label.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
 		label.AddThemeStyleboxOverride("normal", new StyleBoxFlat
 		{
 			BgColor = bg,

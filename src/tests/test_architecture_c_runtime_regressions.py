@@ -606,7 +606,8 @@ def test_startup_grounding_uses_fresh_telemetry_tab_evidence() -> None:
     assert bundle.has_direct_screen_evidence is True
     assert bundle.has_strong_opening_anchor is True
     assert bundle.telemetry_surface_visible is True
-    assert bundle.evidence_refs == ("screen:telemetry-status",)
+    assert bundle.evidence_refs[0] == "screen:telemetry-status"
+    assert "runtime:active_app" in bundle.evidence_refs
     assert "TTS queue" in bundle.prompt_context()
     assert "low-risk" in bundle.prompt_context()
 
@@ -645,14 +646,90 @@ def test_grounded_startup_plan_forces_specific_screen_opening() -> None:
     assert "Do not invent" in grounded.topic
 
 
-def test_startup_without_evidence_prefers_silence_over_bland_onboarding() -> None:
+def test_startup_without_evidence_allows_persona_opening_without_fake_fact() -> None:
     from runtime.ai_orchestrated.startup_grounding import StartupGroundingBundle
 
     bundle = StartupGroundingBundle()
     context = bundle.prompt_context()
-    assert "Prefer silence" in context
-    assert "generic availability/onboarding" in context
+    assert "personality-led greeting is still allowed and expected" in context
+    assert "must not fabricate user activity" in context
     assert bundle.has_strong_opening_anchor is False
+
+
+def test_startup_without_any_evidence_forces_persona_plan_when_enabled() -> None:
+    from runtime.ai_orchestrated.contracts import IntentionPlan
+    from runtime.ai_orchestrated.startup_grounding import (
+        StartupGroundingBundle,
+        ensure_grounded_startup_plan,
+    )
+
+    plan = IntentionPlan.silence(channel="autonomous", reason="planner_unavailable")
+    forced = ensure_grounded_startup_plan(
+        plan,
+        StartupGroundingBundle(),
+        force_startup_speech=True,
+    )
+
+    assert forced.speak is True
+    assert forced.motive == "startup_opening"
+    assert forced.strategy == "persona_opening"
+    assert forced.confidence >= 0.78
+    assert forced.importance >= 0.62
+    assert "own attitude" in forced.topic
+
+
+def test_startup_runtime_signal_beats_persona_when_screen_is_empty() -> None:
+    from runtime.ai_orchestrated.contracts import IntentionPlan
+    from runtime.ai_orchestrated.startup_grounding import (
+        StartupGroundingBundle,
+        ensure_grounded_startup_plan,
+    )
+
+    bundle = StartupGroundingBundle(
+        runtime_evidence=(
+            {
+                "id": "recent_event_1",
+                "source": "runtime",
+                "text": "TTS recovered after cooldown",
+                "confidence": 0.82,
+            },
+        ),
+    )
+    forced = ensure_grounded_startup_plan(
+        IntentionPlan.silence(channel="autonomous", reason="planner_unavailable"),
+        bundle,
+        force_startup_speech=True,
+    )
+
+    assert bundle.has_runtime_opening_anchor is True
+    assert forced.strategy == "grounded_runtime_opening"
+    assert forced.evidence_refs == ("runtime:recent_event_1",)
+
+
+def test_startup_continuity_beats_persona_without_screen_or_runtime() -> None:
+    from runtime.ai_orchestrated.contracts import IntentionPlan
+    from runtime.ai_orchestrated.startup_grounding import (
+        StartupGroundingBundle,
+        ensure_grounded_startup_plan,
+    )
+
+    forced = ensure_grounded_startup_plan(
+        IntentionPlan.silence(channel="autonomous", reason="planner_unavailable"),
+        StartupGroundingBundle(),
+        force_startup_speech=True,
+        has_continuity_anchor=True,
+    )
+
+    assert forced.strategy == "continuity_opening"
+    assert "real continuity anchor" in forced.topic
+
+
+def test_startup_persona_fallback_is_never_blank() -> None:
+    from runtime.ai_orchestrated.startup_grounding import build_startup_fallback_text
+
+    text = build_startup_fallback_text(language="vi")
+    assert text.strip()
+    assert "cần gì cứ nói" not in text.lower()
 
 
 def test_screen_router_recognizes_telemetry_tab_capability_question() -> None:
@@ -669,6 +746,8 @@ def test_screen_router_recognizes_telemetry_tab_capability_question() -> None:
 def test_hardening_fingerprint_covers_startup_screen_grounding() -> None:
     from runtime.hardening_release import DEFAULT_AUTHORITY_FILES
 
+    assert "runtime/ai_orchestrated/orchestrator.py" in DEFAULT_AUTHORITY_FILES
+    assert "runtime/ai_orchestrated/model_router.py" in DEFAULT_AUTHORITY_FILES
     assert "runtime/ai_orchestrated/startup_grounding.py" in DEFAULT_AUTHORITY_FILES
     assert "screen/screen_relevance_router.py" in DEFAULT_AUTHORITY_FILES
 

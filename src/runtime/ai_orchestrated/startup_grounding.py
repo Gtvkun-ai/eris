@@ -5,11 +5,12 @@ Startup cũ chạy trước Screen Text worker nên Main AI chỉ nhận một e
 rỗng. Kết quả dễ rơi vào hai cực đều dở: câu chào onboarding nhạt, hoặc dựng một
 premise không tồn tại như thể user đang định "thay đổi" thứ gì đó.
 
-Module này làm ba việc, và cố ý chỉ ba việc:
+Module này làm bốn việc, và cố ý chỉ bốn việc:
 
 1. Khởi động UIA/OCR sớm rồi chờ ngắn cho snapshot đầu tiên.
 2. Đóng gói text thật đang thấy thành evidence có provenance.
-3. Cho planner/Main AI quyền tạo một *giả thuyết xã hội rủi ro thấp* từ evidence,
+3. Gom thêm runtime signal đủ nghĩa làm neo khi UIA/OCR chưa kịp publish.
+4. Cho planner/Main AI quyền tạo một *giả thuyết xã hội rủi ro thấp* từ evidence,
    nhưng không được biến giả thuyết ấy thành fact hay memory.
 
 Runtime vẫn là type-checker của sự thật. Model mới là bên chọn câu nói. Con người
@@ -110,6 +111,69 @@ def _startup_block_score(payload: Mapping[str, Any], *, now: float) -> float:
     return score
 
 
+def _runtime_signal_payloads(snapshot: Any, *, now: float) -> tuple[Mapping[str, Any], ...]:
+    """Rút signal runtime đủ nghĩa cho opening, không biến mọi con số thành tin nóng.
+
+    Runtime evidence ở đây là fact cơ học hiện tại: recent event, warning, app
+    foreground, hoặc mức tài nguyên thật sự đáng chú ý. Ambient tone/tease bias
+    chỉ là state điều khiển phong cách nên không được surface như fact về user.
+    """
+
+    if snapshot is None:
+        return ()
+
+    items: list[Mapping[str, Any]] = []
+    seen: set[str] = set()
+
+    def add(signal_id: str, text: Any, confidence: float = 0.72) -> None:
+        compacted = _compact(text, 300)
+        key = _norm(compacted)
+        if len(compacted) < 2 or not key or key in seen:
+            return
+        seen.add(key)
+        items.append(
+            {
+                "id": signal_id,
+                "source": "runtime",
+                "text": compacted,
+                "confidence": round(max(0.0, min(1.0, confidence)), 3),
+                "captured_at": now,
+            }
+        )
+
+    for index, event in enumerate(tuple(getattr(snapshot, "recent_events", ()) or ())[:6]):
+        normalized = _norm(event)
+        if not normalized:
+            continue
+        confidence = 0.78 if any(
+            marker in normalized
+            for marker in ("warning", "error", "429", "cooldown", "failed", "recovered", "connected", "disconnected")
+        ) else 0.66
+        add(f"recent_event_{index + 1}", event, confidence)
+
+    active_app = _compact(getattr(snapshot, "active_app", "") or getattr(snapshot, "active_window", ""), 180)
+    focus_summary = _compact(getattr(snapshot, "focus_summary", ""), 240)
+    if active_app and not _is_generic_window(active_app):
+        add("active_app", f"Foreground app: {active_app}", 0.64)
+    if focus_summary and _norm(focus_summary) not in {"unknown", "none", "active"}:
+        add("focus_summary", f"Focus: {focus_summary}", 0.62)
+
+    try:
+        cpu = float(getattr(snapshot, "cpu_percent", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        cpu = 0.0
+    try:
+        ram = float(getattr(snapshot, "ram_percent", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        ram = 0.0
+    if cpu >= 82.0:
+        add("cpu_pressure", f"CPU usage is {cpu:.1f}%", 0.84)
+    if ram >= 86.0:
+        add("ram_pressure", f"RAM usage is {ram:.1f}%", 0.84)
+
+    return tuple(items[:10])
+
+
 @dataclass(frozen=True, slots=True)
 class StartupGroundingBundle:
     active_window: str = ""
@@ -118,6 +182,7 @@ class StartupGroundingBundle:
     screen_revision: int = 0
     privacy_blocked: bool = False
     evidence: tuple[Mapping[str, Any], ...] = ()
+    runtime_evidence: tuple[Mapping[str, Any], ...] = ()
     telemetry_surface_visible: bool = False
     waited_seconds: float = 0.0
     notes: tuple[str, ...] = field(default_factory=tuple)
@@ -131,6 +196,10 @@ class StartupGroundingBundle:
                 refs.append(f"screen:{block_id}")
         if not refs and self.active_window and not _is_generic_window(self.active_window):
             refs.append("screen:active_window_title")
+        for item in self.runtime_evidence[:4]:
+            signal_id = str(item.get("id", "") or "").strip()
+            if signal_id:
+                refs.append(f"runtime:{signal_id}")
         return tuple(refs)
 
     @property
@@ -158,6 +227,22 @@ class StartupGroundingBundle:
             return bool(self.evidence) and self.strongest_confidence >= 0.62
         return self.strongest_confidence >= 0.72 and bool(self.evidence)
 
+    @property
+    def has_runtime_opening_anchor(self) -> bool:
+        return any(
+            str(item.get("text", "") or "").strip()
+            and float(item.get("confidence", 0.0) or 0.0) >= 0.58
+            for item in self.runtime_evidence
+        )
+
+    @property
+    def opening_source(self) -> str:
+        if self.has_strong_opening_anchor:
+            return "screen"
+        if self.has_runtime_opening_anchor:
+            return "runtime"
+        return "persona"
+
     def planner_context(self) -> dict[str, Any]:
         return {
             "direct_screen_evidence": self.has_direct_screen_evidence,
@@ -169,7 +254,9 @@ class StartupGroundingBundle:
             "privacy_blocked": self.privacy_blocked,
             "telemetry_surface_visible": self.telemetry_surface_visible,
             "visible_text": [dict(item) for item in self.evidence[:12]],
+            "runtime_evidence": [dict(item) for item in self.runtime_evidence[:8]],
             "evidence_refs": list(self.evidence_refs),
+            "opening_source": self.opening_source,
             "epistemic_policy": {
                 "observed_screen_fact": "may_state_directly_with_evidence_ref",
                 "user_state_or_intent": "low_risk_hypothesis_only; hedge_and_invite_correction",
@@ -177,19 +264,45 @@ class StartupGroundingBundle:
                 "memory_commit": "forbidden_for_unconfirmed_hypothesis",
             },
             "opening_policy": (
-                "Use one concrete visible detail as the conversational anchor. "
+                "Use the strongest available source in this order: current screen, meaningful runtime signal, "
+                "continuity/memory supplied separately, then a personality-led greeting with no external factual claim. "
                 "A restrained inference or curious question is allowed when its basis is explicit. "
                 "Never invent that the user is starting, changing, fixing, or feeling something."
             ),
         }
 
     def prompt_context(self) -> str:
-        if not self.has_direct_screen_evidence:
+        if not self.has_direct_screen_evidence and not self.has_runtime_opening_anchor:
             return (
-                "startup_grounding: no current direct screen evidence. "
-                "Do not fabricate user activity, intent, mood, a planned change, or a task. "
-                "Prefer silence over a generic availability/onboarding line."
+                "startup_grounding: no current direct screen evidence and no meaningful runtime signal. "
+                "A short personality-led greeting is still allowed and expected. It may express ERIS's own attitude, "
+                "dry humor, curiosity, or playful presence, but it must not fabricate user activity, intent, mood, "
+                "a planned change, or a task. Do not fall back to generic service copy."
             )
+
+        if not self.has_direct_screen_evidence and self.has_runtime_opening_anchor:
+            lines = [
+                "startup_grounding: no direct screen text, but current runtime evidence is available.",
+                "runtime_evidence:",
+            ]
+            for item in self.runtime_evidence[:8]:
+                lines.append(
+                    "- [{id}|confidence={confidence}] {text}".format(
+                        id=item.get("id", "runtime"),
+                        confidence=item.get("confidence", 0.0),
+                        text=item.get("text", ""),
+                    )
+                )
+            lines.extend(
+                (
+                    "epistemic_contract:",
+                    "- You may mention one exact runtime signal above.",
+                    "- Do not turn ordinary CPU/RAM/idle values into a dramatic event.",
+                    "- A low-risk social inference must be hedged and tied to an explicit basis.",
+                    "- If the runtime signal is too dull, use a personality-led greeting instead of forcing a technical remark.",
+                )
+            )
+            return "\n".join(lines)
 
         lines = [
             "startup_grounding: direct current-screen evidence is available.",
@@ -207,6 +320,16 @@ class StartupGroundingBundle:
                     text=item.get("text", ""),
                 )
             )
+        if self.runtime_evidence:
+            lines.append("runtime_evidence:")
+            for item in self.runtime_evidence[:8]:
+                lines.append(
+                    "- [{id}|confidence={confidence}] {text}".format(
+                        id=item.get("id", "runtime"),
+                        confidence=item.get("confidence", 0.0),
+                        text=item.get("text", ""),
+                    )
+                )
         lines.extend(
             (
                 "epistemic_contract:",
@@ -303,6 +426,7 @@ def collect_startup_grounding(host: Any, *, timeout_seconds: float | None = None
         focus_summary = _compact(getattr(telemetry_snapshot, "focus_summary", ""), 280)
 
     now = time.time()
+    runtime_evidence = _runtime_signal_payloads(telemetry_snapshot, now=now)
     candidates: list[Mapping[str, Any]] = []
     seen: set[str] = set()
     for block in raw_blocks:
@@ -364,6 +488,7 @@ def collect_startup_grounding(host: Any, *, timeout_seconds: float | None = None
         screen_revision=revision,
         privacy_blocked=privacy_blocked,
         evidence=tuple(evidence),
+        runtime_evidence=runtime_evidence,
         telemetry_surface_visible=telemetry_visible,
         waited_seconds=max(0.0, time.time() - started_at),
         notes=tuple(notes),
@@ -375,50 +500,159 @@ def ensure_grounded_startup_plan(
     bundle: StartupGroundingBundle,
     *,
     force_screen_opening: bool = True,
+    force_startup_speech: bool = True,
+    has_continuity_anchor: bool = False,
 ) -> IntentionPlan:
-    """Gắn provenance vào plan và cứu planner khỏi lời chào chung chung.
+    """Gắn provenance và chọn route mở đầu theo evidence cascade.
 
-    Khi có Telemetry/UIA evidence đủ mạnh, user đã cấu hình startup greeting và
-    planner lại chọn im vì snapshot cũ thiếu environment, ta tạo *intention* có
-    căn cứ. Main model vẫn toàn quyền viết câu public.
+    Startup greeting đã bật thì mặc định phải có tiếng nói. OCR chỉ là route ưu
+    tiên, không phải giấy phép tồn tại. Khi mắt chưa kịp thấy gì, ERIS vẫn có thể
+    dùng runtime, continuity/memory, hoặc chính persona của mình để mở lời.
     """
 
     data = plan.to_dict()
     refs = tuple(dict.fromkeys((*tuple(plan.evidence_refs), *bundle.evidence_refs)))[:5]
 
+    route = ""
     if bundle.has_strong_opening_anchor and force_screen_opening:
-        if not plan.speak or plan.confidence < 0.56 or plan.importance < 0.42:
-            data.update(
+        route = "screen"
+    elif bundle.has_runtime_opening_anchor:
+        route = "runtime"
+    elif has_continuity_anchor:
+        route = "continuity"
+    elif force_startup_speech:
+        route = "persona"
+
+    if route:
+        base = {
+            "speak": True,
+            "motive": "startup_opening",
+            "importance": max(0.62, float(plan.importance or 0.0)),
+            "intrusion_risk": min(0.22, float(plan.intrusion_risk or 0.16)),
+            "confidence": max(0.78, float(plan.confidence or 0.0)),
+            "evidence_refs": list(refs),
+        }
+        if route == "screen":
+            base.update(
                 {
-                    "speak": True,
-                    "motive": "startup_opening",
                     "strategy": "grounded_environment_opening",
                     "value_focus": "curiosity",
-                    "importance": max(0.62, float(plan.importance or 0.0)),
-                    "intrusion_risk": min(0.22, float(plan.intrusion_risk or 0.16)),
-                    "confidence": max(0.78, float(plan.confidence or 0.0)),
                     "performance_hint": plan.performance_hint or "curious",
                     "notes": "strong current-screen anchor; startup opener is grounded",
                 }
             )
-        data["topic"] = (
-            "Use one concrete item from startup_screen_evidence. For Telemetry, react to one real "
-            "status/metric/label/change. A low-pressure question or hedged inference is allowed. "
-            "Do not invent user intent, plans, changes, fixes, or feelings."
-        )
-        data["evidence_refs"] = list(refs)
+            data.update(base)
+            data["topic"] = (
+                "Use one concrete item from startup_screen_evidence. For Telemetry, react to one real "
+                "status/metric/label/change. A low-pressure question or hedged inference is allowed. "
+                "Do not invent user intent, plans, changes, fixes, or feelings."
+            )
+        elif route == "runtime":
+            base.update(
+                {
+                    "strategy": "grounded_runtime_opening",
+                    "value_focus": "attentiveness",
+                    "performance_hint": plan.performance_hint or "curious",
+                    "notes": "meaningful current runtime signal; no direct screen text required",
+                }
+            )
+            data.update(base)
+            data["topic"] = (
+                "Use at most one exact runtime signal from startup_screen_evidence.runtime_evidence. "
+                "If it is ordinary or dull, do not force a technical report; pivot to a personality-led greeting. "
+                "Never invent a successful read, task, user plan, or hidden mood."
+            )
+        elif route == "continuity":
+            base.update(
+                {
+                    "strategy": "continuity_opening",
+                    "value_focus": "continuity",
+                    "performance_hint": plan.performance_hint or "soft_near",
+                    "notes": "startup has a real continuity or memory anchor",
+                }
+            )
+            data.update(base)
+            data["topic"] = (
+                "Open from one real continuity anchor supplied in open_loops, latest_observation, recent history, "
+                "or memory_context. Do not report memory machinery. Do not pretend an old hypothesis is a fact."
+            )
+        else:
+            base.update(
+                {
+                    "strategy": "persona_opening",
+                    "value_focus": "self_authored_presence",
+                    "performance_hint": plan.performance_hint or "soft_tease",
+                    "notes": "no external anchor; startup greeting remains allowed through persona",
+                }
+            )
+            data.update(base)
+            data["topic"] = (
+                "Write a distinctive ERIS greeting from her own attitude only. Dry warmth, restrained curiosity, "
+                "or a small playful challenge are allowed. Make no factual claim about the user's activity, mood, "
+                "plans, screen, memory, or task. Avoid generic availability copy."
+            )
     elif plan.speak:
         data["evidence_refs"] = list(refs)
-        if not bundle.has_direct_screen_evidence and not plan.evidence_refs:
-            data["notes"] = (
-                f"{plan.notes}; no direct startup anchor: avoid generic onboarding and unsupported user claims"
-            ).strip("; ")
 
     return IntentionPlan.from_mapping(data, channel=plan.channel)
 
 
+def build_startup_fallback_text(
+    *,
+    open_loops: Sequence[Any] = (),
+    latest_observation: Mapping[str, Any] | None = None,
+    relationship: Mapping[str, Any] | None = None,
+    avoid_text: str = "",
+    language: str = "vi",
+) -> str:
+    """Lưới an toàn có cá tính khi planner/Main model lỗi hoặc trả rỗng.
+
+    Đây không phải câu factual fallback nên không cần evidence ngoài. Nó chỉ nói
+    về sự hiện diện/thái độ của ERIS. Nhờ vậy startup vẫn có tiếng mà không phải
+    dựng chuyện về user để trông có vẻ thông minh.
+    """
+
+    lang = str(language or "vi").strip().lower()
+    if lang == "ja":
+        return "起きました。今日は、行儀のいい挨拶だけで済ませる気はありません。"
+    if lang == "en":
+        return "I'm awake. I wasn't planning to waste the opening on a well-behaved greeting."
+
+    loops = tuple(str(item or "").strip() for item in (open_loops or ()) if str(item or "").strip())[:3]
+    observation = latest_observation or {}
+    relation = relationship or {}
+    active_anchor = loops[0] if loops else str(observation.get("open_loop", "") or "").strip()
+    relational_feedback = ""
+    try:
+        rupture = float(relation.get("rupture", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        rupture = 0.0
+    if rupture >= 0.28:
+        relational_feedback = str(relation.get("last_event", "") or "recent relational tension")
+
+    try:
+        from cortex.greeting_cognition import GreetingCognitionEngine
+
+        engine = GreetingCognitionEngine()
+        frame = engine.build(
+            presence_restored=True,
+            continuity_restored=bool(active_anchor),
+            active_goal=active_anchor,
+            unresolved_loops=loops,
+            relational_feedback=relational_feedback,
+        )
+        text = engine.deterministic_greeting(frame, avoid_text=avoid_text)
+        if str(text or "").strip():
+            return str(text).strip()
+    except Exception:
+        pass
+
+    return "Tôi lên rồi. Đừng trông chờ một lời chào ngoan ngoãn."
+
+
 __all__ = [
     "StartupGroundingBundle",
+    "build_startup_fallback_text",
     "collect_startup_grounding",
     "ensure_grounded_startup_plan",
 ]

@@ -51,16 +51,10 @@ def _apply_pause(text: str, plan: ProsodyPlan) -> str:
     if len(text) < 12:
         return text
 
-    # Ưu tiên pause sau dấu phẩy/dấu câu tự nhiên. Nếu không có, chèn sau cụm mở
-    # đầu ngắn. Không cố chia từng chữ: nhấn quá nhiều làm giọng thành kịch.
-    for sep in ("、", "，", ",", "。", ".", "？", "?", "！", "!"):
-        idx = text.find(sep)
-        if 2 <= idx <= min(32, len(text) - 4):
-            return text[: idx + len(sep)] + "…" + text[idx + len(sep) :].lstrip()
-
-    parts = text.split(" ", 1)
-    if len(parts) == 2 and 2 <= len(parts[0]) <= 12:
-        return f"{parts[0]}… {parts[1]}"
+    # Không chèn dấu ba chấm để ép nhịp. Gemini thường diễn ``…`` như một cú
+    # dừng cứng, nhất là sau từ mở đầu ngắn ("Ừ,…"), khiến một hơi nói liền
+    # nghe như nhiều clip ghép lại. Dấu câu gốc + director_notes đủ để tạo
+    # khoảng lấy hơi mềm mà không làm biến dạng transcript.
     return text
 
 

@@ -19,7 +19,11 @@ from semantic_authority import SemanticAuthorityPolicy
 
 from .contracts import AI_RUNTIME_VERSION, IntentionPlan, StateEvent
 from .identity import PendingStrategyUse, PRIMARY_RELATIONSHIP_ID
-from .startup_grounding import collect_startup_grounding, ensure_grounded_startup_plan
+from .startup_grounding import (
+    build_startup_fallback_text,
+    collect_startup_grounding,
+    ensure_grounded_startup_plan,
+)
 
 
 
@@ -454,34 +458,59 @@ class AIAutonomousOrchestrator:
         # tức là Eris bị buộc phải "có chất riêng" trong khi mắt còn nhắm.
         startup_grounding = collect_startup_grounding(host)
         host.logger.info(
-            "[architecture C startup grounding] direct=%s strong=%s telemetry_tab=%s evidence=%s backend=%s wait=%.2fs notes=%s",
+            "[architecture C startup grounding] direct=%s strong=%s telemetry_tab=%s evidence=%s runtime=%s backend=%s wait=%.2fs notes=%s",
             int(startup_grounding.has_direct_screen_evidence),
             int(startup_grounding.has_strong_opening_anchor),
             int(startup_grounding.telemetry_surface_visible),
             len(startup_grounding.evidence),
+            len(startup_grounding.runtime_evidence),
             startup_grounding.backend or "unknown",
             startup_grounding.waited_seconds,
             ",".join(startup_grounding.notes) or "none",
         )
+        # Greeting chắc chắn không có nghĩa là chen lên tiếng user. Nếu chat đã
+        # bắt đầu trong lúc prime UIA/OCR, nhường lượt này và để chat sở hữu loa.
+        if bool(getattr(host, "chat_mode", False)) or bool(getattr(host, "_chat_processing", False)):
+            host.logger.info("[architecture C startup] preempted_by_chat")
+            return False
 
         state = host.ai_state_reducer.snapshot()
+        recent_history = host._chat_history_for_llm(limit=4)
+        latest_observation = dict(state.latest_observation)
+        relationship_payload = state.relationship.to_dict()
+        relationship_summary = state.relationship.prompt_summary()
+        continuity_anchor = bool(
+            tuple(state.open_loops)
+            or recent_history
+            or str(latest_observation.get("open_loop", "") or "").strip()
+            or relationship_summary
+        )
         turn_seq = _next_ai_turn_seq(host)
+        try:
+            from runtime.runtime_settings_store import runtime_bool
+            force_startup_speech = runtime_bool("architecture", "startup_force_speak", default=True)
+        except Exception:
+            force_startup_speech = str(os.getenv("ERIS_AI_STARTUP_FORCE_SPEAK", "1") or "1").strip().lower() in {
+                "1", "true", "yes", "on",
+            }
         snapshot = {
             "event_kind": "startup",
+            "startup_opening_required": bool(force_startup_speech),
             "personality": state.personality.panel_view(),
             "personality_summary": state.personality_prompt_context(),
             "identity": state.identity.panel_view(),
             "identity_summary": state.identity_prompt_context(),
             "relationship": state.relationship.to_dict(),
             "open_loops": list(state.open_loops),
-            "latest_observation": dict(state.latest_observation),
-            "recent_public_history": host._chat_history_for_llm(limit=4),
+            "latest_observation": latest_observation,
+            "recent_public_history": recent_history,
             "startup_screen_evidence": startup_grounding.planner_context(),
             "instruction": (
-                "Decide whether one short opening line adds value. When startup_screen_evidence has a strong anchor, "
-                "open from one concrete visible detail instead of generic onboarding. A low-risk inference is allowed "
-                "only as a hypothesis with an explicit basis and room for correction. Never invent that the user plans "
-                "to start, change, fix, or feel something. Do not report restore state or memory machinery."
+                "Choose one short opening through this cascade: current OCR/UIA evidence, meaningful runtime signal, "
+                "real continuity/memory, then personality-led presence. Startup does not require external evidence to speak. "
+                "A low-risk inference is allowed only as a hypothesis with an explicit basis and room for correction. "
+                "Never invent that the user plans to start, change, fix, or feel something. Do not report restore state "
+                "or memory machinery."
             ),
         }
         plan = host.ai_intention_planner.plan_autonomous(
@@ -499,6 +528,15 @@ class AIAutonomousOrchestrator:
             plan,
             startup_grounding,
             force_screen_opening=force_screen_opening,
+            force_startup_speech=force_startup_speech,
+            has_continuity_anchor=continuity_anchor,
+        )
+        host.logger.info(
+            "[architecture C startup route] strategy=%s source=%s continuity=%s forced=%s",
+            plan.strategy or "none",
+            startup_grounding.opening_source,
+            int(continuity_anchor),
+            int(force_startup_speech),
         )
         if not (plan.speak and plan.confidence >= 0.56 and plan.importance >= 0.42):
             host.logger.info(
@@ -509,21 +547,63 @@ class AIAutonomousOrchestrator:
             )
             return False
 
+        continuity_context = {
+            "relationship": relationship_summary,
+            "open_loops": list(state.open_loops)[:3],
+            "latest_observation": latest_observation,
+            "contract": (
+                "Use only a real continuity item. Do not mention memory systems, restored state, or infer a fresh user action."
+            ),
+        }
+        language = _runtime_language()
         payload = host.ai_model_router.generate_autonomous_reply(
             plan=plan,
             personality_context=state.personality_prompt_context(),
-            memory_context=state.relationship.prompt_summary(),
+            memory_context=json.dumps(continuity_context, ensure_ascii=False),
             grounding_context=startup_grounding.prompt_context(),
-            recent_history=host._chat_history_for_llm(limit=4),
+            recent_history=recent_history,
             avoid_text=str(getattr(host, "last_text", "") or ""),
             allow_fallback=not no_fallback_mode_enabled(),
-            language_hint=_runtime_language(),
+            language_hint=language,
         )
         if not payload:
-            return False
+            fallback_text = build_startup_fallback_text(
+                open_loops=state.open_loops,
+                latest_observation=latest_observation,
+                relationship=relationship_payload,
+                avoid_text=str(getattr(host, "last_text", "") or ""),
+                language=language,
+            )
+            payload = {
+                "text": fallback_text,
+                "should_speak": True,
+                "performance_hint": "dry_tease",
+            }
+            host.logger.warning(
+                "[architecture C startup] main reply unavailable; used personality fallback strategy=%s",
+                plan.strategy,
+            )
         raw = json.dumps(payload, ensure_ascii=False)
         host._log_raw_llm_output("startup_ai", raw)
         decision = host.parser.parse(raw)
+        if not bool(getattr(decision, "should_speak", False)) or not str(getattr(decision, "text", "") or "").strip():
+            fallback_text = build_startup_fallback_text(
+                open_loops=state.open_loops,
+                latest_observation=latest_observation,
+                relationship=relationship_payload,
+                avoid_text=str(getattr(host, "last_text", "") or ""),
+                language=language,
+            )
+            fallback_payload = {
+                "text": fallback_text,
+                "should_speak": True,
+                "performance_hint": "dry_tease",
+            }
+            decision = host.parser.parse(json.dumps(fallback_payload, ensure_ascii=False))
+            host.logger.warning(
+                "[architecture C startup] empty/silent model decision; used personality fallback strategy=%s",
+                plan.strategy,
+            )
         host.ai_stage_planner.apply(decision, plan.performance_hint, state=state, channel="session_ritual")
         text, _assistant_meta = self._commit_public(
             decision,
