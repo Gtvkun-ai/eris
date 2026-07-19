@@ -43,6 +43,16 @@ _FORMAT_REPAIR_FALLBACK_LINES = (
 class ChatCycleMixin:
     def _enter_chat_cycle(self) -> None:
         self._chat_last_activity_at = time.time()
+        # User lên tiếng thì discovery nền phải nhường ngay. cancel_pending_requests
+        # của main LLM không chạm Tutor web, nên nếu thiếu nhánh này Tutor vẫn ung
+        # dung đọc tin trong lúc chat đang cần quota và sự chú ý.
+        discovery = getattr(self, "ai_discovery_runtime", None)
+        preempt_discovery = getattr(discovery, "preempt_for_chat", None)
+        if callable(preempt_discovery):
+            try:
+                preempt_discovery(reason="enter_chat_mode")
+            except Exception as exc:
+                self.logger.debug("Discovery cooperative cancel failed: %s", exc)
         if not self.chat_mode:
             cancel_generation = getattr(getattr(self, "llm_service", None), "cancel_pending_requests", None)
             if callable(cancel_generation):

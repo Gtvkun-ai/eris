@@ -78,19 +78,59 @@ class IntentionObserver:
     không cần một tool riêng.
     """
 
-    VERSION = "intention_authority.v1"
+    VERSION = "intention_authority.v2.semantic_execution"
 
-    _FIRST_PERSON_RE = re.compile(r"\b(?:toi|minh|em|ta|tui)\b")
-    _INTENTION_RE = re.compile(
-        r"\b(?:se|dang|dinh|muon|can|phai|sap|chuan bi|de toi|de minh|thu)\b"
-    )
-    _OPERATION_RE = re.compile(
+    # Observer này chỉ được phép bắt lời claim về *hành động runtime bên ngoài*.
+    # Nó không phải máy dò động từ. Nếu cứ thấy "tôi" + "làm/xem/mở" rồi kết án
+    # thì banter, tình cảm và câu nói tự hoàn thành sẽ biến thành "nợ capability".
+    _FIRST_PERSON = r"(?:toi|minh|em|ta|tui)"
+    _AUX = r"(?:se|dang|da|vua|dinh|muon|can|phai|sap|chuan bi|thu|co the)"
+    _FIRST_PERSON_RE = re.compile(rf"\b{_FIRST_PERSON}\b")
+
+    # Hành động nội tại/speech act hoàn thành ngay trong chính câu nói, không cần
+    # tool/handler. Đây là vùng Eris được phép là một sinh vật biết nói thay vì
+    # một pipeline đang xin giấy phép thở.
+    _SELF_EXECUTING_RE = re.compile(
         r"\b(?:"
-        r"ra soat|ra lai|kiem|kiem tra|kiem lai|xem|xem lai|doc lai|luc|luc lai|doi chieu|"
-        r"tim|tim lai|tra|tra cuu|chay|thu chay|sua|xu ly|lam|viet|ghi|luu|xoa|"
-        r"mo|dong|gui|tai|cap nhat|sap xep|don|don dep|phan tich|tong hop"
+        r"noi|hoi|nhac|ke|thu nhan|xin loi|tra loi|trieu|treu|dua|"
+        r"thich|thuong|nho|so|ngai|muon quen|thay vui|thay buon|"
+        r"giu khoang cach|diu lai|noi gon|noi thang|noi sen|noi ngot|"
+        r"thu cach noi|thu noi|thu xem hop|xem hop|lam mau|lam gi|mo mieng"
         r")\b"
     )
+
+    # Những verb này tự thân đã ám chỉ side effect bên ngoài runtime/model.
+    _INHERENT_EXTERNAL_OP_RE = re.compile(
+        r"\b(?:"
+        r"chay|thu chay|luu|xoa|mo|dong|gui|tai|tai xuong|cap nhat|"
+        r"sap xep|don dep|doi ten|di chuyen|sao chep|cai dat|go cai dat"
+        r")\b"
+    )
+
+    # Verb mơ hồ chỉ thành execution claim khi đi cùng target bên ngoài. "Tôi
+    # xem hợp không" không phải lời hứa gọi tool, còn "tôi xem lại file" thì có.
+    _AMBIGUOUS_OP_RE = re.compile(
+        r"\b(?:"
+        r"ra soat|kiem|kiem tra|kiem lai|xem|xem lai|doc|doc lai|luc|luc lai|"
+        r"doi chieu|tim|tim lai|tra|tra cuu|sua|xu ly|viet|ghi|lam"
+        r")\b"
+    )
+    _EXTERNAL_TARGET_RE = re.compile(
+        r"\b(?:"
+        r"file|tep|repo|source|code|project|thu muc|folder|duong dan|path|"
+        r"cua so|window|tab|trinh duyet|browser|app|ung dung|man hinh|"
+        r"email|mail|tin nhan|message|lich|calendar|database|db|memory|"
+        r"setting|cau hinh|config|key|api|server|process|service|log|test|"
+        r"anh|image|video|audio|tts|body|godot|scene|node"
+        r")\b"
+    )
+    _NEGATED_EXTERNAL_RE = re.compile(
+        rf"\b{_FIRST_PERSON}\b(?:\s+\w+){{0,5}}\s+"
+        r"(?:khong|chua|chang|khoi|khong can|chua can)\s+"
+        r"(?:\w+\s+){0,3}(?:chay|luu|xoa|mo|dong|gui|tai|sua|viet|ghi|lam|xem)\b"
+    )
+    _CLAUSE_SPLIT_RE = re.compile(r"[,.!?;:\n]+|\s+-\s+|\s+—\s+")
+    _NEGATION_RE = re.compile(r"\b(?:khong|chua|chang|khoi)\b")
 
     # Những câu này có hình thức tương lai nhưng không khoe một pipeline hành
     # động. Chặn chúng sẽ khiến Eris không hứa ngoan được, một thảm họa đạo đức.
@@ -102,7 +142,8 @@ class IntentionObserver:
         r")\b"
     )
     _IMMEDIATE_SPEECH_RE = re.compile(
-        r"\b(?:muon|se|de toi|de minh)\s+(?:noi|hoi|nhac|ke|thu nhan|xin loi|tra loi)\b"
+        r"\b(?:muon|se|de toi|de minh|toi|minh|em|tui)\s+"
+        r"(?:noi|hoi|nhac|ke|thu nhan|xin loi|tra loi|treu|dua)\b"
     )
 
     _PRESSURE_ONLY_PREFIXES = (
@@ -142,7 +183,7 @@ class IntentionObserver:
         original = _clean(text)
         normalized = _norm(original)
         ctx = _as_mapping(context)
-        operation = self._operation(normalized)
+        operation = self._operation(normalized, ctx, original_text=original)
 
         if not original:
             return self._accepted(original, operation=operation, mode="empty_passthrough")
@@ -152,7 +193,15 @@ class IntentionObserver:
         result_contract = self._result_contract(ctx, handler_id=handler_id)
 
         missing: list[str] = []
-        looks_operational = bool(operation and self._looks_like_self_intention(normalized))
+        looks_operational = bool(
+            operation
+            and self._looks_like_self_intention(
+                normalized,
+                operation,
+                ctx,
+                original_text=original,
+            )
+        )
         if looks_operational:
             if not target_refs:
                 missing.append("target")
@@ -162,7 +211,11 @@ class IntentionObserver:
                 missing.append("result")
 
         if not looks_operational:
-            mode = "self_executing" if (self._SELF_LIMITING_RE.search(normalized) or self._IMMEDIATE_SPEECH_RE.search(normalized)) else "raw_passthrough"
+            mode = "self_executing" if (
+                self._SELF_LIMITING_RE.search(normalized)
+                or self._IMMEDIATE_SPEECH_RE.search(normalized)
+                or self._SELF_EXECUTING_RE.search(normalized)
+            ) else "raw_passthrough"
             reason = "not_execution_claim_passthrough"
         elif missing:
             mode = "raw_passthrough_missing_contract"
@@ -200,18 +253,113 @@ class IntentionObserver:
             missing_contract=(),
         )
 
-    def _looks_like_self_intention(self, normalized: str) -> bool:
-        if not self._FIRST_PERSON_RE.search(normalized):
-            return False
-        if self._INTENTION_RE.search(normalized):
+    def _looks_like_self_intention(
+        self,
+        normalized: str,
+        operation: str,
+        ctx: Mapping[str, Any],
+        *,
+        original_text: str = "",
+    ) -> bool:
+        # Runtime đã có tool/action contract thì text chỉ cần chứa một operation
+        # phù hợp. Đây là evidence mạnh hơn việc đoán bằng từ khóa.
+        explicit_action = canonicalize_action_id(
+            _clean(ctx.get("system_action") or ctx.get("action") or ctx.get("execution_handler"))
+        )
+        if explicit_action and explicit_action not in {"none", "reply", "respond", "speak", "motioncommand"}:
             return True
-        # "Tôi kiểm lại..." ở micro-presence vẫn là claim đang làm, dù model
-        # quên chữ "đang". Câu chủ động với ngôi thứ nhất + operation cũng cần gate.
-        return bool(re.search(r"\b(?:toi|minh|em|ta|tui)\s+", normalized))
 
-    def _operation(self, normalized: str) -> str:
-        match = self._OPERATION_RE.search(normalized)
-        return str(match.group(0) if match else "")
+        # ``_operation`` chỉ trả operation khi nó đã tìm thấy một clause tự nhận
+        # hành động hợp lệ. Không chạy lại regex toàn câu ở đây, tránh hai bộ luật
+        # lệch nhau rồi tự tạo thêm một loại bug mới để con người chăm sóc.
+        return bool(operation)
+
+    def _clauses(self, original_text: str, normalized: str) -> tuple[str, ...]:
+        """Giữ ranh giới clause trước khi chuẩn hoá làm mất dấu câu.
+
+        ``_norm`` cố ý loại dấu câu cho các matcher cũ. Nếu split sau bước đó thì
+        ``"bạn mở miệng, tôi sửa file"`` thành một clause và động từ ``mở`` của
+        user bị gắn sang ngôi ``tôi``. Split trên raw text trước, rồi mới normalize
+        từng phần sẽ giữ đúng chủ thể của hành động.
+        """
+
+        source = str(original_text or "").strip()
+        if not source:
+            return tuple(
+                part.strip()
+                for part in self._CLAUSE_SPLIT_RE.split(normalized)
+                if part.strip()
+            )
+        return tuple(
+            clean
+            for clean in (_norm(part) for part in self._CLAUSE_SPLIT_RE.split(source))
+            if clean
+        )
+
+    def _operation(
+        self,
+        normalized: str,
+        ctx: Mapping[str, Any],
+        *,
+        original_text: str = "",
+    ) -> str:
+        # Chọn operation trong clause có ngôi thứ nhất và chỉ xét phần nằm sau
+        # ngôi đó. Không lấy động từ của User ở nửa đầu câu rồi dùng nó để đánh
+        # giá lời Eris ở nửa sau.
+        explicit_action = canonicalize_action_id(
+            _clean(ctx.get("system_action") or ctx.get("action") or ctx.get("execution_handler"))
+        )
+        has_explicit_action = bool(
+            explicit_action
+            and explicit_action not in {"none", "reply", "respond", "speak", "motioncommand"}
+        )
+        for clause in self._clauses(original_text, normalized):
+            person = self._FIRST_PERSON_RE.search(clause)
+            if not person:
+                continue
+            tail = clause[person.end() :].strip()
+            if not tail:
+                continue
+
+            candidates: list[tuple[int, str, str]] = []
+            external = self._INHERENT_EXTERNAL_OP_RE.search(tail)
+            if external:
+                candidates.append((external.start(), str(external.group(0)), "external"))
+            ambiguous = self._AMBIGUOUS_OP_RE.search(tail)
+            if ambiguous:
+                candidates.append((ambiguous.start(), str(ambiguous.group(0)), "ambiguous"))
+            if not candidates:
+                continue
+
+            position, operation, kind = min(candidates, key=lambda item: item[0])
+            before_operation = tail[:position]
+
+            # Phủ định chỉ vô hiệu operation trong chính clause đó. Clause kế tiếp
+            # vẫn có thể tạo claim thật: "tôi không mở A, tôi sẽ mở B".
+            if self._NEGATION_RE.search(before_operation):
+                continue
+
+            # Không cho operation cách ngôi thứ nhất quá xa. Đây thường là một
+            # mệnh đề phụ khác bị mất liên từ/dấu câu, không phải lời tự nhận.
+            if len(before_operation.split()) > 5:
+                continue
+
+            if kind == "ambiguous" and not (
+                has_explicit_action or self._EXTERNAL_TARGET_RE.search(tail[position:])
+            ):
+                continue
+            return operation
+
+        # Payload action thật có thể đi với câu rất ngắn/elliptical; khi đó lấy
+        # operation ở toàn câu làm telemetry, nhưng vẫn không bịa operation mới.
+        if has_explicit_action:
+            external = self._INHERENT_EXTERNAL_OP_RE.search(normalized)
+            if external:
+                return str(external.group(0))
+            ambiguous = self._AMBIGUOUS_OP_RE.search(normalized)
+            if ambiguous:
+                return str(ambiguous.group(0))
+        return ""
 
     def _target_refs(self, ctx: Mapping[str, Any]) -> tuple[str, ...]:
         refs: list[str] = []

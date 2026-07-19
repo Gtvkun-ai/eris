@@ -1,0 +1,40 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-19 08:16:43
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+08:16:43.981 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+08:16:43.981 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+08:16:44.010 [INFO] [Vision] Da khoi chay vision.py PID=5436
+08:16:50.283 [INFO] [vision.py] [LLM][INFO] Social parser client sẵn sàng: openai/gpt-oss-20b
+08:16:50.283 [INFO] [vision.py] [LLM][INFO] Social deliberator/critic client sẵn sàng: openai/gpt-oss-120b
+08:16:50.283 [INFO] [vision.py] [LLM][INFO] Social observer fallback client sẵn sàng: llama-3.1-8b-instant
+08:16:50.508 [INFO] [vision.py] [Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=1
+08:16:50.515 [INFO] [vision.py] [Loop][INFO] [vtuber-stage] loaded version=vtuber_stage.v11 phases=8,9,10,11 status=intention_authority_ready session=stage_1947d7a21852419f
+08:16:50.531 [INFO] [vision.py] [Loop][INFO] [internal-cognitive] loaded version=internal_cognitive.v1.0 capabilities=8 status=read_only_verified
+08:16:50.565 [INFO] [vision.py] [Loop][INFO] [project-ops] loaded version=project_operations.v1.1 capabilities=15 mode=autonomous_project_scope
+08:16:50.566 [INFO] [vision.py] [Loop][INFO] [workspace] eris_home=[đường dẫn nội bộ đã ẩn] active=none implicit_source_repo=false
+08:16:51.328 [INFO] [vision.py] [Loop][INFO] [social observer] loaded version=social_observer.v1.observe_only social_state=social_cognition.v2.0 primary=openai/gpt-oss-20b deep=openai/gpt-oss-120b fallback=llama-3.1-8b-instant mode=observe_only
+08:16:51.383 [INFO] [vision.py] [Loop][INFO] [environment-capability] loaded version=environment_capability.v1.0 capabilities=6 status=read_only_verified
+08:16:51.702 [INFO] [vision.py] [Loop][INFO] [architecture C] enabled version=ai_orchestrated.v5.1.language_contract state_version=0 personality_version=0 identity_version=0 observer=post_turn planner=ai single_writer=1
+08:16:57.592 [INFO] [vision.py] [Loop][INFO] [behavior-observation] committed=1 families=unverified_execution_claim
+08:16:57.610 [INFO] [vision.py] [Loop][INFO] [architecture C startup] spoke motive=startup_opening text=Chào, mình ở đây—nói ngắn thôi cho đúng nhịp mở đầu.
+08:16:57.621 [INFO] [vision.py] [Loop][INFO] [screen text] worker started backend=lazy-auto poll=1.2s
+08:16:57.867 [INFO] [vision.py] [Loop][INFO] [screen text] OCR backend resolved=uia_only
+08:17:07.342 [INFO] [Settings] Đang đọc trạng thái hai key pool...
+08:17:07.649 [INFO] [Settings] Đã đọc trạng thái key pool thật từ Brain.
+08:17:14.411 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=1 reason=enter_chat_mode
+08:17:14.411 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+08:17:17.026 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 45s (post-chat grace).
+08:17:17.412 [INFO] [vision.py] [Loop][INFO] Người dùng: chào bạn
+08:17:17.412 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference
+08:17:17.413 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+08:17:21.578 [INFO] [vision.py] [Loop][INFO] ERIS: Chào bạn.
+08:17:22.181 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=0 7s vì http_429; alive=8/9
+08:17:23.848 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=1 20s vì http_429; alive=7/9
+08:17:24.955 [INFO] [vision.py] [Loop][INFO] [post observer] turn=2 act=chào bạn meaning=greeting conf=0.80 repair=False traits=1 frame=neutral strategy=none source=groq_observer+self_reflection latency=3374ms
+08:17:27.594 [INFO] [Vision] Dang dung vision.py PID=5436...
+08:17:27.616 [INFO] [Vision] vision.py da thoat (PID=5436, code=-1, unexpected=False).
+08:17:27.647 [INFO] [RunLogger] Ket thuc phien chay.

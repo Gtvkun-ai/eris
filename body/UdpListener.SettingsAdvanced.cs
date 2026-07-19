@@ -826,7 +826,7 @@ public partial class UdpListener : Node2D
 				try { root = JsonNode.Parse(File.ReadAllText(path, Encoding.UTF8))?.AsObject() ?? new JsonObject(); }
 				catch { root = new JsonObject(); }
 			}
-			root["version"] = 1;
+			root["version"] = 2;
 			JsonObject patch = BuildAdvancedRuntimeSettingsPatch();
 			foreach (var pair in patch)
 				root[pair.Key] = pair.Value?.DeepClone();

@@ -67,7 +67,7 @@ class ApiKeyPool:
         # Một request không được phép biến cả pool thành nghĩa địa chỉ vì provider
         # đang rate-limit theo project/model. Ghi nhận burst 429 trên nhiều key và
         # mở cooldown toàn pool ngắn để chặn vòng xoay dây chuyền.
-        self._rate_limit_events: list[tuple[float, int]] = []
+        self._rate_limit_events: list[tuple[float, int, str]] = []
         self._global_cooldown_until = 0.0
         self._rate_limit_bursts = 0
 
@@ -178,7 +178,9 @@ class ApiKeyPool:
                 self._quarantine_reasons[int(target)] = ""
             self._global_cooldown_until = 0.0
             self._rate_limit_events = [
-                (ts, idx) for ts, idx in self._rate_limit_events if now - ts <= 2.0 and idx != target
+                (ts, idx, scope)
+                for ts, idx, scope in self._rate_limit_events
+                if now - ts <= 2.0 and idx != target
             ]
 
     def mark_rate_limited(
@@ -191,9 +193,9 @@ class ApiKeyPool:
     ) -> bool:
         """Cooldown key bị 429 và quyết định có nên xoay sang key khác hay không.
 
-        Mặc định mỗi key là một project độc lập nên 429 chỉ cooldown đúng lease
-        và pool tiếp tục xoay. Emergency global guard có thể bật bằng env khi xác
-        định provider đang outage, nhưng không có logic đoán project trong hot path.
+        Vẫn tôn trọng giả định mỗi key có quota project riêng, nhưng không xoay
+        sạch cả pool trong một burst. Sau vài key liên tiếp cùng lane/model đều
+        429, breaker mở cooldown ngắn để main loop/fallback có cơ hội đổi hướng.
         """
 
         now = time.time()
@@ -202,20 +204,27 @@ class ApiKeyPool:
             window_s = max(1.0, float(os.environ.get("ERIS_KEY_POOL_429_BURST_WINDOW_S", "8")))
         except ValueError:
             window_s = 8.0
+        raw_threshold = str(os.environ.get("ERIS_KEY_POOL_429_BURST_KEYS", "") or "").strip()
         try:
-            threshold = max(2, int(os.environ.get("ERIS_KEY_POOL_429_BURST_KEYS", "2")))
+            threshold = max(2, int(raw_threshold)) if raw_threshold else max(
+                3,
+                min(5, (len(self._keys) + 2) // 3),
+            )
         except ValueError:
-            threshold = 2
+            threshold = max(3, min(5, (len(self._keys) + 2) // 3))
         try:
-            global_cooldown_s = max(2.0, float(os.environ.get("ERIS_KEY_POOL_429_GLOBAL_COOLDOWN_S", "20")))
+            global_cooldown_s = max(2.0, float(os.environ.get("ERIS_KEY_POOL_429_GLOBAL_COOLDOWN_S", "30")))
         except ValueError:
-            global_cooldown_s = 20.0
-        # Mỗi key của Eris được cấu hình thuộc một project riêng. Vì vậy 429 ở
-        # nhiều key KHÔNG được mặc định suy diễn thành quota chung rồi khóa cả pool.
-        # Guard toàn pool chỉ là emergency override cho outage provider thực sự.
+            global_cooldown_s = 30.0
+        # Adaptive guard mặc định bật: vẫn cho thử vài project khác nhau, nhưng
+        # không biến một lượt background thành cuộc hành quân qua 9-12 key.
+        adaptive_guard = str(os.environ.get("ERIS_KEY_POOL_429_ADAPTIVE_GUARD", "1") or "1").strip().lower() in {
+            "1", "true", "yes", "on"
+        }
         global_guard = str(os.environ.get("ERIS_KEY_POOL_429_GLOBAL_GUARD", "0") or "0").strip().lower() in {
             "1", "true", "yes", "on"
         }
+        scope = str(reason or "http_429").strip().lower() or "http_429"
 
         with self._lock:
             if not self._keys:
@@ -227,12 +236,16 @@ class ApiKeyPool:
             self._dead_until[target] = max(self._dead_until[target], now + cooldown)
 
             self._rate_limit_events = [
-                (ts, idx) for ts, idx in self._rate_limit_events if now - ts <= window_s
+                (ts, idx, event_scope)
+                for ts, idx, event_scope in self._rate_limit_events
+                if now - ts <= window_s
             ]
-            self._rate_limit_events.append((now, target))
-            unique_keys = {idx for _ts, idx in self._rate_limit_events}
+            self._rate_limit_events.append((now, target, scope))
+            unique_keys = {
+                idx for _ts, idx, event_scope in self._rate_limit_events if event_scope == scope
+            }
             threshold = min(max(2, threshold), max(2, len(self._keys)))
-            burst = global_guard and len(self._keys) > 1 and len(unique_keys) >= threshold
+            burst = (adaptive_guard or global_guard) and len(self._keys) > 1 and len(unique_keys) >= threshold
 
             alive = sum(1 for i in range(len(self._keys)) if self._dead_until[i] <= now)
             if burst:
@@ -244,7 +257,8 @@ class ApiKeyPool:
                 if not was_open:
                     self._rate_limit_bursts += 1
                     _LOGGER.warning(
-                        "[KEY POOL] 429 burst trên %d key/%ds; dừng xoay, cooldown pool %.0fs (alive=%d/%d)",
+                        "[KEY POOL] 429 burst scope=%s trên %d key/%ds; dừng xoay, cooldown pool %.0fs (alive=%d/%d)",
+                        scope,
                         len(unique_keys),
                         int(window_s),
                         shared_wait,

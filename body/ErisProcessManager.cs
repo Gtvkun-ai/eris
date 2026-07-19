@@ -13,7 +13,7 @@ public sealed class ErisServiceConfig
 	public bool EnableRemoteCognitionApi { get; init; } = true;
 	public bool EnableTts { get; init; } = true;
 	public string TtsVoice { get; init; } = "Aoede";
-	public string TtsLanguage { get; init; } = "auto";
+	public string TtsLanguage { get; init; } = "ja";
 	public string TtsQuality { get; init; } = "high";
 	public string DefaultRemoteApiKey { get; init; } = "";
 	public string RemoteApiProvider { get; init; } = "gemini";

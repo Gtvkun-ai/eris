@@ -318,6 +318,9 @@ class DiscoveryRuntime:
         self.gate = ExternalNeedGate()
         self._lock = threading.RLock()
         self._job_thread: threading.Thread | None = None
+        self._cancel_event = threading.Event()
+        self._started_at = time.time()
+        self._last_planning_attempt_at = 0.0
         self._state_path = state_path or (default_eris_home() / "state" / "discovery_state.json")
         self._state = self._load()
         self._last_planned: DiscoveryPlan = DiscoveryPlan()
@@ -451,8 +454,31 @@ class DiscoveryRuntime:
             verification.get("confidence", bundle.get("confidence", plan.confidence or 0.68)),
             0.68,
         )
-        explicitly_failed = verification.get("verified") is False or verification.get("passed") is False
-        verified = bool(answer.strip()) and not explicitly_failed and source_conf >= 0.46
+        explicitly_failed = (
+            verification.get("verified") is False
+            or verification.get("passed") is False
+            or str(verification.get("overall_status", "") or "").strip().lower() == "failed"
+        )
+        source_policy_pass = bool(verification.get("source_policy_pass", False))
+        try:
+            citation_coverage = float(verification.get("citation_coverage", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            citation_coverage = 0.0
+        try:
+            orphan_claims = int(verification.get("orphan_claim_count", 0) or 0)
+        except (TypeError, ValueError):
+            orphan_claims = 0
+        # Discovery có thể được Eris chủ động kể lại, nên chuẩn nguồn phải cao
+        # hơn một câu search trực tiếp. Không archive tin nguồn yếu rồi vô tình
+        # biến nó thành "điều Eris biết" ở lượt sau.
+        verified = bool(
+            answer.strip()
+            and not explicitly_failed
+            and source_conf >= 0.52
+            and source_policy_pass
+            and citation_coverage >= 0.65
+            and orphan_claims <= 1
+        )
         evidence: list[str] = []
         for item in sources[:5]:
             if isinstance(item, Mapping):
@@ -519,6 +545,12 @@ class DiscoveryRuntime:
             return
         if bool(getattr(self.host, "chat_mode", False)) or bool(getattr(self.host, "_chat_processing", False)):
             return
+        # Không vừa boot xong đã mở browser đi săn tin. Startup cần ổn định UI,
+        # TTS và chat trước; discovery là việc nhàn rỗi thật sự, không phải nghi
+        # lễ chào ngày mới bằng cách đốt quota.
+        startup_grace = max(120.0, self._float("startup_grace_seconds", 600.0))
+        if now - self._started_at < startup_grace:
+            return
         last_user_at = float(getattr(self.host, "_chat_last_activity_at", 0.0) or 0.0)
         minimum_idle = max(60.0, self._float("minimum_idle_seconds", 240.0))
         if last_user_at > 0.0 and now - last_user_at < minimum_idle:
@@ -527,8 +559,10 @@ class DiscoveryRuntime:
         with self._lock:
             if now - self._state.last_plan_at < max(300.0, self._float("planning_interval_seconds", 1800.0)):
                 return
-            self._state = replace(self._state, last_plan_at=now, version=self._state.version + 1, updated_at=now)
-            self._persist_locked()
+            attempt_gap = max(120.0, self._float("planning_attempt_interval_seconds", 300.0))
+            if now - self._last_planning_attempt_at < attempt_gap:
+                return
+            self._last_planning_attempt_at = now
 
         plan = self._choose_due_local_plan(now)
         if plan is None:
@@ -553,6 +587,11 @@ class DiscoveryRuntime:
         if not allowed or not plan.needs_external:
             self._log("debug", "[discovery] external gate rejected lane=%s reason=%s", plan.lane, reason)
             return
+        with self._lock:
+            # last_plan_at chỉ ghi khi plan thật sự qua gate và sắp chạy. Plan
+            # rỗng/không đủ chuẩn không được làm scheduler ngủ oan nửa giờ.
+            self._state = replace(self._state, last_plan_at=now, version=self._state.version + 1, updated_at=now)
+            self._persist_locked()
         self._start_search(plan, now=now)
 
     def _choose_due_local_plan(self, now: float) -> DiscoveryPlan | None:
@@ -561,6 +600,10 @@ class DiscoveryRuntime:
         interval = max(2 * 3600.0, self._float("local_signal_interval_seconds", 8 * 3600.0))
         with self._lock:
             last = float(self._state.lane_last_started.get("vietnam_local_signal", 0.0) or 0.0)
+        if last <= 0.0:
+            first_delay = max(300.0, self._float("first_local_signal_delay_seconds", 1800.0))
+            if now - self._started_at < first_delay:
+                return None
         if now - last < interval:
             return None
         location = self._text("local_signal_scope", "Việt Nam") or "Việt Nam"
@@ -591,11 +634,13 @@ class DiscoveryRuntime:
             self._log("debug", "[discovery] tutor search unavailable")
             return
         topic_key = plan.topic.casefold()
+        self._cancel_event.clear()
         with self._lock:
             failed_at = float(self._state.failed_topics.get(topic_key, 0.0) or 0.0)
             if failed_at > 0.0 and now - failed_at < 3 * 3600.0:
                 return
             lane_started = dict(self._state.lane_last_started)
+            previous_lane_started = float(lane_started.get(plan.lane, 0.0) or 0.0)
             lane_started[plan.lane] = now
             activity = ActivityRecord(
                 activity_id=f"activity-{uuid.uuid4().hex[:10]}",
@@ -619,22 +664,26 @@ class DiscoveryRuntime:
         def job() -> None:
             answer: str | None = None
             try:
-                try:
-                    daemon._eris_discovery_meta = {
-                        "plan": plan.to_dict(),
-                        "activity_id": activity_id,
-                        "requested_at": started,
-                    }
-                except Exception:
-                    pass
-                answer = search_now(
-                    plan.topic,
-                    context=(
-                        "Đây là discovery riêng của Eris. Chỉ trả dữ kiện mới có nguồn; "
-                        "không viết lời thoại, không giả cảm xúc, không suy đoán nhiệt độ phòng từ thời tiết ngoài trời."
-                    ),
-                    now=time.time(),
-                )
+                if not self._cancel_event.is_set():
+                    try:
+                        daemon._eris_discovery_meta = {
+                            "plan": plan.to_dict(),
+                            "activity_id": activity_id,
+                            "requested_at": started,
+                        }
+                    except Exception:
+                        pass
+                    answer = search_now(
+                        plan.topic,
+                        context=(
+                            "Đây là discovery riêng của Eris. Chỉ trả dữ kiện mới có nguồn; "
+                            "không viết lời thoại, không giả cảm xúc, không suy đoán nhiệt độ phòng từ thời tiết ngoài trời."
+                        ),
+                        now=time.time(),
+                        cancel_event=self._cancel_event,
+                    )
+                if self._cancel_event.is_set():
+                    answer = None
             except Exception as exc:  # noqa: BLE001
                 self._log("warning", "[discovery] tutor search failed: %s", exc)
             finally:
@@ -651,46 +700,86 @@ class DiscoveryRuntime:
             if answer:
                 bundle = _mapping(getattr(daemon, "last_research_bundle", {}))
                 record = self._record_from_answer(plan=plan, answer=answer, bundle=bundle, created_at=finished)
-                self._upsert_record(record, last_tutor_answer_ts=float(getattr(daemon, "last_answer_ts", finished) or finished))
-                activity = ActivityRecord(
-                    activity_id=activity_id,
-                    kind="external_search",
-                    topic=plan.topic,
-                    status="done",
-                    detail=f"Đã tạo discovery {record.discovery_id}; đang chờ một khoảng trống phù hợp để kể.",
-                    started_at=started,
-                    updated_at=finished,
-                    evidence=(f"discovery:{record.discovery_id}",),
-                )
-                self._replace_state(current_activity=activity)
-            else:
-                with self._lock:
-                    failures = dict(self._state.failed_topics)
-                    failures[topic_key] = finished
+                if record.verified:
+                    self._upsert_record(record, last_tutor_answer_ts=float(getattr(daemon, "last_answer_ts", finished) or finished))
                     activity = ActivityRecord(
                         activity_id=activity_id,
                         kind="external_search",
                         topic=plan.topic,
-                        status="failed",
-                        detail="Tutor không trả về artifact đủ dùng; không có gì được phép đem đi khoe.",
+                        status="done",
+                        detail=f"Đã tạo discovery {record.discovery_id}; đang chờ một khoảng trống phù hợp để kể.",
                         started_at=started,
                         updated_at=finished,
-                        evidence=("tutor_result:empty_or_failed",),
+                        evidence=(f"discovery:{record.discovery_id}",),
                     )
-                    self._state = replace(
-                        self._state,
-                        current_activity=activity,
-                        failed_topics=failures,
-                        version=self._state.version + 1,
-                        updated_at=finished,
-                    )
-                    self._persist_locked()
+                    self._replace_state(current_activity=activity)
+                    return
+                answer = None
+
+            cancelled = self._cancel_event.is_set()
+            with self._lock:
+                failures = dict(self._state.failed_topics)
+                lane_started = dict(self._state.lane_last_started)
+                if cancelled:
+                    # Preemption không phải thất bại và không được tiêu luôn lịch
+                    # chạy của lane. Sau khi User rời chat, scheduler có thể thử
+                    # lại theo idle/planning cooldown bình thường.
+                    if previous_lane_started > 0.0:
+                        lane_started[plan.lane] = previous_lane_started
+                    else:
+                        lane_started.pop(plan.lane, None)
+                else:
+                    failures[topic_key] = finished
+                activity = ActivityRecord(
+                    activity_id=activity_id,
+                    kind="external_search",
+                    topic=plan.topic,
+                    status="cancelled" if cancelled else "failed",
+                    detail=(
+                        "Discovery đã nhường chỗ cho cuộc trò chuyện của User."
+                        if cancelled
+                        else "Tutor không trả về artifact đủ nguồn; không có gì được phép đem đi khoe."
+                    ),
+                    started_at=started,
+                    updated_at=finished,
+                    evidence=(("preempted_by_chat",) if cancelled else ("tutor_result:empty_or_weak",)),
+                )
+                self._state = replace(
+                    self._state,
+                    current_activity=activity,
+                    failed_topics=failures,
+                    lane_last_started=lane_started,
+                    version=self._state.version + 1,
+                    updated_at=finished,
+                )
+                self._persist_locked()
 
         with self._lock:
             activity_id = self._state.current_activity.activity_id
             started = self._state.current_activity.started_at
         self._job_thread = threading.Thread(target=job, name="eris-discovery-search", daemon=True)
         self._job_thread.start()
+
+    def preempt_for_chat(self, *, reason: str = "user_chat_started") -> bool:
+        """Nhường Tutor/discovery nền ngay khi User bắt đầu nói.
+
+        Search trực tiếp do User yêu cầu không mang ``_eris_discovery_meta`` nên
+        không bị đụng. Chỉ job do DiscoveryRuntime tự mở mới bị preempt.
+        """
+
+        thread = self._job_thread
+        if thread is None or not thread.is_alive():
+            return False
+        self._cancel_event.set()
+        daemon = getattr(self.host, "tutor_daemon", None)
+        cancel = getattr(daemon, "cancel_pending", None)
+        if callable(cancel):
+            try:
+                cancel(reason=reason)
+            except Exception:
+                pass
+        self._log("info", "[discovery] preempted reason=%s", reason)
+        return True
 
     # ------------------------------------------------------------------
     # Planner/public bridge
@@ -866,9 +955,20 @@ class DiscoveryRuntime:
         with self._lock:
             self._state = DiscoveryState(version=self._state.version + 1, updated_at=time.time())
             self._last_planned = DiscoveryPlan()
+            self._last_planning_attempt_at = 0.0
+            self._started_at = time.time()
+            self._cancel_event.clear()
             self._persist_locked()
 
     def shutdown(self) -> None:
+        self._cancel_event.set()
+        daemon = getattr(self.host, "tutor_daemon", None)
+        cancel = getattr(daemon, "cancel_pending", None)
+        if callable(cancel):
+            try:
+                cancel(reason="discovery_shutdown")
+            except Exception:
+                pass
         thread = self._job_thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=0.25)

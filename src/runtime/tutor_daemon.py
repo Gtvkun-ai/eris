@@ -26,6 +26,16 @@ except Exception:  # pragma: no cover
 _QUESTION_PREVIEW_LEN = 120
 
 
+class _CombinedCancellation:
+    """View read-only của nhiều cancellation event cho đúng một request."""
+
+    def __init__(self, *events: Any) -> None:
+        self._events = tuple(event for event in events if event is not None)
+
+    def is_set(self) -> bool:
+        return any(bool(getattr(event, "is_set", lambda: False)()) for event in self._events)
+
+
 # =============================================================================
 # Popup_Event emitter (UDP 4242 → body)
 # =============================================================================
@@ -174,6 +184,8 @@ class TutorDaemon:
         self._drive_fn = drive_fn
         # Serialize episode: KHÔNG mở 2 browser cùng profile cùng lúc (autonomous vs chat).
         self._run_lock = threading.Lock()
+        self._cancel_event = threading.Event()
+        self._cancel_reason = ""
         # ContentEngine đọc các trường này để tận dụng "sư phụ Gemini" như một
         # nguồn seed thật, không cần mở browser hay hỏi lại mỗi lượt.
         self.last_episode: Optional[TutorEpisode] = None
@@ -194,6 +206,7 @@ class TutorDaemon:
         if not self._run_lock.acquire(blocking=False):
             return None
         try:
+            self._begin_request()
             return self._run_once_locked(idle=idle, now=now)
         finally:
             self._run_lock.release()
@@ -258,9 +271,15 @@ class TutorDaemon:
 
         # 2. Hỏi gia sư (backend tự emit opening/asking/reading qua callback).
         try:
-            answer = self.backend.ask(question, on_stage=lambda s: self._emit(episode, s))
+            answer = self.backend.ask(
+                question,
+                on_stage=lambda s: self._emit(episode, s),
+                cancel_event=self._cancel_event,
+            )
         except Exception:
             return self._fail(episode, "network_error", now)
+        if self._cancel_event.is_set():
+            return self._fail(episode, "cancelled", now)
         episode.answer = answer
         if answer is None or not getattr(answer, "ok", False) or not getattr(answer, "text", ""):
             reason = getattr(answer, "fail_reason", None) or "empty_answer"
@@ -337,6 +356,7 @@ class TutorDaemon:
         if not self._run_lock.acquire(blocking=False):
             return None
         try:
+            self._begin_request()
             now = float(now if now is not None else time.time())
             if self.risk_guard.is_paused(now):
                 return None
@@ -365,9 +385,16 @@ class TutorDaemon:
             episode.question = question
 
             try:
-                answer = self.backend.ask(question, on_stage=lambda s: self._emit(episode, s))
+                answer = self.backend.ask(
+                    question,
+                    on_stage=lambda s: self._emit(episode, s),
+                    cancel_event=self._cancel_event,
+                )
             except Exception:
                 self._fail(episode, "network_error", now)
+                return None
+            if self._cancel_event.is_set():
+                self._fail(episode, "cancelled", now)
                 return None
             episode.answer = answer
             if answer is None or not getattr(answer, "ok", False) or not getattr(answer, "text", ""):
@@ -465,6 +492,7 @@ class TutorDaemon:
         if not self._run_lock.acquire(blocking=False):
             return None
         try:
+            self._begin_request()
             from cortex.tutor.research_relay import (
                 analyze_tutor_research_answer,
                 build_gemini_research_prompt,
@@ -503,9 +531,16 @@ class TutorDaemon:
 
             self._emit_research_status(episode, "asking_tutor", mode="research", topic=topic)
             try:
-                answer = self.backend.ask(question, on_stage=lambda stage: self._emit(episode, stage))
+                answer = self.backend.ask(
+                    question,
+                    on_stage=lambda stage: self._emit(episode, stage),
+                    cancel_event=self._cancel_event,
+                )
             except Exception:
                 self._fail(episode, "network_error", now)
+                return None
+            if self._cancel_event.is_set():
+                self._fail(episode, "cancelled", now)
                 return None
             episode.answer = answer
             if answer is None or not getattr(answer, "ok", False) or not getattr(answer, "text", ""):
@@ -571,6 +606,7 @@ class TutorDaemon:
         context: str = "",
         now: Optional[float] = None,
         critic_fn: Optional[Callable[[str], str]] = None,
+        cancel_event: Any = None,
     ) -> Optional[str]:
         """Search web nhanh bằng Tutor Gemini, rồi guard lại trước khi surface.
 
@@ -588,6 +624,10 @@ class TutorDaemon:
         if not self._run_lock.acquire(blocking=False):
             return None
         try:
+            self._begin_request()
+            request_cancel = _CombinedCancellation(self._cancel_event, cancel_event)
+            if request_cancel.is_set():
+                return None
             from cortex.tutor.research_relay import (
                 analyze_tutor_research_answer,
                 build_gemini_search_prompt,
@@ -626,9 +666,16 @@ class TutorDaemon:
 
             self._emit_research_status(episode, "asking_tutor", mode="quick_search", topic=topic)
             try:
-                answer = self.backend.ask(question, on_stage=lambda stage: self._emit(episode, stage))
+                answer = self.backend.ask(
+                    question,
+                    on_stage=lambda stage: self._emit(episode, stage),
+                    cancel_event=request_cancel,
+                )
             except Exception:
                 self._fail(episode, "network_error", now)
+                return None
+            if request_cancel.is_set():
+                self._fail(episode, "cancelled", now)
                 return None
             episode.answer = answer
             if answer is None or not getattr(answer, "ok", False) or not getattr(answer, "text", ""):
@@ -716,7 +763,25 @@ class TutorDaemon:
         self.risk_guard.note_success(now)
         return episode
 
+    def _begin_request(self) -> None:
+        self._cancel_reason = ""
+        self._cancel_event.clear()
+
+    def cancel_pending(self, *, reason: str = "cancelled") -> bool:
+        """Hủy cooperative episode đang chạy, không đóng vĩnh viễn Tutor."""
+
+        self._cancel_reason = str(reason or "cancelled")[:80]
+        self._cancel_event.set()
+        cancel = getattr(self.backend, "cancel_current", None)
+        if callable(cancel):
+            try:
+                cancel(self._cancel_reason)
+            except Exception:
+                pass
+        return self._run_lock.locked()
+
     def stop(self) -> None:
+        self.cancel_pending(reason="tutor_stopped")
         try:
             close = getattr(self.backend, "close", None)
             if callable(close):
@@ -789,7 +854,11 @@ class TutorDaemon:
         episode.stage = "failed"
         episode.fail_reason = reason  # type: ignore[assignment]
         episode.ended_ts = float(time.time())
-        if reason == "captcha_or_expired":
+        if reason == "cancelled":
+            # User vừa lên tiếng không phải lỗi Tutor và không được kích hoạt
+            # risk cooldown. Đây là preemption bình thường của scheduler.
+            pass
+        elif reason == "captcha_or_expired":
             self.risk_guard.note_captcha(now)
         else:
             self.risk_guard.note_failure(now, reason)

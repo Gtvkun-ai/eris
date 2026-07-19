@@ -2091,10 +2091,11 @@ class RuntimeCoordinator(
             payload["private_life_digest"] = private_life_digest
         # Stage transport consumes the Decision directly; no director/scorer pass.
         from runtime.runtime_settings_store import runtime_text
-        # Stage/TTS phải theo ngôn ngữ câu public của turn, không theo voice config.
-        stage_language = runtime_text("chat", "language", default="vi").strip().lower() or "vi"
+        # Bubble/public text và transcript phát âm là hai contract độc lập.
+        # Eris viết tiếng Việt nhưng có thể đọc bằng giọng Nhật sau bước localize.
+        stage_language = runtime_text("tts", "language", default="ja").strip().lower() or "ja"
         if stage_language in {"", "auto"}:
-            stage_language = "vi"
+            stage_language = "ja"
         stage_builder = getattr(self, "stage_frame_builder", None)
         if stage_builder is None or str(getattr(stage_builder, "language_hint", "auto")) != stage_language:
             # StageFrame là lớp dịch giữa Decision và sân khấu.  Giữ lazy-init để

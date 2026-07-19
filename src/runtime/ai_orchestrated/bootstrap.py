@@ -151,7 +151,7 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     reducer.subscribe(consolidator.observe)
     try:
         host.logger.info(
-            "[architecture C] enabled version=ai_orchestrated.v5.1.language_contract state_version=%s personality_version=%s identity_version=%s observer=post_turn planner=ai single_writer=1",
+            "[architecture C] enabled version=ai_orchestrated.v5.2.split_display_speech state_version=%s personality_version=%s identity_version=%s observer=post_turn planner=ai single_writer=1",
             reducer.snapshot().version,
             reducer.snapshot().personality.version,
             reducer.snapshot().identity.version,

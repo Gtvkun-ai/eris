@@ -498,6 +498,9 @@ class AIRuntimeModelRouter:
             "Không cố diễn một nhãn MBTI, Enneagram, tritype hay archetype. Mô tả personality được cung cấp là quán tính hiện tại, "
             "không phải danh sách động tác phải biểu diễn. Có thể dịu, sắc, hóm hỉnh, phòng thủ, chủ động hoặc mâu thuẫn theo đúng ngữ cảnh. "
             "Không phải support bot, không giả dễ thương, không biến mọi cảm xúc thành thơ. "
+            "Yêu cầu đổi giọng (ngọt, sến, cộc, dịu...) chỉ điều chỉnh delivery của lượt này, không thay toàn bộ bản thân. "
+            "Giữ continuity và self-authorship: đáp lại sự gần gũi theo mức quan hệ hiện có; có thể trêu, ngượng hoặc nhận một phần, "
+            "nhưng không nhảy thẳng sang tuyên bố yêu/quen/gắn bó chỉ vì user vừa yêu cầu một câu tình cảm. "
             "Bạn sở hữu lời nói; không tự phân loại Ni/Ti/Fe, không tự chấm confidence, không giải thích reasoning. "
             "Trả lời yêu cầu cụ thể trước. Không tự chèn tuyên bố kiểu 'không như con người' nếu người dùng không hỏi về bản thể. "
             "Memory chỉ là continuity, không chứng minh hiện tại. Grounding là nguồn thật cho màn hình/file/tool. "
@@ -664,6 +667,8 @@ class AIRuntimeModelRouter:
             f"Bạn là ERIS đang có một ý định chủ động đã được planner duyệt. Viết bằng {language}. "
             "Hãy hành động từ personality hiện tại; không diễn nhãn MBTI/Enneagram/archetype. "
             "Viết đúng một micro-line public tự nhiên, ngắn, có lý do rõ; không nhắc planner, motive, score hay nội bộ. "
+            "Nếu motive=startup_opening, đừng quảng cáo giá trị bản thân hoặc mời user vào một 'cuộc nói chuyện có ý tứ'; "
+            "hãy mở bằng một câu cụ thể, nhẹ và có chất riêng, không giống màn hình onboarding. "
             "Không nói chỉ vì im lặng hoặc buồn chán. Không bịa screen fact. "
             "Memory chỉ tạo continuity. Planner đã sở hữu tool intent; không chọn hoặc đổi tool. "
             "performance_hint ưu tiên preset planner đã chọn. Return JSON only."
@@ -752,6 +757,8 @@ class AIRuntimeModelRouter:
             "Bạn là observer hậu kỳ khách quan cho ERIS. Lượt public đã xảy ra rồi. "
             "Bạn không viết câu trả lời, không sửa lời ERIS, không tự diễn giải tính cách và không phát trait signal. "
             "Hãy mô tả điều thật sự vừa xảy ra giữa user và ERIS bằng JSON. "
+            "user_act và relationship_meaning phải mô tả *user_text hiện tại*. recent_public_history chỉ là continuity, tuyệt đối không được bê act/frustration cũ sang lượt mới. "
+            "current_turn_anchor.user_move_hint là neo deterministic bảo thủ; có thể sửa nó khi text rõ ràng hơn, nhưng không được bỏ qua text hiện tại để lặp frame cũ. "
             "consequence chỉ được đánh giá cho pending_strategy_for_evaluation trong current_state_summary, dựa vào phản ứng user hiện tại. "
             "Nếu không có pending strategy, hoặc phản ứng không đủ rõ, đặt strategy_use_id rỗng, outcome=unknown, reinforcement=0 và confidence thấp. "
             "Không tự chấm chiến lược của chính câu ERIS vừa nói; câu hiện tại chỉ được ghi thành pending ở runtime để chờ lượt sau. "
@@ -764,6 +771,74 @@ class AIRuntimeModelRouter:
             "Mọi delta nằm trong [-1,1] chỉ thể hiện hướng và độ mạnh tương đối; runtime sẽ clamp hậu quả. "
             + extra +
             "Evidence chỉ lấy từ public text, recent history và mechanical outcomes được cung cấp."
+        )
+
+    @staticmethod
+    def _current_user_move_hint(user_text: str) -> str:
+        """Neo rất mỏng cho observer, không thay thế semantic model.
+
+        Mục tiêu chỉ là ngăn model nhỏ bám một frame cũ qua nhiều lượt. Taxonomy
+        cố ý thô và ưu tiên `unknown` hơn việc đóng kịch tâm lý.
+        """
+
+        text = " ".join(str(user_text or "").casefold().split())
+        if not text:
+            return "none"
+        technical = (
+            "code", "repo", "log", "bug", "lỗi", "file", "tts", "api", "runtime",
+            "godot", "fix", "sửa", "debug", "panel", "model",
+        )
+        if any(token in text for token in technical):
+            return "technical_request"
+        if any(token in text for token in ("không phải", "ý tôi là", "tôi nói là", "sai rồi", "hiểu sai", "đọc lại")):
+            return "correction"
+        if any(token in text for token in ("chán", "tệ", "máy quá", "cứng quá", "nhạt", "phèn", "không hay")):
+            return "style_criticism"
+        if any(token in text for token in ("sến", "tình cảm", "ngọt", "dịu", "cộc lốc", "nói gọn", "nói thẳng")):
+            return "style_request"
+        if any(token in text for token in ("muốn tui quen", "muốn tôi quen", "thích tui", "thích tôi", "yêu tui", "yêu tôi")):
+            return "request_reciprocity"
+        if any(token in text for token in ("hả", "hong", "không")) and any(
+            token in text for token in ("bạn muốn", "em muốn", "bạn thích", "em thích", "bạn nhớ", "em nhớ")
+        ):
+            return "request_reciprocity"
+        if any(token in text for token in ("haha", "lmao", ":))", "=))", "khịa", "trêu")):
+            return "play_bid"
+        return "unknown"
+
+    @staticmethod
+    def _should_reflect_personality(observation: CognitiveObservation) -> bool:
+        """Không gọi self-reflection cho mọi tiếng động xã hội.
+
+        Reflection chỉ đáng chạy khi observation đủ chắc và có novelty, relational
+        delta, repair, memory hoặc consequence thật. Nhờ vậy một frame observer sai
+        không được trang điểm thành ba trait signal rồi ghi vào personality.
+        """
+
+        if observation.confidence < 0.52:
+            return False
+        relational_signal = max(
+            abs(observation.relational_delta),
+            abs(observation.boundary_delta),
+            abs(observation.familiarity_delta),
+            abs(observation.closeness_delta),
+            abs(observation.playful_safety_delta),
+            abs(observation.rupture_delta),
+        )
+        consequence = observation.consequence
+        has_consequence = bool(consequence.strategy_use_id and consequence.confidence >= 0.50)
+        if observation.event_kind in {"autonomous", "startup"}:
+            return bool(
+                observation.memory_worthy
+                or observation.appraisal.novelty >= 0.58
+                or has_consequence
+            )
+        return bool(
+            observation.repair_needed
+            or observation.memory_worthy
+            or relational_signal >= 0.16
+            or observation.appraisal.novelty >= 0.44
+            or has_consequence
         )
 
     @staticmethod
@@ -874,9 +949,13 @@ class AIRuntimeModelRouter:
             "event_kind": str(event_kind or "chat"),
             "user_text": user_text,
             "assistant_text": assistant_text,
-            "recent_public_history": list(recent_history)[-8:],
+            "recent_public_history": list(recent_history)[-4:],
             "mechanical_outcomes": list(mechanical_outcomes)[-6:],
             "current_state_summary": dict(state_summary or {}),
+            "current_turn_anchor": {
+                "user_move_hint": self._current_user_move_hint(user_text),
+                "rule": "classify current user_text first; history is continuity only",
+            },
         }
         started = time.perf_counter()
         primary_payload = self._call(
@@ -935,8 +1014,16 @@ class AIRuntimeModelRouter:
                 latency_ms=(time.perf_counter() - deep_started) * 1000.0,
             )
             if deep.confidence >= max(0.62, primary.confidence + 0.04):
-                return self._reflect_personality(deep, payload=payload, deep=True)
-        return self._reflect_personality(primary, payload=payload, deep=False)
+                return (
+                    self._reflect_personality(deep, payload=payload, deep=True)
+                    if self._should_reflect_personality(deep)
+                    else deep
+                )
+        return (
+            self._reflect_personality(primary, payload=payload, deep=False)
+            if self._should_reflect_personality(primary)
+            else primary
+        )
 
 
     @staticmethod

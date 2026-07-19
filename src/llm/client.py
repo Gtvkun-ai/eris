@@ -448,7 +448,9 @@ class OpenAICompatibleClient:
 
             if rate_limited and self.key_pool is not None:
                 retry_s = _retry_after_seconds(getattr(last_error, "response", None), 60.0)
-                may_rotate = self.key_pool.mark_rate_limited(retry_s, lease=lease, reason="http_429")
+                may_rotate = self.key_pool.mark_rate_limited(
+                    retry_s, lease=lease, reason=f"http_429:{self.model_name}"
+                )
                 if may_rotate and attempt < max_attempts - 1:
                     continue
             if auth_failed and self.key_pool is not None:
@@ -744,7 +746,9 @@ class GeminiClient:
                 _record_pressure_429(pressure_provider, last_response, 60.0)
             if status == 429 and self.key_pool is not None:
                 retry_s = _retry_after_seconds(last_response, 60.0)
-                may_rotate = self.key_pool.mark_rate_limited(retry_s, lease=lease, reason="http_429")
+                may_rotate = self.key_pool.mark_rate_limited(
+                    retry_s, lease=lease, reason=f"http_429:{self.model_name}"
+                )
                 if may_rotate and attempt < max_attempts - 1:
                     _LOGGER.warning(
                         "[GEMINI RETRY] status=429 attempt=%d/%d failed_index=%s → acquire key khác",

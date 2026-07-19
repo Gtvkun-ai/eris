@@ -68,7 +68,8 @@ public partial class UdpListener : Node2D
 	private ulong _settingsNextRuntimeRefreshMs;
 	private bool _settingsTtsEnabled = true;
 	private string _settingsTtsVoice = "Aoede";
-	private string _settingsTtsLanguage = "vi";
+	private string _settingsTtsLanguage = "ja";
+	private int _settingsLoadedSchemaVersion = 0;
 	private string _settingsTtsQuality = "high";
 	private float _settingsTtsVolume = 1.00f;
 	private float _settingsTtsSpeed = 1.00f;
@@ -891,7 +892,7 @@ public partial class UdpListener : Node2D
 		parent.AddChild(tts);
 
 		_settingsVoiceSelect = AddSettingsOptionRow(parent, 78f, "Giọng", new[] { "Aoede", "Leda", "Achernar", "Kore", "Callirrhoe" }, _settingsTtsVoice);
-		_settingsLanguageSelect = AddSettingsOptionRow(parent, 118f, "Ngôn ngữ", new[] { "vi", "ja", "en" }, _settingsTtsLanguage);
+		_settingsLanguageSelect = AddSettingsOptionRow(parent, 118f, "Ngôn ngữ giọng", new[] { "ja", "vi", "en" }, _settingsTtsLanguage);
 		_settingsQualitySelect = AddSettingsOptionRow(parent, 158f, "Chất lượng", new[] { "balanced", "high" }, _settingsTtsQuality);
 		_settingsVoiceSelect.ItemSelected += _ => ApplyLiveTtsSettingsFromPanel("giọng");
 		_settingsLanguageSelect.ItemSelected += _ => ApplyLiveTtsSettingsFromPanel("ngôn ngữ");
@@ -1458,6 +1459,10 @@ public partial class UdpListener : Node2D
 			if (root.ValueKind != JsonValueKind.Object)
 				return;
 
+			_settingsLoadedSchemaVersion = root.TryGetProperty("version", out JsonElement versionEl) && versionEl.TryGetInt32(out int schemaVersion)
+				? schemaVersion
+				: 0;
+
 			if (TryReadBool(root, "tts_enabled", out bool tts))
 				_settingsTtsEnabled = tts;
 			if (TryReadBool(root, "auto_start_brain", out bool autoStart))
@@ -1481,6 +1486,10 @@ public partial class UdpListener : Node2D
 			RemoteApiModelName = ReadString(root, "remote_model", RemoteApiModelName);
 			_settingsTtsVoice = ReadString(root, "tts_voice", _settingsTtsVoice);
 			_settingsTtsLanguage = ReadString(root, "tts_language", _settingsTtsLanguage);
+			// Schema 4 từng ghép ngôn ngữ public và TTS nên đã ghi vi ngoài ý muốn.
+			// Migrate một lần về voice Nhật; schema 5 trở đi tôn trọng lựa chọn thật.
+			if (_settingsLoadedSchemaVersion < 5 && NormalizeSettingsTtsLanguage(_settingsTtsLanguage) == "vi")
+				_settingsTtsLanguage = "ja";
 			_settingsTtsQuality = ReadString(root, "tts_quality", _settingsTtsQuality);
 			LoadSettingsKeyAliases(root);
 			LoadAdvancedSettingsState(root);
@@ -1783,8 +1792,8 @@ public partial class UdpListener : Node2D
 		string lang = (value ?? "").Trim().ToLowerInvariant();
 		return lang switch
 		{
-			"" => "vi",
-			"auto" => "vi",
+			"" => "ja",
+			"auto" => "ja",
 			"jp" => "ja",
 			"japanese" => "ja",
 			"ja-jp" => "ja",
@@ -1850,7 +1859,7 @@ public partial class UdpListener : Node2D
 	{
 		var state = new JsonObject
 		{
-			["version"] = 4,
+			["version"] = 5,
 			["remote_api_enabled"] = EnableRemoteCognitionApi,
 			["auto_start_brain"] = AutoStartVision,
 			["auto_restart_brain"] = AutoRestartVisionOnCrash,

@@ -26,7 +26,7 @@ from runtime.workspace_manager import default_eris_home
 
 
 _DEFAULT_SETTINGS: dict[str, Any] = {
-    "version": 1,
+    "version": 2,
     "architecture": {
         "mode": "ai_orchestrated",
         "startup_greeting": True,
@@ -125,7 +125,8 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
     },
     "tts": {
         "enabled": True,
-        "language": "vi",
+        # Project Eris dùng bubble Việt + voice Nhật theo mặc định.
+        "language": "ja",
         "voice": "Aoede",
         "quality": "high",
         "volume": 1.0,
@@ -333,7 +334,10 @@ class RuntimeSettingsStore:
             elif self.path.exists():
                 try:
                     payload = json.loads(self.path.read_text(encoding="utf-8"))
+                    payload, migrated = self._migrate_payload(payload)
                     settings = self._validate_full(payload)
+                    if migrated:
+                        self._atomic_save(settings)
                 except Exception as exc:
                     self._log("warning", "[runtime-settings] file lỗi, dùng env compat: %s", exc)
                     settings = self.from_env_compat()
@@ -448,6 +452,47 @@ class RuntimeSettingsStore:
         hard_cap = str(0 if hard_cap_value is None else hard_cap_value)
         os.environ["ERIS_LLM_PROMPT_HARD_CAP_TOKENS"] = hard_cap
         os.environ["ERIS_LLM_PROMPT_TOTAL_TOKENS"] = hard_cap
+
+    @classmethod
+    def _migrate_payload(cls, payload: Any) -> tuple[dict[str, Any], bool]:
+        """Tách ngôn ngữ public khỏi ngôn ngữ phát âm của schema v1.
+
+        Bản v5.1 từng ghi cùng một selector vào cả chat.language và
+        tts.language, khiến cấu hình Nhật cũ bị ép thành Việt. Với file v1,
+        giữ public ở Việt và phục hồi voice Nhật. Sau migration, lựa chọn vi/ja
+        của người dùng lại được tôn trọng bình thường.
+        """
+        if not isinstance(payload, Mapping):
+            return {}, False
+        out = copy.deepcopy(dict(payload))
+        try:
+            version = int(out.get("version", 0) or 0)
+        except (TypeError, ValueError):
+            version = 0
+        if version >= int(_DEFAULT_SETTINGS["version"]):
+            return out, False
+
+        chat = out.get("chat") if isinstance(out.get("chat"), Mapping) else {}
+        tts = out.get("tts") if isinstance(out.get("tts"), Mapping) else {}
+        chat = dict(chat or {})
+        tts = dict(tts or {})
+        chat["language"] = str(chat.get("language") or "vi").strip().lower() or "vi"
+
+        raw_tts = str(tts.get("language") or "").strip().lower()
+        env_tts = str(os.environ.get("ERIS_TTS_LANGUAGE", "") or "").strip().lower()
+        aliases = {"jp": "ja", "japanese": "ja", "ja-jp": "ja", "auto": ""}
+        raw_tts = aliases.get(raw_tts, raw_tts)
+        env_tts = aliases.get(env_tts, env_tts)
+        # v1 đã cưỡng ép vi nên không xem giá trị vi của schema đó là lựa chọn
+        # có chủ ý. Ưu tiên env Nhật cũ; nếu không có thì dùng mặc định Eris.
+        if raw_tts in {"", "vi"}:
+            tts["language"] = env_tts if env_tts in {"ja", "en"} else "ja"
+        else:
+            tts["language"] = raw_tts if raw_tts in {"ja", "en"} else "ja"
+        out["chat"] = chat
+        out["tts"] = tts
+        out["version"] = int(_DEFAULT_SETTINGS["version"])
+        return out, True
 
     def _validate_full(self, payload: Any) -> dict[str, Any]:
         return self._static_validate(payload)

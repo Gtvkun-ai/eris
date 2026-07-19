@@ -45,7 +45,7 @@ class SpeechContract:
 
 
 class SpeechContractResolver:
-    def __init__(self, *, default_language: str = "vi") -> None:
+    def __init__(self, *, default_language: str = "ja") -> None:
         self.default_language = default_language or "vi"
 
     def resolve(self, payload: Mapping[str, Any] | None, *, text: str = "") -> SpeechContract:

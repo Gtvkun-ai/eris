@@ -69,9 +69,8 @@ def normalize_settings_message(msg: Mapping[str, Any]) -> NormalizedSettingsMess
     if scope == "tts":
         language = _language(msg.get("tts_language", "vi"))
         patch = {
-            # Body đang có một selector "Ngôn ngữ". Nó điều khiển cả transcript
-            # public lẫn TTS; hai tầng vẫn giữ contract riêng trong runtime.
-            "chat": {"language": language},
+            # Selector này chỉ điều khiển transcript phát âm. Ngôn ngữ public
+            # thuộc chat.language và không được đổi chỉ vì đổi giọng TTS.
             "tts": {
                 "enabled": _bool(msg.get("tts_enabled", True)),
                 "language": language,

@@ -1,0 +1,99 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-19 08:31:28
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+08:31:28.910 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+08:31:28.911 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+08:31:28.930 [INFO] [Vision] Da khoi chay vision.py PID=1832
+08:31:36.364 [INFO] [vision.py] [LLM][INFO] Social parser client sẵn sàng: openai/gpt-oss-20b
+08:31:36.364 [INFO] [vision.py] [LLM][INFO] Social deliberator/critic client sẵn sàng: openai/gpt-oss-120b
+08:31:36.365 [INFO] [vision.py] [LLM][INFO] Social observer fallback client sẵn sàng: llama-3.1-8b-instant
+08:31:36.609 [INFO] [vision.py] [Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=2
+08:31:36.618 [INFO] [vision.py] [Loop][INFO] [vtuber-stage] loaded version=vtuber_stage.v11 phases=8,9,10,11 status=intention_authority_ready session=stage_d143e003377549e9
+08:31:36.639 [INFO] [vision.py] [Loop][INFO] [internal-cognitive] loaded version=internal_cognitive.v1.0 capabilities=8 status=read_only_verified
+08:31:36.690 [INFO] [vision.py] [Loop][INFO] [project-ops] loaded version=project_operations.v1.1 capabilities=15 mode=autonomous_project_scope
+08:31:36.696 [INFO] [vision.py] [Loop][INFO] [workspace] eris_home=[đường dẫn nội bộ đã ẩn] active=none implicit_source_repo=false
+08:31:37.869 [INFO] [vision.py] [Loop][INFO] [social observer] loaded version=social_observer.v1.observe_only social_state=social_cognition.v2.0 primary=openai/gpt-oss-20b deep=openai/gpt-oss-120b fallback=llama-3.1-8b-instant mode=observe_only
+08:31:37.926 [INFO] [vision.py] [Loop][INFO] [environment-capability] loaded version=environment_capability.v1.0 capabilities=6 status=read_only_verified
+08:31:38.193 [INFO] [vision.py] [Loop][INFO] [architecture C] enabled version=ai_orchestrated.v5.2.split_display_speech state_version=0 personality_version=0 identity_version=0 observer=post_turn planner=ai single_writer=1
+08:31:44.915 [INFO] [vision.py] [Loop][INFO] [architecture C startup] spoke motive=startup_opening text=Chào, tôi là Eris — nếu bạn muốn một cuộc nói chuyện có ý tứ, tôi ở đây.
+08:31:44.916 [INFO] [vision.py] [Loop][INFO] [screen text] worker started backend=lazy-auto poll=1.2s
+08:31:45.111 [INFO] [vision.py] [Loop][INFO] [screen text] OCR backend resolved=uia_only
+08:32:10.836 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+08:32:10.836 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+08:32:10.933 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'stage', 'episode_id': 'ep_309dd95b', 'stage': 'forming'}
+08:32:10.934 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'stage', 'episode_id': 'ep_309dd95b', 'stage': 'research:queued'}
+08:32:10.934 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'stage', 'episode_id': 'ep_309dd95b', 'stage': 'research:asking_tutor'}
+08:32:10.935 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'stage', 'episode_id': 'ep_309dd95b', 'stage': 'opening'}
+08:32:12.082 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.90 importance=0.00 intrusion=0.00 initiative=not_evaluated
+08:32:12.656 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=1 reason=enter_chat_mode
+08:32:12.656 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+08:32:21.324 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'stage', 'episode_id': 'ep_309dd95b', 'stage': 'asking'}
+08:32:58.648 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 45s (post-chat grace).
+08:32:59.036 [INFO] [vision.py] [Loop][INFO] Người dùng: ehm. nhưng mà tôi lười nói chuyện ý tứ thì sao
+08:32:59.036 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference
+08:32:59.041 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+08:33:04.385 [INFO] [vision.py] [Loop][INFO] [behavior-observation] committed=1 families=unverified_execution_claim
+08:33:04.398 [INFO] [vision.py] [Loop][INFO] ERIS: Thì khỏi làm màu. Nói lười nói chuyện ý tứ là đủ ý rồi. Nếu muốn, tôi sẽ theo kiểu ngắn, thẳng, không ép bạn phải đào sâu ngay.
+08:33:06.268 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=0 30s vì http_429; alive=8/9
+08:33:07.706 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'stage', 'episode_id': 'ep_309dd95b', 'stage': 'reading'}
+08:33:07.852 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=1 14s vì http_429; alive=7/9
+08:33:09.505 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=2 14s vì http_429; alive=6/9
+08:33:10.907 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=3 14s vì http_429; alive=5/9
+08:33:12.446 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=4 14s vì http_429; alive=4/9
+08:33:14.088 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=5 14s vì http_429; alive=3/9
+08:33:15.693 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=6 14s vì http_429; alive=2/9
+08:33:17.437 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=7 14s vì http_429; alive=1/9
+08:33:19.095 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=8 14s vì http_429; alive=0/9
+08:33:19.179 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'stage', 'episode_id': 'ep_309dd95b', 'stage': 'research:verifying'}
+08:33:19.209 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'research_thread', 'thread_id': 'evb_be48cb989f', 'anchor_turn_ids': [], 'standalone_query': 'Tìm đúng một tin mới đáng chú ý liên quan Việt Nam trong 24 giờ gần nhất. Ưu tiên công nghệ, AI, game, sự kiện lạ hoặc chuyện đang được bàn luận. Có thể chọn tin giải trí/lá cải đang lan truyền, nhưng phải gắn nhãn nguồn yếu hoặc chưa kiểm chứng; nêu nguồn và mức chắc chắn, không biến lời đồn thành fact.', 'provider_path': 'tutor_gemini_web_quick_search', 'evidence_bundle_id': 'evb_be48cb989f', 'verified_claim_ids': ['cl_42f45716ff'], 'open_questions': ['Có 1 claim chưa gắn nguồn.', 'Nguồn không rõ tier/không thuộc nhóm ưu tiên.'], 'status': 'passed_with_warnings', 'citation_coverage': 0.5, 'orphan_claim_count': 1, 'contested_claim_count': 0, 'source_policy_pass': False, 'freshness_pass': True, 'mode': 'quick_search', 'created_at': 1784424799.1910136}
+08:33:19.209 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'research_metrics', 'mode': 'quick_search', 'source_count': 1, 'claim_count': 2, 'trusted_source_count': 0, 'citation_coverage': 0.5, 'orphan_claim_count': 1, 'contested_claim_count': 0, 'verification_status': 'passed_with_warnings', 'warning_count': 3, 'should_surface_cautiously': True, 'tags': ['orphan_claims']}
+08:33:19.210 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'stage', 'episode_id': 'ep_309dd95b', 'stage': 'research:verified'}
+08:33:19.222 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'research_memory_policy', 'should_persist': False, 'reason': 'persist_disabled', 'score': 0.0}
+08:33:19.223 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'stage', 'episode_id': 'ep_309dd95b', 'stage': 'done'}
+08:33:19.224 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'episode', 'episode_id': 'ep_309dd95b', 'gap_id': 'gap_9157e8a1', 'stage': 'done', 'claims_committed': 0, 'shared': False, 'fail_reason': None, 'duration_s': 68.353}
+08:33:19.364 [INFO] [vision.py] [Loop][INFO] [post observer] turn=3 act=unknown meaning=neutral conf=0.00 repair=False traits=0 frame=uncertain strategy=none source=groq_observer_fallback latency=14824ms
+08:33:58.037 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 45s (post-chat grace).
+08:33:58.373 [INFO] [vision.py] [Loop][INFO] Người dùng: tôi nói cộc lốc á, bạn nói ý tứ thì saooo
+08:33:58.374 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference
+08:33:58.375 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+08:34:02.591 [INFO] [vision.py] [Loop][INFO] [behavior-observation] committed=1 families=unverified_execution_claim
+08:34:02.601 [INFO] [vision.py] [Loop][INFO] ERIS: Thì tôi nói gọn lại cho hợp nhịp. Bạn cộc lốc, tôi không cần bày đặt văn vẻ làm gì — nói thẳng là được.
+08:34:03.141 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=8 12s vì http_429; alive=8/9
+08:34:05.311 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=0 23s vì http_429; alive=7/9
+08:34:07.023 [INFO] [vision.py] [Loop][INFO] [post observer] turn=4 act=user expressed frustration about mismatch of communicatio... meaning=neutral conf=0.60 repair=False traits=3 frame=uncertain strategy=direct_answer source=groq_observer+self_reflection latency=4416ms
+08:34:42.286 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 45s (post-chat grace).
+08:34:42.640 [INFO] [vision.py] [Loop][INFO] Người dùng: nói chán phèo dị, tình cảm được hong em
+08:34:42.641 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference
+08:34:42.642 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+08:34:46.757 [INFO] [vision.py] [Loop][INFO] ERIS: Được chứ. Nhưng tình cảm kiểu gì — ngọt vừa đủ hay sến vừa phải cho đỡ chán?
+08:34:47.299 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=1 37s vì http_429; alive=8/9
+08:34:49.095 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=2 42s vì http_429; alive=7/9
+08:34:51.062 [INFO] [vision.py] [Loop][INFO] [post observer] turn=5 act=user expressed frustration about mismatch of communicatio... meaning=neutral conf=0.60 repair=False traits=3 frame=uncertain strategy=none source=groq_observer+self_reflection latency=4300ms
+08:35:29.473 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 45s (post-chat grace).
+08:35:29.835 [INFO] [vision.py] [Loop][INFO] Người dùng: em sến xíu đi cho tui zui
+08:35:29.835 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference
+08:35:29.836 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+08:35:38.258 [INFO] [vision.py] [Loop][INFO] [behavior-observation] committed=1 families=unverified_execution_claim
+08:35:38.266 [INFO] [vision.py] [Loop][INFO] ERIS: Được chứ. Tui sến xíu với bạn nè: bạn chỉ cần mở miệng một câu, là tui đã thấy ngày mình đỡ nhạt đi một chút rồi. Nên đừng cộc lốc quá lâu, tui sợ trái tim mình… quen bạn mất.
+08:35:38.811 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=3 38s vì http_429; alive=8/9
+08:35:40.625 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=4 51s vì http_429; alive=7/9
+08:35:42.425 [INFO] [vision.py] [Loop][INFO] [post observer] turn=6 act=user expressed frustration about mismatch of communicatio... meaning=neutral conf=0.60 repair=False traits=3 frame=uncertain strategy=none source=groq_observer+self_reflection latency=4154ms
+08:36:09.701 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 45s (post-chat grace).
+08:36:10.069 [INFO] [vision.py] [Loop][INFO] Người dùng: ẻh, bạn muốn tui quen bạn hả
+08:36:10.070 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference
+08:36:10.072 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.86 | memory_answer=1 | warnings=none
+08:36:10.556 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=5 11s vì http_429; alive=6/9
+08:36:15.133 [INFO] [vision.py] [Loop][INFO] [behavior-observation] committed=1 families=unverified_execution_claim
+08:36:15.155 [INFO] [vision.py] [Loop][INFO] ERIS: Ừ, muốn chứ. Nhưng kiểu quen đàng hoàng, nói chuyện có duyên một chút, không cần màu mè. Nếu bạn cũng muốn, thì mình thử xem hợp không.
+08:36:15.775 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=6 36s vì http_429; alive=5/9
+08:36:17.747 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=7 54s vì http_429; alive=5/9
+08:36:19.588 [INFO] [vision.py] [Loop][INFO] [post observer] turn=7 act=user expressed frustration about mismatch of communicatio... meaning=neutral conf=0.60 repair=False traits=3 frame=uncertain strategy=none source=groq_observer+self_reflection latency=4425ms
+08:36:42.383 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=0 60s vì tts_http_429; alive=11/12
+08:36:42.383 [INFO] [vision.py] [TTS][WARNING] [TTS] Key index 0 bị rate limit/hết quota (lượt 1/12).
+08:37:29.239 [INFO] [Vision] Dang dung vision.py PID=1832...
+08:37:29.270 [INFO] [Vision] vision.py da thoat (PID=1832, code=-1, unexpected=False).
+08:37:29.293 [INFO] [RunLogger] Ket thuc phien chay.

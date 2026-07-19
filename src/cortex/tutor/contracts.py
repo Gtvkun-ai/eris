@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+                                                                    # -*- coding: utf-8 -*-
 """
 cortex/tutor/contracts.py
 =========================
@@ -56,6 +56,7 @@ FailReason = Literal[
     "selector_miss",
     "network_error",
     "empty_answer",
+    "cancelled",             # discovery nền nhường User/chat, không phải failure
     "formulation_failed",
     "gate_rejected",
     "gate_rejected_known",    # router: đã biết rồi (trí nhớ trúng)
