@@ -1,0 +1,119 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-19 11:49:47
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+11:49:48.662 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+11:49:48.662 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+11:49:48.692 [INFO] [Vision] Da khoi chay vision.py PID=9644
+11:49:51.436 [INFO] [vision.py] [LLM][INFO] Social parser client sẵn sàng: openai/gpt-oss-20b
+11:49:51.436 [INFO] [vision.py] [LLM][INFO] Social deliberator/critic client sẵn sàng: openai/gpt-oss-120b
+11:49:51.437 [INFO] [vision.py] [LLM][INFO] Social observer fallback client sẵn sàng: llama-3.1-8b-instant
+11:49:51.924 [INFO] [vision.py] [Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=2
+11:49:51.936 [INFO] [vision.py] [Loop][INFO] [vtuber-stage] loaded version=vtuber_stage.v11 phases=8,9,10,11 status=intention_authority_ready session=stage_2ee7c93deb164a6a
+11:49:51.952 [INFO] [vision.py] [Loop][INFO] [internal-cognitive] loaded version=internal_cognitive.v1.0 capabilities=8 status=read_only_verified
+11:49:51.976 [INFO] [vision.py] [Loop][INFO] [project-ops] loaded version=project_operations.v1.1 capabilities=15 mode=autonomous_project_scope
+11:49:51.977 [INFO] [vision.py] [Loop][INFO] [workspace] eris_home=[đường dẫn nội bộ đã ẩn] active=none implicit_source_repo=false
+11:49:52.921 [INFO] [vision.py] [Loop][INFO] [social observer] loaded version=social_observer.v1.observe_only social_state=social_cognition.v2.0 primary=openai/gpt-oss-20b deep=openai/gpt-oss-120b fallback=llama-3.1-8b-instant mode=observe_only
+11:49:52.974 [INFO] [vision.py] [Loop][INFO] [environment-capability] loaded version=environment_capability.v1.0 capabilities=6 status=read_only_verified
+11:49:53.196 [INFO] [vision.py] [Loop][INFO] [architecture C] enabled version=ai_orchestrated.v5.2.split_display_speech state_version=0 personality_version=0 identity_version=0 observer=post_turn planner=ai single_writer=1
+11:49:56.252 [INFO] [vision.py] [Loop][INFO] [screen text] worker started backend=lazy-auto poll=1.2s
+11:49:56.487 [INFO] [vision.py] [Loop][INFO] [screen text] OCR backend resolved=uia_only
+11:49:56.914 [INFO] [vision.py] [Loop][INFO] [architecture C startup grounding] direct=1 strong=0 telemetry_tab=0 evidence=0 backend=uia_only wait=0.66s notes=none
+11:49:58.192 [INFO] [vision.py] [Loop][INFO] [architecture C startup] silence motive=startup_opening conf=0.90 importance=0.00
+11:49:59.394 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:49:59.394 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:50:00.031 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=0 8s vì http_429:openai/gpt-oss-20b; alive=8/9
+11:50:01.149 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:50:20.207 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:50:20.207 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:50:21.860 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:50:33.205 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:50:33.206 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:50:33.728 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=1 17s vì http_429:openai/gpt-oss-20b; alive=8/9
+11:50:34.503 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:50:44.316 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:50:44.316 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:50:44.841 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=2 5s vì http_429:openai/gpt-oss-20b; alive=7/9
+11:50:45.961 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:50:55.223 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:50:55.224 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:50:55.771 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=3 5s vì http_429:openai/gpt-oss-20b; alive=8/9
+11:50:56.928 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:51:08.000 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:51:08.000 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:51:08.812 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=4 1s vì http_429:openai/gpt-oss-20b; alive=8/9
+11:51:10.951 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:51:26.012 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:51:26.012 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:51:27.225 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:51:38.678 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:51:38.678 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:51:39.187 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=5 20s vì http_429:openai/gpt-oss-20b; alive=8/9
+11:51:40.244 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:51:51.677 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:51:51.678 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:51:52.169 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=6 2s vì http_429:openai/gpt-oss-20b; alive=7/9
+11:51:53.250 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:52:12.500 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:52:12.500 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:52:13.754 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:52:33.228 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:52:33.228 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:52:33.855 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=7 15s vì http_429:openai/gpt-oss-20b; alive=8/9
+11:52:35.022 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:52:54.277 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:52:54.277 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:52:55.445 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:53:06.444 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:53:06.444 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:53:06.896 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=8 22s vì http_429:openai/gpt-oss-20b; alive=8/9
+11:53:07.951 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.95 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:53:23.180 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:53:23.181 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:53:24.431 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.90 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:53:44.128 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:53:44.128 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:53:44.685 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=0 9s vì http_429:openai/gpt-oss-20b; alive=8/9
+11:53:45.863 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.90 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:54:01.141 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:54:01.141 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:54:02.556 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.90 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:54:22.078 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:54:22.079 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:54:22.645 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=1 10s vì http_429:openai/gpt-oss-20b; alive=8/9
+11:54:23.702 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:54:35.500 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:54:35.501 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:54:36.163 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=2 2s vì http_429:openai/gpt-oss-20b; alive=8/9
+11:54:37.135 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:54:56.424 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:54:56.424 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:54:57.769 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:55:07.481 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:55:07.482 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:55:08.448 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=3 19s vì http_429:openai/gpt-oss-20b; alive=8/9
+11:55:09.692 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:55:20.998 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:55:20.999 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:55:21.783 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=4 2s vì http_429:openai/gpt-oss-20b; alive=7/9
+11:55:22.980 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:55:40.739 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:55:40.739 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:55:41.996 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:56:01.665 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:56:01.665 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:56:02.508 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=5 10s vì http_429:openai/gpt-oss-20b; alive=8/9
+11:56:03.848 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:56:13.271 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:56:13.271 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:56:13.869 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=6 3s vì http_429:openai/gpt-oss-20b; alive=8/9
+11:56:15.009 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:56:24.475 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+11:56:24.476 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+11:56:26.372 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+11:56:29.296 [INFO] [Vision] Dang dung vision.py PID=9644...
+11:56:29.328 [INFO] [Vision] vision.py da thoat (PID=9644, code=-1, unexpected=False).
+11:56:29.367 [INFO] [RunLogger] Ket thuc phien chay.

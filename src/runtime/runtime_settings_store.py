@@ -30,6 +30,9 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
     "architecture": {
         "mode": "ai_orchestrated",
         "startup_greeting": True,
+        # Khi UIA/OCR có evidence foreground đủ mạnh, dùng chính evidence đó làm
+        # neo cho câu mở đầu thay vì onboarding chung chung.
+        "startup_screen_opening": True,
     },
     "chat": {
         # Ngôn ngữ câu public là contract cognition riêng, không mượn cấu hình TTS.
@@ -203,6 +206,7 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
 _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
     ("architecture", "mode"): ("ERIS_RUNTIME_ARCHITECTURE", "str"),
     ("architecture", "startup_greeting"): ("ERIS_AI_STARTUP_GREETING_ENABLED", "bool"),
+    ("architecture", "startup_screen_opening"): ("ERIS_AI_STARTUP_SCREEN_OPENING", "bool"),
     ("chat", "language"): ("ERIS_CHAT_LANGUAGE", "str"),
     ("chat", "semantic_authority_mode"): ("ERIS_SEMANTIC_AUTHORITY", "str"),
     ("chat", "reasoning_effort"): ("ERIS_REASONING_EFFORT", "str"),

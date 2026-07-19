@@ -19,6 +19,7 @@ from semantic_authority import SemanticAuthorityPolicy
 
 from .contracts import AI_RUNTIME_VERSION, IntentionPlan, StateEvent
 from .identity import PendingStrategyUse, PRIMARY_RELATIONSHIP_ID
+from .startup_grounding import collect_startup_grounding, ensure_grounded_startup_plan
 
 
 
@@ -449,6 +450,20 @@ class AIAutonomousOrchestrator:
             return False
         host._ai_startup_ran = True
 
+        # UIA/OCR phải chạy trước câu mở đầu. Bản cũ chào xong mới start worker,
+        # tức là Eris bị buộc phải "có chất riêng" trong khi mắt còn nhắm.
+        startup_grounding = collect_startup_grounding(host)
+        host.logger.info(
+            "[architecture C startup grounding] direct=%s strong=%s telemetry_tab=%s evidence=%s backend=%s wait=%.2fs notes=%s",
+            int(startup_grounding.has_direct_screen_evidence),
+            int(startup_grounding.has_strong_opening_anchor),
+            int(startup_grounding.telemetry_surface_visible),
+            len(startup_grounding.evidence),
+            startup_grounding.backend or "unknown",
+            startup_grounding.waited_seconds,
+            ",".join(startup_grounding.notes) or "none",
+        )
+
         state = host.ai_state_reducer.snapshot()
         turn_seq = _next_ai_turn_seq(host)
         snapshot = {
@@ -461,14 +476,29 @@ class AIAutonomousOrchestrator:
             "open_loops": list(state.open_loops),
             "latest_observation": dict(state.latest_observation),
             "recent_public_history": host._chat_history_for_llm(limit=4),
+            "startup_screen_evidence": startup_grounding.planner_context(),
             "instruction": (
-                "Decide whether one short opening line adds value. Do not report restore state, "
-                "telemetry, memory machinery, or claim the user is present when there is no evidence."
+                "Decide whether one short opening line adds value. When startup_screen_evidence has a strong anchor, "
+                "open from one concrete visible detail instead of generic onboarding. A low-risk inference is allowed "
+                "only as a hypothesis with an explicit basis and room for correction. Never invent that the user plans "
+                "to start, change, fix, or feel something. Do not report restore state or memory machinery."
             ),
         }
         plan = host.ai_intention_planner.plan_autonomous(
             snapshot,
             turn_seq=turn_seq,
+        )
+        try:
+            from runtime.runtime_settings_store import runtime_bool
+            force_screen_opening = runtime_bool("architecture", "startup_screen_opening", default=True)
+        except Exception:
+            force_screen_opening = str(os.getenv("ERIS_AI_STARTUP_SCREEN_OPENING", "1") or "1").strip().lower() in {
+                "1", "true", "yes", "on",
+            }
+        plan = ensure_grounded_startup_plan(
+            plan,
+            startup_grounding,
+            force_screen_opening=force_screen_opening,
         )
         if not (plan.speak and plan.confidence >= 0.56 and plan.importance >= 0.42):
             host.logger.info(
@@ -483,7 +513,7 @@ class AIAutonomousOrchestrator:
             plan=plan,
             personality_context=state.personality_prompt_context(),
             memory_context=state.relationship.prompt_summary(),
-            grounding_context="startup_event_only; no direct screen evidence",
+            grounding_context=startup_grounding.prompt_context(),
             recent_history=host._chat_history_for_llm(limit=4),
             avoid_text=str(getattr(host, "last_text", "") or ""),
             allow_fallback=not no_fallback_mode_enabled(),

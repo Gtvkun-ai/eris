@@ -9,7 +9,7 @@ public partial class UdpListener : Node2D
 	// Panel cũ "Chiều sâu" từng phụ thuộc Ni/Fe/ToM legacy. Từ Architecture C v5,
 	// nó trở thành bảng Identity & Life Runtime, đọc đúng một contract
 	// identity_runtime. Tên method/field cũ được giữ để không làm vỡ UdpListener.
-	private static readonly Vector2 DepthPanelMinSize = new(1260f, 780f);
+	private static readonly Vector2 DepthPanelMinSize = new(1240f, 820f);
 	private const float DepthPanelMargin = 14f;
 
 	private Panel _depthPanel;
@@ -20,6 +20,15 @@ public partial class UdpListener : Node2D
 	private Label _depthLearningChip;
 	private Label _depthTurnChip;
 	private Button _depthFreezeButton;
+	private bool _depthResetScrollOnRefresh = true;
+	private ScrollContainer _depthScrollContainer;
+	private Control _depthScrollDecorationLayer;
+	private TextureRect _depthScrollTrackRect;
+	private TextureRect _depthScrollFillRect;
+	private TextureRect _depthScrollCapRect;
+	private Texture2D _depthScrollTrackTexture;
+	private Texture2D _depthScrollFillTexture;
+	private Texture2D _depthScrollCapTexture;
 	private readonly List<Button> _depthTabButtons = new();
 	private string _depthActiveTab = "overview";
 	private bool _depthLearningEnabled = true;
@@ -81,7 +90,9 @@ public partial class UdpListener : Node2D
 		_depthPanel.Position = new Vector2(
 			Mathf.Max(0f, (viewport.X - width) * 0.5f),
 			Mathf.Max(0f, (viewport.Y - height) * 0.5f));
+		_depthResetScrollOnRefresh = true;
 		RefreshDepthPanel();
+		Callable.From(UpdateDepthScrollDecor).CallDeferred();
 	}
 
 	private void BuildDepthPanelUi()
@@ -114,20 +125,20 @@ public partial class UdpListener : Node2D
 		var root = new VBoxContainer
 		{
 			Name = "IdentityRuntimeRoot",
-			OffsetLeft = 20f,
-			OffsetTop = 12f,
-			OffsetRight = -20f,
-			OffsetBottom = -12f,
+			OffsetLeft = 22f,
+			OffsetTop = 14f,
+			OffsetRight = -22f,
+			OffsetBottom = -14f,
 		};
 		root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
 		root.AddThemeConstantOverride("separation", 7);
 		_depthPanel.AddChild(root);
 
-		var header = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 56f) };
+		var header = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 62f) };
 		header.AddThemeConstantOverride("separation", 10);
 		root.AddChild(header);
 
-		header.AddChild(NewIconBadge(IdentityAsset("identity_brand.png"), "♥", new Vector2(50f, 50f), IdentityPink, true));
+		header.AddChild(NewIconBadge(IdentityAsset("identity_brand.png"), "♥", new Vector2(68f, 54f), IdentityPink, false));
 
 		var titleBlock = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
 		titleBlock.AddThemeConstantOverride("separation", -1);
@@ -154,7 +165,7 @@ public partial class UdpListener : Node2D
 
 		var tabs = new HBoxContainer
 		{
-			CustomMinimumSize = new Vector2(0f, 44f),
+			CustomMinimumSize = new Vector2(0f, 48f),
 			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
 		};
 		tabs.AddThemeConstantOverride("separation", 6);
@@ -171,52 +182,184 @@ public partial class UdpListener : Node2D
 			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
 			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
 			HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+			VerticalScrollMode = ScrollContainer.ScrollMode.Auto,
+			ClipContents = true,
 		};
+		scroll.AddThemeConstantOverride("v_scrollbar_separation", 0);
 		root.AddChild(scroll);
+		_depthScrollContainer = scroll;
+
+		// Mượn đúng cấu trúc cuộn của Inner Diary: chừa một rail riêng bên phải,
+		// ẩn scrollbar Godot và vẽ topcap/track/fill bằng asset đã có.
+		var scrollPad = new MarginContainer
+		{
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			SizeFlagsVertical = Control.SizeFlags.ShrinkBegin,
+		};
+		scrollPad.AddThemeConstantOverride("margin_right", 30);
+		scrollPad.AddThemeConstantOverride("margin_top", 4);
+		scrollPad.AddThemeConstantOverride("margin_bottom", 8);
+		scroll.AddChild(scrollPad);
+
 		_depthContentList = new VBoxContainer
 		{
 			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
 			CustomMinimumSize = new Vector2(0f, 0f),
 			SizeFlagsVertical = Control.SizeFlags.ShrinkBegin,
 		};
-		_depthContentList.AddThemeConstantOverride("separation", 10);
-		scroll.AddChild(_depthContentList);
+		_depthContentList.AddThemeConstantOverride("separation", 12);
+		scrollPad.AddChild(_depthContentList);
 
-		var controls = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 42f) };
-		controls.AddThemeConstantOverride("separation", 8);
-		root.AddChild(controls);
+		ApplyHiddenScrollBarTheme(scroll.GetVScrollBar());
+		scroll.GetVScrollBar().ValueChanged += _ => UpdateDepthScrollDecor();
+		scroll.Resized += UpdateDepthScrollDecor;
+
+		// Action dock tách thao tác bảo trì khỏi nội dung sống, có khối nền và độ nổi riêng.
+		var actionDock = new PanelContainer
+		{
+			CustomMinimumSize = new Vector2(0f, 58f),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+		};
+		actionDock.AddThemeStyleboxOverride("panel", IdentityActionDockStyle());
+		root.AddChild(actionDock);
+
+		var actionPad = new MarginContainer();
+		actionPad.AddThemeConstantOverride("margin_left", 8);
+		actionPad.AddThemeConstantOverride("margin_top", 6);
+		actionPad.AddThemeConstantOverride("margin_right", 8);
+		actionPad.AddThemeConstantOverride("margin_bottom", 6);
+		actionDock.AddChild(actionPad);
+
+		var controls = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 46f) };
+		controls.AddThemeConstantOverride("separation", 10);
+		actionPad.AddChild(controls);
 		_depthFreezeButton = NewFooterButton("Đóng băng học", IdentityAsset("identity_action_freeze.png"), "❄", ToggleIdentityLearning, IdentityBlue);
 		controls.AddChild(_depthFreezeButton);
-		controls.AddChild(NewFooterButton("Xuất snapshot", IdentityAsset("identity_action_export.png"), "⇩", () => SendDebugCommand("identity snapshot"), IdentityBlue));
+		controls.AddChild(NewFooterButton("Xuất snapshot", IdentityAsset("identity_action_export.png"), "⇩", () => SendDebugCommand("identity snapshot"), new Color(0.42f, 0.48f, 0.88f, 1f)));
 		controls.AddChild(NewFooterButton("Reset mood", IdentityAsset("identity_action_reset_mood.png"), "☺", () => SendDebugCommand("identity reset mood"), IdentityPink));
 		controls.AddChild(NewFooterButton("Reset quan hệ", IdentityAsset("identity_action_reset_relationship.png"), "♧", () => SendDebugCommand("identity reset relationship"), IdentityAccent));
 		controls.AddChild(NewFooterButton("Reset discovery", IdentityAsset("identity_action_reset_discovery.png"), "✦", () => SendDebugCommand("identity reset discovery"), IdentityOrange));
 
+		BuildDepthScrollDecoration();
 		RefreshDepthTabStyle();
 		RefreshDepthPanel();
 	}
 
 
+	private void BuildDepthScrollDecoration()
+	{
+		_depthScrollCapTexture ??= LoadResourceTexture("res://asset/Resource/topcap.png");
+		_depthScrollTrackTexture ??= LoadResourceTexture("res://asset/Resource/scrolltrack.png");
+		_depthScrollFillTexture ??= LoadResourceTexture("res://asset/Resource/scrollfill.png");
+
+		_depthScrollDecorationLayer = new Control
+		{
+			Name = "IdentityScrollDecoration",
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		_depthScrollDecorationLayer.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+		_depthPanel.AddChild(_depthScrollDecorationLayer);
+
+		_depthScrollTrackRect = CreateDecorTextureRect(_depthScrollTrackTexture, new Vector2(14f, 220f));
+		_depthScrollFillRect = CreateDecorTextureRect(_depthScrollFillTexture, new Vector2(14f, 72f));
+		_depthScrollCapRect = CreateDecorTextureRect(_depthScrollCapTexture, new Vector2(28f, 28f));
+		_depthScrollDecorationLayer.AddChild(_depthScrollTrackRect);
+		_depthScrollDecorationLayer.AddChild(_depthScrollFillRect);
+		_depthScrollDecorationLayer.AddChild(_depthScrollCapRect);
+
+		Callable.From(UpdateDepthScrollDecor).CallDeferred();
+	}
+
+	private void UpdateDepthScrollDecor()
+	{
+		if (_depthScrollContainer == null || _depthPanel == null)
+			return;
+
+		VScrollBar scrollBar = _depthScrollContainer.GetVScrollBar();
+		if (scrollBar == null)
+			return;
+
+		Vector2 panelOrigin = _depthPanel.GlobalPosition;
+		Vector2 scPos = _depthScrollContainer.GlobalPosition - panelOrigin;
+		Vector2 scSize = _depthScrollContainer.Size;
+
+		float railWidth = 12f;
+		float trackX = scPos.X + scSize.X - railWidth - 8f;
+		float trackTop = scPos.Y + 5f;
+		float trackHeight = Mathf.Max(52f, scSize.Y - 10f);
+		bool canScroll = scrollBar.MaxValue > scrollBar.Page + 0.5;
+
+		if (_depthScrollTrackRect != null)
+		{
+			_depthScrollTrackRect.Position = new Vector2(trackX, trackTop);
+			_depthScrollTrackRect.Size = new Vector2(railWidth, trackHeight);
+			_depthScrollTrackRect.Visible = canScroll;
+		}
+
+		float thumbMinHeight = 56f;
+		float thumbMaxHeight = Mathf.Min(trackHeight, 160f);
+		float thumbHeight = thumbMinHeight;
+		double maxVal = scrollBar.MaxValue;
+		if (maxVal > 0.001 && scrollBar.Page > 0)
+		{
+			float pageRatio = Mathf.Clamp((float)(scrollBar.Page / maxVal), 0.12f, 1f);
+			thumbHeight = Mathf.Clamp(trackHeight * pageRatio, thumbMinHeight, thumbMaxHeight);
+		}
+
+		float scrollRange = Mathf.Max(0f, (float)(scrollBar.MaxValue - scrollBar.Page));
+		float scrollRatio = scrollRange > 0.001f
+			? Mathf.Clamp((float)(scrollBar.Value / scrollRange), 0f, 1f)
+			: 0f;
+		float thumbY = trackTop + scrollRatio * Mathf.Max(0f, trackHeight - thumbHeight);
+
+		if (_depthScrollFillRect != null)
+		{
+			_depthScrollFillRect.Position = new Vector2(trackX, thumbY);
+			_depthScrollFillRect.Size = new Vector2(railWidth, thumbHeight);
+			_depthScrollFillRect.Visible = canScroll;
+		}
+
+		if (_depthScrollCapRect != null)
+		{
+			float capWidth = railWidth + 14f;
+			float capHeight = capWidth;
+			if (_depthScrollCapTexture != null)
+			{
+				Vector2 texSize = _depthScrollCapTexture.GetSize();
+				if (texSize.X > 0f && texSize.Y > 0f)
+					capHeight = capWidth * (texSize.Y / texSize.X);
+			}
+			_depthScrollCapRect.Position = new Vector2(
+				trackX + (railWidth - capWidth) * 0.5f,
+				thumbY - capHeight * 0.40f);
+			_depthScrollCapRect.Size = new Vector2(capWidth, capHeight);
+			_depthScrollCapRect.Visible = canScroll;
+		}
+	}
+
+
 	private void AddDepthTab(HBoxContainer parent, string key, string label, string iconPath, string fallbackGlyph)
 	{
-		bool hasIcon = ResourceLoader.Exists(iconPath);
+		string resolvedIconPath = ResolveIdentityAssetPath(iconPath);
+		bool hasIcon = ResourceLoader.Exists(resolvedIconPath);
 		var button = NewButton(hasIcon ? label : $"{fallbackGlyph}  {label}", () =>
 		{
 			_depthActiveTab = key;
+			_depthResetScrollOnRefresh = true;
 			RefreshDepthTabStyle();
 			RefreshDepthPanel();
 		}, danger: false);
 		button.SetMeta("identity_tab", key);
 		button.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
 		button.SizeFlagsStretchRatio = 1f;
-		button.CustomMinimumSize = new Vector2(0f, 42f);
+		button.CustomMinimumSize = new Vector2(0f, 46f);
 		button.AddThemeFontSizeOverride("font_size", 12);
 		button.ClipText = true;
 		if (hasIcon)
 		{
-			button.Icon = GD.Load<Texture2D>(iconPath);
+			button.Icon = GD.Load<Texture2D>(resolvedIconPath);
 			button.ExpandIcon = true;
-			button.AddThemeConstantOverride("icon_max_width", 18);
+			button.AddThemeConstantOverride("icon_max_width", 26);
 		}
 		_depthTabButtons.Add(button);
 		parent.AddChild(button);
@@ -231,15 +374,16 @@ public partial class UdpListener : Node2D
 			bool active = string.Equals(key, _depthActiveTab, StringComparison.Ordinal);
 			button.AddThemeColorOverride("font_color", active ? Colors.White : new Color(0.40f, 0.21f, 0.34f));
 			button.AddThemeColorOverride("font_hover_color", active ? Colors.White : new Color(0.35f, 0.16f, 0.31f));
-			button.AddThemeColorOverride("icon_normal_color", active ? Colors.White : IdentityPink);
-			button.AddThemeColorOverride("icon_hover_color", active ? Colors.White : IdentityPink);
-			button.AddThemeStyleboxOverride("normal", ButtonStyle(
-				active ? new Color(0.95f, 0.18f, 0.48f, 1f) : new Color(1f, 0.978f, 0.989f, 1f),
-				active ? new Color(0.95f, 0.18f, 0.48f, 1f) : new Color(0.95f, 0.78f, 0.86f, 1f)));
-			button.AddThemeStyleboxOverride("hover", ButtonStyle(
-				active ? new Color(0.88f, 0.12f, 0.42f, 1f) : new Color(1f, 0.93f, 0.97f, 1f),
-				IdentityPink));
-			button.AddThemeStyleboxOverride("pressed", ButtonStyle(new Color(0.90f, 0.13f, 0.43f, 1f), IdentityPink));
+			// PNG Identity đã có màu hoàn chỉnh. Không được dùng theme icon color để
+			// nhuộm chúng thành một mảng hồng như icon monochrome.
+			button.AddThemeColorOverride("icon_normal_color", Colors.White);
+			button.AddThemeColorOverride("icon_hover_color", Colors.White);
+			button.AddThemeColorOverride("icon_pressed_color", Colors.White);
+			button.AddThemeColorOverride("icon_focus_color", Colors.White);
+			button.AddThemeStyleboxOverride("normal", IdentityTabStyle(active, false));
+			button.AddThemeStyleboxOverride("hover", IdentityTabStyle(active, true));
+			button.AddThemeStyleboxOverride("pressed", IdentityTabPressedStyle());
+			button.AddThemeStyleboxOverride("focus", new StyleBoxEmpty());
 		}
 	}
 
@@ -332,6 +476,8 @@ public partial class UdpListener : Node2D
 				"Panel đang chờ identity_runtime từ Python.",
 				"Nếu Architecture C đã bật mà panel vẫn trắng, kiểm tra panel_state_update và UDP ack.",
 			});
+			Callable.From(UpdateDepthScrollDecor).CallDeferred();
+			ResetDepthScrollIfNeeded();
 			return;
 		}
 
@@ -363,10 +509,13 @@ public partial class UdpListener : Node2D
 				case "audit": RenderAuditTab(root); break;
 				default: RenderOverviewTab(root); break;
 			}
+			Callable.From(UpdateDepthScrollDecor).CallDeferred();
+			ResetDepthScrollIfNeeded();
 		}
 		catch (Exception ex)
 		{
 			AddInfoCard("Không đọc được snapshot", new[] { ex.Message, "Raw state vẫn được giữ để gói sau có thể sửa lại." });
+			ResetDepthScrollIfNeeded();
 		}
 	}
 
@@ -379,17 +528,17 @@ public partial class UdpListener : Node2D
 		{
 			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
 			ClipContents = true,
-			CustomMinimumSize = new Vector2(0f, 560f),
+			CustomMinimumSize = new Vector2(0f, 742f),
 		};
-		body.AddThemeConstantOverride("separation", 12);
+		body.AddThemeConstantOverride("separation", 14);
 		_depthContentList.AddChild(body);
 
-		var left = new VBoxContainer { CustomMinimumSize = new Vector2(325f, 0f), SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin };
-		left.AddThemeConstantOverride("separation", 8);
+		var left = new VBoxContainer { CustomMinimumSize = new Vector2(330f, 0f), SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin };
+		left.AddThemeConstantOverride("separation", 10);
 		body.AddChild(left);
 
 		var right = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		right.AddThemeConstantOverride("separation", 10);
+		right.AddThemeConstantOverride("separation", 12);
 		body.AddChild(right);
 
 		RenderOverviewMood(left, root);
@@ -398,8 +547,8 @@ public partial class UdpListener : Node2D
 		RenderDefenseAndConflict(left, root);
 
 		RenderLiveTimeline(right, root);
-		var bottom = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 205f) };
-		bottom.AddThemeConstantOverride("separation", 10);
+		var bottom = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 258f) };
+		bottom.AddThemeConstantOverride("separation", 12);
 		right.AddChild(bottom);
 		RenderStageExpression(bottom, root);
 		RenderReadyDiscovery(bottom, root);
@@ -410,7 +559,7 @@ public partial class UdpListener : Node2D
 	private void RenderOverviewMood(VBoxContainer parent, JsonElement root)
 	{
 		JsonElement summary = Obj(root, "summary");
-		var card = NewIdentityCard("Tâm thế hiện tại", IdentityAsset("identity_card_mood.png"), "✧", IdentityPink, 130f);
+		var card = NewIdentityCard("Tâm thế hiện tại", IdentityAsset("identity_card_mood.png"), "✧", IdentityPink, 160f);
 		parent.AddChild(card);
 		var box = (VBoxContainer)card.GetChild(0);
 		var row = new HBoxContainer();
@@ -450,7 +599,7 @@ public partial class UdpListener : Node2D
 		bool allowed = ReadBool(decision, "allowed", false);
 		string reason = ReadString(decision, "reason");
 		string status = allowed ? "Sẵn sàng nói" : (want >= 0.35f ? "Đang giữ lại" : "Đang yên");
-		var card = NewIdentityCard("Xung lực chủ động", IdentityAsset("identity_card_speech_drive.png"), "ϟ", IdentityPink, 165f);
+		var card = NewIdentityCard("Xung lực chủ động", IdentityAsset("identity_card_speech_drive.png"), "ϟ", IdentityPink, 190f);
 		parent.AddChild(card);
 		var box = (VBoxContainer)card.GetChild(0);
 		var stateRow = new HBoxContainer();
@@ -468,7 +617,7 @@ public partial class UdpListener : Node2D
 
 	private void RenderTopMotives(VBoxContainer parent, JsonElement root)
 	{
-		var card = NewIdentityCard("Motive chính", IdentityAsset("identity_card_motive.png"), "✦", IdentityAccent, 96f);
+		var card = NewIdentityCard("Motive chính", IdentityAsset("identity_card_motive.png"), "✦", IdentityAccent, 112f);
 		parent.AddChild(card);
 		var box = (VBoxContainer)card.GetChild(0);
 		JsonElement motiveArray = Arr(root, "active_motives");
@@ -503,13 +652,13 @@ public partial class UdpListener : Node2D
 				break;
 			}
 		}
-		var defense = NewIdentityCard("Defense", IdentityAsset("identity_card_defense.png"), "♢", IdentityPurple, 66f);
+		var defense = NewIdentityCard("Defense", IdentityAsset("identity_card_defense.png"), "♢", IdentityPurple, 82f);
 		parent.AddChild(defense);
 		var defenseBox = (VBoxContainer)defense.GetChild(0);
 		AddCompactValue(defenseBox, PrettyIdentityKey(defenseKey), defenseValue, IdentityPurple);
 
 		JsonElement conflict = Obj(root, "active_conflict");
-		var conflictCard = NewIdentityCard("Mâu thuẫn nội tại", IdentityAsset("identity_card_conflict.png"), "⚖", IdentityPink, 66f);
+		var conflictCard = NewIdentityCard("Mâu thuẫn nội tại", IdentityAsset("identity_card_conflict.png"), "⚖", IdentityPink, 82f);
 		parent.AddChild(conflictCard);
 		var conflictBox = (VBoxContainer)conflictCard.GetChild(0);
 		AddCompactValue(conflictBox, PrettyIdentityKey(ReadString(conflict, "conflict_id")), ReadFloat(conflict, "activation"), IdentityPink);
@@ -518,7 +667,7 @@ public partial class UdpListener : Node2D
 
 	private void RenderLiveTimeline(VBoxContainer parent, JsonElement root)
 	{
-		var card = NewIdentityCard("Dòng trạng thái sống", IdentityAsset("identity_card_timeline.png"), "⌁", IdentityPink, 285f);
+		var card = NewIdentityCard("Dòng trạng thái sống", IdentityAsset("identity_card_timeline.png"), "⌁", IdentityPink, 355f);
 		card.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
 		parent.AddChild(card);
 		var box = (VBoxContainer)card.GetChild(0);
@@ -551,9 +700,10 @@ public partial class UdpListener : Node2D
 	private void RenderStageExpression(HBoxContainer parent, JsonElement root)
 	{
 		JsonElement expression = Obj(root, "expression");
-		var card = NewIdentityCard("Identity → Stage Expression", IdentityAsset("identity_card_stage.png"), "✧", IdentityPink, 205f);
+		var card = NewIdentityCard("Identity → Stage Expression", IdentityAsset("identity_card_stage.png"), "✧", IdentityPink, 245f);
 		card.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-		card.SizeFlagsStretchRatio = 1.08f;
+		card.SizeFlagsStretchRatio = 1.04f;
+		card.CustomMinimumSize = new Vector2(292f, 245f);
 		parent.AddChild(card);
 		var box = (VBoxContainer)card.GetChild(0);
 		var content = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
@@ -567,7 +717,7 @@ public partial class UdpListener : Node2D
 		AddMetricBar(metrics, "Intensity", ReadFloat(expression, "intensity"), IdentityPurple);
 		AddKeyValueRow(metrics, "Sentence bias", PrettyStageText(ReadString(expression, "sentence_bias")), IdentityPurple);
 		AddKeyValueRow(metrics, "Stage", PrettyStageText(ReadString(expression, "preset")), IdentityPink);
-		content.AddChild(NewIconBadge(IdentityAsset("identity_stage_silhouette.png"), "♙", new Vector2(58f, 100f), IdentityPink, false));
+		content.AddChild(NewIconBadge(IdentityAsset("identity_stage_silhouette.png"), "♙", new Vector2(88f, 136f), IdentityPink, false));
 	}
 
 
@@ -580,9 +730,10 @@ public partial class UdpListener : Node2D
 		{
 			foreach (JsonElement item in readyArray.EnumerateArray()) { first = item; break; }
 		}
-		var card = NewIdentityCard("Discovery sẵn sàng", IdentityAsset("identity_card_discovery.png"), "♢", IdentityOrange, 205f);
+		var card = NewIdentityCard("Discovery sẵn sàng", IdentityAsset("identity_card_discovery.png"), "♢", IdentityOrange, 245f);
 		card.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-		card.SizeFlagsStretchRatio = 0.92f;
+		card.SizeFlagsStretchRatio = 0.96f;
+		card.CustomMinimumSize = new Vector2(272f, 245f);
 		parent.AddChild(card);
 		var box = (VBoxContainer)card.GetChild(0);
 		var badgeRow = new HBoxContainer();
@@ -592,7 +743,7 @@ public partial class UdpListener : Node2D
 		var main = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
 		main.AddThemeConstantOverride("separation", 10);
 		box.AddChild(main);
-		main.AddChild(NewIconBadge(IdentityAsset("identity_discovery_mascot.png"), "♡", new Vector2(64f, 72f), IdentityOrange, false));
+		main.AddChild(NewIconBadge(IdentityAsset("identity_discovery_mascot.png"), "♡", new Vector2(96f, 106f), IdentityOrange, false));
 		var copy = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
 		main.AddChild(copy);
 		if (first.ValueKind != JsonValueKind.Object)
@@ -624,9 +775,10 @@ public partial class UdpListener : Node2D
 	private void RenderRelationshipPreview(HBoxContainer parent, JsonElement root)
 	{
 		JsonElement rel = Obj(root, "relationship");
-		var card = NewIdentityCard("Quan hệ & belief", IdentityAsset("identity_card_relationship.png"), "♧", IdentityAccent, 205f);
+		var card = NewIdentityCard("Quan hệ & belief", IdentityAsset("identity_card_relationship.png"), "♧", IdentityAccent, 245f);
 		card.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-		card.SizeFlagsStretchRatio = 1.08f;
+		card.SizeFlagsStretchRatio = 1.00f;
+		card.CustomMinimumSize = new Vector2(276f, 245f);
 		parent.AddChild(card);
 		var box = (VBoxContainer)card.GetChild(0);
 		AddRelationshipBar(box, "Tin tưởng", ReadFirstFloat(rel, "relational_trust", "trust"), IdentityPink, "♥");
@@ -643,37 +795,58 @@ public partial class UdpListener : Node2D
 		var card = new PanelContainer { CustomMinimumSize = new Vector2(0f, minHeight), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
 		card.AddThemeStyleboxOverride("panel", new StyleBoxFlat
 		{
-			BgColor = new Color(1f, 0.995f, 0.998f, 0.99f),
-			BorderColor = new Color(accent.R, accent.G, accent.B, 0.24f),
+			BgColor = new Color(1f, 0.994f, 0.998f, 0.995f),
+			BorderColor = new Color(accent.R, accent.G, accent.B, 0.27f),
 			BorderWidthLeft = 1,
 			BorderWidthTop = 1,
 			BorderWidthRight = 1,
 			BorderWidthBottom = 1,
-			CornerRadiusTopLeft = 17,
-			CornerRadiusTopRight = 17,
-			CornerRadiusBottomLeft = 17,
-			CornerRadiusBottomRight = 17,
-			ContentMarginLeft = 12f,
-			ContentMarginTop = 9f,
-			ContentMarginRight = 12f,
-			ContentMarginBottom = 9f,
-			ShadowColor = new Color(0.72f, 0.28f, 0.52f, 0.07f),
-			ShadowSize = 5,
+			CornerRadiusTopLeft = 18,
+			CornerRadiusTopRight = 18,
+			CornerRadiusBottomLeft = 18,
+			CornerRadiusBottomRight = 18,
+			ContentMarginLeft = 14f,
+			ContentMarginTop = 11f,
+			ContentMarginRight = 14f,
+			ContentMarginBottom = 11f,
+			ShadowColor = new Color(0.56f, 0.18f, 0.40f, 0.10f),
+			ShadowSize = 9,
+			ShadowOffset = new Vector2(0f, 3f),
 		});
 		var box = new VBoxContainer();
 		box.AddThemeConstantOverride("separation", 5);
 		card.AddChild(box);
 		var header = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 24f) };
 		header.AddThemeConstantOverride("separation", 6);
-		header.AddChild(NewIconBadge(iconPath, fallbackGlyph, new Vector2(22f, 22f), accent, true));
+		header.AddChild(NewIconBadge(iconPath, fallbackGlyph, new Vector2(32f, 32f), accent, true));
 		header.AddChild(NewLabel(title, 14, new Color(0.55f, 0.17f, 0.38f), true));
 		box.AddChild(header);
 		return card;
 	}
 
 
+	private static string ResolveIdentityAssetPath(string path)
+	{
+		if (string.IsNullOrWhiteSpace(path))
+			return path ?? "";
+		if (ResourceLoader.Exists(path))
+			return path;
+
+		// Chấp nhận lỗi đặt tên phổ biến "identity_mood_neutral.png.png" để asset
+		// vẫn hiển thị trong lúc người dùng đang thay bộ icon.
+		if (path.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+		{
+			string doubled = path + ".png";
+			if (ResourceLoader.Exists(doubled))
+				return doubled;
+		}
+		return path;
+	}
+
+
 	private TextureRect NewIdentityTexture(string path, Vector2 size)
 	{
+		string resolvedPath = ResolveIdentityAssetPath(path);
 		var rect = new TextureRect
 		{
 			CustomMinimumSize = size,
@@ -681,35 +854,49 @@ public partial class UdpListener : Node2D
 			ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
 			StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
 			MouseFilter = Control.MouseFilterEnum.Ignore,
+			Modulate = Colors.White,
+			SelfModulate = Colors.White,
+			TextureFilter = CanvasItem.TextureFilterEnum.Linear,
 		};
-		if (ResourceLoader.Exists(path)) rect.Texture = GD.Load<Texture2D>(path);
+		if (ResourceLoader.Exists(resolvedPath))
+			rect.Texture = GD.Load<Texture2D>(resolvedPath);
 		return rect;
 	}
 
 	private Control NewIconBadge(string path, string fallbackGlyph, Vector2 size, Color accent, bool circular)
 	{
-		var badge = new PanelContainer { CustomMinimumSize = size, Size = size, MouseFilter = Control.MouseFilterEnum.Ignore };
+		string resolvedPath = ResolveIdentityAssetPath(path);
+		bool hasTexture = ResourceLoader.Exists(resolvedPath);
+		var badge = new PanelContainer
+		{
+			CustomMinimumSize = size,
+			Size = size,
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
 		int radius = circular ? (int)Mathf.Round(Mathf.Min(size.X, size.Y) * 0.5f) : 14;
+
+		// Ảnh màu hoàn chỉnh không cần thêm lớp nền hồng/border phủ phía sau. Khung
+		// pastel chỉ dành cho glyph fallback khi asset còn thiếu.
 		badge.AddThemeStyleboxOverride("panel", new StyleBoxFlat
 		{
-			BgColor = new Color(accent.R, accent.G, accent.B, 0.075f),
-			BorderColor = new Color(accent.R, accent.G, accent.B, 0.20f),
-			BorderWidthLeft = 1,
-			BorderWidthTop = 1,
-			BorderWidthRight = 1,
-			BorderWidthBottom = 1,
+			BgColor = hasTexture ? new Color(1f, 1f, 1f, 0f) : new Color(accent.R, accent.G, accent.B, 0.075f),
+			BorderColor = hasTexture ? new Color(1f, 1f, 1f, 0f) : new Color(accent.R, accent.G, accent.B, 0.20f),
+			BorderWidthLeft = hasTexture ? 0 : 1,
+			BorderWidthTop = hasTexture ? 0 : 1,
+			BorderWidthRight = hasTexture ? 0 : 1,
+			BorderWidthBottom = hasTexture ? 0 : 1,
 			CornerRadiusTopLeft = radius,
 			CornerRadiusTopRight = radius,
 			CornerRadiusBottomLeft = radius,
 			CornerRadiusBottomRight = radius,
-			ContentMarginLeft = 3f,
-			ContentMarginTop = 3f,
-			ContentMarginRight = 3f,
-			ContentMarginBottom = 3f,
+			ContentMarginLeft = hasTexture ? 0f : 3f,
+			ContentMarginTop = hasTexture ? 0f : 3f,
+			ContentMarginRight = hasTexture ? 0f : 3f,
+			ContentMarginBottom = hasTexture ? 0f : 3f,
 		});
-		if (ResourceLoader.Exists(path))
+		if (hasTexture)
 		{
-			badge.AddChild(NewIdentityTexture(path, new Vector2(Mathf.Max(1f, size.X - 6f), Mathf.Max(1f, size.Y - 6f))));
+			badge.AddChild(NewIdentityTexture(resolvedPath, size));
 		}
 		else
 		{
@@ -723,9 +910,10 @@ public partial class UdpListener : Node2D
 
 	private Control NewMoodOrb(string path, string subtitle)
 	{
-		if (ResourceLoader.Exists(path))
-			return NewIdentityTexture(path, new Vector2(92f, 92f));
-		var orb = new PanelContainer { CustomMinimumSize = new Vector2(92f, 92f) };
+		string resolvedPath = ResolveIdentityAssetPath(path);
+		if (ResourceLoader.Exists(resolvedPath))
+			return NewIdentityTexture(resolvedPath, new Vector2(112f, 112f));
+		var orb = new PanelContainer { CustomMinimumSize = new Vector2(112f, 112f) };
 		orb.AddThemeStyleboxOverride("panel", new StyleBoxFlat
 		{
 			BgColor = new Color(0.98f, 0.68f, 0.84f, 0.82f),
@@ -734,10 +922,10 @@ public partial class UdpListener : Node2D
 			BorderWidthTop = 3,
 			BorderWidthRight = 3,
 			BorderWidthBottom = 3,
-			CornerRadiusTopLeft = 46,
-			CornerRadiusTopRight = 46,
-			CornerRadiusBottomLeft = 46,
-			CornerRadiusBottomRight = 46,
+			CornerRadiusTopLeft = 56,
+			CornerRadiusTopRight = 56,
+			CornerRadiusBottomLeft = 56,
+			CornerRadiusBottomRight = 56,
 		});
 		var face = NewLabel("• ᴗ •", 21, new Color(0.33f, 0.21f, 0.38f), true);
 		face.HorizontalAlignment = HorizontalAlignment.Center;
@@ -815,22 +1003,138 @@ public partial class UdpListener : Node2D
 
 	private Button NewFooterButton(string text, string iconPath, string fallbackGlyph, Action action, Color accent)
 	{
-		bool hasIcon = ResourceLoader.Exists(iconPath);
+		string resolvedIconPath = ResolveIdentityAssetPath(iconPath);
+		bool hasIcon = ResourceLoader.Exists(resolvedIconPath);
 		var button = NewButton(hasIcon ? text : $"{fallbackGlyph}  {text}", action, false);
-		button.CustomMinimumSize = new Vector2(0f, 36f);
+		button.CustomMinimumSize = new Vector2(0f, 46f);
 		button.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
 		button.SizeFlagsStretchRatio = 1f;
-		button.AddThemeColorOverride("font_color", new Color(0.36f, 0.23f, 0.34f));
-		button.AddThemeStyleboxOverride("normal", ButtonStyle(new Color(1f, 0.982f, 0.990f), new Color(accent.R, accent.G, accent.B, 0.24f)));
-		button.AddThemeStyleboxOverride("hover", ButtonStyle(new Color(accent.R, accent.G, accent.B, 0.08f), accent));
+		button.FocusMode = Control.FocusModeEnum.None;
+		button.AddThemeFontSizeOverride("font_size", 12);
+		button.AddThemeConstantOverride("h_separation", 8);
+		button.AddThemeColorOverride("font_color", new Color(0.31f, 0.20f, 0.31f));
+		button.AddThemeColorOverride("font_hover_color", new Color(0.25f, 0.12f, 0.25f));
+		button.AddThemeColorOverride("font_pressed_color", new Color(0.25f, 0.12f, 0.25f));
+		button.AddThemeStyleboxOverride("normal", IdentityActionButtonStyle(accent, false, false));
+		button.AddThemeStyleboxOverride("hover", IdentityActionButtonStyle(accent, true, false));
+		button.AddThemeStyleboxOverride("pressed", IdentityActionButtonStyle(accent, true, true));
+		button.AddThemeStyleboxOverride("focus", new StyleBoxEmpty());
 		if (hasIcon)
 		{
-			button.Icon = GD.Load<Texture2D>(iconPath);
+			button.Icon = GD.Load<Texture2D>(resolvedIconPath);
 			button.ExpandIcon = true;
-			button.AddThemeConstantOverride("icon_max_width", 18);
+			button.AddThemeConstantOverride("icon_max_width", 22);
+			button.AddThemeColorOverride("icon_normal_color", Colors.White);
+			button.AddThemeColorOverride("icon_hover_color", Colors.White);
+			button.AddThemeColorOverride("icon_pressed_color", Colors.White);
+			button.AddThemeColorOverride("icon_focus_color", Colors.White);
 		}
 		return button;
 	}
+
+
+	// Chỉ reset khi mở panel hoặc đổi tab; refresh telemetry thường vẫn giữ vị trí người đang xem.
+	private void ResetDepthScrollIfNeeded()
+	{
+		if (!_depthResetScrollOnRefresh || _depthScrollContainer == null)
+			return;
+		_depthResetScrollOnRefresh = false;
+		Callable.From(() =>
+		{
+			if (_depthScrollContainer == null)
+				return;
+			_depthScrollContainer.ScrollVertical = 0;
+			UpdateDepthScrollDecor();
+		}).CallDeferred();
+	}
+
+	private static StyleBoxFlat IdentityActionDockStyle() => new()
+	{
+		BgColor = new Color(1f, 0.987f, 0.994f, 0.985f),
+		BorderColor = new Color(0.94f, 0.78f, 0.86f, 0.92f),
+		BorderWidthLeft = 1,
+		BorderWidthTop = 1,
+		BorderWidthRight = 1,
+		BorderWidthBottom = 1,
+		CornerRadiusTopLeft = 19,
+		CornerRadiusTopRight = 19,
+		CornerRadiusBottomLeft = 19,
+		CornerRadiusBottomRight = 19,
+		ShadowColor = new Color(0.50f, 0.16f, 0.36f, 0.12f),
+		ShadowSize = 10,
+		ShadowOffset = new Vector2(0f, 3f),
+	};
+
+	private static StyleBoxFlat IdentityActionButtonStyle(Color accent, bool hover, bool pressed)
+	{
+		float alpha = pressed ? 0.19f : hover ? 0.13f : 0.065f;
+		float borderAlpha = pressed ? 0.72f : hover ? 0.58f : 0.34f;
+		return new StyleBoxFlat
+		{
+			BgColor = new Color(accent.R, accent.G, accent.B, alpha),
+			BorderColor = new Color(accent.R, accent.G, accent.B, borderAlpha),
+			BorderWidthLeft = 1,
+			BorderWidthTop = 1,
+			BorderWidthRight = 1,
+			BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 15,
+			CornerRadiusTopRight = 15,
+			CornerRadiusBottomLeft = 15,
+			CornerRadiusBottomRight = 15,
+			ContentMarginLeft = 14f,
+			ContentMarginTop = 7f,
+			ContentMarginRight = 14f,
+			ContentMarginBottom = 7f,
+			ShadowColor = new Color(accent.R, accent.G, accent.B, hover ? 0.14f : 0.07f),
+			ShadowSize = hover ? 8 : 5,
+			ShadowOffset = new Vector2(0f, pressed ? 1f : 2f),
+		};
+	}
+
+	private static StyleBoxFlat IdentityTabStyle(bool active, bool hover)
+	{
+		Color bg = active
+			? new Color(0.95f, hover ? 0.14f : 0.18f, 0.48f, 1f)
+			: new Color(1f, hover ? 0.945f : 0.982f, hover ? 0.972f : 0.991f, 1f);
+		Color border = active ? new Color(0.95f, 0.18f, 0.48f, 1f) : new Color(0.95f, 0.73f, 0.84f, hover ? 0.92f : 0.72f);
+		return new StyleBoxFlat
+		{
+			BgColor = bg,
+			BorderColor = border,
+			BorderWidthLeft = 1,
+			BorderWidthTop = 1,
+			BorderWidthRight = 1,
+			BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 15,
+			CornerRadiusTopRight = 15,
+			CornerRadiusBottomLeft = 15,
+			CornerRadiusBottomRight = 15,
+			ContentMarginLeft = 12f,
+			ContentMarginRight = 12f,
+			ShadowColor = new Color(0.55f, 0.14f, 0.37f, active ? 0.15f : hover ? 0.08f : 0.03f),
+			ShadowSize = active ? 8 : hover ? 6 : 3,
+			ShadowOffset = new Vector2(0f, active ? 3f : 1f),
+		};
+	}
+
+	private static StyleBoxFlat IdentityTabPressedStyle() => new()
+	{
+		BgColor = new Color(0.88f, 0.12f, 0.42f, 1f),
+		BorderColor = new Color(0.84f, 0.08f, 0.37f, 1f),
+		BorderWidthLeft = 1,
+		BorderWidthTop = 1,
+		BorderWidthRight = 1,
+		BorderWidthBottom = 1,
+		CornerRadiusTopLeft = 15,
+		CornerRadiusTopRight = 15,
+		CornerRadiusBottomLeft = 15,
+		CornerRadiusBottomRight = 15,
+		ContentMarginLeft = 12f,
+		ContentMarginRight = 12f,
+		ShadowColor = new Color(0.45f, 0.08f, 0.28f, 0.12f),
+		ShadowSize = 4,
+		ShadowOffset = new Vector2(0f, 1f),
+	};
 
 
 	private void AddRankRow(VBoxContainer parent, int rank, string label, float value, Color accent)
@@ -891,7 +1195,7 @@ public partial class UdpListener : Node2D
 
 	private void AddTimelineRow(VBoxContainer parent, IdentityLiveEvent item, int index)
 	{
-		var row = new PanelContainer { CustomMinimumSize = new Vector2(0f, 48f) };
+		var row = new PanelContainer { CustomMinimumSize = new Vector2(0f, 60f) };
 		row.AddThemeStyleboxOverride("panel", new StyleBoxFlat
 		{
 			BgColor = index % 2 == 0 ? new Color(1f, 0.988f, 0.995f, 0.96f) : new Color(1f, 1f, 1f, 0.88f),
@@ -917,7 +1221,7 @@ public partial class UdpListener : Node2D
 		sequence.CustomMinimumSize = new Vector2(26f, 0f);
 		sequence.HorizontalAlignment = HorizontalAlignment.Center;
 		h.AddChild(sequence);
-		h.AddChild(NewIconBadge(item.IconPath, item.FallbackGlyph, new Vector2(36f, 36f), item.Accent, true));
+		h.AddChild(NewIconBadge(item.IconPath, item.FallbackGlyph, new Vector2(48f, 48f), item.Accent, true));
 		var copy = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
 		copy.AddThemeConstantOverride("separation", -1);
 		var title = NewLabel(TrimForPanel(item.Title, 52), 11, IdentityInk, true);

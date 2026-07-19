@@ -24,8 +24,20 @@ def _has_marker(normalized: str, marker: str) -> bool:
 
 
 class ScreenRelevanceRouter:
-    SCREEN_MARKERS = ("man hinh", "screen", "tren man", "cua so nay", "nhin man hinh", "xem man hinh", "xem di", "ban xem di", "dang hien gi", "toi dang code gi", "doan dang mo", "file dang mo", "loi nay tren man hinh")
-    TEXT_MARKERS = ("chu", "text", "dong", "log", "terminal", "console", "code", "traceback", "exception", "error", "loi", "thong bao", "ghi gi", "doc", "file", "ham", "class")
+    SCREEN_MARKERS = (
+        "man hinh", "screen", "tren man", "cua so nay", "nhin man hinh", "xem man hinh",
+        "xem di", "ban xem di", "dang hien gi", "toi dang code gi", "doan dang mo",
+        "file dang mo", "loi nay tren man hinh", "tab nay", "panel nay", "tab dang mo",
+        "tab telemetry", "panel telemetry", "cua so telemetry", "doc tab telemetry",
+        "doc duoc tab telemetry", "telemetry cua toi", "telemetry toi",
+    )
+    TEXT_MARKERS = (
+        "chu", "text", "dong", "log", "terminal", "console", "code", "traceback",
+        "exception", "error", "loi", "thong bao", "ghi gi", "doc", "file", "ham",
+        "class", "tab", "panel", "telemetry", "uia", "ocr", "metric", "status",
+    )
+    SCREEN_CAPABILITY_MARKERS = ("doc duoc", "nhin duoc", "thay duoc", "xem duoc", "co doc", "co thay")
+    SCREEN_RESOURCE_MARKERS = ("telemetry", "tab", "panel", "uia", "ocr", "cua so")
     VISUAL_MARKERS = ("mau", "bo cuc", "layout", "icon", "anh nay", "hinh anh", "giao dien", "ui", "dep", "xau", "vi tri", "can le", "kich thuoc", "bieu do", "chart")
     STRONG_MARKERS = ("chinh xac", "xac nhan", "evidence", "bang chung", "doc dung", "kiem tra ky", "verify")
 
@@ -35,6 +47,14 @@ class ScreenRelevanceRouter:
     def route(self, user_text: str) -> ScreenRouteDecision:
         normalized = _norm(user_text)
         references = any(_has_marker(normalized, marker) for marker in self.SCREEN_MARKERS)
+        # Câu hỏi capability kiểu "em đọc được tab telemetry tôi chưa" không nhất
+        # thiết chứa chữ "màn hình". Ghép verb đọc/nhìn với resource UI để router
+        # hiểu đây vừa là capability inquiry vừa là current-screen reference.
+        if not references:
+            references = (
+                any(_has_marker(normalized, marker) for marker in self.SCREEN_CAPABILITY_MARKERS)
+                and any(_has_marker(normalized, marker) for marker in self.SCREEN_RESOURCE_MARKERS)
+            )
         if not references:
             return ScreenRouteDecision(mode="none", reason="no_screen_reference")
         needs_visual = any(_has_marker(normalized, marker) for marker in self.VISUAL_MARKERS)

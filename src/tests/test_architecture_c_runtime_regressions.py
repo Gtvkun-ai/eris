@@ -547,3 +547,181 @@ def test_hardening_fingerprint_covers_signature_ending_runtime() -> None:
     assert "runtime/speech_localizer.py" in DEFAULT_AUTHORITY_FILES
     assert "runtime/tts_engine.py" in DEFAULT_AUTHORITY_FILES
     assert "runtime/runtime_settings_store.py" in DEFAULT_AUTHORITY_FILES
+
+
+def test_startup_grounding_uses_fresh_telemetry_tab_evidence() -> None:
+    from types import SimpleNamespace
+
+    from runtime.ai_orchestrated.startup_grounding import collect_startup_grounding
+    from screen.evidence_models import ActiveWindowInfo, ScreenTextBlock, ScreenTextSnapshot
+
+    now = time.time()
+    block = ScreenTextBlock(
+        block_id="telemetry-status",
+        text="TTS queue: idle | Observer 429 burst: cooldown 30s",
+        source="uia",
+        confidence=0.86,
+        window_title="Eris - Telemetry",
+        captured_at=now,
+    )
+    snapshot = ScreenTextSnapshot(
+        window=ActiveWindowInfo(title="Eris - Telemetry"),
+        blocks=(block,),
+        captured_at=now,
+        revision=1,
+        backend="uia_only",
+    )
+
+    class _Worker:
+        def __init__(self) -> None:
+            self.started = False
+
+        def start(self) -> None:
+            self.started = True
+
+    class _Store:
+        def snapshot(self):
+            return snapshot
+
+    class _Telemetry:
+        def capture_snapshot(self, **_kwargs):
+            return SimpleNamespace(
+                active_window="Eris - Telemetry",
+                active_app="Eris",
+                focus_summary="Telemetry panel with runtime status",
+            )
+
+    host = SimpleNamespace(
+        screen_text_worker=_Worker(),
+        screen_evidence_store=_Store(),
+        telemetry_service=_Telemetry(),
+        mood_score=0,
+        inferred_pos_x=0.5,
+        chat_mode=False,
+        _chat_processing=False,
+    )
+
+    bundle = collect_startup_grounding(host, timeout_seconds=0.0)
+    assert host.screen_text_worker.started is True
+    assert bundle.has_direct_screen_evidence is True
+    assert bundle.has_strong_opening_anchor is True
+    assert bundle.telemetry_surface_visible is True
+    assert bundle.evidence_refs == ("screen:telemetry-status",)
+    assert "TTS queue" in bundle.prompt_context()
+    assert "low-risk" in bundle.prompt_context()
+
+
+def test_grounded_startup_plan_forces_specific_screen_opening() -> None:
+    from runtime.ai_orchestrated.contracts import IntentionPlan
+    from runtime.ai_orchestrated.startup_grounding import (
+        StartupGroundingBundle,
+        ensure_grounded_startup_plan,
+    )
+
+    plan = IntentionPlan.silence(channel="autonomous", reason="planner_uncertain")
+    bundle = StartupGroundingBundle(
+        active_window="Eris - Telemetry",
+        backend="uia_only",
+        screen_revision=1,
+        telemetry_surface_visible=True,
+        evidence=(
+            {
+                "id": "status-1",
+                "source": "uia",
+                "text": "Observer 429 burst: cooldown 30s",
+                "confidence": 0.86,
+            },
+        ),
+    )
+
+    grounded = ensure_grounded_startup_plan(plan, bundle, force_screen_opening=True)
+    assert grounded.speak is True
+    assert grounded.motive == "startup_opening"
+    assert grounded.strategy == "grounded_environment_opening"
+    assert grounded.confidence >= 0.78
+    assert grounded.importance >= 0.62
+    assert grounded.evidence_refs == ("screen:status-1",)
+    assert "one concrete item" in grounded.topic
+    assert "Do not invent" in grounded.topic
+
+
+def test_startup_without_evidence_prefers_silence_over_bland_onboarding() -> None:
+    from runtime.ai_orchestrated.startup_grounding import StartupGroundingBundle
+
+    bundle = StartupGroundingBundle()
+    context = bundle.prompt_context()
+    assert "Prefer silence" in context
+    assert "generic availability/onboarding" in context
+    assert bundle.has_strong_opening_anchor is False
+
+
+def test_screen_router_recognizes_telemetry_tab_capability_question() -> None:
+    from screen.screen_evidence_store import ScreenEvidenceStore
+    from screen.screen_relevance_router import ScreenRelevanceRouter
+
+    route = ScreenRelevanceRouter(ScreenEvidenceStore()).route(
+        "em đọc được tab telemetry tôi chưa"
+    )
+    assert route.references_screen is True
+    assert route.reason != "no_screen_reference"
+
+
+def test_hardening_fingerprint_covers_startup_screen_grounding() -> None:
+    from runtime.hardening_release import DEFAULT_AUTHORITY_FILES
+
+    assert "runtime/ai_orchestrated/startup_grounding.py" in DEFAULT_AUTHORITY_FILES
+    assert "screen/screen_relevance_router.py" in DEFAULT_AUTHORITY_FILES
+
+
+def test_startup_grounding_uses_telemetry_content_metadata_when_worker_is_sparse() -> None:
+    from types import SimpleNamespace
+
+    from runtime.ai_orchestrated.startup_grounding import collect_startup_grounding
+    from screen.evidence_models import ActiveWindowInfo, ScreenTextSnapshot
+
+    screen_snapshot = ScreenTextSnapshot(
+        window=ActiveWindowInfo(title="Desktop"),
+        blocks=(),
+        captured_at=time.time(),
+        revision=1,
+        backend="uia_only",
+    )
+
+    class _Worker:
+        def start(self) -> None:
+            return None
+
+    class _Store:
+        def snapshot(self):
+            return screen_snapshot
+
+    class _Telemetry:
+        def capture_snapshot(self, **_kwargs):
+            return SimpleNamespace(
+                active_window="Eris - Telemetry",
+                active_app="Eris",
+                focus_summary="Telemetry panel",
+                content_metadata={
+                    "source": "ocr_cache",
+                    "confidence": 0.82,
+                    "privacy_level": "normal",
+                    "visible_text_sample": "TTS latency 240 ms | queue idle",
+                },
+            )
+
+    host = SimpleNamespace(
+        screen_text_worker=_Worker(),
+        screen_evidence_store=_Store(),
+        telemetry_service=_Telemetry(),
+        mood_score=0,
+        inferred_pos_x=0.5,
+        chat_mode=False,
+        _chat_processing=False,
+    )
+
+    bundle = collect_startup_grounding(host, timeout_seconds=0.0)
+    assert bundle.active_window == "Eris - Telemetry"
+    assert bundle.telemetry_surface_visible is True
+    assert bundle.has_strong_opening_anchor is True
+    assert bundle.evidence[0]["source"] == "ocr_cache"
+    assert "TTS latency" in bundle.evidence[0]["text"]
