@@ -92,7 +92,15 @@ public partial class UdpListener : Node2D
 	private void OnContextAnchorPressed()
 	{
 		_bodyAutonomy?.RecordUserInteraction();
-		ToggleAnchorPanel();
+
+		// "Mô Hình Ngài" cũ từng đọc Anchor/Shadow/Fe legacy. Từ Architecture C v5,
+		// user model có một nguồn duy nhất trong Identity Runtime. Giữ method này
+		// làm compatibility hook, nhưng chuyển thẳng tới tab Quan hệ & belief để
+		// không còn hai panel kể hai câu chuyện khác nhau về cùng một người.
+		if (_anchorPanel != null && _anchorPanel.Visible)
+			CloseAnchorPanel();
+		_depthActiveTab = "relationship";
+		ShowDepthPanel();
 	}
 
 	private void ToggleAnchorPanel()

@@ -23,6 +23,17 @@ from .identity import (
     StrategyRecord,
     ValueChoice,
 )
+from .discovery import (
+    ActivityRecord,
+    DiscoveryPlan,
+    DiscoveryRecord,
+    DiscoveryRuntime,
+    DiscoveryState,
+    ExternalNeedGate,
+)
+from .expression import IdentityExpression, IdentityExpressionBridge
+from .identity_consolidator import IdentityConsolidator
+from .initiative import InitiativeController, InitiativeEvent, InitiativeState
 from .stage_planner import StagePlan, StagePlanner
 from .panel_adapter import build_ai_panel_payload
 from .views import build_cognitive_views
@@ -30,6 +41,18 @@ from .state_reducer import StateReducer
 
 __all__ = [
     "AI_RUNTIME_VERSION",
+    "ActivityRecord",
+    "DiscoveryPlan",
+    "DiscoveryRecord",
+    "DiscoveryRuntime",
+    "DiscoveryState",
+    "ExternalNeedGate",
+    "IdentityExpression",
+    "IdentityExpressionBridge",
+    "IdentityConsolidator",
+    "InitiativeController",
+    "InitiativeEvent",
+    "InitiativeState",
     "AppraisalState",
     "CognitiveObservation",
     "ConsequenceAssessment",

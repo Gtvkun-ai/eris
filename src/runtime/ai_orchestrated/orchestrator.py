@@ -17,7 +17,7 @@ from failure_meta import build_failure_meta
 from runtime.no_fallback_policy import no_fallback_mode_enabled
 from semantic_authority import SemanticAuthorityPolicy
 
-from .contracts import AI_RUNTIME_VERSION, StateEvent
+from .contracts import AI_RUNTIME_VERSION, IntentionPlan, StateEvent
 from .identity import PendingStrategyUse, PRIMARY_RELATIONSHIP_ID
 
 
@@ -155,6 +155,13 @@ class AIChatOrchestrator:
         personality_context = mind_state.personality_prompt_context()
         relationship_context = mind_state.relationship.prompt_summary()
         grounding_context = str(getattr(grounding_report, "prompt_context", "") or "")
+        discovery_runtime = getattr(host, "ai_discovery_runtime", None)
+        telemetry_payload = snapshot.to_machine_context() if callable(getattr(snapshot, "to_machine_context", None)) else {}
+        discovery_context = (
+            discovery_runtime.planner_context(telemetry_payload)
+            if discovery_runtime is not None
+            else {}
+        )
         planning_snapshot = {
             "event_kind": "chat",
             "user_text": user_text,
@@ -166,11 +173,28 @@ class AIChatOrchestrator:
             "grounding_context": grounding_context,
             "memory_available": bool(str(memory_context or "").strip()),
             "interrupt_context": speech_interrupt_context,
+            "discovery": discovery_context,
         }
         chat_plan = host.ai_intention_planner.plan_chat(
             planning_snapshot,
             turn_seq=turn_seq,
         )
+        discovery_id = ""
+        if discovery_runtime is not None:
+            chat_plan, discovery_grounding, discovery_id = discovery_runtime.bind_plan(chat_plan)
+            if discovery_grounding:
+                grounding_context = "\n".join(part for part in (grounding_context, discovery_grounding) if part)
+            elif str(getattr(chat_plan, "strategy", "") or "").strip().lower() == "share_discovery":
+                data = chat_plan.to_dict()
+                data.update({
+                    "strategy": "direct_answer",
+                    "topic": (
+                        "Answer honestly that no verified discovery is ready yet, or use a real current activity if present. "
+                        "Do not invent a fact merely because the user asked for something interesting."
+                    ),
+                    "evidence_refs": [],
+                })
+                chat_plan = IntentionPlan.from_mapping(data, channel="chat")
         user_message = host.parser.build_chat_user_message(
             user_message=user_text,
             last_chat_answer=host.last_chat_answer,
@@ -252,9 +276,11 @@ class AIChatOrchestrator:
         hint = str(getattr(decision, "performance_hint", "") or "").strip().lower()
         if not hint or hint == "neutral":
             hint = str(getattr(chat_plan, "performance_hint", "") or "neutral")
-        host.ai_stage_planner.apply(decision, hint)
+        host.ai_stage_planner.apply(decision, hint, state=state, channel="chat")
         decision = host._execute_system_action(decision, snapshot=snapshot, frame=None)
         public_text, assistant_meta = self._commit(decision)
+        if public_text and discovery_id and discovery_runtime is not None:
+            discovery_runtime.mark_spoken(discovery_id, public_text)
         host.last_user_text_for_semantics = user_text
 
         if public_text and chat_plan.strategy:
@@ -455,7 +481,7 @@ class AIAutonomousOrchestrator:
         raw = json.dumps(payload, ensure_ascii=False)
         host._log_raw_llm_output("startup_ai", raw)
         decision = host.parser.parse(raw)
-        host.ai_stage_planner.apply(decision, plan.performance_hint)
+        host.ai_stage_planner.apply(decision, plan.performance_hint, state=state, channel="session_ritual")
         text, _assistant_meta = self._commit_public(
             decision,
             channel="session_ritual",
@@ -496,10 +522,11 @@ class AIAutonomousOrchestrator:
         memory_context = host._build_memory_context(snapshot, memory_resonance=memory_resonance)
         state = host.ai_state_reducer.snapshot()
         turn_seq = _next_ai_turn_seq(host)
+        telemetry_payload = snapshot.to_machine_context() if callable(getattr(snapshot, "to_machine_context", None)) else {}
         planner_snapshot = {
             "event_kind": "force_speak",
             "explicit_user_pull": True,
-            "telemetry": snapshot.to_machine_context() if callable(getattr(snapshot, "to_machine_context", None)) else {},
+            "telemetry": telemetry_payload,
             "vision_facts": list(vision_facts or ()),
             "personality": state.personality.panel_view(),
             "personality_summary": state.personality_prompt_context(),
@@ -511,12 +538,20 @@ class AIAutonomousOrchestrator:
             "recent_public_history": host._chat_history_for_llm(limit=8),
             "instruction": "Choose one grounded, worthwhile thing to say now. Do not invent context.",
         }
+        discovery_runtime = getattr(host, "ai_discovery_runtime", None)
+        if discovery_runtime is not None:
+            planner_snapshot["discovery"] = discovery_runtime.planner_context(telemetry_payload)
         plan = host.ai_intention_planner.plan_autonomous(
             planner_snapshot,
             turn_seq=turn_seq,
         )
+        discovery_id = ""
+        discovery_grounding = ""
+        if discovery_runtime is not None:
+            plan, discovery_grounding, discovery_id = discovery_runtime.bind_plan(plan)
+        if str(getattr(plan, "strategy", "") or "").strip().lower() == "share_discovery" and not discovery_grounding:
+            plan = IntentionPlan.silence(channel="force_speak", reason="share_discovery_without_artifact")
         if not plan.speak or not plan.topic.strip():
-            from .contracts import IntentionPlan
             plan = IntentionPlan.from_mapping(
                 {
                     "plan_id": f"force-speak-{int(time.time() * 1000)}",
@@ -541,7 +576,12 @@ class AIAutonomousOrchestrator:
             plan=plan,
             personality_context=state.personality_prompt_context(),
             memory_context=memory_context,
-            grounding_context="\n".join(str(item) for item in (vision_facts or ())[-6:]),
+            grounding_context="\n".join(
+                part for part in (
+                    "\n".join(str(item) for item in (vision_facts or ())[-6:]),
+                    discovery_grounding,
+                ) if part
+            ),
             recent_history=host._chat_history_for_llm(limit=8),
             avoid_text=str(getattr(host, "last_text", "") or ""),
             allow_fallback=not no_fallback_mode_enabled(),
@@ -553,7 +593,7 @@ class AIAutonomousOrchestrator:
         raw = json.dumps(payload, ensure_ascii=False)
         host._log_raw_llm_output("force_speak_ai", raw)
         decision = host.parser.parse(raw)
-        host.ai_stage_planner.apply(decision, plan.performance_hint)
+        host.ai_stage_planner.apply(decision, plan.performance_hint, state=state, channel="force_speak")
         decision = host._execute_system_action(decision, snapshot=snapshot, frame=None)
         text = str(getattr(decision, "text", "") or "").strip()
         if not text:
@@ -564,6 +604,8 @@ class AIAutonomousOrchestrator:
             channel="force_speak",
             turn_seq=turn_seq,
         )
+        if text and discovery_id and discovery_runtime is not None:
+            discovery_runtime.mark_spoken(discovery_id, text)
         if not text:
             return
         host.last_autonomous_spoken_at = time.time()
@@ -643,9 +685,10 @@ class AIAutonomousOrchestrator:
         memory_context = host._merge_conversation_context(memory_context)
         state = host.ai_state_reducer.snapshot()
         turn_seq = _next_ai_turn_seq(host)
+        telemetry_payload = snapshot.to_machine_context() if callable(getattr(snapshot, "to_machine_context", None)) else {}
         planner_snapshot = {
             "time": now,
-            "telemetry": snapshot.to_machine_context() if callable(getattr(snapshot, "to_machine_context", None)) else {},
+            "telemetry": telemetry_payload,
             "vision_facts": list(vision_facts or ()),
             "personality": state.personality.panel_view(),
             "personality_summary": state.personality_prompt_context(),
@@ -658,24 +701,51 @@ class AIAutonomousOrchestrator:
             "seconds_since_assistant": max(0.0, now - float(getattr(host, "_temporal_last_assistant_turn_at", 0.0) or 0.0)),
             "last_autonomous_text": str(getattr(host, "last_text", "") or ""),
         }
+        discovery_runtime = getattr(host, "ai_discovery_runtime", None)
+        if discovery_runtime is not None:
+            planner_snapshot["discovery"] = discovery_runtime.planner_context(telemetry_payload, now=now)
+            discovery_runtime.maybe_tick(planner_snapshot, now=now)
+            planner_snapshot["discovery"] = discovery_runtime.planner_context(telemetry_payload, now=now)
         plan = host.ai_intention_planner.plan_autonomous(
             planner_snapshot,
             turn_seq=turn_seq,
         )
+        discovery_id = ""
+        discovery_grounding = ""
+        if discovery_runtime is not None:
+            plan, discovery_grounding, discovery_id = discovery_runtime.bind_plan(plan)
+        discovery_requires_artifact = str(getattr(plan, "strategy", "") or "").strip().lower() == "share_discovery"
         worth_speaking = (
             plan.speak
             and plan.confidence >= 0.62
             and plan.importance >= 0.56
             and plan.importance >= plan.intrusion_risk + 0.10
             and bool(plan.topic.strip())
+            and (not discovery_requires_artifact or bool(discovery_grounding))
         )
+        initiative_reason = "not_evaluated"
+        initiative = getattr(host, "ai_initiative_controller", None)
+        if worth_speaking and initiative is not None:
+            active_app = str(telemetry_payload.get("active_app", "") or "").strip().lower()
+            active_title = str(telemetry_payload.get("active_window_title", "") or "").strip().lower()
+            busy_markers = ("meeting", "meet", "zoom", "teams", "presentation", "full screen", "fullscreen")
+            user_busy = any(marker in active_app or marker in active_title for marker in busy_markers)
+            seconds_since_user = max(0.0, now - float(getattr(host, "_chat_last_activity_at", 0.0) or 0.0))
+            allowed, initiative_reason = initiative.evaluate(
+                plan,
+                now=now,
+                user_busy=user_busy,
+                seconds_since_user=seconds_since_user,
+            )
+            worth_speaking = worth_speaking and allowed
         if not worth_speaking:
             host.logger.info(
-                "[ai autonomous] silence motive=%s conf=%.2f importance=%.2f intrusion=%.2f",
+                "[ai autonomous] silence motive=%s conf=%.2f importance=%.2f intrusion=%.2f initiative=%s",
                 plan.motive,
                 plan.confidence,
                 plan.importance,
                 plan.intrusion_risk,
+                initiative_reason,
             )
             host._sleep_interruptible(max(8, min(24, host._choose_autonomous_sleep_duration(suppressed=True, ti_mode="ai_silence"))))
             return True
@@ -686,7 +756,12 @@ class AIAutonomousOrchestrator:
             plan=plan,
             personality_context=state.personality_prompt_context(),
             memory_context=memory_context,
-            grounding_context="\n".join(str(item) for item in (vision_facts or ())[-6:]),
+            grounding_context="\n".join(
+                part for part in (
+                    "\n".join(str(item) for item in (vision_facts or ())[-6:]),
+                    discovery_grounding,
+                ) if part
+            ),
             recent_history=host._chat_history_for_llm(limit=8),
             avoid_text=str(getattr(host, "last_text", "") or ""),
             allow_fallback=not no_fallback_mode_enabled(),
@@ -703,7 +778,7 @@ class AIAutonomousOrchestrator:
         raw = json.dumps(payload, ensure_ascii=False)
         host._log_raw_llm_output("autonomous_ai", raw)
         decision = host.parser.parse(raw)
-        host.ai_stage_planner.apply(decision, plan.performance_hint)
+        host.ai_stage_planner.apply(decision, plan.performance_hint, state=state, channel="autonomous")
         decision = host._execute_system_action(decision, snapshot=snapshot, frame=None)
         if isinstance(getattr(decision, "action_result_meta", None), Mapping):
             host.ai_state_reducer.submit(
@@ -719,11 +794,15 @@ class AIAutonomousOrchestrator:
             channel="autonomous",
             turn_seq=turn_seq,
         )
+        if text and discovery_id and discovery_runtime is not None:
+            discovery_runtime.mark_spoken(discovery_id, text)
         if not text:
             host._sleep_interruptible(10)
             return True
         host.last_autonomous_spoken_at = time.time()
         host._note_autonomous_spoken()
+        if initiative is not None:
+            initiative.record_spoken(plan, now=host.last_autonomous_spoken_at, channel="autonomous")
         autonomous_turn_id = f"autonomous:{turn_seq}"
         if plan.strategy:
             host.ai_state_reducer.submit(

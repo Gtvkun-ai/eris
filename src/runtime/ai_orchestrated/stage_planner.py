@@ -1,15 +1,18 @@
 # -*- coding: utf-8 -*-
-"""Biến một performance hint nhỏ thành metadata sân khấu cơ học.
+"""Ánh xạ ý định biểu hiện sang metadata sân khấu cơ học.
 
-Main model không cần vận hành cả rạp hát. Nó chỉ nói "soft_warm" hay
-"dry_tease"; runtime ánh xạ sang pose/cue hợp frontend. Đây là mapping cơ học,
-không phải lớp sửa văn.
+Main model vẫn sở hữu câu public. IdentityExpressionBridge chỉ chọn preset dựa
+trên state đã được reducer chấp nhận; module này không sửa văn và không chèn tag
+hành động vào text.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+
+from .contracts import RuntimeMindState
+from .expression import IdentityExpressionBridge
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,24 +44,55 @@ _STAGE_PRESETS: dict[str, StagePlan] = {
 
 
 class StagePlanner:
-    def plan(self, hint: str, *, fallback: str = "neutral") -> StagePlan:
-        key = str(hint or fallback or "neutral").strip().lower().replace("-", "_").replace(" ", "_")
-        return _STAGE_PRESETS.get(key, _STAGE_PRESETS.get(fallback, StagePlan()))
+    def __init__(self, *, expression_bridge: IdentityExpressionBridge | None = None) -> None:
+        self.expression_bridge = expression_bridge or IdentityExpressionBridge()
 
-    def apply(self, decision: Any, hint: str = "") -> Any:
-        plan = self.plan(hint or getattr(decision, "performance_hint", ""))
-        # Explicit runtime/tool motion wins. Preset only fills empty fields.
+    def plan(
+        self,
+        hint: str,
+        *,
+        fallback: str = "neutral",
+        state: RuntimeMindState | None = None,
+        channel: str = "chat",
+    ) -> tuple[StagePlan, dict[str, Any]]:
+        expression = self.expression_bridge.derive(
+            state,
+            requested_hint=hint or fallback,
+            channel=channel,
+        )
+        key = str(expression.preset or fallback or "neutral").strip().lower().replace("-", "_").replace(" ", "_")
+        plan = _STAGE_PRESETS.get(key, _STAGE_PRESETS.get(fallback, StagePlan()))
+        return plan, expression.to_dict()
+
+    def apply(
+        self,
+        decision: Any,
+        hint: str = "",
+        *,
+        state: RuntimeMindState | None = None,
+        channel: str = "chat",
+    ) -> Any:
+        plan, expression = self.plan(
+            hint or getattr(decision, "performance_hint", ""),
+            state=state,
+            channel=channel,
+        )
         if not str(getattr(decision, "animation", "") or "").strip() or getattr(decision, "animation", "") == "stand":
             decision.animation = plan.animation
         decision.next_animation = str(getattr(decision, "next_animation", "") or "") or plan.next_animation
         decision.delivery_hint = str(getattr(decision, "delivery_hint", "") or "") or plan.delivery_hint
         decision.nonverbal_cue = str(getattr(decision, "nonverbal_cue", "") or "") or plan.nonverbal_cue
         decision.stage_motion = str(getattr(decision, "stage_motion", "") or "") or plan.stage_motion
+        decision.performance_hint = str(expression.get("preset", "") or hint or "neutral")
         if int(getattr(decision, "direction", 0) or 0) == 0:
             decision.direction = plan.direction
         if float(getattr(decision, "target_x", -1.0) or -1.0) < 0.0:
             decision.target_x = plan.target_x
         decision.bounce_action = str(getattr(decision, "bounce_action", "") or "") or plan.bounce_action
+
+        meta = dict(getattr(decision, "behavior_observation_meta", {}) or {})
+        meta["identity_expression"] = expression
+        decision.behavior_observation_meta = meta
         return decision
 
 

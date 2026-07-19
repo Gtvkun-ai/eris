@@ -8,6 +8,10 @@ import threading
 from typing import Any, Mapping
 
 from .contracts import RuntimeMindState
+from .discovery import DiscoveryRuntime
+from .expression import IdentityExpressionBridge
+from .identity_consolidator import IdentityConsolidator
+from .initiative import InitiativeController
 from .model_router import AIRuntimeModelRouter
 from .observer import PostTurnObserver
 from .orchestrator import AIChatOrchestrator, AIAutonomousOrchestrator, architecture_c_enabled
@@ -64,6 +68,10 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
         workers=int(os.getenv("ERIS_AI_OBSERVER_WORKERS", "2") or 2),
     )
     planner = IntentionPlanner(router, reducer, logger=getattr(host, "logger", None))
+    discovery = DiscoveryRuntime(host, router, logger=getattr(host, "logger", None))
+    initiative = InitiativeController(logger=getattr(host, "logger", None))
+    consolidator = IdentityConsolidator(logger=getattr(host, "logger", None))
+    expression_bridge = IdentityExpressionBridge()
 
     host.ai_runtime_enabled = True
     host._ai_turn_seq_lock = threading.RLock()
@@ -72,7 +80,10 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     host.ai_model_router = router
     host.ai_post_turn_observer = observer
     host.ai_intention_planner = planner
-    host.ai_stage_planner = StagePlanner()
+    host.ai_discovery_runtime = discovery
+    host.ai_initiative_controller = initiative
+    host.ai_identity_consolidator = consolidator
+    host.ai_stage_planner = StagePlanner(expression_bridge=expression_bridge)
     host.ai_chat_orchestrator = AIChatOrchestrator(host)
     host.ai_autonomous_orchestrator = AIAutonomousOrchestrator(host)
 
@@ -95,6 +106,7 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
         host.latest_cognitive_observation = dict(state.latest_observation)
         host.latest_personality_profile = state.personality.to_dict()
         host.latest_identity_profile = state.identity.to_dict()
+        host.latest_discovery_state = discovery.panel_view()
         host.pending_social_repair = bool(state.latest_observation.get("repair_needed", False))
         # Panel đọc một state duy nhất, không ráp trust từ ba engine khác nhau.
         try:
@@ -136,9 +148,10 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
                         pass
 
     reducer.subscribe(on_state)
+    reducer.subscribe(consolidator.observe)
     try:
         host.logger.info(
-            "[architecture C] enabled version=ai_orchestrated.v3.identity_kernel state_version=%s personality_version=%s identity_version=%s observer=post_turn planner=ai single_writer=1",
+            "[architecture C] enabled version=ai_orchestrated.v5.identity_expression_panel_sync state_version=%s personality_version=%s identity_version=%s observer=post_turn planner=ai single_writer=1",
             reducer.snapshot().version,
             reducer.snapshot().personality.version,
             reducer.snapshot().identity.version,
@@ -149,9 +162,10 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
 
 
 def shutdown_ai_orchestrated_runtime(host: Any) -> None:
-    for name in ("ai_post_turn_observer", "ai_state_reducer"):
+    for name in ("ai_post_turn_observer", "ai_discovery_runtime", "ai_state_reducer"):
         obj = getattr(host, name, None)
-        method = getattr(obj, "shutdown" if name.endswith("observer") else "close", None)
+        method_name = "shutdown" if name in {"ai_post_turn_observer", "ai_discovery_runtime"} else "close"
+        method = getattr(obj, method_name, None)
         if callable(method):
             try:
                 method()

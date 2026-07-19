@@ -26,7 +26,7 @@ from .contracts import (
     clamp01,
     compact,
 )
-from .identity import PendingStrategyUse
+from .identity import IdentityProfile, PendingStrategyUse, PRIMARY_RELATIONSHIP_ID, RelationshipIdentity
 from .identity_reducer import IdentityKernelReducer
 from .personality import (
     DEFAULT_CORE,
@@ -175,6 +175,8 @@ class StateReducer:
                 new_state = self._reduce_mechanical_outcome(state, event)
             elif event.kind == "pending_strategy":
                 new_state = self._reduce_pending_strategy(state, event)
+            elif event.kind == "admin_control":
+                new_state = self._reduce_admin_control(state, event)
             else:
                 self._log("debug", "[state reducer] unknown event ignored kind=%s", event.kind)
                 return False
@@ -201,6 +203,8 @@ class StateReducer:
         weight = observation.confidence if observation.confidence >= 0.55 else 0.0
         # Autonomous/startup không có user turn nên không tự sáng tác biến động quan hệ.
         relation_weight = weight if observation.event_kind in {"chat", "force_speak"} else 0.0
+        if not state.identity_learning_enabled:
+            relation_weight = 0.0
         relation = state.relationship
 
         def delta(current: float, proposed: float, cap: float) -> float:
@@ -251,17 +255,21 @@ class StateReducer:
                 last_turn_seq=observation.turn_seq,
             )
 
-        personality = self._reduce_personality(
-            state.personality,
-            observation,
-            now=now,
-        )
-        identity = self._identity_reducer.reduce_observation(
-            state.identity,
-            observation,
-            relationship_state=updated_relation.to_dict(),
-            now=now,
-        )
+        if state.identity_learning_enabled:
+            personality = self._reduce_personality(
+                state.personality,
+                observation,
+                now=now,
+            )
+            identity = self._identity_reducer.reduce_observation(
+                state.identity,
+                observation,
+                relationship_state=updated_relation.to_dict(),
+                now=now,
+            )
+        else:
+            personality = state.personality
+            identity = state.identity
 
         loops = list(state.open_loops)
         if observation.open_loop and observation.confidence >= 0.65:
@@ -292,6 +300,7 @@ class StateReducer:
             appraisal=appraisal,
             personality=personality,
             identity=identity,
+            identity_learning_enabled=state.identity_learning_enabled,
             latest_observation=observation.to_dict(),
             latest_intention=state.latest_intention,
             open_loops=tuple(loops[-8:]),
@@ -593,6 +602,56 @@ class StateReducer:
             relationship=relation,
             updated_at=time.time(),
         )
+
+    def _reduce_admin_control(self, state: RuntimeMindState, event: StateEvent) -> RuntimeMindState:
+        """Lệnh panel/debug đi qua single writer thay vì sửa state từ bên hông."""
+        action = compact(event.payload.get("action", ""), 60).lower()
+        now = time.time()
+        if action == "set_learning":
+            enabled = bool(event.payload.get("enabled", True))
+            return replace(state, version=state.version + 1, identity_learning_enabled=enabled, updated_at=now)
+        if action == "reset_mood":
+            personality = PersonalityProfile.from_mapping({
+                **state.personality.to_dict(),
+                "version": state.personality.version + 1,
+                "mood": dict(DEFAULT_MOOD),
+                "last_updated_at": now,
+            })
+            return replace(
+                state,
+                version=state.version + 1,
+                appraisal=AppraisalState(),
+                personality=personality,
+                updated_at=now,
+            )
+        if action == "reset_relationship":
+            identity_payload = state.identity.to_dict()
+            relationships = dict(identity_payload.get("relationships", {}) or {})
+            relationships[PRIMARY_RELATIONSHIP_ID] = RelationshipIdentity().to_dict()
+            identity_payload["relationships"] = relationships
+            identity_payload["version"] = state.identity.version + 1
+            return replace(
+                state,
+                version=state.version + 1,
+                relationship=RelationshipState(),
+                identity=IdentityProfile.from_mapping(identity_payload),
+                updated_at=now,
+            )
+        if action == "reset_identity":
+            return replace(
+                state,
+                version=state.version + 1,
+                identity=IdentityProfile(),
+                updated_at=now,
+            )
+        if action == "reset_all_ai_state":
+            return RuntimeMindState(
+                version=state.version + 1,
+                last_applied_turn_seq=state.last_applied_turn_seq,
+                identity_learning_enabled=state.identity_learning_enabled,
+                updated_at=now,
+            )
+        return state
 
     def _notify(self, event: StateEvent, accepted: bool) -> None:
         state = self.snapshot()

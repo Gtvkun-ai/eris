@@ -15,6 +15,22 @@ PANEL_STATE_PACKET_TYPE = "panel_state_update"
 def _compact_private_mind_for_udp_overflow(value):
     if not isinstance(value, dict):
         return {}
+    # Architecture C v5 gửi motive/defense/conflict/discovery trực tiếp. Không
+    # được ép digest mới vào khuôn menu/inner_diary legacy rồi vô tình xóa sạch
+    # đúng dữ liệu mà panel mới cần.
+    if any(key in value for key in ("active_motives", "activated_defenses", "active_conflict", "self_interpretation")):
+        modern_keys = (
+            "architecture", "surface", "open_loops", "latest_intention",
+            "personality_direction_30d", "active_personality_forms",
+            "active_identity_forms", "active_motives", "activated_defenses",
+            "active_conflict", "value_choice", "self_interpretation",
+            "expression", "discovery", "latest_observation",
+        )
+        return {
+            key: _bounded_panel_value(value.get(key), dict_limit=16, list_limit=8, text_limit=240)
+            for key in modern_keys
+            if key in value
+        } | {"udp_debug_truncated": True}
     menu = value.get("menu")
     if not isinstance(menu, dict):
         menu = {}
@@ -89,6 +105,17 @@ def _slim_private_mind_core(private_mind):
     """
     if not isinstance(private_mind, dict):
         return {}
+    if any(key in private_mind for key in ("active_motives", "activated_defenses", "active_conflict", "self_interpretation")):
+        modern_keys = (
+            "architecture", "open_loops", "latest_intention", "active_motives",
+            "activated_defenses", "active_conflict", "value_choice",
+            "self_interpretation", "expression", "discovery",
+        )
+        return {
+            key: _bounded_panel_value(private_mind.get(key), dict_limit=10, list_limit=5, text_limit=140)
+            for key in modern_keys
+            if key in private_mind
+        } | {"udp_debug_truncated": True}
     menu = private_mind.get("menu")
     menu = menu if isinstance(menu, dict) else {}
     slim_menu = {}
@@ -251,6 +278,17 @@ def _compact_depth_v2_for_panel(value, *, aggressive: bool = False):
     )
 
 
+
+def _compact_identity_runtime_for_panel(value, *, aggressive: bool = False):
+    if not isinstance(value, dict):
+        return {}
+    return _bounded_panel_value(
+        value,
+        dict_limit=28 if aggressive else 72,
+        list_limit=8 if aggressive else 20,
+        text_limit=160 if aggressive else 360,
+    )
+
 def build_panel_state_payload(payload: dict, *, aggressive: bool = False) -> dict:
     """Dựng envelope riêng cho panel, tách khỏi gói hội thoại/TTS.
 
@@ -275,6 +313,9 @@ def build_panel_state_payload(payload: dict, *, aggressive: bool = False) -> dic
         ),
         "depth_v2": _compact_depth_v2_for_panel(
             payload.get("depth_v2"), aggressive=aggressive
+        ),
+        "identity_runtime": _compact_identity_runtime_for_panel(
+            payload.get("identity_runtime"), aggressive=aggressive
         ),
         "udp_panel_compacted": True,
     }
@@ -409,12 +450,14 @@ class UdpTransport:
             return None
         has_panel_data = any(
             isinstance(payload.get(key), dict) and bool(payload.get(key))
-            for key in ("private_mind_digest", "emotion_debug", "depth_v2", "private_life_digest")
+            for key in ("private_mind_digest", "emotion_debug", "depth_v2", "private_life_digest", "identity_runtime")
         )
         if not has_panel_data:
             return None
 
-        self._panel_seq += 1
+        # Một số test/adapter dựng transport bằng __new__ để chỉ kiểm tra payload.
+        # Đừng để bộ đếm phụ biến đường panel thành AttributeError.
+        self._panel_seq = int(getattr(self, "_panel_seq", 0) or 0) + 1
         sent_at = time.time()
         packet_id = f"panel-{int(sent_at * 1000)}-{self._panel_seq}"
 
@@ -433,6 +476,7 @@ class UdpTransport:
         anchor = private_mind.get("anchor") if isinstance(private_mind, dict) else {}
         emotion = _compact_emotion_debug_for_panel(payload.get("emotion_debug"), aggressive=True)
         depth = _compact_depth_v2_for_panel(payload.get("depth_v2"), aggressive=True)
+        identity_runtime = _compact_identity_runtime_for_panel(payload.get("identity_runtime"), aggressive=True)
         minimal = {
             "type": PANEL_STATE_PACKET_TYPE,
             "should_speak": False,
@@ -444,6 +488,7 @@ class UdpTransport:
             },
             "emotion_debug": emotion,
             "depth_v2": depth,
+            "identity_runtime": identity_runtime,
             "udp_panel_compacted": True,
             "udp_debug_truncated": True,
             "packet_id": packet_id,

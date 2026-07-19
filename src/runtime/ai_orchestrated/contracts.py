@@ -35,7 +35,7 @@ from .personality import (
 )
 
 
-AI_RUNTIME_VERSION = "ai_orchestrated.v3.identity_kernel"
+AI_RUNTIME_VERSION = "ai_orchestrated.v5.identity_expression_panel_sync"
 
 
 def clamp01(value: Any, default: float = 0.0) -> float:
@@ -380,6 +380,7 @@ class RuntimeMindState:
     appraisal: AppraisalState = field(default_factory=AppraisalState)
     personality: PersonalityProfile = field(default_factory=PersonalityProfile)
     identity: IdentityProfile = field(default_factory=IdentityProfile)
+    identity_learning_enabled: bool = True
     latest_observation: Mapping[str, Any] = field(default_factory=dict)
     latest_intention: Mapping[str, Any] = field(default_factory=dict)
     open_loops: tuple[str, ...] = ()
@@ -415,6 +416,7 @@ class RuntimeMindState:
             appraisal=AppraisalState.from_mapping(data.get("appraisal") if isinstance(data.get("appraisal"), Mapping) else {}),
             personality=personality,
             identity=identity,
+            identity_learning_enabled=bool(data.get("identity_learning_enabled", True)),
             latest_observation=dict(data.get("latest_observation", {})) if isinstance(data.get("latest_observation"), Mapping) else {},
             latest_intention=dict(data.get("latest_intention", {})) if isinstance(data.get("latest_intention"), Mapping) else {},
             open_loops=loops,
@@ -431,6 +433,7 @@ class RuntimeMindState:
             "appraisal": self.appraisal.to_dict(),
             "personality": self.personality.to_dict(),
             "identity": self.identity.to_dict(),
+            "identity_learning_enabled": bool(self.identity_learning_enabled),
             "latest_observation": dict(self.latest_observation),
             "latest_intention": dict(self.latest_intention),
             "open_loops": list(self.open_loops),

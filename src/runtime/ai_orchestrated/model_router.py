@@ -12,8 +12,37 @@ from typing import Any, Mapping, Sequence
 from actions.contracts import VALID_SYSTEM_ACTIONS
 
 from .contracts import CognitiveObservation, IntentionPlan
+from .discovery import DiscoveryPlan
 from .identity import CONFLICT_TEMPLATES, DEFAULT_DEFENSES, DEFAULT_EMERGENT_VALUES, DEFAULT_MOTIVES, DEFAULT_RELATIONSHIP, DEFAULT_VALUES
 
+
+
+
+DISCOVERY_PLAN_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "lane", "topic", "needs_external", "freshness_required",
+        "verification_required", "eris_interest", "user_relevance",
+        "novelty", "importance", "confidence", "reason"
+    ],
+    "properties": {
+        "lane": {
+            "type": "string",
+            "enum": ["none", "vietnam_local_signal", "fresh_curiosity", "user_environment", "tutor_artifact"],
+        },
+        "topic": {"type": "string"},
+        "needs_external": {"type": "boolean"},
+        "freshness_required": {"type": "boolean"},
+        "verification_required": {"type": "boolean"},
+        "eris_interest": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "user_relevance": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "novelty": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "importance": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "reason": {"type": "string"},
+    },
+}
 
 COGNITIVE_OBSERVATION_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -909,6 +938,37 @@ class AIRuntimeModelRouter:
                 return self._reflect_personality(deep, payload=payload, deep=True)
         return self._reflect_personality(primary, payload=payload, deep=False)
 
+
+    @staticmethod
+    def _discovery_planner_prompt() -> str:
+        return (
+            "Bạn là discovery planner hậu trường của ERIS, không viết lời public. "
+            "Mục tiêu không phải tìm thứ main model không biết, vì main GPT đủ mạnh cho kiến thức ổn định. "
+            "Chỉ đề xuất Tutor/search khi cần dữ liệu mới, nguồn hiện thời, tín hiệu Việt Nam/địa phương, "
+            "hoặc một fact ngách cần kiểm chứng trước khi ERIS mang về khoe. "
+            "lane=fresh_curiosity chỉ khi chủ đề thật sự có freshness_required hoặc verification_required; "
+            "kiến thức phổ thông ổn định phải lane=none và needs_external=false. "
+            "lane=user_environment không được dùng web để đo nhiệt độ phòng, vị trí chính xác, app đang mở hay trạng thái máy; "
+            "những thứ đó chỉ hợp lệ khi snapshot.environment cho biết sensor/telemetry hoặc location setting thật có sẵn. "
+            "Thời tiết ngoài trời có thể cần search mới nếu có location setting; tuyệt đối không gọi nó là nhiệt độ trong phòng. "
+            "vietnam_local_signal có thể chọn tin lạ hoặc lá cải đang lan truyền, nhưng reason phải yêu cầu gắn nhãn nguồn yếu/chưa kiểm chứng. "
+            "Không suy ra sở thích User chỉ từ một từ khóa. Không tạo tin giả, không chọn chủ đề câu khách chỉ vì dễ gây sốc. "
+            "Nếu snapshot.discovery.ready_to_share đã có artifact tốt, không tạo search mới; trả lane=none. "
+            "Topic phải là câu giao việc ngắn, có thể đưa thẳng cho Tutor, và reason nói vì sao ERIS thấy đáng tò mò."
+        )
+
+    def plan_discovery(self, snapshot: Mapping[str, Any]) -> DiscoveryPlan:
+        payload = self._call(
+            self.observer_client or self.deep_client,
+            system=self._discovery_planner_prompt(),
+            payload=snapshot,
+            schema=DISCOVERY_PLAN_SCHEMA,
+            name="eris_discovery_plan",
+            max_tokens=360,
+            reasoning_effort="low" if str(getattr(self.observer_client, "model_name", "")).startswith("openai/gpt-oss-") else None,
+        )
+        return DiscoveryPlan.from_mapping(payload) if payload else DiscoveryPlan()
+
     @staticmethod
     def _chat_planner_prompt() -> str:
         allowed = ", ".join(sorted(VALID_SYSTEM_ACTIONS))
@@ -918,6 +978,8 @@ class AIRuntimeModelRouter:
             "Chọn một strategy mô tả cách tiếp cận thực tế (ví dụ direct_answer, dry_correction, quiet_counter_tease, direct_repair, shared_curiosity). "
             "value_focus là giá trị đang được ưu tiên trong lựa chọn này, hoặc rỗng nếu không có xung đột đáng kể. "
             "Personality summary là quán tính hành vi hiện tại, không phải vai diễn hay đích phát triển được định sẵn. "
+            "Nếu user hỏi ERIS có gì mới/đang làm gì/thấy gì hay và snapshot.discovery có artifact/activity thật, "
+            "ưu tiên strategy=share_discovery hoặc update_own_activity; không bịa nếu archive rỗng. "
             "Chỉ chọn tool_intent khi user thật sự yêu cầu hành động hoặc cần runtime lấy dữ kiện. "
             "Không dùng tool để xử lý tình cảm, ẩn dụ, banter hay câu hỏi có thể trả lời trực tiếp. "
             "tool_intent phải rỗng hoặc thuộc danh sách: " + allowed + ". "
@@ -969,7 +1031,9 @@ class AIRuntimeModelRouter:
         return (
             "Bạn là intention planner của ERIS, không phải người viết câu public. "
             "Từ snapshot đã cho, gồm cả identity, personality và strategy history hiện tại, quyết định ERIS có một lý do đủ giá trị để chủ động nói hay không. "
-            "Nếu nói, chọn strategy và value_focus rõ; autonomous discovery nên dùng strategy=share_discovery hoặc update_own_activity khi có artifact thật. "
+            "Nếu nói, chọn strategy và value_focus rõ. Khi snapshot.discovery.ready_to_share có artifact thật, "
+            "có thể dùng strategy=share_discovery; khi current_activity có id/status thật, có thể dùng update_own_activity. "
+            "Không phát minh discovery hay activity chỉ để lấp im lặng. "
             "Không ép ERIS về một phiên bản tốt hơn; chỉ dùng quỹ đạo hiện tại để chọn ý định hợp lý. "
             "Mặc định là im lặng. Chỉ speak=true khi có motive rõ: repair_previous_miss, "
             "important_open_loop, meaningful_environment_change, useful_followup, grounded_curiosity, "
@@ -996,6 +1060,7 @@ class AIRuntimeModelRouter:
 __all__ = [
     "AIRuntimeModelRouter",
     "COGNITIVE_OBSERVATION_SCHEMA",
+    "DISCOVERY_PLAN_SCHEMA",
     "OBJECTIVE_OBSERVATION_SCHEMA",
     "PERSONALITY_REFLECTION_SCHEMA",
     "INTENTION_PLAN_SCHEMA",

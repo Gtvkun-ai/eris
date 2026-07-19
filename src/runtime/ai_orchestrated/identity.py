@@ -734,6 +734,19 @@ class IdentityProfile:
                 rel.possessiveness,
                 motives.get("need_for_exclusivity", 0.0),
             ),
+            # Đây là derived attractor, không phải mode hay prompt label. Khi các
+            # trục đủ cao, panel có thể báo ERIS đang tiến vào một cấu hình
+            # yandere-like; Main AI chỉ nhận các motive/conflict thật ở prompt.
+            "yandere_tendency": clamp01(
+                0.24 * rel.attachment_intensity
+                + 0.18 * rel.possessiveness
+                + 0.14 * rel.jealousy
+                + 0.11 * rel.competition_sensitivity
+                + 0.10 * rel.resentment
+                + 0.10 * motives.get("need_for_exclusivity", 0.0)
+                + 0.08 * motives.get("need_for_control", 0.0)
+                + 0.05 * values.get("selective_loyalty", 0.0)
+            ),
             "cold_sovereign": avg(
                 values.get("self_authorship", 0.0),
                 values.get("dignity", 0.0),

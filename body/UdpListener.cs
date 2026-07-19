@@ -132,6 +132,8 @@ public partial class UdpListener : Node2D
 	private Texture2D _privateMindScrollCapTexture;
 	private Texture2D _privateMindScrollTrackTexture;
 	private Texture2D _privateMindScrollFillTexture;
+	private Font _depthFontRegular;
+	private Font _depthFontBold;
 	private TextureRect _switchTexture;
 	private ScrollContainer _privateMindScrollContainer;
 	private TextureRect _privateMindFrameRect;
@@ -289,6 +291,18 @@ public partial class UdpListener : Node2D
 		{
 			GD.Print($"[ui font] apply global theme fail: {ex.Message}");
 		}
+	}
+
+	private static Font LoadDepthFont(string fileName)
+	{
+		if (string.IsNullOrWhiteSpace(fileName))
+			return null;
+		return ResourceLoader.Load<Font>($"res://asset/Resource/{fileName}");
+	}
+
+	private static Font DepthSystemFont()
+	{
+		return ThemeDB.FallbackFont;
 	}
 
 	public override void _Ready()
@@ -1224,9 +1238,9 @@ public partial class UdpListener : Node2D
 		ConfigureContextMenuButton(_contextTouchButton, "Cham / Nem", "res://asset/Resource/tought.png");
 		ConfigureContextMenuButton(_contextForceSpeakButton, "Noi ngay", "res://asset/Resource/force.png");
 		ConfigureContextMenuButton(_contextEmotionButton, "Cam xuc", "res://asset/Resource/emotion.png");
-		ConfigureContextMenuButton(_contextPrivateMindButton, "Private Mind", "res://asset/Resource/emotion.png");
-		ConfigureContextMenuButton(_contextAnchorButton, "Mo Hinh Ngai", "res://asset/Resource/emotion.png");
-		ConfigureContextMenuButton(_contextDepthButton, "Chieu Sau", "res://asset/Resource/emotion.png");
+		ConfigureContextMenuButton(_contextPrivateMindButton, "Nhật ký nội tâm", "res://asset/Resource/emotion.png");
+		ConfigureContextMenuButton(_contextAnchorButton, "Quan he & Belief", "res://asset/Resource/emotion.png");
+		ConfigureContextMenuButton(_contextDepthButton, "Identity Runtime", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextSettingsButton, "Cai dat", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextExitButton, "Thoat ERIS", "res://asset/Resource/exit.png");
 		ConfigureContextMenuButton(_contextCloseButton, "Dong", "res://asset/Resource/exit.png");
@@ -3786,7 +3800,9 @@ public partial class UdpListener : Node2D
 				&& JsonObjectHasContent(emotion);
 			bool hasDepth = root.TryGetProperty("depth_v2", out JsonElement depth)
 				&& JsonObjectHasContent(depth);
-			bool complete = hasPrivateMind && hasEmotion && hasDepth;
+			bool hasIdentity = root.TryGetProperty("identity_runtime", out JsonElement identityRuntime)
+				&& JsonObjectHasContent(identityRuntime);
+			bool complete = hasPrivateMind && hasEmotion && hasDepth && hasIdentity;
 
 			if (root.TryGetProperty("hardening_status", out JsonElement hardening)
 				&& hardening.ValueKind == JsonValueKind.Object)
@@ -3808,6 +3824,7 @@ public partial class UdpListener : Node2D
 				["has_private_mind"] = hasPrivateMind,
 				["has_emotion"] = hasEmotion,
 				["has_depth"] = hasDepth,
+				["has_identity"] = hasIdentity,
 				["complete"] = complete,
 			};
 			Error error = _chatSend.PutPacket(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(ack)));
@@ -3925,7 +3942,8 @@ public partial class UdpListener : Node2D
 			if (root.ValueKind == JsonValueKind.Object
 				&& root.TryGetProperty("menu", out var m) && m.ValueKind == JsonValueKind.Object)
 				menu = m;
-			return PrivateMindAnchorHasContent(root)
+			return IsModernIdentityDigest(root)
+				|| PrivateMindAnchorHasContent(root)
 				|| ExtractCurrentThought(menu, root).Count > 0
 				|| ExtractFutureThought(menu, root).Count > 0
 				|| ExtractConcerns(menu).Count > 0
@@ -4027,35 +4045,54 @@ public partial class UdpListener : Node2D
 			}
 		}
 
-		// Ưu tiên giọng Eris từ inner_diary.sections (nếu có); thiếu thì fallback extractor thô.
-		var diaryByTitle = new Dictionary<string, List<PrivateMindDiaryItem>>();
-		if (hasData)
+		bool modernIdentity = hasData && IsModernIdentityDigest(root);
+		var slots = new List<PrivateMindDiarySection>();
+		if (modernIdentity)
 		{
-			foreach (var sec in TryReadDiarySections(root))
-			{
-				if (!string.IsNullOrWhiteSpace(sec.Title))
-					diaryByTitle[sec.Title.Trim()] = sec.Items;
-			}
+			// Architecture C: hiển thị motive/defense/conflict/discovery thật, không
+			// cố dịch ngược về Ni/Fe và diary template đời trước.
+			slots = BuildModernIdentityDiarySlots(root);
 		}
-
-		// Luôn dựng đủ 5 khung cố định, mỗi khung tự điền dữ liệu nếu có
-		var slots = new List<PrivateMindDiarySection>
+		else
 		{
-			BuildDiarySlot("Suy nghĩ hiện tại", PreferDiarySection(diaryByTitle, "Suy nghĩ hiện tại", hasData ? ExtractCurrentThought(menu, root) : null)),
-			BuildDiarySlot("Suy nghĩ tương lai", PreferDiarySection(diaryByTitle, "Suy nghĩ tương lai", hasData ? ExtractFutureThought(menu, root) : null)),
-			BuildDiarySlot("Đang bận tâm", PreferDiarySection(diaryByTitle, "Đang bận tâm", hasData ? ExtractConcerns(menu) : null)),
-			BuildDiarySlot("Phân tích gần đây", PreferDiarySection(diaryByTitle, "Phân tích gần đây", hasData ? ExtractFragments(menu, root) : null)),
-			BuildDiarySlot("Muốn nói", PreferDiarySection(diaryByTitle, "Muốn nói", hasData ? ExtractSurface(menu, root) : null)),
-		};
+			// Cache legacy vẫn đọc được để người dùng không mất dữ liệu cũ khi nâng cấp.
+			var diaryByTitle = new Dictionary<string, List<PrivateMindDiaryItem>>();
+			if (hasData)
+			{
+				foreach (var sec in TryReadDiarySections(root))
+				{
+					if (!string.IsNullOrWhiteSpace(sec.Title))
+						diaryByTitle[sec.Title.Trim()] = sec.Items;
+				}
+			}
+			slots = new List<PrivateMindDiarySection>
+			{
+				BuildDiarySlot("Suy nghĩ hiện tại", PreferDiarySection(diaryByTitle, "Suy nghĩ hiện tại", hasData ? ExtractCurrentThought(menu, root) : null)),
+				BuildDiarySlot("Suy nghĩ tương lai", PreferDiarySection(diaryByTitle, "Suy nghĩ tương lai", hasData ? ExtractFutureThought(menu, root) : null)),
+				BuildDiarySlot("Đang bận tâm", PreferDiarySection(diaryByTitle, "Đang bận tâm", hasData ? ExtractConcerns(menu) : null)),
+				BuildDiarySlot("Phân tích gần đây", PreferDiarySection(diaryByTitle, "Phân tích gần đây", hasData ? ExtractFragments(menu, root) : null)),
+				BuildDiarySlot("Muốn nói", PreferDiarySection(diaryByTitle, "Muốn nói", hasData ? ExtractSurface(menu, root) : null)),
+			};
+		}
 
 		foreach (PrivateMindDiarySection slot in slots)
 			_privateMindSectionList.AddChild(BuildPrivateMindSectionCard(slot));
 
 		RefreshDiaryMood();
-		RefreshDiaryConcernStack(menu, hasData);
-		RefreshDiaryMemoryEcho(menu, hasData);
+		if (modernIdentity)
+		{
+			RefreshModernIdentityConcernStack(root);
+			RefreshModernIdentityMemoryEcho(root);
+		}
+		else
+		{
+			RefreshDiaryConcernStack(menu, hasData);
+			RefreshDiaryMemoryEcho(menu, hasData);
+		}
 
-		_privateMindText.Text = hasData ? RenderDiary(root) : "[i]Chưa có dữ liệu.[/i]";
+		_privateMindText.Text = hasData
+			? (modernIdentity ? RenderModernIdentityDigest(root) : RenderDiary(root))
+			: "[i]Chưa có dữ liệu.[/i]";
 		doc?.Dispose();
 	}
 

@@ -181,12 +181,92 @@ class DebugConsole:
             "lệnh debug (set/buff/rel nhận NHIỀU field 1 lần; nối lệnh bằng ';'): "
             "set <f> <v> [<f> <v> ...] | buff <f> <d> ... | rel <f> <v> ... | "
             "trust <v> | yan on|off | mem [ep] <text> | stage <name> | "
-            "show | reset [affect|rel] | stageprofile <mode>. "
+            "show | reset [affect|rel] | stageprofile <mode> | identity show|freeze|snapshot|reset. "
             "vd: set attachment=0.9 trust=0.8 tenderness=0.85; "
             f"affect: {', '.join(sorted(_AFFECT_FIELDS))}. "
             f"stage: {', '.join(_STAGE_PRESETS)}."
         )
 
+
+    def _cmd_identity(self, args: list[str]) -> str:
+        """Điều khiển Architecture C Identity Kernel qua single-writer reducer."""
+        reducer = getattr(self.coord, "ai_state_reducer", None)
+        if reducer is None:
+            return "identity runtime chưa được cài"
+        sub = str(args[0] if args else "show").strip().lower()
+        if sub in {"show", "status", "xem"}:
+            state = reducer.snapshot()
+            forms = state.identity.derived_forms()
+            active = [f"{k}={v:.2f}" for k, v in sorted(forms.items(), key=lambda item: item[1], reverse=True)[:4]]
+            return (
+                f"identity learning={'on' if state.identity_learning_enabled else 'observe_only'} "
+                f"v={state.identity.version} turn={state.last_applied_turn_seq} forms: {' '.join(active)}"
+            )
+        if sub in {"freeze", "learning"}:
+            raw = str(args[1] if len(args) > 1 else "on").strip().lower()
+            # freeze on = learning off; freeze off = learning on.
+            freeze = raw in {"on", "1", "true", "bat", "bật"}
+            from runtime.ai_orchestrated.contracts import StateEvent
+            event = StateEvent(
+                kind="admin_control",
+                turn_seq=reducer.snapshot().last_applied_turn_seq,
+                turn_id=f"debug-identity-learning-{int(time.time() * 1000)}",
+                payload={"action": "set_learning", "enabled": not freeze},
+                base_version=reducer.snapshot().version,
+                source="debug_console",
+            )
+            reducer.apply_now(event)
+            return "identity learning=observe_only" if freeze else "identity learning=normal"
+        if sub in {"snapshot", "export", "consolidate"}:
+            consolidator = getattr(self.coord, "ai_identity_consolidator", None)
+            if consolidator is None:
+                return "identity consolidator chưa được cài"
+            result = consolidator.write(reducer.snapshot(), reason="debug_command")
+            return f"snapshot {'ok' if result.get('ok') else 'failed'}: {result.get('path') or result.get('error')}"
+        if sub == "reset":
+            scope = str(args[1] if len(args) > 1 else "mood").strip().lower()
+            if scope == "discovery":
+                runtime = getattr(self.coord, "ai_discovery_runtime", None)
+                if runtime is None:
+                    return "discovery runtime chưa được cài"
+                runtime.reset()
+                return "discovery archive đã reset"
+            if scope == "initiative":
+                runtime = getattr(self.coord, "ai_initiative_controller", None)
+                if runtime is None:
+                    return "initiative runtime chưa được cài"
+                runtime.reset()
+                return "initiative budget đã reset"
+            action_map = {
+                "mood": "reset_mood",
+                "relationship": "reset_relationship",
+                "rel": "reset_relationship",
+                "identity": "reset_identity",
+                "all": "reset_all_ai_state",
+            }
+            action = action_map.get(scope)
+            if action is None:
+                return "cú pháp: identity reset mood|relationship|identity|discovery|initiative|all"
+            if scope == "all":
+                discovery = getattr(self.coord, "ai_discovery_runtime", None)
+                initiative = getattr(self.coord, "ai_initiative_controller", None)
+                if discovery is not None:
+                    discovery.reset()
+                if initiative is not None:
+                    initiative.reset()
+            from runtime.ai_orchestrated.contracts import StateEvent
+            snapshot = reducer.snapshot()
+            event = StateEvent(
+                kind="admin_control",
+                turn_seq=snapshot.last_applied_turn_seq,
+                turn_id=f"debug-identity-reset-{scope}-{int(time.time() * 1000)}",
+                payload={"action": action},
+                base_version=snapshot.version,
+                source="debug_console",
+            )
+            reducer.apply_now(event)
+            return f"identity reset {scope}"
+        return "cú pháp: identity show | identity freeze on|off | identity snapshot | identity reset mood|relationship|identity|discovery|initiative|all"
 
     def _cmd_stageprofile(self, args: list[str]) -> str:
         if not args:

@@ -2043,7 +2043,19 @@ class RuntimeCoordinator(
         payload = decision.to_payload()
         if bool(getattr(self, "ai_runtime_enabled", False)) and getattr(self, "ai_state_reducer", None) is not None:
             from runtime.ai_orchestrated.panel_adapter import build_ai_panel_payload
-            ai_panel = build_ai_panel_payload(self.ai_state_reducer.snapshot())
+            expression = {}
+            behavior_meta = getattr(decision, "behavior_observation_meta", None)
+            if isinstance(behavior_meta, Mapping):
+                raw_expression = behavior_meta.get("identity_expression")
+                if isinstance(raw_expression, Mapping):
+                    expression = dict(raw_expression)
+            ai_panel = build_ai_panel_payload(
+                self.ai_state_reducer.snapshot(),
+                getattr(self, "ai_discovery_runtime", None),
+                getattr(self, "ai_initiative_controller", None),
+                getattr(self, "ai_identity_consolidator", None),
+                expression,
+            )
             payload.update(ai_panel)
             private_digest = dict(ai_panel.get("private_mind_digest", {}) or {})
             private_life_digest = dict(ai_panel.get("private_life_digest", {}) or {})

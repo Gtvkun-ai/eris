@@ -348,7 +348,7 @@ public partial class UdpListener : Node2D
 	{
 		_latestDepthV2Json = "";
 		DeleteUserStateFile(DepthV2StatePath);
-		if (_depthPanelContentRoot != null || _depthPanel != null)
+		if (_depthContentList != null || _depthPanel != null)
 			RefreshDepthPanel();
 	}
 
