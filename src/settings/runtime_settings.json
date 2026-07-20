@@ -70,9 +70,6 @@
     "stage_localize": true,
     "audio_polish": true
   },
-  "pipeline": {
-    "v3_enabled": true
-  },
   "danger_zone": {
     "require_preview_before_execute": true,
     "typed_confirmation": true,

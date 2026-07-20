@@ -9,7 +9,7 @@ Mục tiêu:
 - Không route intent bằng keyword thô kiểu: nếu thấy "buồn" thì attachment_dialogue.
 - Thay vào đó, module trả về nhiều score mềm:
   technicality, distress, intimacy, attachment, conflict, correction, objectification...
-- FeRenderer / PersonalityLens / Coordinator có thể dùng các score này để quyết định giọng,
+- StyleProjection / planner có thể dùng các score này để quyết định giọng,
   mức trực tiếp, mức symbolic, mức cẩn thận, hoặc có cần relationship repair không.
 
 Giới hạn cố ý:
@@ -151,7 +151,7 @@ class AffectSemanticSignal:
 
     Nguyên tắc:
     - Signal này không quyết định final intent.
-    - Nó chỉ là input cho ChatMeaningLayer / PersonalityLens / FeRenderer.
+    - Nó chỉ là input cho SemanticProjection / StyleProjection.
     """
 
     technicality: float = 0.0
@@ -604,7 +604,7 @@ class AffectSemanticClassifier:
             user_text:
                 Text user gửi trong turn hiện tại.
             ti_mode:
-                Mode từ TiGovernor nếu có. Ví dụ: "chat_code", "chat_emotional".
+                Mode từ EpistemicProjection nếu có. Ví dụ: "chat_code", "chat_emotional".
                 Đây là context bias, không phải lệnh cứng.
             active_window_kind:
                 Context focus hiện tại nếu có: coding/documentation/communication...

@@ -80,7 +80,7 @@ def test_key_pool_breaker_stops_before_exhausting_every_key(monkeypatch) -> None
         if not may_rotate:
             break
 
-    assert attempts == [0, 1, 2]
+    assert attempts == [0, 1]
     assert pool.stats()["rate_limit_bursts"] == 1
     assert pool.stats()["available"] == 0
 
@@ -203,6 +203,119 @@ def test_tutor_backend_supports_cooperative_cancel() -> None:
 def test_current_turn_anchor_distinguishes_style_and_reciprocity() -> None:
     assert AIRuntimeModelRouter._current_user_move_hint("em sến xíu đi cho tui zui") == "style_request"
     assert AIRuntimeModelRouter._current_user_move_hint("bạn muốn tui quen bạn hả") == "request_reciprocity"
+    assert AIRuntimeModelRouter._current_user_move_hint("bạn nói generic vl") == "style_criticism"
+    assert AIRuntimeModelRouter._current_user_move_hint("ehm, rồi sao á") == "continuation_bid"
+
+
+def test_cortex_v2_resolves_phrase_from_startup_opening() -> None:
+    from runtime.cognition import PreResponseCognition
+
+    brief = PreResponseCognition().analyze(
+        user_text="phần thật là phần nào",
+        recent_history=(
+            {
+                "role": "assistant",
+                "content": "Tôi không thích nói cho có mặt — nên cứ lấy phần thật trước, phần còn lại để sau.",
+            },
+        ),
+        turn_id="turn-phrase",
+        turn_seq=1,
+    )
+
+    assert brief.discourse_relation == "clarify_assistant_phrase"
+    assert brief.ambiguity_owner == "assistant"
+    assert brief.response_move == "clarify_previous_phrase"
+    assert "invent_new_premise" in brief.avoid_moves
+
+
+def test_cortex_v2_turns_direct_style_criticism_into_mandatory_repair() -> None:
+    from runtime.cognition import PreResponseCognition
+
+    brief = PreResponseCognition().analyze(
+        user_text="bạn nói generic vl",
+        recent_history=({"role": "assistant", "content": "Bạn nói rõ hơn một chút đi."},),
+        turn_id="turn-style",
+        turn_seq=2,
+    )
+
+    assert brief.discourse_relation == "style_feedback"
+    assert brief.response_move == "repair_previous_response"
+    assert brief.assistant_fault_probability >= 0.80
+    assert "ask_user_to_repeat_feedback" in brief.avoid_moves
+
+
+def test_cortex_v2_continuation_bid_assigns_ambiguity_to_eris() -> None:
+    from runtime.cognition import PreResponseCognition
+
+    brief = PreResponseCognition().analyze(
+        user_text="ehm, rồi sao á",
+        recent_history=(
+            {"role": "assistant", "content": "Tôi không ồn, nhưng cũng không dễ bị bỏ qua."},
+        ),
+        turn_id="turn-continuation",
+        turn_seq=3,
+    )
+
+    assert brief.discourse_relation == "continue_assistant_move"
+    assert brief.ambiguity_owner == "assistant"
+    assert brief.response_move == "self_elaborate"
+    assert brief.primary_goal == "complete_previous_assistant_implication"
+    assert "broad_clarification" in brief.avoid_moves
+
+
+def test_cortex_v2_gate_rejects_assistant_owned_deflection() -> None:
+    from runtime.cognition import CognitiveAcceptanceGate, PreResponseCognition
+
+    brief = PreResponseCognition().analyze(
+        user_text="ehm, rồi sao á",
+        recent_history=({"role": "assistant", "content": "Tôi không ồn, nhưng cũng không dễ bị bỏ qua."},),
+        turn_id="turn-gate",
+        turn_seq=4,
+    )
+    violations = CognitiveAcceptanceGate().validate(
+        "Rồi thì... bạn muốn mình nói tiếp phần nào?",
+        brief,
+    )
+    assert [item.code for item in violations] == ["ASSISTANT_OWNED_AMBIGUITY_DEFLECTED"]
+
+
+def test_cortex_v2_gate_accepts_self_elaboration() -> None:
+    from runtime.cognition import CognitiveAcceptanceGate, PreResponseCognition
+
+    brief = PreResponseCognition().analyze(
+        user_text="rồi sao?",
+        recent_history=({"role": "assistant", "content": "Tôi không ồn, nhưng cũng không dễ bị bỏ qua."},),
+        turn_id="turn-gate-ok",
+        turn_seq=5,
+    )
+    violations = CognitiveAcceptanceGate().validate(
+        "Rồi thì bạn vừa quay lại hỏi tiếp đấy thôi. Câu trước tự chứng minh được một nửa rồi.",
+        brief,
+    )
+    assert violations == ()
+
+
+def test_observer_anchor_overrides_generic_feedback_unknown_frame() -> None:
+    from runtime.ai_orchestrated.contracts import CognitiveObservation
+
+    unknown = CognitiveObservation.from_mapping(
+        {},
+        turn_id="turn-style",
+        turn_seq=4,
+        source="groq_observer_fallback",
+        latency_ms=4400,
+    )
+    anchored = AIRuntimeModelRouter._apply_deterministic_observation_anchor(
+        unknown,
+        user_text="bạn nói generic vl",
+        assistant_text="Ừ, vì câu đó generic thật.",
+        event_kind="chat",
+    )
+
+    assert anchored.user_act == "style_criticism"
+    assert anchored.repair_needed is True
+    assert anchored.confidence >= 0.76
+    assert "deterministic_anchor" in anchored.source
 
 
 def test_chat_start_supersedes_tts_before_asr_text_arrives() -> None:
@@ -278,10 +391,36 @@ def test_tts_worker_relocalizes_even_when_upstream_claims_prelocalized(monkeypat
     )
     monkeypatch.setattr(tts_engine, "_prelocalize_japanese_enabled", lambda: True)
 
-    text, localized = worker._resolve_main_transcript(request, request.text)
+    text, localized, language = worker._resolve_main_transcript(request, request.text)
     assert worker._localizer.strict is True
     assert localized is True
+    assert language == "ja"
     assert "話" in text
+
+
+def test_tts_worker_fails_open_to_source_language_when_japanese_localizer_breaks(monkeypatch) -> None:
+    import runtime.tts_engine as tts_engine
+    from runtime.speech_localizer import SpeechLocalizationError
+
+    class _BrokenLocalizer:
+        def localize(self, _text: str, **_kwargs) -> str:
+            raise SpeechLocalizationError("japanese_localization_failed:ClientError")
+
+    worker = tts_engine._TtsWorker.__new__(tts_engine._TtsWorker)
+    worker._language_hint = "ja"
+    worker._localizer = _BrokenLocalizer()
+    request = tts_engine._SpeakRequest(
+        "Tôi vẫn nói được bằng tiếng Việt.",
+        prelocalized=False,
+        language_hint="ja",
+    )
+    monkeypatch.setattr(tts_engine, "_prelocalize_japanese_enabled", lambda: True)
+
+    text, localized, language = worker._resolve_main_transcript(request, request.text)
+
+    assert text == request.text
+    assert localized is False
+    assert language == "vi"
 
 
 def test_tts_attempts_default_is_bounded(monkeypatch) -> None:
@@ -607,8 +746,7 @@ def test_startup_grounding_uses_fresh_telemetry_tab_evidence() -> None:
     assert bundle.has_strong_opening_anchor is True
     assert bundle.telemetry_surface_visible is True
     assert bundle.evidence_refs[0] == "screen:telemetry-status"
-    assert "runtime:active_app" not in bundle.evidence_refs
-    assert bundle.runtime_metadata[0]["id"] == "active_app"
+    assert "runtime:active_app" in bundle.evidence_refs
     assert "TTS queue" in bundle.prompt_context()
     assert "low-risk" in bundle.prompt_context()
 
@@ -693,7 +831,6 @@ def test_startup_runtime_signal_beats_persona_when_screen_is_empty() -> None:
                 "source": "runtime",
                 "text": "TTS recovered after cooldown",
                 "confidence": 0.82,
-                "opening_eligible": True,
             },
         ),
     )
@@ -706,111 +843,6 @@ def test_startup_runtime_signal_beats_persona_when_screen_is_empty() -> None:
     assert bundle.has_runtime_opening_anchor is True
     assert forced.strategy == "grounded_runtime_opening"
     assert forced.evidence_refs == ("runtime:recent_event_1",)
-
-
-def test_startup_foreground_debug_metadata_does_not_become_opening_anchor() -> None:
-    from types import SimpleNamespace
-
-    from runtime.ai_orchestrated.startup_grounding import _runtime_signal_payloads, StartupGroundingBundle
-
-    payloads = _runtime_signal_payloads(
-        SimpleNamespace(
-            recent_events=(),
-            active_app="Eris (DEBUG)",
-            active_window="Eris (DEBUG)",
-            focus_summary="Eris debug window is foreground",
-            cpu_percent=12.0,
-            ram_percent=31.0,
-        ),
-        now=time.time(),
-    )
-    bundle = StartupGroundingBundle(runtime_evidence=payloads)
-
-    assert bundle.has_runtime_opening_anchor is False
-    assert bundle.opening_source == "persona"
-    assert {item["id"] for item in bundle.runtime_metadata} == {"active_app", "focus_summary"}
-    assert bundle.evidence_refs == ()
-
-
-def test_reference_repair_resolves_eris_debug_identity_question() -> None:
-    from runtime.ai_orchestrated.reference_repair import resolve_reference_repair
-
-    history = (
-        {
-            "role": "assistant",
-            "content": "Eris (DEBUG) đang ở foreground — nhìn khá đúng kiểu một bối cảnh chưa muốn nói hết ngay.",
-        },
-    )
-    repair = resolve_reference_repair("eris debug là bạn á", history)
-
-    assert repair.active is True
-    assert repair.kind == "clarify_previous_reference_identity"
-    assert repair.referenced_phrase == "eris debug"
-    assert "literal runtime/window meaning" in repair.instruction
-
-
-def test_reference_repair_overrides_planner_and_removes_tool_intent() -> None:
-    from runtime.ai_orchestrated.contracts import IntentionPlan
-    from runtime.ai_orchestrated.reference_repair import (
-        apply_reference_repair_to_plan,
-        resolve_reference_repair,
-    )
-
-    repair = resolve_reference_repair(
-        "eris debug là bạn á",
-        ({"role": "assistant", "content": "Eris (DEBUG) đang ở foreground."},),
-    )
-    original = IntentionPlan.from_mapping(
-        {
-            "speak": True,
-            "motive": "respond_to_user",
-            "strategy": "quiet_counter_tease",
-            "topic": "Tease the user about a nickname.",
-            "importance": 0.5,
-            "confidence": 0.5,
-            "tool_intent": "open_panel",
-            "tool_input": "debug",
-        },
-        channel="chat",
-    )
-    fixed = apply_reference_repair_to_plan(original, repair)
-
-    assert fixed.strategy == "direct_repair"
-    assert fixed.motive == "repair_previous_miss"
-    assert fixed.performance_hint == "repair"
-    assert fixed.tool_intent == ""
-    assert fixed.evidence_refs == ("history:last_assistant",)
-
-
-def test_reference_repair_detects_challenge_to_previous_assumption() -> None:
-    from runtime.ai_orchestrated.reference_repair import resolve_reference_repair
-
-    repair = resolve_reference_repair(
-        "là em nghĩ tôi sẽ làm gì đó hả",
-        ({"role": "assistant", "content": "Chỗ này đang định thay đổi điều gì trước tiên?"},),
-    )
-
-    assert repair.active is True
-    assert repair.kind == "challenge_previous_assumption"
-    assert "repair the assumption" in repair.instruction
-
-
-def test_parser_marks_identity_reference_as_follow_up() -> None:
-    from domain import Decision
-    from parser_grounding.service import DecisionParser
-
-    parser = DecisionParser(Decision(text="", animation="stand"))
-    message = parser.build_chat_user_message(
-        user_message="eris debug là bạn á",
-        last_chat_answer="Eris (DEBUG) đang ở foreground.",
-    )
-
-    assert "Câu trả lời trước của bạn" in message
-    assert "Eris (DEBUG)" in message
-
-
-def test_current_turn_anchor_prefers_reference_clarification_over_debug_keyword() -> None:
-    assert AIRuntimeModelRouter._current_user_move_hint("eris debug là bạn á") == "reference_clarification"
 
 
 def test_startup_continuity_beats_persona_without_screen_or_runtime() -> None:
@@ -855,7 +887,6 @@ def test_hardening_fingerprint_covers_startup_screen_grounding() -> None:
 
     assert "runtime/ai_orchestrated/orchestrator.py" in DEFAULT_AUTHORITY_FILES
     assert "runtime/ai_orchestrated/model_router.py" in DEFAULT_AUTHORITY_FILES
-    assert "runtime/ai_orchestrated/reference_repair.py" in DEFAULT_AUTHORITY_FILES
     assert "runtime/ai_orchestrated/startup_grounding.py" in DEFAULT_AUTHORITY_FILES
     assert "screen/screen_relevance_router.py" in DEFAULT_AUTHORITY_FILES
 
@@ -912,3 +943,214 @@ def test_startup_grounding_uses_telemetry_content_metadata_when_worker_is_sparse
     assert bundle.has_strong_opening_anchor is True
     assert bundle.evidence[0]["source"] == "ocr_cache"
     assert "TTS latency" in bundle.evidence[0]["text"]
+
+
+def test_relationship_panel_contract_uses_real_ledger_and_belief_evidence() -> None:
+    """Panel quan hệ không được tự bịa drift hoặc biến baseline thành live state."""
+
+    from runtime.ai_orchestrated.contracts import RuntimeMindState
+    from runtime.ai_orchestrated.identity import IdentityProfile
+    from runtime.ai_orchestrated.panel_adapter import build_ai_panel_payload
+
+    now = time.time()
+    identity = IdentityProfile.from_mapping(
+        {
+            "beliefs": {
+                "user.tolerates_disagreement": {
+                    "strength": 0.61,
+                    "confidence": 0.72,
+                    "evidence_ids": ["turn-8", "turn-12", "turn-15"],
+                    "contradictions": 1,
+                    "last_turn_seq": 15,
+                }
+            },
+            "relationships": {
+                "primary_user": {
+                    "relational_trust": 0.55,
+                    "competence_trust": 0.66,
+                    "respect": 0.62,
+                    "closeness": 0.41,
+                }
+            },
+            "ledger": [
+                {
+                    "timestamp": now - 3600,
+                    "turn_seq": 15,
+                    "dimension": "relationship",
+                    "key": "relational_trust",
+                    "applied_delta": 0.012,
+                    "evidence": ["User tiếp tục tranh luận thay vì rời đi."],
+                },
+                {
+                    "timestamp": now - 1800,
+                    "turn_seq": 15,
+                    "dimension": "belief",
+                    "key": "user.tolerates_disagreement",
+                    "applied_delta": 0.008,
+                    "evidence": ["Bất đồng không làm cuộc trò chuyện kết thúc."],
+                    "self_interpretation": "Tranh luận không đồng nghĩa bị xóa.",
+                },
+            ],
+        }
+    )
+    state = RuntimeMindState(
+        identity=identity,
+        last_applied_turn_seq=15,
+        latest_observation={
+            "event_kind": "chat",
+            "user_act": "disagreement",
+            "relationship_meaning": "trust",
+            "confidence": 0.84,
+            "identity_signals": [
+                {
+                    "dimension": "relationship",
+                    "key": "relational_trust",
+                    "delta": 0.2,
+                    "confidence": 0.82,
+                    "context": "disagreement_without_exit",
+                    "evidence": ["User vẫn tiếp tục trao đổi."],
+                }
+            ],
+            "self_interpretation": {"summary": "Bất đồng này không phải từ chối."},
+            "evidence": ["User tiếp tục trao đổi."],
+        },
+    )
+
+    payload = build_ai_panel_payload(state)["identity_runtime"]["relationship_runtime"]
+    metric = next(row for row in payload["metrics"] if row["key"] == "relational_trust")
+    belief = next(row for row in payload["beliefs"] if row["key"] == "user.tolerates_disagreement")
+
+    assert metric["delta_7d"] == 0.012
+    assert metric["delta_30d"] == 0.012
+    assert metric["has_history"] is True
+    assert belief["status"] == "mixed"
+    assert belief["evidence_count"] == 3
+    assert belief["contradiction_count"] == 1
+    assert "Bất đồng không làm" in belief["evidence_summaries"][0]
+    assert payload["live"]["changed"] is True
+    assert payload["live"]["signals"][0]["key"] == "relational_trust"
+
+
+def test_relationship_panel_contract_marks_default_beliefs_as_baseline() -> None:
+    from runtime.ai_orchestrated.contracts import RuntimeMindState
+    from runtime.ai_orchestrated.panel_adapter import build_ai_panel_payload
+
+    payload = build_ai_panel_payload(RuntimeMindState())["identity_runtime"]["relationship_runtime"]
+    default_belief = next(row for row in payload["beliefs"] if row["key"] == "user.respects_independence")
+
+    assert default_belief["status"] == "baseline"
+    assert default_belief["evidence_count"] == 0
+    assert payload["live"]["changed"] is False
+
+
+def test_discovery_panel_payload_keeps_real_readiness_and_archive_counts() -> None:
+    """Panel phải nhận readiness thật, không đoán từ vị trí hay màu card."""
+
+    from runtime.ai_orchestrated.discovery import DiscoveryRecord, DiscoveryState
+
+    with tempfile.TemporaryDirectory() as tmp:
+        runtime = DiscoveryRuntime(_Host(), _Router(), state_path=Path(tmp) / "state.json")
+        record = DiscoveryRecord(
+            discovery_id="disc-panel-1",
+            lane="fresh_curiosity",
+            topic="Một chủ đề đã kiểm chứng",
+            summary="Tóm tắt thật",
+            eris_take="Điều đáng kể là cách dữ kiện này đổi góc nhìn.",
+            share_readiness=0.83,
+            novelty=0.77,
+            eris_interest=0.88,
+            user_relevance=0.69,
+            verified=True,
+            created_at=time.time(),
+        )
+        runtime._state = DiscoveryState(version=1, records=(record,), updated_at=time.time())
+
+        panel = runtime.panel_view()
+        ready = panel["ready_to_share"][0]
+
+        assert ready["discovery_id"] == "disc-panel-1"
+        assert ready["share_readiness"] == 0.83
+        assert ready["novelty"] == 0.77
+        assert ready["shared"] is False
+        assert panel["archive_count"] == 1
+        assert panel["verified_count"] == 1
+        assert panel["ready_count"] == 1
+
+
+def test_initiative_panel_exposes_budget_and_recent_events() -> None:
+    from types import SimpleNamespace
+
+    from runtime.ai_orchestrated.initiative import InitiativeController
+
+    with tempfile.TemporaryDirectory() as tmp:
+        controller = InitiativeController(state_path=Path(tmp) / "initiative.json")
+        plan = SimpleNamespace(
+            motive="share_discovery",
+            strategy="share_discovery",
+            importance=0.82,
+            intrusion_risk=0.10,
+            topic="Một discovery đáng kể",
+        )
+        controller.record_spoken(plan, now=1_000.0)
+        panel = controller.panel_view(now=1_100.0)
+
+        assert panel["used_last_hour"] == 1
+        assert panel["remaining_budget"] == max(0, panel["hourly_budget"] - 1)
+        assert panel["next_allowed_at"] >= 1_000.0
+        assert panel["recent_events"][0]["strategy"] == "share_discovery"
+
+
+def test_discovery_runtime_panel_contract_separates_activity_ready_and_initiative() -> None:
+    from runtime.ai_orchestrated.contracts import RuntimeMindState
+    from runtime.ai_orchestrated.panel_adapter import build_ai_panel_payload
+
+    now = time.time()
+    discovery = {
+        "archive_count": 3,
+        "verified_count": 2,
+        "shared_count": 1,
+        "ready_count": 1,
+        "current_activity": {
+            "activity_id": "activity-1",
+            "status": "verifying",
+            "kind": "fresh_curiosity",
+            "topic": "Tín hiệu mới",
+            "detail": "Đang kiểm chứng nguồn.",
+            "updated_at": now,
+        },
+        "ready_to_share": [
+            {
+                "discovery_id": "disc-2",
+                "topic": "Artifact đã sẵn sàng",
+                "eris_take": "Có một góc nhìn đáng kể.",
+                "share_readiness": 0.81,
+                "verified": True,
+                "shared": False,
+                "created_at": now - 60,
+            }
+        ],
+        "recent": [],
+        "authority": {
+            "facts": "tutor_or_runtime_evidence",
+            "selection_and_voice": "main_model",
+        },
+    }
+    initiative = {
+        "enabled": True,
+        "hourly_budget": 2,
+        "used_last_hour": 1,
+        "remaining_budget": 1,
+        "minimum_interval_seconds": 1200,
+        "next_allowed_at": now - 1,
+        "last_decision": {"allowed": True, "reason": "allowed", "at": now},
+        "recent_events": [],
+    }
+
+    runtime = build_ai_panel_payload(RuntimeMindState(), discovery=discovery, initiative=initiative)["identity_runtime"]["discovery_runtime"]
+
+    assert runtime["schema"] == "eris.discovery_runtime.panel.v1"
+    assert runtime["headline"]["state"] == "active"
+    assert runtime["activity"]["status"] == "verifying"
+    assert runtime["ready"][0]["share_readiness"] == 0.81
+    assert runtime["initiative"]["state"] == "open"
+    assert next(step for step in runtime["flow"] if step["key"] == "research")["state"] == "active"

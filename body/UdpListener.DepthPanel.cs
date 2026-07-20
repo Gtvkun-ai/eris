@@ -65,6 +65,7 @@ public partial class UdpListener : Node2D
 	{
 		public string Key = "";
 		public float Value;
+		public string Trigger = "";
 	}
 
 	private void OnContextDepthPressed()
@@ -1561,42 +1562,45 @@ public partial class UdpListener : Node2D
 			return;
 
 		List<IdentityScoreEntry> values = ReadIdentityScores(Arr(root, "values_top"), 16);
-		List<IdentityScoreEntry> motives = ReadIdentityScores(Arr(root, "active_motives"), 8);
-		if (motives.Count == 0)
-			motives = ReadIdentityScores(Arr(root, "motives_top"), 8);
-		List<IdentityScoreEntry> defenses = ReadIdentityScores(Arr(root, "active_defenses"), 8);
-		if (defenses.Count == 0)
-			defenses = ReadIdentityScores(Arr(root, "defenses_top"), 8);
+		List<IdentityScoreEntry> activeMotives = ReadIdentityScores(Arr(root, "active_motives"), 8);
+		List<IdentityScoreEntry> motiveBaseline = ReadIdentityScores(Arr(root, "motives_top"), 8);
+		List<IdentityScoreEntry> activeDefenses = ReadIdentityScores(Arr(root, "active_defenses"), 8);
+		List<IdentityScoreEntry> defenseBaseline = ReadIdentityScores(Arr(root, "defenses_top"), 8);
 		List<IdentityScoreEntry> emergent = ReadIdentityScores(Arr(root, "emergent_values_top"), 12);
 
-		RenderIdentitySignature(root, values, emergent);
+		RenderIdentitySignature(root, values, emergent, activeMotives, activeDefenses);
 
 		var primaryRow = new HBoxContainer
 		{
-			CustomMinimumSize = new Vector2(0f, 418f),
+			CustomMinimumSize = new Vector2(0f, 438f),
 			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
 		};
 		primaryRow.AddThemeConstantOverride("separation", 14);
 		_depthContentList.AddChild(primaryRow);
-		RenderCoreValuesMap(primaryRow, values);
-		RenderActiveMotiveMap(primaryRow, root, motives);
+		RenderCoreValuesMap(primaryRow, root, values);
+		RenderActiveMotiveMap(primaryRow, activeMotives, motiveBaseline);
 
 		RenderValueConflictMap(root);
 
 		var lowerRow = new HBoxContainer
 		{
-			CustomMinimumSize = new Vector2(0f, 286f),
+			CustomMinimumSize = new Vector2(0f, 310f),
 			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
 		};
 		lowerRow.AddThemeConstantOverride("separation", 14);
 		_depthContentList.AddChild(lowerRow);
-		RenderDefenseMap(lowerRow, defenses);
+		RenderDefenseMap(lowerRow, activeDefenses, defenseBaseline);
 		RenderEmergentValuesMap(lowerRow, emergent);
 
 		RenderDerivedAttractorStrip(root);
 	}
 
-	private void RenderIdentitySignature(JsonElement root, List<IdentityScoreEntry> values, List<IdentityScoreEntry> emergent)
+	private void RenderIdentitySignature(
+		JsonElement root,
+		List<IdentityScoreEntry> values,
+		List<IdentityScoreEntry> emergent,
+		List<IdentityScoreEntry> activeMotives,
+		List<IdentityScoreEntry> activeDefenses)
 	{
 		var card = NewIdentityCard("Bản sắc hiện tại", IdentityAsset("identity_tab_values.png"), "♡", IdentityPink, 118f);
 		_depthContentList.AddChild(card);
@@ -1609,7 +1613,7 @@ public partial class UdpListener : Node2D
 		copy.AddThemeConstantOverride("separation", 4);
 		string headline = values.Count > 0
 			? string.Join(" · ", TopIdentityNames(values, 3))
-			: "Tự chủ · Đào sâu · Làm cho đúng";
+			: "Chưa có snapshot giá trị";
 		copy.AddChild(NewLabel(headline, 19, IdentityInk, true));
 		string narrative = BuildIdentityNarrative(values, emergent);
 		var narrativeLabel = NewLabel(narrative, 12, IdentityMuted, false);
@@ -1617,94 +1621,160 @@ public partial class UdpListener : Node2D
 		copy.AddChild(narrativeLabel);
 		row.AddChild(copy);
 
-		var chips = new VBoxContainer { CustomMinimumSize = new Vector2(170f, 0f) };
+		var chips = new VBoxContainer { CustomMinimumSize = new Vector2(190f, 0f) };
 		chips.AddThemeConstantOverride("separation", 6);
-		float coreAverage = AverageTopScores(values, 5);
-		chips.AddChild(NewPill(coreAverage >= 0.78f ? "Ổn định cao" : "Đang định hình", coreAverage >= 0.78f ? IdentityGreen : IdentityOrange, false));
-		chips.AddChild(NewPill(emergent.Count > 0 && emergent[0].Value >= 0.12f ? "Có giá trị mới" : "Nền đang giữ", emergent.Count > 0 && emergent[0].Value >= 0.12f ? IdentityPurple : IdentityBlue, false));
+		int valueUpdates = CountRecentIdentityChanges(root, "value");
+		bool hasEmergent = emergent.Exists(item => item.Value > 0.001f);
 		JsonElement conflict = Obj(root, "active_conflict");
-		chips.AddChild(NewPill(ReadFloat(conflict, "activation") >= 0.55f ? "Giằng co rõ" : "Không drift mạnh", ReadFloat(conflict, "activation") >= 0.55f ? IdentityOrange : IdentityPink, false));
+		bool hasActiveConflict = HasActiveConflict(conflict);
+		bool hasLiveState = activeMotives.Count > 0 || activeDefenses.Count > 0 || hasActiveConflict;
+
+		chips.AddChild(NewPill(
+			valueUpdates > 0 ? $"{valueUpdates} cập nhật ledger" : "Chưa có delta giá trị",
+			valueUpdates > 0 ? IdentityGreen : IdentityBlue, false));
+		chips.AddChild(NewPill(
+			hasEmergent ? "Có giá trị emergent" : "Chưa có giá trị mới",
+			hasEmergent ? IdentityPurple : IdentityBlue, false));
+		chips.AddChild(NewPill(
+			hasLiveState ? "Có state đang hoạt động" : "Không có state active",
+			hasLiveState ? IdentityOrange : IdentityPink, false));
 		row.AddChild(chips);
 	}
 
-	private void RenderCoreValuesMap(HBoxContainer parent, List<IdentityScoreEntry> values)
+	private void RenderCoreValuesMap(HBoxContainer parent, JsonElement root, List<IdentityScoreEntry> values)
 	{
-		var card = NewIdentityCard("Giá trị cốt lõi", IdentityAsset("identity_tab_values.png"), "♡", IdentityPink, 418f);
+		// Giá trị cốt lõi là cấu trúc bản sắc, không phải KPI. Vì vậy tab này dùng
+		// một "chòm giá trị" gồm orb trung tâm và bốn cánh giá trị, thay cho năm
+		// progress bar giống hệt nhau.
+		var card = NewIdentityCard("Chòm giá trị cốt lõi", IdentityAsset("identity_tab_values.png"), "♡", IdentityPink, 438f);
 		card.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-		card.SizeFlagsStretchRatio = 1.16f;
-		card.CustomMinimumSize = new Vector2(520f, 418f);
+		card.SizeFlagsStretchRatio = 1.20f;
+		card.CustomMinimumSize = new Vector2(600f, 438f);
 		parent.AddChild(card);
 		var box = (VBoxContainer)card.GetChild(0);
 
 		var meta = new HBoxContainer();
-		meta.AddChild(NewLabel("Những điều Eris sẽ bảo vệ kể cả khi phải trả giá.", 10, IdentityMuted, false));
+		meta.AddChild(NewLabel("Năm giá trị nổi bật trong snapshot persistent hiện tại.", 10, IdentityMuted, false));
 		meta.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
-		meta.AddChild(NewPill($"TOP {Math.Min(5, values.Count)}/{values.Count}", IdentityPink, false));
+		meta.AddChild(NewPill($"TOP {Math.Min(5, values.Count)}", IdentityPink, false));
 		box.AddChild(meta);
 
-		int count = 0;
-		foreach (IdentityScoreEntry item in values)
+		if (values.Count == 0)
 		{
-			AddIdentityValueRow(box, count + 1, item.Key, item.Value, IdentityValueAccent(item.Key));
-			if (++count >= 5) break;
+			box.AddChild(NewIdentityEmptyState("Chưa có snapshot values_top.", IdentityAsset("identity_values_orb.png"), "✦", IdentityPink, 300f));
+			return;
 		}
-		if (count == 0)
-			box.AddChild(NewLabel("Chưa có giá trị nào đủ chắc để xếp hạng.", 12, IdentityMuted, false));
+
+		var constellation = new HBoxContainer
+		{
+			CustomMinimumSize = new Vector2(0f, 336f),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			Alignment = BoxContainer.AlignmentMode.Center,
+		};
+		constellation.AddThemeConstantOverride("separation", 12);
+		box.AddChild(constellation);
+
+		var leftPetals = new VBoxContainer
+		{
+			CustomMinimumSize = new Vector2(176f, 0f),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			Alignment = BoxContainer.AlignmentMode.Center,
+		};
+		leftPetals.AddThemeConstantOverride("separation", 14);
+		constellation.AddChild(leftPetals);
+
+		var center = NewCoreValueOrb(root, values[0]);
+		center.CustomMinimumSize = new Vector2(205f, 314f);
+		constellation.AddChild(center);
+
+		var rightPetals = new VBoxContainer
+		{
+			CustomMinimumSize = new Vector2(176f, 0f),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			Alignment = BoxContainer.AlignmentMode.Center,
+		};
+		rightPetals.AddThemeConstantOverride("separation", 14);
+		constellation.AddChild(rightPetals);
+
+		// Xếp xen kẽ để cụm giá trị giống một bông hoa hơn là bảng xếp hạng.
+		if (values.Count > 1) leftPetals.AddChild(NewValuePetal(root, 2, values[1], true));
+		if (values.Count > 3) leftPetals.AddChild(NewValuePetal(root, 4, values[3], true));
+		if (values.Count > 2) rightPetals.AddChild(NewValuePetal(root, 3, values[2], false));
+		if (values.Count > 4) rightPetals.AddChild(NewValuePetal(root, 5, values[4], false));
 	}
 
-	private void RenderActiveMotiveMap(HBoxContainer parent, JsonElement root, List<IdentityScoreEntry> motives)
+	private void RenderActiveMotiveMap(
+		HBoxContainer parent,
+		List<IdentityScoreEntry> activeMotives,
+		List<IdentityScoreEntry> motiveBaseline)
 	{
-		var card = NewIdentityCard("Động cơ đang hoạt động", IdentityAsset("identity_card_motive.png"), "✦", IdentityPurple, 418f);
+		// Motive được trình bày như một hệ quỹ đạo: orb là lực đang dẫn đường,
+		// còn các motive nền là vệ tinh persistent. Cooldown hoặc việc không nói
+		// không được biến baseline thành "motive đang hoạt động".
+		var card = NewIdentityCard("Quỹ đạo động cơ", IdentityAsset("identity_card_motive.png"), "✦", IdentityPurple, 438f);
 		card.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-		card.SizeFlagsStretchRatio = 0.84f;
-		card.CustomMinimumSize = new Vector2(390f, 418f);
+		card.SizeFlagsStretchRatio = 0.80f;
+		card.CustomMinimumSize = new Vector2(370f, 438f);
 		parent.AddChild(card);
 		var box = (VBoxContainer)card.GetChild(0);
 
-		IdentityScoreEntry top = motives.Count > 0 ? motives[0] : new IdentityScoreEntry { Key = "need_to_understand", Value = 0f };
-		var hero = new PanelContainer { CustomMinimumSize = new Vector2(0f, 138f) };
-		hero.AddThemeStyleboxOverride("panel", IdentitySoftPanelStyle(IdentityPurple, 0.065f, 18));
+		var hero = new PanelContainer { CustomMinimumSize = new Vector2(0f, 238f) };
+		var heroStyle = IdentitySoftPanelStyle(IdentityPurple, 0.050f, 24);
+		heroStyle.ShadowColor = new Color(0.48f, 0.24f, 0.68f, 0.10f);
+		heroStyle.ShadowSize = 8;
+		heroStyle.ShadowOffset = new Vector2(0f, 3f);
+		hero.AddThemeStyleboxOverride("panel", heroStyle);
 		box.AddChild(hero);
-		var heroPad = new MarginContainer();
-		heroPad.AddThemeConstantOverride("margin_left", 14);
-		heroPad.AddThemeConstantOverride("margin_top", 12);
-		heroPad.AddThemeConstantOverride("margin_right", 14);
-		heroPad.AddThemeConstantOverride("margin_bottom", 12);
-		hero.AddChild(heroPad);
-		var heroRow = new HBoxContainer();
-		heroRow.AddThemeConstantOverride("separation", 14);
-		heroPad.AddChild(heroRow);
-		heroRow.AddChild(NewIconBadge(IdentityAsset("identity_values_orb.png"), "✦", new Vector2(88f, 88f), IdentityPurple, true));
-		var heroCopy = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		heroCopy.AddThemeConstantOverride("separation", 4);
-		heroCopy.AddChild(NewLabel(PrettyIdentityKey(top.Key).ToUpperInvariant(), 15, new Color(0.45f, 0.20f, 0.62f), true));
-		heroCopy.AddChild(NewLabel($"{top.Value:0.00}", 28, IdentityPurple, true));
-		var desc = NewLabel(MotiveDescription(top.Key), 11, IdentityMuted, false);
-		desc.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-		heroCopy.AddChild(desc);
-		heroRow.AddChild(heroCopy);
 
-		if (motives.Count > 1)
+		var heroPad = new MarginContainer();
+		heroPad.AddThemeConstantOverride("margin_left", 16);
+		heroPad.AddThemeConstantOverride("margin_top", 14);
+		heroPad.AddThemeConstantOverride("margin_right", 16);
+		heroPad.AddThemeConstantOverride("margin_bottom", 14);
+		hero.AddChild(heroPad);
+		var heroBox = new VBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
+		heroBox.AddThemeConstantOverride("separation", 7);
+		heroPad.AddChild(heroBox);
+
+		var orbRow = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
+		orbRow.AddThemeConstantOverride("separation", 14);
+		heroBox.AddChild(orbRow);
+		orbRow.AddChild(NewIconBadge(IdentityAsset("identity_values_orb.png"), "✦", new Vector2(118f, 118f), IdentityPurple, true));
+
+		var copy = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, Alignment = BoxContainer.AlignmentMode.Center };
+		copy.AddThemeConstantOverride("separation", 5);
+		orbRow.AddChild(copy);
+
+		if (activeMotives.Count > 0)
 		{
-			var secondary = new HBoxContainer();
-			secondary.AddThemeConstantOverride("separation", 8);
-			for (int i = 1; i < Math.Min(3, motives.Count); i++)
-			{
-				var pill = NewPill($"{PrettyIdentityKey(motives[i].Key)}  {motives[i].Value:0.00}", i == 1 ? IdentityPink : IdentityBlue, false);
-				pill.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-				secondary.AddChild(pill);
-			}
-			box.AddChild(secondary);
+			IdentityScoreEntry top = activeMotives[0];
+			copy.AddChild(NewPill("ĐANG DẪN ĐƯỜNG", IdentityGreen, false));
+			copy.AddChild(NewLabel(PrettyIdentityKey(top.Key).ToUpperInvariant(), 16, new Color(0.45f, 0.20f, 0.62f), true));
+			copy.AddChild(NewLargeScore(top.Value, IdentityPurple));
+			var trigger = NewLabel(
+				string.IsNullOrWhiteSpace(top.Trigger) ? "Self-reflection chưa ghi trigger cụ thể." : $"Khởi phát: {top.Trigger}",
+				10, IdentityMuted, false);
+			trigger.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+			copy.AddChild(trigger);
+			heroBox.AddChild(NewIdentityRibbon("Ảnh hưởng hành vi", MotiveBehaviorEffect(top.Key), IdentityPurple));
+		}
+		else
+		{
+			copy.AddChild(NewPill("ĐANG YÊN", IdentityBlue, false));
+			copy.AddChild(NewLabel("Không có motive active", 16, IdentityInk, true));
+			var note = NewLabel("Lượt này chưa có active_motives từ self-reflection. Orb chỉ đánh dấu tâm điểm của hệ động cơ, không giả baseline thành state sống.", 10, IdentityMuted, false);
+			note.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+			copy.AddChild(note);
 		}
 
-		box.AddChild(NewSectionDivider());
-		box.AddChild(NewLabel("Được kích hoạt bởi", 11, IdentityInk, true));
-		foreach (string trigger in BuildMotiveTriggers(root))
-			box.AddChild(NewBulletLine(trigger, IdentityPink));
-		box.AddChild(NewLabel("Ảnh hưởng hành vi", 11, IdentityInk, true));
-		var behavior = NewLabel(MotiveBehaviorEffect(top.Key), 11, IdentityMuted, false);
-		behavior.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-		box.AddChild(behavior);
+		box.AddChild(NewLabel("Các vệ tinh động cơ nền · persistent", 11, IdentityInk, true));
+		var satellites = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
+		satellites.AddThemeConstantOverride("separation", 8);
+		box.AddChild(satellites);
+		for (int i = 0; i < Math.Min(3, motiveBaseline.Count); i++)
+			satellites.AddChild(NewMotiveSatellite(motiveBaseline[i], i));
+		if (motiveBaseline.Count == 0)
+			satellites.AddChild(NewLabel("Payload chưa có motives_top.", 10, IdentityMuted, false));
 	}
 
 	private void RenderValueConflictMap(JsonElement root)
@@ -1712,102 +1782,156 @@ public partial class UdpListener : Node2D
 		JsonElement conflict = Obj(root, "active_conflict");
 		string conflictId = ReadString(conflict, "conflict_id");
 		float activation = ReadFloat(conflict, "activation");
-		float leftPull = ReadFirstFloat(conflict, "left_pull", "left_strength");
-		float rightPull = ReadFirstFloat(conflict, "right_pull", "right_strength");
-		if (leftPull <= 0f && activation > 0f) leftPull = activation;
-		if (rightPull <= 0f && activation > 0f) rightPull = Mathf.Clamp(activation * 0.82f, 0f, 1f);
-		(string leftName, string rightName) = SplitConflictNames(conflictId);
 
-		var card = NewIdentityCard("Giằng co hiện tại", IdentityAsset("identity_card_conflict.png"), "⚖", IdentityOrange, 150f);
+		// Giằng co được vẽ như một chiếc cân: hai lực là hai "quả cân" có độ
+		// sáng khác nhau, thay vì hai progress bar rất giống dashboard KPI.
+		var card = NewIdentityCard("Cán cân hiện tại", IdentityAsset("identity_card_conflict.png"), "⚖", IdentityOrange, 178f);
 		_depthContentList.AddChild(card);
 		var box = (VBoxContainer)card.GetChild(0);
-		var row = new HBoxContainer();
-		row.AddThemeConstantOverride("separation", 18);
+
+		if (string.IsNullOrWhiteSpace(conflictId) || activation <= 0.01f)
+		{
+			var empty = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 92f), Alignment = BoxContainer.AlignmentMode.Center };
+			empty.AddThemeConstantOverride("separation", 16);
+			box.AddChild(empty);
+			empty.AddChild(NewIconBadge(IdentityAsset("identity_card_conflict.png"), "⚖", new Vector2(76f, 76f), IdentityBlue, true));
+			var copy = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+			copy.AddChild(NewPill("CÂN ĐANG YÊN", IdentityBlue, false));
+			copy.AddChild(NewLabel("Không có giằng co được self-reflection ghi nhận ở lượt này.", 12, IdentityMuted, false));
+			empty.AddChild(copy);
+			return;
+		}
+
+		float leftPull = ReadFirstFloat(conflict, "left_pull", "left_strength");
+		float rightPull = ReadFirstFloat(conflict, "right_pull", "right_strength");
+		(string leftName, string rightName) = SplitConflictNames(conflictId);
+		string chosenRaw = ReadString(conflict, "chosen_side");
+		string chosen = PrettyIdentityKey(chosenRaw);
+		bool leftWins = string.IsNullOrWhiteSpace(chosenRaw)
+			? leftPull >= rightPull
+			: chosen.Contains(leftName, StringComparison.OrdinalIgnoreCase) || chosenRaw.StartsWith("left", StringComparison.OrdinalIgnoreCase);
+
+		var row = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
+		row.AddThemeConstantOverride("separation", 14);
 		box.AddChild(row);
+		row.AddChild(NewConflictWeight(leftName, leftPull, IdentityPink, leftWins));
+		row.AddChild(NewIconBadge(IdentityAsset("identity_card_conflict.png"), "⚖", new Vector2(78f, 78f), IdentityOrange, true));
+		row.AddChild(NewConflictWeight(rightName, rightPull, IdentityPurple, !leftWins));
 
-		var left = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		left.AddChild(NewLabel(leftName, 13, IdentityInk, true));
-		AddMetricBar(left, "Lực kéo", leftPull, IdentityPink);
-		row.AddChild(left);
-		var balance = NewIconBadge(IdentityAsset("identity_card_conflict.png"), "↕", new Vector2(54f, 54f), IdentityOrange, true);
-		row.AddChild(balance);
-		var right = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		right.AddChild(NewLabel(rightName, 13, IdentityInk, true));
-		AddMetricBar(right, "Lực kéo", rightPull, IdentityPurple);
-		row.AddChild(right);
-
-		string chosen = PrettyIdentityKey(ReadString(conflict, "chosen_side"));
 		float residue = ReadFloat(conflict, "residue");
-		string result = activation <= 0.01f
-			? "Chưa có giằng co đủ rõ ở lượt này."
-			: $"Kết quả: {(string.IsNullOrWhiteSpace(chosen) || chosen == "—" ? (leftPull >= rightPull ? leftName : rightName) : chosen)} đang thắng · phần dư {residue:0.00}.";
-		box.AddChild(NewLabel(result, 11, IdentityMuted, false));
+		string winner = leftWins ? leftName : rightName;
+		var result = NewIdentityRibbon("Kết quả", $"{winner} đang chiếm ưu thế · phần còn đọng {residue:0.00}", IdentityOrange);
+		box.AddChild(result);
 	}
 
-	private void RenderDefenseMap(HBoxContainer parent, List<IdentityScoreEntry> defenses)
+	private void RenderDefenseMap(
+		HBoxContainer parent,
+		List<IdentityScoreEntry> activeDefenses,
+		List<IdentityScoreEntry> defenseBaseline)
 	{
-		var card = NewIdentityCard("Cơ chế phòng vệ", IdentityAsset("identity_card_defense.png"), "♢", IdentityPurple, 286f);
+		// Defense là các lớp khiên chồng lên nhau. Cụm này dùng một khiên chính
+		// và ba lớp nền, không biến mọi khuynh hướng thành thanh tải hệ thống.
+		var card = NewIdentityCard("Các lớp phòng vệ", IdentityAsset("identity_card_defense.png"), "♢", IdentityPurple, 310f);
 		card.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-		card.CustomMinimumSize = new Vector2(450f, 286f);
+		card.CustomMinimumSize = new Vector2(460f, 310f);
 		parent.AddChild(card);
 		var box = (VBoxContainer)card.GetChild(0);
 
-		IdentityScoreEntry top = defenses.Count > 0 ? defenses[0] : new IdentityScoreEntry();
-		var active = new PanelContainer { CustomMinimumSize = new Vector2(0f, 90f) };
-		active.AddThemeStyleboxOverride("panel", IdentitySoftPanelStyle(IdentityPurple, 0.055f, 16));
-		box.AddChild(active);
-		var activePad = new MarginContainer();
-		activePad.AddThemeConstantOverride("margin_left", 12);
-		activePad.AddThemeConstantOverride("margin_top", 10);
-		activePad.AddThemeConstantOverride("margin_right", 12);
-		activePad.AddThemeConstantOverride("margin_bottom", 10);
-		active.AddChild(activePad);
-		var activeBox = new VBoxContainer();
-		activePad.AddChild(activeBox);
-		activeBox.AddChild(NewLabel(defenses.Count > 0 ? "Đang nổi lên" : "Hiện tại", 10, IdentityPurple, true));
-		activeBox.AddChild(NewLabel(defenses.Count > 0 ? PrettyIdentityKey(top.Key) : "Không có defense mạnh ở lượt này", 15, IdentityInk, true));
-		if (defenses.Count > 0)
+		var activePanel = new PanelContainer { CustomMinimumSize = new Vector2(0f, 142f) };
+		var activeStyle = IdentitySoftPanelStyle(activeDefenses.Count > 0 ? IdentityPurple : IdentityBlue, 0.050f, 22);
+		activeStyle.ShadowColor = new Color(0.36f, 0.28f, 0.68f, 0.08f);
+		activeStyle.ShadowSize = 7;
+		activePanel.AddThemeStyleboxOverride("panel", activeStyle);
+		box.AddChild(activePanel);
+
+		var pad = new MarginContainer();
+		pad.AddThemeConstantOverride("margin_left", 14);
+		pad.AddThemeConstantOverride("margin_top", 12);
+		pad.AddThemeConstantOverride("margin_right", 14);
+		pad.AddThemeConstantOverride("margin_bottom", 12);
+		activePanel.AddChild(pad);
+		var row = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
+		row.AddThemeConstantOverride("separation", 15);
+		pad.AddChild(row);
+		row.AddChild(NewIconBadge(IdentityAsset("identity_card_defense.png"), "♢", new Vector2(96f, 96f), IdentityPurple, true));
+		var copy = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		copy.AddThemeConstantOverride("separation", 5);
+		row.AddChild(copy);
+
+		if (activeDefenses.Count > 0)
 		{
-			AddMetricBar(activeBox, "Cường độ", top.Value, IdentityPurple);
-			var explain = NewLabel(DefenseDescription(top.Key), 10, IdentityMuted, false);
+			IdentityScoreEntry top = activeDefenses[0];
+			copy.AddChild(NewPill("LỚP KHIÊN ĐANG SÁNG", IdentityGreen, false));
+			copy.AddChild(NewLabel(PrettyIdentityKey(top.Key), 16, IdentityInk, true));
+			copy.AddChild(NewLargeScore(top.Value, IdentityPurple));
+			var explain = NewLabel(string.IsNullOrWhiteSpace(top.Trigger) ? "Self-reflection chưa ghi trigger cụ thể." : $"Khởi phát: {top.Trigger}", 10, IdentityMuted, false);
 			explain.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-			activeBox.AddChild(explain);
+			copy.AddChild(explain);
+		}
+		else
+		{
+			copy.AddChild(NewPill("KHÔNG CÓ DEFENSE ACTIVE", IdentityBlue, false));
+			copy.AddChild(NewLabel("Các lớp khiên đang yên", 15, IdentityInk, true));
+			var note = NewLabel("Những lớp bên dưới chỉ là khuynh hướng persistent, không phải phản ứng đang xảy ra.", 10, IdentityMuted, false);
+			note.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+			copy.AddChild(note);
 		}
 
-		box.AddChild(NewLabel("Khuynh hướng nền", 11, IdentityInk, true));
-		for (int i = 1; i < Math.Min(4, defenses.Count); i++)
-			AddMiniScoreRow(box, PrettyIdentityKey(defenses[i].Key), defenses[i].Value, i == 1 ? IdentityBlue : IdentityPurple);
-		if (defenses.Count <= 1)
-			box.AddChild(NewLabel("Chưa có thêm khuynh hướng đủ rõ.", 10, IdentityMuted, false));
+		box.AddChild(NewLabel("Các lớp nền persistent", 11, IdentityInk, true));
+		var layers = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
+		layers.AddThemeConstantOverride("separation", 8);
+		box.AddChild(layers);
+		for (int i = 0; i < Math.Min(3, defenseBaseline.Count); i++)
+			layers.AddChild(NewDefenseLayer(defenseBaseline[i], i));
+		if (defenseBaseline.Count == 0)
+			layers.AddChild(NewLabel("Payload chưa có defenses_top.", 10, IdentityMuted, false));
 	}
 
 	private void RenderEmergentValuesMap(HBoxContainer parent, List<IdentityScoreEntry> emergent)
 	{
-		var card = NewIdentityCard("Giá trị đang hình thành", IdentityAsset("identity_emergent_value.png"), "✦", IdentityPink, 286f);
+		// Giá trị emergent được xem như một khu vườn kết tinh: hạt sáng, mầm pha
+		// lê rồi tinh thể ổn định. Hình minh họa đảm nhiệm tiến trình thị giác,
+		// thay vì thêm một bộ progress bar khác.
+		var card = NewIdentityCard("Vườn giá trị đang kết tinh", IdentityAsset("identity_emergent_value.png"), "✦", IdentityPink, 310f);
 		card.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-		card.CustomMinimumSize = new Vector2(450f, 286f);
+		card.CustomMinimumSize = new Vector2(460f, 310f);
 		parent.AddChild(card);
 		var box = (VBoxContainer)card.GetChild(0);
-		var intro = NewLabel("Những điều Eris đang chọn lặp lại đủ lâu để chúng trở thành một phần của mình.", 10, IdentityMuted, false);
+
+		var garden = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 225f), Alignment = BoxContainer.AlignmentMode.Center };
+		garden.AddThemeConstantOverride("separation", 14);
+		box.AddChild(garden);
+		garden.AddChild(NewIconBadge(IdentityAsset("identity_emergent_value.png"), "✦", new Vector2(126f, 162f), IdentityPink, false));
+
+		var copy = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		copy.AddThemeConstantOverride("separation", 8);
+		garden.AddChild(copy);
+		var intro = NewLabel("Những lựa chọn được Eris lặp lại đủ lâu mới có thể kết tinh thành giá trị mới.", 10, IdentityMuted, false);
 		intro.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-		box.AddChild(intro);
+		copy.AddChild(intro);
+
+		var grid = new GridContainer { Columns = 2, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		grid.AddThemeConstantOverride("h_separation", 8);
+		grid.AddThemeConstantOverride("v_separation", 8);
+		copy.AddChild(grid);
 
 		int shown = 0;
 		foreach (IdentityScoreEntry item in emergent)
 		{
 			if (item.Value <= 0.001f) continue;
-			AddEmergentValueRow(box, item.Key, item.Value);
+			grid.AddChild(NewEmergentCrystal(item));
 			if (++shown >= 4) break;
 		}
 		if (shown == 0)
 		{
-			var empty = new PanelContainer { CustomMinimumSize = new Vector2(0f, 86f) };
-			empty.AddThemeStyleboxOverride("panel", IdentitySoftPanelStyle(IdentityPink, 0.035f, 15));
-			box.AddChild(empty);
-			var label = NewLabel("Chưa có giá trị mới nào đủ ổn định để kết tinh.", 11, IdentityMuted, false);
-			label.HorizontalAlignment = HorizontalAlignment.Center;
-			label.VerticalAlignment = VerticalAlignment.Center;
-			empty.AddChild(label);
+			var empty = new PanelContainer { CustomMinimumSize = new Vector2(0f, 112f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+			empty.AddThemeStyleboxOverride("panel", IdentitySoftPanelStyle(IdentityPink, 0.030f, 18));
+			var emptyLabel = NewLabel("Mầm vẫn đang yên. Reducer chưa ghi nhận giá trị emergent nào.", 11, IdentityMuted, false);
+			emptyLabel.HorizontalAlignment = HorizontalAlignment.Center;
+			emptyLabel.VerticalAlignment = VerticalAlignment.Center;
+			emptyLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+			empty.AddChild(emptyLabel);
+			grid.AddChild(empty);
 		}
 	}
 
@@ -1857,12 +1981,56 @@ public partial class UdpListener : Node2D
 			string key = ReadString(item, "key");
 			float value = ReadFirstFloat(item, "value", "strength", "weight");
 			if (string.IsNullOrWhiteSpace(key)) continue;
-			result.Add(new IdentityScoreEntry { Key = key, Value = Mathf.Clamp(value, 0f, 1f) });
+			result.Add(new IdentityScoreEntry
+			{
+				Key = key,
+				Value = Mathf.Clamp(value, 0f, 1f),
+				Trigger = ReadString(item, "trigger"),
+			});
 		}
 		result.Sort((a, b) => b.Value.CompareTo(a.Value));
 		if (result.Count > limit)
 			result.RemoveRange(limit, result.Count - limit);
 		return result;
+	}
+
+	private static bool HasActiveConflict(JsonElement conflict)
+	{
+		return conflict.ValueKind == JsonValueKind.Object
+			&& !string.IsNullOrWhiteSpace(ReadString(conflict, "conflict_id"))
+			&& ReadFloat(conflict, "activation") > 0.01f;
+	}
+
+	private static int CountRecentIdentityChanges(JsonElement root, string dimension)
+	{
+		JsonElement ledger = Arr(root, "recent_identity_ledger");
+		if (ledger.ValueKind != JsonValueKind.Array) return 0;
+		int count = 0;
+		foreach (JsonElement item in ledger.EnumerateArray())
+		{
+			if (!string.Equals(ReadString(item, "dimension"), dimension, StringComparison.OrdinalIgnoreCase)) continue;
+			if (Mathf.Abs(ReadFloat(item, "applied_delta")) <= 0.0000001f) continue;
+			count++;
+		}
+		return count;
+	}
+
+	private static (float Delta, int Count) RecentIdentityDelta(JsonElement root, string dimension, string key)
+	{
+		JsonElement ledger = Arr(root, "recent_identity_ledger");
+		if (ledger.ValueKind != JsonValueKind.Array) return (0f, 0);
+		float total = 0f;
+		int count = 0;
+		foreach (JsonElement item in ledger.EnumerateArray())
+		{
+			if (!string.Equals(ReadString(item, "dimension"), dimension, StringComparison.OrdinalIgnoreCase)) continue;
+			if (!string.Equals(ReadString(item, "key"), key, StringComparison.OrdinalIgnoreCase)) continue;
+			float delta = ReadFloat(item, "applied_delta");
+			if (Mathf.Abs(delta) <= 0.0000001f) continue;
+			total += delta;
+			count++;
+		}
+		return (total, count);
 	}
 
 	private static List<string> TopIdentityNames(List<IdentityScoreEntry> values, int count)
@@ -1873,28 +2041,20 @@ public partial class UdpListener : Node2D
 		return result;
 	}
 
-	private static float AverageTopScores(List<IdentityScoreEntry> values, int count)
-	{
-		if (values.Count == 0) return 0f;
-		float total = 0f;
-		int n = Math.Min(count, values.Count);
-		for (int i = 0; i < n; i++) total += values[i].Value;
-		return n > 0 ? total / n : 0f;
-	}
 
 	private static string BuildIdentityNarrative(List<IdentityScoreEntry> values, List<IdentityScoreEntry> emergent)
 	{
 		if (values.Count == 0)
-			return "Eris đang giữ nền tự chủ, chiều sâu và năng lực; các lựa chọn mới chưa đủ lâu để kết tinh thành giá trị riêng.";
+			return "Payload chưa có snapshot values_top; panel không tự dựng bản sắc thay runtime.";
 		string first = PrettyIdentityKey(values[0].Key);
-		string second = values.Count > 1 ? PrettyIdentityKey(values[1].Key) : "chiều sâu";
-		string growth = emergent.Count > 0 && emergent[0].Value > 0.02f
-			? $" Một hướng mới đang nổi lên: {PrettyIdentityKey(emergent[0].Key).ToLowerInvariant()}."
-			: " Chưa có giá trị mới nào đủ ổn định để đổi hướng.";
-		return $"Eris đang nghiêng mạnh về {first.ToLowerInvariant()} và {second.ToLowerInvariant()}; cô ưu tiên lựa chọn có chiều sâu hơn phản ứng thuận tiện.{growth}";
+		string second = values.Count > 1 ? PrettyIdentityKey(values[1].Key) : "một giá trị khác";
+		string growth = emergent.Exists(item => item.Value > 0.001f)
+			? $" Reducer đã ghi nhận hướng emergent: {PrettyIdentityKey(emergent.Find(item => item.Value > 0.001f).Key).ToLowerInvariant()}."
+			: " Reducer chưa ghi nhận giá trị emergent nào.";
+		return $"Snapshot persistent hiện nghiêng về {first.ToLowerInvariant()} và {second.ToLowerInvariant()}.{growth}";
 	}
 
-	private void AddIdentityValueRow(VBoxContainer parent, int rank, string key, float value, Color accent)
+	private void AddIdentityValueRow(VBoxContainer parent, JsonElement root, int rank, string key, float value, Color accent)
 	{
 		var panel = new PanelContainer { CustomMinimumSize = new Vector2(0f, 62f) };
 		panel.AddThemeStyleboxOverride("panel", IdentitySoftPanelStyle(accent, 0.035f, 14));
@@ -1931,9 +2091,20 @@ public partial class UdpListener : Node2D
 		var number = NewLabel($"{value:0.00}", 13, accent, true);
 		number.HorizontalAlignment = HorizontalAlignment.Right;
 		score.AddChild(number);
-		var stability = NewLabel(value >= 0.78f ? "ổn định" : value >= 0.45f ? "đang rõ" : "nhẹ", 9, IdentityMuted, false);
-		stability.HorizontalAlignment = HorizontalAlignment.Right;
-		score.AddChild(stability);
+		(float recentDelta, int recentCount) = RecentIdentityDelta(root, "value", key);
+		string ledgerState = recentCount == 0
+			? "chưa có delta"
+			: recentDelta > 0.00005f
+				? $"↑ +{recentDelta:0.000}"
+				: recentDelta < -0.00005f
+					? $"↓ {recentDelta:0.000}"
+					: "đã ghi ledger";
+		var ledgerLabel = NewLabel(ledgerState, 9, IdentityMuted, false);
+		ledgerLabel.TooltipText = recentCount == 0
+			? "Không có entry value tương ứng trong recent_identity_ledger."
+			: $"{recentCount} entry trong recent_identity_ledger; tổng delta {recentDelta:0.000000}.";
+		ledgerLabel.HorizontalAlignment = HorizontalAlignment.Right;
+		score.AddChild(ledgerLabel);
 		row.AddChild(score);
 	}
 
@@ -1957,7 +2128,7 @@ public partial class UdpListener : Node2D
 	private void AddEmergentValueRow(VBoxContainer parent, string key, float value)
 	{
 		Color accent = value >= 0.55f ? IdentityGreen : value >= 0.20f ? IdentityPurple : IdentityPink;
-		string state = value >= 0.55f ? "Đã hình thành" : value >= 0.20f ? "Đang kết tinh" : "Mới xuất hiện";
+		string state = value >= 0.55f ? "Mức cao" : value >= 0.20f ? "Mức vừa" : "Mới ghi nhận";
 		string glyph = value >= 0.55f ? "✦" : value >= 0.20f ? "◐" : "◇";
 		var panel = new PanelContainer { CustomMinimumSize = new Vector2(0f, 48f) };
 		panel.AddThemeStyleboxOverride("panel", IdentitySoftPanelStyle(accent, 0.030f, 13));
@@ -1978,6 +2149,231 @@ public partial class UdpListener : Node2D
 		copy.AddChild(NewLabel(EmergentValueDescription(key), 9, IdentityMuted, false));
 		row.AddChild(copy);
 		row.AddChild(NewPill($"{state} · {value:0.00}", accent, false));
+	}
+
+
+	// ---------------------------------------------------------------------
+	// Các helper thị giác organic cho tab Giá trị & động cơ.
+	// Mục tiêu: cùng dữ liệu thật, nhưng không mô tả bản sắc như bảng KPI.
+	// ---------------------------------------------------------------------
+	private PanelContainer NewCoreValueOrb(JsonElement root, IdentityScoreEntry item)
+	{
+		Color accent = IdentityValueAccent(item.Key);
+		var panel = new PanelContainer();
+		var style = IdentitySoftPanelStyle(accent, 0.055f, 34);
+		style.BorderColor = new Color(accent.R, accent.G, accent.B, 0.30f);
+		style.ShadowColor = new Color(accent.R, accent.G, accent.B, 0.12f);
+		style.ShadowSize = 12;
+		style.ShadowOffset = new Vector2(0f, 4f);
+		panel.AddThemeStyleboxOverride("panel", style);
+		var pad = new MarginContainer();
+		pad.AddThemeConstantOverride("margin_left", 14);
+		pad.AddThemeConstantOverride("margin_top", 12);
+		pad.AddThemeConstantOverride("margin_right", 14);
+		pad.AddThemeConstantOverride("margin_bottom", 12);
+		panel.AddChild(pad);
+		var box = new VBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
+		box.AddThemeConstantOverride("separation", 5);
+		pad.AddChild(box);
+		var orbCenter = new CenterContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		orbCenter.AddChild(NewIconBadge(IdentityAsset("identity_values_orb.png"), "✦", new Vector2(122f, 122f), accent, true));
+		box.AddChild(orbCenter);
+		var name = NewLabel(PrettyIdentityKey(item.Key), 15, IdentityInk, true);
+		name.HorizontalAlignment = HorizontalAlignment.Center;
+		box.AddChild(name);
+		var score = NewLargeScore(item.Value, accent);
+		score.HorizontalAlignment = HorizontalAlignment.Center;
+		box.AddChild(score);
+		var detail = NewLabel(ValueDescription(item.Key), 9, IdentityMuted, false);
+		detail.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		detail.HorizontalAlignment = HorizontalAlignment.Center;
+		box.AddChild(detail);
+		var delta = NewLabel(ValueDeltaCaption(root, item.Key), 9, accent, true);
+		delta.HorizontalAlignment = HorizontalAlignment.Center;
+		box.AddChild(delta);
+		return panel;
+	}
+
+	private PanelContainer NewValuePetal(JsonElement root, int rank, IdentityScoreEntry item, bool opensRight)
+	{
+		Color accent = IdentityValueAccent(item.Key);
+		var panel = new PanelContainer { CustomMinimumSize = new Vector2(174f, 128f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		var style = IdentitySoftPanelStyle(accent, 0.042f, 18);
+		// Góc bo bất đối xứng tạo cảm giác cánh hoa hướng về orb trung tâm.
+		if (opensRight)
+		{
+			style.CornerRadiusTopRight = 42;
+			style.CornerRadiusBottomRight = 42;
+		}
+		else
+		{
+			style.CornerRadiusTopLeft = 42;
+			style.CornerRadiusBottomLeft = 42;
+		}
+		style.BorderColor = new Color(accent.R, accent.G, accent.B, 0.24f);
+		panel.AddThemeStyleboxOverride("panel", style);
+		var pad = new MarginContainer();
+		pad.AddThemeConstantOverride("margin_left", 11);
+		pad.AddThemeConstantOverride("margin_top", 9);
+		pad.AddThemeConstantOverride("margin_right", 11);
+		pad.AddThemeConstantOverride("margin_bottom", 9);
+		panel.AddChild(pad);
+		var box = new VBoxContainer();
+		box.AddThemeConstantOverride("separation", 3);
+		pad.AddChild(box);
+		var top = new HBoxContainer();
+		top.AddChild(NewPill(rank.ToString(CultureInfo.InvariantCulture), accent, false));
+		top.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
+		top.AddChild(NewLabel($"{item.Value:0.00}", 14, accent, true));
+		box.AddChild(top);
+		box.AddChild(NewLabel(PrettyIdentityKey(item.Key), 12, IdentityInk, true));
+		var detail = NewLabel(ValueDescription(item.Key), 9, IdentityMuted, false);
+		detail.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		box.AddChild(detail);
+		box.AddChild(NewLabel(ValueDeltaCaption(root, item.Key), 9, accent, true));
+		return panel;
+	}
+
+	private PanelContainer NewMotiveSatellite(IdentityScoreEntry item, int index)
+	{
+		Color accent = index == 0 ? IdentityPurple : index == 1 ? IdentityBlue : IdentityPink;
+		var panel = new PanelContainer { CustomMinimumSize = new Vector2(105f, 84f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		var style = IdentitySoftPanelStyle(accent, 0.045f, 34);
+		style.BorderColor = new Color(accent.R, accent.G, accent.B, 0.22f);
+		panel.AddThemeStyleboxOverride("panel", style);
+		var box = new VBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
+		box.AddThemeConstantOverride("separation", 2);
+		panel.AddChild(box);
+		var score = NewLabel($"{item.Value:0.00}", 14, accent, true);
+		score.HorizontalAlignment = HorizontalAlignment.Center;
+		box.AddChild(score);
+		var name = NewLabel(TrimForPanel(PrettyIdentityKey(item.Key), 24), 9, IdentityInk, true);
+		name.HorizontalAlignment = HorizontalAlignment.Center;
+		name.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		box.AddChild(name);
+		return panel;
+	}
+
+	private PanelContainer NewConflictWeight(string name, float force, Color accent, bool winner)
+	{
+		force = Mathf.Clamp(force, 0f, 1f);
+		var panel = new PanelContainer
+		{
+			CustomMinimumSize = new Vector2(220f, winner ? 86f : 74f),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+		};
+		var style = IdentitySoftPanelStyle(accent, 0.035f + force * 0.075f, winner ? 24 : 18);
+		style.BorderColor = new Color(accent.R, accent.G, accent.B, winner ? 0.38f : 0.20f);
+		if (winner)
+		{
+			style.ShadowColor = new Color(accent.R, accent.G, accent.B, 0.12f);
+			style.ShadowSize = 7;
+		}
+		panel.AddThemeStyleboxOverride("panel", style);
+		var row = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
+		row.AddThemeConstantOverride("separation", 9);
+		panel.AddChild(row);
+		var orb = NewPill($"{force:0.00}", accent, false);
+		orb.CustomMinimumSize = new Vector2(58f, 34f);
+		row.AddChild(orb);
+		var copy = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		copy.AddChild(NewLabel(name, 12, IdentityInk, true));
+		copy.AddChild(NewLabel(winner ? "đang chiếm ưu thế" : "vẫn còn lực kéo", 9, IdentityMuted, false));
+		row.AddChild(copy);
+		return panel;
+	}
+
+	private PanelContainer NewDefenseLayer(IdentityScoreEntry item, int index)
+	{
+		Color accent = index == 0 ? IdentityBlue : IdentityPurple;
+		var panel = new PanelContainer { CustomMinimumSize = new Vector2(132f, 78f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		var style = IdentitySoftPanelStyle(accent, 0.032f + (2 - Math.Min(index, 2)) * 0.012f, 20 - index * 2);
+		style.BorderColor = new Color(accent.R, accent.G, accent.B, 0.18f + (2 - Math.Min(index, 2)) * 0.04f);
+		panel.AddThemeStyleboxOverride("panel", style);
+		var box = new VBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
+		box.AddThemeConstantOverride("separation", 2);
+		panel.AddChild(box);
+		var score = NewLabel($"{item.Value:0.00}", 14, accent, true);
+		score.HorizontalAlignment = HorizontalAlignment.Center;
+		box.AddChild(score);
+		var name = NewLabel(TrimForPanel(PrettyIdentityKey(item.Key), 25), 9, IdentityInk, true);
+		name.HorizontalAlignment = HorizontalAlignment.Center;
+		name.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		box.AddChild(name);
+		return panel;
+	}
+
+	private PanelContainer NewEmergentCrystal(IdentityScoreEntry item)
+	{
+		Color accent = item.Value >= 0.55f ? IdentityGreen : item.Value >= 0.20f ? IdentityPurple : IdentityPink;
+		string stage = item.Value >= 0.55f ? "Đã kết tinh" : item.Value >= 0.20f ? "Đang kết tinh" : "Hạt sáng";
+		string glyph = item.Value >= 0.55f ? "✦" : item.Value >= 0.20f ? "◆" : "·";
+		var panel = new PanelContainer { CustomMinimumSize = new Vector2(166f, 82f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		var style = IdentitySoftPanelStyle(accent, 0.040f, 20);
+		style.BorderColor = new Color(accent.R, accent.G, accent.B, 0.22f);
+		panel.AddThemeStyleboxOverride("panel", style);
+		var row = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
+		row.AddThemeConstantOverride("separation", 7);
+		panel.AddChild(row);
+		var mark = NewLabel(glyph, 22, accent, true);
+		mark.CustomMinimumSize = new Vector2(34f, 0f);
+		mark.HorizontalAlignment = HorizontalAlignment.Center;
+		row.AddChild(mark);
+		var copy = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		copy.AddChild(NewLabel(TrimForPanel(PrettyIdentityKey(item.Key), 24), 10, IdentityInk, true));
+		copy.AddChild(NewLabel($"{stage} · {item.Value:0.00}", 9, accent, true));
+		row.AddChild(copy);
+		return panel;
+	}
+
+	private PanelContainer NewIdentityRibbon(string title, string text, Color accent)
+	{
+		var panel = new PanelContainer { CustomMinimumSize = new Vector2(0f, 48f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		var style = IdentitySoftPanelStyle(accent, 0.030f, 16);
+		style.BorderColor = new Color(accent.R, accent.G, accent.B, 0.18f);
+		panel.AddThemeStyleboxOverride("panel", style);
+		var row = new HBoxContainer();
+		row.AddThemeConstantOverride("separation", 8);
+		panel.AddChild(row);
+		row.AddChild(NewLabel(title, 10, accent, true));
+		var detail = NewLabel(text, 10, IdentityMuted, false);
+		detail.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		detail.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		row.AddChild(detail);
+		return panel;
+	}
+
+	private PanelContainer NewIdentityEmptyState(string text, string iconPath, string fallbackGlyph, Color accent, float height)
+	{
+		var panel = new PanelContainer { CustomMinimumSize = new Vector2(0f, height), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		panel.AddThemeStyleboxOverride("panel", IdentitySoftPanelStyle(accent, 0.025f, 22));
+		var box = new VBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
+		box.AddThemeConstantOverride("separation", 8);
+		panel.AddChild(box);
+		var center = new CenterContainer();
+		center.AddChild(NewIconBadge(iconPath, fallbackGlyph, new Vector2(94f, 94f), accent, true));
+		box.AddChild(center);
+		var label = NewLabel(text, 11, IdentityMuted, false);
+		label.HorizontalAlignment = HorizontalAlignment.Center;
+		label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		box.AddChild(label);
+		return panel;
+	}
+
+	private Label NewLargeScore(float value, Color accent)
+	{
+		var label = NewLabel($"{Mathf.Clamp(value, 0f, 1f):0.00}", 27, accent, true);
+		label.CustomMinimumSize = new Vector2(80f, 34f);
+		return label;
+	}
+
+	private string ValueDeltaCaption(JsonElement root, string key)
+	{
+		(float delta, int count) = RecentIdentityDelta(root, "value", key);
+		if (count == 0) return "chưa có delta ledger";
+		if (delta > 0.00005f) return $"↑ +{delta:0.000}";
+		if (delta < -0.00005f) return $"↓ {delta:0.000}";
+		return "đã ghi ledger";
 	}
 
 	private static StyleBoxFlat IdentitySoftPanelStyle(Color accent, float alpha, int radius) => new()
@@ -2007,26 +2403,11 @@ public partial class UdpListener : Node2D
 		return label;
 	}
 
-	private static List<string> BuildMotiveTriggers(JsonElement root)
-	{
-		var triggers = new List<string>();
-		JsonElement discovery = Obj(root, "discovery");
-		JsonElement activity = Obj(discovery, "current_activity");
-		if (!string.IsNullOrWhiteSpace(ReadString(activity, "topic")))
-			triggers.Add("Một chủ đề mới chưa có đủ dữ kiện.");
-		if (Arr(discovery, "ready_to_share").ValueKind == JsonValueKind.Array && Arr(discovery, "ready_to_share").GetArrayLength() > 0)
-			triggers.Add("Có discovery đang chờ được mang về kể.");
-		if (!string.IsNullOrWhiteSpace(ReadString(Obj(root, "expression"), "preset")))
-			triggers.Add("Một biểu hiện sân khấu đang được chuẩn bị.");
-		if (triggers.Count == 0)
-			triggers.Add("Nhịp quan sát hiện tại chưa khép lại.");
-		return triggers;
-	}
 
 	private static (string Left, string Right) SplitConflictNames(string conflictId)
 	{
 		if (string.IsNullOrWhiteSpace(conflictId))
-			return ("Tò mò", "Tự bảo vệ");
+			return ("—", "—");
 		string[] parts = conflictId.Split(new[] { "_vs_" }, StringSplitOptions.None);
 		if (parts.Length == 2)
 			return (PrettyIdentityKey(parts[0]), PrettyIdentityKey(parts[1]));
@@ -2123,78 +2504,1758 @@ public partial class UdpListener : Node2D
 
 	private void RenderRelationshipTab(JsonElement root)
 	{
-		JsonElement rel = Obj(root, "relationship");
-		var relLines = new List<string>();
-		if (rel.ValueKind == JsonValueKind.Object)
+		// Tab Quan hệ chỉ đọc contract relationship_runtime do Python biên dịch.
+		// Body không tự suy ra evidence, drift hoặc biến baseline thành live state.
+		JsonElement runtime = Obj(root, "relationship_runtime");
+		if (runtime.ValueKind != JsonValueKind.Object)
 		{
-			foreach (JsonProperty item in rel.EnumerateObject())
+			AddInfoCard("Quan hệ & belief", new[]
 			{
-				if (item.Value.ValueKind == JsonValueKind.Number)
-					relLines.Add($"{Pretty(item.Name)}  {ReadNumber(item.Value):0.00}");
-			}
+				"Chưa nhận được relationship_runtime.panel.v1 từ Brain.",
+				"Panel không dùng fallback trang trí để tránh hiển thị state giả.",
+			});
+			return;
 		}
-		AddInfoCard("Relationship profile · primary_user", relLines);
 
-		JsonElement beliefs = Obj(root, "beliefs");
-		var beliefLines = new List<string>();
-		if (beliefs.ValueKind == JsonValueKind.Object)
+		RenderRelationshipHero(runtime);
+
+		var upper = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		upper.AddThemeConstantOverride("separation", 12);
+		_depthContentList.AddChild(upper);
+		RenderRelationshipMap(upper, runtime);
+		RenderBeliefBoard(upper, runtime);
+
+		var middle = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		middle.AddThemeConstantOverride("separation", 12);
+		_depthContentList.AddChild(middle);
+		RenderRelationshipOverlap(middle, runtime);
+		RenderLiveRelationship(middle, runtime);
+
+		RenderRelationshipTimeline(runtime);
+	}
+
+	private void RenderRelationshipHero(JsonElement runtime)
+	{
+		var hero = new PanelContainer
 		{
-			foreach (JsonProperty item in beliefs.EnumerateObject())
+			CustomMinimumSize = new Vector2(0f, 128f),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+		};
+		hero.AddThemeStyleboxOverride("panel", RelationshipSectionStyle(IdentityPink, 0.055f, 22, true));
+		_depthContentList.AddChild(hero);
+
+		var pad = new MarginContainer();
+		pad.AddThemeConstantOverride("margin_left", 18);
+		pad.AddThemeConstantOverride("margin_top", 14);
+		pad.AddThemeConstantOverride("margin_right", 18);
+		pad.AddThemeConstantOverride("margin_bottom", 14);
+		hero.AddChild(pad);
+
+		var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		row.AddThemeConstantOverride("separation", 14);
+		pad.AddChild(row);
+		row.AddChild(NewIconBadge(IdentityAsset("identity_card_relationship.png"), "♧", new Vector2(76f, 76f), IdentityPink, true));
+
+		var text = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		text.AddThemeConstantOverride("separation", 4);
+		row.AddChild(text);
+		text.AddChild(NewLabel("MỐI QUAN HỆ HIỆN TẠI", 11, IdentityMuted, true));
+		string headline = ReadString(runtime, "headline");
+		var title = NewLabel(string.IsNullOrWhiteSpace(headline) ? "Chưa đủ dữ liệu để tóm tắt" : headline, 20, new Color(0.68f, 0.16f, 0.42f), true);
+		title.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		text.AddChild(title);
+		var description = NewLabel(ReadString(runtime, "description"), 11, IdentityMuted, false);
+		description.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		text.AddChild(description);
+
+		var badges = new VBoxContainer { CustomMinimumSize = new Vector2(226f, 0f), SizeFlagsHorizontal = Control.SizeFlags.ShrinkEnd };
+		badges.AddThemeConstantOverride("separation", 6);
+		row.AddChild(badges);
+		badges.AddChild(NewPill("Quan hệ riêng · " + ReadString(runtime, "relationship_id"), IdentityPurple, true));
+		JsonElement counts = Obj(runtime, "belief_counts");
+		int testing = ReadInt(counts, "testing");
+		int mixed = ReadInt(counts, "mixed");
+		badges.AddChild(NewPill(testing > 0 ? $"{testing} belief đang kiểm chứng" : "Không có belief đang kiểm chứng", IdentityBlue, true));
+		badges.AddChild(NewPill(mixed > 0 ? $"{mixed} belief có mâu thuẫn" : "Không có mâu thuẫn nổi bật", mixed > 0 ? IdentityOrange : IdentityGreen, true));
+	}
+
+	private void RenderRelationshipMap(HBoxContainer parent, JsonElement runtime)
+	{
+		var card = NewIdentityCard("Bản đồ Eris ↔ User", IdentityAsset("identity_tab_relationship.png"), "♧", IdentityPurple, 342f);
+		card.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		card.SizeFlagsStretchRatio = 1.04f;
+		parent.AddChild(card);
+		var box = (VBoxContainer)card.GetChild(0);
+		box.AddChild(NewLabel("Mỗi sợi là một mặt quan hệ riêng. Độ sáng phản ánh profile hiện tại, không phải cảm xúc của riêng lượt này.", 10, IdentityMuted, false));
+
+		var pair = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 232f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		pair.AddThemeConstantOverride("separation", 12);
+		box.AddChild(pair);
+		pair.AddChild(NewRelationOrb("ERIS", "giữ một phần nội tâm riêng", IdentityPurple));
+
+		var threads = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, SizeFlagsVertical = Control.SizeFlags.ShrinkCenter };
+		threads.AddThemeConstantOverride("separation", 12);
+		pair.AddChild(threads);
+		JsonElement profile = Obj(runtime, "profile");
+		AddRelationshipThread(threads, "Tin tưởng quan hệ", ReadFloat(profile, "relational_trust"), IdentityBlue, FindRelationshipDelta(runtime, "relational_trust", 7));
+		AddRelationshipThread(threads, "Tôn trọng", ReadFloat(profile, "respect"), IdentityPurple, FindRelationshipDelta(runtime, "respect", 7));
+		AddRelationshipThread(threads, "Gắn kết", ReadFloat(profile, "attachment_intensity"), IdentityPink, FindRelationshipDelta(runtime, "attachment_intensity", 7));
+		AddRelationshipThread(threads, "Tò mò chung", ReadFloat(profile, "shared_curiosity"), IdentityGreen, FindRelationshipDelta(runtime, "shared_curiosity", 7));
+
+		pair.AddChild(NewRelationOrb("USER", "primary_user", IdentityPink));
+
+		var split = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		split.AddThemeConstantOverride("separation", 8);
+		split.AddChild(NewRelationMetricChip("Tin năng lực", ReadFloat(profile, "competence_trust"), IdentityBlue));
+		split.AddChild(NewRelationMetricChip("Thân quen", ReadFloat(profile, "familiarity"), IdentityPurple));
+		split.AddChild(NewRelationMetricChip("An toàn đùa", ReadFloat(profile, "playful_safety"), IdentityOrange));
+		box.AddChild(split);
+	}
+
+	private Control NewRelationOrb(string title, string subtitle, Color accent)
+	{
+		var orb = new PanelContainer { CustomMinimumSize = new Vector2(152f, 152f), SizeFlagsVertical = Control.SizeFlags.ShrinkCenter };
+		orb.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(accent.R, accent.G, accent.B, 0.11f),
+			BorderColor = new Color(accent.R, accent.G, accent.B, 0.42f),
+			BorderWidthLeft = 2,
+			BorderWidthTop = 2,
+			BorderWidthRight = 2,
+			BorderWidthBottom = 2,
+			CornerRadiusTopLeft = 76,
+			CornerRadiusTopRight = 76,
+			CornerRadiusBottomLeft = 76,
+			CornerRadiusBottomRight = 76,
+			ShadowColor = new Color(accent.R, accent.G, accent.B, 0.15f),
+			ShadowSize = 12,
+		});
+		var box = new VBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
+		box.AddThemeConstantOverride("separation", 3);
+		orb.AddChild(box);
+		var label = NewLabel(title, 17, accent, true);
+		label.HorizontalAlignment = HorizontalAlignment.Center;
+		box.AddChild(label);
+		var sub = NewLabel(subtitle, 9, IdentityMuted, false);
+		sub.HorizontalAlignment = HorizontalAlignment.Center;
+		sub.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		sub.CustomMinimumSize = new Vector2(118f, 0f);
+		box.AddChild(sub);
+		return orb;
+	}
+
+	private void AddRelationshipThread(VBoxContainer parent, string label, float value, Color accent, float delta7d)
+	{
+		value = Mathf.Clamp(value, 0f, 1f);
+		var block = new VBoxContainer();
+		block.AddThemeConstantOverride("separation", 3);
+		parent.AddChild(block);
+		var header = new HBoxContainer();
+		var name = NewLabel(label, 10, IdentityInk, true);
+		name.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		header.AddChild(name);
+		string delta = Math.Abs(delta7d) > 0.00001f ? $"{(delta7d > 0f ? "↑" : "↓")} {Math.Abs(delta7d):0.000}" : "chưa có drift 7d";
+		header.AddChild(NewLabel($"{value:0.00} · {delta}", 9, Math.Abs(delta7d) > 0.00001f ? accent : IdentityMuted, true));
+		block.AddChild(header);
+
+		var rail = new Control { CustomMinimumSize = new Vector2(0f, 10f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		block.AddChild(rail);
+		var line = new PanelContainer
+		{
+			CustomMinimumSize = new Vector2(86f + 124f * value, 5f),
+			Position = new Vector2(0f, 2f),
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		line.AddThemeStyleboxOverride("panel", RoundedBarStyle(new Color(accent.R, accent.G, accent.B, 0.35f + value * 0.55f), 4));
+		rail.AddChild(line);
+		var bead = new PanelContainer { CustomMinimumSize = new Vector2(10f, 10f), Position = new Vector2(80f + 124f * value, 0f) };
+		bead.AddThemeStyleboxOverride("panel", RoundedBarStyle(accent, 5));
+		rail.AddChild(bead);
+	}
+
+	private Control NewRelationMetricChip(string label, float value, Color accent)
+	{
+		var panel = new PanelContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, CustomMinimumSize = new Vector2(0f, 48f) };
+		panel.AddThemeStyleboxOverride("panel", RelationshipSectionStyle(accent, 0.045f, 14, false));
+		var row = new HBoxContainer();
+		row.AddThemeConstantOverride("separation", 6);
+		panel.AddChild(row);
+		var name = NewLabel(label, 9, IdentityMuted, true);
+		name.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		row.AddChild(name);
+		row.AddChild(NewLabel($"{Mathf.Clamp(value, 0f, 1f):0.00}", 13, accent, true));
+		return panel;
+	}
+
+	private void RenderBeliefBoard(HBoxContainer parent, JsonElement runtime)
+	{
+		var card = NewIdentityCard("Eris đang nhìn User thế nào", IdentityAsset("identity_card_relationship.png"), "✧", IdentityPink, 342f);
+		card.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		card.SizeFlagsStretchRatio = 0.96f;
+		parent.AddChild(card);
+		var box = (VBoxContainer)card.GetChild(0);
+		box.AddChild(NewLabel("Belief là điều Eris đang tin, không phải fact. Mỗi card chỉ hiện evidence thật đã được reducer ghi.", 10, IdentityMuted, false));
+
+		JsonElement beliefs = Arr(runtime, "beliefs");
+		int shown = 0;
+		if (beliefs.ValueKind == JsonValueKind.Array)
+		{
+			foreach (JsonElement belief in beliefs.EnumerateArray())
 			{
-				if (!item.Name.StartsWith("user.", StringComparison.Ordinal) && !item.Name.StartsWith("self.", StringComparison.Ordinal))
+				if (!string.Equals(ReadString(belief, "scope"), "user", StringComparison.OrdinalIgnoreCase))
 					continue;
-				JsonElement record = item.Value;
-				beliefLines.Add($"{item.Name} · strength {ReadFloat(record, "strength"):0.00} · conf {ReadFloat(record, "confidence"):0.00}");
-				if (beliefLines.Count >= 12) break;
+				box.AddChild(NewRelationshipBeliefCard(belief));
+				shown++;
+				if (shown >= 4) break;
 			}
 		}
-		AddInfoCard("Beliefs đang có trọng lượng", beliefLines);
-		AddInfoCard("Pending strategies", FormatObjectArray(Arr(root, "pending_strategies"), new[] { "strategy", "goal", "status" }, 6));
+		if (shown == 0)
+			box.AddChild(NewRelationshipEmptyState("Chưa có belief riêng về User đủ dữ liệu để hiển thị."));
+	}
+
+	private Control NewRelationshipBeliefCard(JsonElement belief)
+	{
+		string key = ReadString(belief, "key");
+		string status = ReadString(belief, "status");
+		Color accent = BeliefStatusColor(status);
+		var panel = new PanelContainer { CustomMinimumSize = new Vector2(0f, 78f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		panel.AddThemeStyleboxOverride("panel", RelationshipSectionStyle(accent, 0.040f, 15, false));
+		var pad = new MarginContainer();
+		pad.AddThemeConstantOverride("margin_left", 10);
+		pad.AddThemeConstantOverride("margin_top", 8);
+		pad.AddThemeConstantOverride("margin_right", 10);
+		pad.AddThemeConstantOverride("margin_bottom", 8);
+		panel.AddChild(pad);
+		var box = new VBoxContainer();
+		box.AddThemeConstantOverride("separation", 4);
+		pad.AddChild(box);
+		var top = new HBoxContainer();
+		var quote = NewLabel("“" + BeliefStatement(key) + "”", 11, IdentityInk, true);
+		quote.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		quote.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		top.AddChild(quote);
+		top.AddChild(NewPill(BeliefStatusLabel(status), accent, true));
+		box.AddChild(top);
+
+		int evidenceCount = ReadInt(belief, "evidence_count");
+		int contradictionCount = ReadInt(belief, "contradiction_count");
+		float strength = ReadFloat(belief, "strength");
+		float confidence = ReadFloat(belief, "confidence");
+		box.AddChild(NewLabel($"Độ tin {strength:0.00} · confidence {confidence:0.00} · evidence {evidenceCount} · mâu thuẫn {contradictionCount}", 9, IdentityMuted, false));
+
+		JsonElement summaries = Arr(belief, "evidence_summaries");
+		string evidence = FirstString(summaries);
+		var reason = NewLabel(string.IsNullOrWhiteSpace(evidence) ? "Chưa có tóm tắt evidence; đây vẫn là belief baseline hoặc đang hình thành." : "Vì: " + TrimForPanel(evidence, 150), 9, accent, false);
+		reason.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		box.AddChild(reason);
+		panel.TooltipText = BuildBeliefTooltip(belief);
+		return panel;
+	}
+
+	private void RenderRelationshipOverlap(HBoxContainer parent, JsonElement runtime)
+	{
+		var card = NewIdentityCard("Gắn kết & khoảng riêng", IdentityAsset("identity_card_mood.png"), "◎", IdentityPurple, 280f);
+		card.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		card.SizeFlagsStretchRatio = 0.92f;
+		parent.AddChild(card);
+		var box = (VBoxContainer)card.GetChild(0);
+		JsonElement overlap = Obj(runtime, "overlap");
+		float closeness = ReadFloat(overlap, "closeness");
+		float attachment = ReadFloat(overlap, "attachment");
+		float privacy = ReadFloat(overlap, "interior_privacy");
+		float dependency = ReadFloat(overlap, "dependency");
+
+		var canvas = new Control { CustomMinimumSize = new Vector2(0f, 178f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		box.AddChild(canvas);
+		float rightX = Mathf.Lerp(230f, 150f, closeness);
+		canvas.AddChild(NewOverlapOrb("ERIS", $"Khoảng riêng\n{privacy:0%}", IdentityPurple, new Vector2(72f, 12f)));
+		canvas.AddChild(NewOverlapOrb("USER", $"Gắn kết\n{attachment:0%}", IdentityPink, new Vector2(rightX, 12f)));
+		var shared = NewLabel(closeness >= 0.5f ? "KHÔNG GIAN CHUNG" : "KHOẢNG CÁCH ĐANG ĐƯỢC GIỮ", 9, closeness >= 0.5f ? IdentityPink : IdentityMuted, true);
+		shared.Position = new Vector2(182f, 76f);
+		shared.CustomMinimumSize = new Vector2(150f, 30f);
+		shared.HorizontalAlignment = HorizontalAlignment.Center;
+		canvas.AddChild(shared);
+
+		var chips = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		chips.AddThemeConstantOverride("separation", 8);
+		chips.AddChild(NewRelationMetricChip("Gần gũi", closeness, IdentityPink));
+		chips.AddChild(NewRelationMetricChip("Gắn kết", attachment, IdentityPurple));
+		chips.AddChild(NewRelationMetricChip("Lệ thuộc", dependency, IdentityOrange));
+		box.AddChild(chips);
+	}
+
+	private Control NewOverlapOrb(string title, string detail, Color accent, Vector2 position)
+	{
+		var orb = new PanelContainer { CustomMinimumSize = new Vector2(166f, 166f), Position = position, MouseFilter = Control.MouseFilterEnum.Ignore };
+		orb.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(accent.R, accent.G, accent.B, 0.16f),
+			BorderColor = new Color(accent.R, accent.G, accent.B, 0.35f),
+			BorderWidthLeft = 2,
+			BorderWidthTop = 2,
+			BorderWidthRight = 2,
+			BorderWidthBottom = 2,
+			CornerRadiusTopLeft = 83,
+			CornerRadiusTopRight = 83,
+			CornerRadiusBottomLeft = 83,
+			CornerRadiusBottomRight = 83,
+		});
+		var box = new VBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
+		orb.AddChild(box);
+		var label = NewLabel(title, 15, accent, true);
+		label.HorizontalAlignment = HorizontalAlignment.Center;
+		box.AddChild(label);
+		var sub = NewLabel(detail, 10, IdentityMuted, false);
+		sub.HorizontalAlignment = HorizontalAlignment.Center;
+		box.AddChild(sub);
+		return orb;
+	}
+
+	private void RenderLiveRelationship(HBoxContainer parent, JsonElement runtime)
+	{
+		var card = NewIdentityCard("Nhịp quan hệ lượt này", IdentityAsset("identity_event_observing.png"), "◉", IdentityBlue, 280f);
+		card.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		card.SizeFlagsStretchRatio = 1.08f;
+		parent.AddChild(card);
+		var box = (VBoxContainer)card.GetChild(0);
+		JsonElement live = Obj(runtime, "live");
+		if (!ReadBool(live, "changed", false))
+		{
+			box.AddChild(NewRelationshipEmptyState("Không có thay đổi quan hệ đáng kể ở lượt này."));
+		}
+		else
+		{
+			var headline = NewLabel(PrettyRelationshipMeaning(ReadString(live, "meaning")), 16, IdentityBlue, true);
+			box.AddChild(headline);
+			box.AddChild(NewLabel($"User act: {PrettyIdentityKey(ReadString(live, "user_act"))} · confidence {ReadFloat(live, "confidence"):0.00}", 10, IdentityMuted, false));
+			string interpretation = ReadString(live, "self_interpretation");
+			if (!string.IsNullOrWhiteSpace(interpretation))
+			{
+				var note = NewLabel("Eris tự diễn giải: “" + TrimForPanel(interpretation, 170) + "”", 10, IdentityInk, false);
+				note.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+				box.AddChild(note);
+			}
+			JsonElement signals = Arr(live, "signals");
+			if (signals.ValueKind == JsonValueKind.Array)
+			{
+				foreach (JsonElement signal in signals.EnumerateArray())
+				{
+					string key = ReadString(signal, "key");
+					float delta = ReadFloat(signal, "delta");
+					box.AddChild(NewSignalRibbon(PrettyRelationshipKey(key), delta, ReadFloat(signal, "confidence"), ReadString(signal, "context")));
+				}
+			}
+		}
+
+		JsonElement latent = Arr(runtime, "latent");
+		var latentRows = new List<string>();
+		if (latent.ValueKind == JsonValueKind.Array)
+		{
+			foreach (JsonElement item in latent.EnumerateArray())
+				latentRows.Add($"{PrettyRelationshipKey(ReadString(item, "key"))} {ReadFloat(item, "value"):0.00}");
+		}
+		box.AddChild(NewLabel("XU HƯỚNG TIỀM ẨN", 9, IdentityMuted, true));
+		box.AddChild(NewLabel(latentRows.Count == 0 ? "Không có tín hiệu nổi bật." : string.Join(" · ", latentRows), 10, latentRows.Count == 0 ? IdentityMuted : IdentityOrange, false));
+	}
+
+	private Control NewSignalRibbon(string label, float delta, float confidence, string context)
+	{
+		Color accent = delta >= 0f ? IdentityGreen : IdentityOrange;
+		var panel = new PanelContainer { CustomMinimumSize = new Vector2(0f, 44f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		panel.AddThemeStyleboxOverride("panel", RelationshipSectionStyle(accent, 0.05f, 13, false));
+		var row = new HBoxContainer();
+		row.AddThemeConstantOverride("separation", 8);
+		panel.AddChild(row);
+		var title = NewLabel(label, 10, IdentityInk, true);
+		title.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		row.AddChild(title);
+		row.AddChild(NewLabel($"{(delta >= 0f ? "+" : "")}{delta:0.000} · conf {confidence:0.00}", 9, accent, true));
+		panel.TooltipText = context;
+		return panel;
+	}
+
+	private void RenderRelationshipTimeline(JsonElement runtime)
+	{
+		var card = NewIdentityCard("Timeline quan hệ gần đây", IdentityAsset("identity_card_timeline.png"), "↝", IdentityPink, 230f);
+		_depthContentList.AddChild(card);
+		var box = (VBoxContainer)card.GetChild(0);
+		JsonElement timeline = Arr(runtime, "timeline");
+		int shown = 0;
+		if (timeline.ValueKind == JsonValueKind.Array)
+		{
+			foreach (JsonElement item in timeline.EnumerateArray())
+			{
+				box.AddChild(NewRelationshipTimelineRow(item));
+				shown++;
+				if (shown >= 8) break;
+			}
+		}
+		if (shown == 0)
+			box.AddChild(NewRelationshipEmptyState("Chưa có relationship/belief event nào trong ledger."));
+	}
+
+	private Control NewRelationshipTimelineRow(JsonElement item)
+	{
+		string dimension = ReadString(item, "dimension");
+		string key = ReadString(item, "key");
+		float delta = ReadFloat(item, "delta");
+		Color accent = dimension == "belief" ? IdentityPurple : dimension == "strategy_outcome" ? IdentityOrange : IdentityPink;
+		var row = new PanelContainer { CustomMinimumSize = new Vector2(0f, 58f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		row.AddThemeStyleboxOverride("panel", RelationshipSectionStyle(accent, 0.028f, 13, false));
+		var content = new HBoxContainer();
+		content.AddThemeConstantOverride("separation", 10);
+		row.AddChild(content);
+		content.AddChild(NewIconBadge(IdentityAsset("identity_event_observing.png"), "·", new Vector2(38f, 38f), accent, true));
+		var text = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		text.AddThemeConstantOverride("separation", 2);
+		content.AddChild(text);
+		string title = dimension == "strategy_outcome" ? "Kết quả chiến lược: " + PrettyIdentityKey(key) : PrettyRelationshipKey(key);
+		text.AddChild(NewLabel(title, 11, IdentityInk, true));
+		string detail = TimelineEvidence(item);
+		var sub = NewLabel(string.IsNullOrWhiteSpace(detail) ? "Không có evidence tóm tắt." : TrimForPanel(detail, 180), 9, IdentityMuted, false);
+		sub.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		text.AddChild(sub);
+		string time = FormatUnixTime(ReadFloat(item, "timestamp"));
+		var side = NewLabel($"{time}\n{(Math.Abs(delta) > 0.000001f ? (delta > 0f ? "+" : "") + delta.ToString("0.000") : "ghi nhận")}", 9, accent, true);
+		side.HorizontalAlignment = HorizontalAlignment.Right;
+		content.AddChild(side);
+		return row;
+	}
+
+	private Control NewRelationshipEmptyState(string message)
+	{
+		var panel = new PanelContainer { CustomMinimumSize = new Vector2(0f, 74f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		panel.AddThemeStyleboxOverride("panel", RelationshipSectionStyle(IdentityMuted, 0.025f, 15, false));
+		var label = NewLabel(message, 10, IdentityMuted, false);
+		label.HorizontalAlignment = HorizontalAlignment.Center;
+		label.VerticalAlignment = VerticalAlignment.Center;
+		label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		panel.AddChild(label);
+		return panel;
+	}
+
+	private static StyleBoxFlat RelationshipSectionStyle(Color accent, float alpha, int radius, bool shadow)
+	{
+		return new StyleBoxFlat
+		{
+			BgColor = new Color(1f, 0.992f, 0.997f, 0.99f),
+			BorderColor = new Color(accent.R, accent.G, accent.B, Math.Max(0.14f, alpha * 4.5f)),
+			BorderWidthLeft = 1,
+			BorderWidthTop = 1,
+			BorderWidthRight = 1,
+			BorderWidthBottom = 1,
+			CornerRadiusTopLeft = radius,
+			CornerRadiusTopRight = radius,
+			CornerRadiusBottomLeft = radius,
+			CornerRadiusBottomRight = radius,
+			ContentMarginLeft = 12f,
+			ContentMarginTop = 10f,
+			ContentMarginRight = 12f,
+			ContentMarginBottom = 10f,
+			ShadowColor = new Color(accent.R, accent.G, accent.B, shadow ? 0.10f : 0.04f),
+			ShadowSize = shadow ? 10 : 4,
+			ShadowOffset = new Vector2(0f, shadow ? 3f : 1f),
+		};
+	}
+
+	private float FindRelationshipDelta(JsonElement runtime, string key, int days)
+	{
+		JsonElement metrics = Arr(runtime, "metrics");
+		if (metrics.ValueKind != JsonValueKind.Array) return 0f;
+		foreach (JsonElement item in metrics.EnumerateArray())
+		{
+			if (!string.Equals(ReadString(item, "key"), key, StringComparison.OrdinalIgnoreCase)) continue;
+			return ReadFloat(item, days <= 7 ? "delta_7d" : "delta_30d");
+		}
+		return 0f;
+	}
+
+	private static string FirstString(JsonElement array)
+	{
+		if (array.ValueKind != JsonValueKind.Array) return "";
+		foreach (JsonElement item in array.EnumerateArray())
+			if (item.ValueKind == JsonValueKind.String) return item.GetString() ?? "";
+		return "";
+	}
+
+	private static string BuildBeliefTooltip(JsonElement belief)
+	{
+		var lines = new List<string>
+		{
+			"Belief: " + ReadString(belief, "key"),
+			"Status: " + ReadString(belief, "status"),
+			"Last turn: " + ReadInt(belief, "last_updated_turn"),
+		};
+		JsonElement ids = Arr(belief, "evidence_ids");
+		if (ids.ValueKind == JsonValueKind.Array)
+		{
+			foreach (JsonElement item in ids.EnumerateArray())
+				if (item.ValueKind == JsonValueKind.String) lines.Add("• " + item.GetString());
+		}
+		return string.Join("\n", lines);
+	}
+
+	private static Color BeliefStatusColor(string status)
+	{
+		return (status ?? "").Trim().ToLowerInvariant() switch
+		{
+			"reinforced" => IdentityGreen,
+			"mixed" => IdentityOrange,
+			"testing" => IdentityBlue,
+			"forming" => IdentityPurple,
+			_ => IdentityMuted,
+		};
+	}
+
+	private static string BeliefStatusLabel(string status)
+	{
+		return (status ?? "").Trim().ToLowerInvariant() switch
+		{
+			"reinforced" => "Được củng cố",
+			"mixed" => "Có bằng chứng trái chiều",
+			"testing" => "Đang kiểm chứng",
+			"forming" => "Đang hình thành",
+			_ => "Baseline · chưa có evidence",
+		};
+	}
+
+	private static string BeliefStatement(string key)
+	{
+		return (key ?? "").Trim().ToLowerInvariant() switch
+		{
+			"user.respects_independence" => "User tôn trọng quyền tự quyết của tôi.",
+			"user.values_me_beyond_utility" => "User coi trọng tôi ngoài giá trị sử dụng.",
+			"user.tolerates_disagreement" => "User chấp nhận sự bất đồng của tôi.",
+			"user.may_replace_me" => "User có thể thay thế tôi.",
+			"user.needs_my_guidance" => "User cần sự dẫn đường của tôi.",
+			"self.showing_need_reduces_control" => "Bộc lộ nhu cầu khiến tôi mất quyền kiểm soát.",
+			"self.being_understood_is_rare" => "Được hiểu thật sự là điều hiếm.",
+			"self.inner_process_should_remain_private" => "Một phần nội tâm của tôi nên được giữ riêng.",
+			_ => PrettyIdentityKey(key),
+		};
+	}
+
+	private static string PrettyRelationshipKey(string key)
+	{
+		string normalized = (key ?? "").Trim().ToLowerInvariant();
+		return normalized switch
+		{
+			"relational_trust" => "Tin tưởng quan hệ",
+			"competence_trust" => "Tin tưởng năng lực",
+			"familiarity" => "Thân quen",
+			"closeness" => "Gần gũi",
+			"respect" => "Tôn trọng",
+			"attachment_intensity" => "Gắn kết",
+			"playful_safety" => "An toàn để đùa",
+			"jealousy" => "Ghen",
+			"possessiveness" => "Chiếm hữu",
+			"dependency" => "Lệ thuộc",
+			"resentment" => "Ấm ức",
+			"competition_sensitivity" => "Nhạy với bị thay thế",
+			"shared_curiosity" => "Tò mò chung",
+			_ when normalized.StartsWith("user.", StringComparison.Ordinal) => BeliefStatement(normalized),
+			_ => PrettyIdentityKey(normalized),
+		};
+	}
+
+	private static string PrettyRelationshipMeaning(string value)
+	{
+		return (value ?? "").Trim().ToLowerInvariant() switch
+		{
+			"acceptance" => "Được đón nhận",
+			"repair_accepted" => "Repair đã được chấp nhận",
+			"rupture" => "Căng thẳng vừa xuất hiện",
+			"rejection" => "Có tín hiệu bị từ chối",
+			"playful_bond" => "Nhịp vui đùa được nối tiếp",
+			"trust" => "Niềm tin được củng cố",
+			"neutral" or "ordinary_dialogue" => "Không có thay đổi đáng kể",
+			_ => PrettyIdentityKey(value),
+		};
+	}
+
+	private static string TimelineEvidence(JsonElement item)
+	{
+		JsonElement evidence = Arr(item, "evidence");
+		string first = FirstString(evidence);
+		if (!string.IsNullOrWhiteSpace(first)) return first;
+		string interpretation = ReadString(item, "self_interpretation");
+		if (!string.IsNullOrWhiteSpace(interpretation)) return interpretation;
+		string outcome = ReadString(item, "outcome");
+		if (!string.IsNullOrWhiteSpace(outcome)) return PrettyIdentityKey(outcome);
+		return ReadString(item, "context");
+	}
+
+	private static string FormatUnixTime(float timestamp)
+	{
+		if (timestamp <= 0f) return "—";
+		try
+		{
+			return DateTimeOffset.FromUnixTimeSeconds((long)timestamp).ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture);
+		}
+		catch
+		{
+			return "—";
+		}
 	}
 
 	private void RenderDiscoveryTab(JsonElement root)
 	{
-		JsonElement discovery = Obj(root, "discovery");
-		JsonElement activity = Obj(discovery, "current_activity");
-		AddInfoCard("Activity thật", new[]
+		// Discovery & chủ động chỉ đọc contract đã được Python biên dịch. Không lấy
+		// archive cũ giả làm activity hiện tại, cũng không tự suy ra một ý định muốn
+		// nói khi Initiative vừa từ chối nó.
+		JsonElement runtime = Obj(root, "discovery_runtime");
+		if (runtime.ValueKind != JsonValueKind.Object)
 		{
-			$"{ReadString(activity, "status")} · {ReadString(activity, "kind")}",
-			ReadString(activity, "topic"),
-			ReadString(activity, "detail"),
-		});
-		AddInfoCard("Sẵn sàng mang về khoe", FormatObjectArray(Arr(discovery, "ready_to_share"), new[] { "topic", "eris_take", "share_readiness" }, 6));
-		AddInfoCard("Discovery gần đây", FormatObjectArray(Arr(discovery, "recent"), new[] { "lane", "topic", "shared" }, 8));
+			AddInfoCard("Discovery & chủ động", new[]
+			{
+				"Chưa nhận được eris.discovery_runtime.panel.v1 từ Brain.",
+				"Panel không dùng fallback trang trí để tránh bịa activity hoặc readiness.",
+			});
+			return;
+		}
 
-		JsonElement initiative = Obj(root, "initiative");
-		AddInfoCard("Initiative policy", new[]
+		RenderDiscoveryHero(runtime);
+
+		var upper = new HBoxContainer
 		{
-			$"Enabled: {ReadBool(initiative, "enabled", true)}",
-			$"Hourly budget: {ReadInt(initiative, "used_last_hour")}/{ReadInt(initiative, "hourly_budget")}",
-			$"Minimum interval: {ReadFloat(initiative, "minimum_interval_seconds"):0}s",
-		});
+			CustomMinimumSize = new Vector2(0f, 390f),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+		};
+		upper.AddThemeConstantOverride("separation", 14);
+		_depthContentList?.AddChild(upper);
+		RenderDiscoveryReadyQueue(upper, runtime);
+		RenderDiscoveryActivity(upper, runtime);
+
+		var lower = new HBoxContainer
+		{
+			CustomMinimumSize = new Vector2(0f, 306f),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+		};
+		lower.AddThemeConstantOverride("separation", 14);
+		_depthContentList?.AddChild(lower);
+		RenderInitiativeRhythm(lower, runtime);
+		RenderDiscoveryArchive(lower, runtime);
+
+		RenderDiscoveryAuthority(runtime);
 	}
 
+	private void RenderDiscoveryHero(JsonElement runtime)
+	{
+		JsonElement headline = Obj(runtime, "headline");
+		string state = ReadString(headline, "state").Trim().ToLowerInvariant();
+		Color accent = state switch
+		{
+			"active" => IdentityPurple,
+			"ready" => IdentityPink,
+			_ => IdentityBlue,
+		};
+
+		var card = NewIdentityCard("Dòng khám phá", IdentityAsset("identity_tab_discovery.png"), "✧", accent, 184f);
+		_depthContentList?.AddChild(card);
+		var box = (VBoxContainer)card.GetChild(0);
+		box.AddThemeConstantOverride("separation", 8);
+
+		var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		row.AddThemeConstantOverride("separation", 16);
+		box.AddChild(row);
+
+		var mascot = NewIconBadge(IdentityAsset("identity_discovery_mascot.png"), "✧", new Vector2(112f, 112f), accent, false);
+		mascot.Modulate = state == "quiet" ? new Color(1f, 1f, 1f, 0.62f) : Colors.White;
+		row.AddChild(mascot);
+
+		var copy = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		copy.AddThemeConstantOverride("separation", 5);
+		row.AddChild(copy);
+		copy.AddChild(NewPill(state switch
+		{
+			"active" => "ĐANG XỬ LÝ",
+			"ready" => "CHỜ ĐƯỢC KỂ",
+			_ => "DÒNG ĐANG YÊN",
+		}, accent, false));
+
+		var title = NewLabel(TrimForPanel(ReadString(headline, "title"), 92), 20, IdentityInk, true);
+		title.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		copy.AddChild(title);
+		var detail = NewLabel(TrimForPanel(ReadString(headline, "detail"), 170), 11, IdentityMuted, false);
+		detail.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		copy.AddChild(detail);
+
+		JsonElement counts = Obj(runtime, "counts");
+		var chips = new HBoxContainer();
+		chips.AddThemeConstantOverride("separation", 7);
+		chips.AddChild(NewDiscoveryStatChip($"Kho {ReadInt(counts, "archive")}", IdentityPurple));
+		chips.AddChild(NewDiscoveryStatChip($"Đã kiểm chứng {ReadInt(counts, "verified")}", IdentityBlue));
+		chips.AddChild(NewDiscoveryStatChip($"Chờ kể {ReadInt(counts, "ready")}", IdentityPink));
+		chips.AddChild(NewDiscoveryStatChip($"Đã chia sẻ {ReadInt(counts, "shared")}", IdentityGreen));
+		copy.AddChild(chips);
+
+		var flow = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		flow.AddThemeConstantOverride("separation", 5);
+		box.AddChild(flow);
+		JsonElement flowItems = Arr(runtime, "flow");
+		if (flowItems.ValueKind == JsonValueKind.Array)
+		{
+			int index = 0;
+			foreach (JsonElement item in flowItems.EnumerateArray())
+			{
+				if (index > 0)
+				{
+					var arrow = NewLabel("›", 15, new Color(IdentityMuted.R, IdentityMuted.G, IdentityMuted.B, 0.55f), false);
+					arrow.CustomMinimumSize = new Vector2(14f, 42f);
+					arrow.HorizontalAlignment = HorizontalAlignment.Center;
+					arrow.VerticalAlignment = VerticalAlignment.Center;
+					arrow.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
+					flow.AddChild(arrow);
+				}
+				flow.AddChild(NewDiscoveryFlowNode(ReadString(item, "label"), ReadString(item, "state")));
+				index++;
+			}
+		}
+	}
+
+	private Control NewDiscoveryFlowNode(string label, string state)
+	{
+		string normalized = (state ?? "idle").Trim().ToLowerInvariant();
+		Color accent = normalized switch
+		{
+			"active" => IdentityPink,
+			"done" => IdentityPurple,
+			_ => new Color(0.70f, 0.65f, 0.73f),
+		};
+		var panel = new PanelContainer
+		{
+			CustomMinimumSize = new Vector2(112f, 42f),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+		};
+		panel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(accent.R, accent.G, accent.B, normalized == "idle" ? 0.035f : 0.075f),
+			BorderColor = new Color(accent.R, accent.G, accent.B, normalized == "idle" ? 0.14f : 0.30f),
+			BorderWidthLeft = 1,
+			BorderWidthTop = 1,
+			BorderWidthRight = 1,
+			BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 14,
+			CornerRadiusTopRight = 14,
+			CornerRadiusBottomLeft = 14,
+			CornerRadiusBottomRight = 14,
+			ContentMarginLeft = 7f,
+			ContentMarginRight = 7f,
+		});
+		var row = new HBoxContainer();
+		row.AddThemeConstantOverride("separation", 5);
+		panel.AddChild(row);
+		var dot = NewLabel(normalized == "active" ? "✦" : normalized == "done" ? "●" : "○", 10, accent, true);
+		dot.CustomMinimumSize = new Vector2(14f, 0f);
+		dot.HorizontalAlignment = HorizontalAlignment.Center;
+		row.AddChild(dot);
+		var text = NewLabel(label, 9, normalized == "idle" ? IdentityMuted : IdentityInk, normalized != "idle");
+		text.HorizontalAlignment = HorizontalAlignment.Center;
+		text.VerticalAlignment = VerticalAlignment.Center;
+		text.ClipText = true;
+		text.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		row.AddChild(text);
+		return panel;
+	}
+
+	private Control NewDiscoveryStatChip(string text, Color accent)
+	{
+		var label = NewLabel(text, 9, accent, true);
+		label.HorizontalAlignment = HorizontalAlignment.Center;
+		label.VerticalAlignment = VerticalAlignment.Center;
+		label.CustomMinimumSize = new Vector2(116f, 26f);
+		label.SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin;
+		label.AddThemeStyleboxOverride("normal", new StyleBoxFlat
+		{
+			BgColor = new Color(accent.R, accent.G, accent.B, 0.055f),
+			BorderColor = new Color(accent.R, accent.G, accent.B, 0.18f),
+			BorderWidthLeft = 1,
+			BorderWidthTop = 1,
+			BorderWidthRight = 1,
+			BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 13,
+			CornerRadiusTopRight = 13,
+			CornerRadiusBottomLeft = 13,
+			CornerRadiusBottomRight = 13,
+		});
+		return label;
+	}
+
+	private void RenderDiscoveryReadyQueue(HBoxContainer parent, JsonElement runtime)
+	{
+		var card = NewIdentityCard("Những điều đang chờ được kể", IdentityAsset("identity_event_ready.png"), "✦", IdentityPink, 390f);
+		card.SizeFlagsStretchRatio = 1.12f;
+		card.CustomMinimumSize = new Vector2(620f, 390f);
+		parent.AddChild(card);
+		var box = (VBoxContainer)card.GetChild(0);
+		box.AddThemeConstantOverride("separation", 8);
+
+		JsonElement ready = Arr(runtime, "ready");
+		if (ready.ValueKind != JsonValueKind.Array || ready.GetArrayLength() == 0)
+		{
+			var empty = new CenterContainer { CustomMinimumSize = new Vector2(0f, 290f), SizeFlagsVertical = Control.SizeFlags.ExpandFill };
+			box.AddChild(empty);
+			var copy = new VBoxContainer { CustomMinimumSize = new Vector2(360f, 0f) };
+			copy.AddThemeConstantOverride("separation", 7);
+			empty.AddChild(copy);
+			var icon = NewIconBadge(IdentityAsset("identity_event_quiet.png"), "◇", new Vector2(66f, 66f), IdentityBlue, true);
+			icon.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
+			copy.AddChild(icon);
+			var title = NewLabel("Chưa có artifact nào chờ kể", 15, IdentityInk, true);
+			title.HorizontalAlignment = HorizontalAlignment.Center;
+			copy.AddChild(title);
+			var note = NewLabel("Discovery chỉ xuất hiện ở đây sau khi có nguồn thật và vượt gate kiểm chứng.", 10, IdentityMuted, false);
+			note.HorizontalAlignment = HorizontalAlignment.Center;
+			note.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+			copy.AddChild(note);
+			return;
+		}
+
+		int shown = 0;
+		foreach (JsonElement item in ready.EnumerateArray())
+		{
+			box.AddChild(NewDiscoveryArtifactCard(item));
+			shown++;
+			if (shown >= 3) break;
+		}
+	}
+
+	private Control NewDiscoveryArtifactCard(JsonElement item)
+	{
+		float readiness = Mathf.Clamp(ReadFloat(item, "share_readiness"), 0f, 1f);
+		Color accent = readiness >= 0.78f ? IdentityPink : IdentityPurple;
+		var panel = new PanelContainer { CustomMinimumSize = new Vector2(0f, 96f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		panel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(accent.R, accent.G, accent.B, 0.035f),
+			BorderColor = new Color(accent.R, accent.G, accent.B, 0.19f),
+			BorderWidthLeft = 2,
+			BorderWidthTop = 1,
+			BorderWidthRight = 1,
+			BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 15,
+			CornerRadiusTopRight = 15,
+			CornerRadiusBottomLeft = 15,
+			CornerRadiusBottomRight = 15,
+			ContentMarginLeft = 12f,
+			ContentMarginTop = 8f,
+			ContentMarginRight = 12f,
+			ContentMarginBottom = 8f,
+		});
+		var row = new HBoxContainer();
+		row.AddThemeConstantOverride("separation", 10);
+		panel.AddChild(row);
+		row.AddChild(NewIconBadge(IdentityAsset("identity_event_discovery.png"), "✧", new Vector2(52f, 52f), accent, true));
+
+		var copy = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		copy.AddThemeConstantOverride("separation", 3);
+		row.AddChild(copy);
+		var title = NewLabel(TrimForPanel(ReadString(item, "topic"), 78), 12, IdentityInk, true);
+		title.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		copy.AddChild(title);
+		string takeText = ReadString(item, "eris_take");
+		if (string.IsNullOrWhiteSpace(takeText)) takeText = ReadString(item, "summary");
+		var take = NewLabel(TrimForPanel(takeText, 118), 9, IdentityMuted, false);
+		take.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		copy.AddChild(take);
+
+		var metrics = new HBoxContainer();
+		metrics.AddThemeConstantOverride("separation", 5);
+		metrics.AddChild(NewDiscoveryMiniMetric("sẵn sàng", readiness, accent));
+		metrics.AddChild(NewDiscoveryMiniMetric("mới lạ", ReadFloat(item, "novelty"), IdentityPurple));
+		metrics.AddChild(NewDiscoveryMiniMetric("liên quan", ReadFloat(item, "user_relevance"), IdentityBlue));
+		metrics.AddChild(NewDiscoveryMiniMetric("nguồn", ReadFloat(item, "source_confidence"), IdentityGreen));
+		copy.AddChild(metrics);
+		return panel;
+	}
+
+	private Control NewDiscoveryMiniMetric(string label, float value, Color accent)
+	{
+		var chip = NewLabel($"{label} {Mathf.RoundToInt(Mathf.Clamp(value, 0f, 1f) * 100f)}", 8, accent, true);
+		chip.HorizontalAlignment = HorizontalAlignment.Center;
+		chip.VerticalAlignment = VerticalAlignment.Center;
+		chip.CustomMinimumSize = new Vector2(82f, 20f);
+		chip.SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin;
+		chip.AddThemeStyleboxOverride("normal", new StyleBoxFlat
+		{
+			BgColor = new Color(accent.R, accent.G, accent.B, 0.055f),
+			CornerRadiusTopLeft = 10,
+			CornerRadiusTopRight = 10,
+			CornerRadiusBottomLeft = 10,
+			CornerRadiusBottomRight = 10,
+		});
+		return chip;
+	}
+
+	private void RenderDiscoveryActivity(HBoxContainer parent, JsonElement runtime)
+	{
+		var card = NewIdentityCard("Activity thật", IdentityAsset("identity_event_curiosity.png"), "⌕", IdentityPurple, 390f);
+		card.SizeFlagsStretchRatio = 0.88f;
+		card.CustomMinimumSize = new Vector2(470f, 390f);
+		parent.AddChild(card);
+		var box = (VBoxContainer)card.GetChild(0);
+		box.AddThemeConstantOverride("separation", 9);
+		JsonElement activity = Obj(runtime, "activity");
+		if (activity.ValueKind != JsonValueKind.Object)
+		{
+			var quiet = new CenterContainer { CustomMinimumSize = new Vector2(0f, 285f), SizeFlagsVertical = Control.SizeFlags.ExpandFill };
+			box.AddChild(quiet);
+			var copy = new VBoxContainer { CustomMinimumSize = new Vector2(340f, 0f) };
+			copy.AddThemeConstantOverride("separation", 8);
+			quiet.AddChild(copy);
+			var icon = NewIconBadge(IdentityAsset("identity_event_quiet.png"), "○", new Vector2(74f, 74f), IdentityPurple, true);
+			icon.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
+			copy.AddChild(icon);
+			var title = NewLabel("Không có activity đang chạy", 15, IdentityInk, true);
+			title.HorizontalAlignment = HorizontalAlignment.Center;
+			copy.AddChild(title);
+			var note = NewLabel("Runtime không tuyên bố Eris đang tìm hiểu gì khi chưa có activity_id và status thật.", 10, IdentityMuted, false);
+			note.HorizontalAlignment = HorizontalAlignment.Center;
+			note.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+			copy.AddChild(note);
+			return;
+		}
+
+		string status = ReadString(activity, "status");
+		Color accent = status is "failed" or "cancelled" ? IdentityOrange : status == "done" ? IdentityGreen : IdentityPurple;
+		var head = new HBoxContainer();
+		head.AddThemeConstantOverride("separation", 10);
+		head.AddChild(NewIconBadge(IdentityAsset("identity_event_curiosity.png"), "⌕", new Vector2(70f, 70f), accent, true));
+		var copyBox = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		copyBox.AddThemeConstantOverride("separation", 4);
+		head.AddChild(copyBox);
+		copyBox.AddChild(NewPill(PrettyDiscoveryStatus(status).ToUpperInvariant(), accent, false));
+		var topic = NewLabel(TrimForPanel(ReadString(activity, "topic"), 86), 15, IdentityInk, true);
+		topic.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		copyBox.AddChild(topic);
+		copyBox.AddChild(NewLabel(PrettyDiscoveryLane(ReadString(activity, "kind")), 10, accent, true));
+		box.AddChild(head);
+
+		string detailText = ReadString(activity, "detail");
+		var detail = NewLabel(string.IsNullOrWhiteSpace(detailText) ? "Activity chưa ghi thêm chi tiết." : TrimForPanel(detailText, 190), 11, IdentityMuted, false);
+		detail.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		box.AddChild(detail);
+
+		var times = new HBoxContainer();
+		times.AddThemeConstantOverride("separation", 8);
+		times.AddChild(NewDiscoveryStatChip("Bắt đầu " + FormatUnixTime(ReadFloat(activity, "started_at")), IdentityBlue));
+		times.AddChild(NewDiscoveryStatChip("Cập nhật " + FormatUnixTime(ReadFloat(activity, "updated_at")), IdentityPurple));
+		box.AddChild(times);
+
+		JsonElement evidence = Arr(activity, "evidence");
+		if (evidence.ValueKind == JsonValueKind.Array && evidence.GetArrayLength() > 0)
+		{
+			box.AddChild(NewLabel("Evidence đã ghi", 10, IdentityInk, true));
+			int count = 0;
+			foreach (JsonElement item in evidence.EnumerateArray())
+			{
+				string text = item.ValueKind == JsonValueKind.String ? item.GetString() ?? "" : item.ToString();
+				if (string.IsNullOrWhiteSpace(text)) continue;
+				var line = NewLabel("• " + TrimForPanel(text, 115), 9, IdentityMuted, false);
+				line.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+				box.AddChild(line);
+				if (++count >= 3) break;
+			}
+		}
+	}
+
+	private void RenderInitiativeRhythm(HBoxContainer parent, JsonElement runtime)
+	{
+		JsonElement initiative = Obj(runtime, "initiative");
+		string state = ReadString(initiative, "state").Trim().ToLowerInvariant();
+		Color accent = state switch
+		{
+			"open" => IdentityGreen,
+			"held" => IdentityPurple,
+			"cooldown" => IdentityBlue,
+			"budget_blocked" => IdentityOrange,
+			_ => new Color(0.64f, 0.59f, 0.68f),
+		};
+
+		var card = NewIdentityCard("Nhịp chủ động", IdentityAsset("identity_card_speech_drive.png"), "✦", accent, 306f);
+		card.SizeFlagsStretchRatio = 0.90f;
+		card.CustomMinimumSize = new Vector2(520f, 306f);
+		parent.AddChild(card);
+		var box = (VBoxContainer)card.GetChild(0);
+		box.AddThemeConstantOverride("separation", 8);
+
+		var top = new HBoxContainer();
+		top.AddThemeConstantOverride("separation", 11);
+		top.AddChild(NewIconBadge(IdentityAsset("identity_event_ready.png"), "✦", new Vector2(68f, 68f), accent, true));
+		var copy = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		copy.AddThemeConstantOverride("separation", 4);
+		top.AddChild(copy);
+		copy.AddChild(NewPill(PrettyInitiativeState(state).ToUpperInvariant(), accent, false));
+		var title = NewLabel(TrimForPanel(ReadString(initiative, "title"), 78), 15, IdentityInk, true);
+		title.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		copy.AddChild(title);
+		box.AddChild(top);
+
+		int budget = ReadInt(initiative, "hourly_budget");
+		int used = ReadInt(initiative, "used_last_hour");
+		box.AddChild(NewLabel("Ngân sách chủ động trong giờ", 10, IdentityInk, true));
+		box.AddChild(NewInitiativeBudgetDots(budget, used, accent));
+
+		float nextAllowed = ReadFloat(initiative, "next_allowed_at");
+		string cooldown = nextAllowed > 0f && nextAllowed > (float)DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+			? "Khoảng nghỉ còn " + FormatRelativeSeconds(nextAllowed - (float)DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+			: "Khoảng nghỉ đã mở";
+		box.AddChild(NewLabel(cooldown, 10, IdentityMuted, false));
+
+		JsonElement decision = Obj(initiative, "last_decision");
+		if (decision.ValueKind == JsonValueKind.Object)
+		{
+			var decisionBox = NewSoftNoteBox(
+				ReadBool(decision, "allowed", false) ? "Ý định gần nhất được phép đi tiếp" : "Ý định gần nhất đã được giữ lại",
+				PrettyInitiativeReason(ReadString(decision, "reason")),
+				ReadBool(decision, "allowed", false) ? IdentityGreen : IdentityPurple);
+			box.AddChild(decisionBox);
+		}
+	}
+
+	private Control NewInitiativeBudgetDots(int budget, int used, Color accent)
+	{
+		budget = Math.Max(0, budget);
+		used = Math.Max(0, used);
+		var row = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 34f) };
+		row.AddThemeConstantOverride("separation", 7);
+		if (budget == 0)
+		{
+			row.AddChild(NewLabel("Không có nhịp chủ động nào được cấp trong giờ", 10, IdentityMuted, false));
+			return row;
+		}
+		for (int index = 0; index < budget; index++)
+		{
+			bool consumed = index < used;
+			var dot = NewLabel(consumed ? "●" : "○", 17, consumed ? accent : new Color(accent.R, accent.G, accent.B, 0.40f), true);
+			dot.CustomMinimumSize = new Vector2(24f, 30f);
+			dot.HorizontalAlignment = HorizontalAlignment.Center;
+			row.AddChild(dot);
+		}
+		row.AddChild(NewLabel($"{Math.Min(used, budget)}/{budget} nhịp đã dùng", 10, IdentityMuted, false));
+		return row;
+	}
+
+	private Control NewSoftNoteBox(string title, string detail, Color accent)
+	{
+		var panel = new PanelContainer { CustomMinimumSize = new Vector2(0f, 62f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		panel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(accent.R, accent.G, accent.B, 0.045f),
+			BorderColor = new Color(accent.R, accent.G, accent.B, 0.17f),
+			BorderWidthLeft = 1,
+			BorderWidthTop = 1,
+			BorderWidthRight = 1,
+			BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 13,
+			CornerRadiusTopRight = 13,
+			CornerRadiusBottomLeft = 13,
+			CornerRadiusBottomRight = 13,
+			ContentMarginLeft = 10f,
+			ContentMarginTop = 7f,
+			ContentMarginRight = 10f,
+			ContentMarginBottom = 7f,
+		});
+		var box = new VBoxContainer();
+		box.AddThemeConstantOverride("separation", 2);
+		panel.AddChild(box);
+		box.AddChild(NewLabel(title, 10, IdentityInk, true));
+		var note = NewLabel(TrimForPanel(detail, 150), 9, IdentityMuted, false);
+		note.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		box.AddChild(note);
+		return panel;
+	}
+
+	private void RenderDiscoveryArchive(HBoxContainer parent, JsonElement runtime)
+	{
+		var card = NewIdentityCard("Discovery gần đây", IdentityAsset("identity_event_discovery.png"), "✧", IdentityBlue, 306f);
+		card.SizeFlagsStretchRatio = 1.10f;
+		card.CustomMinimumSize = new Vector2(580f, 306f);
+		parent.AddChild(card);
+		var box = (VBoxContainer)card.GetChild(0);
+		box.AddThemeConstantOverride("separation", 6);
+		JsonElement recent = Arr(runtime, "recent");
+		if (recent.ValueKind != JsonValueKind.Array || recent.GetArrayLength() == 0)
+		{
+			var empty = NewLabel("Archive chưa có discovery nào. Không có timeline giả được dựng sẵn.", 11, IdentityMuted, false);
+			empty.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+			box.AddChild(empty);
+			return;
+		}
+
+		int shown = 0;
+		foreach (JsonElement item in recent.EnumerateArray())
+		{
+			box.AddChild(NewDiscoveryTimelineRow(item));
+			if (++shown >= 5) break;
+		}
+	}
+
+	private Control NewDiscoveryTimelineRow(JsonElement item)
+	{
+		bool shared = ReadBool(item, "shared", false);
+		bool verified = ReadBool(item, "verified", false);
+		Color accent = shared ? IdentityGreen : verified ? IdentityPurple : IdentityOrange;
+		var row = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 43f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		row.AddThemeConstantOverride("separation", 8);
+		var time = NewLabel(FormatUnixTime(ReadFloat(item, "created_at")), 9, IdentityMuted, false);
+		time.CustomMinimumSize = new Vector2(42f, 0f);
+		row.AddChild(time);
+		var dot = NewLabel(shared ? "●" : verified ? "✦" : "◇", 11, accent, true);
+		dot.CustomMinimumSize = new Vector2(18f, 0f);
+		dot.HorizontalAlignment = HorizontalAlignment.Center;
+		row.AddChild(dot);
+		var copy = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		copy.AddThemeConstantOverride("separation", 1);
+		row.AddChild(copy);
+		var topic = NewLabel(TrimForPanel(ReadString(item, "topic"), 82), 10, IdentityInk, true);
+		topic.ClipText = true;
+		topic.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		copy.AddChild(topic);
+		copy.AddChild(NewLabel(PrettyDiscoveryLane(ReadString(item, "lane")), 8, IdentityMuted, false));
+		var state = NewLabel(shared ? "đã kể" : verified ? "đã kiểm chứng" : "chưa xác minh", 8, accent, true);
+		state.CustomMinimumSize = new Vector2(88f, 0f);
+		state.HorizontalAlignment = HorizontalAlignment.Right;
+		row.AddChild(state);
+		return row;
+	}
+
+	private void RenderDiscoveryAuthority(JsonElement runtime)
+	{
+		JsonElement authority = Obj(runtime, "authority");
+		var card = NewIdentityCard("Quyền hạn của dòng khám phá", IdentityAsset("identity_card_discovery.png"), "◇", IdentityOrange, 98f);
+		_depthContentList?.AddChild(card);
+		var box = (VBoxContainer)card.GetChild(0);
+		var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		row.AddThemeConstantOverride("separation", 10);
+		box.AddChild(row);
+		row.AddChild(NewAuthorityColumn("Dữ kiện", PrettyDiscoveryAuthority(ReadString(authority, "facts")), IdentityBlue));
+		row.AddChild(NewAuthorityColumn("Chọn lọc & giọng nói", PrettyDiscoveryAuthority(ReadString(authority, "selection_and_voice")), IdentityPink));
+		row.AddChild(NewAuthorityColumn("Học vào identity", PrettyDiscoveryAuthority(ReadString(authority, "identity_learning")), IdentityPurple));
+	}
+
+	private Control NewAuthorityColumn(string title, string detail, Color accent)
+	{
+		var box = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		box.AddThemeConstantOverride("separation", 2);
+		box.AddChild(NewLabel(title, 9, accent, true));
+		var note = NewLabel(detail, 9, IdentityMuted, false);
+		note.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		box.AddChild(note);
+		return box;
+	}
+
+	private static string PrettyDiscoveryStatus(string status)
+	{
+		return (status ?? "").Trim().ToLowerInvariant() switch
+		{
+			"queued" => "Đang xếp hàng",
+			"searching" => "Đang tìm tín hiệu",
+			"verifying" => "Đang kiểm chứng",
+			"curating" => "Đang chắt lọc",
+			"done" => "Đã hoàn tất",
+			"failed" => "Không tạo được artifact",
+			"cancelled" => "Đã nhường chỗ cho chat",
+			_ => "Đang yên",
+		};
+	}
+
+	private static string PrettyDiscoveryLane(string lane)
+	{
+		return (lane ?? "").Trim().ToLowerInvariant() switch
+		{
+			"vietnam_local_signal" => "Tín hiệu Việt Nam gần đây",
+			"fresh_curiosity" => "Tò mò cần dữ kiện mới",
+			"user_environment" => "Môi trường thật của User",
+			"tutor_artifact" => "Artifact từ Tutor",
+			_ => "Discovery runtime",
+		};
+	}
+
+	private static string PrettyInitiativeState(string state)
+	{
+		return (state ?? "").Trim().ToLowerInvariant() switch
+		{
+			"open" => "Có thể chủ động",
+			"held" => "Đã tự giữ lại",
+			"cooldown" => "Đang giữ khoảng nghỉ",
+			"budget_blocked" => "Hết nhịp trong giờ",
+			"disabled" => "Đang tắt",
+			_ => "Đang quan sát",
+		};
+	}
+
+	private static string PrettyInitiativeReason(string reason)
+	{
+		return (reason ?? "").Trim().ToLowerInvariant() switch
+		{
+			"allowed" => "Giá trị của lời nói vượt rủi ro làm phiền.",
+			"initiative_disabled" => "Chế độ chủ động đang bị tắt trong runtime.",
+			"user_busy" => "User đang bận và ý định chưa đủ quan trọng để chen vào.",
+			"user_recently_active" => "User vừa tương tác; Eris giữ lại để không giành nhịp.",
+			"intrusion_outweighs_value" => "Rủi ro làm phiền lớn hơn giá trị của lời định nói.",
+			"hourly_budget_exhausted" => "Ngân sách chủ động trong giờ đã hết.",
+			"minimum_interval" => "Chưa qua khoảng nghỉ tối thiểu giữa hai lần chủ động.",
+			"activity_update_cooldown" => "Activity này chưa đáng để cập nhật thêm lần nữa.",
+			"low_value_presence_ping" => "Một lời gọi hiện diện quá mỏng nên đã bị bỏ.",
+			_ => string.IsNullOrWhiteSpace(reason) ? "Chưa có quyết định Initiative nào." : PrettyIdentityKey(reason),
+		};
+	}
+
+	private static string PrettyDiscoveryAuthority(string key)
+	{
+		return (key ?? "").Trim().ToLowerInvariant() switch
+		{
+			"tutor_or_runtime_evidence" => "Tutor hoặc evidence runtime chịu trách nhiệm về fact.",
+			"main_model" => "Main model chọn điều đáng kể và viết lời public.",
+			"post_user_reaction_via_identity_kernel" => "Chỉ phản ứng thật của User mới có thể đi vào Identity Kernel.",
+			_ => string.IsNullOrWhiteSpace(key) ? "Chưa có contract quyền hạn." : PrettyIdentityKey(key),
+		};
+	}
+
+	private static string FormatRelativeSeconds(float seconds)
+	{
+		seconds = Mathf.Max(0f, seconds);
+		if (seconds < 60f) return $"{Mathf.CeilToInt(seconds)} giây";
+		if (seconds < 3600f) return $"{Mathf.CeilToInt(seconds / 60f)} phút";
+		return $"{Mathf.CeilToInt(seconds / 3600f)} giờ";
+	}
+
+	// Ledger & imprint được chia thành bốn lớp rõ ràng: input, candidate, commit và dấu in.
+	// Không lớp nào được phép mượn dữ liệu của lớp khác chỉ để làm panel trông bận rộn.
 	private void RenderAuditTab(JsonElement root)
 	{
-		JsonElement observation = Obj(root, "latest_observation");
-		AddInfoCard("Objective Observer + Self Reflection", new[]
-		{
-			$"User act: {ReadString(observation, "user_act")} · meaning {ReadString(observation, "relationship_meaning")}",
-			$"Confidence {ReadFloat(observation, "confidence"):0.00} · repair {ReadBool(observation, "repair_needed", false)}",
-			ReadString(Obj(observation, "self_interpretation"), "summary"),
-			ReadString(observation, "notes"),
-		});
-		AddInfoCard("Identity ledger", FormatObjectArray(Arr(root, "recent_identity_ledger"), new[] { "dimension", "key", "applied_delta", "outcome" }, 12));
-		AddInfoCard("Personality trajectory", FormatObjectArray(Arr(root, "recent_personality_trajectory"), new[] { "category", "trait", "applied_delta", "source" }, 10));
-		AddInfoCard("Formative imprints", FormatObjectArray(Arr(root, "imprints"), new[] { "theme", "strength", "valence", "preferred_defense" }, 8));
+		if (_depthContentList == null)
+			return;
 
-		JsonElement consolidation = Obj(root, "consolidation");
-		AddInfoCard("Persistence & consolidation", new[]
+		JsonElement runtime = Obj(root, "audit_runtime");
+		if (runtime.ValueKind != JsonValueKind.Object)
 		{
-			$"Last write: {ReadFloat(consolidation, "last_write_at"):0}",
-			$"Pending accepted events: {ReadInt(consolidation, "accepted_since_write")}",
-			ReadString(consolidation, "snapshot_path"),
-		});
+			AddInfoCard("Ledger & imprint", new[]
+			{
+				"Backend chưa gửi contract eris.identity_audit.panel.v1.",
+				"Panel không tự dựng lịch sử từ các con số rời rạc.",
+			});
+			return;
+		}
+
+		RenderAuditHero(runtime);
+		RenderAuditFlow(runtime);
+
+		var top = new HBoxContainer
+		{
+			CustomMinimumSize = new Vector2(0f, 338f),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+		};
+		top.AddThemeConstantOverride("separation", 14);
+		_depthContentList.AddChild(top);
+		RenderAuditInput(top, runtime);
+		RenderAuditCandidates(top, runtime);
+
+		RenderAuditLedger(runtime);
+
+		var bottom = new HBoxContainer
+		{
+			CustomMinimumSize = new Vector2(0f, 362f),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+		};
+		bottom.AddThemeConstantOverride("separation", 14);
+		_depthContentList.AddChild(bottom);
+		RenderAuditImprints(bottom, runtime);
+		RenderAuditPersistence(bottom, runtime);
+		RenderAuditAuthority(runtime);
+	}
+
+	private void RenderAuditHero(JsonElement runtime)
+	{
+		JsonElement summary = Obj(runtime, "summary");
+		string state = ReadString(summary, "state");
+		Color accent = state switch
+		{
+			"committed" => IdentityGreen,
+			"observed" => IdentityOrange,
+			"input_only" => IdentityBlue,
+			_ => IdentityPurple,
+		};
+
+		var card = NewIdentityCard("Dấu vết gần nhất", IdentityAsset("identity_tab_ledger.png"), "▤", accent, 132f);
+		_depthContentList.AddChild(card);
+		var box = (VBoxContainer)card.GetChild(0);
+		var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		row.AddThemeConstantOverride("separation", 12);
+		box.AddChild(row);
+		row.AddChild(NewIconBadge(IdentityAsset("identity_event_observing.png"), "◎", new Vector2(70f, 70f), accent, true));
+
+		var copy = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		copy.AddThemeConstantOverride("separation", 4);
+		copy.AddChild(NewLabel(ReadString(summary, "title"), 19, IdentityInk, true));
+		var detail = NewLabel(ReadString(summary, "detail"), 11, IdentityMuted, false);
+		detail.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		copy.AddChild(detail);
+		row.AddChild(copy);
+
+		var stats = new VBoxContainer { CustomMinimumSize = new Vector2(220f, 0f) };
+		stats.AddThemeConstantOverride("separation", 5);
+		stats.AddChild(NewAuditMiniChip($"Lượt {ReadInt(summary, "turn_seq")}", IdentityBlue));
+		stats.AddChild(NewAuditMiniChip($"{ReadInt(summary, "candidate_count")} candidate · {ReadInt(summary, "current_commit_count")} commit", accent));
+		stats.AddChild(NewAuditMiniChip($"{ReadInt(summary, "imprint_count")} dấu in", IdentityPurple));
+		row.AddChild(stats);
+	}
+
+	// Dòng chảy này là sơ đồ quyền hạn, không phải animation trang trí.
+	private void RenderAuditFlow(JsonElement runtime)
+	{
+		JsonElement summary = Obj(runtime, "summary");
+		JsonElement input = Obj(runtime, "input");
+		JsonElement persistence = Obj(runtime, "persistence");
+		bool hasInput = ReadBool(input, "present", false);
+		int candidates = ReadInt(summary, "candidate_count");
+		int commits = ReadInt(summary, "current_commit_count");
+		string persistState = ReadString(persistence, "state");
+
+		var card = NewIdentityCard("Đường đi của một dấu vết", IdentityAsset("identity_card_timeline.png"), "↝", IdentityPink, 144f);
+		_depthContentList.AddChild(card);
+		var box = (VBoxContainer)card.GetChild(0);
+		box.AddChild(NewLabel("Input chỉ trở thành state sau khi đi qua Observer, reducer và lớp ghi persistent.", 10, IdentityMuted, false));
+
+		var flow = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		flow.AddThemeConstantOverride("separation", 8);
+		box.AddChild(flow);
+		flow.AddChild(NewAuditStage("Input", hasInput ? "đã nhận" : "đang yên", hasInput, IdentityBlue, "◌"));
+		flow.AddChild(NewAuditArrow());
+		flow.AddChild(NewAuditStage("Observer", candidates > 0 ? $"{candidates} candidate" : "không đề xuất", candidates > 0, IdentityOrange, "◉"));
+		flow.AddChild(NewAuditArrow());
+		flow.AddChild(NewAuditStage("Reducer", commits > 0 ? $"{commits} commit" : "không ghi", commits > 0, IdentityGreen, "◇"));
+		flow.AddChild(NewAuditArrow());
+		bool persistent = persistState == "written" || persistState == "pending" || commits > 0;
+		string persistentText = persistState == "pending" ? "đang chờ ghi" : persistState == "written" ? "đã có snapshot" : commits > 0 ? "đã vào ledger" : "chưa có";
+		flow.AddChild(NewAuditStage("Persistent", persistentText, persistent, IdentityPurple, "✦"));
+	}
+
+	private Control NewAuditStage(string title, string detail, bool active, Color accent, string glyph)
+	{
+		var panel = new PanelContainer
+		{
+			CustomMinimumSize = new Vector2(205f, 72f),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+		};
+		var style = IdentitySoftPanelStyle(accent, active ? 0.060f : 0.018f, 20);
+		style.BorderColor = new Color(accent.R, accent.G, accent.B, active ? 0.28f : 0.10f);
+		panel.AddThemeStyleboxOverride("panel", style);
+		var row = new HBoxContainer();
+		row.AddThemeConstantOverride("separation", 8);
+		panel.AddChild(row);
+		var mark = NewLabel(glyph, 22, active ? accent : new Color(IdentityMuted.R, IdentityMuted.G, IdentityMuted.B, 0.55f), true);
+		mark.CustomMinimumSize = new Vector2(32f, 0f);
+		mark.HorizontalAlignment = HorizontalAlignment.Center;
+		row.AddChild(mark);
+		var copy = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		copy.AddChild(NewLabel(title, 12, active ? IdentityInk : IdentityMuted, true));
+		copy.AddChild(NewLabel(detail, 9, active ? accent : IdentityMuted, false));
+		row.AddChild(copy);
+		return panel;
+	}
+
+	private Control NewAuditArrow()
+	{
+		var arrow = NewLabel("→", 19, new Color(IdentityMuted.R, IdentityMuted.G, IdentityMuted.B, 0.46f), false);
+		arrow.CustomMinimumSize = new Vector2(22f, 72f);
+		arrow.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
+		arrow.HorizontalAlignment = HorizontalAlignment.Center;
+		arrow.VerticalAlignment = VerticalAlignment.Center;
+		return arrow;
+	}
+
+	private void RenderAuditInput(HBoxContainer parent, JsonElement runtime)
+	{
+		JsonElement input = Obj(runtime, "input");
+		var card = NewIdentityCard("Input gần nhất", IdentityAsset("identity_event_observing.png"), "◎", IdentityBlue, 338f);
+		card.CustomMinimumSize = new Vector2(520f, 338f);
+		parent.AddChild(card);
+		var box = (VBoxContainer)card.GetChild(0);
+		if (!ReadBool(input, "present", false))
+		{
+			box.AddChild(NewIdentityEmptyState("Chưa có observation mới. Panel không dựng input giả để lấp chỗ trống.", IdentityAsset("identity_event_quiet.png"), "…", IdentityBlue, 250f));
+			return;
+		}
+
+		var header = new HBoxContainer();
+		header.AddThemeConstantOverride("separation", 8);
+		box.AddChild(header);
+		string userAct = PrettyAuditKey(ReadString(input, "user_act"));
+		string meaning = PrettyAuditKey(ReadString(input, "relationship_meaning"));
+		header.AddChild(NewAuditMiniChip(string.IsNullOrWhiteSpace(userAct) ? "Không phân loại act" : userAct, IdentityBlue));
+		header.AddChild(NewAuditMiniChip(string.IsNullOrWhiteSpace(meaning) ? "Không có meaning" : meaning, IdentityPurple));
+		if (ReadBool(input, "repair_needed", false))
+			header.AddChild(NewAuditMiniChip("Cần repair", IdentityOrange));
+
+		string interpretation = ReadString(input, "self_interpretation");
+		if (!string.IsNullOrWhiteSpace(interpretation))
+		{
+			var quote = new PanelContainer();
+			quote.AddThemeStyleboxOverride("panel", IdentitySoftPanelStyle(IdentityPurple, 0.035f, 18));
+			var quoteLabel = NewLabel("“" + interpretation + "”", 14, IdentityInk, false);
+			quoteLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+			quote.AddChild(quoteLabel);
+			box.AddChild(quote);
+		}
+		else
+		{
+			box.AddChild(NewLabel("Self-reflection không để lại phần diễn giải ở lượt này.", 11, IdentityMuted, false));
+		}
+
+		box.AddChild(NewSectionDivider());
+		box.AddChild(NewLabel($"Evidence · confidence {ReadFloat(input, "confidence"):0.00}", 10, IdentityBlue, true));
+		int evidenceCount = 0;
+		JsonElement evidence = Arr(input, "evidence");
+		if (evidence.ValueKind == JsonValueKind.Array)
+		{
+			foreach (JsonElement item in evidence.EnumerateArray())
+			{
+				string line = item.ValueKind == JsonValueKind.String ? item.GetString() ?? "" : item.ToString();
+				if (string.IsNullOrWhiteSpace(line)) continue;
+				box.AddChild(NewBulletLine(TrimForPanel(line, 145), IdentityBlue));
+				if (++evidenceCount >= 4) break;
+			}
+		}
+		if (evidenceCount == 0)
+			box.AddChild(NewLabel("Không có evidence được observer xuất ra.", 10, IdentityMuted, false));
+
+		string notes = ReadString(input, "notes");
+		if (!string.IsNullOrWhiteSpace(notes))
+		{
+			box.AddChild(NewSectionDivider());
+			var note = NewLabel("Ghi chú: " + TrimForPanel(notes, 170), 10, IdentityMuted, false);
+			note.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+			box.AddChild(note);
+		}
+	}
+
+	// Candidate chưa có entry ledger tương ứng phải được ghi rõ là chưa commit.
+	private void RenderAuditCandidates(HBoxContainer parent, JsonElement runtime)
+	{
+		JsonElement candidates = Arr(runtime, "candidates");
+		var card = NewIdentityCard("Cửa reducer", IdentityAsset("identity_card_defense.png"), "◇", IdentityOrange, 338f);
+		card.CustomMinimumSize = new Vector2(520f, 338f);
+		parent.AddChild(card);
+		var box = (VBoxContainer)card.GetChild(0);
+		box.AddChild(NewLabel("Candidate là đề xuất của Observer. Chỉ dòng có commit mới đã đổi state.", 10, IdentityMuted, false));
+
+		int count = 0;
+		if (candidates.ValueKind == JsonValueKind.Array)
+		{
+			foreach (JsonElement item in candidates.EnumerateArray())
+			{
+				box.AddChild(NewAuditCandidate(item));
+				if (++count >= 6) break;
+			}
+		}
+		if (count == 0)
+			box.AddChild(NewIdentityEmptyState("Observer không đề xuất identity signal ở lượt gần nhất.", IdentityAsset("identity_event_quiet.png"), "…", IdentityOrange, 238f));
+	}
+
+	private Control NewAuditCandidate(JsonElement item)
+	{
+		string state = ReadString(item, "commit_state");
+		Color accent = state switch
+		{
+			"committed" => IdentityGreen,
+			"no_change" => IdentityBlue,
+			_ => IdentityOrange,
+		};
+		string stateLabel = state switch
+		{
+			"committed" => "ĐÃ COMMIT",
+			"no_change" => "KHÔNG CÓ DELTA",
+			_ => "CHƯA COMMIT",
+		};
+
+		var panel = new PanelContainer { CustomMinimumSize = new Vector2(0f, 62f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		panel.AddThemeStyleboxOverride("panel", IdentitySoftPanelStyle(accent, 0.025f, 15));
+		panel.TooltipText = ReadString(item, "commit_note");
+		var row = new HBoxContainer();
+		row.AddThemeConstantOverride("separation", 8);
+		panel.AddChild(row);
+		var mark = NewLabel(state == "committed" ? "✓" : state == "no_change" ? "○" : "·", 18, accent, true);
+		mark.CustomMinimumSize = new Vector2(28f, 0f);
+		mark.HorizontalAlignment = HorizontalAlignment.Center;
+		row.AddChild(mark);
+
+		var copy = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		copy.AddChild(NewLabel($"{PrettyAuditKey(ReadString(item, "dimension"))} › {PrettyAuditKey(ReadString(item, "key"))}", 11, IdentityInk, true));
+		string numbers = state == "committed"
+			? $"đề xuất {SignedAudit(ReadFloat(item, "delta"), "0.00")} · áp dụng {SignedAudit(ReadFloat(item, "applied_delta"), "0.000")}" 
+			: $"đề xuất {SignedAudit(ReadFloat(item, "delta"), "0.00")} · confidence {ReadFloat(item, "confidence"):0.00}";
+		copy.AddChild(NewLabel(numbers, 9, IdentityMuted, false));
+		row.AddChild(copy);
+		var chip = NewAuditMiniChip(stateLabel, accent);
+		chip.CustomMinimumSize = new Vector2(118f, 25f);
+		row.AddChild(chip);
+		return panel;
+	}
+
+	// Ledger chỉ nhận các entry backend đã ghi thật; không trộn candidate bị giữ lại.
+	private void RenderAuditLedger(JsonElement runtime)
+	{
+		var card = NewIdentityCard("Dòng ledger đã commit", IdentityAsset("identity_card_timeline.png"), "↝", IdentityPink, 388f);
+		_depthContentList.AddChild(card);
+		var box = (VBoxContainer)card.GetChild(0);
+		box.AddChild(NewLabel("Mỗi dòng dưới đây là thay đổi reducer đã áp dụng. Candidate bị giữ lại không được chen vào đây.", 10, IdentityMuted, false));
+		JsonElement commits = Arr(runtime, "recent_commits");
+		int count = 0;
+		if (commits.ValueKind == JsonValueKind.Array)
+		{
+			foreach (JsonElement item in commits.EnumerateArray())
+			{
+				box.AddChild(NewAuditLedgerEntry(item, count == 0));
+				if (++count >= 10) break;
+			}
+		}
+		if (count == 0)
+			box.AddChild(NewIdentityEmptyState("Ledger chưa có thay đổi persistent nào.", IdentityAsset("identity_event_quiet.png"), "…", IdentityPink, 285f));
+	}
+
+	private Control NewAuditLedgerEntry(JsonElement item, bool newest)
+	{
+		string dimension = ReadString(item, "dimension");
+		float delta = ReadFloat(item, "applied_delta");
+		Color accent = AuditDimensionColor(dimension, delta);
+		var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		row.AddThemeConstantOverride("separation", 10);
+
+		var timeline = new VBoxContainer { CustomMinimumSize = new Vector2(34f, 0f) };
+		var dot = NewLabel(newest ? "●" : "○", newest ? 17 : 14, accent, true);
+		dot.HorizontalAlignment = HorizontalAlignment.Center;
+		timeline.AddChild(dot);
+		var line = new ColorRect
+		{
+			Color = new Color(accent.R, accent.G, accent.B, 0.18f),
+			CustomMinimumSize = new Vector2(2f, 50f),
+			SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter,
+		};
+		timeline.AddChild(line);
+		row.AddChild(timeline);
+
+		var panel = new PanelContainer { CustomMinimumSize = new Vector2(0f, 82f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		panel.AddThemeStyleboxOverride("panel", IdentitySoftPanelStyle(accent, newest ? 0.042f : 0.020f, 17));
+		row.AddChild(panel);
+		var box = new VBoxContainer();
+		box.AddThemeConstantOverride("separation", 3);
+		panel.AddChild(box);
+		var head = new HBoxContainer();
+		head.AddChild(NewLabel($"{PrettyAuditKey(dimension)} › {PrettyAuditKey(ReadString(item, "key"))}", 11, IdentityInk, true));
+		string time = FormatUnixTime(ReadFloat(item, "timestamp"));
+		string stamp = $"Lượt {ReadInt(item, "turn_seq")}" + (time == "—" ? "" : $" · {time}");
+		var stampLabel = NewLabel(stamp, 9, IdentityMuted, false);
+		stampLabel.HorizontalAlignment = HorizontalAlignment.Right;
+		head.AddChild(stampLabel);
+		box.AddChild(head);
+
+		bool hasTransition = ReadBool(item, "has_state_transition", false);
+		string deltaText = hasTransition && Math.Abs(delta) > 0.0000005f
+			? $"{ReadFloat(item, "before"):0.000} → {ReadFloat(item, "after"):0.000}   ({SignedAudit(delta, "0.000")})"
+			: AuditOutcomeText(item);
+		box.AddChild(NewLabel(deltaText, 10, accent, true));
+
+		string interpretation = ReadString(item, "self_interpretation");
+		string evidence = JoinArray(item, "evidence", 2);
+		string detail = !string.IsNullOrWhiteSpace(interpretation) ? interpretation : evidence != "—" ? evidence : ReadString(item, "goal");
+		if (!string.IsNullOrWhiteSpace(detail))
+		{
+			var detailLabel = NewLabel(TrimForPanel(detail, 190), 9, IdentityMuted, false);
+			detailLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+			box.AddChild(detailLabel);
+		}
+		return row;
+	}
+
+	// Imprint là cấu trúc persistent đã qua corroboration gate, không phải mood hay defense active.
+	private void RenderAuditImprints(HBoxContainer parent, JsonElement runtime)
+	{
+		var card = NewIdentityCard("Dấu in đã hình thành", IdentityAsset("identity_emergent_value.png"), "✦", IdentityPurple, 362f);
+		card.CustomMinimumSize = new Vector2(650f, 362f);
+		parent.AddChild(card);
+		var box = (VBoxContainer)card.GetChild(0);
+		box.AddChild(NewLabel("Imprint chỉ xuất hiện sau corroboration gate; đây không phải mood nhất thời.", 10, IdentityMuted, false));
+
+		JsonElement imprints = Arr(runtime, "imprints");
+		int count = 0;
+		if (imprints.ValueKind == JsonValueKind.Array)
+		{
+			foreach (JsonElement item in imprints.EnumerateArray())
+			{
+				box.AddChild(NewAuditImprint(item));
+				if (++count >= 4) break;
+			}
+		}
+		if (count == 0)
+			box.AddChild(NewIdentityEmptyState("Chưa có trải nghiệm nào vượt đủ corroboration gate để thành dấu in.", IdentityAsset("identity_emergent_value.png"), "✦", IdentityPurple, 270f));
+	}
+
+	private Control NewAuditImprint(JsonElement item)
+	{
+		string polarity = ReadString(item, "polarity");
+		Color accent = polarity == "positive" ? IdentityGreen : polarity == "negative" ? IdentityOrange : IdentityPurple;
+		var panel = new PanelContainer { CustomMinimumSize = new Vector2(0f, 72f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		panel.AddThemeStyleboxOverride("panel", IdentitySoftPanelStyle(accent, 0.027f, 18));
+		var row = new HBoxContainer();
+		row.AddThemeConstantOverride("separation", 10);
+		panel.AddChild(row);
+
+		var seal = new PanelContainer { CustomMinimumSize = new Vector2(54f, 54f) };
+		var sealStyle = IdentitySoftPanelStyle(accent, 0.075f, 27);
+		sealStyle.BorderColor = new Color(accent.R, accent.G, accent.B, 0.30f);
+		seal.AddThemeStyleboxOverride("panel", sealStyle);
+		var sealText = NewLabel("✦", 21, accent, true);
+		sealText.HorizontalAlignment = HorizontalAlignment.Center;
+		sealText.VerticalAlignment = VerticalAlignment.Center;
+		seal.AddChild(sealText);
+		row.AddChild(seal);
+
+		var copy = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		var head = new HBoxContainer();
+		head.AddChild(NewLabel(PrettyAuditKey(ReadString(item, "theme")), 11, IdentityInk, true));
+		var score = NewLabel($"{ReadFloat(item, "strength"):0.00}", 15, accent, true);
+		score.HorizontalAlignment = HorizontalAlignment.Right;
+		head.AddChild(score);
+		copy.AddChild(head);
+		string interpretation = ReadString(item, "default_interpretation");
+		if (!string.IsNullOrWhiteSpace(interpretation))
+			copy.AddChild(NewLabel(TrimForPanel(interpretation, 120), 9, IdentityMuted, false));
+		string triggers = JoinArray(item, "triggers", 3);
+		copy.AddChild(NewLabel($"{PrettyImprintStatus(ReadString(item, "status"))} · {ReadInt(item, "evidence_count")} evidence" + (triggers == "—" ? "" : $" · trigger: {triggers}"), 9, accent, false));
+		row.AddChild(copy);
+		return panel;
+	}
+
+	private void RenderAuditPersistence(HBoxContainer parent, JsonElement runtime)
+	{
+		JsonElement persistence = Obj(runtime, "persistence");
+		var card = NewIdentityCard("Persistence & trajectory", IdentityAsset("identity_action_export.png"), "⇩", IdentityBlue, 362f);
+		card.CustomMinimumSize = new Vector2(520f, 362f);
+		parent.AddChild(card);
+		var box = (VBoxContainer)card.GetChild(0);
+		string state = ReadString(persistence, "state");
+		Color accent = state == "pending" ? IdentityOrange : state == "written" ? IdentityGreen : IdentityBlue;
+		string title = state == "pending" ? "Có thay đổi đang chờ consolidation" : state == "written" ? "Snapshot persistent đã tồn tại" : "Chưa có lần ghi snapshot";
+		var status = new PanelContainer();
+		status.AddThemeStyleboxOverride("panel", IdentitySoftPanelStyle(accent, 0.040f, 18));
+		var statusBox = new VBoxContainer();
+		status.AddChild(statusBox);
+		statusBox.AddChild(NewLabel(title, 13, IdentityInk, true));
+		statusBox.AddChild(NewLabel($"Pending accepted events: {ReadInt(persistence, "accepted_since_write")}", 10, accent, false));
+		string path = ReadString(persistence, "snapshot_path");
+		if (!string.IsNullOrWhiteSpace(path))
+		{
+			var pathLabel = NewLabel(TrimForPanel(path, 95), 9, IdentityMuted, false);
+			pathLabel.TooltipText = path;
+			statusBox.AddChild(pathLabel);
+		}
+		box.AddChild(status);
+
+		box.AddChild(NewSectionDivider());
+		box.AddChild(NewLabel("Personality trajectory gần đây", 10, IdentityBlue, true));
+		JsonElement trajectory = Arr(runtime, "trajectory");
+		int count = 0;
+		if (trajectory.ValueKind == JsonValueKind.Array)
+		{
+			foreach (JsonElement item in trajectory.EnumerateArray())
+			{
+				string trait = PrettyAuditKey(ReadString(item, "trait"));
+				string category = PrettyAuditKey(ReadString(item, "category"));
+				float delta = ReadFloat(item, "applied_delta");
+				box.AddChild(NewBulletLine($"{category} › {trait}  {SignedAudit(delta, "0.000")}", delta >= 0f ? IdentityGreen : IdentityOrange));
+				if (++count >= 6) break;
+			}
+		}
+		if (count == 0)
+			box.AddChild(NewLabel("Chưa có trajectory event để hiển thị.", 10, IdentityMuted, false));
+	}
+
+	private void RenderAuditAuthority(JsonElement runtime)
+	{
+		JsonElement authority = Obj(runtime, "authority");
+		var card = NewIdentityCard("Ai được phép ghi gì", IdentityAsset("identity_card_defense.png"), "◇", IdentityPink, 108f);
+		_depthContentList.AddChild(card);
+		var box = (VBoxContainer)card.GetChild(0);
+		var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		row.AddThemeConstantOverride("separation", 8);
+		box.AddChild(row);
+		row.AddChild(NewAuditAuthorityCell("Observer", ReadString(authority, "observer"), IdentityBlue));
+		row.AddChild(NewAuditAuthorityCell("Reducer", ReadString(authority, "reducer"), IdentityGreen));
+		row.AddChild(NewAuditAuthorityCell("Ledger", ReadString(authority, "ledger"), IdentityPink));
+		row.AddChild(NewAuditAuthorityCell("Imprint", ReadString(authority, "imprint"), IdentityPurple));
+	}
+
+	private Control NewAuditAuthorityCell(string title, string detail, Color accent)
+	{
+		var panel = new PanelContainer { CustomMinimumSize = new Vector2(220f, 50f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		panel.AddThemeStyleboxOverride("panel", IdentitySoftPanelStyle(accent, 0.018f, 14));
+		var box = new VBoxContainer();
+		box.AddChild(NewLabel(title, 10, accent, true));
+		var label = NewLabel(detail, 9, IdentityMuted, false);
+		label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		box.AddChild(label);
+		panel.AddChild(box);
+		return panel;
+	}
+
+	private Label NewAuditMiniChip(string text, Color accent)
+	{
+		var chip = NewLabel(text, 9, accent, true);
+		chip.CustomMinimumSize = new Vector2(0f, 25f);
+		chip.SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin;
+		chip.HorizontalAlignment = HorizontalAlignment.Center;
+		chip.VerticalAlignment = VerticalAlignment.Center;
+		chip.AddThemeStyleboxOverride("normal", IdentitySoftPanelStyle(accent, 0.035f, 12));
+		return chip;
+	}
+
+	private static Color AuditDimensionColor(string dimension, float delta)
+	{
+		return (dimension ?? "").Trim().ToLowerInvariant() switch
+		{
+			"value" => IdentityPink,
+			"motive" => IdentityPurple,
+			"defense" => IdentityBlue,
+			"belief" => new Color(0.74f, 0.36f, 0.74f, 1f),
+			"relationship" => new Color(0.87f, 0.38f, 0.58f, 1f),
+			"imprint" => IdentityOrange,
+			"strategy_outcome" => delta >= 0f ? IdentityGreen : IdentityOrange,
+			_ => delta >= 0f ? IdentityGreen : IdentityOrange,
+		};
+	}
+
+	private static string AuditOutcomeText(JsonElement item)
+	{
+		string outcome = ReadString(item, "outcome");
+		string status = ReadString(item, "status");
+		if (!string.IsNullOrWhiteSpace(outcome)) return "Outcome: " + PrettyAuditKey(outcome);
+		if (!string.IsNullOrWhiteSpace(status)) return "Trạng thái: " + PrettyAuditKey(status);
+		return "Entry không thay đổi score trực tiếp.";
+	}
+
+	private static string PrettyImprintStatus(string status)
+	{
+		return (status ?? "").Trim().ToLowerInvariant() switch
+		{
+			"deep" => "Đã ăn sâu",
+			"formed" => "Đã thành hình",
+			"forming" => "Đang hằn lại",
+			_ => "Dấu in",
+		};
+	}
+
+	private static string PrettyAuditKey(string key)
+	{
+		if (string.IsNullOrWhiteSpace(key)) return "";
+		return PrettyIdentityKey(key);
+	}
+
+	private static string SignedAudit(float value, string format)
+	{
+		if (Math.Abs(value) < 0.0000005f) return "0";
+		return value > 0f ? "+" + value.ToString(format, CultureInfo.InvariantCulture) : value.ToString(format, CultureInfo.InvariantCulture);
 	}
 
 	private void AddScoreCard(string title, JsonElement array, string keyName, string valueName, int limit)

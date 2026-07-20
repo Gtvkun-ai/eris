@@ -31,8 +31,6 @@ KNOWN_FLAGS: dict[str, str] = {
     "emotional_consequence": "ERIS_EMOTIONAL_CONSEQUENCE",
     "development_growth": "ERIS_DEVELOPMENT_GROWTH_ENABLED",
     "interior_surface": "ERIS_INTERIOR_SURFACE_NONANCHORED",
-    "tom_advisor": "ERIS_TOM_ADVISOR",
-    "real_embeddings": "ERIS_MEANING_REAL_EMBEDDINGS",
     "private_mind": "ERIS_PRIVATE_MIND_API_ENABLED",
 }
 
@@ -106,7 +104,7 @@ def all_states() -> dict[str, bool]:
 def set_flags(updates: dict[str, bool]) -> dict[str, bool]:
     """Ghi đè control-file cho các khóa thân thiện đưa vào. Trả trạng thái mới.
 
-    ``updates`` dùng khóa thân thiện (vd "tom_advisor"); chỉ khóa hợp lệ được nhận.
+    ``updates`` dùng khóa thân thiện; chỉ khóa hợp lệ được nhận.
     """
     path = control_file_path()
     control = _load_control()

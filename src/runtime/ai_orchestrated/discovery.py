@@ -170,6 +170,31 @@ class DiscoveryRecord:
             "evidence": list(self.evidence[:5]),
         }
 
+    def panel_payload(self) -> dict[str, Any]:
+        """Contract đầy đủ cho panel, tách khỏi payload tối giản gửi planner.
+
+        Panel cần readiness, novelty và trạng thái chia sẻ thật. Không để C# tự
+        đoán các giá trị này từ màu sắc hoặc thứ tự archive, vì dashboard đã đủ
+        cơ hội bịa chuyện trong lịch sử loài người rồi.
+        """
+
+        payload = self.prompt_payload()
+        payload.update(
+            {
+                "summary": self.summary,
+                "share_readiness": round(self.share_readiness, 3),
+                "novelty": round(self.novelty, 3),
+                "eris_interest": round(self.eris_interest, 3),
+                "user_relevance": round(self.user_relevance, 3),
+                "verified": bool(self.verified),
+                "created_at": self.created_at,
+                "shared": bool(self.shared),
+                "shared_at": self.shared_at,
+                "shared_text": self.shared_text,
+            }
+        )
+        return payload
+
 
 @dataclass(frozen=True, slots=True)
 class ActivityRecord:
@@ -897,16 +922,22 @@ class DiscoveryRuntime:
     def panel_view(self) -> dict[str, Any]:
         with self._lock:
             state = self._state
-            ready = [item.prompt_payload() for item in self.ready_records(limit=4)]
+            ready_records = self.ready_records(limit=4)
+            shared_count = sum(1 for item in state.records if item.shared)
+            verified_count = sum(1 for item in state.records if item.verified)
             return {
                 "schema": DISCOVERY_SCHEMA,
                 "version": state.version,
                 "archive_count": len(state.records),
-                "ready_to_share": ready,
+                "shared_count": shared_count,
+                "verified_count": verified_count,
+                "unshared_count": max(0, len(state.records) - shared_count),
+                "ready_count": len(ready_records),
+                "ready_to_share": [item.panel_payload() for item in ready_records],
                 "current_activity": state.current_activity.to_dict(),
                 "last_shared_at": state.last_shared_at,
                 "lane_last_started": dict(state.lane_last_started),
-                "recent": [item.to_dict() for item in state.records[-8:]],
+                "recent": [item.panel_payload() for item in state.records[-8:]],
                 "authority": {
                     "facts": "tutor_or_runtime_evidence",
                     "selection_and_voice": "main_model",

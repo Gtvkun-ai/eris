@@ -1,51 +1,18 @@
-from __future__ import annotations
-
 from collections.abc import Mapping
-import json
-import os
-import random
 import re
-import threading
 import time
-import traceback
-import unicodedata
-from dataclasses import dataclass, replace
+from dataclasses import replace
 
-from cortex.contracts import (
-    AgentSpeechCore,
-    AttentionCandidate,
-    CognitiveActionPlan,
-    CognitiveAppraisal,
-    CognitiveBroadcast,
-    CognitiveDisturbance,
-    CognitiveFrame,
-    InnerThought,
-    CognitiveMemoryUpdate,
-    MeaningLayerResult,
-    PersonalityLensResult,
-    PerceptEvent,
-    SessionRitualReport,
-    SilenceState,
-    SubconsciousReport,
-    ThoughtStreamReport,
-    TiPolicyReport,
-)
 from cortex.internal_state import PersistentInternalState
 from memory.memory_commit_policy import MemoryCommitPolicy
 from memory.memory_models import MemoryKind
-from cortex.relationship_dynamics import RelationshipTurnEvent
-from core.evidence import EvidenceItem, RawSignal
-from cortex.modes import QUIET_MODES
-from cortex.ni import NiStateMachine
 from domain import Decision
 from failure_meta import is_technical_failure_meta
 from runtime.body_bias import BodyBiasProjector
 from runtime.memory_recall_adapter import MemoryRecallAdapter
 from runtime.affect_self_read import AffectSelfReadAdapter
-from runtime.presence_controller import SocialPresenceEvent
-from runtime.public_turn_ledger import PublicTurnLedger, infer_public_turn_channel, normalize_public_turn_channel
+from runtime.public_turn_ledger import PublicTurnLedger, infer_public_turn_channel
 from runtime.session_turn_ledger import SessionTurnLedger
-from runtime.speech_pipeline import SpeechIntentDecision
 
 
 
@@ -602,9 +569,7 @@ class StateCommitServiceMixin:
         if not should_speak or not text.strip():
             return None
 
-        frame = getattr(self, "last_cognitive_frame", None)
-        frame_channel = str(getattr(frame, "channel", "") or "")
-        fallback = channel or (normalize_public_turn_channel(frame_channel) if frame_channel else "chat" if getattr(self, "chat_mode", False) else "autonomous")
+        fallback = channel or ("chat" if getattr(self, "chat_mode", False) or getattr(self, "_chat_processing", False) else "autonomous")
         public_channel = infer_public_turn_channel(decision, fallback=fallback)
         return ledger.append(
             channel=public_channel,
@@ -614,10 +579,7 @@ class StateCommitServiceMixin:
             can_be_replied_to=True,
         )
     def _build_body_bias_payload(self) -> dict[str, object]:
-        frame = getattr(self, "last_cognitive_frame", None)
-        action_plan = getattr(frame, "action_plan", None) if frame is not None else None
-        impulse_hint = getattr(action_plan, "body_bias_hint", {}) if action_plan is not None else {}
-        return self.body_bias_projector.build_payload(impulse_hint=impulse_hint)
+        return self.body_bias_projector.build_payload(impulse_hint={})
     def _body_bias_clamp(value: object) -> float:
         return BodyBiasProjector.clamp(value)
     def _normalize_body_focus_kind(value: str) -> str:
@@ -706,53 +668,6 @@ class StateCommitServiceMixin:
         if captured_at:
             return captured_at
         return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(started_at or time.time()))
-    def _commit_chat_decision(self, decision: Decision, fe_plan, *, frame: CognitiveFrame | None = None) -> None:
-        self.fe_style_memory = self.fe_renderer.remember_style(
-            self.fe_style_memory,
-            plan=fe_plan,
-            rendered_text=decision.text,
-        )
-        self.last_chat_answer = decision.text
-        self.last_system_action = decision.system_action
-        invalid_for_semantic_history = _is_nonsemantic_fallback_decision(decision)
-        # Fallback/service-error vẫn có thể hiện ra UI, nhưng không được đưa vào
-        # LLM semantic history như một câu trả lời thật. Nếu không, prompt lượt sau
-        # tự nhiễm câu "tôi bị lỗi định dạng" và TurnGraph nối nhầm ANSWERS.
-        self._append_chat_history("assistant", decision.text, invalid=invalid_for_semantic_history)
-        if bool(decision.should_speak) and str(decision.text or "").strip():
-            assistant_meta = {
-                "intent": decision.intent,
-                "parse_mode": decision.parse_mode,
-                "system_action": decision.system_action,
-            }
-            if invalid_for_semantic_history:
-                assistant_meta.update({
-                    "is_service_fallback": True,
-                    "counts_as_answer": False,
-                    "invalid_for_semantic_context": True,
-                })
-            self._ensure_session_turn_ledger().record_assistant(
-                decision.text,
-                meta=assistant_meta,
-            )
-        if len(self.chat_history) > 32:
-            self.chat_history = self.chat_history[-32:]
-
-        self._apply_position_update(decision)
-        if frame is not None:
-            frame.final_decision = self._decision_to_frame_dict(decision)
-            grounding = getattr(frame, "source_grounding", None) or getattr(frame, "grounding", None)
-            if grounding is not None:
-                frame.final_decision["grounding_source"] = str(getattr(grounding, "grounding_source", "unknown") or "unknown")
-                frame.final_decision["grounding_preempt_mode"] = str(getattr(grounding, "preempt_mode", "") or "")
-                frame.final_decision["grounding_missing_evidence"] = list(getattr(grounding, "missing_evidence", ()) or ())
-            self._set_cognitive_memory_update(frame, decision=decision, notes=("chat_commit",))
-            self._commit_internal_state_for_frame(frame)
-            self._send_decision_to_body(decision, channel="chat")
-            self._finalize_cognitive_frame(frame)
-        self.logger.info("ERIS: %s", decision.text)
-        self.logger.info("[chat debug] parse_mode=%s | trace=%s", decision.parse_mode, decision.debug_trace or "<empty>")
-        self.logger.info("[chat parser] %s", decision.parser_trace or "<empty>")
 
     def _apply_position_update(self, decision: Decision) -> None:
         intent = decision.resolve_motion_intent()
@@ -765,55 +680,6 @@ class StateCommitServiceMixin:
             self.inferred_pos_x = max(0.0, self.inferred_pos_x - 0.4)
         elif intent == "walk" and facing == 1:
             self.inferred_pos_x = min(1.0, self.inferred_pos_x + 0.4)
-    def _build_silent_motion_decision(self, ti_report: TiPolicyReport) -> Decision | None:
-        motion_intent = str(getattr(ti_report, "motion_intent_hint", "") or "").strip()
-        motion_target_x = float(getattr(ti_report, "motion_target_x_hint", -1.0) or -1.0)
-        motion_facing = int(getattr(ti_report, "motion_facing_hint", 0) or 0)
-        if not motion_intent:
-            return None
-        if motion_target_x < 0.0 and motion_facing == 0:
-            return None
-        return Decision(
-            text="",
-            animation=str(getattr(ti_report, "animation_hint", "") or "stand"),
-            should_speak=False,
-            confidence=0.54,
-            parse_mode="motion_only",
-            debug_trace=f"silent_motion; ti_mode={getattr(ti_report, 'mode', '')}",
-            motion_intent=motion_intent,
-            motion_target_x=motion_target_x,
-            motion_facing=motion_facing,
-        )
-    def _build_direct_action_decision(self, user_text: str, ti_report, snapshot, *, repeat_count: int = 1) -> Decision | None:
-        if self.action_router is None or self.action_executor is None:
-            return None
-
-        routed = self.action_router.route_chat(user_text, last_action=self.last_system_action)
-        if not routed:
-            return None
-
-        action_name, action_input = routed
-        result = self.action_executor.execute(action_name, action_input)
-        text = self._action_result_to_text(result)
-        if action_name == "get_now_playing" and not result.success:
-            text = self._resolve_now_playing_text(snapshot) or text
-        if repeat_count == 2:
-            text = f"Bạn đang hỏi lại cùng một ý. {text}"
-        elif repeat_count >= 3:
-            text = f"Bạn đang spam cùng một ý. {text}"
-
-        decision = Decision(
-            text=text,
-            animation=self._action_animation_hint(action_name, ti_report.animation_hint),
-            debug_trace=f"Direct action route: {action_name}",
-            parse_mode="direct_action",
-            system_action=action_name,
-            action_input=action_input,
-        )
-        if action_name in {"open_url", "focus_window", "launch_app"}:
-            decision.motion_intent = "walk_to"
-            decision.motion_target_x = 0.5
-        return self.ti_governor.enforce_decision(decision, ti_report, user_hint=user_text)
     def _execute_system_action(self, decision: Decision, *, snapshot) -> Decision:
         if str(getattr(decision, "system_action", "") or "").strip() == "search_web":
             decision.system_action = ""

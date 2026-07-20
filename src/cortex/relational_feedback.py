@@ -12,7 +12,7 @@ Tầng này đọc feedback về *cách ERIS hiện diện* trong hội thoại:
 
 Nó không mutate relationship state, không tự viết câu trả lời, và không biến mọi
 chữ "lạnh" thành drama quan hệ. Nó chỉ trả một signal có score để các tầng sau
-ConversationDynamics / RelationshipEventBuilder / FeRenderer quyết định.
+SocialProjection / RelationshipEventBuilder / StyleProjection quyết định.
 
 Lý do tách riêng
 ----------------
@@ -291,9 +291,9 @@ class RelationalFeedbackAnalyzer:
 
 
 def merge_affect_with_relational_feedback(affect: Any, feedback: RelationalFeedbackSignal) -> dict[str, Any]:
-    """Tạo dict affect cho FeRenderer mà không cần mutate AffectSemanticSignal.
+    """Tạo dict affect cho StyleProjection mà không cần mutate AffectSemanticSignal.
 
-    FeRenderer đã nhận dict, nên đây là adapter sạch: giữ score cũ, rồi boost
+    StyleProjection nhận dict, nên đây là adapter sạch: giữ score cũ, rồi boost
     perceived_rejection / relational_pressure / attachment vừa đủ để kích
     `relational_repair` mà không bắt user phải "farm attachment". Cuối cùng cũng
     có một chỗ không biến cảm xúc thành thanh EXP, may thay.

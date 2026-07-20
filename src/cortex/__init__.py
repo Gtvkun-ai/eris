@@ -4,7 +4,6 @@ from .contracts import (
     CognitiveActionPlan,
     CognitiveAppraisal,
     CognitiveBroadcast,
-    CognitiveFrame,
     CognitiveMemoryUpdate,
     CognitiveMomentum,
     CognitivePercept,
@@ -30,10 +29,6 @@ from .contracts import (
     UnresolvedTensionLoop,
     UserSignals,
 )
-from .attention_salience import AttentionSalienceEngine, SalienceFrame
-from .action_planner import ACTION_SPACE, ActionPlanner
-from .appraisal import AppraisalEngine
-from .fe import FeRenderer
 from .goal_persistence import GoalPersistenceEngine, GoalPersistenceState
 from .internal_state import (
     AttachmentProcess,
@@ -53,11 +48,8 @@ from .internal_state import (
     TemporalCognitionEngine,
     TensionProcess,
 )
-from .ni import NiEngine
 from .se import SeLens
 from .self_model import SelfModelEngine
-from .session_ritual import SessionRitualEngine
-from .speech_core import SpeechCoreEngine
 from .social_presence import SocialPresenceDetector
 from .thought_stream import (
     AssociationGraph,
@@ -77,23 +69,15 @@ from .thought_stream import (
     ThoughtStreamEngine,
     UnresolvedTensionEngine,
 )
-try:
-    from .ti import TiGovernor
-except Exception:  # pragma: no cover - test memory không cần Ti/guard_config
-    TiGovernor = None  # type: ignore
+
 
 __all__ = [
     "AgentSpeechCore",
     "AssociationGraph",
     "AttentionCandidate",
-    "AppraisalEngine",
-    "AttentionSalienceEngine",
-    "ACTION_SPACE",
-    "ActionPlanner",
     "CognitiveActionPlan",
     "CognitiveAppraisal",
     "CognitiveBroadcast",
-    "CognitiveFrame",
     "CognitionDelta",
     "CognitiveMemoryUpdate",
     "CognitiveMomentum",
@@ -102,7 +86,6 @@ __all__ = [
     "CognitiveStreamEngine",
     "CognitiveMomentumEngine",
     "CognitiveTensionEngine",
-    "FeRenderer",
     "FeStyleMemory",
     "FeStylePlan",
     "FragmentStore",
@@ -123,7 +106,6 @@ __all__ = [
     "MotivationalPressureReport",
     "MotivationalUrge",
     "MomentumClosure",
-    "NiEngine",
     "PerceptEvent",
     "PersistenceDecay",
     "PersistentInternalState",
@@ -135,10 +117,7 @@ __all__ = [
     "SelfModelEngine",
     "SelfNarrative",
     "SelfState",
-    "SessionRitualEngine",
     "SessionRitualReport",
-    "SalienceFrame",
-    "SpeechCoreEngine",
     "SocialPresenceDetector",
     "SocialPresenceEvent",
     "SocialPresenceProcess",
@@ -155,7 +134,6 @@ __all__ = [
     "ThoughtStreamEngine",
     "ThoughtStreamReport",
     "ThoughtSurface",
-    "TiGovernor",
     "TiPolicyReport",
     "UnresolvedTensionEngine",
     "UnresolvedTensionLoop",

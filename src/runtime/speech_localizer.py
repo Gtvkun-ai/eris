@@ -128,6 +128,7 @@ class SpeechLocalizer:
 
     def __init__(self) -> None:
         self._cache: dict[tuple[str, str, str], str] = {}
+        self._failure_until: dict[tuple[str, str, str], float] = {}
         self._logged_persona_policies: set[str] = set()
 
     def localize(
@@ -182,6 +183,11 @@ class SpeechLocalizer:
             clean, cached, persona_policy=persona_policy
         ):
             return cached
+        failed_until = float(self._failure_until.get(key, 0.0) or 0.0)
+        if failed_until > time.monotonic():
+            if strict:
+                raise SpeechLocalizationError("japanese_localization_recently_failed")
+            return clean
 
         try:
             translated = self._translate_to_japanese(
@@ -194,6 +200,7 @@ class SpeechLocalizer:
         except SpeechLocalizationCancelled:
             raise
         except SpeechLocalizationError:
+            self._failure_until[key] = time.monotonic() + 15.0
             if strict:
                 raise
             return clean
@@ -201,10 +208,12 @@ class SpeechLocalizer:
         if not _valid_japanese_translation(
             clean, translated, persona_policy=persona_policy
         ):
+            self._failure_until[key] = time.monotonic() + 15.0
             if strict:
                 raise SpeechLocalizationError("japanese_localization_unavailable")
             return clean
         self._cache[key] = translated
+        self._failure_until.pop(key, None)
         return translated
 
     def _translate_to_japanese(

@@ -14,7 +14,7 @@ và thực tế quan sát được. Sai số đó (chứ không phải số lầ
 Nguyên tắc:
 - Mặc định bật (config.enabled=true). Khi tắt, không ai bị ảnh hưởng.
 - Tái dùng hạ tầng sẵn có: cosine/normalize/embedding-cache trong event_semantics,
-  và tokenize/clamp01 trong attention_salience. Không phát minh lại bánh xe.
+  và tokenize/clamp01 trong value_utils. Không phát minh lại bánh xe.
 - Tất định: lõi cập nhật nhận `now` từ ngoài, không gọi time.time() ngầm.
 - Commit-or-rollback: lỗi giữa chừng không để lại trạng thái nửa vời.
 
@@ -47,9 +47,9 @@ except Exception:  # pragma: no cover
     )
 
 try:  # cùng package cortex
-    from .attention_salience import clamp01, safe_float, tokenize  # type: ignore
+    from .value_utils import clamp01, safe_float, tokenize  # type: ignore
 except Exception:  # pragma: no cover
-    from cortex.attention_salience import clamp01, safe_float, tokenize  # type: ignore
+    from cortex.value_utils import clamp01, safe_float, tokenize  # type: ignore
 
 
 # =============================================================================

@@ -101,6 +101,29 @@ def _retry_after_seconds(response, default: float = 60.0) -> float:
     return max(1.0, float(default))
 
 
+def _key_pool_attempt_limit(model_name: str, pool_size: int) -> int:
+    """Giới hạn số project một request được phép đập vào khi gặp 429.
+
+    Các model social ``gpt-oss`` chạy hậu kỳ, không đáng để một observation nhỏ
+    đi tuần qua chín key. Hai project liên tiếp cùng 429 đã đủ mạnh để coi lane
+    đang nóng và nhường cho fallback/deterministic anchor. Main model khác vẫn
+    giữ hành vi cũ trừ khi người dùng đặt giới hạn chung qua env.
+    """
+
+    size = max(1, int(pool_size or 1))
+    model = str(model_name or "").strip().lower()
+    if model.startswith("openai/gpt-oss-"):
+        raw = str(os.environ.get("ERIS_SOCIAL_KEY_POOL_MAX_ATTEMPTS", "2") or "2").strip()
+    else:
+        raw = str(os.environ.get("ERIS_KEY_POOL_MAX_ATTEMPTS", "") or "").strip()
+        if not raw:
+            return size
+    try:
+        return max(1, min(size, int(raw)))
+    except (TypeError, ValueError):
+        return min(size, 2) if model.startswith("openai/gpt-oss-") else size
+
+
 def _is_empty_output_error(exc: requests.HTTPError) -> bool:
     """Detect lỗi Groq 'model output must contain either output text or tool calls'.
 
@@ -383,7 +406,8 @@ class OpenAICompatibleClient:
         url = f"{self.base_url}/chat/completions"
 
         # Có pool: gặp 429 thì xoay key kế và thử lại, tối đa bằng số key trong pool.
-        max_attempts = self.key_pool.size if (self.key_pool is not None and self.key_pool.size > 0) else 1
+        pool_size = self.key_pool.size if (self.key_pool is not None and self.key_pool.size > 0) else 1
+        max_attempts = _key_pool_attempt_limit(self.model_name, pool_size)
         last_error = None
         attempted_indices: set[int] = set()
         for attempt in range(max(1, max_attempts)):
@@ -719,7 +743,8 @@ class GeminiClient:
 
         # Có pool dùng chung: gặp 429 (hết quota project) thì xoay sang key kế và
         # thử lại, tối đa bằng số key trong pool. Không pool → đúng một lần như cũ.
-        max_attempts = self.key_pool.size if (self.key_pool is not None and self.key_pool.size > 0) else 1
+        pool_size = self.key_pool.size if (self.key_pool is not None and self.key_pool.size > 0) else 1
+        max_attempts = _key_pool_attempt_limit(self.model_name, pool_size)
         last_response = None
         attempted_indices: set[int] = set()
         for attempt in range(max(1, max_attempts)):

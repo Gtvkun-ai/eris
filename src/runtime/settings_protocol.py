@@ -15,7 +15,6 @@ _RESTART_REQUIRED = {
     "chat.max_concurrency",
     "prompt.strict_grounding",
     "memory.semantic_parser",
-    "pipeline.v3_enabled",
 }
 
 
@@ -34,7 +33,6 @@ _LEGACY_ADVANCED_MAP: dict[str, tuple[str, ...]] = {
     "ERIS_MEMORY_SEMANTIC_PARSER": ("memory", "semantic_parser"),
     "ERIS_MEMORY_DIGEST_MAINTENANCE": ("memory", "maintenance_enabled"),
     "ERIS_MEMORY_MAINTENANCE_BUDGET": ("memory", "maintenance_budget"),
-    "ERIS_V3_PIPELINE": ("pipeline", "v3_enabled"),
     "ERIS_PERFORMANCE_ACTS_ENABLED": ("stage", "performance_acts_enabled"),
     "ERIS_INTERRUPT_ENABLED": ("stage", "interrupt_enabled"),
     "ERIS_STAGE_PROTOCOL": ("stage", "protocol_enabled"),
@@ -144,7 +142,7 @@ def _normalize_legacy_value(key: str, value: Any) -> Any:
             return text
     if key in {
         "ERIS_DDS_ENABLED", "ERIS_STRICT_GROUNDING", "ERIS_MEMORY_SEMANTIC_PARSER",
-        "ERIS_MEMORY_DIGEST_MAINTENANCE", "ERIS_V3_PIPELINE", "ERIS_PERFORMANCE_ACTS_ENABLED",
+        "ERIS_MEMORY_DIGEST_MAINTENANCE", "ERIS_PERFORMANCE_ACTS_ENABLED",
         "ERIS_INTERRUPT_ENABLED", "ERIS_STAGE_PROTOCOL", "ERIS_STAGE_SEGMENT_TTS",
         "ERIS_TTS_TASK_MANAGER", "ERIS_TTS_STAGE_LOCALIZE", "ERIS_TTS_AUDIO_POLISH",
         "ERIS_TUTOR_ENABLED", "ERIS_TUTOR_QUICK_SEARCH_ENABLED", "ERIS_TUTOR_RESEARCH_ENABLED",

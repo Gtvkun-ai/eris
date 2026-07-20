@@ -175,14 +175,20 @@ class InitiativeController:
             state = self._state
             recent_hour = [item for item in state.events if now - item.timestamp <= 3600.0]
             last = state.events[-1].to_dict() if state.events else {}
+            hourly_budget = max(0, int(_as_float(_setting("hourly_budget", 2), 2)))
+            minimum_interval = max(60.0, _as_float(_setting("minimum_interval_seconds", 1200.0), 1200.0))
+            next_allowed_at = float(last.get("timestamp", 0.0) or 0.0) + minimum_interval if last else 0.0
             return {
                 "schema": "eris.initiative.v1",
                 "enabled": _as_bool(_setting("enabled", True), True),
-                "hourly_budget": max(0, int(_as_float(_setting("hourly_budget", 2), 2))),
+                "hourly_budget": hourly_budget,
                 "used_last_hour": len(recent_hour),
-                "minimum_interval_seconds": max(60.0, _as_float(_setting("minimum_interval_seconds", 1200.0), 1200.0)),
+                "remaining_budget": max(0, hourly_budget - len(recent_hour)),
+                "minimum_interval_seconds": minimum_interval,
+                "next_allowed_at": next_allowed_at,
                 "last_spoken": last,
                 "last_decision": dict(state.last_decision),
+                "recent_events": [item.to_dict() for item in state.events[-8:]][::-1],
                 "version": state.version,
             }
 

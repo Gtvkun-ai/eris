@@ -19,7 +19,7 @@ from semantic_authority import SemanticAuthorityPolicy
 
 from .contracts import AI_RUNTIME_VERSION, IntentionPlan, StateEvent
 from .identity import PendingStrategyUse, PRIMARY_RELATIONSHIP_ID
-from .reference_repair import apply_reference_repair_to_plan, resolve_reference_repair
+from runtime.cognition.plan_policy import apply_cognitive_brief_to_plan
 from .startup_grounding import (
     build_startup_fallback_text,
     collect_startup_grounding,
@@ -29,16 +29,12 @@ from .startup_grounding import (
 
 
 def architecture_c_enabled() -> bool:
-    """Kiến trúc production mặc định; legacy chỉ là đường rollback có chủ ý."""
-    legacy_flag = str(os.getenv("ERIS_ARCHITECTURE_C_ENABLED", "1") or "1").strip().lower()
-    if legacy_flag in {"0", "false", "no", "off"}:
-        return False
-    try:
-        from runtime.runtime_settings_store import runtime_text
-        mode = str(runtime_text("architecture", "mode", default="ai_orchestrated") or "ai_orchestrated").strip().lower()
-        return mode not in {"legacy", "cortex_legacy", "disabled", "off"}
-    except Exception:
-        return True
+    """Cortex V2 là kiến trúc production duy nhất.
+
+    Không còn cờ môi trường để âm thầm quay về legacy pipeline. Bootstrap lỗi
+    phải lộ rõ và dừng lượt, thay vì đổi sang một bộ contract nhận thức khác.
+    """
+    return True
 
 
 def _runtime_language() -> str:
@@ -148,7 +144,6 @@ class AIChatOrchestrator:
         prior_public_history = tuple(host._chat_history_for_llm(limit=16))
         if previous_public_context and not prior_public_history:
             prior_public_history = ({"role": "assistant", "content": previous_public_context},)
-        reference_repair = resolve_reference_repair(user_text, prior_public_history)
         host._append_chat_history("user", user_text)
 
         host._chat_snapshot_for_vision = snapshot
@@ -178,16 +173,20 @@ class AIChatOrchestrator:
         personality_context = mind_state.personality_prompt_context()
         relationship_context = mind_state.relationship.prompt_summary()
         grounding_context = str(getattr(grounding_report, "prompt_context", "") or "")
-        if reference_repair.active:
-            grounding_context = "\n".join(
-                part for part in (grounding_context, reference_repair.prompt_context()) if part
-            )
-            host.logger.info(
-                "[reference repair] kind=%s confidence=%.2f phrase=%s",
-                reference_repair.kind,
-                reference_repair.confidence,
-                reference_repair.referenced_phrase or "<implicit>",
-            )
+        cognitive_brief = host.ai_pre_response_cognition.analyze(
+            user_text=user_text,
+            recent_history=prior_public_history,
+            turn_id=turn_id,
+            turn_seq=turn_seq,
+            grounding_context=grounding_context,
+            relationship_summary=relationship_context,
+            personality_summary=personality_context,
+            memory_available=bool(str(memory_context or "").strip()),
+            interrupt_context=speech_interrupt_context,
+            metadata={"event_kind": "chat"},
+        )
+        host.last_cognitive_brief = cognitive_brief
+        user_meta["pre_response_cognitive_brief"] = cognitive_brief.to_dict()
         discovery_runtime = getattr(host, "ai_discovery_runtime", None)
         telemetry_payload = snapshot.to_machine_context() if callable(getattr(snapshot, "to_machine_context", None)) else {}
         discovery_context = (
@@ -207,13 +206,13 @@ class AIChatOrchestrator:
             "memory_available": bool(str(memory_context or "").strip()),
             "interrupt_context": speech_interrupt_context,
             "discovery": discovery_context,
-            "reference_repair": reference_repair.to_dict(),
+            "cognitive_brief": cognitive_brief.to_dict(),
         }
         chat_plan = host.ai_intention_planner.plan_chat(
             planning_snapshot,
             turn_seq=turn_seq,
         )
-        chat_plan = apply_reference_repair_to_plan(chat_plan, reference_repair)
+        chat_plan = apply_cognitive_brief_to_plan(chat_plan, cognitive_brief)
         discovery_id = ""
         if discovery_runtime is not None:
             chat_plan, discovery_grounding, discovery_id = discovery_runtime.bind_plan(chat_plan)
@@ -254,6 +253,7 @@ class AIChatOrchestrator:
                 allow_fallback=False,
                 language_hint=_runtime_language(),
                 planned_intention=chat_plan,
+                cognitive_brief=cognitive_brief,
             )
             if not payload and not no_fallback_mode_enabled():
                 payload = host.ai_model_router.generate_public_reply(
@@ -269,9 +269,54 @@ class AIChatOrchestrator:
                     allow_fallback=True,
                     language_hint=_runtime_language(),
                     planned_intention=chat_plan,
+                    cognitive_brief=cognitive_brief,
                 )
         finally:
             host._set_background_memory_digest_remote_inflight(False)
+
+        if payload:
+            gate = getattr(host, "ai_cognitive_acceptance_gate", None)
+            violations = gate.validate(str(payload.get("text", "") or ""), cognitive_brief) if gate is not None else ()
+            if violations:
+                host.logger.warning(
+                    "[cortex v2 gate] turn=%s violations=%s; retrying public writer once",
+                    turn_seq,
+                    ",".join(item.code for item in violations),
+                )
+                retry_instruction = gate.retry_instruction(violations, cognitive_brief)
+                host._set_background_memory_digest_remote_inflight(True)
+                try:
+                    retried = host.ai_model_router.generate_public_reply(
+                        chat_history=history,
+                        user_text=user_message,
+                        memory_context=memory_context,
+                        grounding_context=grounding_context,
+                        relationship_context=relationship_context,
+                        personality_context=personality_context,
+                        interrupt_context=speech_interrupt_context,
+                        use_escalation=use_escalation,
+                        reasoning_effort=reasoning_effort,
+                        allow_fallback=not no_fallback_mode_enabled(),
+                        language_hint=_runtime_language(),
+                        planned_intention=chat_plan,
+                        cognitive_brief=cognitive_brief,
+                        retry_instruction=retry_instruction,
+                    )
+                finally:
+                    host._set_background_memory_digest_remote_inflight(False)
+                if retried:
+                    retry_violations = gate.validate(str(retried.get("text", "") or ""), cognitive_brief)
+                    if not retry_violations:
+                        payload = retried
+                    else:
+                        host.logger.warning(
+                            "[cortex v2 gate] retry still invalid turn=%s violations=%s; suppressing unsafe surface",
+                            turn_seq,
+                            ",".join(item.code for item in retry_violations),
+                        )
+                        payload = {}
+                else:
+                    payload = {}
 
         if not payload:
             fallback_payload = {
@@ -434,6 +479,10 @@ class AIAutonomousOrchestrator:
         if not public_text:
             return "", None
         host.last_text = public_text
+        # Startup/autonomous là public assistant turn thật, không phải hiệu ứng
+        # trang trí. Giữ cùng con trỏ gần nhất với chat để câu user kế tiếp có
+        # thể hỏi "ý câu vừa rồi là gì" mà không bị Eris giả mất trí nhớ.
+        host.last_chat_answer = public_text
         clock = getattr(host, "interaction_clock", None)
         if clock is not None:
             try:
@@ -527,6 +576,8 @@ class AIAutonomousOrchestrator:
                 "Choose one short opening through this cascade: current OCR/UIA evidence, meaningful runtime signal, "
                 "real continuity/memory, then personality-led presence. Startup does not require external evidence to speak. "
                 "A low-risk inference is allowed only as a hypothesis with an explicit basis and room for correction. "
+                "The opening must be self-contained: every phrase such as 'the real part', 'the rest', 'that thing', or 'what matters' "
+                "must name its referent inside the same sentence. "
                 "Never invent that the user plans to start, change, fix, or feel something. Do not report restore state "
                 "or memory machinery."
             ),

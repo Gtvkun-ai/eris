@@ -7,7 +7,6 @@ import traceback
 
 from actions import ActionExecutor, ActionRouter
 from app_logging import configure_logging, get_logger
-from cortex import FeRenderer, NiEngine, TiGovernor
 from domain import Decision
 from llm import LlmService
 from llm.process_manager import RemoteModelProcessManager
@@ -146,9 +145,6 @@ class AttentionOverseer:
         )
         self.decision_parser = DecisionParser(fallback_decision, logger=self.parse_logger)
         self.telemetry_service = TelemetryService()
-        self.ni_engine = NiEngine()
-        self.ti_governor = TiGovernor(logger=self.loop_logger)
-        self.fe_renderer = FeRenderer()
         self.action_executor = ActionExecutor(logger=self.action_logger)
         self.action_router = ActionRouter()
         self.coordinator = RuntimeCoordinator(
@@ -157,9 +153,6 @@ class AttentionOverseer:
             llm_service=self.llm_service,
             parser=self.decision_parser,
             telemetry_service=self.telemetry_service,
-            ni_engine=self.ni_engine,
-            ti_governor=self.ti_governor,
-            fe_renderer=self.fe_renderer,
             memory_core=self.memory_core,
             body_running_fn=self._is_body_running,
             action_executor=self.action_executor,

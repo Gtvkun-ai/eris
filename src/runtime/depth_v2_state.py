@@ -256,8 +256,6 @@ def _autoswitch_block(
         ("n1", "N1", "emotional_consequence", n1_live, "pink"),
         ("n2", "N2", "development_growth", False, "pink"),
         ("interiority", "interiority", "interior_surface", False, "pink"),
-        ("tom", "tom", "tom_advisor", bool(_text(tom_text)), "pink"),
-        ("embed", "embed", "real_embeddings", False, "mint"),
         ("mind", "mind", "private_mind", False, "mint"),
     )
     chips: list[dict[str, Any]] = []

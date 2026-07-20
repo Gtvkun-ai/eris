@@ -1258,7 +1258,7 @@ class SourceGroundingEngine:
         """
         Tạo signal khi nguồn user yêu cầu chưa có evidence.
 
-        Bản cũ sinh text public ở đây, rồi `post_generation_filters.py` dùng lại
+        Bản cũ sinh text public ở đây, rồi một filter hậu kỳ dùng lại
         nó như một câu thay thế. Đó là text surgery: SourceGrounding tự biến mình
         thành tác giả lời nói cuối. Bản này cố tình không làm vậy nữa.
 

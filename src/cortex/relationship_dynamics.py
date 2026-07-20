@@ -32,7 +32,7 @@ Ranh giới trách nhiệm
 ---------------------
 - RelationshipEventBuilder: suy event score từ evidence.
 - RelationshipDynamicsEngine: cập nhật state.
-- PersonalityLens/FeRenderer: dùng style pressure để nói.
+- StyleProjection: dùng style pressure để nói.
 
 Không module nào trong file này nên tự đọc marker kiểu "ổn", "project", "ERIS"
 để tăng trust/ritual. Nếu cần dùng surface cue, đưa nó qua builder để bị cap
@@ -1204,7 +1204,7 @@ class RelationshipDynamicsEngine:
 class RelationshipStylePressure:
     """Áp lực style derive từ relationship state.
 
-    PersonalityLens/FeRenderer nên đọc pressure này thay vì đọc thẳng mọi field.
+    StyleProjection nên đọc pressure này thay vì đọc thẳng mọi field.
     Vì nếu mỗi module tự diễn dịch state theo ý nó thì lại thành hội nghị quốc tế
     của if/else, một thảm cảnh có format JSON.
     """

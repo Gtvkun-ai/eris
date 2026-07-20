@@ -34,7 +34,10 @@ from dataclasses import dataclass
 from typing import Optional
 
 from runtime.prosody_director import ProsodyDirector
-from runtime.speech_localizer import SpeechLocalizer
+from runtime.speech_localizer import (
+    SpeechLocalizationCancelled,
+    SpeechLocalizer,
+)
 from runtime.tts_audio_polish import audio_polish_enabled, polish_pcm16_mono
 from runtime.tts_markup import render_tts_markup
 from runtime.vocal_cache import VocalCache, VocalCacheKey, strip_audible_prefix, vocal_cache_enabled
@@ -1532,34 +1535,57 @@ class _TtsWorker:
         *,
         cancel_event=None,
         authority_check=None,
-    ) -> tuple[str, bool]:
+    ) -> tuple[str, bool, str]:
         """Khóa transcript theo language contract trước khi gọi provider audio.
 
         ``prelocalized=True`` chỉ là metadata từ upstream, không phải bằng chứng.
-        Nếu contract là Nhật mà text vẫn còn Việt, localizer phải sửa hoặc fail
-        closed; không đẩy câu sai ngôn ngữ xuống Gemini TTS rồi mong nó tự hiểu.
+        Nếu contract là Nhật mà localizer lỗi, giữ quyền phát của turn bằng cách
+        rơi về đúng ngôn ngữ nguồn. Localization là lớp trình bày, không được làm
+        cả câu biến mất chỉ vì một request phụ cáu kỉnh với quota.
         """
 
         language_hint = self._request_language(req)
         text_to_speak = str(main_text_raw or "").strip()
         if language_hint != "ja" or not text_to_speak:
-            return text_to_speak, bool(req.prelocalized)
+            return text_to_speak, bool(req.prelocalized), language_hint
         if _contains_japanese_chars(text_to_speak):
-            return text_to_speak, True
+            return text_to_speak, True, "ja"
         if not _prelocalize_japanese_enabled():
-            raise RuntimeError("tts_japanese_transcript_not_localized")
+            source_language = normalize_language("", text=text_to_speak) or "vi"
+            logger.warning(
+                "[TTS] JP localization disabled; fail-open bằng transcript nguồn language=%s.",
+                source_language,
+            )
+            return text_to_speak, False, source_language
 
-        text_to_speak = self._localizer.localize(
-            text_to_speak,
-            language_hint="ja",
-            prosody_style=req.prosody_style,
-            strict=True,
-            cancel_event=cancel_event,
-            authority_check=authority_check,
-        )
+        source_text = text_to_speak
+        try:
+            text_to_speak = self._localizer.localize(
+                source_text,
+                language_hint="ja",
+                prosody_style=req.prosody_style,
+                strict=True,
+                cancel_event=cancel_event,
+                authority_check=authority_check,
+            )
+        except SpeechLocalizationCancelled:
+            raise
+        except Exception as exc:
+            source_language = normalize_language("", text=source_text) or "vi"
+            logger.warning(
+                "[TTS] JP localization lỗi (%s); fail-open bằng transcript nguồn language=%s.",
+                _short_error(exc),
+                source_language,
+            )
+            return source_text, False, source_language
         if not _contains_japanese_chars(text_to_speak):
-            raise RuntimeError("tts_japanese_localizer_returned_non_japanese")
-        return text_to_speak, True
+            source_language = normalize_language("", text=source_text) or "vi"
+            logger.warning(
+                "[TTS] JP localizer trả transcript không phải tiếng Nhật; fail-open language=%s.",
+                source_language,
+            )
+            return source_text, False, source_language
+        return text_to_speak, True, "ja"
 
     def _vocal_prefix_wav(
         self, req: _SpeakRequest, prefix: str, prosody_plan,
@@ -1648,12 +1674,15 @@ class _TtsWorker:
         vocal_prefix = str(getattr(req, "vocal_prefix", "") or "").strip()
         main_text_raw = strip_audible_prefix(req.text, vocal_prefix) if vocal_prefix else req.text
         prefix_is_separate = bool(vocal_prefix and main_text_raw != req.text)
-        text_to_speak, localized = self._resolve_main_transcript(
+        text_to_speak, localized, effective_language = self._resolve_main_transcript(
             req,
             main_text_raw,
             cancel_event=cancel_event,
             authority_check=authority_check,
         )
+        if effective_language != language_hint:
+            language_hint = effective_language
+            locale = _same_language_locale(language_hint)
         prosody_plan = self._prosody.plan(
             text_to_speak,
             stance=req.stance,
@@ -1724,12 +1753,15 @@ class _TtsWorker:
                     vocal_prefix = str(getattr(req, "vocal_prefix", "") or "").strip()
                     main_text_raw = strip_audible_prefix(req.text, vocal_prefix) if vocal_prefix else req.text
                     prefix_is_separate = bool(vocal_prefix and main_text_raw != req.text)
-                    text_to_speak, localized = self._resolve_main_transcript(
+                    text_to_speak, localized, effective_language = self._resolve_main_transcript(
                         req,
                         main_text_raw,
                         cancel_event=self._current_stop,
                         authority_check=lambda: self._request_is_current(req),
                     )
+                    if effective_language != language_hint:
+                        language_hint = effective_language
+                        locale = _same_language_locale(language_hint)
                     prosody_plan = self._prosody.plan(
                         text_to_speak,
                         stance=req.stance,

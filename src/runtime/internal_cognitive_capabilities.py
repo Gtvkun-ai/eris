@@ -166,14 +166,14 @@ COGNITIVE_CAPABILITY_CONTRACTS: dict[str, CognitiveCapabilityContract] = {
         public_name_vi="kiểm lại claim hội thoại",
         description_vi="đọc claim public đang bị user sửa và chỉ ra Eris đã gán nghĩa gì",
         handler_id="internal_cognitive.review_discourse_claim",
-        required_sources=("social_cognition_v2.discourse_ledger",),
+        required_sources=("public_turn_ledger",),
     ),
     "inspect_unresolved_questions": CognitiveCapabilityContract(
         capability_id="inspect_unresolved_questions",
         public_name_vi="xem câu hỏi còn bỏ ngỏ",
         description_vi="đọc discourse focus để tìm câu hỏi hoặc correction chưa được đóng",
         handler_id="internal_cognitive.inspect_unresolved_questions",
-        required_sources=("social_cognition_v2.discourse_ledger",),
+        required_sources=("public_turn_ledger",),
     ),
     "inspect_memory_candidates": CognitiveCapabilityContract(
         capability_id="inspect_memory_candidates",
@@ -194,21 +194,21 @@ COGNITIVE_CAPABILITY_CONTRACTS: dict[str, CognitiveCapabilityContract] = {
         public_name_vi="xem trạng thái xã hội hiện tại",
         description_vi="đọc social state đã được runtime tính, không suy đoán cảm xúc user",
         handler_id="internal_cognitive.inspect_social_state",
-        required_sources=("social_cognition_v2.social_state",),
+        required_sources=("ai_state_reducer",),
     ),
     "detect_internal_contradictions": CognitiveCapabilityContract(
         capability_id="detect_internal_contradictions",
         public_name_vi="tìm mâu thuẫn trong lời Eris",
         description_vi="đối chiếu các claim public gần đây và báo cặp phủ định có nội dung trùng",
         handler_id="internal_cognitive.detect_internal_contradictions",
-        required_sources=("social_cognition_v2.discourse_ledger",),
+        required_sources=("public_turn_ledger",),
     ),
     "summarize_open_loops": CognitiveCapabilityContract(
         capability_id="summarize_open_loops",
         public_name_vi="tổng kết việc nhận thức còn dang dở",
         description_vi="gom correction, câu hỏi bỏ ngỏ và memory candidate thành danh sách open loop có evidence",
         handler_id="internal_cognitive.summarize_open_loops",
-        required_sources=("social_cognition_v2.discourse_ledger", "memory_kernel"),
+        required_sources=("ai_state_reducer", "memory_kernel"),
     ),
     "inspect_capability_health": CognitiveCapabilityContract(
         capability_id="inspect_capability_health",
@@ -261,12 +261,12 @@ class InternalCognitiveCapabilityRuntime:
             return False, "runtime_owner_unavailable"
         if cap not in self._handlers:
             return False, "cognitive_handler_missing"
-        if cap in {"review_discourse_claim", "inspect_unresolved_questions", "inspect_social_state", "detect_internal_contradictions"}:
-            engine = getattr(owner, "social_cognition_v2", None)
-            if engine is None:
-                return False, "social_cognition_v2_unavailable"
-            if cap != "inspect_social_state" and getattr(engine, "ledger", None) is None:
-                return False, "discourse_ledger_unavailable"
+        if cap in {"review_discourse_claim", "detect_internal_contradictions"}:
+            if getattr(owner, "public_turn_ledger", None) is None:
+                return False, "public_turn_ledger_unavailable"
+        if cap in {"inspect_unresolved_questions", "inspect_social_state"}:
+            if getattr(owner, "ai_state_reducer", None) is None:
+                return False, "ai_state_reducer_unavailable"
         if cap == "inspect_memory_candidates":
             if self._memory_candidate_store() is None:
                 return False, "memory_candidate_store_unavailable"
@@ -380,9 +380,16 @@ class InternalCognitiveCapabilityRuntime:
             return False
         return bool(data.get("verification_key") == capability_id)
 
-    def _social_engine(self) -> Any | None:
+    def _mind_state(self) -> Any | None:
         owner = self.owner
-        return getattr(owner, "social_cognition_v2", None) if owner is not None else None
+        reducer = getattr(owner, "ai_state_reducer", None) if owner is not None else None
+        snapshot = getattr(reducer, "snapshot", None)
+        if not callable(snapshot):
+            return None
+        try:
+            return snapshot()
+        except Exception:
+            return None
 
     def _memory_candidate_store(self) -> Any | None:
         owner = self.owner
@@ -397,73 +404,59 @@ class InternalCognitiveCapabilityRuntime:
         return getattr(memory_core, "memory_candidate", None)
 
     def _review_discourse_claim(self, action_input: str) -> tuple[str, dict[str, Any], tuple[CognitiveEvidence, ...]]:
-        engine = self._social_engine()
-        ledger = getattr(engine, "ledger", None)
-        target = _clean(action_input)
-        claim = None
-        if target and target not in {"latest", "latest_challenged", "current"}:
-            claim = ledger.get(target)
-        if claim is None:
-            claim = ledger.challenged_claim()
-        if claim is None:
-            claims = list(getattr(ledger, "claims", ()) or ())
-            claim = claims[-1] if claims else None
-        if claim is None:
-            evidence = (CognitiveEvidence("cognitive:discourse_ledger:empty", "discourse_ledger", "ledger không có claim public"),)
+        del action_input
+        turns = [turn for turn in self._recent_public_turns(20) if _clean(getattr(turn, "text", ""))]
+        if not turns:
+            evidence = (CognitiveEvidence("public_turns:empty", "public_turn_ledger", "ledger không có câu public"),)
             return (
-                "Tôi đã kiểm tra. Hiện không có claim public nào đủ cụ thể để rà lại.",
+                "Tôi đã kiểm tra. Hiện không có câu public nào đủ cụ thể để rà lại.",
                 {"verification_key": "review_discourse_claim", "found": False},
                 evidence,
             )
-        proposition = _clean(getattr(claim, "proposition", "") or getattr(claim, "text", ""), 260)
-        status = _clean(getattr(claim, "status", "active"), 40)
-        unresolved = _clean(getattr(getattr(ledger, "focus", None), "unresolved_question", ""), 220)
-        if status == "challenged":
-            text = f"Tôi đã kiểm lại. Claim đang bị sửa là: “{proposition}”."
-        else:
-            text = f"Tôi đã kiểm lại claim gần nhất: “{proposition}”. Trạng thái hiện là {status}."
-        if unresolved:
-            text += f" Câu còn phải trả lời là: “{unresolved}”."
+        turn = turns[-1]
+        proposition = _clean(getattr(turn, "text", ""), 260)
+        state = self._mind_state()
+        observation = dict(getattr(state, "latest_observation", {}) or {}) if state is not None else {}
+        fault = float(observation.get("assistant_fault_probability", 0.0) or 0.0)
+        repair = bool(observation.get("repair_needed", False))
+        status = "needs_review" if repair or fault >= 0.50 else "active"
+        text = f"Tôi đã kiểm lại câu public gần nhất: “{proposition}”."
+        if status == "needs_review":
+            text += " Observer hậu kỳ đánh dấu câu này có khả năng cần sửa."
         evidence = (CognitiveEvidence(
-            f"claim_id:{getattr(claim, 'claim_id', 'unknown')}",
-            "social_cognition_v2.discourse_ledger",
+            f"turn_id:{getattr(turn, 'turn_id', 'unknown')}",
+            "public_turn_ledger",
             proposition,
-            {"status": status, "turn_id": _clean(getattr(claim, "turn_id", ""), 80)},
+            {"status": status, "assistant_fault_probability": round(fault, 4)},
         ),)
         return text, {
             "verification_key": "review_discourse_claim",
             "found": True,
-            "claim_id": getattr(claim, "claim_id", ""),
+            "turn_id": getattr(turn, "turn_id", ""),
             "claim_status": status,
             "claim_text": proposition,
-            "unresolved_question": unresolved,
+            "assistant_fault_probability": fault,
         }, evidence
 
     def _inspect_unresolved_questions(self, action_input: str) -> tuple[str, dict[str, Any], tuple[CognitiveEvidence, ...]]:
         del action_input
-        engine = self._social_engine()
-        ledger = getattr(engine, "ledger", None)
-        focus = getattr(ledger, "focus", None)
-        question = _clean(getattr(focus, "unresolved_question", ""), 260)
-        claim_id = _clean(getattr(focus, "challenged_claim_id", ""), 80)
-        if question:
-            text = f"Câu đang bỏ ngỏ là: “{question}”."
-            summary = question
-        elif claim_id:
-            text = "Có một claim đang bị challenge nhưng chưa có câu hỏi follow-up cụ thể."
-            summary = claim_id
+        state = self._mind_state()
+        observation = dict(getattr(state, "latest_observation", {}) or {}) if state is not None else {}
+        open_loop = _clean(observation.get("open_loop", ""), 260)
+        if open_loop:
+            text = f"Điều đang bỏ ngỏ là: “{open_loop}”."
+            summary = open_loop
         else:
-            text = "Tôi đã kiểm tra. Discourse hiện không có câu hỏi nào được đánh dấu bỏ ngỏ."
+            text = "Tôi đã kiểm tra. State hiện không đánh dấu câu hỏi nào còn bỏ ngỏ."
             summary = "none"
         evidence = (CognitiveEvidence(
-            f"discourse_focus:{claim_id or 'none'}",
-            "social_cognition_v2.discourse_focus",
+            f"mind_state:turn:{int(getattr(state, 'last_applied_turn_seq', 0) or 0)}",
+            "ai_state_reducer.latest_observation",
             summary,
         ),)
         return text, {
             "verification_key": "inspect_unresolved_questions",
-            "unresolved_question": question,
-            "challenged_claim_id": claim_id,
+            "unresolved_question": open_loop,
         }, evidence
 
     def _inspect_memory_candidates(self, action_input: str) -> tuple[str, dict[str, Any], tuple[CognitiveEvidence, ...]]:
@@ -533,34 +526,41 @@ class InternalCognitiveCapabilityRuntime:
 
     def _inspect_social_state(self, action_input: str) -> tuple[str, dict[str, Any], tuple[CognitiveEvidence, ...]]:
         del action_input
-        engine = self._social_engine()
-        state = getattr(engine, "state", None)
-        payload = state.to_dict() if callable(getattr(state, "to_dict", None)) else {}
-        anger = int(getattr(state, "anger_level", 0) or 0)
-        warmth = float(payload.get("warmth", 0.0) or 0.0)
-        irritation = float(payload.get("irritation", 0.0) or 0.0)
-        play = float(payload.get("play_contract", 0.0) or 0.0)
+        state = self._mind_state()
+        relationship = getattr(state, "relationship", None)
+        appraisal = getattr(state, "appraisal", None)
+        payload = {
+            "relational_trust": float(getattr(relationship, "relational_trust", 0.0) or 0.0),
+            "familiarity": float(getattr(relationship, "familiarity", 0.0) or 0.0),
+            "closeness": float(getattr(relationship, "closeness", 0.0) or 0.0),
+            "playful_safety": float(getattr(relationship, "playful_safety", 0.0) or 0.0),
+            "rupture": float(getattr(relationship, "rupture", 0.0) or 0.0),
+            "irritation": float(getattr(appraisal, "irritation", 0.0) or 0.0),
+            "tenderness": float(getattr(appraisal, "tenderness", 0.0) or 0.0),
+        }
         text = (
-            f"Trạng thái xã hội hiện tại: mức cáu {anger}/5, warmth {warmth:.2f}, "
-            f"irritation {irritation:.2f}, play-contract {play:.2f}. Đây là state của Eris, không phải chẩn đoán cảm xúc của bạn."
+            "State quan hệ hiện tại: "
+            f"trust {payload['relational_trust']:.2f}, familiarity {payload['familiarity']:.2f}, "
+            f"closeness {payload['closeness']:.2f}, rupture {payload['rupture']:.2f}. "
+            "Đây là read-model của Eris, không phải chẩn đoán cảm xúc của bạn."
         )
+        seq = int(getattr(state, "last_applied_turn_seq", 0) or 0)
         evidence = (CognitiveEvidence(
-            f"social_state:timestamp:{int(getattr(state, 'last_updated_at', time.time()))}",
-            "social_cognition_v2.social_state",
-            f"anger={anger} warmth={warmth:.2f} irritation={irritation:.2f}",
+            f"ai_state:turn:{seq}",
+            "ai_state_reducer",
+            f"trust={payload['relational_trust']:.2f} closeness={payload['closeness']:.2f} rupture={payload['rupture']:.2f}",
             payload,
         ),)
-        return text, {"verification_key": "inspect_social_state", "anger_level": anger, **payload}, evidence
+        return text, {"verification_key": "inspect_social_state", **payload}, evidence
 
     def _detect_internal_contradictions(self, action_input: str) -> tuple[str, dict[str, Any], tuple[CognitiveEvidence, ...]]:
         del action_input
-        engine = self._social_engine()
-        claims = list(getattr(getattr(engine, "ledger", None), "claims", ()) or ())[-16:]
+        turns = [turn for turn in self._recent_public_turns(20) if _clean(getattr(turn, "text", ""))][-16:]
         contradictions: list[tuple[Any, Any, float]] = []
-        for idx, left in enumerate(claims):
-            left_text = _clean(getattr(left, "proposition", "") or getattr(left, "text", ""))
-            for right in claims[idx + 1:]:
-                right_text = _clean(getattr(right, "proposition", "") or getattr(right, "text", ""))
+        for idx, left in enumerate(turns):
+            left_text = _clean(getattr(left, "text", ""))
+            for right in turns[idx + 1:]:
+                right_text = _clean(getattr(right, "text", ""))
                 if _has_negation(left_text) == _has_negation(right_text):
                     continue
                 a, b = _token_set(left_text), _token_set(right_text)
@@ -568,36 +568,34 @@ class InternalCognitiveCapabilityRuntime:
                 if score >= 0.62 and len(a & b) >= 2:
                     contradictions.append((left, right, score))
         if not contradictions:
-            text = "Tôi đã đối chiếu các claim public gần đây. Chưa thấy cặp mâu thuẫn phủ định đủ rõ."
-            evidence = (CognitiveEvidence("claim_scan:none", "discourse_ledger", f"scanned={len(claims)}"),)
+            text = "Tôi đã đối chiếu các câu public gần đây. Chưa thấy cặp phủ định mâu thuẫn đủ rõ."
+            evidence = (CognitiveEvidence("public_turn_scan:none", "public_turn_ledger", f"scanned={len(turns)}"),)
         else:
             left, right, score = contradictions[-1]
             text = (
                 "Tôi thấy một cặp có khả năng mâu thuẫn: "
-                f"“{_clean(getattr(left, 'proposition', '') or left.text, 180)}” và "
-                f"“{_clean(getattr(right, 'proposition', '') or right.text, 180)}”."
+                f"“{_clean(getattr(left, 'text', ''), 180)}” và “{_clean(getattr(right, 'text', ''), 180)}”."
             )
             evidence = (
-                CognitiveEvidence(f"claim_id:{left.claim_id}", "discourse_ledger", _clean(left.text, 220)),
-                CognitiveEvidence(f"claim_id:{right.claim_id}", "discourse_ledger", _clean(right.text, 220)),
+                CognitiveEvidence(f"turn_id:{left.turn_id}", "public_turn_ledger", _clean(left.text, 220)),
+                CognitiveEvidence(f"turn_id:{right.turn_id}", "public_turn_ledger", _clean(right.text, 220)),
             )
         return text, {
             "verification_key": "detect_internal_contradictions",
-            "scanned_claims": len(claims),
+            "scanned_claims": len(turns),
             "contradiction_count": len(contradictions),
             "pairs": [
-                {"left": left.claim_id, "right": right.claim_id, "score": round(score, 4)}
+                {"left": left.turn_id, "right": right.turn_id, "score": round(score, 4)}
                 for left, right, score in contradictions[:6]
             ],
         }, evidence
 
     def _summarize_open_loops(self, action_input: str) -> tuple[str, dict[str, Any], tuple[CognitiveEvidence, ...]]:
         del action_input
-        engine = self._social_engine()
-        ledger = getattr(engine, "ledger", None) if engine is not None else None
-        focus = getattr(ledger, "focus", None)
-        question = _clean(getattr(focus, "unresolved_question", ""), 220)
-        challenged = _clean(getattr(focus, "challenged_claim_id", ""), 80)
+        state = self._mind_state()
+        observation = dict(getattr(state, "latest_observation", {}) or {}) if state is not None else {}
+        open_loop = _clean(observation.get("open_loop", ""), 220)
+        repair = bool(observation.get("repair_needed", False))
         store = self._memory_candidate_store()
         candidates = []
         if store is not None:
@@ -609,24 +607,24 @@ class InternalCognitiveCapabilityRuntime:
             except Exception:
                 candidates = []
         loops: list[str] = []
-        if challenged:
-            loops.append("một claim đang bị sửa")
-        if question:
-            loops.append("một câu hỏi chưa đóng")
+        if repair:
+            loops.append("một lượt có thể cần sửa")
+        if open_loop:
+            loops.append("một ý chưa đóng")
         if candidates:
             loops.append(f"{len(candidates)} ký ức cũ chưa sắp xếp")
         text = "Tôi đã kiểm tra. " + ("Hiện còn: " + "; ".join(loops) + "." if loops else "Hiện không còn điều gì đáng giữ mở.")
         evidence = (CognitiveEvidence(
             "open_loops:snapshot",
-            "internal_cognitive.aggregate",
-            f"challenged={bool(challenged)} question={bool(question)} memory_candidates={len(candidates)}",
-            {"challenged_claim_id": challenged, "unresolved_question": question, "memory_candidate_count": len(candidates)},
+            "ai_state_reducer+memory_kernel",
+            f"repair={repair} open_loop={bool(open_loop)} memory_candidates={len(candidates)}",
+            {"repair_needed": repair, "open_loop": open_loop, "memory_candidate_count": len(candidates)},
         ),)
         return text, {
             "verification_key": "summarize_open_loops",
             "open_loop_count": len(loops),
-            "challenged_claim_id": challenged,
-            "unresolved_question": question,
+            "repair_needed": repair,
+            "unresolved_question": open_loop,
             "memory_candidate_count": len(candidates),
         }, evidence
 

@@ -26,7 +26,7 @@ except Exception:  # pragma: no cover
         return -1.0
 
 try:  # pragma: no cover
-    from cortex.attention_salience import tokenize  # type: ignore
+    from cortex.value_utils import tokenize  # type: ignore
 except Exception:  # pragma: no cover
     def tokenize(text: Any):  # type: ignore
         return set(str(text or "").lower().split())

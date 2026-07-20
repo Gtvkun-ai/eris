@@ -576,15 +576,8 @@ def _screen_context_from_snapshot(snapshot: Any) -> str:
 
 
 def _reach_situation_model(runtime_owner: Any) -> Optional[Any]:
-    sm = getattr(runtime_owner, "situation_model", None)
-    if sm is None:
-        for attr in ("cognitive_pipeline", "shadow_pipeline", "v3_pipeline", "_shadow_pipeline_instance"):
-            pipeline = getattr(runtime_owner, attr, None)
-            if pipeline is not None:
-                sm = getattr(pipeline, "situation_model", None)
-                if sm is not None:
-                    break
-    return sm
+    """Situation model chỉ có một owner thật; không mò qua pipeline đã bị gỡ."""
+    return getattr(runtime_owner, "situation_model", None)
 
 
 def _reach_situation_violation(runtime_owner: Any) -> Optional[Any]:

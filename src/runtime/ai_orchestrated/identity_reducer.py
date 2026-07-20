@@ -169,7 +169,17 @@ class IdentityKernelReducer:
         active_defenses = tuple(getattr(observation, "activated_defenses", ()) or ())[:4]
         active_conflict = getattr(observation, "active_conflict", profile.active_conflict)
         value_choice = getattr(observation, "value_choice", profile.latest_value_choice)
-        if active_motives or active_defenses or getattr(active_conflict, "conflict_id", "") or getattr(value_choice, "chosen", ""):
+
+        # Motive/defense/conflict là state tức thời của đúng lượt observer vừa đọc.
+        # Trước đây reducer chỉ đánh dấu changed khi state mới không rỗng, nên một
+        # activation cũ có thể treo trên panel qua nhiều lượt yên lặng. Xóa state
+        # tức thời cũng là một thay đổi thật và phải được single-writer commit.
+        transient_identity_changed = (
+            active_motives != profile.active_motives
+            or active_defenses != profile.active_defenses
+            or active_conflict != profile.active_conflict
+        )
+        if transient_identity_changed or getattr(value_choice, "chosen", ""):
             changed = True
 
         signals = self._resolve_conflicts(tuple(getattr(observation, "identity_signals", ()) or ()))

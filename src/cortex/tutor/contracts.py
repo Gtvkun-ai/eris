@@ -18,10 +18,10 @@ from typing import Any, Literal, Optional
 
 
 # ---------------------------------------------------------------------------
-# Import mềm clamp01 — fallback nội bộ nếu attention_salience không có sẵn.
+# Import mềm clamp01 — fallback nội bộ nếu utility dùng chung không có sẵn.
 # ---------------------------------------------------------------------------
 try:  # pragma: no cover - đường import thường
-    from cortex.attention_salience import clamp01  # type: ignore
+    from cortex.value_utils import clamp01  # type: ignore
 except Exception:  # pragma: no cover
     try:
         from .._vendored import clamp01  # type: ignore

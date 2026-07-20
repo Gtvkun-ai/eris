@@ -152,9 +152,6 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "signature_ending_rate": 0.42,
         "audio_polish": False,
     },
-    "pipeline": {
-        "v3_enabled": True,
-    },
     "discovery": {
         "enabled": True,
         "local_signal_enabled": True,
@@ -295,7 +292,6 @@ _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
     ("tts", "signature_ending"): ("ERIS_TTS_SIGNATURE_ENDING", "str"),
     ("tts", "signature_ending_rate"): ("ERIS_TTS_SIGNATURE_ENDING_RATE", "float"),
     ("tts", "audio_polish"): ("ERIS_TTS_AUDIO_POLISH", "bool"),
-    ("pipeline", "v3_enabled"): ("ERIS_V3_PIPELINE", "bool"),
     ("tutor", "enabled"): ("ERIS_TUTOR_ENABLED", "bool"),
     ("tutor", "quick_search_enabled"): ("ERIS_TUTOR_QUICK_SEARCH_ENABLED", "bool"),
     ("tutor", "research_enabled"): ("ERIS_TUTOR_RESEARCH_ENABLED", "bool"),

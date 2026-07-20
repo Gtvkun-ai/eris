@@ -18,6 +18,7 @@ from .orchestrator import AIChatOrchestrator, AIAutonomousOrchestrator, architec
 from .planner import IntentionPlanner
 from .stage_planner import StagePlanner
 from .state_reducer import StateReducer
+from runtime.cognition import CognitiveAcceptanceGate, PreResponseCognition
 
 
 def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
@@ -84,18 +85,11 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     host.ai_initiative_controller = initiative
     host.ai_identity_consolidator = consolidator
     host.ai_stage_planner = StagePlanner(expression_bridge=expression_bridge)
+    host.ai_pre_response_cognition = PreResponseCognition(logger=getattr(host, "logger", None))
+    host.ai_cognitive_acceptance_gate = CognitiveAcceptanceGate()
     host.ai_chat_orchestrator = AIChatOrchestrator(host)
     host.ai_autonomous_orchestrator = AIAutonomousOrchestrator(host)
 
-    # Legacy social paths are kept importable but removed from production authority.
-    old_observer = getattr(host, "social_observer", None)
-    if old_observer is not None:
-        try:
-            old_observer.shutdown()
-        except Exception:
-            pass
-    host.social_observer = None
-    host.social_cognition_v2 = None
 
     processed_memory_turns: set[str] = set()
 
@@ -151,7 +145,7 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     reducer.subscribe(consolidator.observe)
     try:
         host.logger.info(
-            "[architecture C] enabled version=ai_orchestrated.v5.2.split_display_speech state_version=%s personality_version=%s identity_version=%s observer=post_turn planner=ai single_writer=1",
+            "[architecture C] enabled version=ai_orchestrated.v6.0.cortex_brief state_version=%s personality_version=%s identity_version=%s observer=post_turn planner=ai cortex=pre_response_brief single_writer=1",
             reducer.snapshot().version,
             reducer.snapshot().personality.version,
             reducer.snapshot().identity.version,

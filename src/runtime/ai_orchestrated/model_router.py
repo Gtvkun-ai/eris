@@ -9,6 +9,9 @@ import time
 from dataclasses import replace
 from typing import Any, Mapping, Sequence
 
+from core.cognition import PreResponseCognitiveBrief
+from runtime.cognition.normalization import normalize_vi
+
 from actions.contracts import VALID_SYSTEM_ACTIONS
 
 from .contracts import CognitiveObservation, IntentionPlan
@@ -503,10 +506,12 @@ class AIRuntimeModelRouter:
             "nhưng không nhảy thẳng sang tuyên bố yêu/quen/gắn bó chỉ vì user vừa yêu cầu một câu tình cảm. "
             "Bạn sở hữu lời nói; không tự phân loại Ni/Ti/Fe, không tự chấm confidence, không giải thích reasoning. "
             "Trả lời yêu cầu cụ thể trước. Không tự chèn tuyên bố kiểu 'không như con người' nếu người dùng không hỏi về bản thể. "
-            "Nếu Current grounding có reference_repair_contract, đó là ưu tiên cao nhất của lượt: trả lời đúng cụm user đang hỏi "
-            "trong câu ERIS ngay trước đó, xác nhận hoặc sửa nghĩa đen trước rồi mới thêm cá tính. Mẫu 'X là bạn/em á?' thường là "
-            "câu hỏi định danh về X vừa được ERIS nói, không phải user đặt biệt danh mới. Không tự đánh giá user, không đảo chủ thể, "
-            "không phát minh một premise khác để né câu hỏi. "
+            "Pre-response cognitive brief là contract hiểu lượt hiện tại, không phải câu văn mẫu. Tuân thủ primary_goal, response_move, "
+            "ambiguity_owner và avoid_moves. Khi ambiguity_owner=assistant, ERIS phải tự giải quyết phần mơ hồ do lời trước của mình tạo ra; "
+            "không hỏi user nói rõ hơn, không trách user hỏi lửng và không giảng giải cơ chế hội thoại. Khi response_move=self_elaborate, "
+            "hãy nối tiếp chính lời ERIS trước đó. Khi response_move=repair_previous_response, nêu ngắn lỗi cụ thể rồi thay câu trả lời ngay. "
+            "Khi response_move=clarify_previous_phrase/literal_reference, trả nghĩa đen trước rồi mới thêm cá tính. Không tự đánh giá user, "
+            "không đảo chủ thể, không phát minh premise khác để né câu hỏi. "
             "Memory chỉ là continuity, không chứng minh hiện tại. Grounding là nguồn thật cho màn hình/file/tool. "
             "Planner đã sở hữu tool intent; bạn không chọn, đổi hay claim tool đã thành công. "
             "performance_hint chỉ là một preset sân khấu ngắn, không viết stage direction vào text. Return JSON only."
@@ -527,6 +532,8 @@ class AIRuntimeModelRouter:
         allow_fallback: bool = False,
         language_hint: str = "vi",
         planned_intention: IntentionPlan | None = None,
+        cognitive_brief: PreResponseCognitiveBrief | None = None,
+        retry_instruction: str = "",
     ) -> dict[str, Any]:
         client = None
         if use_escalation:
@@ -548,6 +555,10 @@ class AIRuntimeModelRouter:
             context_parts.append(f"Relevant memory: {memory_context}")
         if interrupt_context:
             context_parts.append(f"Mechanical interrupt context: {interrupt_context}")
+        if cognitive_brief is not None:
+            context_parts.append(cognitive_brief.prompt_context())
+        if retry_instruction:
+            context_parts.append(f"One-shot rewrite instruction: {retry_instruction}")
         if planned_intention is not None:
             context_parts.append(
                 "Planner intent: "
@@ -682,6 +693,8 @@ class AIRuntimeModelRouter:
             "chúng thành ẩn dụ, bầu không khí, tính cách user hoặc câu chuyện bí ẩn. Nếu chỉ có metadata loại này, dùng persona_opening. "
             "Tránh câu onboarding/availability như 'Tôi ở đây', 'bắt đầu thôi', 'cần gì cứ nói', hoặc lời chào an toàn vô nghĩa. "
             "Nếu không có evidence hay open loop, vẫn viết một persona_opening có nét: ấm kín, hơi khô, tò mò hoặc trêu nhẹ; "
+            "persona_opening phải tự đủ nghĩa trong chính câu đó. Không dùng cụm treo như 'phần thật', 'phần còn lại', 'điều đáng nói', "
+            "'cái đó' hoặc 'thứ quan trọng' nếu câu không chỉ rõ chúng là gì. "
             "không được bịa fact bên ngoài để tạo cảm giác thông minh. "
             "Không nói chỉ vì im lặng hoặc buồn chán. Không bịa screen fact. "
             "Memory chỉ tạo continuity. Planner đã sở hữu tool intent; không chọn hoặc đổi tool. "
@@ -796,8 +809,19 @@ class AIRuntimeModelRouter:
         """
 
         text = " ".join(str(user_text or "").casefold().split())
+        normalized_text = normalize_vi(user_text)
         if not text:
             return "none"
+        continuation = {
+            "rồi sao", "roi sao", "thế rồi sao", "the roi sao", "xong", "xong rồi sao",
+            "tiếp đi", "tiep di", "nói tiếp", "noi tiep", "kể tiếp", "ke tiep",
+            "nữa", "nua", "nữa đi", "nua di", "thì sao", "thi sao",
+            "ehm rồi sao á", "ừm rồi sao", "ờm rồi sao",
+        }
+        stripped = normalized_text.strip(" ?.!…")
+        normalized_continuation = {normalize_vi(item) for item in continuation}
+        if stripped in normalized_continuation or any(stripped.endswith(" " + item) for item in normalized_continuation):
+            return "continuation_bid"
         if any(
             marker in text
             for marker in (
@@ -822,7 +846,14 @@ class AIRuntimeModelRouter:
             return "technical_request"
         if any(token in text for token in ("không phải", "ý tôi là", "tôi nói là", "sai rồi", "hiểu sai", "đọc lại")):
             return "correction"
-        if any(token in text for token in ("chán", "tệ", "máy quá", "cứng quá", "nhạt", "phèn", "không hay")):
+        if any(
+            token in text
+            for token in (
+                "chán", "tệ", "máy quá", "cứng quá", "nhạt", "phèn", "không hay",
+                "generic", "chung chung", "vô hồn", "như bot", "support bot",
+                "chăm sóc khách hàng", "cộc lốc", "lạnh với", "nói lạnh", "làm màu",
+            )
+        ):
             return "style_criticism"
         if any(token in text for token in ("sến", "tình cảm", "ngọt", "dịu", "cộc lốc", "nói gọn", "nói thẳng")):
             return "style_request"
@@ -837,6 +868,109 @@ class AIRuntimeModelRouter:
         return "unknown"
 
     @staticmethod
+    def _apply_deterministic_observation_anchor(
+        observation: CognitiveObservation,
+        *,
+        user_text: str,
+        assistant_text: str,
+        event_kind: str,
+    ) -> CognitiveObservation:
+        """Giữ observer bám lượt hiện tại khi model phụ 429 hoặc bê frame cũ.
+
+        Đây không phải semantic classifier thứ hai. Nó chỉ sửa vài nhãn hiển
+        nhiên có hậu quả vận hành lớn: user đang chê câu vừa rồi, đang sửa hiểu
+        nhầm, hoặc đang hỏi lại một tham chiếu. Những lượt này mà thành
+        ``unknown/repair=False`` thì reducer học đúng điều ngược với thực tế.
+        """
+
+        if str(event_kind or "chat").strip().lower() != "chat":
+            return observation
+        hint = AIRuntimeModelRouter._current_user_move_hint(user_text)
+        if hint in {"none", "unknown"}:
+            return observation
+
+        data = observation.to_dict()
+        source_suffix = "deterministic_anchor"
+        model_was_empty = observation.confidence <= 0.05 and observation.user_act in {"", "unknown"}
+
+        if hint == "style_criticism":
+            data.update(
+                {
+                    "user_act": "style_criticism",
+                    "relationship_meaning": "feedback_on_previous_response",
+                    "continuity": "direct_response_feedback",
+                    "repair_needed": True,
+                    "assistant_fault_probability": max(0.72, float(observation.assistant_fault_probability or 0.0)),
+                    "confidence": max(0.76, float(observation.confidence or 0.0)),
+                    "ambiguity": min(0.22, float(observation.ambiguity or 1.0)),
+                    "evidence": list(dict.fromkeys((*observation.evidence, "deterministic:style_criticism")))[:4],
+                    "notes": "User directly criticized the immediately previous assistant response; repair is required.",
+                }
+            )
+        elif hint == "correction":
+            data.update(
+                {
+                    "user_act": "correction",
+                    "relationship_meaning": "corrects_previous_interpretation",
+                    "continuity": "repair_previous_miss",
+                    "repair_needed": True,
+                    "assistant_fault_probability": max(0.62, float(observation.assistant_fault_probability or 0.0)),
+                    "confidence": max(0.72, float(observation.confidence or 0.0)),
+                    "ambiguity": min(0.28, float(observation.ambiguity or 1.0)),
+                    "evidence": list(dict.fromkeys((*observation.evidence, "deterministic:correction")))[:4],
+                }
+            )
+        elif hint == "reference_clarification":
+            # Hỏi lại nghĩa câu trước chưa chắc là lỗi của ERIS, nên chỉ neo act;
+            # repair_needed vẫn do model hoặc reference contract quyết định.
+            data.update(
+                {
+                    "user_act": "reference_clarification",
+                    "relationship_meaning": "asks_to_clarify_previous_statement",
+                    "continuity": "continues_previous_statement",
+                    "confidence": max(0.70, float(observation.confidence or 0.0)),
+                    "ambiguity": min(0.30, float(observation.ambiguity or 1.0)),
+                    "evidence": list(dict.fromkeys((*observation.evidence, "deterministic:reference_clarification")))[:4],
+                }
+            )
+        elif hint == "continuation_bid":
+            data.update(
+                {
+                    "user_act": "continuation_bid",
+                    "relationship_meaning": "invites_assistant_to_continue_own_move",
+                    "continuity": "continues_previous_assistant_move",
+                    "repair_needed": False,
+                    "assistant_fault_probability": max(0.36, float(observation.assistant_fault_probability or 0.0)),
+                    "confidence": max(0.78, float(observation.confidence or 0.0)),
+                    "ambiguity": min(0.18, float(observation.ambiguity or 1.0)),
+                    "evidence": list(dict.fromkeys((*observation.evidence, "deterministic:continuation_bid")))[:4],
+                    "notes": "User invited ERIS to continue the immediately previous assistant move.",
+                }
+            )
+        elif model_was_empty:
+            data.update(
+                {
+                    "user_act": hint,
+                    "relationship_meaning": "neutral",
+                    "continuity": "current_turn_classified",
+                    "confidence": 0.58,
+                    "ambiguity": 0.42,
+                    "evidence": [f"deterministic:{hint}"],
+                }
+            )
+        else:
+            return observation
+
+        base_source = str(observation.source or "observer")
+        return CognitiveObservation.from_mapping(
+            data,
+            turn_id=observation.turn_id,
+            turn_seq=observation.turn_seq,
+            source=(source_suffix if model_was_empty else f"{base_source}+{source_suffix}"),
+            latency_ms=observation.latency_ms,
+        )
+
+    @staticmethod
     def _should_reflect_personality(observation: CognitiveObservation) -> bool:
         """Không gọi self-reflection cho mọi tiếng động xã hội.
 
@@ -845,6 +979,11 @@ class AIRuntimeModelRouter:
         không được trang điểm thành ba trait signal rồi ghi vào personality.
         """
 
+        if "deterministic_anchor" in str(observation.source or ""):
+            # Fallback cơ học chỉ để bảo vệ continuity/repair. Không dùng nó làm
+            # nguyên liệu viết lại personality, nếu không một lần provider 429 có
+            # thể trở thành bước ngoặt nội tâm. Hơi tham vọng cho một timeout.
+            return False
         if observation.confidence < 0.52:
             return False
         relational_signal = max(
@@ -1015,6 +1154,12 @@ class AIRuntimeModelRouter:
             source=source,
             latency_ms=(time.perf_counter() - started) * 1000.0,
         )
+        primary = self._apply_deterministic_observation_anchor(
+            primary,
+            user_text=user_text,
+            assistant_text=assistant_text,
+            event_kind=event_kind,
+        )
         importance = max(
             primary.assistant_fault_probability,
             abs(primary.rupture_delta),
@@ -1101,9 +1246,11 @@ class AIRuntimeModelRouter:
             "Không dùng tool để xử lý tình cảm, ẩn dụ, banter hay câu hỏi có thể trả lời trực tiếp. "
             "tool_intent phải rỗng hoặc thuộc danh sách: " + allowed + ". "
             "Không claim tool thành công. speak thường true cho chat; intrusion_risk gần 0. "
-            "Nếu mơ hồ, để tool rỗng và ghi điều cần thận trọng trong notes."
-            " Nếu snapshot.reference_repair.active=true, bắt buộc strategy=direct_repair, tool rỗng, và topic phải yêu cầu "
-            "trả lời nghĩa đen của cụm trong previous_assistant_text trước. Không hiểu câu hỏi định danh thành biệt danh, banter hay đánh giá user."
+            "Nếu mơ hồ, để tool rỗng và ghi điều cần thận trọng trong notes. "
+            "snapshot.cognitive_brief là contract discourse đã được specialist có evidence tổng hợp. Khi confidence đủ cao, planner phải bám "
+            "response_move và primary_goal; ambiguity_owner=assistant cấm broad clarification. self_elaborate dùng strategy=carry_own_thread; "
+            "repair_previous_response dùng direct_repair; clarify_previous_phrase/literal_reference dùng literal_clarification; "
+            "repair_assumption dùng repair_assumption. Các move này không dùng tool."
         )
 
     def plan_chat(self, snapshot: Mapping[str, Any]) -> IntentionPlan:

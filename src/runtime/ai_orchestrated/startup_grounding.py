@@ -225,6 +225,27 @@ def _runtime_signal_payloads(snapshot: Any, *, now: float) -> tuple[Mapping[str,
     return tuple(items[:10])
 
 
+def _runtime_item_opening_eligible(item: Mapping[str, Any]) -> bool:
+    """Đọc cờ explicit, hoặc suy ra bảo thủ cho payload legacy/test cũ.
+
+    Runtime producer mới luôn ghi ``opening_eligible``. Nhưng snapshot/plugin cũ
+    có thể chỉ đưa text. Khi thiếu cờ, warning/recovery/cooldown rõ ràng vẫn nên
+    được nhận ra; metadata kiểu foreground app thì không.
+    """
+
+    if "opening_eligible" in item:
+        return bool(item.get("opening_eligible", False))
+    normalized = _norm(str(item.get("text", "") or ""))
+    return any(
+        marker in normalized
+        for marker in (
+            "warning", "error", "429", "cooldown", "failed", "failure",
+            "recovered", "recovery", "connected", "disconnected", "completed",
+            "finished", "done", "restored", "degraded", "blocked", "cancelled",
+        )
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class StartupGroundingBundle:
     active_window: str = ""
@@ -249,6 +270,13 @@ class StartupGroundingBundle:
             signal_id = str(item.get("id", "") or "").strip()
             if signal_id:
                 refs.append(f"runtime:{signal_id}")
+        # Metadata không được dùng làm premise mở lời, nhưng vẫn là provenance
+        # hợp lệ cho planner/debug khi đã có screen evidence mạnh.
+        for item in self.runtime_metadata[:4]:
+            signal_id = str(item.get("id", "") or "").strip()
+            ref = f"runtime:{signal_id}" if signal_id else ""
+            if ref and ref not in refs:
+                refs.append(ref)
         return tuple(refs)
 
     @property
@@ -270,7 +298,7 @@ class StartupGroundingBundle:
         return tuple(
             item
             for item in self.runtime_evidence
-            if bool(item.get("opening_eligible", False))
+            if _runtime_item_opening_eligible(item)
             and str(item.get("text", "") or "").strip()
             and float(item.get("confidence", 0.0) or 0.0) >= 0.58
         )
@@ -279,7 +307,7 @@ class StartupGroundingBundle:
     def runtime_metadata(self) -> tuple[Mapping[str, Any], ...]:
         return tuple(
             item for item in self.runtime_evidence
-            if not bool(item.get("opening_eligible", False))
+            if not _runtime_item_opening_eligible(item)
         )
 
     @property
