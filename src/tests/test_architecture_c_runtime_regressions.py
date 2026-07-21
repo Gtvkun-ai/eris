@@ -1156,3 +1156,252 @@ def test_discovery_runtime_panel_contract_separates_activity_ready_and_initiativ
     assert runtime["ready"][0]["share_readiness"] == 0.81
     assert runtime["initiative"]["state"] == "open"
     assert next(step for step in runtime["flow"] if step["key"] == "research")["state"] == "active"
+
+
+def test_startup_production_builds_real_greeting_frame_and_avoids_manifesto(tmp_path, monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from runtime.ai_orchestrated.startup_grounding import (
+        StartupGroundingBundle,
+        build_startup_greeting_frame,
+        choose_startup_text,
+        select_startup_persona_preset,
+    )
+
+    monkeypatch.setenv("ERIS_GREETING_PRESET_HISTORY", str(tmp_path / "greeting_history.json"))
+
+    host = SimpleNamespace(
+        rolling_internal_state=None,
+        _get_internal_state=lambda: SimpleNamespace(last_session_greeting_at=0.0),
+    )
+    state = SimpleNamespace(
+        open_loops=(),
+        latest_observation={},
+        relationship=SimpleNamespace(to_dict=lambda: {}),
+    )
+    frame = build_startup_greeting_frame(
+        host,
+        state,
+        StartupGroundingBundle(),
+        now=1784628000.0,
+    )
+
+    assert frame.situation == "plain_return"
+    assert frame.active_anchor is None
+    assert frame.local_time
+    preset = select_startup_persona_preset(frame)
+    assert preset is not None
+    assert str(preset["text"]).strip()
+    assert "Tôi không hứa sẽ làm mọi thứ dịu đi" not in str(preset["text"])
+
+    from dataclasses import replace
+
+    continuity_frame = replace(
+        frame,
+        situation="resume_project",
+        intent="resume_continuity",
+        active_anchor="sửa lỗi TTS bị lệch",
+        continuity_strength=0.82,
+    )
+    selected, quality = choose_startup_text(
+        "Tôi không hứa sẽ làm mọi thứ dịu đi—nhưng có thể làm chúng rõ hơn.",
+        continuity_frame,
+    )
+    assert "làm mọi thứ dịu đi" not in selected
+    assert quality["accepted"] is True
+
+
+def test_architecture_c_autonomous_reads_public_safe_cortex_context() -> None:
+    from types import SimpleNamespace
+
+    from runtime.ai_orchestrated.self_context import build_autonomous_self_context
+
+    agenda_item = SimpleNamespace(
+        id="agenda-1",
+        kind="technical_followup",
+        summary="Kiểm tra lại thứ tự TTS và bubble",
+        evidence_ids=("turn:42",),
+        pressure=0.78,
+        urgency=0.64,
+        confidence=0.88,
+        speech_value=0.82,
+        score=0.79,
+    )
+    host = SimpleNamespace(
+        rolling_internal_state=SimpleNamespace(
+            curiosity=0.72,
+            fatigue=0.14,
+            silence_pressure=0.31,
+            continuity_pressure=0.68,
+            attachment_pressure=0.22,
+            consolidation_pressure=0.44,
+            insight_pressure=0.61,
+            agenda_pressure=0.77,
+            speech_restraint=0.24,
+            resource_caution=0.11,
+            self_coherence=0.83,
+            internal_drive=0.69,
+        ),
+        last_wake_decision=SimpleNamespace(
+            level="wake_main_cognition",
+            should_speak=True,
+            should_wake_main=True,
+            reason="main_wake_allowed",
+            confidence=0.86,
+            internal_drive=0.69,
+            speech_value=0.73,
+            permission=0.91,
+            interrupt_cost=0.09,
+        ),
+        internal_agenda=SimpleNamespace(top_items=lambda limit=5: [agenda_item]),
+        private_mind_daemon_digest={
+            "daemon": {
+                "surface_queue_preview": [
+                    {
+                        "id": "mind-1",
+                        "kind": "unfinished_thought",
+                        "source": "private_mind",
+                        "topic_seed": "TTS đang nói sau bubble một nhịp",
+                        "confidence": 0.84,
+                        "score": 0.76,
+                    }
+                ]
+            }
+        },
+        private_life_digest={},
+        private_mind_surface_queue=[],
+        private_life_surface_queue=[],
+    )
+
+    context = build_autonomous_self_context(host)
+    assert context.has_public_seed is True
+    assert context.strongest_seed_score >= 0.48
+    assert context.agenda[0]["evidence_refs"] == ["turn:42"]
+    assert context.private_mind_surface[0]["topic_seed"] == "TTS đang nói sau bubble một nhịp"
+    assert "TTS" in context.prompt_context()
+
+def test_ambient_screen_tracker_surfaces_ocr_delta_and_game_hypothesis() -> None:
+    from screen.evidence_models import ActiveWindowInfo, ScreenTextBlock, ScreenTextSnapshot
+    from runtime.ai_orchestrated.ambient_screen_context import AmbientScreenTracker
+
+    now = time.time()
+    tracker = AmbientScreenTracker()
+    snapshot = ScreenTextSnapshot(
+        window=ActiveWindowInfo(title="Mini World", process_name="miniworld.exe"),
+        blocks=(
+            ScreenTextBlock(
+                block_id="hud-1",
+                text="HP 92  Stamina 44  Inventory",
+                source="ocr",
+                confidence=0.87,
+                window_title="Mini World",
+                captured_at=now,
+            ),
+        ),
+        captured_at=now,
+        changed_ratio=0.18,
+        revision=1,
+        backend="rapidocr",
+    )
+
+    context = tracker.observe(snapshot, telemetry={"active_app": "Mini World"}, now=now)
+
+    assert context.ocr_active is True
+    assert context.scene_kind == "game_likely"
+    assert context.meaningful_delta is True
+    assert context.changed_text == ("HP 92 Stamina 44 Inventory",)
+    assert context.evidence_refs == ("screen:hud-1",)
+    assert "not proof of user intent" in context.to_dict()["epistemic_note"]
+
+
+def test_ambient_screen_tracker_does_not_repeat_unchanged_ocr_as_delta() -> None:
+    from screen.evidence_models import ActiveWindowInfo, ScreenTextBlock, ScreenTextSnapshot
+    from runtime.ai_orchestrated.ambient_screen_context import AmbientScreenTracker
+
+    now = time.time()
+    tracker = AmbientScreenTracker()
+    block = ScreenTextBlock("hud", "Quest: Find the village", "ocr", 0.82, "Game", now)
+    first = ScreenTextSnapshot(
+        window=ActiveWindowInfo(title="Game", process_name="game.exe"),
+        blocks=(block,), captured_at=now, changed_ratio=0.10, revision=1, backend="rapidocr",
+    )
+    second = ScreenTextSnapshot(
+        window=ActiveWindowInfo(title="Game", process_name="game.exe"),
+        blocks=(block,), captured_at=now + 1, changed_ratio=0.0, revision=2, backend="rapidocr",
+    )
+
+    assert tracker.observe(first, now=now).changed_text
+    repeated = tracker.observe(second, now=now + 1)
+    assert repeated.changed_text == ()
+    assert repeated.content_changed is False
+
+
+def test_ambient_screen_tracker_blocks_private_communication_text() -> None:
+    from screen.evidence_models import ActiveWindowInfo, ScreenTextBlock, ScreenTextSnapshot
+    from runtime.ai_orchestrated.ambient_screen_context import AmbientScreenTracker
+
+    now = time.time()
+    snapshot = ScreenTextSnapshot(
+        window=ActiveWindowInfo(title="Discord"),
+        blocks=(ScreenTextBlock("private", "secret message", "uia", 0.9, "Discord", now),),
+        captured_at=now,
+        revision=1,
+        backend="uia_only",
+        privacy_blocked=True,
+    )
+    context = AmbientScreenTracker().observe(snapshot, now=now)
+    assert context.privacy_blocked is True
+    assert context.visible_text == ()
+    assert context.changed_text == ()
+    assert "do not mention" in context.prompt_context()
+
+
+def test_autonomous_deliberation_uses_main_model_not_parser_lane(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    main = object()
+    parser = object()
+    critic = object()
+    router = AIRuntimeModelRouter(
+        SimpleNamespace(
+            client=main,
+            social_parser_client=parser,
+            social_critic_client=critic,
+        )
+    )
+    captured = {}
+
+    def fake_call(client, **kwargs):
+        captured["client"] = client
+        captured.update(kwargs)
+        return {
+            "plan_id": "self-turn-1",
+            "speak": False,
+            "motive": "none",
+            "strategy": "silence",
+            "value_focus": "",
+            "topic": "",
+            "importance": 0.0,
+            "intrusion_risk": 0.0,
+            "confidence": 0.8,
+            "performance_hint": "neutral",
+            "tool_intent": "",
+            "tool_input": "",
+            "evidence_refs": [],
+            "notes": "no grounded reason",
+        }
+
+    monkeypatch.setattr(router, "_call", fake_call)
+    router.plan_autonomous({"event_kind": "self_initiated_turn"})
+
+    assert captured["client"] is main
+    assert captured["inference_tier"] == "main_cognition"
+    assert captured["priority"] == 90
+    assert captured["name"] == "eris_self_initiated_intention"
+
+
+def test_hardening_fingerprint_covers_ambient_screen_autonomy() -> None:
+    from runtime.hardening_release import DEFAULT_AUTHORITY_FILES
+
+    assert "runtime/ai_orchestrated/ambient_screen_context.py" in DEFAULT_AUTHORITY_FILES
+    assert "screen/ocr_worker.py" in DEFAULT_AUTHORITY_FILES

@@ -1,0 +1,70 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-21 16:54:39
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+16:54:40.800 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+16:54:40.801 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+16:54:40.844 [INFO] [Vision] Da khoi chay vision.py PID=15924
+16:54:44.621 [INFO] [vision.py] [LLM][INFO] Social parser client sẵn sàng: openai/gpt-oss-20b
+16:54:44.621 [INFO] [vision.py] [LLM][INFO] Social deliberator/critic client sẵn sàng: openai/gpt-oss-120b
+16:54:44.621 [INFO] [vision.py] [LLM][INFO] Social observer fallback client sẵn sàng: llama-3.1-8b-instant
+16:54:45.263 [INFO] [vision.py] [Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=2
+16:54:45.269 [INFO] [vision.py] [Loop][INFO] [vtuber-stage] loaded version=vtuber_stage.v11 phases=8,9,10,11 status=intention_authority_ready session=stage_2b6bf6181276446e
+16:54:45.285 [INFO] [vision.py] [Loop][INFO] [internal-cognitive] loaded version=internal_cognitive.v1.0 capabilities=8 status=read_only_verified
+16:54:45.331 [INFO] [vision.py] [Loop][INFO] [project-ops] loaded version=project_operations.v1.1 capabilities=15 mode=autonomous_project_scope
+16:54:45.331 [INFO] [vision.py] [Loop][INFO] [workspace] eris_home=[đường dẫn nội bộ đã ẩn] active=none implicit_source_repo=false
+16:54:46.034 [INFO] [vision.py] [Loop][INFO] tutor: knowledge provider đã nối vào memory recall
+16:54:46.100 [INFO] [vision.py] [Loop][INFO] [environment-capability] loaded version=environment_capability.v1.0 capabilities=6 status=read_only_verified
+16:54:46.430 [INFO] [vision.py] [Loop][INFO] [architecture C] enabled version=ai_orchestrated.v6.1.arbitrated_brief state_version=0 personality_version=0 identity_version=0 observer=post_turn planner=ai cortex=pre_response_brief single_writer=1
+16:54:48.735 [INFO] [vision.py] [Loop][INFO] --- Architecture C runtime; chat vision theo yêu cầu màn hình ---
+16:54:48.736 [INFO] [vision.py] [Loop][INFO] [screen text] worker started backend=lazy-auto poll=1.2s
+16:54:48.850 [INFO] [vision.py] [Loop][INFO] [screen text] OCR backend resolved=uia_only
+16:54:49.150 [INFO] [vision.py] [Loop][INFO] [architecture C startup grounding] direct=0 strong=0 telemetry_tab=0 evidence=0 runtime_opening=0 metadata=4 backend=uia_only wait=0.42s notes=none
+16:54:50.466 [INFO] [vision.py] [Loop][INFO] [architecture C startup route] strategy=persona_opening source=persona continuity=0 forced=1
+16:55:09.379 [INFO] [vision.py] [Loop][INFO] [architecture C startup] spoke motive=startup_opening text=Tôi không hứa sẽ làm mọi thứ dịu đi—nhưng có thể làm chúng rõ hơn.
+16:55:18.309 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+16:55:18.309 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+16:55:19.532 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+16:55:30.594 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+16:55:30.594 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+16:55:31.015 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=0 9s vì http_429:openai/gpt-oss-20b; alive=8/9
+16:55:32.099 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.90 importance=0.00 intrusion=0.00 initiative=not_evaluated
+16:55:43.085 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+16:55:43.085 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+16:55:43.598 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=1 5s vì http_429:openai/gpt-oss-20b; alive=8/9
+16:55:44.967 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+16:56:04.168 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+16:56:04.168 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+16:56:05.393 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+16:56:16.279 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+16:56:16.279 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+16:56:16.794 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=2 20s vì http_429:openai/gpt-oss-20b; alive=8/9
+16:56:17.911 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+16:56:32.756 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+16:56:32.757 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+16:56:34.072 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=grounded_curiosity conf=0.90 importance=0.20 intrusion=0.10 initiative=not_evaluated
+16:56:43.056 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+16:56:43.056 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+16:56:43.576 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=3 27s vì http_429:openai/gpt-oss-20b; alive=8/9
+16:56:44.774 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+16:56:59.598 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+16:56:59.598 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+16:57:00.061 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=4 2s vì http_429:openai/gpt-oss-20b; alive=7/9
+16:57:01.143 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+16:57:10.124 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+16:57:10.124 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+16:57:10.563 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=5 5s vì http_429:openai/gpt-oss-20b; alive=7/9
+16:57:11.740 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+16:57:26.606 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+16:57:26.607 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+16:57:28.057 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.50 importance=0.00 intrusion=0.00 initiative=not_evaluated
+16:57:42.770 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+16:57:42.770 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+16:57:43.211 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=6 19s vì http_429:openai/gpt-oss-20b; alive=8/9
+16:57:44.355 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence motive=none conf=0.00 importance=0.00 intrusion=0.00 initiative=not_evaluated
+16:57:57.161 [INFO] [Vision] Dang dung vision.py PID=15924...
+16:57:57.177 [INFO] [Vision] vision.py da thoat (PID=15924, code=-1, unexpected=False).
+16:57:57.187 [INFO] [RunLogger] Ket thuc phien chay.

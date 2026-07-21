@@ -234,7 +234,13 @@ class IncrementalScreenTextWorker:
                 if should_ocr and self.backend is None:
                     self.backend = _choose_ocr_backend()
                     if self.logger:
-                        self.logger.info("[screen text] OCR backend resolved=%s", self.backend.name if self.backend.available else "uia_only")
+                        if self.backend.available:
+                            self.logger.info("[screen text] OCR backend resolved=%s", self.backend.name)
+                        else:
+                            self.logger.warning(
+                                "[screen text] OCR backend unavailable; running UIA-only. "
+                                "Install rapidocr-onnxruntime (recommended) or configure ERIS_TESSERACT_CMD."
+                            )
                 if should_ocr and self.backend is not None and self.backend.available:
                     target = image
                     if change.roi and not change.full_refresh and (now - self._last_full_at) < self.full_refresh_sec:

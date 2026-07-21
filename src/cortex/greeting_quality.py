@@ -69,6 +69,11 @@ class GreetingQualityScorer:
         "toi co the giup", "tôi có thể giúp", "toi san sang", "tôi sẵn sàng",
         "toi dang nghe", "tôi đang nghe", "can ho tro", "cần hỗ trợ", "xin loi",
         "xin lỗi", "rat vui duoc", "rất vui được", "toi se dieu chinh", "tôi sẽ điều chỉnh",
+        # Slogan/manifesto cũng là bot DNA, chỉ đội tóc giả triết học. Startup
+        # cần một câu người đang nói, không phải mặt sau hộp trà.
+        "lam moi thu", "làm mọi thứ", "lam chung ro hon", "làm chúng rõ hơn",
+        "dieu quan trong", "điều quan trọng", "nguyen tac", "nguyên tắc",
+        "tieu chuan cua toi", "tiêu chuẩn của tôi",
     )
 
     def __init__(self, *, cognition: GreetingCognitionEngine | None = None):

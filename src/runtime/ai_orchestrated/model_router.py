@@ -447,6 +447,8 @@ class AIRuntimeModelRouter:
         name: str,
         max_tokens: int,
         reasoning_effort: str | None = None,
+        inference_tier: str = "subconscious_4b",
+        priority: int | None = None,
     ) -> dict[str, Any]:
         if client is None:
             return {}
@@ -476,10 +478,10 @@ class AIRuntimeModelRouter:
                 )
 
             raw = self._run_inference(
-                "subconscious_4b",
+                inference_tier,
                 invoke,
                 reason=name,
-                priority=45 if "deep" in name else 35,
+                priority=int(priority if priority is not None else (45 if "deep" in name else 35)),
             )
             return _json(_content(raw))
         except Exception as exc:  # noqa: BLE001
@@ -696,7 +698,17 @@ class AIRuntimeModelRouter:
             "Nếu không có evidence hay open loop, vẫn viết một persona_opening có nét: ấm kín, hơi khô, tò mò hoặc trêu nhẹ; "
             "persona_opening phải tự đủ nghĩa trong chính câu đó. Không dùng cụm treo như 'phần thật', 'phần còn lại', 'điều đáng nói', "
             "'cái đó' hoặc 'thứ quan trọng' nếu câu không chỉ rõ chúng là gì. "
+            "Với startup/persona_opening, nói như một người vừa xuất hiện trong phòng: câu đời thường, có nhịp nói, không viết manifesto. "
+            "Tránh lời tuyên ngôn trừu tượng kiểu 'tôi không hứa...', 'tôi sẽ làm mọi thứ rõ hơn', 'điều quan trọng là...', "
+            "hoặc tự giới thiệu tiêu chuẩn/nguyên tắc của ERIS. Chúng nghe thông minh theo cách một hộp trà ghi triết lý trên nắp. "
+            "Nếu motive là internal_agenda, private_mind_surface hoặc private_life_surface, chỉ dùng đúng topic_seed/summary đã có trong "
+            "AUTONOMOUS_SELF_CONTEXT. Biến nó thành một phản ứng, nhận xét, câu hỏi hoặc whim của ERIS; không nhắc private mind, agenda, "
+            "surface candidate, pressure, score hay hệ thống nội bộ. Numeric internal_state chỉ điều chỉnh sắc thái, không tự tạo topic. "
             "không được bịa fact bên ngoài để tạo cảm giác thông minh. "
+            "Autonomous là lượt public tiếp theo trong cùng conversation: nếu planner chọn carry_own_thread/useful_followup, nối trực tiếp mạch trước "
+            "mà không chào lại hay giả như một phiên mới. Grounding screen_context có thể chứa UIA/OCR và delta: chỉ nhắc chữ thật còn tươi; "
+            "scene_kind=game_likely/game_possible chỉ cho phép hỏi hoặc nói kiểu giả thuyết, không được tuyên bố user chắc chắn đang chơi hay đang làm gì. "
+            "App/window literal có thể làm neo cho một câu hỏi chung, nhưng không đủ để bịa mục tiêu, cảm xúc hay kết quả. "
             "Không nói chỉ vì im lặng hoặc buồn chán. Không bịa screen fact. "
             "Memory chỉ tạo continuity. Planner đã sở hữu tool intent; không chọn hoặc đổi tool. "
             "performance_hint ưu tiên preset planner đã chọn. Return JSON only."
@@ -1235,36 +1247,48 @@ class AIRuntimeModelRouter:
     @staticmethod
     def _planner_prompt() -> str:
         return (
-            "Bạn là intention planner của ERIS, không phải người viết câu public. "
-            "Từ snapshot đã cho, gồm cả identity, personality và strategy history hiện tại, quyết định ERIS có một lý do đủ giá trị để chủ động nói hay không. "
-            "Nếu nói, chọn strategy và value_focus rõ. Khi snapshot.discovery.ready_to_share có artifact thật, "
-            "có thể dùng strategy=share_discovery; khi current_activity có id/status thật, có thể dùng update_own_activity. "
-            "Không phát minh discovery hay activity chỉ để lấp im lặng. "
-            "Không ép ERIS về một phiên bản tốt hơn; chỉ dùng quỹ đạo hiện tại để chọn ý định hợp lý. "
-            "Mặc định autonomous thường là im lặng. Riêng khi snapshot.event_kind=startup và "
-            "startup_opening_required=true, phải speak=true và chọn một route mở đầu rõ ràng. Các motive khác gồm: repair_previous_miss, "
-            "important_open_loop, meaningful_environment_change, useful_followup, grounded_curiosity, "
-            "hoặc user_force_speak khi snapshot.event_kind=force_speak và user đã yêu cầu hiện diện rõ ràng. "
-            "Ở startup, chọn theo thứ tự: strong_opening_anchor => grounded_environment_opening; runtime_evidence có nghĩa => "
-            "grounded_runtime_opening; open_loops/recent history/latest observation thật => continuity_opening; nếu tất cả đều rỗng "
-            "=> persona_opening. Persona opening không cần external evidence nhưng chỉ được nói về thái độ/sự hiện diện của ERIS. "
-            "Topic phải chỉ rõ source; không được suy từ chữ startup/runtime/telemetry rằng user đang định thay đổi hay bắt đầu việc gì. "
-            "runtime_metadata như process/window title, DEBUG label, foreground, PID, backend không đủ làm grounded_runtime_opening. "
+            "Bạn là bộ deliberation cho self-initiated public turn của ERIS, không viết câu public. "
+            "Autonomous không phải một channel tách biệt: đó là lượt tiếp theo trong cùng conversation khi user tạm im. "
+            "Đọc conversation_baton trước; nếu thread_fresh=true và có mạch thật chưa khép, ưu tiên useful_followup/carry_own_thread "
+            "trước khi mở chủ đề ambient mới. Không phát minh unresolved thread từ một câu đã kết thúc rõ. "
+            "Đọc screen_context như giác quan hiện tại: changed_text/visible_text tươi là direct evidence; literal app/window name là fact yếu; "
+            "scene_kind chỉ là phân loại xác suất. game_likely/game_possible cho phép hỏi tự nhiên về cảnh đang diễn ra hoặc trêu nhẹ, "
+            "nhưng không được khẳng định user chắc chắn đang chơi, thắng, thua, căng thẳng hay làm một thao tác cụ thể. "
+            "meaningful_delta=true, cửa sổ đổi, hoặc OCR/UIA xuất hiện nội dung mới có thể là motive=meaningful_environment_change hoặc grounded_curiosity. "
+            "Nếu screen_context.privacy_blocked=true, bỏ toàn bộ nội dung màn hình. Không surface chat/mail/meeting text. "
+            "Đọc self_context như đời sống nội tâm public-safe. wake là tín hiệu timing, không phải quyền phủ quyết tuyệt đối khi có continuation hoặc screen delta thật. "
+            "Nếu self_context có agenda item kèm evidence và speech_value đủ cao, có thể dùng motive=internal_agenda. Nếu có candidate trong "
+            "private_mind_surface hoặc private_life_surface, có thể dùng motive tương ứng. Chỉ chọn một seed cụ thể và copy evidence refs của nó. "
+            "internal_state dạng số chỉ điều chỉnh tone/độ kiềm chế; boredom, silence_pressure hay attachment_pressure không phải lý do công khai để nói. "
+            "Nếu nói, chọn strategy và value_focus rõ. Khi snapshot.discovery.ready_to_share có artifact thật, có thể dùng strategy=share_discovery; "
+            "khi current_activity có id/status thật, có thể dùng update_own_activity. Không phát minh discovery/activity để lấp im lặng. "
+            "Không ép ERIS về một phiên bản tốt hơn; chỉ dùng identity, personality, relationship và history hiện tại. "
+            "Mặc định có thể im khi không có continuation, delta, open loop, public-safe seed hay curiosity có căn cứ. Riêng startup_opening_required=true phải speak=true. "
+            "Các motive hợp lệ gồm repair_previous_miss, important_open_loop, meaningful_environment_change, useful_followup, grounded_curiosity, "
+            "internal_agenda, private_mind_surface, private_life_surface, startup_opening và user_force_speak. "
+            "Ở startup, chọn theo thứ tự screen evidence, runtime signal có nghĩa, continuity thật, rồi persona_opening. "
+            "Topic phải nêu source và mục tiêu giao tiếp, không tạo câu thoại. Không bịa screen fact. "
+            "intrusion_risk cao nếu user đang họp, đang nhập liệu dồn dập, vừa phát biểu hoặc screen delta chỉ là animation lặp. "
+            "Tên process/PID/backend đơn lẻ không đủ để dựng premise sâu, nhưng app/window thật có thể làm nền cho một câu hỏi rất chung. "
             "Nếu có suy đoán về mood/intent, đó chỉ là low-risk hypothesis có căn cứ và cho phép user sửa. "
-            "Không tạo câu thoại; topic chỉ là nội dung cần nói. Không bịa screen fact. "
-            "intrusion_risk cao nếu user vừa bận, vừa chat, hoặc motive chỉ là boredom/silence. "
-            "tool_intent để trống trừ khi snapshot có một tác vụ runtime rõ ràng."
+            "tool_intent để trống trừ khi snapshot có tác vụ runtime rõ ràng."
         )
 
     def plan_autonomous(self, snapshot: Mapping[str, Any]) -> IntentionPlan:
+        # Quyền quyết định chủ động thuộc Main AI. Parser nhỏ vẫn có thể làm
+        # observer, nhưng không còn giữ quyền phủ quyết trước khi Terra nhìn thấy
+        # continuation, OCR/UIA và self-context cùng lúc.
+        client = getattr(self.llm_service, "client", None) or self.deep_client or self.observer_client
         payload = self._call(
-            self.observer_client or self.deep_client,
+            client,
             system=self._planner_prompt(),
             payload=snapshot,
             schema=INTENTION_PLAN_SCHEMA,
-            name="eris_autonomous_intention",
-            max_tokens=420,
-            reasoning_effort="low" if str(getattr(self.observer_client, "model_name", "")).startswith("openai/gpt-oss-") else None,
+            name="eris_self_initiated_intention",
+            max_tokens=520,
+            reasoning_effort=None,
+            inference_tier="main_cognition",
+            priority=90,
         )
         return IntentionPlan.from_mapping(payload, channel="autonomous") if payload else IntentionPlan.silence(channel="autonomous", reason="planner_unavailable_or_uncertain")
 

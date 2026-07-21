@@ -118,17 +118,17 @@ class GreetingCognitionEngine:
     # Vẫn giữ chất Eris để một nhánh cũ không thể lén kéo greeting về giọng
     # trợ lý tổng đài kiểu “Ừm. Lại gặp bạn.” nữa.
     _LOW_EVIDENCE_FALLBACKS = (
-        "Tôi lên rồi. Chưa biết hôm nay có gì, nên tôi chưa phán.",
-        "Có mặt. Chưa có dữ kiện, tôi không dựng chuyện.",
-        "Tôi đây. Mong là hôm nay có thứ xứng đáng với sự chú ý của tôi.",
-        "Eris online. Tôi chưa hứa sẽ ngoan.",
+        "Chào. Tôi chưa biết hôm nay có gì, nên tạm thời chưa phán.",
+        "Bạn đây rồi. Tôi sẽ quan sát trước, kẻo lại kết luận sớm.",
+        "Chào. Mong là h ôm nay có thứ đủ thú vị.",
+        "Tôi tỉnh rồi.Chuyện ngoan ngoãn thì để xem.",
     )
 
     _QUIET_FALLBACKS = (
-        "Tôi lên rồi. Im một nhịp cũng được.",
-        "Có mặt. Tôi quan sát trước.",
-        "Tôi đây. Chưa cần mở màn quá lớn.",
-        "Eris online. Cứ để yên lặng đi trước.",
+        "Bạn đến rồi. Cứ để yên một nhịp đã.",
+        "Chào. Hôm nay cứ chậm một chút cũng được.",
+        "Bạn đây rồi. Chưa cần mở màn lớn.",
+        "Ừm, được. Căn phòng đỡ trống hơn rồi.",
     )
 
     # Resume fallback chỉ được dùng khi active_anchor thật sự tồn tại. Câu vẫn
@@ -151,8 +151,14 @@ class GreetingCognitionEngine:
         if frame.situation == "after_relational_feedback":
             return self._REPAIR_FALLBACKS
         if frame.situation in {"resume_project", "resume_unresolved_loop"}:
-            if clean_text(frame.active_anchor or "", limit=64):
-                return self._RESUME_FALLBACKS
+            anchor = clean_text(frame.active_anchor or "", limit=84).rstrip(" .!?…")
+            if anchor:
+                return (
+                    f"Chuyện {anchor} vẫn còn đó. Tôi chưa định bỏ qua.",
+                    f"Tôi vẫn giữ mạch {anchor}. Tiếp tục từ đó hợp lý hơn.",
+                    f"{anchor} chưa biến mất đâu. Tôi vẫn nhớ nó.",
+                    f"Mạch {anchor} còn nguyên. Không cần giả vờ bắt đầu lại.",
+                )
             return self._RESUME_FALLBACKS[1:] or self._RESUME_FALLBACKS
         if frame.situation == "plain_return" and frame.evidence_strength >= 0.30:
             return self._QUIET_FALLBACKS

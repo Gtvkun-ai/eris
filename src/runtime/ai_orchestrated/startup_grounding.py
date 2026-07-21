@@ -23,8 +23,10 @@ import os
 import re
 import time
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import datetime
 from typing import Any, Mapping, Sequence
+from zoneinfo import ZoneInfo
 
 from .contracts import IntentionPlan
 
@@ -435,6 +437,211 @@ class StartupGroundingBundle:
         return "\n".join(lines)
 
 
+
+def build_startup_greeting_frame(
+    host: Any,
+    state: Any,
+    bundle: StartupGroundingBundle,
+    *,
+    now: float | None = None,
+):
+    """Dựng GreetingFrame thật cho đường startup production.
+
+    Trước đây ``GreetingCognitionEngine`` chỉ được gọi ở fallback. Main model
+    thành công thì nó không được thấy situation, return cadence, continuity hay
+    mức restraint nào cả. Khá đúng tinh thần xây não rồi chỉ dùng khi não khác
+    hỏng. Hàm này đưa cognition greeting vào đường chính, nhưng chỉ bằng dữ kiện
+    đã có trong runtime, không chế thêm một tiểu sử lúc khởi động.
+    """
+
+    from cortex.greeting_cognition import GreetingCognitionEngine
+
+    timestamp = float(now or time.time())
+    open_loops = tuple(
+        str(item or "").strip()
+        for item in (getattr(state, "open_loops", ()) or ())
+        if str(item or "").strip()
+    )[:3]
+    latest = getattr(state, "latest_observation", {}) or {}
+    if not isinstance(latest, Mapping):
+        latest = {}
+    relationship = getattr(state, "relationship", None)
+    relationship_payload = relationship.to_dict() if callable(getattr(relationship, "to_dict", None)) else {}
+    if not isinstance(relationship_payload, Mapping):
+        relationship_payload = {}
+
+    active_goal = open_loops[0] if open_loops else str(latest.get("open_loop", "") or "").strip()
+    current_attractor = str(
+        latest.get("current_attractor", "")
+        or latest.get("focus", "")
+        or latest.get("topic", "")
+        or ""
+    ).strip()
+    recent_direction = str(
+        latest.get("recent_cognition_direction", "")
+        or latest.get("summary", "")
+        or ""
+    ).strip()
+    self_continuity = str(
+        latest.get("self_continuity", "")
+        or latest.get("identity_continuity", "")
+        or ""
+    ).strip()
+
+    internal = None
+    getter = getattr(host, "_get_internal_state", None)
+    if callable(getter):
+        try:
+            internal = getter()
+        except Exception:
+            internal = None
+    last_greeting_at = float(getattr(internal, "last_session_greeting_at", 0.0) or 0.0)
+    seconds_since_last_session = max(0.0, timestamp - last_greeting_at) if last_greeting_at > 0.0 else 0.0
+    greeted_recently = bool(0.0 < seconds_since_last_session <= 180.0)
+
+    rupture = 0.0
+    try:
+        rupture = float(relationship_payload.get("rupture", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        rupture = 0.0
+    relational_feedback = ""
+    if rupture >= 0.28:
+        relational_feedback = str(relationship_payload.get("last_event", "") or "recent relational tension")
+
+    runtime_text = " ".join(
+        str(item.get("text", "") or "").lower()
+        for item in bundle.runtime_opening_evidence
+        if isinstance(item, Mapping)
+    )
+    restart_detected = any(
+        marker in runtime_text
+        for marker in ("runtime restarted", "process restarted", "crash recovery", "restarted after crash")
+    )
+
+    rolling = getattr(host, "rolling_internal_state", None)
+    fatigue = max(
+        float(getattr(rolling, "fatigue", 0.0) or 0.0),
+        float(getattr(rolling, "resource_caution", 0.0) or 0.0),
+    )
+    tone = "overloaded" if fatigue >= 0.66 else ""
+
+    timezone_name = str(os.getenv("ERIS_TIMEZONE", "Asia/Ho_Chi_Minh") or "Asia/Ho_Chi_Minh")
+    try:
+        local_dt = datetime.fromtimestamp(timestamp, ZoneInfo(timezone_name))
+    except Exception:
+        timezone_name = "Asia/Ho_Chi_Minh"
+        local_dt = datetime.fromtimestamp(timestamp, ZoneInfo(timezone_name))
+    hour = local_dt.hour
+    if 5 <= hour < 8:
+        time_of_day = "dawn"
+    elif 8 <= hour < 12:
+        time_of_day = "morning"
+    elif 12 <= hour < 14:
+        time_of_day = "noon"
+    elif 14 <= hour < 18:
+        time_of_day = "afternoon"
+    elif 18 <= hour < 23:
+        time_of_day = "evening"
+    else:
+        time_of_day = "late_night"
+    weekdays = ("Thứ hai", "Thứ ba", "Thứ tư", "Thứ năm", "Thứ sáu", "Thứ bảy", "Chủ nhật")
+
+    frame = GreetingCognitionEngine().build(
+        presence_restored=True,
+        continuity_restored=bool(active_goal or current_attractor or open_loops),
+        active_goal=active_goal,
+        current_attractor=current_attractor,
+        unresolved_loops=open_loops,
+        recent_direction=recent_direction,
+        self_continuity=self_continuity,
+        tone=tone,
+        greeted_recently=greeted_recently,
+        relational_feedback=relational_feedback,
+        seconds_since_last_session=seconds_since_last_session,
+        restart_detected=restart_detected,
+        timezone=timezone_name,
+        local_time=local_dt.strftime("%H:%M"),
+        weekday_vi=weekdays[local_dt.weekday()],
+        time_of_day=time_of_day,
+        is_weekend=local_dt.weekday() >= 5,
+    )
+    return replace(frame, must_not_claim_screen=not bundle.has_direct_screen_evidence)
+
+
+def select_startup_persona_preset(frame: Any, *, avoid_text: str = "") -> Mapping[str, Any] | None:
+    """Chọn preset cho persona opening thật sự rỗng context.
+
+    Preset chỉ thắng khi không có active anchor. Có continuity thì Main AI vẫn
+    phải viết câu động, vì đọc macro về một project dang dở sẽ rất NPC dù macro
+    có được đặt tên ``elegant`` đi nữa.
+    """
+
+    if frame is None or str(getattr(frame, "active_anchor", "") or "").strip():
+        return None
+    try:
+        from cortex.greeting_presets import GreetingPresetResolver
+
+        tone = "overloaded" if float(getattr(frame, "warmth", 0.0) or 0.0) < 0.22 else "socially_warm"
+        resolver = GreetingPresetResolver()
+        preset = None
+        mechanical_fallback = None
+        # Catalog cũ có vài câu hợp lệ nhưng vẫn mang nhịp status bot kiểu
+        # “Có mặt”, “Eris online”, “dữ kiện đến đâu…”. Không xóa chúng vì tone
+        # quiet/overloaded vẫn có lúc dùng được, nhưng persona opening mặc định
+        # sẽ thử lấy câu có nhịp hội thoại thật trước.
+        mechanical_starts = ("có mặt", "eris online", "tôi lên rồi")
+        mechanical_markers = ("dữ kiện", "không dựng chuyện", "tiêu chuẩn", "độ khó tính")
+        for _ in range(8):
+            candidate = resolver.resolve_or_default(frame, tone=tone, force=True)
+            if candidate is None:
+                break
+            mechanical_fallback = mechanical_fallback or candidate
+            normalized = " ".join(str(candidate.text or "").lower().split())
+            if normalized.startswith(mechanical_starts) or any(marker in normalized for marker in mechanical_markers):
+                continue
+            preset = candidate
+            break
+        preset = preset or mechanical_fallback
+        if preset is None:
+            return None
+        if str(preset.text or "").strip() == str(avoid_text or "").strip():
+            # Resolver đã chống lặp bằng history, nhưng ``avoid_text`` là hàng
+            # rào của chính session hiện tại nên vẫn kiểm thêm một lần.
+            return None
+        resolver.mark_used(preset.id)
+        return {
+            "text": str(preset.text or "").strip(),
+            "should_speak": True,
+            "performance_hint": str(preset.prosody_style or "dry_tease"),
+            "preset_id": str(preset.id or ""),
+            "preset_emotion": str(preset.emotion or ""),
+            "preset_motion": str(preset.motion or ""),
+            "preset_audio_asset": str(preset.audio_asset or ""),
+        }
+    except Exception:
+        return None
+
+
+def choose_startup_text(text: str, frame: Any, *, avoid_text: str = "") -> tuple[str, Mapping[str, Any]]:
+    """Giữ câu model nếu đạt taste/grounding, nếu không mới dùng fallback.
+
+    Đây là scorer, không phải rewrite guard. Nó không cố sửa từng chữ rồi tạo ra
+    món cháo văn phong. Hoặc câu model đủ tốt, hoặc cognition chọn câu khác.
+    """
+
+    try:
+        from cortex.greeting_quality import GreetingQualityScorer
+
+        quality = GreetingQualityScorer().choose_best((text,), frame, avoid_text=avoid_text)
+        return str(quality.text or "").strip(), {
+            "score": round(float(quality.score), 3),
+            "accepted": bool(quality.accepted),
+            "reasons": list(quality.reasons),
+        }
+    except Exception:
+        return str(text or "").strip(), {"score": 0.0, "accepted": True, "reasons": ["scorer_unavailable"]}
+
+
 def collect_startup_grounding(host: Any, *, timeout_seconds: float | None = None) -> StartupGroundingBundle:
     """Prime UIA/OCR và thu evidence hiện tại mà không gọi VLM.
 
@@ -744,6 +951,9 @@ def build_startup_fallback_text(
 __all__ = [
     "StartupGroundingBundle",
     "build_startup_fallback_text",
+    "build_startup_greeting_frame",
+    "choose_startup_text",
     "collect_startup_grounding",
     "ensure_grounded_startup_plan",
+    "select_startup_persona_preset",
 ]
