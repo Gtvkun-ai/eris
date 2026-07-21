@@ -171,18 +171,16 @@ def build_tutor_daemon_from_runtime(runtime_owner: Any) -> Optional[Any]:
 
     runtime_owner.request_tutor_answer = request_tutor_answer
 
-    # Nối KnowledgeProvider (đọc claim đã học) vào SituationModel nếu reachable.
-    try:
-        _attach_knowledge_provider(runtime_owner, logger)
-    except Exception as exc:
-        _warn(logger, f"tutor: không nối được knowledge provider ({exc!r})")
-
+    _install_knowledge_provider(runtime_owner, logger)
     return daemon
 
 
+def _install_knowledge_provider(runtime_owner: Any, logger: Any) -> None:
+    """Nối claim Tutor đã học vào đường memory recall đang sống.
 
-def _attach_knowledge_provider(runtime_owner: Any, logger: Any) -> None:
-    """Gắn KnowledgeProvider vào SituationModel để dự đoán dùng tri thức đã học."""
+    SituationModel shadow đã bị xóa; provider không còn giả vờ chờ một pipeline
+    sẽ không bao giờ được dựng nữa.
+    """
 
     from cortex.tutor.knowledge_provider import KnowledgeProvider
 
@@ -197,15 +195,8 @@ def _attach_knowledge_provider(runtime_owner: Any, logger: Any) -> None:
         except Exception:
             return []
 
-    provider = KnowledgeProvider(recall_fn)
-    runtime_owner.tutor_knowledge_provider = provider
-
-    sm = _reach_situation_model(runtime_owner)
-    if sm is not None and callable(getattr(sm, "set_knowledge_provider", None)):
-        sm.set_knowledge_provider(provider)
-        _info(logger, "tutor: đã nối KnowledgeProvider vào SituationModel")
-    else:
-        _info(logger, "tutor: KnowledgeProvider sẵn sàng (SituationModel sẽ nối khi pipeline dựng)")
+    runtime_owner.tutor_knowledge_provider = KnowledgeProvider(recall_fn)
+    _info(logger, "tutor: knowledge provider đã nối vào memory recall")
 
 
 def tutor_tick(runtime_owner: Any, *, observer_frame: Any = None, channel: str = "", snapshot: Any = None) -> None:
@@ -219,37 +210,11 @@ def tutor_tick(runtime_owner: Any, *, observer_frame: Any = None, channel: str =
         return
     try:
         now = _time.time()
-        # Lazy-attach KnowledgeProvider vào SituationModel (shadow pipeline tạo nó lazily).
-        sm = _reach_situation_model(runtime_owner)
-        if sm is not None:
-            prov = getattr(runtime_owner, "tutor_knowledge_provider", None)
-            if (prov is not None
-                    and getattr(sm, "_knowledge_provider", None) is None
-                    and callable(getattr(sm, "set_knowledge_provider", None))):
-                try:
-                    sm.set_knowledge_provider(prov)
-                except Exception:
-                    pass
         # Nguồn 1: observer 'unknown' — kèm đóng gói nội dung màn hình thật để Gemini đoán.
         if observer_frame is not None:
             try:
                 screen_ctx = _screen_context_from_snapshot(snapshot)
                 collector.push(collector.collect_from_observer(observer_frame, now=now, screen_context=screen_ctx))
-            except Exception:
-                pass
-        # Nguồn 2: vi phạm kỳ vọng của SituationModel (nếu reachable).
-        violation = None
-        if sm is not None:
-            expose = getattr(sm, "expose_violation", None)
-            if callable(expose):
-                try:
-                    violation = expose()
-                except Exception:
-                    violation = None
-        if violation is not None:
-            try:
-                stake = float(getattr(violation, "prediction_error", 0.0) or 0.0)
-                collector.push(collector.collect_from_violation(violation, stake_relevance=stake, now=now))
             except Exception:
                 pass
         idle = (channel == "autonomous") and not bool(getattr(runtime_owner, "chat_mode", False))
@@ -573,24 +538,6 @@ def _screen_context_from_snapshot(snapshot: Any) -> str:
     if ocr:
         parts.append(f"chữ trên màn hình: {ocr[:300]}")
     return scrub_identity(" | ".join(parts))[:500]
-
-
-def _reach_situation_model(runtime_owner: Any) -> Optional[Any]:
-    """Situation model chỉ có một owner thật; không mò qua pipeline đã bị gỡ."""
-    return getattr(runtime_owner, "situation_model", None)
-
-
-def _reach_situation_violation(runtime_owner: Any) -> Optional[Any]:
-    sm = _reach_situation_model(runtime_owner)
-    if sm is None:
-        return None
-    expose = getattr(sm, "expose_violation", None)
-    if callable(expose):
-        try:
-            return expose()
-        except Exception:
-            return None
-    return None
 
 
 def _reach_memory_commit(runtime_owner: Any) -> Optional[Callable[[Any], Any]]:

@@ -35,7 +35,7 @@ from .personality import (
 )
 
 
-AI_RUNTIME_VERSION = "ai_orchestrated.v6.0.cortex_brief"
+AI_RUNTIME_VERSION = "ai_orchestrated.v6.1.arbitrated_brief"
 
 
 def clamp01(value: Any, default: float = 0.0) -> float:

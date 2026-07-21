@@ -11,7 +11,7 @@ from core.cognition import (
 
 
 class StyleCortex:
-    """Fe V2 thu gọn: chỉ xuất lực delivery, không viết prompt nhân cách dài."""
+    """Chỉ xuất lực delivery, không viết prompt nhân cách dài."""
 
     def project(
         self,
@@ -35,6 +35,17 @@ class StyleCortex:
                     "support_bot_tone",
                 ),
                 confidence=0.90,
+                evidence_ids=refs,
+            )
+        if discourse.relation == "challenge_assistant_relevance":
+            return StyleProjection(
+                delivery="dry_clear_relevance",
+                distance="calm_near",
+                warmth_visibility="low",
+                edge="dry_precise",
+                pacing="answer_consequence_first",
+                avoid_moves=("dismiss_user", "repeat_claim_without_reason", "broad_clarification"),
+                confidence=0.86,
                 evidence_ids=refs,
             )
         if social.repair_pressure >= 0.65:

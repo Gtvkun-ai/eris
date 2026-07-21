@@ -10,6 +10,7 @@ from runtime.ai_orchestrated.contracts import IntentionPlan
 _STRATEGY_BY_MOVE = {
     "self_elaborate": ("carry_own_thread", "continuity", "dry_tease"),
     "repair_previous_response": ("direct_repair", "accuracy", "repair"),
+    "explain_relevance": ("explain_relevance", "coherence", "focused"),
     "clarify_literal_reference": ("literal_clarification", "accuracy", "focused"),
     "clarify_previous_phrase": ("literal_clarification", "accuracy", "focused"),
     "clarify_previous_statement": ("literal_clarification", "accuracy", "focused"),
@@ -29,6 +30,10 @@ def apply_cognitive_brief_to_plan(
     """
 
     if brief.confidence < 0.72:
+        return plan
+    if "discourse" in brief.degraded_modules:
+        return plan
+    if brief.needs_deep_inference and brief.ambiguity_owner != "assistant":
         return plan
     mapped = _STRATEGY_BY_MOVE.get(brief.response_move)
     if mapped is None:

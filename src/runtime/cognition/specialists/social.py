@@ -28,6 +28,17 @@ class SocialCortex:
                 ambiguity=0.10,
                 evidence_ids=refs,
             )
+        if discourse.relation == "challenge_assistant_relevance":
+            return SocialProjection(
+                user_posture="skeptical_request_for_relevance",
+                seriousness=0.58,
+                playfulness=0.24,
+                repair_pressure=0.34,
+                relational_stakes=0.22,
+                confidence=0.84,
+                ambiguity=0.12,
+                evidence_ids=refs,
+            )
         if discourse.relation == "style_feedback":
             return SocialProjection(
                 user_posture="direct_corrective_feedback",

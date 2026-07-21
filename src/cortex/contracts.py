@@ -970,7 +970,7 @@ class SpeechImpulse:
     # Báo cáo arbitration giữ nguyên dạng plain dict để tránh contracts.py import ngược
     # impulse_arbitration.py rồi tạo vòng phụ thuộc. Đây là "hồ sơ vụ án" của
     # impulse competition: impulse nào thắng, impulse nào thua, điểm vì sao.
-    # ActionUtility/SpeechCore/PromptContext có thể đọc nó mà không cần bói qua
+    # Runtime action/prompt policy có thể đọc nó mà không cần bói qua
     # suggested_speech_act. Một tiến bộ nhỏ, tiếc là phải nói ra.
     selected_impulse: str = ""
     impulse_scores: tuple[str, ...] = ()
@@ -978,7 +978,7 @@ class SpeechImpulse:
     agent_state_notes: tuple[str, ...] = ()
     body_bias_hint: dict[str, object] = field(default_factory=dict)
 
-    # Đạo hàm metabolism từ AgentStateStack/SpontaneousLife. Đây không phải
+    # Đạo hàm metabolism từ trạng thái runtime đang sống. Đây không phải
     # memory/state mới; nó là "áp lực sống" đi kèm impulse để các gate phía sau
     # hiểu rằng im lâu khác với im có chủ đích.
     vital_pressure: float = 0.0

@@ -305,7 +305,7 @@ class EmbeddingIndex:
         """Embed một text -> vector tuple. Trả () nếu model không sẵn sàng.
 
         Đây là interface provider dùng chung: EventSemanticProfiler và
-        SituationModel đều có thể nhận trực tiếp EmbeddingIndex làm provider.
+        consumer semantic có thể nhận trực tiếp EmbeddingIndex làm provider.
         """
 
         vectors = self.embed_events([str(text or "")])

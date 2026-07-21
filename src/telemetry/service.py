@@ -4,7 +4,8 @@ import io
 import mss
 from PIL import Image
 
-from cortex import SeLens, TelemetrySnapshot
+from cortex.se import SeLens
+from cortex.contracts import TelemetrySnapshot
 
 from .system import TelemetryMixin
 

@@ -10,6 +10,7 @@ from dataclasses import replace
 from typing import Any, Mapping, Sequence
 
 from core.cognition import PreResponseCognitiveBrief
+from runtime.cognition.turn_anchor import infer_current_turn_anchor, previous_assistant_from_history
 from runtime.cognition.normalization import normalize_vi
 
 from actions.contracts import VALID_SYSTEM_ACTIONS
@@ -801,79 +802,13 @@ class AIRuntimeModelRouter:
         )
 
     @staticmethod
-    def _current_user_move_hint(user_text: str) -> str:
-        """Neo rất mỏng cho observer, không thay thế semantic model.
-
-        Mục tiêu chỉ là ngăn model nhỏ bám một frame cũ qua nhiều lượt. Taxonomy
-        cố ý thô và ưu tiên `unknown` hơn việc đóng kịch tâm lý.
-        """
-
-        text = " ".join(str(user_text or "").casefold().split())
-        normalized_text = normalize_vi(user_text)
-        if not text:
-            return "none"
-        continuation = {
-            "rồi sao", "roi sao", "thế rồi sao", "the roi sao", "xong", "xong rồi sao",
-            "tiếp đi", "tiep di", "nói tiếp", "noi tiep", "kể tiếp", "ke tiep",
-            "nữa", "nua", "nữa đi", "nua di", "thì sao", "thi sao",
-            "ehm rồi sao á", "ừm rồi sao", "ờm rồi sao",
-        }
-        stripped = normalized_text.strip(" ?.!…")
-        normalized_continuation = {normalize_vi(item) for item in continuation}
-        if stripped in normalized_continuation or any(stripped.endswith(" " + item) for item in normalized_continuation):
-            return "continuation_bid"
-        if any(
-            marker in text
-            for marker in (
-                "là bạn á", "là em á", "là bạn hả", "là em hả", "có phải bạn", "có phải em",
-                "ý em là gì", "ý bạn là gì", "cái đó là gì", "cái này là gì", "tức là sao", "sao cơ",
-            )
-        ):
-            return "reference_clarification"
-        if any(
-            marker in text
-            for marker in (
-                "là em nghĩ tôi sẽ", "là bạn nghĩ tôi sẽ", "ý em là tôi", "ý bạn là tôi",
-                "em đang nghĩ tôi", "bạn đang nghĩ tôi",
-            )
-        ):
-            return "correction"
-        technical = (
-            "code", "repo", "log", "bug", "lỗi", "file", "tts", "api", "runtime",
-            "godot", "fix", "sửa", "debug", "panel", "model",
-        )
-        if any(token in text for token in technical):
-            return "technical_request"
-        if any(token in text for token in ("không phải", "ý tôi là", "tôi nói là", "sai rồi", "hiểu sai", "đọc lại")):
-            return "correction"
-        if any(
-            token in text
-            for token in (
-                "chán", "tệ", "máy quá", "cứng quá", "nhạt", "phèn", "không hay",
-                "generic", "chung chung", "vô hồn", "như bot", "support bot",
-                "chăm sóc khách hàng", "cộc lốc", "lạnh với", "nói lạnh", "làm màu",
-            )
-        ):
-            return "style_criticism"
-        if any(token in text for token in ("sến", "tình cảm", "ngọt", "dịu", "cộc lốc", "nói gọn", "nói thẳng")):
-            return "style_request"
-        if any(token in text for token in ("muốn tui quen", "muốn tôi quen", "thích tui", "thích tôi", "yêu tui", "yêu tôi")):
-            return "request_reciprocity"
-        if any(token in text for token in ("hả", "hong", "không")) and any(
-            token in text for token in ("bạn muốn", "em muốn", "bạn thích", "em thích", "bạn nhớ", "em nhớ")
-        ):
-            return "request_reciprocity"
-        if any(token in text for token in ("haha", "lmao", ":))", "=))", "khịa", "trêu")):
-            return "play_bid"
-        return "unknown"
-
-    @staticmethod
     def _apply_deterministic_observation_anchor(
         observation: CognitiveObservation,
         *,
         user_text: str,
         assistant_text: str,
         event_kind: str,
+        previous_assistant_text: str = "",
     ) -> CognitiveObservation:
         """Giữ observer bám lượt hiện tại khi model phụ 429 hoặc bê frame cũ.
 
@@ -885,7 +820,7 @@ class AIRuntimeModelRouter:
 
         if str(event_kind or "chat").strip().lower() != "chat":
             return observation
-        hint = AIRuntimeModelRouter._current_user_move_hint(user_text)
+        hint = infer_current_turn_anchor(user_text, previous_assistant_text=previous_assistant_text)
         if hint in {"none", "unknown"}:
             return observation
 
@@ -1112,6 +1047,10 @@ class AIRuntimeModelRouter:
         state_summary: Mapping[str, Any] | None = None,
         event_kind: str = "chat",
     ) -> CognitiveObservation:
+        previous_assistant_text = previous_assistant_from_history(
+            recent_history,
+            current_assistant_text=assistant_text,
+        )
         payload = {
             "turn_id": turn_id,
             "turn_seq": turn_seq,
@@ -1122,7 +1061,7 @@ class AIRuntimeModelRouter:
             "mechanical_outcomes": list(mechanical_outcomes)[-6:],
             "current_state_summary": dict(state_summary or {}),
             "current_turn_anchor": {
-                "user_move_hint": self._current_user_move_hint(user_text),
+                "user_move_hint": infer_current_turn_anchor(user_text, previous_assistant_text=previous_assistant_text),
                 "rule": "classify current user_text first; history is continuity only",
             },
         }
@@ -1159,6 +1098,7 @@ class AIRuntimeModelRouter:
             user_text=user_text,
             assistant_text=assistant_text,
             event_kind=event_kind,
+            previous_assistant_text=previous_assistant_text,
         )
         importance = max(
             primary.assistant_fault_probability,

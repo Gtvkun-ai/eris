@@ -44,6 +44,7 @@ class CognitiveAcceptanceGate:
             "clarify_previous_phrase",
             "clarify_previous_statement",
             "repair_assumption",
+            "explain_relevance",
         }:
             if contains_phrase(normalized, *self.ASSISTANT_OWNED_DEFLECTIONS):
                 violations.append(

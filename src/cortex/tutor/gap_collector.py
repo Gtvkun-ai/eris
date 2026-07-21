@@ -3,7 +3,7 @@
 cortex/tutor/gap_collector.py
 =============================
 
-Dẫn xuất Knowledge_Gap từ vi phạm kỳ vọng (SituationModel) và observer 'unknown',
+Dẫn xuất Knowledge_Gap từ observer 'unknown' và evidence gap có contract,
 dedupe theo ngữ nghĩa, giới hạn hàng đợi.
 """
 
@@ -48,7 +48,7 @@ class GapCollector:
     # ------------------------------------------------------------------
 
     def collect_from_violation(self, violation: Any, *, stake_relevance: float, now: float) -> Optional[KnowledgeGap]:
-        """Từ một ExpectationViolation của SituationModel."""
+        """Từ một violation có contract; caller không phụ thuộc model shadow cụ thể."""
 
         expected = str(getattr(violation, "expected", "") or "").strip()
         observed = str(getattr(violation, "observed", "") or "").strip()

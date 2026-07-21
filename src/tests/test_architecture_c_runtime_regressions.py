@@ -201,10 +201,12 @@ def test_tutor_backend_supports_cooperative_cancel() -> None:
 
 
 def test_current_turn_anchor_distinguishes_style_and_reciprocity() -> None:
-    assert AIRuntimeModelRouter._current_user_move_hint("em sến xíu đi cho tui zui") == "style_request"
-    assert AIRuntimeModelRouter._current_user_move_hint("bạn muốn tui quen bạn hả") == "request_reciprocity"
-    assert AIRuntimeModelRouter._current_user_move_hint("bạn nói generic vl") == "style_criticism"
-    assert AIRuntimeModelRouter._current_user_move_hint("ehm, rồi sao á") == "continuation_bid"
+    from runtime.cognition.turn_anchor import infer_current_turn_anchor
+
+    assert infer_current_turn_anchor("em sến xíu đi cho tui zui") == "style_request"
+    assert infer_current_turn_anchor("bạn muốn tui quen bạn hả") == "request_reciprocity"
+    assert infer_current_turn_anchor("bạn nói generic vl") == "style_criticism"
+    assert infer_current_turn_anchor("ehm, rồi sao á") == "continuation_bid"
 
 
 def test_cortex_v2_resolves_phrase_from_startup_opening() -> None:

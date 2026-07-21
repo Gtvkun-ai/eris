@@ -4,7 +4,7 @@ cortex/tutor/knowledge_provider.py
 ==================================
 
 KnowledgeProvider — đọc claim ĐÃ HỌC (đã commit, có embedding) từ trí nhớ ngữ nghĩa để
-làm giàu mô tả Prediction của SituationModel.
+cung cấp claim Tutor đã học cho memory recall và các consumer có contract rõ.
 
 Chỉ ĐỌC state đã commit (không gọi backend/LLM) ⇒ giữ tính tất định của lõi dự đoán.
 """

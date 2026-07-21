@@ -18,6 +18,15 @@ class SemanticCortex:
                 ambiguity=0.05,
                 evidence_ids=discourse.evidence_ids,
             )
+        if discourse.relation == "challenge_assistant_relevance":
+            return SemanticProjection(
+                user_act="challenge_relevance",
+                task_goal="explain_why_previous_claim_matters",
+                literal_question=True,
+                confidence=0.90,
+                ambiguity=0.10,
+                evidence_ids=discourse.evidence_ids,
+            )
         if discourse.relation == "style_feedback":
             return SemanticProjection(
                 user_act="style_criticism",

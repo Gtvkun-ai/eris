@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""DiscourseCortex: hiểu quan hệ giữa lượt mới và lời public gần nhất.
+"""DiscourseCortex: quan hệ giữa lượt mới và lời public gần nhất.
 
-Module này không đánh giá tính cách và không viết câu trả lời. Việc duy nhất của
-nó là xác định: user đang nối cái gì, sự mơ hồ thuộc về ai và move kế tiếp hợp lý.
+Không đọc personality, không quyết định warmth, không viết câu. Module chỉ trả
+relation, ownership và move kế tiếp kèm evidence thật của frame.
 """
 
 from __future__ import annotations
@@ -14,37 +14,52 @@ from runtime.cognition.normalization import contains_phrase, normalize_vi, token
 
 
 class DiscourseCortex:
-    CONTINUATION_PHRASES = (
-        "rồi sao", "roi sao", "thế rồi sao", "the roi sao", "xong rồi sao", "xong roi sao",
-        "tiếp đi", "tiep di", "nói tiếp", "noi tiep", "kể tiếp", "ke tiep", "nữa đi", "nua di",
-        "rồi", "roi", "xong", "nữa", "nua", "thì sao", "thi sao", "sau đó", "sau do",
+    _FILLER_PREFIX = re.compile(r"^(?:(?:eh+m+|uh+m+|um+|u+m+|o+m+|hm+|hmm+|a+|nay+)\s+)+")
+    _SOFT_SUFFIX = re.compile(r"\s+(?:a|ah|ha|nhi|nhe|vay|the|coi|di|nao)$")
+
+    EXACT_CONTINUATION = {
+        "roi", "roi sao", "the roi sao", "xong", "xong roi sao", "sau do", "sau do thi sao",
+        "tiep", "tiep di", "noi tiep", "ke tiep", "lam tiep", "giai thich tiep",
+        "nua", "nua di", "con nua", "con gi nua", "phan sau", "phan con lai",
+        "va", "va roi", "continue",
+    }
+    CONTINUATION_PATTERNS = (
+        re.compile(r"^(?:noi|ke|lam|giai thich|phan tich)\s+tiep(?:\s+.*)?$"),
+        re.compile(r"^(?:con|phan)\s+.*\s+(?:nua|dau|sao)$"),
+        re.compile(r"^(?:roi|xong|sau do)\s+(?:thi\s+)?sao$"),
     )
-    CLOSE_PHRASES = ("thôi bỏ đi", "thoi bo di", "khỏi", "khoi", "được rồi", "duoc roi")
+    DIRECT_QUESTION_PREFIXES = (
+        "roi toi ", "the toi ", "vay toi ", "con toi ", "roi minh ", "the minh ", "vay minh ",
+        "roi em ", "the em ", "vay em ", "con em ", "roi ban ", "the ban ", "vay ban ",
+    )
+    CLOSE_EXACT = {
+        "thoi bo di", "thoi bo", "bo di", "bo", "khoi", "thoi", "duoc roi", "ok bo qua", "khong can nua",
+    }
     CRITICISM_MARKERS = (
-        "generic", "chung chung", "vô hồn", "vo hon", "máy móc", "may moc", "như bot", "nhu bot",
-        "support bot", "cộc", "coc", "lạnh", "lanh", "khô khan", "kho khan", "rỗng", "rong",
-        "không đúng ý", "khong dung y", "làm màu", "lam mau", "thẳng quá", "thang qua",
+        "generic", "chung chung", "vo hon", "may moc", "nhu bot", "support bot", "coc", "lanh",
+        "kho khan", "rong", "khong dung y", "lam mau", "thang qua", "khong tu nhien",
     )
     ASSISTANT_MARKERS = (
-        "bạn nói", "ban noi", "em nói", "em noi", "câu vừa rồi", "cau vua roi", "câu này", "cau nay",
-        "trả lời", "tra loi", "eris nói", "eris noi",
+        "ban noi", "em noi", "cau vua roi", "cau nay", "tra loi", "eris noi", "cach noi",
     )
 
     def project(self, frame: CognitiveFrame) -> DiscourseProjection:
         current = normalize_vi(frame.user_text)
         previous = frame.last_assistant_text
-        refs = ("turn:user_text", "history:last_assistant") if previous else ("turn:user_text",)
+        previous_id = frame.last_assistant_evidence_id
+        refs = ("turn:user_text", previous_id) if previous_id else ("turn:user_text",)
         if not current:
             return DiscourseProjection(confidence=0.2, ambiguity=0.9, evidence_ids=("turn:user_text",))
 
-        if previous and contains_phrase(current, *self.CLOSE_PHRASES):
+        cue = self._compact_cue(current)
+        if previous and cue in self.CLOSE_EXACT:
             return DiscourseProjection(
                 relation="close_topic",
                 ambiguity_owner="shared",
                 expected_next_move="acknowledge_close",
                 assistant_fault_probability=0.05,
-                confidence=0.88,
-                ambiguity=0.08,
+                confidence=0.90,
+                ambiguity=0.06,
                 evidence_ids=refs,
             )
 
@@ -102,6 +117,22 @@ class DiscourseCortex:
                 evidence_ids=refs,
             )
 
+        # "Thì sao?" thường là đòi ERIS giải thích relevance/consequence của claim,
+        # không phải câu hỏi mới vô chủ. Tách khỏi "rồi sao?" để tránh làm mọi
+        # continuation thành một nhãn duy nhất rồi tự khen mình hiểu discourse.
+        if previous and cue in {"thi sao", "roi thi sao", "the thi sao"}:
+            return DiscourseProjection(
+                relation="challenge_assistant_relevance",
+                ambiguity_owner="assistant",
+                expected_next_move="explain_relevance",
+                open_loop=previous,
+                referenced_phrase="previous assistant claim",
+                assistant_fault_probability=0.44,
+                confidence=0.88,
+                ambiguity=0.12,
+                evidence_ids=refs,
+            )
+
         if previous and self._is_continuation_bid(current):
             return DiscourseProjection(
                 relation="continue_assistant_move",
@@ -132,51 +163,71 @@ class DiscourseCortex:
             ambiguity_owner="unknown",
             expected_next_move="answer",
             assistant_fault_probability=0.0,
-            confidence=0.64,
-            ambiguity=0.34,
+            confidence=0.66,
+            ambiguity=0.32,
             evidence_ids=("turn:user_text",),
         )
 
+    def _compact_cue(self, current: str) -> str:
+        text = current.strip(" ?.!,")
+        text = self._FILLER_PREFIX.sub("", text).strip()
+        # Gỡ tối đa hai tiểu từ cuối. "rồi sao á vậy" hiếm nhưng loài người có
+        # quyền sáng tạo, parser không cần nổi giận vì chuyện đó.
+        for _ in range(2):
+            reduced = self._SOFT_SUFFIX.sub("", text).strip()
+            if reduced == text:
+                break
+            text = reduced
+        for acknowledgement in ("duoc roi ", "ok ", "uh ", "u "):
+            if text.startswith(acknowledgement):
+                text = text[len(acknowledgement):].strip()
+                break
+        return text
+
     def _is_continuation_bid(self, current: str) -> bool:
-        stripped = current.strip(" ?.")
-        if contains_phrase(stripped, *self.CONTINUATION_PHRASES):
-            return len(stripped.split()) <= 8
-        # "ehm/ừm, rồi sao á" và các filler tương tự.
-        without_fillers = re.sub(r"^(?:eh+m+|uh+m+|um+|ừ+m+|ờ+m+|à+)\s+", "", stripped).strip()
-        return contains_phrase(without_fillers, *self.CONTINUATION_PHRASES) and len(without_fillers.split()) <= 8
+        cue = self._compact_cue(current)
+        if not cue or len(cue.split()) > 10:
+            return False
+        if cue.startswith(self.DIRECT_QUESTION_PREFIXES):
+            return False
+        # Một câu kể đã hoàn tất như "tôi làm xong rồi" có từ rồi nhưng không
+        # phải lời mời ERIS tiếp tục. Exact cue tránh lỗi contains-phrase cũ.
+        if any(token in cue.split() for token in ("toi", "minh", "em")) and cue not in self.EXACT_CONTINUATION:
+            return False
+        if cue in self.EXACT_CONTINUATION:
+            return True
+        return any(pattern.match(cue) for pattern in self.CONTINUATION_PATTERNS)
 
     def _is_criticism(self, current: str) -> bool:
         has_defect = contains_phrase(current, *self.CRITICISM_MARKERS)
         points_to_assistant = contains_phrase(current, *self.ASSISTANT_MARKERS)
-        return has_defect and (points_to_assistant or len(current.split()) <= 8)
+        return has_defect and (points_to_assistant or len(current.split()) <= 9)
 
     @staticmethod
     def _challenges_assumption(current: str) -> bool:
         markers = (
-            "là em nghĩ tôi sẽ", "la em nghi toi se", "là bạn nghĩ tôi sẽ", "la ban nghi toi se",
-            "ý em là tôi", "y em la toi", "ý bạn là tôi", "y ban la toi", "em cho rằng tôi", "em cho rang toi",
-            "bạn cho rằng tôi", "ban cho rang toi",
+            "la em nghi toi se", "la ban nghi toi se", "y em la toi", "y ban la toi",
+            "em cho rang toi", "ban cho rang toi", "sao em lai nghi toi", "sao ban lai nghi toi",
         )
         return contains_phrase(current, *markers)
 
     @staticmethod
     def _generic_clarification(current: str) -> bool:
         markers = (
-            "cái đó là gì", "cai do la gi", "cái này là gì", "cai nay la gi", "ý em là gì", "y em la gi",
-            "ý bạn là gì", "y ban la gi", "tức là sao", "tuc la sao", "nghĩa là gì", "nghia la gi",
-            "em nói cái gì vậy", "em noi cai gi vay", "bạn nói cái gì vậy", "ban noi cai gi vay",
+            "cai do la gi", "cai nay la gi", "y em la gi", "y ban la gi", "tuc la sao",
+            "nghia la gi", "em noi cai gi vay", "ban noi cai gi vay", "la sao",
         )
         return contains_phrase(current, *markers)
 
     @staticmethod
     def _looks_open_ended(previous: str) -> bool:
         text = str(previous or "").strip()
+        normalized = normalize_vi(text)
         if not text:
             return False
-        return text.endswith(("...", "…", ":", "-")) or any(
-            marker in normalize_vi(text)
-            for marker in ("nhung", "con", "phan con lai", "roi thi", "khong de", "khong on")
-        )
+        if text.endswith(("...", "…", ":", "-")):
+            return True
+        return bool(re.search(r"\b(?:nhung|con|roi thi|phan con lai|chua het)\s*$", normalized))
 
     @staticmethod
     def _identity_reference(current: str, previous: str) -> str:
