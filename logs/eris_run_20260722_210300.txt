@@ -1,0 +1,44 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-22 21:03:00
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+21:03:01.730 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+21:03:01.731 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+21:03:01.800 [INFO] [Vision] Da khoi chay vision.py PID=23088
+21:03:01.850 [INFO] [Live2D] Da khoi chay renderer PID=21924, UDP=4252
+21:03:01.850 [INFO] [BodyMode] 2D -> Live2D
+21:03:02.458 [INFO] [live2d] [live2d] third-party wrapper (0.7.0.4), not affiliated with Live2D Inc.
+21:03:02.471 [INFO] [live2d] [live2d.v3] Cubism Native, Python 3.12.0
+21:03:02.471 [INFO] [live2d] [live2d.v3] official: https://www.live2d.com/sdk/download/native/
+21:03:02.853 [INFO] [live2d] [INFO]  [Pal] Init Shader Dir: C:\Users\Gtvkun\Documents\GitHub\eris\.venv\Lib\site-packages\live2d\v3\
+21:03:02.860 [INFO] [live2d] [INFO]  [CSM][I]Live2D Cubism Core version: 05.01.0000 (83951616)
+21:03:02.861 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::StartUp() is complete.
+21:03:02.862 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::Initialize() is complete.
+21:03:02.865 [INFO] [live2d] [INFO]  allocate: cpp Model(at=000001B997B18250)
+21:03:02.865 [INFO] [live2d] [INFO]  load modelSetting: C:\Users\Gtvkun\Documents\GitHub\eris\src\assets\live2d\infj\infj.model3.json
+21:03:02.867 [INFO] [live2d] [INFO]  create model: infj.moc3
+21:03:03.023 [INFO] [live2d] [Live2D] Đã mở infj.model3.json | UDP 127.0.0.1:4252
+21:03:03.023 [INFO] [live2d] [Live2D] Window pos=(1370, 110) size=(520,900) fb=(520,900) screen=(1920, 1080) canvas=(1.0, 1.5) canvas_px=(1024.0, 1536.0) scale=1.00 offset=(0.00,-0.02) transparent=True decorated=False topmost=True
+21:03:05.196 [INFO] [vision.py] [LLM][INFO] Social parser client sẵn sàng: openai/gpt-oss-20b
+21:03:05.197 [INFO] [vision.py] [LLM][INFO] Social deliberator/critic client sẵn sàng: openai/gpt-oss-120b
+21:03:05.198 [INFO] [vision.py] [LLM][INFO] Social observer fallback client sẵn sàng: llama-3.1-8b-instant
+21:03:05.505 [INFO] [vision.py] [Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=4
+21:03:05.510 [INFO] [vision.py] [Loop][INFO] [vtuber-stage] loaded version=vtuber_stage.v11 phases=8,9,10,11 status=intention_authority_ready session=stage_9ed2c3b1a8a44143
+21:03:05.521 [INFO] [vision.py] [Loop][INFO] [internal-cognitive] loaded version=internal_cognitive.v1.0 capabilities=8 status=read_only_verified
+21:03:05.539 [INFO] [vision.py] [Loop][INFO] [project-ops] loaded version=project_operations.v1.1 capabilities=15 mode=autonomous_project_scope
+21:03:05.539 [INFO] [vision.py] [Loop][INFO] [workspace] eris_home=[đường dẫn nội bộ đã ẩn] active=none implicit_source_repo=false
+21:03:06.474 [INFO] [vision.py] [Loop][INFO] tutor: knowledge provider đã nối vào memory recall
+21:03:06.541 [INFO] [vision.py] [Loop][INFO] [environment-capability] loaded version=environment_capability.v1.0 capabilities=6 status=read_only_verified
+21:03:06.690 [INFO] [vision.py] [Loop][INFO] [architecture C] enabled version=ai_orchestrated.v6.1.arbitrated_brief state_version=0 personality_version=0 identity_version=0 observer=post_turn planner=ai cortex=pre_response_brief single_writer=1
+21:03:10.594 [INFO] [vision.py] [Loop][INFO] --- Architecture C runtime; chat vision theo yêu cầu màn hình ---
+21:03:10.596 [INFO] [vision.py] [Loop][INFO] [screen text] worker started backend=lazy-auto poll=1.2s
+21:03:12.059 [INFO] [vision.py] [Loop][INFO] [screen text] OCR backend resolved=rapidocr
+21:03:12.525 [INFO] [vision.py] [Loop][INFO] [architecture C startup grounding] direct=0 strong=0 telemetry_tab=0 evidence=0 runtime_opening=2 metadata=4 backend=unknown wait=1.93s notes=screen_prime_timeout
+21:03:22.308 [INFO] [Live2D] Dang dung renderer PID=21924...
+21:03:22.340 [INFO] [Live2D] Renderer da thoat (code=-1, current=False).
+21:03:22.368 [INFO] [Vision] Dang dung vision.py PID=23088...
+21:03:22.402 [INFO] [Vision] vision.py da thoat (PID=23088, code=-1, unexpected=False).
+21:03:22.413 [INFO] [RunLogger] Ket thuc phien chay.

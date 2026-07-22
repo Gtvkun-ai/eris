@@ -62,8 +62,6 @@ class Live2DRenderer:
         window = None
         model = None
         try:
-            glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
-            glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
             glfw.window_hint(glfw.RESIZABLE, glfw.TRUE)
             glfw.window_hint(glfw.DECORATED, glfw.TRUE if self.config.decorated else glfw.FALSE)
             glfw.window_hint(glfw.FLOATING, glfw.TRUE if self.config.topmost else glfw.FALSE)
@@ -81,7 +79,8 @@ class Live2DRenderer:
                 raise RuntimeError("Không tạo được cửa sổ Live2D")
             glfw.make_context_current(window)
             glfw.swap_interval(1)
-            self._position_window(glfw, window)
+            screen_size, window_pos = self._position_window(glfw, window)
+            self._show_window(glfw, window)
 
             live2d.init()
             live2d.glInit()
@@ -94,11 +93,22 @@ class Live2DRenderer:
             model.SetAutoBlinkEnable(True)
             model.SetAutoBreathEnable(True)
             self.available_parameters = self._read_parameter_ids(model)
+            canvas_size = self._safe_model_call(model, "GetCanvasSize")
+            canvas_pixel_size = self._safe_model_call(model, "GetCanvasSizePixel")
 
             self._install_callbacks(glfw, window, model)
             self.receiver.send_avatar_ready()
             print(
                 f"[Live2D] Đã mở {model_path.name} | UDP {self.config.listen_host}:{self.config.listen_port}",
+                flush=True,
+            )
+            print(
+                "[Live2D] Window "
+                f"pos={window_pos} size=({self.config.width},{self.config.height}) "
+                f"fb=({fb_width},{fb_height}) screen={screen_size} "
+                f"canvas={canvas_size} canvas_px={canvas_pixel_size} "
+                f"scale={self.config.scale:.2f} offset=({self.config.offset_x:.2f},{self.config.offset_y:.2f}) "
+                f"transparent={self.config.transparent} decorated={self.config.decorated} topmost={self.config.topmost}",
                 flush=True,
             )
             if "ParamMouthOpenY" not in self.available_parameters:
@@ -131,7 +141,10 @@ class Live2DRenderer:
                     if parameter_id in self.available_parameters:
                         model.SetParameterValue(parameter_id, float(value))
 
-                live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
+                if self.config.transparent:
+                    live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
+                else:
+                    live2d.clearBuffer(0.08, 0.08, 0.10, 1.0)
                 model.Draw()
                 glfw.swap_buffers(window)
 
@@ -175,15 +188,46 @@ class Live2DRenderer:
             print(f"[Live2D][WARN] Không đọc được parameter list: {exc}", flush=True)
         return ids
 
-    def _position_window(self, glfw: Any, window: Any) -> None:
+    @staticmethod
+    def _safe_model_call(model: Any, method_name: str) -> Any:
+        try:
+            return getattr(model, method_name)()
+        except Exception as exc:
+            return f"unavailable:{exc}"
+
+    def _position_window(self, glfw: Any, window: Any) -> tuple[tuple[int, int], tuple[int, int]]:
+        screen_size = (0, 0)
+        window_pos = (0, 0)
         try:
             monitor = glfw.get_primary_monitor()
             mode = glfw.get_video_mode(monitor)
             screen_width = int(mode.size.width)
             screen_height = int(mode.size.height)
-            x = max(0, screen_width - self.config.width - 30)
-            y = max(0, screen_height - self.config.height - 70)
+            screen_size = (screen_width, screen_height)
+            x = self.config.x if self.config.x is not None else max(0, screen_width - self.config.width - 30)
+            y = self.config.y if self.config.y is not None else max(0, screen_height - self.config.height - 70)
             glfw.set_window_pos(window, x, y)
+            window_pos = (int(x), int(y))
+        except Exception:
+            pass
+        return screen_size, window_pos
+
+    @staticmethod
+    def _show_window(glfw: Any, window: Any) -> None:
+        try:
+            glfw.show_window(window)
+        except Exception:
+            pass
+        try:
+            glfw.focus_window(window)
+        except Exception:
+            pass
+        try:
+            hwnd = glfw.get_win32_window(window)
+            if hwnd:
+                import ctypes
+
+                ctypes.windll.user32.SetForegroundWindow(int(hwnd))
         except Exception:
             pass
 

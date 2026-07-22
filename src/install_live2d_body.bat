@@ -1,6 +1,8 @@
 @echo off
 setlocal
 cd /d "%~dp0"
+set "PYTHONUTF8=1"
+set "PYTHONIOENCODING=utf-8"
 
 rem File nay nam trong thu muc src. Uu tien venv cua repo o thu muc cha.
 set "PYTHON=%~dp0..\.venv\Scripts\python.exe"

@@ -41,7 +41,7 @@ public sealed class Live2DBodyManager
 		}
 	}
 
-	public bool Start(string configuredPython, string modelRelativePath, int port)
+	public bool Start(string configuredPython, string modelRelativePath, int port, int windowX, int windowY, int windowWidth, int windowHeight)
 	{
 		lock (_gate)
 		{
@@ -68,9 +68,14 @@ public sealed class Live2DBodyManager
 		bool useBundled = File.Exists(bundled);
 		string fileName = useBundled ? bundled : ResolvePythonExecutable(configuredPython, root);
 		int safePort = Math.Clamp(port, 1, 65535);
+		int safeWidth = Math.Clamp(windowWidth, 320, 2400);
+		int safeHeight = Math.Clamp(windowHeight, 480, 2400);
+		int safeX = Math.Max(0, windowX);
+		int safeY = Math.Max(0, windowY);
+		string rendererArgs = $"--model \"{modelPath}\" --port {safePort} --width {safeWidth} --height {safeHeight} --x {safeX} --y {safeY}";
 		string arguments = useBundled
-			? $"--model \"{modelPath}\" --port {safePort}"
-			: $"-m live2d_body.main --model \"{modelPath}\" --port {safePort}";
+			? rendererArgs
+			: $"-m live2d_body.main {rendererArgs}";
 
 		Process process = null;
 		try
@@ -93,6 +98,7 @@ public sealed class Live2DBodyManager
 			startInfo.Environment["ERIS_PROJECT_ROOT"] = root;
 			startInfo.Environment["ERIS_LIVE2D_MODEL"] = modelPath;
 			startInfo.Environment["ERIS_LIVE2D_PORT"] = safePort.ToString();
+			startInfo.Environment["ERIS_GODOT_PID"] = Process.GetCurrentProcess().Id.ToString();
 
 			process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
 			process.OutputDataReceived += (_, e) =>

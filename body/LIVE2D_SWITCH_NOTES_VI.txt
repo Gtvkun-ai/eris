@@ -1,4 +1,21 @@
-Body patch 51
-- UdpListener.Live2D.cs: mode switch, context-menu bridge, UDP forwarding, fallback 2D.
-- Live2DBodyManager.cs: sở hữu process renderer; không nhét process này vào cognition.
-- UdpListener.cs: thêm hook khởi tạo/tắt, forward toàn bộ packet và nút context menu.
+LIVE2D SWITCH V2 - bubble overlay + eye tracking an toàn
+
+Đã sửa:
+- Không ẩn cả CharacterBody2D nữa. Chỉ làm trong suốt AnimatedSprite2D bằng SelfModulate,
+  nên BubbleContainer vẫn được Godot vẽ.
+- Live2D gửi window_geometry về UDP 4242; hidden anchor Godot đi theo cửa sổ model,
+  vì vậy bubble đi theo khi kéo Live2D.
+- Khi ở Live2D, dừng gravity/autonomy của sprite 2D để anchor bubble không tự bò lệch.
+- Renderer Win32 được giữ ngay dưới top-level window Godot trong z-order, để bubble,
+  context menu và các panel Godot luôn nằm trên model.
+- Eye tracking bỏ model.Drag, dùng bộ điều khiển riêng có dead-zone, easing và clamp nhỏ.
+- Mắt phải dùng trục X đối xứng với mắt trái theo rig hiện tại của model INFJ.
+- Renderer đọc chuột desktop thay vì chỉ cursor callback trong cửa sổ, nên mắt không bị
+  đóng băng ở cực trị khi con trỏ rời khỏi model.
+- Startup log in model profile: parameter, physics, expression và motion group thật sự có.
+
+LƯU Ý BẮT BUỘC KHI CHẠY TỪ GODOT EDITOR:
+Tắt nút "Embed Game on Play" trước khi F6/F5.
+Log "Embedded window can't become on top" nghĩa là game đang nằm trong viewport Editor.
+Một cửa sổ GLFW bên ngoài không thể được chèn giữa model và bubble của viewport nhúng.
+Khi chạy build/exe hoặc Editor ở chế độ cửa sổ ngoài, z-order bridge hoạt động bình thường.

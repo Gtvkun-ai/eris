@@ -571,7 +571,14 @@ public partial class UdpListener : Node2D
 		float d = (float)delta;
 		Vector2 pos = _body.Position;
 		Vector2 screenSize = GetViewportRect().Size;
-		if (_isDraggingCharacter)
+		if (_isLive2DMode)
+		{
+			// Live2D sở hữu vị trí body. Dừng gravity/autonomy của sprite 2D để
+			// hidden anchor không tự bò khỏi model và kéo bubble đi chỗ khác.
+			SyncLive2DBodyAnchor();
+			pos = _body.Position;
+		}
+		else if (_isDraggingCharacter)
 		{
 			pos = ClampDraggedPosition(pos, screenSize);
 			_body.Position = pos;
@@ -584,6 +591,7 @@ public partial class UdpListener : Node2D
 			UpdateLocalBodyAutonomy(d);
 		}
 		_motion.ApplyVisualState(_monika, _bubble, _body.Position, screenSize);
+		ApplyLive2DBubbleVisualState();
 		ClampBubbleToScreen();
 		UpdateMousePassthrough();
 		if (_privateMindPanel != null && _privateMindPanel.Visible)

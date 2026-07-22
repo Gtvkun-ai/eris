@@ -46,6 +46,8 @@ class Live2DBodyConfig:
     transparent: bool = True
     topmost: bool = True
     decorated: bool = False
+    x: int | None = None
+    y: int | None = None
 
     @classmethod
     def from_env(cls, *, root: Path | None = None) -> "Live2DBodyConfig":
@@ -68,4 +70,6 @@ class Live2DBodyConfig:
             transparent=_bool_env("ERIS_LIVE2D_TRANSPARENT", True),
             topmost=_bool_env("ERIS_LIVE2D_TOPMOST", True),
             decorated=_bool_env("ERIS_LIVE2D_DECORATED", False),
+            x=_int_env("ERIS_LIVE2D_X", -1) if _int_env("ERIS_LIVE2D_X", -1) >= 0 else None,
+            y=_int_env("ERIS_LIVE2D_Y", -1) if _int_env("ERIS_LIVE2D_Y", -1) >= 0 else None,
         )
