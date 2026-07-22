@@ -2229,10 +2229,16 @@ class RuntimeCoordinator(
         nên client có thể bỏ qua nếu chưa hỗ trợ.
         """
         event_type = str(getattr(event, "type", "") or "")
+        turn_segments = tuple(getattr(event, "turn_segments", ()) or ())
+        try:
+            segment_count = len(turn_segments) or int(getattr(stage_frame, "segment_count", 0) or 1)
+        except (TypeError, ValueError):
+            segment_count = 1
         record = {
             "type": event_type,
             "turn_id": str(getattr(event, "turn_id", "") or getattr(stage_frame, "turn_id", "") or ""),
             "segment_id": int(getattr(event, "segment_id", getattr(stage_frame, "segment_id", 0)) or 0),
+            "segment_count": max(1, int(segment_count)),
             "reason": str(getattr(event, "reason", "") or ""),
             "error": str(getattr(event, "error", "") or ""),
             "prosody_style": str(getattr(stage_frame, "prosody_style", "") or ""),

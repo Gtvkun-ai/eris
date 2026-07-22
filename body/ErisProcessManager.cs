@@ -226,6 +226,7 @@ public sealed class ErisProcessManager
 		startInfo.Environment["ERIS_TTS_VOICE"] = string.IsNullOrWhiteSpace(config.TtsVoice) ? "Aoede" : config.TtsVoice.Trim();
 		startInfo.Environment["ERIS_TTS_LANGUAGE"] = NormalizeTtsLanguage(config.TtsLanguage);
 		startInfo.Environment["ERIS_TTS_QUALITY"] = string.IsNullOrWhiteSpace(config.TtsQuality) ? "high" : config.TtsQuality.Trim();
+		startInfo.Environment["ERIS_TTS_EVENT_PAYLOAD"] = "1";
 		// Settings panel da load secrets/user settings vao config truoc khi start.
 		// Gan truc tiep de Restart ap dung ngay ca khi user chua bam Save.
 		startInfo.Environment["ERIS_REMOTE_PROVIDER"] = string.IsNullOrWhiteSpace(config.RemoteApiProvider) ? "gemini" : config.RemoteApiProvider.Trim();

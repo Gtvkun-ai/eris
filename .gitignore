@@ -2,6 +2,8 @@
 __pycache__/
 **/__pycache__/
 *.pyc
+.venv/
+.venv-*/
 **/.hf_datasets_cache/
 .hf_datasets_cache/
 *.gguf

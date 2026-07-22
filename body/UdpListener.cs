@@ -43,6 +43,8 @@ public partial class UdpListener : Node2D
 	private MotionController _motion;
 	private LocalBodyAutonomy _bodyAutonomy;
 	private BodyAudioController _audio;
+	private string _ttsBodyAudioTurnId = "";
+	private int _ttsBodyAudioSegmentCount = 1;
 	private ErisProcessManager _processes;
 	private UdpDecisionParser _decisionParser = new();
 
@@ -3697,6 +3699,8 @@ public partial class UdpListener : Node2D
 
 	private void ParseAndApply(string raw)
 	{
+		if (TryHandleTtsEvent(raw))
+			return;
 		if (TryHandleTutorEvent(raw))
 			return;
 		var payload = _decisionParser.Parse(raw);
@@ -3748,6 +3752,94 @@ public partial class UdpListener : Node2D
 			ScheduleBodyTimeline(payload.BodyTimeline);
 		else if (payload.HasExplicitMotion)
 			_motion.ApplyCommand(payload.MotionCommand, _body.Position, GetViewportRect().Size);
+	}
+
+	private bool TryHandleTtsEvent(string raw)
+	{
+		if (string.IsNullOrWhiteSpace(raw))
+			return false;
+		try
+		{
+			using JsonDocument doc = JsonDocument.Parse(raw);
+			JsonElement root = doc.RootElement;
+			if (root.ValueKind != JsonValueKind.Object
+				|| !root.TryGetProperty("type", out JsonElement typeNode)
+				|| typeNode.ValueKind != JsonValueKind.String
+				|| !string.Equals(typeNode.GetString(), "tts_event", StringComparison.Ordinal))
+				return false;
+
+			string eventType = root.TryGetProperty("event_type", out JsonElement eventNode)
+				&& eventNode.ValueKind == JsonValueKind.String
+				? (eventNode.GetString() ?? "").Trim().ToLowerInvariant()
+				: "";
+			string turnId = root.TryGetProperty("turn_id", out JsonElement turnNode)
+				&& turnNode.ValueKind == JsonValueKind.String
+				? turnNode.GetString() ?? ""
+				: "";
+			int segmentId = ReadTtsInt(root, "segment_id", 0);
+			int segmentCount = ReadTtsSegmentCount(root, segmentId);
+
+			if (eventType == "audio_start")
+			{
+				_ttsBodyAudioTurnId = turnId;
+				_ttsBodyAudioSegmentCount = Math.Max(segmentCount, segmentId + 1);
+				_audio?.SetTtsExclusiveMute(true);
+				return true;
+			}
+
+			if (eventType == "audio_done")
+			{
+				if (string.IsNullOrWhiteSpace(_ttsBodyAudioTurnId)
+					|| string.IsNullOrWhiteSpace(turnId)
+					|| string.Equals(turnId, _ttsBodyAudioTurnId, StringComparison.Ordinal))
+				{
+					int totalSegments = Math.Max(_ttsBodyAudioSegmentCount, segmentCount);
+					if (segmentId >= totalSegments - 1)
+						ClearTtsBodyAudioMute();
+				}
+				return true;
+			}
+
+			if (eventType == "audio_failed" || eventType == "audio_cancelled")
+			{
+				ClearTtsBodyAudioMute();
+				return true;
+			}
+
+			return true;
+		}
+		catch (JsonException)
+		{
+			return false;
+		}
+	}
+
+	private void ClearTtsBodyAudioMute()
+	{
+		_ttsBodyAudioTurnId = "";
+		_ttsBodyAudioSegmentCount = 1;
+		_audio?.SetTtsExclusiveMute(false);
+	}
+
+	private static int ReadTtsSegmentCount(JsonElement root, int segmentId)
+	{
+		int explicitCount = ReadTtsInt(root, "segment_count", 0);
+		if (explicitCount > 0)
+			return explicitCount;
+		if (root.TryGetProperty("turn_segments", out JsonElement segments) && segments.ValueKind == JsonValueKind.Array)
+			return Math.Max(segments.GetArrayLength(), segmentId + 1);
+		return Math.Max(1, segmentId + 1);
+	}
+
+	private static int ReadTtsInt(JsonElement root, string key, int fallback)
+	{
+		if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty(key, out JsonElement value))
+			return fallback;
+		if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int number))
+			return number;
+		if (value.ValueKind == JsonValueKind.String && int.TryParse(value.GetString(), out int parsed))
+			return parsed;
+		return fallback;
 	}
 
 	private void TryCaptureAndAcknowledgePanelState(string raw)

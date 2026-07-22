@@ -144,6 +144,15 @@ def _auto_install_rapidocr(*, logger=None) -> bool:
         if logger:
             logger.warning("[screen text] OCR auto-install skipped: runtime is not inside a virtualenv.")
         return False
+    if sys.version_info >= (3, 13):
+        if logger:
+            logger.warning(
+                "[screen text] OCR auto-install skipped: rapidocr-onnxruntime is not available for Python %s.%s. "
+                "Use a Python 3.12 venv or install Tesseract + pytesseract for OCR.",
+                sys.version_info.major,
+                sys.version_info.minor,
+            )
+        return False
     requirements = Path(__file__).resolve().parents[1] / "requirements-screen-ocr.txt"
     command = [sys.executable, "-m", "pip", "install", "--disable-pip-version-check"]
     if requirements.exists():

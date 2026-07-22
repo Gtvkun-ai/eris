@@ -1,2 +1,4 @@
 # OCR nền cho Eris. Chỉ cần cài trong đúng Python venv của project.
+# rapidocr-onnxruntime/onnxruntime hiện chưa có wheel cho Python 3.13+.
+# Dùng venv Python 3.12, hoặc cài Tesseract + pytesseract làm backend thay thế.
 rapidocr-onnxruntime>=1.3.24,<2
