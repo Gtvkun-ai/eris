@@ -411,7 +411,20 @@ def infer_fact_key(norm: str) -> Optional[tuple[str, float]]:
     # không được memory adapter cướp lượt chỉ vì có cụm "tên tôi".
     if _looks_like_interpretive_fact_question(norm):
         return None
-    if any(m in norm for m in ("toi ten gi", "ten toi", "toi ten la gi", "nho ten toi")):
+    if any(m in norm for m in (
+        "toi la ai", "tui la ai", "minh la ai",
+        "nho toi la ai", "nho tui la ai", "nho minh la ai",
+        "biet toi la ai", "biet tui la ai", "biet minh la ai",
+        "ban nho toi la ai", "ban nho tui la ai", "ban biet toi la ai", "ban biet tui la ai",
+    )):
+        return ("user.profile", 0.86)
+    if any(m in norm for m in (
+        "toi ten gi", "tui ten gi", "minh ten gi",
+        "ten toi", "ten tui", "ten minh",
+        "ten cua toi", "ten cua tui", "ten cua minh",
+        "toi ten la gi", "tui ten la gi", "minh ten la gi",
+        "nho ten toi", "nho ten tui", "nho ten minh",
+    )):
         return ("user.name", 0.88)
     if any(m in norm for m in ("toi sinh thang may", "thang sinh", "sinh thang may", "birthday month")):
         return ("user.birth_month", 0.90)
@@ -565,7 +578,16 @@ def parse_vi_number(value: str) -> Optional[int]:
 
 
 def _looks_like_name_disclosure(norm: str) -> bool:
-    if any(marker in norm for marker in ("toi ten gi", "ten toi", "toi ten la gi", "nho ten toi")):
+    if any(marker in norm for marker in (
+        "toi ten gi", "tui ten gi", "minh ten gi",
+        "ten toi", "ten tui", "ten minh",
+        "ten cua toi", "ten cua tui", "ten cua minh",
+        "toi ten la gi", "tui ten la gi", "minh ten la gi",
+        "nho ten toi", "nho ten tui", "nho ten minh",
+        "toi la ai", "tui la ai", "minh la ai",
+        "nho toi la ai", "nho tui la ai", "nho minh la ai",
+        "biet toi la ai", "biet tui la ai", "biet minh la ai",
+    )):
         return False
     if re.search(r"\btoi\s+ten\s+(?:day\s+du\s+)?la\s+[a-z0-9_ -]{2,60}\b", norm):
         return True
@@ -635,9 +657,17 @@ def _looks_like_fact_update_question(norm: str, *, raw: str) -> bool:
         return True
     question_markers = (
         "toi ten gi",
+        "tui ten gi",
+        "minh ten gi",
         "ten toi la gi",
+        "ten tui la gi",
+        "ten minh la gi",
         "toi la ai",
+        "tui la ai",
+        "minh la ai",
         "toi la gi",
+        "tui la gi",
+        "minh la gi",
         "toi thich gi",
         "toi thich gi nhi",
         "toi sinh thang may",

@@ -39,6 +39,8 @@ class MaintenanceActionSpec:
     pause_runtime: bool = True
     cancel_pending: bool = True
     destructive: bool = False
+    confirmation_mode: str = "simple"
+    confirm_label: str = "Xác nhận"
 
 
 @dataclass(slots=True)
@@ -66,95 +68,126 @@ class MaintenanceResult:
 ACTION_SPECS: dict[str, MaintenanceActionSpec] = {
     "refresh_conversation": MaintenanceActionSpec(
         "refresh_conversation", "Làm mới cuộc trò chuyện",
-        "Xóa context/ledger của phiên hiện tại, không đụng ký ức dài hạn.",
+        "Xóa context của phiên hiện tại, không đụng ký ức dài hạn.",
         "warning", True, True,
+        confirmation_mode="simple", confirm_label="Làm mới trò chuyện",
     ),
     "cancel_pending": MaintenanceActionSpec(
         "cancel_pending", "Hủy tác vụ đang chờ",
         "Hủy TTS, request nền và các queue chưa phát.",
         "safe", False, False,
+        confirmation_mode="none", confirm_label="Hủy tác vụ",
     ),
     "reset_session_affect": MaintenanceActionSpec(
         "reset_session_affect", "Reset cảm xúc phiên",
-        "Đưa affect/pressure runtime về baseline nhưng giữ quan hệ dài hạn.",
-        "warning", True, False,
+        "Đưa affect và pressure runtime về baseline nhưng giữ quan hệ dài hạn.",
+        "warning", True, True,
         ("active_state_snapshot.json",),
+        confirmation_mode="simple", confirm_label="Reset cảm xúc",
     ),
     "reset_runtime_relationship": MaintenanceActionSpec(
         "reset_runtime_relationship", "Reset quan hệ runtime",
         "Đưa relationship state đang hoạt động về baseline, chưa xóa relational memory.",
         "warning", True, True,
         ("active_state_snapshot.json",),
+        confirmation_mode="simple", confirm_label="Reset quan hệ phiên",
+    ),
+    "reset_session_state": MaintenanceActionSpec(
+        "reset_session_state", "Reset trạng thái phiên",
+        "Đưa cảm xúc và quan hệ runtime về baseline, giữ nguyên ký ức dài hạn.",
+        "warning", True, True,
+        ("active_state_snapshot.json",),
+        confirmation_mode="simple", confirm_label="Reset phiên",
     ),
     "reset_user_model": MaintenanceActionSpec(
-        "reset_user_model", "Đặt lại mô hình về bạn",
-        "Reset user model và epistemic beliefs về user; giữ đời sống riêng của Eris.",
+        "reset_user_model", "Quên mô hình về bạn",
+        "Xóa user model, epistemic beliefs và lịch sử ToM về người dùng.",
         "danger", True, True,
         ("user_model.json", "epistemic_v2.json", "tom_history.json"),
+        destructive=True, confirmation_mode="typed", confirm_label="Quên mô hình",
     ),
     "reset_long_term_relationship": MaintenanceActionSpec(
-        "reset_long_term_relationship", "Reset quan hệ dài hạn",
-        "Xóa relational/affective relationship memory và reset existential anchor.",
+        "reset_long_term_relationship", "Xóa quan hệ dài hạn",
+        "Xóa relational memory, affective residue và existential anchor của quan hệ.",
         "danger", True, True,
         ("relational_memory.json", "affective_residue_memory.json", "anchor_state.json", "active_state_snapshot.json"),
+        destructive=True, confirmation_mode="typed", confirm_label="Xóa quan hệ",
     ),
     "clear_repair_history": MaintenanceActionSpec(
-        "clear_repair_history", "Xóa lịch sử repair & xung đột",
-        "Xóa repair memory và trạng thái repair/rupture đang hoạt động.",
+        "clear_repair_history", "Xóa repair & xung đột",
+        "Xóa repair memory và trạng thái rupture/repair đang hoạt động.",
         "danger", True, True,
         ("repair_memory.json", "active_state_snapshot.json"),
+        destructive=True, confirmation_mode="typed", confirm_label="Xóa lịch sử",
     ),
     "reset_private_mind": MaintenanceActionSpec(
         "reset_private_mind", "Reset dòng suy nghĩ & bận tâm",
         "Xóa concern, thought stream, inner diary và queue private-mind.",
         "danger", True, True,
         ("private_concerns.json", "thought_stream.jsonl", "inner_diary.json", "internal_agenda.json"),
+        destructive=True, confirmation_mode="typed", confirm_label="Reset dòng suy nghĩ",
     ),
     "reset_private_life": MaintenanceActionSpec(
         "reset_private_life", "Reset đời sống riêng",
         "Đưa PrivateLifeCore về state baseline và xóa queue bề mặt.",
         "danger", True, True,
         ("private_life_state.json",),
+        destructive=True, confirmation_mode="typed", confirm_label="Reset đời sống riêng",
+    ),
+    "reset_inner_state": MaintenanceActionSpec(
+        "reset_inner_state", "Reset nội tâm hiện tại",
+        "Xóa dòng suy nghĩ, bận tâm và private-life state hiện tại.",
+        "warning", True, True,
+        ("private_concerns.json", "thought_stream.jsonl", "inner_diary.json", "internal_agenda.json", "private_life_state.json"),
+        confirmation_mode="simple", confirm_label="Reset nội tâm",
     ),
     "clear_vocal_cache": MaintenanceActionSpec(
-        "clear_vocal_cache", "Xóa Vocal Cache",
+        "clear_vocal_cache", "Dọn cache giọng",
         "Xóa cache giọng đã sinh; không đụng preset, key hoặc memory.",
-        "warning", False, True,
+        "safe", False, False,
+        confirmation_mode="none", confirm_label="Dọn cache",
     ),
     "reindex_semantic_memory": MaintenanceActionSpec(
         "reindex_semantic_memory", "Dựng lại semantic index",
         "Không xóa ký ức; chỉ dựng lại embedding index từ semantic memory hiện có.",
         "safe", False, False, ("semantic_memory.json",), False, False, False,
+        confirmation_mode="none", confirm_label="Dựng lại index",
     ),
     "export_backup": MaintenanceActionSpec(
-        "export_backup", "Xuất backup thủ công",
-        "Đóng gói memory_core thành ZIP để lưu trước khi thử nghiệm hoặc reset.",
+        "export_backup", "Xuất backup ZIP",
+        "Đóng gói memory_core thành ZIP, không sửa file nguồn.",
         "safe", False, False, (), False, False, False,
+        confirmation_mode="none", confirm_label="Xuất backup",
     ),
     "quarantine_provider_key": MaintenanceActionSpec(
         "quarantine_provider_key", "Cách ly API key",
         "Tắt một key trong runtime theo fingerprint; không xóa secret khỏi ổ đĩa.",
         "warning", True, True, (), False, False, False,
+        confirmation_mode="simple", confirm_label="Cách ly key",
     ),
     "restore_provider_key": MaintenanceActionSpec(
         "restore_provider_key", "Khôi phục API key",
-        "Bỏ quarantine/cooldown cho key đã kiểm tra lại.",
+        "Bỏ quarantine hoặc cooldown cho key đã kiểm tra lại.",
         "safe", False, False, (), False, False, False,
+        confirmation_mode="none", confirm_label="Khôi phục key",
     ),
     "rotate_provider_key": MaintenanceActionSpec(
         "rotate_provider_key", "Xoay API key chủ động",
         "Chuyển con trỏ provider sang key sống kế tiếp mà không đánh dấu key hiện tại lỗi.",
         "safe", False, False, (), False, False, False,
+        confirmation_mode="none", confirm_label="Xoay key",
     ),
     "reset_anchor_state": MaintenanceActionSpec(
         "reset_anchor_state", "Reset Anchor State",
-        "Reset các switch/override của anchor qua cùng maintenance protocol, có backup trước.",
+        "Reset các switch và override của anchor qua maintenance protocol, có backup trước.",
         "warning", True, True, ("anchor_state.json", "anchor_journal.jsonl"), True, True, True,
+        confirmation_mode="typed", confirm_label="Reset anchor",
     ),
     "factory_reset": MaintenanceActionSpec(
-        "factory_reset", "Khôi phục toàn bộ Eris",
-        "Reset các thành phần được chọn. Raw event ledger và API key không bao giờ bị chọn mặc định.",
+        "factory_reset", "Đặt lại toàn bộ Eris",
+        "Reset các thành phần được chọn. API key, settings, raw event ledger và backup được giữ nguyên.",
         "critical", True, True,
+        destructive=True, confirmation_mode="typed", confirm_label="Đặt lại toàn bộ",
     ),
 }
 
@@ -173,16 +206,15 @@ class MaintenanceService:
     @staticmethod
     def confirmation_phrase(action: str) -> str:
         return {
-            "factory_reset": "FACTORY RESET",
-            "reset_user_model": "FORGET USER MODEL",
-            "reset_long_term_relationship": "RESET RELATIONSHIP",
-            "reset_private_mind": "RESET PRIVATE MIND",
-            "reset_private_life": "RESET PRIVATE LIFE",
-            "clear_repair_history": "CLEAR REPAIR HISTORY",
-            "clear_vocal_cache": "CLEAR VOCAL CACHE",
-            "quarantine_provider_key": "QUARANTINE KEY",
+            "factory_reset": "ĐẶT LẠI TOÀN BỘ",
+            "reset_user_model": "QUÊN MÔ HÌNH",
+            "reset_long_term_relationship": "XÓA QUAN HỆ",
+            "reset_private_mind": "RESET NỘI TÂM",
+            "reset_private_life": "RESET ĐỜI SỐNG RIÊNG",
+            "reset_inner_state": "RESET NỘI TÂM",
+            "clear_repair_history": "XÓA XUNG ĐỘT",
             "reset_anchor_state": "RESET ANCHOR",
-        }.get(str(action or "").strip().lower(), "CONFIRM")
+        }.get(str(action or "").strip().lower(), "XÁC NHẬN")
 
     # ------------------------------------------------------------------ API
     def catalog(self) -> dict[str, Any]:
@@ -195,6 +227,8 @@ class MaintenanceService:
                     "severity": spec.severity,
                     "reversible": spec.reversible,
                     "requires_confirmation": spec.requires_confirmation,
+                    "confirmation_mode": spec.confirmation_mode,
+                    "confirm_label": spec.confirm_label,
                 }
                 for spec in ACTION_SPECS.values()
             ],
@@ -203,6 +237,8 @@ class MaintenanceService:
             "provider_health": self._provider_health(),
             "semantic_index": self._semantic_index_health(),
             "backup_export_root": str((self.memory_root / "exports").resolve()),
+            "backup_root": str((self.memory_root / "backups").resolve()),
+            "backup_summary": self._backup_summary(),
         }
 
     def preview(self, action: str, *, options: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -227,6 +263,8 @@ class MaintenanceService:
             "severity": spec.severity,
             "reversible": spec.reversible,
             "requires_confirmation": spec.requires_confirmation,
+            "confirmation_mode": spec.confirmation_mode if spec.requires_confirmation else "none",
+            "confirm_label": spec.confirm_label,
             "affected": affected,
             "total_bytes": total_bytes,
             "confirmation_token": token,
@@ -378,6 +416,11 @@ class MaintenanceService:
         self.owner._set_internal_state(state)
         result.changed.append("internal_state.relationship_dynamics")
 
+    def _action_reset_session_state(self, *, result: MaintenanceResult, options: dict[str, Any]) -> None:
+        self._action_reset_session_affect(result=result, options=options)
+        self._action_reset_runtime_relationship(result=result, options=options)
+        result.changed.append("session_state_baseline")
+
     def _action_reset_user_model(self, *, result: MaintenanceResult, options: dict[str, Any]) -> None:
         loop = getattr(self.owner, "private_mind_loop", None)
         store = getattr(loop, "user_model_store", None)
@@ -515,6 +558,11 @@ class MaintenanceService:
         self.owner.private_life_surface_queue = []
         self.owner.private_life_digest = {}
         result.changed.extend(["private_life_state", "private_life_queue"])
+
+    def _action_reset_inner_state(self, *, result: MaintenanceResult, options: dict[str, Any]) -> None:
+        self._action_reset_private_mind(result=result, options=options)
+        self._action_reset_private_life(result=result, options=options)
+        result.changed.append("inner_state_baseline")
 
     def _action_clear_vocal_cache(self, *, result: MaintenanceResult, options: dict[str, Any]) -> None:
         path = self.vocal_cache_path
@@ -710,6 +758,56 @@ class MaintenanceService:
             "store_ready": semantic is not None,
             "embedding_backend_ready": index is not None,
             "rebuild_supported": callable(getattr(semantic, "rebuild_embedding_index", None)),
+        }
+
+    def _backup_summary(self) -> dict[str, Any]:
+        """Tóm tắt backup cho UI mà không bắt Body tự quét memory_core."""
+
+        candidates: list[tuple[float, Path, str, int]] = []
+        backup_root = self.memory_root / "backups"
+        export_root = self.memory_root / "exports"
+
+        if backup_root.exists():
+            for path in backup_root.iterdir():
+                if not path.exists():
+                    continue
+                created_at = path.stat().st_mtime
+                action = "maintenance"
+                manifest = path / "manifest.json" if path.is_dir() else None
+                if manifest is not None and manifest.exists():
+                    try:
+                        payload = json.loads(manifest.read_text(encoding="utf-8"))
+                        created_at = float(payload.get("created_at") or created_at)
+                        action = str(payload.get("action") or action)
+                    except Exception:
+                        pass
+                stat = self._path_stat(path)
+                candidates.append((created_at, path, action, int(stat.get("bytes", 0) or 0)))
+
+        if export_root.exists():
+            for path in export_root.glob("*.zip"):
+                try:
+                    candidates.append((path.stat().st_mtime, path, "export_backup", path.stat().st_size))
+                except OSError:
+                    continue
+
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        total_bytes = sum(item[3] for item in candidates)
+        latest = None
+        if candidates:
+            created_at, path, action, size = candidates[0]
+            latest = {
+                "path": str(path),
+                "name": path.name,
+                "created_at": created_at,
+                "action": action,
+                "bytes": size,
+                "is_zip": path.is_file(),
+            }
+        return {
+            "count": len(candidates),
+            "total_bytes": total_bytes,
+            "latest": latest,
         }
 
     def _preview_notes(self, action: str, options: dict[str, Any]) -> list[str]:

@@ -1,204 +1,470 @@
 using Godot;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
 public partial class UdpListener : Node2D
 {
-	// Danger Zone không phải một nhóm setting. Đây là command center bảo trì:
-	// mỗi thao tác được preview ở Brain, nhận confirmation token rồi mới execute.
+	// Danger Zone là command center bảo trì, không phải một bãi toggle.
+	// UI chỉ hiện hành động theo cấp độ: an toàn, reset phiên, xóa dài hạn và đặt lại toàn bộ.
+	// Mọi thao tác đi qua preview của Brain trước khi execute để Body không tự đoán phạm vi dữ liệu.
 	private Label _dangerCatalogStatusLabel;
+	private Label _dangerBackupStatusLabel;
 	private Label _dangerVocalCacheLabel;
-	private Label _dangerProviderHealthLabel;
 	private Label _dangerSemanticIndexLabel;
 	private ConfirmationDialog _dangerConfirmDialog;
 	private Label _dangerConfirmSummaryLabel;
 	private Label _dangerConfirmPhraseHintLabel;
 	private LineEdit _dangerConfirmInput;
 	private Button _dangerConfirmButton;
+	private string _dangerBackupRoot = "";
 	private string _dangerPendingAction = "";
 	private string _dangerPendingToken = "";
 	private string _dangerPendingPhrase = "";
+	private string _dangerPendingConfirmationMode = "typed";
+	private string _dangerPendingConfirmLabel = "Xác nhận";
+	private string _dangerPendingSeverity = "danger";
 	private JsonObject _dangerPendingOptions = new();
 
 	private static readonly Color DangerRed = new(0.72f, 0.12f, 0.22f);
-	private static readonly Color DangerRedSoft = new(1.00f, 0.89f, 0.91f, 0.92f);
-	private static readonly Color DangerAmber = new(0.68f, 0.36f, 0.06f);
+	private static readonly Color DangerRedDeep = new(0.62f, 0.06f, 0.16f);
+	private static readonly Color DangerRedSoft = new(1.00f, 0.91f, 0.93f, 0.94f);
+	private static readonly Color DangerAmber = new(0.67f, 0.35f, 0.05f);
+	private static readonly Color DangerAmberSoft = new(1.00f, 0.96f, 0.87f, 0.94f);
+	private static readonly Color DangerSafe = new(0.46f, 0.18f, 0.34f);
+	private static readonly Color DangerSafeSoft = new(1.00f, 0.98f, 0.99f, 0.94f);
+	private static readonly Color DangerSuccess = new(0.18f, 0.48f, 0.30f);
 
 	private void ResetDangerSettingsUiReferences()
 	{
 		_dangerCatalogStatusLabel = null;
+		_dangerBackupStatusLabel = null;
 		_dangerVocalCacheLabel = null;
-		_dangerProviderHealthLabel = null;
 		_dangerSemanticIndexLabel = null;
 		_dangerConfirmDialog = null;
 		_dangerConfirmSummaryLabel = null;
 		_dangerConfirmPhraseHintLabel = null;
 		_dangerConfirmInput = null;
 		_dangerConfirmButton = null;
+		_dangerBackupRoot = "";
 	}
 
 	private void BuildDangerSettingsPage(Control root)
 	{
 		var intro = CreateUiLabel(
-			"Chỉ reset, xóa hoặc sửa trạng thái thật. Body không tự đụng file memory; Brain sẽ backup và reset cả object trong RAM.",
-			12,
+			"Bảo trì an toàn nằm riêng. Chỉ thao tác xóa dữ liệu dài hạn mới dùng nút đỏ và yêu cầu nhập xác nhận.",
+			11,
 			DangerAmber);
-		intro.Position = new Vector2(44f, 202f);
-		intro.Size = new Vector2(1090f, 30f);
+		intro.Position = new Vector2(44f, 204f);
+		intro.Size = new Vector2(1088f, 22f);
 		intro.AutowrapMode = TextServer.AutowrapMode.WordSmart;
 		root.AddChild(intro);
 
-		var sessionCard = AddSettingsCard(root, new Rect2(32f, 232f, 350f, 350f), "Phiên hiện tại");
-		AddDangerActionRow(sessionCard, 52f, "Làm mới cuộc trò chuyện", "Xóa context, public/session ledger và interrupt của phiên.", "refresh_conversation", "Làm mới");
-		AddDangerActionRow(sessionCard, 122f, "Hủy tác vụ đang chờ", "Hủy TTS, future nền và queue chưa phát.", "cancel_pending", "Hủy ngay");
-		AddDangerActionRow(sessionCard, 192f, "Reset cảm xúc phiên", "Đưa affect/pressure về baseline, giữ quan hệ.", "reset_session_affect", "Reset");
-		AddDangerActionRow(sessionCard, 262f, "Reset quan hệ runtime", "Reset state quan hệ đang chạy, chưa xóa memory dài hạn.", "reset_runtime_relationship", "Reset");
+		BuildDangerStatusStrip(root);
 
-		var memoryCard = AddSettingsCard(root, new Rect2(400f, 232f, 360f, 350f), "Ký ức & quan hệ");
-		AddDangerActionRow(memoryCard, 52f, "Đặt lại mô hình về Ngài", "Reset user model, epistemic user và ToM history.", "reset_user_model", "Quên mô hình");
-		AddDangerActionRow(memoryCard, 132f, "Reset quan hệ dài hạn", "Xóa relational/affective memory và reset anchor.", "reset_long_term_relationship", "Reset sâu");
-		AddDangerActionRow(memoryCard, 212f, "Xóa repair & xung đột", "Xóa repair memory cùng rupture/repair state hiện hành.", "clear_repair_history", "Xóa lịch sử");
+		var safeCard = AddSettingsCard(root, new Rect2(32f, 292f, 548f, 310f), "Bảo trì & trạng thái hiện tại");
+		_dangerVocalCacheLabel = AddDangerMaintenanceTile(
+			safeCard,
+			new Vector2(18f, 50f),
+			"Dọn cache giọng",
+			"Đang đọc dung lượng cache…",
+			"clear_vocal_cache",
+			"Dọn cache");
+		_dangerSemanticIndexLabel = AddDangerMaintenanceTile(
+			safeCard,
+			new Vector2(280f, 50f),
+			"Dựng lại semantic index",
+			"Đang kiểm tra embedding backend…",
+			"reindex_semantic_memory",
+			"Dựng lại");
+		AddDangerMaintenanceTile(
+			safeCard,
+			new Vector2(18f, 116f),
+			"Hủy tác vụ đang chờ",
+			"Dừng TTS, future nền và queue chưa phát.",
+			"cancel_pending",
+			"Hủy tác vụ");
+		AddDangerMaintenanceTile(
+			safeCard,
+			new Vector2(280f, 116f),
+			"Xuất backup ZIP",
+			"Đóng gói memory hiện tại, không sửa file nguồn.",
+			"export_backup",
+			"Xuất backup");
 
-		_dangerSemanticIndexLabel = CreateUiLabel("Semantic index: đang đọc…", 10, SettingsInkSoft);
-		_dangerSemanticIndexLabel.Position = new Vector2(18f, 274f);
-		_dangerSemanticIndexLabel.Size = new Vector2(320f, 18f);
-		memoryCard.AddChild(_dangerSemanticIndexLabel);
-		var reindex = CreateDangerButton("Dựng lại index", () => RequestMaintenancePreview("reindex_semantic_memory"), critical: false);
-		reindex.Position = new Vector2(18f, 298f);
-		reindex.Size = new Vector2(150f, 34f);
-		memoryCard.AddChild(reindex);
-		var exportBackup = CreateDangerButton("Xuất backup ZIP", () => RequestMaintenancePreview("export_backup"), critical: false);
-		exportBackup.Position = new Vector2(178f, 298f);
-		exportBackup.Size = new Vector2(164f, 34f);
-		memoryCard.AddChild(exportBackup);
+		AddDangerSectionDivider(safeCard, 184f, "Đặt lại trạng thái hiện tại");
+		AddDangerResetRow(
+			safeCard,
+			214f,
+			"Làm mới trò chuyện",
+			"Xóa context của phiên, giữ nguyên ký ức dài hạn.",
+			"refresh_conversation",
+			"Làm mới");
+		AddDangerResetRow(
+			safeCard,
+			248f,
+			"Reset trạng thái phiên",
+			"Đưa cảm xúc và quan hệ runtime về baseline.",
+			"reset_session_state",
+			"Reset phiên");
+		AddDangerResetRow(
+			safeCard,
+			282f,
+			"Reset nội tâm hiện tại",
+			"Xóa dòng suy nghĩ, bận tâm và private-life state hiện tại.",
+			"reset_inner_state",
+			"Reset nội tâm");
 
-		var internalCard = AddSettingsCard(root, new Rect2(778f, 232f, 370f, 350f), "Nội tâm & hệ thống");
-		AddDangerActionRow(internalCard, 52f, "Reset dòng suy nghĩ", "Xóa concern, thought stream, inner diary và private queue.", "reset_private_mind", "Reset");
-		AddDangerActionRow(internalCard, 122f, "Reset đời sống riêng", "Đưa PrivateLifeCore về baseline, không đụng user model.", "reset_private_life", "Reset");
-		AddDangerActionRow(internalCard, 192f, "Xóa Vocal Cache", "Chỉ xóa cache giọng đã sinh; preset và key được giữ.", "clear_vocal_cache", "Dọn cache");
-		_dangerVocalCacheLabel = CreateUiLabel("Cache: đang đọc từ Brain…", 10, SettingsInkSoft);
-		_dangerVocalCacheLabel.Position = new Vector2(18f, 246f);
-		_dangerVocalCacheLabel.Size = new Vector2(160f, 18f);
-		internalCard.AddChild(_dangerVocalCacheLabel);
-		_dangerProviderHealthLabel = CreateUiLabel("Key pool: đang đọc…", 10, SettingsInkSoft);
-		_dangerProviderHealthLabel.Position = new Vector2(176f, 246f);
-		_dangerProviderHealthLabel.Size = new Vector2(176f, 18f);
-		_dangerProviderHealthLabel.HorizontalAlignment = HorizontalAlignment.Right;
-		internalCard.AddChild(_dangerProviderHealthLabel);
+		var persistentCard = AddSettingsCard(root, new Rect2(598f, 292f, 550f, 310f), "Ký ức dài hạn");
+		var persistentHint = CreateUiLabel("Mỗi thao tác bên dưới tự tạo backup trước khi thay đổi dữ liệu.", 10, SettingsInkSoft);
+		persistentHint.Position = new Vector2(18f, 44f);
+		persistentHint.Size = new Vector2(500f, 20f);
+		persistentCard.AddChild(persistentHint);
 
-		var rotateKey = CreateDangerButton("Xoay key", () => RequestMaintenancePreview("rotate_provider_key"), critical: false);
-		rotateKey.Position = new Vector2(18f, 268f);
-		rotateKey.Size = new Vector2(104f, 32f);
-		rotateKey.TooltipText = "Xoay key trong pool đang chọn ở Basic.";
-		internalCard.AddChild(rotateKey);
-		var quarantineKey = CreateDangerButton("Cách ly", () => RequestMaintenancePreview("quarantine_provider_key"), critical: false);
-		quarantineKey.Position = new Vector2(130f, 268f);
-		quarantineKey.Size = new Vector2(104f, 32f);
-		quarantineKey.TooltipText = "Cách ly key active trong pool đang chọn; không xóa secret.";
-		internalCard.AddChild(quarantineKey);
-		var restoreKey = CreateDangerButton("Khôi phục", () => RequestMaintenancePreview("restore_provider_key"), critical: false);
-		restoreKey.Position = new Vector2(242f, 268f);
-		restoreKey.Size = new Vector2(110f, 32f);
-		restoreKey.TooltipText = "Khôi phục key quarantined/cooldown đầu tiên trong pool đang chọn.";
-		internalCard.AddChild(restoreKey);
+		AddDangerPersistentRow(
+			persistentCard,
+			70f,
+			"Quên mô hình về bạn",
+			"Xóa user model, ToM và điều Eris tin rằng đã biết về bạn.",
+			"reset_user_model",
+			"Quên mô hình");
+		AddDangerPersistentRow(
+			persistentCard,
+			132f,
+			"Xóa quan hệ dài hạn",
+			"Xóa mức độ thân thiết, residue cảm xúc và anchor quan hệ.",
+			"reset_long_term_relationship",
+			"Xóa quan hệ");
+		AddDangerPersistentRow(
+			persistentCard,
+			194f,
+			"Xóa repair & xung đột",
+			"Xóa các mốc hiểu lầm, đổ vỡ và lịch sử từng sửa chữa.",
+			"clear_repair_history",
+			"Xóa lịch sử");
 
-		var factory = CreateDangerButton("KHÔI PHỤC TOÀN BỘ", () => RequestMaintenancePreview("factory_reset"), critical: true);
-		factory.Position = new Vector2(18f, 306f);
-		factory.Size = new Vector2(334f, 30f);
-		factory.TooltipText = "Mặc định không xóa API key, raw event ledger, settings hoặc backup.";
-		internalCard.AddChild(factory);
-
-		var divider = new ColorRect
-		{
-			Color = new Color(0.82f, 0.22f, 0.30f, 0.34f),
-			Position = new Vector2(32f, 604f),
-			Size = new Vector2(1116f, 1.4f),
-			MouseFilter = Control.MouseFilterEnum.Ignore,
-		};
-		root.AddChild(divider);
-
-		_dangerCatalogStatusLabel = CreateUiLabel("Đang kết nối maintenance service…", 11, SettingsInkSoft);
-		_dangerCatalogStatusLabel.Position = new Vector2(44f, 620f);
-		_dangerCatalogStatusLabel.Size = new Vector2(520f, 22f);
-		root.AddChild(_dangerCatalogStatusLabel);
+		AddDangerFactoryResetCard(persistentCard, 256f);
 
 		_settingsStatusNoteLabel = CreateUiLabel("", 10, DangerRed);
-		_settingsStatusNoteLabel.Position = new Vector2(44f, 642f);
-		_settingsStatusNoteLabel.Size = new Vector2(650f, 18f);
+		_settingsStatusNoteLabel.Position = new Vector2(44f, 617f);
+		_settingsStatusNoteLabel.Size = new Vector2(920f, 24f);
 		_settingsStatusNoteLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
 		root.AddChild(_settingsStatusNoteLabel);
 
-		var refresh = CreateSettingsButton("↻ Đọc lại trạng thái", RequestMaintenanceCatalog, primary: false);
-		refresh.Position = new Vector2(742f, 622f);
-		refresh.Size = new Vector2(138f, 38f);
-		root.AddChild(refresh);
-
-		var openMemory = CreateSettingsButton("Mở memory", OpenAdvancedMemoryDirectory, primary: false);
-		openMemory.Position = new Vector2(888f, 622f);
-		openMemory.Size = new Vector2(106f, 38f);
-		root.AddChild(openMemory);
-
 		var close = CreateSettingsButton("Đóng", CloseSettingsPanel, primary: false);
-		close.Position = new Vector2(1002f, 622f);
-		close.Size = new Vector2(70f, 38f);
+		close.Position = new Vector2(1044f, 614f);
+		close.Size = new Vector2(104f, 38f);
 		root.AddChild(close);
-
-		var restart = CreateSettingsButton("Restart", RestartVisionProcess, primary: true);
-		restart.Position = new Vector2(1080f, 620f);
-		restart.Size = new Vector2(64f, 42f);
-		restart.AddThemeFontSizeOverride("font_size", 9);
-		root.AddChild(restart);
 
 		BuildDangerConfirmationDialog();
 	}
 
-	private void AddDangerActionRow(Control parent, float y, string title, string description, string action, string buttonText)
+	private void BuildDangerStatusStrip(Control root)
 	{
-		var titleLabel = CreateUiLabel(title, 13, SettingsInk);
-		titleLabel.Position = new Vector2(18f, y);
-		titleLabel.Size = new Vector2(200f, 22f);
-		parent.AddChild(titleLabel);
-
-		var descriptionLabel = CreateUiLabel(description, 10, SettingsInkSoft);
-		descriptionLabel.Position = new Vector2(18f, y + 23f);
-		descriptionLabel.Size = new Vector2(210f, 36f);
-		descriptionLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-		parent.AddChild(descriptionLabel);
-
-		bool critical = action is "reset_user_model" or "reset_long_term_relationship" or "clear_repair_history" or "reset_private_mind" or "reset_private_life";
-		var button = CreateDangerButton(buttonText, () => RequestMaintenancePreview(action), critical);
-		button.Position = new Vector2(parent.Size.X - 124f, y + 6f);
-		button.Size = new Vector2(106f, 36f);
-		parent.AddChild(button);
-	}
-
-	private Button CreateDangerButton(string text, Action onPressed, bool critical)
-	{
-		var button = CreateSettingsButton(text, onPressed, primary: false);
-		var normal = new StyleBoxFlat
+		var statusPanel = new Panel
 		{
-			BgColor = critical ? new Color(0.74f, 0.12f, 0.22f, 0.90f) : DangerRedSoft,
-			BorderColor = critical ? new Color(0.98f, 0.46f, 0.53f, 0.95f) : new Color(0.88f, 0.38f, 0.46f, 0.84f),
+			Position = new Vector2(32f, 230f),
+			Size = new Vector2(1116f, 50f),
+			MouseFilter = Control.MouseFilterEnum.Stop,
+		};
+		var style = new StyleBoxFlat
+		{
+			BgColor = new Color(1f, 0.985f, 0.992f, 0.96f),
+			BorderColor = new Color(0.95f, 0.64f, 0.76f, 0.58f),
 			BorderWidthLeft = 1,
 			BorderWidthTop = 1,
 			BorderWidthRight = 1,
 			BorderWidthBottom = 1,
-			CornerRadiusTopLeft = 10,
-			CornerRadiusTopRight = 10,
-			CornerRadiusBottomLeft = 10,
-			CornerRadiusBottomRight = 10,
+			CornerRadiusTopLeft = 14,
+			CornerRadiusTopRight = 14,
+			CornerRadiusBottomLeft = 14,
+			CornerRadiusBottomRight = 14,
+		};
+		statusPanel.AddThemeStyleboxOverride("panel", style);
+		root.AddChild(statusPanel);
+
+		var dot = CreateUiLabel("●", 12, DangerSuccess);
+		dot.Position = new Vector2(18f, 9f);
+		dot.Size = new Vector2(18f, 20f);
+		statusPanel.AddChild(dot);
+
+		_dangerCatalogStatusLabel = CreateUiLabel("Đang kết nối maintenance service…", 11, SettingsInk);
+		_dangerCatalogStatusLabel.Position = new Vector2(38f, 7f);
+		_dangerCatalogStatusLabel.Size = new Vector2(420f, 20f);
+		statusPanel.AddChild(_dangerCatalogStatusLabel);
+
+		_dangerBackupStatusLabel = CreateUiLabel("Backup gần nhất: đang đọc…", 9, SettingsInkSoft);
+		_dangerBackupStatusLabel.Position = new Vector2(38f, 26f);
+		_dangerBackupStatusLabel.Size = new Vector2(660f, 18f);
+		statusPanel.AddChild(_dangerBackupStatusLabel);
+
+		var guarantee = CreateUiLabel("Xóa sâu luôn preview và backup trước.", 9, DangerAmber);
+		guarantee.Position = new Vector2(474f, 9f);
+		guarantee.Size = new Vector2(330f, 20f);
+		guarantee.HorizontalAlignment = HorizontalAlignment.Right;
+		statusPanel.AddChild(guarantee);
+
+		var refresh = CreateSettingsCompactButton("↻ Đọc lại", RequestMaintenanceCatalog, 9);
+		refresh.Position = new Vector2(846f, 9f);
+		refresh.Size = new Vector2(112f, 32f);
+		statusPanel.AddChild(refresh);
+
+		var openBackup = CreateSettingsCompactButton("Mở backup", OpenDangerBackupDirectory, 9);
+		openBackup.Position = new Vector2(968f, 9f);
+		openBackup.Size = new Vector2(130f, 32f);
+		statusPanel.AddChild(openBackup);
+	}
+
+	private Label AddDangerMaintenanceTile(
+		Control parent,
+		Vector2 position,
+		string title,
+		string description,
+		string action,
+		string buttonText)
+	{
+		var tile = new Panel
+		{
+			Position = position,
+			Size = new Vector2(250f, 58f),
+			MouseFilter = Control.MouseFilterEnum.Stop,
+		};
+		var style = new StyleBoxFlat
+		{
+			BgColor = DangerSafeSoft,
+			BorderColor = new Color(0.92f, 0.70f, 0.80f, 0.62f),
+			BorderWidthLeft = 1,
+			BorderWidthTop = 1,
+			BorderWidthRight = 1,
+			BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 11,
+			CornerRadiusTopRight = 11,
+			CornerRadiusBottomLeft = 11,
+			CornerRadiusBottomRight = 11,
+		};
+		tile.AddThemeStyleboxOverride("panel", style);
+		parent.AddChild(tile);
+
+		var titleLabel = CreateUiLabel(title, 11, SettingsInk);
+		titleLabel.Position = new Vector2(12f, 8f);
+		titleLabel.Size = new Vector2(140f, 18f);
+		tile.AddChild(titleLabel);
+
+		var descriptionLabel = CreateUiLabel(description, 8, SettingsInkSoft);
+		descriptionLabel.Position = new Vector2(12f, 28f);
+		descriptionLabel.Size = new Vector2(148f, 25f);
+		descriptionLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		tile.AddChild(descriptionLabel);
+
+		var button = CreateDangerActionButton(buttonText, () => RequestMaintenancePreview(action), "safe");
+		button.Position = new Vector2(162f, 15f);
+		button.Size = new Vector2(78f, 30f);
+		tile.AddChild(button);
+		return descriptionLabel;
+	}
+
+	private void AddDangerSectionDivider(Control parent, float y, string title)
+	{
+		var divider = new ColorRect
+		{
+			Color = new Color(0.92f, 0.65f, 0.76f, 0.38f),
+			Position = new Vector2(18f, y),
+			Size = new Vector2(512f, 1f),
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		parent.AddChild(divider);
+		var label = CreateUiLabel(title, 10, DangerAmber);
+		label.Position = new Vector2(18f, y + 7f);
+		label.Size = new Vector2(300f, 18f);
+		parent.AddChild(label);
+	}
+
+	private void AddDangerResetRow(
+		Control parent,
+		float y,
+		string title,
+		string description,
+		string action,
+		string buttonText)
+	{
+		var titleLabel = CreateUiLabel(title, 10, SettingsInk);
+		titleLabel.Position = new Vector2(18f, y + 5f);
+		titleLabel.Size = new Vector2(145f, 18f);
+		parent.AddChild(titleLabel);
+
+		var descriptionLabel = CreateUiLabel(description, 8, SettingsInkSoft);
+		descriptionLabel.Position = new Vector2(166f, y + 5f);
+		descriptionLabel.Size = new Vector2(252f, 20f);
+		descriptionLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		parent.AddChild(descriptionLabel);
+
+		var button = CreateDangerActionButton(buttonText, () => RequestMaintenancePreview(action), "warning");
+		button.Position = new Vector2(432f, y);
+		button.Size = new Vector2(98f, 28f);
+		parent.AddChild(button);
+	}
+
+	private void AddDangerPersistentRow(
+		Control parent,
+		float y,
+		string title,
+		string description,
+		string action,
+		string buttonText)
+	{
+		var row = new Panel
+		{
+			Position = new Vector2(18f, y),
+			Size = new Vector2(514f, 54f),
+			MouseFilter = Control.MouseFilterEnum.Stop,
+		};
+		var style = new StyleBoxFlat
+		{
+			BgColor = DangerRedSoft,
+			BorderColor = new Color(0.91f, 0.42f, 0.51f, 0.64f),
+			BorderWidthLeft = 1,
+			BorderWidthTop = 1,
+			BorderWidthRight = 1,
+			BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 11,
+			CornerRadiusTopRight = 11,
+			CornerRadiusBottomLeft = 11,
+			CornerRadiusBottomRight = 11,
+		};
+		row.AddThemeStyleboxOverride("panel", style);
+		parent.AddChild(row);
+
+		var titleLabel = CreateUiLabel(title, 11, DangerRedDeep);
+		titleLabel.Position = new Vector2(12f, 7f);
+		titleLabel.Size = new Vector2(250f, 19f);
+		row.AddChild(titleLabel);
+
+		var backupBadge = CreateUiLabel("BACKUP", 7, DangerAmber);
+		backupBadge.Position = new Vector2(268f, 7f);
+		backupBadge.Size = new Vector2(58f, 16f);
+		backupBadge.HorizontalAlignment = HorizontalAlignment.Center;
+		row.AddChild(backupBadge);
+
+		var descriptionLabel = CreateUiLabel(description, 8, SettingsInkSoft);
+		descriptionLabel.Position = new Vector2(12f, 28f);
+		descriptionLabel.Size = new Vector2(366f, 18f);
+		descriptionLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		row.AddChild(descriptionLabel);
+
+		var button = CreateDangerActionButton(buttonText, () => RequestMaintenancePreview(action), "danger");
+		button.Position = new Vector2(388f, 11f);
+		button.Size = new Vector2(114f, 32f);
+		row.AddChild(button);
+	}
+
+	private void AddDangerFactoryResetCard(Control parent, float y)
+	{
+		var panel = new Panel
+		{
+			Position = new Vector2(18f, y),
+			Size = new Vector2(514f, 44f),
+			MouseFilter = Control.MouseFilterEnum.Stop,
+		};
+		var style = new StyleBoxFlat
+		{
+			BgColor = new Color(0.76f, 0.10f, 0.22f, 0.94f),
+			BorderColor = new Color(0.97f, 0.55f, 0.64f, 0.92f),
+			BorderWidthLeft = 1,
+			BorderWidthTop = 1,
+			BorderWidthRight = 1,
+			BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 11,
+			CornerRadiusTopRight = 11,
+			CornerRadiusBottomLeft = 11,
+			CornerRadiusBottomRight = 11,
+		};
+		panel.AddThemeStyleboxOverride("panel", style);
+		parent.AddChild(panel);
+
+		var title = CreateUiLabel("Đặt lại toàn bộ Eris", 11, Colors.White);
+		title.Position = new Vector2(12f, 5f);
+		title.Size = new Vector2(210f, 18f);
+		panel.AddChild(title);
+
+		var desc = CreateUiLabel("Không xóa API key, settings, raw event ledger hoặc backup.", 8, new Color(1f, 0.88f, 0.92f));
+		desc.Position = new Vector2(12f, 23f);
+		desc.Size = new Vector2(344f, 16f);
+		desc.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		panel.AddChild(desc);
+
+		var button = CreateDangerActionButton("Xem phạm vi", () => RequestMaintenancePreview("factory_reset"), "critical");
+		button.Position = new Vector2(386f, 7f);
+		button.Size = new Vector2(116f, 30f);
+		panel.AddChild(button);
+	}
+
+	private Button CreateDangerActionButton(string text, Action onPressed, string severity)
+	{
+		var button = CreateSettingsButton(text, onPressed, primary: false);
+		string normalized = (severity ?? "safe").Trim().ToLowerInvariant();
+		Color background;
+		Color border;
+		Color foreground;
+		Color hoverBackground;
+
+		switch (normalized)
+		{
+			case "critical":
+				background = new Color(0.55f, 0.03f, 0.12f, 0.98f);
+				border = new Color(1f, 0.66f, 0.72f, 0.98f);
+				foreground = Colors.White;
+				hoverBackground = new Color(0.66f, 0.05f, 0.16f, 1f);
+				break;
+			case "danger":
+				background = new Color(0.74f, 0.12f, 0.22f, 0.94f);
+				border = new Color(0.98f, 0.47f, 0.55f, 0.92f);
+				foreground = Colors.White;
+				hoverBackground = new Color(0.84f, 0.16f, 0.28f, 0.98f);
+				break;
+			case "warning":
+				background = DangerAmberSoft;
+				border = new Color(0.88f, 0.60f, 0.22f, 0.84f);
+				foreground = DangerAmber;
+				hoverBackground = new Color(1f, 0.91f, 0.74f, 0.98f);
+				break;
+			default:
+				background = DangerSafeSoft;
+				border = new Color(0.90f, 0.55f, 0.70f, 0.74f);
+				foreground = DangerSafe;
+				hoverBackground = new Color(1f, 0.92f, 0.96f, 0.98f);
+				break;
+		}
+
+		var normal = new StyleBoxFlat
+		{
+			BgColor = background,
+			BorderColor = border,
+			BorderWidthLeft = 1,
+			BorderWidthTop = 1,
+			BorderWidthRight = 1,
+			BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 9,
+			CornerRadiusTopRight = 9,
+			CornerRadiusBottomLeft = 9,
+			CornerRadiusBottomRight = 9,
+			ContentMarginLeft = 4f,
+			ContentMarginRight = 4f,
+			ContentMarginTop = 2f,
+			ContentMarginBottom = 2f,
 		};
 		var hover = (StyleBoxFlat)normal.Duplicate();
-		hover.BgColor = critical ? new Color(0.84f, 0.16f, 0.28f, 0.96f) : new Color(1.00f, 0.82f, 0.86f, 0.96f);
+		hover.BgColor = hoverBackground;
 		button.AddThemeStyleboxOverride("normal", normal);
 		button.AddThemeStyleboxOverride("hover", hover);
 		button.AddThemeStyleboxOverride("pressed", hover);
-		button.AddThemeColorOverride("font_color", critical ? Colors.White : DangerRed);
-		button.AddThemeColorOverride("font_hover_color", critical ? Colors.White : DangerRed);
-		button.AddThemeFontSizeOverride("font_size", 10);
+		button.AddThemeStyleboxOverride("focus", hover);
+		button.AddThemeColorOverride("font_color", foreground);
+		button.AddThemeColorOverride("font_hover_color", foreground);
+		button.AddThemeColorOverride("font_pressed_color", foreground);
+		button.AddThemeFontSizeOverride("font_size", 9);
 		return button;
 	}
 
@@ -206,10 +472,10 @@ public partial class UdpListener : Node2D
 	{
 		_dangerConfirmDialog = new ConfirmationDialog
 		{
-			Title = "Xác nhận thao tác Danger Zone",
-			Size = new Vector2I(610, 320),
-			MinSize = new Vector2I(610, 320),
-			OkButtonText = "Thực thi",
+			Title = "Xác nhận thao tác",
+			Size = new Vector2I(640, 360),
+			MinSize = new Vector2I(640, 360),
+			OkButtonText = "Xác nhận",
 			CancelButtonText = "Hủy",
 		};
 		_dangerConfirmDialog.Confirmed += ExecutePendingMaintenance;
@@ -218,24 +484,24 @@ public partial class UdpListener : Node2D
 		var content = new VBoxContainer
 		{
 			Position = new Vector2(24f, 58f),
-			Size = new Vector2(562f, 182f),
+			Size = new Vector2(592f, 220f),
 		};
 		content.AddThemeConstantOverride("separation", 10);
 		_dangerConfirmDialog.AddChild(content);
 
-		_dangerConfirmSummaryLabel = CreateUiLabel("", 13, SettingsInk);
-		_dangerConfirmSummaryLabel.CustomMinimumSize = new Vector2(550f, 104f);
+		_dangerConfirmSummaryLabel = CreateUiLabel("", 12, SettingsInk);
+		_dangerConfirmSummaryLabel.CustomMinimumSize = new Vector2(580f, 132f);
 		_dangerConfirmSummaryLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
 		content.AddChild(_dangerConfirmSummaryLabel);
 
-		_dangerConfirmPhraseHintLabel = CreateUiLabel("", 11, DangerRed);
-		_dangerConfirmPhraseHintLabel.CustomMinimumSize = new Vector2(550f, 24f);
+		_dangerConfirmPhraseHintLabel = CreateUiLabel("", 10, DangerRed);
+		_dangerConfirmPhraseHintLabel.CustomMinimumSize = new Vector2(580f, 24f);
 		content.AddChild(_dangerConfirmPhraseHintLabel);
 
 		_dangerConfirmInput = new LineEdit
 		{
 			PlaceholderText = "Nhập câu xác nhận",
-			CustomMinimumSize = new Vector2(550f, 38f),
+			CustomMinimumSize = new Vector2(580f, 38f),
 		};
 		_dangerConfirmInput.TextChanged += _ => RefreshDangerConfirmButton();
 		content.AddChild(_dangerConfirmInput);
@@ -248,6 +514,8 @@ public partial class UdpListener : Node2D
 	{
 		if (_chatSend == null || _processes == null || !_processes.IsVisionRunning)
 		{
+			if (_dangerCatalogStatusLabel != null)
+				_dangerCatalogStatusLabel.Text = "Brain đang dừng · maintenance chưa sẵn sàng";
 			SetSettingsStatus("Brain đang dừng; không thể đọc maintenance catalog.");
 			return;
 		}
@@ -266,7 +534,7 @@ public partial class UdpListener : Node2D
 	{
 		if (_chatSend == null || _processes == null || !_processes.IsVisionRunning)
 		{
-			SetSettingsStatus("Brain đang dừng. Khởi động Brain trước khi reset để backend khóa và đồng bộ store.");
+			SetSettingsStatus("Brain đang dừng. Khởi động Brain trước để backend khóa và đồng bộ store.");
 			return;
 		}
 
@@ -281,14 +549,14 @@ public partial class UdpListener : Node2D
 			["options"] = options.DeepClone(),
 		};
 		Error error = _chatSend.PutPacket(Encoding.UTF8.GetBytes(payload.ToJsonString()));
-		SetSettingsStatus(error == Error.Ok ? $"Đang preview thao tác {action}…" : $"Không gửi được preview: {error}");
+		SetSettingsStatus(error == Error.Ok ? "Đang đọc phạm vi ảnh hưởng từ Brain…" : $"Không gửi được preview: {error}");
 	}
 
 	private JsonObject BuildMaintenanceOptions(string action)
 	{
 		if (string.Equals(action, "factory_reset", StringComparison.OrdinalIgnoreCase))
 		{
-			// Factory reset mặc định giữ settings, key, raw event ledger và backup.
+			// Đặt lại toàn bộ mặc định giữ settings, key, raw event ledger và backup.
 			return new JsonObject
 			{
 				["components"] = new JsonArray(
@@ -302,29 +570,6 @@ public partial class UdpListener : Node2D
 					"clear_vocal_cache")
 			};
 		}
-
-		if (action is "rotate_provider_key" or "quarantine_provider_key" or "restore_provider_key")
-		{
-			string provider = NormalizeSettingsPoolKind(_settingsKeyPoolKind);
-			if (string.IsNullOrWhiteSpace(provider))
-				provider = "gemini";
-			_settingsKeyHealth.TryGetValue(provider, out List<SettingsKeyHealth> health);
-			SettingsKeyHealth target = null;
-			if (string.Equals(action, "restore_provider_key", StringComparison.OrdinalIgnoreCase))
-				target = health?.Find(item => string.Equals(item.Status, "quarantined", StringComparison.OrdinalIgnoreCase))
-					?? health?.Find(item => string.Equals(item.Status, "cooldown", StringComparison.OrdinalIgnoreCase));
-			else
-				target = health?.Find(item => item.Active);
-
-			var options = new JsonObject { ["provider"] = provider };
-			if (target != null)
-			{
-				options["index"] = target.Index;
-				options["fingerprint"] = target.Fingerprint;
-			}
-			return options;
-		}
-
 		return new JsonObject();
 	}
 
@@ -340,30 +585,28 @@ public partial class UdpListener : Node2D
 			{
 				int actions = catalog.TryGetProperty("actions", out JsonElement actionsEl) && actionsEl.ValueKind == JsonValueKind.Array ? actionsEl.GetArrayLength() : 0;
 				if (_dangerCatalogStatusLabel != null)
-					_dangerCatalogStatusLabel.Text = $"Brain sẵn sàng · {actions} thao tác maintenance có backend thật";
-				if (catalog.TryGetProperty("provider_health", out JsonElement providerHealth) && providerHealth.ValueKind == JsonValueKind.Object)
-				{
-					string provider = NormalizeSettingsPoolKind(_settingsKeyPoolKind);
-					if (string.IsNullOrWhiteSpace(provider)) provider = "gemini";
-					if (providerHealth.TryGetProperty(provider, out JsonElement pool) && pool.ValueKind == JsonValueKind.Object)
-					{
-						int available = pool.TryGetProperty("available", out JsonElement availableEl) ? availableEl.GetInt32() : 0;
-						int size = pool.TryGetProperty("size", out JsonElement sizeEl) ? sizeEl.GetInt32() : 0;
-						if (_dangerProviderHealthLabel != null) _dangerProviderHealthLabel.Text = $"{provider}: {available}/{size} key";
-					}
-				}
+					_dangerCatalogStatusLabel.Text = $"Brain sẵn sàng · {actions} thao tác có backend thật";
+
+				if (catalog.TryGetProperty("backup_root", out JsonElement backupRootEl))
+					_dangerBackupRoot = backupRootEl.GetString() ?? "";
+				if (catalog.TryGetProperty("backup_summary", out JsonElement backupSummary) && backupSummary.ValueKind == JsonValueKind.Object)
+					ApplyDangerBackupSummary(backupSummary);
+
 				if (catalog.TryGetProperty("semantic_index", out JsonElement semantic) && semantic.ValueKind == JsonValueKind.Object)
 				{
 					bool backend = semantic.TryGetProperty("embedding_backend_ready", out JsonElement backendEl) && backendEl.ValueKind == JsonValueKind.True;
 					bool supported = semantic.TryGetProperty("rebuild_supported", out JsonElement supportedEl) && supportedEl.ValueKind == JsonValueKind.True;
-					if (_dangerSemanticIndexLabel != null) _dangerSemanticIndexLabel.Text = supported ? (backend ? "Semantic index: sẵn sàng" : "Semantic index: chưa có embedding backend") : "Semantic index: không hỗ trợ rebuild";
+					if (_dangerSemanticIndexLabel != null)
+						_dangerSemanticIndexLabel.Text = supported
+							? (backend ? "Embedding backend sẵn sàng." : "Chưa có embedding backend.")
+							: "Runtime không hỗ trợ rebuild.";
 				}
 				if (catalog.TryGetProperty("vocal_cache", out JsonElement cache) && cache.ValueKind == JsonValueKind.Object)
 				{
 					long bytes = cache.TryGetProperty("bytes", out JsonElement bytesEl) && bytesEl.TryGetInt64(out long parsed) ? parsed : 0L;
 					int items = cache.TryGetProperty("items", out JsonElement itemsEl) && itemsEl.TryGetInt32(out int count) ? count : 0;
 					if (_dangerVocalCacheLabel != null)
-						_dangerVocalCacheLabel.Text = $"Cache: {FormatDangerBytes(bytes)} · {items} file";
+						_dangerVocalCacheLabel.Text = $"{FormatDangerBytes(bytes)} · {items} file cache.";
 				}
 				return;
 			}
@@ -391,8 +634,8 @@ public partial class UdpListener : Node2D
 					&& details.TryGetProperty("backup_path", out JsonElement backupPathEl))
 					backup = backupPathEl.GetString() ?? backup;
 				SetSettingsStatus(ok
-					? $"Đã thực thi {action}: {changed} thành phần{(string.IsNullOrWhiteSpace(backup) ? "" : " · đã tạo backup")}"
-					: $"Maintenance {action} lỗi: {errors} lỗi. Xem log để biết chi tiết.");
+					? $"Hoàn tất: {changed} thành phần{(string.IsNullOrWhiteSpace(backup) ? "" : " · đã tạo backup")}."
+					: $"Thao tác lỗi: {errors} lỗi. Xem log để biết chi tiết.");
 				if (ok)
 					ApplyMaintenanceResultToUi(action, result);
 				RequestMaintenanceCatalog();
@@ -404,16 +647,46 @@ public partial class UdpListener : Node2D
 		}
 	}
 
+	private void ApplyDangerBackupSummary(JsonElement summary)
+	{
+		if (_dangerBackupStatusLabel == null)
+			return;
+		int count = summary.TryGetProperty("count", out JsonElement countEl) && countEl.TryGetInt32(out int parsedCount) ? parsedCount : 0;
+		long totalBytes = summary.TryGetProperty("total_bytes", out JsonElement totalEl) && totalEl.TryGetInt64(out long parsedBytes) ? parsedBytes : 0L;
+		if (!summary.TryGetProperty("latest", out JsonElement latest) || latest.ValueKind != JsonValueKind.Object)
+		{
+			_dangerBackupStatusLabel.Text = count > 0
+				? $"Backup: {count} bản · {FormatDangerBytes(totalBytes)}"
+				: "Backup gần nhất: chưa có bản backup nào";
+			return;
+		}
+
+		string action = latest.TryGetProperty("action", out JsonElement actionEl) ? actionEl.GetString() ?? "backup" : "backup";
+		double createdAt = latest.TryGetProperty("created_at", out JsonElement createdEl) && createdEl.TryGetDouble(out double unix) ? unix : 0d;
+		string createdText = createdAt > 0d
+			? DateTimeOffset.FromUnixTimeSeconds((long)createdAt).LocalDateTime.ToString("dd/MM HH:mm")
+			: "không rõ thời gian";
+		_dangerBackupStatusLabel.Text = $"Backup gần nhất: {createdText} · {DangerActionDisplayName(action)} · tổng {count} bản / {FormatDangerBytes(totalBytes)}";
+	}
+
 	private void ShowMaintenancePreview(JsonElement preview)
 	{
 		_dangerPendingAction = preview.TryGetProperty("action", out JsonElement actionEl) ? actionEl.GetString() ?? "" : "";
 		_dangerPendingToken = preview.TryGetProperty("confirmation_token", out JsonElement tokenEl) ? tokenEl.GetString() ?? "" : "";
 		string title = preview.TryGetProperty("title", out JsonElement titleEl) ? titleEl.GetString() ?? _dangerPendingAction : _dangerPendingAction;
 		string description = preview.TryGetProperty("description", out JsonElement descEl) ? descEl.GetString() ?? "" : "";
+		_dangerPendingSeverity = preview.TryGetProperty("severity", out JsonElement severityEl) ? severityEl.GetString() ?? "warning" : "warning";
+		_dangerPendingConfirmationMode = preview.TryGetProperty("confirmation_mode", out JsonElement modeEl) ? modeEl.GetString() ?? "typed" : "typed";
+		_dangerPendingConfirmLabel = preview.TryGetProperty("confirm_label", out JsonElement labelEl) ? labelEl.GetString() ?? "Xác nhận" : "Xác nhận";
 		long totalBytes = preview.TryGetProperty("total_bytes", out JsonElement bytesEl) && bytesEl.TryGetInt64(out long parsed) ? parsed : 0L;
-		int files = preview.TryGetProperty("affected", out JsonElement affectedEl) && affectedEl.ValueKind == JsonValueKind.Array ? affectedEl.GetArrayLength() : 0;
+		int stores = preview.TryGetProperty("affected", out JsonElement affectedEl) && affectedEl.ValueKind == JsonValueKind.Array ? affectedEl.GetArrayLength() : 0;
+		int items = 0;
+		if (preview.TryGetProperty("summary", out JsonElement summary) && summary.ValueKind == JsonValueKind.Object
+			&& summary.TryGetProperty("items_estimated", out JsonElement itemsEl) && itemsEl.TryGetInt32(out int parsedItems))
+			items = parsedItems;
 		bool reversible = preview.TryGetProperty("reversible", out JsonElement reversibleEl) && reversibleEl.ValueKind == JsonValueKind.True;
 		bool requiresConfirmation = !preview.TryGetProperty("requires_confirmation", out JsonElement confirmEl) || confirmEl.ValueKind != JsonValueKind.False;
+		int expires = preview.TryGetProperty("expires_in_seconds", out JsonElement expiresEl) && expiresEl.TryGetInt32(out int seconds) ? seconds : 120;
 		_dangerPendingOptions = preview.TryGetProperty("options", out JsonElement optionsEl) && optionsEl.ValueKind == JsonValueKind.Object
 			? JsonNode.Parse(optionsEl.GetRawText())?.AsObject() ?? new JsonObject()
 			: new JsonObject();
@@ -421,41 +694,104 @@ public partial class UdpListener : Node2D
 		_dangerPendingPhrase = preview.TryGetProperty("typed_confirmation", out JsonElement phraseEl)
 			? phraseEl.GetString() ?? DangerConfirmationPhrase(_dangerPendingAction)
 			: DangerConfirmationPhrase(_dangerPendingAction);
-		if (!requiresConfirmation)
+		if (!requiresConfirmation || string.Equals(_dangerPendingConfirmationMode, "none", StringComparison.OrdinalIgnoreCase))
 		{
-			SendPendingMaintenanceExecute(skipPhrase: true);
+			SendPendingMaintenanceExecute(autoConfirm: true);
 			return;
 		}
 
+		string impact = stores > 0
+			? $"Phạm vi: {stores} kho dữ liệu · khoảng {items} mục · {FormatDangerBytes(totalBytes)}"
+			: "Phạm vi: trạng thái runtime, không có file dữ liệu cố định.";
+		string recovery = reversible
+			? "Một bản backup sẽ được tạo trước khi thay đổi."
+			: "Thao tác này không tạo backup vì dữ liệu có thể sinh lại hoặc chỉ tồn tại trong RAM.";
 		if (_dangerConfirmSummaryLabel != null)
-			_dangerConfirmSummaryLabel.Text = $"{title}\n{description}\n\nẢnh hưởng: {files} đường dẫn · {FormatDangerBytes(totalBytes)}\n{(reversible ? "Backup sẽ được tạo trước khi thay đổi." : "Thao tác này không có backup tự động.")}";
+			_dangerConfirmSummaryLabel.Text = $"{title}\n{description}\n\n{impact}\n{recovery}\nPreview hết hạn sau {expires} giây.";
+
+		bool typed = string.Equals(_dangerPendingConfirmationMode, "typed", StringComparison.OrdinalIgnoreCase);
 		if (_dangerConfirmPhraseHintLabel != null)
-			_dangerConfirmPhraseHintLabel.Text = $"Nhập chính xác: {_dangerPendingPhrase}";
+		{
+			_dangerConfirmPhraseHintLabel.Visible = typed;
+			_dangerConfirmPhraseHintLabel.Text = typed ? $"Nhập chính xác: {_dangerPendingPhrase}" : "Kiểm tra phạm vi rồi xác nhận thao tác.";
+		}
 		if (_dangerConfirmInput != null)
+		{
+			_dangerConfirmInput.Visible = typed;
 			_dangerConfirmInput.Text = "";
+		}
+		if (_dangerConfirmDialog != null)
+			_dangerConfirmDialog.Title = title;
+		StyleDangerConfirmButton(_dangerPendingSeverity, _dangerPendingConfirmLabel);
 		RefreshDangerConfirmButton();
 		_dangerConfirmDialog?.PopupCentered();
 		SetSettingsStatus("Brain đã trả manifest. Kiểm tra phạm vi trước khi xác nhận.");
 	}
 
+	private void StyleDangerConfirmButton(string severity, string label)
+	{
+		if (_dangerConfirmButton == null)
+			return;
+		_dangerConfirmButton.Text = string.IsNullOrWhiteSpace(label) ? "Xác nhận" : label;
+		string normalized = (severity ?? "warning").Trim().ToLowerInvariant();
+		Color bg = normalized is "danger" or "critical" ? DangerRed : new Color(0.88f, 0.56f, 0.16f);
+		Color hoverBg = normalized is "danger" or "critical" ? new Color(0.82f, 0.14f, 0.25f) : new Color(0.94f, 0.65f, 0.22f);
+		var normal = new StyleBoxFlat
+		{
+			BgColor = bg,
+			BorderColor = normalized == "critical" ? new Color(0.50f, 0.02f, 0.10f) : bg,
+			BorderWidthLeft = 1,
+			BorderWidthTop = 1,
+			BorderWidthRight = 1,
+			BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 8,
+			CornerRadiusTopRight = 8,
+			CornerRadiusBottomLeft = 8,
+			CornerRadiusBottomRight = 8,
+		};
+		var hover = (StyleBoxFlat)normal.Duplicate();
+		hover.BgColor = hoverBg;
+		_dangerConfirmButton.AddThemeStyleboxOverride("normal", normal);
+		_dangerConfirmButton.AddThemeStyleboxOverride("hover", hover);
+		_dangerConfirmButton.AddThemeStyleboxOverride("pressed", hover);
+		_dangerConfirmButton.AddThemeColorOverride("font_color", Colors.White);
+		_dangerConfirmButton.AddThemeColorOverride("font_hover_color", Colors.White);
+	}
+
 	private string DangerConfirmationPhrase(string action) => action switch
 	{
-		"factory_reset" => "FACTORY RESET",
-		"reset_user_model" => "FORGET USER MODEL",
-		"reset_long_term_relationship" => "RESET RELATIONSHIP",
-		"reset_private_mind" => "RESET PRIVATE MIND",
-		"reset_private_life" => "RESET PRIVATE LIFE",
-		"clear_repair_history" => "CLEAR REPAIR HISTORY",
-		"clear_vocal_cache" => "CLEAR VOCAL CACHE",
-		"quarantine_provider_key" => "QUARANTINE KEY",
+		"factory_reset" => "ĐẶT LẠI TOÀN BỘ",
+		"reset_user_model" => "QUÊN MÔ HÌNH",
+		"reset_long_term_relationship" => "XÓA QUAN HỆ",
+		"reset_private_mind" => "RESET NỘI TÂM",
+		"reset_private_life" => "RESET ĐỜI SỐNG RIÊNG",
+		"reset_inner_state" => "RESET NỘI TÂM",
+		"clear_repair_history" => "XÓA XUNG ĐỘT",
 		"reset_anchor_state" => "RESET ANCHOR",
-		_ => "CONFIRM",
+		_ => "XÁC NHẬN",
+	};
+
+	private static string DangerActionDisplayName(string action) => action switch
+	{
+		"factory_reset" => "đặt lại toàn bộ",
+		"reset_user_model" => "quên mô hình",
+		"reset_long_term_relationship" => "xóa quan hệ",
+		"clear_repair_history" => "xóa repair",
+		"reset_private_mind" => "reset nội tâm",
+		"reset_private_life" => "reset đời sống riêng",
+		"export_backup" => "backup thủ công",
+		_ => string.IsNullOrWhiteSpace(action) ? "backup" : action.Replace('_', ' '),
 	};
 
 	private void RefreshDangerConfirmButton()
 	{
 		if (_dangerConfirmButton == null)
 			return;
+		if (string.Equals(_dangerPendingConfirmationMode, "simple", StringComparison.OrdinalIgnoreCase))
+		{
+			_dangerConfirmButton.Disabled = string.IsNullOrWhiteSpace(_dangerPendingToken);
+			return;
+		}
 		_dangerConfirmButton.Disabled = string.IsNullOrWhiteSpace(_dangerPendingToken)
 			|| _dangerConfirmInput == null
 			|| !string.Equals(_dangerConfirmInput.Text.Trim(), _dangerPendingPhrase, StringComparison.Ordinal);
@@ -463,19 +799,23 @@ public partial class UdpListener : Node2D
 
 	private void ExecutePendingMaintenance()
 	{
-		SendPendingMaintenanceExecute(skipPhrase: false);
+		SendPendingMaintenanceExecute(autoConfirm: false);
 	}
 
-	private void SendPendingMaintenanceExecute(bool skipPhrase)
+	private void SendPendingMaintenanceExecute(bool autoConfirm)
 	{
 		if (_chatSend == null || string.IsNullOrWhiteSpace(_dangerPendingAction) || string.IsNullOrWhiteSpace(_dangerPendingToken))
 			return;
-		if (!skipPhrase && (_dangerConfirmInput == null || !string.Equals(_dangerConfirmInput.Text.Trim(), _dangerPendingPhrase, StringComparison.Ordinal)))
+		bool typed = string.Equals(_dangerPendingConfirmationMode, "typed", StringComparison.OrdinalIgnoreCase);
+		if (typed && !autoConfirm && (_dangerConfirmInput == null || !string.Equals(_dangerConfirmInput.Text.Trim(), _dangerPendingPhrase, StringComparison.Ordinal)))
 		{
 			SetSettingsStatus("Câu xác nhận không khớp; thao tác chưa được gửi.");
 			return;
 		}
 
+		string confirmation = typed && !autoConfirm
+			? (_dangerConfirmInput?.Text.Trim() ?? "")
+			: _dangerPendingPhrase;
 		var payload = new JsonObject
 		{
 			["type"] = "maintenance_execute",
@@ -484,13 +824,33 @@ public partial class UdpListener : Node2D
 			["dry_run"] = false,
 			["preview_id"] = _dangerPendingToken,
 			["confirmation_token"] = _dangerPendingToken,
-			["typed_confirmation"] = skipPhrase ? _dangerPendingPhrase : (_dangerConfirmInput?.Text.Trim() ?? ""),
+			["typed_confirmation"] = confirmation,
 			["options"] = _dangerPendingOptions.DeepClone(),
 		};
 		Error error = _chatSend.PutPacket(Encoding.UTF8.GetBytes(payload.ToJsonString()));
-		SetSettingsStatus(error == Error.Ok ? $"Đã gửi lệnh {_dangerPendingAction}; Brain đang khóa và đồng bộ store…" : $"Không gửi được maintenance execute: {error}");
+		SetSettingsStatus(error == Error.Ok ? "Đã gửi lệnh; Brain đang khóa và đồng bộ store…" : $"Không gửi được maintenance execute: {error}");
 		_dangerPendingToken = "";
 		RefreshDangerConfirmButton();
+	}
+
+	private void OpenDangerBackupDirectory()
+	{
+		try
+		{
+			string target = _dangerBackupRoot;
+			if (string.IsNullOrWhiteSpace(target))
+			{
+				SetSettingsStatus("Chưa đọc được đường dẫn backup từ Brain. Bấm Đọc lại trước.");
+				return;
+			}
+			Directory.CreateDirectory(target);
+			OS.ShellOpen(target);
+			SetSettingsStatus($"Đã mở thư mục backup: {target}");
+		}
+		catch (Exception ex)
+		{
+			SetSettingsStatus($"Không mở được backup: {ex.Message}");
+		}
 	}
 
 	private static string FormatDangerBytes(long bytes)

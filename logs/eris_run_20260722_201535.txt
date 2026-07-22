@@ -60,3 +60,26 @@
 20:16:56.998 [INFO] [vision.py] [TTS][WARNING] [TTS] JP localization lỗi (japanese_localization_failed:ClientError); audio fail-closed, giữ display transcript.
 20:16:57.000 [INFO] [vision.py] [TTS][WARNING] [TTS] Audio bị bỏ vì không giữ được language contract: japanese_localization_failed:ClientError
 20:16:58.197 [INFO] [vision.py] [Loop][INFO] [post observer] turn=4 act=style_criticism meaning=feedback_on_previous_response conf=0.76 repair=True traits=0 frame=uncertain strategy=none source=groq_observer+deterministic_anchor latency=5848ms
+20:17:12.305 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+20:17:12.930 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.53 internal=0.06 interrupt=0.31 resource=0.20 vision_hint=0 budget=scheduler_allow
+20:17:13.156 [INFO] [vision.py] [Loop][WARNING] [vision_facts] compressor failed: no_fallback_vision:vision_compressor_disabled | backoff=30s
+20:17:15.613 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.75 surface=yes mutations=2
+20:17:35.217 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=other act=withhold_interruption conf=0.95 importance=0.20 gate=model_silence body_only=1
+20:17:55.298 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.62 internal=0.08 interrupt=0.38 resource=0.31 vision_hint=0 budget=scheduler_allow
+20:17:55.608 [INFO] [vision.py] [Loop][WARNING] [vision_facts] compressor failed: no_fallback_vision:vision_compressor_disabled | backoff=45s
+20:17:55.622 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+20:17:58.409 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.70 surface=yes mutations=1
+20:18:26.990 [INFO] [vision.py] [Loop][INFO] [ai autonomous] spoke kind=environment act=comment_current_surface subject=current_screen_or_window_change text=coordinator.py đang mở trong VS Code; cái tên này nghe khá quyền lực đấy.
+20:18:29.538 [INFO] [vision.py] [TTS][WARNING] [TTS] JP localization lỗi (japanese_localization_failed:ClientError); audio fail-closed, giữ display transcript.
+20:18:29.539 [INFO] [vision.py] [TTS][WARNING] [TTS] Audio bị bỏ vì không giữ được language contract: japanese_localization_failed:ClientError
+20:18:29.782 [INFO] [vision.py] [Loop][INFO] [post observer] turn=6 act=none meaning=none conf=0.00 repair=False traits=0 frame=uncertain strategy=none source=groq_observer latency=2825ms
+20:18:58.124 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.70 internal=0.10 interrupt=0.43 resource=0.40 vision_hint=0 budget=scheduler_allow
+20:18:59.362 [INFO] [vision.py] [Loop][WARNING] [vision_facts] compressor failed: no_fallback_vision:vision_compressor_disabled | backoff=60s
+20:19:01.065 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.49 surface=yes mutations=1
+20:19:22.640 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=environment act=withhold_for_privacy conf=0.94 importance=0.30 gate=model_silence body_only=0
+20:19:34.049 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.70 internal=0.11 interrupt=0.47 resource=0.49 vision_hint=0 budget=scheduler_allow
+20:19:34.130 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+20:19:38.495 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.72 surface=yes mutations=1
+20:19:54.542 [INFO] [Vision] Dang dung vision.py PID=22588...
+20:19:54.600 [INFO] [Vision] vision.py da thoat (PID=22588, code=-1, unexpected=False).
+20:19:54.601 [INFO] [RunLogger] Ket thuc phien chay.

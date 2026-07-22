@@ -180,6 +180,8 @@ class MemoryQueryExecutor:
         fact_key = ir.target.fact_key
         if not fact_key:
             return RawRecallResult.missing(ir, "fact_key_missing")
+        if fact_key == "user.profile":
+            return self._execute_user_profile_recall(ir, memory_core=memory_core)
 
         # Ưu tiên semantic memory ổn định.
         value = self._lookup_fact(memory_core, fact_key)
@@ -222,6 +224,119 @@ class MemoryQueryExecutor:
                         )
 
         return RawRecallResult.missing(ir, f"fact_not_found:{fact_key}", MemorySourceKind.SEMANTIC_MEMORY)
+
+    def _execute_user_profile_recall(self, ir: MemoryQueryIR, *, memory_core: Any) -> RawRecallResult:
+        name = self._lookup_fact(memory_core, "user.name")
+        if name is not None and not is_plausible_user_name(name):
+            name = None
+
+        items = self._semantic_user_items(memory_core)
+        profile_lines: list[str] = []
+        evidence: list[str] = []
+
+        if name:
+            profile_lines.append(f"tên bạn là {name}")
+            evidence.append("semantic_fact:user.name")
+
+        for item in items:
+            fact_key = str(getattr(item, "fact_key", "") or "")
+            if fact_key == "user.name":
+                continue
+            try:
+                confidence = float(getattr(item, "confidence", 0.0) or 0.0)
+                importance = float(getattr(item, "importance", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                confidence = 0.0
+                importance = 0.0
+            if confidence < 0.74 or importance < 0.70:
+                continue
+            rendered = self._format_user_profile_fact(item)
+            if not rendered:
+                continue
+            profile_lines.append(rendered)
+            item_id = str(getattr(item, "id", "") or fact_key or "user_fact")
+            evidence.append(f"semantic_fact:{item_id}")
+            if len(profile_lines) >= 4:
+                break
+
+        if not profile_lines:
+            return RawRecallResult.missing(ir, "fact_not_found:user.profile", MemorySourceKind.SEMANTIC_MEMORY)
+
+        if len(profile_lines) == 1 and name:
+            text = (
+                f"Mình biết chắc nhất hiện tại: {profile_lines[0]}. "
+                "Phần còn lại về bạn tôi chưa có đủ ký ức ổn định để nói chắc."
+            )
+        else:
+            head = profile_lines[0]
+            tail = "; ".join(profile_lines[1:])
+            text = (
+                f"Mình biết chắc nhất hiện tại: {head}. "
+                f"Ngoài ra tôi có vài dấu vết: {tail}. "
+                "Tôi chưa có đủ ký ức ổn định để gán một hồ sơ tính cách cụ thể nếu bạn chưa nói rõ."
+            )
+
+        return RawRecallResult(
+            found=True,
+            source=MemorySourceKind.SEMANTIC_MEMORY,
+            ir=ir,
+            exact_text=text,
+            gist=text,
+            confidence=min(0.88, max(ir.confidence, 0.76)),
+            evidence=tuple(dict.fromkeys(evidence)),
+        )
+
+    def _semantic_user_items(self, memory_core: Any) -> list[Any]:
+        candidates = []
+        semantic = getattr(memory_core, "semantic", None)
+        if semantic is not None:
+            candidates.append(semantic)
+        core = getattr(memory_core, "core", None)
+        semantic = getattr(core, "semantic", None)
+        if semantic is not None:
+            candidates.append(semantic)
+        for store in candidates:
+            load = getattr(store, "load", None)
+            if not callable(load):
+                continue
+            try:
+                items = list(load() or [])
+            except Exception:
+                continue
+            user_items = [
+                item
+                for item in items
+                if str(getattr(item, "status", "") or "") in {"active", "tentative"}
+                and (
+                    str(getattr(item, "domain", "") or "") == "user"
+                    or str(getattr(item, "fact_key", "") or "").startswith("user.")
+                )
+            ]
+            return sorted(
+                user_items,
+                key=lambda item: (
+                    float(getattr(item, "confidence", 0.0) or 0.0),
+                    float(getattr(item, "importance", 0.0) or 0.0),
+                    str(getattr(item, "updated_at", "") or ""),
+                ),
+                reverse=True,
+            )
+        return []
+
+    def _format_user_profile_fact(self, item: Any) -> str:
+        fact_key = str(getattr(item, "fact_key", "") or "")
+        value = getattr(item, "semantic_value", None)
+        if value is None:
+            value = getattr(item, "value", None)
+        value_text = str(value or "").strip()
+        claim = str(getattr(item, "claim", "") or "").strip()
+        if fact_key == "user.response_style" and value_text:
+            return "bạn từng góp ý về cách tôi trả lời"
+        if fact_key == "user.study_field" and value_text:
+            return f"bạn từng nhắc việc học/lĩnh vực học: {value_text}"
+        if value_text:
+            return f"{fact_key}: {value_text}" if fact_key else value_text
+        return claim if claim and len(claim) <= 160 else ""
 
     def _lookup_fact(self, memory_core: Any, fact_key: str) -> Any:
         if memory_core is None:

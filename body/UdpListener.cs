@@ -429,6 +429,7 @@ public partial class UdpListener : Node2D
 
 		// Khởi tạo AudioStreamPlayer
 		_processes = new ErisProcessManager(OnVisionProcessStatusChanged, OnVisionProcessUnexpectedExit);
+		InitializeLive2DMode();
 
 		// Trạng thái mặc định khi khởi động
 		_monika.Play("stand");
@@ -503,6 +504,9 @@ public partial class UdpListener : Node2D
 			return;
 		}
 
+		if (ApplyLive2DMousePassthrough(uiActive))
+			return;
+
 		if (_body == null)
 			return;
 
@@ -554,6 +558,7 @@ public partial class UdpListener : Node2D
 
 	public override void _ExitTree()
 	{
+		ShutdownLive2DMode();
 		StopVisionProcess();
 		_udp.Close();
 		_chatSend.Close();
@@ -592,9 +597,12 @@ public partial class UdpListener : Node2D
 		UpdateTutorPanelAutoHide();
 		TickSettingsPanelRuntimeStatus();
 
-		if (_udp.GetAvailablePacketCount() > 0)
+		while (_udp.GetAvailablePacketCount() > 0)
 		{
 			string raw = Encoding.UTF8.GetString(_udp.GetPacket());
+			if (HandleLive2DControlPacket(raw))
+				continue;
+			ForwardPacketToLive2D(raw);
 			ParseAndApply(raw);
 		}
 	}
@@ -1213,6 +1221,7 @@ public partial class UdpListener : Node2D
 				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
 				container.MoveChild(_contextExitButton, Mathf.Max(0, closeIndex));
 			}
+			EnsureLive2DContextButton(container);
 		}
 
 		ConfigureContextMenuButton(_contextChatButton, "Chat", "res://asset/Resource/chat.png");
@@ -3188,6 +3197,7 @@ public partial class UdpListener : Node2D
 
 	private void ShowCharacterContextMenu(Vector2 mousePosition)
 	{
+		UpdateBodyModeButton();
 		_characterContextMenu.Visible = true;
 		_characterContextMenu.ZIndex = 100;
 

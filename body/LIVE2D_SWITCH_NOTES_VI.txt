@@ -1,0 +1,4 @@
+Body patch 51
+- UdpListener.Live2D.cs: mode switch, context-menu bridge, UDP forwarding, fallback 2D.
+- Live2DBodyManager.cs: sở hữu process renderer; không nhét process này vào cognition.
+- UdpListener.cs: thêm hook khởi tạo/tắt, forward toàn bộ packet và nút context menu.

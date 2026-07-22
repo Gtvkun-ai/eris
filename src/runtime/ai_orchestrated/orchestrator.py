@@ -176,6 +176,40 @@ class AIChatOrchestrator:
         # observer dùng phản ứng user hiện tại để chấm hậu quả.
         host.ai_state_reducer.wait_idle(0.15)
         mind_state = host.ai_state_reducer.snapshot()
+
+        memory_recall_decision = None
+        if grounding_report is None or bool(getattr(grounding_report, "memory_answer_allowed", True)):
+            build_memory_recall = getattr(host, "_build_memory_recall_decision", None)
+            if callable(build_memory_recall):
+                try:
+                    memory_recall_decision = build_memory_recall(user_text)
+                except Exception as exc:
+                    host.logger.debug("[memory recall] deterministic answer failed: %s", exc)
+        if memory_recall_decision is not None:
+            user_meta["memory_recall_answer"] = True
+            host.logger.info(
+                "[memory recall] deterministic answer parse_mode=%s",
+                str(getattr(memory_recall_decision, "parse_mode", "") or "memory_recall"),
+            )
+            host.ai_stage_planner.apply(memory_recall_decision, "neutral", state=mind_state, channel="chat")
+            memory_recall_decision = host._execute_system_action(memory_recall_decision, snapshot=snapshot, frame=None)
+            public_text, assistant_meta = self._commit(memory_recall_decision)
+            host.last_user_text_for_semantics = user_text
+            recent_history = tuple(host._chat_history_for_llm(limit=8))
+            host.ai_post_turn_observer.submit(
+                turn_id=turn_id,
+                turn_seq=turn_seq,
+                user_text=user_text,
+                assistant_text=public_text,
+                recent_history=recent_history,
+                mechanical_outcomes=[],
+                state_summary=mind_state.to_dict(),
+                user_meta=user_meta,
+                assistant_meta=assistant_meta,
+                event_kind="chat",
+            )
+            return
+
         personality_context = mind_state.personality_prompt_context()
         relationship_context = mind_state.relationship.prompt_summary()
         grounding_context = str(getattr(grounding_report, "prompt_context", "") or "")
