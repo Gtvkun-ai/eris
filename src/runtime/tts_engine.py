@@ -38,6 +38,7 @@ from runtime.speech_localizer import (
     SpeechLocalizationCancelled,
     SpeechLocalizationError,
     SpeechLocalizer,
+    localizer_model_name,
 )
 from runtime.tts_audio_polish import audio_polish_enabled, polish_pcm16_mono
 from runtime.tts_markup import render_tts_markup
@@ -498,10 +499,7 @@ def _edge_japanese_romaji_text(text: str) -> str:
             "Output only simple romaji and punctuation.\n\n"
             f"Japanese text:\n{clean}"
         )
-        response = client.models.generate_content(
-            model=os.environ.get("ERIS_TTS_LOCALIZER_MODEL", "gemini-2.5-flash").strip(),
-            contents=prompt,
-        )
+        response = client.models.generate_content(model=localizer_model_name(), contents=prompt)
         if plan is not None:
             try:
                 GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_request(
@@ -1305,10 +1303,7 @@ def _translate_to_japanese(text: str, api_key: str) -> str:
             "Output ONLY the Japanese translation, with absolutely no quotes, annotations, or English/Vietnamese explanations.\n\n"
             f"Sentence to translate: {text}"
         )
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-        )
+        response = client.models.generate_content(model=localizer_model_name(), contents=prompt)
         translated = (response.text or "").strip()
         if translated.startswith('"') and translated.endswith('"'):
             translated = translated[1:-1].strip()

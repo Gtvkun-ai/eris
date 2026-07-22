@@ -400,6 +400,15 @@ def test_tts_worker_relocalizes_even_when_upstream_claims_prelocalized(monkeypat
     assert "話" in text
 
 
+def test_tts_localizer_uses_speech_model_when_no_override(monkeypatch) -> None:
+    from runtime.speech_localizer import localizer_model_name
+
+    monkeypatch.delenv("ERIS_TTS_LOCALIZER_MODEL", raising=False)
+    monkeypatch.setenv("ERIS_SPEECH_MODEL", "gemma-4-31b-it")
+
+    assert localizer_model_name() == "gemma-4-31b-it"
+
+
 def test_tts_worker_fails_closed_when_japanese_localizer_breaks(monkeypatch) -> None:
     import pytest
     import runtime.tts_engine as tts_engine
@@ -1470,3 +1479,46 @@ def test_autonomous_grounding_report_accepts_fresh_window_title() -> None:
     report = pipeline._autonomous_grounding_report(context, plan)
     assert report.screen_evidence_present is True
     assert "screen:window_title" in report.evidence_ids
+
+
+def test_post_observer_skips_llm_for_plain_greeting() -> None:
+    from runtime.ai_orchestrated.model_router import AIRuntimeModelRouter
+
+    payload = AIRuntimeModelRouter._fast_observer_payload("xin chào", event_kind="chat")
+    assert payload is not None
+    data, source = payload
+    assert data["user_act"] == "greeting"
+    assert "deterministic_anchor" in source
+
+
+def test_startup_grounding_default_is_lazy(monkeypatch) -> None:
+    from runtime.ai_orchestrated.startup_grounding import collect_startup_grounding
+    from types import SimpleNamespace
+
+    monkeypatch.delenv("ERIS_STARTUP_SCREEN_PRIME_SEC", raising=False)
+    monkeypatch.delenv("ERIS_STARTUP_RUNTIME_SIGNALS_ENABLED", raising=False)
+
+    class Worker:
+        def __init__(self):
+            self.started = False
+        def start(self):
+            self.started = True
+
+    class Store:
+        def snapshot(self):
+            return SimpleNamespace(revision=0, blocks=(), backend="", privacy_blocked=False, window=None)
+
+    class Telemetry:
+        def capture_snapshot(self, **_kwargs):
+            return SimpleNamespace(cpu_percent=99.0, ram_percent=99.0, active_window="", active_app="", focus_summary="")
+
+    worker = Worker()
+    host = SimpleNamespace(
+        screen_text_worker=worker, screen_evidence_store=Store(), telemetry_service=Telemetry(),
+        mood_score=0, inferred_pos_x=0.5, chat_mode=False, _chat_processing=False,
+    )
+    bundle = collect_startup_grounding(host)
+    assert worker.started is False
+    assert bundle.waited_seconds < 0.25
+    assert bundle.runtime_opening_evidence == ()
+    assert "screen_prime_lazy" in bundle.notes

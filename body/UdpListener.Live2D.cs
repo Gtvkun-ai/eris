@@ -26,6 +26,8 @@ public partial class UdpListener
 	[Export(PropertyHint.Range, "320,1600,1")] public int Live2DWindowWidth = 520;
 	[Export(PropertyHint.Range, "480,1800,1")] public int Live2DWindowHeight = 900;
 	[Export(PropertyHint.Range, "0.20,0.50,0.01")] public float Live2DBubbleAnchorY = 0.34f;
+	[Export(PropertyHint.Range, "0.05,0.75,0.01")] public float Live2DBubbleSideAnchorY = 0.18f;
+	[Export(PropertyHint.Range, "8,96,1")] public float Live2DBubbleGap = 24f;
 
 	private void EnsureLive2DContextButton(VBoxContainer container)
 	{
@@ -85,9 +87,14 @@ public partial class UdpListener
 			}
 
 			_bodyPositionBeforeLive2D = _body?.GlobalPosition ?? Vector2.Zero;
-			_live2DWindowRectScreen = ResolveInitialLive2DWindowRect();
-			_hasLive2DWindowRect = true;
-			if (!(_live2DManager?.Start(
+			if (!_hasLive2DWindowRect)
+			{
+				_live2DWindowRectScreen = ResolveInitialLive2DWindowRect();
+				_hasLive2DWindowRect = true;
+			}
+
+			bool resident = _live2DManager?.IsRunning ?? false;
+			if (!resident && !(_live2DManager?.Start(
 				PythonExecutable,
 				Live2DModelPath,
 				Live2DStagePort,
@@ -97,7 +104,6 @@ public partial class UdpListener
 				_live2DWindowRectScreen.Size.Y) ?? false))
 			{
 				_isLive2DMode = false;
-				_hasLive2DWindowRect = false;
 				Restore2DSpriteVisual();
 				UpdateBodyModeButton();
 				_label.Text = "Không mở được Live2D. Chạy src/install_live2d_body.bat rồi thử lại.";
@@ -107,20 +113,22 @@ public partial class UdpListener
 
 			_isLive2DMode = true;
 			HideOnly2DSpriteVisual();
+			if (resident)
+				SendLive2DControl("set_visibility", visible: true);
 			SyncLive2DBodyAnchor();
-			RunLogger.Log("[BodyMode] 2D -> Live2D | bubble giữ ở Godot overlay");
+			RunLogger.Log($"[BodyMode] 2D -> Live2D | resident={resident} | bubble giữ ở Godot overlay");
 		}
 		else
 		{
 			bool wasLive2D = _isLive2DMode;
 			_isLive2DMode = false;
-			_live2DManager?.Stop();
+			if (_live2DManager?.IsRunning ?? false)
+				SendLive2DControl("set_visibility", visible: false);
 			Restore2DSpriteVisual();
-			_hasLive2DWindowRect = false;
 			if (_body != null)
 				_body.GlobalPosition = _bodyPositionBeforeLive2D;
 			if (wasLive2D)
-				RunLogger.Log("[BodyMode] Live2D -> 2D");
+				RunLogger.Log("[BodyMode] Live2D -> 2D | renderer hidden, process giữ thường trú");
 		}
 
 		if (persist && RememberBodyRendererMode)
@@ -176,8 +184,8 @@ public partial class UdpListener
 			return;
 		_contextBodyModeButton.Text = _isLive2DMode ? "Chuyển về 2D" : "Chuyển sang Live2D";
 		_contextBodyModeButton.TooltipText = _isLive2DMode
-			? "Tắt cửa sổ Live2D và hiện lại body sprite 2D."
-			: "Ẩn riêng sprite 2D, giữ bubble/UI Godot và mở model infj.model3.json.";
+			? "Ẩn Live2D và hiện lại sprite 2D; renderer không bị khởi động lại."
+			: "Hiện renderer Live2D thường trú; chỉ lần mở đầu tiên mới phải nạp model.";
 	}
 
 	private void OnLive2DProcessExited(int exitCode)
@@ -281,13 +289,81 @@ public partial class UdpListener
 			return;
 		// Live2D không lật cả sprite như body pixel. Giữ bubble và chữ không bị
 		// mirror theo trạng thái facing còn sót lại của MotionController.
+		if (_monika != null)
+			_monika.Scale = Vector2.One;
 		_bubble.Scale = Vector2.One;
-		_bubble.Position = _bubbleBasePos;
+		if (_hasLive2DWindowRect)
+			PositionLive2DBubbleBesideModel();
+		else
+			_bubble.Position = _bubbleBasePos;
+	}
+
+	private void PositionLive2DBubbleBesideModel()
+	{
+		Vector2 viewportSize = GetViewportRect().Size;
+		if (viewportSize.X <= 0f || viewportSize.Y <= 0f)
+			return;
+
+		Vector2I overlayScreenPosition = DisplayServer.WindowGetPosition();
+		Rect2 liveRect = new(
+			new Vector2(
+				_live2DWindowRectScreen.Position.X - overlayScreenPosition.X,
+				_live2DWindowRectScreen.Position.Y - overlayScreenPosition.Y),
+			new Vector2(_live2DWindowRectScreen.Size.X, _live2DWindowRectScreen.Size.Y));
+		Vector2 bubbleSize = _bubble.Size;
+		if (bubbleSize.X <= 0f || bubbleSize.Y <= 0f)
+			bubbleSize = new Vector2(560f, 230f);
+
+		float margin = 8f;
+		float gap = Mathf.Clamp(Live2DBubbleGap, 8f, 96f);
+		float rightSpace = viewportSize.X - liveRect.End.X;
+		float leftSpace = liveRect.Position.X;
+		bool canPlaceRight = rightSpace >= bubbleSize.X + gap + margin;
+		bool canPlaceLeft = leftSpace >= bubbleSize.X + gap + margin;
+
+		float x;
+		if (canPlaceRight || (!canPlaceLeft && rightSpace >= leftSpace))
+			x = liveRect.End.X + gap;
+		else if (canPlaceLeft)
+			x = liveRect.Position.X - bubbleSize.X - gap;
+		else
+			x = liveRect.Position.X + (liveRect.Size.X - bubbleSize.X) * 0.5f;
+
+		float y = liveRect.Position.Y
+			+ liveRect.Size.Y * Mathf.Clamp(Live2DBubbleSideAnchorY, 0.05f, 0.75f);
+		x = Mathf.Clamp(x, margin, Math.Max(margin, viewportSize.X - bubbleSize.X - margin));
+		y = Mathf.Clamp(y, margin, Math.Max(margin, viewportSize.Y - bubbleSize.Y - margin));
+		_bubble.GlobalPosition = new Vector2(x, y);
+	}
+
+	private void SendLive2DControl(string type, bool visible = true)
+	{
+		if (!(_live2DManager?.IsRunning ?? false))
+			return;
+		try
+		{
+			var payload = new
+			{
+				protocol = "eris.live2d.control",
+				version = 1,
+				type = type ?? "",
+				visible,
+				timestamp = Time.GetUnixTimeFromSystem(),
+			};
+			string raw = JsonSerializer.Serialize(payload);
+			_live2DForward.PutPacket(Encoding.UTF8.GetBytes(raw));
+		}
+		catch (Exception ex)
+		{
+			RunLogger.LogErr($"[Live2D] Control UDP lỗi: {ex.Message}");
+		}
 	}
 
 	private void ForwardPacketToLive2D(string raw)
 	{
-		if (!_isLive2DMode || !(_live2DManager?.IsRunning ?? false) || string.IsNullOrWhiteSpace(raw))
+		// Giữ stage state nóng cả khi cửa sổ đang ẩn. Lúc bật lại, cảm xúc/TTS hiện
+		// tại được tiếp tục ngay thay vì reset về neutral.
+		if (!(_live2DManager?.IsRunning ?? false) || string.IsNullOrWhiteSpace(raw))
 			return;
 		try
 		{
@@ -342,6 +418,7 @@ public partial class UdpListener
 	{
 		_isLive2DMode = false;
 		Restore2DSpriteVisual();
+		SendLive2DControl("shutdown");
 		_live2DManager?.Stop();
 		_live2DForward.Close();
 	}

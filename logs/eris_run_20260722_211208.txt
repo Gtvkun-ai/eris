@@ -1,0 +1,97 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-22 21:12:08
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+21:12:09.397 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+21:12:09.398 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+21:12:09.422 [INFO] [Vision] Da khoi chay vision.py PID=18084
+21:12:09.457 [INFO] [Live2D] Da khoi chay renderer PID=14516, UDP=4252
+21:12:09.458 [INFO] [BodyMode] 2D -> Live2D | bubble giữ ở Godot overlay
+21:12:10.020 [INFO] [live2d] [live2d] third-party wrapper (0.7.0.4), not affiliated with Live2D Inc.
+21:12:10.033 [INFO] [live2d] [live2d.v3] Cubism Native, Python 3.12.0
+21:12:10.033 [INFO] [live2d] [live2d.v3] official: https://www.live2d.com/sdk/download/native/
+21:12:10.621 [INFO] [live2d] [INFO]  [Pal] Init Shader Dir: C:\Users\Gtvkun\Documents\GitHub\eris\.venv\Lib\site-packages\live2d\v3\
+21:12:10.621 [INFO] [live2d] [INFO]  [CSM][I]Live2D Cubism Core version: 05.01.0000 (83951616)
+21:12:10.621 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::StartUp() is complete.
+21:12:10.622 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::Initialize() is complete.
+21:12:10.623 [INFO] [live2d] [INFO]  allocate: cpp Model(at=000001EBB9F77350)
+21:12:10.624 [INFO] [live2d] [INFO]  load modelSetting: C:\Users\Gtvkun\Documents\GitHub\eris\src\assets\live2d\infj\infj.model3.json
+21:12:10.625 [INFO] [live2d] [INFO]  create model: infj.moc3
+21:12:10.769 [INFO] [live2d] [Live2D] Đã mở infj.model3.json | UDP 127.0.0.1:4252
+21:12:10.769 [INFO] [live2d] [Live2D] Window pos=(486, 50) size=(520,900) fb=(520,900) screen=(1920, 1080) canvas=(1.0, 1.5) canvas_px=(1024.0, 1536.0) scale=1.00 offset=(0.00,-0.02) transparent=True decorated=False topmost=True
+21:12:10.770 [INFO] [live2d] [Live2D] Model profile: parameters=21 head=X/Z eyes=custom mirrored pair mouth=yes physics=yes expressions=0 motion_groups=0
+21:12:14.941 [INFO] [vision.py] [LLM][INFO] Social parser client sẵn sàng: openai/gpt-oss-20b
+21:12:14.941 [INFO] [vision.py] [LLM][INFO] Social deliberator/critic client sẵn sàng: openai/gpt-oss-120b
+21:12:14.941 [INFO] [vision.py] [LLM][INFO] Social observer fallback client sẵn sàng: llama-3.1-8b-instant
+21:12:15.158 [INFO] [vision.py] [Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=4
+21:12:15.165 [INFO] [vision.py] [Loop][INFO] [vtuber-stage] loaded version=vtuber_stage.v11 phases=8,9,10,11 status=intention_authority_ready session=stage_e6995741cab54862
+21:12:15.190 [INFO] [vision.py] [Loop][INFO] [internal-cognitive] loaded version=internal_cognitive.v1.0 capabilities=8 status=read_only_verified
+21:12:15.234 [INFO] [vision.py] [Loop][INFO] [project-ops] loaded version=project_operations.v1.1 capabilities=15 mode=autonomous_project_scope
+21:12:15.234 [INFO] [vision.py] [Loop][INFO] [workspace] eris_home=[đường dẫn nội bộ đã ẩn] active=none implicit_source_repo=false
+21:12:16.332 [INFO] [vision.py] [Loop][INFO] tutor: knowledge provider đã nối vào memory recall
+21:12:16.432 [INFO] [vision.py] [Loop][INFO] [environment-capability] loaded version=environment_capability.v1.0 capabilities=6 status=read_only_verified
+21:12:16.649 [INFO] [vision.py] [Loop][INFO] [architecture C] enabled version=ai_orchestrated.v6.1.arbitrated_brief state_version=0 personality_version=0 identity_version=0 observer=post_turn planner=ai cortex=pre_response_brief single_writer=1
+21:12:19.390 [INFO] [vision.py] [Loop][INFO] --- Architecture C runtime; chat vision theo yêu cầu màn hình ---
+21:12:19.391 [INFO] [vision.py] [Loop][INFO] [screen text] worker started backend=lazy-auto poll=1.2s
+21:12:21.215 [INFO] [vision.py] [Loop][INFO] [screen text] OCR backend resolved=rapidocr
+21:12:21.729 [INFO] [vision.py] [Loop][INFO] [architecture C startup grounding] direct=0 strong=0 telemetry_tab=0 evidence=0 runtime_opening=2 metadata=4 backend=unknown wait=2.34s notes=screen_prime_timeout
+21:12:29.835 [INFO] [vision.py] [Loop][INFO] [architecture C startup route] strategy=grounded_runtime_opening source=runtime continuity=0 forced=1
+21:12:33.884 [INFO] [vision.py] [Loop][INFO] [architecture C startup] spoke motive=startup_opening text=CPU đang ở 97%—máy hôm nay có vẻ làm việc hơi quá tay rồi.
+21:12:36.221 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=1 reason=enter_chat_mode
+21:12:36.222 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+21:12:36.905 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:12:38.184 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=2 reason=enter_chat_mode
+21:12:38.184 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+21:12:38.977 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:12:39.391 [INFO] [vision.py] [Loop][INFO] Người dùng: xin chafo
+21:12:39.391 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference
+21:12:39.395 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+21:12:39.419 [INFO] [vision.py] [Loop][INFO] [cortex v2] turn=2 relation=new_or_direct_turn owner=unknown move=answer posture=neutral_or_underdetermined delivery=calm_direct_with_room_for_edge conf=0.44 ambiguity=0.20 margin=0.12 coverage=1.00 deep=1 degraded=none conflicts=response_move:answer<->respond_in_context
+21:12:47.672 [INFO] [vision.py] [Loop][INFO] ERIS: Chào. “Chafo” là kiểu gõ nhầm có chủ đích à?
+21:12:49.130 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=0 9s vì http_429:openai/gpt-oss-20b; alive=8/9
+21:12:50.122 [INFO] [vision.py] [TTS][WARNING] [TTS] JP localization lỗi (japanese_localization_failed:ClientError); audio fail-closed, giữ display transcript.
+21:12:50.124 [INFO] [vision.py] [TTS][WARNING] [TTS] Audio bị bỏ vì không giữ được language contract: japanese_localization_failed:ClientError
+21:12:51.314 [INFO] [Settings] Đang đọc trạng thái hai key pool...
+21:12:51.814 [INFO] [Settings] Đã đọc trạng thái key pool thật từ Brain.
+21:12:52.747 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] 429 burst scope=http_429:openai/gpt-oss-20b trên 2 key/8s; dừng xoay, cooldown pool 30s (alive=7/9)
+21:12:53.033 [INFO] [vision.py] [Loop][INFO] [post observer] turn=2 act=unknown meaning=neutral conf=0.00 repair=False traits=0 frame=uncertain strategy=none source=groq_observer_fallback latency=5314ms
+21:12:54.711 [INFO] [Live2D] Dang dung renderer PID=14516...
+21:12:54.766 [INFO] [Live2D] Renderer da thoat (code=-1, current=False).
+21:12:54.770 [INFO] [BodyMode] Live2D -> 2D
+21:12:56.295 [INFO] [Live2D] Da khoi chay renderer PID=15268, UDP=4252
+21:12:56.295 [INFO] [BodyMode] 2D -> Live2D | bubble giữ ở Godot overlay
+21:12:56.812 [INFO] [live2d] [live2d] third-party wrapper (0.7.0.4), not affiliated with Live2D Inc.
+21:12:56.821 [INFO] [live2d] [live2d.v3] Cubism Native, Python 3.12.0
+21:12:56.821 [INFO] [live2d] [live2d.v3] official: https://www.live2d.com/sdk/download/native/
+21:12:56.973 [INFO] [live2d] [INFO]  [Pal] Init Shader Dir: C:\Users\Gtvkun\Documents\GitHub\eris\.venv\Lib\site-packages\live2d\v3\
+21:12:56.973 [INFO] [live2d] [INFO]  [CSM][I]Live2D Cubism Core version: 05.01.0000 (83951616)
+21:12:56.973 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::StartUp() is complete.
+21:12:56.973 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::Initialize() is complete.
+21:12:56.975 [INFO] [live2d] [INFO]  allocate: cpp Model(at=00000247B56374E0)
+21:12:56.975 [INFO] [live2d] [INFO]  load modelSetting: C:\Users\Gtvkun\Documents\GitHub\eris\src\assets\live2d\infj\infj.model3.json
+21:12:56.975 [INFO] [live2d] [INFO]  create model: infj.moc3
+21:12:57.073 [INFO] [live2d] [Live2D] Đã mở infj.model3.json | UDP 127.0.0.1:4252
+21:12:57.073 [INFO] [live2d] [Live2D] Window pos=(486, 50) size=(520,900) fb=(520,900) screen=(1920, 1080) canvas=(1.0, 1.5) canvas_px=(1024.0, 1536.0) scale=1.00 offset=(0.00,-0.02) transparent=True decorated=False topmost=True
+21:12:57.074 [INFO] [live2d] [Live2D] Model profile: parameters=21 head=X/Z eyes=custom mirrored pair mouth=yes physics=yes expressions=0 motion_groups=0
+21:13:04.717 [INFO] [Settings] Đang đọc trạng thái hai key pool...
+21:13:05.482 [INFO] [Settings] Đã đọc trạng thái key pool thật từ Brain.
+21:13:06.521 [INFO] [Settings] Advanced điều khiển hành vi, memory, Tutor và quyền project. Một nút Áp dụng sẽ lưu lẫn cập nhật Brain.
+21:13:07.237 [INFO] [Settings] Danger Zone chỉ chứa thao tác reset/bảo trì thật. Mọi lệnh phá dữ liệu đều preview trước.
+21:13:07.443 [INFO] [Settings] Đã đọc trạng thái key pool thật từ Brain.
+21:13:11.637 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+21:13:12.532 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=active external=1.00 internal=0.03 interrupt=0.20 resource=0.10 vision_hint=1 budget=scheduler_allow
+21:13:12.754 [INFO] [vision.py] [Loop][WARNING] [vision_facts] compressor failed: no_fallback_vision:vision_compressor_disabled | backoff=15s
+21:13:12.760 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=8
+21:13:14.752 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] synthesis failed error=RuntimeError:API key pool đang cooldown; thử lại sau khoảng 8.0s
+21:13:14.914 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] inner_diary failed error=RuntimeError:API key pool đang cooldown; thử lại sau khoảng 7.8s
+21:13:14.924 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] inner_diary failed error=RuntimeError:API key pool đang cooldown; thử lại sau khoảng 7.8s
+21:13:14.928 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.88 pressure=0.68 surface=yes mutations=2
+21:13:43.866 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=environment act=defer_for_user_focus conf=0.90 importance=0.36 gate=model_silence body_only=1
+21:13:44.387 [INFO] [Live2D] Dang dung renderer PID=15268...
+21:13:44.422 [INFO] [Live2D] Renderer da thoat (code=-1, current=False).
+21:13:44.431 [INFO] [Vision] Dang dung vision.py PID=18084...
+21:13:44.453 [INFO] [Vision] vision.py da thoat (PID=18084, code=-1, unexpected=False).
+21:13:44.469 [INFO] [RunLogger] Ket thuc phien chay.

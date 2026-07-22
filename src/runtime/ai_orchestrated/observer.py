@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 import uuid
@@ -26,6 +27,7 @@ class ObservationTicket:
     user_meta: MutableMapping[str, Any] | None = None
     assistant_meta: MutableMapping[str, Any] | None = None
     _claimed: bool = False
+    _timer: threading.Timer | None = field(default=None, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def claim(self) -> bool:
@@ -47,6 +49,10 @@ class PostTurnObserver:
         )
         self._tickets: dict[str, ObservationTicket] = {}
         self._lock = threading.RLock()
+        try:
+            self.deadline_seconds = max(1.0, min(15.0, float(os.getenv("ERIS_POST_OBSERVER_DEADLINE_SEC", "4.0") or 4.0)))
+        except (TypeError, ValueError):
+            self.deadline_seconds = 4.0
 
     def submit(
         self,
@@ -88,6 +94,10 @@ class PostTurnObserver:
         )
         with self._lock:
             self._tickets[ticket_id] = ticket
+        timer = threading.Timer(self.deadline_seconds, self._expire, args=(ticket,))
+        timer.daemon = True
+        ticket._timer = timer
+        timer.start()
         future.add_done_callback(lambda done: self._complete(ticket, done))
         return ticket
 
@@ -96,6 +106,8 @@ class PostTurnObserver:
             return
         with self._lock:
             self._tickets.pop(ticket.ticket_id, None)
+        if ticket._timer is not None:
+            ticket._timer.cancel()
         try:
             observation = future.result()
         except Exception as exc:  # noqa: BLE001
@@ -128,7 +140,38 @@ class PostTurnObserver:
             observation.latency_ms,
         )
 
+    def _expire(self, ticket: ObservationTicket) -> None:
+        if not ticket.claim():
+            return
+        with self._lock:
+            self._tickets.pop(ticket.ticket_id, None)
+        try:
+            ticket.future.cancel()
+        except Exception:
+            pass
+        if ticket.user_meta is not None:
+            ticket.user_meta["cognitive_observation_pending"] = False
+            ticket.user_meta["cognitive_observation_timeout"] = True
+        if ticket.assistant_meta is not None:
+            ticket.assistant_meta["cognitive_observation_source"] = "timeout_discarded"
+        self._log(
+            "warning",
+            "[post observer] deadline turn=%s after %.1fs; result discarded",
+            ticket.turn_seq,
+            self.deadline_seconds,
+        )
+
     def shutdown(self) -> None:
+        with self._lock:
+            tickets = tuple(self._tickets.values())
+            self._tickets.clear()
+        for ticket in tickets:
+            if ticket._timer is not None:
+                ticket._timer.cancel()
+            try:
+                ticket.future.cancel()
+            except Exception:
+                pass
         try:
             self.executor.shutdown(wait=False, cancel_futures=True)
         except Exception:

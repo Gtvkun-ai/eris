@@ -1,0 +1,79 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-22 21:49:09
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+21:49:11.014 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+21:49:11.014 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+21:49:11.045 [INFO] [Vision] Da khoi chay vision.py PID=2544
+21:49:11.079 [INFO] [Live2D] Da khoi chay renderer PID=2888, UDP=4252
+21:49:11.080 [INFO] [BodyMode] 2D -> Live2D | bubble giữ ở Godot overlay
+21:49:11.611 [INFO] [live2d] [live2d] third-party wrapper (0.7.0.4), not affiliated with Live2D Inc.
+21:49:11.620 [INFO] [live2d] [live2d.v3] Cubism Native, Python 3.12.0
+21:49:11.620 [INFO] [live2d] [live2d.v3] official: https://www.live2d.com/sdk/download/native/
+21:49:11.848 [INFO] [live2d] [INFO]  [Pal] Init Shader Dir: C:\Users\Gtvkun\Documents\GitHub\eris\.venv\Lib\site-packages\live2d\v3\
+21:49:11.849 [INFO] [live2d] [INFO]  [CSM][I]Live2D Cubism Core version: 05.01.0000 (83951616)
+21:49:11.849 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::StartUp() is complete.
+21:49:11.849 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::Initialize() is complete.
+21:49:11.851 [INFO] [live2d] [INFO]  allocate: cpp Model(at=00000152020811A0)
+21:49:11.851 [INFO] [live2d] [INFO]  load modelSetting: C:\Users\Gtvkun\Documents\GitHub\eris\src\assets\live2d\infj\infj.model3.json
+21:49:11.853 [INFO] [live2d] [INFO]  create model: infj.moc3
+21:49:11.970 [INFO] [live2d] [Live2D] Đã mở infj.model3.json | UDP 127.0.0.1:4252
+21:49:11.970 [INFO] [live2d] [Live2D] Window pos=(486, 50) size=(520,900) fb=(520,900) screen=(1920, 1080) canvas=(1.0, 1.5) canvas_px=(1024.0, 1536.0) scale=1.00 offset=(0.00,-0.02) transparent=True decorated=False topmost=True
+21:49:11.971 [INFO] [live2d] [Live2D] Model profile: parameters=21 head=X/Z eyes=custom mirrored pair mouth=yes physics=yes expressions=0 motion_groups=0
+21:49:13.463 [INFO] [vision.py] [LLM][INFO] Social parser client sẵn sàng: llama-3.1-8b-instant
+21:49:13.463 [INFO] [vision.py] [LLM][INFO] Social deliberator/critic client sẵn sàng: llama-3.3-70b-versatile
+21:49:13.463 [INFO] [vision.py] [LLM][INFO] Social observer fallback client sẵn sàng: llama-3.1-8b-instant
+21:49:13.726 [INFO] [vision.py] [Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=4
+21:49:13.731 [INFO] [vision.py] [Loop][INFO] [vtuber-stage] loaded version=vtuber_stage.v11 phases=8,9,10,11 status=intention_authority_ready session=stage_6e17478b5d2d42f0
+21:49:13.743 [INFO] [vision.py] [Loop][INFO] [internal-cognitive] loaded version=internal_cognitive.v1.0 capabilities=8 status=read_only_verified
+21:49:13.754 [INFO] [vision.py] [Loop][INFO] [project-ops] loaded version=project_operations.v1.1 capabilities=15 mode=autonomous_project_scope
+21:49:13.754 [INFO] [vision.py] [Loop][INFO] [workspace] eris_home=[đường dẫn nội bộ đã ẩn] active=none implicit_source_repo=false
+21:49:14.744 [INFO] [vision.py] [Loop][INFO] tutor: knowledge provider đã nối vào memory recall
+21:49:14.820 [INFO] [vision.py] [Loop][INFO] [environment-capability] loaded version=environment_capability.v1.0 capabilities=6 status=read_only_verified
+21:49:14.999 [INFO] [vision.py] [Loop][INFO] [architecture C] enabled version=ai_orchestrated.v6.1.arbitrated_brief state_version=0 personality_version=0 identity_version=0 observer=post_turn planner=ai cortex=pre_response_brief single_writer=1
+21:49:17.457 [INFO] [vision.py] [Loop][INFO] --- Architecture C runtime; chat vision theo yêu cầu màn hình ---
+21:49:17.458 [INFO] [vision.py] [Loop][INFO] [screen text] worker started backend=lazy-auto poll=1.2s
+21:49:18.754 [INFO] [vision.py] [Loop][INFO] [screen text] OCR backend resolved=rapidocr
+21:49:19.470 [INFO] [vision.py] [Loop][INFO] [architecture C startup grounding] direct=0 strong=0 telemetry_tab=0 evidence=0 runtime_opening=2 metadata=4 backend=unknown wait=2.01s notes=screen_prime_timeout
+21:49:28.328 [INFO] [vision.py] [Loop][INFO] [architecture C startup route] strategy=grounded_runtime_opening source=runtime continuity=0 forced=1
+21:49:32.323 [INFO] [vision.py] [Loop][INFO] [architecture C startup] spoke motive=startup_opening text=Máy đang dùng gần hết CPU rồi; tôi sẽ nói gọn thôi.
+21:49:38.654 [INFO] [vision.py] [TTS][WARNING] [TTS] JP localization lỗi (japanese_localization_failed:ServerError); audio fail-closed, giữ display transcript.
+21:49:38.655 [INFO] [vision.py] [TTS][WARNING] [TTS] Audio bị bỏ vì không giữ được language contract: japanese_localization_failed:ServerError
+21:49:44.132 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=active external=1.00 internal=0.03 interrupt=0.20 resource=0.10 vision_hint=1 budget=scheduler_allow
+21:49:44.395 [INFO] [vision.py] [Loop][WARNING] [vision_facts] compressor failed: no_fallback_vision:vision_compressor_disabled | backoff=15s
+21:49:44.395 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+21:49:49.899 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.55 surface=yes mutations=1
+21:49:57.909 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=internal act=withhold_for_user_focus conf=0.88 importance=0.18 gate=model_silence body_only=1
+21:50:12.987 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.48 internal=0.06 interrupt=0.32 resource=0.21 vision_hint=0 budget=scheduler_allow
+21:50:13.111 [INFO] [vision.py] [Loop][WARNING] [vision_facts] compressor failed: no_fallback_vision:vision_compressor_disabled | backoff=30s
+21:50:13.116 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=8
+21:50:15.383 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.65 surface=yes mutations=1
+21:50:38.783 [INFO] [vision.py] [Loop][INFO] [ai autonomous] spoke kind=environment act=grounded_curiosity subject=chess_opening text=Reti Opening: Queenside Fianchetto Variation — cái tên nghe lịch sự mà khá tham vọng; bạn thấy nó thú vị ở chỗ nào?
+21:50:44.890 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=0 33s vì http_429:llama-3.1-8b-instant; alive=8/9
+21:50:48.384 [INFO] [vision.py] [Loop][INFO] [post observer] turn=3 act=unknown meaning=neutral conf=0.00 repair=False traits=0 frame=uncertain strategy=none source=groq_observer_fallback latency=9607ms
+21:51:00.583 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.38 internal=0.07 interrupt=0.44 resource=0.33 vision_hint=0 budget=scheduler_allow
+21:51:00.793 [INFO] [vision.py] [Loop][WARNING] [vision_facts] compressor failed: no_fallback_vision:vision_compressor_disabled | backoff=45s
+21:51:00.798 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+21:51:03.429 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.65 surface=yes mutations=1
+21:51:12.862 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=environment act=silent_observation conf=0.86 importance=0.28 gate=model_silence body_only=1
+21:51:18.947 [INFO] [Settings] Đang đọc trạng thái hai key pool...
+21:51:19.657 [INFO] [Settings] Đã đọc trạng thái key pool thật từ Brain.
+21:51:19.832 [INFO] [Settings] Giọng nói cơ bản nằm ở card Giọng & cửa sổ.
+21:51:20.479 [INFO] [Settings] Dữ liệu cơ bản: key pool, backup, export config.
+21:51:20.861 [INFO] [Settings] Advanced điều khiển hành vi, memory, Tutor và quyền project. Một nút Áp dụng sẽ lưu lẫn cập nhật Brain.
+21:51:21.215 [INFO] [Settings] Đã đọc trạng thái key pool thật từ Brain.
+21:51:21.526 [INFO] [Settings] Danger Zone chỉ chứa thao tác reset/bảo trì thật. Mọi lệnh phá dữ liệu đều preview trước.
+21:51:24.823 [INFO] [Settings] Đang đọc phạm vi ảnh hưởng từ Brain…
+21:51:25.752 [INFO] [DangerZone.preview] {"request_id":"af163492088845d2ace92a46b0cd95b3","protocol_phase":"preview","action":"factory_reset","title":"\u0110\u1EB7t l\u1EA1i to\u00E0n b\u1ED9 Eris","description":"Reset c\u00E1c th\u00E0nh ph\u1EA7n \u0111\u01B0\u1EE3c ch\u1ECDn. API key, settings, raw event ledger v\u00E0 backup \u0111\u01B0\u1EE3c gi\u1EEF nguy\u00EAn.","severity":"critical","reversible":true,"requires_confirmation":true,"confirmation_mode":"typed","confirm_label":"\u0110\u1EB7t l\u1EA1i to\u00E0n b\u1ED9","affected":[{"path":"C:\\Users\\Gtvkun\\Documents\\ErisLive\\memory\\core\\active_state_snapshot.json","exists":true,"bytes":357,"items":1,"is_dir":false},{"path":"C:\\Users\\Gtvkun\\Documents\\ErisLive\\memory\\core\\user_model.json","exists":false,"bytes":0,"items":0,"is_dir":false},{"path":"C:\\Users\\Gtvkun\\Documents\\ErisLive\\memory\\core\\epistemic_v2.json","exists":false,"bytes":0,"items":0,"is_dir":false},{"path":"C:\\Users\\Gtvkun\\Documents\\ErisLive\\memory\\core\\tom_history.json","exists":false,"bytes":0,"items":0,"is_dir":false},{"path":"C:\\Users\\Gtvkun\\Documents\\ErisLive\\memory\\core\\relational_memory.json","exists":false,"bytes":0,"items":0,"is_dir":false},{"path":"C:\\Users\\Gtvkun\\Documents\\ErisLive\\memory\\core\\affective_residue_memory.json","exists":false,"bytes":0,"items":0,"is_dir":false},{"path":"C:\\Users\\Gtvkun\\Documents\\ErisLive\\memory\\core\\anchor_state.json","exists":true,"bytes":267,"items":1,"is_dir":false},{"path":"C:\\Users\\Gtvkun\\Documents\\ErisLive\\memory\\core\\repair_memory.json","exists":false,"bytes":0,"items":0,"is_dir":false},{"path":"C:\\Users\\Gtvkun\\Documents\\ErisLive\\memory\\core\\private_concerns.json","exists":true,"bytes":5310,"items":1,"is_dir":false},{"path":"C:\\Users\\Gtvkun\\Documents\\ErisLive\\memory\\core\\thought_stream.jsonl","exists":false,"bytes":0,"items":0,"is_dir":false},{"path":"C:\\Users\\Gtvkun\\Documents\\ErisLive\\memory\\core\\inner_diary.json","exists":true,"bytes":39310,"items":1,"is_dir":false},{"path":"C:\\Users\\Gtvkun\\Documents\\ErisLive\\memory\\core\\internal_agenda.json","exists":false,"bytes":0,"items":0,"is_dir":false},{"path":"C:\\Users\\Gtvkun\\Documents\\ErisLive\\memory\\core\\private_life_state.json","exists":true,"bytes":81044,"items":1,"is_dir":false},{"path":"C:\\Users\\Gtvkun\\Documents\\GitHub\\eris\\voice_presets\\tts_vocal_cache","exists":true,"bytes":732085,"items":20,"is_dir":true}],"total_bytes":858373,"confirmation_token":"f7bfc07eced040d7968627eb3582e4a9","preview_id":"f7bfc07eced040d7968627eb3582e4a9","typed_confirmation":"\u0110\u1EB6T L\u1EA0I TO\u00C0N B\u1ED8","expires_in_seconds":120,"options":{"components":["refresh_conversation","reset_session_affect","reset_user_model","reset_long_term_relationship","clear_repair_history","reset_private_mind","reset_private_life","clear_vocal_cache"]},"summary":{"stores_touched":["active_state_snapshot","user_model","epistemic_v2","tom_history","relational_memory","affective_residue_memory","anchor_state","repair_memory","private_concerns","thought_stream","inner_diary","internal_agenda","private_life_state","tts_vocal_cache"],"items_estimated":25,"will_delete":false,"execute_will_delete":true,"restart_required":false},"diff_excerpt":["active_state_snapshot.json: s\u1EBD \u0111\u01B0\u1EE3c backup r\u1ED3i thay \u0111\u1ED5i","user_model.json: s\u1EBD \u0111\u01B0\u1EE3c backup r\u1ED3i thay \u0111\u1ED5i","epistemic_v2.json: s\u1EBD \u0111\u01B0\u1EE3c backup r\u1ED3i thay \u0111\u1ED5i","tom_history.json: s\u1EBD \u0111\u01B0\u1EE3c backup r\u1ED3i thay \u0111\u1ED5i","relational_memory.json: s\u1EBD \u0111\u01B0\u1EE3c backup r\u1ED3i thay \u0111\u1ED5i","affective_residue_memory.json: s\u1EBD \u0111\u01B0\u1EE3c backup r\u1ED3i thay \u0111\u1ED5i","anchor_state.json: s\u1EBD \u0111\u01B0\u1EE3c backup r\u1ED3i thay \u0111\u1ED5i","repair_memory.json: s\u1EBD \u0111\u01B0\u1EE3c backup r\u1ED3i thay \u0111\u1ED5i"]}
+21:51:25.763 [INFO] [Settings] Brain đã trả manifest. Kiểm tra phạm vi trước khi xác nhận.
+21:51:28.729 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.48 internal=0.08 interrupt=0.48 resource=0.43 vision_hint=0 budget=scheduler_allow
+21:51:28.776 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=8
+21:51:32.233 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.65 surface=yes mutations=1
+21:51:55.297 [INFO] [Live2D] Dang dung renderer PID=2888...
+21:51:55.330 [INFO] [Live2D] Renderer da thoat (code=-1, current=False).
+21:51:55.349 [INFO] [Vision] Dang dung vision.py PID=2544...
+21:51:55.397 [INFO] [Vision] vision.py da thoat (PID=2544, code=-1, unexpected=False).
+21:51:55.397 [INFO] [RunLogger] Ket thuc phien chay.

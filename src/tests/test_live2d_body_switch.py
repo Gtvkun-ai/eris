@@ -48,3 +48,67 @@ def test_right_click_request_targets_godot_context_menu() -> None:
         assert payload["type"] == "open_context_menu"
         assert payload["screen_x"] == 320
         assert payload["screen_y"] == 240
+
+
+def test_gaze_keeps_custom_eyes_coupled_without_extreme_crossing() -> None:
+    from live2d_body.gaze import GazeController
+
+    gaze = GazeController(strength_x=0.28, strength_y=0.20, right_x_sign=-1.0)
+    sample = None
+    for _ in range(30):
+        sample = gaze.update(
+            cursor_screen=(2000.0, 500.0),
+            face_screen=(1000.0, 500.0),
+            span_x=400.0,
+            span_y=300.0,
+            dt=1 / 60,
+        )
+    assert sample is not None
+    assert 0.0 < sample.left_x <= 0.28
+    assert -0.28 <= sample.right_x < 0.0
+    assert abs(sample.left_x + sample.right_x) < 1e-6
+
+
+def test_window_geometry_is_reported_to_godot_body() -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.settimeout(1.0)
+        port = listener.getsockname()[1]
+        receiver = Live2DStageReceiver(
+            Live2DStageState(),
+            port=port + 1,
+            body_host="127.0.0.1",
+            body_port=port,
+        )
+        receiver.send_window_geometry(screen_x=1200, screen_y=100, width=520, height=900)
+        raw, _ = listener.recvfrom(4096)
+        payload = json.loads(raw.decode("utf-8"))
+        assert payload["type"] == "window_geometry"
+        assert payload["screen_x"] == 1200
+        assert payload["height"] == 900
+
+
+def test_renderer_control_visibility_is_resident_state() -> None:
+    receiver = Live2DStageReceiver(Live2DStageState(), port=0)
+    assert receiver.desired_visible is True
+    assert receiver._handle_renderer_control({
+        "protocol": "eris.live2d.control",
+        "type": "set_visibility",
+        "visible": False,
+    }) is True
+    assert receiver.desired_visible is False
+    receiver._handle_renderer_control({
+        "protocol": "eris.live2d.control",
+        "type": "set_visibility",
+        "visible": True,
+    })
+    assert receiver.desired_visible is True
+
+
+def test_renderer_control_shutdown_is_recorded() -> None:
+    receiver = Live2DStageReceiver(Live2DStageState(), port=0)
+    receiver._handle_renderer_control({
+        "protocol": "eris.live2d.control",
+        "type": "shutdown",
+    })
+    assert receiver.shutdown_requested is True

@@ -48,6 +48,14 @@ class Live2DBodyConfig:
     decorated: bool = False
     x: int | None = None
     y: int | None = None
+    godot_pid: int | None = None
+    eye_tracking: bool = True
+    eye_strength_x: float = 0.28
+    eye_strength_y: float = 0.20
+    eye_right_x_sign: float = -1.0
+    head_follow_degrees: float = 2.4
+    face_anchor_y: float = 0.17
+    z_order_sync: bool = True
 
     @classmethod
     def from_env(cls, *, root: Path | None = None) -> "Live2DBodyConfig":
@@ -72,4 +80,12 @@ class Live2DBodyConfig:
             decorated=_bool_env("ERIS_LIVE2D_DECORATED", False),
             x=_int_env("ERIS_LIVE2D_X", -1) if _int_env("ERIS_LIVE2D_X", -1) >= 0 else None,
             y=_int_env("ERIS_LIVE2D_Y", -1) if _int_env("ERIS_LIVE2D_Y", -1) >= 0 else None,
+            godot_pid=_int_env("ERIS_GODOT_PID", 0) or None,
+            eye_tracking=_bool_env("ERIS_LIVE2D_EYE_TRACKING", True),
+            eye_strength_x=max(0.0, min(0.6, _float_env("ERIS_LIVE2D_EYE_STRENGTH_X", 0.28))),
+            eye_strength_y=max(0.0, min(0.6, _float_env("ERIS_LIVE2D_EYE_STRENGTH_Y", 0.20))),
+            eye_right_x_sign=-1.0 if _float_env("ERIS_LIVE2D_EYE_RIGHT_X_SIGN", -1.0) < 0.0 else 1.0,
+            head_follow_degrees=max(0.0, min(8.0, _float_env("ERIS_LIVE2D_HEAD_FOLLOW_DEGREES", 2.4))),
+            face_anchor_y=max(0.05, min(0.45, _float_env("ERIS_LIVE2D_FACE_ANCHOR_Y", 0.17))),
+            z_order_sync=_bool_env("ERIS_LIVE2D_Z_ORDER_SYNC", True),
         )

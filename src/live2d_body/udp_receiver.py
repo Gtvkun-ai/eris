@@ -34,6 +34,11 @@ class Live2DStageReceiver:
         self._sock: socket.socket | None = None
         self.last_error = ""
         self.packet_count = 0
+        # Renderer chạy thường trú sau lần mở đầu tiên. Godot chỉ đổi desired_visible
+        # qua UDP, tránh kill/spawn lại Cubism và nạp lại moc3 mỗi lần switch.
+        self._control_lock = threading.RLock()
+        self._desired_visible = True
+        self._shutdown_requested = False
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -61,11 +66,36 @@ class Live2DStageReceiver:
             try:
                 payload: Any = json.loads(raw.decode("utf-8"))
                 if isinstance(payload, dict):
+                    if self._handle_renderer_control(payload):
+                        self.packet_count += 1
+                        continue
                     self.state.handle_payload(payload)
                     self.packet_count += 1
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                 self.last_error = f"invalid packet: {exc}"
 
+    def _handle_renderer_control(self, payload: dict[str, Any]) -> bool:
+        if str(payload.get("protocol", "") or "") != "eris.live2d.control":
+            return False
+        command = str(payload.get("type", "") or "").strip().lower()
+        with self._control_lock:
+            if command == "set_visibility":
+                self._desired_visible = bool(payload.get("visible", True))
+                return True
+            if command == "shutdown":
+                self._shutdown_requested = True
+                return True
+        return True
+
+    @property
+    def desired_visible(self) -> bool:
+        with self._control_lock:
+            return bool(self._desired_visible)
+
+    @property
+    def shutdown_requested(self) -> bool:
+        with self._control_lock:
+            return bool(self._shutdown_requested)
 
     def send_context_menu_request(self, *, screen_x: int, screen_y: int) -> None:
         payload = {
@@ -75,6 +105,27 @@ class Live2DStageReceiver:
             "timestamp": time.time(),
             "screen_x": int(screen_x),
             "screen_y": int(screen_y),
+            "source": "live2d",
+        }
+        self._send_target(payload, self.body_target)
+
+    def send_window_geometry(
+        self,
+        *,
+        screen_x: int,
+        screen_y: int,
+        width: int,
+        height: int,
+    ) -> None:
+        payload = {
+            "protocol": "eris.body.control",
+            "version": 1,
+            "type": "window_geometry",
+            "timestamp": time.time(),
+            "screen_x": int(screen_x),
+            "screen_y": int(screen_y),
+            "width": max(1, int(width)),
+            "height": max(1, int(height)),
             "source": "live2d",
         }
         self._send_target(payload, self.body_target)

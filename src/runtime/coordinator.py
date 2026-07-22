@@ -6467,11 +6467,16 @@ class RuntimeCoordinator(
         if not self.running:
             return
         worker = getattr(self, "screen_text_worker", None)
-        if worker is not None:
+        background_screen_text = str(
+            os.environ.get("ERIS_SCREEN_TEXT_BACKGROUND_ENABLED", "0") or "0"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if worker is not None and background_screen_text:
             try:
                 worker.start()
             except Exception as exc:
                 self.logger.warning("[screen text] start error: %s", exc)
+        elif worker is not None:
+            self.logger.info("[screen text] lazy mode; OCR/UIA chỉ khởi động khi user yêu cầu nhìn màn hình")
         # Startup là public presence quan trọng, không phải fire-and-forget. Nếu
         # lần đầu vấp do worker/client vừa bootstrap, thử lại đúng một lần sau khi
         # sensory worker đã lên. Không loop vô hạn, con người đã có đủ startup

@@ -649,20 +649,25 @@ def collect_startup_grounding(host: Any, *, timeout_seconds: float | None = None
     """
 
     timeout = (
-        _env_float("ERIS_STARTUP_SCREEN_PRIME_SEC", 1.4, low=0.0, high=3.0)
+        _env_float("ERIS_STARTUP_SCREEN_PRIME_SEC", 0.0, low=0.0, high=3.0)
         if timeout_seconds is None
         else max(0.0, min(3.0, float(timeout_seconds)))
     )
+    # Production startup mặc định không đánh thức OCR. Truyền timeout_seconds rõ
+    # ràng (test/tool) hoặc đặt ERIS_STARTUP_SCREEN_PRIME_SEC > 0 để opt-in.
+    prime_requested = timeout_seconds is not None or timeout > 0.0
     started_at = time.time()
     notes: list[str] = []
 
     worker = getattr(host, "screen_text_worker", None)
     store = getattr(host, "screen_evidence_store", None)
-    if worker is not None:
+    if worker is not None and prime_requested:
         try:
             worker.start()
         except Exception as exc:  # pragma: no cover - phụ thuộc Windows/runtime thật
             notes.append(f"screen_worker_start_failed:{type(exc).__name__}")
+    elif worker is not None:
+        notes.append("screen_prime_lazy")
 
     screen_snapshot = None
     if store is not None:
@@ -722,7 +727,14 @@ def collect_startup_grounding(host: Any, *, timeout_seconds: float | None = None
         focus_summary = _compact(getattr(telemetry_snapshot, "focus_summary", ""), 280)
 
     now = time.time()
-    runtime_evidence = _runtime_signal_payloads(telemetry_snapshot, now=now)
+    runtime_signal_enabled = (
+        timeout_seconds is not None
+        or str(os.getenv("ERIS_STARTUP_RUNTIME_SIGNALS_ENABLED", "0") or "0").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+    runtime_evidence = _runtime_signal_payloads(telemetry_snapshot, now=now) if runtime_signal_enabled else ()
+    if not runtime_signal_enabled:
+        notes.append("runtime_signals_lazy")
     candidates: list[Mapping[str, Any]] = []
     seen: set[str] = set()
     for block in raw_blocks:

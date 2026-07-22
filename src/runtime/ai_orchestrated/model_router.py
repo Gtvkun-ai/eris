@@ -508,6 +508,7 @@ class AIRuntimeModelRouter:
         reasoning_effort: str | None = None,
         inference_tier: str = "subconscious_4b",
         priority: int | None = None,
+        timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         if client is None:
             return {}
@@ -534,6 +535,7 @@ class AIRuntimeModelRouter:
                     max_tokens=max_tokens,
                     response_format=response_format,
                     reasoning_effort=reasoning_effort,
+                    timeout=timeout_seconds,
                 )
 
             raw = self._run_inference(
@@ -1110,6 +1112,7 @@ class AIRuntimeModelRouter:
             reasoning_effort=(
                 "medium" if deep else "low"
             ) if str(getattr(client, "model_name", "")).startswith("openai/gpt-oss-") else None,
+            timeout_seconds=max(2.0, min(6.0, float(os.getenv("ERIS_POST_REFLECTION_HTTP_TIMEOUT_SEC", "3.5") or 3.5))),
         )
         if not reflected:
             return observation
@@ -1134,6 +1137,32 @@ class AIRuntimeModelRouter:
             relationship_id=observation.relationship_id,
             source=f"{observation.source}+self_reflection",
             latency_ms=observation.latency_ms + (time.perf_counter() - started) * 1000.0,
+        )
+
+    @staticmethod
+    def _fast_observer_payload(user_text: str, *, event_kind: str) -> tuple[dict[str, Any], str] | None:
+        if str(event_kind or "chat").strip().lower() != "chat":
+            return None
+        normalized = normalize_vi(user_text).strip(" ?.!…")
+        greetings = {
+            "xin chao", "chao", "hello", "hi", "hey", "alo",
+            "chao eris", "xin chao eris", "hello eris",
+        }
+        if normalized not in greetings:
+            return None
+        return (
+            {
+                "user_act": "greeting",
+                "relationship_meaning": "opens_contact",
+                "continuity": "new_or_direct_turn",
+                "repair_needed": False,
+                "memory_worthy": False,
+                "confidence": 0.88,
+                "ambiguity": 0.05,
+                "evidence": ["deterministic:greeting"],
+                "notes": "Low-information greeting; LLM post-observer skipped.",
+            },
+            "deterministic_anchor:greeting",
         )
 
     def observe_completed_turn(
@@ -1176,26 +1205,39 @@ class AIRuntimeModelRouter:
             },
         }
         started = time.perf_counter()
-        primary_payload = self._call(
-            self.observer_client,
-            system=self._observer_prompt(deep=False),
-            payload=payload,
-            schema=OBJECTIVE_OBSERVATION_SCHEMA,
-            name="eris_cognitive_observation",
-            max_tokens=650,
-            reasoning_effort="low" if str(getattr(self.observer_client, "model_name", "")).startswith("openai/gpt-oss-") else None,
-        )
-        source = "groq_observer"
-        if not primary_payload and self.fallback_client is not None:
+        fast = self._fast_observer_payload(user_text, event_kind=event_kind)
+        try:
+            observer_timeout = max(0.8, min(12.0, float(os.getenv("ERIS_POST_OBSERVER_HTTP_TIMEOUT_SEC", "3.0") or 3.0)))
+        except (TypeError, ValueError):
+            observer_timeout = 3.0
+        if fast is not None:
+            primary_payload, source = fast
+        else:
             primary_payload = self._call(
-                self.fallback_client,
+                self.observer_client,
                 system=self._observer_prompt(deep=False),
                 payload=payload,
                 schema=OBJECTIVE_OBSERVATION_SCHEMA,
                 name="eris_cognitive_observation",
-                max_tokens=650,
+                max_tokens=520,
+                reasoning_effort="low" if str(getattr(self.observer_client, "model_name", "")).startswith("openai/gpt-oss-") else None,
+                timeout_seconds=observer_timeout,
             )
-            source = "groq_observer_fallback"
+            source = "groq_observer"
+            fallback_enabled = str(
+                os.getenv("ERIS_POST_OBSERVER_FALLBACK_ENABLED", "0") or "0"
+            ).strip().lower() in {"1", "true", "yes", "on"}
+            if not primary_payload and fallback_enabled and self.fallback_client is not None:
+                primary_payload = self._call(
+                    self.fallback_client,
+                    system=self._observer_prompt(deep=False),
+                    payload=payload,
+                    schema=OBJECTIVE_OBSERVATION_SCHEMA,
+                    name="eris_cognitive_observation",
+                    max_tokens=520,
+                    timeout_seconds=observer_timeout,
+                )
+                source = "groq_observer_fallback"
         primary = CognitiveObservation.from_mapping(
             primary_payload,
             turn_id=turn_id,
@@ -1218,8 +1260,12 @@ class AIRuntimeModelRouter:
             abs(primary.boundary_delta),
             0.8 if primary.repair_needed else 0.0,
         )
+        deep_enabled = str(os.getenv("ERIS_POST_OBSERVER_DEEP_ENABLED", "0") or "0").strip().lower() in {
+            "1", "true", "yes", "on"
+        }
         if (
-            self.deep_client is not None
+            deep_enabled
+            and self.deep_client is not None
             and primary.ambiguity >= 0.58
             and importance >= 0.55
         ):
@@ -1232,6 +1278,7 @@ class AIRuntimeModelRouter:
                 name="eris_cognitive_observation_deep",
                 max_tokens=820,
                 reasoning_effort="medium" if str(getattr(self.deep_client, "model_name", "")).startswith("openai/gpt-oss-") else None,
+                timeout_seconds=max(observer_timeout, 4.0),
             )
             deep = CognitiveObservation.from_mapping(
                 deep_payload,

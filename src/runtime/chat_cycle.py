@@ -223,11 +223,23 @@ class ChatCycleMixin:
         )
         return any(term and term in normalized for term in direct_terms)
 
+    def _ensure_screen_text_worker_for_request(self) -> None:
+        worker = getattr(self, "screen_text_worker", None)
+        if worker is None:
+            return
+        try:
+            worker.start()
+        except Exception as exc:
+            self.logger.warning("[screen text] lazy start error: %s", exc)
+
     def _capture_screen_frame_for_chat(self, user_text: str) -> str:
         self._chat_screen_route_decision = None
         self._chat_screen_text_evidence = ()
         self._chat_screen_capture_present = False
         self._chat_screen_capture_interpreted = False
+        explicit_screen_request = self._looks_like_screen_vision_request(user_text)
+        if explicit_screen_request:
+            self._ensure_screen_text_worker_for_request()
         router = getattr(self, "screen_relevance_router", None)
         route = None
         if router is not None:
@@ -236,7 +248,7 @@ class ChatCycleMixin:
             except Exception as exc:
                 self.logger.warning("[screen route] router lỗi: %s", exc)
         if route is None:
-            if not self._looks_like_screen_vision_request(user_text):
+            if not explicit_screen_request:
                 self.logger.debug("[screen route] mode=none reason=no_screen_reference")
                 return ""
             try:

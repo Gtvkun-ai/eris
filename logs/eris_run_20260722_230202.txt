@@ -1,0 +1,17 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-22 23:02:02
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+23:02:03.450 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+23:02:03.451 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+23:02:03.481 [INFO] [Vision] Da khoi chay vision.py PID=18644
+23:02:03.521 [INFO] [Live2D] Da khoi chay renderer PID=13376, UDP=4252
+23:02:03.522 [INFO] [BodyMode] 2D -> Live2D | resident=False | bubble giữ ở Godot overlay
+23:02:03.642 [INFO] [Live2D] Dang dung renderer PID=13376...
+23:02:03.706 [INFO] [Live2D] Renderer da thoat (code=-1, current=False).
+23:02:03.707 [INFO] [Vision] Dang dung vision.py PID=18644...
+23:02:03.736 [INFO] [Vision] vision.py da thoat (PID=18644, code=-1, unexpected=False).
+23:02:03.737 [INFO] [RunLogger] Ket thuc phien chay.

@@ -48,6 +48,16 @@ def _remote_provider_is_gemini() -> bool:
     return "generativelanguage.googleapis.com" in base_url or "googleapis.com" in base_url
 
 
+def localizer_model_name() -> str:
+    """Model Gemini/Gemma dùng riêng cho transcript localization trước TTS."""
+
+    for env_name in ("ERIS_TTS_LOCALIZER_MODEL", "ERIS_SPEECH_MODEL"):
+        value = os.environ.get(env_name, "").strip()
+        if value and not value.startswith("PASTE_"):
+            return value
+    return "gemini-2.5-flash"
+
+
 def _get_api_key_lease(*, exclude_indices: Iterable[int] = ()):
     """Lấy key + lease, không lấy lại key pool đã thử trong cùng request."""
 
@@ -326,10 +336,8 @@ class SpeechLocalizer:
                 from google import genai
 
                 client = genai.Client(api_key=api_key)
-                response = client.models.generate_content(
-                    model=os.environ.get("ERIS_TTS_LOCALIZER_MODEL", "gemini-2.5-flash").strip(),
-                    contents=prompt,
-                )
+                model_name = localizer_model_name()
+                response = client.models.generate_content(model=model_name, contents=prompt)
                 _raise_if_cancelled(cancel_event, authority_check)
                 out = _clean_translation_output(getattr(response, "text", "") or "")
                 if not _valid_japanese_translation(
@@ -375,7 +383,7 @@ class SpeechLocalizer:
                                 pool.mark_rate_limited(
                                     seconds=60.0,
                                     lease=lease,
-                                    reason="localizer_http_429:gemini-2.5-flash",
+                                    reason=f"localizer_http_429:{localizer_model_name()}",
                                 )
                             ) and may_retry
                             try:
@@ -394,7 +402,8 @@ class SpeechLocalizer:
                     pass
 
                 logger.warning(
-                    "[TTS.Localizer] Dịch sang JP lỗi lượt %d/%d: %s",
+                    "[TTS.Localizer] Dịch sang JP lỗi model=%s lượt %d/%d: %s",
+                    localizer_model_name(),
                     attempt + 1,
                     attempts,
                     exc,
@@ -464,4 +473,5 @@ __all__ = [
     "SpeechLocalizationCancelled",
     "SpeechLocalizationError",
     "SpeechLocalizer",
+    "localizer_model_name",
 ]

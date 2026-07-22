@@ -1,21 +1,16 @@
-LIVE2D SWITCH V2 - bubble overlay + eye tracking an toàn
+LIVE2D SWITCH V4 - RESIDENT RENDERER / FAST START
 
-Đã sửa:
-- Không ẩn cả CharacterBody2D nữa. Chỉ làm trong suốt AnimatedSprite2D bằng SelfModulate,
-  nên BubbleContainer vẫn được Godot vẽ.
-- Live2D gửi window_geometry về UDP 4242; hidden anchor Godot đi theo cửa sổ model,
-  vì vậy bubble đi theo khi kéo Live2D.
-- Khi ở Live2D, dừng gravity/autonomy của sprite 2D để anchor bubble không tự bò lệch.
-- Renderer Win32 được giữ ngay dưới top-level window Godot trong z-order, để bubble,
-  context menu và các panel Godot luôn nằm trên model.
-- Eye tracking bỏ model.Drag, dùng bộ điều khiển riêng có dead-zone, easing và clamp nhỏ.
-- Mắt phải dùng trục X đối xứng với mắt trái theo rig hiện tại của model INFJ.
-- Renderer đọc chuột desktop thay vì chỉ cursor callback trong cửa sổ, nên mắt không bị
-  đóng băng ở cực trị khi con trỏ rời khỏi model.
-- Startup log in model profile: parameter, physics, expression và motion group thật sự có.
+- Sau lần mở Live2D đầu tiên, process Cubism chạy thường trú.
+- Chuyển Live2D -> 2D chỉ hide window, không kill process.
+- Chuyển 2D -> Live2D lần sau chỉ show window, không load lại moc3/texture/physics.
+- Khi ẩn renderer giảm xuống vòng kiểm tra 20 Hz và không Draw, giảm CPU/GPU.
+- Stage event vẫn được forward khi ẩn để bật lại không reset cảm xúc/TTS.
+- Shutdown ứng dụng mới dừng process thật.
+- Sửa lỗi parser control packet có return false thừa.
 
-LƯU Ý BẮT BUỘC KHI CHẠY TỪ GODOT EDITOR:
-Tắt nút "Embed Game on Play" trước khi F6/F5.
-Log "Embedded window can't become on top" nghĩa là game đang nằm trong viewport Editor.
-Một cửa sổ GLFW bên ngoài không thể được chèn giữa model và bubble của viewport nhúng.
-Khi chạy build/exe hoặc Editor ở chế độ cửa sổ ngoài, z-order bridge hoạt động bình thường.
+SRC V4:
+- Startup không chờ OCR mặc định.
+- OCR/UIA chỉ start khi user yêu cầu nhìn màn hình; có thể bật nền bằng ERIS_SCREEN_TEXT_BACKGROUND_ENABLED=1.
+- CPU/RAM không còn tự thành chủ đề greeting; opt-in bằng ERIS_STARTUP_RUNTIME_SIGNALS_ENABLED=1.
+- Greeting đơn giản bỏ qua post-observer LLM.
+- Observer fallback/deep mặc định tắt, có HTTP timeout và deadline discard.
