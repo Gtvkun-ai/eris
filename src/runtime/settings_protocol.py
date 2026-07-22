@@ -83,9 +83,17 @@ def normalize_settings_message(msg: Mapping[str, Any]) -> NormalizedSettingsMess
     raw = msg.get("settings")
     if isinstance(raw, Mapping):
         allowed_roots = {
-            "advanced": {"chat", "personality", "project_ops", "prompt", "memory", "stage", "tts", "pipeline", "tutor"},
+            "advanced": {
+                "chat", "personality", "project_ops", "prompt", "memory",
+                "stage", "tts", "pipeline", "tutor", "commentary",
+                "initiative", "discovery",
+            },
             "personality": {"personality"},
-            "runtime": {"chat", "personality", "capabilities", "project_ops", "prompt", "memory", "stage", "tts", "pipeline", "tutor", "danger_zone"},
+            "runtime": {
+                "chat", "personality", "capabilities", "project_ops", "prompt",
+                "memory", "stage", "tts", "pipeline", "tutor", "commentary",
+                "initiative", "discovery", "danger_zone",
+            },
         }.get(scope, set())
         patch = {str(k): v for k, v in raw.items() if str(k) in allowed_roots}
         rejected = tuple(str(k) for k in raw.keys() if str(k) not in allowed_roots)

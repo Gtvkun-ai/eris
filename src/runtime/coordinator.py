@@ -5136,6 +5136,35 @@ class RuntimeCoordinator(
             except Exception:
                 pass
 
+    def _advanced_effective_settings_snapshot(self) -> dict:
+        """Snapshot gọn cho Advanced UI, chỉ gồm policy người dùng có thể chỉnh."""
+
+        try:
+            from runtime.runtime_settings_store import get_runtime_settings_store
+
+            store = getattr(self, "runtime_settings_store", None) or get_runtime_settings_store(logger=self.logger)
+            settings = store.snapshot()
+            selected: dict[str, dict] = {}
+            field_map = {
+                "chat": ("reasoning_effort", "completion_chat_tokens", "chat_timeout_seconds", "auto_fallback"),
+                "personality": ("retort_mode", "style_repair_mode", "allow_sharp_retort", "allow_cold_boundary"),
+                "commentary": ("enabled", "desired_interval_seconds", "maximum_quiet_seconds", "startup_delay_seconds", "minimum_user_silence_seconds"),
+                "initiative": ("enabled", "global_hourly_budget", "minimum_interval_seconds", "minimum_user_silence_seconds"),
+                "discovery": ("enabled", "local_signal_enabled"),
+                "memory": ("background_digest", "maintenance_enabled", "maintenance_budget"),
+                "tutor": ("enabled", "quick_search_enabled", "research_enabled", "self_search_enabled", "stale_result_guard_enabled", "persist_research_memory"),
+                "project_ops": ("enabled", "autonomy_mode", "ask_when_uncertain", "proceed_without_user_reply", "auto_rollback_on_failure", "auto_package_patch", "max_repair_attempts"),
+            }
+            for section, fields in field_map.items():
+                source = settings.get(section, {})
+                if isinstance(source, Mapping):
+                    selected[section] = {name: source.get(name) for name in fields if name in source}
+            metadata = store.metadata()
+            metadata["settings"] = selected
+            return metadata
+        except Exception as exc:
+            return {"revision": 0, "saved_at": 0.0, "settings": {}, "error": str(exc)[:240]}
+
     def _handle_settings_health(self) -> None:
         """Gửi trạng thái hai key pool cho Settings UI mà không lộ API key.
 
@@ -5173,6 +5202,7 @@ class RuntimeCoordinator(
                     "pools": pools,
                     "tts": {"ready": tts_ready},
                     "capabilities": capability_health,
+                    "effective": self._advanced_effective_settings_snapshot(),
                 },
             }
         except Exception as exc:
@@ -5184,6 +5214,7 @@ class RuntimeCoordinator(
                 "settings_health_ack": {
                     "pools": {},
                     "tts": {"ready": False},
+                    "effective": self._advanced_effective_settings_snapshot(),
                     "error": str(exc)[:240],
                 },
             }
@@ -5225,6 +5256,7 @@ class RuntimeCoordinator(
             ack_payload["rejected"] = list(dict.fromkeys(rejected))
             ack_payload["legacy_payload"] = bool(normalized.legacy_payload)
             ack_payload.update(refresh_meta)
+            ack_payload["effective"] = self._advanced_effective_settings_snapshot()
             if normalized.scope == "tts":
                 tts_settings = result.settings.get("tts", {})
                 ack_payload.update({
@@ -5305,6 +5337,12 @@ class RuntimeCoordinator(
                 self.logger.debug("[capability] live refresh failed: %s", exc)
         if any(path.startswith("tutor.") for path in applied_paths):
             meta["live_refreshed"].append("tutor_search_policy")
+        if any(path.startswith("commentary.") or path.startswith("initiative.") or path.startswith("discovery.") for path in applied_paths):
+            meta["live_refreshed"].append("autonomous_presence_policy")
+        if any(path.startswith("memory.") for path in applied_paths):
+            meta["live_refreshed"].append("memory_policy")
+        if any(path.startswith("project_ops.") for path in applied_paths):
+            meta["live_refreshed"].append("project_operations_policy")
         return meta
 
     def _handle_stage_inbound_event(self, msg: dict) -> None:

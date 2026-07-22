@@ -35,6 +35,34 @@ from runtime.workspace_manager import WorkspaceManager, extract_workspace_source
 PROJECT_OPERATIONS_VERSION = "project_operations.v1.1"
 
 
+_READ_ONLY_PROJECT_CAPABILITIES = frozenset({
+    "project_list_files",
+    "project_read_file",
+    "project_search_text",
+    "project_find_symbol",
+    "project_git_diff",
+    "workspace_list",
+    "workspace_switch",
+})
+
+
+def project_autonomy_allows(capability_id: str, autonomy_mode: str) -> tuple[bool, str]:
+    """Ràng quyền project theo mode người dùng chọn trong Advanced.
+
+    `read_only` là hàng rào thật, không phải nhãn UI dễ thương dán lên một runtime
+    vẫn có thể apply patch. `guarded` và `full` đều cho thao tác, khác nhau ở các
+    policy hỏi/rollback/package được lưu cạnh mode.
+    """
+
+    cap = str(capability_id or "").strip()
+    mode = str(autonomy_mode or "guarded").strip().lower()
+    if mode in {"off", "disabled", "none", "0", "false"}:
+        return False, "project_autonomy_disabled"
+    if mode == "read_only" and cap not in _READ_ONLY_PROJECT_CAPABILITIES:
+        return False, "project_read_only_mode"
+    return True, "project_autonomy_allowed"
+
+
 class ProjectOperationState(str, Enum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
@@ -242,8 +270,9 @@ class ProjectOperationsRuntime:
         if not bool(self._setting("enabled", True)):
             return False, "project_operations_disabled"
         autonomy_mode = str(self._setting("autonomy_mode", "full") or "full").strip().lower()
-        if autonomy_mode in {"off", "disabled", "none", "0", "false"}:
-            return False, "project_autonomy_disabled"
+        autonomy_allowed, autonomy_reason = project_autonomy_allows(cap, autonomy_mode)
+        if not autonomy_allowed:
+            return False, autonomy_reason
         workspace_caps = {"workspace_join", "workspace_switch", "workspace_list", "workspace_leave"}
         if cap in workspace_caps:
             if cap == "workspace_join" and shutil.which("git") is None:

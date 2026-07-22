@@ -1321,7 +1321,7 @@ public partial class UdpListener : Node2D
 		if (text.Contains("Dữ liệu", StringComparison.OrdinalIgnoreCase))
 			return "Dữ liệu cơ bản: key pool, backup, export config.";
 		if (text.Contains("Advanced", StringComparison.OrdinalIgnoreCase))
-			return "Advanced chưa tách màn; Basic hiện đã ghi config thật.";
+			return "Advanced điều khiển hiện diện, memory, Tutor và quyền thao tác project.";
 		if (text.Contains("Danger", StringComparison.OrdinalIgnoreCase))
 			return "Danger Zone: import secrets sẽ backup file cũ trước khi ghi đè.";
 		return "Cấu hình nằm trong các card bên dưới.";
@@ -1705,10 +1705,7 @@ public partial class UdpListener : Node2D
 				string scope = ack.TryGetProperty("scope", out JsonElement scopeEl) ? scopeEl.GetString() ?? "tts" : "tts";
 				if (string.Equals(scope, "advanced", StringComparison.OrdinalIgnoreCase))
 				{
-					int appliedCount = ack.TryGetProperty("applied", out JsonElement appliedEl) && appliedEl.ValueKind == JsonValueKind.Array ? appliedEl.GetArrayLength() : 0;
-					int rejectedCount = ack.TryGetProperty("rejected", out JsonElement rejectedEl) && rejectedEl.ValueKind == JsonValueKind.Array ? rejectedEl.GetArrayLength() : 0;
-					int restartCount = ack.TryGetProperty("restart_required", out JsonElement restartEl) && restartEl.ValueKind == JsonValueKind.Array ? restartEl.GetArrayLength() : 0;
-					SetSettingsStatus($"Brain đã nhận {appliedCount} thiết lập Advanced{(restartCount > 0 ? $" · {restartCount} mục cần restart" : "")}{(rejectedCount > 0 ? $" · {rejectedCount} mục bị từ chối" : "")}.");
+					ApplyAdvancedSettingsAck(ack);
 				}
 				else
 				{
@@ -1728,6 +1725,7 @@ public partial class UdpListener : Node2D
 
 			if (root.TryGetProperty("settings_health_ack", out JsonElement healthAck) && healthAck.ValueKind == JsonValueKind.Object)
 			{
+				ApplyAdvancedHealthSnapshot(healthAck);
 				if (healthAck.TryGetProperty("pools", out JsonElement pools) && pools.ValueKind == JsonValueKind.Object)
 				{
 					foreach (string kind in new[] { "gemini", "groq" })

@@ -186,7 +186,7 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "enabled": True,
         "quick_search_enabled": True,
         "research_enabled": True,
-        "self_search_enabled": True,
+        "self_search_enabled": False,
         "low_confidence_clarify_threshold": 0.55,
         "stale_result_guard_enabled": True,
         "persist_research_memory": False,
@@ -233,6 +233,9 @@ _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
     ("chat", "chat_timeout_seconds"): ("ERIS_LLM_TIMEOUT_CHAT_S", "int"),
     ("chat", "max_concurrency"): ("ERIS_LLM_MAX_CONCURRENCY", "int"),
     ("personality", "retort_mode"): ("ERIS_RETORT_MODE", "str"),
+    ("personality", "style_repair_mode"): ("ERIS_STYLE_REPAIR_MODE", "str"),
+    ("personality", "allow_sharp_retort"): ("ERIS_ALLOW_SHARP_RETORT", "bool"),
+    ("personality", "allow_cold_boundary"): ("ERIS_ALLOW_COLD_BOUNDARY", "bool"),
     ("personality", "forbid_family_literalization"): ("ERIS_FORBID_FAMILY_LITERALIZATION", "bool"),
     ("personality", "forbid_generic_helper_reset"): ("ERIS_FORBID_GENERIC_HELPER_RESET", "bool"),
     ("project_ops", "enabled"): ("ERIS_PROJECT_OPS_ENABLED", "bool"),
@@ -274,6 +277,7 @@ _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
     ("prompt", "dds_enabled"): ("ERIS_DDS_ENABLED", "bool"),
     ("prompt", "strict_grounding"): ("ERIS_STRICT_GROUNDING", "bool"),
     ("memory", "semantic_parser"): ("ERIS_MEMORY_SEMANTIC_PARSER", "bool"),
+    ("memory", "background_digest"): ("ERIS_MEMORY_BACKGROUND_DIGEST", "bool"),
     ("memory", "maintenance_enabled"): ("ERIS_MEMORY_DIGEST_MAINTENANCE", "bool"),
     ("memory", "maintenance_budget"): ("ERIS_MEMORY_MAINTENANCE_BUDGET", "str"),
     ("social_observer", "enabled"): ("ERIS_SOCIAL_OBSERVER_ENABLED", "bool"),
@@ -397,6 +401,17 @@ class RuntimeSettingsStore:
 
     def snapshot(self) -> dict[str, Any]:
         return self.load(materialize_env=False)
+
+    def metadata(self) -> dict[str, Any]:
+        """Metadata công khai cho Settings UI, không kèm secret hay API key."""
+
+        with self._lock:
+            self.load(materialize_env=False)
+            return {
+                "revision": int(self._revision),
+                "saved_at": float(self._saved_at),
+                "path": str(self.path),
+            }
 
     def get(self, *path: str, default: Any = None) -> Any:
         node: Any = self.load(materialize_env=False)
@@ -784,6 +799,7 @@ def _coerce_setting(path: str, value: Any, expected: Any) -> tuple[bool, Any]:
         "personality.provocation_policy": {"character_safe", "restrained", "boundary_only"},
         "personality.style_repair_mode": {"self_aware_dry", "direct", "soft"},
         "capabilities.source": {"registry"},
+        "project_ops.autonomy_mode": {"off", "read_only", "guarded", "full"},
         "memory.maintenance_budget": {"small", "medium", "large"},
         "stage.performance_profile": {"conversation", "custom"},
         "stage.segment_dispatch": {"inline", "queued"},
@@ -803,6 +819,14 @@ def _coerce_setting(path: str, value: Any, expected: Any) -> tuple[bool, Any]:
         "chat.chat_timeout_seconds": (5, 120),
         "chat.max_concurrency": (1, 16),
         "prompt.hard_cap_tokens": (0, 1_000_000),
+        "project_ops.max_repair_attempts": (0, 5),
+        "initiative.global_hourly_budget": (0, 120),
+        "initiative.minimum_interval_seconds": (15, 3600),
+        "initiative.minimum_user_silence_seconds": (3, 120),
+        "commentary.desired_interval_seconds": (20, 1800),
+        "commentary.maximum_quiet_seconds": (30, 3600),
+        "commentary.startup_delay_seconds": (0, 120),
+        "commentary.minimum_user_silence_seconds": (3, 120),
         "hardening.production_validation_turns": (20, 30),
         "stage.prefetch_workers": (1, 8),
         "stage.max_tts_segments": (1, 12),

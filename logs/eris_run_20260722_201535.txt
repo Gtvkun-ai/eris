@@ -1,0 +1,62 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-22 20:15:35
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+20:15:36.424 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+20:15:36.424 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+20:15:36.440 [INFO] [Vision] Da khoi chay vision.py PID=22588
+20:15:37.838 [INFO] [vision.py] [LLM][INFO] Social parser client sẵn sàng: openai/gpt-oss-20b
+20:15:37.838 [INFO] [vision.py] [LLM][INFO] Social deliberator/critic client sẵn sàng: openai/gpt-oss-120b
+20:15:37.838 [INFO] [vision.py] [LLM][INFO] Social observer fallback client sẵn sàng: llama-3.1-8b-instant
+20:15:37.942 [INFO] [vision.py] [Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=4
+20:15:37.944 [INFO] [vision.py] [Loop][INFO] [vtuber-stage] loaded version=vtuber_stage.v11 phases=8,9,10,11 status=intention_authority_ready session=stage_7cf0d3d67ef1424c
+20:15:37.950 [INFO] [vision.py] [Loop][INFO] [internal-cognitive] loaded version=internal_cognitive.v1.0 capabilities=8 status=read_only_verified
+20:15:37.956 [INFO] [vision.py] [Loop][INFO] [project-ops] loaded version=project_operations.v1.1 capabilities=15 mode=autonomous_project_scope
+20:15:37.956 [INFO] [vision.py] [Loop][INFO] [workspace] eris_home=[đường dẫn nội bộ đã ẩn] active=none implicit_source_repo=false
+20:15:38.423 [INFO] [vision.py] [Loop][INFO] tutor: knowledge provider đã nối vào memory recall
+20:15:38.448 [INFO] [vision.py] [Loop][INFO] [environment-capability] loaded version=environment_capability.v1.0 capabilities=6 status=read_only_verified
+20:15:38.501 [INFO] [vision.py] [Loop][INFO] [architecture C] enabled version=ai_orchestrated.v6.1.arbitrated_brief state_version=0 personality_version=0 identity_version=0 observer=post_turn planner=ai cortex=pre_response_brief single_writer=1
+20:15:40.038 [INFO] [vision.py] [Loop][INFO] --- Architecture C runtime; chat vision theo yêu cầu màn hình ---
+20:15:40.039 [INFO] [vision.py] [Loop][INFO] [screen text] worker started backend=lazy-auto poll=1.2s
+20:15:40.904 [INFO] [vision.py] [Loop][INFO] [screen text] OCR backend resolved=rapidocr
+20:15:41.850 [INFO] [vision.py] [Loop][INFO] [architecture C startup grounding] direct=0 strong=0 telemetry_tab=0 evidence=0 runtime_opening=0 metadata=4 backend=unknown wait=1.81s notes=screen_prime_timeout
+20:15:50.590 [INFO] [vision.py] [Loop][INFO] [architecture C startup route] strategy=persona_opening source=persona continuity=0 forced=1
+20:15:50.610 [INFO] [vision.py] [Loop][INFO] [architecture C startup greeting] source=preset id=greet_warm_03 situation=plain_return
+20:15:50.707 [INFO] [vision.py] [Loop][INFO] [architecture C startup] spoke motive=startup_opening text=Bạn đây rồi. Tôi ghi nhận điều đó với mức hài lòng vừa đủ.
+20:15:51.343 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=1 reason=enter_chat_mode
+20:15:51.344 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+20:15:51.992 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+20:15:52.388 [INFO] [vision.py] [Loop][INFO] Người dùng: bạn nhớ tôi la ai không
+20:15:52.388 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference
+20:15:52.391 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=memory | preempt_mode=none | missing=none | allowed=memory,user_text | cap=0.75 | memory_answer=1 | warnings=none
+20:15:52.398 [INFO] [vision.py] [Loop][INFO] [cortex v2] turn=2 relation=new_or_direct_turn owner=unknown move=answer posture=neutral_or_underdetermined delivery=calm_direct_with_room_for_edge conf=0.44 ambiguity=0.20 margin=0.12 coverage=1.00 deep=1 degraded=none conflicts=response_move:answer<->respond_in_context
+20:15:59.398 [INFO] [vision.py] [Loop][INFO] ERIS: Chưa. Tôi chỉ biết bạn là người đang nói chuyện với tôi lúc này; phần còn lại không có dấu vết đủ rõ để tôi gọi tên.
+20:16:00.417 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=0 13s vì http_429:openai/gpt-oss-20b; alive=8/9
+20:16:03.149 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] 429 burst scope=http_429:openai/gpt-oss-20b trên 2 key/8s; dừng xoay, cooldown pool 30s (alive=7/9)
+20:16:03.262 [INFO] [vision.py] [Loop][INFO] [post observer] turn=2 act=request_reciprocity meaning=neutral conf=0.58 repair=False traits=0 frame=uncertain strategy=none source=deterministic_anchor latency=3853ms
+20:16:20.254 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+20:16:20.795 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=active external=1.00 internal=0.03 interrupt=0.19 resource=0.09 vision_hint=1 budget=scheduler_allow
+20:16:21.230 [INFO] [vision.py] [Loop][WARNING] [vision_facts] compressor failed: no_fallback_vision:vision_compressor_disabled | backoff=15s
+20:16:21.230 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+20:16:22.426 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] synthesis failed error=RuntimeError:API key pool đang cooldown; thử lại sau khoảng 10.7s
+20:16:22.480 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] inner_diary failed error=RuntimeError:API key pool đang cooldown; thử lại sau khoảng 10.7s
+20:16:22.494 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] inner_diary failed error=RuntimeError:API key pool đang cooldown; thử lại sau khoảng 10.7s
+20:16:22.497 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.88 pressure=0.75 surface=yes mutations=2
+20:16:28.948 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=0 60s vì tts_http_429; alive=11/12
+20:16:28.952 [INFO] [vision.py] [TTS][WARNING] [TTS] Key index 0 bị rate limit/hết quota (lượt 1/2).
+20:16:42.508 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=environment act=defer_nonessential_commentary conf=0.90 importance=0.34 gate=model_silence body_only=1
+20:16:43.381 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=2 reason=enter_chat_mode
+20:16:43.381 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+20:16:44.449 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+20:16:44.814 [INFO] [vision.py] [Loop][INFO] Người dùng: tên tui á
+20:16:44.815 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference
+20:16:44.827 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.86 | memory_answer=1 | warnings=none
+20:16:44.832 [INFO] [vision.py] [Loop][INFO] [cortex v2] turn=4 relation=new_or_direct_turn owner=unknown move=answer posture=neutral_or_underdetermined delivery=calm_direct_with_room_for_edge conf=0.44 ambiguity=0.20 margin=0.12 coverage=1.00 deep=1 degraded=none conflicts=response_move:answer<->respond_in_context
+20:16:52.338 [INFO] [vision.py] [Loop][INFO] ERIS: À, bạn hỏi tôi có nhớ tên bạn không. Không — bạn chưa nói tên với tôi. Lúc nãy tôi hiểu lệch, lỗi tôi.
+20:16:55.183 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=2 15s vì http_429:openai/gpt-oss-20b; alive=8/9
+20:16:56.998 [INFO] [vision.py] [TTS][WARNING] [TTS] JP localization lỗi (japanese_localization_failed:ClientError); audio fail-closed, giữ display transcript.
+20:16:57.000 [INFO] [vision.py] [TTS][WARNING] [TTS] Audio bị bỏ vì không giữ được language contract: japanese_localization_failed:ClientError
+20:16:58.197 [INFO] [vision.py] [Loop][INFO] [post observer] turn=4 act=style_criticism meaning=feedback_on_previous_response conf=0.76 repair=True traits=0 frame=uncertain strategy=none source=groq_observer+deterministic_anchor latency=5848ms
