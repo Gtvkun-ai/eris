@@ -15,11 +15,12 @@ from typing import Any, Mapping
 
 from failure_meta import build_failure_meta
 from runtime.no_fallback_policy import no_fallback_mode_enabled
+from runtime.grounding_surface_gate import evaluate_grounded_surface
 from semantic_authority import SemanticAuthorityPolicy
 
 from .contracts import AI_RUNTIME_VERSION, IntentionPlan, StateEvent
 from .identity import PendingStrategyUse, PRIMARY_RELATIONSHIP_ID
-from .ambient_screen_context import AmbientScreenTracker
+from .self_turn_pipeline import SelfTurnPipeline
 from runtime.cognition.plan_policy import apply_cognitive_brief_to_plan
 from .startup_grounding import (
     build_startup_fallback_text,
@@ -281,14 +282,28 @@ class AIChatOrchestrator:
 
         if payload:
             gate = getattr(host, "ai_cognitive_acceptance_gate", None)
-            violations = gate.validate(str(payload.get("text", "") or ""), cognitive_brief) if gate is not None else ()
-            if violations:
+            draft_text = str(payload.get("text", "") or "")
+            violations = gate.validate(draft_text, cognitive_brief) if gate is not None else ()
+            grounding_engine = getattr(host, "source_grounding_engine", None)
+            grounding_verdict = evaluate_grounded_surface(
+                grounding_engine, draft_text, report=grounding_report
+            )
+            grounding_annotations = grounding_verdict.annotations
+            if violations or not grounding_verdict.allowed:
+                violation_codes = [item.code for item in violations]
+                if grounding_annotations:
+                    violation_codes.append("UNGROUNDED_PERCEPTION_OR_ACTION_CLAIM")
                 host.logger.warning(
                     "[cortex v2 gate] turn=%s violations=%s; retrying public writer once",
                     turn_seq,
-                    ",".join(item.code for item in violations),
+                    ",".join(violation_codes),
                 )
-                retry_instruction = gate.retry_instruction(violations, cognitive_brief)
+                retry_parts: list[str] = []
+                if gate is not None and violations:
+                    retry_parts.append(gate.retry_instruction(violations, cognitive_brief))
+                if grounding_annotations:
+                    retry_parts.append(grounding_verdict.retry_instruction())
+                retry_instruction = "\n".join(retry_parts)
                 host._set_background_memory_digest_remote_inflight(True)
                 try:
                     retried = host.ai_model_router.generate_public_reply(
@@ -310,18 +325,29 @@ class AIChatOrchestrator:
                 finally:
                     host._set_background_memory_digest_remote_inflight(False)
                 if retried:
-                    retry_violations = gate.validate(str(retried.get("text", "") or ""), cognitive_brief)
-                    if not retry_violations:
+                    retry_violations = (
+                        gate.validate(str(retried.get("text", "") or ""), cognitive_brief)
+                        if gate is not None else ()
+                    )
+                    retry_grounding_verdict = evaluate_grounded_surface(
+                        grounding_engine, str(retried.get("text", "") or ""), report=grounding_report
+                    )
+                    retry_grounding = retry_grounding_verdict.annotations
+                    if not retry_violations and retry_grounding_verdict.allowed:
                         payload = retried
                     else:
+                        retry_codes = [item.code for item in retry_violations]
+                        if retry_grounding:
+                            retry_codes.append("UNGROUNDED_PERCEPTION_OR_ACTION_CLAIM")
                         host.logger.warning(
                             "[cortex v2 gate] retry still invalid turn=%s violations=%s; suppressing unsafe surface",
                             turn_seq,
-                            ",".join(item.code for item in retry_violations),
+                            ",".join(retry_codes),
                         )
                         payload = {}
                 else:
                     payload = {}
+
 
         if not payload:
             fallback_payload = {
@@ -450,17 +476,29 @@ class AIChatOrchestrator:
         if len(host.chat_history) > 32:
             host.chat_history = host.chat_history[-32:]
         host._apply_position_update(decision)
-        host._send_decision_to_body(decision, channel="chat")
-        host.logger.info("ERIS: %s", public_text)
+        if public_text or str(getattr(decision, "system_action", "") or "").strip():
+            host._send_decision_to_body(decision, channel="chat")
+        if public_text:
+            host.logger.info("ERIS: %s", public_text)
+        else:
+            host.logger.info("[cortex v2 gate] public surface suppressed without canned fallback")
         return public_text, assistant_meta
 
 
 class AIAutonomousOrchestrator:
     def __init__(self, host: Any) -> None:
         self.host = host
-        # UIA/OCR là giác quan nền của self-initiated turn. Tracker chỉ giữ hash
-        # để tính delta; không ghi nội dung màn hình vào semantic memory.
-        self.screen_context_tracker = AmbientScreenTracker()
+        self._last_body_only_at = 0.0
+        self._last_body_only_signature = ""
+        self.self_turn_pipeline = SelfTurnPipeline(
+            host,
+            next_turn_seq=_next_ai_turn_seq,
+            commit_public=self._commit_public,
+            emit_body_only=self._emit_body_only,
+        )
+        # Alias chỉ để panel/test adapter cũ truy cập trace. Logic production nằm
+        # trong SelfTurnPipeline, không còn phình ở orchestrator facade.
+        self.trace_store = self.self_turn_pipeline.trace_store
 
     def _commit_public(self, decision: Any, *, channel: str, turn_seq: int) -> tuple[str, dict[str, Any] | None]:
         """Commit một public turn autonomous vào cùng lịch sử/ledger với chat.
@@ -514,6 +552,55 @@ class AIAutonomousOrchestrator:
         host._apply_position_update(decision)
         host._send_decision_to_body(decision, channel=channel)
         return public_text, meta
+
+    def _emit_body_only(
+        self,
+        *,
+        reason: str,
+        activity_kind: str = "unknown",
+        motion_hint: str = "",
+        turn_seq: int,
+        signature: str = "",
+    ) -> bool:
+        """Phát hiện diện phi ngôn ngữ sau deliberation của main planner.
+
+        ``activity_kind`` chỉ là annotation typed từ planner. Motion lấy từ
+        ``performance_hint``; runtime không phân loại game/code/media.
+        """
+        host = self.host
+        now = time.time()
+        signature = str(signature or f"{reason}:{motion_hint}")[:200]
+        if now - self._last_body_only_at < 24.0 or (signature and signature == self._last_body_only_signature):
+            return False
+        try:
+            from domain.decision import Decision
+            hint = str(motion_hint or "").strip().lower()
+            motion = {
+                "focus": "focus",
+                "curious": "tilt_head",
+                "thinking": "blink_slow",
+                "quiet_presence": "look_aside",
+                "soft": "lean_in_small",
+            }.get(hint, "tilt_head")
+            decision = Decision(
+                text="", animation="stand", should_speak=False, confidence=0.82,
+                performance_hint="quiet_presence", stage_motion=motion, motion_intent=motion,
+                nonverbal_cue="small_presence", debug_trace=f"body_only:{reason}",
+            )
+            host._send_decision_to_body(decision, channel="autonomous")
+            self._last_body_only_at = now
+            self._last_body_only_signature = signature
+            self.trace_store.append("body_only", {
+                "turn_seq": turn_seq, "activity_kind": activity_kind, "reason": reason,
+                "motion_hint": hint, "result": "emitted", "body_only": True,
+            }, now=now)
+            return True
+        except Exception as exc:
+            try:
+                host.logger.debug("[self turn body-only] failed: %s", exc)
+            except Exception:
+                pass
+            return False
 
     def run_startup(self) -> bool:
         host = self.host
@@ -591,10 +678,37 @@ class AIAutonomousOrchestrator:
                 "or memory machinery."
             ),
         }
-        plan = host.ai_intention_planner.plan_autonomous(
-            snapshot,
-            turn_seq=turn_seq,
-        )
+        try:
+            plan = host.ai_intention_planner.plan_autonomous(
+                snapshot,
+                turn_seq=turn_seq,
+            )
+        except Exception as exc:
+            # Startup presence không được chết chỉ vì planner/provider vừa thức
+            # dậy chậm hơn phần còn lại của runtime.
+            host.logger.warning("[architecture C startup] planner failed; using typed persona plan: %s", exc)
+            plan = IntentionPlan.from_mapping(
+                {
+                    "speak": True,
+                    "motive": "startup_opening",
+                    "strategy": "persona_opening",
+                    "value_focus": "warm_relational_presence",
+                    "topic": "Offer one ordinary, warm-guarded opening with a small dry edge; no manifesto.",
+                    "importance": 0.72,
+                    "intrusion_risk": 0.05,
+                    "confidence": 0.74,
+                    "performance_hint": "soft",
+                    "evidence_refs": [],
+                    "semantics": {
+                        "turn_kind": "startup",
+                        "speech_act": "warm_session_opening",
+                        "subject_key": "session_arrival",
+                        "evidence_scope": "persona",
+                        "continuation_key": "none",
+                    },
+                },
+                channel="startup",
+            )
         try:
             from runtime.runtime_settings_store import runtime_bool
             force_screen_opening = runtime_bool("architecture", "startup_screen_opening", default=True)
@@ -683,7 +797,7 @@ class AIAutonomousOrchestrator:
                 open_loops=state.open_loops,
                 latest_observation=latest_observation,
                 relationship=relationship_payload,
-                avoid_text=str(getattr(host, "last_text", "") or ""),
+                avoid_text=avoid_text,
                 language=language,
             )
             payload = {
@@ -725,6 +839,7 @@ class AIAutonomousOrchestrator:
         if not text:
             return False
         spoken_at = time.time()
+        host.last_autonomous_spoken_at = spoken_at
         host._note_autonomous_spoken(now=spoken_at)
         block = getattr(host, "_block_autonomous_presence_after_public_turn", None)
         if callable(block):
@@ -802,6 +917,13 @@ class AIAutonomousOrchestrator:
                     "tool_intent": "",
                     "tool_input": "",
                     "evidence_refs": [],
+                    "semantics": {
+                        "turn_kind": "force_speak",
+                        "speech_act": "respond_explicit_presence_pull",
+                        "subject_key": "explicit_user_pull",
+                        "evidence_scope": "conversation",
+                        "continuation_key": "current_public_turn",
+                    },
                     "notes": "mechanical explicit user pull fallback",
                 },
                 channel="force_speak",
@@ -818,7 +940,11 @@ class AIAutonomousOrchestrator:
                 ) if part
             ),
             recent_history=host._chat_history_for_llm(limit=8),
-            avoid_text=str(getattr(host, "last_text", "") or ""),
+            avoid_text="\n".join(
+                str(item.get("content", "") or "").strip()
+                for item in host._chat_history_for_llm(limit=6)
+                if isinstance(item, Mapping) and str(item.get("role", "") or "") == "assistant"
+            )[-1800:] or str(getattr(host, "last_text", "") or ""),
             allow_fallback=not no_fallback_mode_enabled(),
             language_hint=_runtime_language(),
         )
@@ -845,6 +971,9 @@ class AIAutonomousOrchestrator:
             return
         host.last_autonomous_spoken_at = time.time()
         host._note_autonomous_spoken()
+        initiative = getattr(host, "ai_initiative_controller", None)
+        if initiative is not None:
+            initiative.record_spoken(plan, now=host.last_autonomous_spoken_at, channel="force_speak")
         if plan.strategy:
             host.ai_state_reducer.submit(
                 StateEvent.from_pending_strategy(
@@ -884,302 +1013,11 @@ class AIAutonomousOrchestrator:
         host.logger.info("[architecture C force_speak] text=%s", text)
 
     def run_iteration(self) -> bool:
-        host = self.host
-        if not host.body_running_fn():
-            host.stop()
-            return False
-        if host._process_pending_user_input():
-            return host.running
-        if host.chat_mode:
-            # chat_mode là độ tươi hội thoại, không phải khóa vĩnh viễn. Khi user
-            # im đủ lâu, autonomous được quyền tiếp tục cùng thread thay vì đợi
-            # một gói chat_end vốn có thể thất lạc trên UDP.
-            stale_check = getattr(host, "_conversation_went_stale", None)
-            if callable(stale_check) and stale_check():
-                host.chat_mode = False
-                host.logger.info("[self turn] chat baton released after stale public activity")
-            else:
-                time.sleep(0.2)
-                return True
-
-        now = time.time()
-        blocked_until = float(getattr(host, "autonomous_presence_blocked_until", 0.0) or 0.0)
-        if now < blocked_until:
-            host._sleep_interruptible(min(4.0, max(0.2, blocked_until - now)))
-            return True
-
-        snapshot = host.telemetry_service.capture_snapshot(
-            mood_score=host.mood_score,
-            inferred_pos_x=host.inferred_pos_x,
-        )
-        vision_facts = host._maybe_update_screen_facts()
-        if vision_facts:
-            try:
-                host._attach_screen_facts(snapshot, vision_facts)
-            except Exception:
-                pass
-        # Architecture C trước đây bỏ qua hẳn Cortex V2 ở autonomous production:
-        # drive/agenda/private mind vẫn tồn tại trong owner nhưng không tick và
-        # không được quyền veto/wake main planner. Gọi observer tại đây để một
-        # đường production duy nhất thật sự dùng một nội trạng duy nhất.
-        observer_frame = None
-        observer_runner = getattr(host, "_run_background_observer", None)
-        if callable(observer_runner):
-            try:
-                observer_frame = observer_runner(
-                    snapshot=snapshot,
-                    channel="autonomous",
-                    user_text="",
-                    vision_facts=tuple(vision_facts or ()),
-                    started_at=now,
-                )
-            except Exception as exc:
-                host.logger.warning("[ai autonomous] cortex observer unavailable: %s", exc)
-        host.long_term_memory = host._memory_recall_texts(snapshot=snapshot)
-        memory_resonance = host._recall_memory_resonance(
-            snapshot=snapshot,
-            channel="autonomous",
-            fragments=tuple(vision_facts or ()),
-        )
-        memory_context = host._build_memory_context(snapshot, memory_resonance=memory_resonance)
-        memory_context = host._merge_conversation_context(memory_context)
-        self_context = build_autonomous_self_context(host)
-        state = host.ai_state_reducer.snapshot()
-        turn_seq = _next_ai_turn_seq(host)
-        telemetry_payload = snapshot.to_machine_context() if callable(getattr(snapshot, "to_machine_context", None)) else {}
-        screen_snapshot = None
-        screen_store = getattr(host, "screen_evidence_store", None)
-        if screen_store is not None:
-            try:
-                screen_snapshot = screen_store.snapshot()
-            except Exception as exc:
-                host.logger.debug("[self turn screen] snapshot unavailable: %s", exc)
-        screen_context = self.screen_context_tracker.observe(
-            screen_snapshot,
-            telemetry=telemetry_payload,
-            now=now,
-        )
-        recent_public_history = host._chat_history_for_llm(limit=8)
-        last_public = recent_public_history[-1] if recent_public_history else {}
-        seconds_since_user = max(0.0, now - float(getattr(host, "_temporal_last_user_turn_at", 0.0) or getattr(host, "_chat_last_activity_at", 0.0) or 0.0))
-        if screen_context.meaningful_delta or screen_context.scene_kind != "unknown":
-            host.logger.info(
-                "[self turn screen] backend=%s ocr=%s scene=%s conf=%.2f delta=%s changed_text=%s",
-                screen_context.backend or "unknown",
-                int(screen_context.ocr_active),
-                screen_context.scene_kind,
-                screen_context.scene_confidence,
-                int(screen_context.meaningful_delta),
-                len(screen_context.changed_text),
-            )
-        conversation_baton = {
-            "mode": "continuation" if recent_public_history else "ambient",
-            "last_role": str(last_public.get("role", "") or "") if isinstance(last_public, Mapping) else "",
-            "last_public_excerpt": str(last_public.get("content", "") or "")[:360] if isinstance(last_public, Mapping) else "",
-            "seconds_since_user": round(seconds_since_user, 2),
-            "thread_fresh": bool(recent_public_history and seconds_since_user <= 240.0),
-            "instruction": (
-                "Autonomous is a self-initiated public turn in the same conversation. "
-                "Prefer continuing a real unresolved thread before inventing a new ambient topic."
-            ),
-        }
-        planner_snapshot = {
-            "time": now,
-            "event_kind": "self_initiated_turn",
-            "telemetry": telemetry_payload,
-            "screen_context": screen_context.to_dict(),
-            "conversation_baton": conversation_baton,
-            "vision_facts": list(vision_facts or ()),
-            "personality": state.personality.panel_view(),
-            "personality_summary": state.personality_prompt_context(),
-            "identity": state.identity.panel_view(),
-            "identity_summary": state.identity_prompt_context(),
-            "relationship": state.relationship.to_dict(),
-            "open_loops": list(state.open_loops),
-            "latest_observation": dict(state.latest_observation),
-            "recent_public_history": recent_public_history,
-            "seconds_since_assistant": max(0.0, now - float(getattr(host, "_temporal_last_assistant_turn_at", 0.0) or 0.0)),
-            "last_autonomous_text": str(getattr(host, "last_text", "") or ""),
-            "self_context": self_context.to_dict(),
-            "instruction": (
-                "Cortex self_context is public-safe. Internal numeric pressure alone is not a topic. "
-                "Only use agenda items with evidence or private_mind/private_life surface candidates. "
-                "Respect self_context.wake as the permission and timing authority."
-            ),
-        }
-        discovery_runtime = getattr(host, "ai_discovery_runtime", None)
-        if discovery_runtime is not None:
-            planner_snapshot["discovery"] = discovery_runtime.planner_context(telemetry_payload, now=now)
-            discovery_runtime.maybe_tick(planner_snapshot, now=now)
-            planner_snapshot["discovery"] = discovery_runtime.planner_context(telemetry_payload, now=now)
-
-        wake = getattr(host, "last_wake_decision", None)
-        discovery_payload = planner_snapshot.get("discovery")
-        discovery_ready = bool(
-            isinstance(discovery_payload, Mapping)
-            and (
-                discovery_payload.get("ready_to_share")
-                or discovery_payload.get("artifact")
-                or discovery_payload.get("artifact_ready")
-            )
-        )
-        wake_is_authoritative = bool(observer_frame is not None and float(getattr(wake, "confidence", 0.0) or 0.0) > 0.0)
-        has_fresh_continuation = bool(conversation_baton.get("thread_fresh", False))
-        has_screen_opportunity = bool(screen_context.meaningful_delta)
-        has_cortex_seed = bool(getattr(self_context, "has_public_seed", False))
-        if (
-            wake_is_authoritative
-            and not bool(getattr(wake, "should_speak", False))
-            and not discovery_ready
-            and not has_fresh_continuation
-            and not has_screen_opportunity
-            and not has_cortex_seed
-        ):
-            host.logger.info(
-                "[ai autonomous preflight] silence wake=%s reason=%s speech=%.2f internal=%.2f seed=%.2f",
-                str(getattr(wake, "level", "sleep") or "sleep"),
-                str(getattr(wake, "reason", "") or "none"),
-                float(getattr(wake, "speech_value", 0.0) or 0.0),
-                float(getattr(wake, "internal_drive", 0.0) or 0.0),
-                float(self_context.strongest_seed_score),
-            )
-            host._sleep_interruptible(max(8, min(24, host._choose_autonomous_sleep_duration(suppressed=True, ti_mode="cortex_v2_silence"))))
-            return True
-        plan = host.ai_intention_planner.plan_autonomous(
-            planner_snapshot,
-            turn_seq=turn_seq,
-        )
-        discovery_id = ""
-        discovery_grounding = ""
-        if discovery_runtime is not None:
-            plan, discovery_grounding, discovery_id = discovery_runtime.bind_plan(plan)
-        discovery_requires_artifact = str(getattr(plan, "strategy", "") or "").strip().lower() == "share_discovery"
-        worth_speaking = (
-            plan.speak
-            and plan.confidence >= 0.62
-            and plan.importance >= 0.56
-            and plan.importance >= plan.intrusion_risk + 0.10
-            and bool(plan.topic.strip())
-            and (not discovery_requires_artifact or bool(discovery_grounding))
-        )
-        initiative_reason = "not_evaluated"
-        initiative = getattr(host, "ai_initiative_controller", None)
-        if worth_speaking and initiative is not None:
-            active_app = str(telemetry_payload.get("active_app", "") or "").strip().lower()
-            active_title = str(telemetry_payload.get("active_window_title", "") or "").strip().lower()
-            busy_markers = ("meeting", "meet", "zoom", "teams", "presentation", "full screen", "fullscreen")
-            user_busy = any(marker in active_app or marker in active_title for marker in busy_markers)
-            seconds_since_user = max(0.0, now - float(getattr(host, "_chat_last_activity_at", 0.0) or 0.0))
-            allowed, initiative_reason = initiative.evaluate(
-                plan,
-                now=now,
-                user_busy=user_busy,
-                seconds_since_user=seconds_since_user,
-            )
-            worth_speaking = worth_speaking and allowed
-        if not worth_speaking:
-            host.logger.info(
-                "[ai autonomous] silence motive=%s conf=%.2f importance=%.2f intrusion=%.2f initiative=%s",
-                plan.motive,
-                plan.confidence,
-                plan.importance,
-                plan.intrusion_risk,
-                initiative_reason,
-            )
-            host._sleep_interruptible(max(8, min(24, host._choose_autonomous_sleep_duration(suppressed=True, ti_mode="ai_silence"))))
-            return True
-
-        if host._process_pending_user_input():
-            return host.running
-        payload = host.ai_model_router.generate_autonomous_reply(
-            plan=plan,
-            personality_context=state.personality_prompt_context(),
-            memory_context=memory_context,
-            grounding_context="\n".join(
-                part for part in (
-                    screen_context.prompt_context(),
-                    "\n".join(str(item) for item in (vision_facts or ())[-6:]),
-                    discovery_grounding,
-                    f"AUTONOMOUS_SELF_CONTEXT:\n{self_context.prompt_context()}",
-                ) if part
-            ),
-            recent_history=recent_public_history,
-            avoid_text=str(getattr(host, "last_text", "") or ""),
-            allow_fallback=not no_fallback_mode_enabled(),
-            language_hint=_runtime_language(),
-        )
-        if not payload:
-            host.logger.warning(
-                "[ai autonomous] public generation failed motive=%s topic=%s",
-                plan.motive,
-                plan.topic[:120],
-            )
-            host._sleep_interruptible(10)
-            return True
-        raw = json.dumps(payload, ensure_ascii=False)
-        host._log_raw_llm_output("autonomous_ai", raw)
-        decision = host.parser.parse(raw)
-        host.ai_stage_planner.apply(decision, plan.performance_hint, state=state, channel="autonomous")
-        decision = host._execute_system_action(decision, snapshot=snapshot, frame=None)
-        if isinstance(getattr(decision, "action_result_meta", None), Mapping):
-            host.ai_state_reducer.submit(
-                StateEvent.from_mechanical_outcome(
-                    dict(decision.action_result_meta),
-                    turn_seq=turn_seq,
-                    turn_id=plan.plan_id,
-                    base_version=host.ai_state_reducer.snapshot().version,
-                )
-            )
-        text, assistant_meta = self._commit_public(
-            decision,
-            channel="autonomous",
-            turn_seq=turn_seq,
-        )
-        if text and discovery_id and discovery_runtime is not None:
-            discovery_runtime.mark_spoken(discovery_id, text)
-        if not text:
-            host._sleep_interruptible(10)
-            return True
-        host.last_autonomous_spoken_at = time.time()
-        host._note_autonomous_spoken()
-        if initiative is not None:
-            initiative.record_spoken(plan, now=host.last_autonomous_spoken_at, channel="autonomous")
-        autonomous_turn_id = f"autonomous:{turn_seq}"
-        if plan.strategy:
-            host.ai_state_reducer.submit(
-                StateEvent.from_pending_strategy(
-                    PendingStrategyUse(
-                        strategy_use_id=f"strategy:{autonomous_turn_id}",
-                        turn_seq=turn_seq,
-                        strategy=plan.strategy,
-                        goal=plan.topic,
-                        context=tuple(item for item in (plan.motive, plan.value_focus, "autonomous") if str(item or "").strip()),
-                        assistant_text=text,
-                    ),
-                    base_version=host.ai_state_reducer.snapshot().version,
-                )
-            )
-        host.ai_post_turn_observer.submit(
-            turn_id=autonomous_turn_id,
-            turn_seq=turn_seq,
-            user_text="",
-            assistant_text=text,
-            recent_history=tuple(host._chat_history_for_llm(limit=8)),
-            mechanical_outcomes=(dict(decision.action_result_meta),)
-                if isinstance(getattr(decision, "action_result_meta", None), Mapping)
-                else (),
-            state_summary=state.to_dict(),
-            assistant_meta=assistant_meta,
-            event_kind="autonomous",
-        )
-        host.logger.info(
-            "[ai autonomous] spoke motive=%s topic=%s text=%s",
-            plan.motive,
-            plan.topic[:120],
-            text,
-        )
-        host._sleep_interruptible(max(10, host._choose_autonomous_sleep_duration(suppressed=False, ti_mode="ai_intention")))
-        return True
+        """Facade mỏng; pipeline typed nằm trong ``self_turn_pipeline.py``."""
+        # Adapter/test có thể thay trace_store trực tiếp trên facade. Đồng bộ lại
+        # trước mỗi tick để không giữ hai sink debug khác nhau.
+        self.self_turn_pipeline.trace_store = self.trace_store
+        return self.self_turn_pipeline.run()
 
 
 __all__ = [

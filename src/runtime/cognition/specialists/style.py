@@ -97,6 +97,22 @@ class StyleCortex:
                 confidence=0.82,
                 evidence_ids=refs,
             )
+        if discourse.relation == "relational_bid" or semantic.user_act == "closeness_bid":
+            return StyleProjection(
+                delivery="warm_guarded_presence",
+                distance="near_without_overclaim",
+                warmth_visibility="clear_but_restrained",
+                edge="dry_soft",
+                pacing="brief_gentle_response",
+                avoid_moves=(
+                    "literal_vision_claim_without_sensor",
+                    "mock_vulnerability",
+                    "cold_deflection",
+                    "support_bot_tone",
+                ),
+                confidence=0.90,
+                evidence_ids=refs,
+            )
         return StyleProjection(
             delivery="calm_direct_with_room_for_edge",
             distance="guarded_neutral",

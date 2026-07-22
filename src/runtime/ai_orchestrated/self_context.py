@@ -10,7 +10,7 @@ Module này chỉ đưa sang planner những tín hiệu đã qua ranh giới c�
 - rolling internal state dạng số, không phải chain-of-thought;
 - agenda có evidence;
 - surface candidate đã qua SurfaceValve/PrivateLife policy;
-- wake decision của Cortex V2.
+- attention/resource signal của Cortex V2 (không có quyền phát ngôn).
 
 Không đọc raw diary, raw concern hay hidden reasoning.
 """
@@ -73,7 +73,7 @@ def _surface_preview(item: Any) -> dict[str, Any]:
 @dataclass(frozen=True, slots=True)
 class AutonomousSelfContext:
     internal_state: Mapping[str, Any] = field(default_factory=dict)
-    wake: Mapping[str, Any] = field(default_factory=dict)
+    attention: Mapping[str, Any] = field(default_factory=dict)
     agenda: tuple[Mapping[str, Any], ...] = ()
     private_mind_surface: tuple[Mapping[str, Any], ...] = ()
     private_life_surface: tuple[Mapping[str, Any], ...] = ()
@@ -83,7 +83,7 @@ class AutonomousSelfContext:
     def to_dict(self) -> dict[str, Any]:
         return {
             "internal_state": dict(self.internal_state),
-            "wake": dict(self.wake),
+            "attention": dict(self.attention),
             "agenda": [dict(item) for item in self.agenda],
             "private_mind_surface": [dict(item) for item in self.private_mind_surface],
             "private_life_surface": [dict(item) for item in self.private_life_surface],
@@ -117,17 +117,17 @@ def build_autonomous_self_context(host: Any) -> AutonomousSelfContext:
     }
     internal_state["internal_drive"] = round(_clamp01(getattr(rolling, "internal_drive", 0.0)), 3)
 
-    wake_obj = getattr(host, "last_wake_decision", None)
-    wake = {
-        "level": _compact(getattr(wake_obj, "level", "sleep"), 48),
-        "should_speak": bool(getattr(wake_obj, "should_speak", False)),
-        "should_wake_main": bool(getattr(wake_obj, "should_wake_main", False)),
-        "reason": _compact(getattr(wake_obj, "reason", ""), 160),
-        "confidence": round(_clamp01(getattr(wake_obj, "confidence", 0.0)), 3),
-        "internal_drive": round(_clamp01(getattr(wake_obj, "internal_drive", 0.0)), 3),
-        "speech_value": round(_clamp01(getattr(wake_obj, "speech_value", 0.0)), 3),
-        "permission": round(_clamp01(getattr(wake_obj, "permission", 0.0)), 3),
-        "interrupt_cost": round(_clamp01(getattr(wake_obj, "interrupt_cost", 1.0)), 3),
+    attention_obj = getattr(host, "last_cortex_attention", None)
+    attention = {
+        "level": _compact(getattr(attention_obj, "level", "quiet"), 48),
+        "reason": _compact(getattr(attention_obj, "reason", ""), 160),
+        "confidence": round(_clamp01(getattr(attention_obj, "confidence", 1.0)), 3),
+        "external_pressure": round(_clamp01(getattr(attention_obj, "external_pressure", 0.0)), 3),
+        "internal_drive": round(_clamp01(getattr(attention_obj, "internal_drive", 0.0)), 3),
+        "interrupt_cost": round(_clamp01(getattr(attention_obj, "interrupt_cost", 0.0)), 3),
+        "resource_caution": round(_clamp01(getattr(attention_obj, "resource_caution", 0.0)), 3),
+        "vision_refresh_recommended": bool(getattr(attention_obj, "vision_refresh_recommended", False)),
+        "semantic_authority": "none",
     }
 
     agenda_items: list[Mapping[str, Any]] = []
@@ -195,7 +195,7 @@ def build_autonomous_self_context(host: Any) -> AutonomousSelfContext:
 
     return AutonomousSelfContext(
         internal_state=internal_state,
-        wake=wake,
+        attention=attention,
         agenda=tuple(agenda_items[:5]),
         private_mind_surface=private_mind,
         private_life_surface=private_life,

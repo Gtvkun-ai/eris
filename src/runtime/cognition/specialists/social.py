@@ -83,6 +83,17 @@ class SocialCortex:
                 ambiguity=0.10,
                 evidence_ids=refs,
             )
+        if discourse.relation == "relational_bid" or semantic.user_act == "closeness_bid":
+            return SocialProjection(
+                user_posture="soft_relational_bid",
+                seriousness=0.54,
+                playfulness=0.22,
+                repair_pressure=0.0,
+                relational_stakes=0.72,
+                confidence=0.88,
+                ambiguity=0.12,
+                evidence_ids=refs,
+            )
         return SocialProjection(
             user_posture="neutral_or_underdetermined",
             seriousness=0.50,

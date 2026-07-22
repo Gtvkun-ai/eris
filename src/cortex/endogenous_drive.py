@@ -11,7 +11,7 @@ continuity pressure, consolidation pressure, insight pressure.
 Điểm quan trọng:
 - Đây là nội áp, không phải câu thoại.
 - Nội áp cao không có nghĩa được phép nói.
-- Nó chỉ cấp dữ liệu cho WakeGovernor và DaydreamConsolidation.
+- Nó chỉ cấp dữ liệu cho CortexRuntime và DaydreamConsolidation.
 
 Nếu để nội áp tự nhảy ra public, ta có một NPC kêu đói giữa lúc user compile. Không ai cần cảnh đó.
 """

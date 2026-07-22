@@ -26,7 +26,7 @@ import unicodedata
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Mapping, Sequence
-from zoneinfo import ZoneInfo
+from core.temporal_context import resolve_timezone
 
 from .contracts import IntentionPlan
 
@@ -525,12 +525,10 @@ def build_startup_greeting_frame(
     )
     tone = "overloaded" if fatigue >= 0.66 else ""
 
-    timezone_name = str(os.getenv("ERIS_TIMEZONE", "Asia/Ho_Chi_Minh") or "Asia/Ho_Chi_Minh")
-    try:
-        local_dt = datetime.fromtimestamp(timestamp, ZoneInfo(timezone_name))
-    except Exception:
-        timezone_name = "Asia/Ho_Chi_Minh"
-        local_dt = datetime.fromtimestamp(timestamp, ZoneInfo(timezone_name))
+    timezone_name, timezone_info = resolve_timezone(
+        str(os.getenv("ERIS_TIMEZONE", "Asia/Ho_Chi_Minh") or "Asia/Ho_Chi_Minh")
+    )
+    local_dt = datetime.fromtimestamp(timestamp, timezone_info)
     hour = local_dt.hour
     if 5 <= hour < 8:
         time_of_day = "dawn"

@@ -204,17 +204,26 @@ def resolve_speech_persona_policy(
 
     enabled = _runtime_bool("speech_persona_polish", True)
     profile = _runtime_text("speech_persona_profile", _PROFILE_NAME).strip().lower()
-    warmth = _runtime_float("speech_persona_warmth", 0.18)
+    warmth = _runtime_float("speech_persona_warmth", 0.24)
     cuteness = _runtime_float("speech_persona_cuteness", 0.10)
     style = str(prosody_style or "").strip().lower()
 
-    if style in {"focused", "technical", "cold_boundary", "sharp_deadpan"}:
-        mode = "technical" if style in {"focused", "technical"} else "boundary"
-        warmth = min(warmth, 0.06 if mode == "technical" else 0.03)
+    if style in {"focused", "technical"}:
+        mode = "technical"
+        # Kỹ thuật vẫn có cadence mềm; precision không đồng nghĩa vô cảm.
+        warmth = min(warmth, 0.14)
+        cuteness = 0.0
+    elif style == "cold_boundary":
+        mode = "boundary"
+        warmth = min(warmth, 0.03)
+        cuteness = 0.0
+    elif style == "sharp_deadpan":
+        mode = "dry"
+        warmth = min(warmth, 0.10)
         cuteness = 0.0
     elif style in {"annoyed_soft", "deadpan", "dry_tease", "self_aware_dry"}:
         mode = "dry"
-        warmth = min(warmth, 0.12)
+        warmth = min(warmth, 0.16)
         cuteness = min(cuteness, 0.04)
     elif style in {"soft_tease", "low_quiet", "gentle", "warm"}:
         mode = "soft"

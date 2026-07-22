@@ -400,7 +400,8 @@ def test_tts_worker_relocalizes_even_when_upstream_claims_prelocalized(monkeypat
     assert "話" in text
 
 
-def test_tts_worker_fails_open_to_source_language_when_japanese_localizer_breaks(monkeypatch) -> None:
+def test_tts_worker_fails_closed_when_japanese_localizer_breaks(monkeypatch) -> None:
+    import pytest
     import runtime.tts_engine as tts_engine
     from runtime.speech_localizer import SpeechLocalizationError
 
@@ -418,11 +419,8 @@ def test_tts_worker_fails_open_to_source_language_when_japanese_localizer_breaks
     )
     monkeypatch.setattr(tts_engine, "_prelocalize_japanese_enabled", lambda: True)
 
-    text, localized, language = worker._resolve_main_transcript(request, request.text)
-
-    assert text == request.text
-    assert localized is False
-    assert language == "vi"
+    with pytest.raises(SpeechLocalizationError):
+        worker._resolve_main_transcript(request, request.text)
 
 
 def test_tts_attempts_default_is_bounded(monkeypatch) -> None:
@@ -528,10 +526,10 @@ def test_speech_persona_polish_is_subtle_and_style_aware(monkeypatch) -> None:
 
     assert neutral.enabled is True
     assert neutral.profile == "infj_5w4_subtle"
-    assert neutral.warmth == 0.18
+    assert neutral.warmth == 0.24
     assert neutral.cuteness == 0.10
     assert technical.cuteness == 0.0
-    assert technical.warmth <= 0.06
+    assert 0.10 <= technical.warmth <= 0.14
     assert soft.warmth > neutral.warmth
     assert soft.cuteness > neutral.cuteness
 
@@ -1079,19 +1077,20 @@ def test_discovery_panel_payload_keeps_real_readiness_and_archive_counts() -> No
         assert panel["ready_count"] == 1
 
 
-def test_initiative_panel_exposes_budget_and_recent_events() -> None:
-    from types import SimpleNamespace
-
+def test_initiative_panel_exposes_typed_semantic_events() -> None:
+    from runtime.ai_orchestrated.contracts import IntentionPlan
     from runtime.ai_orchestrated.initiative import InitiativeController
+    from runtime.ai_orchestrated.semantic_contracts import TurnSemantics
 
     with tempfile.TemporaryDirectory() as tmp:
         controller = InitiativeController(state_path=Path(tmp) / "initiative.json")
-        plan = SimpleNamespace(
-            motive="share_discovery",
-            strategy="share_discovery",
-            importance=0.82,
-            intrusion_risk=0.10,
-            topic="Một discovery đáng kể",
+        plan = IntentionPlan(
+            plan_id="discovery:1", created_at=1_000.0, channel="autonomous",
+            speak=True, topic="Một discovery đáng kể", importance=0.82, intrusion_risk=0.10,
+            semantics=TurnSemantics(
+                turn_kind="discovery", speech_act="share_verified_discovery",
+                subject_key="eris_discovery_1", evidence_scope="discovery_artifact",
+            ),
         )
         controller.record_spoken(plan, now=1_000.0)
         panel = controller.panel_view(now=1_100.0)
@@ -1099,8 +1098,10 @@ def test_initiative_panel_exposes_budget_and_recent_events() -> None:
         assert panel["used_last_hour"] == 1
         assert panel["remaining_budget"] == max(0, panel["hourly_budget"] - 1)
         assert panel["next_allowed_at"] >= 1_000.0
-        assert panel["recent_events"][0]["strategy"] == "share_discovery"
-
+        event = panel["recent_events"][0]
+        assert event["kind"] == "discovery"
+        assert event["speech_act"] == "share_verified_discovery"
+        assert event["subject_key"] == "eris_discovery_1"
 
 def test_discovery_runtime_panel_contract_separates_activity_ready_and_initiative() -> None:
     from runtime.ai_orchestrated.contracts import RuntimeMindState
@@ -1242,7 +1243,7 @@ def test_architecture_c_autonomous_reads_public_safe_cortex_context() -> None:
             self_coherence=0.83,
             internal_drive=0.69,
         ),
-        last_wake_decision=SimpleNamespace(
+        last_cortex_attention=SimpleNamespace(
             level="wake_main_cognition",
             should_speak=True,
             should_wake_main=True,
@@ -1280,7 +1281,7 @@ def test_architecture_c_autonomous_reads_public_safe_cortex_context() -> None:
     assert context.private_mind_surface[0]["topic_seed"] == "TTS đang nói sau bubble một nhịp"
     assert "TTS" in context.prompt_context()
 
-def test_ambient_screen_tracker_surfaces_ocr_delta_and_game_hypothesis() -> None:
+def test_ambient_screen_tracker_surfaces_ocr_delta_without_keyword_scene_inference() -> None:
     from screen.evidence_models import ActiveWindowInfo, ScreenTextBlock, ScreenTextSnapshot
     from runtime.ai_orchestrated.ambient_screen_context import AmbientScreenTracker
 
@@ -1290,29 +1291,20 @@ def test_ambient_screen_tracker_surfaces_ocr_delta_and_game_hypothesis() -> None
         window=ActiveWindowInfo(title="Mini World", process_name="miniworld.exe"),
         blocks=(
             ScreenTextBlock(
-                block_id="hud-1",
-                text="HP 92  Stamina 44  Inventory",
-                source="ocr",
-                confidence=0.87,
-                window_title="Mini World",
-                captured_at=now,
+                block_id="hud-1", text="HP 92 Stamina 44 Inventory", source="ocr",
+                confidence=0.87, window_title="Mini World", captured_at=now,
             ),
         ),
-        captured_at=now,
-        changed_ratio=0.18,
-        revision=1,
-        backend="rapidocr",
+        captured_at=now, changed_ratio=0.18, revision=1, backend="rapidocr",
     )
 
     context = tracker.observe(snapshot, telemetry={"active_app": "Mini World"}, now=now)
 
     assert context.ocr_active is True
-    assert context.scene_kind == "game_likely"
+    assert context.scene_kind == "unknown"
     assert context.meaningful_delta is True
-    assert context.changed_text == ("HP 92 Stamina 44 Inventory",)
-    assert context.evidence_refs == ("screen:hud-1",)
-    assert "not proof of user intent" in context.to_dict()["epistemic_note"]
-
+    assert "HP 92" in context.visible_text[0]
+    assert context.changed_text
 
 def test_ambient_screen_tracker_does_not_repeat_unchanged_ocr_as_delta() -> None:
     from screen.evidence_models import ActiveWindowInfo, ScreenTextBlock, ScreenTextSnapshot
@@ -1405,3 +1397,76 @@ def test_hardening_fingerprint_covers_ambient_screen_autonomy() -> None:
 
     assert "runtime/ai_orchestrated/ambient_screen_context.py" in DEFAULT_AUTHORITY_FILES
     assert "screen/ocr_worker.py" in DEFAULT_AUTHORITY_FILES
+
+
+def test_runtime_settings_v2_migrates_only_old_warmth_baseline() -> None:
+    from runtime.runtime_settings_store import RuntimeSettingsStore
+
+    migrated, changed = RuntimeSettingsStore._migrate_payload(
+        {
+            "version": 2,
+            "chat": {"language": "vi"},
+            "tts": {"language": "vi", "speech_persona_warmth": 0.18},
+        }
+    )
+    assert changed is True
+    assert migrated["version"] == 4
+    assert migrated["tts"]["language"] == "vi"
+    assert migrated["tts"]["speech_persona_warmth"] == 0.24
+
+    custom, changed = RuntimeSettingsStore._migrate_payload(
+        {
+            "version": 2,
+            "tts": {"language": "ja", "speech_persona_warmth": 0.31},
+        }
+    )
+    assert changed is True
+    assert custom["tts"]["speech_persona_warmth"] == 0.31
+
+
+def test_grounding_surface_gate_uses_current_evidence_not_user_wording() -> None:
+    from runtime.grounding_surface_gate import evaluate_grounded_surface
+    from runtime.source_grounding import SourceGroundingEngine, SourceGroundingReport
+
+    engine = SourceGroundingEngine()
+    missing = SourceGroundingReport(
+        user_text="", primary_source="runtime_state", confidence_cap=0.5,
+        screen_evidence_present=False, screen_facts_are_stale=False,
+        missing_evidence=["screen_evidence"],
+    )
+    grounded = SourceGroundingReport(
+        user_text="", primary_source="current_screen", confidence_cap=0.8,
+        screen_evidence_present=True, screen_facts_are_stale=False,
+        evidence_ids=["screen:window_title"], allowed_sources=["current_screen"],
+    )
+
+    assert evaluate_grounded_surface(engine, "Tôi thấy cửa sổ Brave.", report=missing).allowed is False
+    assert evaluate_grounded_surface(engine, "Tôi thấy cửa sổ Brave.", report=grounded).allowed is True
+
+
+def test_autonomous_grounding_report_accepts_fresh_window_title() -> None:
+    from types import SimpleNamespace
+
+    from runtime.ai_orchestrated.contracts import IntentionPlan
+    from runtime.ai_orchestrated.self_turn_pipeline import SelfTurnPipeline
+
+    pipeline = object.__new__(SelfTurnPipeline)
+    screen = SimpleNamespace(
+        fresh=True, privacy_blocked=False, window_title="Live2D Cubism",
+        evidence_refs=(), visible_text=(),
+    )
+    context = SimpleNamespace(
+        perception=SimpleNamespace(screen=screen, vision_facts=()),
+    )
+    plan = IntentionPlan.from_mapping({
+        "speak": True, "topic": "Mention the visible app",
+        "semantics": {
+            "turn_kind": "environment", "speech_act": "comment_current_surface",
+            "subject_key": "live2d", "evidence_scope": "screen_window",
+            "continuation_key": "none",
+        },
+    }, channel="autonomous")
+
+    report = pipeline._autonomous_grounding_report(context, plan)
+    assert report.screen_evidence_present is True
+    assert "screen:window_title" in report.evidence_ids

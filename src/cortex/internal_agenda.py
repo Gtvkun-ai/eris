@@ -16,7 +16,7 @@ Luật quan trọng:
 - File này KHÔNG gọi LLM.
 - File này KHÔNG tự nói với user.
 - File này KHÔNG tự ghi memory dài hạn.
-- Nó chỉ giữ stack có evidence để WakeGovernor và DaydreamConsolidation đọc.
+- Nó chỉ giữ stack có evidence để CortexRuntime, planner và DaydreamConsolidation đọc.
 
 Nói cách khác: đây là sổ nháp có khóa. Không phải cái loa phường.
 """
@@ -73,7 +73,7 @@ class InternalAgendaItem:
     """Một mục agenda nội bộ.
 
     pressure:
-        Độ ép phải xử lý. WakeGovernor đọc trường này.
+        Độ ép phải xử lý. CortexRuntime và planner đọc trường này.
     urgency:
         Độ gấp. Khác pressure: một thứ có thể dai dẳng nhưng không gấp.
     confidence:

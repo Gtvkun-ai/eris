@@ -56,10 +56,8 @@ from cortex.vision_semantic_compressor import (
 from domain import Decision
 from failure_meta import is_technical_failure_meta
 from runtime.public_payload_policy import sanitize_body_payload
-from runtime.autonomous_wake_governor import AutonomousWakeGovernor, WakeDecision
-from runtime.autonomous_orchestrator import AutonomousPerformerOrchestrator, AutonomousPlan
 from runtime.body_bias import BodyBiasProjector
-from runtime.contextual_autonomy_loop import ContextualAutonomyLoop
+from runtime.ai_orchestrated.cortex_runtime import CortexAttentionSignal, CortexRuntime
 from runtime.thought_model_adapter import RuntimeThoughtModelAdapter
 from runtime.model_budget_policy import ModelBudgetPolicy
 from runtime.signal_buffer import SignalBuffer, SignalBufferConfig
@@ -605,29 +603,25 @@ class RuntimeCoordinator(
         self.rolling_internal_state = RollingInternalState()
         self.model_budget_policy = ModelBudgetPolicy(logger=self.logger)
         self._install_model_inference_queue()
-        self.wake_governor = AutonomousWakeGovernor()
-        self.last_wake_decision: WakeDecision | None = None
+        self.last_cortex_attention: CortexAttentionSignal | None = None
         self.last_daydream_result = None
         self.daydream_model_adapter = None
         self.daydream_consolidator = DaydreamConsolidator(
             llm_client=getattr(llm_service, "style_client", None),
             logger=self.logger,
         )
-        self.contextual_autonomy_loop = ContextualAutonomyLoop(
+        # CortexRuntime chỉ duy trì context/drive/consolidation. Nó không có
+        # SpeakGate hay quyền semantic; main planner Architecture C là authority.
+        self.cortex_runtime = CortexRuntime(
             user_context_stream=self.user_context_stream,
             endogenous_drive=self.endogenous_drive_engine,
             agenda_stack=self.internal_agenda,
             daydream=self.daydream_consolidator,
             budget_policy=self.model_budget_policy,
-            wake_governor=self.wake_governor,
             agent_mind=self.epistemic_agent_mind,
             logger=self.logger,
         )
-        # Autonomous Performer là van trước main cognition: nó giữ scene liên tục,
-        # tìm opportunity thật và cấp budget nói. Không có mic/ASR ở đây; text mới,
-        # nút stop và scene change vẫn là các nguồn cancel hiện có.
-        self.autonomous_performer = AutonomousPerformerOrchestrator(logger=self.logger, observability=self.observability)
-        self.last_autonomous_plan: AutonomousPlan | None = None
+        self.last_ai_intention_plan = None
         self.last_signal_snapshot: SignalSnapshot | None = None
         self.last_signal_diff = None
         self.last_observer_frame: ObserverFrame | None = None
@@ -742,8 +736,6 @@ class RuntimeCoordinator(
         self.mood_score = 50 #mô phỏng trạng thái cảm xúc
         self.inferred_pos_x = 0.5 # vị trí avatar
         self.idle_cycles = 0
-        self.last_autonomous_signature = ""
-        self.repeated_autonomous_count = 0
         self.last_autonomous_spoken_at = 0.0
         self.autonomous_presence_blocked_until = 0.0
         self.presence_maintenance_silent_cycles = 0
@@ -1014,7 +1006,7 @@ class RuntimeCoordinator(
             self.last_signal_diff = signal_diff
             self.last_observer_frame = observer_frame
             self._log_observer_trace(observer_frame)
-            self._update_3tier_autonomy_state(
+            self._update_cortex_runtime_state(
                 signal_snapshot=signal_snapshot,
                 signal_diff=signal_diff,
                 observer_frame=observer_frame,
@@ -1060,7 +1052,7 @@ class RuntimeCoordinator(
             float(getattr(observer_frame, "repetition", 0.0) or 0.0),
         )
 
-    def _update_3tier_autonomy_state(
+    def _update_cortex_runtime_state(
         self,
         *,
         signal_snapshot: SignalSnapshot,
@@ -1069,12 +1061,17 @@ class RuntimeCoordinator(
         channel: str = "",
         user_text: str = "",
     ) -> None:
-        loop = getattr(self, "contextual_autonomy_loop", None)
-        if loop is None:
+        """Cập nhật Cortex attention/drive mà không xét quyền phát ngôn.
+
+        Main planner nhìn attention, discourse, OCR và telemetry rồi tự trả
+        ``IntentionPlan`` typed. Cortex chỉ duy trì state nền.
+        """
+        runtime = getattr(self, "cortex_runtime", None)
+        if runtime is None:
             return
         try:
             packets = self._daydream_packets_from_runtime(limit=20)
-            result = loop.tick(
+            result = runtime.tick(
                 signal_snapshot=signal_snapshot,
                 signal_diff=signal_diff,
                 observer_frame=observer_frame,
@@ -1082,79 +1079,37 @@ class RuntimeCoordinator(
                 memory_packets=packets,
                 user_text=user_text,
                 channel=channel or "autonomous",
-                autonomous_silent_cycles=int(getattr(self, "presence_maintenance_silent_cycles", 0) or 0),
             )
             self.rolling_user_context = result.user_context
             self.rolling_internal_state = result.internal_state
-            # Ghép opportunity/speak gate vào wake decision. Khi có permit thật,
-            # performer mở đúng một lượt main cognition; nếu không thì veto lời chen.
-            performer = getattr(self, "autonomous_performer", None)
-            if performer is not None:
-                # Phase 5: chat mới cũng là phản hồi cho act autonomous trước đó.
-                # Không cần chạy một lượt autonomous mới để biết user vừa bảo
-                # "đừng chen" hay vừa nối tiếp câu đùa.
-                performer.observe_audience(
-                    channel=channel or "autonomous",
-                    user_text=user_text,
-                    signal_snapshot=signal_snapshot,
-                    observer_frame=observer_frame,
-                )
-            if performer is not None and str(channel or "autonomous").strip().lower() != "chat":
-                plan = performer.evaluate(
-                    signal_snapshot=signal_snapshot,
-                    observer_frame=observer_frame,
-                    signal_diff=signal_diff,
-                    user_context=result.user_context,
-                    wake_decision=result.wake_decision,
-                )
-                result.wake_decision = performer.refine_wake_decision(result.wake_decision, plan)
-                self.last_autonomous_plan = plan
-                selected = plan.selected_opportunity
-                self.logger.info(
-                    "[autonomous stage] scene=%s opportunity=%s permit=%s/%s reason=%s",
-                    plan.scene.name,
-                    str(getattr(selected, "kind", "none") or "none"),
-                    plan.permit.allowed,
-                    plan.permit.mode,
-                    plan.permit.reason,
-                )
-            self.last_wake_decision = result.wake_decision
+            self.last_cortex_attention = result.attention
             if result.daydream_result is not None:
                 self.last_daydream_result = result.daydream_result
-            wake_debug = getattr(result.wake_decision, "debug", {}) or {}
             self.logger.info(
-                "[wake governor] level=%s ext=%.2f internal=%.2f permission=%.2f interrupt=%.2f speech=%.2f wants_vision=%s vision_permission_ok=%s vision_rejected_by=%s budget=%s silence_debt=%.2f cycles=%d micro_checked=%s reengagement_checked=%s",
-                result.wake_decision.level,
-                result.wake_decision.external_pressure,
-                result.wake_decision.internal_drive,
-                result.wake_decision.permission,
-                result.wake_decision.interrupt_cost,
-                result.wake_decision.speech_value,
-                bool(wake_debug.get("wants_vision", False)),
-                bool(wake_debug.get("vision_permission_ok", False)),
-                str(wake_debug.get("vision_rejected_by", "") or "none"),
-                result.wake_decision.budget_reason,
-                float(wake_debug.get("silence_debt", 0.0) or 0.0),
-                int(wake_debug.get("autonomous_silent_cycles", 0) or 0),
-                wake_debug.get("micro_presence_checked", False),
-                wake_debug.get("reengagement_checked", False),
+                "[cortex attention] level=%s external=%.2f internal=%.2f interrupt=%.2f resource=%.2f vision_hint=%s budget=%s",
+                result.attention.level,
+                result.attention.external_pressure,
+                result.attention.internal_drive,
+                result.attention.interrupt_cost,
+                result.attention.resource_caution,
+                int(result.attention.vision_refresh_recommended),
+                result.attention.budget_reason or "none",
             )
+            # Private mind nhận attention để hiểu nhịp tài nguyên. Signal này
+            # không mang trường semantic và không có quyền mở loa.
             self._update_private_mind_state(
                 signal_snapshot=signal_snapshot,
                 observer_frame=observer_frame,
-                wake_decision=result.wake_decision,
+                attention_signal=result.attention,
                 channel=channel,
                 user_text=user_text,
             )
             self._update_private_life_state(
                 signal_snapshot=signal_snapshot,
                 observer_frame=observer_frame,
-                wake_decision=result.wake_decision,
                 channel=channel,
                 user_text=user_text,
             )
-            # Curiosity Tutor tick chỉ chạy khi rảnh; chat chính không chia TPM
-            # với một tiến trình nền đang tò mò quá mức cần thiết.
             if getattr(self, "tutor_daemon", None) is not None and not getattr(self, "_chat_processing", False):
                 try:
                     from runtime.tutor_wiring import tutor_tick
@@ -1162,14 +1117,14 @@ class RuntimeCoordinator(
                 except Exception as exc:
                     self.logger.warning("Curiosity Tutor tick error: %s", exc)
         except Exception as exc:
-            self.logger.warning("3-tier autonomy update error: %s", exc)
+            self.logger.warning("Cortex runtime update error: %s", exc)
 
     def _update_private_mind_state(
         self,
         *,
         signal_snapshot,
         observer_frame,
-        wake_decision,
+        attention_signal,
         channel: str = "",
         user_text: str = "",
     ) -> None:
@@ -1223,7 +1178,7 @@ class RuntimeCoordinator(
             channel=channel or "autonomous",
             snapshot=signal_snapshot,
             observer_frame=observer_frame,
-            wake_decision=wake_decision,
+            attention_signal=attention_signal,
             memory_core=getattr(self, "memory_core", None),
             state_committer=state_committer,
             session_turn_ledger=getattr(self, "session_turn_ledger", None),
@@ -1340,7 +1295,6 @@ class RuntimeCoordinator(
         *,
         signal_snapshot,
         observer_frame=None,
-        wake_decision=None,
         channel: str = "",
         user_text: str = "",
     ) -> None:
@@ -1880,11 +1834,11 @@ class RuntimeCoordinator(
             payload["emotion_debug"] = self._build_emotion_debug_payload()
             payload["depth_v2"] = self._build_depth_v2_block(private_mind_digest=full_private_digest)
         if channel_name == "autonomous":
-            plan = getattr(self, "last_autonomous_plan", None)
-            if plan is not None:
-                # Payload này đi tới Director/Stage, không đi vào prompt như raw fact.
-                # Nó nói "vì sao được diễn", không tự bịa nội dung màn hình.
-                payload["autonomous_plan"] = plan.to_payload()
+            plan = getattr(self, "last_ai_intention_plan", None)
+            if plan is not None and callable(getattr(plan, "to_dict", None)):
+                # Stage chỉ nhận IntentionPlan typed của Architecture C. Không còn
+                # AutonomousPlan/permit/opportunity legacy chen giữa model và body.
+                payload["autonomous_plan"] = plan.to_dict()
         if channel_name == "chat":
             # Chỉ dùng nội bộ stage: nhận ra user đang yêu cầu ERIS diễn một hành
             # vi nghe được như cười, thở dài, giả giận. Không gửi field này cho
@@ -2140,20 +2094,11 @@ class RuntimeCoordinator(
             # không phải chờ TTS remote hoàn tất mới biết mình vừa nói.
             self._temporal_last_assistant_turn_at = time.time()
             if channel_name == "autonomous":
-                performer = getattr(self, "autonomous_performer", None)
+                # Content hook vẫn commit sau output public thật. Performer legacy
+                # đã bị xóa; nhịp sân khấu lấy trực tiếp từ IntentionPlan typed.
                 performance_meta = payload.get("performance_context") if isinstance(payload.get("performance_context"), dict) else {}
                 hook_meta = performance_meta.get("content_hook") if isinstance(performance_meta.get("content_hook"), dict) else {}
                 hook_id = str(performance_meta.get("content_hook_id") or hook_meta.get("id") or "")
-                performance_intent = str(performance_meta.get("performance_intent") or payload.get("intent") or "")
-                if performer is not None:
-                    performer.mark_spoken(
-                        getattr(self, "last_autonomous_plan", None),
-                        intent=performance_intent,
-                        hook_id=hook_id,
-                        text=str(payload.get("memory_text", payload.get("text", "")) or ""),
-                    )
-                # ContentEngine autonomous chỉ reserve khi chọn. Commit cooldown
-                # sau output public thật sự, tránh mất một bit chưa từng được nói.
                 performance_builder = getattr(self, "performance_context_builder", None)
                 content_engine = getattr(performance_builder, "content_engine", None) if performance_builder is not None else None
                 if content_engine is not None and callable(getattr(content_engine, "commit_hook_use", None)) and hook_id:
@@ -2258,8 +2203,8 @@ class RuntimeCoordinator(
         """Tóm tắt quyền phát ngôn theo Architecture C, không đọc speech_core cũ."""
         brief = getattr(self, "last_cognitive_brief", None)
         brief_payload = brief.to_dict() if brief is not None and callable(getattr(brief, "to_dict", None)) else {}
-        plan = getattr(self, "last_autonomous_plan", None)
-        plan_payload = plan.to_payload() if plan is not None and callable(getattr(plan, "to_payload", None)) else {}
+        plan = getattr(self, "last_ai_intention_plan", None)
+        plan_payload = plan.to_dict() if plan is not None and callable(getattr(plan, "to_dict", None)) else {}
         return {
             "architecture": "cortex_v2",
             "chat_active": bool(getattr(self, "chat_mode", False) or getattr(self, "_chat_processing", False)),
@@ -2271,7 +2216,7 @@ class RuntimeCoordinator(
             },
             "autonomous_plan": {
                 key: plan_payload.get(key)
-                for key in ("mode", "reason", "should_speak", "performance_intent")
+                for key in ("speak", "motive", "strategy", "semantics", "activity")
                 if key in plan_payload
             },
         }
@@ -2382,13 +2327,30 @@ class RuntimeCoordinator(
         except ValueError:
             return 1.2
 
-    def _block_autonomous_presence_after_public_turn(self, now: float | None = None) -> None:
+    def _block_autonomous_presence_after_public_turn(
+        self,
+        now: float | None = None,
+        *,
+        seconds: float | None = None,
+    ) -> None:
+        """Chặn self-turn trong một khoảng ngắn sau public turn.
+
+        ``seconds`` là contract của ChatCycle. Bản cũ không nhận tham số này nên
+        rơi vào TypeError rồi vô tình dùng grace 8 giây, khiến baton nhả ngay giữa
+        nhịp chat. Khi caller không truyền, mới dùng cooldown cơ học tối thiểu.
+        """
         current_time = time.time() if now is None else float(now)
-        window = max(
-            8.0,
-            float(getattr(self, "presence_maintenance_cooldown_sec", 0.0) or 0.0),
-            float(getattr(self, "reengagement_cooldown_sec", 0.0) or 0.0),
-        )
+        if seconds is not None:
+            try:
+                window = max(8.0, min(120.0, float(seconds)))
+            except (TypeError, ValueError):
+                window = 18.0
+        else:
+            window = max(
+                8.0,
+                float(getattr(self, "presence_maintenance_cooldown_sec", 0.0) or 0.0),
+                float(getattr(self, "reengagement_cooldown_sec", 0.0) or 0.0),
+            )
         self.autonomous_presence_blocked_until = max(
             float(getattr(self, "autonomous_presence_blocked_until", 0.0) or 0.0),
             current_time + window,
@@ -5668,6 +5630,18 @@ class RuntimeCoordinator(
         local bằng API; không ⇒ trả None ⇒ compressor caption local như cũ.
         """
         remote = getattr(llm_service, "vision_client", None)
+        # Nếu provider chính là multimodal nhưng chưa dựng lane riêng, thử dùng
+        # chính main client. Adapter sẽ tự degrade nếu model từ chối image_url.
+        # Nhờ vậy gpt-5.6 Terra không bị đứng ngoài cửa trong khi OCR-only giả
+        # vờ là toàn bộ thị giác của Eris.
+        if remote is None:
+            use_main = os.environ.get("ERIS_VISION_USE_MAIN_MODEL", "1").strip().lower() not in {
+                "0", "false", "no", "off",
+            }
+            if use_main:
+                candidate = getattr(llm_service, "client", None)
+                if candidate is not None and callable(getattr(candidate, "create_chat_completion", None)):
+                    remote = candidate
         if remote is None or not callable(getattr(remote, "create_chat_completion", None)):
             return None
         self.logger.info(
@@ -6430,12 +6404,20 @@ class RuntimeCoordinator(
             self.stop()
             return
 
+        startup_failed = False
         try:
             orchestrator.run_startup()
-        except Exception:
+        except Exception as exc:
+            startup_failed = True
+            self._ai_startup_ran = False
+            formatted = " | ".join(
+                line.strip() for line in traceback.format_exc().strip().splitlines() if line.strip()
+            )
             self.logger.warning(
-                "[architecture C startup] failed; continuing. %s",
-                traceback.format_exc().strip(),
+                "[architecture C startup] failed type=%s message=%s trace=%s",
+                type(exc).__name__,
+                str(exc)[:300],
+                formatted[:1800],
             )
 
         if not self.running:
@@ -6446,6 +6428,23 @@ class RuntimeCoordinator(
                 worker.start()
             except Exception as exc:
                 self.logger.warning("[screen text] start error: %s", exc)
+        # Startup là public presence quan trọng, không phải fire-and-forget. Nếu
+        # lần đầu vấp do worker/client vừa bootstrap, thử lại đúng một lần sau khi
+        # sensory worker đã lên. Không loop vô hạn, con người đã có đủ startup
+        # ritual tự sinh rồi.
+        if startup_failed and self.running:
+            try:
+                time.sleep(0.20)
+                orchestrator.run_startup()
+            except Exception as exc:
+                self._ai_startup_ran = False
+                formatted = " | ".join(
+                    line.strip() for line in traceback.format_exc().strip().splitlines() if line.strip()
+                )
+                self.logger.error(
+                    "[architecture C startup retry] failed type=%s message=%s trace=%s",
+                    type(exc).__name__, str(exc)[:300], formatted[:1800],
+                )
 
         while self.running:
             try:

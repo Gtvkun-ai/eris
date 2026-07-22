@@ -16,6 +16,7 @@ _STRATEGY_BY_MOVE = {
     "clarify_previous_statement": ("literal_clarification", "accuracy", "focused"),
     "repair_assumption": ("repair_assumption", "accuracy", "repair"),
     "acknowledge_close": ("respect_topic_close", "boundary", "neutral"),
+    "respond_to_relational_bid": ("meet_relational_bid", "connection", "soft"),
 }
 
 

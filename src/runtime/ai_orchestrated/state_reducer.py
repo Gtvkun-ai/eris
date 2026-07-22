@@ -32,10 +32,14 @@ from .personality import (
     DEFAULT_CORE,
     DEFAULT_MOOD,
     DEFAULT_TEMPERAMENT,
+    NarrativeState,
     PersonalityProfile,
+    RELATIONSHIP_PROFILE_TRAITS,
+    RelationshipPersonalityProfile,
     TraitSignal,
     decay_profile,
 )
+from .personality_consolidator import consolidate_personality
 
 
 PersistFn = Callable[[Mapping[str, Any]], None]
@@ -325,8 +329,17 @@ class StateReducer:
         temperament_attractor = dict(profile.temperament_attractor)
         day_usage = self._prune_day_usage(dict(profile.day_usage))
         corroboration = dict(profile.corroboration)
+        corroboration_records = {
+            str(key): [dict(item) for item in values]
+            for key, values in profile.corroboration_records.items()
+        }
         streaks = {str(key): dict(value) for key, value in profile.streaks.items()}
         strategy_reinforcement = dict(profile.strategy_reinforcement)
+        narrative = profile.narrative
+        relationship_profiles = {
+            str(key): value
+            for key, value in profile.relationship_profiles.items()
+        }
         trajectory = [dict(item) for item in profile.trajectory]
 
         changed = False
@@ -400,13 +413,34 @@ class StateReducer:
             # ta phải ghi bookkeeping một cách minh bạch.
             changed = True
 
-            # Core chỉ dịch sau hit mạnh thứ ba cùng hướng. Không có chuyện một câu
-            # chat làm đổi bản sắc rồi panel tung pháo giấy.
+            # Core chỉ dịch sau ít nhất ba event mạnh cùng hướng, qua tối thiểu
+            # hai runtime session trong 14 ngày. Một buổi chat dồn dập không được
+            # tự phong thành identity milestone chỉ vì nó nói cùng một ý ba lần.
             if category == "core":
                 corr_key = f"{signal.trait}:{'positive' if direction > 0 else 'negative'}"
-                seen = int(corroboration.get(corr_key, 0) or 0) + 1
-                corroboration[corr_key] = seen
-                if seen < 3 or count < 2:
+                cutoff = now - 14 * 86400.0
+                records = [
+                    dict(item)
+                    for item in corroboration_records.get(corr_key, [])
+                    if float(item.get("timestamp", 0.0) or 0.0) >= cutoff
+                ]
+                records.append(
+                    {
+                        "timestamp": now,
+                        "session_id": observation.session_id or "runtime",
+                        "turn_seq": observation.turn_seq,
+                        "turn_id": observation.turn_id,
+                        "confidence": signal.confidence,
+                        "evidence_count": len(evidence),
+                    }
+                )
+                records = records[-16:]
+                corroboration_records[corr_key] = records
+                corroboration[corr_key] = len(records)
+                distinct_sessions = {
+                    str(item.get("session_id", "") or "runtime") for item in records
+                }
+                if len(records) < 3 or len(distinct_sessions) < 2:
                     continue
 
             confidence_scale = self._confidence_scale(signal.confidence, category)
@@ -418,10 +452,13 @@ class StateReducer:
                 else 0.68
             )
             outcome_scale = 1.0
-            if signal.source in {"self_choice", "consequence"}:
-                outcome_scale = 0.62 + 0.38 * (
-                    abs(consequence.reinforcement) * consequence.confidence
-                )
+            if signal.source in {"self_choice", "consequence"} and category != "mood":
+                # Reinforcement mang dấu. Outcome xấu có thể làm yếu chiến lược
+                # đã biểu hiện, thay vì abs() rồi vô tình củng cố cả thất bại.
+                # Chỉ dùng khi self-reflection thừa nhận quan hệ nhân quả đủ chắc.
+                if consequence.confidence < 0.55 or abs(consequence.reinforcement) < 0.05:
+                    continue
+                outcome_scale = consequence.reinforcement * consequence.confidence
 
             proposed = (
                 max(-1.0, min(1.0, signal.delta))
@@ -448,6 +485,35 @@ class StateReducer:
             day_usage[usage_key] = used + abs(applied)
             changed = True
 
+            if (
+                category == "temperament"
+                and signal.trait in RELATIONSHIP_PROFILE_TRAITS
+                and observation.event_kind in {"chat", "force_speak"}
+            ):
+                relationship_id = observation.relationship_id or PRIMARY_RELATIONSHIP_ID
+                relation_profile = relationship_profiles.get(
+                    relationship_id,
+                    RelationshipPersonalityProfile(relationship_id=relationship_id),
+                )
+                offsets = dict(relation_profile.trait_offsets)
+                old_offset = float(offsets.get(signal.trait, 0.0) or 0.0)
+                offsets[signal.trait] = max(
+                    -0.35,
+                    min(0.35, old_offset + applied * 0.75),
+                )
+                relationship_profiles[relationship_id] = RelationshipPersonalityProfile.from_mapping(
+                    {
+                        **relation_profile.to_dict(),
+                        "relationship_id": relationship_id,
+                        "trait_offsets": offsets,
+                        "last_interpretation": interpretation.summary,
+                        "event_count": relation_profile.event_count + 1,
+                        "last_turn_seq": observation.turn_seq,
+                        "updated_at": now,
+                    },
+                    relationship_id=relationship_id,
+                )
+
             # Hai event cùng hướng bắt đầu dịch attractor. Không có attractor "tốt";
             # attractor chỉ là quỹ đạo đã được lặp và củng cố.
             if category == "temperament" and count >= 2:
@@ -467,6 +533,8 @@ class StateReducer:
                     "timestamp": now,
                     "turn_seq": observation.turn_seq,
                     "turn_id": observation.turn_id,
+                    "session_id": observation.session_id,
+                    "relationship_id": observation.relationship_id,
                     "event_kind": observation.event_kind,
                     "category": category,
                     "trait": signal.trait,
@@ -480,6 +548,8 @@ class StateReducer:
                     "strategy": signal.strategy or consequence.strategy,
                     "self_interpretation": interpretation.summary,
                     "interpretation_frame": interpretation.frame,
+                    "interpretation_confidence": interpretation.confidence,
+                    "self_authored": interpretation.self_authored,
                     "consequence": consequence.outcome,
                     "reinforcement": consequence.reinforcement,
                     "evidence": list(evidence[:5]),
@@ -491,13 +561,85 @@ class StateReducer:
         # strategy_reinforcement cũ được giữ read-only để migrate/rollback,
         # không còn là nguồn học production.
 
+        narrative_text = observation.self_narrative_candidate
+        narrative_confidence = observation.self_narrative_confidence
+        # Migration an toàn: profile cũ chưa có narrative có thể nhận một
+        # self-interpretation đủ chắc làm seed đầu tiên. Sau đó chỉ candidate
+        # dài hạn có contract riêng mới được phép viết đè.
+        if (
+            not narrative_text
+            and not narrative.text
+            and interpretation.self_authored
+            and interpretation.summary
+            and interpretation.confidence >= 0.78
+        ):
+            narrative_text = interpretation.summary
+            narrative_confidence = interpretation.confidence
+
+        if narrative_text and narrative_confidence >= 0.72:
+            provenance = [
+                *narrative.provenance,
+                f"turn:{observation.turn_seq}",
+                f"frame:{interpretation.frame}",
+            ][-8:]
+            candidate_narrative = NarrativeState.from_mapping(
+                {
+                    "text": narrative_text,
+                    "frame": interpretation.frame,
+                    "confidence": narrative_confidence,
+                    "version": narrative.version + 1,
+                    "source_turn_seq": observation.turn_seq,
+                    "source_turn_id": observation.turn_id,
+                    "provenance": provenance,
+                    "updated_at": now,
+                }
+            )
+            if candidate_narrative != narrative:
+                narrative = candidate_narrative
+                changed = True
+
+        if observation.event_kind in {"chat", "force_speak"}:
+            relationship_id = observation.relationship_id or PRIMARY_RELATIONSHIP_ID
+            relation_profile = relationship_profiles.get(
+                relationship_id,
+                RelationshipPersonalityProfile(relationship_id=relationship_id),
+            )
+            carry = list(relation_profile.unresolved_carry)
+            if observation.discourse.status == "closed" or observation.relationship_meaning in {
+                "closure",
+                "repair_accepted",
+            }:
+                carry = []
+            elif observation.open_loop:
+                carry = [
+                    item for item in carry
+                    if item.casefold() != observation.open_loop.casefold()
+                ]
+                carry.append(observation.open_loop)
+                carry = carry[-6:]
+            updated_relation_profile = RelationshipPersonalityProfile.from_mapping(
+                {
+                    **relation_profile.to_dict(),
+                    "relationship_id": relationship_id,
+                    "unresolved_carry": carry,
+                    "last_interpretation": (
+                        interpretation.summary
+                        if interpretation.self_authored and interpretation.confidence >= 0.60
+                        else relation_profile.last_interpretation
+                    ),
+                    "last_turn_seq": max(relation_profile.last_turn_seq, observation.turn_seq),
+                    "updated_at": now,
+                },
+                relationship_id=relationship_id,
+            )
+            if updated_relation_profile != relation_profile:
+                relationship_profiles[relationship_id] = updated_relation_profile
+                changed = True
+
         # Giữ ledger hữu hạn. 96 entry đủ để debug hướng gần đây mà không biến
         # memory state thành nhật ký đời người không có mục lục.
         trajectory = trajectory[-96:]
-        if not changed and profile.last_decay_at == original.last_decay_at:
-            return original
-
-        return PersonalityProfile.from_mapping(
+        candidate = PersonalityProfile.from_mapping(
             {
                 **profile.to_dict(),
                 "version": profile.version + (1 if changed else 0),
@@ -508,13 +650,26 @@ class StateReducer:
                 "temperament_attractor": temperament_attractor,
                 "day_usage": day_usage,
                 "corroboration": corroboration,
+                "corroboration_records": corroboration_records,
                 "streaks": streaks,
                 "strategy_reinforcement": strategy_reinforcement,
+                "narrative": narrative.to_dict(),
+                "relationship_profiles": {
+                    key: value.to_dict() for key, value in relationship_profiles.items()
+                },
                 "trajectory": trajectory,
                 "last_decay_at": now,
                 "last_updated_at": now if changed else profile.last_updated_at,
             }
         )
+        candidate = consolidate_personality(candidate, now=now)
+        if (
+            not changed
+            and profile.last_decay_at == original.last_decay_at
+            and candidate.version == profile.version
+        ):
+            return original
+        return candidate
 
     @staticmethod
     def _confidence_scale(confidence: float, category: str) -> float:
@@ -621,6 +776,20 @@ class StateReducer:
                 state,
                 version=state.version + 1,
                 appraisal=AppraisalState(),
+                personality=personality,
+                updated_at=now,
+            )
+        if action == "consolidate_personality":
+            personality = consolidate_personality(
+                state.personality,
+                now=now,
+                force=True,
+            )
+            if personality.version == state.personality.version:
+                return state
+            return replace(
+                state,
+                version=state.version + 1,
                 personality=personality,
                 updated_at=now,
             )

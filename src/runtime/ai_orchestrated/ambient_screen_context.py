@@ -32,62 +32,8 @@ def _hash_text(text: str) -> str:
     return hashlib.sha1(_norm(text).encode("utf-8", "ignore")).hexdigest()[:16]
 
 
-_GAME_MARKERS = (
-    "steam", "epic games", "mini world", "minecraft", "roblox", "valorant",
-    "league of legends", "lien quan", "genshin", "honkai", "game client",
-    "inventory", "stamina", "mana", "health", "hp ", " mp ", "quest",
-    "respawn", "victory", "defeat", "score", "match", "level up",
-)
-_CODE_MARKERS = (
-    "godot", "visual studio", "vscode", "pycharm", "rider", "terminal",
-    "powershell", "traceback", "exception", "debugger", "script", ".gd",
-    ".py", "class ", "func ", "extends ", "error", "warning",
-)
-_MEDIA_MARKERS = (
-    "youtube", "tiktok", "spotify", "netflix", "vlc", "now playing",
-    "pause", "playback", "subtitle", "channel", "playlist",
-)
-_CHAT_MARKERS = (
-    "discord", "telegram", "zalo", "messenger", "gmail", "outlook", "slack",
-    "teams", "zoom", "meet",
-)
-_BROWSER_MARKERS = ("chrome", "edge", "firefox", "brave", "opera", "browser")
-
-
-def _contains_any(blob: str, markers: Sequence[str]) -> bool:
-    padded = f" {blob} "
-    return any(marker in blob or f" {marker.strip()} " in padded for marker in markers)
-
-
-def _infer_scene_kind(*, window_title: str, process_name: str, text_blob: str) -> tuple[str, float, tuple[str, ...]]:
-    window_blob = _norm(f"{window_title} {process_name}")
-    content_blob = _norm(text_blob)
-    joined = f"{window_blob} {content_blob}".strip()
-    evidence: list[str] = []
-
-    # Nội dung OCR/UIA có trọng lượng cao hơn tên process. Một cửa sổ Chrome có
-    # thể đang chạy game web, xem video hoặc đọc tài liệu, loài người vốn thích
-    # nhét cả đời mình vào một tab nên không được phân loại chỉ bằng executable.
-    if _contains_any(content_blob, _GAME_MARKERS):
-        evidence.append("screen_text:game_markers")
-        return "game_likely", 0.82, tuple(evidence)
-    if _contains_any(window_blob, _GAME_MARKERS):
-        evidence.append("window:game_marker")
-        return "game_possible", 0.62, tuple(evidence)
-    if _contains_any(joined, _CODE_MARKERS):
-        evidence.append("screen_or_window:code_markers")
-        return "development", 0.78 if _contains_any(content_blob, _CODE_MARKERS) else 0.64, tuple(evidence)
-    if _contains_any(joined, _MEDIA_MARKERS):
-        evidence.append("screen_or_window:media_markers")
-        return "media", 0.72, tuple(evidence)
-    if _contains_any(joined, _CHAT_MARKERS):
-        evidence.append("screen_or_window:private_communication")
-        return "communication", 0.72, tuple(evidence)
-    if _contains_any(window_blob, _BROWSER_MARKERS):
-        evidence.append("window:browser_marker")
-        return "browser", 0.52, tuple(evidence)
-    return "unknown", 0.25 if window_blob else 0.0, ()
-
+# Runtime chỉ vận chuyển evidence. Việc một màn hình là game, IDE hay media
+# thuộc về main planner/vision model, không thuộc bảng keyword trong Python.
 
 @dataclass(frozen=True, slots=True)
 class AmbientScreenContext:
@@ -106,7 +52,6 @@ class AmbientScreenContext:
     visible_text: tuple[str, ...] = ()
     changed_text: tuple[str, ...] = ()
     evidence_refs: tuple[str, ...] = ()
-    scene_evidence: tuple[str, ...] = ()
 
     @property
     def fresh(self) -> bool:
@@ -135,10 +80,9 @@ class AmbientScreenContext:
             "visible_text": list(self.visible_text),
             "changed_text": list(self.changed_text),
             "evidence_refs": list(self.evidence_refs),
-            "scene_evidence": list(self.scene_evidence),
             "epistemic_note": (
-                "scene_kind is a low-risk classification, not proof of user intent. "
-                "Use visible_text/changed_text for direct claims; otherwise ask or hedge."
+                "Runtime does not classify screen semantics. scene_kind is accepted only when an upstream "
+                "vision sensor supplied it with provenance; main planner remains the semantic authority."
             ),
         }
 
@@ -164,8 +108,8 @@ class AmbientScreenContext:
             (
                 "epistemic_contract:",
                 "- Directly mention only fresh visible/changed text or the literal app/window name.",
-                "- scene_kind is only a hypothesis. Ask or hedge; never assert the user's intent, mood, success, failure, or exact activity from it.",
-                "- A game-like scene may justify a natural question about what is happening on screen, not a claim that the user is definitely playing.",
+                "- scene_kind, when present, came from an upstream vision sensor and remains a hypothesis.",
+                "- Never assert the user's intent, mood, success, failure, or exact activity without direct evidence.",
                 "- Do not surface private communication content.",
             )
         )
@@ -271,12 +215,18 @@ class AmbientScreenTracker:
         visible_text = tuple(visible_items[: max(1, int(max_items))])
         changed_text = tuple(dict.fromkeys(changed_items[: max(1, int(max_items))]))
         content_changed = bool(changed_text) or bool(revision > self._last_revision and changed_ratio >= 0.025)
-        text_blob = " ".join(visible_text)
-        scene_kind, scene_confidence, scene_evidence = _infer_scene_kind(
-            window_title=window_title,
-            process_name=process_name,
-            text_blob=text_blob,
-        )
+        # Chỉ nhận semantic label khi upstream sensor đã cung cấp rõ provenance.
+        # Không phân loại bằng executable, title hay token OCR ở đây.
+        scene_kind = _compact(
+            content_meta.get("scene_kind", "") or telemetry.get("vision_scene_kind", ""), 64
+        ).lower() or "unknown"
+        try:
+            scene_confidence = float(
+                content_meta.get("scene_confidence", telemetry.get("vision_scene_confidence", 0.0)) or 0.0
+            )
+        except (TypeError, ValueError):
+            scene_confidence = 0.0
+        scene_confidence = max(0.0, min(1.0, scene_confidence))
         evidence_refs = tuple(dict.fromkeys(evidence_refs_list))
 
         self._last_revision = max(self._last_revision, revision)
@@ -299,7 +249,6 @@ class AmbientScreenTracker:
             visible_text=visible_text,
             changed_text=changed_text,
             evidence_refs=evidence_refs,
-            scene_evidence=scene_evidence,
         )
 
     def _from_telemetry_only(self, telemetry: Mapping[str, Any], *, now: float) -> AmbientScreenContext:
@@ -318,11 +267,16 @@ class AmbientScreenTracker:
         )
         process_name = _compact(telemetry.get("active_app", ""), 120)
         source = str(content.get("source", "") or "")
-        scene_kind, scene_confidence, scene_evidence = _infer_scene_kind(
-            window_title=window_title,
-            process_name=process_name,
-            text_blob=visible,
-        )
+        scene_kind = _compact(
+            content.get("scene_kind", "") or telemetry.get("vision_scene_kind", ""), 64
+        ).lower() or "unknown"
+        try:
+            scene_confidence = float(
+                content.get("scene_confidence", telemetry.get("vision_scene_confidence", 0.0)) or 0.0
+            )
+        except (TypeError, ValueError):
+            scene_confidence = 0.0
+        scene_confidence = max(0.0, min(1.0, scene_confidence))
         return AmbientScreenContext(
             window_title=window_title,
             process_name=process_name,
@@ -334,7 +288,6 @@ class AmbientScreenTracker:
             scene_confidence=scene_confidence,
             visible_text=(visible,) if visible and not privacy else (),
             evidence_refs=(f"screen_content:{source or 'telemetry'}",) if visible and not privacy else (),
-            scene_evidence=scene_evidence,
         )
 
 

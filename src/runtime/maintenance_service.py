@@ -314,7 +314,7 @@ class MaintenanceService:
         for name, value in {
             "last_chat_answer": "", "last_user_intent": "", "active_conversational_topic": "",
             "last_user_signature": "", "repeated_user_count": 0, "last_text": "",
-            "last_autonomous_signature": "", "last_semantic_scene_note": None,
+            "last_semantic_scene_note": None,
         }.items():
             if hasattr(owner, name):
                 setattr(owner, name, value)

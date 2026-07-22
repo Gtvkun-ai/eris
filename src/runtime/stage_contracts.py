@@ -16,9 +16,8 @@ import uuid
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from runtime.autonomous_performance import AutonomousPerformancePlanner
+from runtime.ai_orchestrated.performance import AutonomousPerformancePlanner
 from runtime.body_choreography import BodyChoreographyPlanner
-from runtime.autonomous_surface_anchor import AutonomousSurfaceAnchorObserver
 from runtime.intention_authority import IntentionObserver
 from runtime.prosody_director import ProsodyDirector
 from runtime.speech_delivery_planner import SpeechDeliveryPlanner, affect_signals_from
@@ -177,8 +176,6 @@ class StageFrameBuilder:
         self.delivery_planner = SpeechDeliveryPlanner()
         self.performance_planner = PerformanceRequestPlanner()
         self.autonomous_performance_planner = AutonomousPerformancePlanner()
-        self.autonomous_anchor_observer = AutonomousSurfaceAnchorObserver()
-        self.autonomous_anchor_guard = self.autonomous_anchor_observer  # alias tương thích plugin cũ
         self.intention_observer = IntentionObserver()
         self.intention_authority_gate = self.intention_observer  # alias tương thích plugin cũ
         self.show_runtime = StageShowRuntime()
@@ -196,22 +193,13 @@ class StageFrameBuilder:
     ) -> StageFrame:
         raw_text = str(payload.get("text", getattr(decision, "text", "")) or "")
         if str(channel or "").strip().lower() == "autonomous":
-            plan_payload = payload.get("autonomous_plan") if isinstance(payload.get("autonomous_plan"), dict) else None
-            verdict = self.autonomous_anchor_observer.validate(raw_text, plan_payload)
-            payload["autonomous_anchor"] = verdict.to_payload()
-            # Observer chỉ mô tả khoản nợ bằng chứng. Semantic surface bất biến.
-            raw_text = verdict.text
-
-            # Quan sát lời hứa thực thi để ghi hậu quả cho lượt sau. Không rewrite,
-            # không body-only, không giả làm một tầng đạo đức đứng sau model chính.
-            opportunity = (
-                plan_payload.get("selected_opportunity")
-                if isinstance(plan_payload, dict) and isinstance(plan_payload.get("selected_opportunity"), dict)
-                else {}
-            )
+            plan_payload = payload.get("autonomous_plan") if isinstance(payload.get("autonomous_plan"), dict) else {}
+            semantics = plan_payload.get("semantics") if isinstance(plan_payload.get("semantics"), dict) else {}
+            # IntentionObserver chỉ quan sát claim thực thi. Nó không chấm lại
+            # semantic surface và không cần opportunity/permit legacy.
             intention_context = {
-                "kind": str(opportunity.get("kind", "") or payload.get("intent", "")),
-                "evidence_refs": tuple(opportunity.get("evidence_refs") or ()),
+                "kind": str(semantics.get("speech_act", "") or payload.get("intent", "")),
+                "evidence_refs": tuple(plan_payload.get("evidence_refs") or ()),
                 "system_action": payload.get("system_action", ""),
                 "action": payload.get("action", ""),
                 "action_input": payload.get("action_input", ""),
@@ -225,7 +213,7 @@ class StageFrameBuilder:
             intention_observation = self.intention_observer.validate(raw_text, intention_context)
             observation_payload = intention_observation.to_payload()
             payload["intention_observation"] = observation_payload
-            payload["intention_authority"] = observation_payload  # khóa tương thích frontend/log cũ
+            payload["intention_authority"] = observation_payload
             raw_text = intention_observation.text
         surfaces = self.transformers.transform(raw_text)
         user_text = str(payload.get("user_text", "") or "")
@@ -286,8 +274,8 @@ class StageFrameBuilder:
             if performance.performance_act.prosody_note:
                 prosody_notes = f"{prosody_notes} {performance.performance_act.prosody_note}".strip()
 
-        # Autonomous không chỉ có text. Dựng opening hold, speech beat và closing
-        # settle từ plan đã được SpeakGate cấp quyền. LLM không được tự bịa nhịp.
+        # Autonomous không chỉ có text. Nhịp sân khấu lấy từ IntentionPlan typed;
+        # InitiativeController đã xử lý gate nên stage không cấp quyền lần hai.
         autonomous_act = None
         if str(channel or "").strip().lower() == "autonomous":
             autonomous_act = self.autonomous_performance_planner.plan(

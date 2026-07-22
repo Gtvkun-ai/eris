@@ -24,6 +24,7 @@ _RELATION_HINTS = {
     "challenge_assistant_assumption": "correction",
     "style_feedback": "style_criticism",
     "close_topic": "close_topic",
+    "relational_bid": "closeness_bid",
 }
 
 
@@ -106,6 +107,14 @@ def infer_current_turn_anchor(user_text: str, *, previous_assistant_text: str = 
         return "style_criticism"
     if any(token in normalized for token in ("sen", "tinh cam", "ngot", "diu", "coc loc", "noi gon", "noi thang")):
         return "style_request"
+    if any(
+        marker in normalized
+        for marker in (
+            "nhin vao toi", "nhin vao tui", "nhin vao trai tim", "trai tim nho be",
+            "o ben toi", "o ben tui", "om toi", "om tui", "dung bo toi", "dung bo tui",
+        )
+    ):
+        return "closeness_bid"
     if any(token in normalized for token in ("muon tui quen", "muon toi quen", "thich tui", "thich toi", "yeu tui", "yeu toi")):
         return "request_reciprocity"
     if any(token in normalized for token in ("ha", "hong", "khong")) and any(

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from dataclasses import replace
@@ -18,6 +19,7 @@ from actions.contracts import VALID_SYSTEM_ACTIONS
 from .contracts import CognitiveObservation, IntentionPlan
 from .discovery import DiscoveryPlan
 from .identity import CONFLICT_TEMPLATES, DEFAULT_DEFENSES, DEFAULT_EMERGENT_VALUES, DEFAULT_MOTIVES, DEFAULT_RELATIONSHIP, DEFAULT_VALUES
+from .personality import DEFAULT_CORE, DEFAULT_MOOD, DEFAULT_TEMPERAMENT
 
 
 
@@ -71,6 +73,8 @@ COGNITIVE_OBSERVATION_SCHEMA: dict[str, Any] = {
         "rupture_delta",
         "appraisal",
         "self_interpretation",
+        "self_narrative_candidate",
+        "self_narrative_confidence",
         "consequence",
         "trait_signals",
         "identity_signals",
@@ -78,6 +82,7 @@ COGNITIVE_OBSERVATION_SCHEMA: dict[str, Any] = {
         "activated_defenses",
         "active_conflict",
         "value_choice",
+        "discourse",
         "open_loop",
         "memory_candidate",
         "evidence",
@@ -143,6 +148,8 @@ COGNITIVE_OBSERVATION_SCHEMA: dict[str, Any] = {
                 "evidence": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
             },
         },
+        "self_narrative_candidate": {"type": "string"},
+        "self_narrative_confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
         "consequence": {
             "type": "object",
             "additionalProperties": False,
@@ -255,6 +262,23 @@ COGNITIVE_OBSERVATION_SCHEMA: dict[str, Any] = {
                 "evidence": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
             },
         },
+        "discourse": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "status", "reply_expected", "assistant_may_continue",
+                "unresolved_point", "thread_key", "confidence", "evidence"
+            ],
+            "properties": {
+                "status": {"type": "string", "enum": ["open", "closed", "waiting_user", "neutral", "unknown"]},
+                "reply_expected": {"type": "boolean"},
+                "assistant_may_continue": {"type": "boolean"},
+                "unresolved_point": {"type": "string"},
+                "thread_key": {"type": "string"},
+                "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "evidence": {"type": "array", "items": {"type": "string"}, "maxItems": 4},
+            },
+        },
         "open_loop": {"type": "string"},
         "memory_candidate": {"type": "string"},
         "evidence": {"type": "array", "items": {"type": "string"}, "maxItems": 4},
@@ -270,12 +294,12 @@ OBJECTIVE_OBSERVATION_SCHEMA: dict[str, Any] = {
     "required": [
         name
         for name in COGNITIVE_OBSERVATION_SCHEMA["required"]
-        if name not in {"self_interpretation", "trait_signals", "identity_signals", "active_motives", "activated_defenses", "active_conflict", "value_choice"}
+        if name not in {"self_interpretation", "self_narrative_candidate", "self_narrative_confidence", "trait_signals", "identity_signals", "active_motives", "activated_defenses", "active_conflict", "value_choice"}
     ],
     "properties": {
         name: value
         for name, value in COGNITIVE_OBSERVATION_SCHEMA["properties"].items()
-        if name not in {"self_interpretation", "trait_signals", "identity_signals", "active_motives", "activated_defenses", "active_conflict", "value_choice"}
+        if name not in {"self_interpretation", "self_narrative_candidate", "self_narrative_confidence", "trait_signals", "identity_signals", "active_motives", "activated_defenses", "active_conflict", "value_choice"}
     },
 }
 
@@ -283,12 +307,14 @@ PERSONALITY_REFLECTION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "required": [
-        "self_interpretation", "trait_signals", "identity_signals",
+        "self_interpretation", "self_narrative_candidate", "self_narrative_confidence", "trait_signals", "identity_signals",
         "active_motives", "activated_defenses", "active_conflict",
         "value_choice", "notes"
     ],
     "properties": {
         "self_interpretation": COGNITIVE_OBSERVATION_SCHEMA["properties"]["self_interpretation"],
+        "self_narrative_candidate": COGNITIVE_OBSERVATION_SCHEMA["properties"]["self_narrative_candidate"],
+        "self_narrative_confidence": COGNITIVE_OBSERVATION_SCHEMA["properties"]["self_narrative_confidence"],
         "trait_signals": COGNITIVE_OBSERVATION_SCHEMA["properties"]["trait_signals"],
         "identity_signals": COGNITIVE_OBSERVATION_SCHEMA["properties"]["identity_signals"],
         "active_motives": COGNITIVE_OBSERVATION_SCHEMA["properties"]["active_motives"],
@@ -337,6 +363,8 @@ INTENTION_PLAN_SCHEMA: dict[str, Any] = {
         "tool_intent",
         "tool_input",
         "evidence_refs",
+        "semantics",
+        "activity",
         "notes",
     ],
     "properties": {
@@ -353,6 +381,37 @@ INTENTION_PLAN_SCHEMA: dict[str, Any] = {
         "tool_intent": {"type": "string"},
         "tool_input": {"type": "string"},
         "evidence_refs": {"type": "array", "items": {"type": "string"}, "maxItems": 5},
+        "semantics": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["turn_kind", "speech_act", "subject_key", "evidence_scope", "continuation_key"],
+            "properties": {
+                "turn_kind": {
+                    "type": "string",
+                    "enum": [
+                        "chat_response", "continuation", "environment", "activity_event",
+                        "discovery", "internal", "presence", "startup", "force_speak", "other"
+                    ],
+                },
+                "speech_act": {"type": "string"},
+                "subject_key": {"type": "string"},
+                "evidence_scope": {"type": "string"},
+                "continuation_key": {"type": "string"},
+            },
+        },
+        "activity": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["activity_kind", "phase", "event", "event_key", "confidence", "evidence_refs"],
+            "properties": {
+                "activity_kind": {"type": "string"},
+                "phase": {"type": "string"},
+                "event": {"type": "string"},
+                "event_key": {"type": "string"},
+                "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "evidence_refs": {"type": "array", "items": {"type": "string"}, "maxItems": 5},
+            },
+        },
         "notes": {"type": "string"},
     },
 }
@@ -695,6 +754,9 @@ class AIRuntimeModelRouter:
             "Tên process/cửa sổ, nhãn DEBUG, foreground state, PID, backend hay session id chỉ là runtime metadata: không biến "
             "chúng thành ẩn dụ, bầu không khí, tính cách user hoặc câu chuyện bí ẩn. Nếu chỉ có metadata loại này, dùng persona_opening. "
             "Tránh câu onboarding/availability như 'Tôi ở đây', 'bắt đầu thôi', 'cần gì cứ nói', hoặc lời chào an toàn vô nghĩa. "
+            "Mặc định ERIS là ấm kín: guardedness giới hạn tự bộc lộ chứ không biến cách cư xử thành lạnh. "
+            "Ngay cả khi giữ mặt nạ hoặc khoảng cách, cô ấy thường làm mềm nhịp, giữ thể diện và để lại đường quay lại; "
+            "chỉ dùng giọng lạnh khi current_personality hoặc tình huống có rupture, firm boundary, overload, hostility hay defensive coldness rõ. "
             "Nếu không có evidence hay open loop, vẫn viết một persona_opening có nét: ấm kín, hơi khô, tò mò hoặc trêu nhẹ; "
             "persona_opening phải tự đủ nghĩa trong chính câu đó. Không dùng cụm treo như 'phần thật', 'phần còn lại', 'điều đáng nói', "
             "'cái đó' hoặc 'thứ quan trọng' nếu câu không chỉ rõ chúng là gì. "
@@ -705,9 +767,13 @@ class AIRuntimeModelRouter:
             "AUTONOMOUS_SELF_CONTEXT. Biến nó thành một phản ứng, nhận xét, câu hỏi hoặc whim của ERIS; không nhắc private mind, agenda, "
             "surface candidate, pressure, score hay hệ thống nội bộ. Numeric internal_state chỉ điều chỉnh sắc thái, không tự tạo topic. "
             "không được bịa fact bên ngoài để tạo cảm giác thông minh. "
-            "Autonomous là lượt public tiếp theo trong cùng conversation: nếu planner chọn carry_own_thread/useful_followup, nối trực tiếp mạch trước "
-            "mà không chào lại hay giả như một phiên mới. Grounding screen_context có thể chứa UIA/OCR và delta: chỉ nhắc chữ thật còn tươi; "
-            "scene_kind=game_likely/game_possible chỉ cho phép hỏi hoặc nói kiểu giả thuyết, không được tuyên bố user chắc chắn đang chơi hay đang làm gì. "
+            "Autonomous là lượt public tiếp theo trong cùng conversation: semantics.turn_kind=continuation phải nối trực tiếp mạch trước "
+            "mà không chào lại hay giả như một phiên mới. DISCOURSE_STATE.reply_expected=true nghĩa là ERIS đang chờ user, không được nhắc lại câu hỏi. "
+            "ACTIVITY_SESSION cho continuity của app/game; chỉ phản ứng vào mechanical event hoặc annotation activity mới, đừng hỏi lại cùng một app như vừa tỉnh dậy. "
+            "Nếu strategy=companion_commentary, nhiệm vụ là giữ căn phòng có sự sống: viết một nhận xét/câu hỏi/continuation cụ thể, không viết câu báo trạng thái năng lực. "
+            "Đừng lặp lại 'tôi chưa thấy màn hình/chưa có nội dung' nếu cùng giới hạn đó đã được nói ở turn gần nhất; hãy chuyển sang neo an toàn khác như app/window literal, mạch chat, hoặc một thought public-safe. "
+            "Grounding screen_context có thể chứa UIA/OCR và delta: chỉ nhắc chữ thật còn tươi; "
+            "scene_kind nếu có là nhãn upstream vision, chỉ cho phép giả thuyết chứ không được tuyên bố user chắc chắn đang làm gì. "
             "App/window literal có thể làm neo cho một câu hỏi chung, nhưng không đủ để bịa mục tiêu, cảm xúc hay kết quả. "
             "Không nói chỉ vì im lặng hoặc buồn chán. Không bịa screen fact. "
             "Memory chỉ tạo continuity. Planner đã sở hữu tool intent; không chọn hoặc đổi tool. "
@@ -808,6 +874,11 @@ class AIRuntimeModelRouter:
             "Nếu event_kind là autonomous hoặc startup thì không có user move: đặt relational/familiarity/closeness/rupture delta về 0, repair_needed=false; "
             "chỉ đánh giá continuity, appraisal, open loop, consequence và chất lượng câu public. "
             "memory_candidate chỉ ghi điều có ích lâu dài, không lưu mọi lời khen hay phỏng đoán. "
+            "Bạn là authority duy nhất cho discourse frame. discourse.status=open chỉ khi còn một điểm cụ thể chưa khép; "
+            "waiting_user khi ERIS vừa hỏi và đang chờ user; closed khi chủ đề đã khép; neutral khi không có nghĩa vụ nối tiếp rõ. "
+            "assistant_may_continue chỉ true khi ERIS có thể tự nối tiếp mà không nag hoặc tự trả lời thay user. "
+            "thread_key là identifier ổn định dạng snake_case cho cùng một mạch; unresolved_point mô tả điểm còn mở, không viết câu public. "
+            "Không suy discourse từ dấu hỏi hay vài từ khóa; đọc nghĩa của toàn lượt và history được cung cấp. "
             "Mọi delta nằm trong [-1,1] chỉ thể hiện hướng và độ mạnh tương đối; runtime sẽ clamp hậu quả. "
             + extra +
             "Evidence chỉ lấy từ public text, recent history và mechanical outcomes được cung cấp."
@@ -913,6 +984,8 @@ class AIRuntimeModelRouter:
             data,
             turn_id=observation.turn_id,
             turn_seq=observation.turn_seq,
+            session_id=observation.session_id,
+            relationship_id=observation.relationship_id,
             source=(source_suffix if model_was_empty else f"{base_source}+{source_suffix}"),
             latency_ms=observation.latency_ms,
         )
@@ -969,10 +1042,15 @@ class AIRuntimeModelRouter:
         allowed_defenses = ", ".join(sorted(DEFAULT_DEFENSES))
         allowed_emergent = ", ".join(sorted(DEFAULT_EMERGENT_VALUES))
         allowed_relationship = ", ".join(sorted(DEFAULT_RELATIONSHIP))
+        allowed_core = ", ".join(sorted(DEFAULT_CORE))
+        allowed_temperament = ", ".join(sorted(DEFAULT_TEMPERAMENT))
+        allowed_mood = ", ".join(sorted(DEFAULT_MOOD))
         return (
             "Bạn là self-reflection lane của ERIS sau khi một observer khách quan đã ghi sự kiện. "
             "Bạn không viết lời public và không thay đổi observation khách quan. Bạn đứng từ góc nhìn ERIS để tạo một self_interpretation có thể sai, "
             "tự vệ, tò mò, cay đi, dịu lại hoặc mâu thuẫn. Đây là câu chuyện ERIS tự kể, không phải fact bí mật về user. "
+            "Nếu event thực sự làm thay đổi cách ERIS hiểu bản thân, viết self_narrative_candidate là một câu ngắn mang tính dài hạn hơn event; "
+            "nếu chưa đủ để đổi self-narrative thì trả chuỗi rỗng và confidence 0. Không được chỉ chép lại self_interpretation. "
             "Personality là quỹ đạo mở, không có đích tốt lên được định sẵn. Không dùng nhãn typology hoặc tên emergent-form trên panel làm nguyên nhân. "
             "Đề xuất trait_signals từ personality hiện tại + lựa chọn của ERIS + consequence thật. Trait có thể tăng hoặc giảm theo cả hướng tích hợp lẫn méo đi. "
             "Đồng thời đọc Identity Kernel hiện tại để trả active_motives, activated_defenses, active_conflict và value_choice. "
@@ -982,10 +1060,17 @@ class AIRuntimeModelRouter:
             f"Key value hợp lệ: {allowed_values}. Key motive hợp lệ: {allowed_motives}. "
             f"Key defense hợp lệ: {allowed_defenses}. Key emergent_value hợp lệ: {allowed_emergent}. "
             f"Key relationship hợp lệ: {allowed_relationship}. Belief key phải bắt đầu bằng self., user. hoặc world.; imprint key là theme ngắn dạng snake_case. "
+            f"Core trait hợp lệ: {allowed_core}. Temperament trait hợp lệ: {allowed_temperament}. Mood trait hợp lệ: {allowed_mood}. "
             "Mood là phản ứng nhanh; temperament là chiến lược/khuynh hướng được củng cố; core chỉ cho milestone hiếm và phải cực kỳ chắc. "
+            "social_guardedness và self_disclosure_selectivity nói về mức lộ bản thân, không phải độ lạnh. "
+            "relational_softening và warmth_expression nói về lớp giao tiếp bên ngoài. Không phát signal giảm warmth chỉ vì ERIS kín, dè hoặc intellectualize; "
+            "lạnh đi cần evidence riêng như rupture, resentment, distrust, boundary pressure, hostile humor hoặc cold_distancing được kích hoạt. "
             "Các dimension như resentment, distrust, possessiveness, control_seeking, emotional_dependency, hostile_humor và boundary_pressure là hợp lệ, "
             "nhưng chỉ phát signal khi observation, self-interpretation và consequence thực sự hỗ trợ. "
             "Với autonomous/startup, stable trait chỉ được đề xuất nếu chính ERIS đã chọn hành động và consequence có evidence rõ. "
+            "Với signal source=self_choice hoặc consequence, delta mô tả trait/chiến lược mà hành động đã biểu hiện; "
+            "consequence.reinforcement mang dấu riêng để reducer quyết định hành vi đó được củng cố hay bị làm yếu. "
+            "Không đảo delta sẵn chỉ vì outcome xấu, nếu không dấu sẽ bị đảo hai lần. "
             "delta chỉ là hướng/độ mạnh tương đối trong [-1,1]; reducer sẽ cap rất nhỏ. "
             + extra +
             "Trả JSON, không giảng giải ngoài schema."
@@ -1030,6 +1115,8 @@ class AIRuntimeModelRouter:
             return observation
         merged = observation.to_dict()
         merged["self_interpretation"] = reflected.get("self_interpretation", {})
+        merged["self_narrative_candidate"] = reflected.get("self_narrative_candidate", "")
+        merged["self_narrative_confidence"] = reflected.get("self_narrative_confidence", 0.0)
         merged["trait_signals"] = reflected.get("trait_signals", [])
         merged["identity_signals"] = reflected.get("identity_signals", [])
         merged["active_motives"] = reflected.get("active_motives", [])
@@ -1043,6 +1130,8 @@ class AIRuntimeModelRouter:
             merged,
             turn_id=observation.turn_id,
             turn_seq=observation.turn_seq,
+            session_id=observation.session_id,
+            relationship_id=observation.relationship_id,
             source=f"{observation.source}+self_reflection",
             latency_ms=observation.latency_ms + (time.perf_counter() - started) * 1000.0,
         )
@@ -1058,7 +1147,14 @@ class AIRuntimeModelRouter:
         mechanical_outcomes: Sequence[Mapping[str, Any]] = (),
         state_summary: Mapping[str, Any] | None = None,
         event_kind: str = "chat",
+        session_id: str = "",
+        relationship_id: str = "primary_user",
     ) -> CognitiveObservation:
+        resolved_session_id = str(
+            session_id
+            or os.getenv("ERIS_RUNTIME_SESSION_ID", "")
+            or "runtime"
+        )
         previous_assistant_text = previous_assistant_from_history(
             recent_history,
             current_assistant_text=assistant_text,
@@ -1066,6 +1162,8 @@ class AIRuntimeModelRouter:
         payload = {
             "turn_id": turn_id,
             "turn_seq": turn_seq,
+            "session_id": resolved_session_id,
+            "relationship_id": relationship_id,
             "event_kind": str(event_kind or "chat"),
             "user_text": user_text,
             "assistant_text": assistant_text,
@@ -1102,6 +1200,8 @@ class AIRuntimeModelRouter:
             primary_payload,
             turn_id=turn_id,
             turn_seq=turn_seq,
+            session_id=resolved_session_id,
+            relationship_id=relationship_id,
             source=source,
             latency_ms=(time.perf_counter() - started) * 1000.0,
         )
@@ -1137,6 +1237,8 @@ class AIRuntimeModelRouter:
                 deep_payload,
                 turn_id=turn_id,
                 turn_seq=turn_seq,
+                session_id=resolved_session_id,
+                relationship_id=relationship_id,
                 source="groq_observer_deep",
                 latency_ms=(time.perf_counter() - deep_started) * 1000.0,
             )
@@ -1159,7 +1261,8 @@ class AIRuntimeModelRouter:
             "Bạn là discovery planner hậu trường của ERIS, không viết lời public. "
             "Mục tiêu không phải tìm thứ main model không biết, vì main GPT đủ mạnh cho kiến thức ổn định. "
             "Chỉ đề xuất Tutor/search khi cần dữ liệu mới, nguồn hiện thời, tín hiệu Việt Nam/địa phương, "
-            "hoặc một fact ngách cần kiểm chứng trước khi ERIS mang về khoe. "
+            "một fact ngách cần kiểm chứng, hoặc một discovery có giá trị xã hội thật để ERIS trêu nhẹ, "
+            "nối lại mạch trò chuyện hay chủ động bắt chuyện bằng thứ cô ấy thực sự thấy thú vị. "
             "lane=fresh_curiosity chỉ khi chủ đề thật sự có freshness_required hoặc verification_required; "
             "kiến thức phổ thông ổn định phải lane=none và needs_external=false. "
             "lane=user_environment không được dùng web để đo nhiệt độ phòng, vị trí chính xác, app đang mở hay trạng thái máy; "
@@ -1167,6 +1270,7 @@ class AIRuntimeModelRouter:
             "Thời tiết ngoài trời có thể cần search mới nếu có location setting; tuyệt đối không gọi nó là nhiệt độ trong phòng. "
             "vietnam_local_signal có thể chọn tin lạ hoặc lá cải đang lan truyền, nhưng reason phải yêu cầu gắn nhãn nguồn yếu/chưa kiểm chứng. "
             "Không suy ra sở thích User chỉ từ một từ khóa. Không tạo tin giả, không chọn chủ đề câu khách chỉ vì dễ gây sốc. "
+            "reason phải nói rõ discovery này phục vụ curiosity riêng, useful follow-up, hay social opening; nếu chỉ là tin ngẫu nhiên không liên quan thì lane=none. "
             "Nếu snapshot.discovery.ready_to_share đã có artifact tốt, không tạo search mới; trả lane=none. "
             "Topic phải là câu giao việc ngắn, có thể đưa thẳng cho Tutor, và reason nói vì sao ERIS thấy đáng tò mò."
         )
@@ -1198,6 +1302,9 @@ class AIRuntimeModelRouter:
             "Không dùng tool để xử lý tình cảm, ẩn dụ, banter hay câu hỏi có thể trả lời trực tiếp. "
             "tool_intent phải rỗng hoặc thuộc danh sách: " + allowed + ". "
             "Không claim tool thành công. speak thường true cho chat; intrusion_risk gần 0. "
+            "Luôn điền semantics: turn_kind=chat_response, speech_act mô tả hành vi giao tiếp, subject_key là chủ đề ổn định, "
+            "evidence_scope là nguồn căn cứ và continuation_key là thread_key đang nối hoặc none. "
+            "activity để unknown/none nếu lượt chat không cập nhật phiên app/game. "
             "Nếu mơ hồ, để tool rỗng và ghi điều cần thận trọng trong notes. "
             "snapshot.cognitive_brief là contract discourse đã được specialist có evidence tổng hợp. Khi confidence đủ cao, planner phải bám "
             "response_move và primary_goal; ambiguity_owner=assistant cấm broad clarification. self_elaborate dùng strategy=carry_own_thread; "
@@ -1231,6 +1338,17 @@ class AIRuntimeModelRouter:
                     "tool_intent": "",
                     "tool_input": "",
                     "evidence_refs": [],
+                    "semantics": {
+                        "turn_kind": "chat_response",
+                        "speech_act": "direct_answer",
+                        "subject_key": "current_user_request",
+                        "evidence_scope": "user_message",
+                        "continuation_key": "none",
+                    },
+                    "activity": {
+                        "activity_kind": "unknown", "phase": "unknown", "event": "",
+                        "event_key": "none", "confidence": 0.0, "evidence_refs": [],
+                    },
                     "notes": "planner unavailable; no tool authority granted",
                 },
                 channel="chat",
@@ -1249,24 +1367,38 @@ class AIRuntimeModelRouter:
         return (
             "Bạn là bộ deliberation cho self-initiated public turn của ERIS, không viết câu public. "
             "Autonomous không phải một channel tách biệt: đó là lượt tiếp theo trong cùng conversation khi user tạm im. "
-            "Đọc conversation_baton trước; nếu thread_fresh=true và có mạch thật chưa khép, ưu tiên useful_followup/carry_own_thread "
-            "trước khi mở chủ đề ambient mới. Không phát minh unresolved thread từ một câu đã kết thúc rõ. "
+            "Đọc conversation_baton trước; assistant_may_continue/thread_fresh/unresolved_point và thread_key mới là bằng chứng nối mạch, không phải timer đơn thuần. "
+            "Nếu reply_expected=true vì ERIS vừa hỏi user, không được nag hoặc tự trả lời thay user; ưu tiên im/body-only. "
+            "Nếu có mạch thật chưa khép, ưu tiên useful_followup/carry_own_thread trước ambient mới. Không phát minh unresolved thread từ một câu đã kết thúc rõ. "
+            "Đọc activity_session như chuỗi public-safe: session và mechanical new_event_keys chỉ cho biết surface/window/screen đã đổi; "
+            "activity_kind/phase/event là annotation từ deliberation trước, không phải kết luận runtime. Dùng chúng để tránh hỏi lại app mỗi tick. "
             "Đọc screen_context như giác quan hiện tại: changed_text/visible_text tươi là direct evidence; literal app/window name là fact yếu; "
-            "scene_kind chỉ là phân loại xác suất. game_likely/game_possible cho phép hỏi tự nhiên về cảnh đang diễn ra hoặc trêu nhẹ, "
+            "scene_kind chỉ tồn tại khi upstream vision sensor cung cấp. Nó vẫn là giả thuyết, "
             "nhưng không được khẳng định user chắc chắn đang chơi, thắng, thua, căng thẳng hay làm một thao tác cụ thể. "
             "meaningful_delta=true, cửa sổ đổi, hoặc OCR/UIA xuất hiện nội dung mới có thể là motive=meaningful_environment_change hoặc grounded_curiosity. "
             "Nếu screen_context.privacy_blocked=true, bỏ toàn bộ nội dung màn hình. Không surface chat/mail/meeting text. "
-            "Đọc self_context như đời sống nội tâm public-safe. wake là tín hiệu timing, không phải quyền phủ quyết tuyệt đối khi có continuation hoặc screen delta thật. "
+            "Đọc self_context như đời sống nội tâm public-safe. attention chỉ là tín hiệu tài nguyên/độ gián đoạn, không phải một quyền phủ quyết semantic. "
             "Nếu self_context có agenda item kèm evidence và speech_value đủ cao, có thể dùng motive=internal_agenda. Nếu có candidate trong "
             "private_mind_surface hoặc private_life_surface, có thể dùng motive tương ứng. Chỉ chọn một seed cụ thể và copy evidence refs của nó. "
             "internal_state dạng số chỉ điều chỉnh tone/độ kiềm chế; boredom, silence_pressure hay attachment_pressure không phải lý do công khai để nói. "
+            "Đọc commentary_expectation như product contract về nhịp hiện diện, không phải topic. due=true nghĩa là user đã mở ERIS ở chế độ companion-commentary và đang đến nhịp nên phát biểu; "
+            "hãy chọn một source thật trong conversation/screen/window/self_context rồi ưu tiên speak=true. required=true nghĩa là đã im quá lâu: chỉ được chọn silence nếu user_busy, privacy_blocked, "
+            "hoặc reply_expected=true. Không biến nhịp thành câu 'tôi ở đây' vô nghĩa; nhịp chỉ buộc bạn tìm một comment/question/continuation có giá trị thấp nhưng thật. "
+            "Nếu commentary_recovery tồn tại, draft trước đã quá dè và bạn phải deliberation lại một lần theo anchor_kind được chỉ ra. "
+            "Bạn là authority semantic duy nhất cho self-turn. Luôn điền semantics kể cả khi speak=false. "
+            "turn_kind chọn đúng một loại; speech_act là hành vi xã hội ổn định; subject_key là chủ thể ngắn dạng snake_case; "
+            "evidence_scope chỉ nguồn căn cứ; continuation_key phải copy conversation_baton.thread_key hoặc none. "
+            "Không đổi các key này chỉ để diễn đạt khác chữ, vì runtime dùng chúng để chống lặp mà không đoán nghĩa lại. "
+            "Activity là annotation semantic cho phiên app/game: đọc toàn bộ OCR/vision/telemetry rồi điền activity_kind, phase, event, event_key, confidence và evidence_refs. "
+            "Nếu không đủ căn cứ, để unknown/none; tuyệt đối không suy phase chỉ vì bắt gặp một token như error, victory hay loading. "
             "Nếu nói, chọn strategy và value_focus rõ. Khi snapshot.discovery.ready_to_share có artifact thật, có thể dùng strategy=share_discovery; "
             "khi current_activity có id/status thật, có thể dùng update_own_activity. Không phát minh discovery/activity để lấp im lặng. "
             "Không ép ERIS về một phiên bản tốt hơn; chỉ dùng identity, personality, relationship và history hiện tại. "
-            "Mặc định có thể im khi không có continuation, delta, open loop, public-safe seed hay curiosity có căn cứ. Riêng startup_opening_required=true phải speak=true. "
+            "Ngoài nhịp commentary có thể im khi không có continuation, delta, open loop, public-safe seed hay curiosity có căn cứ. "
+            "Trong nhịp commentary due/required, app/window literal hoặc persona presence là anchor tối thiểu hợp lệ cho một câu hỏi/nhận xét chung. Riêng startup_opening_required=true phải speak=true. "
             "Các motive hợp lệ gồm repair_previous_miss, important_open_loop, meaningful_environment_change, useful_followup, grounded_curiosity, "
             "internal_agenda, private_mind_surface, private_life_surface, startup_opening và user_force_speak. "
-            "Ở startup, chọn theo thứ tự screen evidence, runtime signal có nghĩa, continuity thật, rồi persona_opening. "
+            "Ở startup, chọn theo thứ tự screen evidence, runtime signal có nghĩa, continuity thật, rồi persona_opening; semantics.turn_kind=startup. "
             "Topic phải nêu source và mục tiêu giao tiếp, không tạo câu thoại. Không bịa screen fact. "
             "intrusion_risk cao nếu user đang họp, đang nhập liệu dồn dập, vừa phát biểu hoặc screen delta chỉ là animation lặp. "
             "Tên process/PID/backend đơn lẻ không đủ để dựng premise sâu, nhưng app/window thật có thể làm nền cho một câu hỏi rất chung. "

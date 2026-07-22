@@ -120,8 +120,8 @@ class GreetingCognitionEngine:
     _LOW_EVIDENCE_FALLBACKS = (
         "Chào. Tôi chưa biết hôm nay có gì, nên tạm thời chưa phán.",
         "Bạn đây rồi. Tôi sẽ quan sát trước, kẻo lại kết luận sớm.",
-        "Chào. Mong là h ôm nay có thứ đủ thú vị.",
-        "Tôi tỉnh rồi.Chuyện ngoan ngoãn thì để xem.",
+        "Chào. Mong là hôm nay có thứ đủ thú vị.",
+        "Tôi tỉnh rồi. Chuyện ngoan ngoãn thì để xem.",
     )
 
     _QUIET_FALLBACKS = (

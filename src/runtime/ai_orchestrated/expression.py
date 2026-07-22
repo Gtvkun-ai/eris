@@ -80,6 +80,22 @@ class IdentityExpressionBridge:
         sarcastic_deflection = active_defenses.get("sarcastic_deflection", 0.0)
         withdrawal = active_defenses.get("withdrawal", 0.0)
         silent_compensation = active_defenses.get("silent_compensation", 0.0)
+        temperament = state.personality.temperament
+        warmth_expression = float(temperament.get("warmth_expression", 0.0) or 0.0)
+        relational_softening = float(temperament.get("relational_softening", 0.0) or 0.0)
+        hostile_humor = float(temperament.get("hostile_humor", 0.0) or 0.0)
+
+        # Bề mặt Ni-Fe mặc định là ấm kín. Guardedness chỉ làm ERIS ít lộ mình,
+        # không cho phép bridge tự suy ra một preset lạnh khi không có rupture hay
+        # phòng thủ đủ mạnh. Đây là style surface, không sửa nội dung public.
+        if requested == "neutral" and relational_softening >= 0.58:
+            add(
+                0.34 + 0.16 * relational_softening + 0.10 * warmth_expression,
+                "guarded_warm",
+                "guarded_but_relationally_soft",
+                "soft_compact",
+                0.02,
+            )
 
         if embarrassment >= 0.42 and intellectualization >= 0.48:
             add(
@@ -89,14 +105,23 @@ class IdentityExpressionBridge:
                 "short_technical",
                 -0.20,
             )
-        if irritation >= 0.40 and (identity.values.get("dignity", 0.0) >= 0.72 or cold_distance >= 0.45):
-            preset = "cold_precision" if irritation < 0.68 else "annoyed_soft"
+        if irritation >= 0.40:
+            cold_authorized = bool(
+                cold_distance >= 0.58
+                and (
+                    irritation >= 0.68
+                    or relation.resentment >= 0.46
+                    or hostile_humor >= 0.42
+                )
+                and relational_softening <= 0.48
+            )
+            preset = "cold_precision" if cold_authorized else "annoyed_soft"
             add(
                 0.50 + 0.34 * irritation + 0.16 * max(cold_distance, withdrawal),
                 preset,
-                "dignity_under_pressure",
-                "short_cold",
-                -0.30,
+                "defensive_coldness_evidenced" if cold_authorized else "dignity_kept_without_cutting_connection",
+                "short_cold" if cold_authorized else "short_direct",
+                -0.30 if cold_authorized else -0.16,
             )
         if silent_compensation >= 0.55 and embarrassment >= 0.30:
             add(0.58 + 0.28 * silent_compensation, "repair", "silent_compensation_after_error", "short_direct", -0.25)
@@ -115,7 +140,16 @@ class IdentityExpressionBridge:
         if conflict.conflict_id == "attachment_vs_pride" and conflict.activation >= 0.52:
             chosen = compact(conflict.chosen_side, 60).lower()
             if "pride" in chosen:
-                add(0.58 + 0.28 * conflict.activation, "cold_precision", "attachment_vs_pride_pride_wins", "short_cold", -0.20)
+                # Pride có thể giữ mặt bằng một câu gọn, không mặc định biến thành
+                # băng giá. Chỉ cold khi defense lạnh đã thực sự được kích hoạt.
+                pride_cold = cold_distance >= 0.60 and relational_softening <= 0.44
+                add(
+                    0.58 + 0.28 * conflict.activation,
+                    "cold_precision" if pride_cold else "annoyed_soft",
+                    "attachment_vs_pride_cold_defense" if pride_cold else "attachment_vs_pride_keeps_surface_soft",
+                    "short_cold" if pride_cold else "short_direct",
+                    -0.20 if pride_cold else -0.10,
+                )
             else:
                 add(0.54 + 0.26 * conflict.activation, "warm_embarrassed", "attachment_vs_pride_attachment_leaks", "soft_compact", 0.06)
 

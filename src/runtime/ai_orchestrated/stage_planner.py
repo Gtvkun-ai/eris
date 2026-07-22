@@ -30,6 +30,7 @@ class StagePlan:
 _STAGE_PRESETS: dict[str, StagePlan] = {
     "neutral": StagePlan(),
     "soft_warm": StagePlan(delivery_hint="warm_soft", nonverbal_cue="small_smile", stage_motion="lean_in_small"),
+    "guarded_warm": StagePlan(delivery_hint="restrained_warmth", nonverbal_cue="soft_breath", stage_motion="blink_slow"),
     "warm_embarrassed": StagePlan(delivery_hint="gentle_low", nonverbal_cue="soft_breath", stage_motion="look_away"),
     "dry_tease": StagePlan(delivery_hint="dry_tease", nonverbal_cue="scoff_soft", stage_motion="blink_slow"),
     "playful": StagePlan(delivery_hint="soft_tease", nonverbal_cue="laugh_soft", stage_motion="tilt_head"),

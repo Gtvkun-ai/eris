@@ -158,6 +158,19 @@ class DiscourseCortex:
                 evidence_ids=refs,
             )
 
+        if self._is_relational_bid(current):
+            return DiscourseProjection(
+                relation="relational_bid",
+                ambiguity_owner="shared",
+                expected_next_move="respond_to_relational_bid",
+                open_loop=previous,
+                referenced_phrase="current relational bid",
+                assistant_fault_probability=0.0,
+                confidence=0.88,
+                ambiguity=0.12,
+                evidence_ids=refs,
+            )
+
         return DiscourseProjection(
             relation="new_or_direct_turn",
             ambiguity_owner="unknown",
@@ -167,6 +180,21 @@ class DiscourseCortex:
             ambiguity=0.32,
             evidence_ids=("turn:user_text",),
         )
+
+    @staticmethod
+    def _is_relational_bid(current: str) -> bool:
+        """Bắt các lời mời gần gũi rõ, không suy toàn bộ tâm lý user.
+
+        Đây là fallback vận hành khi observer phụ 429. Nó chỉ gán speech act
+        hiện tại, không commit trait hay khẳng định user thật sự tổn thương.
+        """
+        markers = (
+            "nhin vao toi", "nhin vao tui", "nhin vao em", "nhin vao trai tim",
+            "trai tim nho be", "o ben toi", "o ben tui", "lai gan toi", "lai gan tui",
+            "om toi", "om tui", "dung bo toi", "dung bo tui", "muon em chu y den toi",
+            "muon ban chu y den toi", "hay nghe toi mot chut", "hay nhin toi mot chut",
+        )
+        return contains_phrase(current, *markers)
 
     def _compact_cue(self, current: str) -> str:
         text = current.strip(" ?.!,")

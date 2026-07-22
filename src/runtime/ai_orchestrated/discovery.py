@@ -589,15 +589,21 @@ class DiscoveryRuntime:
                 return
             self._last_planning_attempt_at = now
 
-        plan = self._choose_due_local_plan(now)
-        if plan is None:
-            try:
-                plan = self.router.plan_discovery(dict(planner_snapshot))
-            except Exception as exc:  # noqa: BLE001
-                self._log("debug", "[discovery] planner failed: %s", exc)
-                plan = DiscoveryPlan()
+        # Để trí khôn của Eris chọn lý do tìm kiếm trước: nối mạch đang dang dở,
+        # kiếm một điều hay để trêu/bắt chuyện, hoặc theo đuổi tò mò riêng có căn
+        # cứ. Tín hiệu tin địa phương chỉ là fallback khi planner không có ý hay,
+        # không còn quyền chen lên đầu hàng đợi như một trang chủ tin tức biết nói.
+        try:
+            plan = self.router.plan_discovery(dict(planner_snapshot))
+        except Exception as exc:  # noqa: BLE001
+            self._log("debug", "[discovery] planner failed: %s", exc)
+            plan = DiscoveryPlan()
         if not isinstance(plan, DiscoveryPlan):
             plan = DiscoveryPlan.from_mapping(plan if isinstance(plan, Mapping) else {})
+        if plan.lane == "none" or not plan.topic.strip():
+            due_local = self._choose_due_local_plan(now)
+            if due_local is not None:
+                plan = due_local
         self._last_planned = plan
         if plan.confidence < 0.60 or plan.importance < 0.52 or plan.eris_interest < 0.52:
             return
@@ -633,8 +639,9 @@ class DiscoveryRuntime:
             return None
         location = self._text("local_signal_scope", "Việt Nam") or "Việt Nam"
         topic = (
-            f"Tìm đúng một tin mới đáng chú ý liên quan {location} trong 24 giờ gần nhất. "
-            "Ưu tiên công nghệ, AI, game, sự kiện lạ hoặc chuyện đang được bàn luận. "
+            f"Tìm đúng một chuyện mới đáng chú ý liên quan {location} trong 24 giờ gần nhất mà Eris có thể "
+            "dùng để chủ động bắt chuyện, trêu nhẹ hoặc chia sẻ vì thật sự thú vị. "
+            "Ưu tiên công nghệ, AI, game, sự kiện lạ hoặc chuyện đang được bàn luận; bỏ qua tin ngẫu nhiên không có góc nói chuyện. "
             "Có thể chọn tin giải trí/lá cải đang lan truyền, nhưng phải gắn nhãn nguồn yếu hoặc chưa kiểm chứng; "
             "nêu nguồn và mức chắc chắn, không biến lời đồn thành fact."
         )
@@ -649,7 +656,7 @@ class DiscoveryRuntime:
             novelty=0.70,
             importance=0.66,
             confidence=0.82,
-            reason="Eris muốn nhìn ra ngoài runtime và mang về một tín hiệu địa phương đáng kể.",
+            reason="Eris muốn kiếm một chuyện đủ hay để tự mở lời với User, không phải lấp im lặng bằng tin ngẫu nhiên.",
         )
 
     def _start_search(self, plan: DiscoveryPlan, *, now: float) -> None:
@@ -855,11 +862,12 @@ class DiscoveryRuntime:
         """Gắn artifact thật vào plan đã chọn.
 
         Trả về (plan mới, grounding, discovery_id). Không sửa strategy planner nếu
-        planner không chọn share_discovery/update_own_activity.
+        planner không chọn semantic turn_kind tương ứng.
         """
-        strategy = _compact(getattr(plan, "strategy", ""), 100).lower()
-        motive = _compact(getattr(plan, "motive", ""), 100).lower()
-        if strategy == "share_discovery" or motive in {"grounded_curiosity", "share_discovery"}:
+        semantics = getattr(plan, "semantics", None)
+        turn_kind = str(getattr(semantics, "turn_kind", "other") or "other")
+        speech_act = str(getattr(semantics, "speech_act", "unspecified") or "unspecified")
+        if turn_kind == "discovery":
             ready = self.ready_records(limit=1)
             if not ready:
                 return plan, "", ""
@@ -875,7 +883,7 @@ class DiscoveryRuntime:
                 pass
             grounding = "Verified discovery artifact:\n" + json.dumps(record.prompt_payload(), ensure_ascii=False)
             return plan, grounding, record.discovery_id
-        if strategy == "update_own_activity" or motive == "update_own_activity":
+        if turn_kind == "activity_event" and speech_act == "update_own_activity":
             with self._lock:
                 activity = self._state.current_activity
             if not activity.activity_id or activity.status == "idle":

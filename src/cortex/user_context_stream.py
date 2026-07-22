@@ -8,7 +8,7 @@ Tầng 1 - Sensory / User Context Stream.
 Trách nhiệm:
 - Đọc diff màn hình, app đang active, OCR/vision hint, key/mouse/recent events.
 - Gọi/nhận kết quả từ observer 0.6B nếu runtime đã bật.
-- Xuất `RollingUserContext` nhỏ, ổn định, có thể đưa cho WakeGovernor.
+- Xuất `RollingUserContext` nhỏ, ổn định, có thể đưa cho CortexRuntime và main planner.
 
 Không làm:
 - Không nói với user.

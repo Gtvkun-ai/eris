@@ -1197,10 +1197,18 @@ class SourceGroundingEngine:
         clauses = self._split_grounding_clauses(text)
         if not clauses:
             clauses = [str(text or "").strip()] if str(text or "").strip() else []
-        missing = set(getattr(report, "missing_evidence", ()) or ()) if report is not None else set()
-        screen_missing = bool({"screen_evidence", "live_vision", "file_evidence"} & missing) or not bool(
-            getattr(report, "refers_to_current_screen", False) if report is not None else False
+        missing = set(getattr(report, "missing_evidence", ()) or ()) if report is not None else {"screen_evidence"}
+        # Claim "tôi thấy/đọc được" phụ thuộc evidence thật, không phụ thuộc việc
+        # user có nhắc chữ "màn hình" hay không. Field screen_evidence_present đã
+        # được tạo cho đúng mục đích này nhưng gate cũ lại bỏ quên nó, khiến chat
+        # và autonomous áp hai tiêu chuẩn khác nhau.
+        screen_evidence_present = bool(
+            getattr(report, "screen_evidence_present", False) if report is not None else False
         )
+        screen_facts_stale = bool(
+            getattr(report, "screen_facts_are_stale", False) if report is not None else True
+        )
+        screen_missing = bool({"screen_evidence", "live_vision", "file_evidence"} & missing) or not screen_evidence_present or screen_facts_stale
         evidence_ids = tuple(str(x) for x in (getattr(report, "evidence_ids", ()) or ()) if str(x).strip()) if report is not None else ()
 
         annotations: list[ClaimAnnotation] = []
@@ -1588,14 +1596,18 @@ class SourceGroundingEngine:
         if any(self._contains_token_or_phrase(norm, marker) for marker in strong_web_markers):
             return True
         explicit_research_markers = (
-            "tim", "tim kiem", "tim hieu", "tra cuu", "dieu tra", "kiem chung", "xac minh",
+            # Không dùng token trần ``tim``. Sau normalize, ``trái tim`` và động
+            # từ ``tìm`` đều thành ``tim``; route cũ vì thế đem một lời thân mật
+            # đi tra web như thể trái tim có endpoint REST. Các phrase có nghĩa
+            # hành động vẫn đủ rõ, còn "tìm giá/tìm lịch" đã được domain marker bắt.
+            "tim kiem", "tim hieu", "tra cuu", "dieu tra", "kiem chung", "xac minh",
             "search", "look up", "investigate", "verify", "fact check",
         )
         if any(re.search(r"(?:^|\s)" + re.escape(marker) + r"(?:\s|$)", norm) for marker in explicit_research_markers):
             return True
         web_question_markers = (
             "bao nhieu", "may do", "nhiet do", "thoi tiet", "weather", "temperature",
-            "tim", "tim kiem", "tim hieu", "tra cuu", "dieu tra", "kiem chung", "xac minh",
+            "tim kiem", "tim hieu", "tra cuu", "dieu tra", "kiem chung", "xac minh",
             "search", "look up", "investigate", "verify", "fact check",
             "kiem tra", "check", "cap nhat",
         )

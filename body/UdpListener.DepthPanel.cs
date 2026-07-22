@@ -33,17 +33,17 @@ public partial class UdpListener : Node2D
 	private string _depthActiveTab = "overview";
 	private bool _depthLearningEnabled = true;
 
-	private static readonly Color IdentityInk = new(0.20f, 0.16f, 0.25f, 1f);
-	private static readonly Color IdentityMuted = new(0.44f, 0.39f, 0.49f, 1f);
-	private static readonly Color IdentityAccent = new(0.76f, 0.30f, 0.56f, 1f);
-	private static readonly Color IdentityAccentSoft = new(0.97f, 0.87f, 0.92f, 1f);
-	private static readonly Color IdentityCard = new(1f, 0.985f, 0.992f, 0.98f);
-	private static readonly Color IdentityBorder = new(0.91f, 0.72f, 0.82f, 1f);
-	private static readonly Color IdentityPink = new(0.94f, 0.25f, 0.52f, 1f);
-	private static readonly Color IdentityPurple = new(0.58f, 0.31f, 0.84f, 1f);
-	private static readonly Color IdentityBlue = new(0.35f, 0.48f, 0.88f, 1f);
-	private static readonly Color IdentityOrange = new(0.96f, 0.55f, 0.18f, 1f);
-	private static readonly Color IdentityGreen = new(0.20f, 0.65f, 0.45f, 1f);
+	private static readonly Color IdentityInk = new(0.16f, 0.12f, 0.20f, 1f);
+	private static readonly Color IdentityMuted = new(0.39f, 0.35f, 0.43f, 1f);
+	private static readonly Color IdentityAccent = new(0.72f, 0.24f, 0.49f, 1f);
+	private static readonly Color IdentityAccentSoft = new(0.98f, 0.93f, 0.95f, 1f);
+	private static readonly Color IdentityCard = new(1f, 0.997f, 0.994f, 0.985f);
+	private static readonly Color IdentityBorder = new(0.89f, 0.82f, 0.86f, 1f);
+	private static readonly Color IdentityPink = new(0.91f, 0.18f, 0.46f, 1f);
+	private static readonly Color IdentityPurple = new(0.50f, 0.35f, 0.75f, 1f);
+	private static readonly Color IdentityBlue = new(0.39f, 0.50f, 0.78f, 1f);
+	private static readonly Color IdentityOrange = new(0.83f, 0.53f, 0.29f, 1f);
+	private static readonly Color IdentityGreen = new(0.28f, 0.61f, 0.46f, 1f);
 
 	// Bộ asset mới dành riêng cho Identity Runtime. Tất cả ảnh đều là PNG nền trong suốt.
 	// Panel vẫn chạy bằng fallback glyph nếu người dùng chưa thả đủ asset.
@@ -114,42 +114,43 @@ public partial class UdpListener : Node2D
 
 		_depthPanel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
 		{
-			BgColor = new Color(1f, 0.978f, 0.988f, 0.995f),
-			BorderColor = new Color(0.95f, 0.73f, 0.84f, 1f),
-			BorderWidthLeft = 2,
-			BorderWidthTop = 2,
-			BorderWidthRight = 2,
-			BorderWidthBottom = 2,
-			CornerRadiusTopLeft = 28,
-			CornerRadiusTopRight = 28,
-			CornerRadiusBottomLeft = 28,
-			CornerRadiusBottomRight = 28,
-			ShadowColor = new Color(0.30f, 0.10f, 0.22f, 0.18f),
-			ShadowSize = 16,
+			BgColor = new Color(0.988f, 0.975f, 0.980f, 0.995f),
+			BorderColor = new Color(0.84f, 0.73f, 0.79f, 0.78f),
+			BorderWidthLeft = 1,
+			BorderWidthTop = 1,
+			BorderWidthRight = 1,
+			BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 24,
+			CornerRadiusTopRight = 24,
+			CornerRadiusBottomLeft = 24,
+			CornerRadiusBottomRight = 24,
+			ShadowColor = new Color(0.20f, 0.10f, 0.17f, 0.12f),
+			ShadowSize = 11,
+			ShadowOffset = new Vector2(0f, 4f),
 		});
 		_depthPanel.ClipContents = true;
 
 		var root = new VBoxContainer
 		{
 			Name = "IdentityRuntimeRoot",
-			OffsetLeft = 18f,
-			OffsetTop = 14f,
-			OffsetRight = -18f,
+			OffsetLeft = 20f,
+			OffsetTop = 16f,
+			OffsetRight = -20f,
 			OffsetBottom = -14f,
 		};
 		root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-		root.AddThemeConstantOverride("separation", 7);
+		root.AddThemeConstantOverride("separation", 9);
 		_depthPanel.AddChild(root);
 
-		var header = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 62f) };
-		header.AddThemeConstantOverride("separation", 10);
+		var header = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 64f) };
+		header.AddThemeConstantOverride("separation", 12);
 		root.AddChild(header);
 
-		header.AddChild(NewIconBadge(IdentityAsset("identity_brand.png"), "♥", new Vector2(68f, 54f), IdentityPink, false));
+		header.AddChild(NewIconBadge(IdentityAsset("identity_brand.png"), "♥", new Vector2(62f, 50f), IdentityPink, false));
 
 		var titleBlock = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
 		titleBlock.AddThemeConstantOverride("separation", -1);
-		_depthTitleLabel = NewLabel("IDENTITY & LIFE RUNTIME", 22, new Color(0.86f, 0.15f, 0.44f), true);
+		_depthTitleLabel = NewLabel("IDENTITY & LIFE RUNTIME", 23, new Color(0.45f, 0.15f, 0.31f), true);
 		_depthTitleLabel.ClipText = true;
 		_depthStatusLabel = NewLabel("v5.3.0  •  ai_orchestrated", 10, IdentityMuted, false);
 		_depthStatusLabel.ClipText = true;
@@ -158,10 +159,10 @@ public partial class UdpListener : Node2D
 		header.AddChild(titleBlock);
 
 		_depthLearningChip = NewChip("LEARNING ?", new Color(0.93f, 0.99f, 0.96f), IdentityGreen);
-		_depthLearningChip.CustomMinimumSize = new Vector2(180f, 36f);
+		_depthLearningChip.CustomMinimumSize = new Vector2(172f, 34f);
 		_depthLearningChip.SizeFlagsHorizontal = Control.SizeFlags.ShrinkEnd;
 		_depthTurnChip = NewChip("TURN 0 · STATE 0", new Color(0.95f, 0.97f, 1f), IdentityBlue);
-		_depthTurnChip.CustomMinimumSize = new Vector2(180f, 36f);
+		_depthTurnChip.CustomMinimumSize = new Vector2(172f, 34f);
 		_depthTurnChip.SizeFlagsHorizontal = Control.SizeFlags.ShrinkEnd;
 		header.AddChild(_depthLearningChip);
 		header.AddChild(_depthTurnChip);
@@ -174,10 +175,10 @@ public partial class UdpListener : Node2D
 
 		var tabs = new HBoxContainer
 		{
-			CustomMinimumSize = new Vector2(0f, 48f),
+			CustomMinimumSize = new Vector2(0f, 44f),
 			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
 		};
-		tabs.AddThemeConstantOverride("separation", 6);
+		tabs.AddThemeConstantOverride("separation", 2);
 		root.AddChild(tabs);
 		_depthTabButtons.Clear();
 		AddDepthTab(tabs, "overview", "Tổng quan", IdentityAsset("identity_tab_overview.png"), "▦");
@@ -206,8 +207,8 @@ public partial class UdpListener : Node2D
 			SizeFlagsVertical = Control.SizeFlags.ShrinkBegin,
 		};
 		scrollPad.AddThemeConstantOverride("margin_right", 30);
-		scrollPad.AddThemeConstantOverride("margin_top", 4);
-		scrollPad.AddThemeConstantOverride("margin_bottom", 8);
+		scrollPad.AddThemeConstantOverride("margin_top", 8);
+		scrollPad.AddThemeConstantOverride("margin_bottom", 10);
 		scroll.AddChild(scrollPad);
 
 		_depthContentList = new VBoxContainer
@@ -216,14 +217,14 @@ public partial class UdpListener : Node2D
 			CustomMinimumSize = new Vector2(0f, 0f),
 			SizeFlagsVertical = Control.SizeFlags.ShrinkBegin,
 		};
-		_depthContentList.AddThemeConstantOverride("separation", 12);
+		_depthContentList.AddThemeConstantOverride("separation", 14);
 		scrollPad.AddChild(_depthContentList);
 
 		ApplyHiddenScrollBarTheme(scroll.GetVScrollBar());
 		scroll.GetVScrollBar().ValueChanged += _ => UpdateDepthScrollDecor();
 		scroll.Resized += UpdateDepthScrollDecor;
 
-		// Action dock tách thao tác bảo trì khỏi nội dung sống, có khối nền và độ nổi riêng.
+		// Action dock tách thao tác bảo trì khỏi nội dung sống; reset được gom về một cụm riêng.
 		var actionDock = new PanelContainer
 		{
 			CustomMinimumSize = new Vector2(0f, 58f),
@@ -239,15 +240,30 @@ public partial class UdpListener : Node2D
 		actionPad.AddThemeConstantOverride("margin_bottom", 6);
 		actionDock.AddChild(actionPad);
 
-		var controls = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 46f) };
-		controls.AddThemeConstantOverride("separation", 10);
+		var controls = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 42f) };
+		controls.AddThemeConstantOverride("separation", 8);
 		actionPad.AddChild(controls);
+
 		_depthFreezeButton = NewFooterButton("Đóng băng học", IdentityAsset("identity_action_freeze.png"), "❄", ToggleIdentityLearning, IdentityBlue);
-		controls.AddChild(WrapHBoxControl(_depthFreezeButton, 46f));
-		controls.AddChild(WrapHBoxControl(NewFooterButton("Xuất snapshot", IdentityAsset("identity_action_export.png"), "⇩", () => SendDebugCommand("identity snapshot"), new Color(0.42f, 0.48f, 0.88f, 1f)), 46f));
-		controls.AddChild(WrapHBoxControl(NewFooterButton("Reset mood", IdentityAsset("identity_action_reset_mood.png"), "☺", () => SendDebugCommand("identity reset mood"), IdentityPink), 46f));
-		controls.AddChild(WrapHBoxControl(NewFooterButton("Reset quan hệ", IdentityAsset("identity_action_reset_relationship.png"), "♧", () => SendDebugCommand("identity reset relationship"), IdentityAccent), 46f));
-		controls.AddChild(WrapHBoxControl(NewFooterButton("Reset discovery", IdentityAsset("identity_action_reset_discovery.png"), "✦", () => SendDebugCommand("identity reset discovery"), IdentityOrange), 46f));
+		_depthFreezeButton.CustomMinimumSize = new Vector2(184f, 42f);
+		controls.AddChild(_depthFreezeButton);
+
+		var exportButton = NewFooterButton("Xuất snapshot", IdentityAsset("identity_action_export.png"), "⇩", () => SendDebugCommand("identity snapshot"), IdentityBlue);
+		exportButton.CustomMinimumSize = new Vector2(174f, 42f);
+		controls.AddChild(exportButton);
+
+		controls.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
+		controls.AddChild(NewActionDivider());
+
+		var resetMood = NewFooterButton("Reset mood", IdentityAsset("identity_action_reset_mood.png"), "☺", () => SendDebugCommand("identity reset mood"), IdentityPink);
+		resetMood.CustomMinimumSize = new Vector2(148f, 42f);
+		controls.AddChild(resetMood);
+		var resetRelationship = NewFooterButton("Reset quan hệ", IdentityAsset("identity_action_reset_relationship.png"), "♧", () => SendDebugCommand("identity reset relationship"), IdentityAccent);
+		resetRelationship.CustomMinimumSize = new Vector2(154f, 42f);
+		controls.AddChild(resetRelationship);
+		var resetDiscovery = NewFooterButton("Reset discovery", IdentityAsset("identity_action_reset_discovery.png"), "✦", () => SendDebugCommand("identity reset discovery"), IdentityOrange);
+		resetDiscovery.CustomMinimumSize = new Vector2(164f, 42f);
+		controls.AddChild(resetDiscovery);
 
 		BuildDepthScrollDecoration();
 		RefreshDepthTabStyle();
@@ -361,7 +377,7 @@ public partial class UdpListener : Node2D
 		button.SetMeta("identity_tab", key);
 		button.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
 		button.SizeFlagsStretchRatio = 1f;
-		button.CustomMinimumSize = new Vector2(0f, 46f);
+		button.CustomMinimumSize = new Vector2(0f, 42f);
 		button.AddThemeFontSizeOverride("font_size", 12);
 		button.ClipText = true;
 		if (hasIcon)
@@ -371,7 +387,7 @@ public partial class UdpListener : Node2D
 			button.AddThemeConstantOverride("icon_max_width", 26);
 		}
 		_depthTabButtons.Add(button);
-		parent.AddChild(WrapHBoxControl(button, 46f));
+		parent.AddChild(WrapHBoxControl(button, 42f));
 	}
 
 	private Control WrapHBoxControl(Control child, float height)
@@ -401,8 +417,8 @@ public partial class UdpListener : Node2D
 		{
 			string key = button.HasMeta("identity_tab") ? button.GetMeta("identity_tab").AsString() : "";
 			bool active = string.Equals(key, _depthActiveTab, StringComparison.Ordinal);
-			button.AddThemeColorOverride("font_color", active ? Colors.White : new Color(0.40f, 0.21f, 0.34f));
-			button.AddThemeColorOverride("font_hover_color", active ? Colors.White : new Color(0.35f, 0.16f, 0.31f));
+			button.AddThemeColorOverride("font_color", active ? IdentityPink : new Color(0.33f, 0.25f, 0.31f));
+			button.AddThemeColorOverride("font_hover_color", active ? IdentityPink : new Color(0.46f, 0.18f, 0.34f));
 			// PNG Identity đã có màu hoàn chỉnh. Không được dùng theme icon color để
 			// nhuộm chúng thành một mảng hồng như icon monochrome.
 			button.AddThemeColorOverride("icon_normal_color", Colors.White);
@@ -821,34 +837,42 @@ public partial class UdpListener : Node2D
 
 	private PanelContainer NewIdentityCard(string title, string iconPath, string fallbackGlyph, Color accent, float minHeight)
 	{
-		var card = new PanelContainer { CustomMinimumSize = new Vector2(0f, minHeight), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		// Card cấp section chỉ dùng một đường nhấn bên trái. Bỏ khung màu bốn cạnh
+		// và glow lặp lại, vì đó chính là thứ khiến panel giống template pastel rẻ tiền.
+		var card = new PanelContainer
+		{
+			CustomMinimumSize = new Vector2(0f, minHeight),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+		};
 		card.AddThemeStyleboxOverride("panel", new StyleBoxFlat
 		{
-			BgColor = new Color(1f, 0.994f, 0.998f, 0.995f),
-			BorderColor = new Color(accent.R, accent.G, accent.B, 0.27f),
-			BorderWidthLeft = 1,
-			BorderWidthTop = 1,
-			BorderWidthRight = 1,
-			BorderWidthBottom = 1,
-			CornerRadiusTopLeft = 18,
-			CornerRadiusTopRight = 18,
-			CornerRadiusBottomLeft = 18,
-			CornerRadiusBottomRight = 18,
-			ContentMarginLeft = 14f,
-			ContentMarginTop = 11f,
-			ContentMarginRight = 14f,
-			ContentMarginBottom = 11f,
-			ShadowColor = new Color(0.56f, 0.18f, 0.40f, 0.10f),
-			ShadowSize = 9,
-			ShadowOffset = new Vector2(0f, 3f),
+			BgColor = IdentityCard,
+			BorderColor = new Color(accent.R, accent.G, accent.B, 0.34f),
+			BorderWidthLeft = 2,
+			BorderWidthTop = 0,
+			BorderWidthRight = 0,
+			BorderWidthBottom = 0,
+			CornerRadiusTopLeft = 15,
+			CornerRadiusTopRight = 15,
+			CornerRadiusBottomLeft = 15,
+			CornerRadiusBottomRight = 15,
+			ContentMarginLeft = 16f,
+			ContentMarginTop = 13f,
+			ContentMarginRight = 16f,
+			ContentMarginBottom = 13f,
+			ShadowColor = new Color(0.22f, 0.12f, 0.19f, 0.065f),
+			ShadowSize = 6,
+			ShadowOffset = new Vector2(0f, 2f),
 		});
+
 		var box = new VBoxContainer();
-		box.AddThemeConstantOverride("separation", 5);
+		box.AddThemeConstantOverride("separation", 7);
 		card.AddChild(box);
-		var header = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 24f) };
-		header.AddThemeConstantOverride("separation", 6);
-		header.AddChild(NewIconBadge(iconPath, fallbackGlyph, new Vector2(32f, 32f), accent, true));
-		header.AddChild(NewLabel(title, 14, new Color(0.55f, 0.17f, 0.38f), true));
+
+		var header = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 26f) };
+		header.AddThemeConstantOverride("separation", 8);
+		header.AddChild(NewIconBadge(iconPath, fallbackGlyph, new Vector2(28f, 28f), accent, true));
+		header.AddChild(NewLabel(title, 15, IdentityInk, true));
 		box.AddChild(header);
 		return card;
 	}
@@ -1005,45 +1029,84 @@ public partial class UdpListener : Node2D
 
 	private Label NewPill(string text, Color accent, bool alignRight)
 	{
+		// Pill chỉ còn là nhãn trạng thái nhỏ. Không dùng nó như container mặc định
+		// cho mọi đoạn chữ nữa.
 		var label = NewLabel(text, 9, accent, true);
 		label.ClipText = true;
 		label.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
 		label.TooltipText = text;
 		label.HorizontalAlignment = HorizontalAlignment.Center;
 		label.VerticalAlignment = VerticalAlignment.Center;
-		label.CustomMinimumSize = new Vector2(78f, 24f);
+		label.CustomMinimumSize = new Vector2(72f, 22f);
 		label.SizeFlagsHorizontal = alignRight ? Control.SizeFlags.ShrinkEnd : Control.SizeFlags.ShrinkBegin;
 		label.AddThemeStyleboxOverride("normal", new StyleBoxFlat
 		{
-			BgColor = new Color(accent.R, accent.G, accent.B, 0.08f),
-			BorderColor = new Color(accent.R, accent.G, accent.B, 0.24f),
+			BgColor = new Color(accent.R, accent.G, accent.B, 0.070f),
+			BorderColor = new Color(accent.R, accent.G, accent.B, 0.12f),
 			BorderWidthLeft = 1,
-			BorderWidthTop = 1,
-			BorderWidthRight = 1,
-			BorderWidthBottom = 1,
-			CornerRadiusTopLeft = 13,
-			CornerRadiusTopRight = 13,
-			CornerRadiusBottomLeft = 13,
-			CornerRadiusBottomRight = 13,
+			BorderWidthTop = 0,
+			BorderWidthRight = 0,
+			BorderWidthBottom = 0,
+			CornerRadiusTopLeft = 7,
+			CornerRadiusTopRight = 7,
+			CornerRadiusBottomLeft = 7,
+			CornerRadiusBottomRight = 7,
+			ContentMarginLeft = 8f,
+			ContentMarginRight = 8f,
 		});
 		return label;
 	}
 
+
+	private Control NewStatusLine(string text, Color accent)
+	{
+		var row = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 22f) };
+		row.AddThemeConstantOverride("separation", 8);
+		var dot = new PanelContainer
+		{
+			CustomMinimumSize = new Vector2(8f, 8f),
+			SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+		};
+		dot.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = accent,
+			CornerRadiusTopLeft = 4,
+			CornerRadiusTopRight = 4,
+			CornerRadiusBottomLeft = 4,
+			CornerRadiusBottomRight = 4,
+		});
+		row.AddChild(dot);
+		var label = NewLabel(text, 10, IdentityMuted, false);
+		label.ClipText = true;
+		label.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+		label.TooltipText = text;
+		row.AddChild(label);
+		return row;
+	}
+
+	private static Control NewActionDivider()
+	{
+		return new ColorRect
+		{
+			Color = new Color(0.52f, 0.40f, 0.47f, 0.20f),
+			CustomMinimumSize = new Vector2(1f, 24f),
+			SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+		};
+	}
 
 	private Button NewFooterButton(string text, string iconPath, string fallbackGlyph, Action action, Color accent)
 	{
 		string resolvedIconPath = ResolveIdentityAssetPath(iconPath);
 		bool hasIcon = ResourceLoader.Exists(resolvedIconPath);
 		var button = NewButton(hasIcon ? text : $"{fallbackGlyph}  {text}", action, false);
-		button.CustomMinimumSize = new Vector2(0f, 46f);
-		button.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-		button.SizeFlagsStretchRatio = 1f;
+		button.CustomMinimumSize = new Vector2(142f, 42f);
+		button.SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin;
 		button.FocusMode = Control.FocusModeEnum.None;
-		button.AddThemeFontSizeOverride("font_size", 12);
-		button.AddThemeConstantOverride("h_separation", 8);
-		button.AddThemeColorOverride("font_color", new Color(0.31f, 0.20f, 0.31f));
-		button.AddThemeColorOverride("font_hover_color", new Color(0.25f, 0.12f, 0.25f));
-		button.AddThemeColorOverride("font_pressed_color", new Color(0.25f, 0.12f, 0.25f));
+		button.AddThemeFontSizeOverride("font_size", 11);
+		button.AddThemeConstantOverride("h_separation", 7);
+		button.AddThemeColorOverride("font_color", new Color(0.27f, 0.20f, 0.28f));
+		button.AddThemeColorOverride("font_hover_color", IdentityInk);
+		button.AddThemeColorOverride("font_pressed_color", IdentityInk);
 		button.AddThemeStyleboxOverride("normal", IdentityActionButtonStyle(accent, false, false));
 		button.AddThemeStyleboxOverride("hover", IdentityActionButtonStyle(accent, true, false));
 		button.AddThemeStyleboxOverride("pressed", IdentityActionButtonStyle(accent, true, true));
@@ -1052,7 +1115,7 @@ public partial class UdpListener : Node2D
 		{
 			button.Icon = GD.Load<Texture2D>(resolvedIconPath);
 			button.ExpandIcon = true;
-			button.AddThemeConstantOverride("icon_max_width", 22);
+			button.AddThemeConstantOverride("icon_max_width", 20);
 			button.AddThemeColorOverride("icon_normal_color", Colors.White);
 			button.AddThemeColorOverride("icon_hover_color", Colors.White);
 			button.AddThemeColorOverride("icon_pressed_color", Colors.White);
@@ -1079,25 +1142,22 @@ public partial class UdpListener : Node2D
 
 	private static StyleBoxFlat IdentityActionDockStyle() => new()
 	{
-		BgColor = new Color(1f, 0.987f, 0.994f, 0.985f),
-		BorderColor = new Color(0.94f, 0.78f, 0.86f, 0.92f),
-		BorderWidthLeft = 1,
+		BgColor = new Color(1f, 1f, 1f, 0.50f),
+		BorderColor = new Color(0.78f, 0.67f, 0.73f, 0.34f),
+		BorderWidthLeft = 0,
 		BorderWidthTop = 1,
-		BorderWidthRight = 1,
-		BorderWidthBottom = 1,
-		CornerRadiusTopLeft = 19,
-		CornerRadiusTopRight = 19,
-		CornerRadiusBottomLeft = 19,
-		CornerRadiusBottomRight = 19,
-		ShadowColor = new Color(0.50f, 0.16f, 0.36f, 0.12f),
-		ShadowSize = 10,
-		ShadowOffset = new Vector2(0f, 3f),
+		BorderWidthRight = 0,
+		BorderWidthBottom = 0,
+		CornerRadiusTopLeft = 0,
+		CornerRadiusTopRight = 0,
+		CornerRadiusBottomLeft = 14,
+		CornerRadiusBottomRight = 14,
 	};
 
 	private static StyleBoxFlat IdentityActionButtonStyle(Color accent, bool hover, bool pressed)
 	{
-		float alpha = pressed ? 0.19f : hover ? 0.13f : 0.065f;
-		float borderAlpha = pressed ? 0.72f : hover ? 0.58f : 0.34f;
+		float alpha = pressed ? 0.14f : hover ? 0.085f : 0.035f;
+		float borderAlpha = pressed ? 0.42f : hover ? 0.28f : 0.14f;
 		return new StyleBoxFlat
 		{
 			BgColor = new Color(accent.R, accent.G, accent.B, alpha),
@@ -1106,63 +1166,55 @@ public partial class UdpListener : Node2D
 			BorderWidthTop = 1,
 			BorderWidthRight = 1,
 			BorderWidthBottom = 1,
-			CornerRadiusTopLeft = 15,
-			CornerRadiusTopRight = 15,
-			CornerRadiusBottomLeft = 15,
-			CornerRadiusBottomRight = 15,
-			ContentMarginLeft = 14f,
-			ContentMarginTop = 7f,
-			ContentMarginRight = 14f,
-			ContentMarginBottom = 7f,
-			ShadowColor = new Color(accent.R, accent.G, accent.B, hover ? 0.14f : 0.07f),
-			ShadowSize = hover ? 8 : 5,
-			ShadowOffset = new Vector2(0f, pressed ? 1f : 2f),
+			CornerRadiusTopLeft = 9,
+			CornerRadiusTopRight = 9,
+			CornerRadiusBottomLeft = 9,
+			CornerRadiusBottomRight = 9,
+			ContentMarginLeft = 12f,
+			ContentMarginTop = 6f,
+			ContentMarginRight = 12f,
+			ContentMarginBottom = 6f,
 		};
 	}
 
 	private static StyleBoxFlat IdentityTabStyle(bool active, bool hover)
 	{
 		Color bg = active
-			? new Color(0.95f, hover ? 0.14f : 0.18f, 0.48f, 1f)
-			: new Color(1f, hover ? 0.945f : 0.982f, hover ? 0.972f : 0.991f, 1f);
-		Color border = active ? new Color(0.95f, 0.18f, 0.48f, 1f) : new Color(0.95f, 0.73f, 0.84f, hover ? 0.92f : 0.72f);
+			? new Color(0.94f, 0.18f, 0.46f, hover ? 0.085f : 0.060f)
+			: new Color(1f, 1f, 1f, hover ? 0.42f : 0.06f);
 		return new StyleBoxFlat
 		{
 			BgColor = bg,
-			BorderColor = border,
-			BorderWidthLeft = 1,
-			BorderWidthTop = 1,
-			BorderWidthRight = 1,
-			BorderWidthBottom = 1,
-			CornerRadiusTopLeft = 15,
-			CornerRadiusTopRight = 15,
-			CornerRadiusBottomLeft = 15,
-			CornerRadiusBottomRight = 15,
+			BorderColor = active
+				? new Color(0.91f, 0.18f, 0.46f, 0.92f)
+				: new Color(0.70f, 0.60f, 0.66f, hover ? 0.18f : 0f),
+			BorderWidthLeft = 0,
+			BorderWidthTop = 0,
+			BorderWidthRight = 0,
+			BorderWidthBottom = active ? 2 : 1,
+			CornerRadiusTopLeft = 8,
+			CornerRadiusTopRight = 8,
+			CornerRadiusBottomLeft = 4,
+			CornerRadiusBottomRight = 4,
 			ContentMarginLeft = 12f,
 			ContentMarginRight = 12f,
-			ShadowColor = new Color(0.55f, 0.14f, 0.37f, active ? 0.15f : hover ? 0.08f : 0.03f),
-			ShadowSize = active ? 8 : hover ? 6 : 3,
-			ShadowOffset = new Vector2(0f, active ? 3f : 1f),
 		};
 	}
 
 	private static StyleBoxFlat IdentityTabPressedStyle() => new()
 	{
-		BgColor = new Color(0.88f, 0.12f, 0.42f, 1f),
-		BorderColor = new Color(0.84f, 0.08f, 0.37f, 1f),
-		BorderWidthLeft = 1,
-		BorderWidthTop = 1,
-		BorderWidthRight = 1,
-		BorderWidthBottom = 1,
-		CornerRadiusTopLeft = 15,
-		CornerRadiusTopRight = 15,
-		CornerRadiusBottomLeft = 15,
-		CornerRadiusBottomRight = 15,
+		BgColor = new Color(0.91f, 0.18f, 0.46f, 0.10f),
+		BorderColor = new Color(0.91f, 0.18f, 0.46f, 1f),
+		BorderWidthLeft = 0,
+		BorderWidthTop = 0,
+		BorderWidthRight = 0,
+		BorderWidthBottom = 2,
+		CornerRadiusTopLeft = 8,
+		CornerRadiusTopRight = 8,
+		CornerRadiusBottomLeft = 4,
+		CornerRadiusBottomRight = 4,
 		ContentMarginLeft = 12f,
 		ContentMarginRight = 12f,
-		ShadowColor = new Color(0.45f, 0.08f, 0.28f, 0.12f),
-		ShadowSize = 4,
-		ShadowOffset = new Vector2(0f, 1f),
 	};
 
 
@@ -1602,43 +1654,53 @@ public partial class UdpListener : Node2D
 		List<IdentityScoreEntry> activeMotives,
 		List<IdentityScoreEntry> activeDefenses)
 	{
-		var card = NewIdentityCard("Bản sắc hiện tại", IdentityAsset("identity_tab_values.png"), "♡", IdentityPink, 118f);
+		var card = NewIdentityCard("Bản sắc hiện tại", IdentityAsset("identity_tab_values.png"), "♡", IdentityPink, 142f);
 		_depthContentList.AddChild(card);
 		var box = (VBoxContainer)card.GetChild(0);
-		var row = new HBoxContainer();
-		row.AddThemeConstantOverride("separation", 16);
+		var row = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 90f) };
+		row.AddThemeConstantOverride("separation", 18);
 		box.AddChild(row);
 
 		var copy = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		copy.AddThemeConstantOverride("separation", 4);
+		copy.AddThemeConstantOverride("separation", 6);
 		string headline = values.Count > 0
 			? string.Join(" · ", TopIdentityNames(values, 3))
 			: "Chưa có snapshot giá trị";
-		copy.AddChild(NewLabel(headline, 19, IdentityInk, true));
+		copy.AddChild(NewLabel(headline, 21, IdentityInk, true));
 		string narrative = BuildIdentityNarrative(values, emergent);
 		var narrativeLabel = NewLabel(narrative, 12, IdentityMuted, false);
 		narrativeLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
 		copy.AddChild(narrativeLabel);
 		row.AddChild(copy);
 
-		var chips = new VBoxContainer { CustomMinimumSize = new Vector2(190f, 0f) };
-		chips.AddThemeConstantOverride("separation", 6);
+		// Asset tùy chọn. Nếu chưa có thì panel tự bỏ khoảng minh họa, không dựng
+		// một ô glyph giả khiến hệ thị giác tụt chất lượng.
+		string quillPath = ResolveIdentityAssetPath(IdentityAsset("identity_signature_quill.png"));
+		if (ResourceLoader.Exists(quillPath))
+		{
+			var quill = NewIdentityTexture(quillPath, new Vector2(158f, 82f));
+			quill.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
+			row.AddChild(quill);
+		}
+
 		int valueUpdates = CountRecentIdentityChanges(root, "value");
 		bool hasEmergent = emergent.Exists(item => item.Value > 0.001f);
 		JsonElement conflict = Obj(root, "active_conflict");
 		bool hasActiveConflict = HasActiveConflict(conflict);
 		bool hasLiveState = activeMotives.Count > 0 || activeDefenses.Count > 0 || hasActiveConflict;
 
-		chips.AddChild(NewPill(
+		var status = new VBoxContainer { CustomMinimumSize = new Vector2(218f, 0f) };
+		status.AddThemeConstantOverride("separation", 7);
+		status.AddChild(NewStatusLine(
 			valueUpdates > 0 ? $"{valueUpdates} cập nhật ledger" : "Chưa có delta giá trị",
-			valueUpdates > 0 ? IdentityGreen : IdentityBlue, false));
-		chips.AddChild(NewPill(
+			valueUpdates > 0 ? IdentityGreen : IdentityBlue));
+		status.AddChild(NewStatusLine(
 			hasEmergent ? "Có giá trị emergent" : "Chưa có giá trị mới",
-			hasEmergent ? IdentityPurple : IdentityBlue, false));
-		chips.AddChild(NewPill(
+			hasEmergent ? IdentityPurple : IdentityBlue));
+		status.AddChild(NewStatusLine(
 			hasLiveState ? "Có state đang hoạt động" : "Không có state active",
-			hasLiveState ? IdentityOrange : IdentityPink, false));
-		row.AddChild(chips);
+			hasLiveState ? IdentityOrange : IdentityPink));
+		row.AddChild(status);
 	}
 
 	private void RenderCoreValuesMap(HBoxContainer parent, JsonElement root, List<IdentityScoreEntry> values)
@@ -1946,29 +2008,27 @@ public partial class UdpListener : Node2D
 		}
 		scored.Sort((a, b) => b.Value.CompareTo(a.Value));
 
-		var strip = new PanelContainer { CustomMinimumSize = new Vector2(0f, 58f) };
-		strip.AddThemeStyleboxOverride("panel", IdentitySoftPanelStyle(IdentityBlue, 0.025f, 15));
+		var strip = new MarginContainer { CustomMinimumSize = new Vector2(0f, 42f) };
+		strip.AddThemeConstantOverride("margin_left", 6);
+		strip.AddThemeConstantOverride("margin_top", 5);
+		strip.AddThemeConstantOverride("margin_right", 8);
+		strip.AddThemeConstantOverride("margin_bottom", 4);
 		_depthContentList.AddChild(strip);
-		var pad = new MarginContainer();
-		pad.AddThemeConstantOverride("margin_left", 14);
-		pad.AddThemeConstantOverride("margin_top", 8);
-		pad.AddThemeConstantOverride("margin_right", 14);
-		pad.AddThemeConstantOverride("margin_bottom", 8);
-		strip.AddChild(pad);
+
 		var row = new HBoxContainer();
 		row.AddThemeConstantOverride("separation", 9);
-		pad.AddChild(row);
-		row.AddChild(NewLabel("Hình thái suy ra · debug", 10, IdentityMuted, true));
+		strip.AddChild(row);
+		row.AddChild(NewLabel("Hình thái suy ra · debug", 10, new Color(IdentityMuted.R, IdentityMuted.G, IdentityMuted.B, 0.82f), true));
 		row.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
-		int shown = 0;
+
+		var labels = new List<string>();
 		foreach (IdentityScoreEntry item in scored)
 		{
 			if (item.Value < 0.08f) continue;
-			row.AddChild(NewPill($"{PrettyIdentityKey(item.Key)} {item.Value:0.00}", shown == 0 ? IdentityPink : IdentityBlue, false));
-			if (++shown >= 3) break;
+			labels.Add($"{PrettyIdentityKey(item.Key)} {item.Value:0.00}");
+			if (labels.Count >= 3) break;
 		}
-		if (shown == 0)
-			row.AddChild(NewLabel("Chưa có attractor đáng kể.", 10, IdentityMuted, false));
+		row.AddChild(NewLabel(labels.Count > 0 ? string.Join("   ·   ", labels) : "Chưa có attractor đáng kể.", 9, IdentityMuted, false));
 	}
 
 	private List<IdentityScoreEntry> ReadIdentityScores(JsonElement array, int limit)
@@ -2160,25 +2220,37 @@ public partial class UdpListener : Node2D
 	{
 		Color accent = IdentityValueAccent(item.Key);
 		var panel = new PanelContainer();
-		var style = IdentitySoftPanelStyle(accent, 0.055f, 34);
-		style.BorderColor = new Color(accent.R, accent.G, accent.B, 0.30f);
-		style.ShadowColor = new Color(accent.R, accent.G, accent.B, 0.12f);
-		style.ShadowSize = 12;
-		style.ShadowOffset = new Vector2(0f, 4f);
-		panel.AddThemeStyleboxOverride("panel", style);
+		panel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(1f, 0.985f, 0.988f, 0.72f),
+			BorderColor = new Color(accent.R, accent.G, accent.B, 0.20f),
+			BorderWidthLeft = 1,
+			BorderWidthTop = 1,
+			BorderWidthRight = 1,
+			BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 20,
+			CornerRadiusTopRight = 20,
+			CornerRadiusBottomLeft = 20,
+			CornerRadiusBottomRight = 20,
+			ShadowColor = new Color(accent.R, accent.G, accent.B, 0.085f),
+			ShadowSize = 8,
+			ShadowOffset = new Vector2(0f, 3f),
+		});
+
 		var pad = new MarginContainer();
 		pad.AddThemeConstantOverride("margin_left", 14);
 		pad.AddThemeConstantOverride("margin_top", 12);
 		pad.AddThemeConstantOverride("margin_right", 14);
 		pad.AddThemeConstantOverride("margin_bottom", 12);
 		panel.AddChild(pad);
+
 		var box = new VBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
-		box.AddThemeConstantOverride("separation", 5);
+		box.AddThemeConstantOverride("separation", 6);
 		pad.AddChild(box);
 		var orbCenter = new CenterContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		orbCenter.AddChild(NewIconBadge(IdentityAsset("identity_values_orb.png"), "✦", new Vector2(122f, 122f), accent, true));
+		orbCenter.AddChild(NewIconBadge(IdentityAsset("identity_values_orb.png"), "✦", new Vector2(132f, 132f), accent, true));
 		box.AddChild(orbCenter);
-		var name = NewLabel(PrettyIdentityKey(item.Key), 15, IdentityInk, true);
+		var name = NewLabel(PrettyIdentityKey(item.Key), 16, IdentityInk, true);
 		name.HorizontalAlignment = HorizontalAlignment.Center;
 		box.AddChild(name);
 		var score = NewLargeScore(item.Value, accent);
@@ -2188,7 +2260,7 @@ public partial class UdpListener : Node2D
 		detail.AutowrapMode = TextServer.AutowrapMode.WordSmart;
 		detail.HorizontalAlignment = HorizontalAlignment.Center;
 		box.AddChild(detail);
-		var delta = NewLabel(ValueDeltaCaption(root, item.Key), 9, accent, true);
+		var delta = NewLabel(ValueDeltaCaption(root, item.Key), 9, new Color(accent.R, accent.G, accent.B, 0.88f), true);
 		delta.HorizontalAlignment = HorizontalAlignment.Center;
 		box.AddChild(delta);
 		return panel;
@@ -2197,52 +2269,60 @@ public partial class UdpListener : Node2D
 	private PanelContainer NewValuePetal(JsonElement root, int rank, IdentityScoreEntry item, bool opensRight)
 	{
 		Color accent = IdentityValueAccent(item.Key);
-		var panel = new PanelContainer { CustomMinimumSize = new Vector2(174f, 128f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		var style = IdentitySoftPanelStyle(accent, 0.042f, 18);
-		// Góc bo bất đối xứng tạo cảm giác cánh hoa hướng về orb trung tâm.
-		if (opensRight)
+		var panel = new PanelContainer
 		{
-			style.CornerRadiusTopRight = 42;
-			style.CornerRadiusBottomRight = 42;
-		}
-		else
+			CustomMinimumSize = new Vector2(176f, 126f),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+		};
+		panel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
 		{
-			style.CornerRadiusTopLeft = 42;
-			style.CornerRadiusBottomLeft = 42;
-		}
-		style.BorderColor = new Color(accent.R, accent.G, accent.B, 0.24f);
-		panel.AddThemeStyleboxOverride("panel", style);
-		var pad = new MarginContainer();
-		pad.AddThemeConstantOverride("margin_left", 11);
-		pad.AddThemeConstantOverride("margin_top", 9);
-		pad.AddThemeConstantOverride("margin_right", 11);
-		pad.AddThemeConstantOverride("margin_bottom", 9);
-		panel.AddChild(pad);
+			BgColor = new Color(1f, 1f, 1f, 0.34f),
+			BorderColor = new Color(accent.R, accent.G, accent.B, 0.26f),
+			BorderWidthLeft = opensRight ? 2 : 0,
+			BorderWidthTop = 0,
+			BorderWidthRight = opensRight ? 0 : 2,
+			BorderWidthBottom = 0,
+			CornerRadiusTopLeft = 10,
+			CornerRadiusTopRight = 10,
+			CornerRadiusBottomLeft = 10,
+			CornerRadiusBottomRight = 10,
+			ContentMarginLeft = 12f,
+			ContentMarginTop = 10f,
+			ContentMarginRight = 12f,
+			ContentMarginBottom = 10f,
+		});
+
 		var box = new VBoxContainer();
-		box.AddThemeConstantOverride("separation", 3);
-		pad.AddChild(box);
+		box.AddThemeConstantOverride("separation", 4);
+		panel.AddChild(box);
 		var top = new HBoxContainer();
-		top.AddChild(NewPill(rank.ToString(CultureInfo.InvariantCulture), accent, false));
+		var rankLabel = NewLabel($"0{rank}", 10, new Color(accent.R, accent.G, accent.B, 0.82f), true);
+		rankLabel.SizeFlagsHorizontal = Control.SizeFlags.ShrinkBegin;
+		top.AddChild(rankLabel);
 		top.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
 		top.AddChild(NewLabel($"{item.Value:0.00}", 14, accent, true));
 		box.AddChild(top);
-		box.AddChild(NewLabel(PrettyIdentityKey(item.Key), 12, IdentityInk, true));
+		box.AddChild(NewLabel(PrettyIdentityKey(item.Key), 13, IdentityInk, true));
 		var detail = NewLabel(ValueDescription(item.Key), 9, IdentityMuted, false);
 		detail.AutowrapMode = TextServer.AutowrapMode.WordSmart;
 		box.AddChild(detail);
-		box.AddChild(NewLabel(ValueDeltaCaption(root, item.Key), 9, accent, true));
+		box.AddChild(NewLabel(ValueDeltaCaption(root, item.Key), 9, new Color(accent.R, accent.G, accent.B, 0.85f), true));
 		return panel;
 	}
 
 	private PanelContainer NewMotiveSatellite(IdentityScoreEntry item, int index)
 	{
 		Color accent = index == 0 ? IdentityPurple : index == 1 ? IdentityBlue : IdentityPink;
-		var panel = new PanelContainer { CustomMinimumSize = new Vector2(105f, 84f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		var style = IdentitySoftPanelStyle(accent, 0.045f, 34);
-		style.BorderColor = new Color(accent.R, accent.G, accent.B, 0.22f);
+		var panel = new PanelContainer
+		{
+			CustomMinimumSize = new Vector2(105f, 76f),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+		};
+		var style = IdentitySoftPanelStyle(accent, 0.026f, 12);
+		style.BorderColor = new Color(accent.R, accent.G, accent.B, 0.13f);
 		panel.AddThemeStyleboxOverride("panel", style);
 		var box = new VBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
-		box.AddThemeConstantOverride("separation", 2);
+		box.AddThemeConstantOverride("separation", 3);
 		panel.AddChild(box);
 		var score = NewLabel($"{item.Value:0.00}", 14, accent, true);
 		score.HorizontalAlignment = HorizontalAlignment.Center;
@@ -2286,12 +2366,16 @@ public partial class UdpListener : Node2D
 	private PanelContainer NewDefenseLayer(IdentityScoreEntry item, int index)
 	{
 		Color accent = index == 0 ? IdentityBlue : IdentityPurple;
-		var panel = new PanelContainer { CustomMinimumSize = new Vector2(132f, 78f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		var style = IdentitySoftPanelStyle(accent, 0.032f + (2 - Math.Min(index, 2)) * 0.012f, 20 - index * 2);
-		style.BorderColor = new Color(accent.R, accent.G, accent.B, 0.18f + (2 - Math.Min(index, 2)) * 0.04f);
+		var panel = new PanelContainer
+		{
+			CustomMinimumSize = new Vector2(132f, 72f),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+		};
+		var style = IdentitySoftPanelStyle(accent, 0.020f + (2 - Math.Min(index, 2)) * 0.006f, 11);
+		style.BorderColor = new Color(accent.R, accent.G, accent.B, 0.12f);
 		panel.AddThemeStyleboxOverride("panel", style);
 		var box = new VBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
-		box.AddThemeConstantOverride("separation", 2);
+		box.AddThemeConstantOverride("separation", 3);
 		panel.AddChild(box);
 		var score = NewLabel($"{item.Value:0.00}", 14, accent, true);
 		score.HorizontalAlignment = HorizontalAlignment.Center;
@@ -2308,15 +2392,19 @@ public partial class UdpListener : Node2D
 		Color accent = item.Value >= 0.55f ? IdentityGreen : item.Value >= 0.20f ? IdentityPurple : IdentityPink;
 		string stage = item.Value >= 0.55f ? "Đã kết tinh" : item.Value >= 0.20f ? "Đang kết tinh" : "Hạt sáng";
 		string glyph = item.Value >= 0.55f ? "✦" : item.Value >= 0.20f ? "◆" : "·";
-		var panel = new PanelContainer { CustomMinimumSize = new Vector2(166f, 82f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		var style = IdentitySoftPanelStyle(accent, 0.040f, 20);
-		style.BorderColor = new Color(accent.R, accent.G, accent.B, 0.22f);
+		var panel = new PanelContainer
+		{
+			CustomMinimumSize = new Vector2(166f, 76f),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+		};
+		var style = IdentitySoftPanelStyle(accent, 0.022f, 11);
+		style.BorderColor = new Color(accent.R, accent.G, accent.B, 0.13f);
 		panel.AddThemeStyleboxOverride("panel", style);
 		var row = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
-		row.AddThemeConstantOverride("separation", 7);
+		row.AddThemeConstantOverride("separation", 8);
 		panel.AddChild(row);
-		var mark = NewLabel(glyph, 22, accent, true);
-		mark.CustomMinimumSize = new Vector2(34f, 0f);
+		var mark = NewLabel(glyph, 19, accent, true);
+		mark.CustomMinimumSize = new Vector2(30f, 0f);
 		mark.HorizontalAlignment = HorizontalAlignment.Center;
 		row.AddChild(mark);
 		var copy = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
@@ -2379,10 +2467,15 @@ public partial class UdpListener : Node2D
 	private static StyleBoxFlat IdentitySoftPanelStyle(Color accent, float alpha, int radius) => new()
 	{
 		BgColor = new Color(accent.R, accent.G, accent.B, alpha),
-		BorderColor = new Color(accent.R, accent.G, accent.B, 0.16f),
-		BorderWidthLeft = 1, BorderWidthTop = 1, BorderWidthRight = 1, BorderWidthBottom = 1,
-		CornerRadiusTopLeft = radius, CornerRadiusTopRight = radius,
-		CornerRadiusBottomLeft = radius, CornerRadiusBottomRight = radius,
+		BorderColor = new Color(accent.R, accent.G, accent.B, 0.10f),
+		BorderWidthLeft = 1,
+		BorderWidthTop = 1,
+		BorderWidthRight = 1,
+		BorderWidthBottom = 1,
+		CornerRadiusTopLeft = Math.Min(radius, 16),
+		CornerRadiusTopRight = Math.Min(radius, 16),
+		CornerRadiusBottomLeft = Math.Min(radius, 16),
+		CornerRadiusBottomRight = Math.Min(radius, 16),
 	};
 
 	private static Control NewSectionDivider()
@@ -4354,7 +4447,7 @@ public partial class UdpListener : Node2D
 
 	private Label NewChip(string text, Color bg, Color ink)
 	{
-		var label = NewLabel(text, 11, ink, true);
+		var label = NewLabel(text, 10, ink, true);
 		label.HorizontalAlignment = HorizontalAlignment.Center;
 		label.VerticalAlignment = VerticalAlignment.Center;
 		label.CustomMinimumSize = new Vector2(112f, 32f);
@@ -4363,16 +4456,16 @@ public partial class UdpListener : Node2D
 		label.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
 		label.AddThemeStyleboxOverride("normal", new StyleBoxFlat
 		{
-			BgColor = bg,
-			BorderColor = ink,
+			BgColor = new Color(bg.R, bg.G, bg.B, 0.62f),
+			BorderColor = new Color(ink.R, ink.G, ink.B, 0.32f),
 			BorderWidthLeft = 1,
 			BorderWidthTop = 1,
 			BorderWidthRight = 1,
 			BorderWidthBottom = 1,
-			CornerRadiusTopLeft = 12,
-			CornerRadiusTopRight = 12,
-			CornerRadiusBottomLeft = 12,
-			CornerRadiusBottomRight = 12,
+			CornerRadiusTopLeft = 8,
+			CornerRadiusTopRight = 8,
+			CornerRadiusBottomLeft = 8,
+			CornerRadiusBottomRight = 8,
 		});
 		return label;
 	}

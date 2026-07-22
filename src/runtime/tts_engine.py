@@ -36,6 +36,7 @@ from typing import Optional
 from runtime.prosody_director import ProsodyDirector
 from runtime.speech_localizer import (
     SpeechLocalizationCancelled,
+    SpeechLocalizationError,
     SpeechLocalizer,
 )
 from runtime.tts_audio_polish import audio_polish_enabled, polish_pcm16_mono
@@ -1539,9 +1540,9 @@ class _TtsWorker:
         """Khóa transcript theo language contract trước khi gọi provider audio.
 
         ``prelocalized=True`` chỉ là metadata từ upstream, không phải bằng chứng.
-        Nếu contract là Nhật mà localizer lỗi, giữ quyền phát của turn bằng cách
-        rơi về đúng ngôn ngữ nguồn. Localization là lớp trình bày, không được làm
-        cả câu biến mất chỉ vì một request phụ cáu kỉnh với quota.
+        Nếu contract là Nhật mà localizer lỗi, audio phải fail-closed. Display text
+        vẫn còn nguyên ở stage, nhưng tuyệt đối không đẩy transcript Việt xuống
+        voice Nhật rồi giả vờ đó là cùng một giọng.
         """
 
         language_hint = self._request_language(req)
@@ -1551,12 +1552,8 @@ class _TtsWorker:
         if _contains_japanese_chars(text_to_speak):
             return text_to_speak, True, "ja"
         if not _prelocalize_japanese_enabled():
-            source_language = normalize_language("", text=text_to_speak) or "vi"
-            logger.warning(
-                "[TTS] JP localization disabled; fail-open bằng transcript nguồn language=%s.",
-                source_language,
-            )
-            return text_to_speak, False, source_language
+            logger.warning("[TTS] JP localization disabled; audio fail-closed for Japanese contract.")
+            raise SpeechLocalizationError("japanese_speech_contract_unavailable:localizer_disabled")
 
         source_text = text_to_speak
         try:
@@ -1571,20 +1568,20 @@ class _TtsWorker:
         except SpeechLocalizationCancelled:
             raise
         except Exception as exc:
-            source_language = normalize_language("", text=source_text) or "vi"
             logger.warning(
-                "[TTS] JP localization lỗi (%s); fail-open bằng transcript nguồn language=%s.",
+                "[TTS] JP localization lỗi (%s); audio fail-closed, giữ display transcript.",
                 _short_error(exc),
-                source_language,
             )
-            return source_text, False, source_language
+            if isinstance(exc, SpeechLocalizationError):
+                raise
+            raise SpeechLocalizationError(
+                f"japanese_speech_contract_unavailable:{type(exc).__name__}"
+            ) from exc
         if not _contains_japanese_chars(text_to_speak):
-            source_language = normalize_language("", text=source_text) or "vi"
             logger.warning(
-                "[TTS] JP localizer trả transcript không phải tiếng Nhật; fail-open language=%s.",
-                source_language,
+                "[TTS] JP localizer trả transcript không phải tiếng Nhật; audio fail-closed."
             )
-            return source_text, False, source_language
+            raise SpeechLocalizationError("japanese_speech_contract_unavailable:non_japanese_output")
         return text_to_speak, True, "ja"
 
     def _vocal_prefix_wav(
@@ -1741,6 +1738,7 @@ class _TtsWorker:
             with self._current_lock:
                 self._current_req = req
             callback_called = False
+            speech_contract_failed = False
             try:
                 try:
                     if not self._request_is_current(req):
@@ -1833,6 +1831,10 @@ class _TtsWorker:
                     )
                     if cancelled:
                         self._emit(req, "audio_cancelled", reason="speech_superseded")
+                    elif isinstance(exc, SpeechLocalizationError):
+                        speech_contract_failed = True
+                        self._emit(req, "audio_localization_failed", error=str(exc))
+                        logger.warning("[TTS] Audio bị bỏ vì không giữ được language contract: %s", exc)
                     else:
                         self._emit(req, "audio_failed", error=str(exc))
                         logger.warning("[TTS] Lỗi: %s", exc)
@@ -1844,6 +1846,7 @@ class _TtsWorker:
                     and req.on_start_play is not None
                     and self._request_is_current(req)
                     and not self._current_stop.is_set()
+                    and not speech_contract_failed
                 ):
                     try:
                         req.on_start_play()

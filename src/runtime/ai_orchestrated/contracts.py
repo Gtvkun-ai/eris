@@ -19,12 +19,15 @@ import time
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Mapping, Sequence
 
+from .semantic_contracts import ActivitySemantics, DiscourseFrame, TurnSemantics
+
 from .identity import (
     Activation,
     ConflictState,
     IdentityProfile,
     IdentitySignal,
     PendingStrategyUse,
+    PRIMARY_RELATIONSHIP_ID,
     ValueChoice,
 )
 from .personality import (
@@ -145,6 +148,8 @@ class CognitiveObservation:
 
     turn_id: str
     turn_seq: int
+    session_id: str = "runtime"
+    relationship_id: str = PRIMARY_RELATIONSHIP_ID
     event_kind: str = "chat"
     user_act: str = "unknown"
     relationship_meaning: str = "neutral"
@@ -164,6 +169,8 @@ class CognitiveObservation:
     rupture_delta: float = 0.0
     appraisal: AppraisalState = field(default_factory=AppraisalState)
     self_interpretation: SelfInterpretation = field(default_factory=SelfInterpretation)
+    self_narrative_candidate: str = ""
+    self_narrative_confidence: float = 0.0
     consequence: ConsequenceAssessment = field(default_factory=ConsequenceAssessment)
     trait_signals: tuple[TraitSignal, ...] = ()
     identity_signals: tuple[IdentitySignal, ...] = ()
@@ -171,6 +178,7 @@ class CognitiveObservation:
     activated_defenses: tuple[Activation, ...] = ()
     active_conflict: ConflictState = field(default_factory=ConflictState)
     value_choice: ValueChoice = field(default_factory=ValueChoice)
+    discourse: DiscourseFrame = field(default_factory=DiscourseFrame)
     open_loop: str = ""
     memory_candidate: str = ""
     evidence: tuple[str, ...] = ()
@@ -185,6 +193,8 @@ class CognitiveObservation:
         *,
         turn_id: str,
         turn_seq: int,
+        session_id: str = "runtime",
+        relationship_id: str = PRIMARY_RELATIONSHIP_ID,
         source: str = "model",
         latency_ms: float = 0.0,
     ) -> "CognitiveObservation":
@@ -251,6 +261,11 @@ class CognitiveObservation:
         return cls(
             turn_id=str(turn_id or f"turn-{turn_seq}"),
             turn_seq=max(0, int(turn_seq or 0)),
+            session_id=compact(data.get("session_id", session_id), 100) or "runtime",
+            relationship_id=compact(
+                data.get("relationship_id", relationship_id),
+                80,
+            ) or PRIMARY_RELATIONSHIP_ID,
             event_kind=compact(data.get("event_kind", "chat"), 40).lower() or "chat",
             user_act=compact(data.get("user_act", "unknown"), 60).lower() or "unknown",
             relationship_meaning=compact(data.get("relationship_meaning", "neutral"), 80).lower() or "neutral",
@@ -272,6 +287,8 @@ class CognitiveObservation:
             self_interpretation=SelfInterpretation.from_mapping(
                 data.get("self_interpretation") if isinstance(data.get("self_interpretation"), Mapping) else {}
             ),
+            self_narrative_candidate=compact(data.get("self_narrative_candidate", ""), 360),
+            self_narrative_confidence=clamp01(data.get("self_narrative_confidence", 0.0)),
             consequence=ConsequenceAssessment.from_mapping(
                 data.get("consequence") if isinstance(data.get("consequence"), Mapping) else {}
             ),
@@ -284,6 +301,9 @@ class CognitiveObservation:
             ),
             value_choice=ValueChoice.from_mapping(
                 data.get("value_choice") if isinstance(data.get("value_choice"), Mapping) else {}
+            ),
+            discourse=DiscourseFrame.from_mapping(
+                data.get("discourse") if isinstance(data.get("discourse"), Mapping) else {}
             ),
             open_loop=compact(data.get("open_loop", ""), 180),
             memory_candidate=compact(data.get("memory_candidate", ""), 260),
@@ -303,6 +323,7 @@ class CognitiveObservation:
         payload["activated_defenses"] = [item.to_dict() for item in self.activated_defenses]
         payload["active_conflict"] = self.active_conflict.to_dict()
         payload["value_choice"] = self.value_choice.to_dict()
+        payload["discourse"] = self.discourse.to_dict()
         payload["version"] = AI_RUNTIME_VERSION
         return payload
 
@@ -324,6 +345,8 @@ class IntentionPlan:
     tool_intent: str = ""
     tool_input: str = ""
     evidence_refs: tuple[str, ...] = ()
+    semantics: TurnSemantics = field(default_factory=TurnSemantics)
+    activity: ActivitySemantics = field(default_factory=ActivitySemantics)
     notes: str = ""
 
     @classmethod
@@ -334,6 +357,7 @@ class IntentionPlan:
             channel=channel,
             speak=False,
             motive="silence",
+            semantics=TurnSemantics(turn_kind="other", speech_act="silence", subject_key="none", evidence_scope="none"),
             notes=reason,
         )
 
@@ -363,11 +387,30 @@ class IntentionPlan:
             tool_intent=compact(data.get("tool_intent", ""), 80),
             tool_input=compact(data.get("tool_input", ""), 1200),
             evidence_refs=refs,
+            semantics=TurnSemantics.from_mapping(
+                data.get("semantics") if isinstance(data.get("semantics"), Mapping) else {
+                    "turn_kind": data.get("turn_kind", "other"),
+                    "speech_act": data.get("speech_act", data.get("strategy", "unspecified")),
+                    "subject_key": data.get("subject_key", data.get("plan_id", "unknown")),
+                    "evidence_scope": data.get("evidence_scope", "none"),
+                    "continuation_key": data.get("continuation_key", "none"),
+                }
+            ),
+            activity=ActivitySemantics.from_mapping(
+                data.get("activity") if isinstance(data.get("activity"), Mapping) else {}
+            ),
             notes=compact(data.get("notes", ""), 220),
         )
 
+    @property
+    def semantic_signature(self) -> str:
+        return self.semantics.signature
+
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
+        payload["semantics"] = self.semantics.to_dict()
+        payload["activity"] = self.activity.to_dict()
+        payload["semantic_signature"] = self.semantic_signature
         payload["version"] = AI_RUNTIME_VERSION
         return payload
 

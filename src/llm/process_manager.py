@@ -296,7 +296,7 @@ class RemoteModelProcessManager:
         model = (
             os.environ.get("ERIS_SOCIAL_OBSERVER_MODEL")
             or os.environ.get("ERIS_SOCIAL_PARSER_MODEL")
-            or "openai/gpt-oss-20b"
+            or "llama-3.1-8b-instant"
         ).strip()
         client = self._build_groq_social_client(
             model_name=model,
@@ -310,7 +310,7 @@ class RemoteModelProcessManager:
         model = (
             os.environ.get("ERIS_SOCIAL_OBSERVER_DEEP_MODEL")
             or os.environ.get("ERIS_SOCIAL_CRITIC_MODEL")
-            or "openai/gpt-oss-120b"
+            or "llama-3.3-70b-versatile"
         ).strip()
         client = self._build_groq_social_client(
             model_name=model,
@@ -399,7 +399,11 @@ class RemoteModelProcessManager:
         Tra None khi tat hoac thieu key (caller degrade ve vision local/caption cu).
         """
         apply_secrets_to_environ()
-        if not self._env_flag("ERIS_VISION_API_ENABLED", "0"):
+        # Companion mode cần thấy màn hình để bình luận. Mặc định ``auto``:
+        # có key aggregator thì dựng vision client, thiếu key mới degrade.
+        # Người dùng vẫn có thể tắt hẳn bằng ERIS_VISION_API_ENABLED=0.
+        raw_mode = os.environ.get("ERIS_VISION_API_ENABLED", "auto").strip().lower()
+        if raw_mode in {"0", "false", "no", "off"}:
             return None
 
         api_key = get_secret(

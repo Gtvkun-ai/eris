@@ -133,7 +133,7 @@ class PrivateMindLoop:
         channel: str = "autonomous",
         snapshot: Any = None,
         observer_frame: Any = None,
-        wake_decision: Any = None,
+        attention_signal: Any = None,
         memory_core: Any = None,
         state_committer: Any = None,
         memory_hits: Iterable[Any] = (),
@@ -164,7 +164,7 @@ class PrivateMindLoop:
             channel=channel,
             snapshot=snapshot,
             observer_frame=observer_frame,
-            wake_decision=wake_decision,
+            attention_signal=attention_signal,
             memory_core=memory_core,
             memory_hits=memory_hits,
             session_turn_ledger=session_turn_ledger,
@@ -747,7 +747,7 @@ class PrivateMindLoop:
         """Nguồn Sợ_Hiện_Sinh: RollingInternalState từ contextual loop nếu có.
 
         Thử vài tên thuộc tính thường gặp; không có thì trả None (dread=0, an toàn).
-        Điểm này là hook để contextual autonomy loop feed dread thật về sau.
+        Điểm này là hook để CortexRuntime feed dread thật về sau.
         """
         if runtime_owner is None:
             return None
@@ -755,8 +755,8 @@ class PrivateMindLoop:
             state = getattr(runtime_owner, attr, None)
             if state is not None and hasattr(state, "ontological_dread"):
                 return state
-        loop = getattr(runtime_owner, "contextual_autonomy_loop", None)
-        drive = getattr(loop, "endogenous_drive", None) if loop is not None else None
+        runtime = getattr(runtime_owner, "cortex_runtime", None)
+        drive = getattr(runtime, "endogenous_drive", None) if runtime is not None else None
         current = getattr(drive, "current", None) if drive is not None else None
         if current is not None and hasattr(current, "ontological_dread"):
             return current

@@ -26,7 +26,7 @@ from runtime.workspace_manager import default_eris_home
 
 
 _DEFAULT_SETTINGS: dict[str, Any] = {
-    "version": 2,
+    "version": 4,
     "architecture": {
         "mode": "ai_orchestrated",
         "startup_greeting": True,
@@ -105,9 +105,9 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
     },
     "social_observer": {
         "enabled": True,
-        "primary_model": "openai/gpt-oss-20b",
+        "primary_model": "llama-3.1-8b-instant",
         "deep_enabled": True,
-        "deep_model": "openai/gpt-oss-120b",
+        "deep_model": "llama-3.3-70b-versatile",
         "fallback_enabled": True,
         "fallback_model": "llama-3.1-8b-instant",
         "workers": 2,
@@ -143,7 +143,7 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         # Làm mềm riêng transcript TTS, không sửa bubble/public meaning.
         "speech_persona_polish": True,
         "speech_persona_profile": "infj_5w4_subtle",
-        "speech_persona_warmth": 0.18,
+        "speech_persona_warmth": 0.24,
         "speech_persona_cuteness": 0.10,
         # Signature chỉ áp vào transcript Nhật. Localizer quyết định theo câu và
         # tích hợp bằng ngữ pháp, không nối chuỗi ``ですね`` một cách máy móc.
@@ -164,11 +164,23 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
     },
     "initiative": {
         "enabled": True,
-        "hourly_budget": 2,
-        "minimum_interval_seconds": 1200,
-        "minimum_user_silence_seconds": 150,
-        "importance_margin": 0.12,
-        "activity_update_cooldown_seconds": 2700,
+        # Global cap chỉ là phanh cuối. Cooldown thật nằm theo motive class.
+        "hourly_budget": 2,  # legacy UI value; Initiative v3 không dùng làm global cap
+        "global_hourly_budget": 40,
+        "minimum_interval_seconds": 60,
+        "minimum_user_silence_seconds": 12,
+        "importance_margin": 0.08,
+        "semantic_duplicate_threshold": 0.66,
+        "activity_update_cooldown_seconds": 120,
+    },
+    "commentary": {
+        # Companion mode: người dùng mở Eris để nghe cô ấy sống cùng phiên làm
+        # việc, không phải để ngắm một hệ thống rất thông minh quyết định im.
+        "enabled": True,
+        "desired_interval_seconds": 60,
+        "maximum_quiet_seconds": 120,
+        "startup_delay_seconds": 8,
+        "minimum_user_silence_seconds": 12,
     },
     "tutor": {
         "enabled": True,
@@ -247,10 +259,17 @@ _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
     ("discovery", "share_cooldown_seconds"): ("ERIS_DISCOVERY_SHARE_COOLDOWN_SECONDS", "int"),
     ("initiative", "enabled"): ("ERIS_INITIATIVE_ENABLED", "bool"),
     ("initiative", "hourly_budget"): ("ERIS_INITIATIVE_HOURLY_BUDGET", "int"),
+    ("initiative", "global_hourly_budget"): ("ERIS_INITIATIVE_GLOBAL_HOURLY_BUDGET", "int"),
     ("initiative", "minimum_interval_seconds"): ("ERIS_INITIATIVE_MINIMUM_INTERVAL_SECONDS", "int"),
     ("initiative", "minimum_user_silence_seconds"): ("ERIS_INITIATIVE_MINIMUM_USER_SILENCE_SECONDS", "int"),
+    ("initiative", "semantic_duplicate_threshold"): ("ERIS_INITIATIVE_SEMANTIC_DUPLICATE_THRESHOLD", "float"),
     ("initiative", "importance_margin"): ("ERIS_INITIATIVE_IMPORTANCE_MARGIN", "float"),
     ("initiative", "activity_update_cooldown_seconds"): ("ERIS_INITIATIVE_ACTIVITY_UPDATE_COOLDOWN_SECONDS", "int"),
+    ("commentary", "enabled"): ("ERIS_COMMENTARY_ENABLED", "bool"),
+    ("commentary", "desired_interval_seconds"): ("ERIS_COMMENTARY_DESIRED_INTERVAL_SECONDS", "int"),
+    ("commentary", "maximum_quiet_seconds"): ("ERIS_COMMENTARY_MAXIMUM_QUIET_SECONDS", "int"),
+    ("commentary", "startup_delay_seconds"): ("ERIS_COMMENTARY_STARTUP_DELAY_SECONDS", "int"),
+    ("commentary", "minimum_user_silence_seconds"): ("ERIS_COMMENTARY_MINIMUM_USER_SILENCE_SECONDS", "int"),
     ("prompt", "hard_cap_tokens"): ("ERIS_LLM_PROMPT_HARD_CAP_TOKENS", "int"),
     ("prompt", "dds_enabled"): ("ERIS_DDS_ENABLED", "bool"),
     ("prompt", "strict_grounding"): ("ERIS_STRICT_GROUNDING", "bool"),
@@ -478,12 +497,12 @@ class RuntimeSettingsStore:
 
     @classmethod
     def _migrate_payload(cls, payload: Any) -> tuple[dict[str, Any], bool]:
-        """Tách ngôn ngữ public khỏi ngôn ngữ phát âm của schema v1.
+        """Di trú settings theo từng schema, không ghi đè lựa chọn thật.
 
-        Bản v5.1 từng ghi cùng một selector vào cả chat.language và
-        tts.language, khiến cấu hình Nhật cũ bị ép thành Việt. Với file v1,
-        giữ public ở Việt và phục hồi voice Nhật. Sau migration, lựa chọn vi/ja
-        của người dùng lại được tôn trọng bình thường.
+        v1 -> v2 tách ngôn ngữ public khỏi ngôn ngữ TTS.
+        v2 -> v3 nâng đúng baseline warmth 0.18 lên 0.24; giá trị đã được
+        người dùng chỉnh khác baseline cũ được giữ nguyên.
+        v3 -> v4 thêm companion-commentary cadence và nới ngân sách initiative.
         """
         if not isinstance(payload, Mapping):
             return {}, False
@@ -492,30 +511,71 @@ class RuntimeSettingsStore:
             version = int(out.get("version", 0) or 0)
         except (TypeError, ValueError):
             version = 0
-        if version >= int(_DEFAULT_SETTINGS["version"]):
+        target_version = int(_DEFAULT_SETTINGS["version"])
+        if version >= target_version:
             return out, False
 
-        chat = out.get("chat") if isinstance(out.get("chat"), Mapping) else {}
-        tts = out.get("tts") if isinstance(out.get("tts"), Mapping) else {}
-        chat = dict(chat or {})
-        tts = dict(tts or {})
-        chat["language"] = str(chat.get("language") or "vi").strip().lower() or "vi"
+        migrated = False
+        if version < 2:
+            chat = out.get("chat") if isinstance(out.get("chat"), Mapping) else {}
+            tts = out.get("tts") if isinstance(out.get("tts"), Mapping) else {}
+            chat = dict(chat or {})
+            tts = dict(tts or {})
+            chat["language"] = str(chat.get("language") or "vi").strip().lower() or "vi"
 
-        raw_tts = str(tts.get("language") or "").strip().lower()
-        env_tts = str(os.environ.get("ERIS_TTS_LANGUAGE", "") or "").strip().lower()
-        aliases = {"jp": "ja", "japanese": "ja", "ja-jp": "ja", "auto": ""}
-        raw_tts = aliases.get(raw_tts, raw_tts)
-        env_tts = aliases.get(env_tts, env_tts)
-        # v1 đã cưỡng ép vi nên không xem giá trị vi của schema đó là lựa chọn
-        # có chủ ý. Ưu tiên env Nhật cũ; nếu không có thì dùng mặc định Eris.
-        if raw_tts in {"", "vi"}:
-            tts["language"] = env_tts if env_tts in {"ja", "en"} else "ja"
-        else:
-            tts["language"] = raw_tts if raw_tts in {"ja", "en"} else "ja"
-        out["chat"] = chat
-        out["tts"] = tts
-        out["version"] = int(_DEFAULT_SETTINGS["version"])
-        return out, True
+            raw_tts = str(tts.get("language") or "").strip().lower()
+            env_tts = str(os.environ.get("ERIS_TTS_LANGUAGE", "") or "").strip().lower()
+            aliases = {"jp": "ja", "japanese": "ja", "ja-jp": "ja", "auto": ""}
+            raw_tts = aliases.get(raw_tts, raw_tts)
+            env_tts = aliases.get(env_tts, env_tts)
+            # v1 từng cưỡng ép vi nên chỉ schema này mới được phục hồi về ja.
+            if raw_tts in {"", "vi"}:
+                tts["language"] = env_tts if env_tts in {"ja", "en"} else "ja"
+            else:
+                tts["language"] = raw_tts if raw_tts in {"ja", "en"} else "ja"
+            out["chat"] = chat
+            out["tts"] = tts
+            migrated = True
+
+        if version < 3:
+            tts = dict(out.get("tts") or {}) if isinstance(out.get("tts"), Mapping) else {}
+            try:
+                old_warmth = float(tts.get("speech_persona_warmth"))
+            except (TypeError, ValueError):
+                old_warmth = -1.0
+            if abs(old_warmth - 0.18) <= 1e-9:
+                tts["speech_persona_warmth"] = 0.24
+                out["tts"] = tts
+                migrated = True
+
+
+        if version < 4:
+            initiative = dict(out.get("initiative") or {}) if isinstance(out.get("initiative"), Mapping) else {}
+            try:
+                old_budget = int(initiative.get("global_hourly_budget", 10) or 10)
+            except (TypeError, ValueError):
+                old_budget = 10
+            # Chỉ nâng đúng baseline cũ; lựa chọn thủ công khác 10 được giữ.
+            if old_budget == 10:
+                initiative["global_hourly_budget"] = 40
+            if int(initiative.get("minimum_interval_seconds", 90) or 90) == 90:
+                initiative["minimum_interval_seconds"] = 60
+            if int(initiative.get("minimum_user_silence_seconds", 20) or 20) == 20:
+                initiative["minimum_user_silence_seconds"] = 12
+            if int(initiative.get("activity_update_cooldown_seconds", 180) or 180) == 180:
+                initiative["activity_update_cooldown_seconds"] = 120
+            out["initiative"] = initiative
+            commentary = dict(out.get("commentary") or {}) if isinstance(out.get("commentary"), Mapping) else {}
+            commentary.setdefault("enabled", True)
+            commentary.setdefault("desired_interval_seconds", 60)
+            commentary.setdefault("maximum_quiet_seconds", 120)
+            commentary.setdefault("startup_delay_seconds", 8)
+            commentary.setdefault("minimum_user_silence_seconds", 12)
+            out["commentary"] = commentary
+            migrated = True
+
+        out["version"] = target_version
+        return out, True if version != target_version else migrated
 
     def _validate_full(self, payload: Any) -> dict[str, Any]:
         return self._static_validate(payload)

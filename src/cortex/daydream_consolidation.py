@@ -6,7 +6,7 @@ src/cortex/daydream_consolidation.py
 Tầng 2b - Daydream Consolidation.
 
 Đây là nơi Qwen 4B GGUF được phép nghiền ngẫm memory packet đã lọc sẵn.
-Nó không chạy theo timer mù. Runtime/WakeGovernor phải gọi khi có áp lực đủ mạnh,
+Nó không chạy theo timer mù. CortexRuntime gọi khi attention và budget cho phép,
 rồi ModelBudgetPolicy vẫn có quyền veto nếu máy đang bận.
 
 Luật chống ảo giác:

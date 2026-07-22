@@ -27,6 +27,7 @@ from typing import Any, Callable, Iterable
 
 from runtime.stage_audio_bus import StageAudioBus
 from runtime.stage_continuation import StageContinuationRuntime
+from runtime.speech_localizer import SpeechLocalizationError
 
 logger = logging.getLogger("TTS.TaskManager")
 
@@ -309,6 +310,7 @@ class TtsTaskManager:
         on_event: Callable[[Any, Any], None] | None,
     ) -> None:
         first_started = False
+        localization_failure_seen = False
         emotion_signature = ""
         try:
             for task in tasks:
@@ -334,6 +336,18 @@ class TtsTaskManager:
                             callback=on_event,
                         )
                         break
+                    if isinstance(exc, SpeechLocalizationError):
+                        localization_failure_seen = True
+                        self.audio_bus.emit_lifecycle(
+                            "audio_localization_failed",
+                            stage_frame=task.frame,
+                            text=task.text,
+                            turn_segments=turn_segments,
+                            error=str(exc),
+                            callback=on_event,
+                        )
+                        logger.warning("[tts-task-manager] localization contract failed: %s", exc)
+                        continue
                     if not first_started:
                         first_started = True
                         _call_once(on_first_start)
@@ -449,6 +463,7 @@ class TtsTaskManager:
                 and tasks
                 and not cancel_event.is_set()
                 and _speech_task_is_current(backend, tasks[0])
+                and not localization_failure_seen
             ):
                 first_started = True
                 _call_once(on_first_start)
@@ -468,6 +483,7 @@ class TtsTaskManager:
                 and tasks
                 and not cancel_event.is_set()
                 and _speech_task_is_current(backend, tasks[0])
+                and not localization_failure_seen
             ):
                 _call_once(on_first_start)
             with self._lock:

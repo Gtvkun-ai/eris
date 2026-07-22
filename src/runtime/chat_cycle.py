@@ -60,8 +60,8 @@ class ChatCycleMixin:
             self.logger.info("Exited chat mode; autonomous can resume (conversation buffer kept).")
             return
         try:
-            raw_grace = str(os.environ.get("ERIS_POST_CHAT_GRACE_SEC", "45") or "45").strip()
-            grace = max(15.0, float(raw_grace) if raw_grace else 45.0)
+            raw_grace = str(os.environ.get("ERIS_POST_CHAT_GRACE_SEC", "18") or "18").strip()
+            grace = max(8.0, float(raw_grace) if raw_grace else 18.0)
             block_fn(now=time.time(), seconds=grace)
             self.logger.info("Exited chat mode; autonomous blocked for %.0fs (post-chat grace).", grace)
         except TypeError:
@@ -226,6 +226,8 @@ class ChatCycleMixin:
     def _capture_screen_frame_for_chat(self, user_text: str) -> str:
         self._chat_screen_route_decision = None
         self._chat_screen_text_evidence = ()
+        self._chat_screen_capture_present = False
+        self._chat_screen_capture_interpreted = False
         router = getattr(self, "screen_relevance_router", None)
         route = None
         if router is not None:
@@ -270,12 +272,27 @@ class ChatCycleMixin:
         except Exception as exc:
             self.logger.warning("[vision chat] không chụp được màn hình: %s", exc)
             return ""
+        if not str(data_uri or "").strip():
+            self.logger.warning("[vision chat] screen capture trả dữ liệu rỗng")
+            return ""
+        self._chat_screen_capture_present = True
+        self.logger.info("[vision chat] captured=1 bytes=%d", len(str(data_uri)))
         snapshot = getattr(self, "_chat_snapshot_for_vision", None)
         if snapshot is not None:
             try:
                 self._refresh_screen_facts_from_data_uri(
                     data_uri=data_uri, snapshot=snapshot, channel="chat",
                     user_text=user_text, force_refresh=True,
+                )
+                report = getattr(self, "last_vision_grounding_report", None)
+                grounded_count = len(tuple(getattr(report, "grounded_claims", ()) or ())) if report is not None else 0
+                self._chat_screen_capture_interpreted = grounded_count > 0
+                self.logger.info(
+                    "[vision chat] interpreted=%s grounded_claims=%d recommendation=%s source=%s",
+                    int(self._chat_screen_capture_interpreted),
+                    grounded_count,
+                    str(getattr(report, "recommendation", "none") or "none"),
+                    str(getattr(report, "source", "unknown") or "unknown"),
                 )
             except Exception as exc:
                 self.logger.warning("[vision chat] không nén được screenshot: %s", exc)

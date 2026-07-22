@@ -1,10 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Ngân sách chủ động cho Architecture C.
+"""Gate cơ học cho self-initiated public turn.
 
-Không quyết định Eris nói gì. Nó chỉ ngăn autonomous biến mọi curiosity thành
-thông báo, đồng thời lưu lý do cho panel/debug.
+Main planner là semantic authority duy nhất. Controller này không đọc câu tự
+nhiên, không dò keyword, không tính Jaccard và không tự đổi motive thành loại
+hành vi. Nó chỉ dùng ``IntentionPlan.semantics`` đã được model khai báo để:
+
+- nhường lượt khi user đang bận hoặc vừa tương tác;
+- áp cooldown/ngân sách theo ``turn_kind``;
+- chặn đúng một semantic signature đã nói gần đây;
+- ghi state có debounce để không hành hạ SSD sau mỗi tick im lặng.
 """
-
 from __future__ import annotations
 
 import json
@@ -16,6 +21,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from runtime.workspace_manager import default_eris_home
+from .semantic_contracts import TurnSemantics
 
 
 def _setting(name: str, default: Any) -> Any:
@@ -42,14 +48,52 @@ def _as_float(value: Any, default: float) -> float:
     return number if number == number else default
 
 
+def _plan_semantics(plan: Any) -> TurnSemantics:
+    value = getattr(plan, "semantics", None)
+    if isinstance(value, TurnSemantics):
+        return value
+    if isinstance(value, Mapping):
+        return TurnSemantics.from_mapping(value)
+    return TurnSemantics()
+
+
+@dataclass(frozen=True, slots=True)
+class InitiativeProfile:
+    kind: str
+    cooldown_seconds: float
+    minimum_user_silence_seconds: float
+    hourly_budget: int
+    duplicate_window_seconds: float
+
+
+_PROFILES: dict[str, InitiativeProfile] = {
+    "continuation": InitiativeProfile("continuation", 20.0, 8.0, 20, 180.0),
+    "environment": InitiativeProfile("environment", 32.0, 12.0, 24, 180.0),
+    "activity_event": InitiativeProfile("activity_event", 12.0, 6.0, 24, 120.0),
+    "discovery": InitiativeProfile("discovery", 1800.0, 90.0, 2, 7200.0),
+    "internal": InitiativeProfile("internal", 150.0, 30.0, 10, 300.0),
+    "presence": InitiativeProfile("presence", 55.0, 12.0, 24, 90.0),
+    "startup": InitiativeProfile("startup", 0.0, 0.0, 2, 0.0),
+    "force_speak": InitiativeProfile("force_speak", 0.0, 0.0, 20, 300.0),
+    "other": InitiativeProfile("other", 120.0, 25.0, 8, 300.0),
+}
+
+
+def profile_for_plan(plan: Any) -> InitiativeProfile:
+    """Chọn profile từ key do planner tạo, không suy từ motive/strategy/text."""
+    kind = _plan_semantics(plan).turn_kind
+    return _PROFILES.get(kind, _PROFILES["other"])
+
+
 @dataclass(frozen=True, slots=True)
 class InitiativeEvent:
     timestamp: float
     channel: str
-    motive: str
-    strategy: str
     importance: float
-    topic: str = ""
+    kind: str = "other"
+    semantic_signature: str = ""
+    speech_act: str = "unspecified"
+    subject_key: str = "unknown"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -68,19 +112,20 @@ class InitiativeState:
         events: list[InitiativeEvent] = []
         raw = data.get("events", ())
         if isinstance(raw, (list, tuple)):
-            for item in raw[-48:]:
+            for item in raw[-96:]:
                 if not isinstance(item, Mapping):
                     continue
-                events.append(
-                    InitiativeEvent(
-                        timestamp=max(0.0, _as_float(item.get("timestamp"), 0.0)),
-                        channel=str(item.get("channel", "autonomous") or "autonomous")[:40],
-                        motive=str(item.get("motive", "") or "")[:100],
-                        strategy=str(item.get("strategy", "") or "")[:100],
-                        importance=max(0.0, min(1.0, _as_float(item.get("importance"), 0.0))),
-                        topic=str(item.get("topic", "") or "")[:260],
-                    )
-                )
+                # Migration: state V2 cũ không có signature typed. Không dựng lại
+                # signature từ topic vì đó chính là heuristic cần xóa.
+                events.append(InitiativeEvent(
+                    timestamp=max(0.0, _as_float(item.get("timestamp"), 0.0)),
+                    channel=str(item.get("channel", "autonomous") or "autonomous")[:40],
+                    importance=max(0.0, min(1.0, _as_float(item.get("importance"), 0.0))),
+                    kind=str(item.get("kind", "other") or "other")[:40],
+                    semantic_signature=str(item.get("semantic_signature", "") or "")[:320],
+                    speech_act=str(item.get("speech_act", "unspecified") or "unspecified")[:64],
+                    subject_key=str(item.get("subject_key", "unknown") or "unknown")[:96],
+                ))
         return cls(
             version=max(0, int(data.get("version", 0) or 0)),
             events=tuple(events),
@@ -90,7 +135,7 @@ class InitiativeState:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "schema": "eris.initiative.v1",
+            "schema": "eris.initiative.v3",
             "version": self.version,
             "events": [item.to_dict() for item in self.events],
             "last_decision": dict(self.last_decision),
@@ -104,6 +149,9 @@ class InitiativeController:
         self._path = state_path or (default_eris_home() / "state" / "initiative_state.json")
         self._lock = threading.RLock()
         self._state = self._load()
+        self._dirty = False
+        self._last_persist_at = 0.0
+        self._persist_debounce_seconds = max(2.0, _as_float(_setting("persist_debounce_seconds", 12.0), 12.0))
 
     def evaluate(
         self,
@@ -112,104 +160,120 @@ class InitiativeController:
         now: float | None = None,
         user_busy: bool = False,
         seconds_since_user: float = 0.0,
+        **_: Any,
     ) -> tuple[bool, str]:
         now = float(now if now is not None else time.time())
+        semantics = _plan_semantics(plan)
+        profile = profile_for_plan(plan)
         if not _as_bool(_setting("enabled", True), True):
-            return self._remember(False, "initiative_disabled", plan, now)
+            return self._remember(False, "initiative_disabled", plan, now, profile=profile)
 
         importance = max(0.0, min(1.0, _as_float(getattr(plan, "importance", 0.0), 0.0)))
-        intrusion = max(0.0, min(1.0, _as_float(getattr(plan, "intrusion_risk", 0.0), 0.0)))
-        strategy = str(getattr(plan, "strategy", "") or "").strip().lower()
-        motive = str(getattr(plan, "motive", "") or "").strip().lower()
-
-        if user_busy and importance < 0.82:
-            return self._remember(False, "user_busy", plan, now)
-        min_user_silence = max(30.0, _as_float(_setting("minimum_user_silence_seconds", 150.0), 150.0))
-        if seconds_since_user > 0.0 and seconds_since_user < min_user_silence and importance < 0.78:
-            return self._remember(False, "user_recently_active", plan, now)
-        if importance < intrusion + max(0.05, _as_float(_setting("importance_margin", 0.12), 0.12)):
-            return self._remember(False, "intrusion_outweighs_value", plan, now)
+        if user_busy and importance < 0.90:
+            return self._remember(False, "user_busy", plan, now, profile=profile)
+        if seconds_since_user > 0.0 and seconds_since_user < profile.minimum_user_silence_seconds and importance < 0.84:
+            return self._remember(False, "user_recently_active", plan, now, profile=profile)
 
         with self._lock:
             events = tuple(item for item in self._state.events if now - item.timestamp <= 3600.0)
-        hourly_budget = max(0, int(_as_float(_setting("hourly_budget", 2), 2)))
-        if hourly_budget >= 0 and len(events) >= hourly_budget:
-            return self._remember(False, "hourly_budget_exhausted", plan, now)
+        # Companion-commentary là chế độ nghe ERIS sống cùng màn hình, không phải
+        # một thông báo hệ thống mỗi sáu phút. Budget vẫn hữu hạn để chống spam,
+        # nhưng mặc định đủ rộng cho nhịp 1-2 phút/lần.
+        global_budget = max(1, int(_as_float(_setting("global_hourly_budget", 40), 40)))
+        if len(events) >= global_budget:
+            return self._remember(False, "global_hourly_budget_exhausted", plan, now, profile=profile)
+        same_kind = tuple(item for item in events if item.kind == profile.kind)
+        if len(same_kind) >= profile.hourly_budget:
+            return self._remember(False, "kind_hourly_budget_exhausted", plan, now, profile=profile)
+        if same_kind and now - same_kind[-1].timestamp < profile.cooldown_seconds:
+            return self._remember(False, "kind_cooldown", plan, now, profile=profile)
 
-        min_interval = max(60.0, _as_float(_setting("minimum_interval_seconds", 1200.0), 1200.0))
-        if events and now - events[-1].timestamp < min_interval:
-            # Discovery có thể đáng kể hơn activity update, nhưng vẫn không được
-            # xuyên cooldown với một mẩu fact vụn.
-            if not (strategy == "share_discovery" and importance >= 0.78):
-                return self._remember(False, "minimum_interval", plan, now)
+        signature = semantics.signature if semantics.complete else ""
+        if signature and profile.duplicate_window_seconds > 0.0:
+            for item in reversed(events):
+                if now - item.timestamp > profile.duplicate_window_seconds:
+                    break
+                if item.semantic_signature == signature:
+                    return self._remember(False, "semantic_repeat", plan, now, profile=profile)
+        return self._remember(True, "allowed", plan, now, profile=profile)
 
-        if strategy == "update_own_activity":
-            activity_interval = max(min_interval, _as_float(_setting("activity_update_cooldown_seconds", 2700.0), 2700.0))
-            last_activity = next((item for item in reversed(events) if item.strategy == "update_own_activity"), None)
-            if last_activity is not None and now - last_activity.timestamp < activity_interval:
-                return self._remember(False, "activity_update_cooldown", plan, now)
+    def should_body_only(self, reason: str, *, has_perception_delta: bool = False, **_: Any) -> bool:
+        """Body-only dựa trên event cơ học, không dựa scene keyword."""
+        return bool(
+            has_perception_delta
+            and reason in {"user_busy", "user_recently_active", "kind_cooldown", "semantic_repeat"}
+        )
 
-        if motive in {"presence_ping", "status_ping", "companionship_ping"} and importance < 0.72:
-            return self._remember(False, "low_value_presence_ping", plan, now)
-        return self._remember(True, "allowed", plan, now)
-
-    def record_spoken(self, plan: Any, *, now: float | None = None, channel: str = "autonomous") -> None:
+    def record_spoken(self, plan: Any, *, now: float | None = None, channel: str = "autonomous", **_: Any) -> None:
         now = float(now if now is not None else time.time())
+        semantics = _plan_semantics(plan)
+        profile = profile_for_plan(plan)
         event = InitiativeEvent(
             timestamp=now,
             channel=str(channel or "autonomous")[:40],
-            motive=str(getattr(plan, "motive", "") or "")[:100],
-            strategy=str(getattr(plan, "strategy", "") or "")[:100],
             importance=max(0.0, min(1.0, _as_float(getattr(plan, "importance", 0.0), 0.0))),
-            topic=str(getattr(plan, "topic", "") or "")[:260],
+            kind=profile.kind,
+            semantic_signature=semantics.signature if semantics.complete else "",
+            speech_act=semantics.speech_act,
+            subject_key=semantics.subject_key,
         )
         with self._lock:
             events = [item for item in self._state.events if now - item.timestamp <= 24 * 3600.0]
             events.append(event)
-            self._state = replace(self._state, version=self._state.version + 1, events=tuple(events[-48:]), updated_at=now)
-            self._persist_locked()
+            self._state = replace(self._state, version=self._state.version + 1, events=tuple(events[-96:]), updated_at=now)
+            self._dirty = True
+            self._persist_locked(force=True)
 
     def panel_view(self, *, now: float | None = None) -> dict[str, Any]:
         now = float(now if now is not None else time.time())
         with self._lock:
+            self._persist_locked(force=False)
             state = self._state
             recent_hour = [item for item in state.events if now - item.timestamp <= 3600.0]
             last = state.events[-1].to_dict() if state.events else {}
-            hourly_budget = max(0, int(_as_float(_setting("hourly_budget", 2), 2)))
-            minimum_interval = max(60.0, _as_float(_setting("minimum_interval_seconds", 1200.0), 1200.0))
-            next_allowed_at = float(last.get("timestamp", 0.0) or 0.0) + minimum_interval if last else 0.0
+            hourly_budget = max(1, int(_as_float(_setting("global_hourly_budget", 40), 40)))
+            profile = _PROFILES.get(str(last.get("kind", "other") or "other"), _PROFILES["other"])
+            next_allowed_at = float(last.get("timestamp", 0.0) or 0.0) + profile.cooldown_seconds if last else 0.0
             return {
-                "schema": "eris.initiative.v1",
+                "schema": "eris.initiative.v3",
                 "enabled": _as_bool(_setting("enabled", True), True),
                 "hourly_budget": hourly_budget,
                 "used_last_hour": len(recent_hour),
                 "remaining_budget": max(0, hourly_budget - len(recent_hour)),
-                "minimum_interval_seconds": minimum_interval,
+                "minimum_interval_seconds": profile.cooldown_seconds,
                 "next_allowed_at": next_allowed_at,
                 "last_spoken": last,
                 "last_decision": dict(state.last_decision),
-                "recent_events": [item.to_dict() for item in state.events[-8:]][::-1],
+                "profiles": {key: asdict(value) for key, value in _PROFILES.items()},
+                "recent_events": [item.to_dict() for item in state.events[-12:]][::-1],
                 "version": state.version,
             }
 
     def reset(self) -> None:
         with self._lock:
             self._state = InitiativeState(version=self._state.version + 1, updated_at=time.time())
-            self._persist_locked()
+            self._dirty = True
+            self._persist_locked(force=True)
 
-    def _remember(self, allowed: bool, reason: str, plan: Any, now: float) -> tuple[bool, str]:
+    def flush(self) -> None:
+        with self._lock:
+            self._persist_locked(force=True)
+
+    def _remember(self, allowed: bool, reason: str, plan: Any, now: float, *, profile: InitiativeProfile) -> tuple[bool, str]:
+        semantics = _plan_semantics(plan)
         payload = {
             "allowed": bool(allowed),
             "reason": reason,
+            "kind": profile.kind,
+            "semantic_signature": semantics.signature if semantics.complete else "",
             "at": now,
-            "motive": str(getattr(plan, "motive", "") or "")[:100],
-            "strategy": str(getattr(plan, "strategy", "") or "")[:100],
             "importance": max(0.0, min(1.0, _as_float(getattr(plan, "importance", 0.0), 0.0))),
             "intrusion_risk": max(0.0, min(1.0, _as_float(getattr(plan, "intrusion_risk", 0.0), 0.0))),
         }
         with self._lock:
             self._state = replace(self._state, version=self._state.version + 1, last_decision=payload, updated_at=now)
-            self._persist_locked()
+            self._dirty = True
+            self._persist_locked(force=False)
         return allowed, reason
 
     def _load(self) -> InitiativeState:
@@ -220,12 +284,19 @@ class InitiativeController:
             self._log("warning", "[initiative] load failed: %s", exc)
         return InitiativeState()
 
-    def _persist_locked(self) -> None:
+    def _persist_locked(self, *, force: bool) -> None:
+        if not self._dirty:
+            return
+        now = time.time()
+        if not force and now - self._last_persist_at < self._persist_debounce_seconds:
+            return
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self._path.with_suffix(self._path.suffix + ".tmp")
-            tmp.write_text(json.dumps(self._state.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
-            tmp.replace(self._path)
+            temp = self._path.with_suffix(self._path.suffix + ".tmp")
+            temp.write_text(json.dumps(self._state.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+            temp.replace(self._path)
+            self._dirty = False
+            self._last_persist_at = now
         except Exception as exc:
             self._log("warning", "[initiative] persist failed: %s", exc)
 
@@ -238,4 +309,4 @@ class InitiativeController:
             pass
 
 
-__all__ = ["InitiativeController", "InitiativeEvent", "InitiativeState"]
+__all__ = ["InitiativeController", "InitiativeEvent", "InitiativeProfile", "InitiativeState", "profile_for_plan"]

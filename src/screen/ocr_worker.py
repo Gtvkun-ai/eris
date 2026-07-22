@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
+import sys
 import re
 import shutil
 import threading
@@ -123,6 +125,51 @@ class _PytesseractBackend(_OCRBackend):
         return tuple(blocks)
 
 
+def _auto_install_rapidocr(*, logger=None) -> bool:
+    """Cài OCR đúng vào Python đang chạy, tối đa một lần mỗi process.
+
+    Chỉ chạy trong venv và có thể tắt bằng ERIS_SCREEN_OCR_AUTO_INSTALL=0.
+    Worker thực hiện lazy ở lần thật sự cần OCR, không chặn boot vô cớ.
+    """
+
+    enabled = os.getenv("ERIS_SCREEN_OCR_AUTO_INSTALL", "1").strip().lower() not in {"0", "false", "off", "no"}
+    if not enabled or os.getenv("PYTEST_CURRENT_TEST"):
+        return False
+    if getattr(_auto_install_rapidocr, "attempted", False):
+        return False
+    _auto_install_rapidocr.attempted = True
+    # Không tự ý cài vào Python hệ thống. Eris luôn có venv; nếu không có thì log
+    # hướng dẫn rõ còn hơn biến máy user thành bãi thử pip toàn cục.
+    if getattr(sys, "prefix", "") == getattr(sys, "base_prefix", ""):
+        if logger:
+            logger.warning("[screen text] OCR auto-install skipped: runtime is not inside a virtualenv.")
+        return False
+    requirements = Path(__file__).resolve().parents[1] / "requirements-screen-ocr.txt"
+    command = [sys.executable, "-m", "pip", "install", "--disable-pip-version-check"]
+    if requirements.exists():
+        command.extend(["-r", str(requirements)])
+    else:
+        command.append("rapidocr-onnxruntime>=1.3.24,<2")
+    try:
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=240, check=False,
+        )
+    except Exception as exc:
+        if logger:
+            logger.warning("[screen text] OCR auto-install failed: %s", exc)
+        return False
+    if result.returncode != 0:
+        if logger:
+            detail = (result.stderr or result.stdout or "pip returned non-zero")[-800:]
+            logger.warning("[screen text] OCR auto-install failed rc=%s detail=%s", result.returncode, detail)
+        return False
+    if logger:
+        logger.info("[screen text] OCR dependency installed into current venv; resolving backend again.")
+    return True
+
+
+_auto_install_rapidocr.attempted = False
+
 def _choose_ocr_backend() -> _OCRBackend:
     preferred = os.getenv("ERIS_SCREEN_OCR_BACKEND", "auto").strip().lower() or "auto"
     candidates = []
@@ -148,6 +195,8 @@ class IncrementalScreenTextWorker:
         self.uia_reader = WindowsUIAReader()
         self.detector = ScreenChangeDetector(threshold=float(os.getenv("ERIS_SCREEN_CHANGE_THRESHOLD", "0.025") or 0.025))
         self.backend: _OCRBackend | None = None
+        self._last_backend_probe_at = 0.0
+        self._backend_warning_emitted = False
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._revision = 0
@@ -213,6 +262,33 @@ class IncrementalScreenTextWorker:
             merged.append(block)
         return tuple(merged[:240])
 
+    def _ensure_ocr_backend(self, now: float) -> None:
+        if self.backend is not None and self.backend.available:
+            return
+        retry_sec = max(30.0, float(os.getenv("ERIS_SCREEN_OCR_BACKEND_RETRY_SEC", "120") or 120.0))
+        if now - self._last_backend_probe_at < retry_sec:
+            return
+        self._last_backend_probe_at = now
+        self.backend = _choose_ocr_backend()
+        if self.backend.available:
+            self._backend_warning_emitted = False
+            if self.logger:
+                self.logger.info("[screen text] OCR backend resolved=%s", self.backend.name)
+            return
+        if _auto_install_rapidocr(logger=self.logger):
+            self.backend = _choose_ocr_backend()
+            if self.backend.available:
+                self._backend_warning_emitted = False
+                if self.logger:
+                    self.logger.info("[screen text] OCR backend resolved=%s after self-heal", self.backend.name)
+                return
+        if self.logger and not self._backend_warning_emitted:
+            self._backend_warning_emitted = True
+            self.logger.warning(
+                "[screen text] OCR backend unavailable; running UIA + vision fallback. "
+                "Auto-install failed or was disabled; install requirements-screen-ocr.txt in this venv."
+            )
+
     def _run(self) -> None:
         while not self._stop.is_set():
             started = time.time()
@@ -231,16 +307,8 @@ class IncrementalScreenTextWorker:
                 should_ocr = bool(change.changed and (now - self._last_ocr_at) >= self.min_ocr_interval)
                 if (now - self._last_full_at) >= self.full_refresh_sec:
                     should_ocr = True
-                if should_ocr and self.backend is None:
-                    self.backend = _choose_ocr_backend()
-                    if self.logger:
-                        if self.backend.available:
-                            self.logger.info("[screen text] OCR backend resolved=%s", self.backend.name)
-                        else:
-                            self.logger.warning(
-                                "[screen text] OCR backend unavailable; running UIA-only. "
-                                "Install rapidocr-onnxruntime (recommended) or configure ERIS_TESSERACT_CMD."
-                            )
+                if should_ocr:
+                    self._ensure_ocr_backend(now)
                 if should_ocr and self.backend is not None and self.backend.available:
                     target = image
                     if change.roi and not change.full_refresh and (now - self._last_full_at) < self.full_refresh_sec:

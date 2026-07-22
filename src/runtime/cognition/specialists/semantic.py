@@ -61,6 +61,15 @@ class SemanticCortex:
                 ambiguity=0.08,
                 evidence_ids=discourse.evidence_ids,
             )
+        if discourse.relation == "relational_bid":
+            return SemanticProjection(
+                user_act="closeness_bid",
+                task_goal="meet_the_relational_bid_without_false_capability_claims",
+                literal_question=False,
+                confidence=0.90,
+                ambiguity=0.10,
+                evidence_ids=discourse.evidence_ids,
+            )
         action_markers = (
             "mở file", "mo file", "sửa file", "sua file", "xóa file", "xoa file", "chạy test", "chay test",
             "gửi file", "gui file", "đọc repo", "doc repo", "kiểm tra repo", "kiem tra repo",

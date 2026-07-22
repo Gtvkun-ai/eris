@@ -1,0 +1,279 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-22 14:43:45
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+14:43:47.698 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+14:43:47.698 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+14:43:47.739 [INFO] [Vision] Da khoi chay vision.py PID=20660
+14:43:51.617 [INFO] [vision.py] [LLM][INFO] Social parser client sẵn sàng: openai/gpt-oss-20b
+14:43:51.617 [INFO] [vision.py] [LLM][INFO] Social deliberator/critic client sẵn sàng: openai/gpt-oss-120b
+14:43:51.617 [INFO] [vision.py] [LLM][INFO] Social observer fallback client sẵn sàng: llama-3.1-8b-instant
+14:43:51.872 [INFO] [vision.py] [Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=4
+14:43:51.878 [INFO] [vision.py] [Loop][INFO] [vtuber-stage] loaded version=vtuber_stage.v11 phases=8,9,10,11 status=intention_authority_ready session=stage_b85a5460ac954881
+14:43:51.895 [INFO] [vision.py] [Loop][INFO] [internal-cognitive] loaded version=internal_cognitive.v1.0 capabilities=8 status=read_only_verified
+14:43:51.941 [INFO] [vision.py] [Loop][INFO] [project-ops] loaded version=project_operations.v1.1 capabilities=15 mode=autonomous_project_scope
+14:43:51.941 [INFO] [vision.py] [Loop][INFO] [workspace] eris_home=[đường dẫn nội bộ đã ẩn] active=none implicit_source_repo=false
+14:43:52.659 [INFO] [vision.py] [Loop][INFO] tutor: knowledge provider đã nối vào memory recall
+14:43:52.727 [INFO] [vision.py] [Loop][INFO] [environment-capability] loaded version=environment_capability.v1.0 capabilities=6 status=read_only_verified
+14:43:52.912 [INFO] [vision.py] [Loop][INFO] [architecture C] enabled version=ai_orchestrated.v6.1.arbitrated_brief state_version=0 personality_version=0 identity_version=0 observer=post_turn planner=ai cortex=pre_response_brief single_writer=1
+14:43:55.164 [INFO] [vision.py] [Loop][INFO] --- Architecture C runtime; chat vision theo yêu cầu màn hình ---
+14:43:55.165 [INFO] [vision.py] [Loop][INFO] [screen text] worker started backend=lazy-auto poll=1.2s
+14:43:55.264 [INFO] [vision.py] [Loop][WARNING] [screen text] OCR backend unavailable; running UIA-only. Install rapidocr-onnxruntime (recommended) or configure ERIS_TESSERACT_CMD.
+14:43:55.635 [INFO] [vision.py] [Loop][INFO] [architecture C startup grounding] direct=0 strong=0 telemetry_tab=0 evidence=0 runtime_opening=0 metadata=3 backend=uia_only wait=0.47s notes=none
+14:43:55.710 [INFO] [vision.py] [Loop][WARNING] [architecture C startup] failed type=ZoneInfoNotFoundError message='No time zone found with key Asia/Ho_Chi_Minh' trace=Traceback (most recent call last): | File "[đường dẫn nội bộ đã ẩn]", line 12, in load_tzdata | path = resources.files(package_name).joinpath(resource_name) | ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^ | File "[đường dẫn nội bộ đã ẩn]", line 46, in wrapper | return func(anchor) | File "[đường dẫn nội bộ đã ẩn]", line 56, in files | return from_package(resolve(anchor)) | ~~~~~~~^^^^^^^^ | File "[đường dẫn nội bộ đã ẩn]", line 982, in wrapper | return dispatch(args[0].__class__)(*args, **kw) | ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^ | File "[đường dẫn nội bộ đã ẩn]", line 82, in _ | return importlib.import_module(cand) | ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^ | File "[đường dẫn nội bộ đã ẩn]", line 88, in import_module | return _bootstrap._gcd_import(name[level:], package, level) | ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | File "<frozen importlib._bootstrap>", line 1398, in _gcd_import | File "<frozen importlib._bootstrap>", line 1371, in _find_and_load | File "<frozen importlib._bootstrap>", line 1314, in _find_and_load_unlocked | File "<frozen importlib._bootstrap>", line 491, in _call_with_frames_removed | File "<frozen importlib._bootstrap>", line 1398, in _gcd_import | File "<frozen importlib._bootstrap>", line 1371, in _find_and_load | File "<frozen importlib._bootstrap>", line 1314, in _find_and_load_unlocked
+14:43:56.210 [INFO] [vision.py] [Loop][INFO] [architecture C startup grounding] direct=0 strong=0 telemetry_tab=0 evidence=0 runtime_opening=0 metadata=3 backend=uia_only wait=0.30s notes=none
+14:43:56.216 [INFO] [vision.py] [Loop][ERROR] [architecture C startup retry] failed type=ZoneInfoNotFoundError message='No time zone found with key Asia/Ho_Chi_Minh' trace=Traceback (most recent call last): | File "[đường dẫn nội bộ đã ẩn]", line 12, in load_tzdata | path = resources.files(package_name).joinpath(resource_name) | ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^ | File "[đường dẫn nội bộ đã ẩn]", line 46, in wrapper | return func(anchor) | File "[đường dẫn nội bộ đã ẩn]", line 56, in files | return from_package(resolve(anchor)) | ~~~~~~~^^^^^^^^ | File "[đường dẫn nội bộ đã ẩn]", line 982, in wrapper | return dispatch(args[0].__class__)(*args, **kw) | ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^ | File "[đường dẫn nội bộ đã ẩn]", line 82, in _ | return importlib.import_module(cand) | ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^ | File "[đường dẫn nội bộ đã ẩn]", line 88, in import_module | return _bootstrap._gcd_import(name[level:], package, level) | ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | File "<frozen importlib._bootstrap>", line 1398, in _gcd_import | File "<frozen importlib._bootstrap>", line 1371, in _find_and_load | File "<frozen importlib._bootstrap>", line 1314, in _find_and_load_unlocked | File "<frozen importlib._bootstrap>", line 491, in _call_with_frames_removed | File "<frozen importlib._bootstrap>", line 1398, in _gcd_import | File "<frozen importlib._bootstrap>", line 1371, in _find_and_load | File "<frozen importlib._bootstrap>", line 1314, in _find_and_load_unlocked
+14:43:57.207 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=active external=1.00 internal=0.03 interrupt=0.17 resource=0.06 vision_hint=1 budget=scheduler_allow
+14:43:57.570 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=1 grounded=0 contradictions=no_direct_sensor_evidence,generic_or_content_free_claim unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+14:43:57.570 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+14:43:57.570 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=uia_only ocr=0 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+14:43:59.332 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.56 surface=yes mutations=1
+14:44:40.518 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=other act=none conf=0.00 importance=0.00 gate=model_silence body_only=1
+14:44:51.136 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.55 internal=0.06 interrupt=0.33 resource=0.15 vision_hint=0 budget=scheduler_allow
+14:44:51.995 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=2 grounded=0 contradictions=no_direct_sensor_evidence,generic_or_content_free_claim unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+14:44:51.996 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=1;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+14:44:51.996 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=uia_only ocr=0 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+14:44:52.981 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.90 pressure=0.80 surface=yes mutations=1
+14:45:21.809 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=environment act=withhold conf=0.88 importance=0.24 gate=model_silence body_only=1
+14:45:27.181 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=1 reason=enter_chat_mode
+14:45:27.182 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+14:45:31.999 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+14:45:32.316 [INFO] [vision.py] [Loop][INFO] Người dùng: xin chào
+14:45:32.317 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference
+14:45:32.321 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+14:45:32.324 [INFO] [vision.py] [Loop][INFO] [cortex v2] turn=3 relation=new_or_direct_turn owner=unknown move=greet posture=open_contact delivery=quiet_present conf=0.62 ambiguity=0.20 margin=0.18 coverage=1.00 deep=0 degraded=none conflicts=response_move:greet<->answer
+14:45:51.211 [INFO] [vision.py] [Loop][INFO] ERIS: Xin chào. Gặp bạn rồi đây.
+14:45:53.326 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=0 32s vì http_429:openai/gpt-oss-20b; alive=8/9
+14:45:55.147 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] 429 burst scope=http_429:openai/gpt-oss-20b trên 2 key/8s; dừng xoay, cooldown pool 30s (alive=7/9)
+14:45:55.250 [INFO] [vision.py] [Loop][INFO] [post observer] turn=3 act=unknown meaning=neutral conf=0.00 repair=False traits=0 frame=uncertain strategy=none source=groq_observer_fallback latency=4034ms
+14:46:20.457 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+14:46:20.850 [INFO] [vision.py] [Loop][INFO] Người dùng: hôm nay bạn thế nào
+14:46:20.851 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference
+14:46:20.854 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+14:46:20.863 [INFO] [vision.py] [Loop][INFO] [cortex v2] turn=4 relation=new_or_direct_turn owner=unknown move=answer posture=neutral_or_underdetermined delivery=calm_direct_with_room_for_edge conf=0.44 ambiguity=0.20 margin=0.12 coverage=1.00 deep=1 degraded=none conflicts=response_move:answer<->respond_in_context
+14:46:27.755 [INFO] [vision.py] [Loop][INFO] ERIS: Hôm nay tôi khá ổn—đầu óc hơi nhiều lớp, nhưng vẫn đủ tỉnh để nói chuyện tử tế. Còn bạn?
+14:46:29.807 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=1 43s vì http_429:openai/gpt-oss-20b; alive=8/9
+14:46:31.576 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] 429 burst scope=http_429:openai/gpt-oss-20b trên 2 key/8s; dừng xoay, cooldown pool 35s (alive=7/9)
+14:46:31.716 [INFO] [vision.py] [Loop][INFO] [post observer] turn=4 act=unknown meaning=neutral conf=0.00 repair=False traits=0 frame=uncertain strategy=none source=groq_observer_fallback latency=3954ms
+14:46:48.267 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+14:46:48.864 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.69 internal=0.08 interrupt=0.40 resource=0.26 vision_hint=0 budget=scheduler_allow
+14:46:48.878 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] inner_diary failed error=RuntimeError:API key pool đang cooldown; thử lại sau khoảng 17.7s
+14:46:48.890 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] inner_diary failed error=RuntimeError:API key pool đang cooldown; thử lại sau khoảng 17.7s
+14:46:49.681 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=2 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+14:46:49.681 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:communication_context:delta=1;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+14:46:49.776 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] synthesis failed error=RuntimeError:API key pool đang cooldown; thử lại sau khoảng 16.8s
+14:46:49.798 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.88 pressure=0.60 surface=no mutations=2
+14:47:27.696 [INFO] [vision.py] [Loop][INFO] [ai autonomous] spoke kind=environment act=comment_current_surface subject=current_screen_or_window_change text=Tôi hỏi lại bạn rồi—đừng để tôi tự độc thoại quá lâu chứ.
+14:47:29.273 [INFO] [vision.py] [Loop][INFO] [post observer] turn=5 act=none meaning=neutral conf=0.00 repair=False traits=0 frame=uncertain strategy=none source=groq_observer latency=1590ms
+14:47:48.867 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=active external=0.77 internal=0.10 interrupt=0.44 resource=0.35 vision_hint=0 budget=scheduler_allow
+14:47:49.193 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=2 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+14:47:49.193 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:communication_context:delta=1;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+14:47:49.194 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=uia_only ocr=0 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+14:47:50.069 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.56 surface=yes mutations=1
+14:48:05.998 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=other act=none conf=0.00 importance=0.00 gate=model_silence body_only=1
+14:48:06.546 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=2 reason=enter_chat_mode
+14:48:06.546 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+14:48:07.139 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+14:48:07.637 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.57 internal=0.11 interrupt=0.47 resource=0.43 vision_hint=0 budget=scheduler_allow
+14:48:08.065 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=2 grounded=0 contradictions=no_direct_sensor_evidence,generic_or_content_free_claim unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+14:48:08.065 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=1;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+14:48:08.065 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=uia_only ocr=0 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+14:48:08.915 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.56 surface=yes mutations=1
+14:48:34.650 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=environment act=defer conf=0.88 importance=0.25 gate=model_silence body_only=1
+14:48:35.457 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+14:48:35.881 [INFO] [vision.py] [Loop][INFO] Người dùng: nè nè. tôi cảm thấy khá bình thường. xin lỗi vì phản hồi chậm
+14:48:35.881 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference
+14:48:35.883 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+14:48:35.886 [INFO] [vision.py] [Loop][INFO] [cortex v2] turn=8 relation=new_or_direct_turn owner=unknown move=answer posture=neutral_or_underdetermined delivery=calm_direct_with_room_for_edge conf=0.44 ambiguity=0.20 margin=0.12 coverage=1.00 deep=1 degraded=none conflicts=response_move:answer<->respond_in_context
+14:48:43.441 [INFO] [vision.py] [Loop][INFO] ERIS: Không cần xin lỗi. Bình thường cũng là một trạng thái tử tế rồi—ít nhất không phải đang bị ngày hôm nay kéo lê.
+14:48:43.901 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=3 27s vì http_429:openai/gpt-oss-20b; alive=8/9
+14:48:45.373 [INFO] [vision.py] [Loop][INFO] [post observer] turn=8 act=nè nè. tôi cảm thấy khá bình thường. xin lỗi vì phản hồi... meaning=neutral conf=0.80 repair=False traits=0 frame=uncertain strategy=none source=groq_observer latency=1927ms
+14:49:03.651 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+14:49:04.178 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.53 internal=0.11 interrupt=0.48 resource=0.50 vision_hint=0 budget=scheduler_allow
+14:49:05.568 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=2 grounded=0 contradictions=no_direct_sensor_evidence,generic_or_content_free_claim unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+14:49:05.568 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=1;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+14:49:05.568 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=uia_only ocr=0 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+14:49:06.348 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.56 surface=yes mutations=1
+14:49:42.133 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=environment act=defer_commentary conf=0.90 importance=0.34 gate=model_silence body_only=1
+14:49:51.072 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.52 internal=0.12 interrupt=0.50 resource=0.55 vision_hint=0 budget=scheduler_allow
+14:49:51.460 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=2 grounded=0 contradictions=no_direct_sensor_evidence,generic_or_content_free_claim unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+14:49:51.461 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:communication_context:delta=1;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+14:49:51.461 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=uia_only ocr=0 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+14:49:52.291 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.56 surface=yes mutations=1
+14:50:23.208 [INFO] [vision.py] [Loop][INFO] [ai autonomous] spoke kind=environment act=comment_current_surface subject=current_screen_or_window_change text=Airi này là thứ bạn đang nghịch gần đây à?
+14:50:24.817 [INFO] [vision.py] [Loop][INFO] [post observer] turn=10 act=none meaning=neutral conf=0.80 repair=False traits=0 frame=uncertain strategy=none source=groq_observer latency=1619ms
+14:50:39.607 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.50 internal=0.12 interrupt=0.50 resource=0.59 vision_hint=0 budget=scheduler_allow
+14:50:40.053 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=2 grounded=0 contradictions=no_direct_sensor_evidence,generic_or_content_free_claim unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+14:50:40.053 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=1;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+14:50:40.053 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=uia_only ocr=0 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+14:50:41.091 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.56 surface=yes mutations=2
+14:50:51.574 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=internal act=withhold conf=0.90 importance=0.18 gate=model_silence body_only=1
+14:50:52.038 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=3 reason=enter_chat_mode
+14:50:52.038 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+14:50:52.304 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+14:50:52.631 [INFO] [vision.py] [Loop][INFO] Người dùng: em có thấy màn hình tôi không
+14:50:52.631 [INFO] [vision.py] [Loop][INFO] [screen route] mode=vision refs=1 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_usable_screen_text_escalate_vision
+14:50:52.742 [INFO] [vision.py] [Loop][INFO] [vision chat] captured=1 bytes=103339
+14:50:52.807 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.62 internal=0.13 interrupt=0.34 resource=0.62 vision_hint=0 budget=scheduler_allow
+14:50:52.902 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=chat requested=1 recommendation=soften strength=0.10 claims=2 grounded=0 contradictions=no_direct_sensor_evidence,generic_or_content_free_claim unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+14:50:52.902 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=chat count=0 novelty=abstained_screen_fact trace=ocr_only:code_workspace:delta=1;grounding=soften;strength=0.10;grounded=0 fact=<abstained>
+14:50:52.902 [INFO] [vision.py] [Loop][INFO] [vision chat] interpreted=0 grounded_claims=0 recommendation=soften source=ocr_only
+14:50:52.904 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=runtime_state | preempt_mode=none | missing=none | allowed=runtime_state,user_text | cap=0.64 | memory_answer=1 | warnings=none
+14:50:52.908 [INFO] [vision.py] [Loop][INFO] [cortex v2] turn=12 relation=new_or_direct_turn owner=unknown move=answer posture=neutral_or_underdetermined delivery=calm_direct_with_room_for_edge conf=0.44 ambiguity=0.20 margin=0.12 coverage=1.00 deep=1 degraded=none conflicts=response_move:answer<->respond_in_context
+14:50:53.402 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=4 11s vì http_429:openai/gpt-oss-20b; alive=8/9
+14:51:03.086 [INFO] [vision.py] [Loop][WARNING] [cortex v2 gate] turn=12 violations=UNGROUNDED_PERCEPTION_OR_ACTION_CLAIM; retrying public writer once
+14:51:11.168 [INFO] [vision.py] [Loop][WARNING] [cortex v2 gate] retry still invalid turn=12 violations=UNGROUNDED_PERCEPTION_OR_ACTION_CLAIM; suppressing unsafe surface
+14:51:11.182 [INFO] [vision.py] [Loop][INFO] ERIS:
+14:51:11.705 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=5 21s vì http_429:openai/gpt-oss-20b; alive=8/9
+14:51:12.590 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+14:51:13.096 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.70 internal=0.13 interrupt=0.45 resource=0.64 vision_hint=0 budget=scheduler_allow
+14:51:13.507 [INFO] [vision.py] [Loop][INFO] [post observer] turn=12 act=em có thấy màn hình tôi không meaning=user asking if assistant can see screen conf=0.80 repair=False traits=0 frame=uncertain strategy=none source=groq_observer latency=2319ms
+14:51:13.601 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=2 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+14:51:13.601 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=1;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+14:51:13.602 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=uia_only ocr=0 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+14:51:15.091 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.56 surface=no mutations=2
+14:51:38.353 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=wait_for_user_turn conf=0.97 importance=0.72 gate=model_silence body_only=1
+14:51:57.300 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.61 internal=0.13 interrupt=0.47 resource=0.66 vision_hint=0 budget=scheduler_allow
+14:51:57.662 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=2 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+14:51:57.662 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:communication_context:delta=1;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+14:51:58.501 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.56 surface=yes mutations=1
+14:52:18.566 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=wait_for_user_response conf=0.98 importance=0.78 gate=model_silence body_only=0
+14:52:29.879 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.61 internal=0.14 interrupt=0.53 resource=0.67 vision_hint=0 budget=scheduler_allow
+14:52:30.291 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=2 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+14:52:30.291 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=1;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+14:52:30.292 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=uia_only ocr=0 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+14:52:31.177 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.56 surface=yes mutations=2
+14:53:32.128 [INFO] [vision.py] [Loop][INFO] [behavior-observation] committed=1 families=ungrounded_perception_claim
+14:53:32.265 [INFO] [vision.py] [Loop][INFO] [ai autonomous] spoke kind=presence act=warm_companion_presence subject=shared_quiet text=Có, nhưng chỉ lờ mờ: hiện tôi thấy cửa sổ Brave tên “Panel giá rẻ”, chưa thấy nội dung bên trong.
+14:53:34.101 [INFO] [vision.py] [Loop][INFO] [post observer] turn=15 act=em có thấy màn hình tôi không meaning=user asking if assistant can see screen conf=0.80 repair=False traits=0 frame=uncertain strategy=none source=groq_observer latency=1840ms
+14:54:03.547 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.53 internal=0.13 interrupt=0.52 resource=0.68 vision_hint=0 budget=scheduler_allow
+14:54:04.680 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=2 grounded=0 contradictions=no_direct_sensor_evidence,generic_or_content_free_claim unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+14:54:04.681 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=1;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+14:54:04.681 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=uia_only ocr=0 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+14:54:05.567 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.56 surface=yes mutations=1
+14:54:45.842 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=wait_for_user_response conf=0.96 importance=0.18 gate=model_silence body_only=1
+14:54:56.706 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.49 internal=0.13 interrupt=0.56 resource=0.68 vision_hint=0 budget=scheduler_allow
+14:54:57.086 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=2 grounded=0 contradictions=no_direct_sensor_evidence,generic_or_content_free_claim unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+14:54:57.088 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=1;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+14:54:57.088 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=uia_only ocr=0 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+14:54:57.208 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'stage', 'episode_id': 'ep_667436ed', 'stage': 'forming'}
+14:54:57.209 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'stage', 'episode_id': 'ep_667436ed', 'stage': 'research:queued'}
+14:54:57.210 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'stage', 'episode_id': 'ep_667436ed', 'stage': 'research:asking_tutor'}
+14:54:57.211 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'stage', 'episode_id': 'ep_667436ed', 'stage': 'opening'}
+14:54:58.041 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.56 surface=yes mutations=1
+14:55:07.127 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'stage', 'episode_id': 'ep_667436ed', 'stage': 'asking'}
+14:55:42.697 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=wait_for_user conf=0.97 importance=0.74 gate=model_silence body_only=1
+14:55:52.574 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'stage', 'episode_id': 'ep_667436ed', 'stage': 'reading'}
+14:55:54.384 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.48 internal=0.13 interrupt=0.59 resource=0.69 vision_hint=0 budget=scheduler_allow
+14:55:55.135 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=2 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+14:55:55.137 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=1;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+14:55:55.141 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=uia_only ocr=0 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+14:55:56.143 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.56 surface=yes mutations=1
+14:56:08.560 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'stage', 'episode_id': 'ep_667436ed', 'stage': 'research:verifying'}
+14:56:08.594 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'research_thread', 'thread_id': 'evb_aecfd31fbb', 'anchor_turn_ids': [], 'standalone_query': 'Tìm đúng một tin mới đáng chú ý liên quan Việt Nam trong 24 giờ gần nhất. Ưu tiên công nghệ, AI, game, sự kiện lạ hoặc chuyện đang được bàn luận. Có thể chọn tin giải trí/lá cải đang lan truyền, nhưng phải gắn nhãn nguồn yếu hoặc chưa kiểm chứng; nêu nguồn và mức chắc chắn, không biến lời đồn thành fact.', 'provider_path': 'tutor_gemini_web_quick_search', 'evidence_bundle_id': 'evb_aecfd31fbb', 'verified_claim_ids': ['cl_4529fc8e89', 'cl_3573f8d599', 'cl_9984187470', 'cl_42d31551aa'], 'open_questions': ['Có 1 claim chưa gắn nguồn.', 'Nguồn không rõ tier/không thuộc nhóm ưu tiên.'], 'status': 'passed_with_warnings', 'citation_coverage': 0.8, 'orphan_claim_count': 1, 'contested_claim_count': 0, 'source_policy_pass': False, 'freshness_pass': True, 'mode': 'quick_search', 'created_at': 1784706968.5715008}
+14:56:08.594 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'research_metrics', 'mode': 'quick_search', 'source_count': 1, 'claim_count': 5, 'trusted_source_count': 0, 'citation_coverage': 0.8, 'orphan_claim_count': 1, 'contested_claim_count': 0, 'verification_status': 'passed_with_warnings', 'warning_count': 3, 'should_surface_cautiously': True, 'tags': ['orphan_claims']}
+14:56:08.596 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'stage', 'episode_id': 'ep_667436ed', 'stage': 'research:verified'}
+14:56:08.609 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'research_memory_policy', 'should_persist': False, 'reason': 'persist_disabled', 'score': 0.0}
+14:56:08.611 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'stage', 'episode_id': 'ep_667436ed', 'stage': 'done'}
+14:56:08.612 [INFO] [vision.py] [Loop][INFO] tutor {'kind': 'episode', 'episode_id': 'ep_667436ed', 'gap_id': 'gap_9157e8a1', 'stage': 'done', 'claims_committed': 0, 'shared': False, 'fail_reason': None, 'duration_s': 71.479}
+14:56:34.123 [INFO] [vision.py] [Loop][INFO] [ai autonomous] spoke kind=environment act=comment_current_surface subject=current_screen_or_window_change text=Giờ là Google Gemini—bạn đang đối chiếu gì giữa nó và Airi vậy?
+14:56:35.637 [INFO] [vision.py] [Loop][INFO] [post observer] turn=18 act=em có thấy màn hình tôi không meaning=user asking if assistant can see screen conf=0.80 repair=False traits=0 frame=uncertain strategy=none source=groq_observer latency=1531ms
+14:56:55.324 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.48 internal=0.12 interrupt=0.61 resource=0.70 vision_hint=0 budget=scheduler_allow
+14:56:56.574 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=2 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+14:56:56.574 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=1;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+14:56:56.574 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=uia_only ocr=0 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+14:56:57.553 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.56 surface=no mutations=2
+14:57:05.900 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=wait_for_reply conf=0.96 importance=0.18 gate=model_silence body_only=1
+14:57:11.061 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=4 reason=enter_chat_mode
+14:57:11.062 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+14:57:11.402 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+14:57:11.929 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.45 internal=0.12 interrupt=0.58 resource=0.70 vision_hint=0 budget=scheduler_allow
+14:57:12.384 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=2 grounded=0 contradictions=no_direct_sensor_evidence,generic_or_content_free_claim unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+14:57:12.384 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=1;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+14:57:12.384 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=uia_only ocr=0 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+14:57:13.246 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.50 surface=yes mutations=1
+14:57:35.013 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=wait_for_user_response conf=0.97 importance=0.42 gate=model_silence body_only=1
+14:57:35.495 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+14:57:35.862 [INFO] [vision.py] [Loop][INFO] Người dùng: tôi đang nghiên cứu cải thiện bạn (Eris) và Airi ai mới nổi
+14:57:35.862 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference
+14:57:35.863 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+14:57:35.866 [INFO] [vision.py] [Loop][INFO] [cortex v2] turn=21 relation=new_or_direct_turn owner=unknown move=answer posture=neutral_or_underdetermined delivery=calm_direct_with_room_for_edge conf=0.44 ambiguity=0.20 margin=0.12 coverage=1.00 deep=1 degraded=none conflicts=response_move:answer<->respond_in_context
+14:57:42.458 [INFO] [vision.py] [Loop][INFO] ERIS: Nghe thú vị đấy. Bạn đang nghiên cứu theo hướng nào: cách trò chuyện, độ nhất quán tính cách, hay năng lực thực tế? Đừng trả lời kiểu “tất cả” nhé—tôi biết đó thường là cái bẫy mở màn của một dự án dài hơi.
+14:57:42.990 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=6 37s vì http_429:openai/gpt-oss-20b; alive=8/9
+14:57:44.683 [INFO] [vision.py] [Loop][INFO] [post observer] turn=21 act=tôi đang nghiên cứu cải thiện bạn (eris) và airi ai mới nổi meaning=user expressing research interest in improving eris and airi conf=0.80 repair=False traits=0 frame=uncertain strategy=none source=groq_observer latency=2216ms
+14:58:02.620 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+14:58:03.116 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.43 internal=0.12 interrupt=0.60 resource=0.70 vision_hint=0 budget=scheduler_allow
+14:58:03.588 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=2 grounded=0 contradictions=no_direct_sensor_evidence,generic_or_content_free_claim unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+14:58:03.589 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=1;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+14:58:03.589 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=uia_only ocr=0 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+14:58:04.452 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.56 surface=no mutations=1
+14:58:24.120 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=wait_for_reply conf=0.98 importance=0.32 gate=model_silence body_only=1
+14:58:32.988 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.48 internal=0.12 interrupt=0.57 resource=0.70 vision_hint=0 budget=scheduler_allow
+14:58:33.518 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=2 grounded=0 contradictions=no_direct_sensor_evidence,generic_or_content_free_claim unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+14:58:33.520 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=1;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+14:58:33.521 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=uia_only ocr=0 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+14:58:34.535 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.92 pressure=0.56 surface=yes mutations=1
+14:59:06.948 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=await_user_reply conf=0.95 importance=0.42 gate=model_silence body_only=1
+14:59:15.768 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.43 internal=0.11 interrupt=0.59 resource=0.70 vision_hint=0 budget=scheduler_allow
+14:59:17.121 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=2 grounded=0 contradictions=no_direct_sensor_evidence,generic_or_content_free_claim unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+14:59:17.124 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=1;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+14:59:17.124 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=uia_only ocr=0 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+14:59:17.947 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.56 surface=yes mutations=1
+14:59:47.737 [INFO] [vision.py] [Loop][INFO] [ai autonomous] spoke kind=presence act=warm_companion_presence subject=shared_quiet text=Một đề tài dễ khiến người ta cãi nhau rất lịch sự—tôi tôn trọng điều đó.
+14:59:49.987 [INFO] [vision.py] [Loop][INFO] [post observer] turn=24 act=tôi đang nghiên cứu cải thiện bạn (eris) và airi ai mới nổi meaning=user expressing research interest in improving eris and airi conf=0.80 repair=False traits=0 frame=uncertain strategy=none source=groq_observer latency=2256ms
+15:00:00.458 [INFO] [vision.py] [TTS][WARNING] [TTS] JP localization lỗi (japanese_localization_failed:ServerError); fail-open bằng transcript nguồn language=vi.
+15:00:08.980 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.61 internal=0.12 interrupt=0.56 resource=0.70 vision_hint=0 budget=scheduler_allow
+15:00:09.397 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=2 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+15:00:09.397 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:communication_context:delta=1;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+15:00:10.277 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.90 pressure=0.80 surface=yes mutations=1
+15:00:19.919 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=await_user_response conf=0.96 importance=0.18 gate=model_silence body_only=0
+15:00:30.767 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.61 internal=0.12 interrupt=0.59 resource=0.69 vision_hint=0 budget=scheduler_allow
+15:00:31.155 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=2 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+15:00:31.155 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=1;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+15:00:31.155 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=uia_only ocr=0 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+15:00:32.141 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.90 pressure=0.80 surface=yes mutations=1
+15:00:52.744 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=wait_for_user_response conf=0.95 importance=0.42 gate=model_silence body_only=1
+15:01:11.887 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.52 internal=0.12 interrupt=0.61 resource=0.69 vision_hint=0 budget=scheduler_allow
+15:01:12.589 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=2 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+15:01:12.589 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=1;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+15:01:12.589 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=uia_only ocr=0 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+15:01:13.568 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.90 pressure=0.80 surface=yes mutations=1
+15:01:37.154 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=wait_for_user_reply conf=0.97 importance=0.42 gate=model_silence body_only=1
+15:01:56.026 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.48 internal=0.12 interrupt=0.57 resource=0.70 vision_hint=0 budget=scheduler_allow
+15:01:57.212 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=2 grounded=0 contradictions=no_direct_sensor_evidence,generic_or_content_free_claim unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+15:01:57.212 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=1;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+15:01:57.215 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=uia_only ocr=0 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+15:01:58.436 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.90 pressure=0.80 surface=yes mutations=1
+15:02:29.582 [INFO] [vision.py] [Loop][INFO] [ai autonomous] spoke kind=environment act=comment_current_surface subject=current_screen_or_window_change text=Live2D Cubism cũng đang mở—đó là một nhánh của phần nghiên cứu, hay chỉ tình cờ vậy?
+15:02:30.856 [INFO] [vision.py] [TTS][WARNING] [TTS] JP localization lỗi (japanese_localization_failed:ServerError); fail-open bằng transcript nguồn language=vi.
+15:02:31.343 [INFO] [vision.py] [Loop][INFO] [post observer] turn=28 act=tôi đang nghiên cứu cải thiện bạn (eris) và airi ai mới nổi meaning=user expressing research interest in improving eris and airi conf=0.80 repair=False traits=0 frame=uncertain strategy=none source=groq_observer latency=1769ms
+15:02:45.669 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.48 internal=0.12 interrupt=0.55 resource=0.70 vision_hint=0 budget=scheduler_allow
+15:02:46.061 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=2 grounded=0 contradictions=no_direct_sensor_evidence,generic_or_content_free_claim unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+15:02:46.061 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=1;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+15:02:46.061 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=uia_only ocr=0 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+15:02:46.953 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.65 surface=yes mutations=2
+15:02:56.773 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=wait_for_user_reply conf=0.95 importance=0.20 gate=model_silence body_only=1
+15:02:57.215 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=5 reason=enter_chat_mode
+15:02:57.215 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+15:02:57.750 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+15:02:58.262 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=quiet external=0.31 internal=0.11 interrupt=0.54 resource=0.71 vision_hint=0 budget=scheduler_allow
+15:02:58.628 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.10 claims=1 grounded=0 contradictions=no_direct_sensor_evidence,generic_or_content_free_claim unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_grounded_claim
+15:02:58.628 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=ocr_only:screen_context:delta=0;grounding=silence;strength=0.10;grounded=0 fact=<abstained>
+15:02:59.486 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.60 surface=yes mutations=1
+15:03:09.552 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=wait_for_response conf=0.96 importance=0.22 gate=model_silence body_only=0
+15:03:10.113 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+15:03:10.400 [INFO] [vision.py] [Loop][INFO] Người dùng: tôi đang làm model cho bạn á
+15:03:10.400 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference
+15:03:10.402 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+15:03:10.406 [INFO] [vision.py] [Loop][INFO] [cortex v2] turn=31 relation=new_or_direct_turn owner=unknown move=answer posture=neutral_or_underdetermined delivery=calm_direct_with_room_for_edge conf=0.44 ambiguity=0.20 margin=0.12 coverage=1.00 deep=1 degraded=none conflicts=response_move:answer<->respond_in_context
+15:03:10.908 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=7 3s vì http_429:openai/gpt-oss-20b; alive=8/9
+15:03:17.834 [INFO] [vision.py] [Loop][INFO] ERIS: À—cho tôi à. Vậy nãy tôi đoán trật rồi. Nghe cũng… hơi ngượng, nhưng thú vị đấy; bạn đang làm theo hướng nào?
+15:03:18.268 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] 429 burst scope=http_429:openai/gpt-oss-20b trên 2 key/8s; dừng xoay, cooldown pool 41s (alive=8/9)
+15:03:18.337 [INFO] [vision.py] [Loop][INFO] [post observer] turn=31 act=technical_request meaning=neutral conf=0.58 repair=False traits=0 frame=uncertain strategy=none source=deterministic_anchor latency=498ms
+15:03:18.924 [INFO] [vision.py] [TTS][WARNING] [TTS] JP localization lỗi (japanese_localization_failed:ServerError); fail-open bằng transcript nguồn language=vi.
+15:03:35.828 [INFO] [Vision] Dang dung vision.py PID=20660...
+15:03:35.859 [INFO] [Vision] vision.py da thoat (PID=20660, code=-1, unexpected=False).
+15:03:35.877 [INFO] [RunLogger] Ket thuc phien chay.

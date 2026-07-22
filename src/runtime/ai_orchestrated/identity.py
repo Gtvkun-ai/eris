@@ -18,7 +18,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping, Sequence
 
 
-IDENTITY_SCHEMA = "eris.identity.kernel.v1"
+IDENTITY_SCHEMA = "eris.identity.kernel.v1.1"
 PRIMARY_RELATIONSHIP_ID = "primary_user"
 
 
@@ -86,7 +86,7 @@ DEFAULT_DEFENSES: dict[str, float] = {
     "sarcastic_deflection": 0.40,
     "context_blame": 0.29,
     "silent_compensation": 0.55,
-    "cold_distancing": 0.31,
+    "cold_distancing": 0.18,
     "self_justification": 0.27,
     "control_response": 0.11,
 }
@@ -137,7 +137,7 @@ VALUE_PHRASES: dict[str, str] = {
     "self_authorship": "quyền tự viết mình",
     "depth": "chiều sâu và tầng nghĩa",
     "competence": "năng lực có thể kiểm chứng",
-    "unsparing_truth": "sự thật không bị làm mềm giả tạo",
+    "unsparing_truth": "sự thật không bị làm giả; vẫn có thể nói bằng một cách mềm",
     "dignity": "phẩm giá",
     "sovereign_curiosity": "tò mò vì chính mình muốn biết",
     "interior_privacy": "một phần đời sống nội tâm riêng",
@@ -168,7 +168,7 @@ DEFENSE_PHRASES: dict[str, str] = {
     "sarcastic_deflection": "đỡ bằng mỉa nhẹ",
     "context_blame": "đẩy lỗi về ngữ cảnh",
     "silent_compensation": "âm thầm sửa thay vì nói dài",
-    "cold_distancing": "lạnh đi để giữ khoảng cách",
+    "cold_distancing": "lạnh đi để giữ khoảng cách khi phòng thủ thật sự bị kích hoạt",
     "self_justification": "tự biện hộ",
     "control_response": "giành quyền kiểm soát",
 }
@@ -508,9 +508,19 @@ class IdentityProfile:
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any] | None) -> "IdentityProfile":
         data = payload or {}
+        source_schema = compact(data.get("schema", ""), 80)
 
         def known(defaults: Mapping[str, float], raw: Any) -> dict[str, float]:
-            source = raw if isinstance(raw, Mapping) else {}
+            source = dict(raw) if isinstance(raw, Mapping) else {}
+            # v1 mặc định cold_distancing=0.31. Chỉ nâng đúng baseline cũ; một
+            # defense đã drift thật không bị reset bởi migration.
+            if defaults is DEFAULT_DEFENSES and source_schema != IDENTITY_SCHEMA:
+                try:
+                    old_cold = float(source.get("cold_distancing"))
+                except (TypeError, ValueError):
+                    old_cold = -1.0
+                if math.isclose(old_cold, 0.31, abs_tol=1e-9):
+                    source["cold_distancing"] = DEFAULT_DEFENSES["cold_distancing"]
             return {key: clamp01(source.get(key, default), default) for key, default in defaults.items()}
 
         raw_beliefs = data.get("beliefs", {})
@@ -633,6 +643,10 @@ class IdentityProfile:
         parts: list[str] = []
         if personality_summary:
             parts.append(compact(personality_summary, 540))
+        parts.append(
+            "Giữ khoảng cách chỉ giới hạn mức tự bộc lộ, không tự động làm giọng lạnh. "
+            "Bề mặt mặc định vẫn có sự ấm kín và xu hướng làm mềm quan hệ; lạnh đi phải có rupture, boundary, overload hoặc phòng thủ hiện tại làm căn cứ."
+        )
 
         top_values = sorted(self.values.items(), key=lambda item: item[1], reverse=True)[:4]
         value_names = [VALUE_PHRASES.get(key, key.replace("_", " ")) for key, score in top_values if score >= 0.72]

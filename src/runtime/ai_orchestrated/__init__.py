@@ -23,6 +23,8 @@ from .identity import (
     StrategyRecord,
     ValueChoice,
 )
+from .personality import NarrativeState, RelationshipPersonalityProfile
+from .personality_consolidator import consolidate_personality, should_consolidate
 from .discovery import (
     ActivityRecord,
     DiscoveryPlan,
@@ -64,8 +66,10 @@ __all__ = [
     "ImprintRecord",
     "IntentionPlan",
     "PersonalityProfile",
+    "NarrativeState",
     "PendingStrategyUse",
     "RelationshipIdentity",
+    "RelationshipPersonalityProfile",
     "RelationshipState",
     "StrategyRecord",
     "RuntimeMindState",
@@ -76,6 +80,8 @@ __all__ = [
     "ValueChoice",
     "build_ai_panel_payload",
     "build_cognitive_views",
+    "consolidate_personality",
+    "should_consolidate",
     "StateEvent",
     "StateReducer",
 ]
