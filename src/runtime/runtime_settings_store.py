@@ -146,13 +146,13 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         # Làm mềm riêng transcript TTS, không sửa bubble/public meaning.
         "speech_persona_polish": True,
         "speech_persona_profile": "infj_5w4_subtle",
-        "speech_persona_warmth": 0.24,
-        "speech_persona_cuteness": 0.10,
+        "speech_persona_warmth": 0.36,
+        "speech_persona_cuteness": 0.08,
         # Signature chỉ áp vào transcript Nhật. Localizer quyết định theo câu và
         # tích hợp bằng ngữ pháp, không nối chuỗi ``ですね`` một cách máy móc.
         "signature_ending_enabled": True,
         "signature_ending": "desu_ne",
-        "signature_ending_rate": 0.42,
+        "signature_ending_rate": 0.55,
         "audio_polish": False,
     },
     "discovery": {
@@ -518,7 +518,7 @@ class RuntimeSettingsStore:
         """Di trú settings theo từng schema, không ghi đè lựa chọn thật.
 
         v1 -> v2 tách ngôn ngữ public khỏi ngôn ngữ TTS.
-        v2 -> v3 nâng đúng baseline warmth 0.18 lên 0.24; giá trị đã được
+        v2 -> v3 nâng đúng baseline warmth 0.18 lên 0.36; giá trị đã được
         người dùng chỉnh khác baseline cũ được giữ nguyên.
         v3 -> v4 thêm companion-commentary cadence và nới ngân sách initiative.
         """
@@ -562,7 +562,7 @@ class RuntimeSettingsStore:
             except (TypeError, ValueError):
                 old_warmth = -1.0
             if abs(old_warmth - 0.18) <= 1e-9:
-                tts["speech_persona_warmth"] = 0.24
+                tts["speech_persona_warmth"] = 0.36
                 out["tts"] = tts
                 migrated = True
 

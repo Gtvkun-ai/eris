@@ -1916,7 +1916,16 @@ class RuntimeCoordinator(
         # default=0 làm text hiện ngay, còn Gemini TTS bò tới sau vài giây như một
         # bản lồng tiếng bị lệch timeline. Có thể opt-out bằng ERIS_TTS_SYNC_TEXT=0.
         sync_text = sync_text_with_tts_enabled()
+        text_sync_timeout_seconds = 1.25
+        raw_text_sync_timeout = os.environ.get("ERIS_TTS_TEXT_SYNC_TIMEOUT", "").strip()
+        if raw_text_sync_timeout:
+            try:
+                text_sync_timeout_seconds = max(0.15, min(10.0, float(raw_text_sync_timeout)))
+            except ValueError:
+                pass
         text_payload_sent = False
+        text_payload_lock = threading.Lock()
+        text_release_timer = None
         stage_payload_sent = False
         panel_payload_sent = False
 
@@ -1940,10 +1949,15 @@ class RuntimeCoordinator(
                     self.logger.debug("[stage-protocol] stage_segment emit failed: %s", exc)
 
         def send_text_payload():
-            nonlocal text_payload_sent
-            if text_payload_sent:
-                return
-            text_payload_sent = True
+            nonlocal text_payload_sent, text_release_timer
+            with text_payload_lock:
+                if text_payload_sent:
+                    return
+                text_payload_sent = True
+                timer = text_release_timer
+                text_release_timer = None
+            if timer is not None:
+                timer.cancel()
             send_stage_protocol_segments()
             try:
                 # Godot chỉ cần text/action/stage. Parser trace là metadata nội
@@ -1965,6 +1979,18 @@ class RuntimeCoordinator(
                 self.transport.send_json(body_payload)
             except Exception as e:
                 self.logger.warning("Failed to send deferred chat text payload: %s", e)
+
+        def schedule_text_payload_release():
+            nonlocal text_release_timer
+            if not sync_text:
+                return
+            with text_payload_lock:
+                if text_payload_sent or text_release_timer is not None:
+                    return
+                timer = threading.Timer(text_sync_timeout_seconds, send_text_payload)
+                timer.daemon = True
+                text_release_timer = timer
+            timer.start()
 
         def send_panel_payload():
             nonlocal panel_payload_sent
@@ -2087,6 +2113,9 @@ class RuntimeCoordinator(
         # Mọi lời ERIS thốt ra (autonomous, force_speak, session_ritual...) đều
         # ghi vào bộ đệm hội thoại hợp nhất để lượt chat/autonomous sau nối mạch.
         # Chat public được Architecture C ghi ở đúng commit point; không append trùng.
+        elif sync_text and not text_payload_sent:
+            schedule_text_payload_release()
+
         if (
             channel != "chat"
             and bool(payload.get("should_speak"))
@@ -5408,7 +5437,7 @@ class RuntimeCoordinator(
             if normalized.scope == "tts":
                 tts_settings = result.settings.get("tts", {})
                 ack_payload.update({
-                    "language": tts_settings.get("language", "vi"),
+                    "language": tts_settings.get("language", "ja"),
                     "voice": tts_settings.get("voice", "Aoede"),
                     "quality": tts_settings.get("quality", "high"),
                     "volume": tts_settings.get("volume", 1.0),

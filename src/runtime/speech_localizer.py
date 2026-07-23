@@ -24,6 +24,15 @@ from runtime.speech_persona_polish import (
 logger = logging.getLogger("TTS.Localizer")
 
 _JAPANESE_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
+_JOIN_SIGNATURE_TAIL_RULES = (
+    (re.compile(r"よ[。！？…]\s*(?:だね|よね)[。！？…]*\s*$"), "よね。"),
+    (re.compile(r"だ[。！？…]\s*だね[。！？…]*\s*$"), "だね。"),
+    (re.compile(r"です[。！？…]\s*ですね[。！？…]*\s*$"), "ですね。"),
+)
+_STANDALONE_SIGNATURE_TAIL_RE = re.compile(
+    r"(?:[。！？…]\s*)(?:ですね|だね|よね)[。！？…]*\s*$"
+)
+_SIGNATURE_FAMILY_TAIL_RE = re.compile(r"(?:ですね|だね|よね)[。！？…]*\s*$")
 
 
 class SpeechLocalizationError(RuntimeError):
@@ -113,6 +122,16 @@ def _localizer_max_attempts() -> int:
         return 2
 
 
+def _localizer_timeout_seconds() -> float:
+    # Gemma translation can be materially slower than flash models, so the
+    # JP localization lane needs a longer default runway than the old 6s cap.
+    raw = str(os.environ.get("ERIS_TTS_LOCALIZER_TIMEOUT_SEC", "60.0") or "60.0").strip()
+    try:
+        return max(1.0, min(90.0, float(raw)))
+    except (TypeError, ValueError):
+        return 60.0
+
+
 def _cancel_requested(cancel_event=None, authority_check: Callable[[], bool] | None = None) -> bool:
     if cancel_event is not None and callable(getattr(cancel_event, "is_set", None)):
         try:
@@ -167,23 +186,18 @@ class SpeechLocalizer:
 
         style = str(prosody_style or "").strip().lower()
         persona_policy = resolve_speech_persona_policy(clean, prosody_style=style)
-        log_key = (
-            f"{persona_policy.profile}:{persona_policy.mode}:"
-            f"{persona_policy.warmth:.2f}:{persona_policy.cuteness:.2f}:"
-            f"{persona_policy.signature_ending}:"
-            f"{int(persona_policy.signature_ending_selected)}:"
-            f"{persona_policy.signature_ending_rate:.2f}"
-        )
+        log_key = persona_policy.cache_key
         if log_key not in self._logged_persona_policies:
             self._logged_persona_policies.add(log_key)
             logger.info(
                 "[TTS.Localizer] speech persona profile=%s mode=%s warmth=%.2f cuteness=%.2f "
-                "signature=%s selected=%s rate=%.2f",
+                "signature=%s surface=%s selected=%s rate=%.2f",
                 persona_policy.profile,
                 persona_policy.mode,
                 persona_policy.warmth,
                 persona_policy.cuteness,
                 persona_policy.signature_ending,
+                persona_policy.signature_surface,
                 persona_policy.signature_ending_selected,
                 persona_policy.signature_ending_rate,
             )
@@ -275,22 +289,24 @@ class SpeechLocalizer:
                 plan = None
                 budgeted_text = str(text or "")
 
-        style_line = _style_line(prosody_style)
         policy = persona_policy or resolve_speech_persona_policy(
             text, prosody_style=prosody_style
         )
         persona_line = policy.prompt_directive()
+        style_line = _style_line(prosody_style)
         prompt = (
-            "Translate the transcript into natural, spoken Japanese for Eris, a calm and thoughtful "
-            "desktop companion. Preserve the exact proposition, stance, implication, and relationship "
-            "distance of the source. Avoid titles such as ご主人様 or マスター; prefer natural Japanese "
-            "that omits second-person address when possible. "
-            "Do not add stage directions, quotes, explanations, romanization, or the original text. "
-            "Preserve line breaks as short breath groups and keep the same line order whenever possible.\n"
             f"{persona_line}\n"
             f"{style_line}\n\n"
             "Transcript:\n"
             f"{budgeted_text}"
+        )
+        system_instruction = (
+            "Translate Vietnamese or English into natural spoken Japanese for Eris, "
+            "a warm-first, calm, lightly dry desktop companion. Preserve the exact meaning, "
+            "emotional valence, and relationship distance. Do not invent questions, "
+            "apologies, silence, dissatisfaction, commands, or hidden context. Do not "
+            "turn satisfaction into dissatisfaction. Avoid ご主人様 and マスター. Output "
+            "only Japanese, with no quotes, notes, explanations, or romanization."
         )
 
         attempts = _localizer_max_attempts()
@@ -348,7 +364,7 @@ class SpeechLocalizer:
                 with inference_context(
                     "speech_localizer",
                     optional=True,
-                    timeout_seconds=self.config.timeout_seconds,
+                    timeout_seconds=_localizer_timeout_seconds(),
                     cancel_scope="background:speech_localizer",
                     coalesce_key=stable_work_key("speech_localizer", text),
                     metadata={"attempt": attempt, "transport": "google.genai.text"},
@@ -358,12 +374,21 @@ class SpeechLocalizer:
                         model=model_name,
                         estimated_input_tokens=estimate_tokens([{"role": "user", "content": prompt}]),
                         reserved_output_tokens=output_reserve,
-                        timeout_seconds=self.config.timeout_seconds,
+                        timeout_seconds=_localizer_timeout_seconds(),
                     )
                     def call_localizer(*, cancel_token=None):
                         if cancel_token is not None:
                             cancel_token.raise_if_cancelled(broker_request)
-                        result = client.models.generate_content(model=model_name, contents=prompt)
+                        result = client.models.generate_content(
+                            model=model_name,
+                            contents=prompt,
+                            config={
+                                "system_instruction": system_instruction,
+                                "temperature": 0.15,
+                                "max_output_tokens": 128,
+                                "thinking_config": {"thinking_level": "minimal"},
+                            },
+                        )
                         if cancel_token is not None:
                             cancel_token.raise_if_cancelled(broker_request)
                         return result
@@ -371,6 +396,7 @@ class SpeechLocalizer:
                     response = GLOBAL_INFERENCE_BROKER.run(broker_request, call_localizer)
                 _raise_if_cancelled(cancel_event, authority_check)
                 out = _clean_translation_output(getattr(response, "text", "") or "")
+                out = _apply_signature_surface(out, policy)
                 if not _valid_japanese_translation(
                     text, out, persona_policy=policy
                 ):
@@ -471,8 +497,31 @@ def _clean_translation_output(text: str) -> str:
 
     raw = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
     raw = raw.strip().strip('"').strip("'").strip()
+    for pattern, replacement in _JOIN_SIGNATURE_TAIL_RULES:
+        raw = pattern.sub(replacement, raw)
+    raw = _STANDALONE_SIGNATURE_TAIL_RE.sub("。", raw).strip()
     lines = [" ".join(line.split()).strip() for line in raw.split("\n")]
     return "\n".join(line for line in lines if line).strip()
+
+
+def _apply_signature_surface(text: str, persona_policy: SpeechPersonaPolicy | None) -> str:
+    out = str(text or "").strip()
+    if (
+        not out
+        or persona_policy is None
+        or not getattr(persona_policy, "signature_ending_selected", False)
+        or not getattr(persona_policy, "signature_surface", "")
+        or _SIGNATURE_FAMILY_TAIL_RE.search(out)
+    ):
+        return out
+    surface = str(getattr(persona_policy, "signature_surface", "") or "")
+    if re.search(r"よ[。！？…]*\s*$", out):
+        return re.sub(r"よ[。！？…]*\s*$", "よね。", out)
+    if re.search(r"です[。！？…]*\s*$", out):
+        return re.sub(r"です[。！？…]*\s*$", "ですね。", out)
+    if re.search(r"だ[。！？…]*\s*$", out) and surface in {"だね", "よね"}:
+        return re.sub(r"だ[。！？…]*\s*$", "だね。" if surface == "だね" else "だよね。", out)
+    return out
 
 
 def _style_line(style: str) -> str:
@@ -480,24 +529,24 @@ def _style_line(style: str) -> str:
 
     style = str(style or "").strip().lower()
     if style == "dry_tease":
-        return "Style hint: preserve a dry teasing edge; polite, short, slightly unimpressed."
+        return "Style hint: preserve a dry teasing edge under a warm base; polite, short, slightly amused."
     if style == "soft_tease":
         return "Style hint: preserve soft teasing warmth; playful but restrained."
     if style == "self_aware_dry":
-        return "Style hint: quietly self-aware and dry; admit the miss briefly without sounding submissive."
+        return "Style hint: quietly self-aware and dry, but still warm; admit the miss briefly without sounding submissive."
     if style == "annoyed_soft":
-        return "Style hint: controlled mild irritation; crisp and concise, never loud."
+        return "Style hint: controlled mild irritation with warmth underneath; crisp and concise, never loud."
     if style == "sharp_deadpan":
-        return "Style hint: one sharp deadpan retort; measured pace and a clean ending."
+        return "Style hint: one sharp deadpan retort over a warm base; measured pace and a clean ending."
     if style == "cold_boundary":
-        return "Style hint: cold, controlled boundary; direct, non-threatening, no apology tail."
+        return "Style hint: firm boundary, but still warm and respectful; direct, non-threatening, no apology tail."
     if style == "deadpan":
-        return "Style hint: deadpan and concise; polite but a little flat."
+        return "Style hint: deadpan and concise, but not cold; polite with a warm base."
     if style == "focused":
-        return "Style hint: technical and clear; avoid cute filler."
+        return "Style hint: technical and clear, but still warm and human; avoid cute filler."
     if style == "low_quiet":
-        return "Style hint: quiet and understated; avoid dramatic wording."
-    return "Style hint: natural, restrained, and concise."
+        return "Style hint: quiet and understated, with a warm pulse; avoid dramatic wording."
+    return "Style hint: warm, natural, restrained, and concise."
 
 
 __all__ = [

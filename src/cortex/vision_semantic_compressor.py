@@ -458,20 +458,17 @@ class VisionSemanticCompressor:
         Nếu thiếu ảnh/model/client, trả fallback OCR-only thay vì làm chết loop.
         """
 
+        if not self.config.enabled:
+            return self._empty_scene_note(
+                reason="vision_compressor_disabled",
+                observer_frame=observer_frame,
+                signal_snapshot=signal_snapshot,
+            )
         image = self._resolve_image_base64(
             image_data_uri=image_data_uri,
             image_base64=image_base64,
             image_path=image_path,
         )
-        if not self.config.enabled:
-            if no_fallback_mode_enabled():
-                raise RuntimeError("no_fallback_vision:vision_compressor_disabled")
-            return self._fallback_ocr_note(
-                ocr_text=ocr_text,
-                observer_frame=observer_frame,
-                signal_snapshot=signal_snapshot,
-                reason="vision_compressor_disabled",
-            )
         if not self.config.model:
             if no_fallback_mode_enabled():
                 raise RuntimeError("no_fallback_vision:missing_vision_model")
@@ -900,6 +897,24 @@ class VisionSemanticCompressor:
         )
         self._assign_scene_continuity(note)
         return note
+
+    def _empty_scene_note(
+        self,
+        *,
+        reason: str,
+        observer_frame: ObserverFrame | None,
+        signal_snapshot: SignalSnapshot | None,
+    ) -> SemanticSceneNote:
+        evidence: list[str] = [reason]
+        if observer_frame is not None:
+            evidence.extend(str(x) for x in getattr(observer_frame, "evidence", [])[:4])
+        if signal_snapshot is not None and getattr(signal_snapshot, "screen_hash", ""):
+            evidence.append(f"screen_hash:{getattr(signal_snapshot, 'screen_hash')}")
+        return SemanticSceneNote(
+            source="unknown",
+            evidence=evidence,
+            debug={"disabled_reason": reason, "observer_used": observer_frame is not None},
+        )
 
     def _fallback_ocr_note(
         self,

@@ -283,6 +283,29 @@ public partial class UdpListener
 			anchorScreenY - overlayScreenPosition.Y);
 	}
 
+	private void MoveLive2DWindowForBodyPosition(Vector2 bodyPosition)
+	{
+		if (_body == null)
+			return;
+		if (!_isLive2DMode)
+		{
+			_body.GlobalPosition = bodyPosition;
+			return;
+		}
+
+		int width = Math.Max(1, _live2DWindowRectScreen.Size.X);
+		int height = Math.Max(1, _live2DWindowRectScreen.Size.Y);
+		Vector2I overlayScreenPosition = DisplayServer.WindowGetPosition();
+		float anchorY = Mathf.Clamp(Live2DBubbleAnchorY, 0.20f, 0.50f);
+		int x = overlayScreenPosition.X + Mathf.RoundToInt(bodyPosition.X - width * 0.5f);
+		int y = overlayScreenPosition.Y + Mathf.RoundToInt(bodyPosition.Y - height * anchorY);
+
+		_live2DWindowRectScreen = new Rect2I(x, y, width, height);
+		_hasLive2DWindowRect = true;
+		_body.GlobalPosition = bodyPosition;
+		SendLive2DWindowGeometry(_live2DWindowRectScreen);
+	}
+
 	private void ApplyLive2DBubbleVisualState()
 	{
 		if (!_isLive2DMode || _bubble == null)
@@ -356,6 +379,32 @@ public partial class UdpListener
 		catch (Exception ex)
 		{
 			RunLogger.LogErr($"[Live2D] Control UDP lỗi: {ex.Message}");
+		}
+	}
+
+	private void SendLive2DWindowGeometry(Rect2I windowRect)
+	{
+		if (!(_live2DManager?.IsRunning ?? false))
+			return;
+		try
+		{
+			var payload = new
+			{
+				protocol = "eris.live2d.control",
+				version = 1,
+				type = "set_window_geometry",
+				timestamp = Time.GetUnixTimeFromSystem(),
+				screen_x = windowRect.Position.X,
+				screen_y = windowRect.Position.Y,
+				width = windowRect.Size.X,
+				height = windowRect.Size.Y,
+			};
+			string raw = JsonSerializer.Serialize(payload);
+			_live2DForward.PutPacket(Encoding.UTF8.GetBytes(raw));
+		}
+		catch (Exception ex)
+		{
+			RunLogger.LogErr($"[Live2D] Window geometry UDP lỗi: {ex.Message}");
 		}
 	}
 

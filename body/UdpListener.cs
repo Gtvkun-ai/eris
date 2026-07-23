@@ -1231,7 +1231,7 @@ public partial class UdpListener : Node2D
 		}
 
 		ConfigureContextMenuButton(_contextChatButton, "Chat", "res://asset/Resource/chat.png");
-		ConfigureContextMenuButton(_contextTouchButton, "Cham / Nem", "res://asset/Resource/tought.png");
+		ConfigureContextMenuButton(_contextTouchButton, "Cham / Keo / Nem", "res://asset/Resource/tought.png");
 		ConfigureContextMenuButton(_contextForceSpeakButton, "Noi ngay", "res://asset/Resource/force.png");
 		ConfigureContextMenuButton(_contextEmotionButton, "Cam xuc", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextPrivateMindButton, "Nhật ký nội tâm", "res://asset/Resource/emotion.png");
@@ -3159,7 +3159,11 @@ public partial class UdpListener : Node2D
 		_previousDragMousePos = _lastDragMousePos;
 		_lastDragMousePos = mousePosition;
 		_lastDragSampleAt = GetRuntimeSeconds();
-		_body.GlobalPosition = ClampDraggedPosition(mousePosition + _dragOffset, GetViewportRect().Size);
+		Vector2 targetPosition = ClampDraggedPosition(mousePosition + _dragOffset, GetViewportRect().Size);
+		if (_isLive2DMode)
+			MoveLive2DWindowForBodyPosition(targetPosition);
+		else
+			_body.GlobalPosition = targetPosition;
 	}
 
 	private void EndDrag(Vector2 mousePosition)
@@ -3233,9 +3237,26 @@ public partial class UdpListener : Node2D
 
 	private bool IsMouseOverCharacter(Vector2 mousePosition)
 	{
+		if (IsMouseOverLive2DWindow(mousePosition))
+			return true;
+
 		Vector2 halfSize = _spriteHalfSize;
 		Rect2 hitRect = new(_body.GlobalPosition - halfSize, halfSize * 2f);
 		return hitRect.HasPoint(mousePosition);
+	}
+
+	private bool IsMouseOverLive2DWindow(Vector2 mousePosition)
+	{
+		if (!_isLive2DMode || !_hasLive2DWindowRect)
+			return false;
+
+		Vector2I overlayScreenPosition = DisplayServer.WindowGetPosition();
+		Rect2 liveRect = new(
+			new Vector2(
+				_live2DWindowRectScreen.Position.X - overlayScreenPosition.X,
+				_live2DWindowRectScreen.Position.Y - overlayScreenPosition.Y),
+			new Vector2(_live2DWindowRectScreen.Size.X, _live2DWindowRectScreen.Size.Y));
+		return liveRect.Grow(8f).HasPoint(mousePosition);
 	}
 
 	private static bool IsMouseOverControl(Control control, Vector2 mousePosition)
@@ -3761,7 +3782,7 @@ public partial class UdpListener : Node2D
 		if (payload.HasRemoteMotion || payload.HasBodyTimeline)
 			_lastRemoteMotionAt = GetRuntimeSeconds();
 
-		if (payload.ShouldSpeak && (payload.HasTextField || !payload.ParsedJson) && !string.IsNullOrWhiteSpace(payload.Text))
+		if ((payload.HasTextField || !payload.ParsedJson) && !string.IsNullOrWhiteSpace(payload.Text))
 			ApplyTypewriterEffect(payload.Text);
 
 		if (payload.HasBodyTimeline)

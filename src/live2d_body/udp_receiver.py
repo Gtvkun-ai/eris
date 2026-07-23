@@ -39,6 +39,7 @@ class Live2DStageReceiver:
         self._control_lock = threading.RLock()
         self._desired_visible = True
         self._shutdown_requested = False
+        self._requested_window_geometry: Any | None = None
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -82,6 +83,14 @@ class Live2DStageReceiver:
             if command == "set_visibility":
                 self._desired_visible = bool(payload.get("visible", True))
                 return True
+            if command == "set_window_geometry":
+                self._requested_window_geometry = {
+                    "x": int(payload.get("screen_x", 0)),
+                    "y": int(payload.get("screen_y", 0)),
+                    "width": max(1, int(payload.get("width", 0) or 0)),
+                    "height": max(1, int(payload.get("height", 0) or 0)),
+                }
+                return True
             if command == "shutdown":
                 self._shutdown_requested = True
                 return True
@@ -96,6 +105,18 @@ class Live2DStageReceiver:
     def shutdown_requested(self) -> bool:
         with self._control_lock:
             return bool(self._shutdown_requested)
+
+    @property
+    def requested_window_geometry(self) -> dict[str, int] | None:
+        return self.consume_requested_window_geometry()
+
+    def consume_requested_window_geometry(self) -> dict[str, int] | None:
+        with self._control_lock:
+            if self._requested_window_geometry is None:
+                return None
+            geometry = dict(self._requested_window_geometry)
+            self._requested_window_geometry = None
+            return geometry
 
     def send_context_menu_request(self, *, screen_x: int, screen_y: int) -> None:
         payload = {

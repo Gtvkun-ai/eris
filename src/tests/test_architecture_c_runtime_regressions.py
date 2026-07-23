@@ -281,6 +281,74 @@ def test_japanese_localizer_fails_closed_in_strict_mode(monkeypatch) -> None:
         raise AssertionError("strict Japanese contract accepted Vietnamese transcript")
 
 
+def test_japanese_localizer_translate_path_uses_runtime_timeout(monkeypatch) -> None:
+    import contextlib
+    import sys
+    import types
+
+    from runtime.speech_localizer import SpeechLocalizer, _localizer_timeout_seconds
+
+    monkeypatch.setenv("ERIS_TOKEN_BUDGET_ALL_LANES", "0")
+    monkeypatch.setenv("ERIS_TTS_LOCALIZER_TIMEOUT_SEC", "1.5")
+    monkeypatch.setenv("ERIS_TTS_API_KEY", "dummy-test-key")
+
+    class _Result:
+        text = "こんにちは"
+
+    class _Models:
+        def generate_content(self, model, contents, config=None):
+            self.model = model
+            self.contents = contents
+            self.config = config
+            return _Result()
+
+    class _Client:
+        last = None
+
+        def __init__(self, api_key):
+            self.api_key = api_key
+            self.models = _Models()
+            _Client.last = self
+
+    google_module = types.ModuleType("google")
+    google_module.genai = types.SimpleNamespace(Client=_Client)
+    monkeypatch.setitem(sys.modules, "google", google_module)
+
+    import runtime.inference_broker as broker_module
+    import runtime.speech_localizer as speech_localizer
+
+    monkeypatch.setattr(broker_module, "inference_context", lambda *args, **kwargs: contextlib.nullcontext())
+    monkeypatch.setattr(speech_localizer, "_valid_japanese_translation", lambda *_args, **_kwargs: True)
+
+    class _Broker:
+        def request_from_context(self, **kwargs):
+            self.request_kwargs = kwargs
+            return object()
+
+        def run(self, request, func):
+            self.request = request
+            return func()
+
+    fake_broker = _Broker()
+    monkeypatch.setattr(broker_module, "GLOBAL_INFERENCE_BROKER", fake_broker)
+
+    localizer = SpeechLocalizer()
+    out = localizer._translate_to_japanese("Hello", prosody_style="")
+    assert out == "こんにちは"
+    assert fake_broker.request_kwargs["timeout_seconds"] == 1.5
+    assert _localizer_timeout_seconds() == 1.5
+    assert _Client.last is not None
+    assert _Client.last.models.config["thinking_config"]["thinking_level"] == "minimal"
+    assert "Preserve the exact meaning" in _Client.last.models.config["system_instruction"]
+
+
+def test_japanese_localizer_default_timeout_is_gemma_friendly(monkeypatch) -> None:
+    from runtime.speech_localizer import _localizer_timeout_seconds
+
+    monkeypatch.delenv("ERIS_TTS_LOCALIZER_TIMEOUT_SEC", raising=False)
+    assert _localizer_timeout_seconds() == 60.0
+
+
 def test_tts_worker_relocalizes_even_when_upstream_claims_prelocalized(monkeypatch) -> None:
     import runtime.tts_engine as tts_engine
 
@@ -316,6 +384,16 @@ def test_tts_localizer_uses_speech_model_when_no_override(monkeypatch) -> None:
     monkeypatch.setenv("ERIS_SPEECH_MODEL", "gemma-4-31b-it")
 
     assert localizer_model_name() == "gemma-4-31b-it"
+
+
+def test_vision_compressor_disabled_returns_empty_note() -> None:
+    from cortex.vision_semantic_compressor import VisionCompressorConfig, VisionSemanticCompressor
+
+    compressor = VisionSemanticCompressor(VisionCompressorConfig(enabled=False))
+    note = compressor.compress(ocr_text="settings window")
+    assert note.visible_context == ""
+    assert note.debug["disabled_reason"] == "vision_compressor_disabled"
+    assert note.evidence[0] == "vision_compressor_disabled"
 
 
 def test_tts_worker_fails_closed_when_japanese_localizer_breaks(monkeypatch) -> None:
@@ -444,10 +522,10 @@ def test_speech_persona_polish_is_subtle_and_style_aware(monkeypatch) -> None:
 
     assert neutral.enabled is True
     assert neutral.profile == "infj_5w4_subtle"
-    assert neutral.warmth == 0.24
-    assert neutral.cuteness == 0.10
+    assert neutral.warmth == 0.36
+    assert neutral.cuteness == 0.08
     assert technical.cuteness == 0.0
-    assert 0.10 <= technical.warmth <= 0.14
+    assert 0.22 <= technical.warmth <= 0.30
     assert soft.warmth > neutral.warmth
     assert soft.cuteness > neutral.cuteness
 
@@ -551,6 +629,7 @@ def test_signature_ending_desu_ne_is_deterministic_and_context_aware(monkeypatch
     )
 
     assert first.signature_ending == "desu_ne"
+    assert first.signature_surface in {"ですね", "だね", "よね"}
     assert first.signature_ending_selected is True
     assert first.signature_ending_rate == 1.0
     assert second.cache_key == first.cache_key
@@ -575,6 +654,34 @@ def test_signature_ending_can_be_disabled_without_disabling_persona(monkeypatch)
     assert "Do not deliberately add ですね" in policy.prompt_directive()
 
 
+def test_localizer_strips_standalone_signature_marker() -> None:
+    from runtime.speech_localizer import _clean_translation_output
+
+    assert _clean_translation_output("少しタイミングがずれているみたいだよ。だね。") == "少しタイミングがずれているみたいだよね。"
+    assert _clean_translation_output("少しタイミングがずれているみたいです。ですね。") == "少しタイミングがずれているみたいですね。"
+    assert _clean_translation_output("少し見ていました。だね。") == "少し見ていました。"
+    assert _clean_translation_output("少しタイミングがずれているみたいだね。") == "少しタイミングがずれているみたいだね。"
+
+
+def test_localizer_applies_signature_surface_when_safe(monkeypatch) -> None:
+    import runtime.speech_persona_polish as persona_polish
+    from runtime.speech_localizer import _apply_signature_surface
+
+    monkeypatch.setattr(
+        persona_polish,
+        "_runtime_bool",
+        lambda name, default: True if name == "signature_ending_enabled" else default,
+    )
+    monkeypatch.setattr(
+        persona_polish,
+        "_runtime_float",
+        lambda name, default: 1.0 if name == "signature_ending_rate" else default,
+    )
+    policy = persona_polish.resolve_speech_persona_policy("Tôi hiểu rồi.")
+    assert _apply_signature_surface("ちゃんと理解しているよ。", policy) == "ちゃんと理解しているよね。"
+    assert _apply_signature_surface("ちゃんと理解しているだね。", policy) == "ちゃんと理解しているだね。"
+
+
 def test_tts_prompt_emphasizes_only_actual_desu_ne_signature(monkeypatch) -> None:
     import runtime.tts_engine as tts_engine
 
@@ -595,6 +702,12 @@ def test_tts_prompt_emphasizes_only_actual_desu_ne_signature(monkeypatch) -> Non
     assert "Signature ending performance" in with_signature
     assert "140–220ms" in with_signature
     assert "Signature ending performance" not in without_signature
+    assert "Signature ending performance" in tts_engine._build_tts_prompt(
+        "少しタイミングがずれているみたいだね。",
+        "",
+        "ja",
+        prelocalized=True,
+    )
 
 
 def test_hardening_fingerprint_covers_signature_ending_runtime() -> None:
@@ -1413,7 +1526,7 @@ def test_runtime_settings_v2_migrates_only_old_warmth_baseline() -> None:
     assert changed is True
     assert migrated["version"] == 4
     assert migrated["tts"]["language"] == "vi"
-    assert migrated["tts"]["speech_persona_warmth"] == 0.24
+    assert migrated["tts"]["speech_persona_warmth"] == 0.36
 
     custom, changed = RuntimeSettingsStore._migrate_payload(
         {
@@ -1477,6 +1590,16 @@ def test_post_observer_skips_llm_for_plain_greeting() -> None:
     from runtime.ai_orchestrated.model_router import AIRuntimeModelRouter
 
     payload = AIRuntimeModelRouter._fast_observer_payload("xin chào", event_kind="chat")
+    assert payload is not None
+    data, source = payload
+    assert data["user_act"] == "greeting"
+    assert "deterministic_anchor" in source
+
+
+def test_post_observer_skips_llm_for_greeting_variant() -> None:
+    from runtime.ai_orchestrated.model_router import AIRuntimeModelRouter
+
+    payload = AIRuntimeModelRouter._fast_observer_payload("hey eris oi", event_kind="chat")
     assert payload is not None
     data, source = payload
     assert data["user_act"] == "greeting"

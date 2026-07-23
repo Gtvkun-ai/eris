@@ -105,6 +105,25 @@ def test_renderer_control_visibility_is_resident_state() -> None:
     assert receiver.desired_visible is True
 
 
+def test_renderer_control_window_geometry_is_consumed_once() -> None:
+    receiver = Live2DStageReceiver(Live2DStageState(), port=0)
+    assert receiver._handle_renderer_control({
+        "protocol": "eris.live2d.control",
+        "type": "set_window_geometry",
+        "screen_x": 120,
+        "screen_y": 80,
+        "width": 520,
+        "height": 900,
+    }) is True
+    assert receiver.consume_requested_window_geometry() == {
+        "x": 120,
+        "y": 80,
+        "width": 520,
+        "height": 900,
+    }
+    assert receiver.consume_requested_window_geometry() is None
+
+
 def test_renderer_control_shutdown_is_recorded() -> None:
     receiver = Live2DStageReceiver(Live2DStageState(), port=0)
     receiver._handle_renderer_control({

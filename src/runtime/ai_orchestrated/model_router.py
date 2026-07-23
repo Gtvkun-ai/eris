@@ -1276,11 +1276,7 @@ class AIRuntimeModelRouter:
         if str(event_kind or "chat").strip().lower() != "chat":
             return None
         normalized = normalize_vi(user_text).strip(" ?.!…")
-        greetings = {
-            "xin chao", "chao", "hello", "hi", "hey", "alo",
-            "chao eris", "xin chao eris", "hello eris",
-        }
-        if normalized not in greetings:
+        if not AIRuntimeModelRouter._is_low_info_greeting(normalized):
             return None
         return (
             {
@@ -1296,6 +1292,36 @@ class AIRuntimeModelRouter:
             },
             "deterministic_anchor:greeting",
         )
+
+    @staticmethod
+    def _is_low_info_greeting(normalized: str) -> bool:
+        text = " ".join(str(normalized or "").split())
+        if not text:
+            return False
+        exact = {
+            "xin chao", "chao", "hello", "hi", "hey", "alo",
+            "chao eris", "xin chao eris", "hello eris",
+        }
+        if text in exact:
+            return True
+        roots = ("xin chao", "chao", "hello", "hi", "hey", "alo")
+        polite_suffixes = {"oi", "nhe", "nha"}
+        for root in roots:
+            if text == root:
+                return True
+            if not text.startswith(root + " "):
+                continue
+            tail = text[len(root):].strip()
+            if not tail:
+                return True
+            tail_tokens = tail.split()
+            if tail_tokens and tail_tokens[0] == "eris":
+                tail_tokens = tail_tokens[1:]
+            if not tail_tokens:
+                return True
+            if len(tail_tokens) <= 2 and all(token in polite_suffixes for token in tail_tokens):
+                return True
+        return False
 
     def observe_completed_turn(
         self,

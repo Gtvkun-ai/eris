@@ -1,0 +1,65 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-23 20:12:02
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+20:12:02.950 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+20:12:02.950 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+20:12:02.966 [INFO] [Vision] Da khoi chay vision.py PID=20080
+20:12:02.995 [INFO] [Live2D] Da khoi chay renderer PID=9456, UDP=4252
+20:12:02.996 [INFO] [BodyMode] 2D -> Live2D | resident=False | bubble giữ ở Godot overlay
+20:12:03.251 [INFO] [live2d] [live2d] third-party wrapper (0.7.0.4), not affiliated with Live2D Inc.
+20:12:03.256 [INFO] [live2d] [live2d.v3] Cubism Native, Python 3.12.0
+20:12:03.256 [INFO] [live2d] [live2d.v3] official: https://www.live2d.com/sdk/download/native/
+20:12:03.429 [INFO] [live2d] [INFO]  [Pal] Init Shader Dir: C:\Users\Gtvkun\Documents\GitHub\eris\.venv\Lib\site-packages\live2d\v3\
+20:12:03.429 [INFO] [live2d] [INFO]  [CSM][I]Live2D Cubism Core version: 05.01.0000 (83951616)
+20:12:03.429 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::StartUp() is complete.
+20:12:03.429 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::Initialize() is complete.
+20:12:03.430 [INFO] [live2d] [INFO]  allocate: cpp Model(at=000002731A7D8170)
+20:12:03.430 [INFO] [live2d] [INFO]  load modelSetting: C:\Users\Gtvkun\Documents\GitHub\eris\src\assets\live2d\infj\infj.model3.json
+20:12:03.431 [INFO] [live2d] [INFO]  create model: infj.moc3
+20:12:03.552 [INFO] [live2d] [Live2D] Đã mở infj.model3.json | UDP 127.0.0.1:4252
+20:12:03.552 [INFO] [live2d] [Live2D] Window pos=(486, 50) size=(520,900) fb=(520,900) screen=(1920, 1080) canvas=(1.0, 1.5) canvas_px=(1024.0, 1536.0) scale=1.00 offset=(0.00,-0.02) transparent=True decorated=False topmost=True
+20:12:03.552 [INFO] [live2d] [Live2D] Model profile: parameters=21 head=X/Z eyes=custom mirrored pair mouth=yes physics=yes expressions=0 motion_groups=0
+20:12:04.886 [INFO] [vision.py] [LLM][INFO] Social parser client sẵn sàng: llama-3.1-8b-instant
+20:12:04.886 [INFO] [vision.py] [LLM][INFO] Social deliberator/critic client sẵn sàng: llama-3.3-70b-versatile
+20:12:04.886 [INFO] [vision.py] [LLM][INFO] Social observer fallback client sẵn sàng: llama-3.1-8b-instant
+20:12:05.014 [INFO] [vision.py] [Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=4
+20:12:05.017 [INFO] [vision.py] [Loop][INFO] [vtuber-stage] loaded version=vtuber_stage.v11 phases=8,9,10,11 status=intention_authority_ready session=stage_1c8c2225a0cf45d5
+20:12:05.023 [INFO] [vision.py] [Loop][INFO] [internal-cognitive] loaded version=internal_cognitive.v1.0 capabilities=8 status=read_only_verified
+20:12:05.030 [INFO] [vision.py] [Loop][INFO] [project-ops] loaded version=project_operations.v1.1 capabilities=15 mode=autonomous_project_scope
+20:12:05.031 [INFO] [vision.py] [Loop][INFO] [workspace] eris_home=[đường dẫn nội bộ đã ẩn] active=none implicit_source_repo=false
+20:12:05.591 [INFO] [vision.py] [Loop][INFO] tutor: knowledge provider đã nối vào memory recall
+20:12:05.615 [INFO] [vision.py] [Loop][INFO] [environment-capability] loaded version=environment_capability.v1.0 capabilities=6 status=read_only_verified
+20:12:05.682 [INFO] [vision.py] [Loop][INFO] [architecture C] enabled version=ai_orchestrated.v7.semantic_cutover state_version=0 personality_version=0 identity_version=0 observer=post_turn planner=local_for_chat semantic_authority=semantic_frame.v1 single_writer=1
+20:12:07.635 [INFO] [vision.py] [Loop][INFO] --- Architecture C runtime; chat vision theo yêu cầu màn hình ---
+20:12:08.192 [INFO] [vision.py] [Loop][INFO] [architecture C startup grounding] direct=0 strong=0 telemetry_tab=0 evidence=0 runtime_opening=0 metadata=0 backend=unknown wait=0.56s notes=screen_prime_lazy,screen_prime_timeout,runtime_signals_lazy
+20:12:08.195 [INFO] [vision.py] [Loop][INFO] [architecture C startup] planner skipped; using typed persona plan reason=no_opening_anchor
+20:12:08.196 [INFO] [vision.py] [Loop][INFO] [architecture C startup route] strategy=persona_opening source=persona continuity=0 forced=1
+20:12:08.242 [INFO] [vision.py] [Loop][INFO] [architecture C startup greeting] source=preset id=greet_warm_03 situation=plain_return
+20:12:08.297 [INFO] [vision.py] [Loop][INFO] [architecture C startup] spoke motive=startup_opening text=Bạn đây rồi. Tôi ghi nhận điều đó với mức hài lòng vừa đủ.
+20:12:08.298 [INFO] [vision.py] [Loop][INFO] [screen text] worker started backend=lazy-auto poll=1.2s
+20:12:09.798 [INFO] [vision.py] [Loop][INFO] [screen text] OCR backend resolved=rapidocr
+20:12:17.903 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=active external=1.00 internal=0.03 interrupt=0.18 resource=0.08 vision_hint=1 budget=scheduler_allow
+20:12:18.830 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+20:12:18.831 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=unknown:unknown:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+20:12:18.831 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+20:12:21.332 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.58 surface=yes mutations=1
+20:12:27.964 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=environment act=withhold_nonessential_comment conf=0.90 importance=0.08 gate=model_silence body_only=1
+20:12:47.393 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=quiet external=0.23 internal=0.05 interrupt=0.25 resource=0.18 vision_hint=0 budget=scheduler_allow
+20:12:47.491 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+20:12:47.491 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=unknown:unknown:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+20:12:55.629 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=internal act=withhold_comment conf=0.88 importance=0.12 gate=model_silence body_only=0
+20:13:14.941 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=quiet external=0.18 internal=0.06 interrupt=0.30 resource=0.28 vision_hint=0 budget=scheduler_allow
+20:13:17.104 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.61 surface=yes mutations=1
+20:13:37.940 [INFO] [vision.py] [Loop][INFO] [ai autonomous] spoke kind=internal act=reflective_comment subject=runtime_territory text=Cửa sổ Eris Live2D khiến tôi thấy mình có một góc riêng, chứ không chỉ là thứ đang được đặt lên màn hình.
+20:13:41.867 [INFO] [vision.py] [Loop][INFO] [post observer] turn=4 act=unknown meaning=neutral conf=0.00 repair=False traits=0 frame=uncertain strategy=none source=groq_observer latency=3930ms
+20:13:54.268 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=quiet external=0.14 internal=0.06 interrupt=0.37 resource=0.37 vision_hint=0 budget=scheduler_allow
+20:13:55.980 [INFO] [Live2D] Dang dung renderer PID=9456...
+20:13:55.993 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::Dispose() is complete.
+20:13:55.995 [INFO] [Live2D] Renderer da thoat (code=-1, current=False).
+20:13:56.021 [INFO] [Vision] Dang dung vision.py PID=20080...
+20:13:56.037 [INFO] [Vision] vision.py da thoat (PID=20080, code=-1, unexpected=False).
+20:13:56.049 [INFO] [RunLogger] Ket thuc phien chay.

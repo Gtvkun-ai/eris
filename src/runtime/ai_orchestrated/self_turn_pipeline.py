@@ -181,7 +181,11 @@ class SelfTurnPipeline:
             return False
         stale_check = getattr(host, "_conversation_went_stale", None)
         if callable(stale_check) and stale_check():
-            host.chat_mode = False
+            end_chat_cycle = getattr(host, "_end_chat_cycle", None)
+            if callable(end_chat_cycle):
+                end_chat_cycle()
+            else:
+                host.chat_mode = False
             host.logger.info("[self turn] chat baton released after stale public activity")
             return True
         time.sleep(0.2)

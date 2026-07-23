@@ -93,9 +93,9 @@ def _normalize_language_hint(value: str) -> str:
 
 
 def _language_hint() -> str:
-    # Eris nói tiếng Việt mặc định. Chỉ dịch/đọc Nhật khi cấu hình rõ ``ja``.
+    # Voice contract defaults to Japanese; Vietnamese text is localized first.
     from runtime.runtime_settings_store import runtime_text
-    return _normalize_language_hint(runtime_text("tts", "language", default="vi"))
+    return _normalize_language_hint(runtime_text("tts", "language", default="ja"))
 
 
 def _quality_mode() -> str:
@@ -331,11 +331,11 @@ def _build_tts_prompt(
         prosody_line = f"Line performance: {prosody_notes}\n"
 
     signature_line = ""
-    if language_hint == "ja" and re.search(r"ですね[。！？…]*\s*$", str(text or "")):
+    if language_hint == "ja" and re.search(r"(?:ですね|だね|よね)[。！？…]*\s*$", str(text or "")):
         signature_line = (
-            "Signature ending performance: keep です compact, let the final ね land with a small "
-            "140–220ms linger, a tiny lift into ね, then a gentle downward contour. Make it memorable but restrained; "
-            "do not turn it into a theatrical anime catchphrase.\n"
+            "Signature ending performance: let the final ね land with a small 140–220ms linger, "
+            "a tiny lift into the marker, then a gentle downward contour. Make it warm and memorable "
+            "but restrained; do not turn it into a theatrical anime catchphrase.\n"
         )
 
     performance_rules = ""
@@ -478,6 +478,7 @@ def _brokered_gemini_text_generate(
     output_tokens: int = 256,
     timeout_seconds: float = 10.0,
     coalesce_key: str = "",
+    config: dict | None = None,
 ):
     """Run a Google SDK text request through the same remote control plane."""
 
@@ -502,7 +503,10 @@ def _brokered_gemini_text_generate(
         def call_text_provider(*, cancel_token=None):
             if cancel_token is not None:
                 cancel_token.raise_if_cancelled(request)
-            result = client.models.generate_content(model=model, contents=prompt)
+            if config is None:
+                result = client.models.generate_content(model=model, contents=prompt)
+            else:
+                result = client.models.generate_content(model=model, contents=prompt, config=config)
             if cancel_token is not None:
                 cancel_token.raise_if_cancelled(request)
             return result
@@ -1380,14 +1384,7 @@ def _translate_to_japanese(text: str, api_key: str) -> str:
     from google import genai
     try:
         client = genai.Client(api_key=api_key)
-        prompt = (
-            "You are a translation assistant. Translate the following Vietnamese or English sentence "
-            "into natural, gentle, and polite Japanese, suitable for a soft anime girl companion speaking "
-            "to the user. Avoid titles such as ご主人様 or マスター; prefer polite Japanese "
-            "that omits second-person address when possible. "
-            "Output ONLY the Japanese translation, with absolutely no quotes, annotations, or English/Vietnamese explanations.\n\n"
-            f"Sentence to translate: {text}"
-        )
+        prompt = f"Transcript:\n{text}"
         from runtime.work_keys import stable_work_key
         # Legacy translation remains optional and is dropped before chat.
         response = _brokered_gemini_text_generate(
@@ -1397,6 +1394,19 @@ def _translate_to_japanese(text: str, api_key: str) -> str:
             lane="tts_localizer",
             output_tokens=256,
             coalesce_key=stable_work_key("tts_translate", text),
+            config={
+                "system_instruction": (
+                    "Translate Vietnamese or English into natural spoken Japanese for Eris, "
+                    "a warm-first, calm, lightly dry desktop companion. Preserve the exact meaning, "
+                    "emotional valence, and relationship distance. Do not invent questions, "
+                    "apologies, silence, dissatisfaction, commands, or hidden context. Do not "
+                    "turn satisfaction into dissatisfaction. Avoid ご主人様 and マスター. Output "
+                    "only Japanese, with no quotes, notes, explanations, or romanization."
+                ),
+                "temperature": 0.15,
+                "max_output_tokens": 128,
+                "thinking_config": {"thinking_level": "minimal"},
+            },
         )
         translated = (response.text or "").strip()
         if translated.startswith('"') and translated.endswith('"'):

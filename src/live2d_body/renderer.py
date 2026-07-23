@@ -160,6 +160,28 @@ class Live2DRenderer:
                         print("[Live2D] renderer hidden (resident process)", flush=True)
                     window_visible = desired_visible
 
+                requested_geometry = self.receiver.requested_window_geometry
+                if requested_geometry is not None:
+                    current_geometry = self._bridge.geometry(glfw, window)
+                    target_geometry = WindowGeometry(
+                        requested_geometry["x"],
+                        requested_geometry["y"],
+                        requested_geometry["width"],
+                        requested_geometry["height"],
+                    )
+                    if target_geometry != current_geometry:
+                        if (
+                            current_geometry.width != target_geometry.width
+                            or current_geometry.height != target_geometry.height
+                        ):
+                            glfw.set_window_size(
+                                window,
+                                target_geometry.width,
+                                target_geometry.height,
+                            )
+                        glfw.set_window_pos(window, target_geometry.x, target_geometry.y)
+                        self._report_geometry(glfw, window, force=True)
+
                 now = time.monotonic()
                 dt = min(0.10, max(0.0, now - last))
                 last = now

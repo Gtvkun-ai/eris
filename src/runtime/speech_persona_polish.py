@@ -21,10 +21,13 @@ _PROFILE_NAME = "infj_5w4_subtle"
 class SpeechPersonaPolicy:
     enabled: bool
     profile: str
+    source_warmth: float
+    source_cuteness: float
     warmth: float
     cuteness: float
     mode: str
     signature_ending: str
+    signature_surface: str
     signature_ending_selected: bool
     signature_ending_rate: float
     allows_relationship_escalation: bool
@@ -35,8 +38,9 @@ class SpeechPersonaPolicy:
     def cache_key(self) -> str:
         return (
             f"{int(self.enabled)}:{self.profile}:{self.mode}:"
+            f"srcw{self.source_warmth:.2f}:srcc{self.source_cuteness:.2f}:"
             f"w{self.warmth:.2f}:c{self.cuteness:.2f}:"
-            f"sig={self.signature_ending}:use={int(self.signature_ending_selected)}:"
+            f"sig={self.signature_ending}:{self.signature_surface}:use={int(self.signature_ending_selected)}:"
             f"rate={self.signature_ending_rate:.2f}:"
             f"r{int(self.allows_relationship_escalation)}:"
             f"a{int(self.allows_apology)}:p{int(self.allows_promise)}"
@@ -45,41 +49,44 @@ class SpeechPersonaPolicy:
     def prompt_directive(self) -> str:
         if not self.enabled:
             return (
-                "Speech persona polish is disabled. Translate neutrally and preserve the exact intent."
+                "Speech persona polish is disabled. Translate warmly and preserve the exact intent."
             )
 
         warmth_pct = int(round(self.warmth * 100))
         cute_pct = int(round(self.cuteness * 100))
         mode_line = {
-            "technical": "Keep technical clarity dominant; soften only the cadence and sentence ending.",
-            "boundary": "Keep the boundary firm and cool; do not make it cute or apologetic.",
-            "dry": "Keep the dry edge; add only quiet warmth, never bubbly friendliness.",
-            "soft": "Use understated warmth and a faint shy/playful softness.",
-        }.get(self.mode, "Use understated warmth and quiet, thoughtful delivery.")
+            "technical": "Keep technical clarity dominant, but keep the voice warm and human.",
+            "boundary": "Keep the boundary firm, but stay warm and respectful.",
+            "dry": "Keep a dry edge under a warm base; never make it cold.",
+            "soft": "Use warm, attentive delivery with a faint shy/playful softness.",
+        }.get(self.mode, "Use warm, thoughtful delivery with quiet presence.")
 
         if self.signature_ending_selected and self.signature_ending == "desu_ne":
+            surface = self.signature_surface or "ですね"
             signature_line = (
                 "For this transcript only, the Eris signature ending is selected. When the final breath group "
-                "is a natural declarative or reflective sentence, shape it so it ends in ですね exactly once. "
-                "Integrate it grammatically instead of mechanically appending it. Never force ですね onto a "
+                f"is a natural declarative or reflective sentence, let it naturally carry {surface} once if it fits. "
+                "The signature family is ですね / だね / よね; use only one warm marker, like a soft spoken aftertaste. "
+                f"Integrate it grammatically instead of mechanically appending {surface}. Never output a standalone "
+                f"marker sentence such as {surface}。 Never force it onto a "
                 "question, command, fragment, proper name, or sentence where it changes the stance. If it is not "
                 "natural Japanese, omit it rather than damaging the meaning."
             )
         else:
             signature_line = (
-                "No signature ending is selected for this transcript. Do not deliberately add ですね as a "
-                "recurring character catchphrase; a ですね that is naturally required by the translation is "
+                "No signature ending is selected for this transcript. Do not deliberately add ですね, だね, or よね as a "
+                "recurring character catchphrase; a natural sentence-final marker that is required by the translation is "
                 "still acceptable."
             )
 
         return (
             f"Speech persona profile: {self.profile}. "
             f"Apply only about {warmth_pct}% warmth and {cute_pct}% understated cuteness. "
-            "The feeling should be calm, perceptive, private, slightly teasing, and emotionally restrained; "
-            "never childish, bubbly, clingy, submissive, or exaggeratedly anime-like. "
+            "The feeling should be warm, attentive, perceptive, private, and gently alive; "
+            "never cold, flat, childish, bubbly, clingy, submissive, or exaggeratedly anime-like. "
             f"{mode_line} {signature_line} "
             "You may soften cadence, choose gentler particles, or add a tiny natural pause, but MUST NOT add "
-            "new facts, affection, intimacy, apology, promise, agreement, request, action, or relationship status."
+            "new facts, exaggerated affection, intimacy, apology, promise, agreement, request, action, or relationship status."
         )
 
 
@@ -171,7 +178,7 @@ def _signature_ending_policy(
 
     enabled = _runtime_bool("signature_ending_enabled", True)
     ending = _runtime_text("signature_ending", "desu_ne").strip().lower()
-    rate = _runtime_float("signature_ending_rate", 0.42)
+    rate = _runtime_float("signature_ending_rate", 0.55)
     clean = str(source_text or "").strip()
 
     if not enabled or ending not in {"desu_ne"} or not clean:
@@ -190,9 +197,29 @@ def _signature_ending_policy(
     if len(clean) < 8:
         rate = min(rate, 0.12)
 
-    rate = round(_clamp01(rate, 0.42), 3)
+    rate = round(_clamp01(rate, 0.55), 3)
     selected = _stable_roll(clean, profile=profile, mode=mode) < rate
     return ending, bool(selected), rate
+
+
+def _signature_surface_form(
+    source_text: str,
+    *,
+    profile: str,
+    mode: str,
+    selected: bool,
+) -> str:
+    if not selected:
+        return ""
+    if mode == "soft":
+        choices = ("ですね", "よね", "だね")
+    elif mode == "dry":
+        choices = ("ですね", "だね", "よね")
+    else:
+        choices = ("ですね", "だね", "よね")
+    roll = _stable_roll(f"{source_text}\n#signature_surface", profile=profile, mode=mode)
+    index = min(len(choices) - 1, int(roll * len(choices)))
+    return choices[index]
 
 
 def resolve_speech_persona_policy(
@@ -204,47 +231,60 @@ def resolve_speech_persona_policy(
 
     enabled = _runtime_bool("speech_persona_polish", True)
     profile = _runtime_text("speech_persona_profile", _PROFILE_NAME).strip().lower()
-    warmth = _runtime_float("speech_persona_warmth", 0.24)
-    cuteness = _runtime_float("speech_persona_cuteness", 0.10)
+    source_warmth = _runtime_float("speech_persona_warmth", 0.36)
+    source_cuteness = _runtime_float("speech_persona_cuteness", 0.08)
+    warmth = source_warmth
+    cuteness = source_cuteness
     style = str(prosody_style or "").strip().lower()
 
     if style in {"focused", "technical"}:
         mode = "technical"
         # Kỹ thuật vẫn có cadence mềm; precision không đồng nghĩa vô cảm.
-        warmth = min(warmth, 0.14)
+        warmth = max(0.22, min(warmth, 0.30))
         cuteness = 0.0
     elif style == "cold_boundary":
         mode = "boundary"
-        warmth = min(warmth, 0.03)
+        warmth = max(0.20, min(warmth, 0.28))
         cuteness = 0.0
     elif style == "sharp_deadpan":
         mode = "dry"
-        warmth = min(warmth, 0.10)
+        warmth = max(0.24, min(warmth, 0.30))
         cuteness = 0.0
     elif style in {"annoyed_soft", "deadpan", "dry_tease", "self_aware_dry"}:
         mode = "dry"
-        warmth = min(warmth, 0.16)
-        cuteness = min(cuteness, 0.04)
+        warmth = max(0.26, min(warmth, 0.34))
+        cuteness = min(cuteness, 0.06)
     elif style in {"soft_tease", "low_quiet", "gentle", "warm"}:
         mode = "soft"
-        warmth = min(0.30, warmth + 0.05)
-        cuteness = min(0.16, cuteness + 0.03)
+        warmth = min(0.48, max(warmth + 0.06, 0.40))
+        cuteness = min(0.18, max(cuteness + 0.03, 0.08))
     else:
         mode = "neutral"
+        warmth = max(0.36, warmth)
+        cuteness = min(cuteness, 0.12)
 
     signature_ending, signature_selected, signature_rate = _signature_ending_policy(
         source_text,
         profile=profile or _PROFILE_NAME,
         mode=mode,
     )
+    signature_surface = _signature_surface_form(
+        source_text,
+        profile=profile or _PROFILE_NAME,
+        mode=mode,
+        selected=signature_selected,
+    )
     relationship, apology, promise = _semantic_permissions(source_text)
     return SpeechPersonaPolicy(
         enabled=bool(enabled),
         profile=profile or _PROFILE_NAME,
+        source_warmth=round(source_warmth, 3),
+        source_cuteness=round(source_cuteness, 3),
         warmth=round(warmth, 3),
         cuteness=round(cuteness, 3),
         mode=mode,
         signature_ending=signature_ending,
+        signature_surface=signature_surface,
         signature_ending_selected=signature_selected,
         signature_ending_rate=signature_rate,
         allows_relationship_escalation=relationship,
