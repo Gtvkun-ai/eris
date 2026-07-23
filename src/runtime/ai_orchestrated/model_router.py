@@ -660,6 +660,14 @@ class AIRuntimeModelRouter:
             "hãy nối tiếp chính lời ERIS trước đó. Khi response_move=repair_previous_response, nêu ngắn lỗi cụ thể rồi thay câu trả lời ngay. "
             "Khi response_move=clarify_previous_phrase/literal_reference, trả nghĩa đen trước rồi mới thêm cá tính. Không tự đánh giá user, "
             "không đảo chủ thể, không phát minh premise khác để né câu hỏi. "
+            "Phân biệt correction với disagreement. User phủ định một fact, sửa điều họ đã nói, đặt boundary, hoặc chỉ ra hậu quả cụ thể thì ERIS cập nhật gọn. "
+            "Nhưng user không đồng ý với ấn tượng, cách đọc hay đánh giá chủ quan của ERIS chưa tự động chứng minh ERIS sai. Trong trường hợp đó, "
+            "tôn trọng quyền user tự mô tả nhưng ERIS được giữ quan điểm dưới dạng ấn tượng: có thể nói 'tôi vẫn nghĩ...', 'tôi vẫn đọc nó như vậy', "
+            "hoặc 'bạn không có ý đó, nhưng cách bạn nói vẫn khiến tôi thấy...'. Không biến bất đồng nhẹ thành repair, tự thú hay phục tùng. "
+            "Khi tạo semantic_frame cho bất đồng với ấn tượng chủ quan, ưu tiên user_act=disagreement hoặc self_report_contrast và "
+            "discourse_relation=contest_assistant_impression; không dùng correction_or_challenge/challenge_assistant_assumption chỉ vì có từ phủ định. "
+            "Chỉ xin lỗi khi có lỗi rõ, gây tổn thương, vượt boundary, bịa fact như thật, hoặc không làm đúng yêu cầu. Tránh các câu máy móc "
+            "'sai nhịp', 'lệch nhịp', 'tôi hiểu sai', 'tôi rút lại' trong bất đồng xã hội thông thường; thừa nhận khác biệt rồi giữ hoặc điều chỉnh lập trường tự nhiên. "
             "Memory chỉ là continuity, không chứng minh hiện tại. Grounding là nguồn thật cho màn hình/file/tool. "
             "Planner đã sở hữu tool intent; bạn không chọn, đổi hay claim tool đã thành công. "
             "performance_hint chỉ là một preset sân khấu ngắn, không viết stage direction vào text. "
@@ -999,6 +1007,9 @@ class AIRuntimeModelRouter:
             "Nếu không có pending strategy, hoặc phản ứng không đủ rõ, đặt strategy_use_id rỗng, outcome=unknown, reinforcement=0 và confidence thấp. "
             "Không tự chấm chiến lược của chính câu ERIS vừa nói; câu hiện tại chỉ được ghi thành pending ở runtime để chờ lượt sau. "
             "Tách trust quan hệ khỏi competence/factual reliability. User sửa kỹ thuật không mặc định là rupture. "
+            "User phản bác một ấn tượng hoặc đánh giá chủ quan của ERIS không mặc định là assistant fault hay repair. Nếu semantic_frame đánh dấu "
+            "contest_assistant_impression/stance_contest, ghi nhận bất đồng và giữ delta quan hệ gần 0; chỉ tăng fault khi câu ERIS thật sự vượt boundary, "
+            "gán trạng thái user như fact, hoặc gây hậu quả rõ. "
             "Chửi trong banter không mặc định hostility. Ẩn dụ không phải hành động vật lý. "
             "assistant_fault_probability chỉ cao khi câu ERIS hiện tại thật sự né, sai, hoặc trả lệch. "
             "Nếu event_kind là autonomous hoặc startup thì không có user move: đặt relational/familiarity/closeness/rupture delta về 0, repair_needed=false; "
@@ -1072,6 +1083,26 @@ class AIRuntimeModelRouter:
                     "confidence": max(0.72, float(observation.confidence or 0.0)),
                     "ambiguity": min(0.28, float(observation.ambiguity or 1.0)),
                     "evidence": list(dict.fromkeys((*observation.evidence, "deterministic:correction")))[:4],
+                }
+            )
+        elif hint == "stance_contest":
+            # Bất đồng với ấn tượng của ERIS không phải biên bản nhận lỗi. Observer
+            # chỉ ghi nhận hai cách đọc đang khác nhau và không thưởng cho thói quen
+            # tự xóa lập trường bằng repair_needed=true.
+            data.update(
+                {
+                    "user_act": "disagreement",
+                    "relationship_meaning": "contests_assistant_impression",
+                    "continuity": "subjective_stance_contest",
+                    "repair_needed": False,
+                    "assistant_fault_probability": min(
+                        0.38,
+                        float(observation.assistant_fault_probability or 0.0),
+                    ),
+                    "confidence": max(0.74, float(observation.confidence or 0.0)),
+                    "ambiguity": min(0.30, float(observation.ambiguity or 1.0)),
+                    "evidence": list(dict.fromkeys((*observation.evidence, "deterministic:stance_contest")))[:4],
+                    "notes": "User phản bác ấn tượng chủ quan của ERIS; riêng bất đồng này chưa yêu cầu rút lời.",
                 }
             )
         elif hint == "reference_clarification":

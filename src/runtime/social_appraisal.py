@@ -97,6 +97,39 @@ def _extract_user_contrast(user_text: str) -> str:
     return (preferred[-1] if preferred else parts[-1])[:140]
 
 
+def _infer_previous_claim_kind(previous_claim: str) -> str:
+    """Phân biệt fact với ấn tượng để disagreement không bị xử như correction.
+
+    Đây chỉ là projection bảo thủ cho repair compatibility path. Nó không cố
+    đọc ý định user từ keyword; nó nhìn cách ERIS đã đóng gói claim của chính
+    mình. Claim có dấu hiệu ``tôi nghĩ/tôi thấy/có vẻ`` được quyền giữ như một
+    ấn tượng, còn phát biểu sự kiện cụ thể vẫn phải hạ authority khi bị sửa.
+    """
+
+    norm = normalize_vi(previous_claim)
+    if not norm:
+        return "unknown"
+    impression_markers = (
+        "toi nghi", "toi thay", "theo toi", "co ve", "hinh nhu", "toi doan",
+        "toi doc", "an tuong cua toi", "cam giac cua toi", "khien toi thay",
+        "toi van nghi", "toi van thay",
+    )
+    if _has_any(norm, impression_markers):
+        return "assistant_impression"
+    user_state_markers = (
+        "ban dang", "ban co ve", "ban muon", "ban so", "ban buon", "ban vui",
+        "ban ghet", "ban thich", "ban cam thay", "ban co y", "y cua ban",
+    )
+    if _has_any(norm, user_state_markers):
+        return "user_state_inference"
+    if re.search(r"\b\d+(?:[.,]\d+)?\b", norm) or _has_any(
+        norm,
+        ("file ", "code ", "log ", "api ", "model ", "version ", "pid ", "port "),
+    ):
+        return "objective_assertion"
+    return "assertion"
+
+
 def _env_float(name: str, default: float, *, minimum: float = 0.0, maximum: float = 1.0) -> float:
     try:
         value = float(os.environ.get(name, str(default)) or default)
@@ -181,6 +214,7 @@ class ClaimEstimate:
     previous_claim_excerpt: str = ""
     user_contrast_excerpt: str = ""
     contested_terms: tuple[str, ...] = ()
+    claim_kind: str = "unknown"
     provenance: tuple[EvidenceContribution, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -192,6 +226,7 @@ class ClaimEstimate:
             "previous_claim_excerpt": self.previous_claim_excerpt,
             "user_contrast_excerpt": self.user_contrast_excerpt,
             "contested_terms": list(self.contested_terms),
+            "claim_kind": self.claim_kind,
             "provenance": [item.to_dict() for item in self.provenance],
         }
 
@@ -209,6 +244,7 @@ class ClaimPolicy:
     authority_multiplier: float = 1.0
     memory_write_allowed: bool = True
     suppress_for_current_turn: bool = False
+    stance_may_be_held: bool = False
     candidate_count_hint: int = 1
     response_posture: str = "preserve"
     expires_after_turns: int = 1
@@ -219,6 +255,7 @@ class ClaimPolicy:
             "authority_multiplier": round(clamp01(self.authority_multiplier), 4),
             "memory_write_allowed": bool(self.memory_write_allowed),
             "suppress_for_current_turn": bool(self.suppress_for_current_turn),
+            "stance_may_be_held": bool(self.stance_may_be_held),
             "candidate_count_hint": max(1, min(2, int(self.candidate_count_hint))),
             "response_posture": self.response_posture,
             "expires_after_turns": max(1, int(self.expires_after_turns)),
@@ -306,9 +343,15 @@ class SocialAppraisalSnapshot:
             f"- response_posture={policy.response_posture}; candidate_hint={policy.candidate_count_hint}.",
         ]
         if policy.suppress_for_current_turn:
-            lines.append("- Không dựng tiếp trên claim trước ở lượt này; nhận phần suy diễn sai nhưng giữ sắc thái quan hệ phù hợp.")
+            lines.append("- Claim trước phải dừng ở lượt này; sửa nội dung gọn nhưng không tự động xin lỗi nếu chưa có lỗi quan hệ.")
+        elif policy.stance_may_be_held:
+            lines.append(
+                "- Đây là bất đồng với ấn tượng/cách đọc của ERIS, không phải bằng chứng ERIS chắc chắn sai. "
+                "Tôn trọng cách user tự mô tả nhưng ERIS được giữ quan điểm dưới dạng ấn tượng, không biến nó thành fact."
+            )
+            lines.append("- Không dùng các cụm máy móc như 'sai nhịp', 'lệch nhịp', 'tôi hiểu sai' hoặc xin lỗi theo phản xạ.")
         elif policy.authority_multiplier < 0.52:
-            lines.append("- Claim trước đang bị contest: hạ độ chắc, không dùng nó như fact và không ghi memory.")
+            lines.append("- Claim trước đang bị contest: hạ độ chắc, không dùng nó như fact và không ghi memory; chưa cần tự thú nhận sai.")
         if self.is_playful_repair:
             lines.append("- Có khả năng user đang vừa sửa vừa chọc: repair có duyên, không biến thành lời xin lỗi hành chính.")
         if self.boundary.value >= self.thresholds.boundary_high:
@@ -374,6 +417,7 @@ class SocialAppraisalEngine:
     ) -> SocialAppraisalSnapshot:
         user_norm = normalize_vi(user_text)
         previous_claim, previous_tokens = _extract_previous_claim(previous_assistant_text)
+        claim_kind = _infer_previous_claim_kind(previous_claim)
         fingerprint = hashlib.sha1(
             f"{phase}|{user_norm}|{normalize_vi(previous_assistant_text)}".encode("utf-8", errors="ignore")
         ).hexdigest()[:16]
@@ -396,11 +440,20 @@ class SocialAppraisalEngine:
         rupture_surface = 1.0 if _has_any(user_norm, self._RUPTURE) else 0.0
         acceptance_surface = 1.0 if _has_any(user_norm, self._ACCEPTANCE) else 0.0
         has_replacement_shape = _has_any(user_norm, ("y toi la", "y minh la", "toi noi la", "toi bao la"))
-        negative_surface = _has_any(user_norm, ("khong phai", "sai", "nham", "o dau ra", "dau co", "khong dung"))
+        # Mẫu rất tự nhiên kiểu "tôi có buồn đâu" không chứa đúng chuỗi
+        # ``đâu có``. Nếu bỏ sót, Eris sẽ coi lời phủ định self-report như không
+        # có gì xảy ra rồi tiếp tục khẳng định, một kiểu lì không hề thông minh.
+        self_report_denial = bool(
+            re.search(r"\b(?:toi|minh)\s+(?:co\s+)?[a-z0-9_\s]{1,48}\s+dau\b", user_norm)
+        )
+        negative_surface = bool(
+            _has_any(user_norm, ("khong phai", "sai", "nham", "o dau ra", "dau co", "khong dung"))
+            or self_report_denial
+        )
         # "Ừ đúng rồi, ý tôi là pixel" là làm rõ có tính ủng hộ, không phải
         # contradiction. Giữ cả hai hypothesis nhưng giảm quyền của correction.
         affirming_clarification = bool(acceptance_surface and has_replacement_shape and not negative_surface)
-        explicit_for_contest = 0.16 if affirming_clarification else explicit
+        explicit_for_contest = 0.16 if affirming_clarification else max(explicit, 0.82 if self_report_denial else 0.0)
         has_question = "?" in str(user_text or "") or _has_any(user_norm, ("la sao", "sao ta", "sao vay"))
 
         mundane_irony = bool(
@@ -414,9 +467,16 @@ class SocialAppraisalEngine:
             + contrast * 0.32
             + (0.24 if mundane_irony else 0.0)
             + (0.08 if has_question and contrast else 0.0)
+            + intrusion_surface * 0.72
+            + boundary_surface * 0.54
         )
         correction_value = clamp01(
-            explicit_for_contest * 0.78 + contrast * 0.28 + prior_reference * 0.24 + (0.22 if mundane_irony else 0.0)
+            explicit_for_contest * 0.78
+            + contrast * 0.28
+            + prior_reference * 0.24
+            + (0.22 if mundane_irony else 0.0)
+            + intrusion_surface * 0.62
+            + boundary_surface * 0.44
         )
         confusion_value = min(0.82, clamp01(
             surprise * 0.56 + (0.18 if has_question else 0.0) + max(0.0, mismatch - correction_value) * 0.28
@@ -492,6 +552,8 @@ class SocialAppraisalEngine:
 
         if explicit and not affirming_clarification:
             add("surface", "correction", 0.78, 0.88, "explicit_correction_surface")
+        elif self_report_denial:
+            add("surface", "correction", 0.64, 0.82, "self_report_denial_surface")
         if affirming_clarification:
             add("surface", "acceptance", 0.72, 0.76, "affirming_clarification")
         if surprise:
@@ -521,10 +583,32 @@ class SocialAppraisalEngine:
             return SignalEstimate(value=clamp01(value), confidence=confidence, evidence=selected, contradictions=contradiction_notes, ttl_turns=ttl)
 
         authority = clamp01(1.0 - max(contest * 0.72, contradiction * 0.92) + support * 0.20)
-        suppress = contradiction >= self.thresholds.claim_suppress or (
-            contest >= 0.72 and correction_value >= self.thresholds.repair_active
+
+        # User phản bác một ấn tượng không đồng nghĩa claim đã bị chứng minh sai.
+        # Chỉ suppress khi có boundary/intrusion rõ hoặc user cung cấp replacement
+        # cho một assertion mang tính sự kiện. Các claim chủ quan được giữ như
+        # impression, nhưng không được ghi memory như fact về user.
+        subjective_claim = claim_kind in {"assistant_impression", "user_state_inference"}
+        active_contest = contest >= self.thresholds.repair_active
+        hard_boundary = (
+            boundary_value >= self.thresholds.boundary_high
+            or intrusion_value >= self.thresholds.boundary_high
         )
+        factual_replacement = bool(
+            has_replacement_shape
+            and explicit >= 0.5
+            and claim_kind in {"objective_assertion", "assertion"}
+            and contradiction >= self.thresholds.claim_suppress
+        )
+        suppress = bool(active_contest and (hard_boundary or factual_replacement))
+        stance_may_be_held = bool(active_contest and subjective_claim and not suppress)
+        if stance_may_be_held:
+            authority = max(authority, 0.56)
         memory_allowed = authority >= self.thresholds.memory_write_min_authority and not suppress
+        if active_contest:
+            # Bất đồng đang mở không nên đóng băng thành fact trong memory, kể cả
+            # khi ERIS vẫn được quyền giữ ấn tượng cá nhân.
+            memory_allowed = False
         if suppress and boundary_value >= self.thresholds.boundary_high:
             posture = "boundary_repair"
         elif suppress and playful_value >= max(self.thresholds.playful_repair, irritation_value - 0.08):
@@ -533,8 +617,12 @@ class SocialAppraisalEngine:
             posture = "direct_correction"
         elif suppress:
             posture = "grounded_self_correction"
+        elif stance_may_be_held and playful_value >= self.thresholds.playful_repair:
+            posture = "playful_stance_hold"
+        elif stance_may_be_held:
+            posture = "soft_stance_hold"
         elif authority < self.thresholds.memory_write_min_authority:
-            posture = "clarify_without_defending"
+            posture = "verify_without_apology"
         elif playful_value >= 0.48:
             posture = "acknowledge_tease"
         else:
@@ -542,6 +630,7 @@ class SocialAppraisalEngine:
         candidate_hint = 2 if contest >= self.thresholds.repair_active and uncertainty >= self.thresholds.candidate_uncertainty else 1
         reason = (
             "claim_suppressed_for_current_turn" if suppress
+            else "subjective_stance_contested_but_preserved" if stance_may_be_held
             else "claim_authority_lowered" if authority < self.thresholds.memory_write_min_authority
             else "claim_preserved_with_soft_social_context"
         )
@@ -554,12 +643,14 @@ class SocialAppraisalEngine:
             previous_claim_excerpt=previous_claim,
             user_contrast_excerpt=_extract_user_contrast(user_text),
             contested_terms=contested,
+            claim_kind=claim_kind,
             provenance=tuple(evidence),
         )
         policy = ClaimPolicy(
             authority_multiplier=authority,
             memory_write_allowed=memory_allowed,
             suppress_for_current_turn=suppress,
+            stance_may_be_held=stance_may_be_held,
             candidate_count_hint=candidate_hint,
             response_posture=posture,
             expires_after_turns=1,

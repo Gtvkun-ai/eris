@@ -126,6 +126,12 @@ class RepairAppraisal:
     def suppress_previous_claim_for_turn(self) -> bool:
         return self.social_snapshot.claim_policy.suppress_for_current_turn
 
+    @property
+    def stance_may_be_held(self) -> bool:
+        """ERIS được giữ claim như ấn tượng, nhưng không được nâng nó thành fact."""
+
+        return bool(self.social_snapshot.claim_policy.stance_may_be_held)
+
     # Alias migration một chiều. Không serialize tên này và không dùng nó làm
     # verdict xã hội. Một số module cũ vẫn đọc field, nên bỏ ngay sẽ làm runtime
     # vỡ chỉ để grep nhìn đẹp, một chiến thắng khá vô dụng.
@@ -143,6 +149,12 @@ class RepairAppraisal:
 
     def history_invalidation_note(self) -> str:
         terms = ", ".join(self.contested_terms[:5]) or "previous claim"
+        if self.stance_may_be_held:
+            return (
+                "Previous assistant impression is contested but may be retained as a subjective stance; "
+                f"do not store it as user fact (authority={self.claim_authority_multiplier:.2f}; terms={terms}). "
+                "Respect the user's self-report without forcing an apology or retraction."
+            )
         return (
             "Previous assistant claim has reduced authority and must not be used as fact "
             f"(authority={self.claim_authority_multiplier:.2f}; terms={terms}). "
@@ -220,7 +232,13 @@ def apply_repair_appraisal_to_ti_report(report: Any, appraisal: RepairAppraisal)
     policy = snapshot.claim_policy
     thresholds = snapshot.thresholds
 
-    if snapshot.is_playful_repair:
+    if policy.stance_may_be_held and snapshot.playful.value >= thresholds.playful_repair:
+        mode = "chat_playful_stance_hold"
+        reason = "User phản bác một ấn tượng chủ quan; ERIS giữ quan điểm mềm và có thể trêu nhẹ, không tự nhận lỗi."
+    elif policy.stance_may_be_held:
+        mode = "chat_soft_stance_hold"
+        reason = "User không đồng ý với cách đọc của ERIS; tôn trọng self-report nhưng không xóa lập trường chủ quan."
+    elif snapshot.is_playful_repair:
         mode = "chat_playful_repair"
         reason = "Claim trước bị hạ authority nhưng nhịp quan hệ có khả năng playful; tự sửa có duyên."
     elif snapshot.boundary.value >= thresholds.boundary_high:
@@ -228,7 +246,7 @@ def apply_repair_appraisal_to_ti_report(report: Any, appraisal: RepairAppraisal)
         reason = "Claim trước bị contest cùng boundary pressure; sửa gọn và không kéo gần thêm."
     elif snapshot.affection.value >= 0.42:
         mode = "chat_relational_repair"
-        reason = "Claim trước bị contest trong một nhịp gần gũi; giữ warmth nhưng không bảo vệ suy diễn."
+        reason = "Claim sự kiện trước bị contest trong một nhịp gần gũi; sửa nội dung nhưng không tự hạ mình."
     else:
         mode = "chat_repair"
         reason = "Claim trước có authority thấp; ưu tiên sửa frame trước khi giải thích tiếp."
@@ -236,10 +254,17 @@ def apply_repair_appraisal_to_ti_report(report: Any, appraisal: RepairAppraisal)
     context = str(getattr(report, "prompt_context", "") or "")
     context = f"{context}\n\n{snapshot.to_prompt_context()}".strip()
     hard_rules = tuple(getattr(report, "hard_rules", ()) or ())
-    rules = [
-        "Không dùng claim có authority thấp như fact hoặc memory grounding.",
-        "Sửa epistemic overreach nhưng không làm phẳng playful/affectionate tone.",
-    ]
+    rules = ["Không dùng claim có authority thấp như fact hoặc memory grounding."]
+    if policy.stance_may_be_held:
+        rules.extend(
+            [
+                "Tách quyền user tự mô tả khỏi quyền ERIS giữ một ấn tượng cá nhân.",
+                "Có thể nói 'tôi vẫn nghĩ/tôi vẫn đọc như vậy', nhưng phải ghi rõ đó là ấn tượng chứ không phải fact về user.",
+                "Không xin lỗi theo phản xạ và không dùng 'sai nhịp', 'lệch nhịp', 'tôi hiểu sai' hay 'tôi rút lại'.",
+            ]
+        )
+    else:
+        rules.append("Sửa epistemic overreach nhưng không làm phẳng playful/affectionate tone.")
     if policy.suppress_for_current_turn:
         rules.append("Không được mở rộng claim trước trong lượt hiện tại.")
     hard_rules = tuple(dict.fromkeys((*hard_rules, *rules)))
@@ -265,6 +290,12 @@ _RETRACTION_MARKERS = (
     "toi vua phong", "toi vua tu dung", "toi keo qua tay",
 )
 
+_REFLEXIVE_CAPITULATION_MARKERS = (
+    "xin loi", "toi hieu sai", "toi da hieu sai", "toi sai", "toi nham",
+    "sai nhip", "lech nhip", "rut lai", "toi doan qua", "toi suy dien qua tay",
+    "toi dien giai qua tay", "toi keo qua tay", "toi tu bia",
+)
+
 
 def output_defends_retracted_claim(text: str, appraisal: RepairAppraisal) -> bool:
     """Tên hàm giữ để tương thích; thực chất kiểm tra claim bị suppress hiện tại."""
@@ -286,20 +317,65 @@ def output_defends_retracted_claim(text: str, appraisal: RepairAppraisal) -> boo
 
 def build_safe_repair_text(appraisal: RepairAppraisal) -> str:
     claim_terms = ", ".join(appraisal.contested_terms[:3])
-    claim_label = claim_terms or "đoạn vừa rồi"
+    claim_label = claim_terms
     contrast = appraisal.user_contrast_excerpt.strip()
     snapshot = appraisal.social_snapshot
     if snapshot.is_playful_repair:
         if contrast:
-            return f"Ừ, {claim_label} là tôi tự kéo vào. {contrast}; tôi diễn giải quá tay rồi."
-        return f"Ừ, {claim_label} là tôi tự dựng thêm. bạn đang chọc đúng chỗ tôi vừa suy diễn quá tay rồi."
-    if snapshot.boundary.value >= snapshot.thresholds.boundary_high:
-        return f"Tôi hiểu sai và bỏ phần {claim_label}. Tôi sẽ không tiếp tục đẩy suy diễn đó nữa."
+            return (
+                f"Ừ, phần {claim_label} là tôi tự thêm vào. Tôi lấy phần bạn vừa nói làm mốc mới."
+                if claim_label else
+                "Ừ, đoạn vừa rồi có phần tôi tự thêm vào. Tôi lấy phần bạn vừa nói làm mốc mới."
+            )
+        return (
+            f"Ừ, phần {claim_label} là tôi tự thêm vào. Bỏ nó khỏi câu chuyện này."
+            if claim_label else
+            "Ừ, đoạn vừa rồi có phần tôi tự thêm vào. Bỏ nó khỏi câu chuyện này."
+        )
+    if max(snapshot.boundary.value, snapshot.intrusion.value) >= snapshot.thresholds.boundary_high:
+        return (
+            f"Được, tôi dừng phần suy diễn về {claim_label} ở đây."
+            if claim_label else
+            "Được, tôi dừng cách suy diễn đó ở đây."
+        )
     if snapshot.irritation.value >= snapshot.thresholds.irritation_high:
-        return f"Tôi hiểu sai: phần {claim_label} là suy diễn của tôi, không phải điều bạn nói."
+        return (
+            f"Phần {claim_label} là tôi tự suy ra, không phải điều bạn nói. Tôi bỏ phần đó."
+            if claim_label else
+            "Đoạn vừa rồi là tôi tự suy ra, không phải điều bạn nói. Tôi bỏ phần đó."
+        )
     if contrast:
-        return f"Tôi kéo {claim_label} vào sai chỗ. {contrast}; tôi hiểu quá tay rồi."
-    return f"Tôi hiểu sai và bỏ phần {claim_label}; đó là suy diễn của tôi, không phải dữ kiện từ bạn."
+        return (
+            f"Tôi nhận phần bạn vừa chỉnh. Phần {claim_label} trước đó chỉ là cách tôi tự đọc thêm."
+            if claim_label else
+            "Tôi nhận phần bạn vừa chỉnh. Đoạn trước có phần tôi tự đọc thêm."
+        )
+    return (
+        f"Phần {claim_label} là suy diễn của tôi, không phải dữ kiện từ bạn. Tôi không dùng nó làm mốc nữa."
+        if claim_label else
+        "Đoạn vừa rồi có phần suy diễn của tôi, không phải dữ kiện từ bạn. Tôi không dùng nó làm mốc nữa."
+    )
+
+
+def output_collapses_stance_unnecessarily(text: str, appraisal: RepairAppraisal) -> bool:
+    """Chặn thói quen tự nhận lỗi khi policy chỉ yêu cầu giữ stance mềm."""
+
+    if not appraisal.stance_may_be_held:
+        return False
+    norm = normalize_vi(text)
+    return bool(norm and any(marker in norm for marker in _REFLEXIVE_CAPITULATION_MARKERS))
+
+
+def build_soft_stance_text(appraisal: RepairAppraisal) -> str:
+    """Fallback đời thường cho bất đồng chủ quan, không biến thành bài xin lỗi."""
+
+    snapshot = appraisal.social_snapshot
+    contrast = appraisal.user_contrast_excerpt.strip()
+    if snapshot.playful.value >= snapshot.thresholds.playful_repair:
+        return "Ừ, bạn không nhận cách đọc đó. Tôi vẫn hơi nghi ấn tượng ban đầu của mình đúng đấy."
+    if contrast:
+        return "Tôi hiểu đó là cách bạn tự nhìn. Nhưng tôi vẫn giữ ấn tượng ban đầu, chỉ không coi nó là sự thật về bạn."
+    return "Có thể tôi đang đọc hơi xa, nhưng tôi vẫn chưa muốn bỏ hẳn cách hiểu ban đầu."
 
 
 def apply_repair_output_guard(decision: Any, appraisal: RepairAppraisal) -> Any:
@@ -324,7 +400,19 @@ def apply_repair_output_guard(decision: Any, appraisal: RepairAppraisal) -> Any:
     except Exception:
         pass
 
-    if output_defends_retracted_claim(str(getattr(decision, "text", "") or ""), appraisal):
+    current_text = str(getattr(decision, "text", "") or "")
+    if output_collapses_stance_unnecessarily(current_text, appraisal):
+        try:
+            decision.text = build_soft_stance_text(appraisal)
+            decision.should_speak = True
+            decision.confidence = max(0.56, clamp01(getattr(decision, "confidence", 0.0)))
+            decision.parse_mode = "unified_social_stance_guard"
+            trace = str(getattr(decision, "debug_trace", "") or "").strip()
+            marker = "social_appraisal:blocked_reflexive_stance_collapse"
+            decision.debug_trace = " | ".join(part for part in (trace, marker) if part)
+        except Exception:
+            pass
+    elif output_defends_retracted_claim(current_text, appraisal):
         try:
             decision.text = build_safe_repair_text(appraisal)
             decision.should_speak = True
@@ -345,7 +433,9 @@ __all__ = [
     "calibrate_affect_for_repair",
     "apply_repair_output_guard",
     "build_safe_repair_text",
+    "build_soft_stance_text",
     "content_tokens",
     "normalize_vi",
     "output_defends_retracted_claim",
+    "output_collapses_stance_unnecessarily",
 ]

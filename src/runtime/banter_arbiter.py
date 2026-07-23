@@ -21,6 +21,7 @@ BanterMode = Literal[
     "overread_challenge_repair",
     "screen_underclaim_repair",
     "grounded_media_aside",
+    "stance_hold",
 ]
 
 
@@ -48,14 +49,15 @@ class CorrectionEvidence:
     has_replacement_content: bool = False
     confusion_or_challenge: bool = False
     meta_challenge: bool = False
+    stance_contest: bool = False
 
     @property
     def is_real_correction(self) -> bool:
-        return self.explicit_correction and not self.meta_challenge
+        return self.explicit_correction and not self.meta_challenge and not self.stance_contest
 
     @property
     def is_challenge_only(self) -> bool:
-        return self.confusion_or_challenge or self.meta_challenge
+        return self.confusion_or_challenge or self.meta_challenge or self.stance_contest
 
 
 def _env_enabled() -> bool:
@@ -218,6 +220,13 @@ class BanterArbiter:
         correction = self._correction_from_social_appraisal(social_appraisal)
         if correction is None:
             correction = self._assess_user_correction(normalized_user)
+        if correction.stance_contest and self._looks_like_reflexive_capitulation(normalized_text):
+            return BanterDecision(
+                mode="stance_hold",
+                text=self._stance_hold_text(playful=False),
+                reason="blocked_reflexive_capitulation_on_subjective_disagreement",
+                confidence=0.78,
+            )
         if correction.is_real_correction:
             repair = self._correction_repair_text(
                 normalized_user=normalized_user,
@@ -309,6 +318,10 @@ class BanterArbiter:
         correction = self._correction_from_social_appraisal(social_appraisal)
         if correction is None:
             correction = self._assess_user_correction(normalized_user)
+        if correction.stance_contest:
+            # Để main writer trả lời bất đồng như một cá thể có quan điểm. Banter
+            # pre-repair không được cướp micro rồi phát câu nhận lỗi đóng hộp.
+            return BanterDecision(reason="subjective_stance_contest_not_repair")
         if not correction.is_real_correction:
             if correction.is_challenge_only:
                 if not self._previous_text_invites_challenge_repair(previous_norm):
@@ -393,6 +406,15 @@ class BanterArbiter:
         )
         confusion_pressure = float(getattr(confusion, "value", 0.0) or 0.0)
         suppress = bool(getattr(policy, "suppress_for_current_turn", False))
+        stance_may_be_held = bool(getattr(policy, "stance_may_be_held", False))
+        if stance_may_be_held:
+            return CorrectionEvidence(
+                explicit_correction=False,
+                has_replacement_content=False,
+                confusion_or_challenge=True,
+                meta_challenge=False,
+                stance_contest=True,
+            )
         return CorrectionEvidence(
             explicit_correction=bool(suppress or correction_pressure >= repair_gate),
             has_replacement_content=bool(float(getattr(claim, "contradiction", 0.0) or 0.0) >= 0.72),
@@ -451,8 +473,8 @@ class BanterArbiter:
                 current_norm="",
                 evidence_blob=evidence_blob,
                 correction=correction,
-            ) or "Ừ, câu đó lệch. Tôi rút lại, không dựng tiếp trên nó."
-        return "Câu đó lệch. Tôi rút lại một nhịp."
+            ) or "Câu đó không ổn. Tôi bỏ phần vừa tự dựng thêm."
+        return "Câu đó không nên xuất hiện. Tôi bỏ nó."
 
     def _correction_repair_text(
         self,
@@ -467,18 +489,35 @@ class BanterArbiter:
         mentions_code = "code" in previous_norm or "code" in current_norm or "code" in normalized_user
         media_anchor = _has_any(evidence_blob, ("youtube", "video", "music", "nhac", "anime"))
         if mentions_code and media_anchor:
-            return "Ừ, tôi đoán quá tay. YouTube/nhạc mà tôi kéo sang code, tự tin hơi quá."
+            return "Ừ, YouTube/nhạc mà tôi kéo sang code là không có căn cứ. Tôi bỏ frame đó."
         if mentions_code:
             return "Ừ, tôi vừa gán nhầm nó thành code. Tôi bỏ frame đó."
         if "chi nghe nhac" in normalized_user or "nghe nhac" in normalized_user:
             return "À, chỉ nghe nhạc thôi. Tôi vừa dựng nguyên chuyện trên một cái playlist."
         if _has_any(current_norm, self._GENERIC_CLARIFY_MARKERS):
-            return "Ừ, tôi hiểu sai. Tôi bỏ frame đó, không hỏi vòng thêm."
+            return "Tôi bỏ frame vừa tự dựng và trả lời thẳng theo phần bạn nói."
         if normalized_user in {"ha", "hả", "gi", "gi vay"}:
             return "Câu vừa rồi không có neo. Bỏ qua nó đi."
         if correction.has_replacement_content:
-            return "Ừ, tôi hiểu sai. Tôi bỏ frame đó, nói lại theo phần bạn vừa chỉnh."
-        return "Ừ, tôi hiểu sai. Tôi bỏ frame đó, không dựng tiếp trên nó."
+            return "Tôi lấy phần bạn vừa chỉnh làm mốc và bỏ frame cũ."
+        return "Phần vừa rồi là tôi tự dựng thêm. Tôi không dùng nó làm mốc nữa."
+
+    @staticmethod
+    def _looks_like_reflexive_capitulation(normalized_text: str) -> bool:
+        return _has_any(
+            normalized_text,
+            (
+                "xin loi", "toi hieu sai", "toi sai", "toi nham", "sai nhip",
+                "lech nhip", "rut lai", "toi doan qua", "toi suy dien qua tay",
+                "toi dien giai qua tay", "toi keo qua tay",
+            ),
+        )
+
+    @staticmethod
+    def _stance_hold_text(*, playful: bool = False) -> str:
+        if playful:
+            return "Ừ, bạn không nhận cách đọc đó. Tôi vẫn hơi nghi ấn tượng ban đầu của mình đúng đấy."
+        return "Tôi hiểu bạn không nhìn nó như vậy. Nhưng tôi vẫn giữ ấn tượng ban đầu, chỉ không coi nó là sự thật về bạn."
 
     def _needs_overread_challenge_repair(self, normalized_text: str) -> bool:
         return (
@@ -527,4 +566,6 @@ class BanterArbiter:
             return "grounded_repair"
         if mode == "grounded_media_aside":
             return "grounded_aside"
+        if mode == "stance_hold":
+            return "subjective_stance_hold"
         return str(fallback or "banter")

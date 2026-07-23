@@ -10,12 +10,15 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
+import unicodedata
 from typing import Any, Mapping
 
 from failure_meta import build_failure_meta
 from runtime.no_fallback_policy import no_fallback_mode_enabled
 from runtime.grounding_surface_gate import evaluate_grounded_surface
+from runtime.cognition.turn_anchor import anchor_from_semantic_frame
 from semantic_authority import SemanticAuthorityPolicy
 
 from .contracts import AI_RUNTIME_VERSION, IntentionPlan, StateEvent
@@ -30,6 +33,43 @@ from .startup_grounding import (
     select_startup_persona_preset,
 )
 from .self_context import build_autonomous_self_context
+
+
+_REFLEXIVE_STANCE_COLLAPSE_MARKERS = (
+    "xin loi", "toi hieu sai", "toi sai", "toi nham", "sai nhip", "lech nhip",
+    "rut lai", "toi doan qua", "toi suy dien qua tay", "toi dien giai qua tay",
+)
+
+
+def _normalize_social_surface(text: str) -> str:
+    value = unicodedata.normalize("NFD", str(text or "").strip().lower())
+    value = "".join(ch for ch in value if unicodedata.category(ch) != "Mn")
+    value = value.replace("đ", "d")
+    return " ".join(re.sub(r"[^a-z0-9\s]", " ", value).split())
+
+
+def _guard_subjective_stance_payload(payload: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Không cho wording tự xóa lập trường khi frame chỉ ghi nhận bất đồng.
+
+    semantic_frame.v1 vẫn là authority duy nhất. Guard này không đọc lại user
+    text và không phân loại lần hai; nó chỉ sửa một lỗi wording hiển nhiên khi
+    model đã tự xin lỗi/rút lời trái với chính frame ``stance_contest``.
+    """
+
+    data = dict(payload or {})
+    frame = dict(data.get("semantic_frame", {}) or {})
+    if anchor_from_semantic_frame(frame) != "stance_contest":
+        return data
+    normalized = _normalize_social_surface(str(data.get("text", "") or ""))
+    if not any(marker in normalized for marker in _REFLEXIVE_STANCE_COLLAPSE_MARKERS):
+        return data
+    data["text"] = (
+        "Tôi hiểu bạn không nhìn nó như vậy. Nhưng tôi vẫn giữ ấn tượng ban đầu, "
+        "chỉ không coi nó là sự thật về bạn."
+    )
+    if str(data.get("performance_hint", "") or "").strip().lower() == "repair":
+        data["performance_hint"] = "soft_warm"
+    return data
 
 
 
@@ -402,6 +442,7 @@ class AIChatOrchestrator:
             host._set_background_memory_digest_remote_inflight(False)
 
         if payload:
+            payload = _guard_subjective_stance_payload(payload)
             semantic_frame = dict(payload.get("semantic_frame", {}) or {})
             if semantic_frame:
                 host.last_semantic_frame = semantic_frame

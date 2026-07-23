@@ -20,6 +20,10 @@ _RELATION_HINTS = {
     "clarify_assistant_phrase": "reference_clarification",
     "clarify_assistant_statement": "reference_clarification",
     "challenge_assistant_assumption": "correction",
+    # Phản bác một ấn tượng chủ quan không đồng nghĩa ERIS đã bị chứng minh sai.
+    # Tách lane này khỏi correction để observer không tự động ghi repair/fault.
+    "contest_assistant_impression": "stance_contest",
+    "disagree_with_assistant_impression": "stance_contest",
     "style_feedback": "style_criticism",
     "close_topic": "close_topic",
     "relational_bid": "closeness_bid",
@@ -29,6 +33,9 @@ _FRAME_ACT_HINTS = {
     "style_criticism": "style_criticism",
     "style_request": "style_request",
     "correction_or_challenge": "correction",
+    "disagreement": "stance_contest",
+    "self_report_contrast": "stance_contest",
+    "stance_contest": "stance_contest",
     "clarification_request": "reference_clarification",
     "continuation_bid": "continuation_bid",
     "relational_check_in": "closeness_bid",
