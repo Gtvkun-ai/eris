@@ -5,9 +5,10 @@ Thư mục này chứa metadata cho **32 lời chào mở đầu** theo tone, t�
 - `manifest.json`: catalog chuẩn của runtime.
 - `render_queue.csv`: hàng đợi để render TTS theo lô.
 - `lines_vi.txt`: danh sách câu đọc nhanh.
-- Các file WAV chưa được tạo giả. Render đúng giọng Eris rồi đặt theo tên
-  `greet_*.wav` trong manifest.
-- Thiếu hoặc hỏng WAV thì runtime tự fallback sang TTS live.
+- Catalog chữ đã được viết lại; runtime hiện cố ý dùng TTS live để không phát
+  nhầm các WAV cũ có nội dung khác subtitle.
+- Render lại đúng giọng Eris theo `render_queue.csv`, rồi mới nối lại đường dẫn
+  `greet_*.wav` trong hàm `_asset()` của `cortex/greeting_presets.py`.
 
 ## Chế độ greeting
 

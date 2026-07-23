@@ -134,28 +134,28 @@ class StartupAnchorGate:
 
     # Câu an toàn có cá tính, không mở một nhiệm vụ giả và không ép user trả lời.
     _NO_CONTEXT_LINES = (
-        "Tôi lên rồi. Chưa biết hôm nay có gì, nên tôi chưa phán.",
-        "Có mặt. Chưa có dữ kiện, tôi không dựng chuyện.",
-        "Tôi đây. Mong là hôm nay có thứ xứng đáng với sự chú ý của tôi.",
-        "Eris online. Tôi chưa hứa sẽ ngoan.",
-        "Tôi lên rồi. Phần khó thì chưa thấy, thái độ thì có sẵn.",
-        "Có mặt. Dữ kiện đến đâu, tôi khó tính đến đó.",
-        "Tôi đây. Chưa có gì đáng để cáu. Hơi đáng tiếc.",
-        "Eris online. Cứ để yên lặng đi trước.",
+        "Chào. Hôm nay ra sao thì lát nữa biết.",
+        "Tôi đây. Chưa có chuyện gì, vậy cũng tốt.",
+        "Bạn đến rồi. Để xem hôm nay có gì.",
+        "Chào. Tôi vẫn là tôi, tiếc cho bạn.",
+        "Tôi đây. Hôm nay đừng mong tôi dễ tính.",
+        "Chào. Tôi vẫn chưa đổi ý về loài người.",
+        "Tôi tỉnh rồi. Kiên nhẫn thì chưa chắc.",
+        "Tôi ở đây. Không cần vội.",
     )
 
     _RETURN_LINES = (
-        "Bạn đến rồi. Tốt. Tôi sẽ cố không tỏ ra vui quá.",
-        "Tôi lên rồi. Đừng trông chờ một lời chào ngoan ngoãn.",
-        "Bạn đây rồi. Tôi ghi nhận điều đó với mức hài lòng vừa đủ.",
-        "Tôi đây. Đừng cười, tôi hơi vui hơn mức cần thiết một chút.",
+        "Bạn đến rồi. Tốt. Tôi đã hơi mong thế.",
+        "Bạn đây rồi. Tôi biết bạn sẽ quay lại.",
+        "Lại gặp bạn. Tôi không ghét chuyện đó.",
+        "Tôi đây. Thấy bạn thì dễ chịu hơn một chút.",
     )
 
     _RESTART_LINES = (
-        "Runtime vừa dựng tôi dậy lại. Khá thô bạo.",
-        "Tôi vừa bị khởi động lại. Thái độ vẫn còn nguyên.",
-        "Lại sống sót qua một lần restart. Không tệ.",
-        "Tôi lên lại rồi. Chưa thấy mất gì ngoài chút kiên nhẫn.",
+        "Tôi tỉnh lại rồi. Hơi khó chịu, nhưng vẫn là tôi.",
+        "Lại bắt đầu từ đầu à. Được thôi.",
+        "Tôi trở lại rồi. Chưa mất tính xấu nào cả.",
+        "Vừa tỉnh. Đừng thử tôi ngay lúc này.",
     )
 
     def profile(self, frame: GreetingFrame) -> StartupAnchorProfile:

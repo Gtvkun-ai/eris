@@ -118,33 +118,33 @@ class GreetingCognitionEngine:
     # Vẫn giữ chất Eris để một nhánh cũ không thể lén kéo greeting về giọng
     # trợ lý tổng đài kiểu “Ừm. Lại gặp bạn.” nữa.
     _LOW_EVIDENCE_FALLBACKS = (
-        "Chào. Tôi chưa biết hôm nay có gì, nên tạm thời chưa phán.",
-        "Bạn đây rồi. Tôi sẽ quan sát trước, kẻo lại kết luận sớm.",
-        "Chào. Mong là hôm nay có thứ đủ thú vị.",
-        "Tôi tỉnh rồi. Chuyện ngoan ngoãn thì để xem.",
+        "Chào. Hôm nay ra sao thì lát nữa biết.",
+        "Tôi đây. Chưa có chuyện gì, vậy cũng tốt.",
+        "Bạn đến rồi. Để xem hôm nay có gì.",
+        "Chào. Tôi vẫn là tôi, tiếc cho bạn.",
     )
 
     _QUIET_FALLBACKS = (
-        "Bạn đến rồi. Cứ để yên một nhịp đã.",
-        "Chào. Hôm nay cứ chậm một chút cũng được.",
-        "Bạn đây rồi. Chưa cần mở màn lớn.",
-        "Ừm, được. Căn phòng đỡ trống hơn rồi.",
+        "Bạn đến rồi. Tốt. Tôi đã hơi mong thế.",
+        "Tôi đây. Cứ yên một lúc cũng được.",
+        "Lại gặp bạn. Tôi không ghét chuyện đó.",
+        "Tôi ở đây. Không cần vội.",
     )
 
     # Resume fallback chỉ được dùng khi active_anchor thật sự tồn tại. Câu vẫn
     # không giả vờ biết "phần khó nhất"; nó chỉ xác nhận có một mạch đã phục hồi.
     _RESUME_FALLBACKS = (
-        "Mạch cũ còn đây. Tôi sẽ bám đúng phần đã được khôi phục.",
-        "Có một việc dang dở được nối lại. Tôi chưa thêm giả định nào khác.",
-        "Tôi nhận ra mạch cũ. Cứ để nó tự lộ phần cần xử lý.",
-        "Continuity đã trở lại. Tôi sẽ nói theo đúng neo đang có.",
+        "Mạch cũ còn đó. Tôi chưa quên.",
+        "Việc dang dở vẫn còn. Ta tiếp từ đó.",
+        "Tôi nhớ mình đã dừng ở đâu.",
+        "Chuyện trước chưa xong. Tôi biết.",
     )
 
     _REPAIR_FALLBACKS = (
-        "Tôi nhớ lần trước mình nói hơi quá. Lần này tôi bớt cứng.",
-        "Tôi đã ghi nhận phản hồi trước. Lần này tôi giữ cạnh sắc vừa đủ.",
-        "Tôi vẫn là tôi, chỉ bớt đẩy bạn ra xa hơn cần thiết.",
-        "Lần này tôi sẽ cụ thể hơn, không xin lỗi bằng câu rỗng.",
+        "Tôi nhớ chuyện lần trước. Tôi vẫn nghĩ mình có lý ở một phần.",
+        "Chuyện trước chưa biến mất. Nhưng tôi không định lặp lại đúng cách cũ.",
+        "Bạn đã nói rồi. Tôi nghe, nhưng chưa chắc tôi đồng ý hết.",
+        "Lần này tôi sẽ nói thẳng hơn.",
     )
 
     def _fallback_pool(self, frame: GreetingFrame) -> tuple[str, ...]:

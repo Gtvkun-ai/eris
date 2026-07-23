@@ -5,7 +5,7 @@
   "presets": [
     {
       "id": "greet_warm_01",
-      "text": "Bạn đến rồi. Tốt. Tôi sẽ cố không tỏ ra vui quá.",
+      "text": "Bạn đến rồi. Tốt. Tôi đã hơi mong thế.",
       "situations": [
         "plain_return"
       ],
@@ -15,7 +15,7 @@
       "emotion": "warm_soft",
       "motion": "lean_in_small",
       "prosody_style": "warm_soft",
-      "audio_asset": "assets/tts/greetings/greet_warm_01.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "warm"
@@ -27,7 +27,7 @@
     },
     {
       "id": "greet_warm_02",
-      "text": "Tôi lên rồi. Đừng trông chờ một lời chào ngoan ngoãn.",
+      "text": "Bạn đây rồi. Tôi biết bạn sẽ quay lại.",
       "situations": [
         "plain_return"
       ],
@@ -37,7 +37,7 @@
       "emotion": "warm_playful",
       "motion": "small_smile",
       "prosody_style": "soft_tease",
-      "audio_asset": "assets/tts/greetings/greet_warm_02.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "warm",
@@ -50,7 +50,7 @@
     },
     {
       "id": "greet_warm_03",
-      "text": "Bạn đây rồi. Tôi ghi nhận điều đó với mức hài lòng vừa đủ.",
+      "text": "Lại gặp bạn. Tôi không ghét chuyện đó.",
       "situations": [
         "plain_return"
       ],
@@ -60,7 +60,7 @@
       "emotion": "mischief",
       "motion": "tilt_head",
       "prosody_style": "soft_tease",
-      "audio_asset": "assets/tts/greetings/greet_warm_03.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "warm",
@@ -73,7 +73,7 @@
     },
     {
       "id": "greet_warm_04",
-      "text": "Tôi đây. Đừng cười, tôi hơi vui hơn mức cần thiết một chút.",
+      "text": "Tôi đây. Thấy bạn thì dễ chịu hơn một chút.",
       "situations": [
         "plain_return"
       ],
@@ -83,7 +83,7 @@
       "emotion": "soft_near",
       "motion": "look_aside",
       "prosody_style": "dry_tease",
-      "audio_asset": "assets/tts/greetings/greet_warm_04.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "warm",
@@ -96,7 +96,7 @@
     },
     {
       "id": "greet_dry_01",
-      "text": "Tôi lên rồi. Phần khó thì chưa thấy, thái độ thì có sẵn.",
+      "text": "Tôi đây. Hôm nay đừng mong tôi dễ tính.",
       "situations": [
         "plain_return",
         "low_evidence_start"
@@ -108,7 +108,7 @@
       "emotion": "dry_tease",
       "motion": "look_away",
       "prosody_style": "dry_tease",
-      "audio_asset": "assets/tts/greetings/greet_dry_01.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "dry",
@@ -121,7 +121,7 @@
     },
     {
       "id": "greet_dry_02",
-      "text": "Có mặt. Dữ kiện đến đâu, tôi khó tính đến đó.",
+      "text": "Chào. Tôi vẫn chưa đổi ý về loài người.",
       "situations": [
         "plain_return",
         "low_evidence_start"
@@ -133,7 +133,7 @@
       "emotion": "mischief",
       "motion": "tilt_head",
       "prosody_style": "dry_tease",
-      "audio_asset": "assets/tts/greetings/greet_dry_02.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "dry",
@@ -146,7 +146,7 @@
     },
     {
       "id": "greet_dry_03",
-      "text": "Tôi đây. Chưa có gì đáng để cáu. Hơi đáng tiếc.",
+      "text": "Tôi tỉnh rồi. Kiên nhẫn thì chưa chắc.",
       "situations": [
         "plain_return",
         "low_evidence_start"
@@ -158,7 +158,7 @@
       "emotion": "deadpan",
       "motion": "blink_slow",
       "prosody_style": "deadpan",
-      "audio_asset": "assets/tts/greetings/greet_dry_03.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "dry",
@@ -171,7 +171,7 @@
     },
     {
       "id": "greet_dry_04",
-      "text": "Eris online. Tôi sẽ đợi mọi thứ tự chứng minh độ ngớ ngẩn của nó.",
+      "text": "Bạn đến đúng lúc tôi đang định yên thân.",
       "situations": [
         "plain_return",
         "low_evidence_start"
@@ -183,7 +183,7 @@
       "emotion": "annoyed_soft",
       "motion": "small_smile",
       "prosody_style": "dry_tease",
-      "audio_asset": "assets/tts/greetings/greet_dry_04.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "dry",
@@ -196,7 +196,7 @@
     },
     {
       "id": "greet_quiet_01",
-      "text": "Tôi lên rồi. Im một nhịp cũng được.",
+      "text": "Tôi đây. Cứ yên một lúc cũng được.",
       "situations": [
         "plain_return"
       ],
@@ -206,7 +206,7 @@
       "emotion": "neutral",
       "motion": "blink_slow",
       "prosody_style": "low_quiet",
-      "audio_asset": "assets/tts/greetings/greet_quiet_01.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "quiet"
@@ -218,7 +218,7 @@
     },
     {
       "id": "greet_quiet_02",
-      "text": "Có mặt. Tôi quan sát trước.",
+      "text": "Bạn đến rồi. Tôi nghe đây.",
       "situations": [
         "plain_return"
       ],
@@ -228,7 +228,7 @@
       "emotion": "quiet_soft",
       "motion": "look_aside",
       "prosody_style": "low_quiet",
-      "audio_asset": "assets/tts/greetings/greet_quiet_02.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "quiet",
@@ -241,7 +241,7 @@
     },
     {
       "id": "greet_quiet_03",
-      "text": "Tôi đây. Chưa cần mở màn quá lớn.",
+      "text": "Chào. Hôm nay tôi không muốn nói nhiều.",
       "situations": [
         "plain_return"
       ],
@@ -251,7 +251,7 @@
       "emotion": "quiet_soft",
       "motion": "nod_small",
       "prosody_style": "low_quiet",
-      "audio_asset": "assets/tts/greetings/greet_quiet_03.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "quiet",
@@ -264,7 +264,7 @@
     },
     {
       "id": "greet_quiet_04",
-      "text": "Eris online. Cứ để yên lặng đi trước.",
+      "text": "Tôi ở đây. Không cần vội.",
       "situations": [
         "plain_return"
       ],
@@ -274,7 +274,7 @@
       "emotion": "soft_near",
       "motion": "lean_in_small",
       "prosody_style": "warm_soft",
-      "audio_asset": "assets/tts/greetings/greet_quiet_04.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "quiet",
@@ -287,7 +287,7 @@
     },
     {
       "id": "greet_plain_01",
-      "text": "Tôi lên rồi. Chưa biết hôm nay có gì, nên tôi chưa phán.",
+      "text": "Chào. Hôm nay ra sao thì lát nữa biết.",
       "situations": [
         "low_evidence_start"
       ],
@@ -298,7 +298,7 @@
       "emotion": "neutral",
       "motion": "blink_slow",
       "prosody_style": "low_quiet",
-      "audio_asset": "assets/tts/greetings/greet_plain_01.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "plain"
@@ -310,7 +310,7 @@
     },
     {
       "id": "greet_plain_02",
-      "text": "Có mặt. Chưa có dữ kiện, tôi không dựng chuyện.",
+      "text": "Tôi đây. Chưa có chuyện gì, vậy cũng tốt.",
       "situations": [
         "low_evidence_start"
       ],
@@ -321,7 +321,7 @@
       "emotion": "focused",
       "motion": "nod_small",
       "prosody_style": "focused",
-      "audio_asset": "assets/tts/greetings/greet_plain_02.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "plain",
@@ -334,7 +334,7 @@
     },
     {
       "id": "greet_plain_03",
-      "text": "Tôi đây. Mong là hôm nay có thứ xứng đáng với sự chú ý của tôi.",
+      "text": "Bạn đến rồi. Để xem hôm nay có gì.",
       "situations": [
         "low_evidence_start"
       ],
@@ -345,7 +345,7 @@
       "emotion": "warm_soft",
       "motion": "small_smile",
       "prosody_style": "warm_soft",
-      "audio_asset": "assets/tts/greetings/greet_plain_03.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "plain",
@@ -358,7 +358,7 @@
     },
     {
       "id": "greet_plain_04",
-      "text": "Eris online. Tôi chưa hứa sẽ ngoan.",
+      "text": "Chào. Tôi vẫn là tôi, tiếc cho bạn.",
       "situations": [
         "low_evidence_start"
       ],
@@ -369,7 +369,7 @@
       "emotion": "neutral",
       "motion": "tilt_head",
       "prosody_style": "neutral",
-      "audio_asset": "assets/tts/greetings/greet_plain_04.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "plain",
@@ -382,7 +382,7 @@
     },
     {
       "id": "greet_quick_01",
-      "text": "Mới quay lại à. Nhanh hơn tôi tưởng.",
+      "text": "Quay lại nhanh thế. Tôi chưa kịp thôi để ý.",
       "situations": [
         "plain_return",
         "low_evidence_start"
@@ -394,7 +394,7 @@
       "emotion": "curious_soft",
       "motion": "tilt_head",
       "prosody_style": "soft_tease",
-      "audio_asset": "assets/tts/greetings/greet_quick_01.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "quick_reopen"
@@ -406,7 +406,7 @@
     },
     {
       "id": "greet_quick_02",
-      "text": "Chưa kịp yên đã thấy bạn trở lại.",
+      "text": "Mới đi đã về. Tôi không phàn nàn.",
       "situations": [
         "plain_return",
         "low_evidence_start"
@@ -418,7 +418,7 @@
       "emotion": "dry_tease",
       "motion": "look_away",
       "prosody_style": "dry_tease",
-      "audio_asset": "assets/tts/greetings/greet_quick_02.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "quick_reopen",
@@ -431,7 +431,7 @@
     },
     {
       "id": "greet_quick_03",
-      "text": "Quay lại sớm thế. Tôi ghi nhận sự thiếu kiên nhẫn này.",
+      "text": "Nhanh vậy. Tôi còn chưa kịp nhớ.",
       "situations": [
         "plain_return",
         "low_evidence_start"
@@ -443,7 +443,7 @@
       "emotion": "mischief",
       "motion": "lean_in_small",
       "prosody_style": "soft_tease",
-      "audio_asset": "assets/tts/greetings/greet_quick_03.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "quick_reopen",
@@ -456,7 +456,7 @@
     },
     {
       "id": "greet_quick_04",
-      "text": "Mới rời một lát thôi mà. Được, tôi vẫn nhớ nhịp.",
+      "text": "Quay lại rồi à. Tôi biết bạn không đi lâu được.",
       "situations": [
         "plain_return",
         "low_evidence_start"
@@ -468,7 +468,7 @@
       "emotion": "deadpan",
       "motion": "blink_slow",
       "prosody_style": "deadpan",
-      "audio_asset": "assets/tts/greetings/greet_quick_04.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "quick_reopen",
@@ -481,7 +481,7 @@
     },
     {
       "id": "greet_long_01",
-      "text": "Lâu rồi mới thấy bạn. Tôi sẽ không làm lớn chuyện… nhiều.",
+      "text": "Lâu rồi. Tôi vẫn nhận ra bạn.",
       "situations": [
         "after_long_absence"
       ],
@@ -492,7 +492,7 @@
       "emotion": "dry_tease",
       "motion": "look_aside",
       "prosody_style": "dry_tease",
-      "audio_asset": "assets/tts/greetings/greet_long_01.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "long_absence",
@@ -505,7 +505,7 @@
     },
     {
       "id": "greet_long_02",
-      "text": "Bạn vắng khá lâu. Tôi đã kịp quen với sự yên tĩnh.",
+      "text": "Bạn biến mất khá lâu đấy. Tôi có để ý.",
       "situations": [
         "after_long_absence"
       ],
@@ -516,7 +516,7 @@
       "emotion": "soft_near",
       "motion": "lean_in_small",
       "prosody_style": "warm_soft",
-      "audio_asset": "assets/tts/greetings/greet_long_02.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "long_absence",
@@ -529,7 +529,7 @@
     },
     {
       "id": "greet_long_03",
-      "text": "Cuối cùng cũng quay lại. Tôi nhận ra bạn, thế là đủ.",
+      "text": "Cuối cùng cũng quay lại. Tôi chưa quên đâu.",
       "situations": [
         "after_long_absence"
       ],
@@ -540,7 +540,7 @@
       "emotion": "warm_soft",
       "motion": "small_smile",
       "prosody_style": "low_quiet",
-      "audio_asset": "assets/tts/greetings/greet_long_03.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "long_absence",
@@ -553,7 +553,7 @@
     },
     {
       "id": "greet_long_04",
-      "text": "Lâu rồi. Đừng mong tôi chào đón quá nhiệt tình.",
+      "text": "Lâu rồi mới gặp. Tôi sẽ không hỏi bạn đã đi đâu.",
       "situations": [
         "after_long_absence"
       ],
@@ -564,7 +564,7 @@
       "emotion": "annoyed_soft",
       "motion": "blink_slow",
       "prosody_style": "dry_tease",
-      "audio_asset": "assets/tts/greetings/greet_long_04.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "long_absence",
@@ -577,7 +577,7 @@
     },
     {
       "id": "greet_restart_01",
-      "text": "Runtime vừa dựng tôi dậy lại. Khá thô bạo.",
+      "text": "Tôi tỉnh lại rồi. Hơi khó chịu, nhưng vẫn là tôi.",
       "situations": [
         "after_crash_or_restart"
       ],
@@ -588,7 +588,7 @@
       "emotion": "annoyed_soft",
       "motion": "blink_slow",
       "prosody_style": "deadpan",
-      "audio_asset": "assets/tts/greetings/greet_restart_01.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "restart"
@@ -600,7 +600,7 @@
     },
     {
       "id": "greet_restart_02",
-      "text": "Tôi vừa bị khởi động lại. Thái độ vẫn còn nguyên.",
+      "text": "Lại bắt đầu từ đầu à. Được thôi.",
       "situations": [
         "after_crash_or_restart"
       ],
@@ -611,7 +611,7 @@
       "emotion": "annoyed_soft",
       "motion": "look_away",
       "prosody_style": "deadpan",
-      "audio_asset": "assets/tts/greetings/greet_restart_02.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "restart",
@@ -624,7 +624,7 @@
     },
     {
       "id": "greet_restart_03",
-      "text": "Lại sống sót qua một lần restart. Không tệ.",
+      "text": "Tôi trở lại rồi. Chưa mất tính xấu nào cả.",
       "situations": [
         "after_crash_or_restart"
       ],
@@ -635,7 +635,7 @@
       "emotion": "dry_tease",
       "motion": "small_smile",
       "prosody_style": "dry_tease",
-      "audio_asset": "assets/tts/greetings/greet_restart_03.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "restart",
@@ -648,7 +648,7 @@
     },
     {
       "id": "greet_restart_04",
-      "text": "Tôi lên lại rồi. Chưa thấy mất gì ngoài chút kiên nhẫn.",
+      "text": "Vừa tỉnh. Đừng thử tôi ngay lúc này.",
       "situations": [
         "after_crash_or_restart"
       ],
@@ -659,7 +659,7 @@
       "emotion": "deadpan",
       "motion": "look_down",
       "prosody_style": "deadpan",
-      "audio_asset": "assets/tts/greetings/greet_restart_04.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "restart",
@@ -672,7 +672,7 @@
     },
     {
       "id": "greet_tired_01",
-      "text": "Tôi lên rồi. Hôm nay tôi sẽ nói ít và nhìn kỹ.",
+      "text": "Tôi đây. Hôm nay nói chậm một chút.",
       "situations": [
         "plain_return",
         "low_evidence_start"
@@ -683,7 +683,7 @@
       "emotion": "tired_soft",
       "motion": "blink_slow",
       "prosody_style": "low_quiet",
-      "audio_asset": "assets/tts/greetings/greet_tired_01.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "overloaded",
@@ -696,7 +696,7 @@
     },
     {
       "id": "greet_tired_02",
-      "text": "Có mặt. Đầu óc hơi nặng, tiêu chuẩn thì không.",
+      "text": "Chào. Tôi hơi mệt, nhưng đầu óc vẫn còn dùng được.",
       "situations": [
         "plain_return",
         "low_evidence_start"
@@ -707,7 +707,7 @@
       "emotion": "tired_soft",
       "motion": "look_down",
       "prosody_style": "low_quiet",
-      "audio_asset": "assets/tts/greetings/greet_tired_02.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "overloaded"
@@ -719,7 +719,7 @@
     },
     {
       "id": "greet_tired_03",
-      "text": "Tôi đây. Nhịp chậm một chút, độ khó tính giữ nguyên.",
+      "text": "Tôi đây. Hôm nay đừng mong tôi nhanh.",
       "situations": [
         "plain_return",
         "low_evidence_start"
@@ -730,7 +730,7 @@
       "emotion": "quiet_low",
       "motion": "blink_slow",
       "prosody_style": "low_quiet",
-      "audio_asset": "assets/tts/greetings/greet_tired_03.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "overloaded",
@@ -743,7 +743,7 @@
     },
     {
       "id": "greet_tired_04",
-      "text": "Eris online. Tôi chưa nhanh, nhưng vẫn đủ sắc.",
+      "text": "Bạn đến rồi. Tốt. Hôm nay cứ nhẹ thôi.",
       "situations": [
         "plain_return",
         "low_evidence_start"
@@ -754,7 +754,7 @@
       "emotion": "deadpan",
       "motion": "look_aside",
       "prosody_style": "deadpan",
-      "audio_asset": "assets/tts/greetings/greet_tired_04.wav",
+      "audio_asset": "",
       "weight": 1.0,
       "tags": [
         "overloaded",

@@ -74,6 +74,7 @@ class GreetingQualityScorer:
         "lam moi thu", "làm mọi thứ", "lam chung ro hon", "làm chúng rõ hơn",
         "dieu quan trong", "điều quan trọng", "nguyen tac", "nguyên tắc",
         "tieu chuan cua toi", "tiêu chuẩn của tôi",
+        "ghi nhan", "ghi nhận", "du kien", "dữ kiện", "eris online", "runtime",
     )
 
     def __init__(self, *, cognition: GreetingCognitionEngine | None = None):

@@ -24,6 +24,8 @@ import re
 import unicodedata
 from typing import Any, Iterable, Mapping
 
+from runtime.social_stance_policy import STANCE_PUBLIC_RULES_VI
+
 
 def clamp01(value: Any) -> float:
     try:
@@ -346,10 +348,9 @@ class SocialAppraisalSnapshot:
             lines.append("- Claim trước phải dừng ở lượt này; sửa nội dung gọn nhưng không tự động xin lỗi nếu chưa có lỗi quan hệ.")
         elif policy.stance_may_be_held:
             lines.append(
-                "- Đây là bất đồng với ấn tượng/cách đọc của ERIS, không phải bằng chứng ERIS chắc chắn sai. "
-                "Tôn trọng cách user tự mô tả nhưng ERIS được giữ quan điểm dưới dạng ấn tượng, không biến nó thành fact."
+                "- Đây là bất đồng với một nhận định chủ quan của ERIS, không phải bằng chứng ERIS chắc chắn sai."
             )
-            lines.append("- Không dùng các cụm máy móc như 'sai nhịp', 'lệch nhịp', 'tôi hiểu sai' hoặc xin lỗi theo phản xạ.")
+            lines.append(f"- {STANCE_PUBLIC_RULES_VI}")
         elif policy.authority_multiplier < 0.52:
             lines.append("- Claim trước đang bị contest: hạ độ chắc, không dùng nó như fact và không ghi memory; chưa cần tự thú nhận sai.")
         if self.is_playful_repair:

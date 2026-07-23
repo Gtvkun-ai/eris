@@ -13,6 +13,8 @@ import unicodedata
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
+from runtime.social_stance_policy import build_direct_stance_text, needs_direct_stance_rewrite
+
 
 BanterMode = Literal[
     "none",
@@ -220,10 +222,10 @@ class BanterArbiter:
         correction = self._correction_from_social_appraisal(social_appraisal)
         if correction is None:
             correction = self._assess_user_correction(normalized_user)
-        if correction.stance_contest and self._looks_like_reflexive_capitulation(normalized_text):
+        if correction.stance_contest and needs_direct_stance_rewrite(text):
             return BanterDecision(
                 mode="stance_hold",
-                text=self._stance_hold_text(playful=False),
+                text=build_direct_stance_text(getattr(social_appraisal, "social_snapshot", social_appraisal)),
                 reason="blocked_reflexive_capitulation_on_subjective_disagreement",
                 confidence=0.78,
             )
@@ -502,22 +504,6 @@ class BanterArbiter:
             return "Tôi lấy phần bạn vừa chỉnh làm mốc và bỏ frame cũ."
         return "Phần vừa rồi là tôi tự dựng thêm. Tôi không dùng nó làm mốc nữa."
 
-    @staticmethod
-    def _looks_like_reflexive_capitulation(normalized_text: str) -> bool:
-        return _has_any(
-            normalized_text,
-            (
-                "xin loi", "toi hieu sai", "toi sai", "toi nham", "sai nhip",
-                "lech nhip", "rut lai", "toi doan qua", "toi suy dien qua tay",
-                "toi dien giai qua tay", "toi keo qua tay",
-            ),
-        )
-
-    @staticmethod
-    def _stance_hold_text(*, playful: bool = False) -> str:
-        if playful:
-            return "Ừ, bạn không nhận cách đọc đó. Tôi vẫn hơi nghi ấn tượng ban đầu của mình đúng đấy."
-        return "Tôi hiểu bạn không nhìn nó như vậy. Nhưng tôi vẫn giữ ấn tượng ban đầu, chỉ không coi nó là sự thật về bạn."
 
     def _needs_overread_challenge_repair(self, normalized_text: str) -> bool:
         return (

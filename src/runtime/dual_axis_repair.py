@@ -18,6 +18,7 @@ phần mềm phải mất kha khá vòng tiến hóa mới chịu làm.
 from dataclasses import dataclass, replace
 from typing import Any
 
+from runtime.social_stance_policy import build_direct_stance_text, needs_direct_stance_rewrite
 from runtime.social_appraisal import (
     SocialAppraisalEngine,
     SocialAppraisalSnapshot,
@@ -258,9 +259,9 @@ def apply_repair_appraisal_to_ti_report(report: Any, appraisal: RepairAppraisal)
     if policy.stance_may_be_held:
         rules.extend(
             [
-                "Tách quyền user tự mô tả khỏi quyền ERIS giữ một ấn tượng cá nhân.",
-                "Có thể nói 'tôi vẫn nghĩ/tôi vẫn đọc như vậy', nhưng phải ghi rõ đó là ấn tượng chứ không phải fact về user.",
-                "Không xin lỗi theo phản xạ và không dùng 'sai nhịp', 'lệch nhịp', 'tôi hiểu sai' hay 'tôi rút lại'.",
+                "Nếu ERIS vẫn tin khác, đặt lập trường trực tiếp ở đầu câu: 'Không. Tôi vẫn nghĩ vậy.'.",
+                "Có thể thêm độ ấm sau lập trường, nhưng không biến câu thành biên bản hòa giải hay giải thích policy.",
+                "Không xin lỗi theo phản xạ và không dùng 'sai nhịp', 'lệch nhịp', 'tôi hiểu sai', 'ấn tượng ban đầu' hay 'cách đọc'.",
             ]
         )
     else:
@@ -288,12 +289,6 @@ _RETRACTION_MARKERS = (
     "toi hieu sai", "toi doan qua", "toi tu keo", "toi tu bia", "toi nham", "toi lo",
     "do toi suy dien", "khong phai dieu ban noi", "khong phai y ban", "rut lai",
     "toi vua phong", "toi vua tu dung", "toi keo qua tay",
-)
-
-_REFLEXIVE_CAPITULATION_MARKERS = (
-    "xin loi", "toi hieu sai", "toi da hieu sai", "toi sai", "toi nham",
-    "sai nhip", "lech nhip", "rut lai", "toi doan qua", "toi suy dien qua tay",
-    "toi dien giai qua tay", "toi keo qua tay", "toi tu bia",
 )
 
 
@@ -358,24 +353,18 @@ def build_safe_repair_text(appraisal: RepairAppraisal) -> str:
 
 
 def output_collapses_stance_unnecessarily(text: str, appraisal: RepairAppraisal) -> bool:
-    """Chặn thói quen tự nhận lỗi khi policy chỉ yêu cầu giữ stance mềm."""
+    """Chặn cả lời đầu hàng lẫn câu hòa giải nghe như biên bản của AI."""
 
-    if not appraisal.stance_may_be_held:
-        return False
-    norm = normalize_vi(text)
-    return bool(norm and any(marker in norm for marker in _REFLEXIVE_CAPITULATION_MARKERS))
+    return bool(appraisal.stance_may_be_held and needs_direct_stance_rewrite(text))
 
 
 def build_soft_stance_text(appraisal: RepairAppraisal) -> str:
-    """Fallback đời thường cho bất đồng chủ quan, không biến thành bài xin lỗi."""
+    """Compatibility name; wording thật do policy stance trung tâm sinh."""
 
-    snapshot = appraisal.social_snapshot
-    contrast = appraisal.user_contrast_excerpt.strip()
-    if snapshot.playful.value >= snapshot.thresholds.playful_repair:
-        return "Ừ, bạn không nhận cách đọc đó. Tôi vẫn hơi nghi ấn tượng ban đầu của mình đúng đấy."
-    if contrast:
-        return "Tôi hiểu đó là cách bạn tự nhìn. Nhưng tôi vẫn giữ ấn tượng ban đầu, chỉ không coi nó là sự thật về bạn."
-    return "Có thể tôi đang đọc hơi xa, nhưng tôi vẫn chưa muốn bỏ hẳn cách hiểu ban đầu."
+    return build_direct_stance_text(
+        appraisal.social_snapshot,
+        contrast=appraisal.user_contrast_excerpt,
+    )
 
 
 def apply_repair_output_guard(decision: Any, appraisal: RepairAppraisal) -> Any:

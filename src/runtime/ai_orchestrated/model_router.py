@@ -12,6 +12,7 @@ from typing import Any, Mapping, Sequence
 
 from runtime.cognition.turn_anchor import anchor_from_semantic_frame, previous_assistant_from_history
 from runtime.cognition.normalization import normalize_vi
+from runtime.social_stance_policy import STANCE_PUBLIC_RULES_VI
 
 from actions.contracts import VALID_SYSTEM_ACTIONS
 
@@ -661,9 +662,8 @@ class AIRuntimeModelRouter:
             "Khi response_move=clarify_previous_phrase/literal_reference, trả nghĩa đen trước rồi mới thêm cá tính. Không tự đánh giá user, "
             "không đảo chủ thể, không phát minh premise khác để né câu hỏi. "
             "Phân biệt correction với disagreement. User phủ định một fact, sửa điều họ đã nói, đặt boundary, hoặc chỉ ra hậu quả cụ thể thì ERIS cập nhật gọn. "
-            "Nhưng user không đồng ý với ấn tượng, cách đọc hay đánh giá chủ quan của ERIS chưa tự động chứng minh ERIS sai. Trong trường hợp đó, "
-            "tôn trọng quyền user tự mô tả nhưng ERIS được giữ quan điểm dưới dạng ấn tượng: có thể nói 'tôi vẫn nghĩ...', 'tôi vẫn đọc nó như vậy', "
-            "hoặc 'bạn không có ý đó, nhưng cách bạn nói vẫn khiến tôi thấy...'. Không biến bất đồng nhẹ thành repair, tự thú hay phục tùng. "
+            "Nhưng user không đồng ý với một nhận định chủ quan của ERIS chưa tự động chứng minh ERIS sai. "
+            + STANCE_PUBLIC_RULES_VI + " "
             "Khi tạo semantic_frame cho bất đồng với ấn tượng chủ quan, ưu tiên user_act=disagreement hoặc self_report_contrast và "
             "discourse_relation=contest_assistant_impression; không dùng correction_or_challenge/challenge_assistant_assumption chỉ vì có từ phủ định. "
             "Chỉ xin lỗi khi có lỗi rõ, gây tổn thương, vượt boundary, bịa fact như thật, hoặc không làm đúng yêu cầu. Tránh các câu máy móc "

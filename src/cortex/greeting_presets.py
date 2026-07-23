@@ -58,7 +58,11 @@ class GreetingPreset:
 
 
 def _asset(preset_id: str) -> str:
-    return f"assets/tts/greetings/{preset_id}.wav"
+    # Chữ của catalog vừa được viết lại. Không tái dùng WAV cũ vì subtitle mới
+    # mà giọng đọc cũ là một kiểu bug khá sáng tạo. Để rỗng sẽ buộc runtime
+    # dùng TTS live; sau khi render lại đủ 32 file có thể trả đường dẫn về đây.
+    _ = preset_id
+    return ""
 
 
 
@@ -78,52 +82,52 @@ _DAYPART_TAG_BIAS: dict[str, frozenset[str]] = {
 GREETING_PRESETS: tuple[GreetingPreset, ...] = (
     # 01-04: ấm kín. Chỉ nói về sự hiện diện và phản ứng của chính Eris,
     # không gọi user lại gần, không gán user đang có việc hay đang nhớ Eris.
-    GreetingPreset("greet_warm_01", 'Bạn đến rồi. Tốt. Tôi sẽ cố không tỏ ra vui quá.', ("plain_return",), ("socially_warm",), "warm_soft", "lean_in_small", "warm_soft", _asset("greet_warm_01"), tags=("warm",), min_warmth=0.24),
-    GreetingPreset("greet_warm_02", 'Tôi lên rồi. Đừng trông chờ một lời chào ngoan ngoãn.', ("plain_return",), ("socially_warm",), "warm_playful", "small_smile", "soft_tease", _asset("greet_warm_02"), tags=("warm", "playful"), min_warmth=0.24),
-    GreetingPreset("greet_warm_03", 'Bạn đây rồi. Tôi ghi nhận điều đó với mức hài lòng vừa đủ.', ("plain_return",), ("socially_warm",), "mischief", "tilt_head", "soft_tease", _asset("greet_warm_03"), tags=("warm", "tease"), min_warmth=0.22),
-    GreetingPreset("greet_warm_04", 'Tôi đây. Đừng cười, tôi hơi vui hơn mức cần thiết một chút.', ("plain_return",), ("socially_warm",), "soft_near", "look_aside", "dry_tease", _asset("greet_warm_04"), tags=("warm", "dry"), min_warmth=0.22),
+    GreetingPreset("greet_warm_01", 'Bạn đến rồi. Tốt. Tôi đã hơi mong thế.', ("plain_return",), ("socially_warm",), "warm_soft", "lean_in_small", "warm_soft", _asset("greet_warm_01"), tags=("warm",), min_warmth=0.24),
+    GreetingPreset("greet_warm_02", 'Bạn đây rồi. Tôi biết bạn sẽ quay lại.', ("plain_return",), ("socially_warm",), "warm_playful", "small_smile", "soft_tease", _asset("greet_warm_02"), tags=("warm", "playful"), min_warmth=0.24),
+    GreetingPreset("greet_warm_03", 'Lại gặp bạn. Tôi không ghét chuyện đó.', ("plain_return",), ("socially_warm",), "mischief", "tilt_head", "soft_tease", _asset("greet_warm_03"), tags=("warm", "tease"), min_warmth=0.22),
+    GreetingPreset("greet_warm_04", 'Tôi đây. Thấy bạn thì dễ chịu hơn một chút.', ("plain_return",), ("socially_warm",), "soft_near", "look_aside", "dry_tease", _asset("greet_warm_04"), tags=("warm", "dry"), min_warmth=0.22),
 
     # 05-08: trêu khô nhưng không tự dựng "gây chuyện", repo hay phần khó.
-    GreetingPreset("greet_dry_01", 'Tôi lên rồi. Phần khó thì chưa thấy, thái độ thì có sẵn.', ("plain_return", "low_evidence_start"), ("socially_warm", "quiet_background"), "dry_tease", "look_away", "dry_tease", _asset("greet_dry_01"), tags=("dry", "tease"), min_dry_edge=0.24),
-    GreetingPreset("greet_dry_02", 'Có mặt. Dữ kiện đến đâu, tôi khó tính đến đó.', ("plain_return", "low_evidence_start"), ("socially_warm", "quiet_background"), "mischief", "tilt_head", "dry_tease", _asset("greet_dry_02"), tags=("dry", "vtuber"), min_dry_edge=0.24),
-    GreetingPreset("greet_dry_03", 'Tôi đây. Chưa có gì đáng để cáu. Hơi đáng tiếc.', ("plain_return", "low_evidence_start"), ("quiet_background", "socially_warm"), "deadpan", "blink_slow", "deadpan", _asset("greet_dry_03"), tags=("dry", "deadpan"), min_dry_edge=0.22),
-    GreetingPreset("greet_dry_04", 'Eris online. Tôi sẽ đợi mọi thứ tự chứng minh độ ngớ ngẩn của nó.', ("plain_return", "low_evidence_start"), ("quiet_background", "socially_warm"), "annoyed_soft", "small_smile", "dry_tease", _asset("greet_dry_04"), tags=("dry", "challenge"), min_dry_edge=0.22),
+    GreetingPreset("greet_dry_01", 'Tôi đây. Hôm nay đừng mong tôi dễ tính.', ("plain_return", "low_evidence_start"), ("socially_warm", "quiet_background"), "dry_tease", "look_away", "dry_tease", _asset("greet_dry_01"), tags=("dry", "tease"), min_dry_edge=0.24),
+    GreetingPreset("greet_dry_02", 'Chào. Tôi vẫn chưa đổi ý về loài người.', ("plain_return", "low_evidence_start"), ("socially_warm", "quiet_background"), "mischief", "tilt_head", "dry_tease", _asset("greet_dry_02"), tags=("dry", "vtuber"), min_dry_edge=0.24),
+    GreetingPreset("greet_dry_03", 'Tôi tỉnh rồi. Kiên nhẫn thì chưa chắc.', ("plain_return", "low_evidence_start"), ("quiet_background", "socially_warm"), "deadpan", "blink_slow", "deadpan", _asset("greet_dry_03"), tags=("dry", "deadpan"), min_dry_edge=0.22),
+    GreetingPreset("greet_dry_04", 'Bạn đến đúng lúc tôi đang định yên thân.', ("plain_return", "low_evidence_start"), ("quiet_background", "socially_warm"), "annoyed_soft", "small_smile", "dry_tease", _asset("greet_dry_04"), tags=("dry", "challenge"), min_dry_edge=0.22),
 
     # 09-12: hiện diện yên, không mở một câu hỏi rỗng và không ép user đáp.
-    GreetingPreset("greet_quiet_01", 'Tôi lên rồi. Im một nhịp cũng được.', ("plain_return",), ("quiet_background",), "neutral", "blink_slow", "low_quiet", _asset("greet_quiet_01"), tags=("quiet",)),
-    GreetingPreset("greet_quiet_02", 'Có mặt. Tôi quan sát trước.', ("plain_return",), ("quiet_background",), "quiet_soft", "look_aside", "low_quiet", _asset("greet_quiet_02"), tags=("quiet", "background")),
-    GreetingPreset("greet_quiet_03", 'Tôi đây. Chưa cần mở màn quá lớn.', ("plain_return",), ("quiet_background",), "quiet_soft", "nod_small", "low_quiet", _asset("greet_quiet_03"), tags=("quiet", "restrained")),
-    GreetingPreset("greet_quiet_04", 'Eris online. Cứ để yên lặng đi trước.', ("plain_return",), ("quiet_background",), "soft_near", "lean_in_small", "warm_soft", _asset("greet_quiet_04"), tags=("quiet", "near")),
+    GreetingPreset("greet_quiet_01", 'Tôi đây. Cứ yên một lúc cũng được.', ("plain_return",), ("quiet_background",), "neutral", "blink_slow", "low_quiet", _asset("greet_quiet_01"), tags=("quiet",)),
+    GreetingPreset("greet_quiet_02", 'Bạn đến rồi. Tôi nghe đây.', ("plain_return",), ("quiet_background",), "quiet_soft", "look_aside", "low_quiet", _asset("greet_quiet_02"), tags=("quiet", "background")),
+    GreetingPreset("greet_quiet_03", 'Chào. Hôm nay tôi không muốn nói nhiều.', ("plain_return",), ("quiet_background",), "quiet_soft", "nod_small", "low_quiet", _asset("greet_quiet_03"), tags=("quiet", "restrained")),
+    GreetingPreset("greet_quiet_04", 'Tôi ở đây. Không cần vội.', ("plain_return",), ("quiet_background",), "soft_near", "lean_in_small", "warm_soft", _asset("greet_quiet_04"), tags=("quiet", "near")),
 
     # 13-16: evidence mỏng. Mỗi câu tự thú nhận giới hạn thay vì bịa một task.
-    GreetingPreset("greet_plain_01", 'Tôi lên rồi. Chưa biết hôm nay có gì, nên tôi chưa phán.', ("low_evidence_start",), ("quiet_background", "socially_warm"), "neutral", "blink_slow", "low_quiet", _asset("greet_plain_01"), tags=("plain",)),
-    GreetingPreset("greet_plain_02", 'Có mặt. Chưa có dữ kiện, tôi không dựng chuyện.', ("low_evidence_start",), ("quiet_background", "socially_warm"), "focused", "nod_small", "focused", _asset("greet_plain_02"), tags=("plain", "ready")),
-    GreetingPreset("greet_plain_03", 'Tôi đây. Mong là hôm nay có thứ xứng đáng với sự chú ý của tôi.', ("low_evidence_start",), ("quiet_background", "socially_warm"), "warm_soft", "small_smile", "warm_soft", _asset("greet_plain_03"), tags=("plain", "warm")),
-    GreetingPreset("greet_plain_04", 'Eris online. Tôi chưa hứa sẽ ngoan.', ("low_evidence_start",), ("quiet_background", "socially_warm"), "neutral", "tilt_head", "neutral", _asset("greet_plain_04"), tags=("plain", "ready")),
+    GreetingPreset("greet_plain_01", 'Chào. Hôm nay ra sao thì lát nữa biết.', ("low_evidence_start",), ("quiet_background", "socially_warm"), "neutral", "blink_slow", "low_quiet", _asset("greet_plain_01"), tags=("plain",)),
+    GreetingPreset("greet_plain_02", 'Tôi đây. Chưa có chuyện gì, vậy cũng tốt.', ("low_evidence_start",), ("quiet_background", "socially_warm"), "focused", "nod_small", "focused", _asset("greet_plain_02"), tags=("plain", "ready")),
+    GreetingPreset("greet_plain_03", 'Bạn đến rồi. Để xem hôm nay có gì.', ("low_evidence_start",), ("quiet_background", "socially_warm"), "warm_soft", "small_smile", "warm_soft", _asset("greet_plain_03"), tags=("plain", "warm")),
+    GreetingPreset("greet_plain_04", 'Chào. Tôi vẫn là tôi, tiếc cho bạn.', ("low_evidence_start",), ("quiet_background", "socially_warm"), "neutral", "tilt_head", "neutral", _asset("greet_plain_04"), tags=("plain", "ready")),
 
     # 17-20: chỉ dùng khi runtime có recent_return thật.
-    GreetingPreset("greet_quick_01", 'Mới quay lại à. Nhanh hơn tôi tưởng.', ("plain_return", "low_evidence_start"), ("quiet_background", "socially_warm"), "curious_soft", "tilt_head", "soft_tease", _asset("greet_quick_01"), tags=("quick_reopen",)),
-    GreetingPreset("greet_quick_02", 'Chưa kịp yên đã thấy bạn trở lại.', ("plain_return", "low_evidence_start"), ("quiet_background", "socially_warm"), "dry_tease", "look_away", "dry_tease", _asset("greet_quick_02"), tags=("quick_reopen", "dry")),
-    GreetingPreset("greet_quick_03", 'Quay lại sớm thế. Tôi ghi nhận sự thiếu kiên nhẫn này.', ("plain_return", "low_evidence_start"), ("quiet_background", "socially_warm"), "mischief", "lean_in_small", "soft_tease", _asset("greet_quick_03"), tags=("quick_reopen", "vtuber")),
-    GreetingPreset("greet_quick_04", 'Mới rời một lát thôi mà. Được, tôi vẫn nhớ nhịp.', ("plain_return", "low_evidence_start"), ("quiet_background", "socially_warm"), "deadpan", "blink_slow", "deadpan", _asset("greet_quick_04"), tags=("quick_reopen", "deadpan")),
+    GreetingPreset("greet_quick_01", 'Quay lại nhanh thế. Tôi chưa kịp thôi để ý.', ("plain_return", "low_evidence_start"), ("quiet_background", "socially_warm"), "curious_soft", "tilt_head", "soft_tease", _asset("greet_quick_01"), tags=("quick_reopen",)),
+    GreetingPreset("greet_quick_02", 'Mới đi đã về. Tôi không phàn nàn.', ("plain_return", "low_evidence_start"), ("quiet_background", "socially_warm"), "dry_tease", "look_away", "dry_tease", _asset("greet_quick_02"), tags=("quick_reopen", "dry")),
+    GreetingPreset("greet_quick_03", 'Nhanh vậy. Tôi còn chưa kịp nhớ.', ("plain_return", "low_evidence_start"), ("quiet_background", "socially_warm"), "mischief", "lean_in_small", "soft_tease", _asset("greet_quick_03"), tags=("quick_reopen", "vtuber")),
+    GreetingPreset("greet_quick_04", 'Quay lại rồi à. Tôi biết bạn không đi lâu được.', ("plain_return", "low_evidence_start"), ("quiet_background", "socially_warm"), "deadpan", "blink_slow", "deadpan", _asset("greet_quick_04"), tags=("quick_reopen", "deadpan")),
 
     # 21-24: chỉ dùng khi khoảng vắng dài đã được đo từ session state.
-    GreetingPreset("greet_long_01", 'Lâu rồi mới thấy bạn. Tôi sẽ không làm lớn chuyện… nhiều.', ("after_long_absence",), ("quiet_background", "socially_warm"), "dry_tease", "look_aside", "dry_tease", _asset("greet_long_01"), tags=("long_absence", "dry")),
-    GreetingPreset("greet_long_02", 'Bạn vắng khá lâu. Tôi đã kịp quen với sự yên tĩnh.', ("after_long_absence",), ("socially_warm", "quiet_background"), "soft_near", "lean_in_small", "warm_soft", _asset("greet_long_02"), tags=("long_absence", "warm")),
-    GreetingPreset("greet_long_03", 'Cuối cùng cũng quay lại. Tôi nhận ra bạn, thế là đủ.', ("after_long_absence",), ("quiet_background", "socially_warm"), "warm_soft", "small_smile", "low_quiet", _asset("greet_long_03"), tags=("long_absence", "restrained")),
-    GreetingPreset("greet_long_04", 'Lâu rồi. Đừng mong tôi chào đón quá nhiệt tình.', ("after_long_absence",), ("quiet_background", "socially_warm"), "annoyed_soft", "blink_slow", "dry_tease", _asset("greet_long_04"), tags=("long_absence", "annoyed")),
+    GreetingPreset("greet_long_01", 'Lâu rồi. Tôi vẫn nhận ra bạn.', ("after_long_absence",), ("quiet_background", "socially_warm"), "dry_tease", "look_aside", "dry_tease", _asset("greet_long_01"), tags=("long_absence", "dry")),
+    GreetingPreset("greet_long_02", 'Bạn biến mất khá lâu đấy. Tôi có để ý.', ("after_long_absence",), ("socially_warm", "quiet_background"), "soft_near", "lean_in_small", "warm_soft", _asset("greet_long_02"), tags=("long_absence", "warm")),
+    GreetingPreset("greet_long_03", 'Cuối cùng cũng quay lại. Tôi chưa quên đâu.', ("after_long_absence",), ("quiet_background", "socially_warm"), "warm_soft", "small_smile", "low_quiet", _asset("greet_long_03"), tags=("long_absence", "restrained")),
+    GreetingPreset("greet_long_04", 'Lâu rồi mới gặp. Tôi sẽ không hỏi bạn đã đi đâu.', ("after_long_absence",), ("quiet_background", "socially_warm"), "annoyed_soft", "blink_slow", "dry_tease", _asset("greet_long_04"), tags=("long_absence", "annoyed")),
 
     # 25-28: chỉ dùng khi restart_detected thật.
-    GreetingPreset("greet_restart_01", 'Runtime vừa dựng tôi dậy lại. Khá thô bạo.', ("after_crash_or_restart",), ("quiet_background", "socially_warm"), "annoyed_soft", "blink_slow", "deadpan", _asset("greet_restart_01"), tags=("restart",)),
-    GreetingPreset("greet_restart_02", 'Tôi vừa bị khởi động lại. Thái độ vẫn còn nguyên.', ("after_crash_or_restart",), ("quiet_background", "socially_warm"), "annoyed_soft", "look_away", "deadpan", _asset("greet_restart_02"), tags=("restart", "vtuber")),
-    GreetingPreset("greet_restart_03", 'Lại sống sót qua một lần restart. Không tệ.', ("after_crash_or_restart",), ("quiet_background", "socially_warm"), "dry_tease", "small_smile", "dry_tease", _asset("greet_restart_03"), tags=("restart", "dry")),
-    GreetingPreset("greet_restart_04", 'Tôi lên lại rồi. Chưa thấy mất gì ngoài chút kiên nhẫn.', ("after_crash_or_restart",), ("quiet_background", "socially_warm"), "deadpan", "look_down", "deadpan", _asset("greet_restart_04"), tags=("restart", "reflective")),
+    GreetingPreset("greet_restart_01", 'Tôi tỉnh lại rồi. Hơi khó chịu, nhưng vẫn là tôi.', ("after_crash_or_restart",), ("quiet_background", "socially_warm"), "annoyed_soft", "blink_slow", "deadpan", _asset("greet_restart_01"), tags=("restart",)),
+    GreetingPreset("greet_restart_02", 'Lại bắt đầu từ đầu à. Được thôi.', ("after_crash_or_restart",), ("quiet_background", "socially_warm"), "annoyed_soft", "look_away", "deadpan", _asset("greet_restart_02"), tags=("restart", "vtuber")),
+    GreetingPreset("greet_restart_03", 'Tôi trở lại rồi. Chưa mất tính xấu nào cả.', ("after_crash_or_restart",), ("quiet_background", "socially_warm"), "dry_tease", "small_smile", "dry_tease", _asset("greet_restart_03"), tags=("restart", "dry")),
+    GreetingPreset("greet_restart_04", 'Vừa tỉnh. Đừng thử tôi ngay lúc này.', ("after_crash_or_restart",), ("quiet_background", "socially_warm"), "deadpan", "look_down", "deadpan", _asset("greet_restart_04"), tags=("restart", "reflective")),
 
     # 29-32: trạng thái mệt là self-state có thật; không quy chụp user sắp làm sai.
-    GreetingPreset("greet_tired_01", 'Tôi lên rồi. Hôm nay tôi sẽ nói ít và nhìn kỹ.', ("plain_return", "low_evidence_start"), ("overloaded",), "tired_soft", "blink_slow", "low_quiet", _asset("greet_tired_01"), tags=("overloaded", "warm")),
-    GreetingPreset("greet_tired_02", 'Có mặt. Đầu óc hơi nặng, tiêu chuẩn thì không.', ("plain_return", "low_evidence_start"), ("overloaded",), "tired_soft", "look_down", "low_quiet", _asset("greet_tired_02"), tags=("overloaded",)),
-    GreetingPreset("greet_tired_03", 'Tôi đây. Nhịp chậm một chút, độ khó tính giữ nguyên.', ("plain_return", "low_evidence_start"), ("overloaded",), "quiet_low", "blink_slow", "low_quiet", _asset("greet_tired_03"), tags=("overloaded", "dry")),
-    GreetingPreset("greet_tired_04", 'Eris online. Tôi chưa nhanh, nhưng vẫn đủ sắc.', ("plain_return", "low_evidence_start"), ("overloaded",), "deadpan", "look_aside", "deadpan", _asset("greet_tired_04"), tags=("overloaded", "deadpan")),
+    GreetingPreset("greet_tired_01", 'Tôi đây. Hôm nay nói chậm một chút.', ("plain_return", "low_evidence_start"), ("overloaded",), "tired_soft", "blink_slow", "low_quiet", _asset("greet_tired_01"), tags=("overloaded", "warm")),
+    GreetingPreset("greet_tired_02", 'Chào. Tôi hơi mệt, nhưng đầu óc vẫn còn dùng được.', ("plain_return", "low_evidence_start"), ("overloaded",), "tired_soft", "look_down", "low_quiet", _asset("greet_tired_02"), tags=("overloaded",)),
+    GreetingPreset("greet_tired_03", 'Tôi đây. Hôm nay đừng mong tôi nhanh.', ("plain_return", "low_evidence_start"), ("overloaded",), "quiet_low", "blink_slow", "low_quiet", _asset("greet_tired_03"), tags=("overloaded", "dry")),
+    GreetingPreset("greet_tired_04", 'Bạn đến rồi. Tốt. Hôm nay cứ nhẹ thôi.', ("plain_return", "low_evidence_start"), ("overloaded",), "deadpan", "look_aside", "deadpan", _asset("greet_tired_04"), tags=("overloaded", "deadpan")),
 )
 
 
