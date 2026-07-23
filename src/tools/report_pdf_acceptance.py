@@ -30,7 +30,7 @@ from typing import Any, Iterable, Mapping
 
 OPTIONAL_LANES = {
     "tts_current_turn", "tts", "speech_localizer", "tts_localizer",
-    "romaji_localizer", "semantic_shadow", "post_observer", "memory_digest",
+    "romaji_localizer", "post_observer", "memory_digest",
     "private_mind", "private_mind_optional", "tutor_background",
     "micro_presence", "autonomous", "vision_ambient", "vision_compressor",
 }
@@ -209,7 +209,6 @@ def _summarize_events(
         round(observer_inflight / observer_total_discard, 4) if observer_total_discard else 0.0
     )
 
-    shadow_scores = metric_values.get("semantic_shadow_agreement_score", [])
     hard_caps = metric_values.get("prompt_hard_cap", [])
     hard_cap_default_ok = None
     if hard_caps:
@@ -288,7 +287,7 @@ def _summarize_events(
             "inflight_discard_rate": observer_inflight_rate,
         },
         "semantic": {
-            "shadow_agreement_score": _stats(shadow_scores),
+            "authority": "semantic_frame.v1",
             "paraphrase_accuracy": semantic_accuracy,
             "paraphrase_sample_count": semantic_sample_count,
         },
@@ -299,7 +298,7 @@ def _summarize_events(
         "acceptance": acceptance,
         "notes": [
             "Small-talk percentile uses turn_category=small_talk when available; older logs fall back to all chat turns.",
-            "Semantic shadow agreement is migration telemetry, not ground-truth accuracy. Use --semantic-eval for the >=95% criterion.",
+            "Use --semantic-eval for the >=95% semantic-frame paraphrase criterion.",
             "Adaptive degradation counts only requests whose transport rewrote the actual payload to the smaller reservation.",
         ],
     }

@@ -10,7 +10,6 @@ import time
 from dataclasses import replace
 from typing import Any, Mapping, Sequence
 
-from core.cognition import PreResponseCognitiveBrief
 from runtime.cognition.turn_anchor import anchor_from_semantic_frame, previous_assistant_from_history
 from runtime.cognition.normalization import normalize_vi
 
@@ -541,12 +540,16 @@ class AIRuntimeModelRouter:
             lane = "post_observer"
         elif "autonomous" in reason_key or "self_initiated" in reason_key:
             lane = "autonomous"
-        elif "chat_intention" in reason_key or "planner" in reason_key or "deep" in reason_key:
-            lane = "semantic_shadow"
+        elif "chat_intention" in reason_key:
+            lane = "chat_tool_required"
+        elif "discovery" in reason_key or "planner" in reason_key:
+            lane = "tutor_background"
+        elif "reflection" in reason_key or "deep" in reason_key or tier == "subconscious_4b":
+            lane = "post_observer"
         else:
-            lane = "semantic_shadow" if tier == "subconscious_4b" else "transport"
+            lane = "transport"
 
-        optional = lane in {"post_observer", "autonomous", "semantic_shadow"}
+        optional = lane in {"post_observer", "autonomous", "tutor_background"}
         coalesce_key = reason_key if optional else ""
         with inference_context(
             lane,
@@ -592,8 +595,9 @@ class AIRuntimeModelRouter:
     ) -> dict[str, Any]:
         if client is None:
             return {}
-        model_name = str(getattr(client, "model_name", "") or "")
-        strict = model_name.startswith("openai/gpt-oss-")
+        # PDF cleanup annotation: JSON-schema strictness is a contract choice,
+        # not a removed-model compatibility branch.
+        strict = False
         response_format = {
             "type": "json_schema",
             "json_schema": {
@@ -680,7 +684,6 @@ class AIRuntimeModelRouter:
         allow_fallback: bool = False,
         language_hint: str = "vi",
         planned_intention: IntentionPlan | None = None,
-        cognitive_brief: PreResponseCognitiveBrief | None = None,
         retry_instruction: str = "",
         locked_semantic_frame: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -704,8 +707,6 @@ class AIRuntimeModelRouter:
             context_parts.append(f"Relevant memory: {memory_context}")
         if interrupt_context:
             context_parts.append(f"Mechanical interrupt context: {interrupt_context}")
-        if cognitive_brief is not None:
-            context_parts.append(cognitive_brief.prompt_context())
         if retry_instruction:
             context_parts.append(f"One-shot rewrite instruction: {retry_instruction}")
         if locked_semantic_frame:
@@ -747,8 +748,7 @@ class AIRuntimeModelRouter:
         def call(target: Any) -> dict[str, Any]:
             if target is None:
                 return {}
-            model_name = str(getattr(target, "model_name", "") or "")
-            strict = model_name.startswith("openai/gpt-oss-")
+            strict = False
             response_schema = (
                 PUBLIC_WORDING_REWRITE_SCHEMA if locked_semantic_frame else PUBLIC_REPLY_SCHEMA
             )
@@ -933,8 +933,7 @@ class AIRuntimeModelRouter:
         def call(target: Any) -> dict[str, Any]:
             if target is None:
                 return {}
-            model_name = str(getattr(target, "model_name", "") or "")
-            strict = model_name.startswith("openai/gpt-oss-")
+            strict = False
             try:
                 def invoke() -> Any:
                     return target.create_chat_completion(
@@ -1024,7 +1023,6 @@ class AIRuntimeModelRouter:
         event_kind: str,
         previous_assistant_text: str = "",
         semantic_frame: Mapping[str, Any] | None = None,
-        allow_legacy_text_anchor: bool = True,
     ) -> CognitiveObservation:
         """Giữ observer bám lượt hiện tại khi model phụ 429 hoặc bê frame cũ.
 
@@ -1039,13 +1037,9 @@ class AIRuntimeModelRouter:
         # PDF annotation, pages 12-13 and 20: observer repair consumes the
         # already validated authority frame. It does not classify raw text again.
         hint = anchor_from_semantic_frame(semantic_frame)
-        if hint in {"none", "unknown"} and allow_legacy_text_anchor:
-            # Compatibility for explicit legacy callers and old offline tests.
-            # The production observer call below always passes False.
-            from runtime.cognition.turn_anchor import infer_current_turn_anchor
-            hint = infer_current_turn_anchor(
-                user_text, previous_assistant_text=previous_assistant_text
-            )
+        # PDF annotation, pages 12-13 and 20: no raw-text fallback remains.
+        # Missing/invalid authority frames stay unknown instead of being guessed
+        # by a second phrase classifier.
         if hint in {"none", "unknown"}:
             return observation
 
@@ -1249,9 +1243,7 @@ class AIRuntimeModelRouter:
             schema=PERSONALITY_REFLECTION_SCHEMA,
             name="eris_personality_reflection_deep" if deep else "eris_personality_reflection",
             max_tokens=880 if deep else 700,
-            reasoning_effort=(
-                "medium" if deep else "low"
-            ) if str(getattr(client, "model_name", "")).startswith("openai/gpt-oss-") else None,
+            reasoning_effort=None,
             timeout_seconds=max(2.0, min(6.0, float(os.getenv("ERIS_POST_REFLECTION_HTTP_TIMEOUT_SEC", "3.5") or 3.5))),
         )
         if not reflected:
@@ -1364,7 +1356,7 @@ class AIRuntimeModelRouter:
                 schema=OBJECTIVE_OBSERVATION_SCHEMA,
                 name="eris_cognitive_observation",
                 max_tokens=520,
-                reasoning_effort="low" if str(getattr(self.observer_client, "model_name", "")).startswith("openai/gpt-oss-") else None,
+                reasoning_effort=None,
                 timeout_seconds=observer_timeout,
             )
             source = "groq_observer"
@@ -1398,7 +1390,6 @@ class AIRuntimeModelRouter:
             event_kind=event_kind,
             previous_assistant_text=previous_assistant_text,
             semantic_frame=semantic_frame,
-            allow_legacy_text_anchor=False,
         )
         importance = max(
             primary.assistant_fault_probability,
@@ -1423,7 +1414,7 @@ class AIRuntimeModelRouter:
                 schema=OBJECTIVE_OBSERVATION_SCHEMA,
                 name="eris_cognitive_observation_deep",
                 max_tokens=820,
-                reasoning_effort="medium" if str(getattr(self.deep_client, "model_name", "")).startswith("openai/gpt-oss-") else None,
+                reasoning_effort=None,
                 timeout_seconds=max(observer_timeout, 4.0),
             )
             deep = CognitiveObservation.from_mapping(
@@ -1476,7 +1467,7 @@ class AIRuntimeModelRouter:
             schema=DISCOVERY_PLAN_SCHEMA,
             name="eris_discovery_plan",
             max_tokens=360,
-            reasoning_effort="low" if str(getattr(self.observer_client, "model_name", "")).startswith("openai/gpt-oss-") else None,
+            reasoning_effort=None,
         )
         return DiscoveryPlan.from_mapping(payload) if payload else DiscoveryPlan()
 
@@ -1499,10 +1490,8 @@ class AIRuntimeModelRouter:
             "evidence_scope là nguồn căn cứ và continuation_key là thread_key đang nối hoặc none. "
             "activity để unknown/none nếu lượt chat không cập nhật phiên app/game. "
             "Nếu mơ hồ, để tool rỗng và ghi điều cần thận trọng trong notes. "
-            "snapshot.cognitive_brief là contract discourse đã được specialist có evidence tổng hợp. Khi confidence đủ cao, planner phải bám "
-            "response_move và primary_goal; ambiguity_owner=assistant cấm broad clarification. self_elaborate dùng strategy=carry_own_thread; "
-            "repair_previous_response dùng direct_repair; clarify_previous_phrase/literal_reference dùng literal_clarification; "
-            "repair_assumption dùng repair_assumption. Các move này không dùng tool."
+            "Main semantic authority owns discourse meaning. Planner must only select a tool for an explicit action request; "
+            "it must not infer relational meaning or rewrite the public response."
         )
 
     def plan_chat(self, snapshot: Mapping[str, Any]) -> IntentionPlan:
@@ -1513,7 +1502,7 @@ class AIRuntimeModelRouter:
             schema=INTENTION_PLAN_SCHEMA,
             name="eris_chat_intention",
             max_tokens=460,
-            reasoning_effort="low" if str(getattr(self.observer_client, "model_name", "")).startswith("openai/gpt-oss-") else None,
+            reasoning_effort=None,
         )
         if not payload:
             return IntentionPlan.from_mapping(

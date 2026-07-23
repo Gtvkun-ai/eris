@@ -18,7 +18,6 @@ from .orchestrator import AIChatOrchestrator, AIAutonomousOrchestrator, architec
 from .planner import IntentionPlanner
 from .stage_planner import StagePlanner
 from .state_reducer import StateReducer
-from runtime.cognition import CognitiveAcceptanceGate, PreResponseCognition
 
 
 def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
@@ -85,8 +84,10 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     host.ai_initiative_controller = initiative
     host.ai_identity_consolidator = consolidator
     host.ai_stage_planner = StagePlanner(expression_bridge=expression_bridge)
-    host.ai_pre_response_cognition = PreResponseCognition(logger=getattr(host, "logger", None))
-    host.ai_cognitive_acceptance_gate = CognitiveAcceptanceGate()
+    # PDF annotation, pages 12-13 and 20: P2 cutover is complete.  No legacy
+    # regex cognition or shadow acceptance gate is instantiated at startup.
+    host.ai_pre_response_cognition = None
+    host.ai_cognitive_acceptance_gate = None
     host.ai_chat_orchestrator = AIChatOrchestrator(host)
     host.ai_autonomous_orchestrator = AIAutonomousOrchestrator(host)
 
@@ -145,7 +146,7 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     reducer.subscribe(consolidator.observe)
     try:
         host.logger.info(
-            "[architecture C] enabled version=ai_orchestrated.v6.1.arbitrated_brief state_version=%s personality_version=%s identity_version=%s observer=post_turn planner=ai cortex=pre_response_brief single_writer=1",
+            "[architecture C] enabled version=ai_orchestrated.v7.semantic_cutover state_version=%s personality_version=%s identity_version=%s observer=post_turn planner=local_for_chat semantic_authority=semantic_frame.v1 single_writer=1",
             reducer.snapshot().version,
             reducer.snapshot().personality.version,
             reducer.snapshot().identity.version,

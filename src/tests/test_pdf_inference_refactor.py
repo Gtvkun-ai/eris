@@ -661,34 +661,13 @@ def test_submit_preview_checks_quota_and_concurrency(monkeypatch) -> None:
     assert preview.reason in {"provider_hot_optional", "quota_unavailable_optional"}
 
 
-def test_semantic_shadow_comparison_is_telemetry_not_veto() -> None:
-    from types import SimpleNamespace
+def test_semantic_shadow_lane_and_module_are_removed() -> None:
+    import importlib.util
 
-    from runtime.semantic_shadow import compare_semantic_authorities
+    from runtime.inference_broker import LANE_POLICIES
 
-    primary = {
-        "discourse_relation": "continuation_of_assistant_self_disclosure",
-        "user_act": "relational_check_in",
-        "target": "assistant",
-        "ambiguity_owner": "assistant",
-        "tool_intent": "none",
-    }
-    legacy = SimpleNamespace(
-        to_dict=lambda: {
-            "discourse_relation": "new_or_direct_turn",
-            "user_act": "statement_or_social_bid",
-            "ambiguity_owner": "unknown",
-            "needs_deep_inference": True,
-        }
-    )
-    comparison = compare_semantic_authorities(primary, legacy)
-    assert comparison["agreement"] is False
-    assert set(comparison["disagreements"]) == {
-        "discourse_relation", "user_act", "ambiguity_owner"
-    }
-    assert comparison["primary"]["target"] == "assistant"
-
-
+    assert "semantic_shadow" not in LANE_POLICIES
+    assert importlib.util.find_spec("runtime.semantic_shadow") is None
 def test_semantic_paraphrase_evaluator_scores_predictions() -> None:
     import json
     from pathlib import Path
@@ -856,7 +835,6 @@ def test_observer_anchor_uses_typed_frame_and_can_disable_legacy_text_rules() ->
         assistant_text="response",
         event_kind="chat",
         semantic_frame=frame,
-        allow_legacy_text_anchor=False,
     )
     assert anchored.user_act == "style_criticism"
 
@@ -866,7 +844,6 @@ def test_observer_anchor_uses_typed_frame_and_can_disable_legacy_text_rules() ->
         assistant_text="response",
         event_kind="chat",
         semantic_frame={},
-        allow_legacy_text_anchor=False,
     )
     assert no_frame.user_act == "unknown"
 

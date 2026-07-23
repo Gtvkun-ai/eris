@@ -24,7 +24,7 @@ def _make_request(
     broker: InferenceBroker,
     *,
     provider: str = "openai",
-    model: str = "gpt-oss-20b",
+    model: str = "llama-3.1-8b-instant",
     lane: str = "chat_main",
     optional: bool = False,
     timeout: float = 2.0,
@@ -129,7 +129,7 @@ def test_transport_rewrites_openai_payload_to_effective_budget(monkeypatch) -> N
 
     client_module._brokered_post(
         base_url="https://api.openai.com/v1",
-        model_name="gpt-oss-20b",
+        model_name="llama-3.1-8b-instant",
         messages=messages,
         max_tokens=300,
         timeout_seconds=3.0,
@@ -147,8 +147,8 @@ def test_transport_rewrites_openai_payload_to_effective_budget(monkeypatch) -> N
 def test_model_family_shares_concurrency_gate(monkeypatch) -> None:
     monkeypatch.setenv("ERIS_BROKER_CONCURRENCY_OPENAI", "1")
     broker = InferenceBroker()
-    first = _make_request(broker, model="openai/gpt-oss-20b", timeout=4.0)
-    second = _make_request(broker, model="openai/gpt-oss-120b", timeout=4.0)
+    first = _make_request(broker, model="meta-llama/llama-3.3-70b-versatile", timeout=4.0)
+    second = _make_request(broker, model="meta-llama/llama-3.3-70b-versatile-preview", timeout=4.0)
     first_started = threading.Event()
     release_first = threading.Event()
     second_started = threading.Event()
@@ -181,7 +181,7 @@ def test_unrelated_provider_optional_work_is_not_globally_cancelled(monkeypatch)
     optional = _make_request(
         broker,
         provider="openai",
-        model="gpt-oss-20b",
+        model="llama-3.1-8b-instant",
         lane="vision_ambient",
         optional=True,
         timeout=3.0,

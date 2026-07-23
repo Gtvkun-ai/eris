@@ -225,12 +225,6 @@ class ApiKeyPool:
             "1", "true", "yes", "on"
         }
         scope = str(reason or "http_429").strip().lower() or "http_429"
-        if not raw_threshold and "gpt-oss-" in scope:
-            # Social parser/observer là lane hậu kỳ. Hai project liên tiếp cùng
-            # 429 đã đủ để dừng; key thứ ba không làm observation thông minh hơn,
-            # nó chỉ làm log dài và user già thêm vài giây.
-            threshold = 2
-
         with self._lock:
             if not self._keys:
                 return False

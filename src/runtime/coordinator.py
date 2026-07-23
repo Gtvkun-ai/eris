@@ -421,7 +421,7 @@ class RuntimeCoordinator(
                 except Exception as exc:
                     self.logger.warning("Không khởi tạo được background memory digest service: %s", exc)
                     self.background_memory_digest = None
-        # State nội bộ còn hoạt động độc lập với public cognition. Cortex V2 không
+        # State nội bộ còn hoạt động độc lập với public cognition. semantic-frame authority không
         # khởi tạo các engine Ni/Ti/Fe/appraisal/attention legacy tại boot.
         self.internal_state_engine = InternalStateEngine()
         self.outcome_observer = OutcomeObserver()
@@ -772,9 +772,9 @@ class RuntimeCoordinator(
         self.recent_inner_thought_intents: tuple[str, ...] = ()
         self.recent_inner_thought_seeds: tuple[str, ...] = ()
         self.recent_meaning_families: tuple[str, ...] = ()
-        # Cortex V2 chỉ giữ brief canonical gần nhất cho debug/panel. Không lưu
-        # một danh sách frame legacy có quyền ghi state song song với reducer.
-        self.last_cognitive_brief = None
+        # PDF annotation, pages 12-13 and 20: panel/debug reads the same typed
+        # semantic authority as observer policy; no parallel cognitive brief.
+        self.last_semantic_frame: dict[str, object] = {}
         self.mental_process_interval_sec = self._load_mental_process_interval()
         self.mental_process_enabled = self._load_mental_process_enabled()
         self._mental_process_stop_event = threading.Event()
@@ -2206,18 +2206,17 @@ class RuntimeCoordinator(
 
     def _private_mind_speech_silence_reason(self) -> dict[str, object]:
         """Tóm tắt quyền phát ngôn theo Architecture C, không đọc speech_core cũ."""
-        brief = getattr(self, "last_cognitive_brief", None)
-        brief_payload = brief.to_dict() if brief is not None and callable(getattr(brief, "to_dict", None)) else {}
+        semantic_frame = dict(getattr(self, "last_semantic_frame", {}) or {})
         plan = getattr(self, "last_ai_intention_plan", None)
         plan_payload = plan.to_dict() if plan is not None and callable(getattr(plan, "to_dict", None)) else {}
         return {
-            "architecture": "cortex_v2",
+            "architecture": "semantic_frame_v1",
             "chat_active": bool(getattr(self, "chat_mode", False) or getattr(self, "_chat_processing", False)),
             "autonomous_blocked_until": round(float(getattr(self, "autonomous_presence_blocked_until", 0.0) or 0.0), 3),
-            "cognitive_brief": {
-                key: brief_payload.get(key)
-                for key in ("discourse_relation", "response_move", "delivery", "confidence", "ambiguity")
-                if key in brief_payload
+            "semantic_frame": {
+                key: semantic_frame.get(key)
+                for key in ("version", "discourse_relation", "user_act", "target", "ambiguity_owner", "tool_intent")
+                if key in semantic_frame
             },
             "autonomous_plan": {
                 key: plan_payload.get(key)
@@ -2464,7 +2463,7 @@ class RuntimeCoordinator(
         self_state = None
         meaning = None
         impulse = None
-        brief = getattr(self, "last_cognitive_brief", None)
+        semantic_frame = dict(getattr(self, "last_semantic_frame", {}) or {})
         relationship = getattr(state, "relationship_dynamics", None)
         desire = getattr(state, "desire", None)
         style = getattr(self, "fe_style_memory", None)
@@ -2541,7 +2540,7 @@ class RuntimeCoordinator(
         )
         forced_reply = clamp01(min(1.0, float(getattr(state, "force_speak_ticks", 0) or 0) / 6.0))
 
-        surface_intent = str(getattr(brief, "response_move", "") or "")
+        surface_intent = str(semantic_frame.get("user_act", "") or "")
         return {
             "summary": {
                 "label": "vui / kho_chiu / trung_tinh",
@@ -2566,7 +2565,7 @@ class RuntimeCoordinator(
                 "curiosity": metric("to mo", max(float(get_val(state, "curiosity", 0.0)), float(get_val(state, "curiosity_pressure", 0.0))), group="attention"),
                 "attention_bias": {
                     "label": "thien huong chu y",
-                    "value": str(getattr(brief, "discourse_relation", "") or value(state, "last_focus_kind", "") or ""),
+                    "value": str(semantic_frame.get("discourse_relation", "") or value(state, "last_focus_kind", "") or ""),
                     "group": "attention",
                     "note": "",
                 },
@@ -2592,19 +2591,19 @@ class RuntimeCoordinator(
                 "overload": metric("qua tai", overload, group="load"),
                 "speech_emotional_color": {
                     "label": "mau cam xuc khi noi",
-                    "value": str(getattr(brief, "delivery", "") or value(style, "last_tone_label", "") or ""),
+                    "value": str(value(style, "last_tone_label", "") or ""),
                     "group": "surface",
                     "note": "",
                 },
                 "emotional_reflex": {
                     "label": "phan xa cam xuc",
-                    "value": str(getattr(brief, "user_posture", "") or ""),
+                    "value": str(semantic_frame.get("boundary_action", "") or semantic_frame.get("target", "") or ""),
                     "group": "surface",
                     "note": "",
                 },
                 "emotional_residue": {
                     "label": "du am cam xuc",
-                    "value": str(getattr(brief, "ambiguity_owner", "") or ""),
+                    "value": str(semantic_frame.get("ambiguity_owner", "") or ""),
                     "group": "surface",
                     "note": "",
                 },
@@ -5681,7 +5680,7 @@ class RuntimeCoordinator(
         """Compact v2 contract for the replacement depth panel.
 
         Built from private_mind as the primary source, with lightweight live
-        supplements for expression, Cortex V2 reading, flags, and a tiny affect history.
+        supplements for expression, semantic-frame reading, flags, and a tiny affect history.
         """
         try:
             from cortex.depth_flags import all_states
@@ -5699,13 +5698,13 @@ class RuntimeCoordinator(
         try:
             from runtime.depth_v2_state import build_depth_v2_state
 
-            brief = getattr(self, "last_cognitive_brief", None)
-            if brief is not None:
+            semantic_frame = dict(getattr(self, "last_semantic_frame", {}) or {})
+            if semantic_frame:
                 cognitive_read = (
-                    f"posture={getattr(brief, 'user_posture', 'neutral')}; "
-                    f"relation={getattr(brief, 'discourse_relation', 'new_topic')}; "
-                    f"move={getattr(brief, 'response_move', 'answer')}; "
-                    f"~{float(getattr(brief, 'confidence', 0.0) or 0.0):.2f}"
+                    f"act={semantic_frame.get('user_act', 'unknown')}; "
+                    f"relation={semantic_frame.get('discourse_relation', 'unknown')}; "
+                    f"target={semantic_frame.get('target', 'unknown')}; "
+                    f"owner={semantic_frame.get('ambiguity_owner', 'unknown')}"
                 )
             else:
                 cognitive_read = ""
@@ -6672,7 +6671,7 @@ class RuntimeCoordinator(
         return (time.time() - last) >= window
 
     def _run_loop_iteration(self) -> bool:
-        """Đường autonomous production duy nhất: Architecture C + Cortex V2."""
+        """Đường autonomous production duy nhất: Architecture C + semantic_frame.v1."""
         orchestrator = getattr(self, "ai_autonomous_orchestrator", None)
         if not bool(getattr(self, "ai_runtime_enabled", False)) or orchestrator is None:
             self.logger.error(
@@ -6683,7 +6682,7 @@ class RuntimeCoordinator(
         return bool(orchestrator.run_iteration())
 
     def run_loop(self):
-        """Chạy runtime production duy nhất: Architecture C + Cortex V2."""
+        """Chạy runtime production duy nhất: Architecture C + semantic_frame.v1."""
         self.logger.info("--- Architecture C runtime; chat vision theo yêu cầu màn hình ---")
         orchestrator = getattr(self, "ai_autonomous_orchestrator", None)
         if not bool(getattr(self, "ai_runtime_enabled", False)) or orchestrator is None:

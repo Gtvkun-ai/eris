@@ -3,9 +3,9 @@
 
 PDF annotation, pages 12-13 and 20
 ----------------------------------
-Legacy discourse/semantic/social classifiers may remain in shadow or rollback
-modules during migration, but public chat and post-turn observer entrypoints
-must consume ``semantic_frame.v1`` rather than reclassifying raw user text.
+The P2 cutover is complete: public chat and post-turn observer entrypoints must
+consume ``semantic_frame.v1`` and the removed lexical classifiers must not be
+reintroduced as shadow, rollback or compatibility authorities.
 """
 
 from __future__ import annotations
@@ -142,9 +142,9 @@ def audit(root: Path) -> dict[str, Any]:
             router,
             "authority_anchor = anchor_from_semantic_frame(semantic_frame)",
         ),
-        "observer_disables_legacy_anchor": (
+        "observer_has_no_legacy_anchor_parameter": (
             router,
-            "allow_legacy_text_anchor=False",
+            "no raw-text fallback remains",
         ),
     }
     missing_markers = [

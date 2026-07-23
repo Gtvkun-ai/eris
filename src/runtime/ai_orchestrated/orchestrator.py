@@ -21,7 +21,6 @@ from semantic_authority import SemanticAuthorityPolicy
 from .contracts import AI_RUNTIME_VERSION, IntentionPlan, StateEvent
 from .identity import PendingStrategyUse, PRIMARY_RELATIONSHIP_ID
 from .self_turn_pipeline import SelfTurnPipeline
-from runtime.cognition.plan_policy import apply_cognitive_brief_to_plan
 from .startup_grounding import (
     build_startup_fallback_text,
     build_startup_greeting_frame,
@@ -315,34 +314,10 @@ class AIChatOrchestrator:
         personality_context = mind_state.personality_prompt_context()
         relationship_context = mind_state.relationship.prompt_summary()
         grounding_context = str(getattr(grounding_report, "prompt_context", "") or "")
-        if semantic_policy.primary_model_first:
-            # PDF annotation, pages 12-13 and 19-20: cutover means the old
-            # regex/discourse committee is no longer executed on the public
-            # critical path.  Keep the implementation behind legacy mode for
-            # rollback archaeology, but give the writer a neutral placeholder;
-            # the typed semantic_frame from the main model is the sole meaning
-            # authority in production.
-            from core.cognition import PreResponseCognitiveBrief
-
-            cognitive_brief = PreResponseCognitiveBrief.neutral(
-                trace_id=f"semantic_cutover:{turn_id}"
-            )
-            user_meta["legacy_semantic_classifiers"] = "cutover_disabled"
-        else:
-            cognitive_brief = host.ai_pre_response_cognition.analyze(
-                user_text=user_text,
-                recent_history=prior_public_history,
-                turn_id=turn_id,
-                turn_seq=turn_seq,
-                grounding_context=grounding_context,
-                relationship_summary=relationship_context,
-                personality_summary=personality_context,
-                memory_available=bool(str(memory_context or "").strip()),
-                interrupt_context=speech_interrupt_context,
-                metadata={"event_kind": "chat"},
-            )
-        host.last_cognitive_brief = cognitive_brief
-        user_meta["pre_response_cognitive_brief"] = cognitive_brief.to_dict()
+        # PDF annotation, pages 12-13 and 20: P2 cleanup removed the legacy
+        # discourse/semantic committee entirely. ``semantic_frame.v1`` from the
+        # public writer is the only conversational meaning object.
+        user_meta["semantic_authority"] = "semantic_frame.v1"
         discovery_runtime = getattr(host, "ai_discovery_runtime", None)
         telemetry_payload = snapshot.to_machine_context() if callable(getattr(snapshot, "to_machine_context", None)) else {}
         discovery_context = (
@@ -362,16 +337,11 @@ class AIChatOrchestrator:
             "memory_available": bool(str(memory_context or "").strip()),
             "interrupt_context": speech_interrupt_context,
             "discovery": discovery_context,
-            "cognitive_brief": cognitive_brief.to_dict(),
         }
         chat_plan = host.ai_intention_planner.plan_chat(
             planning_snapshot,
             turn_seq=turn_seq,
         )
-        # PDF annotation, pages 12-13: legacy discourse/semantic specialists
-        # stay in shadow telemetry. They no longer rewrite the model-owned plan.
-        if not semantic_policy.primary_model_first:
-            chat_plan = apply_cognitive_brief_to_plan(chat_plan, cognitive_brief)
         discovery_id = ""
         if discovery_runtime is not None:
             chat_plan, discovery_grounding, discovery_id = discovery_runtime.bind_plan(chat_plan)
@@ -396,7 +366,6 @@ class AIChatOrchestrator:
         use_escalation = semantic_policy.primary_uses_escalation_client if semantic_policy.qwen_first else False
         reasoning_effort = semantic_policy.primary_reasoning_effort if semantic_policy.qwen_first else None
 
-        authority_brief = None if semantic_policy.primary_model_first else cognitive_brief
         payload: dict[str, Any] = {}
         host._set_background_memory_digest_remote_inflight(True)
         try:
@@ -413,7 +382,6 @@ class AIChatOrchestrator:
                 allow_fallback=False,
                 language_hint=_runtime_language(),
                 planned_intention=chat_plan,
-                cognitive_brief=authority_brief,
             )
             if not payload and not no_fallback_mode_enabled():
                 payload = host.ai_model_router.generate_public_reply(
@@ -429,8 +397,7 @@ class AIChatOrchestrator:
                     allow_fallback=True,
                     language_hint=_runtime_language(),
                     planned_intention=chat_plan,
-                    cognitive_brief=authority_brief,
-                )
+                    )
         finally:
             host._set_background_memory_digest_remote_inflight(False)
 
@@ -452,56 +419,20 @@ class AIChatOrchestrator:
                     )
                 except Exception:
                     pass
-                # PDF annotation, pages 12-13 and 19: the legacy deterministic
-                # classifiers run only as a bounded shadow observer.  Their
-                # disagreement is logged after the primary frame exists and
-                # never mutates the plan, frame or public wording.
-                try:
-                    from runtime.semantic_shadow import GLOBAL_SEMANTIC_SHADOW_RUNNER
-
-                    GLOBAL_SEMANTIC_SHADOW_RUNNER.submit(
-                        cognition=getattr(host, "ai_pre_response_cognition", None),
-                        primary_frame=semantic_frame,
-                        user_text=user_text,
-                        recent_history=prior_public_history,
-                        turn_id=turn_id,
-                        turn_seq=turn_seq,
-                        grounding_context=grounding_context,
-                        relationship_summary=relationship_context,
-                        personality_summary=personality_context,
-                        memory_available=bool(str(memory_context or "").strip()),
-                        interrupt_context=speech_interrupt_context,
-                        metadata={"event_kind": "chat", "authority": "semantic_frame.v1"},
-                    )
-                except Exception:
-                    pass
-            gate = getattr(host, "ai_cognitive_acceptance_gate", None)
             draft_text = str(payload.get("text", "") or "")
-            violations = (
-                gate.validate(draft_text, cognitive_brief)
-                if gate is not None and not semantic_policy.primary_model_first
-                else ()
-            )
             grounding_engine = getattr(host, "source_grounding_engine", None)
             grounding_verdict = evaluate_grounded_surface(
                 grounding_engine, draft_text, report=grounding_report
             )
             grounding_annotations = grounding_verdict.annotations
-            if violations or not grounding_verdict.allowed:
-                violation_codes = [item.code for item in violations]
-                if grounding_annotations:
-                    violation_codes.append("UNGROUNDED_PERCEPTION_OR_ACTION_CLAIM")
+            if not grounding_verdict.allowed:
+                violation_codes = ["UNGROUNDED_PERCEPTION_OR_ACTION_CLAIM"]
                 host.logger.warning(
                     "[cortex v2 gate] turn=%s violations=%s; retrying public writer once",
                     turn_seq,
                     ",".join(violation_codes),
                 )
-                retry_parts: list[str] = []
-                if gate is not None and violations:
-                    retry_parts.append(gate.retry_instruction(violations, cognitive_brief))
-                if grounding_annotations:
-                    retry_parts.append(grounding_verdict.retry_instruction())
-                retry_instruction = "\n".join(retry_parts)
+                retry_instruction = grounding_verdict.retry_instruction()
                 host._set_background_memory_digest_remote_inflight(True)
                 try:
                     retried = host.ai_model_router.generate_public_reply(
@@ -517,8 +448,7 @@ class AIChatOrchestrator:
                         allow_fallback=not no_fallback_mode_enabled(),
                         language_hint=_runtime_language(),
                         planned_intention=chat_plan,
-                        cognitive_brief=authority_brief,
-                        retry_instruction=retry_instruction,
+                                retry_instruction=retry_instruction,
                         # PDF annotation, page 13: wording retry is forbidden
                         # from reinterpreting discourse/meaning.  The validated
                         # frame from the first authority call is immutable.
@@ -527,20 +457,14 @@ class AIChatOrchestrator:
                 finally:
                     host._set_background_memory_digest_remote_inflight(False)
                 if retried:
-                    retry_violations = (
-                        gate.validate(str(retried.get("text", "") or ""), cognitive_brief)
-                        if gate is not None and not semantic_policy.primary_model_first else ()
-                    )
                     retry_grounding_verdict = evaluate_grounded_surface(
                         grounding_engine, str(retried.get("text", "") or ""), report=grounding_report
                     )
                     retry_grounding = retry_grounding_verdict.annotations
-                    if not retry_violations and retry_grounding_verdict.allowed:
+                    if retry_grounding_verdict.allowed:
                         payload = retried
                     else:
-                        retry_codes = [item.code for item in retry_violations]
-                        if retry_grounding:
-                            retry_codes.append("UNGROUNDED_PERCEPTION_OR_ACTION_CLAIM")
+                        retry_codes = ["UNGROUNDED_PERCEPTION_OR_ACTION_CLAIM"] if retry_grounding else []
                         host.logger.warning(
                             "[cortex v2 gate] retry still invalid turn=%s violations=%s; suppressing unsafe surface",
                             turn_seq,

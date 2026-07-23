@@ -223,33 +223,28 @@ def _retry_after_seconds(response, default: float = 60.0) -> float:
     return max(1.0, float(default))
 
 
-def _key_pool_attempt_limit(model_name: str, pool_size: int) -> int:
-    """Giới hạn số project một request được phép đập vào khi gặp 429.
+def _key_pool_attempt_limit(_model_name: str, pool_size: int) -> int:
+    """Giới hạn số project một request được phép thử khi gặp 429.
 
-    Các model social ``gpt-oss`` chạy hậu kỳ, không đáng để một observation nhỏ
-    đi tuần qua chín key. Hai project liên tiếp cùng 429 đã đủ mạnh để coi lane
-    đang nóng và nhường cho fallback/deterministic anchor. Main model khác vẫn
-    giữ hành vi cũ trừ khi người dùng đặt giới hạn chung qua env.
+    PDF annotation, pages 6-9 and 19-20: retry fan-out is governed by one
+    provider-wide setting.  Removed-model compatibility must not silently
+    create a second quota policy.
     """
 
     size = max(1, int(pool_size or 1))
-    model = str(model_name or "").strip().lower()
-    if model.startswith("openai/gpt-oss-"):
-        raw = str(os.environ.get("ERIS_SOCIAL_KEY_POOL_MAX_ATTEMPTS", "2") or "2").strip()
-    else:
-        raw = str(os.environ.get("ERIS_KEY_POOL_MAX_ATTEMPTS", "") or "").strip()
-        if not raw:
-            return size
+    raw = str(os.environ.get("ERIS_KEY_POOL_MAX_ATTEMPTS", "") or "").strip()
+    if not raw:
+        return size
     try:
         return max(1, min(size, int(raw)))
     except (TypeError, ValueError):
-        return min(size, 2) if model.startswith("openai/gpt-oss-") else size
+        return size
 
 
 def _is_empty_output_error(exc: requests.HTTPError) -> bool:
     """Detect lỗi Groq 'model output must contain either output text or tool calls'.
 
-    Lỗi này xảy ra khi model thinking (Qwen3/GPT-OSS) với reasoning_effort=none
+    Lỗi này xảy ra khi model thinking Qwen với reasoning_effort=none
     + response_format=json_object tạo ra empty output. Cần retry mà không có
     response_format hoặc reasoning_effort.
     """
@@ -312,22 +307,17 @@ def _is_qwen_model(model_name: str) -> bool:
     return "qwen" in (model_name or "").strip().lower()
 
 
-def _is_gpt_oss_model(model_name: str) -> bool:
-    return "gpt-oss" in (model_name or "").strip().lower()
-
-
 def _model_supports_reasoning_format(model_name: str) -> bool:
-    name = (model_name or "").strip().lower()
-    return "qwen" in name or "gpt-oss" in name
+    """Return whether the configured, supported model family exposes parsed reasoning."""
+
+    return "qwen" in (model_name or "").strip().lower()
 
 
 def _normalize_reasoning_effort(model_name: str, requested: str | None) -> str | None:
-    """Ánh xạ effort đúng theo từng họ model Groq.
+    """Ánh xạ effort cho các họ Qwen còn được ERIS hỗ trợ.
 
-    * qwen/qwen3-32b reasoning mặc định nhưng KHÔNG hỗ trợ low/medium/high.
-      Không gửi field, chỉ dùng ``reasoning_format=parsed``.
-    * qwen3.6 hỗ trợ ``default``/``none``.
-    * GPT-OSS hỗ trợ ``low``/``medium``/``high``.
+    PDF cleanup annotation: removed-model compatibility left the model stack, so this
+    adapter no longer carries dormant payload rules for it.
     """
 
     name = (model_name or "").strip().lower()
@@ -336,8 +326,6 @@ def _normalize_reasoning_effort(model_name: str, requested: str | None) -> str |
         return None
     if "qwen3.6" in name:
         return "none" if raw in {"none", "off", "0", "false"} else "default"
-    if _is_gpt_oss_model(name):
-        return raw if raw in {"low", "medium", "high"} else "medium"
     return None
 
 

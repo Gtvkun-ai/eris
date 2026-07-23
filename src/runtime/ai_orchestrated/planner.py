@@ -18,15 +18,13 @@ class IntentionPlanner:
 
     def plan_chat(self, snapshot: Mapping[str, Any], *, turn_seq: int) -> IntentionPlan:
         semantic_policy = SemanticAuthorityPolicy.from_runtime()
-        brief = dict(snapshot.get("cognitive_brief", {}) or {})
-        response_move = str(brief.get("response_move", "") or "").strip().lower()
 
         # PDF annotation, pages 4 and 12-13: normal chat no longer pays for a
         # separate remote planner before the public writer.  The main writer
         # returns semantic_frame + wording in one call.  A remote planner remains
         # only for explicit action/tool turns so existing capabilities are not
         # amputated in the name of shaving milliseconds.
-        needs_tool_planner = response_move == "execute_requested_action"
+        needs_tool_planner = bool(snapshot.get("explicit_tool_route", False))
         if semantic_policy.primary_model_first and not needs_tool_planner:
             plan = IntentionPlan.from_mapping(
                 {
@@ -41,13 +39,13 @@ class IntentionPlanner:
                     "performance_hint": "neutral",
                     "tool_intent": "",
                     "tool_input": "",
-                    "evidence_refs": list(brief.get("evidence_ids", ()) or ())[:5],
+                    "evidence_refs": [],
                     "semantics": {
                         "turn_kind": "chat_response",
                         "speech_act": "model_owned",
                         "subject_key": "current_user_turn",
                         "evidence_scope": "user_message_plus_recent_history",
-                        "continuation_key": str(brief.get("continuation_key", "none") or "none"),
+                        "continuation_key": "none",
                     },
                     "activity": {
                         "activity_kind": "unknown", "phase": "unknown", "event": "",

@@ -53,8 +53,6 @@ LANE_POLICIES: dict[str, LanePolicy] = {
     "speech_localizer": LanePolicy(35, True, 2, 10.0, 1),
     "tts_localizer": LanePolicy(35, True, 2, 10.0, 1),
     "romaji_localizer": LanePolicy(35, True, 2, 10.0, 1),
-    "semantic_shadow": LanePolicy(40, True, 2, 8.0, 1),
-    "parser": LanePolicy(40, True, 2, 8.0, 1),
     "post_observer": LanePolicy(60, True, 2, 4.0, 1),
     "memory_digest": LanePolicy(70, True, 2, 25.0, 1),
     "private_mind": LanePolicy(80, True, 1, 20.0, 1),
@@ -2013,7 +2011,6 @@ class InferenceBroker:
         model = str(request.model or "unknown").strip().lower().split("/")[-1].split(":")[0]
         model = re.sub(r"[^a-z0-9._-]+", "-", model)
         family_patterns = (
-            (r"^(gpt-oss)(?:[-_].*)?$", r"\1"),
             (r"^(qwen3(?:\.\d+)?)(?:[-_].*)?$", r"\1"),
             (r"^(llama[-_]?3(?:\.\d+)?)(?:[-_].*)?$", r"\1"),
             (r"^(gemini[-_]\d+(?:\.\d+)?)(?:[-_].*)?$", r"\1"),

@@ -25,7 +25,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
-from runtime.social_act import should_exclude_from_persistent_memory
+from .memory_surface_filter import should_exclude_from_persistent_memory
 
 try:  # package path: src/memory/memory_commit_policy.py
     from .memory_models import (

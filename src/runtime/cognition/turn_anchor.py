@@ -1,19 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Observer anchor derived from the typed semantic authority.
+"""Observer anchor derived only from ``semantic_frame.v1``.
 
-PDF annotation, pages 12-13 and 20: production code must not reconstruct open
-conversation meaning from phrase lists after the main model already emitted a
-validated ``semantic_frame.v1``.  The old lexical helper remains as a legacy
-compatibility shim only; live observer wiring uses :func:`anchor_from_semantic_frame`.
+PDF annotation, pages 12-13 and 20
+----------------------------------
+P2 cleanup removed the lexical discourse fallback.  Observer policy may project
+an already validated frame into narrow operational hints, but it may not read
+raw user text and invent a second meaning authority.
 """
 
 from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
-
-from .frame_builder import CognitiveFrameBuilder
-from .normalization import normalize_vi
-from .specialists.discourse import DiscourseCortex
 
 
 _RELATION_HINTS = {
@@ -43,12 +40,7 @@ _FRAME_ACT_HINTS = {
 
 
 def anchor_from_semantic_frame(frame: Mapping[str, Any] | None) -> str:
-    """Map validated frame fields to the observer's narrow operational hints.
-
-    This is a typed projection, not another classifier.  It never reads raw
-    user text and therefore cannot disagree with the authority by inventing a
-    fresh meaning from punctuation or Vietnamese phrase fragments.
-    """
+    """Project typed frame fields into an observer hint without reclassification."""
 
     payload = dict(frame or {})
     if str(payload.get("version", "") or "") != "semantic_frame.v1":
@@ -62,7 +54,6 @@ def anchor_from_semantic_frame(frame: Mapping[str, Any] | None) -> str:
     if relation.startswith("clarify_"):
         return "reference_clarification"
     return _FRAME_ACT_HINTS.get(act, "unknown")
-
 
 
 def previous_assistant_from_history(
@@ -82,99 +73,4 @@ def previous_assistant_from_history(
     return ""
 
 
-def infer_current_turn_anchor(
-    user_text: str,
-    *,
-    previous_assistant_text: str = "",
-    semantic_frame: Mapping[str, Any] | None = None,
-) -> str:
-    """Legacy lexical shim. New production callers must pass ``semantic_frame``.
-
-    Kept for rollback and historical tests while the P2 cutover is canaried.
-    When a frame is present, raw text is intentionally ignored.
-    """
-
-    framed = anchor_from_semantic_frame(semantic_frame)
-    if framed != "unknown":
-        return framed
-    text = " ".join(str(user_text or "").casefold().split())
-    normalized = normalize_vi(user_text)
-    if not text:
-        return "none"
-
-    if previous_assistant_text:
-        frame = CognitiveFrameBuilder().build(
-            user_text=user_text,
-            recent_history=({"role": "assistant", "content": previous_assistant_text},),
-            turn_id="turn-anchor",
-            turn_seq=0,
-        )
-        relation = DiscourseCortex().project(frame).relation
-        hint = _RELATION_HINTS.get(relation)
-        if hint:
-            return hint
-
-    # Không có history vẫn cần một anchor mỏng cho observer fallback.
-    continuation = {
-        "roi sao", "the roi sao", "xong", "xong roi sao", "tiep di", "noi tiep",
-        "ke tiep", "nua", "nua di", "thi sao", "ehm roi sao a", "um roi sao",
-        "om roi sao", "continue",
-    }
-    stripped = normalized.strip(" ?.!…")
-    if stripped in continuation:
-        return "continuation_bid"
-    if any(
-        marker in normalized
-        for marker in (
-            "la ban a", "la em a", "la ban ha", "la em ha", "co phai ban", "co phai em",
-            "y em la gi", "y ban la gi", "cai do la gi", "cai nay la gi", "tuc la sao", "sao co",
-        )
-    ):
-        return "reference_clarification"
-    if any(
-        marker in normalized
-        for marker in (
-            "la em nghi toi se", "la ban nghi toi se", "y em la toi", "y ban la toi",
-            "em dang nghi toi", "ban dang nghi toi", "sao em lai nghi toi", "sao ban lai nghi toi",
-        )
-    ):
-        return "correction"
-    technical = (
-        "code", "repo", "log", "bug", "loi", "file", "tts", "api", "runtime",
-        "godot", "fix", "sua", "debug", "panel", "model",
-    )
-    if any(token in normalized for token in technical):
-        return "technical_request"
-    if any(token in normalized for token in ("khong phai", "y toi la", "toi noi la", "sai roi", "hieu sai", "doc lai")):
-        return "correction"
-    if any(
-        token in normalized
-        for token in (
-            "chan", "te", "may qua", "cung qua", "nhat", "phen", "khong hay", "generic",
-            "chung chung", "vo hon", "nhu bot", "support bot", "cham soc khach hang",
-            "coc loc", "lanh voi", "noi lanh", "lam mau", "khong tu nhien",
-        )
-    ):
-        return "style_criticism"
-    if any(token in normalized for token in ("sen", "tinh cam", "ngot", "diu", "coc loc", "noi gon", "noi thang")):
-        return "style_request"
-    if any(
-        marker in normalized
-        for marker in (
-            "nhin vao toi", "nhin vao tui", "nhin vao trai tim", "trai tim nho be",
-            "o ben toi", "o ben tui", "om toi", "om tui", "dung bo toi", "dung bo tui",
-        )
-    ):
-        return "closeness_bid"
-    if any(token in normalized for token in ("muon tui quen", "muon toi quen", "thich tui", "thich toi", "yeu tui", "yeu toi")):
-        return "request_reciprocity"
-    if any(token in normalized for token in ("ha", "hong", "khong")) and any(
-        token in normalized for token in ("ban muon", "em muon", "ban thich", "em thich", "ban nho", "em nho")
-    ):
-        return "request_reciprocity"
-    if any(token in text for token in ("haha", "lmao", ":))", "=))", "khịa", "trêu")):
-        return "play_bid"
-    return "unknown"
-
-
-__all__ = ["anchor_from_semantic_frame", "infer_current_turn_anchor", "previous_assistant_from_history"]
+__all__ = ["anchor_from_semantic_frame", "previous_assistant_from_history"]

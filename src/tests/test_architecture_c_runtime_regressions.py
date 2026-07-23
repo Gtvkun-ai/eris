@@ -75,12 +75,12 @@ def test_key_pool_breaker_stops_before_exhausting_every_key(monkeypatch) -> None
         may_rotate = pool.mark_rate_limited(
             10,
             lease=lease,
-            reason="http_429:openai/gpt-oss-20b",
+            reason="http_429:llama-3.1-8b-instant",
         )
         if not may_rotate:
             break
 
-    assert attempts == [0, 1]
+    assert attempts == [0, 1, 2]
     assert pool.stats()["rate_limit_bursts"] == 1
     assert pool.stats()["available"] == 0
 
@@ -200,103 +200,6 @@ def test_tutor_backend_supports_cooperative_cancel() -> None:
     assert result["answer"].fail_reason == "cancelled"
 
 
-def test_current_turn_anchor_distinguishes_style_and_reciprocity() -> None:
-    from runtime.cognition.turn_anchor import infer_current_turn_anchor
-
-    assert infer_current_turn_anchor("em sến xíu đi cho tui zui") == "style_request"
-    assert infer_current_turn_anchor("bạn muốn tui quen bạn hả") == "request_reciprocity"
-    assert infer_current_turn_anchor("bạn nói generic vl") == "style_criticism"
-    assert infer_current_turn_anchor("ehm, rồi sao á") == "continuation_bid"
-
-
-def test_cortex_v2_resolves_phrase_from_startup_opening() -> None:
-    from runtime.cognition import PreResponseCognition
-
-    brief = PreResponseCognition().analyze(
-        user_text="phần thật là phần nào",
-        recent_history=(
-            {
-                "role": "assistant",
-                "content": "Tôi không thích nói cho có mặt — nên cứ lấy phần thật trước, phần còn lại để sau.",
-            },
-        ),
-        turn_id="turn-phrase",
-        turn_seq=1,
-    )
-
-    assert brief.discourse_relation == "clarify_assistant_phrase"
-    assert brief.ambiguity_owner == "assistant"
-    assert brief.response_move == "clarify_previous_phrase"
-    assert "invent_new_premise" in brief.avoid_moves
-
-
-def test_cortex_v2_turns_direct_style_criticism_into_mandatory_repair() -> None:
-    from runtime.cognition import PreResponseCognition
-
-    brief = PreResponseCognition().analyze(
-        user_text="bạn nói generic vl",
-        recent_history=({"role": "assistant", "content": "Bạn nói rõ hơn một chút đi."},),
-        turn_id="turn-style",
-        turn_seq=2,
-    )
-
-    assert brief.discourse_relation == "style_feedback"
-    assert brief.response_move == "repair_previous_response"
-    assert brief.assistant_fault_probability >= 0.80
-    assert "ask_user_to_repeat_feedback" in brief.avoid_moves
-
-
-def test_cortex_v2_continuation_bid_assigns_ambiguity_to_eris() -> None:
-    from runtime.cognition import PreResponseCognition
-
-    brief = PreResponseCognition().analyze(
-        user_text="ehm, rồi sao á",
-        recent_history=(
-            {"role": "assistant", "content": "Tôi không ồn, nhưng cũng không dễ bị bỏ qua."},
-        ),
-        turn_id="turn-continuation",
-        turn_seq=3,
-    )
-
-    assert brief.discourse_relation == "continue_assistant_move"
-    assert brief.ambiguity_owner == "assistant"
-    assert brief.response_move == "self_elaborate"
-    assert brief.primary_goal == "complete_previous_assistant_implication"
-    assert "broad_clarification" in brief.avoid_moves
-
-
-def test_cortex_v2_gate_rejects_assistant_owned_deflection() -> None:
-    from runtime.cognition import CognitiveAcceptanceGate, PreResponseCognition
-
-    brief = PreResponseCognition().analyze(
-        user_text="ehm, rồi sao á",
-        recent_history=({"role": "assistant", "content": "Tôi không ồn, nhưng cũng không dễ bị bỏ qua."},),
-        turn_id="turn-gate",
-        turn_seq=4,
-    )
-    violations = CognitiveAcceptanceGate().validate(
-        "Rồi thì... bạn muốn mình nói tiếp phần nào?",
-        brief,
-    )
-    assert [item.code for item in violations] == ["ASSISTANT_OWNED_AMBIGUITY_DEFLECTED"]
-
-
-def test_cortex_v2_gate_accepts_self_elaboration() -> None:
-    from runtime.cognition import CognitiveAcceptanceGate, PreResponseCognition
-
-    brief = PreResponseCognition().analyze(
-        user_text="rồi sao?",
-        recent_history=({"role": "assistant", "content": "Tôi không ồn, nhưng cũng không dễ bị bỏ qua."},),
-        turn_id="turn-gate-ok",
-        turn_seq=5,
-    )
-    violations = CognitiveAcceptanceGate().validate(
-        "Rồi thì bạn vừa quay lại hỏi tiếp đấy thôi. Câu trước tự chứng minh được một nửa rồi.",
-        brief,
-    )
-    assert violations == ()
-
-
 def test_observer_anchor_overrides_generic_feedback_unknown_frame() -> None:
     from runtime.ai_orchestrated.contracts import CognitiveObservation
 
@@ -309,9 +212,15 @@ def test_observer_anchor_overrides_generic_feedback_unknown_frame() -> None:
     )
     anchored = AIRuntimeModelRouter._apply_deterministic_observation_anchor(
         unknown,
-        user_text="bạn nói generic vl",
+        user_text="raw text is deliberately ignored",
         assistant_text="Ừ, vì câu đó generic thật.",
         event_kind="chat",
+        semantic_frame={
+            "version": "semantic_frame.v1",
+            "discourse_relation": "style_feedback",
+            "user_act": "style_criticism",
+            "target": "assistant",
+        },
     )
 
     assert anchored.user_act == "style_criticism"

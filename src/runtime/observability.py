@@ -355,7 +355,7 @@ class ErisObservability:
                 "remote_calls_per_user_turn", "input_tokens_by_lane",
                 "output_tokens_by_lane", "rate_limit_429_",
                 "retry_after_", "optional_background_", "observer_",
-                "semantic_shadow_", "prompt_hard_cap",
+                "prompt_hard_cap",
             ),
             "runtime_hardening": (
                 "director_semantic_", "false_success_action_", "action_confirmation_",

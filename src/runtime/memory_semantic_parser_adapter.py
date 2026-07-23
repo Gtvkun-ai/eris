@@ -193,7 +193,7 @@ class RuntimeSemanticParser:
         from runtime.work_keys import stable_work_key
         work_key = stable_work_key("memory_semantic", text)
         with inference_context(
-            "semantic_shadow",
+            "memory_digest",
             optional=True,
             timeout_seconds=self.timeout_seconds,
             cancel_scope="background:memory_semantic_parser",

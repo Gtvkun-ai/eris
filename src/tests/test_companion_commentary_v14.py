@@ -73,20 +73,16 @@ def test_heart_metaphor_stays_in_conversation_instead_of_web_route() -> None:
     assert "web_access_or_search_result" not in report.missing_evidence
 
 
-def test_relational_bid_gets_warm_guarded_brief_without_literal_vision() -> None:
-    from runtime.cognition import PreResponseCognition
+def test_relational_bid_anchor_comes_from_typed_frame() -> None:
+    from runtime.cognition.turn_anchor import anchor_from_semantic_frame
 
-    brief = PreResponseCognition().analyze(
-        user_text="ý là nhìn vào trái tim nhỏ bé này",
-        recent_history=({"role": "assistant", "content": "Tôi đang chú ý đây."},),
-        turn_id="relational-bid",
-        turn_seq=11,
-    )
-    assert brief.discourse_relation == "relational_bid"
-    assert brief.user_act == "closeness_bid"
-    assert brief.response_move == "respond_to_relational_bid"
-    assert brief.delivery == "warm_guarded_presence"
-    assert "literal_vision_claim_without_sensor" in brief.avoid_moves
+    frame = {
+        "version": "semantic_frame.v1",
+        "discourse_relation": "relational_bid",
+        "user_act": "closeness_bid",
+        "target": "assistant",
+    }
+    assert anchor_from_semantic_frame(frame) == "closeness_bid"
 
 
 def test_self_turn_does_not_release_baton_while_chat_generation_is_active(monkeypatch) -> None:

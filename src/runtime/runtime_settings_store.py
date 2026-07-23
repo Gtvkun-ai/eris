@@ -793,7 +793,7 @@ def _coerce_setting(path: str, value: Any, expected: Any) -> tuple[bool, Any]:
     # rất sáng tạo trong việc nhập 9000 worker rồi hỏi sao máy nóng.
     enum_values: dict[str, set[str]] = {
         "chat.language": {"vi", "ja", "en"},
-        "chat.semantic_authority_mode": {"primary_model", "qwen_first", "legacy"},
+        "chat.semantic_authority_mode": {"primary_model"},
         "chat.reasoning_effort": {"low", "medium", "high"},
         "chat.critique_mode": {"off", "advisory", "bounded_refine"},
         "chat.director_candidate_mode": {"off", "adaptive", "always"},

@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Cortex V2: specialist read-only -> bounded brief -> planner."""
+"""Typed semantic-frame projections retained after Cortex V2 cleanup."""
 
-from .acceptance import CognitiveAcceptanceGate, CognitiveViolation
-from .engine import PreResponseCognition
+from .turn_anchor import anchor_from_semantic_frame, previous_assistant_from_history
 
-__all__ = ["CognitiveAcceptanceGate", "CognitiveViolation", "PreResponseCognition"]
+__all__ = ["anchor_from_semantic_frame", "previous_assistant_from_history"]

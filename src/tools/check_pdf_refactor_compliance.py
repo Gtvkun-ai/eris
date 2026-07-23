@@ -26,7 +26,7 @@ REQUIRED_FILES = {
     "runtime/work_keys.py": "stable cross-process work identity",
     "runtime/pdf_rollout.py": "shadow/canary/kill-switch rollout",
     "runtime/semantic_frame.py": "typed semantic authority invariants",
-    "runtime/semantic_shadow.py": "legacy classifier shadow comparison",
+    "runtime/cognition/turn_anchor.py": "typed semantic-frame observer projection",
     "runtime/degraded_chat_fastpath.py": "degraded-only fast path",
     "runtime/topic_budget.py": "per-topic tutor budget",
     "tools/report_pdf_acceptance.py": "full acceptance report",
@@ -63,20 +63,38 @@ def check(root: Path) -> dict[str, Any]:
         "transport_payload_budget_rewrite": "input_degrade_supported" in transport_source
         and "maxOutputTokens" in transport_source,
     }
+    removed_paths = (
+        "runtime/semantic_shadow.py",
+        "runtime/social_act.py",
+        "runtime/social_intent_head.py",
+        "runtime/cognition/engine.py",
+        "runtime/cognition/specialists/discourse.py",
+        "runtime/cognition/specialists/semantic.py",
+    )
+    cleanup_invariants = {
+        "legacy_semantic_modules_removed": all(not (root / path).exists() for path in removed_paths),
+        "removed_model_compatibility_absent": not any(
+            token in path.read_text(encoding="utf-8", errors="ignore").lower()
+            for path in root.rglob("*.py") if "__pycache__" not in path.parts
+            for token in ("gpt" + "-oss", "gpt" + "_oss")
+        ),
+    }
     passed = (
         all(item["exists"] for item in files.values())
         and all(v6_invariants.values())
+        and all(cleanup_invariants.values())
         and remote_audit["passed"]
         and semantic_audit["passed"]
         and annotations > 0
     )
     return {
-        "schema": "eris.pdf_refactor_compliance.v3",
+        "schema": "eris.pdf_refactor_compliance.v4",
         "root": str(root),
         "passed": passed,
         "required_files": files,
         "pdf_annotation_count": annotations,
         "v6_admission_invariants": v6_invariants,
+        "v7_cleanup_invariants": cleanup_invariants,
         "remote_inference_audit": remote_audit,
         "semantic_authority_audit": semantic_audit,
         "production_metrics_verified": False,

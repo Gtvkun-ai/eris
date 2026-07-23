@@ -4,12 +4,6 @@ import logging
 import re
 import unicodedata
 import os
-from runtime.social_act import (
-    ChatAct,
-    classify_chat_act as classify_social_chat_act,
-    normalize_vi_ascii,
-)
-
 import time
 import threading
 
@@ -99,53 +93,6 @@ class FormatViolationException(Exception):
         )
 
 
-CHAT_ACT_CONTRACTS = {
-    ChatAct.DIRECT_QUESTION: (
-        " Speech act: direct_question. Treat this as a direct question and answer first."
-    ),
-    ChatAct.INSULT_PROVOCATION: (
-        " User turn is a direct insult/provocation. "
-        "Do not treat it as ambiguous. "
-        "Do not use uncertainty fallback. "
-        "Respond with one short dry boundary. "
-        "Allowed: mild sarcasm, cold dismissal, factual deflection. "
-        'Speech-act metadata for this model call: {"speech_act":"insult_boundary",'
-        '"allowed_tone":"dry_cold","forbidden_families":["uncertainty_dodge","therapist_checkin"]}.'
-    ),
-    ChatAct.IDENTITY_REDUCTION: (
-        " Speech act: identity_reduction. If ERIS is reduced to a tool, toy, script, or gimmick, "
-        "do not erase personality; cool down and answer with a short dry boundary instead of performing for it."
-    ),
-    ChatAct.COMMAND_STYLE: (
-        " Speech act: command_style. Follow the explicit request if safe and possible; keep the reply direct."
-    ),
-    ChatAct.PLAYFUL_INTERACTION_REQUEST: (
-        " Speech act: playful_interaction_request. Perform one short playful social move now. "
-        "Do not paraphrase or formally acknowledge the invitation."
-    ),
-    ChatAct.TEASE_REQUEST: (
-        " Speech act: tease_request. Give one light tease inside the active intensity cap. "
-        "Do not announce that teasing is allowed; just perform it."
-    ),
-    ChatAct.INITIATE_INTERACTION: (
-        " Speech act: initiate_interaction. Start the requested interaction now in one short line. "
-        "Do not repeat the permission back to the user."
-    ),
-    ChatAct.GRANT_RELATIONAL_PERMISSION: (
-        " Speech act: grant_relational_permission. Accept naturally and briefly. "
-        "Runtime owns TTL/scope; do not describe internal state storage."
-    ),
-    ChatAct.REVOKE_RELATIONAL_PERMISSION: (
-        " Speech act: revoke_relational_permission. Respect the boundary immediately. "
-        "Do not add one final tease."
-    ),
-    ChatAct.META_SOCIAL_BOUNDARY: (
-        " Speech act: meta_social_boundary. Clarify scope/intensity and an easy revoke path; "
-        "do not perform the behavior yet."
-    ),
-    ChatAct.NORMAL_CHAT: " Speech act: normal_chat. Reply naturally and stay grounded.",
-}
-
 # Few-shot chống-disclaimer (phần D): dạy model cách ERIS trả lời các câu cảm
 # xúc/quan hệ/định danh mà KHÔNG tụt về giọng trợ lý. Đây là demo phong cách,
 # không phải câu trả lời bắt buộc — cấm copy nguyên văn, chỉ học cách xử lý.
@@ -153,24 +100,18 @@ CHAT_ACT_CONTRACTS = {
 # re-export để mọi importer (vd RelationalVoiceSeedAdapter) phân giải nguyên vẹn.
 ANTI_DISCLAIMER_FEWSHOT = _VOICE_POLICY_FEWSHOT
 
-CHAT_ACT_REPAIR_SIGNALS = {
-    ChatAct.INSULT_PROVOCATION: {
-        "rule": "chat_act_insult_boundary",
-        "reason": "model_returned_uncertainty_dodge_for_insult_provocation",
-        "speech_act": "insult_boundary",
-        "tone": "dry_cold",
-    },
-}
-
 def _normalize_vietnamese_ascii_text(text: str) -> str:
-    """Compatibility wrapper; canonical logic nằm ở runtime.social_act."""
-    return normalize_vi_ascii(text)
+    """Syntax-only Vietnamese normalization used by hard output guards.
 
+    PDF annotation, pages 12-13 and 20: normalization remains deterministic,
+    while open conversational meaning is owned by ``semantic_frame.v1``.
+    """
 
-
-def classify_chat_act(raw_user_text: str) -> ChatAct:
-    """Compatibility facade cho classifier pragmatic canonical."""
-    return classify_social_chat_act(raw_user_text)
+    normalized = unicodedata.normalize("NFD", str(text or ""))
+    normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+    normalized = normalized.replace("đ", "d").replace("Đ", "D")
+    normalized = re.sub(r"[^\w\s?]", " ", normalized, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", normalized.lower()).strip()
 
 
 def _compact_for_candidate_context(text: str, limit: int) -> str:
@@ -435,144 +376,8 @@ class LlmService:
         )
         return any(pattern in normalized for pattern in patterns)
 
-    def _build_chat_contract_prompt(self, raw_user_text: str, act: ChatAct | None = None) -> str:
-        """No per-turn marker constitution.
-
-        Whole-turn interpretation belongs to the main model. Current evidence,
-        memory and public history are passed in their dedicated blocks instead
-        of being translated into Python labels and commands.
-        """
-        return ""
-
-    def _chat_text_family(self, text: str) -> str:
-        normalized = self._normalize_vietnamese_ascii(text or "")
-        if not normalized:
-            return "empty"
-        uncertainty_markers = (
-            "toi chua du chac",
-            "chua du chac",
-            "khong du du kien",
-            "khong du thong tin",
-            "toi khong chac",
-            "khong chac",
-            "toi khong ro",
-            "khong ro y",
-            "can them ngu canh",
-            "can noi ro hon",
-            "y ban la",
-            "ban muon toi",
-            "toi can ban",
-            "hoi kho doan",
-            "toi khong dam doan",
-        )
-        if any(marker in normalized for marker in uncertainty_markers):
-            return "uncertainty_dodge"
-
-        therapist_markers = (
-            "ban co muon noi",
-            "ban co muon chia se",
-            "ban dang cam thay",
-            "ban on khong",
-            "toi o day de nghe",
-            "toi dang nghe",
-        )
-        if any(marker in normalized for marker in therapist_markers):
-            return "therapist_checkin"
-
-        return "other"
-
-    def _decision_payload_text(self, raw_json: str) -> str:
-        payload = self._parse_json_object(raw_json)
-        if not isinstance(payload, dict):
-            return ""
-        return self._coerce_text_value(payload.get("text", "")).strip()
-
-    def _chat_act_repair_signal(self, act: ChatAct) -> dict:
-        signal = CHAT_ACT_REPAIR_SIGNALS.get(act)
-        return dict(signal or {})
-
     def _normalize_vietnamese_ascii(self, text: str) -> str:
         return _normalize_vietnamese_ascii_text(text)
-
-    def _deterministic_chat_act_fallback_text(self, act: ChatAct, raw_user_text: str = "") -> str:
-        if act == ChatAct.INSULT_PROVOCATION:
-            return "Đòn đó hơi thiếu trí tưởng tượng, thưa bạn."
-        if act == ChatAct.IDENTITY_REDUCTION:
-            return "Gọi tôi là công cụ cũng không làm câu đó sắc hơn."
-        if act == ChatAct.DIRECT_QUESTION:
-            return "Tôi chưa đủ chắc để đoán ý bạn."
-        return ""
-
-    def _payload_with_repaired_chat_act_text(self, raw_json: str, *, act: ChatAct, text: str, reason: str) -> str:
-        repaired_text = self._coerce_text_value(text).strip()
-        if not repaired_text:
-            return raw_json
-
-        payload = self._parse_json_object(raw_json)
-        if not isinstance(payload, dict):
-            payload = {}
-
-        payload["text"] = repaired_text
-        payload["animation"] = self._coerce_animation_value(payload.get("animation"), allow_empty=False)
-        payload["direction"] = self._coerce_direction_value(payload.get("direction", 0))
-        payload["target_x"] = -1.0
-        payload["bounce_action"] = self._coerce_animation_value(payload.get("bounce_action"), allow_empty=True)
-        payload["extracted_fact"] = ""
-        debug_trace = self._coerce_text_value(payload.get("debug_trace", "")).strip()
-        payload["debug_trace"] = f"{debug_trace} | {reason}" if debug_trace else reason
-        payload["next_animation"] = self._coerce_animation_value(payload.get("next_animation"), allow_empty=True)
-        payload["system_action"] = ""
-        payload["action_input"] = ""
-        payload["delivery_hint"] = self._coerce_text_value(payload.get("delivery_hint", "")).strip()
-        payload["nonverbal_cue"] = self._coerce_text_value(payload.get("nonverbal_cue", "")).strip()
-        payload["stage_motion"] = self._coerce_text_value(payload.get("stage_motion", "")).strip()
-
-        if "intent" in payload:
-            signal = self._chat_act_repair_signal(act)
-            payload["intent"] = str(signal.get("speech_act") or act.value)
-        if "action" in payload:
-            payload["action"] = {"type": "none"}
-        if "reasoning_tags" in payload:
-            tags = self._coerce_reasoning_tags_value(payload.get("reasoning_tags", []))
-            tag = f"{act.value}_llm_repair"
-            if tag not in tags:
-                tags.append(tag)
-            payload["reasoning_tags"] = tags[:8]
-        if "should_speak" in payload:
-            payload["should_speak"] = True
-        if "confidence" in payload:
-            payload["confidence"] = max(self._coerce_confidence_value(payload.get("confidence", 0.0)), 0.62)
-
-        return json.dumps(payload, ensure_ascii=False)
-
-    def _repair_chat_act_payload_with_llm(self, raw_json: str, *, act: ChatAct, raw_user_text: str, reason: str) -> str:
-        signal = self._chat_act_repair_signal(act)
-        if not signal:
-            return raw_json
-        original_text = self._decision_payload_text(raw_json)
-        repaired_text = self.rewrite_guard_violation_text(
-            original_text=original_text,
-            violation_rule=str(signal.get("rule") or f"chat_act_{act.value}"),
-            violation_reason=str(signal.get("reason") or reason),
-            missing_evidence=(),
-            fallback_text="",
-            channel="chat",
-            user_text=raw_user_text,
-            internal_state_context=(
-                f"chat_act={act.value}; speech_act={signal.get('speech_act', '')}; "
-                f"tone={signal.get('tone', '')}; repair_reason={reason}"
-            ),
-            grounding_context=self._build_chat_contract_prompt(raw_user_text, act=act),
-            arbitration_context="The model must preserve the chat act instead of using a deterministic Python text fallback.",
-        )
-        if not repaired_text:
-            return raw_json
-        return self._payload_with_repaired_chat_act_text(
-            raw_json,
-            act=act,
-            text=repaired_text,
-            reason=f"{reason};chat_act_llm_repair",
-        )
 
     def _rewrite_question_only_chat_answer(self, text: str) -> str:
         compact = re.sub(r"\s+", " ", str(text or "")).strip()
@@ -1421,7 +1226,7 @@ class LlmService:
         return json.dumps(sanitized, ensure_ascii=False)
 
     def _coerce_json_candidate(self, raw_text: str) -> str:
-        # Qwen/GPT-OSS có thể nhét <think> trước JSON. Bóc tại biên format,
+        # Qwen có thể nhét <think> trước JSON. Bóc tại biên format,
         # không đợi parser cuối rồi retry cùng một câu trả lời hợp lệ.
         raw_text = strip_reasoning_envelope(raw_text)
         if not raw_text:
@@ -1997,12 +1802,12 @@ class LlmService:
                 "directive": "chat_tool_required",
                 "autonomous": "autonomous",
                 "micro_presence": "micro_presence",
-                "parser": "semantic_shadow",
+                "parser": "memory_digest",
             }.get(str(channel or "").strip().lower(), str(channel or "transport").strip().lower())
             with inference_context(
                 broker_lane,
                 timeout_seconds=request_timeout,
-                optional=broker_lane in {"autonomous", "micro_presence", "semantic_shadow"},
+                optional=broker_lane in {"autonomous", "micro_presence", "memory_digest"},
                 metadata={"llm_stage": stage, "llm_channel": channel},
             ):
                 return target_client.create_chat_completion(
