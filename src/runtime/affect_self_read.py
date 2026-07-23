@@ -181,19 +181,28 @@ class AffectSelfReadAdapter:
             "Viết câu tự-cảm của ERIS bây giờ:"
         )
         try:
-            resp = client.create_chat_completion(
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                temperature=self.config.temperature,
-                frequency_penalty=0.2,
-                presence_penalty=0.2,
-                max_tokens=self.config.max_tokens,
-                response_format=None,
-                grammar=None,
-                timeout=self.config.timeout_seconds,
-            )
+            from runtime.inference_broker import inference_context
+            with inference_context(
+                "private_mind",
+                optional=True,
+                timeout_seconds=self.config.timeout_seconds,
+                cancel_scope="background:affect_self_read",
+                coalesce_key="affect_self_read:latest",
+                metadata={"operation": "affect_self_read"},
+            ):
+                resp = client.create_chat_completion(
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    temperature=self.config.temperature,
+                    frequency_penalty=0.2,
+                    presence_penalty=0.2,
+                    max_tokens=self.config.max_tokens,
+                    response_format=None,
+                    grammar=None,
+                    timeout=self.config.timeout_seconds,
+                )
         except Exception as exc:
             self._warn("affect_self_read gemma call failed: %s", exc)
             return ""

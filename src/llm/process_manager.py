@@ -5,6 +5,13 @@ from .client import GeminiClient, OpenAICompatibleClient, ChainedFallbackClient
 from .key_pool import get_key_pool
 
 
+def _normalize_remote_provider(provider: str) -> str:
+    value = str(provider or "").strip().lower()
+    if value in {"", "openai", "compatible", "shopaikey"}:
+        return "openai_compatible"
+    return value
+
+
 def _bootstrap_pool_key(pool) -> str:
     """Lấy key duy nhất để dựng client; request thật vẫn lease trong client."""
     if pool is None:
@@ -25,8 +32,11 @@ class RemoteModelProcessManager:
 
     def _build_remote_client(self):
         apply_secrets_to_environ()
-        provider = os.environ.get("ERIS_REMOTE_PROVIDER", "gemini").strip().lower()
+        provider = _normalize_remote_provider(os.environ.get("ERIS_REMOTE_PROVIDER", "openai_compatible"))
         remote_profile = get_provider_profile(provider, slot="remote_main")
+        # Não chính có pool riêng, không dùng chung key với Gemini/Groq phụ.
+        main_pool = get_key_pool("remote_main")
+        main_pool_key = _bootstrap_pool_key(main_pool)
 
         if provider == "gemini":
             base_url = (
@@ -45,13 +55,14 @@ class RemoteModelProcessManager:
             )
             api_key = (
                 str(remote_profile.get("api_key") or "").strip()
+                or main_pool_key
                 or get_secret("ERIS_REMOTE_API_KEY", "GEMINI_API_KEY")
             )
             if not api_key:
                 raise RuntimeError("Remote Gemini dang bat nhung chua co GEMINI_API_KEY hoac ERIS_REMOTE_API_KEY.")
             self.logger.info("Dung Gemini API tai %s voi model %s", base_url, model_name)
             try:
-                return GeminiClient(base_url=base_url, api_key=api_key, model_name=model_name, key_pool=get_key_pool("gemini"))
+                return GeminiClient(base_url=base_url, api_key=api_key, model_name=model_name, key_pool=main_pool)
             except ValueError as exc:
                 raise RuntimeError(f"Loi API key Gemini: {exc}") from exc
 
@@ -62,20 +73,23 @@ class RemoteModelProcessManager:
         model_name = (
             str(remote_profile.get("model") or "").strip()
             or str(remote_profile.get("model_name") or "").strip()
-            or os.environ.get("ERIS_REMOTE_MODEL", "gemini-3-flash-preview").strip()
+            or os.environ.get("ERIS_REMOTE_MODEL", "gpt-5.6-terra").strip()
         )
         is_groq_remote = provider == "groq" or "api.groq.com" in base_url.lower()
-        pool = get_key_pool("groq") if is_groq_remote else None
-        pool_key = _bootstrap_pool_key(pool) if pool is not None else ""
+        # Dù endpoint main là Groq hay OpenAI-compatible, credential vẫn thuộc
+        # pool remote_main riêng. Pool Groq còn lại dành cho parser/fallback.
+        pool = main_pool
+        pool_key = main_pool_key
         if is_groq_remote:
             api_key = (
                 str(remote_profile.get("api_key") or "").strip()
                 or pool_key
-                or get_secret("ERIS_GROQ_API_KEY", "ERIS_REMOTE_API_KEY", "OPENAI_API_KEY")
+                or get_secret("ERIS_REMOTE_API_KEY", "ERIS_GROQ_API_KEY", "OPENAI_API_KEY")
             )
         else:
             api_key = (
                 str(remote_profile.get("api_key") or "").strip()
+                or pool_key
                 or get_secret("ERIS_REMOTE_API_KEY", "ERIS_AGGREGATOR_API_KEY", "OPENAI_API_KEY")
             )
         if not api_key:

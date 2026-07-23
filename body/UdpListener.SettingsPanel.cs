@@ -23,11 +23,16 @@ public partial class UdpListener : Node2D
 	private Label _settingsRuntimeDetailLabel;
 	private Label _settingsRuntimeProviderSummaryLabel;
 	private Label _settingsRuntimeModelSummaryLabel;
+	private Label _settingsMainBrainEndpointLabel;
+	private Label _settingsMainBrainKeyLabel;
+	private Label _settingsMainBrainLiveLabel;
+	private Label _settingsSystemAiHealthLabel;
 	private Button _settingsRuntimeStartButton;
 	private Button _settingsRuntimeStopButton;
 	private Button _settingsRuntimeRestartButton;
 	private Control _settingsConnectionOverlay;
 	private Label _settingsConnectionFeedbackLabel;
+	private Button _settingsMainPoolStatusLabel;
 	private Button _settingsPoolStatusLabel;
 	private Button _settingsFallbackStatusLabel;
 	private Label _settingsPoolHealthLabel;
@@ -181,7 +186,25 @@ public partial class UdpListener : Node2D
 		root.AddChild(controls);
 
 		AddSettingsMainTabs(root);
-		AddSettingsModeStrip(root);
+		BuildSettingsImportDialog();
+
+		if (_settingsModePage == SettingsModePage.Voice)
+		{
+			BuildVoiceSettingsPage(root);
+			BuildSettingsConnectionOverlay(root);
+			RefreshSettingsPanel();
+			return;
+		}
+
+		if (_settingsModePage == SettingsModePage.Data)
+		{
+			BuildDataSettingsPage(root);
+			BuildSettingsConnectionOverlay(root);
+			RefreshSettingsPanel();
+			if (_processes != null && _processes.IsVisionRunning)
+				TestSettingsPool();
+			return;
+		}
 
 		if (_settingsModePage == SettingsModePage.Advanced)
 		{
@@ -198,68 +221,26 @@ public partial class UdpListener : Node2D
 			return;
 		}
 
-		var statusCard = AddSettingsCard(root, new Rect2(32f, 205f, 318f, 380f), "Runtime");
+		var statusCard = AddSettingsCard(root, new Rect2(32f, 178f, 334f, 414f), "Trạng thái Eris");
 		BuildSettingsStatusColumn(statusCard);
 
-		var poolCard = AddSettingsCard(root, new Rect2(370f, 205f, 420f, 380f), "Key pool");
-		BuildSettingsKeyPoolColumn(poolCard);
+		var brainCard = AddSettingsCard(root, new Rect2(384f, 178f, 392f, 414f), "Não chính");
+		BuildSettingsMainBrainColumn(brainCard);
 
-		var displayCard = AddSettingsCard(root, new Rect2(810f, 205f, 338f, 380f), "Giọng & cửa sổ");
-		BuildSettingsDisplayColumn(displayCard);
+		var quickCard = AddSettingsCard(root, new Rect2(794f, 178f, 354f, 414f), "Điều khiển nhanh");
+		BuildSettingsQuickControlsColumn(quickCard);
 
-		var divider = new ColorRect
-		{
-			Color = new Color(0.96f, 0.72f, 0.84f, 0.38f),
-			Position = new Vector2(32f, 604f),
-			Size = new Vector2(1116f, 1.4f),
-			MouseFilter = Control.MouseFilterEnum.Ignore,
-		};
-		root.AddChild(divider);
+		AddSettingsPageFooter(
+			root,
+			"Basic chỉ giữ trạng thái, não chính và thao tác dùng hằng ngày. Key phụ đã chuyển sang Kết nối & dữ liệu.",
+			showBackupActions: false);
 
-		var noteHeart = CreateUiLabel("♡", 24, SettingsPink);
-		noteHeart.Position = new Vector2(72f, 624f);
-		noteHeart.Size = new Vector2(32f, 30f);
-		root.AddChild(noteHeart);
+		BuildSettingsConnectionOverlay(root);
+		RefreshSettingsPanel();
+	}
 
-		var note = CreateUiLabel("Basic ghi config thật: user settings + config/secrets.json local.", 13, SettingsInkSoft);
-		note.Position = new Vector2(112f, 630f);
-		note.Size = new Vector2(420f, 24f);
-		root.AddChild(note);
-
-		_settingsStatusNoteLabel = CreateUiLabel("", 12, SettingsInk);
-		_settingsStatusNoteLabel.Position = new Vector2(112f, 646f);
-		_settingsStatusNoteLabel.Size = new Vector2(420f, 16f);
-		_settingsStatusNoteLabel.AutowrapMode = TextServer.AutowrapMode.Off;
-		_settingsStatusNoteLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
-		_settingsStatusNoteLabel.AddThemeFontSizeOverride("font_size", 10);
-		root.AddChild(_settingsStatusNoteLabel);
-
-		var backup = CreateSettingsButton("Sao lưu", BackupSettingsAndSecrets, primary: false);
-		backup.Position = new Vector2(668f, 622f);
-		backup.Size = new Vector2(92f, 38f);
-		root.AddChild(backup);
-
-		var export = CreateSettingsButton("Xuất config", ExportSanitizedSettings, primary: false);
-		export.Position = new Vector2(766f, 622f);
-		export.Size = new Vector2(104f, 38f);
-		root.AddChild(export);
-
-		var cancel = CreateSettingsButton("Hủy", CloseSettingsPanel, primary: false);
-		cancel.Position = new Vector2(876f, 622f);
-		cancel.Size = new Vector2(70f, 38f);
-		root.AddChild(cancel);
-
-		var save = CreateSettingsButton("Lưu", SaveSettingsState, primary: true);
-		save.Position = new Vector2(952f, 620f);
-		save.Size = new Vector2(78f, 42f);
-		root.AddChild(save);
-
-		var saveRestart = CreateSettingsButton("Lưu & Restart", SaveSettingsAndRestart, primary: true);
-		saveRestart.Position = new Vector2(1036f, 620f);
-		saveRestart.Size = new Vector2(108f, 42f);
-		saveRestart.AddThemeFontSizeOverride("font_size", 10);
-		root.AddChild(saveRestart);
-
+	private void BuildSettingsImportDialog()
+	{
 		_settingsImportSecretsDialog = new FileDialog
 		{
 			Title = "Nhập secrets.json",
@@ -270,28 +251,17 @@ public partial class UdpListener : Node2D
 		};
 		_settingsImportSecretsDialog.FileSelected += ImportSecretsFile;
 		_settingsPanel.AddChild(_settingsImportSecretsDialog);
-
-		BuildSettingsConnectionOverlay(root);
-		RefreshSettingsPanel();
 	}
 
 	private void AddSettingsMainTabs(Control root)
 	{
-		AddSettingsTab(root, new Rect2(42f, 118f, 340f, 40f), "♡  Cơ bản", true);
-		AddSettingsTab(root, new Rect2(420f, 118f, 340f, 40f), "♬  Giọng nói", false);
-		AddSettingsTab(root, new Rect2(798f, 118f, 340f, 40f), "▤  Dữ liệu", false);
-	}
-
-	private void AddSettingsModeStrip(Control root)
-	{
-		var label = CreateUiLabel("Chế độ cấu hình", 13, SettingsInkSoft);
-		label.Position = new Vector2(44f, 172f);
-		label.Size = new Vector2(160f, 24f);
-		root.AddChild(label);
-
-		AddSettingsSmallTab(root, new Rect2(690f, 168f, 132f, 32f), "Cơ bản", _settingsModePage == SettingsModePage.Basic, () => SwitchSettingsMode(SettingsModePage.Basic));
-		AddSettingsSmallTab(root, new Rect2(836f, 168f, 132f, 32f), "Advanced", _settingsModePage == SettingsModePage.Advanced, () => SwitchSettingsMode(SettingsModePage.Advanced));
-		AddSettingsSmallTab(root, new Rect2(982f, 168f, 156f, 32f), "△ Danger Zone", _settingsModePage == SettingsModePage.Danger, () => SwitchSettingsMode(SettingsModePage.Danger));
+		// Một hàng điều hướng thật. Bản cũ có ba tab giả bên trên và ba tab thật
+		// bên dưới, một nghi lễ thừa khá công phu chỉ để đổi một dòng status.
+		AddSettingsTab(root, new Rect2(42f, 118f, 204f, 40f), "♡  Cơ bản", _settingsModePage == SettingsModePage.Basic, () => SwitchSettingsMode(SettingsModePage.Basic));
+		AddSettingsTab(root, new Rect2(258f, 118f, 204f, 40f), "♬  Giọng nói", _settingsModePage == SettingsModePage.Voice, () => SwitchSettingsMode(SettingsModePage.Voice));
+		AddSettingsTab(root, new Rect2(474f, 118f, 232f, 40f), "▤  Kết nối & dữ liệu", _settingsModePage == SettingsModePage.Data, () => SwitchSettingsMode(SettingsModePage.Data));
+		AddSettingsTab(root, new Rect2(718f, 118f, 188f, 40f), "Advanced", _settingsModePage == SettingsModePage.Advanced, () => SwitchSettingsMode(SettingsModePage.Advanced));
+		AddSettingsTab(root, new Rect2(918f, 118f, 220f, 40f), "△  Danger Zone", _settingsModePage == SettingsModePage.Danger, () => SwitchSettingsMode(SettingsModePage.Danger));
 	}
 
 	private Panel AddSettingsCard(Control parent, Rect2 rect, string title)
@@ -315,20 +285,18 @@ public partial class UdpListener : Node2D
 
 	private void BuildSettingsStatusColumn(Control parent)
 	{
-		// Runtime chỉ điều khiển tiến trình. Cấu hình model/API được mở ở một editor riêng,
-		// tránh bắt người dùng vừa nhìn PID vừa giải mã endpoint trong cùng một ô bé tí.
 		_settingsBrainStatusLabel = CreateSettingsChip("Brain", true);
 		_settingsBrainStatusLabel.Position = new Vector2(18f, 48f);
-		_settingsBrainStatusLabel.Size = new Vector2(264f, 30f);
+		_settingsBrainStatusLabel.Size = new Vector2(parent.Size.X - 36f, 30f);
 		parent.AddChild(_settingsBrainStatusLabel);
 
 		_settingsRuntimeDetailLabel = CreateUiLabel("PID — · chưa chạy", 10, SettingsInkSoft);
 		_settingsRuntimeDetailLabel.Position = new Vector2(20f, 80f);
-		_settingsRuntimeDetailLabel.Size = new Vector2(260f, 20f);
+		_settingsRuntimeDetailLabel.Size = new Vector2(parent.Size.X - 40f, 20f);
 		StyleSettingsSingleLineLabel(_settingsRuntimeDetailLabel);
 		parent.AddChild(_settingsRuntimeDetailLabel);
 
-		AddSettingsCompactToggle(parent, 104f, "Tự khởi động cùng Eris", AutoStartVision, ref _settingsAutoStartSwitch, () =>
+		AddSettingsCompactToggle(parent, 106f, "Tự khởi động Brain", AutoStartVision, ref _settingsAutoStartSwitch, () =>
 		{
 			AutoStartVision = !AutoStartVision;
 			ApplySettingsSwitch(_settingsAutoStartSwitch, AutoStartVision);
@@ -336,7 +304,7 @@ public partial class UdpListener : Node2D
 				? "Brain sẽ tự khởi động khi mở Eris."
 				: "Đã tắt tự khởi động Brain khi mở Eris.");
 		});
-		AddSettingsCompactToggle(parent, 132f, "Tự phục hồi khi gặp lỗi", AutoRestartVisionOnCrash, ref _settingsAutoRestartSwitch, () =>
+		AddSettingsCompactToggle(parent, 136f, "Tự phục hồi sau crash", AutoRestartVisionOnCrash, ref _settingsAutoRestartSwitch, () =>
 		{
 			AutoRestartVisionOnCrash = !AutoRestartVisionOnCrash;
 			ApplySettingsSwitch(_settingsAutoRestartSwitch, AutoRestartVisionOnCrash);
@@ -352,8 +320,8 @@ public partial class UdpListener : Node2D
 			SetSettingsStatus("Đang khởi động Brain...");
 			RefreshSettingsRuntimeStatus();
 		}, primary: true);
-		_settingsRuntimeStartButton.Position = new Vector2(18f, 166f);
-		_settingsRuntimeStartButton.Size = new Vector2(264f, 34f);
+		_settingsRuntimeStartButton.Position = new Vector2(18f, 174f);
+		_settingsRuntimeStartButton.Size = new Vector2(parent.Size.X - 36f, 36f);
 		parent.AddChild(_settingsRuntimeStartButton);
 
 		_settingsRuntimeStopButton = CreateSettingsButton("■  Dừng", () =>
@@ -362,8 +330,8 @@ public partial class UdpListener : Node2D
 			SetSettingsStatus("Đã yêu cầu dừng Brain.");
 			RefreshSettingsRuntimeStatus();
 		}, primary: false);
-		_settingsRuntimeStopButton.Position = new Vector2(18f, 166f);
-		_settingsRuntimeStopButton.Size = new Vector2(104f, 34f);
+		_settingsRuntimeStopButton.Position = new Vector2(18f, 174f);
+		_settingsRuntimeStopButton.Size = new Vector2(118f, 36f);
 		parent.AddChild(_settingsRuntimeStopButton);
 
 		_settingsRuntimeRestartButton = CreateSettingsButton("↻  Khởi động lại", () =>
@@ -373,64 +341,398 @@ public partial class UdpListener : Node2D
 			SetSettingsStatus("Đang khởi động lại Brain với cấu hình hiện tại...");
 			RefreshSettingsRuntimeStatus();
 		}, primary: true);
-		_settingsRuntimeRestartButton.Position = new Vector2(128f, 166f);
-		_settingsRuntimeRestartButton.Size = new Vector2(154f, 34f);
+		_settingsRuntimeRestartButton.Position = new Vector2(144f, 174f);
+		_settingsRuntimeRestartButton.Size = new Vector2(parent.Size.X - 162f, 36f);
 		parent.AddChild(_settingsRuntimeRestartButton);
 
 		var divider = new ColorRect
 		{
 			Color = new Color(0.96f, 0.72f, 0.84f, 0.42f),
-			Position = new Vector2(18f, 202f),
-			Size = new Vector2(264f, 1.2f),
+			Position = new Vector2(18f, 224f),
+			Size = new Vector2(parent.Size.X - 36f, 1.2f),
 			MouseFilter = Control.MouseFilterEnum.Ignore,
 		};
 		parent.AddChild(divider);
 
-		var modelTitle = CreateUiLabel("Model đang dùng", 10, SettingsInkSoft);
-		modelTitle.Position = new Vector2(20f, 208f);
-		modelTitle.Size = new Vector2(150f, 18f);
-		StyleSettingsSingleLineLabel(modelTitle);
-		parent.AddChild(modelTitle);
+		var healthTitle = CreateUiLabel("Tình trạng hệ thống", 11, SettingsInkSoft);
+		healthTitle.Position = new Vector2(20f, 234f);
+		healthTitle.Size = new Vector2(parent.Size.X - 40f, 20f);
+		StyleSettingsSingleLineLabel(healthTitle);
+		parent.AddChild(healthTitle);
 
-		var modelSummaryPanel = new Panel
-		{
-			Position = new Vector2(18f, 226f),
-			Size = new Vector2(264f, 44f),
-			MouseFilter = Control.MouseFilterEnum.Stop,
-		};
-		modelSummaryPanel.AddThemeStyleboxOverride("panel", SettingsCardStyle(
-			new Color(1f, 0.98f, 0.99f, 0.66f), SettingsBorder, 12));
-		parent.AddChild(modelSummaryPanel);
+		_settingsSystemAiHealthLabel = AddSettingsHealthRow(parent, 260f, "Kết nối AI", "Chưa kiểm tra");
+		_settingsTtsEngineStatusLabel = AddSettingsHealthRow(parent, 290f, "TTS", "Chưa kiểm tra");
+		AddSettingsHealthRow(parent, 320f, "UDP", _chatSend != null ? "Sẵn sàng" : "Chưa sẵn sàng");
+		AddSettingsHealthRow(parent, 350f, "Memory", "Theo Brain");
 
-		_settingsRuntimeProviderSummaryLabel = CreateUiLabel("Provider: —", 9, SettingsInkSoft);
-		_settingsRuntimeProviderSummaryLabel.Position = new Vector2(12f, 3f);
-		_settingsRuntimeProviderSummaryLabel.Size = new Vector2(240f, 19f);
-		StyleSettingsSingleLineLabel(_settingsRuntimeProviderSummaryLabel);
-		modelSummaryPanel.AddChild(_settingsRuntimeProviderSummaryLabel);
-
-		_settingsRuntimeModelSummaryLabel = CreateUiLabel("Model: —", 10, SettingsInk);
-		_settingsRuntimeModelSummaryLabel.Position = new Vector2(12f, 22f);
-		_settingsRuntimeModelSummaryLabel.Size = new Vector2(240f, 21f);
-		_settingsRuntimeModelSummaryLabel.TooltipText = RemoteApiModelName ?? "";
-		StyleSettingsSingleLineLabel(_settingsRuntimeModelSummaryLabel);
-		modelSummaryPanel.AddChild(_settingsRuntimeModelSummaryLabel);
-
-		var editModel = CreateSettingsButton("Model & kết nối", ShowSettingsConnectionEditor, primary: false);
-		editModel.Position = new Vector2(18f, 278f);
-		editModel.Size = new Vector2(264f, 28f);
-		parent.AddChild(editModel);
-
-		var test = CreateSettingsButton("Chẩn đoán", TestSettingsSystem, primary: false);
-		test.Position = new Vector2(18f, 312f);
-		test.Size = new Vector2(128f, 26f);
+		var test = CreateSettingsButton("Kiểm tra toàn bộ", TestSettingsPool, primary: false);
+		test.Position = new Vector2(18f, 378f);
+		test.Size = new Vector2(142f, 28f);
 		parent.AddChild(test);
 
 		var logs = CreateSettingsButton("Mở logs", OpenSettingsLogs, primary: false);
-		logs.Position = new Vector2(154f, 312f);
-		logs.Size = new Vector2(128f, 26f);
+		logs.Position = new Vector2(168f, 378f);
+		logs.Size = new Vector2(parent.Size.X - 186f, 28f);
 		parent.AddChild(logs);
 	}
 
+	private Label AddSettingsHealthRow(Control parent, float y, string name, string status)
+	{
+		var row = new Panel
+		{
+			Position = new Vector2(18f, y),
+			Size = new Vector2(parent.Size.X - 36f, 25f),
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		row.AddThemeStyleboxOverride("panel", SettingsCardStyle(
+			new Color(1f, 0.985f, 0.995f, 0.58f),
+			new Color(0.96f, 0.76f, 0.86f, 0.42f),
+			10));
+		parent.AddChild(row);
+
+		var title = CreateUiLabel(name, 9, SettingsInkSoft);
+		title.Position = new Vector2(10f, 3f);
+		title.Size = new Vector2(112f, 18f);
+		StyleSettingsSingleLineLabel(title);
+		row.AddChild(title);
+
+		var value = CreateUiLabel(status, 9, SettingsInk);
+		value.Position = new Vector2(124f, 3f);
+		value.Size = new Vector2(row.Size.X - 134f, 18f);
+		StyleSettingsSingleLineLabel(value, HorizontalAlignment.Right);
+		row.AddChild(value);
+		return value;
+	}
+
+	private void BuildSettingsMainBrainColumn(Control parent)
+	{
+		var role = CreateUiLabel("MAIN COGNITION", 9, SettingsPink);
+		role.Position = new Vector2(18f, 48f);
+		role.Size = new Vector2(parent.Size.X - 36f, 18f);
+		StyleSettingsSingleLineLabel(role);
+		parent.AddChild(role);
+
+		_settingsRuntimeModelSummaryLabel = CreateUiLabel(
+			string.IsNullOrWhiteSpace(RemoteApiModelName) ? "Chưa chọn model" : FriendlyMainBrainModelName(RemoteApiModelName),
+			22,
+			SettingsInk);
+		_settingsRuntimeModelSummaryLabel.Position = new Vector2(18f, 66f);
+		_settingsRuntimeModelSummaryLabel.Size = new Vector2(parent.Size.X - 36f, 34f);
+		_settingsRuntimeModelSummaryLabel.TooltipText = RemoteApiModelName ?? "";
+		StyleSettingsSingleLineLabel(_settingsRuntimeModelSummaryLabel);
+		parent.AddChild(_settingsRuntimeModelSummaryLabel);
+
+		var modelId = CreateUiLabel(
+			string.IsNullOrWhiteSpace(RemoteApiModelName) ? "Model ID: —" : $"Model ID: {RemoteApiModelName}",
+			9,
+			SettingsInkSoft);
+		modelId.Position = new Vector2(20f, 100f);
+		modelId.Size = new Vector2(parent.Size.X - 40f, 18f);
+		StyleSettingsSingleLineLabel(modelId);
+		modelId.TooltipText = RemoteApiModelName ?? "";
+		parent.AddChild(modelId);
+
+		var identityPanel = new Panel
+		{
+			Position = new Vector2(18f, 128f),
+			Size = new Vector2(parent.Size.X - 36f, 116f),
+			MouseFilter = Control.MouseFilterEnum.Stop,
+		};
+		identityPanel.AddThemeStyleboxOverride("panel", SettingsCardStyle(
+			new Color(1f, 0.985f, 0.995f, 0.76f),
+			SettingsBorder,
+			14));
+		parent.AddChild(identityPanel);
+
+		_settingsRuntimeProviderSummaryLabel = AddSettingsBrainInfoLine(
+			identityPanel, 10f, "Nhà cung cấp", DisplaySettingsProviderName(RemoteApiProvider));
+		_settingsMainBrainEndpointLabel = AddSettingsBrainInfoLine(
+			identityPanel, 38f, "Endpoint", CompactSettingsEndpoint(RemoteApiBaseUrl));
+		_settingsMainBrainKeyLabel = AddSettingsBrainInfoLine(
+			identityPanel, 66f, "Credential", MainBrainLocalCredentialSummary());
+		AddSettingsBrainInfoLine(identityPanel, 94f, "Nguồn cấu hình", "remote_main");
+
+		var test = CreateSettingsButton("Kiểm tra não chính", RequestMainBrainConnectionTest, primary: false);
+		test.Position = new Vector2(18f, 256f);
+		test.Size = new Vector2((parent.Size.X - 44f) * 0.52f, 34f);
+		parent.AddChild(test);
+
+		var configure = CreateSettingsButton("Cấu hình", ShowSettingsConnectionEditor, primary: true);
+		configure.Position = new Vector2(test.Position.X + test.Size.X + 8f, 256f);
+		configure.Size = new Vector2(parent.Size.X - configure.Position.X - 18f, 34f);
+		parent.AddChild(configure);
+
+		_settingsMainBrainLiveLabel = CreateUiLabel("Runtime: chưa đọc trạng thái hiệu lực", 10, SettingsInkSoft);
+		_settingsMainBrainLiveLabel.Position = new Vector2(20f, 300f);
+		_settingsMainBrainLiveLabel.Size = new Vector2(parent.Size.X - 40f, 40f);
+		_settingsMainBrainLiveLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		parent.AddChild(_settingsMainBrainLiveLabel);
+
+		var manage = CreateSettingsButton("Quản lý key não chính & key phụ", () => SwitchSettingsMode(SettingsModePage.Data), primary: false);
+		manage.Position = new Vector2(18f, 350f);
+		manage.Size = new Vector2(parent.Size.X - 36f, 34f);
+		manage.AddThemeFontSizeOverride("font_size", 10);
+		parent.AddChild(manage);
+	}
+
+	private Label AddSettingsBrainInfoLine(Control parent, float y, string name, string value)
+	{
+		var key = CreateUiLabel(name, 9, SettingsInkSoft);
+		key.Position = new Vector2(12f, y);
+		key.Size = new Vector2(112f, 20f);
+		StyleSettingsSingleLineLabel(key);
+		parent.AddChild(key);
+
+		var label = CreateUiLabel(value, 9, SettingsInk);
+		label.Position = new Vector2(126f, y);
+		label.Size = new Vector2(parent.Size.X - 138f, 20f);
+		StyleSettingsSingleLineLabel(label, HorizontalAlignment.Right);
+		label.TooltipText = value ?? "";
+		parent.AddChild(label);
+		return label;
+	}
+
+	private static string FriendlyMainBrainModelName(string model)
+	{
+		string value = (model ?? "").Trim();
+		string normalized = value.ToLowerInvariant();
+		if (normalized.Contains("gpt-5.6-terra"))
+			return "GPT-5.6 Terra";
+		if (normalized.Contains("gpt-5.6"))
+			return "GPT-5.6";
+		if (normalized.Contains("gpt-5.5"))
+			return "GPT-5.5";
+		if (normalized.Contains("gemini"))
+			return value.Replace("-", " ");
+		return value;
+	}
+
+	private static string CompactSettingsEndpoint(string baseUrl)
+	{
+		string value = (baseUrl ?? "").Trim();
+		if (string.IsNullOrWhiteSpace(value))
+			return "Chưa đặt";
+		try
+		{
+			var uri = new Uri(value);
+			return uri.Host;
+		}
+		catch
+		{
+			return value.Length <= 32 ? value : value.Substring(0, 29) + "…";
+		}
+	}
+
+	private string MainBrainLocalCredentialSummary()
+	{
+		int count = CountConfiguredMainKeys();
+		if (count <= 0)
+			return "Chưa có key";
+		return count == 1 ? "Main Brain · 1 key" : $"Main Brain · {count} key";
+	}
+
+	private void BuildSettingsQuickControlsColumn(Control parent)
+	{
+		_settingsTtsSwitch = AddSettingsSwitch(parent, new Vector2(parent.Size.X - 64f, 46f), _settingsTtsEnabled, () =>
+		{
+			_settingsTtsEnabled = !_settingsTtsEnabled;
+			ApplySettingsSwitch(_settingsTtsSwitch, _settingsTtsEnabled);
+			SendTtsRuntimeSettingsUpdate();
+			SetSettingsStatus(_settingsTtsEnabled ? "Đã bật TTS." : "Đã tắt TTS.");
+		});
+		var tts = CreateUiLabel("Giọng nói", 14, SettingsInk);
+		tts.Position = new Vector2(18f, 50f);
+		tts.Size = new Vector2(180f, 24f);
+		parent.AddChild(tts);
+
+		var voiceValue = CreateUiLabel($"{_settingsTtsVoice} · {NormalizeSettingsTtsLanguage(_settingsTtsLanguage)}", 10, SettingsInkSoft);
+		voiceValue.Position = new Vector2(20f, 78f);
+		voiceValue.Size = new Vector2(parent.Size.X - 40f, 20f);
+		StyleSettingsSingleLineLabel(voiceValue);
+		parent.AddChild(voiceValue);
+
+		_settingsTtsVolumeSlider = AddSettingsSliderRow(parent, 104f, "Âm lượng", 0d, 100d, 1d, _settingsTtsVolume * 100d,
+			v => $"{Mathf.RoundToInt((float)v)}%", out _settingsTtsVolumeValueLabel);
+		_settingsTtsVolumeSlider.ValueChanged += value =>
+		{
+			_settingsTtsVolume = Mathf.Clamp((float)value / 100f, 0f, 1f);
+			_settingsTtsVolumeValueLabel.Text = $"{Mathf.RoundToInt(_settingsTtsVolume * 100f)}%";
+			SendTtsRuntimeSettingsUpdate();
+		};
+
+		var voiceSettings = CreateSettingsButton("Mở cài đặt giọng nói", () => SwitchSettingsMode(SettingsModePage.Voice), primary: false);
+		voiceSettings.Position = new Vector2(18f, 140f);
+		voiceSettings.Size = new Vector2(parent.Size.X - 36f, 32f);
+		parent.AddChild(voiceSettings);
+
+		var line = new ColorRect
+		{
+			Color = new Color(0.96f, 0.72f, 0.84f, 0.42f),
+			Position = new Vector2(18f, 184f),
+			Size = new Vector2(parent.Size.X - 36f, 1.2f),
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		parent.AddChild(line);
+
+		var windowTitle = CreateUiLabel("Cửa sổ nhân vật", 13, SettingsInk);
+		windowTitle.Position = new Vector2(18f, 198f);
+		windowTitle.Size = new Vector2(parent.Size.X - 36f, 24f);
+		parent.AddChild(windowTitle);
+
+		AddSettingsMiniToggle(parent, new Vector2(18f, 230f), "Luôn nổi", KeepWindowAlwaysOnTop, ref _settingsAlwaysOnTopSwitch, () =>
+		{
+			KeepWindowAlwaysOnTop = !KeepWindowAlwaysOnTop;
+			ApplySettingsSwitch(_settingsAlwaysOnTopSwitch, KeepWindowAlwaysOnTop);
+			ConfigureDesktopOverlayWindow();
+		});
+		AddSettingsMiniToggle(parent, new Vector2(172f, 230f), "Trong suốt", UseTransparentWindow, ref _settingsTransparentSwitch, () =>
+		{
+			UseTransparentWindow = !UseTransparentWindow;
+			ApplySettingsSwitch(_settingsTransparentSwitch, UseTransparentWindow);
+			ConfigureDesktopOverlayWindow();
+		});
+		AddSettingsMiniToggle(parent, new Vector2(18f, 266f), "Click xuyên", EnableMousePassthrough, ref _settingsPassthroughSwitch, () =>
+		{
+			EnableMousePassthrough = !EnableMousePassthrough;
+			ApplySettingsSwitch(_settingsPassthroughSwitch, EnableMousePassthrough);
+			ConfigureDesktopOverlayWindow();
+		});
+		AddSettingsMiniToggle(parent, new Vector2(172f, 266f), "Khóa vị trí", LockCharacterPosition, ref _settingsPositionLockSwitch, () =>
+		{
+			LockCharacterPosition = !LockCharacterPosition;
+			ApplySettingsSwitch(_settingsPositionLockSwitch, LockCharacterPosition);
+			if (LockCharacterPosition)
+				CancelGrabMode();
+		});
+
+		var hint = CreateUiLabel("Các thay đổi cửa sổ áp dụng ngay. Cấu hình model/key chỉ đổi sau khi restart Brain.", 9, SettingsInkSoft);
+		hint.Position = new Vector2(18f, 316f);
+		hint.Size = new Vector2(parent.Size.X - 36f, 42f);
+		hint.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		parent.AddChild(hint);
+
+		var apply = CreateSettingsButton("Áp dụng", SaveSettingsState, primary: true);
+		apply.Position = new Vector2(18f, 364f);
+		apply.Size = new Vector2(parent.Size.X - 36f, 34f);
+		parent.AddChild(apply);
+	}
+
+	private void BuildVoiceSettingsPage(Control root)
+	{
+		var voiceCard = AddSettingsCard(root, new Rect2(118f, 178f, 338f, 414f), "Giọng nói");
+		BuildSettingsDisplayColumn(voiceCard);
+
+		var infoCard = AddSettingsCard(root, new Rect2(476f, 178f, 606f, 414f), "Trạng thái phát");
+		var intro = CreateUiLabel(
+			"Voice, ngôn ngữ và chất lượng được tách khỏi Basic để khỏi biến trang mở hằng ngày thành buồng lái TTS.",
+			11,
+			SettingsInkSoft);
+		intro.Position = new Vector2(18f, 50f);
+		intro.Size = new Vector2(infoCard.Size.X - 36f, 52f);
+		intro.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		infoCard.AddChild(intro);
+
+		_settingsTtsEngineStatusLabel = AddSettingsHealthRow(infoCard, 116f, "TTS engine", "Chưa kiểm tra");
+		AddSettingsHealthRow(infoCard, 150f, "Voice", _settingsTtsVoice);
+		AddSettingsHealthRow(infoCard, 184f, "Ngôn ngữ", NormalizeSettingsTtsLanguage(_settingsTtsLanguage));
+		AddSettingsHealthRow(infoCard, 218f, "Chất lượng", _settingsTtsQuality);
+
+		var preview = CreateSettingsButton("▶  Nghe thử", RequestTtsPreview, primary: true);
+		preview.Position = new Vector2(18f, 270f);
+		preview.Size = new Vector2(176f, 36f);
+		infoCard.AddChild(preview);
+
+		var refresh = CreateSettingsButton("Đọc trạng thái Brain", TestSettingsPool, primary: false);
+		refresh.Position = new Vector2(204f, 270f);
+		refresh.Size = new Vector2(190f, 36f);
+		infoCard.AddChild(refresh);
+
+		var note = CreateUiLabel("TTS hỗ trợ áp dụng live. Nếu worker không nạp lại được, UI sẽ báo cần restart thay vì giả vờ mọi thứ ổn.", 10, SettingsInkSoft);
+		note.Position = new Vector2(18f, 326f);
+		note.Size = new Vector2(infoCard.Size.X - 36f, 56f);
+		note.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		infoCard.AddChild(note);
+
+		AddSettingsPageFooter(root, "Giọng nói áp dụng live; Đóng chỉ đóng panel, không giả danh là nút Hủy.", showBackupActions: false);
+	}
+
+	private void BuildDataSettingsPage(Control root)
+	{
+		var brainCard = AddSettingsCard(root, new Rect2(32f, 178f, 430f, 414f), "Não chính & kết nối");
+		BuildSettingsMainBrainColumn(brainCard);
+
+		var poolCard = AddSettingsCard(root, new Rect2(480f, 178f, 668f, 414f), "Credential pools");
+		BuildSettingsKeyPoolColumn(poolCard);
+
+		AddSettingsPageFooter(
+			root,
+			"Main Brain là pool riêng. Gemini và Groq chỉ phục vụ các lane phụ, không còn bị nhập nhằng với key GPT/Terra.",
+			showBackupActions: true);
+	}
+
+	private void AddSettingsPageFooter(Control root, string noteText, bool showBackupActions)
+	{
+		var divider = new ColorRect
+		{
+			Color = new Color(0.96f, 0.72f, 0.84f, 0.38f),
+			Position = new Vector2(32f, 604f),
+			Size = new Vector2(1116f, 1.4f),
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		root.AddChild(divider);
+
+		var noteHeart = CreateUiLabel("♡", 24, SettingsPink);
+		noteHeart.Position = new Vector2(52f, 624f);
+		noteHeart.Size = new Vector2(32f, 30f);
+		root.AddChild(noteHeart);
+
+		var note = CreateUiLabel(noteText, 11, SettingsInkSoft);
+		note.Position = new Vector2(90f, 624f);
+		note.Size = new Vector2(showBackupActions ? 560f : 650f, 22f);
+		StyleSettingsSingleLineLabel(note);
+		root.AddChild(note);
+
+		_settingsStatusNoteLabel = CreateUiLabel("", 10, SettingsInk);
+		_settingsStatusNoteLabel.Position = new Vector2(90f, 646f);
+		_settingsStatusNoteLabel.Size = new Vector2(showBackupActions ? 560f : 650f, 16f);
+		StyleSettingsSingleLineLabel(_settingsStatusNoteLabel);
+		root.AddChild(_settingsStatusNoteLabel);
+
+		float closeX;
+		if (showBackupActions)
+		{
+			var backup = CreateSettingsButton("Sao lưu", BackupSettingsAndSecrets, primary: false);
+			backup.Position = new Vector2(650f, 622f);
+			backup.Size = new Vector2(88f, 38f);
+			root.AddChild(backup);
+
+			var export = CreateSettingsButton("Xuất config", ExportSanitizedSettings, primary: false);
+			export.Position = new Vector2(746f, 622f);
+			export.Size = new Vector2(104f, 38f);
+			root.AddChild(export);
+			closeX = 858f;
+		}
+		else
+		{
+			closeX = 858f;
+		}
+
+		var close = CreateSettingsButton("Đóng", CloseSettingsPanel, primary: false);
+		close.Position = new Vector2(closeX, 622f);
+		close.Size = new Vector2(76f, 38f);
+		root.AddChild(close);
+
+		var save = CreateSettingsButton("Áp dụng", SaveSettingsState, primary: true);
+		save.Position = new Vector2(closeX + 84f, 620f);
+		save.Size = new Vector2(86f, 42f);
+		root.AddChild(save);
+
+		var restart = CreateSettingsButton("Lưu & Restart", SaveSettingsAndRestart, primary: true);
+		restart.Position = new Vector2(closeX + 178f, 620f);
+		restart.Size = new Vector2(112f, 42f);
+		restart.AddThemeFontSizeOverride("font_size", 9);
+		root.AddChild(restart);
+	}
 
 	private void BuildSettingsConnectionOverlay(Control root)
 	{
@@ -457,8 +759,8 @@ public partial class UdpListener : Node2D
 
 		var card = new Panel
 		{
-			Position = new Vector2(260f, 171f),
-			Size = new Vector2(660f, 338f),
+			Position = new Vector2(260f, 154f),
+			Size = new Vector2(660f, 382f),
 			MouseFilter = Control.MouseFilterEnum.Stop,
 		};
 		card.AddThemeStyleboxOverride("panel", SettingsCardStyle(
@@ -467,7 +769,7 @@ public partial class UdpListener : Node2D
 			20));
 		_settingsConnectionOverlay.AddChild(card);
 
-		var title = CreateUiLabel("Model & kết nối", 22, SettingsInk);
+		var title = CreateUiLabel("Não chính & kết nối", 22, SettingsInk);
 		title.Position = new Vector2(22f, 16f);
 		title.Size = new Vector2(300f, 32f);
 		card.AddChild(title);
@@ -478,7 +780,7 @@ public partial class UdpListener : Node2D
 		close.AddThemeFontSizeOverride("font_size", 16);
 		card.AddChild(close);
 
-		var hint = CreateUiLabel("Đổi provider/model ở đây. Runtime chỉ giữ các nút chạy, dừng và phục hồi.", 10, SettingsInkSoft);
+		var hint = CreateUiLabel("Đây là route điều khiển toàn bộ hội thoại chính: provider + model + pool Main Brain.", 10, SettingsInkSoft);
 		hint.Position = new Vector2(24f, 50f);
 		hint.Size = new Vector2(590f, 22f);
 		StyleSettingsSingleLineLabel(hint);
@@ -532,41 +834,47 @@ public partial class UdpListener : Node2D
 		_settingsConnectionFeedbackLabel.VerticalAlignment = VerticalAlignment.Top;
 		infoPanel.AddChild(_settingsConnectionFeedbackLabel);
 
-		var test = CreateSettingsButton("Kiểm tra cấu hình", TestSettingsConnectionEditor, primary: false);
-		test.Position = new Vector2(310f, 216f);
-		test.Size = new Vector2(156f, 32f);
-		card.AddChild(test);
+		var validate = CreateSettingsButton("Kiểm tra cục bộ", TestSettingsConnectionEditor, primary: false);
+		validate.Position = new Vector2(310f, 216f);
+		validate.Size = new Vector2(150f, 32f);
+		card.AddChild(validate);
+
+		var liveTest = CreateSettingsButton("Kiểm tra request thật", RequestMainBrainConnectionTest, primary: true);
+		liveTest.Position = new Vector2(468f, 216f);
+		liveTest.Size = new Vector2(168f, 32f);
+		liveTest.AddThemeFontSizeOverride("font_size", 9);
+		card.AddChild(liveTest);
 
 		var logs = CreateSettingsButton("Mở logs", OpenSettingsLogs, primary: false);
-		logs.Position = new Vector2(474f, 216f);
-		logs.Size = new Vector2(162f, 32f);
+		logs.Position = new Vector2(310f, 258f);
+		logs.Size = new Vector2(150f, 32f);
 		card.AddChild(logs);
 
 		var cancel = CreateSettingsButton("Đóng", HideSettingsConnectionEditor, primary: false);
-		cancel.Position = new Vector2(310f, 274f);
-		cancel.Size = new Vector2(92f, 36f);
+		cancel.Position = new Vector2(468f, 258f);
+		cancel.Size = new Vector2(80f, 32f);
 		card.AddChild(cancel);
 
 		var save = CreateSettingsButton("Lưu", () =>
 		{
 			SaveSettingsState(false, writeSecrets: true);
 			RefreshSettingsRuntimeModelSummary();
-			SetSettingsConnectionStatus("Đã lưu cấu hình. Brain đang chạy vẫn dùng cấu hình cũ cho tới khi restart.");
+			SetSettingsConnectionStatus("Đã lưu route não chính. Brain đang chạy vẫn dùng route cũ tới khi restart.");
 		}, primary: false);
-		save.Position = new Vector2(410f, 274f);
-		save.Size = new Vector2(86f, 36f);
+		save.Position = new Vector2(556f, 258f);
+		save.Size = new Vector2(80f, 32f);
 		card.AddChild(save);
 
-		var apply = CreateSettingsButton("Áp dụng & Restart", () =>
+		var apply = CreateSettingsButton("Lưu route & Restart Brain", () =>
 		{
 			SaveSettingsState(false, writeSecrets: true);
 			RestartVisionProcess();
 			RefreshSettingsRuntimeModelSummary();
 			HideSettingsConnectionEditor();
-			SetSettingsStatus("Đã lưu model/kết nối và khởi động lại Brain.");
+			SetSettingsStatus("Đã lưu provider/model/pool Main Brain và khởi động lại Brain.");
 		}, primary: true);
-		apply.Position = new Vector2(504f, 272f);
-		apply.Size = new Vector2(132f, 40f);
+		apply.Position = new Vector2(310f, 304f);
+		apply.Size = new Vector2(326f, 40f);
 		apply.AddThemeFontSizeOverride("font_size", 10);
 		card.AddChild(apply);
 	}
@@ -607,10 +915,9 @@ public partial class UdpListener : Node2D
 			&& string.IsNullOrWhiteSpace(RemoteApiBaseUrl))
 			problems.Add("thiếu Base URL");
 
-		string pool = KeyPoolKindFromProvider(RemoteApiProvider, RemoteApiBaseUrl);
-		int keys = IsGroqPool(pool) ? CountConfiguredGroqKeys() : CountConfiguredGeminiKeys();
+		int keys = CountConfiguredMainKeys();
 		if (keys <= 0)
-			problems.Add($"pool {pool} chưa có key");
+			problems.Add("pool Main Brain chưa có key");
 
 		if (problems.Count > 0)
 		{
@@ -621,29 +928,121 @@ public partial class UdpListener : Node2D
 		string runtime = _processes != null && _processes.IsVisionRunning
 			? $"Brain đang chạy PID {_processes.VisionProcessId}."
 			: "Brain đang dừng.";
-		SetSettingsConnectionStatus($"Cấu hình hợp lệ cục bộ: {DisplaySettingsProviderName(RemoteApiProvider)}, {RemoteApiModelName}, {keys} key. {runtime}");
+		SetSettingsConnectionStatus($"Cấu hình cục bộ hợp lệ: {DisplaySettingsProviderName(RemoteApiProvider)}, {FriendlyMainBrainModelName(RemoteApiModelName)}, Main Brain {keys} key. {runtime}");
 	}
 
-	private static string DisplaySettingsProviderName(string provider)
+	private string DisplaySettingsProviderName(string provider)
 	{
 		string normalized = (provider ?? "").Trim().ToLowerInvariant();
 		return normalized switch
 		{
 			"gemini" => "Gemini",
 			"groq" => "Groq",
-			"openai_compatible" => "OpenAI-compatible",
+			"openai_compatible" => (RemoteApiBaseUrl ?? "").Contains("shopaikey", StringComparison.OrdinalIgnoreCase)
+				? "ShopAIKey / OpenAI-compatible"
+				: "OpenAI-compatible",
 			_ => string.IsNullOrWhiteSpace(provider) ? "Chưa chọn" : provider,
 		};
+	}
+
+	private void RequestMainBrainConnectionTest()
+	{
+		SyncSettingsInputsToFields();
+		if (_processes == null || !_processes.IsVisionRunning)
+		{
+			SetSettingsConnectionStatus("Brain đang dừng. Lưu route rồi khởi động Brain trước khi gửi request thật.");
+			SetSettingsStatus("Không thể kiểm tra não chính vì Brain đang dừng.");
+			return;
+		}
+		if (_chatSend == null)
+		{
+			SetSettingsConnectionStatus("Kênh UDP chưa sẵn sàng.");
+			return;
+		}
+
+		string requestId = $"settings_main_{Time.GetTicksMsec()}";
+		var payload = new { type = "settings_connection_test", request_id = requestId };
+		Error error = _chatSend.PutPacket(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload)));
+		if (error == Error.Ok)
+		{
+			SetSettingsConnectionStatus("Đang gửi request 8 token bằng đúng client Main Brain đang hiệu lực…");
+			SetSettingsStatus("Đang kiểm tra não chính bằng request thật.");
+		}
+		else
+		{
+			SetSettingsConnectionStatus($"Không gửi được yêu cầu kiểm tra: {error}");
+		}
+	}
+
+	private void ApplyMainBrainHealthSnapshot(JsonElement snapshot)
+	{
+		if (snapshot.ValueKind != JsonValueKind.Object)
+			return;
+
+		bool ready = snapshot.TryGetProperty("ready", out JsonElement readyEl) && readyEl.ValueKind == JsonValueKind.True;
+		string provider = snapshot.TryGetProperty("requested_provider", out JsonElement requestedEl)
+			? requestedEl.GetString() ?? ""
+			: snapshot.TryGetProperty("provider", out JsonElement providerEl) ? providerEl.GetString() ?? "" : "";
+		string model = snapshot.TryGetProperty("model", out JsonElement modelEl) ? modelEl.GetString() ?? "" : "";
+		string baseUrl = snapshot.TryGetProperty("base_url", out JsonElement urlEl) ? urlEl.GetString() ?? "" : "";
+		string source = snapshot.TryGetProperty("config_source", out JsonElement sourceEl) ? sourceEl.GetString() ?? "runtime" : "runtime";
+		string fingerprint = snapshot.TryGetProperty("active_key_fingerprint", out JsonElement fpEl) ? fpEl.GetString() ?? "" : "";
+		int configured = snapshot.TryGetProperty("configured_keys", out JsonElement configuredEl) && configuredEl.TryGetInt32(out int parsedConfigured) ? parsedConfigured : 0;
+		int available = snapshot.TryGetProperty("available_keys", out JsonElement availableEl) && availableEl.TryGetInt32(out int parsedAvailable) ? parsedAvailable : 0;
+		string fallback = snapshot.TryGetProperty("fallback_model", out JsonElement fallbackEl) ? fallbackEl.GetString() ?? "" : "";
+
+		if (_settingsRuntimeProviderSummaryLabel != null)
+			_settingsRuntimeProviderSummaryLabel.Text = DisplaySettingsProviderName(string.IsNullOrWhiteSpace(provider) ? RemoteApiProvider : provider);
+		if (_settingsRuntimeModelSummaryLabel != null && !string.IsNullOrWhiteSpace(model))
+		{
+			_settingsRuntimeModelSummaryLabel.Text = FriendlyMainBrainModelName(model);
+			_settingsRuntimeModelSummaryLabel.TooltipText = model;
+		}
+		if (_settingsMainBrainEndpointLabel != null)
+			_settingsMainBrainEndpointLabel.Text = CompactSettingsEndpoint(string.IsNullOrWhiteSpace(baseUrl) ? RemoteApiBaseUrl : baseUrl);
+		if (_settingsMainBrainKeyLabel != null)
+		{
+			string active = string.IsNullOrWhiteSpace(fingerprint) ? "chưa có key active" : $"active …{fingerprint.Substring(Math.Max(0, fingerprint.Length - 6))}";
+			_settingsMainBrainKeyLabel.Text = $"{available}/{configured} sẵn sàng · {active}";
+			_settingsMainBrainKeyLabel.TooltipText = $"Pool Main Brain · fingerprint {fingerprint}";
+		}
+		if (_settingsSystemAiHealthLabel != null)
+			_settingsSystemAiHealthLabel.Text = ready ? "Sẵn sàng" : "Chưa sẵn sàng";
+		if (_settingsMainBrainLiveLabel != null)
+		{
+			string fallbackText = string.IsNullOrWhiteSpace(fallback) ? "" : $" · fallback {fallback}";
+			_settingsMainBrainLiveLabel.Text = ready
+				? $"Runtime: {FriendlyMainBrainModelName(model)} · nguồn {source}{fallbackText}"
+				: "Runtime: client não chính chưa sẵn sàng";
+			_settingsMainBrainLiveLabel.TooltipText = string.IsNullOrWhiteSpace(baseUrl) ? source : $"{baseUrl}\n{source}";
+		}
+	}
+
+	private static string FriendlyMainBrainConnectionError(string kind, string detail)
+	{
+		string message = kind switch
+		{
+			"invalid_key" => "Key Main Brain không hợp lệ hoặc không có quyền.",
+			"model_or_endpoint_not_found" => "Không tìm thấy model hoặc endpoint.",
+			"rate_limited" => "Provider đang giới hạn quota/rate limit.",
+			"provider_unavailable" => "Provider đang lỗi phía máy chủ.",
+			"timeout" => "Provider không phản hồi trước timeout.",
+			_ => "Không kết nối được với não chính.",
+		};
+		return string.IsNullOrWhiteSpace(detail) ? message : $"{message} {detail}";
 	}
 
 
 	private void BuildSettingsKeyPoolColumn(Control parent)
 	{
 		if (string.IsNullOrWhiteSpace(_settingsKeyPoolKind))
-			_settingsKeyPoolKind = KeyPoolKindFromProvider(RemoteApiProvider, RemoteApiBaseUrl);
+			_settingsKeyPoolKind = "main";
 		else
 			_settingsKeyPoolKind = NormalizeSettingsPoolKind(_settingsKeyPoolKind);
 
+		int mainCount = _settingsKeyDrafts.TryGetValue("main", out List<string> mainRows)
+			? NormalizeSettingsKeyRows(mainRows).Count
+			: ReadEditableKeysForPool("main").Count;
 		int geminiCount = _settingsKeyDrafts.TryGetValue("gemini", out List<string> geminiRows)
 			? NormalizeSettingsKeyRows(geminiRows).Count
 			: ReadEditableKeysForPool("gemini").Count;
@@ -651,46 +1050,56 @@ public partial class UdpListener : Node2D
 			? NormalizeSettingsKeyRows(groqRows).Count
 			: ReadEditableKeysForPool("groq").Count;
 
-		_settingsPoolStatusLabel = CreateSettingsButton($"Gemini · {geminiCount}", () => SwitchSettingsKeyPool("gemini"), primary: _settingsKeyPoolKind == "gemini");
-		_settingsPoolStatusLabel.Position = new Vector2(18f, 46f);
-		_settingsPoolStatusLabel.Size = new Vector2(184f, 30f);
-		_settingsPoolStatusLabel.TooltipText = "Chỉnh pool key Gemini";
+		float innerWidth = parent.Size.X - 36f;
+		float tabGap = 8f;
+		float tabWidth = (innerWidth - tabGap * 2f) / 3f;
+
+		_settingsMainPoolStatusLabel = CreateSettingsButton($"Main Brain · {mainCount}", () => SwitchSettingsKeyPool("main"), primary: _settingsKeyPoolKind == "main");
+		_settingsMainPoolStatusLabel.Position = new Vector2(18f, 46f);
+		_settingsMainPoolStatusLabel.Size = new Vector2(tabWidth, 30f);
+		_settingsMainPoolStatusLabel.TooltipText = "Credential dùng riêng cho model chính, ví dụ GPT-5.6 Terra";
+		parent.AddChild(_settingsMainPoolStatusLabel);
+
+		_settingsPoolStatusLabel = CreateSettingsButton($"Gemini phụ · {geminiCount}", () => SwitchSettingsKeyPool("gemini"), primary: _settingsKeyPoolKind == "gemini");
+		_settingsPoolStatusLabel.Position = new Vector2(18f + tabWidth + tabGap, 46f);
+		_settingsPoolStatusLabel.Size = new Vector2(tabWidth, 30f);
+		_settingsPoolStatusLabel.TooltipText = "Key cho TTS, private-mind hoặc lane Gemini phụ";
 		parent.AddChild(_settingsPoolStatusLabel);
 
-		_settingsFallbackStatusLabel = CreateSettingsButton($"Groq · {groqCount}", () => SwitchSettingsKeyPool("groq"), primary: _settingsKeyPoolKind == "groq");
-		_settingsFallbackStatusLabel.Position = new Vector2(218f, 46f);
-		_settingsFallbackStatusLabel.Size = new Vector2(184f, 30f);
-		_settingsFallbackStatusLabel.TooltipText = "Chỉnh pool key Groq / OpenAI-compatible";
+		_settingsFallbackStatusLabel = CreateSettingsButton($"Groq phụ · {groqCount}", () => SwitchSettingsKeyPool("groq"), primary: _settingsKeyPoolKind == "groq");
+		_settingsFallbackStatusLabel.Position = new Vector2(18f + (tabWidth + tabGap) * 2f, 46f);
+		_settingsFallbackStatusLabel.Size = new Vector2(tabWidth, 30f);
+		_settingsFallbackStatusLabel.TooltipText = "Key cho parser, social lane và fallback Groq";
 		parent.AddChild(_settingsFallbackStatusLabel);
 
 		_settingsPoolHealthLabel = CreateUiLabel("Chưa đọc trạng thái runtime", 10, SettingsInkSoft);
-		_settingsPoolHealthLabel.Position = new Vector2(20f, 78f);
-		_settingsPoolHealthLabel.Size = new Vector2(382f, 18f);
+		_settingsPoolHealthLabel.Position = new Vector2(20f, 80f);
+		_settingsPoolHealthLabel.Size = new Vector2(innerWidth - 4f, 18f);
 		StyleSettingsSingleLineLabel(_settingsPoolHealthLabel);
 		parent.AddChild(_settingsPoolHealthLabel);
 
 		var nameHeader = CreateUiLabel("Tên key", 9, SettingsInkSoft);
-		nameHeader.Position = new Vector2(28f, 97f);
-		nameHeader.Size = new Vector2(130f, 16f);
+		nameHeader.Position = new Vector2(28f, 100f);
+		nameHeader.Size = new Vector2(170f, 16f);
 		StyleSettingsSingleLineLabel(nameHeader);
 		parent.AddChild(nameHeader);
 
 		var keyHeader = CreateUiLabel("API key", 9, SettingsInkSoft);
-		keyHeader.Position = new Vector2(172f, 97f);
-		keyHeader.Size = new Vector2(120f, 16f);
+		keyHeader.Position = new Vector2(216f, 100f);
+		keyHeader.Size = new Vector2(220f, 16f);
 		StyleSettingsSingleLineLabel(keyHeader);
 		parent.AddChild(keyHeader);
 
-		var actionHeader = CreateUiLabel("Ưu tiên / xóa", 9, SettingsInkSoft);
-		actionHeader.Position = new Vector2(300f, 97f);
-		actionHeader.Size = new Vector2(100f, 16f);
+		var actionHeader = CreateUiLabel("Trạng thái / ưu tiên", 9, SettingsInkSoft);
+		actionHeader.Position = new Vector2(parent.Size.X - 180f, 100f);
+		actionHeader.Size = new Vector2(150f, 16f);
 		StyleSettingsSingleLineLabel(actionHeader, HorizontalAlignment.Right);
 		parent.AddChild(actionHeader);
 
 		var list = new Panel
 		{
-			Position = new Vector2(18f, 116f),
-			Size = new Vector2(384f, 194f),
+			Position = new Vector2(18f, 118f),
+			Size = new Vector2(innerWidth, 190f),
 			MouseFilter = Control.MouseFilterEnum.Stop,
 		};
 		list.AddThemeStyleboxOverride("panel", SettingsCardStyle(new Color(1f, 0.98f, 0.99f, 0.72f), SettingsBorder, 14));
@@ -702,7 +1111,7 @@ public partial class UdpListener : Node2D
 		var scroller = new ScrollContainer
 		{
 			Position = new Vector2(6f, 6f),
-			Size = new Vector2(372f, 182f),
+			Size = new Vector2(innerWidth - 12f, 178f),
 			HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
 			VerticalScrollMode = ScrollContainer.ScrollMode.Auto,
 			MouseFilter = Control.MouseFilterEnum.Stop,
@@ -711,6 +1120,7 @@ public partial class UdpListener : Node2D
 
 		_settingsKeyRowsBox = new VBoxContainer
 		{
+			CustomMinimumSize = new Vector2(innerWidth - 26f, 0f),
 			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
 			MouseFilter = Control.MouseFilterEnum.Stop,
 		};
@@ -725,6 +1135,7 @@ public partial class UdpListener : Node2D
 		if (keys.Count == 0)
 			AddSettingsEditableKeyRow("", DefaultSettingsKeyName(_settingsKeyPoolKind, 1));
 
+		float buttonY = 318f;
 		var add = CreateSettingsButton("＋ Thêm key", () =>
 		{
 			int next = _settingsKeyInputs.Count + 1;
@@ -737,36 +1148,47 @@ public partial class UdpListener : Node2D
 			}
 			CaptureCurrentSettingsKeyDraft();
 			RefreshSettingsPoolSelectorCounts();
-			SetSettingsStatus("Đã thêm một dòng đầy đủ. Điền Tên key và API key rồi bấm Lưu & Restart.");
+			SetSettingsStatus("Đã thêm key vào bản nháp. Áp dụng & Restart để Brain nạp pool mới.");
 		}, primary: true);
-		add.Position = new Vector2(18f, 318f);
-		add.Size = new Vector2(124f, 30f);
+		add.Position = new Vector2(18f, buttonY);
+		add.Size = new Vector2(132f, 30f);
 		parent.AddChild(add);
 
-		var import = CreateSettingsButton("Nhập tệp…", OpenImportSecretsDialog, primary: false);
-		import.Position = new Vector2(150f, 318f);
-		import.Size = new Vector2(112f, 30f);
+		var import = CreateSettingsButton("Nhập secrets…", OpenImportSecretsDialog, primary: false);
+		import.Position = new Vector2(158f, buttonY);
+		import.Size = new Vector2(132f, 30f);
 		import.TooltipText = "Nhập secrets.json; file cũ sẽ được sao lưu";
 		parent.AddChild(import);
 
-		var reload = CreateSettingsButton("↻ Đọc lại", () =>
+		var reload = CreateSettingsButton("↻ Bỏ bản nháp", () =>
 		{
 			_settingsKeyDrafts.Remove(_settingsKeyPoolKind);
 			_settingsKeyNameDrafts.Remove(_settingsKeyPoolKind);
 			_settingsSkipKeyDraftCaptureOnce = true;
 			BuildSettingsPanelUi();
-			SetSettingsStatus($"Đã bỏ bản nháp và đọc lại pool {_settingsKeyPoolKind} từ secrets.");
+			SetSettingsStatus($"Đã đọc lại pool {DisplaySettingsPoolName(_settingsKeyPoolKind)} từ secrets.");
 		}, primary: false);
-		reload.Position = new Vector2(270f, 318f);
-		reload.Size = new Vector2(132f, 30f);
+		reload.Position = new Vector2(298f, buttonY);
+		reload.Size = new Vector2(140f, 30f);
 		reload.TooltipText = "Bỏ thay đổi chưa lưu của pool đang mở";
 		parent.AddChild(reload);
 
-		var test = CreateSettingsButton("Kiểm tra trạng thái key", TestSettingsPool, primary: false);
-		test.Position = new Vector2(18f, 354f);
-		test.Size = new Vector2(384f, 26f);
+		var test = CreateSettingsButton("Kiểm tra runtime", TestSettingsPool, primary: false);
+		test.Position = new Vector2(parent.Size.X - 166f, buttonY);
+		test.Size = new Vector2(148f, 30f);
 		test.TooltipText = "Đọc key đang dùng, key sẵn sàng và cooldown từ Brain";
 		parent.AddChild(test);
+
+		var hint = CreateUiLabel(
+			_settingsKeyPoolKind == "main"
+				? "Pool Main Brain gắn trực tiếp với provider/model ở card bên trái."
+				: "Pool phụ không thay model chính; chúng chỉ phục vụ lane chuyên biệt.",
+			9,
+			SettingsInkSoft);
+		hint.Position = new Vector2(20f, 356f);
+		hint.Size = new Vector2(innerWidth - 4f, 36f);
+		hint.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		parent.AddChild(hint);
 
 		RefreshSettingsKeyRowHealthIndicators();
 	}
@@ -786,12 +1208,20 @@ public partial class UdpListener : Node2D
 
 	private static string NormalizeSettingsPoolKind(string poolKind)
 	{
-		return IsGroqPool(poolKind) ? "groq" : "gemini";
+		string kind = (poolKind ?? "").Trim().ToLowerInvariant();
+		if (kind is "main" or "main_brain" or "remote_main" or "remote")
+			return "main";
+		return IsGroqPool(kind) ? "groq" : "gemini";
 	}
 
 	private static string DisplaySettingsPoolName(string poolKind)
 	{
-		return NormalizeSettingsPoolKind(poolKind) == "groq" ? "Groq" : "Gemini";
+		return NormalizeSettingsPoolKind(poolKind) switch
+		{
+			"main" => "Main Brain",
+			"groq" => "Groq phụ",
+			_ => "Gemini phụ",
+		};
 	}
 
 	private void CaptureCurrentSettingsKeyDraft()
@@ -852,7 +1282,12 @@ public partial class UdpListener : Node2D
 
 	private static string DefaultSettingsKeyName(string poolKind, int rowNumber)
 	{
-		string provider = NormalizeSettingsPoolKind(poolKind) == "groq" ? "Groq" : "Gemini";
+		string provider = NormalizeSettingsPoolKind(poolKind) switch
+		{
+			"main" => "Main Brain",
+			"groq" => "Groq",
+			_ => "Gemini",
+		};
 		return $"{provider} {Math.Max(1, rowNumber):00}";
 	}
 
@@ -863,6 +1298,9 @@ public partial class UdpListener : Node2D
 
 	private void RefreshSettingsPoolSelectorCounts()
 	{
+		int main = _settingsKeyDrafts.TryGetValue("main", out List<string> mainRows)
+			? NormalizeSettingsKeyRows(mainRows).Count
+			: ReadEditableKeysForPool("main").Count;
 		int gemini = _settingsKeyDrafts.TryGetValue("gemini", out List<string> geminiRows)
 			? NormalizeSettingsKeyRows(geminiRows).Count
 			: ReadEditableKeysForPool("gemini").Count;
@@ -870,10 +1308,12 @@ public partial class UdpListener : Node2D
 			? NormalizeSettingsKeyRows(groqRows).Count
 			: ReadEditableKeysForPool("groq").Count;
 
+		if (_settingsMainPoolStatusLabel != null)
+			_settingsMainPoolStatusLabel.Text = $"Main Brain · {main}";
 		if (_settingsPoolStatusLabel != null)
-			_settingsPoolStatusLabel.Text = $"Gemini · {gemini}";
+			_settingsPoolStatusLabel.Text = $"Gemini phụ · {gemini}";
 		if (_settingsFallbackStatusLabel != null)
-			_settingsFallbackStatusLabel.Text = $"Groq · {groq}";
+			_settingsFallbackStatusLabel.Text = $"Groq phụ · {groq}";
 	}
 
 
@@ -1050,7 +1490,7 @@ public partial class UdpListener : Node2D
 		input.TextSubmitted += _ =>
 		{
 			SyncSettingsInputsToFields();
-			SetSettingsStatus("Đã nhận giá trị. Bấm Lưu để ghi config.");
+			SetSettingsStatus("Đã nhận giá trị. Bấm Áp dụng để ghi config.");
 		};
 		row.AddChild(input);
 		return input;
@@ -1100,9 +1540,10 @@ public partial class UdpListener : Node2D
 			return;
 
 		int rowNumber = _settingsKeyInputs.Count + 1;
+		float rowWidth = Mathf.Max(356f, _settingsKeyRowsBox.CustomMinimumSize.X);
 		var row = new Panel
 		{
-			CustomMinimumSize = new Vector2(356f, 68f),
+			CustomMinimumSize = new Vector2(rowWidth, 68f),
 			MouseFilter = Control.MouseFilterEnum.Stop,
 		};
 		row.AddThemeStyleboxOverride("panel", SettingsCardStyle(new Color(1f, 0.98f, 0.99f, 0.58f), new Color(0.96f, 0.76f, 0.86f, 0.45f), 10));
@@ -1110,7 +1551,7 @@ public partial class UdpListener : Node2D
 
 		var statusLabel = CreateUiLabel($"○ Chưa lưu · Ưu tiên {rowNumber}", 8, new Color(0.56f, 0.50f, 0.54f));
 		statusLabel.Position = new Vector2(8f, 2f);
-		statusLabel.Size = new Vector2(226f, 18f);
+		statusLabel.Size = new Vector2(rowWidth - 104f, 18f);
 		statusLabel.TooltipText = "Chưa có trạng thái runtime";
 		StyleSettingsSingleLineLabel(statusLabel);
 		row.AddChild(statusLabel);
@@ -1121,7 +1562,7 @@ public partial class UdpListener : Node2D
 			Text = string.IsNullOrWhiteSpace(displayName) ? DefaultSettingsKeyName(_settingsKeyPoolKind, rowNumber) : displayName.Trim(),
 			PlaceholderText = "Tên key",
 			Position = new Vector2(8f, 28f),
-			Size = new Vector2(138f, 28f),
+			Size = new Vector2(128f, 28f),
 			Flat = false,
 			MouseFilter = Control.MouseFilterEnum.Stop,
 		};
@@ -1142,8 +1583,8 @@ public partial class UdpListener : Node2D
 		{
 			Text = value ?? "",
 			PlaceholderText = "API key",
-			Position = new Vector2(152f, 28f),
-			Size = new Vector2(144f, 28f),
+			Position = new Vector2(142f, 28f),
+			Size = new Vector2(Mathf.Max(148f, rowWidth - 210f), 28f),
 			Flat = false,
 			Secret = true,
 			MouseFilter = Control.MouseFilterEnum.Stop,
@@ -1158,20 +1599,20 @@ public partial class UdpListener : Node2D
 			CaptureCurrentSettingsKeyDraft();
 			RefreshSettingsPoolSelectorCounts();
 			RefreshSettingsKeyRowHealthIndicators();
-			SetSettingsStatus($"Đã sửa pool {DisplaySettingsPoolName(_settingsKeyPoolKind)}. Bấm Lưu & Restart để áp dụng.");
+			SetSettingsStatus($"Đã sửa pool {DisplaySettingsPoolName(_settingsKeyPoolKind)}. Bấm Lưu & Restart để Brain nạp lại.");
 		};
 		row.AddChild(input);
 		_settingsKeyInputs.Add(input);
 
 		var moveUp = CreateSettingsCompactButton("↑", () => MoveSettingsKeyRow(input, row, -1), 10);
 		moveUp.TooltipText = "Tăng ưu tiên key";
-		moveUp.Position = new Vector2(244f, 2f);
+		moveUp.Position = new Vector2(rowWidth - 84f, 2f);
 		moveUp.Size = new Vector2(24f, 18f);
 		row.AddChild(moveUp);
 
 		var moveDown = CreateSettingsCompactButton("↓", () => MoveSettingsKeyRow(input, row, 1), 10);
 		moveDown.TooltipText = "Giảm ưu tiên key";
-		moveDown.Position = new Vector2(272f, 2f);
+		moveDown.Position = new Vector2(rowWidth - 56f, 2f);
 		moveDown.Size = new Vector2(24f, 18f);
 		row.AddChild(moveDown);
 
@@ -1183,8 +1624,8 @@ public partial class UdpListener : Node2D
 			SetSettingsStatus(input.Secret ? "Đã ẩn API key." : "Đang hiện API key; đừng chia sẻ màn hình lúc này.");
 		}, 8);
 		reveal.TooltipText = "Hiện/ẩn API key";
-		reveal.Position = new Vector2(302f, 28f);
-		reveal.Size = new Vector2(54f, 28f);
+		reveal.Position = new Vector2(rowWidth - 60f, 28f);
+		reveal.Size = new Vector2(52f, 28f);
 		row.AddChild(reveal);
 
 		var remove = CreateSettingsCompactButton("×", () =>
@@ -1196,10 +1637,10 @@ public partial class UdpListener : Node2D
 			CaptureCurrentSettingsKeyDraft();
 			RefreshSettingsPoolSelectorCounts();
 			RefreshSettingsKeyRowHealthIndicators();
-			SetSettingsStatus("Đã bỏ key khỏi bản nháp. Bấm Lưu để ghi thay đổi vào secrets.");
+			SetSettingsStatus("Đã bỏ key khỏi bản nháp. Bấm Áp dụng để ghi thay đổi vào secrets.");
 		}, 11);
 		remove.TooltipText = "Xóa key này";
-		remove.Position = new Vector2(332f, 2f);
+		remove.Position = new Vector2(rowWidth - 28f, 2f);
 		remove.Size = new Vector2(24f, 18f);
 		row.AddChild(remove);
 
@@ -1295,9 +1736,9 @@ public partial class UdpListener : Node2D
 			tex.Texture = on ? _switchOnTexture : _switchOffTexture;
 	}
 
-	private void AddSettingsTab(Control parent, Rect2 rect, string text, bool active)
+	private void AddSettingsTab(Control parent, Rect2 rect, string text, bool active, Action customAction = null)
 	{
-		var btn = CreateSettingsButton(text, () => SetSettingsStatus(SettingsTabHint(text, active)), primary: active);
+		var btn = CreateSettingsButton(text, customAction ?? (() => SetSettingsStatus(SettingsTabHint(text, active))), primary: active);
 		btn.Position = rect.Position;
 		btn.Size = rect.Size;
 		parent.AddChild(btn);
@@ -1315,9 +1756,9 @@ public partial class UdpListener : Node2D
 	private static string SettingsTabHint(string text, bool active)
 	{
 		if (active)
-			return "Đang chỉnh Basic: runtime, key pool, TTS, overlay.";
+			return "Đang chỉnh Basic: trạng thái, não chính, TTS và cửa sổ.";
 		if (text.Contains("Giọng", StringComparison.OrdinalIgnoreCase))
-			return "Giọng nói cơ bản nằm ở card Giọng & cửa sổ.";
+			return "Giọng nói có trang riêng với voice, ngôn ngữ, chất lượng và nghe thử.";
 		if (text.Contains("Dữ liệu", StringComparison.OrdinalIgnoreCase))
 			return "Dữ liệu cơ bản: key pool, backup, export config.";
 		if (text.Contains("Advanced", StringComparison.OrdinalIgnoreCase))
@@ -1481,9 +1922,13 @@ public partial class UdpListener : Node2D
 				UseTransparentWindow = transparent;
 			if (TryReadBool(root, "mouse_passthrough", out bool pass))
 				EnableMousePassthrough = pass;
-			RemoteApiProvider = ReadString(root, "remote_provider", RemoteApiProvider);
-			RemoteApiBaseUrl = ReadString(root, "remote_base_url", RemoteApiBaseUrl);
-			RemoteApiModelName = ReadString(root, "remote_model", RemoteApiModelName);
+			if (_settingsLoadedSchemaVersion >= 6)
+			{
+				RemoteApiProvider = ReadString(root, "remote_provider", RemoteApiProvider);
+				RemoteApiBaseUrl = ReadString(root, "remote_base_url", RemoteApiBaseUrl);
+				RemoteApiModelName = ReadString(root, "remote_model", RemoteApiModelName);
+				NormalizeMainBrainSettingsAfterLoad();
+			}
 			_settingsTtsVoice = ReadString(root, "tts_voice", _settingsTtsVoice);
 			_settingsTtsLanguage = ReadString(root, "tts_language", _settingsTtsLanguage);
 			// Schema 4 từng ghép ngôn ngữ public và TTS nên đã ghi vi ngoài ý muốn.
@@ -1515,6 +1960,7 @@ public partial class UdpListener : Node2D
 			RemoteApiProvider = ReadSecretString(root, "ERIS_REMOTE_PROVIDER", RemoteApiProvider);
 			RemoteApiBaseUrl = ReadSecretString(root, "ERIS_REMOTE_BASE_URL", RemoteApiBaseUrl);
 			RemoteApiModelName = ReadSecretString(root, "ERIS_REMOTE_MODEL", RemoteApiModelName);
+			LoadMainBrainProviderProfile(root);
 			string tts = ReadSecretString(root, "ERIS_TTS_ENABLED", _settingsTtsEnabled ? "1" : "0");
 			_settingsTtsEnabled = IsTruthy(tts);
 			_settingsTtsVoice = ReadSecretString(root, "ERIS_TTS_VOICE", _settingsTtsVoice);
@@ -1529,6 +1975,37 @@ public partial class UdpListener : Node2D
 		catch (Exception ex)
 		{
 			RunLogger.LogErr($"[Settings] Khong doc duoc config/secrets.json: {ex.Message}");
+		}
+	}
+
+	private void LoadMainBrainProviderProfile(JsonElement root)
+	{
+		if (!root.TryGetProperty("providers", out JsonElement providers) || providers.ValueKind != JsonValueKind.Object)
+			return;
+		string provider = NormalizeProviderProfileKey(RemoteApiProvider);
+		if (!providers.TryGetProperty(provider, out JsonElement providerNode) || providerNode.ValueKind != JsonValueKind.Object)
+			return;
+		if (!providerNode.TryGetProperty("remote_main", out JsonElement profile) || profile.ValueKind != JsonValueKind.Object)
+			return;
+		if (profile.TryGetProperty("base_url", out JsonElement baseUrl) && baseUrl.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(baseUrl.GetString()))
+			RemoteApiBaseUrl = baseUrl.GetString() ?? RemoteApiBaseUrl;
+		if (profile.TryGetProperty("model", out JsonElement model) && model.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(model.GetString()))
+			RemoteApiModelName = model.GetString() ?? RemoteApiModelName;
+	}
+
+	private void NormalizeMainBrainSettingsAfterLoad()
+	{
+		string provider = NormalizeProviderProfileKey(RemoteApiProvider);
+		string baseUrl = (RemoteApiBaseUrl ?? "").Trim();
+		string model = (RemoteApiModelName ?? "").Trim();
+		if (provider == "openai_compatible" && baseUrl.Contains("groq.com", StringComparison.OrdinalIgnoreCase))
+		{
+			RemoteApiBaseUrl = "https://api.shopaikey.com/v1";
+			if (string.IsNullOrWhiteSpace(model)
+				|| model.Contains("qwen", StringComparison.OrdinalIgnoreCase)
+				|| model.StartsWith("llama", StringComparison.OrdinalIgnoreCase)
+				|| model.Contains("gemini", StringComparison.OrdinalIgnoreCase))
+				RemoteApiModelName = "gpt-5.6-terra";
 		}
 	}
 
@@ -1566,12 +2043,20 @@ public partial class UdpListener : Node2D
 			{
 				WriteRuntimeSettingsToSecrets(backup: true);
 				WriteRuntimeSettingsToDotEnv();
-				if (_settingsModePage == SettingsModePage.Basic)
+				if (_settingsModePage is SettingsModePage.Basic or SettingsModePage.Voice)
 					SendTtsRuntimeSettingsUpdate();
 			}
 			if (showStatus)
 				SetSettingsStatus(writeSecrets
-					? (_settingsModePage == SettingsModePage.Advanced ? "Đã lưu Advanced. Dùng Áp dụng live hoặc Restart cho mục có cache." : _settingsModePage == SettingsModePage.Danger ? "Danger Zone không dùng Lưu; thao tác được thực thi qua maintenance protocol." : "Đã lưu Basic và áp dụng TTS xuống runtime.")
+					? (_settingsModePage == SettingsModePage.Advanced
+						? "Đã lưu Advanced. Dùng Áp dụng live hoặc Restart cho mục có cache."
+						: _settingsModePage == SettingsModePage.Danger
+							? "Danger Zone không dùng Lưu; thao tác được thực thi qua maintenance protocol."
+							: _settingsModePage == SettingsModePage.Voice
+								? "Đã lưu và áp dụng cấu hình giọng nói xuống runtime."
+								: _settingsModePage == SettingsModePage.Data
+									? "Đã lưu route não chính và các credential pool. Restart Brain để nạp key/model mới."
+									: "Đã lưu Basic; thay đổi cửa sổ/TTS đã áp dụng.")
 					: "Đã lưu user settings.");
 		}
 		catch (Exception ex)
@@ -1601,9 +2086,14 @@ public partial class UdpListener : Node2D
 		env["ERIS_TTS_SPEED"] = _settingsTtsSpeed.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
 		WriteAdvancedSettingsToSecrets(env);
 
-		// Ghi cả hai bản nháp. Đổi tab pool rồi lưu không còn làm mất phần đã sửa
+		// Provider/model là danh tính của não chính, nên luôn ghi profile ngay cả
+		// khi người dùng chưa mở editor key. Không còn cảnh đổi Terra nhưng profile
+		// remote_main vẫn âm thầm giữ model cũ.
+		WriteMainBrainProviderProfile(root, ReadConfiguredMainKeysFromSecretsOnly());
+
+		// Ghi cả ba bản nháp. Đổi tab pool rồi lưu không còn làm mất phần đã sửa
 		// ở tab trước, cũng không bắt người dùng lưu riêng từng provider.
-		foreach (string kind in new[] { "gemini", "groq" })
+		foreach (string kind in new[] { "main", "gemini", "groq" })
 		{
 			if (_settingsKeyDrafts.TryGetValue(kind, out List<string> draftRows))
 				ReplaceEditableKeysForPool(root, kind, NormalizeSettingsKeyRows(draftRows));
@@ -1688,6 +2178,7 @@ public partial class UdpListener : Node2D
 		if (string.IsNullOrWhiteSpace(raw)
 			|| (!raw.Contains("settings_update_ack", StringComparison.Ordinal)
 				&& !raw.Contains("settings_health_ack", StringComparison.Ordinal)
+				&& !raw.Contains("settings_connection_test_ack", StringComparison.Ordinal)
 				&& !raw.Contains("tts_preview_ack", StringComparison.Ordinal)
 				&& !raw.Contains("maintenance_", StringComparison.Ordinal)))
 			return;
@@ -1726,9 +2217,11 @@ public partial class UdpListener : Node2D
 			if (root.TryGetProperty("settings_health_ack", out JsonElement healthAck) && healthAck.ValueKind == JsonValueKind.Object)
 			{
 				ApplyAdvancedHealthSnapshot(healthAck);
+				if (healthAck.TryGetProperty("main_brain", out JsonElement mainBrain))
+					ApplyMainBrainHealthSnapshot(mainBrain);
 				if (healthAck.TryGetProperty("pools", out JsonElement pools) && pools.ValueKind == JsonValueKind.Object)
 				{
-					foreach (string kind in new[] { "gemini", "groq" })
+					foreach (string kind in new[] { "main", "gemini", "groq" })
 					{
 						if (!pools.TryGetProperty(kind, out JsonElement pool) || pool.ValueKind != JsonValueKind.Object)
 							continue;
@@ -1766,7 +2259,33 @@ public partial class UdpListener : Node2D
 						_settingsTtsEngineStatusLabel.Text = ready ? "Engine: sẵn sàng" : "Engine: chưa sẵn sàng";
 				}
 				RefreshSettingsKeyRowHealthIndicators();
-				SetSettingsStatus("Đã đọc trạng thái key pool thật từ Brain.");
+				SetSettingsStatus("Đã đọc trạng thái não chính, TTS và ba credential pool từ Brain.");
+			}
+
+			if (root.TryGetProperty("settings_connection_test_ack", out JsonElement connectionAck) && connectionAck.ValueKind == JsonValueKind.Object)
+			{
+				bool ok = connectionAck.TryGetProperty("ok", out JsonElement okEl) && okEl.ValueKind == JsonValueKind.True;
+				int latency = connectionAck.TryGetProperty("latency_ms", out JsonElement latencyEl) && latencyEl.TryGetInt32(out int parsedLatency) ? parsedLatency : 0;
+				string kind = connectionAck.TryGetProperty("error_kind", out JsonElement kindEl) ? kindEl.GetString() ?? "" : "";
+				string detail = connectionAck.TryGetProperty("error", out JsonElement detailEl) ? detailEl.GetString() ?? "" : "";
+				if (connectionAck.TryGetProperty("main_brain", out JsonElement mainBrain))
+					ApplyMainBrainHealthSnapshot(mainBrain);
+				if (ok)
+				{
+					string message = $"Kết nối thật thành công · {latency} ms · {FriendlyMainBrainModelName(RemoteApiModelName)}";
+					SetSettingsConnectionStatus(message);
+					SetSettingsStatus(message);
+					if (_settingsMainBrainLiveLabel != null)
+						_settingsMainBrainLiveLabel.Text = $"Runtime: request thật thành công · {latency} ms";
+				}
+				else
+				{
+					string message = FriendlyMainBrainConnectionError(kind, detail);
+					SetSettingsConnectionStatus(message);
+					SetSettingsStatus(message);
+					if (_settingsMainBrainLiveLabel != null)
+						_settingsMainBrainLiveLabel.Text = $"Runtime: kiểm tra thất bại · {kind}";
+				}
 			}
 
 			if (root.TryGetProperty("tts_preview_ack", out JsonElement previewAck) && previewAck.ValueKind == JsonValueKind.Object)
@@ -1825,7 +2344,7 @@ public partial class UdpListener : Node2D
 	private JsonObject BuildSettingsKeyAliasesNode()
 	{
 		var root = new JsonObject();
-		foreach (string kind in new[] { "gemini", "groq" })
+		foreach (string kind in new[] { "main", "gemini", "groq" })
 		{
 			List<string> values = _settingsKeyDrafts.TryGetValue(kind, out List<string> draftValues)
 				? new List<string>(draftValues)
@@ -1857,7 +2376,7 @@ public partial class UdpListener : Node2D
 	{
 		var state = new JsonObject
 		{
-			["version"] = 5,
+			["version"] = 6,
 			["remote_api_enabled"] = EnableRemoteCognitionApi,
 			["auto_start_brain"] = AutoStartVision,
 			["auto_restart_brain"] = AutoRestartVisionOnCrash,
@@ -1903,18 +2422,31 @@ public partial class UdpListener : Node2D
 	private void ApplyProviderDefaults(string provider)
 	{
 		string normalized = (provider ?? "").Trim().ToLowerInvariant();
-		if (normalized == "groq" || normalized == "openai_compatible")
+		if (normalized == "groq")
 		{
-			if (string.IsNullOrWhiteSpace(RemoteApiBaseUrl) || RemoteApiBaseUrl.Contains("googleapis", StringComparison.OrdinalIgnoreCase))
+			if (string.IsNullOrWhiteSpace(RemoteApiBaseUrl) || !RemoteApiBaseUrl.Contains("groq.com", StringComparison.OrdinalIgnoreCase))
 				RemoteApiBaseUrl = "https://api.groq.com/openai/v1";
-			if (string.IsNullOrWhiteSpace(RemoteApiModelName) || RemoteApiModelName.Contains("gemini", StringComparison.OrdinalIgnoreCase) || RemoteApiModelName.Contains("gemma", StringComparison.OrdinalIgnoreCase))
+			if (string.IsNullOrWhiteSpace(RemoteApiModelName) || RemoteApiModelName.Contains("gemini", StringComparison.OrdinalIgnoreCase) || RemoteApiModelName.Contains("gpt-", StringComparison.OrdinalIgnoreCase))
 				RemoteApiModelName = "llama-3.1-8b-instant";
-			RemoteApiProvider = normalized == "groq" ? "groq" : "openai_compatible";
+			RemoteApiProvider = "groq";
 			return;
 		}
-		if (string.IsNullOrWhiteSpace(RemoteApiBaseUrl) || RemoteApiBaseUrl.Contains("groq.com", StringComparison.OrdinalIgnoreCase))
+		if (normalized == "openai_compatible")
+		{
+			if (string.IsNullOrWhiteSpace(RemoteApiBaseUrl)
+				|| RemoteApiBaseUrl.Contains("googleapis", StringComparison.OrdinalIgnoreCase)
+				|| RemoteApiBaseUrl.Contains("groq.com", StringComparison.OrdinalIgnoreCase))
+				RemoteApiBaseUrl = "https://api-v2.shopaikey.com/v1";
+			if (string.IsNullOrWhiteSpace(RemoteApiModelName)
+				|| RemoteApiModelName.Contains("gemini", StringComparison.OrdinalIgnoreCase)
+				|| RemoteApiModelName.StartsWith("llama", StringComparison.OrdinalIgnoreCase))
+				RemoteApiModelName = "gpt-5.6-terra";
+			RemoteApiProvider = "openai_compatible";
+			return;
+		}
+		if (string.IsNullOrWhiteSpace(RemoteApiBaseUrl) || !RemoteApiBaseUrl.Contains("googleapis", StringComparison.OrdinalIgnoreCase))
 			RemoteApiBaseUrl = "https://generativelanguage.googleapis.com/v1beta";
-		if (string.IsNullOrWhiteSpace(RemoteApiModelName) || RemoteApiModelName.StartsWith("llama", StringComparison.OrdinalIgnoreCase))
+		if (string.IsNullOrWhiteSpace(RemoteApiModelName) || RemoteApiModelName.StartsWith("llama", StringComparison.OrdinalIgnoreCase) || RemoteApiModelName.Contains("gpt-", StringComparison.OrdinalIgnoreCase))
 			RemoteApiModelName = "gemini-2.5-flash";
 		RemoteApiProvider = "gemini";
 	}
@@ -1938,22 +2470,24 @@ public partial class UdpListener : Node2D
 	private void TestSettingsSystem()
 	{
 		SyncSettingsInputsToFields();
+		int main = CountConfiguredMainKeys();
 		int gemini = CountConfiguredGeminiKeys();
 		int groq = CountConfiguredGroqKeys();
 		string brain = _processes != null && _processes.IsVisionRunning
 			? $"brain chạy PID {_processes.VisionProcessId}"
 			: "brain dừng";
 		string secrets = File.Exists(GetSecretsPath()) ? "có secrets" : "thiếu secrets";
-		SetSettingsStatus($"OK: {brain}, provider {RemoteApiProvider}, Gemini {gemini}, Groq {groq}, TTS {_settingsTtsEnabledText()}, {secrets}.");
+		SetSettingsStatus($"OK: {brain}, main {FriendlyMainBrainModelName(RemoteApiModelName)} · {main} key, Gemini phụ {gemini}, Groq phụ {groq}, TTS {_settingsTtsEnabledText()}, {secrets}.");
 	}
 
 	private void TestSettingsPool()
 	{
 		if (_processes == null || !_processes.IsVisionRunning)
 		{
+			int main = CountConfiguredMainKeys();
 			int gemini = CountConfiguredGeminiKeys();
 			int groq = CountConfiguredGroqKeys();
-			SetSettingsStatus($"Brain đang dừng; chỉ đếm local: Gemini {gemini}, Groq {groq}.");
+			SetSettingsStatus($"Brain đang dừng; local: Main Brain {main}, Gemini phụ {gemini}, Groq phụ {groq}.");
 			return;
 		}
 		if (_chatSend == null)
@@ -1966,7 +2500,7 @@ public partial class UdpListener : Node2D
 			_settingsPoolHealthLabel.Text = "Đang đọc trạng thái runtime…";
 		var payload = new { type = "settings_health" };
 		Error error = _chatSend.PutPacket(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload)));
-		SetSettingsStatus(error == Error.Ok ? "Đang đọc trạng thái hai key pool..." : $"Không gửi được yêu cầu trạng thái: {error}");
+		SetSettingsStatus(error == Error.Ok ? "Đang đọc não chính và ba credential pool..." : $"Không gửi được yêu cầu trạng thái: {error}");
 	}
 
 
@@ -2261,13 +2795,19 @@ public partial class UdpListener : Node2D
 	private void RefreshSettingsRuntimeModelSummary()
 	{
 		if (_settingsRuntimeProviderSummaryLabel != null)
-			_settingsRuntimeProviderSummaryLabel.Text = $"Provider: {DisplaySettingsProviderName(RemoteApiProvider)}";
+			_settingsRuntimeProviderSummaryLabel.Text = DisplaySettingsProviderName(RemoteApiProvider);
 		if (_settingsRuntimeModelSummaryLabel != null)
 		{
 			string model = string.IsNullOrWhiteSpace(RemoteApiModelName) ? "Chưa chọn model" : RemoteApiModelName.Trim();
-			_settingsRuntimeModelSummaryLabel.Text = model;
+			_settingsRuntimeModelSummaryLabel.Text = FriendlyMainBrainModelName(model);
 			_settingsRuntimeModelSummaryLabel.TooltipText = model;
 		}
+		if (_settingsMainBrainEndpointLabel != null)
+			_settingsMainBrainEndpointLabel.Text = CompactSettingsEndpoint(RemoteApiBaseUrl);
+		if (_settingsMainBrainKeyLabel != null)
+			_settingsMainBrainKeyLabel.Text = MainBrainLocalCredentialSummary();
+		if (_settingsMainBrainLiveLabel != null && (_processes == null || !_processes.IsVisionRunning))
+			_settingsMainBrainLiveLabel.Text = "Runtime: Brain đang dừng; cấu hình trên là bản sẽ dùng khi khởi động.";
 	}
 
 
@@ -2376,6 +2916,11 @@ public partial class UdpListener : Node2D
 		SetSettingsStatus(error == Error.Ok ? "Đang tạo câu nghe thử..." : $"Không gửi được câu nghe thử: {error}");
 	}
 
+	private int CountConfiguredMainKeys()
+	{
+		return ReadConfiguredMainKeys().Count;
+	}
+
 	private int CountConfiguredGeminiKeys()
 	{
 		return ReadConfiguredGeminiKeys().Count;
@@ -2386,21 +2931,74 @@ public partial class UdpListener : Node2D
 		return ReadConfiguredGroqKeys().Count;
 	}
 
+	private List<string> ReadConfiguredMainKeys()
+	{
+		var keys = ReadConfiguredKeys("ERIS_REMOTE_API_KEY", "ERIS_REMOTE_FALLBACK_API_KEYS", "ERIS_AGGREGATOR_API_KEY");
+		string profileKey = ReadMainBrainProfileApiKey();
+		if (!string.IsNullOrWhiteSpace(profileKey))
+		{
+			keys.RemoveAll(value => string.Equals(value, profileKey, StringComparison.Ordinal));
+			keys.Insert(0, profileKey);
+		}
+		return keys;
+	}
+
 	private List<string> ReadConfiguredGeminiKeys()
 	{
-		return ReadConfiguredKeys("ERIS_PRIVATE_MIND_API_KEY", "ERIS_REMOTE_API_KEY", "GEMINI_API_KEY", "ERIS_SPEECH_API_KEY", "ERIS_PRIVATE_MIND_FALLBACK_API_KEYS", "ERIS_GEMINI_FALLBACK_API_KEYS");
+		return ReadConfiguredKeys("ERIS_PRIVATE_MIND_API_KEY", "GEMINI_API_KEY", "ERIS_SPEECH_API_KEY", "ERIS_PRIVATE_MIND_FALLBACK_API_KEYS", "ERIS_GEMINI_FALLBACK_API_KEYS");
 	}
 
 	private List<string> ReadConfiguredGroqKeys()
 	{
-		return ReadConfiguredKeys("ERIS_GROQ_API_KEY", "ERIS_GROQ_FALLBACK_API_KEYS", "ERIS_CHAT_FALLBACK_API_KEY", "ERIS_AGGREGATOR_API_KEY");
+		return ReadConfiguredKeys("ERIS_GROQ_API_KEY", "ERIS_GROQ_FALLBACK_API_KEYS", "ERIS_CHAT_FALLBACK_API_KEY");
+	}
+
+	private string ReadMainBrainProfileApiKey()
+	{
+		try
+		{
+			string path = GetSecretsPath();
+			if (!File.Exists(path))
+				return "";
+			using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path, Encoding.UTF8));
+			JsonElement root = doc.RootElement;
+			if (!root.TryGetProperty("providers", out JsonElement providers) || providers.ValueKind != JsonValueKind.Object)
+				return "";
+			string provider = NormalizeProviderProfileKey(RemoteApiProvider);
+			if (!providers.TryGetProperty(provider, out JsonElement providerNode) || providerNode.ValueKind != JsonValueKind.Object)
+				return "";
+			if (!providerNode.TryGetProperty("remote_main", out JsonElement profile) || profile.ValueKind != JsonValueKind.Object)
+				return "";
+			return profile.TryGetProperty("api_key", out JsonElement key) && key.ValueKind == JsonValueKind.String
+				? key.GetString() ?? ""
+				: "";
+		}
+		catch
+		{
+			return "";
+		}
 	}
 
 	private List<string> ReadEditableKeysForPool(string poolKind)
 	{
-		return IsGroqPool(poolKind)
-			? ReadConfiguredKeysFromSecretsOnly("ERIS_GROQ_API_KEY", "ERIS_GROQ_FALLBACK_API_KEYS")
-			: ReadConfiguredKeysFromSecretsOnly("ERIS_REMOTE_API_KEY", "GEMINI_API_KEY", "ERIS_PRIVATE_MIND_FALLBACK_API_KEYS", "ERIS_GEMINI_FALLBACK_API_KEYS");
+		return NormalizeSettingsPoolKind(poolKind) switch
+		{
+			"main" => ReadConfiguredMainKeysFromSecretsOnly(),
+			"groq" => ReadConfiguredKeysFromSecretsOnly("ERIS_GROQ_API_KEY", "ERIS_GROQ_FALLBACK_API_KEYS"),
+			_ => ReadConfiguredKeysFromSecretsOnly("GEMINI_API_KEY", "ERIS_PRIVATE_MIND_API_KEY", "ERIS_PRIVATE_MIND_FALLBACK_API_KEYS", "ERIS_GEMINI_FALLBACK_API_KEYS"),
+		};
+	}
+
+	private List<string> ReadConfiguredMainKeysFromSecretsOnly()
+	{
+		var keys = ReadConfiguredKeysFromSecretsOnly("ERIS_REMOTE_API_KEY", "ERIS_REMOTE_FALLBACK_API_KEYS", "ERIS_AGGREGATOR_API_KEY");
+		string profileKey = ReadMainBrainProfileApiKey();
+		if (!string.IsNullOrWhiteSpace(profileKey))
+		{
+			keys.RemoveAll(value => string.Equals(value, profileKey, StringComparison.Ordinal));
+			keys.Insert(0, profileKey);
+		}
+		return keys;
 	}
 
 	private List<string> CollectEditedSettingsKeys()
@@ -2433,12 +3031,15 @@ public partial class UdpListener : Node2D
 	}
 
 
-	private static void ReplaceEditableKeysForPool(JsonObject root, string poolKind, List<string> keys)
+	private void ReplaceEditableKeysForPool(JsonObject root, string poolKind, List<string> keys)
 	{
-		bool groq = IsGroqPool(poolKind);
-		string[] controlled = groq
-			? new[] { "ERIS_GROQ_API_KEY", "ERIS_GROQ_FALLBACK_API_KEYS" }
-			: new[] { "ERIS_REMOTE_API_KEY", "GEMINI_API_KEY", "ERIS_PRIVATE_MIND_FALLBACK_API_KEYS", "ERIS_GEMINI_FALLBACK_API_KEYS" };
+		string kind = NormalizeSettingsPoolKind(poolKind);
+		string[] controlled = kind switch
+		{
+			"main" => new[] { "ERIS_REMOTE_API_KEY", "ERIS_REMOTE_FALLBACK_API_KEYS" },
+			"groq" => new[] { "ERIS_GROQ_API_KEY", "ERIS_GROQ_FALLBACK_API_KEYS" },
+			_ => new[] { "GEMINI_API_KEY", "ERIS_PRIVATE_MIND_API_KEY", "ERIS_PRIVATE_MIND_FALLBACK_API_KEYS", "ERIS_GEMINI_FALLBACK_API_KEYS" },
+		};
 
 		RemoveControlledKeys(root, controlled);
 		foreach (string sectionName in new[] { "api_keys", "env", "secrets" })
@@ -2448,10 +3049,23 @@ public partial class UdpListener : Node2D
 		}
 
 		JsonObject apiKeys = EnsureObject(root, "api_keys");
+		if (kind == "main")
+		{
+			WriteMainBrainProviderProfile(root, keys);
+			if (keys.Count == 0)
+				return;
+			apiKeys["ERIS_REMOTE_API_KEY"] = keys[0];
+			JsonArray fallback = new();
+			for (int i = 1; i < keys.Count; i++)
+				fallback.Add(keys[i]);
+			apiKeys["ERIS_REMOTE_FALLBACK_API_KEYS"] = fallback;
+			return;
+		}
+
 		if (keys.Count == 0)
 			return;
 
-		if (groq)
+		if (kind == "groq")
 		{
 			apiKeys["ERIS_GROQ_API_KEY"] = keys[0];
 			JsonArray fallback = new();
@@ -2461,8 +3075,8 @@ public partial class UdpListener : Node2D
 			return;
 		}
 
-		apiKeys["ERIS_REMOTE_API_KEY"] = keys[0];
 		apiKeys["GEMINI_API_KEY"] = keys[0];
+		apiKeys["ERIS_PRIVATE_MIND_API_KEY"] = keys[0];
 		JsonArray privateMindFallback = new();
 		JsonArray geminiFallback = new();
 		for (int i = 1; i < keys.Count; i++)
@@ -2472,6 +3086,33 @@ public partial class UdpListener : Node2D
 		}
 		apiKeys["ERIS_PRIVATE_MIND_FALLBACK_API_KEYS"] = privateMindFallback;
 		apiKeys["ERIS_GEMINI_FALLBACK_API_KEYS"] = geminiFallback;
+	}
+
+	private void WriteMainBrainProviderProfile(JsonObject root, List<string> keys)
+	{
+		JsonObject providers = EnsureObject(root, "providers");
+		string provider = NormalizeProviderProfileKey(RemoteApiProvider);
+		JsonObject providerNode = EnsureObject(providers, provider);
+		JsonObject profile = EnsureObject(providerNode, "remote_main");
+		profile["base_url"] = RemoteApiBaseUrl ?? "";
+		profile["model"] = RemoteApiModelName ?? "";
+		if (keys != null && keys.Count > 0)
+			profile["api_key"] = keys[0];
+		else
+			profile.Remove("api_key");
+	}
+
+	private static string NormalizeProviderProfileKey(string provider)
+	{
+		string value = (provider ?? "").Trim().ToLowerInvariant();
+		return value switch
+		{
+			"openai" => "openai_compatible",
+			"compatible" => "openai_compatible",
+			"shopaikey" => "openai_compatible",
+			"" => "openai_compatible",
+			_ => value,
+		};
 	}
 
 	private static void RemoveControlledKeys(JsonObject obj, string[] names)

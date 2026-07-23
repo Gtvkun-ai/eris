@@ -283,7 +283,16 @@ class DaydreamConsolidator:
                 return dict(parsed)
             raise RuntimeError(str(getattr(result, "error", "invalid_json")))
         if callable(getattr(self.client, "create_chat_completion", None)):
-            response = self.client.create_chat_completion(messages=messages, temperature=self.config.temperature)
+            from runtime.inference_broker import inference_context
+            with inference_context(
+                "memory_digest",
+                optional=True,
+                timeout_seconds=20.0,
+                cancel_scope="background:daydream_consolidation",
+                coalesce_key="daydream:latest",
+                metadata={"operation": "daydream_consolidation"},
+            ):
+                response = self.client.create_chat_completion(messages=messages, temperature=self.config.temperature)
             content = self._extract_content(response)
             return self._parse_json_text(content)
         raise RuntimeError("unsupported_4b_client")

@@ -1985,18 +1985,38 @@ class LlmService:
             # presence_penalty vừa: chống lặp chủ đề nhưng không cắt continuity.
             _freq_pen = 0.70
             _pres_pen = 0.50
-            return target_client.create_chat_completion(
-                messages=governed_messages,
-                temperature=_temp,
-                frequency_penalty=_freq_pen,
-                presence_penalty=_pres_pen,
-                max_tokens=completion_tokens,
-                response_format={"type": "json_object"},
-                grammar=DECISION_GBNF,
-                timeout=request_timeout,
-                reasoning_effort=reasoning_effort,
-                reasoning_format="parsed",
-            )
+            # PDF annotation, pages 6-9: attach a typed lane before the
+            # transport-level InferenceBroker reserves quota.  Direct client
+            # calls still pass the broker, but LlmService supplies the semantic
+            # priority and optionality that transport alone cannot infer.
+            from runtime.inference_broker import inference_context
+
+            broker_lane = {
+                "chat": "chat_main",
+                "repair": "chat_main",
+                "directive": "chat_tool_required",
+                "autonomous": "autonomous",
+                "micro_presence": "micro_presence",
+                "parser": "semantic_shadow",
+            }.get(str(channel or "").strip().lower(), str(channel or "transport").strip().lower())
+            with inference_context(
+                broker_lane,
+                timeout_seconds=request_timeout,
+                optional=broker_lane in {"autonomous", "micro_presence", "semantic_shadow"},
+                metadata={"llm_stage": stage, "llm_channel": channel},
+            ):
+                return target_client.create_chat_completion(
+                    messages=governed_messages,
+                    temperature=_temp,
+                    frequency_penalty=_freq_pen,
+                    presence_penalty=_pres_pen,
+                    max_tokens=completion_tokens,
+                    response_format={"type": "json_object"},
+                    grammar=DECISION_GBNF,
+                    timeout=request_timeout,
+                    reasoning_effort=reasoning_effort,
+                    reasoning_format="parsed",
+                )
 
         initial_client = self.style_client if force_local_fallback and self.style_client is not None else self.client
         initial_stage = "local_fallback" if force_local_fallback and self.style_client is not None else "initial"
@@ -3530,30 +3550,48 @@ class LlmService:
             output_reserve=pressure_plan.output_tokens,
         )
         try:
-            response = self.client.create_chat_completion(
-                messages=micro_messages,
-                temperature=(0.7 if react_with_lens else 0.35),
-                frequency_penalty=(0.0 if react_with_lens else 0.7),
-                presence_penalty=(0.0 if react_with_lens else 0.2),
-                max_tokens=pressure_plan.output_tokens,
-                response_format={"type": "json_object"},
-                grammar=None,
-                timeout=float(os.environ.get("ERIS_LLM_TIMEOUT_MICRO_PRESENCE_S", "10")),
-            )
+            from runtime.inference_broker import inference_context
+            micro_timeout = float(os.environ.get("ERIS_LLM_TIMEOUT_MICRO_PRESENCE_S", "10"))
+            with inference_context(
+                "micro_presence",
+                optional=True,
+                timeout_seconds=micro_timeout,
+                cancel_scope="background:micro_presence",
+                coalesce_key="micro_presence:latest",
+                metadata={"force_surface": force_surface},
+            ):
+                response = self.client.create_chat_completion(
+                    messages=micro_messages,
+                    temperature=(0.7 if react_with_lens else 0.35),
+                    frequency_penalty=(0.0 if react_with_lens else 0.7),
+                    presence_penalty=(0.0 if react_with_lens else 0.2),
+                    max_tokens=pressure_plan.output_tokens,
+                    response_format={"type": "json_object"},
+                    grammar=None,
+                    timeout=micro_timeout,
+                )
         except requests.HTTPError as exc:
             if self._is_retryable_http_5xx(exc):
                 time.sleep(0.15)
                 try:
-                    response = self.client.create_chat_completion(
-                        messages=micro_messages,
-                        temperature=0.35,
-                        frequency_penalty=0.7,
-                        presence_penalty=0.2,
-                        max_tokens=pressure_plan.output_tokens,
-                        response_format={"type": "json_object"},
-                        grammar=None,
-                        timeout=float(os.environ.get("ERIS_LLM_TIMEOUT_MICRO_PRESENCE_S", "10")),
-                    )
+                    with inference_context(
+                        "micro_presence",
+                        optional=True,
+                        timeout_seconds=micro_timeout,
+                        cancel_scope="background:micro_presence",
+                        coalesce_key="micro_presence:latest",
+                        metadata={"retry": True},
+                    ):
+                        response = self.client.create_chat_completion(
+                            messages=micro_messages,
+                            temperature=0.35,
+                            frequency_penalty=0.7,
+                            presence_penalty=0.2,
+                            max_tokens=pressure_plan.output_tokens,
+                            response_format={"type": "json_object"},
+                            grammar=None,
+                            timeout=micro_timeout,
+                        )
                 except Exception:
                     return ""
             else:
@@ -3644,18 +3682,27 @@ class LlmService:
                 "'Code mãi không chán à?', "
                 "'Hôm nay bạn có ăn gì ngon không?'"
             )
-            response = self.client.create_chat_completion(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_msg},
-                ],
-                temperature=0.85,
-                frequency_penalty=0.5,
-                presence_penalty=0.3,
-                max_tokens=200,
-                response_format={"type": "json_object"},
-                grammar=None,
-            )
+            from runtime.inference_broker import inference_context
+            with inference_context(
+                "micro_presence",
+                optional=True,
+                timeout_seconds=10.0,
+                cancel_scope="background:curiosity_seed",
+                coalesce_key="curiosity_seed:latest",
+                metadata={"operation": "curiosity_seed"},
+            ):
+                response = self.client.create_chat_completion(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_msg},
+                    ],
+                    temperature=0.85,
+                    frequency_penalty=0.5,
+                    presence_penalty=0.3,
+                    max_tokens=200,
+                    response_format={"type": "json_object"},
+                    grammar=None,
+                )
             raw = self._extract_content(response)
             extracted = self._extract_first_json_object(raw) or raw
             payload = self._parse_json_object(extracted) or {}
@@ -3715,35 +3762,54 @@ class LlmService:
                 ),
             },
         ]
+        from runtime.inference_broker import inference_context
+        vision_foreground = mode_name in {"chat_requested", "screen_requested", "debug_requested", "current_screen"}
+        vision_lane = "chat_tool_required" if vision_foreground else "vision_ambient"
         try:
-            response = vision_client.create_chat_completion(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_content},
-                ],
-                temperature=0.1,
-                frequency_penalty=0.0,
-                presence_penalty=0.0,
-                max_tokens=240,
-                response_format={"type": "json_object"},
-                grammar=None,
-            )
+            with inference_context(
+                vision_lane,
+                optional=not vision_foreground,
+                timeout_seconds=18.0,
+                cancel_scope="background:vision_facts" if not vision_foreground else "",
+                coalesce_key="vision_facts:latest" if not vision_foreground else "",
+                metadata={"vision_mode": mode_name},
+            ):
+                response = vision_client.create_chat_completion(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_content},
+                    ],
+                    temperature=0.1,
+                    frequency_penalty=0.0,
+                    presence_penalty=0.0,
+                    max_tokens=240,
+                    response_format={"type": "json_object"},
+                    grammar=None,
+                )
         except requests.HTTPError as exc:
             if self._is_retryable_http_5xx(exc):
                 time.sleep(0.15)
                 try:
-                    response = vision_client.create_chat_completion(
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_content},
-                        ],
-                        temperature=0.1,
-                        frequency_penalty=0.0,
-                        presence_penalty=0.0,
-                        max_tokens=240,
-                        response_format={"type": "json_object"},
-                        grammar=None,
-                    )
+                    with inference_context(
+                        vision_lane,
+                        optional=not vision_foreground,
+                        timeout_seconds=18.0,
+                        cancel_scope="background:vision_facts" if not vision_foreground else "",
+                        coalesce_key="vision_facts:latest" if not vision_foreground else "",
+                        metadata={"vision_mode": mode_name, "retry": True},
+                    ):
+                        response = vision_client.create_chat_completion(
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_content},
+                            ],
+                            temperature=0.1,
+                            frequency_penalty=0.0,
+                            presence_penalty=0.0,
+                            max_tokens=240,
+                            response_format={"type": "json_object"},
+                            grammar=None,
+                        )
                 except Exception:
                     status = self._http_status_code(exc)
                     if no_fallback_mode_enabled():

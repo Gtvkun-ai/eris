@@ -498,31 +498,63 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
             )
 
         try:
-            resp = requests.post(
-                f"{base_url.rstrip('/')}/models/{model_name}:generateContent",
-                params={"key": api_key},
-                headers={"Content-Type": "application/json"},
-                json={
-                    "contents": [
-                        {
-                            "parts": [
-                                {
-                                    "text": (
-                                        "Tra loi ngan gon bang tieng Viet ve thoi tiet dua tren thong tin web. "
-                                        "Neu nguoi dung hoi ngay mai, hom nay, quan huyen hay khu vuc cu the, "
-                                        "hay giu nguyen muc do cu the do. "
-                                        "Neu du lieu khong chac, noi ro muc do khong chac va khong duoc boi. "
-                                        "Them 1 cau nhac nho nho neu can.\n"
-                                        f"Cau hoi thoi tiet: {query}"
-                                    )
-                                }
-                            ]
-                        }
-                    ],
-                    "tools": [{"google_search": {}}],
-                },
-                timeout=10,
+            # PDF annotation, pages 6-10 and 20: tool-required remote work is
+            # still remote inference.  Weather used to bypass the broker via a
+            # naked requests.post(), which let it collide with chat/background
+            # quota despite being one of the easiest paths to centralize.
+            from llm.token_budget import estimate_tokens
+            from runtime.inference_broker import GLOBAL_INFERENCE_BROKER, inference_context
+
+            weather_prompt = (
+                "Tra loi ngan gon bang tieng Viet ve thoi tiet dua tren thong tin web. "
+                "Neu nguoi dung hoi ngay mai, hom nay, quan huyen hay khu vuc cu the, "
+                "hay giu nguyen muc do cu the do. "
+                "Neu du lieu khong chac, noi ro muc do khong chac va khong duoc boi. "
+                "Them 1 cau nhac nho nho neu can.\n"
+                f"Cau hoi thoi tiet: {query}"
             )
+            request_payload = {
+                "contents": [{"parts": [{"text": weather_prompt}]}],
+                "tools": [{"google_search": {}}],
+            }
+            with inference_context(
+                "chat_tool_required",
+                optional=False,
+                timeout_seconds=10.0,
+                # Inherit the active user-turn cancel scope.  A required tool
+                # belongs to that turn; inventing a detached scope would keep
+                # it alive after the answer is no longer useful.
+                cancel_scope="",
+                metadata={"tool": "get_weather", "transport": "requests.post"},
+            ):
+                broker_request = GLOBAL_INFERENCE_BROKER.request_from_context(
+                    provider="gemini",
+                    model=model_name,
+                    estimated_input_tokens=estimate_tokens(
+                        [{"role": "user", "content": weather_prompt}]
+                    ),
+                    reserved_output_tokens=320,
+                    timeout_seconds=10.0,
+                )
+
+                def send_weather(*, cancel_token=None, timeout_seconds=None):
+                    if cancel_token is not None:
+                        cancel_token.raise_if_cancelled(broker_request)
+                    resp = requests.post(
+                        f"{base_url.rstrip('/')}/models/{model_name}:generateContent",
+                        params={"key": api_key},
+                        headers={"Content-Type": "application/json"},
+                        json=request_payload,
+                        timeout=max(0.05, min(10.0, float(timeout_seconds or 10.0))),
+                    )
+                    GLOBAL_INFERENCE_BROKER.record_response_headers(
+                        "gemini", getattr(resp, "headers", None)
+                    )
+                    if cancel_token is not None:
+                        cancel_token.raise_if_cancelled(broker_request)
+                    return resp
+
+                resp = GLOBAL_INFERENCE_BROKER.run(broker_request, send_weather)
             resp.raise_for_status()
             payload = resp.json()
         except Exception as exc:

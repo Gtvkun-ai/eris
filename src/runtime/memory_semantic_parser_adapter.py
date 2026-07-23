@@ -189,16 +189,28 @@ class RuntimeSemanticParser:
         if not callable(getattr(client, "create_chat_completion", None)):
             raise RuntimeError("llm_service_client_missing_chat_completion")
         # Dung bat ky remote client nao dang duoc cau hinh: Gemini hoac OpenAI-compatible.
-        response = client.create_chat_completion(
-            messages=self._messages(text, context=context),
-            temperature=0.0,
-            frequency_penalty=0.0,
-            presence_penalty=0.0,
-            max_tokens=self.max_tokens,
-            response_format={"type": "json_object"},
-            grammar=None,
-            timeout=self.timeout_seconds,
-        )
+        from runtime.inference_broker import inference_context
+        from runtime.work_keys import stable_work_key
+        work_key = stable_work_key("memory_semantic", text)
+        with inference_context(
+            "semantic_shadow",
+            optional=True,
+            timeout_seconds=self.timeout_seconds,
+            cancel_scope="background:memory_semantic_parser",
+            coalesce_key=work_key,
+            idempotency_key=work_key,
+            metadata={"operation": "memory_semantic_parser"},
+        ):
+            response = client.create_chat_completion(
+                messages=self._messages(text, context=context),
+                temperature=0.0,
+                frequency_penalty=0.0,
+                presence_penalty=0.0,
+                max_tokens=self.max_tokens,
+                response_format={"type": "json_object"},
+                grammar=None,
+                timeout=self.timeout_seconds,
+            )
         extractor = getattr(service, "_extract_content", None)
         content = str(extractor(response) or "") if callable(extractor) else _extract_response_text(response)
         payload = _parse_json_object(content)

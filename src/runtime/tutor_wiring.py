@@ -233,6 +233,8 @@ def _build_generate_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[st
     import os
     import json as _json
     import re
+    import hashlib
+    import time as _time
 
     llm_service = getattr(runtime_owner, "llm_service", None)
     use_remote = (
@@ -242,21 +244,71 @@ def _build_generate_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[st
     if use_remote and llm_service is not None:
         remote_client = llm_service.fallback_client or llm_service.client
         if remote_client is not None:
+            # PDF annotation, pages 14 and 20: background Tutor owns a budget
+            # per topic, not merely a global timer.  Repeated classifier/router
+            # prompts for the same knowledge gap are coalesced and cooled down.
+            last_remote_by_topic: dict[str, float] = {}
+            from runtime.topic_budget import TopicBudget
+            try:
+                topic_hourly_cap = max(1, int(os.getenv("ERIS_TUTOR_TOPIC_MAX_CALLS_PER_HOUR", "2") or 2))
+            except (TypeError, ValueError):
+                topic_hourly_cap = 2
+            topic_budget = TopicBudget(max_calls=topic_hourly_cap, window_seconds=3600.0)
+
             def generate_fn(prompt: str) -> str:
                 try:
                     messages = [
                         {"role": "system", "content": "Trả về JSON gọn dạng {\"text\": \"...\"} bằng tiếng Việt. Tuyệt đối không thêm lời dẫn hay giải thích ngoài JSON."},
                         {"role": "user", "content": prompt},
                     ]
-                    resp = remote_client.create_chat_completion(
-                        messages=messages,
-                        temperature=0.4,
-                        frequency_penalty=0.0,
-                        presence_penalty=0.0,
-                        max_tokens=150,
-                        response_format={"type": "json_object"},
-                        timeout=10,
-                    )
+                    from runtime.inference_broker import GLOBAL_INFERENCE_BROKER, inference_context
+                    # chat_mode may stay enabled for the whole session; only an
+                    # active broker user turn makes this a required foreground job.
+                    foreground = GLOBAL_INFERENCE_BROKER.user_turn_active()
+                    lane = "chat_tool_required" if foreground else "tutor_background"
+                    topic_key = hashlib.sha1(
+                        " ".join(str(prompt or "").lower().split()).encode("utf-8", "ignore")
+                    ).hexdigest()[:16]
+                    if not foreground:
+                        from llm.token_budget import detect_provider
+                        advice = GLOBAL_INFERENCE_BROKER.optional_lane_advice(
+                            "tutor_background",
+                            provider=detect_provider(
+                                str(getattr(remote_client, "base_url", "") or ""),
+                                str(getattr(remote_client, "model_name", "") or ""),
+                            ),
+                        )
+                        if not bool(advice.get("allowed", True)) or not topic_budget.allow(topic_key):
+                            return ""
+                        try:
+                            cooldown = max(
+                                15.0,
+                                float(os.getenv("ERIS_TUTOR_TOPIC_COOLDOWN_SEC", "180") or 180),
+                            )
+                        except (TypeError, ValueError):
+                            cooldown = 180.0
+                        cooldown *= max(1.0, float(advice.get("cooldown_multiplier", 1.0) or 1.0))
+                        now = _time.time()
+                        if now - last_remote_by_topic.get(topic_key, 0.0) < cooldown:
+                            return ""
+                    with inference_context(
+                        lane,
+                        optional=not foreground,
+                        timeout_seconds=10.0,
+                        cancel_scope="background:tutor" if not foreground else "",
+                        coalesce_key=f"tutor:question_generation:{topic_key}" if not foreground else "",
+                        idempotency_key=f"tutor:question_generation:{topic_key}" if not foreground else "",
+                        metadata={"tutor_phase": "question_generation", "topic_key": topic_key},
+                    ):
+                        resp = remote_client.create_chat_completion(
+                            messages=messages,
+                            temperature=0.4,
+                            frequency_penalty=0.0,
+                            presence_penalty=0.0,
+                            max_tokens=150,
+                            response_format={"type": "json_object"},
+                            timeout=10,
+                        )
                     extractor = getattr(llm_service, "_extract_content", None)
                     content = extractor(resp) if callable(extractor) else ""
                     if not content and isinstance(resp, dict):
@@ -273,7 +325,11 @@ def _build_generate_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[st
                     content = re.sub(r"^```(?:json)?\s*", "", content, flags=re.IGNORECASE).strip()
                     content = re.sub(r"\s*```$", "", content).strip()
                     data = _json.loads(content)
-                    return str(data.get("text", "") or "").strip()
+                    output = str(data.get("text", "") or "").strip()
+                    if output and not foreground:
+                        last_remote_by_topic[topic_key] = _time.time()
+                        topic_budget.record(topic_key)
+                    return output
                 except Exception as exc:
                     _warn(logger, f"tutor remote generate_fn lỗi ({exc!r})")
                     return ""
@@ -291,6 +347,8 @@ def _build_distill_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[str
     import os
     import json as _json
     import re
+    import hashlib
+    import time as _time
 
     llm_service = getattr(runtime_owner, "llm_service", None)
     use_remote = (
@@ -300,6 +358,14 @@ def _build_distill_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[str
     if use_remote and llm_service is not None:
         remote_client = llm_service.fallback_client or llm_service.client
         if remote_client is not None:
+            last_distill_by_topic: dict[str, float] = {}
+            from runtime.topic_budget import TopicBudget
+            try:
+                distill_hourly_cap = max(1, int(os.getenv("ERIS_TUTOR_DISTILL_TOPIC_MAX_CALLS_PER_HOUR", "1") or 1))
+            except (TypeError, ValueError):
+                distill_hourly_cap = 1
+            distill_budget = TopicBudget(max_calls=distill_hourly_cap, window_seconds=3600.0)
+
             def distill_fn(answer_text: str) -> list:
                 text = str(answer_text or "").strip()
                 if not text:
@@ -316,15 +382,52 @@ def _build_distill_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[str
                         },
                         {"role": "user", "content": f"Tách đoạn sau thành các sự thật atomic:\n{text[:1200]}"},
                     ]
-                    resp = remote_client.create_chat_completion(
-                        messages=messages,
-                        temperature=0.2,
-                        frequency_penalty=0.0,
-                        presence_penalty=0.0,
-                        max_tokens=300,
-                        response_format={"type": "json_object"},
-                        timeout=10,
-                    )
+                    from runtime.inference_broker import GLOBAL_INFERENCE_BROKER, inference_context
+                    # chat_mode may stay enabled for the whole session; only an
+                    # active broker user turn makes this a required foreground job.
+                    foreground = GLOBAL_INFERENCE_BROKER.user_turn_active()
+                    lane = "chat_tool_required" if foreground else "tutor_background"
+                    topic_key = hashlib.sha1(text[:1200].encode("utf-8", "ignore")).hexdigest()[:16]
+                    if not foreground:
+                        from llm.token_budget import detect_provider
+                        advice = GLOBAL_INFERENCE_BROKER.optional_lane_advice(
+                            "tutor_background",
+                            provider=detect_provider(
+                                str(getattr(remote_client, "base_url", "") or ""),
+                                str(getattr(remote_client, "model_name", "") or ""),
+                            ),
+                        )
+                        if not bool(advice.get("allowed", True)) or not distill_budget.allow(topic_key):
+                            return []
+                        try:
+                            cooldown = max(
+                                15.0,
+                                float(os.getenv("ERIS_TUTOR_DISTILL_TOPIC_COOLDOWN_SEC", "300") or 300),
+                            )
+                        except (TypeError, ValueError):
+                            cooldown = 300.0
+                        cooldown *= max(1.0, float(advice.get("cooldown_multiplier", 1.0) or 1.0))
+                        now = _time.time()
+                        if now - last_distill_by_topic.get(topic_key, 0.0) < cooldown:
+                            return []
+                    with inference_context(
+                        lane,
+                        optional=not foreground,
+                        timeout_seconds=10.0,
+                        cancel_scope="background:tutor" if not foreground else "",
+                        coalesce_key=f"tutor:distill:{topic_key}" if not foreground else "",
+                        idempotency_key=f"tutor:distill:{topic_key}" if not foreground else "",
+                        metadata={"tutor_phase": "distill", "topic_key": topic_key},
+                    ):
+                        resp = remote_client.create_chat_completion(
+                            messages=messages,
+                            temperature=0.2,
+                            frequency_penalty=0.0,
+                            presence_penalty=0.0,
+                            max_tokens=300,
+                            response_format={"type": "json_object"},
+                            timeout=10,
+                        )
                     extractor = getattr(llm_service, "_extract_content", None)
                     content = extractor(resp) if callable(extractor) else ""
                     if not content and isinstance(resp, dict):
@@ -343,7 +446,11 @@ def _build_distill_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[str
                     data = _json.loads(content)
                     facts = data.get("facts") or []
                     if isinstance(facts, (list, tuple)):
-                        return [str(f).strip() for f in facts if str(f or "").strip()][:5]
+                        output = [str(f).strip() for f in facts if str(f or "").strip()][:5]
+                        if output and not foreground:
+                            last_distill_by_topic[topic_key] = _time.time()
+                            distill_budget.record(topic_key)
+                        return output
                 except Exception as exc:
                     _warn(logger, f"tutor remote distill lỗi ({exc!r})")
                 return []

@@ -463,19 +463,30 @@ class MemoryAICurator:
         if not callable(getattr(client, "create_chat_completion", None)):
             return None
         try:
-            response = client.create_chat_completion(
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                temperature=0.0,
-                frequency_penalty=0.0,
-                presence_penalty=0.0,
-                max_tokens=max_tokens,
-                response_format={"type": "json_object"},
-                grammar=None,
-                timeout=10.0,
-            )
+            # PDF annotation, pages 7-9: memory maintenance is optional,
+            # coalesced background work and never competes with chat_main.
+            from runtime.inference_broker import inference_context
+            with inference_context(
+                "memory_digest",
+                optional=True,
+                timeout_seconds=10.0,
+                cancel_scope="background:memory_digest",
+                coalesce_key="memory_digest:latest",
+                metadata={"curator": True},
+            ):
+                response = client.create_chat_completion(
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    temperature=0.0,
+                    frequency_penalty=0.0,
+                    presence_penalty=0.0,
+                    max_tokens=max_tokens,
+                    response_format={"type": "json_object"},
+                    grammar=None,
+                    timeout=10.0,
+                )
             # Extract content từ response — hỗ trợ Gemini và OpenAI-compat
             extract = getattr(self.llm_service, "_extract_content", None)
             if callable(extract):

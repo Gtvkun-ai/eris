@@ -348,6 +348,15 @@ class ErisObservability:
                 "session_retention_", "manual_disable_", "thumbs_down_", "rollback_", "canary_",
                 "user_accepted_", "user_corrected_", "user_intruded_", "relation_ruptured_",
             ),
+            # PDF annotation, pages 17-19: one dashboard groups the exact
+            # inference-control signals used for rollout acceptance.
+            "pdf_inference_architecture": (
+                "broker_", "user_turn_latency_", "ttft_",
+                "remote_calls_per_user_turn", "input_tokens_by_lane",
+                "output_tokens_by_lane", "rate_limit_429_",
+                "retry_after_", "optional_background_", "observer_",
+                "semantic_shadow_", "prompt_hard_cap",
+            ),
             "runtime_hardening": (
                 "director_semantic_", "false_success_action_", "action_confirmation_",
                 "memory_assert_without_provenance_", "memory_provenance_", "repair_loop_",

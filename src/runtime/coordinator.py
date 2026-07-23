@@ -1,5 +1,8 @@
 from actions.confirmation import public_action_text
 from runtime.repair_state import RepairStateController
+import base64
+import hashlib
+import io
 import json
 import os
 import random
@@ -799,6 +802,8 @@ class RuntimeCoordinator(
         self.vision_last_trace = ""
         self.vision_facts_signature = ""
         self.vision_facts_novelty_hint = "none"
+        self._vision_last_thumbnail: tuple[int, ...] | None = None
+        self._vision_last_frame_digest = ""
         # Screen Text Index chạy nền: UI Automation trước, OCR vùng thay đổi sau.
         # Chat chỉ đọc snapshot đã có; tuyệt đối không chờ OCR/VLM trên critical path.
         try:
@@ -4907,6 +4912,10 @@ class RuntimeCoordinator(
             self._handle_settings_health()
             return
 
+        if msg_type == "settings_connection_test":
+            self._handle_settings_connection_test(msg)
+            return
+
         if msg_type == "maintenance_catalog":
             self._handle_maintenance_catalog(msg)
             return
@@ -5165,8 +5174,145 @@ class RuntimeCoordinator(
         except Exception as exc:
             return {"revision": 0, "saved_at": 0.0, "settings": {}, "error": str(exc)[:240]}
 
+    def _main_brain_health_snapshot(self) -> dict:
+        """Trả danh tính não chính và credential hiệu lực, tuyệt đối không lộ key."""
+
+        client = getattr(getattr(self, "llm_service", None), "client", None)
+        requested_provider = str(os.environ.get("ERIS_REMOTE_PROVIDER", "") or "").strip().lower()
+        base_url = str(getattr(client, "base_url", "") or "").strip()
+        model = str(getattr(client, "model_name", "") or "").strip()
+        try:
+            from llm.token_budget import detect_provider
+            detected_provider = detect_provider(base_url, model)
+        except Exception:
+            detected_provider = requested_provider or "unknown"
+
+        pool = getattr(client, "key_pool", None)
+        try:
+            pool_snapshot = pool.snapshot() if pool is not None else {}
+        except Exception:
+            pool_snapshot = {}
+        active_fingerprint = ""
+        keys = pool_snapshot.get("keys", []) if isinstance(pool_snapshot, Mapping) else []
+        if isinstance(keys, list):
+            for item in keys:
+                if isinstance(item, Mapping) and bool(item.get("active")):
+                    active_fingerprint = str(item.get("fingerprint") or "")
+                    break
+
+        config_source = "ERIS_REMOTE_*"
+        try:
+            from eris_secrets import get_provider_profile
+            profile = get_provider_profile(requested_provider, slot="remote_main")
+            if profile:
+                config_source = f"providers.{requested_provider}.remote_main"
+        except Exception:
+            pass
+
+        fallback = getattr(getattr(self, "llm_service", None), "fallback_client", None)
+        fallback_model = str(getattr(fallback, "model_name", "") or "").strip()
+        return {
+            "ready": client is not None,
+            "requested_provider": requested_provider,
+            "provider": detected_provider,
+            "model": model,
+            "base_url": base_url,
+            "pool": "remote",
+            "configured_keys": int(pool_snapshot.get("size", 0) or 0) if isinstance(pool_snapshot, Mapping) else 0,
+            "available_keys": int(pool_snapshot.get("available", 0) or 0) if isinstance(pool_snapshot, Mapping) else 0,
+            "active_key_fingerprint": active_fingerprint,
+            "config_source": config_source,
+            "fallback_model": fallback_model,
+        }
+
+    def _handle_settings_connection_test(self, msg: dict) -> None:
+        """Chạy request cực ngắn bằng đúng client main đang hiệu lực.
+
+        Test chạy ở thread riêng để một provider chậm không khóa UDP/chat loop.
+        Body chỉ nhận model, latency, HTTP status và fingerprint; không có raw key.
+        """
+
+        request_id = str(msg.get("request_id") or f"brain_test_{int(time.time() * 1000)}")
+        worker = threading.Thread(
+            target=self._run_settings_connection_test,
+            args=(request_id,),
+            name="eris-settings-connection-test",
+            daemon=True,
+        )
+        worker.start()
+
+    def _run_settings_connection_test(self, request_id: str) -> None:
+        started = time.perf_counter()
+        snapshot = self._main_brain_health_snapshot()
+        payload = {
+            "request_id": request_id,
+            "ok": False,
+            "latency_ms": 0,
+            "response_text": "",
+            "error_kind": "",
+            "error": "",
+            "main_brain": snapshot,
+        }
+        try:
+            client = getattr(getattr(self, "llm_service", None), "client", None)
+            if client is None:
+                raise RuntimeError("main client chưa được khởi tạo")
+            from runtime.inference_broker import inference_context
+            with inference_context(
+                "chat_tool_required",
+                optional=False,
+                timeout_seconds=15.0,
+                cancel_scope=f"settings_test:{request_id}",
+                metadata={"operation": "settings_connection_test"},
+            ):
+                response = client.create_chat_completion(
+                    messages=[
+                        {"role": "system", "content": "Connection health check. Reply with exactly OK."},
+                        {"role": "user", "content": "OK"},
+                    ],
+                    temperature=0.0,
+                    frequency_penalty=0.0,
+                    presence_penalty=0.0,
+                    max_tokens=8,
+                    timeout=15,
+                    reasoning_effort="low",
+                )
+            extract = getattr(getattr(self, "llm_service", None), "_extract_content", None)
+            text_value = extract(response) if callable(extract) else ""
+            payload["ok"] = True
+            payload["response_text"] = str(text_value or "OK").strip()[:80]
+            payload["main_brain"] = self._main_brain_health_snapshot()
+        except Exception as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status in (401, 403):
+                kind = "invalid_key"
+            elif status == 404:
+                kind = "model_or_endpoint_not_found"
+            elif status == 429:
+                kind = "rate_limited"
+            elif status is not None and int(status) >= 500:
+                kind = "provider_unavailable"
+            elif isinstance(exc, TimeoutError) or "timeout" in str(exc).lower():
+                kind = "timeout"
+            else:
+                kind = "connection_error"
+            payload["error_kind"] = kind
+            payload["error"] = str(exc)[:320]
+            self.logger.warning("[settings] main brain connection test failed kind=%s error=%s", kind, exc)
+        finally:
+            payload["latency_ms"] = int(max(0.0, time.perf_counter() - started) * 1000)
+            try:
+                self.transport.send_json({
+                    "type": "settings_connection_test_ack",
+                    "parse_mode": "settings_connection_test_ack",
+                    "should_speak": False,
+                    "settings_connection_test_ack": payload,
+                })
+            except Exception as exc:
+                self.logger.debug("[settings] connection test ack send failed: %s", exc)
+
     def _handle_settings_health(self) -> None:
-        """Gửi trạng thái hai key pool cho Settings UI mà không lộ API key.
+        """Gửi trạng thái ba key pool và não chính mà không lộ API key.
 
         Trước đây nút kiểm tra chỉ gửi message nhưng coordinator chưa xử lý.
         Handler này trả snapshot thật gồm key đang dùng, key cooldown và cooldown
@@ -5177,6 +5323,7 @@ class RuntimeCoordinator(
             from llm.key_pool import get_key_pool
 
             pools = {
+                "main": get_key_pool("remote_main").snapshot(),
                 "gemini": get_key_pool("gemini").snapshot(),
                 "groq": get_key_pool("groq").snapshot(),
             }
@@ -5200,6 +5347,7 @@ class RuntimeCoordinator(
                 "should_speak": False,
                 "settings_health_ack": {
                     "pools": pools,
+                    "main_brain": self._main_brain_health_snapshot(),
                     "tts": {"ready": tts_ready},
                     "capabilities": capability_health,
                     "effective": self._advanced_effective_settings_snapshot(),
@@ -5213,6 +5361,7 @@ class RuntimeCoordinator(
                 "should_speak": False,
                 "settings_health_ack": {
                     "pools": {},
+                    "main_brain": self._main_brain_health_snapshot(),
                     "tts": {"ready": False},
                     "effective": self._advanced_effective_settings_snapshot(),
                     "error": str(exc)[:240],
@@ -5644,7 +5793,10 @@ class RuntimeCoordinator(
         flag = os.environ.get("ERIS_VISION_FACTS", "1").strip().lower()
         enabled = flag not in {"0", "false", "no", "off"}
 
-        interval_raw = os.environ.get("ERIS_VISION_FACTS_INTERVAL", "10").strip()
+        # PDF annotation, page 14: ambient vision is delta-triggered. The
+        # interval is only a cheap local sampling cadence, never permission to
+        # call a remote captioner by itself.
+        interval_raw = os.environ.get("ERIS_VISION_FACTS_INTERVAL", "45").strip()
         max_items_raw = os.environ.get("ERIS_VISION_FACTS_MAX", "3").strip()
         max_len_raw = os.environ.get("ERIS_VISION_FACTS_MAX_LEN", "120").strip()
 
@@ -5661,7 +5813,7 @@ class RuntimeCoordinator(
         except ValueError:
             max_len = 120
 
-        interval = max(10, min(interval, 900))
+        interval = max(30, min(interval, 900))
         max_items = max(1, min(max_items, 6))
         max_len = max(40, min(max_len, 240))
         return enabled, interval, max_items, max_len
@@ -6222,6 +6374,38 @@ class RuntimeCoordinator(
             snapshot.vision_facts = tuple(self.vision_facts)
         return self.vision_facts
 
+    def _vision_frame_delta_score(self, data_uri: str) -> float:
+        """Return a cheap local [0,1] visual delta without any remote model."""
+
+        raw = str(data_uri or "")
+        if not raw:
+            return 0.0
+        payload = raw.split(",", 1)[1] if "," in raw else raw
+        try:
+            blob = base64.b64decode(payload, validate=False)
+        except Exception:
+            blob = payload.encode("utf-8", "ignore")
+        digest = hashlib.sha1(blob).hexdigest()
+        if digest == self._vision_last_frame_digest:
+            return 0.0
+
+        score = 1.0
+        try:
+            from PIL import Image
+
+            with Image.open(io.BytesIO(blob)) as image:
+                gray = image.convert("L").resize((32, 18))
+                pixels = tuple(int(value) for value in gray.getdata())
+            previous = self._vision_last_thumbnail
+            if previous and len(previous) == len(pixels):
+                score = sum(abs(a - b) for a, b in zip(previous, pixels)) / (255.0 * len(pixels))
+            self._vision_last_thumbnail = pixels
+        except Exception:
+            # Exact digest fallback still eliminates identical-frame spam.
+            score = 1.0 if self._vision_last_frame_digest else 1.0
+        self._vision_last_frame_digest = digest
+        return max(0.0, min(1.0, float(score)))
+
     def _maybe_update_screen_facts(
         self,
         *,
@@ -6240,10 +6424,50 @@ class RuntimeCoordinator(
         if now < self.vision_disabled_until:
             self.vision_facts_novelty_hint = "cached_screen_fact" if self.vision_facts else "none"
             return self.vision_facts
+
+        # PDF annotation, pages 14 and 20: adaptive thresholds are a P2
+        # requirement, not decorative telemetry. Ambient vision consults broker
+        # pressure before even capturing a frame, then raises both cooldown and
+        # delta threshold as quota gets warm. A direct user screen question still
+        # uses force_refresh and the required chat-tool lane.
+        vision_advice = {
+            "allowed": True,
+            "threshold_multiplier": 1.0,
+            "cooldown_multiplier": 1.0,
+            "pressure_score": 0.0,
+        }
+        if channel != "chat" and not force_refresh:
+            try:
+                from llm.token_budget import detect_provider
+                from runtime.inference_broker import GLOBAL_INFERENCE_BROKER
+
+                client = getattr(getattr(self, "llm_service", None), "client", None)
+                provider = detect_provider(
+                    str(getattr(client, "base_url", "") or ""),
+                    str(getattr(client, "model_name", "") or ""),
+                )
+                vision_advice = GLOBAL_INFERENCE_BROKER.optional_lane_advice(
+                    "vision_ambient", provider=provider
+                )
+            except Exception:
+                pass
+            if not bool(vision_advice.get("allowed", True)):
+                self.vision_last_capture_at = now
+                self.vision_facts_novelty_hint = "cached_screen_fact" if self.vision_facts else "none"
+                self.logger.debug(
+                    "[vision_facts] capture skipped by broker advice: reason=%s pressure=%.3f",
+                    vision_advice.get("reason", "unknown"),
+                    float(vision_advice.get("pressure_score", 0.0) or 0.0),
+                )
+                return self.vision_facts
+
+        effective_interval = self.vision_interval_sec * max(
+            1.0, float(vision_advice.get("cooldown_multiplier", 1.0) or 1.0)
+        )
         if (
             not force_refresh
             and self.vision_last_capture_at
-            and (now - self.vision_last_capture_at) < self.vision_interval_sec
+            and (now - self.vision_last_capture_at) < effective_interval
         ):
             self.vision_facts_novelty_hint = "cached_screen_fact" if self.vision_facts else "none"
             return self.vision_facts
@@ -6253,6 +6477,25 @@ class RuntimeCoordinator(
         except Exception as exc:
             self._note_vision_failure("capture", exc)
             return self.vision_facts
+
+        if channel != "chat" and not force_refresh:
+            delta_score = self._vision_frame_delta_score(data_uri)
+            try:
+                base_threshold = max(0.01, min(1.0, float(os.environ.get("ERIS_VISION_SCREEN_DELTA_THRESHOLD", "0.15") or 0.15)))
+            except (TypeError, ValueError):
+                base_threshold = 0.15
+            threshold = min(0.95, base_threshold * max(
+                1.0, float(vision_advice.get("threshold_multiplier", 1.0) or 1.0)
+            ))
+            if delta_score < threshold:
+                self.vision_last_capture_at = now
+                self.vision_facts_novelty_hint = "cached_screen_fact" if self.vision_facts else "none"
+                self.logger.debug(
+                    "[vision_facts] remote summarize skipped: delta=%.3f threshold=%.3f",
+                    delta_score,
+                    threshold,
+                )
+                return self.vision_facts
 
         return self._refresh_screen_facts_from_data_uri(
             data_uri=data_uri,
@@ -6467,16 +6710,11 @@ class RuntimeCoordinator(
         if not self.running:
             return
         worker = getattr(self, "screen_text_worker", None)
-        background_screen_text = str(
-            os.environ.get("ERIS_SCREEN_TEXT_BACKGROUND_ENABLED", "0") or "0"
-        ).strip().lower() in {"1", "true", "yes", "on"}
-        if worker is not None and background_screen_text:
+        if worker is not None:
             try:
                 worker.start()
             except Exception as exc:
                 self.logger.warning("[screen text] start error: %s", exc)
-        elif worker is not None:
-            self.logger.info("[screen text] lazy mode; OCR/UIA chỉ khởi động khi user yêu cầu nhìn màn hình")
         # Startup là public presence quan trọng, không phải fire-and-forget. Nếu
         # lần đầu vấp do worker/client vừa bootstrap, thử lại đúng một lần sau khi
         # sensory worker đã lên. Không loop vô hạn, con người đã có đủ startup

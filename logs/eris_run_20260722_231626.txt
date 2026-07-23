@@ -1,0 +1,109 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-22 23:16:26
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+23:16:27.418 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+23:16:27.418 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+23:16:27.435 [INFO] [Vision] Da khoi chay vision.py PID=16852
+23:16:27.490 [INFO] [Live2D] Da khoi chay renderer PID=1612, UDP=4252
+23:16:27.491 [INFO] [BodyMode] 2D -> Live2D | resident=False | bubble giữ ở Godot overlay
+23:16:27.791 [INFO] [live2d] [live2d] third-party wrapper (0.7.0.4), not affiliated with Live2D Inc.
+23:16:27.799 [INFO] [live2d] [live2d.v3] Cubism Native, Python 3.12.0
+23:16:27.799 [INFO] [live2d] [live2d.v3] official: https://www.live2d.com/sdk/download/native/
+23:16:27.997 [INFO] [live2d] [INFO]  [Pal] Init Shader Dir: C:\Users\Gtvkun\Documents\GitHub\eris\.venv\Lib\site-packages\live2d\v3\
+23:16:27.998 [INFO] [live2d] [INFO]  [CSM][I]Live2D Cubism Core version: 05.01.0000 (83951616)
+23:16:27.998 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::StartUp() is complete.
+23:16:27.998 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::Initialize() is complete.
+23:16:28.000 [INFO] [live2d] [INFO]  allocate: cpp Model(at=00000250EC6B1DC0)
+23:16:28.000 [INFO] [live2d] [INFO]  load modelSetting: C:\Users\Gtvkun\Documents\GitHub\eris\src\assets\live2d\infj\infj.model3.json
+23:16:28.001 [INFO] [live2d] [INFO]  create model: infj.moc3
+23:16:28.119 [INFO] [live2d] [Live2D] Đã mở infj.model3.json | UDP 127.0.0.1:4252
+23:16:28.119 [INFO] [live2d] [Live2D] Window pos=(486, 50) size=(520,900) fb=(520,900) screen=(1920, 1080) canvas=(1.0, 1.5) canvas_px=(1024.0, 1536.0) scale=1.00 offset=(0.00,-0.02) transparent=True decorated=False topmost=True
+23:16:28.119 [INFO] [live2d] [Live2D] Model profile: parameters=21 head=X/Z eyes=custom mirrored pair mouth=yes physics=yes expressions=0 motion_groups=0
+23:16:29.048 [INFO] [vision.py] [LLM][INFO] Social parser client sẵn sàng: llama-3.1-8b-instant
+23:16:29.048 [INFO] [vision.py] [LLM][INFO] Social deliberator/critic client sẵn sàng: llama-3.3-70b-versatile
+23:16:29.048 [INFO] [vision.py] [LLM][INFO] Social observer fallback client sẵn sàng: llama-3.1-8b-instant
+23:16:29.172 [INFO] [vision.py] [Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=4
+23:16:29.175 [INFO] [vision.py] [Loop][INFO] [vtuber-stage] loaded version=vtuber_stage.v11 phases=8,9,10,11 status=intention_authority_ready session=stage_b16323c19d474bd4
+23:16:29.181 [INFO] [vision.py] [Loop][INFO] [internal-cognitive] loaded version=internal_cognitive.v1.0 capabilities=8 status=read_only_verified
+23:16:29.188 [INFO] [vision.py] [Loop][INFO] [project-ops] loaded version=project_operations.v1.1 capabilities=15 mode=autonomous_project_scope
+23:16:29.188 [INFO] [vision.py] [Loop][INFO] [workspace] eris_home=[đường dẫn nội bộ đã ẩn] active=none implicit_source_repo=false
+23:16:29.646 [INFO] [vision.py] [Loop][INFO] tutor: knowledge provider đã nối vào memory recall
+23:16:29.670 [INFO] [vision.py] [Loop][INFO] [environment-capability] loaded version=environment_capability.v1.0 capabilities=6 status=read_only_verified
+23:16:29.736 [INFO] [vision.py] [Loop][INFO] [architecture C] enabled version=ai_orchestrated.v6.1.arbitrated_brief state_version=0 personality_version=0 identity_version=0 observer=post_turn planner=ai cortex=pre_response_brief single_writer=1
+23:16:30.562 [INFO] [Settings] Đang đọc não chính và ba credential pool...
+23:16:31.583 [INFO] [vision.py] [Loop][INFO] --- Architecture C runtime; chat vision theo yêu cầu màn hình ---
+23:16:31.954 [INFO] [vision.py] [Loop][INFO] [architecture C startup grounding] direct=0 strong=0 telemetry_tab=0 evidence=0 runtime_opening=0 metadata=0 backend=unknown wait=0.37s notes=screen_prime_lazy,screen_prime_timeout,runtime_signals_lazy
+23:16:35.735 [INFO] [Settings] Đang kiểm tra não chính bằng request thật.
+23:16:42.935 [INFO] [vision.py] [Loop][INFO] [architecture C startup route] strategy=persona_opening source=persona continuity=0 forced=1
+23:16:42.959 [INFO] [vision.py] [Loop][INFO] [architecture C startup greeting] source=preset id=greet_warm_01 situation=plain_return
+23:16:43.007 [INFO] [vision.py] [Loop][INFO] [architecture C startup] spoke motive=startup_opening text=Bạn đến rồi. Tốt. Tôi sẽ cố không tỏ ra vui quá.
+23:16:43.008 [INFO] [vision.py] [Loop][INFO] [screen text] worker started backend=lazy-auto poll=1.2s
+23:16:44.191 [INFO] [vision.py] [Loop][INFO] [screen text] OCR backend resolved=rapidocr
+23:16:44.223 [INFO] [Settings] Đã đọc trạng thái não chính, TTS và ba credential pool từ Brain.
+23:16:47.907 [INFO] [Settings] Kết nối thật thành công · 2792 ms · qwen/qwen3-32b
+23:16:49.061 [INFO] [Settings] Đã mở logs: C:\Users\Gtvkun\Documents\GitHub\eris\logs
+23:16:53.067 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=active external=1.00 internal=0.03 interrupt=0.19 resource=0.08 vision_hint=1 budget=scheduler_allow
+23:16:53.172 [INFO] [vision.py] [Loop][WARNING] [vision_facts] compressor failed: no_fallback_vision:vision_compressor_disabled | backoff=15s
+23:16:57.349 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.65 surface=yes mutations=1
+23:17:00.315 [INFO] [Settings] Giọng nói chứa toàn bộ cấu hình TTS và nghe thử; Basic chỉ giữ điều khiển nhanh.
+23:17:03.895 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=internal act=withhold conf=0.91 importance=0.12 gate=model_silence body_only=1
+23:17:05.521 [INFO] [Settings] Đang đọc não chính và ba credential pool...
+23:17:05.521 [INFO] [Settings] Kết nối & dữ liệu quản lý não chính, pool credential, backup và export.
+23:17:06.111 [INFO] [Settings] Đã đọc trạng thái não chính, TTS và ba credential pool từ Brain.
+23:17:08.354 [INFO] [Settings] Advanced điều khiển hành vi, memory, Tutor và quyền project. Một nút Áp dụng sẽ lưu lẫn cập nhật Brain.
+23:17:08.481 [INFO] [Settings] Đã đọc trạng thái não chính, TTS và ba credential pool từ Brain.
+23:17:08.861 [INFO] [Settings] Đang đọc não chính và ba credential pool...
+23:17:08.861 [INFO] [Settings] Kết nối & dữ liệu quản lý não chính, pool credential, backup và export.
+23:17:09.010 [INFO] [Settings] Đã đọc trạng thái não chính, TTS và ba credential pool từ Brain.
+23:17:12.380 [INFO] [Settings] Advanced điều khiển hành vi, memory, Tutor và quyền project. Một nút Áp dụng sẽ lưu lẫn cập nhật Brain.
+23:17:12.477 [INFO] [Settings] Đã đọc trạng thái não chính, TTS và ba credential pool từ Brain.
+23:17:13.944 [INFO] [Settings] Danger Zone chỉ chứa thao tác reset/bảo trì thật. Mọi lệnh phá dữ liệu đều preview trước.
+23:17:18.593 [INFO] [Settings] Đã quay lại Basic.
+23:17:23.879 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=quiet external=0.25 internal=0.05 interrupt=0.31 resource=0.19 vision_hint=0 budget=scheduler_allow
+23:17:24.086 [INFO] [vision.py] [Loop][WARNING] [vision_facts] compressor failed: no_fallback_vision:vision_compressor_disabled | backoff=30s
+23:17:24.092 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=8
+23:17:26.604 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.63 surface=yes mutations=1
+23:17:45.719 [INFO] [vision.py] [Loop][INFO] [ai autonomous] spoke kind=environment act=comment_current_surface subject=eris_configuration_surface text=“Mic hiện diện” đứng cạnh “Nhịp bình luận” khá hợp lý—ít nhất ở đây, sự có mặt không bị nhầm với việc phải nói liên tục.
+23:17:49.408 [INFO] [vision.py] [Loop][INFO] [post observer] turn=3 act=unknown meaning=neutral conf=0.00 repair=False traits=0 frame=uncertain strategy=none source=groq_observer latency=3703ms
+23:17:53.294 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=1 reason=enter_chat_mode
+23:17:53.295 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+23:17:57.903 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+23:17:58.288 [INFO] [vision.py] [Loop][INFO] Người dùng: hôm nay em sao
+23:17:58.288 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference
+23:17:58.290 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+23:17:58.305 [INFO] [vision.py] [Loop][INFO] [cortex v2] turn=4 relation=new_or_direct_turn owner=unknown move=answer posture=neutral_or_underdetermined delivery=calm_direct_with_room_for_edge conf=0.44 ambiguity=0.20 margin=0.12 coverage=1.00 deep=1 degraded=none conflicts=response_move:answer<->respond_in_context
+23:18:00.264 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=0 23s vì http_429:llama-3.1-8b-instant; alive=8/9
+23:18:14.954 [INFO] [vision.py] [Loop][INFO] ERIS: Hôm nay tôi ổn, hơi kín tiếng một chút. Còn em?
+23:18:17.149 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=1 29s vì http_429:llama-3.1-8b-instant; alive=7/9
+23:18:18.989 [INFO] [vision.py] [Loop][WARNING] [post observer] deadline turn=4 after 4.0s; result discarded
+23:18:22.966 [INFO] [Settings] Đang đọc não chính và ba credential pool...
+23:18:23.677 [INFO] [Settings] Đã đọc trạng thái não chính, TTS và ba credential pool từ Brain.
+23:18:24.102 [INFO] [Settings] Đang đọc não chính và ba credential pool...
+23:18:24.102 [INFO] [Settings] Kết nối & dữ liệu quản lý não chính, pool credential, backup và export.
+23:18:24.694 [INFO] [Settings] Đã quay lại Basic.
+23:18:26.207 [INFO] [Settings] Đã đọc trạng thái não chính, TTS và ba credential pool từ Brain.
+23:18:36.111 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+23:18:37.036 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=quiet external=0.20 internal=0.06 interrupt=0.39 resource=0.31 vision_hint=0 budget=scheduler_allow
+23:18:37.310 [INFO] [vision.py] [Loop][WARNING] [vision_facts] compressor failed: no_fallback_vision:vision_compressor_disabled | backoff=45s
+23:18:37.316 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+23:18:40.758 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.65 surface=yes mutations=1
+23:19:11.907 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=environment act=defer_due_to_user_busy conf=0.90 importance=0.31 gate=model_silence body_only=1
+23:19:31.525 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.69 internal=0.07 interrupt=0.44 resource=0.41 vision_hint=0 budget=scheduler_allow
+23:19:32.641 [INFO] [vision.py] [Loop][WARNING] [vision_facts] compressor failed: no_fallback_vision:vision_compressor_disabled | backoff=60s
+23:19:34.826 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.65 surface=yes mutations=1
+23:19:57.995 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=environment act=defer_nonintrusively conf=0.93 importance=0.32 gate=model_silence body_only=0
+23:20:07.497 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.69 internal=0.09 interrupt=0.48 resource=0.50 vision_hint=0 budget=scheduler_allow
+23:20:07.823 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+23:20:10.838 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.65 surface=yes mutations=1
+23:20:17.734 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=0 60s vì tts_http_429; alive=11/12
+23:20:17.734 [INFO] [vision.py] [TTS][WARNING] [TTS] Key index 0 bị rate limit/hết quota (lượt 1/2).
+23:20:23.446 [INFO] [Live2D] Dang dung renderer PID=1612...
+23:20:23.455 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::Dispose() is complete.
+23:20:23.473 [INFO] [Live2D] Renderer da thoat (code=-1, current=False).
+23:20:23.497 [INFO] [Vision] Dang dung vision.py PID=16852...
+23:20:23.522 [INFO] [Vision] vision.py da thoat (PID=16852, code=-1, unexpected=False).
+23:20:23.542 [INFO] [RunLogger] Ket thuc phien chay.

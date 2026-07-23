@@ -54,9 +54,9 @@ public partial class UdpListener : Node2D
 	[Export] public bool AutoRestartVisionOnCrash = true;
 	[Export] public bool EnableRemoteCognitionApi = true;
 	[Export(PropertyHint.Password)] public string DefaultRemoteApiKey = "";
-	[Export] public string RemoteApiProvider = "gemini";
-	[Export] public string RemoteApiBaseUrl = "https://generativelanguage.googleapis.com/v1beta";
-	[Export] public string RemoteApiModelName = "gemma-4-26b-a4b-it";
+	[Export] public string RemoteApiProvider = "openai_compatible";
+	[Export] public string RemoteApiBaseUrl = "https://api-v2.shopaikey.com/v1";
+	[Export] public string RemoteApiModelName = "gpt-5.6-terra";
 	[Export] public bool TutorEnabled = true;
 	[Export] public bool TutorQuickSearchEnabled = true;
 	[Export] public bool TutorResearchEnabled = true;
@@ -573,8 +573,6 @@ public partial class UdpListener : Node2D
 		Vector2 screenSize = GetViewportRect().Size;
 		if (_isLive2DMode)
 		{
-			// Live2D sở hữu vị trí body. Dừng gravity/autonomy của sprite 2D để
-			// hidden anchor không tự bò khỏi model và kéo bubble đi chỗ khác.
 			SyncLive2DBodyAnchor();
 			pos = _body.Position;
 		}

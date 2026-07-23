@@ -122,6 +122,37 @@ class ChatCycleMixin:
         finally:
             if clock is not None:
                 clock.mark_generation_finished()
+            # PDF annotation, pages 17-19: acceptance is based on perceived
+            # turn latency, not a cherry-picked provider timing.  Emit the full
+            # user-turn duration so P50/P95 can be computed from production
+            # JSONL without reconstructing timestamps by hand.
+            try:
+                from runtime.observability import GLOBAL_OBSERVABILITY
+
+                frame = dict(getattr(self, "last_semantic_frame", {}) or {})
+                act = str(frame.get("user_act", "") or "").strip().lower()
+                category = (
+                    "small_talk"
+                    if act in {
+                        "greeting",
+                        "acknowledgement",
+                        "relational_check_in",
+                        "closeness_bid",
+                        "repair_request",
+                    }
+                    else "tool_or_action"
+                    if str(frame.get("tool_intent", "none") or "none").strip().lower() not in {"", "none"}
+                    else "general_chat"
+                    if frame
+                    else "unknown"
+                )
+                GLOBAL_OBSERVABILITY.observe(
+                    "user_turn_latency_ms",
+                    max(0.0, (time.time() - cycle_start) * 1000.0),
+                    tags={"channel": "chat", "turn_category": category},
+                )
+            except Exception:
+                pass
             self._temporal_last_user_turn_at = cycle_start
             self.current_stage_user_text = ""
             self.current_conversation_lane = None

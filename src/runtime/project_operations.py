@@ -760,12 +760,21 @@ class ProjectOperationsRuntime:
             "patch phải là unified diff hợp lệ bắt đầu bằng diff --git hoặc ---/+++; tests chỉ chứa lệnh test an toàn trong project."
         )
         messages = [{"role": "system", "content": system}, {"role": "user", "content": f"TÁC VỤ:\n{task}\n\nCONTEXT:\n{context}"}]
-        response = client.create_chat_completion(
-            messages=messages, temperature=0.15, frequency_penalty=0.0, presence_penalty=0.0,
-            max_tokens=max(1800, int(self._setting("coding_max_tokens", 5000))),
-            response_format={"type": "json_object"}, timeout=float(self._setting("coding_timeout_seconds", 120)),
-            reasoning_effort="high", reasoning_format="hidden",
-        )
+        from runtime.inference_broker import inference_context
+        coding_timeout = float(self._setting("coding_timeout_seconds", 120))
+        with inference_context(
+            "chat_tool_required",
+            optional=False,
+            timeout_seconds=coding_timeout,
+            cancel_scope="project_operations:coding",
+            metadata={"operation": "coding_model"},
+        ):
+            response = client.create_chat_completion(
+                messages=messages, temperature=0.15, frequency_penalty=0.0, presence_penalty=0.0,
+                max_tokens=max(1800, int(self._setting("coding_max_tokens", 5000))),
+                response_format={"type": "json_object"}, timeout=coding_timeout,
+                reasoning_effort="high", reasoning_format="hidden",
+            )
         raw = self._extract_response_text(response)
         clean = strip_reasoning_envelope(raw)
         candidate = extract_last_valid_json_object(clean) or clean

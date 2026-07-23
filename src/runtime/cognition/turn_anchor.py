@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Deterministic current-turn anchor dùng chung cho pre-response và observer.
+"""Observer anchor derived from the typed semantic authority.
 
-Đây không phải semantic model thứ hai. Nó chỉ neo một số move vận hành quan
-trọng khi model phụ lỗi/429, và tái dùng DiscourseCortex thay vì duy trì một bộ
-phrase list khác trong model router.
+PDF annotation, pages 12-13 and 20: production code must not reconstruct open
+conversation meaning from phrase lists after the main model already emitted a
+validated ``semantic_frame.v1``.  The old lexical helper remains as a legacy
+compatibility shim only; live observer wiring uses :func:`anchor_from_semantic_frame`.
 """
 
 from __future__ import annotations
@@ -27,6 +28,42 @@ _RELATION_HINTS = {
     "relational_bid": "closeness_bid",
 }
 
+_FRAME_ACT_HINTS = {
+    "style_criticism": "style_criticism",
+    "style_request": "style_request",
+    "correction_or_challenge": "correction",
+    "clarification_request": "reference_clarification",
+    "continuation_bid": "continuation_bid",
+    "relational_check_in": "closeness_bid",
+    "closeness_bid": "closeness_bid",
+    "request_reciprocity": "request_reciprocity",
+    "play_bid": "play_bid",
+    "action_request": "technical_request",
+}
+
+
+def anchor_from_semantic_frame(frame: Mapping[str, Any] | None) -> str:
+    """Map validated frame fields to the observer's narrow operational hints.
+
+    This is a typed projection, not another classifier.  It never reads raw
+    user text and therefore cannot disagree with the authority by inventing a
+    fresh meaning from punctuation or Vietnamese phrase fragments.
+    """
+
+    payload = dict(frame or {})
+    if str(payload.get("version", "") or "") != "semantic_frame.v1":
+        return "unknown"
+    relation = str(payload.get("discourse_relation", "") or "").strip().lower()
+    act = str(payload.get("user_act", "") or "").strip().lower()
+    if relation in _RELATION_HINTS:
+        return _RELATION_HINTS[relation]
+    if relation.startswith("continuation_"):
+        return "continuation_bid"
+    if relation.startswith("clarify_"):
+        return "reference_clarification"
+    return _FRAME_ACT_HINTS.get(act, "unknown")
+
+
 
 def previous_assistant_from_history(
     recent_history: Sequence[Mapping[str, Any] | str],
@@ -45,7 +82,21 @@ def previous_assistant_from_history(
     return ""
 
 
-def infer_current_turn_anchor(user_text: str, *, previous_assistant_text: str = "") -> str:
+def infer_current_turn_anchor(
+    user_text: str,
+    *,
+    previous_assistant_text: str = "",
+    semantic_frame: Mapping[str, Any] | None = None,
+) -> str:
+    """Legacy lexical shim. New production callers must pass ``semantic_frame``.
+
+    Kept for rollback and historical tests while the P2 cutover is canaried.
+    When a frame is present, raw text is intentionally ignored.
+    """
+
+    framed = anchor_from_semantic_frame(semantic_frame)
+    if framed != "unknown":
+        return framed
     text = " ".join(str(user_text or "").casefold().split())
     normalized = normalize_vi(user_text)
     if not text:
@@ -126,4 +177,4 @@ def infer_current_turn_anchor(user_text: str, *, previous_assistant_text: str = 
     return "unknown"
 
 
-__all__ = ["infer_current_turn_anchor", "previous_assistant_from_history"]
+__all__ = ["anchor_from_semantic_frame", "infer_current_turn_anchor", "previous_assistant_from_history"]

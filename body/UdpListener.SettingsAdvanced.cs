@@ -11,6 +11,8 @@ public partial class UdpListener : Node2D
 	private enum SettingsModePage
 	{
 		Basic,
+		Voice,
+		Data,
 		Advanced,
 		Danger,
 	}
@@ -74,6 +76,8 @@ public partial class UdpListener : Node2D
 		BuildSettingsPanelUi();
 		SetSettingsStatus(page switch
 		{
+			SettingsModePage.Voice => "Giọng nói chứa toàn bộ cấu hình TTS và nghe thử; Basic chỉ giữ điều khiển nhanh.",
+			SettingsModePage.Data => "Kết nối & dữ liệu quản lý não chính, pool credential, backup và export.",
 			SettingsModePage.Advanced => "Advanced điều khiển hành vi, memory, Tutor và quyền project. Một nút Áp dụng sẽ lưu lẫn cập nhật Brain.",
 			SettingsModePage.Danger => "Danger Zone chỉ chứa thao tác reset/bảo trì thật. Mọi lệnh phá dữ liệu đều preview trước.",
 			_ => "Đã quay lại Basic.",
@@ -88,11 +92,16 @@ public partial class UdpListener : Node2D
 		_settingsRuntimeDetailLabel = null;
 		_settingsRuntimeProviderSummaryLabel = null;
 		_settingsRuntimeModelSummaryLabel = null;
+		_settingsMainBrainEndpointLabel = null;
+		_settingsMainBrainKeyLabel = null;
+		_settingsMainBrainLiveLabel = null;
+		_settingsSystemAiHealthLabel = null;
 		_settingsRuntimeStartButton = null;
 		_settingsRuntimeStopButton = null;
 		_settingsRuntimeRestartButton = null;
 		_settingsConnectionOverlay = null;
 		_settingsConnectionFeedbackLabel = null;
+		_settingsMainPoolStatusLabel = null;
 		_settingsPoolStatusLabel = null;
 		_settingsFallbackStatusLabel = null;
 		_settingsPoolHealthLabel = null;

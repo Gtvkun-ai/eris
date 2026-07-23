@@ -6,10 +6,15 @@ import logging
 from llm.token_budget import (
     detect_provider as _detect_provider,
     estimate_tokens as _estimate_tokens,
+    enforce_prompt_cap as _enforce_prompt_cap,
     preflight as _preflight,
 )
 from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
 from runtime.observability import GLOBAL_OBSERVABILITY
+from runtime.inference_broker import (
+    GLOBAL_INFERENCE_BROKER,
+    current_inference_context,
+)
 from llm.key_pool import get_provider_circuit
 
 _LOGGER = logging.getLogger("LLM")
@@ -33,15 +38,17 @@ def _record_pressure_request(base_url: str, model_name: str, messages, max_token
     provider = _pressure_provider(base_url, model_name)
     try:
         prompt_tokens = _estimate_tokens(messages)
+        lane = current_inference_context().lane or "transport"
         GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_request(
             provider,
-            lane="transport",
+            lane=lane,
             prompt_tokens=prompt_tokens,
             output_tokens=max_tokens,
         )
-        GLOBAL_OBSERVABILITY.observe("input_tokens_by_lane", prompt_tokens, tags={"provider": provider, "lane": "transport"})
-        GLOBAL_OBSERVABILITY.observe("output_tokens_by_lane", max_tokens, tags={"provider": provider, "lane": "transport"})
-        snapshot = GLOBAL_TOKEN_PRESSURE_GOVERNOR.snapshot(provider, lane="transport")
+        metric_tags = {"provider": provider, "lane": lane, "model": str(model_name or "unknown")[:80]}
+        GLOBAL_OBSERVABILITY.observe("input_tokens_by_lane", prompt_tokens, tags=metric_tags)
+        GLOBAL_OBSERVABILITY.observe("output_tokens_by_lane", max_tokens, tags=metric_tags)
+        snapshot = GLOBAL_TOKEN_PRESSURE_GOVERNOR.snapshot(provider, lane=lane)
         GLOBAL_OBSERVABILITY.gauge("token_pressure_ratio", snapshot.pressure, tags={"provider": provider})
     except Exception:
         pass
@@ -55,18 +62,133 @@ def _record_pressure_success(provider: str) -> None:
         pass
 
 
-def _record_pressure_429(provider: str, response, default: float = 20.0) -> None:
+def _record_pressure_429(
+    provider: str,
+    response,
+    default: float = 20.0,
+    *,
+    model_name: str = "",
+) -> None:
     try:
         retry_after = _retry_after_seconds(response, default)
+        lane = current_inference_context().lane or "transport"
         GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_rate_limit(
             provider,
             retry_after_s=retry_after,
-            lane="transport",
+            lane=lane,
         )
-        GLOBAL_OBSERVABILITY.increment("rate_limit_429_total", tags={"provider": provider})
-        GLOBAL_OBSERVABILITY.observe("retry_after_seconds", retry_after, tags={"provider": provider})
+        GLOBAL_INFERENCE_BROKER.record_rate_limit(provider, retry_after_s=retry_after)
+        tags = {
+            "provider": provider,
+            "lane": lane,
+            "model": str(model_name or "unknown")[:80],
+        }
+        GLOBAL_OBSERVABILITY.increment("rate_limit_429_total", tags=tags)
+        GLOBAL_OBSERVABILITY.observe("retry_after_seconds", retry_after, tags=tags)
     except Exception:
         pass
+
+
+def _brokered_post(
+    *,
+    base_url: str,
+    model_name: str,
+    messages,
+    max_tokens: int,
+    timeout_seconds: float,
+    url: str,
+    **request_kwargs,
+):
+    """Reserve quota before the HTTP request, then report provider headers.
+
+    PDF annotation, pages 6-10: every OpenAI/Gemini compatible transport call
+    enters the same broker.  This is intentionally below LlmService so direct
+    users such as PrivateMind and vision adapters cannot bypass admission.
+    """
+
+    provider = _pressure_provider(base_url, model_name)
+    prompt_tokens = _estimate_tokens(messages)
+    original_payload = request_kwargs.get("json")
+    supports_input_degrade = bool(
+        isinstance(original_payload, dict)
+        and isinstance(original_payload.get("messages"), list)
+    )
+    supports_output_degrade = bool(
+        isinstance(original_payload, dict)
+        and (
+            "max_tokens" in original_payload
+            or "max_completion_tokens" in original_payload
+            or isinstance(original_payload.get("generationConfig"), dict)
+        )
+    )
+    request = GLOBAL_INFERENCE_BROKER.request_from_context(
+        provider=provider,
+        model=model_name,
+        estimated_input_tokens=prompt_tokens,
+        reserved_output_tokens=max_tokens,
+        timeout_seconds=timeout_seconds,
+        metadata={
+            "transport": "requests.post",
+            # PDF annotation, page 8: required-lane degradation is legal only
+            # when the adapter can actually rewrite the payload to match the
+            # smaller reservation. The broker is an accountant, not a novelist.
+            "input_degrade_supported": supports_input_degrade,
+            "output_degrade_supported": supports_output_degrade,
+        },
+    )
+
+    configured_timeout_seconds = float(timeout_seconds)
+
+    def send(*, cancel_token=None, timeout_seconds=None, inference_request=None):
+        # PDF annotation, pages 5, 7 and 10: cancellation/deadline must reach
+        # the adapter, not merely discard a Future after quota is already gone.
+        actual_request = inference_request or request
+        if cancel_token is not None:
+            cancel_token.raise_if_cancelled(actual_request)
+        effective_timeout = max(
+            0.05,
+            min(
+                float(timeout_seconds or configured_timeout_seconds),
+                configured_timeout_seconds,
+            ),
+        )
+
+        effective_messages = list(messages or [])
+        if supports_input_degrade and actual_request.estimated_input_tokens < prompt_tokens:
+            effective_messages, _trimmed = _enforce_prompt_cap(
+                effective_messages, max(1, int(actual_request.estimated_input_tokens))
+            )
+        effective_max_tokens = max(1, min(int(max_tokens), int(actual_request.reserved_output_tokens)))
+
+        effective_kwargs = dict(request_kwargs)
+        payload = effective_kwargs.get("json")
+        if isinstance(payload, dict):
+            payload = dict(payload)
+            if supports_input_degrade and "messages" in payload:
+                payload["messages"] = effective_messages
+            if "max_tokens" in payload:
+                payload["max_tokens"] = effective_max_tokens
+            if "max_completion_tokens" in payload:
+                payload["max_completion_tokens"] = effective_max_tokens
+            generation_config = payload.get("generationConfig")
+            if isinstance(generation_config, dict):
+                generation_config = dict(generation_config)
+                generation_config["maxOutputTokens"] = effective_max_tokens
+                payload["generationConfig"] = generation_config
+            effective_kwargs["json"] = payload
+
+        _record_pressure_request(
+            base_url, model_name, effective_messages, effective_max_tokens
+        )
+        response = requests.post(url, timeout=effective_timeout, **effective_kwargs)
+        if cancel_token is not None:
+            cancel_token.raise_if_cancelled(actual_request)
+        # retry-after, RPM and TPM headers are consumed once here.  The client
+        # error path records a header-less 429 fallback only when necessary.
+        GLOBAL_INFERENCE_BROKER.record_response_headers(provider, getattr(response, "headers", None))
+        return response
+
+    return GLOBAL_INFERENCE_BROKER.run(request, send)
 
 
 def _http_error_with_body(response: requests.Response) -> requests.HTTPError:
@@ -253,7 +375,7 @@ class LlamaServerClient:
         reasoning_format=None,
     ):
         messages = _preflight(messages, base_url=self.base_url, model=self.model_name)
-        pressure_provider = _record_pressure_request(self.base_url, self.model_name, messages, max_tokens)
+        pressure_provider = _pressure_provider(self.base_url, self.model_name)
         payload = {
             "model": self.model_name,
             "messages": messages,
@@ -275,10 +397,15 @@ class LlamaServerClient:
                 continue
             seen_signatures.add(signature)
 
-            response = requests.post(
-                f"{self.base_url}/chat/completions",
+            actual_timeout = self.timeout if timeout is None else timeout
+            response = _brokered_post(
+                base_url=self.base_url,
+                model_name=self.model_name,
+                messages=messages,
+                max_tokens=max_tokens,
+                timeout_seconds=actual_timeout,
+                url=f"{self.base_url}/chat/completions",
                 json=candidate,
-                timeout=self.timeout if timeout is None else timeout,
             )
             try:
                 response.raise_for_status()
@@ -288,7 +415,7 @@ class LlamaServerClient:
                 last_error = _http_error_with_body(response)
                 status_code = exc.response.status_code if exc.response is not None else None
                 if status_code == 429:
-                    _record_pressure_429(pressure_provider, response)
+                    _record_pressure_429(pressure_provider, response, model_name=model_name)
                 if status_code is not None and status_code < 500:
                     continue
                 raise last_error
@@ -349,7 +476,7 @@ class OpenAICompatibleClient:
         reasoning_format=None,
     ):
         messages = _preflight(messages, base_url=self.base_url, model=self.model_name)
-        pressure_provider = _record_pressure_request(self.base_url, self.model_name, messages, max_tokens)
+        pressure_provider = _pressure_provider(self.base_url, self.model_name)
         if response_format and response_format.get("type") == "json_object":
             last_msg_has_json = False
             if messages:
@@ -433,11 +560,16 @@ class OpenAICompatibleClient:
 
                 try:
                     self._provider_circuit.before_request(self.base_url)
-                    response = requests.post(
-                        url,
+                    actual_timeout = self.timeout if timeout is None else timeout
+                    response = _brokered_post(
+                        base_url=self.base_url,
+                        model_name=self.model_name,
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        timeout_seconds=actual_timeout,
+                        url=url,
                         headers=headers,
                         json=candidate,
-                        timeout=self.timeout if timeout is None else timeout,
                     )
                     response.raise_for_status()
                     try:
@@ -455,7 +587,7 @@ class OpenAICompatibleClient:
                     status_code = exc.response.status_code if exc.response is not None else None
                     if status_code == 429:
                         rate_limited = True
-                        _record_pressure_429(pressure_provider, exc.response)
+                        _record_pressure_429(pressure_provider, exc.response, model_name=model_name)
                         break  # thoát vòng variant để xoay key
                     if status_code in (401, 403):
                         auth_failed = True
@@ -700,7 +832,7 @@ class GeminiClient:
         reasoning_format=None,
     ):
         messages = _preflight(messages, base_url=self.base_url, model=self.model_name)
-        pressure_provider = _record_pressure_request(self.base_url, self.model_name, messages, max_tokens)
+        pressure_provider = _pressure_provider(self.base_url, self.model_name)
         system_instruction, contents = self._convert_messages(messages)
         is_gemma = self._is_gemma()
         if is_gemma:
@@ -757,18 +889,23 @@ class GeminiClient:
                 attempted_indices.add(lease.index)
                 self.api_key = self._normalize_api_key(lease.key)
             self._provider_circuit.before_request(self.base_url)
-            last_response = requests.post(
-                f"{self.base_url}/models/{self.model_name}:generateContent",
+            actual_timeout = self.timeout if timeout is None else timeout
+            last_response = _brokered_post(
+                base_url=self.base_url,
+                model_name=self.model_name,
+                messages=messages,
+                max_tokens=max_tokens,
+                timeout_seconds=actual_timeout,
+                url=f"{self.base_url}/models/{self.model_name}:generateContent",
                 headers={
                     "x-goog-api-key": self.api_key,
                     "Content-Type": "application/json",
                 },
                 json=payload,
-                timeout=self.timeout if timeout is None else timeout,
             )
             status = last_response.status_code
             if status == 429:
-                _record_pressure_429(pressure_provider, last_response, 60.0)
+                _record_pressure_429(pressure_provider, last_response, 60.0, model_name=model_name)
             if status == 429 and self.key_pool is not None:
                 retry_s = _retry_after_seconds(last_response, 60.0)
                 may_rotate = self.key_pool.mark_rate_limited(

@@ -493,16 +493,23 @@ class ApiKeyPool:
 
 
 _GROQ_PROVIDERS = {"openai", "openai_compatible", "compatible", "remote", "groq"}
+_REMOTE_MAIN_KINDS = {"main", "main_brain", "remote_main", "aggregator", "shopaikey"}
 
-# Mỗi "kind" (gemini / groq) có pool riêng để chạy SONG SONG hai provider:
-# việc khó/cần JSON chuẩn đi Groq, việc nhẹ/cần nhanh đi Gemma. Tách pool để
-# không bao giờ gửi nhầm key Gemini sang endpoint Groq và ngược lại.
+# Có ba pool tách biệt:
+# - remote: credential dành riêng cho não chính;
+# - gemini: speech/private-mind và các lane Gemini phụ;
+# - groq: parser/fallback/social lane.
+#
+# Tách pool não chính là bắt buộc. Trước đây OpenAI-compatible bị gộp vào Groq,
+# khiến UI có thể ghi key Groq nhưng người dùng tưởng đó là key GPT/Terra.
 _pools: dict[str, ApiKeyPool] = {}
 _pools_lock = threading.Lock()
 
 
 def _normalize_kind(kind: str) -> str:
     k = str(kind or "").strip().lower()
+    if k in _REMOTE_MAIN_KINDS:
+        return "remote"
     return "groq" if k in _GROQ_PROVIDERS else "gemini"
 
 
@@ -524,7 +531,7 @@ def _split_keys_env(*names: str) -> list[str]:
 
 
 def _collect_gemini_keys() -> list[str]:
-    """Gom key Gemini: chính + remote + speech + fallback pool."""
+    """Gom credential Gemini phụ: private-mind, speech và fallback."""
     ordered: list[str] = []
     try:
         from eris_secrets import _load_secrets, get_secret
@@ -532,22 +539,66 @@ def _collect_gemini_keys() -> list[str]:
         payload = _load_secrets() or {}
         api_keys = payload.get("api_keys", {}) if isinstance(payload, dict) else {}
 
-        primary = get_secret("ERIS_PRIVATE_MIND_API_KEY", "ERIS_REMOTE_API_KEY", "GEMINI_API_KEY")
+        primary = get_secret("ERIS_PRIVATE_MIND_API_KEY", "GEMINI_API_KEY", "ERIS_SPEECH_API_KEY")
         if primary:
             ordered.append(primary)
         if isinstance(api_keys, dict):
-            for single in ("ERIS_REMOTE_API_KEY", "ERIS_SPEECH_API_KEY"):
-                val = api_keys.get(single)
-                if val:
-                    ordered.append(str(val))
-            fallbacks = api_keys.get("ERIS_PRIVATE_MIND_FALLBACK_API_KEYS")
-            if isinstance(fallbacks, list):
-                ordered.extend(str(k) for k in fallbacks if str(k or "").strip())
+            speech_key = api_keys.get("ERIS_SPEECH_API_KEY")
+            if speech_key:
+                ordered.append(str(speech_key))
+            for fallback_name in ("ERIS_PRIVATE_MIND_FALLBACK_API_KEYS", "ERIS_GEMINI_FALLBACK_API_KEYS"):
+                fallbacks = api_keys.get(fallback_name)
+                if isinstance(fallbacks, list):
+                    ordered.extend(str(k) for k in fallbacks if str(k or "").strip())
     except Exception:
         pass
     # T4.1: thêm key từ env (sau khi .env đã nạp) — hỗ trợ danh sách phân tách.
     ordered.extend(_split_keys_env("ERIS_PRIVATE_MIND_FALLBACK_API_KEYS", "ERIS_GEMINI_FALLBACK_API_KEYS"))
     return ordered
+
+
+def _collect_remote_keys() -> list[str]:
+    """Gom credential dành riêng cho não chính theo đúng thứ tự ưu tiên.
+
+    ``providers.<provider>.remote_main.api_key`` là authority mới. Các biến
+    ERIS_REMOTE_* vẫn được đọc để tương thích repo cũ. Không gom key Groq hay
+    Gemini phụ vào đây, tránh dùng nhầm project cho main cognition.
+    """
+
+    ordered: list[str] = []
+    try:
+        from eris_secrets import _load_secrets, get_provider_profile, get_secret
+
+        provider = str(os.environ.get("ERIS_REMOTE_PROVIDER", "openai_compatible") or "").strip().lower()
+        if provider in {"", "openai", "compatible", "shopaikey"}:
+            provider = "openai_compatible"
+        profile = get_provider_profile(provider, slot="remote_main")
+        profile_key = str(profile.get("api_key") or "").strip()
+        if not _is_placeholder(profile_key):
+            ordered.append(profile_key)
+
+        primary = get_secret("ERIS_REMOTE_API_KEY", "ERIS_AGGREGATOR_API_KEY")
+        if not _is_placeholder(primary):
+            ordered.append(primary)
+
+        payload = _load_secrets() or {}
+        api_keys = payload.get("api_keys", {}) if isinstance(payload, dict) else {}
+        if isinstance(api_keys, dict):
+            fallbacks = api_keys.get("ERIS_REMOTE_FALLBACK_API_KEYS")
+            if isinstance(fallbacks, list):
+                ordered.extend(str(k) for k in fallbacks if not _is_placeholder(k))
+    except Exception:
+        pass
+
+    ordered.extend(_split_keys_env("ERIS_REMOTE_FALLBACK_API_KEYS"))
+    unique: list[str] = []
+    seen: set[str] = set()
+    for key in ordered:
+        clean = str(key or "").strip()
+        if clean and not _is_placeholder(clean) and clean not in seen:
+            seen.add(clean)
+            unique.append(clean)
+    return unique
 
 
 def _collect_groq_keys() -> list[str]:
@@ -573,10 +624,11 @@ def _collect_groq_keys() -> list[str]:
 
 
 def get_key_pool(kind: str = "gemini") -> ApiKeyPool:
-    """Trả pool singleton theo provider-kind ('gemini' hoặc 'groq').
+    """Trả singleton pool theo lane ``remote`` / ``gemini`` / ``groq``.
 
-    Mỗi consumer truyền đúng provider của mình để luôn lấy đúng họ key, bất kể
-    provider toàn cục đang là gì.
+    ``remote_main`` luôn phân giải sang pool ``remote`` riêng, bất kể endpoint
+    là ShopAIKey, Gemini hay Groq. Nhờ vậy não chính không âm thầm mượn pool của
+    parser, TTS hoặc private-mind.
     """
     k = _normalize_kind(kind)
     pool = _pools.get(k)
@@ -584,7 +636,9 @@ def get_key_pool(kind: str = "gemini") -> ApiKeyPool:
         return pool
     with _pools_lock:
         if k not in _pools:
-            if k == "groq":
+            if k == "remote":
+                keys = _collect_remote_keys()
+            elif k == "groq":
                 keys = _collect_groq_keys()
             else:
                 keys = _collect_gemini_keys()
@@ -593,10 +647,8 @@ def get_key_pool(kind: str = "gemini") -> ApiKeyPool:
 
 
 def get_shared_key_pool() -> ApiKeyPool:
-    """Tương thích ngược: chọn pool theo ERIS_REMOTE_PROVIDER toàn cục."""
-    import os
-
-    return get_key_pool(os.getenv("ERIS_REMOTE_PROVIDER", "gemini"))
+    """Tương thích ngược cho main cognition: luôn trả pool não chính."""
+    return get_key_pool("remote_main")
 
 
 def reset_shared_key_pool() -> None:

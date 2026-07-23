@@ -69,17 +69,43 @@ class PostTurnObserver:
         assistant_meta: MutableMapping[str, Any] | None = None,
     ) -> ObservationTicket:
         ticket_id = f"observe-{uuid.uuid4().hex[:12]}"
-        future = self.executor.submit(
-            self.router.observe_completed_turn,
-            turn_id=turn_id,
-            turn_seq=turn_seq,
-            user_text=user_text,
-            assistant_text=assistant_text,
-            recent_history=recent_history,
-            mechanical_outcomes=mechanical_outcomes,
-            state_summary=state_summary,
-            event_kind=event_kind,
-        )
+        submitted_at = time.time()
+        cancel_scope = f"background:post_observer:{turn_id}"
+
+        def observe_when_idle() -> CognitiveObservation:
+            # PDF annotation, pages 5 and 7-9: observer work is never allowed on
+            # the user-facing critical path. It waits for chat to leave the
+            # broker, then enters a short optional/deadline-aware lane.
+            from runtime.inference_broker import (
+                GLOBAL_INFERENCE_BROKER,
+                InferenceRejected,
+                inference_context,
+            )
+
+            remaining = max(0.0, submitted_at + self.deadline_seconds - time.time())
+            if not GLOBAL_INFERENCE_BROKER.wait_for_user_idle(remaining):
+                raise InferenceRejected("post_observer_user_turn_deadline")
+            with inference_context(
+                "post_observer",
+                optional=True,
+                deadline_at=submitted_at + self.deadline_seconds,
+                cancel_scope=cancel_scope,
+                coalesce_key=f"post_observer:{turn_id}",
+                idempotency_key=f"post_observer:{turn_id}",
+                metadata={"turn_seq": turn_seq, "event_kind": event_kind},
+            ):
+                return self.router.observe_completed_turn(
+                    turn_id=turn_id,
+                    turn_seq=turn_seq,
+                    user_text=user_text,
+                    assistant_text=assistant_text,
+                    recent_history=recent_history,
+                    mechanical_outcomes=mechanical_outcomes,
+                    state_summary=state_summary,
+                    event_kind=event_kind,
+                )
+
+        future = self.executor.submit(observe_when_idle)
         ticket = ObservationTicket(
             ticket_id=ticket_id,
             turn_id=turn_id,
@@ -87,7 +113,7 @@ class PostTurnObserver:
             user_text=user_text,
             assistant_text=assistant_text,
             event_kind=str(event_kind or "chat"),
-            submitted_at=time.time(),
+            submitted_at=submitted_at,
             future=future,
             user_meta=user_meta,
             assistant_meta=assistant_meta,
@@ -125,6 +151,19 @@ class PostTurnObserver:
                 base_version=self.reducer.snapshot().version,
             )
         )
+        try:
+            from runtime.observability import GLOBAL_OBSERVABILITY
+
+            GLOBAL_OBSERVABILITY.increment(
+                "observer_completed_total", tags={"event_kind": ticket.event_kind}
+            )
+            GLOBAL_OBSERVABILITY.observe(
+                "observer_latency_ms",
+                max(0.0, (time.time() - ticket.submitted_at) * 1000.0),
+                tags={"event_kind": ticket.event_kind},
+            )
+        except Exception:
+            pass
         self._log(
             "info",
             "[post observer] turn=%s act=%s meaning=%s conf=%.2f repair=%s traits=%s frame=%s strategy=%s source=%s latency=%.0fms",
@@ -146,7 +185,28 @@ class PostTurnObserver:
         with self._lock:
             self._tickets.pop(ticket.ticket_id, None)
         try:
-            ticket.future.cancel()
+            from runtime.inference_broker import GLOBAL_INFERENCE_BROKER
+            GLOBAL_INFERENCE_BROKER.cancel_scope(f"background:post_observer:{ticket.turn_id}")
+        except Exception:
+            pass
+        # PDF annotation, pages 5 and 18-19: distinguish work dropped before
+        # provider start from a late in-flight discard.  The acceptance target
+        # is near-zero remote work for the former, not a vague aggregate count.
+        was_running = False
+        cancelled_before_start = False
+        try:
+            was_running = ticket.future.running()
+            cancelled_before_start = bool(ticket.future.cancel())
+        except Exception:
+            pass
+        try:
+            from runtime.observability import GLOBAL_OBSERVABILITY
+
+            stage = "before_start" if cancelled_before_start and not was_running else "inflight_or_started"
+            GLOBAL_OBSERVABILITY.increment(
+                "observer_discard_total",
+                tags={"stage": stage, "event_kind": ticket.event_kind},
+            )
         except Exception:
             pass
         if ticket.user_meta is not None:

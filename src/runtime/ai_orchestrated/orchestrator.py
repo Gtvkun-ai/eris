@@ -76,6 +76,58 @@ def _next_ai_turn_seq(host: Any, *, fallback: int = 1) -> int:
         return int(host._ai_turn_seq)
 
 
+def _typed_startup_persona_plan(*, reason: str = "typed_persona_startup") -> IntentionPlan:
+    return IntentionPlan.from_mapping(
+        {
+            "speak": True,
+            "motive": "startup_opening",
+            "strategy": "persona_opening",
+            "value_focus": "warm_relational_presence",
+            "topic": "Offer one ordinary, warm-guarded opening with a small dry edge; no manifesto.",
+            "importance": 0.72,
+            "intrusion_risk": 0.05,
+            "confidence": 0.74,
+            "performance_hint": "soft",
+            "evidence_refs": [],
+            "semantics": {
+                "turn_kind": "startup",
+                "speech_act": "warm_session_opening",
+                "subject_key": "session_arrival",
+                "evidence_scope": "persona",
+                "continuation_key": "none",
+            },
+            "notes": reason,
+        },
+        channel="startup",
+    )
+
+
+def _submit_local_startup_plan(host: Any, plan: IntentionPlan, *, turn_seq: int) -> None:
+    reducer = getattr(host, "ai_state_reducer", None)
+    if reducer is None or not callable(getattr(reducer, "submit", None)):
+        return
+    try:
+        snapshot = reducer.snapshot() if callable(getattr(reducer, "snapshot", None)) else None
+        base_version = int(getattr(snapshot, "version", 0) or 0)
+        reducer.submit(
+            StateEvent.from_intention(
+                plan,
+                turn_seq=turn_seq,
+                base_version=base_version,
+            )
+        )
+    except Exception:
+        pass
+
+
+class _StaticIntentionPlanner:
+    def __init__(self, plan: IntentionPlan) -> None:
+        self.plan = plan
+
+    def plan_autonomous(self, _snapshot: Mapping[str, Any], *, turn_seq: int = 0) -> IntentionPlan:
+        return self.plan
+
+
 
 class AIChatOrchestrator:
     def __init__(self, host: Any) -> None:
@@ -92,7 +144,57 @@ class AIChatOrchestrator:
         speech_interrupt_event: Any | None = None,
         speech_interrupt_reaction: Any | None = None,
     ) -> None:
+        # PDF annotation, pages 7 and 19-20: a user turn is a cancellation
+        # scope. Entering it preempts queued optional lanes and prevents new
+        # background requests from competing with the public reply.
+        from runtime.inference_broker import GLOBAL_INFERENCE_BROKER
+
+        scope = f"user_turn:{int(float(cycle_start) * 1000)}:{id(self):x}"
+        with GLOBAL_INFERENCE_BROKER.user_turn(scope):
+            result = self._run_unscoped(
+                user_text,
+                cycle_start=cycle_start,
+                previous_public_context=previous_public_context,
+                previous_public_turn=previous_public_turn,
+                speech_interrupt_context=speech_interrupt_context,
+                speech_interrupt_event=speech_interrupt_event,
+                speech_interrupt_reaction=speech_interrupt_reaction,
+            )
+            frame = dict(getattr(self.host, "last_semantic_frame", {}) or {})
+            act = str(frame.get("user_act", "") or "").strip().lower()
+            category = (
+                "small_talk"
+                if act in {
+                    "greeting",
+                    "acknowledgement",
+                    "relational_check_in",
+                    "closeness_bid",
+                    "repair_request",
+                }
+                else "tool_or_action"
+                if str(frame.get("tool_intent", "none") or "none").strip().lower() not in {"", "none"}
+                else "general_chat"
+                if frame
+                else "unknown"
+            )
+            GLOBAL_INFERENCE_BROKER.set_user_turn_category(scope, category)
+            return result
+
+    def _run_unscoped(
+        self,
+        user_text: str,
+        *,
+        cycle_start: float,
+        previous_public_context: str = "",
+        previous_public_turn: Any | None = None,
+        speech_interrupt_context: str = "",
+        speech_interrupt_event: Any | None = None,
+        speech_interrupt_reaction: Any | None = None,
+    ) -> None:
         host = self.host
+        # Avoid carrying a previous turn's semantic category into telemetry when
+        # the current authority call fails before producing a frame.
+        host.last_semantic_frame = {}
         semantic_policy = SemanticAuthorityPolicy.from_env()
         snapshot = host.telemetry_service.capture_snapshot(
             mood_score=host.mood_score,
@@ -213,18 +315,32 @@ class AIChatOrchestrator:
         personality_context = mind_state.personality_prompt_context()
         relationship_context = mind_state.relationship.prompt_summary()
         grounding_context = str(getattr(grounding_report, "prompt_context", "") or "")
-        cognitive_brief = host.ai_pre_response_cognition.analyze(
-            user_text=user_text,
-            recent_history=prior_public_history,
-            turn_id=turn_id,
-            turn_seq=turn_seq,
-            grounding_context=grounding_context,
-            relationship_summary=relationship_context,
-            personality_summary=personality_context,
-            memory_available=bool(str(memory_context or "").strip()),
-            interrupt_context=speech_interrupt_context,
-            metadata={"event_kind": "chat"},
-        )
+        if semantic_policy.primary_model_first:
+            # PDF annotation, pages 12-13 and 19-20: cutover means the old
+            # regex/discourse committee is no longer executed on the public
+            # critical path.  Keep the implementation behind legacy mode for
+            # rollback archaeology, but give the writer a neutral placeholder;
+            # the typed semantic_frame from the main model is the sole meaning
+            # authority in production.
+            from core.cognition import PreResponseCognitiveBrief
+
+            cognitive_brief = PreResponseCognitiveBrief.neutral(
+                trace_id=f"semantic_cutover:{turn_id}"
+            )
+            user_meta["legacy_semantic_classifiers"] = "cutover_disabled"
+        else:
+            cognitive_brief = host.ai_pre_response_cognition.analyze(
+                user_text=user_text,
+                recent_history=prior_public_history,
+                turn_id=turn_id,
+                turn_seq=turn_seq,
+                grounding_context=grounding_context,
+                relationship_summary=relationship_context,
+                personality_summary=personality_context,
+                memory_available=bool(str(memory_context or "").strip()),
+                interrupt_context=speech_interrupt_context,
+                metadata={"event_kind": "chat"},
+            )
         host.last_cognitive_brief = cognitive_brief
         user_meta["pre_response_cognitive_brief"] = cognitive_brief.to_dict()
         discovery_runtime = getattr(host, "ai_discovery_runtime", None)
@@ -252,7 +368,10 @@ class AIChatOrchestrator:
             planning_snapshot,
             turn_seq=turn_seq,
         )
-        chat_plan = apply_cognitive_brief_to_plan(chat_plan, cognitive_brief)
+        # PDF annotation, pages 12-13: legacy discourse/semantic specialists
+        # stay in shadow telemetry. They no longer rewrite the model-owned plan.
+        if not semantic_policy.primary_model_first:
+            chat_plan = apply_cognitive_brief_to_plan(chat_plan, cognitive_brief)
         discovery_id = ""
         if discovery_runtime is not None:
             chat_plan, discovery_grounding, discovery_id = discovery_runtime.bind_plan(chat_plan)
@@ -277,6 +396,7 @@ class AIChatOrchestrator:
         use_escalation = semantic_policy.primary_uses_escalation_client if semantic_policy.qwen_first else False
         reasoning_effort = semantic_policy.primary_reasoning_effort if semantic_policy.qwen_first else None
 
+        authority_brief = None if semantic_policy.primary_model_first else cognitive_brief
         payload: dict[str, Any] = {}
         host._set_background_memory_digest_remote_inflight(True)
         try:
@@ -293,7 +413,7 @@ class AIChatOrchestrator:
                 allow_fallback=False,
                 language_hint=_runtime_language(),
                 planned_intention=chat_plan,
-                cognitive_brief=cognitive_brief,
+                cognitive_brief=authority_brief,
             )
             if not payload and not no_fallback_mode_enabled():
                 payload = host.ai_model_router.generate_public_reply(
@@ -309,15 +429,59 @@ class AIChatOrchestrator:
                     allow_fallback=True,
                     language_hint=_runtime_language(),
                     planned_intention=chat_plan,
-                    cognitive_brief=cognitive_brief,
+                    cognitive_brief=authority_brief,
                 )
         finally:
             host._set_background_memory_digest_remote_inflight(False)
 
         if payload:
+            semantic_frame = dict(payload.get("semantic_frame", {}) or {})
+            if semantic_frame:
+                host.last_semantic_frame = semantic_frame
+                user_meta["semantic_frame"] = semantic_frame
+                try:
+                    from runtime.observability import GLOBAL_OBSERVABILITY
+                    GLOBAL_OBSERVABILITY.log(
+                        "semantic_frame_v1",
+                        tags={
+                            "user_act": str(semantic_frame.get("user_act", "unknown") or "unknown"),
+                            "target": str(semantic_frame.get("target", "unknown") or "unknown"),
+                            "relation": str(semantic_frame.get("discourse_relation", "unknown") or "unknown"),
+                        },
+                        fields={"turn_seq": turn_seq, "frame": semantic_frame},
+                    )
+                except Exception:
+                    pass
+                # PDF annotation, pages 12-13 and 19: the legacy deterministic
+                # classifiers run only as a bounded shadow observer.  Their
+                # disagreement is logged after the primary frame exists and
+                # never mutates the plan, frame or public wording.
+                try:
+                    from runtime.semantic_shadow import GLOBAL_SEMANTIC_SHADOW_RUNNER
+
+                    GLOBAL_SEMANTIC_SHADOW_RUNNER.submit(
+                        cognition=getattr(host, "ai_pre_response_cognition", None),
+                        primary_frame=semantic_frame,
+                        user_text=user_text,
+                        recent_history=prior_public_history,
+                        turn_id=turn_id,
+                        turn_seq=turn_seq,
+                        grounding_context=grounding_context,
+                        relationship_summary=relationship_context,
+                        personality_summary=personality_context,
+                        memory_available=bool(str(memory_context or "").strip()),
+                        interrupt_context=speech_interrupt_context,
+                        metadata={"event_kind": "chat", "authority": "semantic_frame.v1"},
+                    )
+                except Exception:
+                    pass
             gate = getattr(host, "ai_cognitive_acceptance_gate", None)
             draft_text = str(payload.get("text", "") or "")
-            violations = gate.validate(draft_text, cognitive_brief) if gate is not None else ()
+            violations = (
+                gate.validate(draft_text, cognitive_brief)
+                if gate is not None and not semantic_policy.primary_model_first
+                else ()
+            )
             grounding_engine = getattr(host, "source_grounding_engine", None)
             grounding_verdict = evaluate_grounded_surface(
                 grounding_engine, draft_text, report=grounding_report
@@ -353,15 +517,19 @@ class AIChatOrchestrator:
                         allow_fallback=not no_fallback_mode_enabled(),
                         language_hint=_runtime_language(),
                         planned_intention=chat_plan,
-                        cognitive_brief=cognitive_brief,
+                        cognitive_brief=authority_brief,
                         retry_instruction=retry_instruction,
+                        # PDF annotation, page 13: wording retry is forbidden
+                        # from reinterpreting discourse/meaning.  The validated
+                        # frame from the first authority call is immutable.
+                        locked_semantic_frame=payload.get("semantic_frame", {}),
                     )
                 finally:
                     host._set_background_memory_digest_remote_inflight(False)
                 if retried:
                     retry_violations = (
                         gate.validate(str(retried.get("text", "") or ""), cognitive_brief)
-                        if gate is not None else ()
+                        if gate is not None and not semantic_policy.primary_model_first else ()
                     )
                     retry_grounding_verdict = evaluate_grounded_surface(
                         grounding_engine, str(retried.get("text", "") or ""), report=grounding_report
@@ -462,6 +630,11 @@ class AIChatOrchestrator:
                 )
             )
         recent_history = tuple(host._chat_history_for_llm(limit=8))
+        observer_state = mind_state.to_dict()
+        # PDF annotation, pages 12-13 and 20: post-turn analysis receives the
+        # same validated semantic authority frame instead of rebuilding meaning
+        # through the retired discourse/social regex stack.
+        observer_state["semantic_frame"] = dict(user_meta.get("semantic_frame", {}) or {})
         host.ai_post_turn_observer.submit(
             turn_id=turn_id,
             turn_seq=turn_seq,
@@ -469,7 +642,7 @@ class AIChatOrchestrator:
             assistant_text=public_text,
             recent_history=recent_history,
             mechanical_outcomes=mechanical,
-            state_summary=mind_state.to_dict(),
+            state_summary=observer_state,
             user_meta=user_meta,
             assistant_meta=assistant_meta,
             event_kind="chat",
@@ -497,6 +670,34 @@ class AIChatOrchestrator:
         clock = getattr(host, "interaction_clock", None)
         if clock is not None and public_text:
             clock.mark_assistant_text()
+            # PDF annotation, pages 17-18: time-to-first-visible-text is a
+            # first-class load-test metric, not something reconstructed from
+            # screenshots after the fact.
+            try:
+                started_at = float(getattr(clock, "generation_started_at", 0.0) or 0.0)
+                if started_at > 0.0:
+                    from runtime.observability import GLOBAL_OBSERVABILITY
+
+                    frame = dict(getattr(host, "last_semantic_frame", {}) or {})
+                    act = str(frame.get("user_act", "") or "").strip().lower()
+                    category = (
+                        "small_talk"
+                        if act in {
+                            "greeting",
+                            "acknowledgement",
+                            "relational_check_in",
+                            "closeness_bid",
+                            "repair_request",
+                        }
+                        else "general_chat"
+                    )
+                    GLOBAL_OBSERVABILITY.observe(
+                        "ttft_ms",
+                        max(0.0, (time.time() - started_at) * 1000.0),
+                        tags={"channel": "chat", "turn_category": category},
+                    )
+            except Exception:
+                pass
         if memory_text:
             host._append_chat_history("assistant", memory_text, invalid=False)
         assistant_meta: dict[str, Any] | None = None
@@ -712,8 +913,20 @@ class AIAutonomousOrchestrator:
                 "or memory machinery."
             ),
         }
+        startup_planner = getattr(host, "ai_intention_planner", None)
+        skip_empty_startup_planner = bool(
+            force_startup_speech
+            and not startup_grounding.has_direct_screen_evidence
+            and not startup_grounding.has_runtime_opening_anchor
+            and not continuity_anchor
+        )
+        if skip_empty_startup_planner:
+            host.logger.info("[architecture C startup] planner skipped; using typed persona plan reason=no_opening_anchor")
+            local_plan = _typed_startup_persona_plan(reason="empty_startup_skipped_planner")
+            _submit_local_startup_plan(host, local_plan, turn_seq=turn_seq)
+            startup_planner = _StaticIntentionPlanner(local_plan)
         try:
-            plan = host.ai_intention_planner.plan_autonomous(
+            plan = startup_planner.plan_autonomous(
                 snapshot,
                 turn_seq=turn_seq,
             )

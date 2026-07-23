@@ -125,14 +125,23 @@ class RemoteStructureClient:
         if isinstance(schema, dict) and schema:
             response_format["schema"] = schema
         try:
-            response = self._client.create_chat_completion(
-                messages=messages,
-                temperature=float(temperature),
-                frequency_penalty=0.0,
-                presence_penalty=0.0,
-                max_tokens=self._max_tokens,
-                response_format=response_format,
-            )
+            from runtime.inference_broker import inference_context
+            with inference_context(
+                "vision_ambient",
+                optional=True,
+                timeout_seconds=18.0,
+                cancel_scope="background:vision_compressor",
+                coalesce_key="vision_compressor:json",
+                metadata={"operation": "vision_structuring"},
+            ):
+                response = self._client.create_chat_completion(
+                    messages=messages,
+                    temperature=float(temperature),
+                    frequency_penalty=0.0,
+                    presence_penalty=0.0,
+                    max_tokens=self._max_tokens,
+                    response_format=response_format,
+                )
         except Exception as exc:  # pragma: no cover - lỗi mạng/remote
             return ChatJsonResult(ok=False, error=f"{type(exc).__name__}:{exc}")
 
@@ -234,13 +243,22 @@ class RemoteCaptionClient:
             }
         ]
         try:
-            response = self._client.create_chat_completion(
-                messages=messages,
-                temperature=float(temperature),
-                frequency_penalty=0.0,
-                presence_penalty=0.0,
-                max_tokens=int(max_tokens or self._max_tokens),
-            )
+            from runtime.inference_broker import inference_context
+            with inference_context(
+                "vision_ambient",
+                optional=True,
+                timeout_seconds=18.0,
+                cancel_scope="background:vision_caption",
+                coalesce_key="vision_caption:latest",
+                metadata={"operation": "vision_caption"},
+            ):
+                response = self._client.create_chat_completion(
+                    messages=messages,
+                    temperature=float(temperature),
+                    frequency_penalty=0.0,
+                    presence_penalty=0.0,
+                    max_tokens=int(max_tokens or self._max_tokens),
+                )
         except Exception as exc:  # pragma: no cover - lỗi mạng/remote
             if self._logger is not None and callable(getattr(self._logger, "warning", None)):
                 try:

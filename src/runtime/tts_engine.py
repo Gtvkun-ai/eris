@@ -469,6 +469,47 @@ def _clean_edge_romaji_output(text: str) -> str:
     return out
 
 
+def _brokered_gemini_text_generate(
+    client,
+    *,
+    model: str,
+    prompt: str,
+    lane: str,
+    output_tokens: int = 256,
+    timeout_seconds: float = 10.0,
+    coalesce_key: str = "",
+):
+    """Run a Google SDK text request through the same remote control plane."""
+
+    from llm.token_budget import estimate_tokens
+    from runtime.inference_broker import GLOBAL_INFERENCE_BROKER, inference_context
+
+    with inference_context(
+        lane,
+        optional=True,
+        timeout_seconds=timeout_seconds,
+        cancel_scope=f"background:{lane}",
+        coalesce_key=coalesce_key,
+        metadata={"transport": "google.genai.text"},
+    ):
+        request = GLOBAL_INFERENCE_BROKER.request_from_context(
+            provider="gemini",
+            model=model,
+            estimated_input_tokens=estimate_tokens([{"role": "user", "content": prompt}]),
+            reserved_output_tokens=max(64, int(output_tokens)),
+            timeout_seconds=timeout_seconds,
+        )
+        def call_text_provider(*, cancel_token=None):
+            if cancel_token is not None:
+                cancel_token.raise_if_cancelled(request)
+            result = client.models.generate_content(model=model, contents=prompt)
+            if cancel_token is not None:
+                cancel_token.raise_if_cancelled(request)
+            return result
+
+        return GLOBAL_INFERENCE_BROKER.run(request, call_text_provider)
+
+
 def _edge_japanese_romaji_text(text: str) -> str:
     """Chỉ transliterate câu Nhật đã có sẵn; tuyệt đối không dịch ở fallback."""
     clean = _clean_text(text)
@@ -499,7 +540,17 @@ def _edge_japanese_romaji_text(text: str) -> str:
             "Output only simple romaji and punctuation.\n\n"
             f"Japanese text:\n{clean}"
         )
-        response = client.models.generate_content(model=localizer_model_name(), contents=prompt)
+        from runtime.work_keys import stable_work_key
+        # PDF annotation, pages 6-9: the romaji fallback is an optional
+        # localizer lane, not a transport loophole around the broker.
+        response = _brokered_gemini_text_generate(
+            client,
+            model=localizer_model_name(),
+            prompt=prompt,
+            lane="romaji_localizer",
+            output_tokens=160,
+            coalesce_key=stable_work_key("romaji", clean),
+        )
         if plan is not None:
             try:
                 GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_request(
@@ -895,20 +946,54 @@ def _synthesize_wav(
 
         try:
             client = genai.Client(api_key=api_key)
-            response = client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_modalities=["AUDIO"],
-                    speech_config=types.SpeechConfig(
-                        voice_config=types.VoiceConfig(
-                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                voice_name=voice,
-                            )
-                        )
-                    ),
-                ),
-            )
+
+            # PDF annotation, pages 6-9 and 15: Gemini TTS is remote work too.
+            # The SDK bypasses llm/client.py, so reserve it explicitly through
+            # the same broker instead of letting audio compete invisibly with
+            # the next chat request.
+            from llm.token_budget import estimate_tokens
+            from runtime.inference_broker import GLOBAL_INFERENCE_BROKER, inference_context
+
+            prompt_tokens = estimate_tokens([{"role": "user", "content": prompt}])
+            output_reserve = int(getattr(tts_budget_plan, "output_tokens", 768) or 768)
+            with inference_context(
+                "tts_current_turn",
+                optional=True,
+                timeout_seconds=18.0,
+                cancel_scope=f"tts:{threading.get_ident()}",
+                metadata={"voice": voice, "tts_model": model},
+            ):
+                broker_request = GLOBAL_INFERENCE_BROKER.request_from_context(
+                    provider="gemini",
+                    model=model,
+                    estimated_input_tokens=prompt_tokens,
+                    reserved_output_tokens=output_reserve,
+                    timeout_seconds=18.0,
+                    metadata={"transport": "google.genai"},
+                )
+
+                def call_tts_provider(*, cancel_token=None):
+                    if cancel_token is not None:
+                        cancel_token.raise_if_cancelled(broker_request)
+                    result = client.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            response_modalities=["AUDIO"],
+                            speech_config=types.SpeechConfig(
+                                voice_config=types.VoiceConfig(
+                                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                        voice_name=voice,
+                                    )
+                                )
+                            ),
+                        ),
+                    )
+                    if cancel_token is not None:
+                        cancel_token.raise_if_cancelled(broker_request)
+                    return result
+
+                response = GLOBAL_INFERENCE_BROKER.run(broker_request, call_tts_provider)
             _raise_if_tts_cancelled(cancel_event, authority_check)
             pcm_data = _extract_gemini_tts_pcm(response)
             if tts_budget_plan is not None:
@@ -1303,7 +1388,16 @@ def _translate_to_japanese(text: str, api_key: str) -> str:
             "Output ONLY the Japanese translation, with absolutely no quotes, annotations, or English/Vietnamese explanations.\n\n"
             f"Sentence to translate: {text}"
         )
-        response = client.models.generate_content(model=localizer_model_name(), contents=prompt)
+        from runtime.work_keys import stable_work_key
+        # Legacy translation remains optional and is dropped before chat.
+        response = _brokered_gemini_text_generate(
+            client,
+            model=localizer_model_name(),
+            prompt=prompt,
+            lane="tts_localizer",
+            output_tokens=256,
+            coalesce_key=stable_work_key("tts_translate", text),
+        )
         translated = (response.text or "").strip()
         if translated.startswith('"') and translated.endswith('"'):
             translated = translated[1:-1].strip()

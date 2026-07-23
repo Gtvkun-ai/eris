@@ -826,6 +826,89 @@ def test_startup_without_any_evidence_forces_persona_plan_when_enabled() -> None
     assert "own attitude" in forced.topic
 
 
+def test_empty_startup_context_skips_main_planner(monkeypatch) -> None:
+    import json
+    from types import SimpleNamespace
+
+    from runtime.ai_orchestrated import orchestrator as orchestrator_module
+    from runtime.ai_orchestrated.orchestrator import AIAutonomousOrchestrator
+    from runtime.ai_orchestrated.startup_grounding import StartupGroundingBundle
+
+    monkeypatch.setattr(
+        orchestrator_module,
+        "collect_startup_grounding",
+        lambda _host: StartupGroundingBundle(),
+    )
+    monkeypatch.setattr(
+        orchestrator_module,
+        "select_startup_persona_preset",
+        lambda _frame, *, avoid_text="": {
+            "text": "Toi day. Khoi bat hoi dong dai.",
+            "should_speak": True,
+            "performance_hint": "soft",
+            "preset_id": "test_fast_startup",
+        },
+    )
+
+    class _Planner:
+        calls = 0
+
+        def plan_autonomous(self, *_args, **_kwargs):
+            self.calls += 1
+            raise AssertionError("empty startup should not call main planner")
+
+    planner = _Planner()
+    submitted = []
+    sent = []
+
+    state = SimpleNamespace(
+        personality=SimpleNamespace(panel_view=lambda: {}),
+        personality_prompt_context=lambda: "",
+        identity=SimpleNamespace(panel_view=lambda: {}),
+        identity_prompt_context=lambda: "",
+        relationship=SimpleNamespace(to_dict=lambda: {}, prompt_summary=lambda: ""),
+        open_loops=(),
+        latest_observation={},
+    )
+
+    def parse(raw: str):
+        payload = json.loads(raw)
+        return SimpleNamespace(
+            text=str(payload.get("text", "") or ""),
+            should_speak=bool(payload.get("should_speak", False)),
+            performance_hint=str(payload.get("performance_hint", "") or ""),
+            system_action="",
+        )
+
+    host = SimpleNamespace(
+        logger=SimpleNamespace(
+            info=lambda *args, **kwargs: None,
+            warning=lambda *args, **kwargs: None,
+            debug=lambda *args, **kwargs: None,
+        ),
+        chat_mode=False,
+        _chat_processing=False,
+        _ai_startup_ran=False,
+        ai_state_reducer=SimpleNamespace(snapshot=lambda: state, submit=submitted.append),
+        ai_intention_planner=planner,
+        _chat_history_for_llm=lambda limit=4: [],
+        last_text="",
+        parser=SimpleNamespace(parse=parse),
+        ai_stage_planner=SimpleNamespace(apply=lambda *args, **kwargs: None),
+        _log_raw_llm_output=lambda *args, **kwargs: None,
+        _note_autonomous_spoken=lambda **kwargs: None,
+        _block_autonomous_presence_after_public_turn=lambda **kwargs: None,
+        _send_decision_to_body=lambda decision, channel: sent.append((decision, channel)),
+    )
+    runtime = AIAutonomousOrchestrator(host)
+    runtime._commit_public = lambda decision, *, channel, turn_seq: (decision.text, {"channel": channel})
+
+    assert runtime.run_startup() is True
+    assert planner.calls == 0
+    assert submitted
+    assert host.last_autonomous_spoken_at > 0
+
+
 def test_startup_runtime_signal_beats_persona_when_screen_is_empty() -> None:
     from runtime.ai_orchestrated.contracts import IntentionPlan
     from runtime.ai_orchestrated.startup_grounding import (

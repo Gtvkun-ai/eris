@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from semantic_authority import SemanticAuthorityPolicy
+
 from .contracts import IntentionPlan, StateEvent
 
 
@@ -15,28 +17,69 @@ class IntentionPlanner:
         self.logger = logger
 
     def plan_chat(self, snapshot: Mapping[str, Any], *, turn_seq: int) -> IntentionPlan:
-        try:
-            plan = self.router.plan_chat(snapshot)
-        except Exception as exc:  # noqa: BLE001
-            self._log("warning", "[chat intention planner] failed: %s", exc)
+        semantic_policy = SemanticAuthorityPolicy.from_runtime()
+        brief = dict(snapshot.get("cognitive_brief", {}) or {})
+        response_move = str(brief.get("response_move", "") or "").strip().lower()
+
+        # PDF annotation, pages 4 and 12-13: normal chat no longer pays for a
+        # separate remote planner before the public writer.  The main writer
+        # returns semantic_frame + wording in one call.  A remote planner remains
+        # only for explicit action/tool turns so existing capabilities are not
+        # amputated in the name of shaving milliseconds.
+        needs_tool_planner = response_move == "execute_requested_action"
+        if semantic_policy.primary_model_first and not needs_tool_planner:
             plan = IntentionPlan.from_mapping(
                 {
                     "speak": True,
                     "motive": "respond_to_user",
                     "strategy": "direct_answer",
-                    "value_focus": "",
-                    "topic": "Answer the current user directly and naturally.",
-                    "importance": 0.70,
+                    "value_focus": "continuity",
+                    "topic": "Let the main semantic authority answer the current user directly and naturally.",
+                    "importance": 0.72,
                     "intrusion_risk": 0.0,
-                    "confidence": 0.50,
+                    "confidence": 0.78,
                     "performance_hint": "neutral",
                     "tool_intent": "",
                     "tool_input": "",
-                    "evidence_refs": [],
-                    "notes": f"planner_error:{type(exc).__name__}",
+                    "evidence_refs": list(brief.get("evidence_ids", ()) or ())[:5],
+                    "semantics": {
+                        "turn_kind": "chat_response",
+                        "speech_act": "model_owned",
+                        "subject_key": "current_user_turn",
+                        "evidence_scope": "user_message_plus_recent_history",
+                        "continuation_key": str(brief.get("continuation_key", "none") or "none"),
+                    },
+                    "activity": {
+                        "activity_kind": "unknown", "phase": "unknown", "event": "",
+                        "event_key": "none", "confidence": 0.0, "evidence_refs": [],
+                    },
+                    "notes": "local_planner:semantic_authority_single_call",
                 },
                 channel="chat",
             )
+        else:
+            try:
+                plan = self.router.plan_chat(snapshot)
+            except Exception as exc:  # noqa: BLE001
+                self._log("warning", "[chat intention planner] failed: %s", exc)
+                plan = IntentionPlan.from_mapping(
+                    {
+                        "speak": True,
+                        "motive": "respond_to_user",
+                        "strategy": "direct_answer",
+                        "value_focus": "",
+                        "topic": "Answer the current user directly and naturally.",
+                        "importance": 0.70,
+                        "intrusion_risk": 0.0,
+                        "confidence": 0.50,
+                        "performance_hint": "neutral",
+                        "tool_intent": "",
+                        "tool_input": "",
+                        "evidence_refs": [],
+                        "notes": f"planner_error:{type(exc).__name__}",
+                    },
+                    channel="chat",
+                )
         self.reducer.submit(
             StateEvent.from_intention(
                 plan,

@@ -112,24 +112,35 @@ def hard_cap_for_provider(provider: str) -> int:
     Đặt ``ERIS_LLM_PROMPT_HARD_CAP_TOKENS=0`` để tắt hard-cap prompt.
     """
 
+    # PDF annotation, pages 4 and 15-16: distinguish an explicit zero from an
+    # absent setting. The old control flow returned "unlimited" for the normal
+    # default path, making the documented 85% provider headroom unreachable.
     prov = (provider or "default").strip().lower()
     if _truthy_env("ERIS_DISABLE_PROMPT_HARD_CAP") is True:
         return _NO_HARD_CAP_TOKENS
-    per_provider = _safe_int_env(f"ERIS_LLM_PROMPT_HARD_CAP_TOKENS_{prov.upper()}", 0)
-    if per_provider > 0:
-        return per_provider
+
+    per_name = f"ERIS_LLM_PROMPT_HARD_CAP_TOKENS_{prov.upper()}"
+    if os.environ.get(per_name) is not None:
+        per_provider = _safe_int_env(per_name, 0)
+        return per_provider if per_provider > 0 else _NO_HARD_CAP_TOKENS
+
     if os.environ.get("ERIS_LLM_PROMPT_HARD_CAP_TOKENS") is not None:
         override = _safe_int_env("ERIS_LLM_PROMPT_HARD_CAP_TOKENS", 0)
         return override if override > 0 else _NO_HARD_CAP_TOKENS
+
+    runtime_cap = None
     try:
         from runtime.runtime_settings_store import runtime_int
-        runtime_cap = runtime_int("prompt", "hard_cap_tokens", default=0)
+
+        raw = runtime_int("prompt", "hard_cap_tokens", default=None)
+        runtime_cap = None if raw is None else int(raw)
     except Exception:
-        runtime_cap = 0
-    if runtime_cap > 0:
-        return runtime_cap
-    if runtime_cap <= 0:
-        return _NO_HARD_CAP_TOKENS
+        runtime_cap = None
+
+    if runtime_cap is not None:
+        return runtime_cap if runtime_cap > 0 else _NO_HARD_CAP_TOKENS
+
+    # Nothing explicitly configured: use a conservative provider-aware cap.
     return max(512, int(budget_for_provider(prov) * _DEFAULT_HEADROOM))
 
 

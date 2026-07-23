@@ -11,7 +11,7 @@ from dataclasses import replace
 from typing import Any, Mapping, Sequence
 
 from core.cognition import PreResponseCognitiveBrief
-from runtime.cognition.turn_anchor import infer_current_turn_anchor, previous_assistant_from_history
+from runtime.cognition.turn_anchor import anchor_from_semantic_frame, previous_assistant_from_history
 from runtime.cognition.normalization import normalize_vi
 
 from actions.contracts import VALID_SYSTEM_ACTIONS
@@ -328,11 +328,50 @@ PERSONALITY_REFLECTION_SCHEMA: dict[str, Any] = {
 
 
 
+SEMANTIC_FRAME_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "version", "turn_kind", "discourse_relation", "user_act", "target",
+        "literal_question", "ambiguity_owner", "boundary_action",
+        "continuation_key", "evidence_scope", "tool_intent",
+        "missing_evidence", "reply_obligation",
+    ],
+    "properties": {
+        "version": {"type": "string", "enum": ["semantic_frame.v1"]},
+        "turn_kind": {"type": "string"},
+        "discourse_relation": {"type": "string"},
+        "user_act": {"type": "string"},
+        "target": {"type": "string"},
+        "literal_question": {"type": "boolean"},
+        "ambiguity_owner": {"type": "string", "enum": ["user", "assistant", "shared", "none"]},
+        "boundary_action": {"type": "string"},
+        "continuation_key": {"type": "string"},
+        "evidence_scope": {"type": "string"},
+        "tool_intent": {"type": "string"},
+        "missing_evidence": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+        "reply_obligation": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["must_answer", "must_not_broad_clarify", "must_not_call_tool"],
+            "properties": {
+                "must_answer": {"type": "boolean"},
+                "must_not_broad_clarify": {"type": "boolean"},
+                "must_not_call_tool": {"type": "boolean"},
+            },
+        },
+    },
+}
+
+
 PUBLIC_REPLY_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["text", "should_speak", "performance_hint"],
+    # PDF annotation, pages 12-13: meaning and wording are produced by one
+    # semantic authority in the same remote call.
+    "required": ["semantic_frame", "text", "should_speak", "performance_hint"],
     "properties": {
+        "semantic_frame": SEMANTIC_FRAME_SCHEMA,
         "text": {"type": "string"},
         "should_speak": {"type": "boolean"},
         "performance_hint": {
@@ -343,6 +382,21 @@ PUBLIC_REPLY_SCHEMA: dict[str, Any] = {
                 "annoyed_soft", "sad_distant", "repair", "surprised"
             ],
         },
+    },
+}
+
+
+# PDF annotation, page 13: a failed wording/grounding gate must not cause the
+# model to reinterpret the user turn.  Retry only the public wording while the
+# already validated semantic frame remains immutable in runtime.
+PUBLIC_WORDING_REWRITE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["text", "should_speak", "performance_hint"],
+    "properties": {
+        "text": {"type": "string"},
+        "should_speak": {"type": "boolean"},
+        "performance_hint": PUBLIC_REPLY_SCHEMA["properties"]["performance_hint"],
     },
 }
 
@@ -474,15 +528,41 @@ class AIRuntimeModelRouter:
         reason: str,
         priority: int,
     ) -> Any:
-        policy = self.budget_policy
-        if policy is not None and callable(getattr(policy, "run_queued", None)):
-            return policy.run_queued(
-                tier,
-                func,
-                reason=reason,
-                priority=priority,
-            )
-        return func()
+        # PDF annotation, pages 6-9: the local VRAM scheduler and the remote
+        # inference broker solve different problems.  Keep the former, but
+        # attach a broker lane so every provider request receives global quota,
+        # deadline and preemption semantics.
+        from runtime.inference_broker import inference_context
+
+        reason_key = str(reason or "").strip().lower()
+        if "public_reply" in reason_key and "autonomous" not in reason_key:
+            lane = "chat_main"
+        elif "observer" in reason_key or "observation" in reason_key:
+            lane = "post_observer"
+        elif "autonomous" in reason_key or "self_initiated" in reason_key:
+            lane = "autonomous"
+        elif "chat_intention" in reason_key or "planner" in reason_key or "deep" in reason_key:
+            lane = "semantic_shadow"
+        else:
+            lane = "semantic_shadow" if tier == "subconscious_4b" else "transport"
+
+        optional = lane in {"post_observer", "autonomous", "semantic_shadow"}
+        coalesce_key = reason_key if optional else ""
+        with inference_context(
+            lane,
+            optional=optional,
+            coalesce_key=coalesce_key,
+            metadata={"router_reason": reason, "model_tier": tier},
+        ):
+            policy = self.budget_policy
+            if policy is not None and callable(getattr(policy, "run_queued", None)):
+                return policy.run_queued(
+                    tier,
+                    func,
+                    reason=reason,
+                    priority=priority,
+                )
+            return func()
 
     @property
     def observer_client(self) -> Any | None:
@@ -578,7 +658,11 @@ class AIRuntimeModelRouter:
             "không đảo chủ thể, không phát minh premise khác để né câu hỏi. "
             "Memory chỉ là continuity, không chứng minh hiện tại. Grounding là nguồn thật cho màn hình/file/tool. "
             "Planner đã sở hữu tool intent; bạn không chọn, đổi hay claim tool đã thành công. "
-            "performance_hint chỉ là một preset sân khấu ngắn, không viết stage direction vào text. Return JSON only."
+            "performance_hint chỉ là một preset sân khấu ngắn, không viết stage direction vào text. "
+            "Trong CÙNG JSON, luôn sinh semantic_frame.v1 trước text. Frame phải mô tả nghĩa của chính lượt user, target thật, "
+            "discourse relation, tool intent và reply obligation. Không dùng regex-marker/runtime label làm authority; history gần nhất và câu user là bằng chứng chính. "
+            "Ví dụ hỏi thăm 'hôm nay em sao' sau lời ERIS nói về mình phải là target=assistant, user_act=relational_check_in, "
+            "must_answer=true, must_not_broad_clarify=true và tool_intent rỗng. Return JSON only."
         )
 
     def generate_public_reply(
@@ -598,6 +682,7 @@ class AIRuntimeModelRouter:
         planned_intention: IntentionPlan | None = None,
         cognitive_brief: PreResponseCognitiveBrief | None = None,
         retry_instruction: str = "",
+        locked_semantic_frame: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         client = None
         if use_escalation:
@@ -623,6 +708,11 @@ class AIRuntimeModelRouter:
             context_parts.append(cognitive_brief.prompt_context())
         if retry_instruction:
             context_parts.append(f"One-shot rewrite instruction: {retry_instruction}")
+        if locked_semantic_frame:
+            context_parts.append(
+                "LOCKED semantic frame (runtime authority; do not reinterpret or modify): "
+                + json.dumps(dict(locked_semantic_frame), ensure_ascii=False)
+            )
         if planned_intention is not None:
             context_parts.append(
                 "Planner intent: "
@@ -640,6 +730,12 @@ class AIRuntimeModelRouter:
                 )
             )
         system = self._public_reply_prompt(language_hint)
+        if locked_semantic_frame:
+            system += (
+                "\n\nThis is a wording-only retry. Return only text, should_speak and "
+                "performance_hint. The semantic frame above is immutable and runtime will "
+                "reuse it verbatim. Do not classify the turn again."
+            )
         if context_parts:
             system += "\n\n" + "\n".join(context_parts)
         messages = [
@@ -653,6 +749,10 @@ class AIRuntimeModelRouter:
                 return {}
             model_name = str(getattr(target, "model_name", "") or "")
             strict = model_name.startswith("openai/gpt-oss-")
+            response_schema = (
+                PUBLIC_WORDING_REWRITE_SCHEMA if locked_semantic_frame else PUBLIC_REPLY_SCHEMA
+            )
+            response_name = "eris_public_wording_rewrite" if locked_semantic_frame else "eris_public_reply"
             try:
                 def invoke() -> Any:
                     return target.create_chat_completion(
@@ -660,13 +760,13 @@ class AIRuntimeModelRouter:
                         temperature=0.48,
                         frequency_penalty=0.0,
                         presence_penalty=0.0,
-                        max_tokens=900 if reasoning_effort else 620,
+                        max_tokens=(360 if locked_semantic_frame else (900 if reasoning_effort else 620)),
                         response_format={
                             "type": "json_schema",
                             "json_schema": {
-                                "name": "eris_public_reply",
+                                "name": response_name,
                                 "strict": strict,
-                                "schema": PUBLIC_REPLY_SCHEMA,
+                                "schema": response_schema,
                             },
                         },
                         reasoning_effort=reasoning_effort,
@@ -678,7 +778,10 @@ class AIRuntimeModelRouter:
                     reason="architecture_c_public_reply",
                     priority=100,
                 )
-                return _json(_content(raw))
+                parsed = _json(_content(raw))
+                if parsed and locked_semantic_frame:
+                    parsed["semantic_frame"] = dict(locked_semantic_frame)
+                return parsed
             except Exception as exc:  # noqa: BLE001
                 if self.logger is not None:
                     try:
@@ -692,6 +795,17 @@ class AIRuntimeModelRouter:
             fallback = getattr(self.llm_service, "fallback_client", None) or getattr(self.llm_service, "style_client", None)
             if fallback is not client:
                 payload = call(fallback)
+        if not payload:
+            # PDF annotation, pages 15-16 and 20: the local fast-path is only an
+            # emergency degraded/offline response for exact closed forms. It is
+            # deliberately consulted after all remote authority attempts fail,
+            # so it cannot become the normal semantic classifier by accident.
+            try:
+                from runtime.degraded_chat_fastpath import build_degraded_reply
+
+                payload = build_degraded_reply(user_text, language_hint=language_hint)
+            except Exception:
+                payload = {}
         if not payload:
             return {}
         # Parser/Decision cũ vẫn nhận envelope đầy đủ, nhưng main model không phải sinh
@@ -709,7 +823,22 @@ class AIRuntimeModelRouter:
         tool_intent: str = "",
         tool_input: str = "",
     ) -> dict[str, Any]:
+        from runtime.semantic_frame import validate_semantic_frame
+
+        validation = validate_semantic_frame(payload.get("semantic_frame", {}))
+        if validation.violations:
+            try:
+                from runtime.observability import GLOBAL_OBSERVABILITY
+                GLOBAL_OBSERVABILITY.log(
+                    "semantic_frame_invariant_repair",
+                    tags={"count": str(len(validation.violations))},
+                    fields={"violations": list(validation.violations)},
+                    status="degraded",
+                )
+            except Exception:
+                pass
         return {
+            "semantic_frame": validation.frame,
             "text": str(payload.get("text", "") or ""),
             "should_speak": bool(payload.get("should_speak", True)),
             "system_action": str(tool_intent or ""),
@@ -894,6 +1023,8 @@ class AIRuntimeModelRouter:
         assistant_text: str,
         event_kind: str,
         previous_assistant_text: str = "",
+        semantic_frame: Mapping[str, Any] | None = None,
+        allow_legacy_text_anchor: bool = True,
     ) -> CognitiveObservation:
         """Giữ observer bám lượt hiện tại khi model phụ 429 hoặc bê frame cũ.
 
@@ -905,7 +1036,16 @@ class AIRuntimeModelRouter:
 
         if str(event_kind or "chat").strip().lower() != "chat":
             return observation
-        hint = infer_current_turn_anchor(user_text, previous_assistant_text=previous_assistant_text)
+        # PDF annotation, pages 12-13 and 20: observer repair consumes the
+        # already validated authority frame. It does not classify raw text again.
+        hint = anchor_from_semantic_frame(semantic_frame)
+        if hint in {"none", "unknown"} and allow_legacy_text_anchor:
+            # Compatibility for explicit legacy callers and old offline tests.
+            # The production observer call below always passes False.
+            from runtime.cognition.turn_anchor import infer_current_turn_anchor
+            hint = infer_current_turn_anchor(
+                user_text, previous_assistant_text=previous_assistant_text
+            )
         if hint in {"none", "unknown"}:
             return observation
 
@@ -1188,6 +1328,8 @@ class AIRuntimeModelRouter:
             recent_history,
             current_assistant_text=assistant_text,
         )
+        semantic_frame = dict((state_summary or {}).get("semantic_frame", {}) or {})
+        authority_anchor = anchor_from_semantic_frame(semantic_frame)
         payload = {
             "turn_id": turn_id,
             "turn_seq": turn_seq,
@@ -1200,9 +1342,11 @@ class AIRuntimeModelRouter:
             "mechanical_outcomes": list(mechanical_outcomes)[-6:],
             "current_state_summary": dict(state_summary or {}),
             "current_turn_anchor": {
-                "user_move_hint": infer_current_turn_anchor(user_text, previous_assistant_text=previous_assistant_text),
-                "rule": "classify current user_text first; history is continuity only",
+                "user_move_hint": authority_anchor,
+                "source": "semantic_frame.v1" if semantic_frame else "none",
+                "rule": "do not reclassify raw text; authority frame owns meaning",
             },
+            "semantic_frame": semantic_frame,
         }
         started = time.perf_counter()
         fast = self._fast_observer_payload(user_text, event_kind=event_kind)
@@ -1253,6 +1397,8 @@ class AIRuntimeModelRouter:
             assistant_text=assistant_text,
             event_kind=event_kind,
             previous_assistant_text=previous_assistant_text,
+            semantic_frame=semantic_frame,
+            allow_legacy_text_anchor=False,
         )
         importance = max(
             primary.assistant_fault_probability,
@@ -1480,4 +1626,5 @@ __all__ = [
     "PERSONALITY_REFLECTION_SCHEMA",
     "INTENTION_PLAN_SCHEMA",
     "PUBLIC_REPLY_SCHEMA",
+    "SEMANTIC_FRAME_SCHEMA",
 ]

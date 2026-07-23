@@ -55,7 +55,10 @@ def _env_flag(name: str, default: bool) -> bool:
 @dataclass(slots=True)
 class PrivateMindLoopConfig:
     enabled: bool = field(default_factory=lambda: _env_flag("ERIS_PRIVATE_MIND_ENABLED", True))
-    min_interval_seconds: float = field(default_factory=lambda: float(os.getenv("ERIS_PRIVATE_MIND_MIN_INTERVAL_SEC", "12") or 12.0))
+    # PDF annotation, pages 14-15: timer alone is not a remote trigger.  Keep
+    # a modest debounce for real deltas and a separate long idle consolidation.
+    min_interval_seconds: float = field(default_factory=lambda: max(30.0, float(os.getenv("ERIS_PRIVATE_MIND_MIN_INTERVAL_SEC", "45") or 45.0)))
+    idle_consolidation_seconds: float = field(default_factory=lambda: max(180.0, float(os.getenv("ERIS_PRIVATE_MIND_IDLE_CONSOLIDATION_SEC", "240") or 240.0)))
     min_fragments_for_synthesis: int = field(default_factory=lambda: max(1, int(os.getenv("ERIS_PRIVATE_MIND_MIN_FRAGMENTS_SYNTH", "2") or 2)))
     concern_store_path: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_CONCERNS_PATH", "") or ""))
     user_model_path: str = field(default_factory=lambda: str(os.getenv("ERIS_USER_MODEL_PATH", "") or ""))
@@ -98,6 +101,7 @@ class PrivateMindLoop:
         self.continuity = continuity_store or ThoughtContinuityStore.from_env(logger=logger)
         self.last_tick_at = 0.0
         self.last_result: PrivateMindTickResult | None = None
+        self._last_trigger_signature = ""
         self.last_digest: dict[str, Any] = {}
         # Snapshot cảm xúc liên tục thật (valence/arousal/...) chụp ở tick gần nhất,
         # để Inner Diary vẽ bảng cảm xúc theo state thật thay vì hằng số gán cứng.
@@ -148,9 +152,65 @@ class PrivateMindLoop:
         if not self.config.enabled:
             return None
         now = time.time()
-        if not force and now - self.last_tick_at < max(1.0, self.config.min_interval_seconds):
-            return self.last_result
+        # PDF annotation, pages 14-15 and 20: background thresholds adapt to
+        # provider pressure.  This avoids producing four evaluator requests and
+        # one synthesis request merely to have the broker reject them separately.
+        private_mind_advice = {
+            "allowed": True,
+            "cooldown_multiplier": 1.0,
+            "pressure_score": 0.0,
+        }
+        if not force:
+            try:
+                from runtime.inference_broker import GLOBAL_INFERENCE_BROKER
+
+                provider = str(
+                    os.getenv(
+                        "ERIS_PRIVATE_MIND_PROVIDER",
+                        os.getenv("ERIS_DAYDREAM_PROVIDER", "gemini"),
+                    )
+                    or "gemini"
+                ).strip().lower()
+                private_mind_advice = GLOBAL_INFERENCE_BROKER.optional_lane_advice(
+                    "private_mind", provider=provider
+                )
+            except Exception:
+                pass
+            if not bool(private_mind_advice.get("allowed", True)):
+                return self.last_result
+
+        trigger_signature = self._trigger_signature(
+            user_text=user_text,
+            channel=channel,
+            snapshot=snapshot,
+            observer_frame=observer_frame,
+            surface_outcome=surface_outcome,
+            surface_candidate_queue=surface_candidate_queue,
+        )
+        has_delta = bool(trigger_signature and trigger_signature != self._last_trigger_signature)
+        cooldown_multiplier = max(
+            1.0, float(private_mind_advice.get("cooldown_multiplier", 1.0) or 1.0)
+        )
+        effective_min_interval = self.config.min_interval_seconds * cooldown_multiplier
+        effective_idle_interval = self.config.idle_consolidation_seconds * cooldown_multiplier
+        idle_due = (now - self.last_tick_at) >= effective_idle_interval
+
+        if not force:
+            # A chat turn owns the provider. PrivateMind keeps its previous state
+            # instead of asking the broker to reject four evaluator calls one by one.
+            try:
+                from runtime.inference_broker import GLOBAL_INFERENCE_BROKER
+                if GLOBAL_INFERENCE_BROKER.user_turn_active():
+                    return self.last_result
+            except Exception:
+                pass
+            if not has_delta and not idle_due:
+                return self.last_result
+            if has_delta and now - self.last_tick_at < effective_min_interval:
+                return self.last_result
+
         self.last_tick_at = now
+        self._last_trigger_signature = trigger_signature or self._last_trigger_signature
         self._capture_affect(runtime_owner)
         api_status = self._model_api_status()
         epistemic_kernel = getattr(runtime_owner, "epistemic_kernel", None) if runtime_owner is not None else None
@@ -190,7 +250,21 @@ class PrivateMindLoop:
             dossier.metadata["unresolved_threads"] = self.continuity.unresolved_for_prompt()
         except Exception:
             pass
-        fragments = self.evaluator_pipeline.evaluate(dossier)
+        from runtime.inference_broker import inference_context
+        with inference_context(
+            "private_mind",
+            optional=True,
+            timeout_seconds=20.0,
+            cancel_scope="background:private_mind",
+            coalesce_key="private_mind:latest_state",
+            metadata={
+                "channel": channel,
+                "state_delta": has_delta,
+                "idle_due": idle_due,
+                "pressure_score": float(private_mind_advice.get("pressure_score", 0.0) or 0.0),
+            },
+        ):
+            fragments = self.evaluator_pipeline.evaluate(dossier)
         # Nghĩ-bổ-sung cho mạch dang dở: CHỈ khi không có bằng chứng mới nào và có
         # thread đến hạn khơi lại (cooldown lớn + đủ áp lực). Đây không phải nhịp đồng hồ.
         if not fragments and self.continuity.has_followup_due():
@@ -212,7 +286,19 @@ class PrivateMindLoop:
         # Trục neo hiện sinh: cập nhật ý nghĩa/gắn bó/bóng tối từ tín hiệu tick.
         # An toàn theo mặc định (công tắc tắt → không đổi hành vi live).
         self._update_anchor_system(dossier=dossier, runtime_owner=runtime_owner)
-        judgment = self.synthesizer.synthesize(dossier=dossier, fragments=fragments)
+        with inference_context(
+            "private_mind",
+            optional=True,
+            timeout_seconds=20.0,
+            cancel_scope="background:private_mind",
+            coalesce_key="private_mind:latest_state",
+            metadata={
+                "phase": "synthesis",
+                "state_delta": has_delta,
+                "pressure_score": float(private_mind_advice.get("pressure_score", 0.0) or 0.0),
+            },
+        ):
+            judgment = self.synthesizer.synthesize(dossier=dossier, fragments=fragments)
         if judgment is not None:
             self.concern_store.update_from_judgment(judgment.private_concern_update)
             self._record_continuity(judgment)
@@ -260,6 +346,37 @@ class PrivateMindLoop:
         self.last_digest = self.digest(surface_queue=surface_candidate_queue)
         self._log_tick(result)
         return result
+
+    def _trigger_signature(
+        self,
+        *,
+        user_text: str,
+        channel: str,
+        snapshot: Any,
+        observer_frame: Any,
+        surface_outcome: Mapping[str, Any] | None,
+        surface_candidate_queue: list[Any] | None,
+    ) -> str:
+        """Cheap local delta detector; no model call, no prompt construction."""
+
+        try:
+            snapshot_bits = {
+                "app": str(getattr(snapshot, "active_app", "") or ""),
+                "window": str(getattr(snapshot, "active_window_title", "") or ""),
+                "vision": tuple(str(x) for x in (getattr(snapshot, "vision_facts", ()) or ()))[:3],
+                "observer": str(getattr(observer_frame, "event", "") or getattr(observer_frame, "summary", "") or ""),
+                "surface": dict(surface_outcome or {}),
+                "queue_tail": [
+                    str(getattr(item, "id", "") or getattr(item, "topic_seed", "") or "")
+                    for item in tuple(surface_candidate_queue or ())[-3:]
+                ],
+                "user": " ".join(str(user_text or "").split())[:400],
+                "channel": str(channel or ""),
+                "concerns": len(self.concern_store),
+            }
+            return json.dumps(snapshot_bits, ensure_ascii=False, sort_keys=True, default=str)
+        except Exception:
+            return f"{channel}:{str(user_text or '').strip()[:200]}"
 
     def _capture_affect(self, runtime_owner: Any) -> None:
         """Chụp snapshot cảm xúc liên tục thật từ runtime_owner (không bao giờ ném lỗi).

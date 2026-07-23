@@ -337,7 +337,38 @@ class SpeechLocalizer:
 
                 client = genai.Client(api_key=api_key)
                 model_name = localizer_model_name()
-                response = client.models.generate_content(model=model_name, contents=prompt)
+
+                # PDF annotation, pages 6-9 and 15: SDK calls must not bypass
+                # global admission merely because they do not use llm/client.py.
+                from llm.token_budget import estimate_tokens
+                from runtime.inference_broker import GLOBAL_INFERENCE_BROKER, inference_context
+                from runtime.work_keys import stable_work_key
+
+                output_reserve = int(getattr(plan, "output_tokens", 384) or 384)
+                with inference_context(
+                    "speech_localizer",
+                    optional=True,
+                    timeout_seconds=self.config.timeout_seconds,
+                    cancel_scope="background:speech_localizer",
+                    coalesce_key=stable_work_key("speech_localizer", text),
+                    metadata={"attempt": attempt, "transport": "google.genai.text"},
+                ):
+                    broker_request = GLOBAL_INFERENCE_BROKER.request_from_context(
+                        provider="gemini",
+                        model=model_name,
+                        estimated_input_tokens=estimate_tokens([{"role": "user", "content": prompt}]),
+                        reserved_output_tokens=output_reserve,
+                        timeout_seconds=self.config.timeout_seconds,
+                    )
+                    def call_localizer(*, cancel_token=None):
+                        if cancel_token is not None:
+                            cancel_token.raise_if_cancelled(broker_request)
+                        result = client.models.generate_content(model=model_name, contents=prompt)
+                        if cancel_token is not None:
+                            cancel_token.raise_if_cancelled(broker_request)
+                        return result
+
+                    response = GLOBAL_INFERENCE_BROKER.run(broker_request, call_localizer)
                 _raise_if_cancelled(cancel_event, authority_check)
                 out = _clean_translation_output(getattr(response, "text", "") or "")
                 if not _valid_japanese_translation(

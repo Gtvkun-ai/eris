@@ -241,7 +241,10 @@ class TokenPressureGovernor:
         key = self._provider(provider)
         with self._lock:
             self._last_success[key] = ts
-            self._cooldown_until[key] = 0.0
+            # PDF annotation, page 5: one successful request must not erase a
+            # provider-wide cooldown opened by a recent 429. Keep the window and
+            # let retry-after expire naturally; otherwise background lanes wake
+            # immediately and recreate the burst.
             self._prune_locked(key, ts)
 
     def snapshot(
