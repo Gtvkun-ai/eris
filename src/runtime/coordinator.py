@@ -81,6 +81,7 @@ from runtime.stage_contracts import StageFrameBuilder
 from runtime.stage_dispatcher import StageDispatcher
 from runtime.tts_sync_policy import (
     sync_text_with_tts_enabled,
+    text_sync_timeout_seconds,
     tts_event_releases_deferred_text,
 )
 from runtime.stage_event_bus import StageEventBus
@@ -1916,13 +1917,7 @@ class RuntimeCoordinator(
         # default=0 làm text hiện ngay, còn Gemini TTS bò tới sau vài giây như một
         # bản lồng tiếng bị lệch timeline. Có thể opt-out bằng ERIS_TTS_SYNC_TEXT=0.
         sync_text = sync_text_with_tts_enabled()
-        text_sync_timeout_seconds = 1.25
-        raw_text_sync_timeout = os.environ.get("ERIS_TTS_TEXT_SYNC_TIMEOUT", "").strip()
-        if raw_text_sync_timeout:
-            try:
-                text_sync_timeout_seconds = max(0.15, min(10.0, float(raw_text_sync_timeout)))
-            except ValueError:
-                pass
+        text_sync_timeout = text_sync_timeout_seconds()
         text_payload_sent = False
         text_payload_lock = threading.Lock()
         text_release_timer = None
@@ -1987,7 +1982,7 @@ class RuntimeCoordinator(
             with text_payload_lock:
                 if text_payload_sent or text_release_timer is not None:
                     return
-                timer = threading.Timer(text_sync_timeout_seconds, send_text_payload)
+                timer = threading.Timer(text_sync_timeout, send_text_payload)
                 timer.daemon = True
                 text_release_timer = timer
             timer.start()
@@ -4823,7 +4818,12 @@ class RuntimeCoordinator(
             tokens.pop()
         return " ".join(tokens)
 
-    def _looks_like_screen_vision_request(self, user_text: str) -> bool:
+    def _looks_like_screen_vision_request(
+        self,
+        user_text: str,
+        *,
+        previous_assistant_text: str = "",
+    ) -> bool:
         """Dùng duy nhất smart vision gate của ChatCycleMixin.
 
         Bản cũ ở coordinator coi mọi lượt chat là lý do chụp màn hình và vô tình
@@ -4831,10 +4831,18 @@ class RuntimeCoordinator(
         logic cũ trong một lần merge sau này.
         """
 
-        return ChatCycleMixin._looks_like_screen_vision_request(self, user_text)
+        return ChatCycleMixin._looks_like_screen_vision_request(
+            self,
+            user_text,
+            previous_assistant_text=previous_assistant_text,
+        )
 
-    def _capture_screen_frame_for_chat(self, user_text: str) -> str:
-        return ChatCycleMixin._capture_screen_frame_for_chat(self, user_text)
+    def _capture_screen_frame_for_chat(self, user_text: str, *, previous_public_turn=None) -> str:
+        return ChatCycleMixin._capture_screen_frame_for_chat(
+            self,
+            user_text,
+            previous_public_turn=previous_public_turn,
+        )
 
     def _build_user_message_signature(self, user_text: str) -> str:
         normalized = self._normalize_user_message(user_text)

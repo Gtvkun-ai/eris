@@ -48,7 +48,7 @@ LANE_POLICIES: dict[str, LanePolicy] = {
     "chat": LanePolicy(10, False, 8, 35.0, 2),
     "chat_tool_required": LanePolicy(20, False, 6, 25.0, 2),
     "directive": LanePolicy(20, False, 6, 20.0, 2),
-    "tts_current_turn": LanePolicy(30, True, 3, 18.0, 1),
+    "tts_current_turn": LanePolicy(30, False, 3, 18.0, 1),
     "tts": LanePolicy(30, True, 3, 18.0, 1),
     "speech_localizer": LanePolicy(35, True, 2, 10.0, 1),
     "tts_localizer": LanePolicy(35, True, 2, 10.0, 1),

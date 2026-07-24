@@ -53,6 +53,7 @@ DEFAULT_AUTHORITY_FILES = (
     "runtime/cognition/engine.py",
     "runtime/cognition/acceptance.py",
     "runtime/ai_orchestrated/startup_grounding.py",
+    "screen/screen_anaphora_rescue.py",
     "screen/screen_relevance_router.py",
     "screen/ocr_worker.py",
     "runtime/tts_circuit_breaker.py",

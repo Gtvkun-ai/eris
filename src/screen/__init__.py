@@ -1,4 +1,5 @@
 from .evidence_models import ActiveWindowInfo, ScreenRouteDecision, ScreenTextBlock, ScreenTextSnapshot
+from .screen_anaphora_rescue import ScreenAnaphoraResolution, ScreenAnaphoraRescue
 from .screen_evidence_store import ScreenEvidenceStore
 from .screen_relevance_router import ScreenRelevanceRouter
 
@@ -31,6 +32,8 @@ __all__ = [
     "ScreenRouteDecision",
     "ScreenTextBlock",
     "ScreenTextSnapshot",
+    "ScreenAnaphoraResolution",
+    "ScreenAnaphoraRescue",
     "ScreenEvidenceStore",
     "ScreenRelevanceRouter",
     "build_screen_text_runtime",

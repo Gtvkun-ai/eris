@@ -258,7 +258,10 @@ class AIChatOrchestrator:
 
         host._chat_snapshot_for_vision = snapshot
         try:
-            screen_image_data_uri = host._capture_screen_frame_for_chat(user_text)
+            screen_image_data_uri = host._capture_screen_frame_for_chat(
+                user_text,
+                previous_public_turn=previous_public_turn,
+            )
         finally:
             host._chat_snapshot_for_vision = None
         grounding_report = host._build_chat_source_grounding_report(

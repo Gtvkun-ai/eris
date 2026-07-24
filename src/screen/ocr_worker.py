@@ -207,6 +207,9 @@ class IncrementalScreenTextWorker:
         self._last_backend_probe_at = 0.0
         self._backend_warning_emitted = False
         self._stop = threading.Event()
+        # OCR nền và OCR cưỡng bức từ chat dùng chung capture/backend state.
+        # Lock này ngăn hai luồng cùng chụp rồi ghi revision lộn thứ tự.
+        self._capture_lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._revision = 0
         self._last_ocr_at = 0.0
@@ -298,46 +301,101 @@ class IncrementalScreenTextWorker:
                 "Auto-install failed or was disabled; install requirements-screen-ocr.txt in this venv."
             )
 
+    def refresh_now(self, *, force_ocr: bool = True) -> ScreenTextSnapshot | None:
+        """Làm mới UIA/OCR ngay cho một yêu cầu chat có nhắc màn hình.
+
+        Worker nền được giữ lazy để tiết kiệm tài nguyên. Nhưng khi user bảo
+        ``xem đi`` thì chờ vòng poll kế tiếp rồi lập tức chuyển sang vision là
+        một nhịp khá vô duyên. Lượt cưỡng bức này dùng cùng pipeline và privacy
+        gate với worker nền; nó không có đường chụp riêng lén lút.
+        """
+
+        if not self.enabled:
+            return None
+        try:
+            with self._capture_lock:
+                return self._capture_snapshot(force_ocr=force_ocr)
+        except Exception as exc:
+            if self.logger:
+                self.logger.warning("[screen text] forced refresh failed: %s", exc)
+            return None
+
+    def _capture_snapshot(self, *, force_ocr: bool = False) -> ScreenTextSnapshot:
+        window = self.window_provider.get()
+        privacy_blocked = self.uia_reader.is_sensitive(window.title) and not self.uia_reader.allow_sensitive
+        image = None if privacy_blocked else self._capture(window)
+        errors: list[str] = []
+        changed_ratio = 0.0
+        uia_blocks = () if privacy_blocked else self.uia_reader.read(window)
+        ocr_blocks: tuple[ScreenTextBlock, ...] = ()
+        should_ocr = False
+        if image is not None:
+            change = self.detector.inspect(image, key=f"{window.hwnd}:{window.title}")
+            changed_ratio = change.ratio
+            now = time.time()
+            should_ocr = bool(
+                force_ocr
+                or (change.changed and (now - self._last_ocr_at) >= self.min_ocr_interval)
+                or (now - self._last_full_at) >= self.full_refresh_sec
+            )
+            if should_ocr:
+                self._ensure_ocr_backend(now)
+            if should_ocr and self.backend is not None and self.backend.available:
+                # Lượt chat cưỡng bức dùng toàn cửa sổ. ROI của detector rất tốt
+                # cho nền, nhưng có thể cắt mất tiêu đề video/tên bài mà đại từ
+                # ``nó`` đang trỏ tới.
+                target = image
+                if (
+                    not force_ocr
+                    and change.roi
+                    and not change.full_refresh
+                    and (now - self._last_full_at) < self.full_refresh_sec
+                ):
+                    target = image.crop(change.roi)
+                ocr_blocks = self.backend.read(
+                    self._prepare(target),
+                    window_title=window.title,
+                    captured_at=now,
+                )
+                self._last_ocr_at = now
+                if force_ocr or change.full_refresh or (now - self._last_full_at) >= self.full_refresh_sec:
+                    self._last_full_at = now
+        elif not privacy_blocked:
+            errors.append("capture_unavailable")
+
+        blocks = self._merge_blocks(uia_blocks, ocr_blocks)
+        if not blocks and not privacy_blocked:
+            blocks = self._last_blocks
+        elif blocks:
+            self._last_blocks = blocks
+        self._revision += 1
+        snapshot = ScreenTextSnapshot(
+            window=window,
+            blocks=blocks,
+            captured_at=time.time(),
+            changed_ratio=changed_ratio,
+            revision=self._revision,
+            backend=(
+                self.backend.name
+                if self.backend is not None and self.backend.available
+                else "uia_only"
+            ),
+            privacy_blocked=privacy_blocked,
+            errors=tuple(errors),
+        )
+        self.sink.publish(snapshot)
+        self._write_cache(snapshot)
+        return snapshot
+
     def _run(self) -> None:
         while not self._stop.is_set():
             started = time.time()
-            window = self.window_provider.get()
-            privacy_blocked = self.uia_reader.is_sensitive(window.title) and not self.uia_reader.allow_sensitive
-            image = None if privacy_blocked else self._capture(window)
-            errors: list[str] = []
-            changed_ratio = 0.0
-            uia_blocks = () if privacy_blocked else self.uia_reader.read(window)
-            ocr_blocks: tuple[ScreenTextBlock, ...] = ()
-            should_ocr = False
-            if image is not None:
-                change = self.detector.inspect(image, key=f"{window.hwnd}:{window.title}")
-                changed_ratio = change.ratio
-                now = time.time()
-                should_ocr = bool(change.changed and (now - self._last_ocr_at) >= self.min_ocr_interval)
-                if (now - self._last_full_at) >= self.full_refresh_sec:
-                    should_ocr = True
-                if should_ocr:
-                    self._ensure_ocr_backend(now)
-                if should_ocr and self.backend is not None and self.backend.available:
-                    target = image
-                    if change.roi and not change.full_refresh and (now - self._last_full_at) < self.full_refresh_sec:
-                        target = image.crop(change.roi)
-                    ocr_blocks = self.backend.read(self._prepare(target), window_title=window.title, captured_at=now)
-                    self._last_ocr_at = now
-                    if change.full_refresh or (now - self._last_full_at) >= self.full_refresh_sec:
-                        self._last_full_at = now
-            elif not privacy_blocked:
-                errors.append("capture_unavailable")
-
-            blocks = self._merge_blocks(uia_blocks, ocr_blocks)
-            if not blocks and not privacy_blocked:
-                blocks = self._last_blocks
-            elif blocks:
-                self._last_blocks = blocks
-            self._revision += 1
-            snapshot = ScreenTextSnapshot(window=window, blocks=blocks, captured_at=time.time(), changed_ratio=changed_ratio, revision=self._revision, backend=self.backend.name if self.backend is not None and self.backend.available else "uia_only", privacy_blocked=privacy_blocked, errors=tuple(errors))
-            self.sink.publish(snapshot)
-            self._write_cache(snapshot)
+            try:
+                with self._capture_lock:
+                    self._capture_snapshot(force_ocr=False)
+            except Exception as exc:
+                if self.logger:
+                    self.logger.warning("[screen text] background refresh failed: %s", exc)
             elapsed = time.time() - started
             self._stop.wait(max(0.05, self.poll_sec - elapsed))
 

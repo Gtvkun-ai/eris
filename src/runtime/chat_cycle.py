@@ -6,6 +6,7 @@ import time
 from runtime.interrupt_reaction_policy import InterruptReactionPolicy
 from runtime.source_grounding import SourceGroundingEngine
 from runtime.cognition.normalization import normalize_vi
+from screen.screen_anaphora_rescue import ScreenAnaphoraRescue
 
 
 class ChatCycleMixin:
@@ -239,7 +240,35 @@ class ChatCycleMixin:
                 continue
             self._handle_incoming(msg)
 
-    def _looks_like_screen_vision_request(self, user_text: str) -> bool:
+    def _previous_assistant_text_for_screen_route(self, previous_public_turn=None) -> str:
+        public_turn = previous_public_turn
+        if public_turn is None:
+            public_turn = getattr(getattr(self, "reply_context", None), "previous_public_turn", None)
+        if public_turn is None:
+            # Reply window chung chỉ 30 giây, hợp cho semantic correction nhưng
+            # hơi ngắn khi TTS vừa nói xong rồi user mới đáp ``tự xem đi``. OCR
+            # anaphora có cửa sổ riêng rộng hơn; nó chỉ mượn câu trước làm query,
+            # không tự coi nội dung câu đó là bằng chứng màn hình.
+            ledger = getattr(self, "public_turn_ledger", None)
+            latest = getattr(ledger, "latest_visible_before", None)
+            if callable(latest):
+                try:
+                    candidate = latest(time.time())
+                    raw_window = str(os.environ.get("ERIS_SCREEN_ANAPHORA_WINDOW_SEC", "90") or "90")
+                    window = max(30.0, min(240.0, float(raw_window)))
+                    age = time.time() - float(getattr(candidate, "timestamp", 0.0) or 0.0)
+                    if candidate is not None and 0.0 <= age <= window:
+                        public_turn = candidate
+                except Exception:
+                    public_turn = None
+        return " ".join(str(getattr(public_turn, "text", "") or "").split()).strip()
+
+    def _looks_like_screen_vision_request(
+        self,
+        user_text: str,
+        *,
+        previous_assistant_text: str = "",
+    ) -> bool:
         normalized = normalize_vi(user_text)
         if not normalized:
             return False
@@ -250,9 +279,20 @@ class ChatCycleMixin:
                 "nhìn màn hình", "xem màn hình", "look at this", "this screen",
                 "xem đi", "bạn xem đi", "tôi đang code gì", "đang code gì",
                 "đoạn đang mở", "file đang mở", "đang hiện gì", "lỗi này trên màn hình",
+                # Yêu cầu model tự nhìn vào ảnh — không tìm chữ qua OCR
+                "tự xem", "tự nhìn", "tự phân tích", "xem thử đi", "nhìn thử đi",
+                "xem giúp", "nhìn giúp", "em xem đi", "em nhìn đi",
+                "phân tích màn hình", "look at", "take a look", "check the screen",
             )
         )
-        return any(term and term in normalized for term in direct_terms)
+        if any(term and term in normalized for term in direct_terms):
+            return True
+        resolution = ScreenAnaphoraRescue().resolve(
+            user_text,
+            previous_assistant_text=previous_assistant_text,
+            explicit_reference=False,
+        )
+        return bool(resolution.references_screen)
 
     def _ensure_screen_text_worker_for_request(self) -> None:
         worker = getattr(self, "screen_text_worker", None)
@@ -263,38 +303,99 @@ class ChatCycleMixin:
         except Exception as exc:
             self.logger.warning("[screen text] lazy start error: %s", exc)
 
-    def _capture_screen_frame_for_chat(self, user_text: str) -> str:
+    def _refresh_screen_text_for_chat_request(self) -> bool:
+        """Cưỡng bức một lượt UIA/OCR trước khi bỏ cuộc sang vision.
+
+        Chỉ gọi khi router đã xác nhận câu hiện tại hoặc câu trước đang trỏ màn
+        hình. Chat thường không bị OCR chặn; riêng lệnh ``xem đi`` thì việc thử
+        đọc thật đáng giá hơn một câu hỏi lại rất máy.
+        """
+
+        worker = getattr(self, "screen_text_worker", None)
+        refresh = getattr(worker, "refresh_now", None)
+        if not callable(refresh):
+            return False
+        try:
+            snapshot = refresh(force_ocr=True)
+        except TypeError:
+            snapshot = refresh()
+        except Exception as exc:
+            self.logger.warning("[screen text] chat refresh error: %s", exc)
+            return False
+        if snapshot is None:
+            return False
+        self.logger.info(
+            "[screen text] chat refresh revision=%s backend=%s blocks=%d privacy=%s",
+            int(getattr(snapshot, "revision", 0) or 0),
+            str(getattr(snapshot, "backend", "unknown") or "unknown"),
+            len(tuple(getattr(snapshot, "blocks", ()) or ())),
+            int(bool(getattr(snapshot, "privacy_blocked", False))),
+        )
+        return True
+
+    def _capture_screen_frame_for_chat(self, user_text: str, *, previous_public_turn=None) -> str:
         self._chat_screen_route_decision = None
         self._chat_screen_text_evidence = ()
         self._chat_screen_capture_present = False
         self._chat_screen_capture_interpreted = False
-        explicit_screen_request = self._looks_like_screen_vision_request(user_text)
-        if explicit_screen_request:
+        previous_assistant_text = self._previous_assistant_text_for_screen_route(previous_public_turn)
+        explicit_or_inherited_request = self._looks_like_screen_vision_request(
+            user_text,
+            previous_assistant_text=previous_assistant_text,
+        )
+        if explicit_or_inherited_request:
             self._ensure_screen_text_worker_for_request()
         router = getattr(self, "screen_relevance_router", None)
         route = None
         if router is not None:
             try:
+                route = router.route(
+                    user_text,
+                    previous_assistant_text=previous_assistant_text,
+                )
+            except TypeError:
+                # Adapter/router cũ trong test vẫn dùng chữ ký một tham số.
                 route = router.route(user_text)
             except Exception as exc:
                 self.logger.warning("[screen route] router lỗi: %s", exc)
+
+        # OCR nền có thể vừa đổi frame nhưng chưa đến poll. Nếu route đã nhận ra
+        # tham chiếu mà chưa có evidence đủ dùng, làm mới một lần rồi route lại.
+        if (
+            route is not None
+            and bool(getattr(route, "references_screen", False))
+            and (not tuple(getattr(route, "evidence", ()) or ()) or bool(getattr(route, "stale", False)))
+            and self._refresh_screen_text_for_chat_request()
+            and router is not None
+        ):
+            try:
+                route = router.route(
+                    user_text,
+                    previous_assistant_text=previous_assistant_text,
+                )
+            except TypeError:
+                route = router.route(user_text)
+            except Exception as exc:
+                self.logger.warning("[screen route] reroute sau OCR lỗi: %s", exc)
+
         if route is None:
-            if not explicit_screen_request:
+            if not explicit_or_inherited_request:
                 self.logger.debug("[screen route] mode=none reason=no_screen_reference")
                 return ""
             try:
                 from screen.evidence_models import ScreenRouteDecision
                 route = ScreenRouteDecision(
                     mode="vision", references_screen=True,
-                    reason="router_unavailable_explicit_request",
+                    reason="router_unavailable_explicit_or_inherited_request",
                 )
             except Exception:
                 return ""
 
         self._chat_screen_route_decision = route
         self._chat_screen_text_evidence = tuple(getattr(route, "evidence", ()) or ())
+        debug = dict(getattr(route, "debug", {}) or {})
         self.logger.info(
-            "[screen route] mode=%s refs=%s visual=%s evidence=%d confidence=%.2f stale=%s reason=%s",
+            "[screen route] mode=%s refs=%s visual=%s evidence=%d confidence=%.2f stale=%s reason=%s anaphora=%s",
             str(getattr(route, "mode", "none") or "none"),
             int(bool(getattr(route, "references_screen", False))),
             int(bool(getattr(route, "needs_visual", False))),
@@ -302,6 +403,7 @@ class ChatCycleMixin:
             float(getattr(route, "confidence", 0.0) or 0.0),
             int(bool(getattr(route, "stale", False))),
             str(getattr(route, "reason", "") or "none"),
+            int(bool(debug.get("anaphora_inherited", False))),
         )
         mode = str(getattr(route, "mode", "none") or "none")
         if mode != "vision":

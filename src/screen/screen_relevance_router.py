@@ -7,6 +7,7 @@ import time
 import unicodedata
 
 from .evidence_models import ScreenRouteDecision
+from .screen_anaphora_rescue import ScreenAnaphoraRescue
 from .screen_evidence_store import ScreenEvidenceStore
 
 
@@ -32,19 +33,35 @@ class ScreenRelevanceRouter:
         "doc duoc tab telemetry", "telemetry cua toi", "telemetry toi",
     )
     TEXT_MARKERS = (
-        "chu", "text", "dong", "log", "terminal", "console", "code", "traceback",
+        # "chu" đã xóa: particle cuối câu "chứ" bị false-match → text_task=True sai
+        "text", "dong", "log", "terminal", "console", "code", "traceback",
         "exception", "error", "loi", "thong bao", "ghi gi", "doc", "file", "ham",
         "class", "tab", "panel", "telemetry", "uia", "ocr", "metric", "status",
     )
     SCREEN_CAPABILITY_MARKERS = ("doc duoc", "nhin duoc", "thay duoc", "xem duoc", "co doc", "co thay")
     SCREEN_RESOURCE_MARKERS = ("telemetry", "tab", "panel", "uia", "ocr", "cua so")
+    # Yêu cầu model TỰ NHÌN vào ảnh — bỏ qua OCR text matching, thẳng vào vision.
+    # Khác VISUAL_MARKERS (hỏi về layout/màu sắc): đây là "phân tích cái đang hiện"
+    # mà không biết trước nội dung là gì.
+    DIRECT_VISION_MARKERS = (
+        "tu xem", "tu nhin", "xem thu", "nhin thu", "xem giup", "nhin giup",
+        "ban co the xem", "ban co the nhin", "em xem di", "em nhin di",
+        "tu phan tich", "phan tich man hinh", "xem man hinh giup",
+        "look at", "take a look", "check the screen", "see for yourself",
+    )
     VISUAL_MARKERS = ("mau", "bo cuc", "layout", "icon", "anh nay", "hinh anh", "giao dien", "ui", "dep", "xau", "vi tri", "can le", "kich thuoc", "bieu do", "chart")
     STRONG_MARKERS = ("chinh xac", "xac nhan", "evidence", "bang chung", "doc dung", "kiem tra ky", "verify")
 
     def __init__(self, store: ScreenEvidenceStore) -> None:
         self.store = store
+        self.anaphora_rescue = ScreenAnaphoraRescue()
 
-    def route(self, user_text: str) -> ScreenRouteDecision:
+    def route(
+        self,
+        user_text: str,
+        *,
+        previous_assistant_text: str = "",
+    ) -> ScreenRouteDecision:
         normalized = _norm(user_text)
         references = any(_has_marker(normalized, marker) for marker in self.SCREEN_MARKERS)
         # Câu hỏi capability kiểu "em đọc được tab telemetry tôi chưa" không nhất
@@ -55,22 +72,69 @@ class ScreenRelevanceRouter:
                 any(_has_marker(normalized, marker) for marker in self.SCREEN_CAPABILITY_MARKERS)
                 and any(_has_marker(normalized, marker) for marker in self.SCREEN_RESOURCE_MARKERS)
             )
+        resolution = self.anaphora_rescue.resolve(
+            user_text,
+            previous_assistant_text=previous_assistant_text,
+            explicit_reference=references,
+        )
+        references = bool(references or resolution.references_screen)
         if not references:
-            return ScreenRouteDecision(mode="none", reason="no_screen_reference")
+            return ScreenRouteDecision(
+                mode="none",
+                reason="no_screen_reference",
+                debug={"anaphora_reason": resolution.reason},
+            )
+
+        # Marker trực tiếp vẫn được tính từ câu user hiện tại. Câu Eris trước chỉ
+        # cứu referent và query OCR, không được tự biến một yêu cầu text thành
+        # yêu cầu bố cục/ảnh mạnh hơn.
+        #
+        # DIRECT_VISION: user bảo "tự xem đi" → yêu cầu xem màn hình tổng quát.
+        # Không force needs_visual — OCR đọc được (lyrics, tiêu đề...) thì dùng OCR;
+        # chỉ escalate vision khi OCR thực sự không có evidence nào.
+        is_direct_vision = any(_has_marker(normalized, marker) for marker in self.DIRECT_VISION_MARKERS)
         needs_visual = any(_has_marker(normalized, marker) for marker in self.VISUAL_MARKERS)
         requires_strong = any(_has_marker(normalized, marker) for marker in self.STRONG_MARKERS)
         text_task = any(_has_marker(normalized, marker) for marker in self.TEXT_MARKERS)
-        generic = references and not text_task and not needs_visual
-        evidence = self.store.query(user_text, generic_screen_request=generic)
+        # Direct vision request cũng là generic — lấy toàn bộ fresh blocks, không filter theo overlap.
+        generic = (is_direct_vision or references) and not text_task and not needs_visual
+        evidence = self.store.query(
+            resolution.query_text or user_text,
+            generic_screen_request=bool(generic or resolution.inherited),
+        )
         confidence = max((block.confidence for block in evidence), default=0.0)
         stale = bool(evidence and time.time() - max(block.captured_at for block in evidence) > 8.0)
+        debug = {
+            "anaphora_inherited": resolution.inherited,
+            "anaphora_reason": resolution.reason,
+            "query_used_previous_turn": bool(resolution.inherited and previous_assistant_text),
+        }
 
         if needs_visual:
-            return ScreenRouteDecision("vision", True, True, requires_strong, "visual_layout_or_image_requested", evidence, confidence, stale)
+            return ScreenRouteDecision(
+                "vision", True, True, requires_strong,
+                "visual_layout_or_image_requested", evidence, confidence, stale, debug,
+            )
         if evidence and confidence >= 0.72 and not stale:
-            return ScreenRouteDecision("text_evidence", True, False, requires_strong, "fresh_screen_text_available", evidence, confidence, False)
+            reason = "fresh_screen_text_available_after_anaphora" if resolution.inherited else "fresh_screen_text_available"
+            return ScreenRouteDecision(
+                "text_evidence", True, False, requires_strong, reason, evidence, confidence, False, debug,
+            )
         if evidence and confidence >= 0.48:
             if requires_strong:
-                return ScreenRouteDecision("vision", True, False, True, "screen_text_not_strong_enough", evidence, confidence, stale)
-            return ScreenRouteDecision("text_evidence_soft", True, False, False, "screen_text_available_but_soft", evidence, confidence, stale)
-        return ScreenRouteDecision("vision", True, False, requires_strong, "no_usable_screen_text_escalate_vision", (), 0.0, False)
+                return ScreenRouteDecision(
+                    "vision", True, False, True, "screen_text_not_strong_enough",
+                    evidence, confidence, stale, debug,
+                )
+            reason = "screen_text_available_but_soft_after_anaphora" if resolution.inherited else "screen_text_available_but_soft"
+            return ScreenRouteDecision(
+                "text_evidence_soft", True, False, False, reason, evidence, confidence, stale, debug,
+            )
+        reason = (
+            "anaphora_without_screen_text_escalate_vision"
+            if resolution.inherited
+            else "no_usable_screen_text_escalate_vision"
+        )
+        return ScreenRouteDecision(
+            "vision", True, False, requires_strong, reason, (), 0.0, False, debug,
+        )

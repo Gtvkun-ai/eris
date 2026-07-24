@@ -423,7 +423,36 @@ def test_tts_attempts_default_is_bounded(monkeypatch) -> None:
     import runtime.tts_engine as tts_engine
 
     monkeypatch.delenv("ERIS_TTS_MAX_ATTEMPTS", raising=False)
-    assert tts_engine._tts_max_attempts() == 2
+    assert tts_engine._tts_max_attempts() == 4
+
+
+def test_tts_broker_provider_is_key_scoped() -> None:
+    from types import SimpleNamespace
+
+    import runtime.tts_engine as tts_engine
+
+    assert tts_engine._tts_broker_provider_name(SimpleNamespace(index=0)) == "gemini_tts_key_0"
+    assert tts_engine._tts_broker_provider_name(SimpleNamespace(index=1)) == "gemini_tts_key_1"
+    assert tts_engine._tts_broker_provider_name(None) == "gemini_tts"
+
+
+def test_tts_broker_timeout_allows_slow_audio_admission(monkeypatch) -> None:
+    import runtime.tts_engine as tts_engine
+
+    monkeypatch.delenv("ERIS_TTS_BROKER_TIMEOUT_SEC", raising=False)
+    assert tts_engine._tts_broker_timeout_seconds() == 45.0
+
+    monkeypatch.setenv("ERIS_TTS_BROKER_TIMEOUT_SEC", "2")
+    assert tts_engine._tts_broker_timeout_seconds() == 5.0
+
+    monkeypatch.setenv("ERIS_TTS_BROKER_TIMEOUT_SEC", "999")
+    assert tts_engine._tts_broker_timeout_seconds() == 120.0
+
+
+def test_tts_current_turn_is_required_broker_lane() -> None:
+    from runtime.inference_broker import lane_policy
+
+    assert lane_policy("tts_current_turn").optional is False
 
 
 def test_tts_manager_new_turn_does_not_wait_for_cancelled_http_request() -> None:
@@ -1637,3 +1666,177 @@ def test_startup_grounding_default_is_lazy(monkeypatch) -> None:
     assert bundle.waited_seconds < 0.25
     assert bundle.runtime_opening_evidence == ()
     assert "screen_prime_lazy" in bundle.notes
+
+
+def test_screen_anaphora_rescue_inherits_media_reference_from_previous_turn() -> None:
+    from screen.screen_anaphora_rescue import ScreenAnaphoraRescue
+
+    result = ScreenAnaphoraRescue().resolve(
+        "đang nghe mà",
+        previous_assistant_text="Bạn đang nghe bài đó à?",
+    )
+
+    assert result.references_screen is True
+    assert result.inherited is True
+    assert "Bạn đang nghe bài đó" in result.query_text
+
+
+def test_screen_anaphora_rescue_does_not_bind_bare_pronoun_without_screen_anchor() -> None:
+    from screen.screen_anaphora_rescue import ScreenAnaphoraRescue
+
+    result = ScreenAnaphoraRescue().resolve(
+        "nó đó",
+        previous_assistant_text="Tôi vẫn nghĩ cách hiểu ban đầu hợp lý hơn.",
+    )
+
+    assert result.references_screen is False
+    assert result.inherited is False
+
+
+def test_screen_router_uses_previous_public_turn_to_retrieve_ocr_media_text() -> None:
+    import time
+
+    from screen.evidence_models import ActiveWindowInfo, ScreenTextBlock, ScreenTextSnapshot
+    from screen.screen_evidence_store import ScreenEvidenceStore
+    from screen.screen_relevance_router import ScreenRelevanceRouter
+
+    now = time.time()
+    store = ScreenEvidenceStore()
+    store.publish(ScreenTextSnapshot(
+        window=ActiveWindowInfo(title="YouTube"),
+        blocks=(ScreenTextBlock(
+            block_id="yt-title",
+            text="From The Start - Laufey (Still In Love Version)",
+            source="ocr",
+            confidence=0.91,
+            window_title="YouTube",
+            captured_at=now,
+        ),),
+        captured_at=now,
+        revision=1,
+        backend="rapidocr",
+    ))
+
+    route = ScreenRelevanceRouter(store).route(
+        "đang nghe mà",
+        previous_assistant_text="Bạn đang nghe bài đó à?",
+    )
+
+    assert route.references_screen is True
+    assert route.debug["anaphora_inherited"] is True
+    assert route.mode in {"text_evidence", "text_evidence_soft"}
+    assert route.evidence[0].block_id == "yt-title"
+
+
+def test_chat_screen_route_forces_ocr_refresh_before_vision() -> None:
+    import time
+    from types import SimpleNamespace
+
+    from runtime.chat_cycle import ChatCycleMixin
+    from screen.evidence_models import ActiveWindowInfo, ScreenTextBlock, ScreenTextSnapshot
+    from screen.screen_evidence_store import ScreenEvidenceStore
+    from screen.screen_relevance_router import ScreenRelevanceRouter
+
+    store = ScreenEvidenceStore()
+
+    class _Worker:
+        def __init__(self) -> None:
+            self.started = False
+            self.refreshed = False
+
+        def start(self) -> None:
+            self.started = True
+
+        def refresh_now(self, *, force_ocr: bool = True):
+            self.refreshed = bool(force_ocr)
+            now = time.time()
+            snapshot = ScreenTextSnapshot(
+                window=ActiveWindowInfo(title="YouTube"),
+                blocks=(ScreenTextBlock(
+                    block_id="video-title",
+                    text="4 AI làm chúa và xây nền văn minh trong WorldBox",
+                    source="ocr",
+                    confidence=0.92,
+                    window_title="YouTube",
+                    captured_at=now,
+                ),),
+                captured_at=now,
+                revision=2,
+                backend="rapidocr",
+            )
+            store.publish(snapshot)
+            return snapshot
+
+    class _Logger:
+        def info(self, *_args, **_kwargs) -> None:
+            return None
+        def warning(self, *_args, **_kwargs) -> None:
+            return None
+        def debug(self, *_args, **_kwargs) -> None:
+            return None
+
+    class _Host(ChatCycleMixin):
+        pass
+
+    host = _Host()
+    host.screen_text_worker = _Worker()
+    host.screen_relevance_router = ScreenRelevanceRouter(store)
+    host.screen_evidence_store = store
+    host.logger = _Logger()
+    host.telemetry_service = SimpleNamespace(
+        capture_screen_frame_data_uri=lambda: (_ for _ in ()).throw(
+            AssertionError("Không được gọi vision khi OCR cưỡng bức đã đủ evidence")
+        )
+    )
+    host.reply_context = SimpleNamespace(previous_public_turn=None)
+
+    result = host._capture_screen_frame_for_chat(
+        "tự mà xem đi",
+        previous_public_turn=SimpleNamespace(text="Còn video mới thì sao?"),
+    )
+
+    assert result == ""
+    assert host.screen_text_worker.started is True
+    assert host.screen_text_worker.refreshed is True
+    assert host._chat_screen_route_decision.mode in {"text_evidence", "text_evidence_soft"}
+    assert host._chat_screen_text_evidence[0].block_id == "video-title"
+
+
+def test_tts_failure_reason_distinguishes_rate_limit_from_long_text() -> None:
+    import runtime.tts_engine as tts_engine
+
+    assert tts_engine._tts_failure_reason(RuntimeError("inference_rejected:provider_hot_optional")) == "provider_hot"
+    assert tts_engine._tts_failure_reason(RuntimeError("HTTP 429 RESOURCE_EXHAUSTED")) == "provider_rate_limited"
+    assert tts_engine._tts_failure_reason(RuntimeError("TTS transcript quá dài (500>260)")) == "transcript_too_long"
+
+
+def test_hardening_fingerprint_covers_screen_anaphora_rescue() -> None:
+    from runtime.hardening_release import DEFAULT_AUTHORITY_FILES
+
+    assert "screen/screen_anaphora_rescue.py" in DEFAULT_AUTHORITY_FILES
+
+
+def test_screen_anaphora_uses_wider_public_turn_window_than_general_reply_link(monkeypatch) -> None:
+    import time
+    from types import SimpleNamespace
+
+    from runtime.chat_cycle import ChatCycleMixin
+
+    now = time.time()
+
+    class _Ledger:
+        def latest_visible_before(self, _timestamp):
+            return SimpleNamespace(
+                text="Còn video mới thì sao?",
+                timestamp=now - 45.0,
+            )
+
+    class _Host(ChatCycleMixin):
+        pass
+
+    host = _Host()
+    host.reply_context = SimpleNamespace(previous_public_turn=None)
+    host.public_turn_ledger = _Ledger()
+    monkeypatch.setenv("ERIS_SCREEN_ANAPHORA_WINDOW_SEC", "90")
+
+    assert host._previous_assistant_text_for_screen_route() == "Còn video mới thì sao?"

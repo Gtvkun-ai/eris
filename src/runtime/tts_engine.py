@@ -807,10 +807,10 @@ def _tts_breaker_enabled() -> bool:
 
 
 def _tts_max_attempts() -> int:
-    # Một câu không được đi tuần qua toàn bộ 12 key. Hai project là đủ để phân
-    # biệt key riêng lỗi với provider/lane đang nóng; sau đó fallback cùng ngôn
-    # ngữ xử lý nhanh hơn và user không phải nghe một khoảng im lặng khảo cổ học.
-    raw = str(os.environ.get("ERIS_TTS_MAX_ATTEMPTS", "2") or "2").strip().lower()
+    # TTS là lane public của lượt hiện tại nên được xoay qua vài key khác nhau khi
+    # một key dính 429. Vẫn không mặc định quét sạch toàn pool; nếu cần probe mạnh,
+    # đặt ERIS_TTS_MAX_ATTEMPTS=pool/all/full.
+    raw = str(os.environ.get("ERIS_TTS_MAX_ATTEMPTS", "4") or "4").strip().lower()
     if raw in {"", "full", "all", "pool", "max"}:
         return 10_000
     try:
@@ -819,12 +819,46 @@ def _tts_max_attempts() -> int:
         return 10_000
 
 
+def _tts_broker_timeout_seconds() -> float:
+    raw = str(os.environ.get("ERIS_TTS_BROKER_TIMEOUT_SEC", "45") or "45").strip()
+    try:
+        return max(5.0, min(120.0, float(raw)))
+    except ValueError:
+        return 45.0
+
+
+def _tts_broker_provider_name(lease=None) -> str:
+    index = getattr(lease, "index", None)
+    if index is None:
+        return "gemini_tts"
+    try:
+        return f"gemini_tts_key_{int(index)}"
+    except (TypeError, ValueError):
+        return "gemini_tts"
+
+
 def _same_language_locale(language_hint: str, locale: str = "") -> str:
     if str(locale or "").strip():
         return str(locale).strip()
     lang = normalize_language(language_hint)
     return {"vi": "vi-VN", "ja": "ja-JP", "en": "en-US"}.get(lang, lang)
 
+
+def _tts_failure_reason(exc: Exception) -> str:
+    """Chuẩn hóa lý do lỗi để log không đổ oan cho độ dài transcript."""
+
+    text = " ".join(str(exc or "").lower().split())
+    if "provider_hot_optional" in text:
+        return "provider_hot"
+    if "429" in text or "resource_exhausted" in text or "rate limit" in text:
+        return "provider_rate_limited"
+    if "transcript quá dài" in text or "transcript too long" in text:
+        return "transcript_too_long"
+    if "prompt vượt hard limit" in text or "prompt" in text and "hard limit" in text:
+        return "prompt_too_long"
+    if "fallback" in text:
+        return "fallback_unavailable"
+    return "provider_error"
 
 def _tts_request_cancelled(cancel_event=None, authority_check=None) -> bool:
     if cancel_event is not None:
@@ -960,19 +994,21 @@ def _synthesize_wav(
 
             prompt_tokens = estimate_tokens([{"role": "user", "content": prompt}])
             output_reserve = int(getattr(tts_budget_plan, "output_tokens", 768) or 768)
+            broker_provider = _tts_broker_provider_name(lease)
+            broker_timeout = _tts_broker_timeout_seconds()
             with inference_context(
                 "tts_current_turn",
-                optional=True,
-                timeout_seconds=18.0,
+                optional=False,
+                timeout_seconds=broker_timeout,
                 cancel_scope=f"tts:{threading.get_ident()}",
-                metadata={"voice": voice, "tts_model": model},
+                metadata={"voice": voice, "tts_model": model, "broker_provider": broker_provider},
             ):
                 broker_request = GLOBAL_INFERENCE_BROKER.request_from_context(
-                    provider="gemini",
+                    provider=broker_provider,
                     model=model,
                     estimated_input_tokens=prompt_tokens,
                     reserved_output_tokens=output_reserve,
-                    timeout_seconds=18.0,
+                    timeout_seconds=broker_timeout,
                     metadata={"transport": "google.genai"},
                 )
 
@@ -1909,14 +1945,17 @@ class _TtsWorker:
                     elif self._current_stop.is_set():
                         self._emit(req, "audio_cancelled", reason="cancelled_before_playback")
                     else:
-                        if req.on_start_play is not None:
-                            try:
-                                req.on_start_play()
-                            except Exception as cb_exc:
-                                logger.error("[TTS] Error in on_start_play callback: %s", cb_exc)
+                        def _mark_audio_started() -> None:
+                            nonlocal callback_called
+                            if req.on_start_play is not None:
+                                try:
+                                    req.on_start_play()
+                                except Exception as cb_exc:
+                                    logger.error("[TTS] Error in on_start_play callback: %s", cb_exc)
                             callback_called = True
-                        self._emit(req, "audio_start")
-                        _play_wav_bytes(wav_bytes, self._current_stop)
+                            self._emit(req, "audio_start")
+
+                        _play_wav_bytes(wav_bytes, self._current_stop, on_started=_mark_audio_started)
                         if self._current_stop.is_set():
                             self._emit(req, "audio_cancelled", reason="cancelled_during_playback")
                         else:
@@ -1935,8 +1974,14 @@ class _TtsWorker:
                         self._emit(req, "audio_localization_failed", error=str(exc))
                         logger.warning("[TTS] Audio bị bỏ vì không giữ được language contract: %s", exc)
                     else:
-                        self._emit(req, "audio_failed", error=str(exc))
-                        logger.warning("[TTS] Lỗi: %s", exc)
+                        failure_reason = _tts_failure_reason(exc)
+                        self._emit(req, "audio_failed", reason=failure_reason, error=str(exc))
+                        logger.warning(
+                            "[TTS] Lỗi reason=%s chars=%d: %s",
+                            failure_reason,
+                            len(str(getattr(req, "text", "") or "")),
+                            exc,
+                        )
                     # _synthesize_wav đã đánh dấu đúng lease gây 429. Không được
                     # mark "key hiện tại" lần nữa ở đây vì thread khác có thể đã xoay pool.
             finally:

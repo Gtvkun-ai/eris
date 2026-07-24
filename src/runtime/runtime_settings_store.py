@@ -122,14 +122,14 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "performance_acts_enabled": True,
         "interrupt_enabled": True,
         "protocol_enabled": True,
-        "segment_tts": False,
+        "segment_tts": True,
         "segment_dispatch": "inline",
         # Conversation profile dùng manager để một request synth cũ bị user hủy
         # không chặn TTS của turn mới ở cùng worker tuần tự.
         "tts_task_manager": True,
         "prefetch_workers": 1,
-        "max_tts_segments": 1,
-        "min_split_chars": 72,
+        "max_tts_segments": 8,
+        "min_split_chars": 58,
         "show_plan_enabled": True,
         "stage_replay_enabled": True,
         "stage_replay_size": 160,
