@@ -376,6 +376,22 @@ class ActionMemoryStore:
                 self.save()
         return changed
 
+    def scrub_evidence(self, evidence_ids: Iterable[str]) -> int:
+        """Xóa goal/commitment/workflow sinh từ evidence bị hard-delete."""
+        wanted = {str(item) for item in evidence_ids if str(item).strip()}
+        if not wanted:
+            return 0
+        removed = 0
+        with self._lock:
+            for bucket in (self._goals, self._commitments, self._workflows):
+                for item_id, item in list(bucket.items()):
+                    if wanted & {item_id, *getattr(item, "evidence_ids", ())}:
+                        bucket.pop(item_id, None)
+                        removed += 1
+            if removed:
+                self.save()
+        return removed
+
     def snapshot(self) -> dict[str, Any]:
         return {
             "schema_version": 1,

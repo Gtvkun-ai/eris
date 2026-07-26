@@ -13,7 +13,6 @@ import time
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any, Mapping
 
-from memory.living_user import UserMemoryScope
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,16 +47,13 @@ def handle_memory_panel_request(living_user: Any, request: Mapping[str, Any]) ->
         elif action in {"correct", "confirm"}:
             if not path:
                 raise ValueError("missing_path")
-            record = _find_record(living_user, path, project_id=project_id)
+            record = living_user.get_memory(path, project_id=project_id)
             value = _coerce_edited_value(request.get("value"), record)
-            if action == "confirm" and record is not None:
-                value = record.value
             evidence_id = str(request.get("evidence_id") or f"memory_panel_{int(time.time() * 1000)}")
-            result = living_user.correct(
-                path,
-                value,
-                evidence_ids=(evidence_id,),
-                project_id=project_id,
+            result = (
+                living_user.confirm(path, project_id=project_id, evidence_ids=(evidence_id,))
+                if action == "confirm"
+                else living_user.correct(path, value, evidence_ids=(evidence_id,), project_id=project_id)
             )
             if not getattr(result, "changed", False):
                 rejected = ", ".join(getattr(result, "rejected", ()) or ())
@@ -77,7 +73,13 @@ def handle_memory_panel_request(living_user: Any, request: Mapping[str, Any]) ->
                 raise ValueError("missing_path")
             target_kind = str(request.get("target_scope_kind") or "global").strip().lower()
             target_key = str(request.get("target_scope_key") or "").strip()
-            _move_scope(living_user, path, project_id, target_kind, target_key)
+            result = living_user.move_scope(
+                path, project_id=project_id, target_scope_kind=target_kind, target_scope_key=target_key,
+            )
+            if not getattr(result, "changed", False):
+                rejected = ", ".join(getattr(result, "rejected", ()) or ())
+                if rejected != "scope_unchanged":
+                    raise RuntimeError(rejected or "scope_move_rejected")
             project_id = target_key if target_kind == "project" else ""
             message = "Đã đổi phạm vi sử dụng memory."
         else:
@@ -111,19 +113,17 @@ def build_memory_panel_snapshot(
     limit: int = 48,
 ) -> dict[str, Any]:
     """Tạo payload UI nhỏ, ổn định và không chứa memory nhạy cảm."""
-    records = []
-    for record in living_user.profile_store.all():
-        if record.sensitivity in {"private", "sensitive"}:
-            continue
-        if not include_inferred and record.explicitness == "inferred":
-            continue
-        if record.scope.kind == "project" and project_id and record.scope.key != project_id:
-            continue
-        records.append(_record_to_panel_dict(record))
-        if len(records) >= max(1, int(limit)):
-            break
+    records = [
+        _record_to_panel_dict(record)
+        for record in living_user.list_memories(
+            include_inferred=include_inferred,
+            include_sensitive=False,
+            project_id=project_id,
+            limit=limit,
+        )
+    ]
 
-    actions = living_user.action_store.snapshot()
+    actions = living_user.action_snapshot()
     goals = _compact_action_rows(actions.get("goals"), "goal", 18)
     commitments = _compact_action_rows(actions.get("commitments"), "commitment", 18)
     workflows = _compact_action_rows(actions.get("workflows"), "workflow", 18)
@@ -139,7 +139,8 @@ def build_memory_panel_snapshot(
         "workflows": len(workflows),
     }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
+        "authority_mode": "canonical_ledger",
         "summary_text": _render_panel_brief(records),
         "counts": counts,
         "records": records,
@@ -215,12 +216,6 @@ def _record_to_panel_dict(record: Any) -> dict[str, Any]:
     }
 
 
-def _find_record(living_user: Any, path: str, *, project_id: str = "") -> Any | None:
-    scope = UserMemoryScope("project", project_id) if project_id else None
-    rows = living_user.profile_store.get(path, scope=scope)
-    return rows[0] if rows else None
-
-
 def _coerce_edited_value(value: Any, record: Any | None) -> Any:
     if not isinstance(value, str):
         return value
@@ -237,31 +232,6 @@ def _coerce_edited_value(value: Any, record: Any | None) -> Any:
         if isinstance(record.value, float):
             return float(text)
         return text
-
-
-def _move_scope(living_user: Any, path: str, project_id: str, target_kind: str, target_key: str) -> None:
-    if target_kind not in {"global", "project"}:
-        raise ValueError("unsupported_scope")
-    source_scope = UserMemoryScope("project", project_id) if project_id else UserMemoryScope()
-    rows = living_user.profile_store.get(path, scope=source_scope)
-    if not rows:
-        raise ValueError("memory_not_found")
-    record = rows[0]
-    if target_kind == "project" and not target_key:
-        raise ValueError("missing_project_id")
-    target_scope = UserMemoryScope(target_kind, target_key if target_kind == "project" else "")
-    if target_scope.identity == source_scope.identity:
-        return
-    result = living_user.profile_store.correct(
-        path,
-        record.value,
-        evidence_ids=(f"memory_scope_move_{int(time.time() * 1000)}",),
-        scope=target_scope,
-        confidence=max(0.95, float(record.confidence)),
-    )
-    if not getattr(result, "changed", False):
-        raise RuntimeError("scope_move_rejected")
-    living_user.profile_store.forget(path, scope=source_scope, hard=False, reason="scope_changed")
 
 
 def _explanation_to_dict(value: Any) -> dict[str, Any]:

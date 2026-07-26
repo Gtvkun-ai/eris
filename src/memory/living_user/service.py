@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from .action_memory import ActionMemoryStore, GoalRecord, CommitmentRecord, WorkflowRecord
+from .authority import UserMemoryAuthorityEvent, UserMemoryAuthorityLedger
 from .clarification import MemoryClarificationPolicy
 from .context_compiler import ProfileContextCompiler, ProfileContextCompilerConfig
 from .dreamer import UserProfileDreamer
@@ -40,6 +41,7 @@ class LivingUserMemoryConfig:
     episode_filename: str = "living_user_episodes.json"
     action_filename: str = "living_user_actions.json"
     trace_filename: str = "living_user_trace.jsonl"
+    authority_filename: str = "living_user_authority.json"
 
     @classmethod
     def from_env(cls) -> "LivingUserMemoryConfig":
@@ -84,6 +86,9 @@ class LivingUserMemoryService:
         self.embedding_index = embedding_index
         self.model_adapter = model_adapter
         self.profile_store = UserProfileStore(self.base_dir / self.config.profile_filename, config=profile_store_config)
+        # Authority ledger là nguồn chân lý cho correction/forget/scope do user chọn.
+        # Profile bên dưới chỉ còn là projection có thể dựng lại.
+        self.authority_ledger = UserMemoryAuthorityLedger(self.base_dir / self.config.authority_filename)
         self.episode_store = UserEpisodeStore(self.base_dir / self.config.episode_filename)
         self.action_store = ActionMemoryStore(self.base_dir / self.config.action_filename)
         self.trace_journal = MemoryTraceJournal(self.base_dir / self.config.trace_filename)
@@ -113,6 +118,7 @@ class LivingUserMemoryService:
         self._turn_buffer: list[dict[str, Any]] = []
         self._active_session_id = ""
         self._load_turn_buffer()
+        self._reapply_authority_projection()
 
     def bind_model_adapter(self, adapter: UserProfileModelAdapter | None) -> None:
         """Nối model sau bootstrap mà không tạo lại store."""
@@ -219,17 +225,21 @@ class LivingUserMemoryService:
             context=context,
             existing_profile=self.profile_store.snapshot(limit=100),
         )
-        result = self.profile_store.apply(ops, checkpoint_reason="observe_user_turn")
+        guarded_ops, authority_rejected = self.authority_ledger.guard_operations(ops)
+        result = self.profile_store.apply(guarded_ops, checkpoint_reason="observe_user_turn")
+        self._reapply_authority_projection()
+        rejected = tuple((*result.rejected, *authority_rejected))
         self.trace_journal.append("observe_turn", {
-            "applied": len(result.record_ids), "rejected_count": len(result.rejected),
-            "operation_count": len(ops), "paths": [op.path for op in ops],
-            "operations": [op.to_dict() for op in ops],
+            "applied": len(result.record_ids), "rejected_count": len(rejected),
+            "operation_count": len(ops), "paths": [op.path for op in guarded_ops],
+            "operations": [op.to_dict() for op in guarded_ops],
+            "authority_rejected": list(authority_rejected),
         })
         return UserTurnObservation(
             applied=len(result.record_ids),
-            rejected=len(result.rejected),
-            operations=ops,
-            diagnostics=result.rejected,
+            rejected=len(rejected),
+            operations=guarded_ops,
+            diagnostics=rejected,
         )
 
     def sync_semantic_memory(self, *, scope: UserMemoryScope | None = None) -> ApplyResult:
@@ -243,7 +253,17 @@ class LivingUserMemoryService:
         except Exception as exc:
             return ApplyResult(False, rejected=(f"semantic_load_failed:{type(exc).__name__}",), version=self.profile_store.version)
         ops = self.extractor.from_semantic_items(items, scope=scope)
-        return self.profile_store.apply(ops, checkpoint_reason="semantic_sync")
+        guarded_ops, authority_rejected = self.authority_ledger.guard_operations(ops)
+        result = self.profile_store.apply(guarded_ops, checkpoint_reason="semantic_sync")
+        self._reapply_authority_projection()
+        if authority_rejected:
+            return ApplyResult(
+                result.changed,
+                result.record_ids,
+                tuple((*result.rejected, *authority_rejected)),
+                self.profile_store.version,
+            )
+        return result
 
     def consolidate_session(
         self,
@@ -395,20 +415,61 @@ class LivingUserMemoryService:
         lines.append("\nBạn có thể yêu cầu tôi sửa hoặc quên từng mục; suy luận không được coi là thông tin chắc chắn.")
         return "\n".join(lines)
 
+    def list_memories(
+        self,
+        *,
+        include_inferred: bool = True,
+        include_sensitive: bool = False,
+        project_id: str = "",
+        limit: int = 120,
+    ) -> tuple[Any, ...]:
+        """Đọc projection qua service boundary cho UI/runtime."""
+        rows = []
+        for record in self.profile_store.all():
+            if not include_sensitive and record.sensitivity in {"private", "sensitive"}:
+                continue
+            if not include_inferred and record.explicitness == "inferred":
+                continue
+            if record.scope.kind == "project" and project_id and record.scope.key != project_id:
+                continue
+            rows.append(record)
+            if len(rows) >= max(1, int(limit)):
+                break
+        return tuple(rows)
+
+    def action_snapshot(self) -> dict[str, Any]:
+        """Snapshot action memory qua facade, dành cho panel và diagnostics."""
+        return self.action_store.snapshot()
+
+    def get_memory(self, path: str, *, project_id: str = "") -> Any | None:
+        scope = UserMemoryScope("project", project_id) if project_id else None
+        rows = self.profile_store.get(path, scope=scope)
+        return rows[0] if rows else None
+
     def explain(self, path: str, *, project_id: str = "") -> tuple[MemoryExplanation, ...]:
         scope = UserMemoryScope("project", project_id) if project_id else None
         return tuple(self.sources.explain(record) for record in self.profile_store.get(path, scope=scope))
 
     def forget(self, path_or_prefix: str, *, project_id: str = "", hard: bool = False) -> int:
-        scope = UserMemoryScope("project", project_id) if project_id else None
-        changed = self.profile_store.forget(path_or_prefix, scope=scope, hard=hard, reason="user_request")
+        """Ghi tombstone canonical rồi cập nhật mọi projection liên quan."""
+        scope = UserMemoryScope("project", project_id) if project_id else UserMemoryScope()
+        evidence_ids = self._collect_memory_evidence(path_or_prefix, scope=scope)
+        authority = self.authority_ledger.append(
+            "forget", path_or_prefix, scope=scope, hard=hard, evidence_ids=() if hard else evidence_ids,
+            source="user_panel", metadata={"project_id": project_id},
+        )
+        changed = self.profile_store.forget(path_or_prefix, scope=scope, hard=hard, reason="user_authority_forget")
+        semantic = self._apply_semantic_authority(authority)
+        evidence_ids.update(str(x) for x in semantic.get("evidence_ids", ()) if str(x).strip())
         if hard:
+            self._scrub_hard_delete(path_or_prefix, evidence_ids)
             self.trace_journal.scrub_prefix(path_or_prefix)
-            # Không ghi lại path vừa được yêu cầu xóa. Audit "đã xóa" là đủ.
+            # Không ghi lại path vừa xóa vào trace public. Authority ledger chỉ giữ
+            # tombstone path, không giữ value đã bị xóa.
             self.trace_journal.append("forget", {"path": "<hard-deleted>", "changed": changed, "hard": True})
         else:
             self.trace_journal.append("forget", {"path": path_or_prefix, "changed": changed, "hard": False})
-        return changed
+        return max(changed, int(semantic.get("changed", 0) or 0))
 
     def correct(
         self,
@@ -419,8 +480,58 @@ class LivingUserMemoryService:
         project_id: str = "",
     ) -> ApplyResult:
         scope = UserMemoryScope("project", project_id) if project_id else UserMemoryScope()
-        result = self.profile_store.correct(path, value, evidence_ids=evidence_ids, scope=scope)
+        authority = self.authority_ledger.append(
+            "correct", path, scope=scope, value=value, evidence_ids=evidence_ids, source="user_panel",
+        )
+        result = self.profile_store.correct(
+            path, value, evidence_ids=(f"authority:{authority.id}", *authority.evidence_ids), scope=scope,
+        )
+        self._apply_semantic_authority(authority)
         self.trace_journal.append("correct", {"path": path, "changed": len(result.record_ids), "rejected_count": len(result.rejected)})
+        return result
+
+    def confirm(self, path: str, *, project_id: str = "", evidence_ids: Iterable[str] = ()) -> ApplyResult:
+        record = self.get_memory(path, project_id=project_id)
+        if record is None:
+            return ApplyResult(False, rejected=(f"memory_not_found:{path}",), version=self.profile_store.version)
+        scope = UserMemoryScope("project", project_id) if project_id else UserMemoryScope()
+        authority = self.authority_ledger.append(
+            "confirm", path, scope=scope, value=record.value, evidence_ids=evidence_ids, source="user_panel",
+        )
+        result = self.profile_store.correct(
+            path, record.value, evidence_ids=(f"authority:{authority.id}", *authority.evidence_ids), scope=scope,
+        )
+        self._apply_semantic_authority(authority)
+        return result
+
+    def move_scope(
+        self,
+        path: str,
+        *,
+        project_id: str = "",
+        target_scope_kind: str = "global",
+        target_scope_key: str = "",
+    ) -> ApplyResult:
+        source_scope = UserMemoryScope("project", project_id) if project_id else UserMemoryScope()
+        record = self.get_memory(path, project_id=project_id)
+        if record is None:
+            return ApplyResult(False, rejected=(f"memory_not_found:{path}",), version=self.profile_store.version)
+        if target_scope_kind not in {"global", "project"}:
+            return ApplyResult(False, rejected=("unsupported_scope",), version=self.profile_store.version)
+        if target_scope_kind == "project" and not str(target_scope_key or "").strip():
+            return ApplyResult(False, rejected=("missing_project_id",), version=self.profile_store.version)
+        target_scope = UserMemoryScope(target_scope_kind, target_scope_key if target_scope_kind == "project" else "")
+        if target_scope.identity == source_scope.identity:
+            return ApplyResult(False, rejected=("scope_unchanged",), version=self.profile_store.version)
+        authority = self.authority_ledger.append(
+            "move_scope", path, scope=source_scope, value=record.value, target_scope=target_scope,
+            evidence_ids=record.evidence_ids, source="user_panel",
+        )
+        self.profile_store.forget(path, scope=source_scope, hard=False, reason="user_authority_scope_move")
+        result = self.profile_store.correct(
+            path, record.value, evidence_ids=(f"authority:{authority.id}", *record.evidence_ids), scope=target_scope,
+        )
+        self._apply_semantic_authority(authority)
         return result
 
     def active_work(self, query: str = "", *, project_id: str = "", session_id: str = ""):
@@ -479,9 +590,84 @@ class LivingUserMemoryService:
         if not callable(loader):
             return ()
         try:
-            return self.extractor.from_semantic_items(loader(), scope=scope)
+            operations = self.extractor.from_semantic_items(loader(), scope=scope)
+            guarded, _ = self.authority_ledger.guard_operations(operations)
+            return guarded
         except Exception:
             return ()
+
+    def _reapply_authority_projection(self) -> None:
+        """Replay ledger theo đúng thứ tự thời gian lên profile projection.
+
+        Không nhóm correction và forget thành hai lượt riêng: làm vậy sẽ khiến một
+        correction cũ chạy lại sau tombstone mới hơn và hồi sinh dữ liệu đã quên.
+        Event sourcing chỉ elegant khi thứ tự event được tôn trọng, một chi tiết nhỏ
+        mà dữ liệu cá nhân có xu hướng nhớ rất lâu nếu ta làm sai.
+        """
+        for event in self.authority_ledger.all():
+            evidence = (f"authority:{event.id}", *event.evidence_ids)
+            if event.action in {"correct", "confirm"}:
+                self.profile_store.correct(event.path, event.value, evidence_ids=evidence, scope=event.scope)
+            elif event.action == "forget":
+                self.profile_store.forget(event.path, scope=event.scope, hard=event.hard, reason="authority_replay")
+            elif event.action == "move_scope" and event.target_scope is not None:
+                self.profile_store.forget(event.path, scope=event.scope, hard=False, reason="authority_replay_scope")
+                self.profile_store.correct(event.path, event.value, evidence_ids=evidence, scope=event.target_scope)
+
+    def _apply_semantic_authority(self, event: UserMemoryAuthorityEvent) -> dict[str, Any]:
+        mutator = getattr(self.semantic_store, "apply_user_authority", None)
+        if not callable(mutator):
+            return {"changed": 0, "evidence_ids": []}
+        target_scope = event.target_scope or event.scope
+        try:
+            return dict(mutator(
+                action=event.action,
+                fact_key=event.path,
+                value=event.value,
+                evidence_ids=event.evidence_ids,
+                scope_kind=target_scope.kind,
+                scope_key=target_scope.key,
+                hard=event.hard,
+                authority_event_id=event.id,
+            ) or {})
+        except Exception:
+            return {"changed": 0, "evidence_ids": []}
+
+    def _collect_memory_evidence(self, path_or_prefix: str, *, scope: UserMemoryScope) -> set[str]:
+        root = str(path_or_prefix or "").strip().lower()
+        evidence: set[str] = set()
+        for record in self.profile_store.all(include_inactive=True):
+            if record.scope.identity != scope.identity:
+                continue
+            if record.path == root or record.path.startswith(root + "."):
+                evidence.update(record.evidence_ids)
+                evidence.add(record.id)
+        loader = getattr(self.semantic_store, "load", None)
+        if callable(loader):
+            try:
+                for item in loader():
+                    fact_key = str(getattr(item, "fact_key", "") or "").strip().lower()
+                    if fact_key == root or fact_key.startswith(root + "."):
+                        evidence.update(str(x) for x in getattr(item, "evidence_ids", ()) or ())
+                        evidence.add(str(getattr(item, "id", "") or ""))
+            except Exception:
+                pass
+        evidence.discard("")
+        return evidence
+
+    def _scrub_hard_delete(self, path: str, evidence_ids: set[str]) -> None:
+        for store in (self.event_ledger, self.episode_store, self.action_store):
+            scrubber = getattr(store, "scrub_evidence", None)
+            if callable(scrubber):
+                try:
+                    scrubber(evidence_ids)
+                except Exception:
+                    pass
+        # Turn buffer là journal tạm nhưng vẫn có thể giữ câu chứa memory vừa xóa.
+        with self._turn_buffer_lock:
+            self._turn_buffer = [row for row in self._turn_buffer if str(row.get("id") or "") not in evidence_ids]
+            self._save_turn_buffer_locked()
+
 
 
 

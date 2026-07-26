@@ -220,6 +220,18 @@ def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
 
 
+def _semantic_value_fingerprint(value: Any) -> str:
+    """Fingerprint ổn định cho object value mà không phụ thuộc living_user.
+
+    Semantic memory nằm thấp hơn living-user layer nên không import ngược models,
+    tránh tạo vòng phụ thuộc chỉ để so hai giá trị.
+    """
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except Exception:
+        return str(value)
+
+
 # =============================================================================
 # 2. Recall cue / hit: query không chỉ là text, nó có ý định nhớ-lại
 # =============================================================================
@@ -1682,6 +1694,137 @@ class SemanticMemoryStore:
             + jaccard(word_ngrams(a), word_ngrams(b)) * 0.22
             + sequence_ratio(a, b) * 0.12
         )
+
+    def apply_user_authority(
+        self,
+        *,
+        action: str,
+        fact_key: str,
+        value: Any = None,
+        evidence_ids: Iterable[str] = (),
+        scope_kind: str = "global",
+        scope_key: str = "",
+        hard: bool = False,
+        authority_event_id: str = "",
+    ) -> dict[str, Any]:
+        """Áp quyết định trực tiếp của người dùng lên semantic projection.
+
+        Semantic memory không còn tự nhận là nguồn chân lý đối với dữ liệu user.
+        Correction/forget từ panel được ghi ở authority ledger rồi phản chiếu vào
+        đây. Nhờ vậy recall semantic và living-user profile không thể trả hai câu
+        khác nhau về cùng một người, một cảnh khá buồn cười nếu nó không liên quan
+        tới dữ liệu thật.
+        """
+        key = str(fact_key or "").strip().lower()
+        if not key:
+            return {"changed": 0, "evidence_ids": []}
+        items = self.load()
+        matched = [item for item in items if str(item.fact_key or "").strip().lower() == key]
+        removed_evidence = unique_keep_order(
+            evidence_id
+            for item in matched
+            for evidence_id in (item.id, *item.evidence_ids)
+        )
+        changed = 0
+        now = iso_now()
+
+        if action == "forget":
+            if hard:
+                before = len(items)
+                items = [item for item in items if str(item.fact_key or "").strip().lower() != key]
+                changed = before - len(items)
+            else:
+                for item in matched:
+                    if item.status != "archived":
+                        item.status = "archived"
+                        item.updated_at = now
+                        item.metadata["authority_event_id"] = authority_event_id
+                        changed += 1
+            if changed:
+                self.save(items)
+                self.rebuild_embedding_index()
+            return {"changed": changed, "evidence_ids": removed_evidence}
+
+        if action == "move_scope":
+            for item in matched:
+                item.metadata["scope_kind"] = scope_kind
+                item.metadata["scope_key"] = scope_key
+                item.metadata["authority_event_id"] = authority_event_id
+                item.updated_at = now
+                changed += 1
+            if changed:
+                self.save(items)
+                self.rebuild_embedding_index()
+            return {"changed": changed, "evidence_ids": removed_evidence}
+
+        if action not in {"correct", "confirm"}:
+            return {"changed": 0, "evidence_ids": removed_evidence}
+
+        authority_evidence = unique_keep_order((*evidence_ids, f"authority:{authority_event_id}" if authority_event_id else ""))
+        same = next((
+            item for item in matched
+            if _semantic_value_fingerprint(item.semantic_value) == _semantic_value_fingerprint(value)
+        ), None)
+        for item in matched:
+            if same is not None and item.id == same.id:
+                continue
+            if item.status in {"active", "tentative"}:
+                item.status = "contradicted"
+                item.updated_at = now
+                item.metadata["superseded_by_authority"] = authority_event_id
+                changed += 1
+
+        if same is None:
+            definition = self.registry.by_fact_key(key)
+            label = definition.display_name if definition is not None else key.rsplit(".", 1)[-1].replace("_", " ")
+            text_value = compact_text(value, limit=260)
+            same = SemanticMemoryItem(
+                id=f"sem_auth_{stable_hash(key + '|' + _semantic_value_fingerprint(value))}",
+                claim=compact_text(f"{label}: {text_value}", limit=520),
+                domain="user",
+                confidence=1.0,
+                source="user_authority",
+                evidence_ids=authority_evidence,
+                observations=1,
+                status="active",
+                first_seen_at=now,
+                updated_at=now,
+                decay_policy="protected",
+                tags=["user_authority", "profile_fact"],
+                metadata={
+                    "fact_key": key,
+                    "value": value,
+                    "explicitness": "explicit",
+                    "authority_event_id": authority_event_id,
+                    "scope_kind": scope_kind,
+                    "scope_key": scope_key,
+                    "importance": 0.95,
+                    "cardinality": definition.cardinality if definition is not None else "single",
+                },
+            )
+            items.append(same)
+            changed += 1
+        else:
+            before = set(same.evidence_ids)
+            same.evidence_ids = unique_keep_order((*same.evidence_ids, *authority_evidence))
+            same.status = "active"
+            same.confidence = 1.0
+            same.source = "user_authority"
+            same.updated_at = now
+            same.metadata.update({
+                "value": value,
+                "explicitness": "explicit",
+                "authority_event_id": authority_event_id,
+                "scope_kind": scope_kind,
+                "scope_key": scope_key,
+                "importance": max(0.95, same.importance),
+            })
+            if set(same.evidence_ids) != before or same.status != "active":
+                changed += 1
+
+        self.save(items)
+        self.rebuild_embedding_index()
+        return {"changed": changed, "evidence_ids": removed_evidence}
 
     def rebuild_embedding_index(self) -> bool:
         """Yêu cầu embedding_index build/cache lại vector nếu backend hỗ trợ.

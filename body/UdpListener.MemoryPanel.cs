@@ -11,7 +11,8 @@ public partial class UdpListener : Node2D
 	// memory từ Godot, vì hai tiến trình cùng sửa một file là cách rất hiệu quả để
 	// biến dữ liệu người dùng thành món mì trộn không còn parse được.
 	private const string MemoryPanelCachePath = "user://living_user_panel_cache.json";
-	private static readonly Vector2 MemoryPanelMinSize = new(1120f, 720f);
+	private static readonly Vector2 MemoryPanelPreferredSize = new(1040f, 680f);
+	private static readonly Vector2 MemoryPanelAbsoluteMinSize = new(900f, 600f);
 
 	private sealed class MemoryPanelRecord
 	{
@@ -63,6 +64,9 @@ public partial class UdpListener : Node2D
 	private Button _memoryMoveScopeButton;
 	private Button _memoryForgetButton;
 	private Label _memoryExplanationLabel;
+	private Control _memoryDetailEmpty;
+	private VBoxContainer _memoryDetailContent;
+	private ScrollContainer _memoryDetailScroll;
 
 	private readonly List<MemoryPanelRecord> _memoryRecords = new();
 	private readonly List<MemoryPanelActionItem> _memoryActions = new();
@@ -74,10 +78,10 @@ public partial class UdpListener : Node2D
 	private string _memoryHardDeleteArmedPath = "";
 
 	private static readonly Color MemoryInk = new(0.39f, 0.08f, 0.25f);
-	private static readonly Color MemoryInkSoft = new(0.62f, 0.35f, 0.49f);
+	private static readonly Color MemoryInkSoft = new(0.48f, 0.27f, 0.38f);
 	private static readonly Color MemoryPink = new(0.95f, 0.34f, 0.62f);
-	private static readonly Color MemoryBorder = new(0.96f, 0.76f, 0.86f, 0.92f);
-	private static readonly Color MemoryCard = new(1f, 0.975f, 0.987f, 0.92f);
+	private static readonly Color MemoryBorder = new(0.91f, 0.66f, 0.79f, 0.96f);
+	private static readonly Color MemoryCard = new(1f, 0.99f, 0.995f, 0.98f);
 
 	private void InitializeMemoryPanel()
 	{
@@ -85,8 +89,8 @@ public partial class UdpListener : Node2D
 		{
 			Name = "MemoryPanel",
 			Visible = false,
-			CustomMinimumSize = MemoryPanelMinSize,
-			Size = MemoryPanelMinSize,
+			CustomMinimumSize = MemoryPanelAbsoluteMinSize,
+			Size = MemoryPanelPreferredSize,
 			ZIndex = 99,
 		};
 		GetNode<Control>("CanvasLayer/Control").AddChild(_memoryPanel);
@@ -112,11 +116,16 @@ public partial class UdpListener : Node2D
 			return;
 		CloseCharacterContextMenu();
 		_memoryPanel.Visible = true;
-		_memoryPanel.Size = MemoryPanelMinSize;
 		Vector2 viewport = GetViewportRect().Size;
+		// Panel co theo viewport nhưng không chiếm gần hết màn hình. Bản cũ dùng
+		// kích thước cố định 1120x720 nên trên màn 1080p trông như một tờ khai thuế.
+		Vector2 target = new(
+			Mathf.Clamp(viewport.X - 120f, MemoryPanelAbsoluteMinSize.X, MemoryPanelPreferredSize.X),
+			Mathf.Clamp(viewport.Y - 100f, MemoryPanelAbsoluteMinSize.Y, MemoryPanelPreferredSize.Y));
+		_memoryPanel.Size = target;
 		_memoryPanel.Position = new Vector2(
-			Mathf.Max(0f, (viewport.X - MemoryPanelMinSize.X) * 0.5f),
-			Mathf.Max(0f, (viewport.Y - MemoryPanelMinSize.Y) * 0.5f));
+			Mathf.Max(16f, (viewport.X - target.X) * 0.5f),
+			Mathf.Max(16f, (viewport.Y - target.Y) * 0.5f));
 		RefreshMemoryPanel();
 		SendMemoryPanelRequest("snapshot");
 	}
@@ -134,47 +143,47 @@ public partial class UdpListener : Node2D
 
 		_memoryPanel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
 		{
-			BgColor = new Color(1f, 0.97f, 0.985f, 0.98f),
+			BgColor = new Color(1f, 0.985f, 0.993f, 0.995f),
 			BorderColor = MemoryBorder,
 			BorderWidthLeft = 2,
 			BorderWidthTop = 2,
 			BorderWidthRight = 2,
 			BorderWidthBottom = 2,
-			CornerRadiusTopLeft = 24,
-			CornerRadiusTopRight = 24,
-			CornerRadiusBottomLeft = 24,
-			CornerRadiusBottomRight = 24,
+			CornerRadiusTopLeft = 20,
+			CornerRadiusTopRight = 20,
+			CornerRadiusBottomLeft = 20,
+			CornerRadiusBottomRight = 20,
 			ShadowColor = new Color(0.55f, 0.10f, 0.30f, 0.20f),
-			ShadowSize = 16,
+			ShadowSize = 10,
 		});
 		_memoryPanel.ClipContents = true;
 
 		var margin = new MarginContainer();
 		margin.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-		margin.AddThemeConstantOverride("margin_left", 28);
-		margin.AddThemeConstantOverride("margin_right", 28);
-		margin.AddThemeConstantOverride("margin_top", 22);
-		margin.AddThemeConstantOverride("margin_bottom", 22);
+		margin.AddThemeConstantOverride("margin_left", 24);
+		margin.AddThemeConstantOverride("margin_right", 24);
+		margin.AddThemeConstantOverride("margin_top", 18);
+		margin.AddThemeConstantOverride("margin_bottom", 18);
 		_memoryPanel.AddChild(margin);
 
 		var root = new VBoxContainer();
-		root.AddThemeConstantOverride("separation", 12);
+		root.AddThemeConstantOverride("separation", 10);
 		margin.AddChild(root);
 
 		var header = new HBoxContainer();
 		header.AddThemeConstantOverride("separation", 10);
 		root.AddChild(header);
-		var title = CreateUiLabel("ERIS nhớ gì về bạn?", 30, MemoryInk);
+		var title = CreateUiLabel("ERIS nhớ gì về bạn?", 26, MemoryInk);
 		title.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
 		header.AddChild(title);
 		var refresh = CreateMemoryButton("Đọc lại", () => SendMemoryPanelRequest("snapshot"), primary: false);
-		refresh.CustomMinimumSize = new Vector2(104f, 36f);
+		refresh.CustomMinimumSize = new Vector2(96f, 34f);
 		header.AddChild(refresh);
 		var controls = CreateWindowControlCapsule(() => _memoryPanel.Visible = false, CloseMemoryPanel);
 		header.AddChild(controls);
 
-		var summaryCard = CreateMemoryCard(new Color(1f, 0.94f, 0.97f, 0.90f), 18);
-		summaryCard.CustomMinimumSize = new Vector2(0f, 104f);
+		var summaryCard = CreateMemoryCard(new Color(1f, 0.955f, 0.978f, 0.98f), 18);
+		summaryCard.CustomMinimumSize = new Vector2(0f, 88f);
 		root.AddChild(summaryCard);
 		var summaryMargin = new MarginContainer();
 		summaryMargin.AddThemeConstantOverride("margin_left", 18);
@@ -185,18 +194,18 @@ public partial class UdpListener : Node2D
 		var summaryBox = new VBoxContainer();
 		summaryBox.AddThemeConstantOverride("separation", 5);
 		summaryMargin.AddChild(summaryBox);
-		_memorySummaryLabel = CreateUiLabel(_memorySummaryText, 13, MemoryInk);
+		_memorySummaryLabel = CreateUiLabel(_memorySummaryText, 14, MemoryInk);
 		_memorySummaryLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
 		_memorySummaryLabel.MaxLinesVisible = 4;
 		_memorySummaryLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
 		summaryBox.AddChild(_memorySummaryLabel);
-		_memoryCountLabel = CreateUiLabel("Chưa có thống kê", 10, MemoryInkSoft);
+		_memoryCountLabel = CreateUiLabel("Chưa có thống kê", 11, MemoryInkSoft);
 		summaryBox.AddChild(_memoryCountLabel);
 
 		var filters = new HBoxContainer();
 		filters.AddThemeConstantOverride("separation", 10);
 		root.AddChild(filters);
-		_memoryCategorySelect = new OptionButton { CustomMinimumSize = new Vector2(190f, 36f) };
+		_memoryCategorySelect = new OptionButton { CustomMinimumSize = new Vector2(176f, 38f) };
 		foreach (string label in new[] { "Tất cả", "Về bạn", "Sở thích", "Dự án & mục tiêu", "Cách làm việc", "Chưa chắc" })
 			_memoryCategorySelect.AddItem(label);
 		_memoryCategorySelect.ItemSelected += _ => RefreshMemoryPanelList();
@@ -207,14 +216,14 @@ public partial class UdpListener : Node2D
 		{
 			PlaceholderText = "Tìm trong những gì ERIS nhớ...",
 			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-			CustomMinimumSize = new Vector2(280f, 36f),
+			CustomMinimumSize = new Vector2(260f, 38f),
 		};
 		_memorySearchInput.TextChanged += _ => RefreshMemoryPanelList();
 		StyleMemoryInput(_memorySearchInput);
 		filters.AddChild(_memorySearchInput);
 
 		_memoryIncludeInferredToggle = new CheckButton { Text = "Hiện suy đoán", ButtonPressed = true };
-		_memoryIncludeInferredToggle.AddThemeFontSizeOverride("font_size", 11);
+		_memoryIncludeInferredToggle.AddThemeFontSizeOverride("font_size", 12);
 		_memoryIncludeInferredToggle.AddThemeColorOverride("font_color", MemoryInkSoft);
 		_memoryIncludeInferredToggle.Toggled += enabled =>
 		{
@@ -223,8 +232,8 @@ public partial class UdpListener : Node2D
 		};
 		filters.AddChild(_memoryIncludeInferredToggle);
 
-		_memoryStatusLabel = CreateUiLabel("Đang dùng dữ liệu gần nhất.", 10, MemoryInkSoft);
-		_memoryStatusLabel.CustomMinimumSize = new Vector2(180f, 36f);
+		_memoryStatusLabel = CreateUiLabel("Đang dùng dữ liệu gần nhất.", 11, MemoryInkSoft);
+		_memoryStatusLabel.CustomMinimumSize = new Vector2(172f, 38f);
 		_memoryStatusLabel.VerticalAlignment = VerticalAlignment.Center;
 		filters.AddChild(_memoryStatusLabel);
 
@@ -254,7 +263,7 @@ public partial class UdpListener : Node2D
 		scroll.AddChild(_memoryItemList);
 
 		var detailCard = CreateMemoryCard(new Color(1f, 0.955f, 0.978f, 0.96f), 18);
-		detailCard.CustomMinimumSize = new Vector2(346f, 0f);
+		detailCard.CustomMinimumSize = new Vector2(360f, 0f);
 		detailCard.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
 		body.AddChild(detailCard);
 		BuildMemoryDetailPane(detailCard);
@@ -262,80 +271,112 @@ public partial class UdpListener : Node2D
 
 	private void BuildMemoryDetailPane(PanelContainer card)
 	{
-		var margin = new MarginContainer();
-		margin.AddThemeConstantOverride("margin_left", 16);
-		margin.AddThemeConstantOverride("margin_right", 16);
-		margin.AddThemeConstantOverride("margin_top", 16);
-		margin.AddThemeConstantOverride("margin_bottom", 16);
-		card.AddChild(margin);
-		var box = new VBoxContainer();
-		box.AddThemeConstantOverride("separation", 8);
-		margin.AddChild(box);
+		var outer = new MarginContainer();
+		outer.AddThemeConstantOverride("margin_left", 16);
+		outer.AddThemeConstantOverride("margin_right", 16);
+		outer.AddThemeConstantOverride("margin_top", 16);
+		outer.AddThemeConstantOverride("margin_bottom", 16);
+		card.AddChild(outer);
 
-		_memoryDetailTitle = CreateUiLabel("Chọn một mục để xem", 18, MemoryInk);
+		var stack = new VBoxContainer { SizeFlagsVertical = Control.SizeFlags.ExpandFill };
+		outer.AddChild(stack);
+
+		// Empty state riêng thay cho cả một form bị disable màu xám. Người dùng chưa
+		// chọn gì thì panel nên hướng dẫn, không nên trông như ứng dụng vừa mất điện.
+		var emptyCard = CreateMemoryCard(new Color(1f, 0.985f, 0.993f, 1f), 16);
+		emptyCard.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+		stack.AddChild(emptyCard);
+		_memoryDetailEmpty = emptyCard;
+		var emptyMargin = new MarginContainer();
+		emptyMargin.AddThemeConstantOverride("margin_left", 24);
+		emptyMargin.AddThemeConstantOverride("margin_right", 24);
+		emptyMargin.AddThemeConstantOverride("margin_top", 32);
+		emptyMargin.AddThemeConstantOverride("margin_bottom", 32);
+		emptyCard.AddChild(emptyMargin);
+		var emptyBox = new VBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
+		emptyBox.AddThemeConstantOverride("separation", 10);
+		emptyMargin.AddChild(emptyBox);
+		var emptyTitle = CreateUiLabel("Chọn một điều ERIS đang nhớ", 18, MemoryInk);
+		emptyTitle.HorizontalAlignment = HorizontalAlignment.Center;
+		emptyTitle.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		emptyBox.AddChild(emptyTitle);
+		var emptyText = CreateUiLabel("Bạn có thể xem nguồn, sửa lại, xác nhận, đổi phạm vi hoặc yêu cầu quên.", 12, MemoryInkSoft);
+		emptyText.HorizontalAlignment = HorizontalAlignment.Center;
+		emptyText.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		emptyBox.AddChild(emptyText);
+
+		_memoryDetailScroll = new ScrollContainer
+		{
+			Visible = false,
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+			HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+		};
+		stack.AddChild(_memoryDetailScroll);
+		_memoryDetailContent = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		_memoryDetailContent.AddThemeConstantOverride("separation", 9);
+		_memoryDetailScroll.AddChild(_memoryDetailContent);
+
+		_memoryDetailTitle = CreateUiLabel("", 19, MemoryInk);
 		_memoryDetailTitle.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-		box.AddChild(_memoryDetailTitle);
-		_memoryDetailMeta = CreateUiLabel("Bạn có thể xem nguồn, sửa, xác nhận hoặc quên từng mục.", 10, MemoryInkSoft);
+		_memoryDetailContent.AddChild(_memoryDetailTitle);
+		_memoryDetailMeta = CreateUiLabel("", 11, MemoryInkSoft);
 		_memoryDetailMeta.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-		box.AddChild(_memoryDetailMeta);
-		_memoryDetailPath = CreateUiLabel("", 9, new Color(0.70f, 0.48f, 0.59f));
+		_memoryDetailContent.AddChild(_memoryDetailMeta);
+		_memoryDetailPath = CreateUiLabel("", 9, new Color(0.58f, 0.39f, 0.49f));
 		_memoryDetailPath.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-		box.AddChild(_memoryDetailPath);
+		_memoryDetailContent.AddChild(_memoryDetailPath);
 
-		var editTitle = CreateUiLabel("Giá trị", 10, MemoryInkSoft);
-		box.AddChild(editTitle);
+		_memoryDetailContent.AddChild(CreateUiLabel("Giá trị đang dùng", 11, MemoryInkSoft));
 		_memoryEditValue = new TextEdit
 		{
-			CustomMinimumSize = new Vector2(0f, 112f),
+			CustomMinimumSize = new Vector2(0f, 96f),
 			WrapMode = TextEdit.LineWrappingMode.Boundary,
-			PlaceholderText = "Chọn một memory trước.",
+			PlaceholderText = "Nhập giá trị đúng...",
 		};
 		StyleMemoryInput(_memoryEditValue);
-		box.AddChild(_memoryEditValue);
+		_memoryDetailContent.AddChild(_memoryEditValue);
 
 		var editRow = new HBoxContainer();
-		editRow.AddThemeConstantOverride("separation", 6);
-		box.AddChild(editRow);
-		_memorySaveButton = CreateMemoryButton("Lưu sửa", SaveSelectedMemory, primary: true);
-		_memoryConfirmButton = CreateMemoryButton("Xác nhận", ConfirmSelectedMemory, primary: false);
+		editRow.AddThemeConstantOverride("separation", 8);
+		_memoryDetailContent.AddChild(editRow);
+		_memorySaveButton = CreateMemoryButton("Lưu thay đổi", SaveSelectedMemory, primary: true);
+		_memoryConfirmButton = CreateMemoryButton("Xác nhận đúng", ConfirmSelectedMemory, primary: false);
 		editRow.AddChild(_memorySaveButton);
 		editRow.AddChild(_memoryConfirmButton);
 
 		var sourceRow = new HBoxContainer();
-		sourceRow.AddThemeConstantOverride("separation", 6);
-		box.AddChild(sourceRow);
+		sourceRow.AddThemeConstantOverride("separation", 8);
+		_memoryDetailContent.AddChild(sourceRow);
 		_memoryExplainButton = CreateMemoryButton("Xem nguồn", ExplainSelectedMemory, primary: false);
-		_memoryMoveScopeButton = CreateMemoryButton("Đổi phạm vi", MoveSelectedMemoryScope, primary: false);
+		_memoryMoveScopeButton = CreateMemoryButton("Áp dụng phạm vi", MoveSelectedMemoryScope, primary: false);
 		sourceRow.AddChild(_memoryExplainButton);
 		sourceRow.AddChild(_memoryMoveScopeButton);
 
-		var scopeTitle = CreateUiLabel("Phạm vi mới", 10, MemoryInkSoft);
-		box.AddChild(scopeTitle);
+		_memoryDetailContent.AddChild(CreateUiLabel("Phạm vi sử dụng", 11, MemoryInkSoft));
 		_memoryScopeSelect = new OptionButton();
 		_memoryScopeSelect.AddItem("Mọi cuộc trò chuyện");
 		_memoryScopeSelect.AddItem("Chỉ một dự án");
 		_memoryScopeSelect.ItemSelected += index => _memoryProjectInput.Visible = index == 1;
 		StyleMemoryInput(_memoryScopeSelect);
-		box.AddChild(_memoryScopeSelect);
+		_memoryDetailContent.AddChild(_memoryScopeSelect);
 		_memoryProjectInput = new LineEdit { PlaceholderText = "Mã dự án, ví dụ: eris", Visible = false };
 		StyleMemoryInput(_memoryProjectInput);
-		box.AddChild(_memoryProjectInput);
+		_memoryDetailContent.AddChild(_memoryProjectInput);
 
-		var separator = new HSeparator();
-		box.AddChild(separator);
-		_memoryHardDeleteToggle = new CheckButton { Text = "Xóa hoàn toàn cả lịch sử" };
-		_memoryHardDeleteToggle.AddThemeFontSizeOverride("font_size", 10);
-		_memoryHardDeleteToggle.AddThemeColorOverride("font_color", new Color(0.72f, 0.20f, 0.30f));
-		box.AddChild(_memoryHardDeleteToggle);
+		_memoryDetailContent.AddChild(new HSeparator());
+		_memoryHardDeleteToggle = new CheckButton { Text = "Xóa cả dữ liệu nguồn liên quan" };
+		_memoryHardDeleteToggle.AddThemeFontSizeOverride("font_size", 11);
+		_memoryHardDeleteToggle.AddThemeColorOverride("font_color", new Color(0.68f, 0.16f, 0.25f));
+		_memoryDetailContent.AddChild(_memoryHardDeleteToggle);
 		_memoryForgetButton = CreateMemoryButton("Quên mục này", ForgetSelectedMemory, primary: false, danger: true);
-		box.AddChild(_memoryForgetButton);
+		_memoryDetailContent.AddChild(_memoryForgetButton);
 
-		var explainTitle = CreateUiLabel("Nguồn hình thành", 10, MemoryInkSoft);
-		box.AddChild(explainTitle);
-		_memoryExplanationLabel = CreateUiLabel("Chưa đọc nguồn.", 10, MemoryInkSoft);
+		_memoryDetailContent.AddChild(CreateUiLabel("Nguồn hình thành", 11, MemoryInkSoft));
+		_memoryExplanationLabel = CreateUiLabel("Bấm “Xem nguồn” để đọc evidence.", 11, MemoryInkSoft);
 		_memoryExplanationLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-		_memoryExplanationLabel.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-		box.AddChild(_memoryExplanationLabel);
+		_memoryExplanationLabel.CustomMinimumSize = new Vector2(0f, 90f);
+		_memoryDetailContent.AddChild(_memoryExplanationLabel);
 		SetMemoryDetailEnabled(false);
 	}
 
@@ -534,11 +575,37 @@ public partial class UdpListener : Node2D
 
 		if (shown == 0)
 		{
-			var empty = CreateUiLabel("Không có mục nào khớp bộ lọc. Ít nhất panel không bịa thêm cho đủ chỗ trống.", 12, MemoryInkSoft);
-			empty.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-			empty.CustomMinimumSize = new Vector2(0f, 68f);
-			_memoryItemList.AddChild(empty);
+			bool hasAnyMemory = _memoryRecords.Count > 0 || _memoryActions.Count > 0;
+			_memoryItemList.AddChild(CreateMemoryEmptyState(
+				hasAnyMemory ? "Không có mục nào khớp" : "ERIS chưa có điều gì để hiển thị",
+				hasAnyMemory
+					? "Thử đổi bộ lọc hoặc từ khóa tìm kiếm."
+					: "Hãy trò chuyện tự nhiên. Những điều bền vững và hữu ích sẽ xuất hiện ở đây."));
 		}
+	}
+
+	private Control CreateMemoryEmptyState(string titleText, string detailText)
+	{
+		var card = CreateMemoryCard(new Color(1f, 0.985f, 0.993f, 0.96f), 16);
+		card.CustomMinimumSize = new Vector2(0f, 170f);
+		var margin = new MarginContainer();
+		margin.AddThemeConstantOverride("margin_left", 24);
+		margin.AddThemeConstantOverride("margin_right", 24);
+		margin.AddThemeConstantOverride("margin_top", 34);
+		margin.AddThemeConstantOverride("margin_bottom", 34);
+		card.AddChild(margin);
+		var box = new VBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
+		box.AddThemeConstantOverride("separation", 8);
+		margin.AddChild(box);
+		var title = CreateUiLabel(titleText, 17, MemoryInk);
+		title.HorizontalAlignment = HorizontalAlignment.Center;
+		title.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		box.AddChild(title);
+		var detail = CreateUiLabel(detailText, 12, MemoryInkSoft);
+		detail.HorizontalAlignment = HorizontalAlignment.Center;
+		detail.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		box.AddChild(detail);
+		return card;
 	}
 
 	private Control CreateMemoryRecordCard(MemoryPanelRecord record)
@@ -562,25 +629,25 @@ public partial class UdpListener : Node2D
 
 		var header = new HBoxContainer();
 		box.AddChild(header);
-		var title = CreateUiLabel(record.Label, 13, MemoryInk);
+		var title = CreateUiLabel(record.Label, 14, MemoryInk);
 		title.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
 		title.AutowrapMode = TextServer.AutowrapMode.WordSmart;
 		header.AddChild(title);
 		var badge = CreateUiLabel(record.CertaintyLabel, 9, accent);
 		header.AddChild(badge);
 
-		var value = CreateUiLabel(record.DisplayValue, 12, new Color(0.47f, 0.18f, 0.32f));
+		var value = CreateUiLabel(record.DisplayValue, 13, new Color(0.47f, 0.18f, 0.32f));
 		value.AutowrapMode = TextServer.AutowrapMode.WordSmart;
 		value.MaxLinesVisible = 3;
 		value.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
 		box.AddChild(value);
 		var footer = new HBoxContainer();
 		box.AddChild(footer);
-		var meta = CreateUiLabel($"{record.ExplicitnessLabel}  ·  {record.ScopeLabel}  ·  {record.EvidenceCount} nguồn", 9, MemoryInkSoft);
+		var meta = CreateUiLabel($"{record.ExplicitnessLabel}  ·  {record.ScopeLabel}  ·  {record.EvidenceCount} nguồn", 10, MemoryInkSoft);
 		meta.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
 		footer.AddChild(meta);
 		var view = CreateMemoryButton("Xem", () => SelectMemoryRecord(record), primary: false);
-		view.CustomMinimumSize = new Vector2(62f, 28f);
+		view.CustomMinimumSize = new Vector2(70f, 30f);
 		footer.AddChild(view);
 		return card;
 	}
@@ -620,16 +687,13 @@ public partial class UdpListener : Node2D
 		_memoryExplanationLabel.Text = "Chưa đọc nguồn.";
 		if (!enabled)
 		{
-			_memoryDetailTitle.Text = "Chọn một mục để xem";
-			_memoryDetailMeta.Text = "Bạn có thể xem nguồn, sửa, xác nhận hoặc quên từng mục.";
-			_memoryDetailPath.Text = "";
 			_memoryEditValue.Text = "";
 			return;
 		}
 		_memoryDetailTitle.Text = record.Label;
 		_memoryDetailMeta.Text = $"{record.ExplicitnessLabel} · {record.CertaintyLabel} · {record.ScopeLabel}\n"
 			+ $"Độ chắc chắn hiển thị: {Mathf.RoundToInt(record.Confidence * 100f)}% · lặp lại {record.Recurrence} lần";
-		_memoryDetailPath.Text = $"Đường dẫn nội bộ: {record.Path}";
+		_memoryDetailPath.Text = $"Mã memory: {record.Path}";
 		_memoryEditValue.Text = record.DisplayValue;
 		_memoryScopeSelect.Select(record.ScopeKind == "project" ? 1 : 0);
 		_memoryProjectInput.Visible = record.ScopeKind == "project";
@@ -732,6 +796,12 @@ public partial class UdpListener : Node2D
 
 	private void SetMemoryDetailEnabled(bool enabled)
 	{
+		if (_memoryDetailEmpty != null)
+			_memoryDetailEmpty.Visible = !enabled;
+		if (_memoryDetailContent != null)
+			_memoryDetailContent.Visible = enabled;
+		if (_memoryDetailScroll != null)
+			_memoryDetailScroll.Visible = enabled;
 		foreach (BaseButton button in new BaseButton[] { _memorySaveButton, _memoryConfirmButton, _memoryExplainButton, _memoryMoveScopeButton, _memoryForgetButton })
 			if (button != null) button.Disabled = !enabled;
 		if (_memoryEditValue != null) _memoryEditValue.Editable = enabled;
@@ -746,7 +816,7 @@ public partial class UdpListener : Node2D
 		{
 			Text = text,
 			MouseDefaultCursorShape = Control.CursorShape.PointingHand,
-			CustomMinimumSize = new Vector2(96f, 32f),
+			CustomMinimumSize = new Vector2(112f, 34f),
 			ClipText = true,
 			TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
 		};
@@ -777,7 +847,7 @@ public partial class UdpListener : Node2D
 		button.AddThemeStyleboxOverride("focus", hover);
 		button.AddThemeColorOverride("font_color", primary ? Colors.White : danger ? new Color(0.72f, 0.15f, 0.23f) : MemoryInk);
 		button.AddThemeColorOverride("font_hover_color", primary ? Colors.White : MemoryPink);
-		button.AddThemeFontSizeOverride("font_size", 10);
+		button.AddThemeFontSizeOverride("font_size", 11);
 		button.Pressed += onPressed;
 		return button;
 	}
@@ -826,7 +896,7 @@ public partial class UdpListener : Node2D
 		control.AddThemeStyleboxOverride("normal", normal);
 		control.AddThemeStyleboxOverride("focus", normal);
 		control.AddThemeColorOverride("font_color", MemoryInk);
-		control.AddThemeFontSizeOverride("font_size", 11);
+		control.AddThemeFontSizeOverride("font_size", 12);
 	}
 
 	private static bool MemoryRecordMatchesTab(MemoryPanelRecord record, int tab) => tab switch
@@ -867,8 +937,8 @@ public partial class UdpListener : Node2D
 	private static string CompactSummaryForPanel(string text)
 	{
 		string clean = (text ?? "").Replace("\r", "").Trim();
-		if (clean.Length <= 760) return clean;
-		return clean[..757].TrimEnd() + "...";
+		if (clean.Length <= 620) return clean;
+		return clean[..617].TrimEnd() + "...";
 	}
 
 	private static string FormatMemoryExplanation(JsonElement explanation)

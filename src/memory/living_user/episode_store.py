@@ -154,6 +154,25 @@ class UserEpisodeStore:
             self.save()
         return removed
 
+    def scrub_evidence(self, evidence_ids: Iterable[str]) -> int:
+        """Xóa episode có chứa evidence bị hard-delete.
+
+        Không cố sửa câu summary bằng regex vì có thể để sót nội dung đã quên.
+        Xóa cả episode liên quan là lựa chọn bảo thủ nhưng đúng về quyền riêng tư.
+        """
+        wanted = {str(item) for item in evidence_ids if str(item).strip()}
+        if not wanted:
+            return 0
+        removed_ids = [
+            item.id for item in self._items.values()
+            if wanted & {item.id, *item.evidence_ids}
+        ]
+        for item_id in removed_ids:
+            self._items.pop(item_id, None)
+        if removed_ids:
+            self.save()
+        return len(removed_ids)
+
     def _trim(self) -> None:
         ranked = sorted(self._items.values(), key=lambda x: (x.importance, x.ended_at), reverse=True)
         self._items = {x.id: x for x in ranked[: self.max_items]}

@@ -198,6 +198,28 @@ class EventLedger:
         key = str(frame_id or "")
         return [item for item in self.load() if item.frame_id == key]
 
+    def scrub_evidence(self, evidence_ids: Iterable[str]) -> int:
+        """Xóa raw event liên quan khi người dùng yêu cầu hard-delete.
+
+        Ledger bình thường là append-only. Quyền xóa dữ liệu cá nhân là ngoại lệ
+        có chủ đích: audit không được đứng trên yêu cầu quên của người dùng.
+        """
+        wanted = {str(item) for item in evidence_ids if str(item).strip()}
+        if not wanted:
+            return 0
+        records = self.load()
+        kept: list[EventLedgerRecord] = []
+        removed = 0
+        for record in records:
+            candidates = {record.id, *record.evidence_ids}
+            if wanted & candidates:
+                removed += 1
+            else:
+                kept.append(record)
+        if removed:
+            self.save(kept)
+        return removed
+
     def query(self, text: str, *, limit: int = 20) -> list[EventLedgerRecord]:
         needle = compact_text(text, limit=160).lower()
         if not needle:

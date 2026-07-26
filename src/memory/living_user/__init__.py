@@ -3,6 +3,7 @@
 
 from .action_memory import ActionContext, ActionMemoryStore, CommitmentRecord, GoalRecord, WorkflowRecord
 from .benchmark import BenchmarkMetrics, LivingUserMemoryBenchmark
+from .authority import AuthorityDecision, UserMemoryAuthorityEvent, UserMemoryAuthorityLedger
 from .clarification import MemoryClarificationPolicy, MemoryUseDecision
 from .context_compiler import ProfileContextCompiler, ProfileContextCompilerConfig, infer_domain
 from .dreamer import UserProfileDreamConfig, UserProfileDreamer
@@ -28,6 +29,9 @@ from .trace import MemoryReplayDebugger, MemoryTraceJournal, ReplayReport
 
 __all__ = [
     "ApplyResult",
+    "AuthorityDecision",
+    "UserMemoryAuthorityEvent",
+    "UserMemoryAuthorityLedger",
     "ActionContext",
     "ActionMemoryStore",
     "BenchmarkMetrics",
