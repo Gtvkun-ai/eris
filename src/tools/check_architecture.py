@@ -54,6 +54,12 @@ REQUIRED_MODULES = {
     "runtime/engagements/snapshot_journal.py",
     # V36 companion-aware DeepSeek routing boundary.
     "runtime/companion_model_routing.py",
+    # V37 Chess.com companion bridge and lightweight rules engine.
+    "runtime/chess/contracts.py",
+    "runtime/chess/mode_policy.py",
+    "runtime/chess/engine.py",
+    "runtime/chess/tracker.py",
+    "runtime/chess/service.py",
 }
 
 REQUIRED_COORDINATOR_BASES = {
@@ -223,7 +229,7 @@ def main() -> int:
     if "class RuntimeReadinessEvaluator" not in readiness:
         errors.append("runtime readiness evaluator boundary missing")
     diagnostics = (ROOT / "runtime/runtime_diagnostics.py").read_text(encoding="utf-8")
-    if '"schema_version": 6' not in diagnostics or '"readiness"' not in diagnostics or '"slo"' not in diagnostics:
+    if '"schema_version": 7' not in diagnostics or '"readiness"' not in diagnostics or '"slo"' not in diagnostics:
         errors.append("runtime diagnostics readiness/SLO projection missing")
     slo = (ROOT / "runtime/runtime_slo.py").read_text(encoding="utf-8")
     for token in ("class RuntimeSLOTracker", "class RuntimeIncident", "ready_ratio"):
@@ -252,6 +258,25 @@ def main() -> int:
     for token in ("class EngagementRecoveryService", "def audit(", "def recover("):
         if token not in recovery:
             errors.append(f"engagement recovery contract missing: {token}")
+
+    chess_service = (ROOT / "runtime/chess/service.py").read_text(encoding="utf-8")
+    chess_tracker = (ROOT / "runtime/chess/tracker.py").read_text(encoding="utf-8")
+    chess_mode = (ROOT / "runtime/chess/mode_policy.py").read_text(encoding="utf-8")
+    chess_profile = (ROOT / "runtime/engagements/profiles.py").read_text(encoding="utf-8")
+    for token in ("class ChessCompanionService", "/v1/chess/snapshot", "ensure_profile(", "chess.move_played"):
+        if token not in chess_service:
+            errors.append(f"chess companion service contract missing: {token}")
+    for token in ("class ChessGameTracker", "direct_move_rate", "mode.full_assistance", "infer_transition"):
+        if token not in chess_tracker:
+            errors.append(f"chess tracker contract missing: {token}")
+    if "LIVE_RESTRICTED" not in chess_mode or "mode_override" not in chess_mode:
+        errors.append("mode-aware chess assistance policy missing")
+    if "direct_start_is_sufficient=True" not in chess_profile or '"pem co"' not in chess_profile:
+        errors.append("natural chess engagement start profile missing")
+    extension = ROOT / "integrations/chesscom_bridge"
+    for name in ("manifest.json", "content.js", "background.js", "popup.html", "popup.js"):
+        if not (extension / name).is_file():
+            errors.append(f"Chess.com extension asset missing: {name}")
 
     if errors:
         for error in errors:

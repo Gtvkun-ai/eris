@@ -1,6 +1,6 @@
 [project]
 name = "eris-runtime-source"
-version = "0.36.0"
+version = "0.37.0"
 description = "AI-orchestrated companion runtime with long-lived engagement support"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -45,4 +45,4 @@ omit = ["tests/*", "assets/*", "live2d_body/*"]
 show_missing = true
 skip_covered = true
 precision = 2
-fail_under = 36.0
+fail_under = 37.0

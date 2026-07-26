@@ -50,6 +50,7 @@ class EngagementDetector:
         "hãy", "hay", "giúp", "giup", "hỗ trợ", "ho tro", "cùng", "cung", "theo dõi", "theo doi",
         "đồng hành", "dong hanh", "hướng dẫn", "huong dan", "nhắc", "nhac", "chơi", "choi",
         "help", "support", "guide", "play", "watch", "monitor", "coach", "stay",
+        "pém", "pem", "đánh", "danh",
     )
     _SHARED = ("với tôi", "voi toi", "cùng tôi", "cung toi", "help me", "with me")
     _STOP = (

@@ -16,6 +16,7 @@ from .consumer import EngagementEventConsumer
 from .supervisor import EngagementConsumerSupervisor
 from .contracts import (
     Engagement,
+    EngagementProposal,
     FocusMode,
     InteractionDecision,
     InteractionSignal,
@@ -91,6 +92,51 @@ class EngagementRuntime:
         """Register the domain reducer/projection paired with a profile."""
 
         self.adapters.register(adapter)
+
+    def ensure_profile(
+        self,
+        profile_id: str,
+        *,
+        objective: str,
+        binding: EvidenceBinding | Mapping[str, Any] | None = None,
+        now: float | None = None,
+        source: str = "runtime",
+    ) -> Engagement:
+        """Return an active engagement for a domain resource, creating one if needed.
+
+        External evidence bridges use this instead of pretending a synthetic chat
+        message came from the user. Resource bindings keep simultaneous sessions
+        from being merged merely because both happen to be chess, coding, or some
+        other human pastime.
+        """
+
+        now = self._clock() if now is None else float(now)
+        profile = self.profiles.get(profile_id)
+        if profile is None:
+            raise KeyError(f"unknown engagement profile: {profile_id}")
+        evidence_binding = EvidenceBinding.from_mapping(binding)
+        for item in reversed(self.registry.all()):
+            if item.kind != profile.kind or not item.active:
+                continue
+            if evidence_binding.resource_id and item.evidence_binding.resource_id == evidence_binding.resource_id:
+                return item
+            if not evidence_binding.resource_id and item.focus == profile.focus:
+                return item
+        proposal = EngagementProposal(
+            semantic_key=f"{profile.kind}:{evidence_binding.resource_id or profile.profile_id}",
+            kind=profile.kind,
+            objective=" ".join(str(objective or profile.kind).split())[:360],
+            adapter_id=profile.adapter_id,
+            confidence=1.0,
+            expected_duration="long_running",
+            contract=profile.contract,
+            continuity=profile.continuity,
+            priority=profile.priority,
+            focus=profile.focus,
+            source=str(source or "runtime")[:64],
+            evidence_binding=evidence_binding,
+        )
+        return self.registry.create(proposal, now=now)
 
 
     def _maintain(self, now: float) -> None:

@@ -35,7 +35,7 @@ class RuntimeDiagnostics:
         engagement = getattr(owner, "ai_engagement_runtime", None)
         engagement_registry = getattr(engagement, "registry", None)
         payload = {
-            "schema_version": 6,
+            "schema_version": 7,
             "generated_at": max(0.0, float(self._clock())),
             "bootstrap": {
                 "completed_phases": list(getattr(owner, "bootstrap_completed_phases", ()) or ()),
@@ -50,6 +50,9 @@ class RuntimeDiagnostics:
                 "transport": self._snapshot(getattr(owner, "transport_boundary", None)),
                 "protocol": self._snapshot(getattr(owner, "incoming_dispatcher", None)),
                 "loop": self._snapshot(getattr(owner, "loop_guard", None)),
+                "chess_bridge": self._snapshot(
+                    getattr(owner, "chess_bridge_service", None), method="diagnostics"
+                ),
             },
             "engagement": (
                 engagement.diagnostics(now=self._clock())

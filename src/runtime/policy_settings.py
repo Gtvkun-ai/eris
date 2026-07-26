@@ -241,6 +241,45 @@ class EngagementSettings:
         return asdict(self)
 
 
+
+
+@dataclass(frozen=True, slots=True)
+class ChessBridgeSettings:
+    enabled: bool = True
+    host: str = "127.0.0.1"
+    port: int = 8765
+    analysis_depth: int = 2
+    direct_move_rate: float = 0.18
+    max_body_bytes: int = 65536
+
+    @classmethod
+    def load(cls) -> "ChessBridgeSettings":
+        from runtime.runtime_settings_store import runtime_text
+        return cls(
+            enabled=runtime_bool("chess_bridge", "enabled", default=True),
+            host=str(runtime_text("chess_bridge", "host", default="127.0.0.1") or "127.0.0.1")[:128],
+            port=_clamp_int(
+                runtime_int("chess_bridge", "port", default=8765),
+                8765, minimum=1024, maximum=65535,
+            ),
+            analysis_depth=_clamp_int(
+                runtime_int("chess_bridge", "analysis_depth", default=2),
+                2, minimum=1, maximum=4,
+            ),
+            direct_move_rate=_clamp_float(
+                runtime_float("chess_bridge", "direct_move_rate", default=0.18),
+                0.18, minimum=0.0, maximum=1.0,
+            ),
+            max_body_bytes=_clamp_int(
+                runtime_int("chess_bridge", "max_body_bytes", default=65536),
+                65536, minimum=4096, maximum=1048576,
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 @dataclass(frozen=True, slots=True)
 class HealthSettings:
     max_events: int = 128
@@ -359,6 +398,7 @@ class RuntimePolicySettings:
     ai_runtime: AIRuntimeSettings
     public_turn: PublicTurnSettings
     engagement: EngagementSettings
+    chess_bridge: ChessBridgeSettings
     health: HealthSettings
     protocol: ProtocolSettings
     run_loop: RunLoopSettings
@@ -370,6 +410,7 @@ class RuntimePolicySettings:
             ai_runtime=AIRuntimeSettings.load(),
             public_turn=PublicTurnSettings.load(),
             engagement=EngagementSettings.load(),
+            chess_bridge=ChessBridgeSettings.load(),
             health=HealthSettings.load(),
             protocol=ProtocolSettings.load(),
             run_loop=RunLoopSettings.load(),
@@ -381,6 +422,7 @@ class RuntimePolicySettings:
             "ai_runtime": self.ai_runtime.to_dict(),
             "public_turn": self.public_turn.to_dict(),
             "engagement": self.engagement.to_dict(),
+            "chess_bridge": self.chess_bridge.to_dict(),
             "health": self.health.to_dict(),
             "protocol": self.protocol.to_dict(),
             "run_loop": self.run_loop.to_dict(),
@@ -390,6 +432,7 @@ class RuntimePolicySettings:
 
 __all__ = [
     "AIRuntimeSettings",
+    "ChessBridgeSettings",
     "EngagementSettings",
     "HealthSettings",
     "ProtocolSettings",

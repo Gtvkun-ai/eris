@@ -89,7 +89,7 @@ def test_runtime_diagnostics_accumulates_slo_and_incident_history() -> None:
     )
     diagnostics = RuntimeDiagnostics(owner, clock=lambda: clock["now"])
     healthy = diagnostics.snapshot()
-    assert healthy["schema_version"] == 6
+    assert healthy["schema_version"] == 7
     assert healthy["slo"]["current_status"] == "ready"
 
     clock["now"] = 10.0

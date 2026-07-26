@@ -60,7 +60,7 @@ def test_runtime_diagnostics_includes_readiness_projection() -> None:
         ai_engagement_runtime=None,
     )
     snapshot = RuntimeDiagnostics(owner, clock=lambda: 2.0).snapshot(include_events=False)
-    assert snapshot["schema_version"] == 6
+    assert snapshot["schema_version"] == 7
     assert snapshot["readiness"]["status"] == "ready"
 
 

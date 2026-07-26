@@ -1,0 +1,178 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from runtime.chess import (
+    BoardSnapshot,
+    ChessAssistMode,
+    ChessCompanionService,
+    ChessGameTracker,
+    Position,
+    apply_move,
+    classify_mode,
+    legal_moves,
+    move_san,
+)
+from runtime.engagements import EngagementRuntime
+from runtime.policy_settings import ChessBridgeSettings
+from runtime.runtime_settings_store import RuntimeSettingsStore
+
+
+def _after_e4_board_fen() -> str:
+    position = Position.initial()
+    move = next(item for item in legal_moves(position) if item.uci == "e2e4")
+    return apply_move(position, move).board_fen
+
+
+def test_chess_engine_generates_legal_opening_and_infers_move() -> None:
+    position = Position.initial()
+    moves = legal_moves(position)
+    assert len(moves) == 20
+    e4 = next(item for item in moves if item.uci == "e2e4")
+    assert move_san(position, e4) == "e4"
+    assert apply_move(position, e4).board_fen == _after_e4_board_fen()
+
+
+def test_mode_policy_allows_full_assistance_only_for_explicit_safe_modes() -> None:
+    base = dict(platform="chess.com", game_id="g", board_fen=Position.initial().board_fen)
+    assert classify_mode(BoardSnapshot(page_url="https://www.chess.com/analysis", **base)) == ChessAssistMode.ANALYSIS
+    assert classify_mode(BoardSnapshot(page_url="https://www.chess.com/play/computer", **base)) == ChessAssistMode.BOT
+    assert classify_mode(BoardSnapshot(page_url="https://www.chess.com/game/live/123", **base)) == ChessAssistMode.LIVE_RESTRICTED
+    assert classify_mode(BoardSnapshot(page_url="https://www.chess.com/game/live/123", mode_override="private", **base)) == ChessAssistMode.PRIVATE
+
+
+def test_tracker_full_assistance_for_live_mode() -> None:
+    """Live pages now get the same full analysis as analysis/bot/private modes."""
+    tracker = ChessGameTracker(depth=1, direct_move_rate=1.0)
+    analysis = tracker.observe(BoardSnapshot(
+        platform="chess.com",
+        game_id="analysis-game",
+        board_fen=Position.initial().board_fen,
+        page_url="https://www.chess.com/analysis",
+        ply=0,
+    ))
+    assert analysis.mode.full_assistance is True
+    assert analysis.suggestion is not None
+    assert analysis.hint_focus
+    assert analysis.suggestion.uci in {move.uci for move in legal_moves(Position.initial())}
+
+    # Live pages receive the same full assistance — no more restriction.
+    live = tracker.observe(BoardSnapshot(
+        platform="chess.com",
+        game_id="live-game",
+        board_fen=Position.initial().board_fen,
+        page_url="https://www.chess.com/game/live/123",
+        ply=0,
+    ))
+    assert live.mode == ChessAssistMode.LIVE_RESTRICTED
+    assert live.mode.full_assistance is True  # live is now fully assisted
+    assert live.evaluation_cp is not None
+    assert live.hint_focus != ""
+    assert live.suggestion is not None
+
+
+def test_bridge_updates_durable_chess_engagement() -> None:
+    runtime = EngagementRuntime(clock=lambda: 10.0)
+    service = ChessCompanionService(runtime, analysis_depth=1, direct_move_rate=1.0, clock=lambda: 10.0)
+    started = service.handle_snapshot({
+        "platform": "chess.com",
+        "game_id": "abc",
+        "board_fen": Position.initial().board_fen,
+        "page_url": "https://www.chess.com/analysis",
+        "ply": 0,
+        "captured_at": 10.0,
+    })
+    assert started.game_started is True
+    engagement = runtime.registry.foreground()
+    assert engagement is not None
+    assert engagement.kind == "chess"
+    assert engagement.evidence_binding.resource_id == "chess:chess.com:abc"
+    assert engagement.domain_state["full_assistance"] is True
+    assert engagement.domain_state["suggested_move_uci"]
+
+    moved = service.handle_snapshot({
+        "platform": "chess.com",
+        "game_id": "abc",
+        "board_fen": _after_e4_board_fen(),
+        "page_url": "https://www.chess.com/analysis",
+        "ply": 1,
+        "captured_at": 11.0,
+    })
+    assert moved.last_move_uci == "e2e4"
+    assert moved.last_move_san == "e4"
+    assert runtime.registry.foreground().last_event_kind == "chess.move_played"
+
+
+def test_slang_starts_chess_engagement() -> None:
+    runtime = EngagementRuntime()
+    first = runtime.observe_user_message("Eris hỗ trợ pem cờ")
+    assert first is not None and first.kind == "chess"
+    second = EngagementRuntime().observe_user_message("pém thôi")
+    assert second is not None and second.kind == "chess"
+
+
+def test_settings_v13_migrate_chess_bridge_defaults(monkeypatch) -> None:
+    migrated, changed = RuntimeSettingsStore._migrate_payload({"version": 13})
+    assert changed is True
+    assert migrated["version"] == 14
+    assert migrated["chess_bridge"]["port"] == 8765
+
+    monkeypatch.setenv("ERIS_CHESS_BRIDGE_PORT", "8877")
+    monkeypatch.setenv("ERIS_CHESS_DIRECT_MOVE_RATE", "0.25")
+    settings = RuntimeSettingsStore.from_env_compat()["chess_bridge"]
+    assert settings["port"] == 8877
+    assert settings["direct_move_rate"] == 0.25
+
+
+def test_extension_bundle_is_present_and_local_only() -> None:
+    root = Path(__file__).resolve().parents[1] / "integrations" / "chesscom_bridge"
+    manifest = (root / "manifest.json").read_text(encoding="utf-8")
+    content = (root / "content.js").read_text(encoding="utf-8")
+    assert '"manifest_version": 3' in manifest
+    assert "127.0.0.1:8765" in manifest
+    assert "MutationObserver" in content
+    assert "eval(" not in content
+
+
+def test_http_bridge_accepts_local_snapshot_with_token() -> None:
+    import json
+    from urllib.error import HTTPError
+    from urllib.request import Request, urlopen
+
+    runtime = EngagementRuntime(clock=lambda: 20.0)
+    service = ChessCompanionService(
+        runtime,
+        host="127.0.0.1",
+        port=0,
+        token="secret",
+        analysis_depth=1,
+        direct_move_rate=1.0,
+        clock=lambda: 20.0,
+    ).start()
+    try:
+        endpoint = f"http://127.0.0.1:{service.port}/v1/chess/snapshot"
+        body = json.dumps({
+            "platform": "chess.com",
+            "game_id": "http-game",
+            "board_fen": Position.initial().board_fen,
+            "page_url": "https://www.chess.com/analysis",
+            "ply": 0,
+        }).encode("utf-8")
+        try:
+            urlopen(Request(endpoint, data=body, headers={"Content-Type": "application/json"}), timeout=2)
+        except HTTPError as exc:
+            assert exc.code == 401
+        else:
+            raise AssertionError("bridge accepted a missing token")
+        request = Request(
+            endpoint,
+            data=body,
+            headers={"Content-Type": "application/json", "X-Eris-Bridge-Token": "secret"},
+        )
+        with urlopen(request, timeout=2) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        assert payload["ok"] is True
+        assert payload["observation"]["mode"] == "analysis"
+        assert runtime.registry.foreground().kind == "chess"
+    finally:
+        service.stop()

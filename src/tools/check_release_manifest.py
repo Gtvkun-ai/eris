@@ -11,14 +11,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "RELEASE_MANIFEST.json"
-EXPECTED_RELEASE = "V36"
-MIN_TESTS = 363
-MIN_COVERAGE_FLOOR = 36.0
-EXPECTED_SETTINGS_SCHEMA = 13
+EXPECTED_RELEASE = "V37"
+MIN_TESTS = 371
+MIN_COVERAGE_FLOOR = 37.0
+EXPECTED_SETTINGS_SCHEMA = 14
 EXPECTED_ENGAGEMENT_SCHEMA = 7
 EXPECTED_JOURNAL_SCHEMA = 1
-EXPECTED_DIAGNOSTICS_SCHEMA = 6
-EXPECTED_BOUNDARIES = 27
+EXPECTED_DIAGNOSTICS_SCHEMA = 7
+EXPECTED_BOUNDARIES = 32
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -89,13 +89,13 @@ def main() -> int:
     registry_text = (ROOT / "runtime/engagements/registry.py").read_text(encoding="utf-8")
     journal_text = (ROOT / "runtime/engagements/snapshot_journal.py").read_text(encoding="utf-8")
     diagnostics_text = (ROOT / "runtime/runtime_diagnostics.py").read_text(encoding="utf-8")
-    if int(architecture.get("settings_schema", -1)) != EXPECTED_SETTINGS_SCHEMA or '"version": 13' not in settings_text:
+    if int(architecture.get("settings_schema", -1)) != EXPECTED_SETTINGS_SCHEMA or '"version": 14' not in settings_text:
         errors.append("settings schema manifest/source mismatch")
     if int(architecture.get("engagement_snapshot_schema", -1)) != EXPECTED_ENGAGEMENT_SCHEMA or '"schema_version": 7' not in registry_text:
         errors.append("engagement snapshot schema manifest/source mismatch")
     if int(architecture.get("engagement_snapshot_journal_schema", -1)) != EXPECTED_JOURNAL_SCHEMA or "SCHEMA_VERSION = 1" not in journal_text:
         errors.append("engagement snapshot journal schema manifest/source mismatch")
-    if int(architecture.get("diagnostics_schema", -1)) != EXPECTED_DIAGNOSTICS_SCHEMA or '"schema_version": 6' not in diagnostics_text:
+    if int(architecture.get("diagnostics_schema", -1)) != EXPECTED_DIAGNOSTICS_SCHEMA or '"schema_version": 7' not in diagnostics_text:
         errors.append("runtime diagnostics schema manifest/source mismatch")
     if int(architecture.get("runtime_boundary_count", -1)) != EXPECTED_BOUNDARIES:
         errors.append("runtime boundary count manifest mismatch")
@@ -131,6 +131,10 @@ def main() -> int:
         "companion_aware_flash_pro_routing",
         "default_deepseek_pro_escalation",
         "per_turn_deepseek_thinking_control",
+        "chesscom_dom_bridge",
+        "mode_aware_chess_companion",
+        "durable_chess_engagement",
+        "lightweight_legal_move_analysis",
     )
     for capability in required_capabilities:
         if capabilities.get(capability) is not True:
@@ -182,6 +186,16 @@ def main() -> int:
         errors.append("default DeepSeek Pro escalation client missing")
     if "thinking_mode=thinking_mode" not in orchestrator_text:
         errors.append("per-turn DeepSeek thinking route missing")
+
+    chess_service = (ROOT / "runtime/chess/service.py").read_text(encoding="utf-8")
+    chess_engine = (ROOT / "runtime/chess/engine.py").read_text(encoding="utf-8")
+    chess_extension = ROOT / "integrations/chesscom_bridge"
+    if "class ChessCompanionService" not in chess_service or "chess.move_played" not in chess_service:
+        errors.append("Chess.com bridge runtime contract missing")
+    if "def legal_moves(" not in chess_engine or "def analyze(" not in chess_engine:
+        errors.append("lightweight chess analysis contract missing")
+    if not (chess_extension / "manifest.json").is_file() or not (chess_extension / "background.js").is_file():
+        errors.append("Chess.com extension release assets missing")
 
     if errors:
         for error in errors:

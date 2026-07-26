@@ -17,7 +17,7 @@ def test_v11_settings_migrate_snapshot_journal_defaults():
         {"version": 11, "engagement": {"max_events": 200}}
     )
     assert changed is True
-    assert migrated["version"] == 13
+    assert migrated["version"] == 14
     assert migrated["engagement"]["snapshot_journal_enabled"] is True
     assert migrated["engagement"]["snapshot_journal_auto_repair"] is True
 
@@ -75,5 +75,5 @@ def test_runtime_diagnostics_projects_snapshot_journal_state():
         ),
     )
     snapshot = RuntimeDiagnostics(owner, clock=lambda: 1.0).snapshot()
-    assert snapshot["schema_version"] == 6
+    assert snapshot["schema_version"] == 7
     assert snapshot["engagement"]["snapshot_journal"]["primary_valid"] is True

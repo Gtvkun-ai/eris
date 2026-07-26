@@ -26,7 +26,7 @@ from runtime.workspace_manager import default_eris_home
 
 
 _DEFAULT_SETTINGS: dict[str, Any] = {
-    "version": 13,
+    "version": 14,
     "architecture": {
         "mode": "ai_orchestrated",
         "startup_greeting": True,
@@ -239,6 +239,14 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "snapshot_journal_enabled": True,
         "snapshot_journal_auto_repair": True,
     },
+    "chess_bridge": {
+        "enabled": True,
+        "host": "127.0.0.1",
+        "port": 8765,
+        "analysis_depth": 2,
+        "direct_move_rate": 0.18,
+        "max_body_bytes": 65536,
+    },
     "observability": {
         "slo_window_seconds": 3600.0,
         "slo_max_samples": 720,
@@ -423,6 +431,12 @@ _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
     ("engagement", "open_dead_letter_warning_count"): ("ERIS_ENGAGEMENT_OPEN_DLQ_WARNING", "int"),
     ("engagement", "snapshot_journal_enabled"): ("ERIS_ENGAGEMENT_SNAPSHOT_JOURNAL", "bool"),
     ("engagement", "snapshot_journal_auto_repair"): ("ERIS_ENGAGEMENT_SNAPSHOT_AUTO_REPAIR", "bool"),
+    ("chess_bridge", "enabled"): ("ERIS_CHESS_BRIDGE_ENABLED", "bool"),
+    ("chess_bridge", "host"): ("ERIS_CHESS_BRIDGE_HOST", "str"),
+    ("chess_bridge", "port"): ("ERIS_CHESS_BRIDGE_PORT", "int"),
+    ("chess_bridge", "analysis_depth"): ("ERIS_CHESS_ANALYSIS_DEPTH", "int"),
+    ("chess_bridge", "direct_move_rate"): ("ERIS_CHESS_DIRECT_MOVE_RATE", "float"),
+    ("chess_bridge", "max_body_bytes"): ("ERIS_CHESS_MAX_BODY_BYTES", "int"),
     ("engagement", "max_delivery_receipts"): ("ERIS_ENGAGEMENT_MAX_DELIVERY_RECEIPTS", "int"),
     ("engagement", "delivery_split_poison_batches"): ("ERIS_ENGAGEMENT_SPLIT_POISON_BATCHES", "bool"),
     ("engagement", "delivery_split_after_attempts"): ("ERIS_ENGAGEMENT_SPLIT_AFTER_ATTEMPTS", "int"),
@@ -644,6 +658,7 @@ class RuntimeSettingsStore:
         v8 -> v9 thêm reliable delivery và readiness SLO policy.
         v9 -> v10 thêm gap fail-closed, lag pressure và dead-letter recovery policy.
         v12 -> v13 thêm companion-aware Flash/Pro routing policy.
+        v13 -> v14 thêm Chess.com bridge và mode-aware companion analysis.
         """
         if not isinstance(payload, Mapping):
             return {}, False
@@ -811,6 +826,18 @@ class RuntimeSettingsStore:
             chat.setdefault("companion_contextual_ambiguity_uses_pro", True)
             chat.setdefault("companion_simple_turns_stay_flash", True)
             out["chat"] = chat
+            migrated = True
+
+
+        if version < 14:
+            chess_bridge = dict(out.get("chess_bridge") or {}) if isinstance(out.get("chess_bridge"), Mapping) else {}
+            chess_bridge.setdefault("enabled", True)
+            chess_bridge.setdefault("host", "127.0.0.1")
+            chess_bridge.setdefault("port", 8765)
+            chess_bridge.setdefault("analysis_depth", 2)
+            chess_bridge.setdefault("direct_move_rate", 0.18)
+            chess_bridge.setdefault("max_body_bytes", 65536)
+            out["chess_bridge"] = chess_bridge
             migrated = True
 
         out["version"] = target_version
@@ -1074,6 +1101,10 @@ def _coerce_setting(path: str, value: Any, expected: Any) -> tuple[bool, Any]:
         "engagement.max_dead_letters": (1, 4096),
         "engagement.consumer_lag_warning_events": (1, 1000000),
         "engagement.open_dead_letter_warning_count": (1, 4096),
+        "chess_bridge.port": (1024, 65535),
+        "chess_bridge.analysis_depth": (1, 4),
+        "chess_bridge.direct_move_rate": (0.0, 1.0),
+        "chess_bridge.max_body_bytes": (4096, 1048576),
         "observability.slo_window_seconds": (60, 604800),
         "observability.slo_max_samples": (16, 10000),
         "observability.minimum_ready_ratio": (0.0, 1.0),

@@ -162,6 +162,10 @@ class GenericEngagementAdapter:
         for key in (
             "fen", "pgn", "move_number", "file", "test_status", "step", "progress",
             "result", "status", "state", "outcome", "error", "url", "artifact",
+            "mode", "full_assistance", "side_to_move", "last_move_uci",
+            "last_move_san", "evaluation_cp", "evaluation_label",
+            "suggested_move_uci", "suggested_move_san", "confidence",
+            "evaluation_swing_cp", "move_quality", "hint_focus",
         ):
             if key in payload:
                 data[key] = payload[key]
@@ -207,6 +211,46 @@ class ChessCompanionAdapter(GenericEngagementAdapter):
     summary_label = "Chess game"
     expected_events = ("board position changed", "move played", "hint request", "game ended")
 
+    def accepts_evidence(self, kind: str, *, source: str, payload: Mapping[str, Any]) -> bool:
+        del source, payload
+        return str(kind or "").strip().lower().startswith("chess.")
+
+    def signal_importance(self, event: EngagementEvent) -> float:
+        kind = str(event.kind or "").strip().lower()
+        if kind == "chess.game_started":
+            return 0.78
+        if kind == "chess.move_played":
+            return 0.94
+        if kind == "chess.position_changed":
+            return 0.82
+        if kind in {"chess.game_over", "chess.game.ended", "chess.game.completed"}:
+            return 0.99
+        return super().signal_importance(event)
+
+    def project(self, engagement: Engagement, *, now: float) -> PlannerProjection:
+        base = super().project(engagement, now=now)
+        state = engagement.domain_state
+        # All modes (analysis, bot, private, live) now receive full assistance.
+        # The only exception is UNKNOWN pages which send full_assistance=False.
+        full = bool(state.get("full_assistance", True))
+        dynamic = (
+            "May evaluate the position, tease mistakes, offer hints, and occasionally state the suggested move directly."
+            if full else
+            "Unknown page: cannot confirm game context — only react socially, do not suggest moves or evaluate."
+        )
+        constraints = tuple(base.interaction_constraints) + (dynamic,)
+        return PlannerProjection(
+            engagement_id=base.engagement_id, kind=base.kind, objective=base.objective,
+            lifecycle=base.lifecycle, focus=base.focus, priority=base.priority, role=base.role,
+            initiative=base.initiative, feedback_style=base.feedback_style,
+            current_state_summary=base.current_state_summary, recent_progress=base.recent_progress,
+            next_expected_events=base.next_expected_events, interaction_constraints=constraints[:12],
+            age_seconds=base.age_seconds, seconds_since_progress=base.seconds_since_progress,
+            evidence_binding=base.evidence_binding, last_event_kind=base.last_event_kind,
+            lifecycle_changed_at=base.lifecycle_changed_at, last_event_log_seq=base.last_event_log_seq,
+            resume_focus=base.resume_focus,
+        )
+
     def lifecycle_signal(
         self,
         engagement: Engagement,
@@ -221,8 +265,22 @@ class ChessCompanionAdapter(GenericEngagementAdapter):
     def _state_summary(self, engagement: Engagement) -> str:
         state = engagement.domain_state
         pieces = [engagement.objective]
+        if state.get("mode"):
+            pieces.append(f"mode={_compact(state.get('mode'), 32)}")
         if state.get("move_number") is not None:
             pieces.append(f"move {state.get('move_number')}")
+        if state.get("side_to_move"):
+            pieces.append(f"to_move={_compact(state.get('side_to_move'), 16)}")
+        if state.get("last_move_san") or state.get("last_move_uci"):
+            pieces.append(f"last={_compact(state.get('last_move_san') or state.get('last_move_uci'), 24)}")
+        if state.get("evaluation_label"):
+            pieces.append(f"evaluation={_compact(state.get('evaluation_label'), 40)}")
+        if state.get("move_quality"):
+            pieces.append(f"move_quality={_compact(state.get('move_quality'), 24)}")
+        if state.get("hint_focus"):
+            pieces.append(f"hint_focus={_compact(state.get('hint_focus'), 32)}")
+        if state.get("suggested_move_san") or state.get("suggested_move_uci"):
+            pieces.append(f"suggestion={_compact(state.get('suggested_move_san') or state.get('suggested_move_uci'), 24)}")
         if state.get("fen"):
             pieces.append(f"FEN={_compact(state.get('fen'), 120)}")
         if state.get("result"):

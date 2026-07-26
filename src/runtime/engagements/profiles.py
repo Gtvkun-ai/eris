@@ -91,17 +91,27 @@ def default_profiles() -> tuple[EngagementProfile, ...]:
             profile_id="chess",
             adapter_id="chess",
             kind="chess",
-            phrases=("cờ vua", "co vua", "chơi cờ", "choi co", "chess", "ván cờ", "van co"),
+            phrases=(
+                "cờ vua", "co vua", "chơi cờ", "choi co", "chess", "ván cờ", "van co",
+                "đánh cờ", "danh co", "pém cờ", "pem co", "pém thôi", "pem thoi",
+            ),
             contract=InteractionContract(
                 role="chess_companion",
                 initiative=InitiativeMode.PROACTIVE,
                 feedback_style="sarcastic_but_helpful",
-                allowed_actions=("comment_on_progress", "give_hint", "point_out_mistake", "ask_for_position"),
-                forbidden_actions=("play_without_permission", "invent_board_state", "spoil_full_solution_by_default"),
-                preferences={"light_mockery_allowed": True, "refuse_trivial_hints": True},
+                allowed_actions=(
+                    "comment_on_progress", "give_hint", "point_out_mistake", "ask_for_position",
+                    "evaluate_position", "state_suggested_move_when_available",
+                ),
+                forbidden_actions=("invent_board_state", "ignore_assistance_mode"),
+                preferences={
+                    "light_mockery_allowed": True, "refuse_trivial_hints": True,
+                    "occasionally_reveal_direct_move": True,
+                },
             ),
             continuity=ContinuityPolicy(55, 125, 8, 8, 7200),
             priority=78,
+            direct_start_is_sufficient=True,
         ),
         EngagementProfile(
             profile_id="coding",

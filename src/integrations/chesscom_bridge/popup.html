@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font: 13px system-ui, sans-serif; width: 270px; padding: 12px; }
+    label { display: block; margin: 9px 0 4px; font-weight: 600; }
+    input, select { width: 100%; box-sizing: border-box; padding: 6px; }
+    .row { display: flex; gap: 8px; align-items: center; }
+    .row input { width: auto; }
+    button { margin-top: 12px; width: 100%; padding: 7px; }
+    #status { margin-top: 8px; min-height: 18px; }
+    small { color: #555; display: block; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="row"><input id="enabled" type="checkbox"><label for="enabled">Bật bridge</label></div>
+  <label for="mode">Chế độ ván</label>
+  <select id="mode">
+    <option value="auto">Tự nhận biết</option>
+    <option value="analysis">Analysis</option>
+    <option value="bot">Đấu bot</option>
+    <option value="private">Ván riêng</option>
+    <option value="live_restricted">Live người thật</option>
+  </select>
+  <label for="endpoint">ERIS endpoint</label>
+  <input id="endpoint" value="http://127.0.0.1:8765/v1/chess/snapshot">
+  <label for="token">Bridge token, nếu có</label>
+  <input id="token" type="password">
+  <button id="save">Lưu</button>
+  <div id="status"></div>
+  <small>Analysis, bot và private cho phép hỗ trợ đầy đủ. Live người thật chỉ quan sát.</small>
+  <script src="popup.js"></script>
+</body>
+</html>

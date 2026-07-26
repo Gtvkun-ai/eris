@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from typing import Any, Mapping
@@ -10,7 +11,7 @@ from typing import Any, Mapping
 from runtime.persistence_gate import PersistenceGate
 from runtime.engagements.snapshot_journal import EngagementSnapshotJournal
 from runtime.diagnostic_logging import safe_log
-from runtime.policy_settings import AIRuntimeSettings, EngagementSettings, HealthSettings
+from runtime.policy_settings import AIRuntimeSettings, ChessBridgeSettings, EngagementSettings, HealthSettings
 from runtime.subsystem_health import FailureKind, SubsystemHealthRegistry
 
 from .contracts import RuntimeMindState
@@ -43,6 +44,9 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     engagement_settings = getattr(policy_bundle, "engagement", None)
     if not isinstance(engagement_settings, EngagementSettings):
         engagement_settings = EngagementSettings.load()
+    chess_bridge_settings = getattr(policy_bundle, "chess_bridge", None)
+    if not isinstance(chess_bridge_settings, ChessBridgeSettings):
+        chess_bridge_settings = ChessBridgeSettings.load()
     runtime_clock = getattr(host, "_runtime_clock", None)
     if not callable(runtime_clock):
         runtime_clock = time.time
@@ -225,8 +229,49 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
                 "engagement.runtime",
                 details={"settings": engagement_settings.to_dict()},
             )
+            host.chess_bridge_service = None
+            if chess_bridge_settings.enabled:
+                try:
+                    from runtime.chess import ChessCompanionService
+
+                    def _build_chess_bridge():
+                        return ChessCompanionService(
+                            host.ai_engagement_runtime,
+                            host=chess_bridge_settings.host,
+                            port=chess_bridge_settings.port,
+                            token=str(os.getenv("ERIS_CHESS_BRIDGE_TOKEN", "") or ""),
+                            analysis_depth=chess_bridge_settings.analysis_depth,
+                            direct_move_rate=chess_bridge_settings.direct_move_rate,
+                            max_body_bytes=chess_bridge_settings.max_body_bytes,
+                            logger=getattr(host, "logger", None),
+                            health_registry=health,
+                            clock=runtime_clock,
+                        ).start()
+
+                    supervisor = getattr(host, "subsystem_supervisor", None)
+                    if supervisor is not None:
+                        host.chess_bridge_service = supervisor.start(
+                            "chess.bridge",
+                            _build_chess_bridge,
+                            failure_kind=FailureKind.INVALID_EXTERNAL_DATA,
+                            stop_methods=("stop", "shutdown", "close"),
+                            details=chess_bridge_settings.to_dict(),
+                        )
+                    else:
+                        host.chess_bridge_service = _build_chess_bridge()
+                except (ImportError, OSError, RuntimeError, ValueError) as exc:
+                    host.chess_bridge_service = None
+                    health.record_failure(
+                        "chess.bridge", exc,
+                        kind=FailureKind.INVALID_EXTERNAL_DATA, degraded=True,
+                        reason="bridge startup failed",
+                    )
+                    safe_log(getattr(host, "logger", None), "warning", "[chess] bridge unavailable: %s", exc)
+            else:
+                health.mark_stopped("chess.bridge", reason="disabled_by_settings")
         except Exception as exc:
             host.ai_engagement_runtime = None
+            host.chess_bridge_service = None
             health.record_failure(
                 "engagement.runtime",
                 exc,
@@ -236,6 +281,7 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
             safe_log(getattr(host, "logger", None), "warning", "[engagement] runtime unavailable: %s", exc)
     else:
         host.ai_engagement_runtime = None
+        host.chess_bridge_service = None
         host._persist_ai_engagement_state = persist_engagement
         health.mark_stopped("engagement.runtime", reason="disabled_by_settings")
     # PDF annotation, pages 12-13 and 20: P2 cutover is complete.  No legacy
@@ -333,6 +379,19 @@ def shutdown_ai_orchestrated_runtime(host: Any) -> None:
         else:
             if isinstance(health, SubsystemHealthRegistry):
                 health.record_success("ai_state.persistence", details={"shutdown_flush": True})
+    chess_bridge = getattr(host, "chess_bridge_service", None)
+    supervisor = getattr(host, "subsystem_supervisor", None)
+    supervised_bridge = supervisor is not None and getattr(supervisor, "get", lambda _name: None)("chess.bridge") is chess_bridge
+    if chess_bridge is not None and not supervised_bridge:
+        try:
+            chess_bridge.stop()
+        except (OSError, RuntimeError, AttributeError) as exc:
+            if isinstance(health, SubsystemHealthRegistry):
+                health.record_failure(
+                    "chess.bridge", exc, kind=FailureKind.PROGRAMMER_ERROR,
+                    degraded=True, reason="shutdown failed",
+                )
+
     engagement_runtime = getattr(host, "ai_engagement_runtime", None)
     persist_engagement = getattr(host, "_persist_ai_engagement_state", None)
     if engagement_runtime is not None and callable(persist_engagement):
