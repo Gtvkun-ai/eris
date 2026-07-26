@@ -26,6 +26,8 @@ from typing import Optional
 import re
 import unicodedata
 
+from core.conversation_intent import is_recent_user_turn_recall
+
 from .predicate_registry import PredicateRegistry, get_default_registry
 
 from .memory_query_ir import (
@@ -140,8 +142,12 @@ class MemoryQuerySlotParser:
         if relation:
             signals.append(SlotSignal("relation", relation, relation[1], "relation_phrase"))
 
-        fact_key = _infer_profile_query(norm)
-        if fact_key is None:
+        # Câu "tôi vừa nói gì" hỏi session continuity, không hỏi hồ sơ người dùng.
+        # Chặn trước registry để embedding/lexical không kéo nó về user.name hoặc
+        # một predicate profile gần nghĩa khác. Runtime continuity adapter sẽ trả
+        # đúng lượt trước đó từ ledger.
+        fact_key = None if is_recent_user_turn_recall(raw) else _infer_profile_query(norm)
+        if fact_key is None and not is_recent_user_turn_recall(raw):
             resolution = self.registry.resolve_fact_query(raw)
             if resolution is not None:
                 fact_key = (resolution.fact_key, resolution.score)

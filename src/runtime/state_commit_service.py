@@ -11,6 +11,7 @@ from failure_meta import is_technical_failure_meta
 from runtime.body_bias import BodyBiasProjector
 from runtime.diagnostic_logging import safe_log
 from runtime.memory_recall_adapter import MemoryRecallAdapter
+from runtime.conversation_continuity import ConversationContinuityAdapter
 from runtime.affect_self_read import AffectSelfReadAdapter
 from runtime.public_turn_ledger import PublicTurnLedger, infer_public_turn_channel
 from runtime.session_turn_ledger import SessionTurnLedger
@@ -316,6 +317,24 @@ class StateCommitServiceMixin:
             return None
         scored.sort(key=lambda item: item[0], reverse=True)
         return scored[0][1]
+
+    def _ensure_conversation_continuity_adapter(self) -> ConversationContinuityAdapter:
+        """Giữ một adapter continuity dùng chung ledger của phiên hiện tại."""
+
+        ledger = self._ensure_session_turn_ledger()
+        adapter = getattr(self, "conversation_continuity_adapter", None)
+        if isinstance(adapter, ConversationContinuityAdapter):
+            adapter.ledger = ledger
+            return adapter
+        adapter = ConversationContinuityAdapter(ledger=ledger)
+        self.conversation_continuity_adapter = adapter
+        return adapter
+
+    def _build_conversation_continuity_decision(self, user_text: str) -> Decision | None:
+        return self._ensure_conversation_continuity_adapter().try_answer(user_text)
+
+    def _conversation_repair_fallback_text(self, user_text: str) -> str:
+        return self._ensure_conversation_continuity_adapter().repair_fallback_text(user_text)
 
     def _ensure_memory_recall_adapter(self) -> MemoryRecallAdapter:
         adapter = getattr(self, "memory_recall_adapter", None)

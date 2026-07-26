@@ -326,23 +326,42 @@ class AIChatOrchestrator:
         host.ai_state_reducer.wait_idle(0.15)
         mind_state = host.ai_state_reducer.snapshot()
 
-        memory_recall_decision = None
-        if grounding_report is None or bool(getattr(grounding_report, "memory_answer_allowed", True)):
+        # Continuity của phiên phải được xét trước profile memory. Nếu không, câu
+        # "tôi vừa nói gì" có thể bị embedding kéo nhầm về user.name, đúng kiểu
+        # tìm rất thông minh nhưng tìm sai căn nhà.
+        deterministic_decision = None
+        deterministic_source = ""
+        build_continuity = getattr(host, "_build_conversation_continuity_decision", None)
+        if callable(build_continuity):
+            try:
+                deterministic_decision = build_continuity(user_text)
+                if deterministic_decision is not None:
+                    deterministic_source = "conversation_continuity"
+            except Exception as exc:
+                host.logger.debug("[conversation continuity] deterministic answer failed: %s", exc)
+
+        if deterministic_decision is None and (
+            grounding_report is None or bool(getattr(grounding_report, "memory_answer_allowed", True))
+        ):
             build_memory_recall = getattr(host, "_build_memory_recall_decision", None)
             if callable(build_memory_recall):
                 try:
-                    memory_recall_decision = build_memory_recall(user_text)
+                    deterministic_decision = build_memory_recall(user_text)
+                    if deterministic_decision is not None:
+                        deterministic_source = "memory_recall"
                 except Exception as exc:
                     host.logger.debug("[memory recall] deterministic answer failed: %s", exc)
-        if memory_recall_decision is not None:
-            user_meta["memory_recall_answer"] = True
+
+        if deterministic_decision is not None:
+            user_meta[f"{deterministic_source}_answer"] = True
             host.logger.info(
-                "[memory recall] deterministic answer parse_mode=%s",
-                str(getattr(memory_recall_decision, "parse_mode", "") or "memory_recall"),
+                "[%s] deterministic answer parse_mode=%s",
+                deterministic_source.replace("_", " "),
+                str(getattr(deterministic_decision, "parse_mode", "") or deterministic_source),
             )
-            host.ai_stage_planner.apply(memory_recall_decision, "neutral", state=mind_state, channel="chat")
-            memory_recall_decision = host._execute_system_action(memory_recall_decision, snapshot=snapshot, frame=None)
-            public_text, assistant_meta = self._commit(memory_recall_decision)
+            host.ai_stage_planner.apply(deterministic_decision, "neutral", state=mind_state, channel="chat")
+            deterministic_decision = host._execute_system_action(deterministic_decision, snapshot=snapshot, frame=None)
+            public_text, assistant_meta = self._commit(deterministic_decision)
             host.last_user_text_for_semantics = user_text
             recent_history = tuple(host._chat_history_for_llm(limit=8))
             host.ai_post_turn_observer.submit(
@@ -537,9 +556,19 @@ class AIChatOrchestrator:
 
 
         if not payload:
+            # Repair request ngắn không được biến thành im lặng. Adapter chỉ dùng
+            # session ledger và không bịa nội dung; nếu không đủ bằng chứng nó
+            # nhắc lại đúng câu user đang muốn làm rõ.
+            repair_fallback = ""
+            build_repair_fallback = getattr(host, "_conversation_repair_fallback_text", None)
+            if callable(build_repair_fallback):
+                try:
+                    repair_fallback = str(build_repair_fallback(user_text) or "").strip()
+                except Exception as exc:
+                    host.logger.debug("[conversation repair] fallback failed: %s", exc)
             fallback_payload = {
-                "text": "",
-                "should_speak": False,
+                "text": repair_fallback,
+                "should_speak": bool(repair_fallback),
                 "animation": "stand",
                 "next_animation": "",
                 "direction": 0,
@@ -556,13 +585,13 @@ class AIChatOrchestrator:
                 json.dumps(fallback_payload, ensure_ascii=False),
                 user_hint=user_text,
             )
-            decision.parse_mode = "ai_runtime_format_block"
+            decision.parse_mode = "conversation_repair_fallback" if repair_fallback else "ai_runtime_format_block"
             decision.failure_meta = build_failure_meta(
                 kind="format_violation",
                 stage="ai_chat_orchestrator",
                 origin="main_model",
-                public_surface="silent",
-                recoverable=False,
+                public_surface="repair_fallback" if repair_fallback else "silent",
+                recoverable=bool(repair_fallback),
             )
         else:
             raw = json.dumps(payload, ensure_ascii=False)

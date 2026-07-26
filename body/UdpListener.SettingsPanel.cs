@@ -14,7 +14,7 @@ public partial class UdpListener : Node2D
 		public string Fingerprint { get; init; } = "";
 		public string Status { get; init; } = "unknown";
 		public string Reason { get; init; } = "";
-		public int CooldownMs { get; init; }
+		public long CooldownMs { get; init; }
 		public bool Active { get; init; }
 	}
 
@@ -2228,9 +2228,12 @@ public partial class UdpListener : Node2D
 						int size = pool.TryGetProperty("size", out JsonElement sizeEl) ? sizeEl.GetInt32() : 0;
 						int available = pool.TryGetProperty("available", out JsonElement availableEl) ? availableEl.GetInt32() : 0;
 						int dead = pool.TryGetProperty("dead", out JsonElement deadEl) ? deadEl.GetInt32() : 0;
-						int cooldownMs = pool.TryGetProperty("global_cooldown_ms", out JsonElement cooldownEl) ? cooldownEl.GetInt32() : 0;
+						// Cooldown 401/quarantine có thể dài hơn 24.8 ngày, vượt Int32.
+						// Đọc Int64 để Settings không nổ FormatException chỉ vì backend gửi
+						// một mốc thời gian hoàn toàn hợp lệ nhưng quá lớn cho int 32-bit.
+						long cooldownMs = ReadJsonInt64(pool, "global_cooldown_ms", 0L);
 						_settingsPoolHealthSummary[kind] = cooldownMs > 0
-							? $"{available}/{size} khả dụng · pool nghỉ {Mathf.CeilToInt(cooldownMs / 1000f)}s"
+							? $"{available}/{size} khả dụng · pool nghỉ {FormatCooldownDuration(cooldownMs)}"
 							: $"{available}/{size} khả dụng · {dead} cooldown/lỗi";
 
 						var keyHealth = new List<SettingsKeyHealth>();
@@ -2244,7 +2247,7 @@ public partial class UdpListener : Node2D
 									Fingerprint = key.TryGetProperty("fingerprint", out JsonElement fingerprintEl) ? fingerprintEl.GetString() ?? "" : "",
 									Status = key.TryGetProperty("status", out JsonElement statusEl) ? statusEl.GetString() ?? "unknown" : "unknown",
 									Reason = key.TryGetProperty("reason", out JsonElement reasonEl) ? reasonEl.GetString() ?? "" : "",
-									CooldownMs = key.TryGetProperty("cooldown_ms", out JsonElement keyCooldownEl) ? keyCooldownEl.GetInt32() : 0,
+									CooldownMs = ReadJsonInt64(key, "cooldown_ms", 0L),
 									Active = key.TryGetProperty("active", out JsonElement activeEl) && activeEl.ValueKind == JsonValueKind.True,
 								});
 							}
@@ -2299,10 +2302,35 @@ public partial class UdpListener : Node2D
 		}
 		catch (Exception ex)
 		{
-			RunLogger.LogErr($"[Settings] ack loi: {ex.Message}");
+			// Ghi cả loại exception để lần sau không phải đoán một câu FormatException
+			// chung chung. ACK không chứa raw key nên log loại packet là an toàn.
+			RunLogger.LogErr($"[Settings] ack lỗi {ex.GetType().Name}: {ex.Message}");
 		}
 	}
 
+
+	private static long ReadJsonInt64(JsonElement root, string name, long fallback)
+	{
+		if (!root.TryGetProperty(name, out JsonElement item))
+			return fallback;
+		if (item.ValueKind == JsonValueKind.Number && item.TryGetInt64(out long number))
+			return Math.Max(0L, number);
+		if (item.ValueKind == JsonValueKind.String && long.TryParse(item.GetString(), out long parsed))
+			return Math.Max(0L, parsed);
+		return fallback;
+	}
+
+	private static string FormatCooldownDuration(long cooldownMs)
+	{
+		long totalSeconds = Math.Max(0L, (long)Math.Ceiling(cooldownMs / 1000d));
+		if (totalSeconds >= 86400L)
+			return $"{Math.Ceiling(totalSeconds / 86400d):0.#} ngày";
+		if (totalSeconds >= 3600L)
+			return $"{Math.Ceiling(totalSeconds / 3600d):0.#} giờ";
+		if (totalSeconds >= 60L)
+			return $"{Math.Ceiling(totalSeconds / 60d):0.#} phút";
+		return $"{totalSeconds} giây";
+	}
 
 	private static string NormalizeSettingsTtsLanguage(string value)
 	{
@@ -2870,7 +2898,7 @@ public partial class UdpListener : Node2D
 			{
 				label.Text = $"● Cooldown · Ưu tiên {priority}";
 				label.AddThemeColorOverride("font_color", new Color(0.78f, 0.43f, 0.08f));
-				label.TooltipText = $"{displayName}: đang cooldown, còn khoảng {Mathf.CeilToInt(item.CooldownMs / 1000f)} giây";
+				label.TooltipText = $"{displayName}: đang cooldown, còn khoảng {FormatCooldownDuration(item.CooldownMs)}";
 			}
 			else if (string.Equals(item.Status, "error", StringComparison.OrdinalIgnoreCase)
 				|| string.Equals(item.Status, "invalid", StringComparison.OrdinalIgnoreCase))
