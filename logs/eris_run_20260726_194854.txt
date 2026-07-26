@@ -1,0 +1,73 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-26 19:48:54
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+19:48:55.762 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+19:48:55.762 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+19:48:55.778 [INFO] [Vision] Da khoi chay vision.py PID=20432
+19:48:55.824 [INFO] [Live2D] Da khoi chay renderer PID=24816, UDP=4252
+19:48:55.826 [INFO] [BodyMode] 2D -> Live2D | resident=False | bubble giữ ở Godot overlay
+19:48:56.238 [INFO] [live2d] [live2d] third-party wrapper (0.7.0.4), not affiliated with Live2D Inc.
+19:48:56.280 [INFO] [live2d] [live2d.v3] Cubism Native, Python 3.12.0
+19:48:56.280 [INFO] [live2d] [live2d.v3] official: https://www.live2d.com/sdk/download/native/
+19:48:56.494 [INFO] [live2d] [INFO]  [Pal] Init Shader Dir: C:\Users\Gtvkun\Documents\GitHub\eris\.venv\Lib\site-packages\live2d\v3\
+19:48:56.494 [INFO] [live2d] [INFO]  [CSM][I]Live2D Cubism Core version: 05.01.0000 (83951616)
+19:48:56.495 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::StartUp() is complete.
+19:48:56.495 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::Initialize() is complete.
+19:48:56.496 [INFO] [live2d] [INFO]  allocate: cpp Model(at=000001A8C4480530)
+19:48:56.496 [INFO] [live2d] [INFO]  load modelSetting: C:\Users\Gtvkun\Documents\GitHub\eris\src\assets\live2d\infj\infj.model3.json
+19:48:56.497 [INFO] [live2d] [INFO]  create model: infj.moc3
+19:48:56.609 [INFO] [live2d] [Live2D] Đã mở infj.model3.json | UDP 127.0.0.1:4252
+19:48:56.609 [INFO] [live2d] [Live2D] Window pos=(521, 86) size=(520,900) fb=(520,900) screen=(1920, 1080) canvas=(1.0, 1.5) canvas_px=(1024.0, 1536.0) scale=1.00 offset=(0.00,-0.02) transparent=True decorated=False topmost=True
+19:48:56.609 [INFO] [live2d] [Live2D] Model profile: parameters=21 head=X/Z eyes=custom mirrored pair mouth=yes physics=yes expressions=0 motion_groups=0
+19:48:59.831 [INFO] [vision.py] [LLM][INFO] Dung DeepSeek API tai https://api.deepseek.com voi model deepseek-v4-flash
+19:48:59.832 [INFO] [vision.py] [LLM][INFO] Vision API tat: can du ERIS_VISION_API_KEY, ERIS_VISION_API_BASE_URL va ERIS_VISION_API_MODEL.
+19:48:59.833 [INFO] [vision.py] [LLM][INFO] Escalation client tat: khong tim thay key Gemini.
+19:48:59.833 [INFO] [vision.py] [LLM][INFO] Social parser client sẵn sàng: llama-3.1-8b-instant
+19:48:59.833 [INFO] [vision.py] [LLM][INFO] Social deliberator/critic client sẵn sàng: llama-3.3-70b-versatile
+19:48:59.833 [INFO] [vision.py] [LLM][INFO] Social observer fallback client sẵn sàng: llama-3.1-8b-instant
+19:49:03.166 [INFO] [vision.py] [Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=14
+19:49:03.202 [INFO] [vision.py] [Loop][INFO] [vtuber-stage] loaded version=vtuber_stage.v11 phases=8,9,10,11 status=intention_authority_ready session=stage_af84689cd3fd4db8
+19:49:03.203 [INFO] [vision.py] [Loop][INFO] Living user memory đã nối episode/profile dreaming adapter.
+19:49:03.217 [INFO] [vision.py] [Loop][INFO] [internal-cognitive] loaded version=internal_cognitive.v1.0 capabilities=8 status=read_only_verified
+19:49:03.260 [INFO] [vision.py] [Loop][INFO] [project-ops] loaded version=project_operations.v1.1 capabilities=15 mode=autonomous_project_scope
+19:49:03.260 [INFO] [vision.py] [Loop][INFO] [workspace] eris_home=[đường dẫn nội bộ đã ẩn] active=none implicit_source_repo=false
+19:49:03.874 [INFO] [vision.py] [Loop][INFO] tutor: knowledge provider đã nối vào memory recall
+19:49:03.934 [INFO] [vision.py] [Loop][INFO] [environment-capability] loaded version=environment_capability.v1.0 capabilities=6 status=read_only_verified
+19:49:04.377 [INFO] [vision.py] [Loop][INFO] [architecture C] enabled version=ai_orchestrated.v7.semantic_cutover state_version=0 personality_version=0 identity_version=0 observer=post_turn planner=local_for_chat semantic_authority=semantic_frame.v1 single_writer=1
+19:49:06.645 [INFO] [vision.py] [Loop][INFO] --- Architecture C runtime; chat vision theo yêu cầu màn hình ---
+19:49:07.043 [INFO] [vision.py] [Loop][INFO] [architecture C startup grounding] direct=0 strong=0 telemetry_tab=0 evidence=0 runtime_opening=0 metadata=0 backend=unknown wait=0.40s notes=screen_prime_lazy,screen_prime_timeout,runtime_signals_lazy
+19:49:07.047 [INFO] [vision.py] [Loop][INFO] [architecture C startup] planner skipped; using typed persona plan reason=no_opening_anchor
+19:49:07.048 [INFO] [vision.py] [Loop][INFO] [architecture C startup route] strategy=persona_opening source=persona continuity=0 forced=1
+19:49:07.062 [INFO] [vision.py] [Loop][INFO] [architecture C startup greeting] source=preset id=greet_warm_02 situation=plain_return
+19:49:07.177 [INFO] [vision.py] [Loop][INFO] [architecture C startup] spoke motive=startup_opening text=Bạn đây rồi. Tôi biết bạn sẽ quay lại.
+19:49:07.178 [INFO] [vision.py] [Loop][INFO] [screen text] worker started backend=lazy-auto poll=1.2s
+19:49:08.825 [INFO] [vision.py] [Loop][INFO] [screen text] OCR backend resolved=rapidocr
+19:49:26.562 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=active external=1.00 internal=0.03 interrupt=0.18 resource=0.07 vision_hint=1 budget=scheduler_allow
+19:49:27.309 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+19:49:27.309 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=unknown:unknown:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+19:49:27.309 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=8
+19:49:28.048 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] quarantine index=0 reason=http_auth_key_revoked
+19:49:28.602 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] quarantine index=1 reason=http_auth_key_revoked
+19:49:29.102 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] quarantine index=2 reason=http_auth_key_revoked
+19:49:29.637 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] quarantine index=3 reason=http_auth_key_revoked
+19:49:30.205 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] quarantine index=4 reason=http_auth_key_revoked
+19:49:30.729 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] quarantine index=5 reason=http_auth_key_revoked
+19:49:31.272 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] quarantine index=6 reason=http_auth_key_revoked
+19:49:31.797 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] quarantine index=7 reason=http_auth_key_revoked
+19:49:32.344 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] quarantine index=8 reason=http_auth_key_revoked
+19:49:32.346 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] synthesis failed error=HTTPError:401 Client Error: Unauthorized for url: https://api.deepseek.com/chat/completions | body: {"error":{"message":"Authentication Fails, Your api key: ****c3q1 is invalid","type":"authentication_error","param":null,"code":"invalid_request_error"}}
+19:49:32.425 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] inner_diary failed error=RuntimeError:API key pool đang cooldown; thử lại sau khoảng 2591995.6s
+19:49:32.426 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.88 pressure=0.65 surface=yes mutations=2
+19:49:38.076 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=other act=ambient_silence conf=0.00 importance=0.00 gate=model_silence body_only=1
+19:49:53.659 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.48 internal=0.06 interrupt=0.31 resource=0.19 vision_hint=0 budget=scheduler_allow
+19:49:53.744 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=8
+19:49:53.858 [INFO] [Live2D] Dang dung renderer PID=24816...
+19:49:53.864 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::Dispose() is complete.
+19:49:53.888 [INFO] [Live2D] Renderer da thoat (code=-1, current=False).
+19:49:53.908 [INFO] [Vision] Dang dung vision.py PID=20432...
+19:49:53.952 [INFO] [Vision] vision.py da thoat (PID=20432, code=-1, unexpected=False).
+19:49:53.969 [INFO] [RunLogger] Ket thuc phien chay.

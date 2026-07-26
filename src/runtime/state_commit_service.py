@@ -146,9 +146,9 @@ class StateCommitServiceMixin:
     def _clean_memory_value(value: object) -> str:
         return str(value or "").strip().strip(" .,:;!?\"'“”")
 
-    def _extract_semantic_value_from_record(self, record: object, kind: MemoryKind) -> str | None:
+    def _extract_semantic_value_from_record(self, record: object, kind: MemoryKind | str) -> str | None:
         metadata = self._record_metadata(record)
-        fact_key = self._fact_key_for_memory_kind(kind)
+        fact_key = self._fact_key_for_memory_kind(kind) if isinstance(kind, MemoryKind) else str(kind or "").strip()
         record_fact_key = str(metadata.get("fact_key") or self._record_value(record, "fact_key", "") or "").strip()
         if fact_key and record_fact_key and record_fact_key != fact_key:
             return None
@@ -159,7 +159,8 @@ class StateCommitServiceMixin:
         raw_content = metadata.get("raw_content")
         if isinstance(raw_content, Mapping):
             raw_kind = str(raw_content.get("kind", "") or "").strip()
-            if raw_kind == kind.value:
+            expected_kind = kind.value if isinstance(kind, MemoryKind) else ""
+            if expected_kind and raw_kind == expected_kind:
                 raw_meta = raw_content.get("metadata")
                 if isinstance(raw_meta, Mapping):
                     value = raw_meta.get("value")
@@ -170,8 +171,21 @@ class StateCommitServiceMixin:
                     return self._clean_memory_value(value)
 
         direct_kind = str(self._record_value(record, "kind", "") or metadata.get("kind", "") or "").strip()
-        if direct_kind and direct_kind != kind.value:
+        expected_kind = kind.value if isinstance(kind, MemoryKind) else ""
+        if expected_kind and direct_kind and direct_kind != expected_kind:
             return None
+
+        semantic_claim = metadata.get("semantic_claim")
+        if isinstance(semantic_claim, Mapping):
+            for value in (semantic_claim.get("object_value"), semantic_claim.get("object_text")):
+                if value not in (None, ""):
+                    return self._clean_memory_value(value)
+        for value in (
+            self._record_value(record, "semantic_value", None),
+            self._record_value(record, "value", None),
+        ):
+            if value not in (None, ""):
+                return self._clean_memory_value(value)
 
         claim_text = " ".join(
             str(part or "").strip()
@@ -184,6 +198,8 @@ class StateCommitServiceMixin:
         )
         lowered = claim_text.lower()
 
+        if not isinstance(kind, MemoryKind):
+            return None
         if kind == MemoryKind.USER_NAME:
             patterns = (
                 r"user'?s name is\s+(.+?)(?:[.!,;:]|$)",
@@ -211,7 +227,7 @@ class StateCommitServiceMixin:
                 return value
         return None
 
-    def _semantic_memory_lookup(self, kind: MemoryKind):
+    def _semantic_memory_lookup(self, kind: MemoryKind | str):
         snapshot = self._memory_snapshot_for_lookup()
         candidates: list[tuple[tuple[float, float, float, str], str]] = []
         for record in self._memory_snapshot_items(snapshot, "semantic_memory"):

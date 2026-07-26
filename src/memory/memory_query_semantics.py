@@ -16,18 +16,27 @@ Nếu không, prototype lexical fallback vẫn chạy nhưng luôn bị cap conf
 """
 
 from dataclasses import dataclass, field
-from typing import Protocol, Sequence
+from typing import Any, Protocol, Sequence
 import math
+import os
 import re
 import unicodedata
 
 from .memory_query_ir import ActRef, QueryIntent, RelationRef, RoleRef, SurfaceMode, clamp01
+from .predicate_registry import PredicateRegistry, get_default_registry, raw_cosine
 
 
 class EmbeddingProvider(Protocol):
-    """Provider embedding tùy chọn. Không bắt buộc."""
+    """Provider embedding tùy chọn.
 
-    def embed(self, text: str) -> Sequence[float]:
+    Provider mới nên tách query/document. `embed()` vẫn được hỗ trợ qua adapter
+    mềm để model cũ không nổ tung chỉ vì kiến trúc cuối cùng biết phân vai.
+    """
+
+    def embed_query(self, text: str) -> Sequence[float]:
+        ...
+
+    def embed_document(self, text: str) -> Sequence[float]:
         ...
 
 
@@ -66,10 +75,18 @@ class MemoryQuerySemanticHintEngine:
         self,
         embedding_provider: EmbeddingProvider | None = None,
         *,
+        registry: PredicateRegistry | None = None,
         fallback_confidence_cap: float = 0.72,
+        embedding_min_cosine: float | None = None,
     ) -> None:
         self.embedding_provider = embedding_provider
+        self.registry = registry or get_default_registry()
         self.fallback_confidence_cap = fallback_confidence_cap
+        self.embedding_min_cosine = float(
+            embedding_min_cosine
+            if embedding_min_cosine is not None
+            else os.getenv("ERIS_MEMORY_QUERY_MIN_COSINE", "0.38")
+        )
         self._prototype_vectors: dict[str, Sequence[float]] = {}
 
     def analyze(self, text: str) -> SemanticQueryHint:
@@ -119,7 +136,7 @@ class MemoryQuerySemanticHintEngine:
                 relation_scores[relation] = min(self.fallback_confidence_cap, score)
                 evidence.append(f"relation:{relation.value}:{score:.2f}")
 
-        for fact_key, phrases in FACT_KEY_PROTOTYPES.items():
+        for fact_key, phrases in self.registry.fact_key_prototypes().items():
             score = max((_token_similarity(norm, p) for p in phrases), default=0.0)
             if score > 0.18:
                 fact_key_scores[fact_key] = min(self.fallback_confidence_cap, score)
@@ -159,7 +176,7 @@ class MemoryQuerySemanticHintEngine:
 
     def _embedding_hint(self, norm: str) -> SemanticQueryHint:
         try:
-            text_vec = self.embedding_provider.embed(norm)  # type: ignore[union-attr]
+            text_vec = _embed_query(self.embedding_provider, norm)
         except Exception:
             return SemanticQueryHint(confidence=0.0, is_fallback=True, evidence=("embedding_failed",))
 
@@ -168,7 +185,7 @@ class MemoryQuerySemanticHintEngine:
         role_scores = self._score_enum_prototypes(text_vec, ROLE_PROTOTYPES, RoleRef)
         act_scores = self._score_enum_prototypes(text_vec, ACT_PROTOTYPES, ActRef)
         relation_scores = self._score_enum_prototypes(text_vec, RELATION_PROTOTYPES, RelationRef)
-        fact_key_scores = self._score_string_prototypes(text_vec, FACT_KEY_PROTOTYPES)
+        fact_key_scores = self._score_string_prototypes(text_vec, self.registry.fact_key_prototypes())
 
         all_scores = (
             list(intent_scores.values())
@@ -194,7 +211,7 @@ class MemoryQuerySemanticHintEngine:
         out = {}
         for key, phrases in bank.items():
             score = max((self._prototype_cosine(text_vec, p) for p in phrases), default=0.0)
-            if score > 0.45:
+            if score >= self.embedding_min_cosine:
                 out[key] = clamp01(score)
         return out
 
@@ -202,7 +219,7 @@ class MemoryQuerySemanticHintEngine:
         out = {}
         for key, phrases in bank.items():
             score = max((self._prototype_cosine(text_vec, p) for p in phrases), default=0.0)
-            if score > 0.45:
+            if score >= self.embedding_min_cosine:
                 out[key] = clamp01(score)
         return out
 
@@ -210,7 +227,7 @@ class MemoryQuerySemanticHintEngine:
         try:
             vec = self._prototype_vectors.get(phrase)
             if vec is None:
-                vec = self.embedding_provider.embed(phrase)  # type: ignore[union-attr]
+                vec = _embed_document(self.embedding_provider, phrase)
                 self._prototype_vectors[phrase] = vec
             return cosine(text_vec, vec)
         except Exception:
@@ -286,18 +303,10 @@ RELATION_PROTOTYPES: dict[RelationRef, tuple[str, ...]] = {
     ),
 }
 
-FACT_KEY_PROTOTYPES: dict[str, tuple[str, ...]] = {
-    "user.name": ("ten toi", "toi ten gi", "nho ten toi", "my name"),
-    "user.birth_month": ("thang sinh", "toi sinh thang may", "birthday month"),
-    "user.current_location": ("toi dang o dau", "hien tai toi o dau", "current location"),
-    "user.living_location": ("toi song o dau", "noi o cua toi", "living location", "current residence"),
-    "user.hometown": ("que toi o dau", "que cua toi", "hometown"),
-    "user.preference.location": ("toi thich noi nao", "toi thich o dau", "location preference"),
-    "user.past_location": ("truoc day toi o dau", "qua khu toi tung o dau", "past location"),
-    "user.response_style": ("toi thich em tra loi", "phong cach tra loi", "response style"),
-    # Chỉ để định hướng retrieval/packet, không phải exact deterministic answer.
-    "user.preference.general": ("so thich cua toi", "toi thich gi", "gu cua toi", "reading preference", "story preference"),
-}
+# Snapshot tương thích cho code ngoài đang import hằng số này. Engine runtime lấy
+# prototype trực tiếp từ registry để predicate provisional cũng được query.
+FACT_KEY_PROTOTYPES: dict[str, tuple[str, ...]] = get_default_registry().fact_key_prototypes()
+
 
 
 # ---------------------------------------------------------------------------
@@ -325,14 +334,23 @@ def _token_similarity(a: str, b: str) -> float:
 
 
 def cosine(a: Sequence[float], b: Sequence[float]) -> float:
-    if not a or not b or len(a) != len(b):
-        return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
-    na = math.sqrt(sum(x * x for x in a))
-    nb = math.sqrt(sum(y * y for y in b))
-    if na <= 1e-9 or nb <= 1e-9:
-        return 0.0
-    return clamp01((dot / (na * nb) + 1.0) / 2.0)
+    """Raw cosine [-1, 1]. Cosine 0 là không liên quan, không phải confidence 0.5."""
+
+    return raw_cosine(a, b)
+
+
+def _embed_query(provider: Any, text: str) -> Sequence[float]:
+    fn = getattr(provider, "embed_query", None)
+    if callable(fn):
+        return fn(text)
+    return provider.embed(text)
+
+
+def _embed_document(provider: Any, text: str) -> Sequence[float]:
+    fn = getattr(provider, "embed_document", None)
+    if callable(fn):
+        return fn(text)
+    return provider.embed(text)
 
 
 def _ambiguity(scores) -> float:

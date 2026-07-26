@@ -282,6 +282,33 @@ class PromptContextBuilderMixin:
         if invalid:
             entry["invalid"] = True
         self.chat_history.append(entry)
+        # Đồng thời ghi journal episode cho living user memory. Đây chỉ là buffer
+        # tóm tắt; raw conversation history vẫn thuộc chat/event ledger.
+        if not invalid:
+            living_user = getattr(getattr(self, "memory_kernel", None), "living_user", None)
+            recorder = getattr(living_user, "record_conversation_turn", None)
+            if callable(recorder):
+                try:
+                    session_id = ""
+                    stage_bus = getattr(self, "stage_event_bus", None)
+                    snapshot_fn = getattr(stage_bus, "session_snapshot", None)
+                    if callable(snapshot_fn):
+                        session_id = str((snapshot_fn() or {}).get("session_id") or "")
+                    workspace = getattr(self, "workspace_manager", None)
+                    project_id = str(
+                        getattr(workspace, "active_project_id", "")
+                        or getattr(self, "active_project_id", "")
+                        or ""
+                    )
+                    recorder(
+                        role,
+                        content,
+                        session_id=session_id,
+                        context={"project_id": project_id},
+                    )
+                except Exception:
+                    # Episode journal là enrichment; không được làm hỏng chat history.
+                    pass
         # Cap rộng để autonomous (vốn cũng ghi vào đây) không làm phình vô hạn.
         if len(self.chat_history) > 64:
             self.chat_history = self.chat_history[-64:]

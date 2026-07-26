@@ -299,6 +299,20 @@ def _parse_clause_as_frames(clause: str, surface: Any) -> list[MeaningFrame]:
             surface,
         ))
 
+    gender_identity = _extract_gender_identity(raw)
+    if gender_identity:
+        frames.append(_mk_frame(
+            "identity",
+            "gender_identity",
+            gender_identity,
+            "gender_identity",
+            raw,
+            0.82,
+            "stable",
+            "fact",
+            surface,
+        ))
+
     birth_year = _extract_year(norm)
     if birth_year is not None and _has_self(norm):
         frames.append(_mk_frame("identity", "birth_year", str(birth_year), "year", raw, 0.84, "stable", "fact", surface))
@@ -452,6 +466,28 @@ def _extract_identity_nickname(raw: str) -> str | None:
         return value
     return None
 
+def _extract_gender_identity(raw: str) -> str:
+    """Fallback local cho self-disclosure giới tính.
+
+    Structured semantic parser vẫn là đường chính cho identity đa dạng. Hàm này
+    chỉ nhận vài mẫu explicit, không suy luận giới tính từ tên, giọng hoặc cách
+    xưng hô. Đoán identity từ dấu hiệu gián tiếp là cách nhanh để memory vừa sai
+    vừa tự tin, một tổ hợp không ai đặt hàng.
+    """
+
+    patterns = (
+        r"(?:^|\b)giới\s*tính\s+(?:của\s+)?(?:tôi|mình|tui)\s*(?:là|:)\s*([^.,;!?]{2,40})",
+        r"(?:^|\b)(?:tôi|mình|tui)\s+(?:là|thuộc\s+giới\s+tính)\s+(nam|nữ|non[- ]?binary|phi nhị nguyên|chuyển giới)(?=$|[.,;!?])",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, raw, flags=re.IGNORECASE | re.UNICODE)
+        if match:
+            value = clean_surface(match.group(1))
+            if value:
+                return value
+    return ""
+
+
 def _extract_study_field(raw: str) -> str:
     """Rút ngành/lĩnh vực học từ self-disclosure ngắn.
 
@@ -555,7 +591,7 @@ def _looks_like_feedback(norm: str) -> bool:
 
 def _infer_frame_type(relation: str) -> str:
     r = relation.lower()
-    if r in {"name", "name_is", "nickname", "nickname_is", "birth_year", "birth_year_is", "birth_month", "birth_month_is", "age", "age_observed_is"}:
+    if r in {"name", "name_is", "nickname", "nickname_is", "birth_year", "birth_year_is", "birth_month", "birth_month_is", "age", "age_observed_is", "gender", "gender_identity", "gender_identity_is"}:
         return "identity"
     if r in {"study_field", "study_field_is", "education_field", "education_field_is"}:
         return "project"

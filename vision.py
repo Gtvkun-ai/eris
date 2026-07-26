@@ -1,4 +1,4 @@
-﻿import os
+import os
 import signal
 import subprocess
 import sys
@@ -7,7 +7,6 @@ import traceback
 
 from actions import ActionExecutor, ActionRouter
 from app_logging import configure_logging, get_logger
-from cortex import FeRenderer, NiEngine, TiGovernor
 from domain import Decision
 from llm import LlmService
 from llm.process_manager import RemoteModelProcessManager
@@ -16,6 +15,7 @@ from parser_grounding import DecisionParser
 from runtime.coordinator import RuntimeCoordinator
 from runtime.memory_semantic_parser_adapter import build_runtime_memory_semantic_parser
 from runtime.tts_engine import build_tts_engine
+from runtime.workspace_manager import ErisHome
 from telemetry import TelemetryService
 from transport import UdpTransport
 
@@ -40,6 +40,12 @@ class AttentionOverseer:
         else:
             self.logger.info("Remote API dang tat; local model runtime da bi go khoi runtime nay.")
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        self.eris_home = ErisHome()
+        memory_root = self.eris_home.path("memory") / "core"
+        memory_root.mkdir(parents=True, exist_ok=True)
+        # Mọi store legacy còn sót cũng phải ghi vào ErisLive, không được lén
+        # quay về source repo chỉ vì ai đó viết đường dẫn tương đối từ thời đồ đá.
+        os.environ["ERIS_MEMORY_CORE_DIR"] = str(memory_root)
         # Materialize runtime settings trước khi dựng provider clients. Nếu làm
         # sau, panel có đổi model observer thì process vẫn ngoan cố dùng env cũ
         # đến lần khởi động kế tiếp, một kiểu "live settings" khá giàu tính châm biếm.
@@ -118,7 +124,7 @@ class AttentionOverseer:
             )
 
         self.transport = UdpTransport("127.0.0.1", 4242, "127.0.0.1", 4243)
-        self.memory_core = MemoryCognitionCore(os.path.join(project_root, "memory_core"))
+        self.memory_core = MemoryCognitionCore(str(memory_root))
         try:
             memory_state = self.memory_core.load()
             packet = self.memory_core.recall("")
@@ -139,9 +145,6 @@ class AttentionOverseer:
         )
         self.decision_parser = DecisionParser(fallback_decision, logger=self.parse_logger)
         self.telemetry_service = TelemetryService()
-        self.ni_engine = NiEngine()
-        self.ti_governor = TiGovernor(logger=self.loop_logger)
-        self.fe_renderer = FeRenderer()
         self.action_executor = ActionExecutor(logger=self.action_logger)
         self.action_router = ActionRouter()
         self.coordinator = RuntimeCoordinator(
@@ -150,9 +153,6 @@ class AttentionOverseer:
             llm_service=self.llm_service,
             parser=self.decision_parser,
             telemetry_service=self.telemetry_service,
-            ni_engine=self.ni_engine,
-            ti_governor=self.ti_governor,
-            fe_renderer=self.fe_renderer,
             memory_core=self.memory_core,
             body_running_fn=self._is_body_running,
             action_executor=self.action_executor,
@@ -243,7 +243,8 @@ if __name__ == "__main__":
         "ERIS_LLM_PROMPT_HARD_CAP_TOKENS",
     )
 
-    lock_file = os.path.join(os.path.dirname(__file__), ".vision.lock")
+    runtime_home = ErisHome()
+    lock_file = str(runtime_home.path("state") / "vision.lock")
     lock = SingleInstanceLock(lock_file)
     try:
         lock.acquire()

@@ -253,12 +253,6 @@ public partial class UdpListener
 		}
 	}
 
-	private static float ReadJsonFloat(JsonElement root, string name)
-	{
-		return root.TryGetProperty(name, out JsonElement value) && value.TryGetSingle(out float parsed)
-			? parsed
-			: 0f;
-	}
 
 	private void OpenContextMenuFromLive2D(float screenX, float screenY)
 	{

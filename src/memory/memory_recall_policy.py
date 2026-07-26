@@ -16,10 +16,11 @@ Bản mới chỉ quyết định:
 Đây là điểm khác với policy cũ bị trộn parse + resolve + execute.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import re
 
 from .provenance_policy import GLOBAL_MEMORY_PROVENANCE_POLICY
+from .predicate_registry import PredicateRegistry, get_default_registry
 from .memory_query_ir import (
     MemorySourceKind,
     RawRecallResult,
@@ -41,8 +42,9 @@ class RecallPolicyConfig:
 class MemoryRecallSurfacePolicy:
     """Policy surface kết quả recall thành câu public."""
 
-    def __init__(self, config: RecallPolicyConfig | None = None) -> None:
+    def __init__(self, config: RecallPolicyConfig | None = None, *, registry: PredicateRegistry | None = None) -> None:
         self.config = config or RecallPolicyConfig()
+        self.registry = registry or get_default_registry()
 
     def surface(self, result: RawRecallResult) -> RecallAnswer:
         ir = result.ir
@@ -56,7 +58,7 @@ class MemoryRecallSurfacePolicy:
 
         if result.source == MemorySourceKind.SEMANTIC_MEMORY and not self.config.allow_semantic_fact_surface:
             return RecallAnswer.uncertain(
-                "Tôi có dấu hiệu ký ức semantic, nhưng không nên surface trực tiếp lúc này.",
+                "Tôi nhớ có thông tin liên quan, nhưng chưa đủ cơ sở để nói chắc.",
                 ir=ir,
                 debug_trace="semantic_surface_not_allowed",
             )
@@ -64,7 +66,7 @@ class MemoryRecallSurfacePolicy:
         if ir.surface == SurfaceMode.COUNT or result.count is not None:
             if result.confidence < self.config.count_min_confidence:
                 return RecallAnswer.uncertain(
-                    "Tôi chưa đủ chắc để đếm phần đó.",
+                    "Tôi chưa đếm chắc phần đó.",
                     ir=ir,
                     debug_trace="count_confidence_low",
                 )
@@ -84,7 +86,7 @@ class MemoryRecallSurfacePolicy:
                     gist_text = self._safe_public_text(result.gist)
                     if gist_text is None:
                         return RecallAnswer.uncertain(
-                            "Tôi có dấu vết, nhưng phần lấy ra đang ở dạng nội bộ nên không nên surface thủ công.",
+                            "Tôi có nhớ, nhưng dữ liệu lấy ra đang lỗi nên không muốn nói bừa.",
                             ir=ir,
                             debug_trace="raw_object_surface_blocked",
                         )
@@ -97,7 +99,7 @@ class MemoryRecallSurfacePolicy:
                         debug_trace=self._trace(result) + "|downgraded_to_gist",
                     )
                 return RecallAnswer.uncertain(
-                    "Tôi có dấu vết ký ức đó, nhưng không đủ chắc để quote nguyên văn.",
+                    "Tôi nhớ nội dung đó, nhưng không chắc từng chữ.",
                     ir=ir,
                     debug_trace="exact_confidence_low",
                 )
@@ -105,7 +107,7 @@ class MemoryRecallSurfacePolicy:
             text = self._safe_public_text(result.exact_text)
             if text is None:
                 return RecallAnswer.uncertain(
-                    "Tôi có dấu vết, nhưng phần lấy ra đang ở dạng nội bộ nên không nên surface thủ công.",
+                    "Tôi có nhớ, nhưng dữ liệu lấy ra đang lỗi nên không muốn nói bừa.",
                     ir=ir,
                     debug_trace="raw_object_surface_blocked",
                 )
@@ -126,14 +128,14 @@ class MemoryRecallSurfacePolicy:
         if result.gist:
             if result.confidence < self.config.gist_min_confidence:
                 return RecallAnswer.uncertain(
-                    "Tôi chỉ có gist rất yếu, nói ra sẽ dễ lệch.",
+                    "Tôi nhớ mang máng, nhưng nói ra lúc này dễ sai.",
                     ir=ir,
                     debug_trace="gist_confidence_low",
                 )
             gist_text = self._safe_public_text(result.gist)
             if gist_text is None:
                 return RecallAnswer.uncertain(
-                    "Tôi có dấu vết, nhưng phần lấy ra đang ở dạng nội bộ nên không nên surface thủ công.",
+                    "Tôi có nhớ, nhưng dữ liệu lấy ra đang lỗi nên không muốn nói bừa.",
                     ir=ir,
                     debug_trace="raw_object_surface_blocked",
                 )
@@ -155,7 +157,7 @@ class MemoryRecallSurfacePolicy:
             )
 
         return RecallAnswer.uncertain(
-            "Tôi tìm được dấu vết, nhưng không có nội dung đủ sạch để nói lại.",
+            "Tôi chưa lấy lại được phần ký ức đó.",
             ir=ir,
             debug_trace="recall_result_unrenderable",
         )
@@ -206,19 +208,17 @@ class MemoryRecallSurfacePolicy:
 
     def _missing_text(self, result: RawRecallResult) -> str:
         warnings = set(result.warnings)
-        if any(w.startswith("fact_not_found:user.birth_month") for w in warnings):
-            return "Tôi chưa có ký ức semantic đủ chắc về tháng sinh của bạn."
-        if any(w.startswith("fact_not_found:user.name") for w in warnings):
-            return "Tôi chưa có ký ức semantic đủ chắc về tên của bạn."
+        fact_warning = next((w for w in warnings if w.startswith("fact_not_found:")), "")
+        if fact_warning:
+            fact_key = fact_warning.split(":", 1)[1]
+            return self.registry.missing_text(fact_key)
         if "anchor_not_found" in warnings:
             return "Tôi không tìm thấy câu mốc trong phiên hiện tại."
         if "answer_node_not_found" in warnings:
-            return "Tôi tìm thấy câu hỏi mốc, nhưng không tìm thấy câu trả lời tương ứng đủ sạch."
+            return "Tôi tìm thấy câu hỏi mốc, nhưng không thấy câu trả lời tương ứng."
         if "target_node_not_found" in warnings:
             return "Tôi không tìm thấy lượt đó trong phiên hiện tại."
-        if any(w.startswith("fact_not_found:") for w in warnings):
-            return "Tôi có thể có dấu vết liên quan, nhưng chưa có ký ức đủ chắc để coi nó là fact ổn định."
-        return "Tôi chưa đủ chắc để lần lại ký ức đó."
+        return "Tôi chưa nhớ chắc phần đó."
 
     def _trace(self, result: RawRecallResult) -> str:
         ir = result.ir

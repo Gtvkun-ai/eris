@@ -25,6 +25,7 @@ kiến trúc hơn. Thế giới đã có đủ facade vô dụng rồi.
 """
 
 import time
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
@@ -45,6 +46,7 @@ from .memory_query_executor import MemoryQueryExecutor
 from .memory_recall_policy import MemoryRecallSurfacePolicy
 from .memory_turn_annotator import TurnAnnotator
 from .memory_turn_graph import TurnGraph
+from .predicate_registry import PredicateRegistry, get_default_registry
 
 
 @dataclass(slots=True)
@@ -97,25 +99,35 @@ class MemoryKernel:
         query_executor: MemoryQueryExecutor | None = None,
         surface_policy: MemoryRecallSurfacePolicy | None = None,
         turn_annotator: TurnAnnotator | None = None,
+        registry: PredicateRegistry | None = None,
+        embedding_index: Any | None = None,
     ) -> None:
         if core is None and not base_dir:
             raise ValueError("MemoryKernel cần base_dir hoặc core hiện có")
 
-        self.core = core or MemoryCognitionCore(str(base_dir), policy=commit_policy)
+        self.registry = registry or getattr(core, "registry", None) or get_default_registry()
+        self.core = core or MemoryCognitionCore(
+            str(base_dir),
+            policy=commit_policy,
+            registry=self.registry,
+            embedding_index=embedding_index,
+        )
         self.config = config or MemoryKernelConfig()
         self.semantic_parser = semantic_parser
 
         # fast_policy cố tình KHÔNG nhận semantic_parser.
         # Đây là policy cho hot path, không được gọi model local/remote.
-        self.fast_policy = MemoryCommitPolicy(semantic_parser=None)
+        self.fast_policy = MemoryCommitPolicy(semantic_parser=None, registry=self.registry)
 
         # digest_policy được quyền dùng parser đã nối, thường chạy ở worker nền.
-        self.digest_policy = MemoryCommitPolicy(semantic_parser=semantic_parser)
+        self.digest_policy = MemoryCommitPolicy(semantic_parser=semantic_parser, registry=self.registry)
 
-        self.query_compiler = query_compiler or MemoryQueryCompiler()
-        self.query_executor = query_executor or MemoryQueryExecutor()
-        self.surface_policy = surface_policy or MemoryRecallSurfacePolicy()
+        self.query_compiler = query_compiler or MemoryQueryCompiler(registry=self.registry)
+        self.query_executor = query_executor or MemoryQueryExecutor(registry=self.registry)
+        self.surface_policy = surface_policy or MemoryRecallSurfacePolicy(registry=self.registry)
         self.turn_annotator = turn_annotator or TurnAnnotator()
+        # Projection hồ sơ người dùng sống cạnh core, dùng chung semantic/episodic truth.
+        self.living_user = getattr(self.core, "living_user", None)
 
     @classmethod
     def from_existing_core(
@@ -124,6 +136,7 @@ class MemoryKernel:
         *,
         semantic_parser: Any | None = None,
         config: MemoryKernelConfig | None = None,
+        registry: PredicateRegistry | None = None,
     ) -> "MemoryKernel":
         """Bọc MemoryCognitionCore hiện có mà không migrate store ngay.
 
@@ -131,7 +144,7 @@ class MemoryKernel:
         nhưng các path mới gọi qua MemoryKernel.
         """
 
-        return cls(core=core, semantic_parser=semantic_parser, config=config)
+        return cls(core=core, semantic_parser=semantic_parser, config=config, registry=registry)
 
     # ------------------------------------------------------------------
     # Ingest path
@@ -217,6 +230,28 @@ class MemoryKernel:
             except Exception as exc:  # pragma: no cover - ingest không được giết chat cycle
                 warnings.append(f"commit_failed:{type(exc).__name__}:{exc}")
 
+        user_profile_debug: dict[str, Any] = {}
+        living_user = self.living_user
+        if living_user is not None and effective_evidence:
+            try:
+                observation = living_user.observe_turn(
+                    raw,
+                    evidence_ids=effective_evidence,
+                    context={**dict(context or {}), "source": source, "mode": mode},
+                )
+                user_profile_debug = {
+                    "applied": observation.applied,
+                    "rejected": observation.rejected,
+                    "operation_count": len(observation.operations),
+                }
+                # semantic_digest là lúc semantic claims vừa được làm giàu; đồng bộ
+                # projection ở đây để fact mới có mặt trong user context ngay.
+                if mode != "fast":
+                    sync_result = living_user.sync_semantic_memory()
+                    user_profile_debug["semantic_sync_changed"] = bool(sync_result.changed)
+            except Exception as exc:  # pragma: no cover - profile không được giết chat
+                warnings.append(f"living_user_observe_failed:{type(exc).__name__}:{exc}")
+
         return MemoryIngestResult(
             accepted=bool(commit_results),
             mode=mode,
@@ -230,6 +265,7 @@ class MemoryKernel:
                 "evidence_ids": effective_evidence,
                 "has_semantic_parser": self.semantic_parser is not None,
                 "policy": "fast_policy" if policy is self.fast_policy else "digest_policy",
+                "living_user": user_profile_debug,
             },
         )
 
@@ -380,7 +416,14 @@ class MemoryKernel:
             destructive=self.config.destructive_maintenance,
             llm_service=getattr(self, "_llm_service", None),
         )
-        return runner.run(budget=budget, reason=reason, destructive=destructive)
+        report = runner.run(budget=budget, reason=reason, destructive=destructive)
+        living_user = self.living_user
+        if living_user is not None and getattr(living_user.config, "auto_dream_on_maintenance", False):
+            try:
+                self.last_user_memory_dream = living_user.dream(reason=reason)
+            except Exception:
+                self.last_user_memory_dream = None
+        return report
 
     # ------------------------------------------------------------------
     # Compatibility helpers: để migration không phải sửa cả repo trong một nhát.
@@ -412,7 +455,128 @@ class MemoryKernel:
         self.core.save(snapshot)
 
     def render_context(self, *args: Any, **kwargs: Any) -> str:
-        return self.core.render_context(*args, **kwargs)
+        """Render memory context và ghép profile đúng ngữ cảnh.
+
+        Profile packet chỉ được thêm khi có record liên quan; vì vậy runtime cũ
+        không bị đổi prompt nếu user model còn rỗng.
+        """
+        core_kwargs = dict(kwargs)
+        for private_key in ("project_id", "session_id", "user_context_token_budget"):
+            core_kwargs.pop(private_key, None)
+        core_context = self.core.render_context(*args, **core_kwargs)
+        living_user = self.living_user
+        if living_user is None:
+            return core_context
+        query = ""
+        if args:
+            first = args[0]
+            query = str(getattr(first, "query", first) or "")
+        elif "query" in kwargs:
+            query = str(getattr(kwargs.get("query"), "query", kwargs.get("query")) or "")
+        try:
+            packet = living_user.compile_context(
+                query,
+                project_id=str(kwargs.get("project_id") or ""),
+                session_id=str(kwargs.get("session_id") or ""),
+                token_budget=int(kwargs.get("user_context_token_budget") or 900),
+            )
+            profile_context = packet.render_prompt_context()
+            if _is_user_memory_summary_query(query):
+                # Khi user hỏi trực tiếp "bạn nhớ gì về tôi", đưa bản summary
+                # có kiểm soát vào prompt. Không inject inferred/sensitive mặc định.
+                # Model chỉ việc diễn đạt tự nhiên, không phải tự đoán profile.
+                readable = living_user.render_summary(
+                    include_inferred=False,
+                    include_sensitive=False,
+                    limit=36,
+                )
+                profile_context = (
+                    f"{profile_context}\n\nMEMORY SUMMARY REQUEST:\n{readable}".strip()
+                    if profile_context
+                    else f"MEMORY SUMMARY REQUEST:\n{readable}"
+                )
+        except Exception:
+            profile_context = ""
+        if not profile_context:
+            return core_context
+        return f"{core_context}\n\n{profile_context}".strip() if core_context else profile_context
+
+    def compile_user_context(
+        self,
+        query: str,
+        *,
+        project_id: str = "",
+        session_id: str = "",
+        domain: str | None = None,
+        token_budget: int = 900,
+    ) -> Any:
+        """API tường minh cho caller cần structured profile packet."""
+        if self.living_user is None:
+            return None
+        return self.living_user.compile_context(
+            query,
+            project_id=project_id,
+            session_id=session_id,
+            domain=domain,
+            token_budget=token_budget,
+        )
+
+    def consolidate_user_session(
+        self,
+        turns: Any,
+        *,
+        session_id: str,
+        project_id: str = "",
+        metadata: Mapping[str, Any] | None = None,
+    ) -> Any:
+        if self.living_user is None:
+            return None
+        from .living_user import UserMemoryScope
+        scope = UserMemoryScope("project", project_id) if project_id else UserMemoryScope()
+        return self.living_user.consolidate_session(
+            turns,
+            session_id=session_id,
+            scope=scope,
+            metadata=metadata,
+        )
+
+    def user_memory_summary(self, *, include_sensitive: bool = False) -> dict[str, Any]:
+        if self.living_user is None:
+            return {"profile": {"records": []}, "recent_episodes": []}
+        return self.living_user.summary(include_sensitive=include_sensitive)
+
+    def render_user_memory_summary(
+        self,
+        *,
+        include_inferred: bool = False,
+        include_sensitive: bool = False,
+        limit: int = 36,
+    ) -> str:
+        if self.living_user is None:
+            return "Tôi chưa có đủ thông tin bền vững để tổng hợp về bạn."
+        return self.living_user.render_summary(
+            include_inferred=include_inferred,
+            include_sensitive=include_sensitive,
+            limit=limit,
+        )
+
+    def explain_user_memory(self, path: str, *, project_id: str = "") -> Any:
+        return () if self.living_user is None else self.living_user.explain(path, project_id=project_id)
+
+    def forget_user_memory(self, path_or_prefix: str, *, project_id: str = "", hard: bool = False) -> int:
+        return 0 if self.living_user is None else self.living_user.forget(path_or_prefix, project_id=project_id, hard=hard)
+
+    def correct_user_memory(
+        self,
+        path: str,
+        value: Any,
+        *,
+        evidence_ids: list[str],
+        project_id: str = "",
+    ) -> Any:
+        if self.living_user is None:
+            return None
+        return self.living_user.correct(path, value, evidence_ids=evidence_ids, project_id=project_id)
 
     def lookup_fact(self, fact_key: str) -> Any:
         return self.core.lookup_fact(fact_key)
@@ -486,6 +650,29 @@ class MemoryKernel:
             "llm_called": bool(getattr(debug, "llm_called", False)) if debug is not None else False,
             "notes": list(getattr(debug, "notes", ()) or ()) if debug is not None else [],
         }
+
+
+def _fold_memory_query(text: str) -> str:
+    """Chuẩn hóa nhẹ để nhận câu hỏi summary có/không dấu."""
+    raw = unicodedata.normalize("NFKD", str(text or "").lower())
+    return " ".join("".join(ch for ch in raw if not unicodedata.combining(ch)).split())
+
+
+def _is_user_memory_summary_query(query: str) -> bool:
+    """Nhận lệnh hỏi tổng quan memory mà không phụ thuộc một câu cố định."""
+    text = _fold_memory_query(query)
+    phrases = (
+        "ban nho gi ve toi",
+        "ban biet gi ve toi",
+        "nho gi ve tui",
+        "biet gi ve tui",
+        "tong hop ve toi",
+        "tong hop ve tui",
+        "memory cua toi",
+        "what do you remember about me",
+        "what do you know about me",
+    )
+    return any(phrase in text for phrase in phrases)
 
 
 # Tên alias để migrate từ MemoryCognitionCore không bị gãy import ngay.

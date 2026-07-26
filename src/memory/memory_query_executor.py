@@ -16,6 +16,8 @@ Nếu thiếu dữ liệu hoặc query mơ hồ, trả RawRecallResult.missing()
 
 from typing import Any, Optional
 
+from dataclasses import dataclass, field
+
 from .memory_query_ir import (
     ActRef,
     MemoryQueryIR,
@@ -27,10 +29,14 @@ from .memory_query_ir import (
 )
 from .memory_turn_graph import TurnGraph, TurnNode
 from .name_validation import is_plausible_user_name
+from .predicate_registry import PredicateRegistry, get_default_registry
 
 
+@dataclass(slots=True)
 class MemoryQueryExecutor:
     """Thực thi IR trên graph và memory_core."""
+
+    registry: PredicateRegistry = field(default_factory=get_default_registry)
 
     def execute(
         self,
@@ -335,7 +341,9 @@ class MemoryQueryExecutor:
         if fact_key == "user.study_field" and value_text:
             return f"bạn từng nhắc việc học/lĩnh vực học: {value_text}"
         if value_text:
-            return f"{fact_key}: {value_text}" if fact_key else value_text
+            spec = self.registry.by_fact_key(fact_key)
+            label = spec.display_name if spec is not None else "thông tin"
+            return f"{label}: {value_text}" if fact_key else value_text
         return claim if claim and len(claim) <= 160 else ""
 
     def _lookup_fact(self, memory_core: Any, fact_key: str) -> Any:
@@ -373,21 +381,13 @@ class MemoryQueryExecutor:
         return None
 
     def _format_fact(self, fact_key: str, value: Any) -> str:
-        if fact_key == "user.name":
-            return f"Tên bạn là {value}."
-        if fact_key == "user.birth_month":
-            return f"bạn sinh vào tháng {value}."
-        if fact_key == "user.current_location":
-            return f"bạn hiện ở {value}."
-        if fact_key == "user.living_location":
-            return f"Theo những gì bạn đã nói, bạn đang sống ở {value}."
-        if fact_key == "user.hometown":
-            return f"Quê của bạn là {value}."
-        if fact_key == "user.preference.location":
-            return f"bạn từng nói thích {value}."
-        if fact_key == "user.past_location":
-            return f"Trước đây bạn từng ở {value}."
-        return f"{fact_key}: {value}"
+        """Surface fact qua registry duy nhất.
+
+        Executor không còn phải biết tên, tháng sinh, giới tính hay thuộc tính mới
+        nào. Thêm predicate mới ở registry là đủ để query và trả lời tự nhiên.
+        """
+
+        return self.registry.render_fact(fact_key, value)
 
     # ------------------------------------------------------------------
     # Summary

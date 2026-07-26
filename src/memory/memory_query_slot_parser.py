@@ -26,6 +26,8 @@ from typing import Optional
 import re
 import unicodedata
 
+from .predicate_registry import PredicateRegistry, get_default_registry
+
 from .memory_query_ir import (
     ActRef,
     MemoryQueryIR,
@@ -67,12 +69,18 @@ class MemoryQuerySlotParser:
     """
     Parser slot nhẹ.
 
+    Fact query được resolve qua PredicateRegistry mở. Hàm infer_fact_key cũ chỉ
+    còn là compatibility wrapper, không còn giữ một danh sách thuộc tính riêng.
+
     Dùng cho tiếng Việt thân mật kiểu:
     - "câu hỏi thứ 2 tôi từng hỏi là gì"
     - "câu trả lời của em cho câu hỏi thứ 3"
     - "3 câu hỏi trước đó của tôi"
     - "tôi sinh tháng mấy"
     """
+
+    def __init__(self, *, registry: PredicateRegistry | None = None) -> None:
+        self.registry = registry or get_default_registry()
 
     def parse(self, text: str) -> SlotParseResult:
         raw = text or ""
@@ -93,7 +101,8 @@ class MemoryQuerySlotParser:
     def _extract_signals(self, raw: str, norm: str) -> list[SlotSignal]:
         signals: list[SlotSignal] = []
 
-        self_disclosure = infer_self_disclosure_fact(norm)
+        disclosure_resolution = self.registry.resolve_disclosure(raw)
+        self_disclosure = (disclosure_resolution.fact_key, disclosure_resolution.score) if disclosure_resolution else None
         if self_disclosure:
             signals.append(
                 SlotSignal(
@@ -131,9 +140,13 @@ class MemoryQuerySlotParser:
         if relation:
             signals.append(SlotSignal("relation", relation, relation[1], "relation_phrase"))
 
-        fact_key = infer_fact_key(norm)
+        fact_key = _infer_profile_query(norm)
+        if fact_key is None:
+            resolution = self.registry.resolve_fact_query(raw)
+            if resolution is not None:
+                fact_key = (resolution.fact_key, resolution.score)
         if fact_key:
-            signals.append(SlotSignal("fact_key", fact_key, fact_key[1], "fact_phrase"))
+            signals.append(SlotSignal("fact_key", fact_key, fact_key[1], "predicate_registry"))
 
         if asks_count(norm):
             signals.append(SlotSignal("intent", QueryIntent.RECALL_COUNT, 0.86, "count_phrase"))
@@ -406,9 +419,9 @@ def _looks_like_interpretive_fact_question(norm: str) -> bool:
     return any(marker in norm for marker in interpretive_markers)
 
 
-def infer_fact_key(norm: str) -> Optional[tuple[str, float]]:
-    # Gợi ý fact_key, không đọc memory tại đây. Câu hỏi diễn giải phải đi qua LLM,
-    # không được memory adapter cướp lượt chỉ vì có cụm "tên tôi".
+def _infer_profile_query(norm: str) -> Optional[tuple[str, float]]:
+    """Profile tổng hợp là query ảo, không phải một predicate lưu trữ."""
+
     if _looks_like_interpretive_fact_question(norm):
         return None
     if any(m in norm for m in (
@@ -418,47 +431,32 @@ def infer_fact_key(norm: str) -> Optional[tuple[str, float]]:
         "ban nho toi la ai", "ban nho tui la ai", "ban biet toi la ai", "ban biet tui la ai",
     )):
         return ("user.profile", 0.86)
-    if any(m in norm for m in (
-        "toi ten gi", "tui ten gi", "minh ten gi",
-        "ten toi", "ten tui", "ten minh",
-        "ten cua toi", "ten cua tui", "ten cua minh",
-        "toi ten la gi", "tui ten la gi", "minh ten la gi",
-        "nho ten toi", "nho ten tui", "nho ten minh",
-    )):
-        return ("user.name", 0.88)
-    if any(m in norm for m in ("toi sinh thang may", "thang sinh", "sinh thang may", "birthday month")):
-        return ("user.birth_month", 0.90)
-    if any(m in norm for m in ("que toi o dau", "que cua toi", "toi que o dau", "hometown")):
-        return ("user.hometown", 0.88)
-    if any(m in norm for m in ("toi dang o dau", "toi hien o dau", "hien tai toi o dau")):
-        return ("user.current_location", 0.82)
-    if any(m in norm for m in ("toi song o dau", "noi o cua toi", "living location", "current residence")):
-        return ("user.living_location", 0.82)
-    if any(m in norm for m in ("toi thich noi nao", "toi thich o dau", "dia diem toi thich", "location preference")):
-        return ("user.preference.location", 0.78)
-    if any(m in norm for m in ("truoc day toi o dau", "qua khu toi o dau", "toi tung o dau")):
-        return ("user.past_location", 0.78)
     return None
+
+
+def infer_fact_key(norm: str) -> Optional[tuple[str, float]]:
+    """Compatibility API cho code cũ.
+
+    Query mới được resolve qua registry, vì vậy thêm predicate không cần sửa hàm
+    này. `norm` có thể là text đã bỏ dấu hoặc raw text.
+    """
+
+    profile = _infer_profile_query(normalize_vi(norm))
+    if profile is not None:
+        return profile
+    resolution = get_default_registry().resolve_fact_query(norm)
+    if resolution is None:
+        return None
+    return (resolution.fact_key, resolution.score)
 
 
 def infer_self_disclosure_fact(norm: str) -> Optional[tuple[str, float]]:
-    if _looks_like_fact_update_disclosure(norm):
-        return ("user.name", 0.96)
-    if _looks_like_name_disclosure(norm):
-        return ("user.name", 0.96)
-    if _looks_like_birth_month_disclosure(norm):
-        return ("user.birth_month", 0.94)
-    if _looks_like_hometown_disclosure(norm):
-        return ("user.hometown", 0.86)
-    if _looks_like_living_location_disclosure(norm):
-        return ("user.living_location", 0.84)
-    if _looks_like_current_location_disclosure(norm):
-        return ("user.current_location", 0.82)
-    if _looks_like_location_preference_disclosure(norm):
-        return ("user.preference.location", 0.76)
-    if _looks_like_past_location_disclosure(norm):
-        return ("user.past_location", 0.80)
-    return None
+    """Compatibility wrapper; grammar thật nằm trong PredicateRegistry."""
+
+    resolution = get_default_registry().resolve_disclosure(norm)
+    if resolution is None:
+        return None
+    return (resolution.fact_key, resolution.score)
 
 
 def asks_count(norm: str) -> bool:
@@ -577,144 +575,8 @@ def parse_vi_number(value: str) -> Optional[int]:
     return _VI_NUMBERS.get(value)
 
 
-def _looks_like_name_disclosure(norm: str) -> bool:
-    if any(marker in norm for marker in (
-        "toi ten gi", "tui ten gi", "minh ten gi",
-        "ten toi", "ten tui", "ten minh",
-        "ten cua toi", "ten cua tui", "ten cua minh",
-        "toi ten la gi", "tui ten la gi", "minh ten la gi",
-        "nho ten toi", "nho ten tui", "nho ten minh",
-        "toi la ai", "tui la ai", "minh la ai",
-        "nho toi la ai", "nho tui la ai", "nho minh la ai",
-        "biet toi la ai", "biet tui la ai", "biet minh la ai",
-    )):
-        return False
-    if re.search(r"\btoi\s+ten\s+(?:day\s+du\s+)?la\s+[a-z0-9_ -]{2,60}\b", norm):
-        return True
-    if re.search(r"\bten\s+day\s+du\s+(?:cua\s+)?toi\s+la\s+[a-z0-9_ -]{2,60}\b", norm):
-        return True
-    # P0: tiếng Việt chat hay rút gọn "tôi tên Tín" thay vì "tôi tên là Tín".
-    # Nếu không nhận dạng dạng này là fact disclosure, compiler sẽ cho semantic
-    # recall xử lý và có thể biến lượt cập nhật tên thành câu hỏi memory.
-    if re.search(r"\b(?:toi|minh|tui|tao|to|em|ban)\s+ten\s+(?!gi\b|la\s+gi\b|la\b)[a-z0-9_ -]{2,40}\b", norm):
-        return True
-    if re.search(r"\bten\s+(?:cua\s+)?toi\s+la\s+[a-z0-9_ -]{2,40}\b", norm):
-        return True
-    if re.search(r"\bgoi\s+toi\s+la\s+[a-z0-9_ -]{2,40}\b", norm):
-        return True
-    return False
-
-
-UPDATE_FACT_PATTERNS = (
-    "toi ten la",
-    "toi la",
-    "toi moi doi ten",
-    "doi ten sang",
-    "tu gio goi toi la",
-    "nho la toi",
-    "nho rang toi",
-    "hay nho la toi",
-    "hay nho rang toi",
-    "ten toi la",
-    "ten cua toi la",
-    "toi ten day du la",
-    "ten day du toi la",
-    "ten day du cua toi la",
-)
-
 
 def user_is_declaring_or_updating_fact(text: str) -> bool:
-    norm = normalize_vi(text)
-    if not norm:
-        return False
-    if _looks_like_fact_update_question(norm, raw=text):
-        return False
-    if infer_self_disclosure_fact(norm):
-        return True
-    return any(pattern in norm for pattern in UPDATE_FACT_PATTERNS)
+    """True khi lượt hiện tại là self-disclosure/update, không phải memory query."""
 
-
-def _looks_like_fact_update_disclosure(norm: str) -> bool:
-    if _looks_like_fact_update_question(norm, raw=norm):
-        return False
-    return any(
-        re.search(pattern, norm)
-        for pattern in (
-            r"\btoi\s+moi\s+doi\s+ten\s+(?:sang|thanh)\s+[a-z0-9_ -]{2,60}\b",
-            r"\bdoi\s+ten\s+(?:sang|thanh)\s+[a-z0-9_ -]{2,60}\b",
-            r"\btu\s+gio\s+(?:cu\s+)?goi\s+toi\s+la\s+[a-z0-9_ -]{2,60}\b",
-            r"\bnho\s+(?:la|rang)\s+toi\s+(?:ten\s+la|la)\s+[a-z0-9_ -]{2,60}\b",
-            r"\bhay\s+nho\s+(?:la|rang)\s+toi\s+(?:ten\s+la|la)\s+[a-z0-9_ -]{2,60}\b",
-        )
-    )
-
-
-def _looks_like_fact_update_question(norm: str, *, raw: str) -> bool:
-    remember_disclosure = ("nho la toi", "nho rang toi", "hay nho la toi", "hay nho rang toi")
-    if any(marker in norm for marker in remember_disclosure):
-        return False
-    if "?" in str(raw or ""):
-        return True
-    question_markers = (
-        "toi ten gi",
-        "tui ten gi",
-        "minh ten gi",
-        "ten toi la gi",
-        "ten tui la gi",
-        "ten minh la gi",
-        "toi la ai",
-        "tui la ai",
-        "minh la ai",
-        "toi la gi",
-        "tui la gi",
-        "minh la gi",
-        "toi thich gi",
-        "toi thich gi nhi",
-        "toi sinh thang may",
-        "toi dang o dau",
-        "toi hien o dau",
-    )
-    return any(re.search(r"(?:^|\s)" + re.escape(marker) + r"(?:\s|$)", norm) for marker in question_markers)
-
-
-def _looks_like_birth_month_disclosure(norm: str) -> bool:
-    if any(marker in norm for marker in ("toi sinh thang may", "thang sinh", "sinh thang may", "birthday month")):
-        return False
-    return bool(
-        re.search(
-            r"\b(?:toi\s+)?sinh\s+(?:vao\s+)?thang\s+([0-9]{1,2}|mot|hai|ba|bon|tu|nam|sau|bay|tam|chin|muoi|muoi mot|muoi hai)\b",
-            norm,
-        )
-    )
-
-
-def _looks_like_hometown_disclosure(norm: str) -> bool:
-    if any(marker in norm for marker in ("que toi o dau", "que cua toi", "hometown")):
-        return False
-    return bool(re.search(r"\b(?:toi\s+)?que\s+(?:o|tai|la)?\s+.{2,60}", norm))
-
-
-def _looks_like_living_location_disclosure(norm: str) -> bool:
-    if any(marker in norm for marker in ("toi song o dau", "noi o cua toi", "living location")):
-        return False
-    return bool(re.search(r"\btoi\s+(?:hien\s+)?(?:dang\s+)?(?:song|cu\s+tru)\s+(?:o|tai)?\s+.{2,60}", norm))
-
-
-def _looks_like_location_preference_disclosure(norm: str) -> bool:
-    if any(marker in norm for marker in ("toi thich noi nao", "toi thich o dau", "dia diem toi thich")):
-        return False
-    return bool(re.search(r"\btoi\s+(?:khong\s+)?thich\s+(?:o|toi|den|di\s+den)?\s+.{2,60}", norm))
-
-
-def _looks_like_current_location_disclosure(norm: str) -> bool:
-    if any(marker in norm for marker in ("toi dang o dau", "toi hien o dau", "toi o dau")):
-        return False
-    return bool(re.search(r"\btoi\s+(?:hien\s+)?(?:dang\s+)?o\s+.{2,60}", norm))
-
-
-def _looks_like_past_location_disclosure(norm: str) -> bool:
-    if any(marker in norm for marker in ("truoc day toi o dau", "qua khu toi o dau", "toi tung o dau")):
-        return False
-    if "o dau" in norm:
-        return False
-    return bool(re.search(r"\b(?:qua\s+khu\s+)?toi\s+(?:tung\s+)?(?:da\s+)?o\s+.{2,60}", norm))
+    return get_default_registry().resolve_disclosure(text) is not None

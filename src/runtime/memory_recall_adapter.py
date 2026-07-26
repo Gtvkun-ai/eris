@@ -34,7 +34,7 @@ except ImportError:
     from runtime.session_turn_ledger import SessionTurnLedger
 
 
-SemanticLookupFn = Callable[[MemoryKind], Optional[Any]]
+SemanticLookupFn = Callable[[Any], Optional[Any]]
 EpisodicLookupFn = Callable[[str], Optional[Any]]
 
 _FACT_KEY_TO_MEMORY_KIND: dict[str, MemoryKind] = {
@@ -257,11 +257,9 @@ class _MemoryCoreProxy:
             return None
 
         kind = _FACT_KEY_TO_MEMORY_KIND.get(str(fact_key or ""))
-        if kind is None:
-            return None
-
+        lookup_key: Any = kind if kind is not None else str(fact_key or "")
         try:
-            return _clean_public_fact_value(self.semantic_lookup_fn(kind))
+            return _clean_public_fact_value(self.semantic_lookup_fn(lookup_key))
         except Exception:
             return None
 

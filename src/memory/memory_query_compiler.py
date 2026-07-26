@@ -34,6 +34,7 @@ from .memory_query_slot_parser import MemoryQuerySlotParser, user_is_declaring_o
 from .memory_query_semantics import MemoryQuerySemanticHintEngine, SemanticQueryHint
 from .memory_query_llm_parser import MemoryQueryLLMParser
 from .memory_query_repair import MemoryQueryRepairStore
+from .predicate_registry import PredicateRegistry, get_default_registry
 
 
 @dataclass(slots=True)
@@ -68,9 +69,24 @@ class MemoryQueryCompiler:
         semantic_engine: Optional[MemoryQuerySemanticHintEngine] = None,
         llm_parser: Optional[MemoryQueryLLMParser] = None,
         repair_store: Optional[MemoryQueryRepairStore] = None,
+        registry: PredicateRegistry | None = None,
     ) -> None:
-        self.slot_parser = slot_parser or MemoryQuerySlotParser()
-        self.semantic_engine = semantic_engine or MemoryQuerySemanticHintEngine()
+        self.registry = registry or get_default_registry()
+        self.slot_parser = slot_parser or MemoryQuerySlotParser(registry=self.registry)
+        if semantic_engine is None:
+            provider = None
+            try:
+                from .embedding_index import get_shared_embedding_index
+
+                provider = get_shared_embedding_index()
+            except Exception:
+                # Query compiler vẫn chạy lexical nếu dependency/model chưa sẵn.
+                provider = None
+            semantic_engine = MemoryQuerySemanticHintEngine(
+                embedding_provider=provider,
+                registry=self.registry,
+            )
+        self.semantic_engine = semantic_engine
         self.llm_parser = llm_parser or MemoryQueryLLMParser()
         self.repair_store = repair_store or MemoryQueryRepairStore()
 

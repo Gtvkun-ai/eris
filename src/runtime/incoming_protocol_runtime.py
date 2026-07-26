@@ -108,6 +108,30 @@ class IncomingProtocolRuntimeMixin:
                     debug("[phase7] panel delivery mark failed: %s", exc)
 
 
+    def _handle_memory_panel_request(self, msg: dict) -> None:
+        """Đọc/sửa Living User Memory qua panel Godot.
+
+        Handler luôn gửi snapshot mới sau thao tác để UI không phải tự đoán state.
+        Payload nhạy cảm bị loại tại runtime, không chỉ ẩn bằng CSS phía client.
+        """
+        from runtime.living_user_panel import handle_memory_panel_request
+
+        request_id = str(msg.get("request_id", "") or "")
+        kernel = getattr(self, "memory_kernel", None)
+        living_user = getattr(kernel, "living_user", None)
+        result = handle_memory_panel_request(living_user, msg)
+        self._send_runtime_json({
+            "type": "memory_panel_ack",
+            "parse_mode": "memory_panel_ack",
+            "should_speak": False,
+            "request_id": request_id,
+            "action": str(msg.get("action", "snapshot") or "snapshot"),
+            "status": result.status,
+            "message": result.message,
+            "memory_panel": result.payload,
+        }, channel="memory_panel")
+
+
     def _handle_phase7_validation_control(self, msg: dict) -> None:
         """Control protocol nhỏ để chạy Phase 7 trên máy thật qua UDP 4243."""
 

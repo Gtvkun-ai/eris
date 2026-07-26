@@ -786,7 +786,7 @@ public partial class UdpListener : Node2D
 		StyleSettingsSingleLineLabel(hint);
 		card.AddChild(hint);
 
-		_settingsProviderSelect = AddSettingsOptionRow(card, 80f, "Provider", new[] { "gemini", "groq", "openai_compatible" }, RemoteApiProvider);
+		_settingsProviderSelect = AddSettingsOptionRow(card, 80f, "Provider", new[] { "gemini", "groq", "openai_compatible", "deepseek" }, RemoteApiProvider);
 		_settingsModelInput = AddSettingsLineEditRow(card, 124f, "Model", RemoteApiModelName);
 		_settingsBaseUrlInput = AddSettingsLineEditRow(card, 168f, "Base URL", RemoteApiBaseUrl);
 
@@ -2429,6 +2429,15 @@ public partial class UdpListener : Node2D
 			if (string.IsNullOrWhiteSpace(RemoteApiModelName) || RemoteApiModelName.Contains("gemini", StringComparison.OrdinalIgnoreCase) || RemoteApiModelName.Contains("gpt-", StringComparison.OrdinalIgnoreCase))
 				RemoteApiModelName = "llama-3.1-8b-instant";
 			RemoteApiProvider = "groq";
+			return;
+		}
+		if (normalized == "deepseek")
+		{
+			if (string.IsNullOrWhiteSpace(RemoteApiBaseUrl) || !RemoteApiBaseUrl.Contains("deepseek.com", StringComparison.OrdinalIgnoreCase))
+				RemoteApiBaseUrl = "https://api.deepseek.com";
+			if (string.IsNullOrWhiteSpace(RemoteApiModelName) || !RemoteApiModelName.Contains("deepseek"))
+				RemoteApiModelName = "deepseek-chat";
+			RemoteApiProvider = "deepseek";
 			return;
 		}
 		if (normalized == "openai_compatible")

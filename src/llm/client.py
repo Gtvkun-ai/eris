@@ -530,7 +530,10 @@ class OpenAICompatibleClient:
             else:
                 payload["max_tokens"] = max_tokens
         if response_format is not None:
-            payload["response_format"] = response_format
+            if deepseek_request and response_format.get("type") == "json_schema":
+                payload["response_format"] = {"type": "json_object"}
+            else:
+                payload["response_format"] = response_format
         if grammar is not None:
             payload["grammar"] = grammar
 

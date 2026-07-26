@@ -1,0 +1,476 @@
+# -*- coding: utf-8 -*-
+"""Persistence và mutation engine cho living user profile.
+
+Store chỉ nhận ``ProfileOperation`` đã được validator thông qua. Nó không gọi LLM,
+không đoán tâm lý và không tự tạo nội dung. Nhờ vậy mọi thay đổi đều audit được,
+undo được và có thể giải thích bằng evidence.
+"""
+from __future__ import annotations
+
+import json
+import os
+import threading
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Iterable, Mapping
+
+from memory.json_store_io import atomic_write_json, locked_path
+
+from .models import (
+    ProfileOperation,
+    ProfileRecord,
+    UserMemoryScope,
+    clamp01,
+    normalize_path,
+    now_ts,
+    value_fingerprint,
+)
+
+SCHEMA_VERSION = 2
+
+
+@dataclass(slots=True)
+class UserProfileStoreConfig:
+    max_records: int = 320
+    max_history: int = 40
+    autosave: bool = True
+    inferred_decay_per_day: float = 0.006
+    observed_decay_per_day: float = 0.002
+    explicit_decay_per_day: float = 0.0
+    forget_after_days: float = 120.0
+    drop_below_confidence: float = 0.08
+    sensitive_requires_explicit: bool = True
+    forbidden_path_fragments: tuple[str, ...] = (
+        "password", "credential", "api_key", "secret_key", "access_token", "refresh_token",
+    )
+
+
+@dataclass(slots=True)
+class ApplyResult:
+    changed: bool
+    record_ids: tuple[str, ...] = ()
+    rejected: tuple[str, ...] = ()
+    version: int = 0
+
+
+class UserProfileStore:
+    """Kho profile canonical, versioned và thread-safe."""
+
+    def __init__(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        config: UserProfileStoreConfig | None = None,
+    ) -> None:
+        self.path = Path(path)
+        self.config = config or UserProfileStoreConfig()
+        self._records: dict[str, ProfileRecord] = {}
+        self._history: list[dict[str, Any]] = []
+        self._audit: list[dict[str, Any]] = []
+        self._version = 0
+        self._lock = threading.RLock()
+        self.load()
+
+    @property
+    def version(self) -> int:
+        return self._version
+
+    def all(self, *, include_inactive: bool = False) -> tuple[ProfileRecord, ...]:
+        records = list(self._records.values())
+        if not include_inactive:
+            records = [r for r in records if r.is_current]
+        return tuple(sorted(records, key=lambda r: (-r.trust_weight, -r.updated_at, r.path)))
+
+    def get(self, path: str, *, scope: UserMemoryScope | None = None, include_inactive: bool = False) -> tuple[ProfileRecord, ...]:
+        key = normalize_path(path)
+        records = [r for r in self._records.values() if r.path == key]
+        if scope is not None:
+            records = [r for r in records if r.scope.identity == scope.identity]
+        if not include_inactive:
+            records = [r for r in records if r.is_current]
+        return tuple(sorted(records, key=lambda r: (-r.trust_weight, -r.updated_at)))
+
+    def query_prefix(self, prefix: str, *, scope: UserMemoryScope | None = None) -> tuple[ProfileRecord, ...]:
+        root = normalize_path(prefix)
+        return tuple(
+            r for r in self.all()
+            if (r.path == root or r.path.startswith(root + ".")) and (scope is None or r.scope.matches(scope))
+        )
+
+    def snapshot(self, *, include_sensitive: bool = False, limit: int = 120) -> dict[str, Any]:
+        records = [
+            r for r in self.all()
+            if include_sensitive or r.sensitivity not in {"private", "sensitive"}
+        ][: max(0, limit)]
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "version": self._version,
+            "record_count": len(records),
+            "records": [r.to_dict() for r in records],
+        }
+
+    def apply(self, operations: Iterable[ProfileOperation], *, checkpoint_reason: str = "") -> ApplyResult:
+        ops = tuple(operations)
+        if not ops:
+            return ApplyResult(False, version=self._version)
+        changed_ids: list[str] = []
+        rejected: list[str] = []
+        with self._lock:
+            before = [r.to_dict() for r in self.all(include_inactive=True)]
+            for op in ops:
+                ok, ids, reason = self._apply_one(op)
+                if ok:
+                    changed_ids.extend(ids)
+                    self._audit.append({"at": now_ts(), "operation": self._audit_safe_operation(op), "record_ids": list(ids)})
+                else:
+                    rejected.append(reason)
+            if changed_ids:
+                self._version += 1
+                self._history.append({
+                    "version": self._version,
+                    "at": now_ts(),
+                    "reason": checkpoint_reason or "profile_operations",
+                    "records_before": before,
+                })
+                self._history = self._history[-self.config.max_history :]
+                self._trim()
+                if self.config.autosave:
+                    self.save()
+        return ApplyResult(bool(changed_ids), tuple(dict.fromkeys(changed_ids)), tuple(rejected), self._version)
+
+    def _apply_one(self, op: ProfileOperation) -> tuple[bool, tuple[str, ...], str]:
+        if not op.path:
+            return False, (), "empty_path"
+        if any(fragment in op.path for fragment in self.config.forbidden_path_fragments):
+            return False, (), f"forbidden_secret_path:{op.path}"
+        if not op.evidence_ids and op.op not in {"archive", "delete", "weaken"}:
+            return False, (), f"missing_evidence:{op.path}"
+        if self.config.sensitive_requires_explicit and op.sensitivity == "sensitive" and op.explicitness != "explicit":
+            return False, (), f"sensitive_not_explicit:{op.path}"
+
+        matches = self._match_records(op)
+        now = now_ts()
+
+        if op.op in {"archive", "delete", "supersede"}:
+            if not matches:
+                return False, (), f"target_not_found:{op.path}"
+            status = "deleted" if op.op == "delete" else ("archived" if op.op == "archive" else "superseded")
+            for record in matches:
+                record.status = status  # type: ignore[assignment]
+                record.updated_at = now
+                record.metadata["mutation_reason"] = op.reason
+            return True, tuple(r.id for r in matches), ""
+
+        if op.op == "weaken":
+            if not matches:
+                return False, (), f"target_not_found:{op.path}"
+            for record in matches:
+                record.confidence = clamp01(record.confidence - max(0.03, 0.35 * op.confidence))
+                record.updated_at = now
+                if record.confidence < self.config.drop_below_confidence:
+                    record.status = "archived"
+            return True, tuple(r.id for r in matches), ""
+
+        if op.op == "merge":
+            if len(matches) < 2:
+                return False, (), f"merge_needs_multiple:{op.path}"
+            primary = max(matches, key=lambda r: (r.trust_weight, r.recurrence, r.updated_at))
+            evidence = list(primary.evidence_ids)
+            for record in matches:
+                if record.id == primary.id:
+                    continue
+                evidence.extend(record.evidence_ids)
+                record.status = "superseded"
+                record.updated_at = now
+                record.metadata["merged_into"] = primary.id
+            primary.evidence_ids = tuple(dict.fromkeys((*evidence, *op.evidence_ids)))[:96]
+            primary.recurrence += sum(r.recurrence for r in matches if r.id != primary.id)
+            primary.confidence = clamp01(max(primary.confidence, op.confidence) + 0.04)
+            primary.updated_at = now
+            return True, tuple(r.id for r in matches), ""
+
+        existing = self._best_match(op, matches)
+        if existing is not None and self._same_value(existing.value, op.value):
+            new_evidence = tuple(eid for eid in op.evidence_ids if eid not in existing.evidence_ids)
+            if not new_evidence:
+                return False, (), f"duplicate_evidence:{op.path}"
+            existing.recurrence += 1
+            existing.confidence = clamp01(max(existing.confidence * 0.97, op.confidence) + min(0.08, existing.recurrence * 0.008))
+            existing.evidence_ids = tuple(dict.fromkeys((*existing.evidence_ids, *new_evidence)))[:96]
+            existing.updated_at = now
+            existing.last_confirmed_at = now
+            existing.metadata.setdefault("reinforcement_sources", [])
+            sources = list(existing.metadata.get("reinforcement_sources") or [])
+            if op.source and op.source not in sources:
+                sources.append(op.source)
+            existing.metadata["reinforcement_sources"] = sources[-20:]
+            return True, (existing.id,), ""
+
+        # Suy luận yếu không được ghi đè fact user nói rõ. Khi evidence xung đột
+        # nhưng chưa đủ mạnh, giữ một record disputed để dreaming/review xử lý sau.
+        active_single = [
+            record for record in self._records.values()
+            if record.path == op.path and record.scope.identity == op.scope.identity
+            and record.status == "active" and record.cardinality == "single"
+        ] if op.cardinality == "single" else []
+        conflicting = [record for record in active_single if not self._same_value(record.value, op.value)]
+        if conflicting and not self._may_supersede(op, conflicting):
+            disputed = self._new_record(op, now=now, status="disputed")
+            disputed.metadata["conflicts_with"] = [record.id for record in conflicting]
+            self._records[disputed.id] = disputed
+            return True, (disputed.id,), ""
+
+        # Single-valued update phải giữ lịch sử: mark record cũ là superseded.
+        superseded_ids: list[str] = []
+        if op.cardinality == "single":
+            for record in active_single:
+                record.status = "superseded"
+                record.valid_until = now
+                record.updated_at = now
+                record.metadata["superseded_by_operation"] = op.reason or op.source
+                superseded_ids.append(record.id)
+
+        record = self._new_record(op, now=now, status="active")
+        self._records[record.id] = record
+        return True, tuple((*superseded_ids, record.id)), ""
+
+    def _new_record(self, op: ProfileOperation, *, now: float, status: str) -> ProfileRecord:
+        expires_at = float(op.metadata.get("expires_at")) if op.metadata.get("expires_at") is not None else None
+        if expires_at is None and op.scope.kind == "session":
+            expires_at = now + 86400.0
+        elif expires_at is None and op.scope.kind == "temporary":
+            expires_at = now + 86400.0 * 7.0
+        return ProfileRecord(
+            id="",
+            path=op.path,
+            value=op.value,
+            confidence=op.confidence,
+            explicitness=op.explicitness,
+            sensitivity=op.sensitivity,
+            scope=op.scope,
+            cardinality=op.cardinality,
+            status=status,  # type: ignore[arg-type]
+            evidence_ids=op.evidence_ids,
+            recurrence=1,
+            source=op.source,
+            valid_from=float(op.metadata.get("valid_from")) if op.metadata.get("valid_from") is not None else now,
+            valid_until=float(op.metadata.get("valid_until")) if op.metadata.get("valid_until") is not None else None,
+            expires_at=expires_at,
+            metadata={"reason": op.reason, **op.metadata},
+        )
+
+    @staticmethod
+    def _may_supersede(op: ProfileOperation, existing: list[ProfileRecord]) -> bool:
+        rank = {"inferred": 1, "observed": 2, "explicit": 3}
+        strongest = max(existing, key=lambda r: (rank[r.explicitness], r.confidence, r.last_confirmed_at))
+        if rank[op.explicitness] < rank[strongest.explicitness]:
+            return False
+        if op.explicitness == "explicit":
+            return True
+        # Pattern quan sát/suy luận chỉ thay pattern cùng hạng nếu mạnh hơn rõ ràng.
+        return op.confidence >= strongest.confidence + 0.10
+
+    @staticmethod
+    def _audit_safe_operation(op: ProfileOperation) -> dict[str, Any]:
+        payload = op.to_dict()
+        if op.sensitivity in {"private", "sensitive"}:
+            payload["value"] = "<redacted>"
+            payload["old_value"] = "<redacted>" if payload.get("old_value") is not None else None
+        return payload
+
+    def _match_records(self, op: ProfileOperation) -> list[ProfileRecord]:
+        records = [
+            r for r in self._records.values()
+            if r.path == op.path and r.scope.identity == op.scope.identity and r.status == "active"
+        ]
+        if op.old_value is not None:
+            records = [r for r in records if self._same_value(r.value, op.old_value)]
+        elif op.value is not None and op.cardinality == "multi":
+            # Multi-valued path chỉ reinforce đúng value trùng. Nếu không có exact
+            # match thì phải tạo record mới, không được "củng cố" value hàng xóm.
+            records = [r for r in records if self._same_value(r.value, op.value)]
+        return records
+
+    @staticmethod
+    def _best_match(op: ProfileOperation, matches: list[ProfileRecord]) -> ProfileRecord | None:
+        if not matches:
+            return None
+        exact = [r for r in matches if UserProfileStore._same_value(r.value, op.value)]
+        return max(exact or matches, key=lambda r: (r.trust_weight, r.updated_at))
+
+    @staticmethod
+    def _same_value(left: Any, right: Any) -> bool:
+        return value_fingerprint(left) == value_fingerprint(right)
+
+    def forget(self, path_or_prefix: str, *, scope: UserMemoryScope | None = None, hard: bool = False, reason: str = "user_request") -> int:
+        root = normalize_path(path_or_prefix)
+        if not root:
+            return 0
+        changed = 0
+        with self._lock:
+            matched_ids = []
+            for record in list(self._records.values()):
+                if not (record.path == root or record.path.startswith(root + ".")):
+                    continue
+                if scope is not None and record.scope.identity != scope.identity:
+                    continue
+                matched_ids.append(record.id)
+                if hard:
+                    self._records.pop(record.id, None)
+                else:
+                    record.status = "archived"
+                    record.updated_at = now_ts()
+                    record.metadata["forget_reason"] = reason
+                changed += 1
+            if changed:
+                self._version += 1
+                if hard:
+                    # Hard delete phải scrub cả snapshot lịch sử và audit payload.
+                    for entry in self._history:
+                        rows = entry.get("records_before")
+                        if isinstance(rows, list):
+                            entry["records_before"] = [
+                                row for row in rows
+                                if not (isinstance(row, Mapping) and str(row.get("id") or "") in matched_ids)
+                            ]
+                    self._audit = [
+                        row for row in self._audit
+                        if not (isinstance(row, Mapping) and str((row.get("operation") or {}).get("path") or "").startswith(root))
+                    ]
+                self.save()
+        return changed
+
+    def correct(self, path: str, value: Any, *, evidence_ids: Iterable[str], scope: UserMemoryScope | None = None, confidence: float = 1.0) -> ApplyResult:
+        return self.apply((ProfileOperation(
+            op="update",
+            path=path,
+            value=value,
+            confidence=confidence,
+            explicitness="explicit",
+            scope=scope or UserMemoryScope(),
+            evidence_ids=tuple(evidence_ids),
+            reason="Người dùng sửa trực tiếp memory.",
+            source="user_correction",
+        ),), checkpoint_reason="user_correction")
+
+    def decay(self, *, now: float | None = None) -> int:
+        current = float(now or now_ts())
+        changed = 0
+        cutoff = self.config.forget_after_days * 86400.0
+        with self._lock:
+            for record in self._records.values():
+                if record.status != "active" or record.explicitness == "explicit" and self.config.explicit_decay_per_day <= 0:
+                    continue
+                age = current - record.last_confirmed_at
+                if age <= cutoff:
+                    continue
+                days = (age - cutoff) / 86400.0
+                rate = self.config.observed_decay_per_day if record.explicitness == "observed" else self.config.inferred_decay_per_day
+                new_conf = clamp01(record.confidence - rate * days)
+                if abs(new_conf - record.confidence) > 1e-9:
+                    record.confidence = new_conf
+                    record.updated_at = current
+                    changed += 1
+                if record.confidence < self.config.drop_below_confidence:
+                    record.status = "archived"
+            if changed and self.config.autosave:
+                self.save()
+        return changed
+
+    def compact(self, *, inactive_after_days: float = 90.0, now: float | None = None) -> int:
+        """Thu gọn record inactive cũ nhưng giữ record active và lịch sử gần.
+
+        Compression không được chạm explicit record đang hoạt động. Record disputed,
+        superseded, archived hoặc deleted quá cũ mới bị bỏ khỏi projection. Evidence
+        gốc vẫn thuộc event/semantic store canonical, không bị xóa lén tại đây.
+        """
+        current = float(now or now_ts())
+        cutoff = current - max(1.0, float(inactive_after_days)) * 86400.0
+        removed: list[str] = []
+        with self._lock:
+            for record_id, record in list(self._records.items()):
+                if record.status == "active":
+                    continue
+                if record.updated_at >= cutoff:
+                    continue
+                removed.append(record_id)
+                self._records.pop(record_id, None)
+            if removed:
+                self._version += 1
+                # Snapshot lịch sử chỉ là undo window, không phải cold archive vô hạn.
+                for entry in self._history:
+                    rows = entry.get("records_before")
+                    if isinstance(rows, list):
+                        entry["records_before"] = [
+                            row for row in rows
+                            if not (isinstance(row, Mapping) and str(row.get("id") or "") in removed)
+                        ]
+                if self.config.autosave:
+                    self.save()
+        return len(removed)
+
+    def revert_to(self, version: int) -> bool:
+        with self._lock:
+            entry = next((x for x in reversed(self._history) if int(x.get("version", -1)) == int(version)), None)
+            if entry is None:
+                return False
+            records = entry.get("records_before")
+            if not isinstance(records, list):
+                return False
+            self._records = {
+                r.id: r for r in (ProfileRecord.from_dict(x) for x in records if isinstance(x, Mapping))
+            }
+            self._version += 1
+            self.save()
+            return True
+
+    def _trim(self) -> None:
+        if len(self._records) <= self.config.max_records:
+            return
+        ranked = sorted(
+            self._records.values(),
+            key=lambda r: (
+                r.status == "active",
+                r.explicitness == "explicit",
+                r.trust_weight,
+                r.updated_at,
+            ),
+            reverse=True,
+        )
+        self._records = {r.id: r for r in ranked[: self.config.max_records]}
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "version": self._version,
+            "updated_at": now_ts(),
+            "records": [r.to_dict() for r in self.all(include_inactive=True)],
+            "history": self._history[-self.config.max_history :],
+            "audit": self._audit[-500:],
+        }
+
+    def load(self) -> None:
+        if not self.path.is_file() or self.path.stat().st_size <= 0:
+            return
+        try:
+            with locked_path(self.path):
+                raw = json.loads(self.path.read_text(encoding="utf-8"))
+            records = raw.get("records") if isinstance(raw, Mapping) else []
+            self._records = {
+                r.id: r for r in (ProfileRecord.from_dict(x) for x in records or [] if isinstance(x, Mapping))
+            }
+            self._version = int(raw.get("version") or 0) if isinstance(raw, Mapping) else 0
+            self._history = [dict(x) for x in (raw.get("history") or []) if isinstance(x, Mapping)] if isinstance(raw, Mapping) else []
+            self._audit = [dict(x) for x in (raw.get("audit") or []) if isinstance(x, Mapping)] if isinstance(raw, Mapping) else []
+        except Exception:
+            # Corrupt profile không được làm runtime chết. Giữ file để người dùng còn cứu thủ công.
+            self._records = {}
+            self._history = []
+            self._audit = []
+            self._version = 0
+
+    def save(self) -> None:
+        atomic_write_json(self.path, self.to_dict())
+
+
+__all__ = ["ApplyResult", "UserProfileStore", "UserProfileStoreConfig"]

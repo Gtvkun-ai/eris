@@ -52,22 +52,20 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import Any, Callable, Iterable, Literal, Mapping, Optional, Sequence
 
+from .predicate_catalog import BUILTIN_PREDICATES
+from .predicate_registry import PredicateRegistry, get_default_registry
+
 SemanticDomain = Literal["user", "self", "world", "technical", "project", "relationship", "unknown"]
 SemanticStatus = Literal["active", "tentative", "contradicted", "rejected", "archived"]
 
+# Compatibility snapshot. Quy tắc replacement thật nằm trong registry qua
+# cardinality=single, không còn một danh sách fact phải vá thủ công ở file này.
 CURRENT_FACT_KEYS = frozenset(
-    {
-        "user.name",
-        "user.nickname",
-        "user.birth_month",
-        "user.current_location",
-        "user.living_location",
-        "user.hometown",
-        "user.response_style",
-        "user.preference.location",
-        "user.preference.general",
-    }
+    item.fact_key
+    for item in BUILTIN_PREDICATES
+    if item.fact_key and item.ontology.cardinality == "single"
 )
+
 
 
 # =============================================================================
@@ -559,12 +557,13 @@ class SemanticMemoryItem:
             str(semantic_claim.get("object_text") or ""),
         ]
 
-        if self.fact_key == "user.name" and value:
-            parts.extend((f"ten {value}", f"toi ten la {value}", f"goi toi la {value}"))
-        elif self.fact_key == "user.nickname" and value:
-            parts.extend((f"biet danh {value}", f"biet danh cua toi la {value}", f"nickname {value}", f"ten goi {value}"))
-        elif self.fact_key == "user.birth_month" and value:
-            parts.extend((f"thang sinh {value}", f"toi sinh thang {value}", f"birth month {value}"))
+        if value:
+            # Mở rộng embedding/lexical bằng alias thực của item. Không cần biết
+            # đây là tên, giới tính hay một predicate model vừa học tuần sau.
+            for alias in self.aliases[:12]:
+                clean_alias = str(alias or "").strip()
+                if clean_alias:
+                    parts.extend((f"{clean_alias} {value}", f"{clean_alias} là {value}"))
 
         return [compact_text(part, limit=240) for part in parts if str(part or "").strip()]
 
@@ -600,11 +599,13 @@ class SemanticMemoryStore:
         max_items: int = 300,
         embedding_index: Any | None = None,
         min_recall_score: float = 0.52,
+        registry: PredicateRegistry | None = None,
     ):
         self.path = path
         self.max_items = max(30, int(max_items))
         self.embedding_index = embedding_index
         self.min_recall_score = float(min_recall_score)
+        self.registry = registry or get_default_registry()
 
     # ------------------------------------------------------------------
     # Load/save/prune
@@ -619,6 +620,9 @@ class SemanticMemoryStore:
         if not isinstance(raw_items, list):
             return []
         items = [SemanticMemoryItem.from_dict(item) for item in raw_items if isinstance(item, dict)]
+        # Predicate provisional được phục hồi từ chính semantic memory. Nhờ vậy
+        # restart không biến một thuộc tính do model học được thành người lạ.
+        self.registry.hydrate_from_memory_items(items)
         return self._sorted_items(items)
 
     def save(self, items: list[SemanticMemoryItem]) -> None:
@@ -945,7 +949,7 @@ class SemanticMemoryStore:
         new_value: str,
         confidence: float,
     ) -> bool:
-        if fact_key not in CURRENT_FACT_KEYS:
+        if not self.registry.is_single_value_fact(fact_key):
             return False
         if not new_value:
             return False
@@ -1012,41 +1016,37 @@ class SemanticMemoryStore:
         return ""
 
     def _extract_simple_value(self, claim: str, fact_key: str) -> str:
+        """Migration fallback generic cho claim cũ thiếu object_value.
+
+        Dữ liệu mới luôn lấy value từ SemanticClaim structured. Hàm này chỉ dùng
+        lexicon của registry để đọc vài câu legacy, không có nhánh fact_key riêng.
+        """
+
         normalized = normalize_text(claim)
-        raw = compact_text(claim, limit=220)
-
-        if fact_key == "user.name":
-            # Các pattern đơn giản: "tên ... là X", "user name: X".
-            patterns = [
-                r"(?:user s name is|users name is|user name|preferred name)\s*(?:la|is|:)?\s*([a-zA-Z0-9_\- ]{2,80})",
-                r"(?:ten cua nguoi dung|ten cua ban|nguoi dung ten|ban ten)\s*(?:la|:)?\s*([a-zA-Z0-9_\- ]{2,80})",
-                r"(?:goi nguoi dung la|goi ban la)\s*([a-zA-Z0-9_\- ]{2,80})",
-            ]
+        definition = self.registry.by_fact_key(fact_key)
+        if not normalized or definition is None:
+            return ""
+        phrases = unique_keep_order([
+            definition.surface.display_name,
+            *definition.query.aliases,
+            *definition.query.disclosure_cues,
+        ])
+        for phrase in sorted(phrases, key=len, reverse=True):
+            alias = normalize_text(phrase)
+            if not alias:
+                continue
+            escaped = re.escape(alias)
+            patterns = (
+                rf"(?:{escaped})(?: cua (?:toi|tui|minh|ban|nguoi dung|user))?\s*(?:la|is|:)\s*(.{1,100})$",
+                rf"(?:toi|tui|minh|ban|nguoi dung|user)\s+(?:co\s+)?{escaped}\s*(?:la|is|:)?\s*(.{1,100})$",
+                rf"(?:goi|call)\s+(?:toi|tui|minh|ban|nguoi dung|user)\s+(?:la|as)\s*(.{1,100})$",
+            )
             for pattern in patterns:
                 match = re.search(pattern, normalized)
                 if match:
-                    return match.group(1).strip()
-            return ""
-
-        if fact_key == "user.nickname":
-            patterns = [
-                r"(?:user s nickname is|users nickname is|user nickname)\s*(?:la|is|:)?\s*([a-zA-Z0-9_\- ]{2,80})",
-                r"(?:biet danh cua nguoi dung|biet danh cua ban|biet danh cua toi|biet danh toi|biet danh la|biet hieu la|nickname la|ten goi la)\s*(?:la|:)?\s*([a-zA-Z0-9_\- ]{2,80})",
-            ]
-            for pattern in patterns:
-                match = re.search(pattern, normalized)
-                if match:
-                    return match.group(1).strip()
-            return ""
-
-        if fact_key == "user.birth_month":
-            match = re.search(r"(?:thang sinh|sinh thang|birth month)\s*(?:la|:)?\s*(\d{1,2}|[a-zA-Z]+)", normalized)
-            return match.group(1).strip() if match else ""
-
-        if fact_key in {"user.current_location", "user.living_location", "user.hometown", "user.preference.location"}:
-            return ""
-
-        # Các fact phức tạp không nên tự detect conflict bằng regex.
+                    value = match.group(1).strip(" .,:;-")
+                    if value and value not in {"gi", "nao", "dau", "khong"}:
+                        return value
         return ""
 
     # ------------------------------------------------------------------
@@ -1282,10 +1282,11 @@ class SemanticMemoryStore:
         )
 
     def _normalize_vector_score(self, value: float) -> float:
-        """Normalize score vector về 0..1.
+        """Đưa score backend về thành phần 0..1 mà không bơm confidence giả.
 
-        Nhiều backend trả cosine [-1, 1], vài backend trả similarity [0, 1].
-        Ta xử lý mềm, không giả vờ vũ trụ có một chuẩn duy nhất.
+        EmbeddingIndex mới công bố `score_scale=cosine` và trả raw cosine. Với
+        cosine, phần âm/neutral không có giá trị retrieval nên bị chặn ở 0; 0.10
+        vẫn là 0.10, không được hóa trang thành 0.55.
         """
 
         try:
@@ -1294,10 +1295,14 @@ class SemanticMemoryStore:
             return 0.0
         if math.isnan(score) or math.isinf(score):
             return 0.0
-        if -1.0 <= score <= 1.0:
-            # Cosine 0 không nên quá cao, nhưng vẫn là neutral. Dùng curve nhẹ.
-            return clamp01((score + 1.0) / 2.0)
-        return clamp01(score)
+        scale = str(getattr(self.embedding_index, "score_scale", "cosine") or "cosine").lower()
+        if scale == "cosine":
+            return clamp01(max(0.0, score))
+        if scale in {"probability", "similarity_01", "unit"}:
+            return clamp01(score)
+        # Backend không khai scale: chọn cách bảo thủ, tuyệt đối không remap
+        # [-1,1] sang [0,1] vì điều đó nâng cosine 0 thành tín hiệu giả 0.5.
+        return clamp01(max(0.0, score))
 
     def _fact_key_score(self, item: SemanticMemoryItem, cue: SemanticRecallCue) -> float:
         if not cue.fact_key:
@@ -1385,105 +1390,18 @@ class SemanticMemoryStore:
             cue.evidence.append("empty_query")
             return cue
 
-        # User profile facts.
-        # Biệt danh phải đứng trước "tên": câu "biệt danh tôi là gì" cũng chứa
-        # token gần với name, nhưng nó hỏi nickname, không phải tên thật.
-        if _matches_any(normalized, (r"\bbiet danh\b", r"\bbiet hieu\b", r"\bnickname\b", r"\bten goi\b")):
-            cue.domain = "user"
-            cue.fact_key = "user.nickname"
-            cue.aliases = ["biet danh", "biet hieu", "nickname", "ten goi", "biệt danh"]
-            cue.wants_profile_fact = True
+        # Profile fact được resolve từ registry canonical. Predicate provisional
+        # đã hydrate cũng tham gia, nên semantic store không cần thêm if cho từng
+        # thuộc tính mới.
+        resolution = self.registry.resolve_fact_query(query) or self.registry.resolve_fact_reference(query)
+        if resolution is not None:
+            definition = self.registry.by_fact_key(resolution.fact_key)
+            cue.domain = self._domain_from_fact_key(resolution.fact_key) or "user"
+            cue.fact_key = resolution.fact_key
+            cue.aliases = list(definition.query_phrases() if definition is not None else (resolution.matched_phrase,))
+            cue.wants_profile_fact = cue.domain == "user"
             cue.strict_domain = True
-            cue.evidence.append("cue:user.nickname")
-            return cue
-
-        if _matches_any(normalized, (r"\btoi ten gi\b", r"\bten toi\b", r"\bten cua toi\b", r"\bgoi toi la gi\b", r"\bmy name\b")):
-            cue.domain = "user"
-            cue.fact_key = "user.name"
-            cue.aliases = ["ten", "name", "goi", "preferred name"]
-            cue.wants_profile_fact = True
-            cue.strict_domain = True
-            cue.evidence.append("cue:user.name")
-            return cue
-
-        if _matches_any(normalized, (r"\btoi sinh thang nao\b", r"\bthang sinh cua toi\b", r"\bbirth month\b", r"\bbirthday\b")):
-            cue.domain = "user"
-            cue.fact_key = "user.birth_month"
-            cue.aliases = ["thang sinh", "birth month", "birthday"]
-            cue.wants_profile_fact = True
-            cue.strict_domain = True
-            cue.evidence.append("cue:user.birth_month")
-            return cue
-
-        if _matches_any(normalized, (r"\bten\b", r"\bgoi ten\b", r"\bname\b")):
-            cue.domain = "user"
-            cue.fact_key = "user.name"
-            cue.aliases = ["ten", "name", "goi ten", "preferred name"]
-            cue.wants_profile_fact = True
-            cue.evidence.append("cue:user.name.soft")
-            return cue
-
-        if _matches_any(normalized, (r"\bthang sinh\b", r"\bsinh thang\b", r"\bthang \d{1,2}\b", r"\bbirth month\b")):
-            cue.domain = "user"
-            cue.fact_key = "user.birth_month"
-            cue.aliases = ["thang sinh", "thang", "birth month", "birthday"]
-            cue.wants_profile_fact = True
-            cue.evidence.append("cue:user.birth_month.soft")
-            return cue
-
-        # Location facts phải tách rõ. Không cho preference/mentioned trả lời hometown/living/current.
-        if _matches_any(normalized, (r"\bque toi o dau\b", r"\bque cua toi\b", r"\btoi que o dau\b", r"\bhometown\b")):
-            cue.domain = "user"
-            cue.fact_key = "user.hometown"
-            cue.aliases = ["que", "que quan", "hometown"]
-            cue.wants_profile_fact = True
-            cue.strict_domain = True
-            cue.evidence.append("cue:user.hometown")
-            return cue
-
-        if _matches_any(normalized, (r"\btoi dang o dau\b", r"\btoi hien o dau\b", r"\bhien tai toi o dau\b", r"\bcurrent location\b")):
-            cue.domain = "user"
-            cue.fact_key = "user.current_location"
-            cue.aliases = ["dang o", "hien o", "current location"]
-            cue.wants_profile_fact = True
-            cue.strict_domain = True
-            cue.evidence.append("cue:user.current_location")
-            return cue
-
-        if _matches_any(normalized, (r"\btoi song o dau\b", r"\bnoi o cua toi\b", r"\bliving location\b", r"\bcurrent residence\b")):
-            cue.domain = "user"
-            cue.fact_key = "user.living_location"
-            cue.aliases = ["song o", "noi o", "living location", "current residence"]
-            cue.wants_profile_fact = True
-            cue.strict_domain = True
-            cue.evidence.append("cue:user.living_location")
-            return cue
-
-        if _matches_any(normalized, (r"\btoi thich noi nao\b", r"\btoi thich o dau\b", r"\bdia diem toi thich\b", r"\blocation preference\b")):
-            cue.domain = "user"
-            cue.fact_key = "user.preference.location"
-            cue.aliases = ["thich noi", "thich o", "dia diem", "location preference"]
-            cue.wants_profile_fact = True
-            cue.strict_domain = True
-            cue.evidence.append("cue:user.preference.location")
-            return cue
-
-        if _matches_any(normalized, (r"\btoi thich.*tra loi\b", r"\bkieu tra loi\b", r"\bstyle tra loi\b", r"\bresponse style\b")):
-            cue.domain = "user"
-            cue.fact_key = "user.response_style"
-            cue.aliases = ["kieu tra loi", "style", "response style", "chu thich", "ngan", "dai"]
-            cue.wants_profile_fact = True
-            cue.strict_domain = True
-            cue.evidence.append("cue:user.response_style")
-            return cue
-
-        if _matches_any(normalized, (r"\btoi thich gi\b", r"\bso thich\b", r"\bpreference\b", r"\btoi hay thich\b")):
-            cue.domain = "user"
-            cue.fact_key = "user.preference.general"
-            cue.aliases = ["thich", "preference", "so thich"]
-            cue.wants_profile_fact = True
-            cue.strict_domain = True
-            cue.evidence.append("cue:user.preference.general")
+            cue.evidence.append(f"cue:{resolution.fact_key}:{resolution.source}")
             return cue
 
         # Self / ERIS identity.
@@ -1557,41 +1475,19 @@ class SemanticMemoryStore:
             profile.domain = explicit_domain  # type: ignore[assignment]
             profile.evidence.append("metadata.domain")
 
-        # Reason từ memory_commit_policy thường ổn định hơn claim text.
-        if any(key in reason_norm for key in ("nickname", "biet_danh", "biet danh", "user_nickname")):
-            profile.domain = "user"
-            profile.fact_key = "user.nickname"
-            profile.aliases = ["biệt danh", "biet danh", "nickname", "biệt hiệu", "biet hieu", "tên gọi", "ten goi"]
-            profile.importance = 0.94
-            profile.tags.extend(["user_profile", "nickname"])
-            profile.evidence.append("reason:user_nickname")
-            return profile
-
-        if any(key in reason_norm for key in ("user_name", "username", "preferred_name")):
-            profile.domain = "user"
-            profile.fact_key = "user.name"
-            profile.aliases = ["tên", "ten", "name", "preferred name", "gọi", "goi"]
-            profile.importance = 0.94
-            profile.tags.extend(["user_profile", "name"])
-            profile.evidence.append("reason:user_name")
-            return profile
-
-        if any(key in reason_norm for key in ("birth_month", "birthday", "user_birth")):
-            profile.domain = "user"
-            profile.fact_key = "user.birth_month"
-            profile.aliases = ["tháng sinh", "thang sinh", "birthday", "birth month"]
-            profile.importance = 0.86
-            profile.tags.extend(["user_profile", "birth_month"])
-            profile.evidence.append("reason:user_birth_month")
-            return profile
-
-        if any(key in reason_norm for key in ("response_style", "reply_style", "user_response_style")):
-            profile.domain = "user"
-            profile.fact_key = "user.response_style"
-            profile.aliases = ["kiểu trả lời", "kieu tra loi", "response style", "style", "chú thích", "chu thich"]
-            profile.importance = 0.88
-            profile.tags.extend(["user_preference", "reply_style"])
-            profile.evidence.append("reason:response_style")
+        # Reason cũ được resolve qua registry thay vì bốn nhánh user.name/...
+        reason_resolution = self.registry.resolve_fact_reference(reason.replace("_", " ")) if reason_norm else None
+        if reason_resolution is not None:
+            definition = self.registry.by_fact_key(reason_resolution.fact_key)
+            profile.domain = self._domain_from_fact_key(reason_resolution.fact_key) or "user"
+            profile.fact_key = reason_resolution.fact_key
+            profile.aliases = list(definition.query_phrases() if definition is not None else ())
+            profile.importance = max(
+                profile.importance,
+                float(definition.retention.importance) if definition is not None else 0.78,
+            )
+            profile.tags.extend(["typed_fact", definition.predicate if definition is not None else "registry_fact"])
+            profile.evidence.append(f"reason:{reason_resolution.fact_key}")
             return profile
 
         if not legacy_profile_infer:
@@ -1605,31 +1501,20 @@ class SemanticMemoryStore:
 
         profile.domain = self._infer_domain(claim, target)
 
-        # Claim parser nhẹ.
-        if profile.domain == "user" and _matches_any(normalized, USER_NICKNAME_PATTERNS):
-            profile.fact_key = "user.nickname"
-            profile.aliases = ["biệt danh", "biet danh", "nickname", "biệt hiệu", "biet hieu", "tên gọi", "ten goi"]
-            profile.importance = 0.94
-            profile.tags.extend(["user_profile", "nickname"])
-            profile.evidence.append("claim:user.nickname")
-        elif profile.domain == "user" and _matches_any(normalized, USER_NAME_PATTERNS):
-            profile.fact_key = "user.name"
-            profile.aliases = ["tên", "ten", "name", "preferred name", "gọi", "goi"]
-            profile.importance = 0.94
-            profile.tags.extend(["user_profile", "name"])
-            profile.evidence.append("claim:user.name")
-        elif profile.domain == "user" and _matches_any(normalized, USER_BIRTH_PATTERNS):
-            profile.fact_key = "user.birth_month"
-            profile.aliases = ["tháng sinh", "thang sinh", "birthday", "birth month"]
-            profile.importance = 0.84
-            profile.tags.extend(["user_profile", "birth_month"])
-            profile.evidence.append("claim:user.birth_month")
-        elif profile.domain == "user" and _matches_any(normalized, USER_STYLE_PATTERNS):
-            profile.fact_key = "user.response_style"
-            profile.aliases = ["kiểu trả lời", "kieu tra loi", "response style", "style"]
-            profile.importance = 0.86
-            profile.tags.extend(["user_preference", "reply_style"])
-            profile.evidence.append("claim:user.response_style")
+        # Migration fallback: resolve claim text bằng catalog. Commit path mới đã
+        # có fact_key structured nên đoạn này chỉ phục vụ dữ liệu cũ.
+        claim_resolution = self.registry.resolve_fact_reference(claim) if profile.domain in {"user", "unknown"} else None
+        if claim_resolution is not None:
+            definition = self.registry.by_fact_key(claim_resolution.fact_key)
+            profile.domain = self._domain_from_fact_key(claim_resolution.fact_key) or "user"
+            profile.fact_key = claim_resolution.fact_key
+            profile.aliases = list(definition.query_phrases() if definition is not None else ())
+            profile.importance = max(
+                profile.importance,
+                float(definition.retention.importance) if definition is not None else 0.72,
+            )
+            profile.tags.extend(["typed_fact", definition.predicate if definition is not None else "registry_fact"])
+            profile.evidence.append(f"claim:{claim_resolution.fact_key}")
         elif _matches_any(normalized, SELF_IDENTITY_PATTERNS):
             profile.domain = "self"
             profile.fact_key = "self.identity"

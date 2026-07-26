@@ -331,6 +331,7 @@ public partial class UdpListener : Node2D
 		_characterContextMenu.Size = CharacterContextMenuMinSize;
 		_characterContextMenu.ZIndex = 100;
 		BuildCharacterContextMenuUi();
+		InitializeMemoryPanel();
 		_emotionPanel = GetNode<Panel>("CanvasLayer/Control/EmotionPanel");
 		_emotionPanel.CustomMinimumSize = EmotionPanelMinSize;
 		_emotionPanel.Size = EmotionPanelMinSize;
@@ -396,6 +397,7 @@ public partial class UdpListener : Node2D
 		MakePanelDraggable(_tutorPanel);
 		MakePanelDraggable(_depthPanel);
 		MakePanelDraggable(_settingsPanel);
+		MakePanelDraggable(_memoryPanel);
 
 		var cs  = GetNode<CollisionShape2D>("Monika2/CollisionShape2D");
 
@@ -490,6 +492,7 @@ public partial class UdpListener : Node2D
 			|| (_privateMindPanel?.Visible ?? false)
 			|| (_depthPanel?.Visible ?? false)
 			|| (_settingsPanel?.Visible ?? false)
+			|| (_memoryPanel?.Visible ?? false)
 			|| _grabModeArmed
 			|| _isDraggingCharacter;
 
@@ -602,6 +605,7 @@ public partial class UdpListener : Node2D
 		UpdateBubbleAutoHide();
 		UpdateTutorPanelAutoHide();
 		TickSettingsPanelRuntimeStatus();
+		TickMemoryPanelStatus();
 
 		while (_udp.GetAvailablePacketCount() > 0)
 		{
@@ -707,6 +711,11 @@ public partial class UdpListener : Node2D
 				GetViewport().SetInputAsHandled();
 				return;
 			}
+			if (_memoryPanel != null && _memoryPanel.Visible && IsMouseOverControl(_memoryPanel, mouseEvent.Position))
+			{
+				GetViewport().SetInputAsHandled();
+				return;
+			}
 
 			if (IsMouseOverCharacter(mouseEvent.Position))
 			{
@@ -734,6 +743,11 @@ public partial class UdpListener : Node2D
 			if (_settingsPanel != null && _settingsPanel.Visible)
 			{
 				CloseSettingsPanel();
+				GetViewport().SetInputAsHandled();
+			}
+			if (_memoryPanel != null && _memoryPanel.Visible)
+			{
+				CloseMemoryPanel();
 				GetViewport().SetInputAsHandled();
 			}
 
@@ -774,6 +788,15 @@ public partial class UdpListener : Node2D
 		)
 		{
 			CloseSettingsPanel();
+		}
+		if (
+			mouseEvent.ButtonIndex == MouseButton.Left
+			&& _memoryPanel != null
+			&& _memoryPanel.Visible
+			&& !IsMouseOverControl(_memoryPanel, mouseEvent.Position)
+		)
+		{
+			CloseMemoryPanel();
 		}
 	}
 
@@ -1213,6 +1236,13 @@ public partial class UdpListener : Node2D
 				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
 				container.MoveChild(_contextDepthButton, Mathf.Max(0, closeIndex));
 			}
+			if (_contextMemoryButton == null)
+			{
+				_contextMemoryButton = new Button { Name = "MemoryButton" };
+				container.AddChild(_contextMemoryButton);
+				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
+				container.MoveChild(_contextMemoryButton, Mathf.Max(0, closeIndex));
+			}
 			if (_contextSettingsButton == null)
 			{
 				_contextSettingsButton = new Button { Name = "SettingsButton" };
@@ -1236,6 +1266,7 @@ public partial class UdpListener : Node2D
 		ConfigureContextMenuButton(_contextEmotionButton, "Cam xuc", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextPrivateMindButton, "Nhật ký nội tâm", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextDepthButton, "Identity Runtime", "res://asset/Resource/emotion.png");
+		ConfigureContextMenuButton(_contextMemoryButton, "ERIS nhớ gì về bạn", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextSettingsButton, "Cai dat", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextExitButton, "Thoat ERIS", "res://asset/Resource/exit.png");
 		ConfigureContextMenuButton(_contextCloseButton, "Dong", "res://asset/Resource/exit.png");
@@ -3739,6 +3770,8 @@ public partial class UdpListener : Node2D
 		if (TryHandleTtsEvent(raw))
 			return;
 		if (TryHandleTutorEvent(raw))
+			return;
+		if (TryHandleMemoryPanelPacket(raw))
 			return;
 		var payload = _decisionParser.Parse(raw);
 		if (payload.HasEmotionDebug)

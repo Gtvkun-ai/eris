@@ -142,6 +142,18 @@ class PrivateMindLoop:
                 user_model_store=EpistemicUserModelProjection(kernel),
                 logger=logger,
             )
+        memory_kernel = getattr(runtime_owner, "memory_kernel", None)
+        living_user = getattr(memory_kernel, "living_user", None)
+        if living_user is not None:
+            # Khi epistemic kernel không authoritative, private mind dùng projection
+            # của living profile thay vì tạo thêm user_model.json cạnh tranh.
+            from memory.living_user import LivingUserModelProjection
+            return cls(
+                config=config,
+                model_adapter=model_adapter,
+                user_model_store=LivingUserModelProjection(living_user),
+                logger=logger,
+            )
         return cls(config=config, model_adapter=model_adapter, logger=logger)
 
     def tick(

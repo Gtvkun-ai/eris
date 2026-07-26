@@ -61,7 +61,9 @@ def analyse_surface(text: str) -> SurfaceFeatures:
         time_scope = "future"
         evidence.append("surface:future")
 
-    is_question = "?" in raw or any(q in f" {norm} " for q in QUESTION)
+    # So khớp theo cụm token, không dùng substring. Bản cũ coi "giới tính"
+    # là câu hỏi vì chuỗi " gi" nằm ở đầu "gioi", một lỗi nhỏ đủ làm mất claim.
+    is_question = "?" in raw or _has_any(norm, QUESTION)
     if is_question:
         evidence.append("surface:question")
 

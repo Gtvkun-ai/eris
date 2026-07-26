@@ -49,3 +49,7 @@ memory_core_backup_*/
 dist/
 build/_work/
 *.spec.bak
+
+# HuggingFace model cache directory
+src/embedding_model/
+

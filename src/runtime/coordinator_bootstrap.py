@@ -264,6 +264,15 @@ class CoordinatorBootstrapMixin:
                 self.memory_kernel = None
         if self.memory_kernel is not None:
             self.memory_kernel._llm_service = llm_service
+            living_user = getattr(self.memory_kernel, "living_user", None)
+            if living_user is not None:
+                try:
+                    from memory.living_user import LlmServiceUserProfileAdapter
+                    living_user.bind_model_adapter(LlmServiceUserProfileAdapter(llm_service))
+                    self.logger.info("Living user memory đã nối episode/profile dreaming adapter.")
+                except Exception as exc:
+                    # Deterministic profile vẫn chạy; model adapter chỉ là enrichment.
+                    self.logger.warning("Không nối được living user model adapter: %s", exc)
         self.body_running_fn = body_running_fn
         self.action_executor = action_executor
         self.action_router = action_router

@@ -36,6 +36,8 @@ try:  # package path: src/memory/memory_commit_policy.py
         SurfaceMode,
     )
     from .claim_extractor import ClaimExtractor
+    from .claims.claim_builder import ClaimBuilder
+    from .predicate_registry import PredicateRegistry, get_default_registry
     from .memory_worthiness import MemoryWorthinessPolicy
     from .memory_retention_policy import MemoryRetentionPolicy, retention_metadata
     from .predicate_ontology import fact_key_for_predicate, get_predicate, predicate_aliases
@@ -50,6 +52,8 @@ except Exception:  # pragma: no cover - chạy file rời khi test
         SurfaceMode,
     )
     from claim_extractor import ClaimExtractor  # type: ignore
+    from claims.claim_builder import ClaimBuilder  # type: ignore
+    from predicate_registry import PredicateRegistry, get_default_registry  # type: ignore
     from memory_worthiness import MemoryWorthinessPolicy  # type: ignore
     from memory_retention_policy import MemoryRetentionPolicy, retention_metadata  # type: ignore
     from predicate_ontology import fact_key_for_predicate, get_predicate, predicate_aliases  # type: ignore
@@ -274,6 +278,7 @@ class MemoryCommitPolicy:
     enable_semantic_claim_pipeline: bool = True
     # Có thể inject parser model.gguf từ runtime. Nếu None, ClaimExtractor dùng fallback surface.
     semantic_parser: Any | None = None
+    registry: PredicateRegistry = field(default_factory=get_default_registry)
     claim_extractor: Any = field(init=False, repr=False)
     worthiness_policy: Any = field(init=False, repr=False)
     retention_policy: Any = field(init=False, repr=False)
@@ -281,7 +286,12 @@ class MemoryCommitPolicy:
     def __post_init__(self) -> None:
         # Ba lớp mới dùng chung cho toàn bộ intake.
         # Để trong instance thay vì global để test có thể override nếu cần.
-        self.claim_extractor = ClaimExtractor(parser=self.semantic_parser) if self.semantic_parser is not None else ClaimExtractor()
+        builder = ClaimBuilder(registry=self.registry)
+        self.claim_extractor = (
+            ClaimExtractor(parser=self.semantic_parser, builder=builder)
+            if self.semantic_parser is not None
+            else ClaimExtractor(builder=builder)
+        )
         self.worthiness_policy = MemoryWorthinessPolicy()
         self.retention_policy = MemoryRetentionPolicy()
 
@@ -294,7 +304,7 @@ class MemoryCommitPolicy:
         """
 
         self.semantic_parser = parser
-        self.claim_extractor = ClaimExtractor(parser=parser)
+        self.claim_extractor = ClaimExtractor(parser=parser, builder=ClaimBuilder(registry=self.registry))
 
     def decide_from_user_turn(
         self,

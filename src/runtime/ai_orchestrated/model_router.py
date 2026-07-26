@@ -496,16 +496,31 @@ def _json(text: str) -> dict[str, Any]:
     raw = str(text or "").strip()
     if not raw:
         return {}
+    
+    def unwrap(d: dict) -> dict:
+        if not d:
+            return d
+        if len(d) == 1:
+            key = list(d.keys())[0]
+            val = d[key]
+            if isinstance(val, Mapping):
+                common_keys = {"text", "semantic_frame", "should_speak", "performance_hint", "event_kind", "user_act", "lane", "topic"}
+                if any(k in val for k in common_keys):
+                    return unwrap(dict(val))
+        return d
+
     try:
         value = json.loads(raw)
-        return dict(value) if isinstance(value, Mapping) else {}
+        parsed = dict(value) if isinstance(value, Mapping) else {}
+        return unwrap(parsed)
     except Exception:
         match = re.search(r"\{.*\}", raw, flags=re.S)
         if not match:
             return {}
         try:
             value = json.loads(match.group(0))
-            return dict(value) if isinstance(value, Mapping) else {}
+            parsed = dict(value) if isinstance(value, Mapping) else {}
+            return unwrap(parsed)
         except Exception:
             return {}
 
@@ -634,7 +649,7 @@ class AIRuntimeModelRouter:
             return _json(_content(raw))
         except Exception as exc:  # noqa: BLE001
             if self.logger is not None:
-                safe_log(self.logger, "debug", "[ai runtime model] %s failed model=%s: %s", name, model_name, exc)
+                safe_log(self.logger, "debug", "[ai runtime model] %s failed model=%s: %s", name, getattr(client, "model_name", ""), exc)
             return {}
 
     @staticmethod
@@ -804,7 +819,7 @@ class AIRuntimeModelRouter:
                 return parsed
             except Exception as exc:  # noqa: BLE001
                 if self.logger is not None:
-                    safe_log(self.logger, "debug", "[ai public reply] model=%s failed: %s", model_name, exc)
+                    safe_log(self.logger, "debug", "[ai public reply] model=%s failed: %s", getattr(target, "model_name", ""), exc)
                 return {}
 
         payload = call(client)
@@ -980,7 +995,7 @@ class AIRuntimeModelRouter:
                 return _json(_content(raw))
             except Exception as exc:  # noqa: BLE001
                 if self.logger is not None:
-                    safe_log(self.logger, "debug", "[ai autonomous reply] model=%s failed: %s", model_name, exc)
+                    safe_log(self.logger, "debug", "[ai autonomous reply] model=%s failed: %s", getattr(target, "model_name", ""), exc)
                 return {}
 
         payload = call(client)

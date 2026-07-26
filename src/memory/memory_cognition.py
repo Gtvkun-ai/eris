@@ -43,6 +43,7 @@ from .procedural_memory import ProceduralMemoryItem, ProceduralMemoryStore
 from .relational_memory import RelationalMemoryItem, RelationalMemoryStore
 from .repair_memory import RepairMemoryItem, RepairMemoryStore
 from .semantic_memory import SemanticMemoryItem, SemanticMemoryStore
+from .predicate_registry import PredicateRegistry, get_default_registry
 from .unresolved_memory import UnresolvedMemoryCandidate, UnresolvedMemoryStore
 from .concept_graph import ConceptGraphStore
 from .canonical_long_term import (
@@ -62,6 +63,7 @@ from .memory_cue import MemoryCue, MemoryCueBuilder
 from .memory_retrieval_engine import MemoryStores, MemoryRetrievalEngine
 from .memory_packet_builder import MemoryPacket, MemoryPacketBuilder
 from .memory_activation import MemoryActivation
+from .living_user import LivingUserMemoryService
 from cortex.agent_mind_persistence import PersistentAgentMindStore, agent_mind_path_for_memory_core
 
 BudgetMode = Literal["fast", "normal", "deep", "reflection"]
@@ -188,8 +190,16 @@ class MemoryCognitionCore:
     - recall()/retrieve(): dựng MemoryCue rồi gọi MemoryRetrievalEngine.
     """
 
-    def __init__(self, base_dir: str, *, policy: CommitPolicy | None = None):
+    def __init__(
+        self,
+        base_dir: str,
+        *,
+        policy: CommitPolicy | None = None,
+        registry: PredicateRegistry | None = None,
+        embedding_index: Any | None = None,
+    ):
         self.base_dir = base_dir
+        self.registry = registry or get_default_registry()
         os.makedirs(self.base_dir, exist_ok=True)
         self.policy = policy or CommitPolicy()
         # Tất cả commit qua core được serialize để chuỗi load -> mutate -> save
@@ -204,14 +214,17 @@ class MemoryCognitionCore:
         # situation_model chia sẻ đúng một model, nạp lazy một lần).
         # Nếu torch/transformers chưa install hoặc ERIS_EMBEDDING_ENABLED=0 thì trả None,
         # semantic store gracefully fallback về lexical scoring.
-        try:
-            from .embedding_index import get_shared_embedding_index
-            _embedding_index = get_shared_embedding_index()
-        except Exception:
-            _embedding_index = None
+        _embedding_index = embedding_index
+        if _embedding_index is None:
+            try:
+                from .embedding_index import get_shared_embedding_index
+                _embedding_index = get_shared_embedding_index()
+            except Exception:
+                _embedding_index = None
         self.semantic = SemanticMemoryStore(
             os.path.join(base_dir, "semantic_memory.json"),
             embedding_index=_embedding_index,
+            registry=self.registry,
         )
         self.relational = RelationalMemoryStore(os.path.join(base_dir, "relational_memory.json"))
         self.affective_residue = AffectiveResidueMemoryStore(os.path.join(base_dir, "affective_residue_memory.json"))
@@ -241,6 +254,15 @@ class MemoryCognitionCore:
                 affective_residue=self.affective_residue,
                 repair=self.repair,
             )
+        )
+        # Living user memory dùng lại đúng các store canonical ở trên. Nó không
+        # sao chép semantic/episodic truth, chỉ giữ profile projection và episode digest.
+        self.living_user = LivingUserMemoryService(
+            base_dir,
+            semantic_store=self.semantic,
+            episodic_store=self.episodic,
+            event_ledger=self.event_ledger,
+            embedding_index=_embedding_index,
         )
 
     # ------------------------------------------------------------------
@@ -475,6 +497,7 @@ class MemoryCognitionCore:
             "homeostatic_baseline": [item.to_dict() for item in self.homeostatic_baseline.load()],
             "concept_graph": self.concept_graph.load(),
             "agent_mind": self.agent_mind.to_dict(),
+            "living_user": self.living_user.summary(include_sensitive=False, limit=80),
         }
 
     def save(self, snapshot: Mapping[str, Any] | None = None) -> None:

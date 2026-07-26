@@ -3,22 +3,17 @@
 memory/embedding_index.py
 =========================
 
-In-memory embedding index cho SemanticMemoryStore.
+In-memory embedding index dùng chung cho semantic memory và query compiler.
 
-Dùng transformers + numpy (đã có sẵn trong runtime).
-Không cần FAISS, ChromaDB, hay server nào.
+Điểm quan trọng của bản này:
+- Tách encode QUERY và DOCUMENT. Qwen3/E5 cần hai đường khác nhau.
+- Tự chọn pooling theo họ model: Qwen3 dùng last-token, MiniLM dùng mean pooling.
+- Chuẩn hoá L2 ngay sau pooling.
+- Search trả RAW COSINE trong [-1, 1]. Không còn biến cosine 0 thành 0.5.
+- Cache có namespace model + role, nên đổi model/prompt không tái dùng vector cũ.
 
-Model mặc định: paraphrase-multilingual-MiniLM-L12-v2
-- ~120MB, support tiếng Việt
-- L12 = 12 layers, MiniLM = distilled, đủ nhanh trên CPU
-- Cosine similarity trong numpy = đủ cho 300 items
-
-Hook interface: object có method
-    search(query: str, items: list[Any], *, text_fn: Callable, limit: int)
-    → list[tuple[float, item]]
-
-SemanticMemoryStore gọi self.embedding_index.search(...) nếu không None.
-Embedding chỉ lấy candidate; scoring cuối vẫn thuộc domain/fact_key/confidence.
+Không cần vector database cho vài trăm item. SQLite/JSON + numpy vẫn đủ, loài
+người chưa cần triệu hồi thêm ba container chỉ để nhớ tên một người.
 """
 
 from __future__ import annotations
@@ -28,52 +23,41 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable, Literal, Sequence
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# Model MiniLM đa ngôn ngữ đi kèm repo: src/paraphrase-multilingual-MiniLM-L12-v2
-# (embedding_index.py nằm ở src/memory/, nên model ở thư mục cha một cấp.)
 _LOCAL_MODEL_DIR = Path(__file__).resolve().parents[1] / "paraphrase-multilingual-MiniLM-L12-v2"
+EmbeddingRole = Literal["query", "document"]
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Cosine similarity giữa vector a và matrix b (N, D).
-    Trả ndarray shape (N,).
-    """
-    a_norm = a / (np.linalg.norm(a) + 1e-9)
-    b_norms = np.linalg.norm(b, axis=1, keepdims=True) + 1e-9
-    b_normalized = b / b_norms
-    return b_normalized @ a_norm
+    """Raw cosine giữa vector a và matrix b (N, D), kết quả [-1, 1]."""
+
+    a_norm = a / (np.linalg.norm(a) + 1e-12)
+    b_norms = np.linalg.norm(b, axis=1, keepdims=True) + 1e-12
+    return (b / b_norms) @ a_norm
 
 
 def _short_hash(text: str) -> str:
-    return hashlib.md5(text.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
+    return hashlib.md5(text.encode("utf-8"), usedforsecurity=False).hexdigest()[:20]
 
-
-# ---------------------------------------------------------------------------
-# EmbeddingIndex
-# ---------------------------------------------------------------------------
 
 class EmbeddingIndex:
-    """In-memory embedding index dùng transformers.
+    """Embedding provider + in-memory search index.
 
-    Workflow:
-    1. `ensure_vectors(items, text_fn)` — embed mọi item chưa có vector
-    2. `search(query, items, text_fn, limit)` — encode query, cosine search
-    3. Vectors cache trong memory dict. Restart thì rebuild (nhanh, 300 items ~2-3s).
+    Contract chính:
+    - embed_query(text): vector query có instruction/prefix phù hợp model.
+    - embed_document(text): vector document không dùng query instruction.
+    - search(...): list[(raw_cosine, item)].
 
-    Không persist vectors ra file riêng — đơn giản hơn, khi model đổi không bị stale cache.
-    Items nhỏ (<500), rebuild mỗi boot không thành vấn đề.
+    `embed()` vẫn tồn tại để code cũ không vỡ và mặc định coi text là document.
     """
 
     DEFAULT_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
-    # Nếu muốn model nhỏ hơn: "paraphrase-MiniLM-L3-v2" (~60MB, English-only)
+    score_scale = "cosine"
 
     def __init__(
         self,
@@ -81,27 +65,43 @@ class EmbeddingIndex:
         model_name: str | None = None,
         cache_dir: str | None = None,
         device: str | None = None,
-        max_seq_length: int = 128,
+        max_seq_length: int | None = None,
+        pooling_strategy: str | None = None,
+        query_instruction: str | None = None,
     ) -> None:
-        self.model_name = model_name or os.getenv(
-            "ERIS_EMBEDDING_MODEL", self.DEFAULT_MODEL
-        )
+        self.model_name = model_name or os.getenv("ERIS_EMBEDDING_MODEL", self.DEFAULT_MODEL)
         self.cache_dir = cache_dir or os.getenv(
             "ERIS_EMBEDDING_CACHE_DIR",
-            # Mặc định đặt cạnh model.gguf — cùng thư mục src/
             str(Path("src") / "embedding_model"),
         )
-        self.max_seq_length = max_seq_length
+        self.model_family = self._detect_model_family(self.model_name)
+        self.max_seq_length = int(
+            max_seq_length
+            if max_seq_length is not None
+            else os.getenv("ERIS_EMBEDDING_MAX_LENGTH", "512")
+        )
+        self.pooling_strategy = str(
+            pooling_strategy
+            or os.getenv("ERIS_EMBEDDING_POOLING", "auto")
+        ).strip().lower()
+        self.query_instruction = str(
+            query_instruction
+            if query_instruction is not None
+            else os.getenv(
+                "ERIS_EMBEDDING_QUERY_INSTRUCTION",
+                "Given a colloquial Vietnamese memory question, retrieve facts or conversation evidence that directly answer it.",
+            )
+        ).strip()
+        self.min_cosine = float(os.getenv("ERIS_EMBEDDING_MIN_COSINE", "0.20"))
         self._device = device or ("cuda" if self._cuda_available() else "cpu")
         self._model: Any = None
         self._tokenizer: Any = None
         self._loaded = False
-        self._load_error: str = ""
-        # Cache: text_hash → ndarray
+        self._load_error = ""
         self._vector_cache: dict[str, np.ndarray] = {}
 
     # ------------------------------------------------------------------
-    # Public interface (contract cho SemanticMemoryStore)
+    # Public search contract
     # ------------------------------------------------------------------
 
     def search(
@@ -112,37 +112,34 @@ class EmbeddingIndex:
         text_fn: Callable[[Any], str],
         limit: int = 24,
     ) -> list[tuple[float, Any]]:
-        """Tìm items gần với query nhất theo cosine similarity.
+        """Tìm candidate theo raw cosine.
 
-        Trả list[tuple[score, item]] đã sorted descending.
-        Score trong [0, 1] (normalized cosine).
+        Score trả về nằm trong [-1, 1]. Downstream phải biết rõ scale này, không
+        được đoán bằng việc nhìn con số rồi cầu nguyện.
         """
+
         if not items or not str(query or "").strip():
             return []
         if not self._ensure_loaded():
             return []
-
         try:
-            query_vec = self._encode([query])[0]
+            query_vec = self._encode([str(query)], role="query")[0]
         except Exception as exc:
             logger.warning("EmbeddingIndex query encode failed: %s", exc)
             return []
 
-        # Encode item texts
-        texts = [text_fn(item) for item in items]
-        vecs = self._encode_with_cache(texts)
+        texts = [str(text_fn(item) or "") for item in items]
+        vecs = self._encode_with_cache(texts, role="document")
         if vecs is None or len(vecs) == 0:
             return []
 
         scores = _cosine_similarity(query_vec, vecs)
-
-        # Sort descending, trả top-limit
-        top_indices = np.argsort(scores)[::-1][:limit]
+        top_indices = np.argsort(scores)[::-1][: max(1, int(limit))]
         results: list[tuple[float, Any]] = []
         for idx in top_indices:
             score = float(scores[idx])
-            if score > 0.10:  # Threshold nhẹ — loại item hoàn toàn không liên quan
-                results.append((score, items[idx]))
+            if score >= self.min_cosine:
+                results.append((score, items[int(idx)]))
         return results
 
     def ensure_vectors(
@@ -151,23 +148,17 @@ class EmbeddingIndex:
         *,
         text_fn: Callable[[Any], str],
     ) -> int:
-        """Pre-embed items vào cache. Trả số item mới được embed.
+        """Pre-embed document vào cache, trả số text mới."""
 
-        Gọi từ maintenance hoặc khi store load. Không bắt buộc —
-        search() tự encode nếu cần, nhưng ensure_vectors() làm nó ấm trước.
-        """
         if not self._ensure_loaded():
             return 0
-        texts = [text_fn(item) for item in items]
-        new_count = 0
-        for text in texts:
-            key = _short_hash(text)
-            if key not in self._vector_cache:
-                new_count += 1
+        texts = [str(text_fn(item) or "") for item in items]
+        keys = [self._cache_key(text, "document") for text in texts]
+        new_count = sum(1 for key in keys if key not in self._vector_cache)
         if new_count == 0:
             return 0
         try:
-            self._encode_with_cache(texts)
+            self._encode_with_cache(texts, role="document")
         except Exception as exc:
             logger.warning("EmbeddingIndex ensure_vectors failed: %s", exc)
             return 0
@@ -181,12 +172,41 @@ class EmbeddingIndex:
             "loaded": self._loaded,
             "load_error": self._load_error,
             "model": self.model_name,
+            "model_family": self.model_family,
             "device": self._device,
+            "pooling": self._resolved_pooling(),
+            "max_seq_length": self.max_seq_length,
+            "score_scale": self.score_scale,
+            "min_cosine": self.min_cosine,
+            "query_instruction_enabled": bool(self.query_instruction),
             "cache_size": len(self._vector_cache),
         }
 
     # ------------------------------------------------------------------
-    # Model loading (lazy)
+    # Provider contract
+    # ------------------------------------------------------------------
+
+    def embed_query(self, text: str) -> tuple[float, ...]:
+        vectors = self._embed_many([str(text or "")], role="query")
+        return vectors[0] if vectors else ()
+
+    def embed_document(self, text: str) -> tuple[float, ...]:
+        vectors = self._embed_many([str(text or "")], role="document")
+        return vectors[0] if vectors else ()
+
+    def embed_documents(self, texts: Iterable[str]) -> list[tuple[float, ...]]:
+        return self._embed_many([str(text or "") for text in texts], role="document")
+
+    def embed(self, text: str) -> tuple[float, ...]:
+        """Compatibility API: text chung được coi là document."""
+
+        return self.embed_document(text)
+
+    def embed_events(self, texts: Iterable[str]) -> list[tuple[float, ...]]:
+        return self.embed_documents(texts)
+
+    # ------------------------------------------------------------------
+    # Model loading
     # ------------------------------------------------------------------
 
     def _ensure_loaded(self) -> bool:
@@ -201,32 +221,43 @@ class EmbeddingIndex:
         except Exception as exc:
             self._load_error = f"{type(exc).__name__}: {exc}"
             logger.warning(
-                "EmbeddingIndex model load failed (%s): %s — recall sẽ dùng lexical only.",
+                "EmbeddingIndex model load failed (%s): %s — recall dùng lexical only.",
                 self.model_name,
                 exc,
             )
             return False
 
     def _load_model(self) -> None:
-        from transformers import AutoTokenizer, AutoModel
+        from transformers import AutoModel, AutoTokenizer
+
         t0 = time.time()
         os.makedirs(self.cache_dir, exist_ok=True)
-
-        # Nếu cache_dir chứa config.json thì đó là local model path — load trực tiếp.
-        # Nếu không thì dùng cache_dir làm HuggingFace cache và download.
         local_model_path = os.path.join(self.cache_dir, "config.json")
         load_path = self.cache_dir if os.path.isfile(local_model_path) else self.model_name
         cache_arg = None if os.path.isfile(local_model_path) else self.cache_dir
+        trust_remote_code = os.getenv("ERIS_EMBEDDING_TRUST_REMOTE_CODE", "0").strip().lower() in {
+            "1", "true", "yes", "on"
+        }
 
         logger.info(
-            "[EmbeddingIndex] Loading model from %s (device=%s)...",
-            load_path, self._device,
+            "[EmbeddingIndex] Loading model from %s (family=%s, device=%s, pooling=%s)...",
+            load_path,
+            self.model_family,
+            self._device,
+            self._resolved_pooling(),
         )
         self._tokenizer = AutoTokenizer.from_pretrained(
-            load_path, cache_dir=cache_arg
+            load_path,
+            cache_dir=cache_arg,
+            trust_remote_code=trust_remote_code,
         )
+        # Last-token pooling cần padding trái để token cuối luôn là token thật.
+        if self._resolved_pooling() == "last_token":
+            self._tokenizer.padding_side = "left"
         self._model = AutoModel.from_pretrained(
-            load_path, cache_dir=cache_arg
+            load_path,
+            cache_dir=cache_arg,
+            trust_remote_code=trust_remote_code,
         )
         self._model.eval()
         if self._device != "cpu":
@@ -234,22 +265,37 @@ class EmbeddingIndex:
                 self._model = self._model.to(self._device)
             except Exception:
                 self._device = "cpu"
-        elapsed = time.time() - t0
-        logger.info("[EmbeddingIndex] Model loaded in %.1fs.", elapsed)
+        logger.info("[EmbeddingIndex] Model loaded in %.1fs.", time.time() - t0)
 
     # ------------------------------------------------------------------
     # Encoding
     # ------------------------------------------------------------------
 
-    def _encode(self, texts: list[str]) -> np.ndarray:
-        """Encode list of texts → ndarray (N, D)."""
+    def _embed_many(self, texts: list[str], *, role: EmbeddingRole) -> list[tuple[float, ...]]:
+        if not texts:
+            return []
+        if not self._ensure_loaded():
+            return [() for _ in texts]
+        try:
+            matrix = self._encode_with_cache(texts, role=role)
+            if matrix is None:
+                return [() for _ in texts]
+            return [tuple(float(x) for x in row) for row in matrix]
+        except Exception as exc:
+            logger.warning("EmbeddingIndex.%s encode failed: %s", role, exc)
+            return [() for _ in texts]
+
+    def _encode(self, texts: list[str], *, role: EmbeddingRole) -> np.ndarray:
+        """Encode texts và L2-normalize output."""
+
         import torch
-        batch_size = 32
+
+        prepared = [self._prepare_text(text, role=role) for text in texts]
+        batch_size = max(1, int(os.getenv("ERIS_EMBEDDING_BATCH_SIZE", "16")))
         all_vecs: list[np.ndarray] = []
 
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i : i + batch_size]
-            # Pad/truncate
+        for i in range(0, len(prepared), batch_size):
+            batch = prepared[i : i + batch_size]
             encoded = self._tokenizer(
                 batch,
                 padding=True,
@@ -258,150 +304,139 @@ class EmbeddingIndex:
                 return_tensors="pt",
             )
             if self._device != "cpu":
-                encoded = {k: v.to(self._device) for k, v in encoded.items()}
+                encoded = {key: value.to(self._device) for key, value in encoded.items()}
             with torch.no_grad():
                 output = self._model(**encoded)
-            # Mean pooling over token dimension
-            token_embeddings = output.last_hidden_state  # (B, T, D)
-            attention_mask = encoded["attention_mask"]   # (B, T)
-            mask_expanded = attention_mask.unsqueeze(-1).float()
-            summed = (token_embeddings * mask_expanded).sum(dim=1)
-            counts = mask_expanded.sum(dim=1).clamp(min=1e-9)
-            mean_pooled = (summed / counts).cpu().numpy()  # (B, D)
-            all_vecs.append(mean_pooled)
+            token_embeddings = output.last_hidden_state
+            attention_mask = encoded["attention_mask"]
+            pooled = self._pool(token_embeddings, attention_mask)
+            pooled = torch.nn.functional.normalize(pooled, p=2, dim=1)
+            all_vecs.append(pooled.detach().cpu().float().numpy())
 
-        return np.vstack(all_vecs)  # (N, D)
+        return np.vstack(all_vecs)
 
-    def _encode_with_cache(self, texts: list[str]) -> np.ndarray | None:
-        """Encode texts, dùng cache để tránh re-embed text đã biết."""
+    def _pool(self, token_embeddings: Any, attention_mask: Any) -> Any:
+        strategy = self._resolved_pooling()
+        if strategy == "last_token":
+            # Hoạt động cho cả padding trái và phải. Với padding trái, token cuối
+            # luôn thật; với padding phải, lấy vị trí length-1 của từng dòng.
+            left_padding = bool(attention_mask[:, -1].sum().item() == attention_mask.shape[0])
+            if left_padding:
+                return token_embeddings[:, -1]
+            lengths = attention_mask.sum(dim=1) - 1
+            batch_indices = lengths.new_tensor(range(token_embeddings.shape[0]))
+            return token_embeddings[batch_indices, lengths]
+
+        mask = attention_mask.unsqueeze(-1).to(token_embeddings.dtype)
+        summed = (token_embeddings * mask).sum(dim=1)
+        counts = mask.sum(dim=1).clamp(min=1e-9)
+        return summed / counts
+
+    def _prepare_text(self, text: str, *, role: EmbeddingRole) -> str:
+        clean = " ".join(str(text or "").split())
+        if role == "query":
+            if self.model_family == "qwen3":
+                instruction = self.query_instruction or "Retrieve relevant text."
+                return f"Instruct: {instruction}\nQuery: {clean}"
+            if self.model_family == "e5":
+                return f"query: {clean}"
+        elif self.model_family == "e5":
+            return f"passage: {clean}"
+        return clean
+
+    def _encode_with_cache(self, texts: list[str], *, role: EmbeddingRole) -> np.ndarray | None:
         if not texts:
             return None
-
-        keys = [_short_hash(t) for t in texts]
-        uncached_indices = [i for i, k in enumerate(keys) if k not in self._vector_cache]
-
+        keys = [self._cache_key(text, role) for text in texts]
+        uncached_indices = [idx for idx, key in enumerate(keys) if key not in self._vector_cache]
         if uncached_indices:
-            uncached_texts = [texts[i] for i in uncached_indices]
+            uncached_texts = [texts[idx] for idx in uncached_indices]
             try:
-                new_vecs = self._encode(uncached_texts)
-                for j, idx in enumerate(uncached_indices):
-                    self._vector_cache[keys[idx]] = new_vecs[j]
+                new_vecs = self._encode(uncached_texts, role=role)
+                for pos, idx in enumerate(uncached_indices):
+                    self._vector_cache[keys[idx]] = new_vecs[pos]
             except Exception as exc:
                 logger.warning("EmbeddingIndex encode batch failed: %s", exc)
                 return None
-
-        # Assemble in original order
         try:
-            result = np.stack([self._vector_cache[k] for k in keys])
-            return result
+            return np.stack([self._vector_cache[key] for key in keys])
         except KeyError:
             return None
 
-    # ------------------------------------------------------------------
-    # Provider interface (cho event_semantics / situation_model)
-    # ------------------------------------------------------------------
+    def _cache_key(self, text: str, role: EmbeddingRole) -> str:
+        namespace = (
+            f"{self.model_name}|{self.model_family}|{self._resolved_pooling()}|"
+            f"{self.max_seq_length}|{role}|{self.query_instruction if role == 'query' else ''}"
+        )
+        return _short_hash(namespace + "\n" + str(text or ""))
 
-    def embed(self, text: str) -> tuple[float, ...]:
-        """Embed một text -> vector tuple. Trả () nếu model không sẵn sàng.
+    def _resolved_pooling(self) -> str:
+        if self.pooling_strategy in {"mean", "last_token"}:
+            return self.pooling_strategy
+        return "last_token" if self.model_family == "qwen3" else "mean"
 
-        Đây là interface provider dùng chung: EventSemanticProfiler và
-        consumer semantic có thể nhận trực tiếp EmbeddingIndex làm provider.
-        """
-
-        vectors = self.embed_events([str(text or "")])
-        return vectors[0] if vectors else ()
-
-    def embed_events(self, texts) -> list[tuple[float, ...]]:
-        """Embed nhiều text -> list vector tuple (cùng thứ tự).
-
-        Mọi lỗi (model chưa nạp được, encode lỗi) -> list các tuple rỗng tương
-        ứng, để caller tự graceful degrade thay vì vỡ.
-        """
-
-        items = [str(t or "") for t in (texts or [])]
-        if not items:
-            return []
-        if not self._ensure_loaded():
-            return [() for _ in items]
-        try:
-            matrix = self._encode_with_cache(items)
-            if matrix is None:
-                return [() for _ in items]
-            return [tuple(float(x) for x in row) for row in matrix]
-        except Exception as exc:  # pragma: no cover - đường lỗi phòng vệ
-            logger.warning("EmbeddingIndex.embed_events failed: %s", exc)
-            return [() for _ in items]
+    @staticmethod
+    def _detect_model_family(model_name: str) -> str:
+        name = str(model_name or "").lower()
+        if "qwen3" in name and "embedding" in name:
+            return "qwen3"
+        if "e5" in name:
+            return "e5"
+        if "bge-m3" in name or "bge_m3" in name:
+            # BGE-M3 dense mode dùng CLS trong FlagEmbedding; AutoModel mean pooling
+            # không phải adapter đầy đủ. Giữ family riêng để debug không giả vờ.
+            return "bge_m3_generic"
+        if "minilm" in name:
+            return "minilm"
+        return "generic"
 
     @staticmethod
     def _cuda_available() -> bool:
         try:
             import torch
+
             return bool(torch.cuda.is_available())
         except Exception:
             return False
 
 
-# ---------------------------------------------------------------------------
-# Factory
-# ---------------------------------------------------------------------------
+def build_embedding_index(*, model_name: str | None = None, enabled: bool = True) -> EmbeddingIndex | None:
+    """Build index nếu dependency có sẵn; model vẫn lazy-load."""
 
-def build_embedding_index(
-    *,
-    model_name: str | None = None,
-    enabled: bool = True,
-) -> EmbeddingIndex | None:
-    """Build EmbeddingIndex nếu enabled.
-
-    Trả None nếu disabled hoặc import fail — caller tự graceful degrade.
-    Env: ERIS_EMBEDDING_ENABLED=1 (default 1)
-         ERIS_EMBEDDING_MODEL=paraphrase-multilingual-MiniLM-L12-v2
-    """
     env_enabled = os.getenv("ERIS_EMBEDDING_ENABLED", "1").strip().lower()
-    if env_enabled in {"0", "false", "no", "off"}:
-        return None
-    if not enabled:
+    if env_enabled in {"0", "false", "no", "off"} or not enabled:
         return None
     try:
-        import torch  # noqa: F401 — check availability
+        import torch  # noqa: F401
         from transformers import AutoTokenizer  # noqa: F401
     except ImportError:
-        logger.warning(
-            "EmbeddingIndex: torch/transformers chưa install. Recall dùng lexical only."
-        )
+        logger.warning("EmbeddingIndex: thiếu torch/transformers. Recall dùng lexical only.")
         return None
     return EmbeddingIndex(model_name=model_name)
 
-
-# ---------------------------------------------------------------------------
-# Shared singleton — một model dùng chung cho memory + event_semantics + situation
-# ---------------------------------------------------------------------------
 
 _SHARED_INDEX: EmbeddingIndex | None = None
 _SHARED_BUILT = False
 
 
 def get_shared_embedding_index() -> EmbeddingIndex | None:
-    """Trả EmbeddingIndex dùng chung toàn tiến trình (build một lần, lazy nạp model).
-
-    Ưu tiên model local trong repo (src/paraphrase-multilingual-MiniLM-L12-v2) để
-    khỏi tải mạng. Trả None nếu embedding bị tắt qua env hoặc thiếu torch/transformers
-    — caller tự graceful degrade.
-
-    Việc tạo object là rẻ; model chỉ thực sự nạp ở lần embed()/search() đầu tiên.
-    Nhờ vậy memory store, event semantics và situation model chia sẻ đúng một model.
-    """
+    """Một provider dùng chung toàn tiến trình."""
 
     global _SHARED_INDEX, _SHARED_BUILT
     if _SHARED_BUILT:
         return _SHARED_INDEX
-
     _SHARED_BUILT = True
     env_enabled = os.getenv("ERIS_EMBEDDING_ENABLED", "1").strip().lower()
     if env_enabled in {"0", "false", "no", "off"}:
-        _SHARED_INDEX = None
         return None
     try:
-        cache_dir = str(_LOCAL_MODEL_DIR) if _LOCAL_MODEL_DIR.is_dir() else None
+        # Chỉ ưu tiên MiniLM local khi user chưa chỉ định model khác. Nếu đã đặt
+        # ERIS_EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B thì không được lén load
+        # thư mục MiniLM chỉ vì nó nằm gần source.
+        explicit_model = os.getenv("ERIS_EMBEDDING_MODEL", "").strip()
+        cache_dir = None
+        if not explicit_model and _LOCAL_MODEL_DIR.is_dir():
+            cache_dir = str(_LOCAL_MODEL_DIR)
         _SHARED_INDEX = EmbeddingIndex(cache_dir=cache_dir)
     except Exception:
         _SHARED_INDEX = None
@@ -409,8 +444,6 @@ def get_shared_embedding_index() -> EmbeddingIndex | None:
 
 
 def reset_shared_embedding_index() -> None:
-    """Xoá singleton (dùng cho test/maintenance)."""
-
     global _SHARED_INDEX, _SHARED_BUILT
     _SHARED_INDEX = None
     _SHARED_BUILT = False

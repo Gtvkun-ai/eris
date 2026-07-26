@@ -98,6 +98,7 @@ class IncomingMessageDispatcher:
         owner = self.owner
         return {
             "panel_state_ack": owner._handle_panel_state_ack,
+            "memory_panel_request": getattr(owner, "_handle_memory_panel_request", lambda _msg: None),
             "phase7_validation_control": owner._handle_phase7_validation_control,
             "chat_start": lambda _msg: owner._enter_chat_cycle(),
             "chat": self._handle_chat,

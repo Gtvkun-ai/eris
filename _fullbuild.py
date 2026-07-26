@@ -28,6 +28,11 @@ KEEP_PY = {"vision.py"}
 # Thu muc qua nang / khong can ship
 SKIP_HEAVY = {
     "paraphrase-multilingual-MiniLM-L12-v2",
+    "embedding_model",
+    "tests",
+    "tools",
+    ".pytest_cache",
+    ".github",
 }
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -115,17 +120,33 @@ if not ok:
 n_pyc = count_ext(src_build, ".pyc")
 print("  Compile xong: " + str(n_pyc) + " file .pyc")
 
-# ── 3. Xoa .py goc (giu vision.py) ───────────────────────────────────────────
-banner("3 / 5  --  Xoa .py goc  (giu: " + ", ".join(sorted(KEEP_PY)) + ")")
+# ── 3. Xoa .py goc (giu vision.py) va cac file dev/doc thua ──────────────────
+banner("3 / 5  --  Xoa .py goc va file dev/doc thua  (giu: " + ", ".join(sorted(KEEP_PY)) + ")")
 
-removed = 0
+removed_py = 0
+removed_dev = 0
 for dp, _, fns in os.walk(src_build):
     for fn in fns:
-        if fn.endswith(".py") and fn not in KEEP_PY:
-            os.remove(os.path.join(dp, fn))
-            removed += 1
+        fp = os.path.join(dp, fn)
+        # Giu lai vision.py, xoa cac file .py khac
+        if fn.endswith(".py"):
+            if fn not in KEEP_PY:
+                os.remove(fp)
+                removed_py += 1
+        # Xoa cac file tai lieu, batch va config dev trong src
+        elif (
+            fn.endswith(".md") or
+            fn.endswith(".bat") or
+            fn.endswith(".toml") or
+            fn.endswith(".ini") or
+            fn.startswith("requirements-") or
+            fn in {".gitignore", ".gitattributes"}
+        ):
+            os.remove(fp)
+            removed_dev += 1
 
-print("  Da xoa: " + str(removed) + " file .py")
+print("  Da xoa: " + str(removed_py) + " file .py")
+print("  Da xoa: " + str(removed_dev) + " file dev/doc (.md, .bat, .toml, .ini, .gitignore)")
 print("  Con lai: " + str(count_ext(src_build, ".py")) + " file .py  (vision.py)")
 
 # Xoa __pycache__ thua (legacy .pyc dat canh file, __pycache__ khong can)

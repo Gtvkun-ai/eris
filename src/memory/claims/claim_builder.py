@@ -4,95 +4,58 @@ from __future__ import annotations
 memory.claims.claim_builder
 ===========================
 
-Biến MeaningFrame thành SemanticClaim.
+Một pipeline duy nhất biến MeaningFrame thành SemanticClaim.
 
-Đây mới là nơi map `frame_type + relation` sang predicate memory. Parser/model chỉ
-được phép nói "khung nghĩa có vẻ là hometown/living/preference"; claim builder
-mới quyết định predicate chuẩn nào được sinh ra. Nhờ vậy `claim_extractor` không
-còn là một hang regex tự phong làm não.
+ClaimBuilder không còn giữ RELATION_TO_PREDICATE hay PREDICATE_DEFAULTS riêng.
+Mọi route/default/retention lấy từ PredicateRegistry, tức catalog canonical.
+Structured model và fallback parser đều đi qua cùng một đường build; khác nhau chỉ
+ở metadata đầu vào, không còn hai bộ luật song song rồi lâu lâu cãi nhau như họp tổ.
 """
 
-from dataclasses import dataclass
-from typing import Iterable, Mapping, Any
+from dataclasses import dataclass, field
 import time
+from types import MappingProxyType
+from typing import Any, Iterable, Mapping
 
 try:
     from ..name_validation import is_valid_name_claim
-except Exception:  # pragma: no cover
-    from name_validation import is_valid_name_claim  # type: ignore
-
-try:
-    from ..semantic_claim import ExtractedClaim, SemanticClaim, build_claim
+    from ..predicate_catalog import BUILTIN_PREDICATES
+    from ..predicate_registry import PredicateRegistry, canonicalize_predicate, get_default_registry
+    from ..semantic_claim import ExtractedClaim, build_claim
     from ..understanding.meaning_frame import MeaningFrame, MeaningParseResult
 except Exception:  # pragma: no cover
-    from semantic_claim import ExtractedClaim, SemanticClaim, build_claim  # type: ignore
+    from name_validation import is_valid_name_claim  # type: ignore
+    from predicate_catalog import BUILTIN_PREDICATES  # type: ignore
+    from predicate_registry import PredicateRegistry, canonicalize_predicate, get_default_registry  # type: ignore
+    from semantic_claim import ExtractedClaim, build_claim  # type: ignore
     from understanding.meaning_frame import MeaningFrame, MeaningParseResult  # type: ignore
 
 
-# Map frame relation -> predicate cuối.
-# Nếu model.gguf trả relation đã là predicate chuẩn, map này vẫn nhận được.
-RELATION_TO_PREDICATE: dict[tuple[str, str], str] = {
-    ("identity", "name"): "name_is",
-    ("identity", "name_is"): "name_is",
-    ("identity", "nickname"): "nickname_is",
-    ("identity", "nickname_is"): "nickname_is",
-    ("identity", "birth_month"): "birth_month_is",
-    ("identity", "birth_month_is"): "birth_month_is",
-    ("identity", "birth_year"): "birth_year_is",
-    ("identity", "birth_year_is"): "birth_year_is",
-    ("identity", "age"): "age_observed_is",
-    ("identity", "age_observed_is"): "age_observed_is",
-
-    ("location", "current_location"): "current_location_is",
-    ("location", "current_location_is"): "current_location_is",
-    ("location", "living_location"): "living_location_is",
-    ("location", "living_location_is"): "living_location_is",
-    ("location", "hometown"): "hometown_is",
-    ("location", "hometown_is"): "hometown_is",
-    ("location", "mentioned_location"): "mentioned_location",
-
-    ("preference", "likes"): "preference_location_or_general",
-    ("preference", "dislikes"): "preference_location_or_general",
-    ("preference", "preference_location"): "preference_location",
-    ("preference", "general_preference"): "general_preference",
-
-    # Profile học tập/ngành học. Tách khỏi preference để câu "Tôi đang học IT"
-    # không bị nhớ thành "tôi thích IT". Một chữ sai predicate, sau này recall sai cả đời.
-    ("project", "study_field"): "study_field_is",
-    ("project", "study_field_is"): "study_field_is",
-
-    ("instruction", "response_style"): "response_style_prefers",
-    ("instruction", "response_style_prefers"): "response_style_prefers",
-    ("feedback", "tone_feedback"): "response_style_prefers",
-    ("feedback", "response_style_prefers"): "response_style_prefers",
-
-    ("session_event", "greeting"): "greeted",
-    ("session_event", "asked_about"): "asked_about",
-}
-
-
-PREDICATE_DEFAULTS: dict[str, dict[str, Any]] = {
-    "name_is": {"object_type": "person_name", "modality": "fact", "temporal": "stable", "stability": "stable", "confidence_floor": 0.80},
-    "nickname_is": {"object_type": "person_name", "modality": "fact", "temporal": "stable", "stability": "stable", "confidence_floor": 0.78},
-    "birth_month_is": {"object_type": "month", "modality": "fact", "temporal": "stable", "stability": "stable", "confidence_floor": 0.78},
-    "birth_year_is": {"object_type": "year", "modality": "fact", "temporal": "stable", "stability": "stable", "confidence_floor": 0.78},
-    "age_observed_is": {"object_type": "age", "modality": "observation", "temporal": "current", "stability": "medium", "valid_seconds": 86400 * 370},
-    "current_location_is": {"object_type": "location", "modality": "observation", "temporal": "current", "stability": "transient", "valid_seconds": 3600},
-    "living_location_is": {"object_type": "location", "modality": "fact", "temporal": "current", "stability": "medium"},
-    "hometown_is": {"object_type": "location", "modality": "fact", "temporal": "stable", "stability": "stable"},
-    "preference_location": {"object_type": "location", "modality": "preference", "temporal": "stable", "stability": "medium"},
-    "general_preference": {"object_type": "unknown", "modality": "preference", "temporal": "stable", "stability": "medium"},
-    "study_field_is": {"object_type": "study_field", "modality": "fact", "temporal": "current", "stability": "medium", "confidence_floor": 0.74},
-    "response_style_prefers": {"object_type": "style_rule", "modality": "preference", "temporal": "stable", "stability": "medium"},
-    "mentioned_location": {"object_type": "location", "modality": "observation", "temporal": "session", "stability": "session"},
-    "greeted": {"object_type": "utterance", "modality": "observation", "temporal": "session", "stability": "session"},
-    "asked_about": {"object_type": "topic", "modality": "observation", "temporal": "session", "stability": "session"},
-}
+# Compatibility view được SINH từ catalog, không còn là nguồn chân lý.
+RELATION_TO_PREDICATE = MappingProxyType({
+    (route.frame_type, route.relation): item.predicate
+    for item in BUILTIN_PREDICATES
+    for route in item.frame_routes
+    if not route.target_kind
+})
+PREDICATE_DEFAULTS = MappingProxyType({
+    item.predicate: {
+        "object_type": item.ontology.object_type,
+        "modality": item.ontology.modality,
+        "temporal": item.ontology.temporal,
+        "stability": item.ontology.stability,
+        "confidence_floor": item.retention.confidence_floor,
+        "valid_seconds": item.retention.valid_seconds,
+    }
+    for item in BUILTIN_PREDICATES
+})
 
 
 @dataclass(slots=True)
 class ClaimBuilder:
-    """Builder deterministic từ MeaningFrame sang ExtractedClaim."""
+    """Builder deterministic, nhận registry qua dependency injection."""
+
+    registry: PredicateRegistry = field(default_factory=get_default_registry)
 
     def build_many(
         self,
@@ -101,232 +64,232 @@ class ClaimBuilder:
         evidence_ids: Iterable[str] = (),
         source: str = "user_text",
     ) -> list[ExtractedClaim]:
-        out: list[ExtractedClaim] = []
-        for frame in result.frames:
-            item = self.build_one(frame, evidence_ids=tuple(evidence_ids), source=source)
-            if item is not None:
-                out.append(item)
+        evidence_tuple = tuple(evidence_ids)
+        out = [
+            item
+            for frame in result.frames
+            if (item := self.build_one(frame, evidence_ids=evidence_tuple, source=source)) is not None
+        ]
         return self._dedupe(out)
 
-    def build_one(self, frame: MeaningFrame, *, evidence_ids: tuple[str, ...] = (), source: str = "user_text") -> ExtractedClaim | None:
-        # --- Path mới: Gemini đã quyết định classification ---
-        # Nếu frame có memory_type (schema mới), dùng trực tiếp thay vì map cứng.
-        raw = (frame.slots or {}).get("_raw") or {}
-        if isinstance(raw, Mapping) and raw.get("memory_type"):
-            return self._build_from_ai_classification(raw, evidence_ids=evidence_ids)
-
-        # --- Path cũ: map frame_type + relation sang predicate (fallback) ---
-        predicate = self._predicate_for_frame(frame)
-        if not predicate:
-            return None
+    def build_one(
+        self,
+        frame: MeaningFrame,
+        *,
+        evidence_ids: tuple[str, ...] = (),
+        source: str = "user_text",
+    ) -> ExtractedClaim | None:
         if frame.polarity in {"hypothetical", "quoted"}:
             return None
 
-        defaults = dict(PREDICATE_DEFAULTS.get(predicate, {}))
-        target = frame.target
-        if target is None and predicate not in {"greeted", "asked_about"}:
+        raw = self._raw(frame)
+        target_kind = frame.target.kind if frame.target is not None else str(raw.get("object_type") or "")
+        fact_key = str(raw.get("fact_key") or "").strip()
+        relation = str(raw.get("predicate") or frame.relation or fact_key).strip()
+        aliases = self._string_tuple(raw.get("aliases"))
+        query_examples = self._string_tuple(raw.get("query_examples"))
+
+        definition = self.registry.resolve_frame(
+            frame.frame_type,
+            relation,
+            target_kind=target_kind,
+            allow_open=self._structured_enough(frame, raw),
+            fact_key=fact_key,
+            aliases=aliases,
+            query_examples=query_examples,
+            display_name=str(raw.get("display_name") or ""),
+            object_type=str(raw.get("object_type") or target_kind or "unknown"),
+            modality=str(raw.get("modality") or frame.modality or "fact"),
+            temporal=str(raw.get("time_scope") or raw.get("temporal") or frame.time_scope or "unknown"),
+            cardinality=str(raw.get("cardinality") or "multi"),
+            sensitivity=str(raw.get("sensitivity") or "normal"),
+            confidence=float(raw.get("confidence") or frame.certainty or 0.0),
+        )
+        if definition is None:
             return None
 
-        object_text = target.text if target else frame.evidence_span
-        object_value: Any = target.text if target else object_text
-        object_type = str(defaults.get("object_type") or (target.kind if target else "unknown"))
+        object_value, object_text = self._object_payload(frame, raw)
+        if object_value in (None, "") and definition.predicate not in {"greeted", "asked_about"}:
+            return None
 
-        if predicate in {"name_is", "nickname_is"}:
+        evidence_text = str(
+            raw.get("_source_evidence")
+            or raw.get("evidence_text")
+            or raw.get("evidence_span")
+            or frame.evidence_span
+            or object_text
+        ).strip()
+
+        if definition.fact_key in {"user.name", "user.nickname"}:
             if not is_valid_name_claim(
-                object_text,
-                frame.evidence_span,
-                nickname=(predicate == "nickname_is"),
+                object_value,
+                evidence_text,
+                nickname=(definition.fact_key == "user.nickname"),
             ):
                 return None
 
-        # Nếu preference target là location thì thành preference_location, còn không là general_preference.
-        if predicate == "preference_location_or_general":
-            if target and target.kind == "location":
-                predicate = "preference_location"
-                defaults = dict(PREDICATE_DEFAULTS[predicate])
-                object_type = "location"
-            else:
-                predicate = "general_preference"
-                defaults = dict(PREDICATE_DEFAULTS[predicate])
-                object_type = target.kind if target else "unknown"
-
-        temporal = str(defaults.get("temporal") or frame.time_scope or "unknown")
-        if frame.time_scope != "unknown":
-            temporal = frame.time_scope
-        stability = str(defaults.get("stability") or frame.stability or "unknown")
-        if frame.stability != "unknown":
-            stability = frame.stability
-
-        valid_until = None
-        valid_seconds = defaults.get("valid_seconds")
-        if valid_seconds:
-            valid_until = time.time() + float(valid_seconds)
-
-        confidence = max(float(frame.certainty), float(defaults.get("confidence_floor", 0.0)))
-        if target is not None:
-            confidence = min(1.0, confidence * 0.82 + target.confidence * 0.18)
-        confidence = max(0.0, min(1.0, confidence))
+        ontology = definition.ontology
+        retention = definition.retention
+        temporal = self._prefer_specific(
+            str(raw.get("time_scope") or raw.get("temporal") or frame.time_scope or "unknown"),
+            ontology.temporal,
+            generic="unknown",
+        )
+        stability = self._prefer_specific(
+            str(raw.get("stability") or frame.stability or "unknown"),
+            ontology.stability,
+            generic="unknown",
+        )
+        modality = self._prefer_specific(
+            str(raw.get("modality") or frame.modality or ""),
+            ontology.modality,
+            generic="",
+        )
+        confidence = self._confidence(frame, raw, retention.confidence_floor)
+        valid_seconds = raw.get("valid_seconds", retention.valid_seconds)
+        valid_until = time.time() + float(valid_seconds) if valid_seconds not in (None, "", 0, 0.0) else None
+        commit_hint = self._commit_hint(str(raw.get("storage_target") or retention.storage_layer))
 
         claim = build_claim(
-            subject=frame.subject or "user",
-            predicate=predicate,
+            subject=str(raw.get("subject") or frame.subject or "user"),
+            predicate=definition.predicate,
             object_text=str(object_text),
             object_value=object_value,
-            object_type=object_type,
-            assertion=frame.polarity,  # type: ignore[arg-type]
-            modality=str(defaults.get("modality") or frame.modality or "fact"),  # type: ignore[arg-type]
+            object_type=str(raw.get("object_type") or ontology.object_type or target_kind or "unknown"),
+            assertion=str(raw.get("assertion") or frame.polarity or "asserted"),  # type: ignore[arg-type]
+            modality=modality,  # type: ignore[arg-type]
             temporal=temporal,  # type: ignore[arg-type]
-            scope=frame.scope or "self",  # type: ignore[arg-type]
+            scope=str(raw.get("scope") or frame.scope or ontology.scope or "self"),  # type: ignore[arg-type]
             source="user_text" if source == "user_text" else "inference",  # type: ignore[arg-type]
             confidence=confidence,
-            evidence_text=frame.evidence_span,
+            evidence_text=evidence_text,
             evidence_ids=evidence_ids,
             valid_until=valid_until,
             stability=stability,  # type: ignore[arg-type]
-            qualifiers={
-                "meaning_frame": frame.to_dict(),
-                "pipeline": "meaning_frame_claim_builder",
-            },
+            qualifiers=self._qualifiers(frame, raw, definition, commit_hint),
         )
         return ExtractedClaim(
             claim=claim,
             extraction_confidence=confidence,
-            extraction_method="meaning_frame_builder",
-            commit_hint="semantic",
+            extraction_method="canonical_claim_builder",
+            commit_hint=commit_hint,
             warnings=frame.warnings,
         )
 
-    def _build_from_ai_classification(
-        self,
-        raw: Mapping[str, Any],
-        *,
-        evidence_ids: tuple[str, ...] = (),
-    ) -> ExtractedClaim | None:
-        """Build ExtractedClaim từ schema mới của Gemini.
+    def _raw(self, frame: MeaningFrame) -> dict[str, Any]:
+        value = (frame.slots or {}).get("_raw") or {}
+        return dict(value) if isinstance(value, Mapping) else {}
 
-        Gemini quyết định memory_type, storage_target, importance, decay, surface_fn.
-        Không cần map sang predicate cứng.
-        """
-        claim_text = str(raw.get("claim") or "").strip()
-        if not claim_text:
-            return None
+    def _structured_enough(self, frame: MeaningFrame, raw: Mapping[str, Any]) -> bool:
+        # Model có schema/fact_key hoặc parser structured đủ confidence mới được
+        # tạo predicate provisional. Fallback regex mơ hồ chỉ dùng builtin routes.
+        return bool(
+            raw.get("fact_key")
+            or raw.get("memory_type")
+            or raw.get("predicate")
+            or (frame.source != "user_text" and float(frame.certainty) >= 0.55)
+            or (raw and float(raw.get("confidence") or frame.certainty) >= 0.55)
+        )
 
-        memory_type = str(raw.get("memory_type") or "context")
-        storage_target = str(raw.get("storage_target") or "semantic")
-        importance = float(raw.get("importance") or 0.5)
-        decay = str(raw.get("decay") or "normal")
-        surface_fn = str(raw.get("surface_fn") or "background")
-        fact_key = str(raw.get("fact_key") or "")
+    def _object_payload(self, frame: MeaningFrame, raw: Mapping[str, Any]) -> tuple[Any, str]:
         value = raw.get("value")
-        confidence = float(raw.get("confidence") or 0.65)
+        if value in (None, "") and frame.target is not None:
+            value = frame.target.text
+        if value in (None, ""):
+            value = raw.get("object") or raw.get("object_value") or raw.get("claim")
+        text = str(
+            raw.get("object_text")
+            or (frame.target.text if frame.target is not None else "")
+            or raw.get("claim")
+            or value
+            or frame.evidence_span
+        ).strip()
+        return value if value not in (None, "") else text, text
 
-        if fact_key in {"user.name", "user.nickname"}:
-            # AI classification không được tự phong đại từ trong câu hỏi thành tên.
-            # Với identity bền vững, thiếu value hoặc thiếu cue tự khai thì bỏ claim.
-            if value is None or not is_valid_name_claim(
-                value,
-                str(raw.get("_source_evidence") or raw.get("evidence_text") or raw.get("evidence_span") or claim_text),
-                nickname=(fact_key == "user.nickname"),
-            ):
-                return None
-        time_scope = str(raw.get("time_scope") or "stable")
-        subject = str(raw.get("subject") or "user")
-        why = str(raw.get("why") or "")
+    def _confidence(self, frame: MeaningFrame, raw: Mapping[str, Any], floor: float) -> float:
+        confidence = max(float(raw.get("confidence") or frame.certainty or 0.0), float(floor or 0.0))
+        if frame.target is not None:
+            confidence = confidence * 0.82 + float(frame.target.confidence) * 0.18
+        return max(0.0, min(1.0, confidence))
 
-        # Map storage_target → commit_hint và predicate fallback
-        target_map = {
+    def _commit_hint(self, storage: str) -> str:
+        value = str(storage or "semantic").strip().lower()
+        mapping = {
             "semantic": "semantic",
+            "semantic_memory": "semantic",
             "episodic": "episodic",
+            "episodic_memory": "episodic",
             "procedural": "procedural",
+            "procedural_memory": "procedural",
             "affective_residue": "affective_residue",
             "relational": "relational",
             "candidate": "candidate",
+            "memory_candidate": "candidate",
+            "session_turn_ledger": "episodic",
         }
-        commit_hint = target_map.get(storage_target, "semantic")
+        return mapping.get(value, "semantic")
 
-        # Map decay string → decay_policy chuẩn
-        decay_map = {
+    def _qualifiers(
+        self,
+        frame: MeaningFrame,
+        raw: Mapping[str, Any],
+        definition: Any,
+        commit_hint: str,
+    ) -> dict[str, Any]:
+        decay = str(raw.get("decay") or definition.retention.default_decay or "normal")
+        decay_policy = {
             "slow": "slow",
             "normal": "normal",
             "fast": "fast",
             "ephemeral": "session_only",
-        }
-        decay_policy = decay_map.get(decay, "normal")
-
-        # Map surface_fn → surface_policy
-        surface_policy_map = {
+        }.get(decay, decay)
+        surface_fn = str(raw.get("surface_fn") or "background")
+        surface_policy = {
             "can_answer": "surface_if_contextual",
             "background": "silent_bias",
             "never": "never_direct_claim",
+        }.get(surface_fn, str(raw.get("surface_policy") or "silent_bias"))
+        return {
+            "meaning_frame": frame.to_dict(),
+            "pipeline": "canonical_claim_builder.v2",
+            "schema_version": definition.schema_version,
+            "predicate_source": definition.source,
+            "provisional_predicate": definition.provisional,
+            "fact_key": definition.fact_key,
+            "aliases": list(definition.query.aliases),
+            "query_examples": list(definition.query.query_examples),
+            "cardinality": definition.ontology.cardinality,
+            "display_name": definition.surface.display_name,
+            "sensitivity": definition.surface.sensitivity,
+            "storage_target": str(raw.get("storage_target") or definition.retention.storage_layer),
+            "commit_hint": commit_hint,
+            "importance": float(raw.get("importance") or definition.retention.importance),
+            "decay": decay,
+            "decay_policy": decay_policy,
+            "surface_fn": surface_fn,
+            "surface_policy": surface_policy,
+            "memory_type": str(raw.get("memory_type") or definition.ontology.modality),
+            "why": str(raw.get("why") or ""),
         }
-        surface_policy = surface_policy_map.get(surface_fn, "silent_bias")
-
-        # Predicate đặc biệt: dùng fact_key nếu có, không thì dùng memory_type
-        predicate = fact_key.replace(".", "_") if fact_key else f"{memory_type}_observed"
-
-        source_evidence = str(raw.get("_source_evidence") or raw.get("evidence_text") or raw.get("evidence_span") or claim_text)
-
-        claim = build_claim(
-            subject=subject,
-            predicate=predicate,
-            object_text=claim_text,
-            object_value=value if value is not None else claim_text,
-            object_type=memory_type,
-            assertion="asserted",
-            modality="fact" if memory_type in {"fact", "knowledge"} else
-                     "preference" if memory_type == "convention" else
-                     "feedback" if memory_type == "feedback" else
-                     "observation",
-            temporal=time_scope,  # type: ignore[arg-type]
-            scope="self",  # type: ignore[arg-type]
-            source="user_text",  # type: ignore[arg-type]
-            confidence=min(1.0, max(0.0, confidence)),
-            evidence_text=source_evidence,
-            evidence_ids=evidence_ids,
-            valid_until=None,
-            stability="stable" if decay in {"slow"} else "medium" if decay == "normal" else "transient",  # type: ignore[arg-type]
-            qualifiers={
-                "memory_type": memory_type,
-                "storage_target": storage_target,
-                "importance": importance,
-                "decay": decay,
-                "decay_policy": decay_policy,
-                "surface_fn": surface_fn,
-                "surface_policy": surface_policy,
-                "fact_key": fact_key,
-                "value": value,
-                "why": why,
-                "pipeline": "ai_classification",
-            },
-        )
-        return ExtractedClaim(
-            claim=claim,
-            extraction_confidence=confidence,
-            extraction_method="ai_classification",
-            commit_hint=commit_hint,
-            warnings=(),
-        )
-
-    def _predicate_for_frame(self, frame: MeaningFrame) -> str:
-        key = (frame.frame_type, frame.relation)
-        if key in RELATION_TO_PREDICATE:
-            return RELATION_TO_PREDICATE[key]
-        # Nếu model trả thẳng predicate chuẩn, nhận luôn khi defaults có.
-        if frame.relation in PREDICATE_DEFAULTS:
-            return frame.relation
-        return ""
 
     def _dedupe(self, items: list[ExtractedClaim]) -> list[ExtractedClaim]:
         seen: set[tuple[str, str, str, str]] = set()
         out: list[ExtractedClaim] = []
         for item in items:
-            c = item.claim
-            key = (c.subject, c.predicate, c.object_text.casefold(), c.assertion)
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(item)
+            claim = item.claim
+            key = (claim.subject, claim.predicate, claim.object_text.casefold(), claim.assertion)
+            if key not in seen:
+                seen.add(key)
+                out.append(item)
         return out
+
+    @staticmethod
+    def _string_tuple(value: Any) -> tuple[str, ...]:
+        return tuple(str(item) for item in value or () if str(item).strip()) if isinstance(value, (list, tuple, set)) else ()
+
+    @staticmethod
+    def _prefer_specific(value: str, default: str, *, generic: str) -> str:
+        return value if value and value != generic else default
 
 
 __all__ = ["ClaimBuilder", "RELATION_TO_PREDICATE", "PREDICATE_DEFAULTS"]

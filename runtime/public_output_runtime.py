@@ -1,0 +1,982 @@
+# -*- coding: utf-8 -*-
+"""Extracted coordinator runtime boundary.
+
+The methods remain owner-oriented for backward compatibility while the main
+coordinator becomes a small composition surface. New behavior should prefer
+typed services over adding more methods to these compatibility mixins.
+"""
+from __future__ import annotations
+
+import base64
+import hashlib
+import io
+import json
+import os
+import random
+import re
+import threading
+import time
+import traceback
+import unicodedata
+from collections.abc import Mapping
+from types import SimpleNamespace
+
+from actions.confirmation import public_action_text
+from cortex.background_observer import BackgroundObserver, BackgroundObserverConfig
+from cortex.daydream_consolidation import DaydreamConsolidator, DaydreamPacket
+from cortex.endogenous_drive import EndogenousDriveEngine, RollingInternalState
+from cortex.epistemic import EpistemicAgentMindProjection, EpistemicKernel, EpistemicKernelConfig, EpistemicStore, archive_v1_cognition, set_default_kernel
+from cortex.internal_agenda import InternalAgendaStack
+from cortex.observer_contracts import ObserverFrame, SemanticSceneNote, SignalSnapshot, stable_hash
+from cortex.appetite_system import AppetiteSystem, build_evidence_buffet
+from cortex.connection_drive import ConnectionDrive, ConnectionDriveState
+from cortex.contracts import CognitiveDisturbance, PerceptEvent, SocialPresenceEvent, SubconsciousReport, ThoughtSurface, ThoughtStreamReport, TiPolicyReport
+from cortex.internal_state import InternalStateEngine, PersistentInternalState
+from cortex.micro_policy import MicroLinePolicy, RelationalContext, SemanticRepeatGuard
+from cortex.subconscious import build_phase1234567_workers
+from cortex.self_observation import SelfObservationEngine
+from cortex.self_model import SelfModelEngine
+from cortex.thought_stream import ThoughtStream
+from cortex.user_context_stream import RollingUserContext, UserContextStream
+from cortex.vision_semantic_compressor import RemoteCaptionClient, RemoteStructureClient, VisionCompressorConfig, VisionSemanticCompressor
+from domain import Decision
+from eris_secrets import get_config
+from failure_meta import is_technical_failure_meta
+from memory.memory_kernel import MemoryKernel
+from runtime.ai_orchestrated.cortex_runtime import CortexAttentionSignal, CortexRuntime
+from runtime.body_bias import BodyBiasProjector
+from runtime.chat_cycle import ChatCycleMixin
+from runtime.failure_taxonomy import FailureContext
+from runtime.inner_diary_persistence import InnerDiaryPersister
+from runtime.interrupt_ledger import InterruptLedger
+from runtime.loop_guard import RuntimeLoopGuard
+from runtime.model_budget_policy import ModelBudgetPolicy
+from runtime.outcome_observer import OutcomeObserver
+from runtime.policy_settings import RuntimePolicySettings
+from runtime.private_life_daemon import PrivateLifeDaemon
+from runtime.private_mind_daemon import PrivateMindDaemon
+from runtime.public_payload_policy import sanitize_body_payload
+from runtime.public_turn_ledger import PublicTurnLedger
+from runtime.public_turn_runtime import PublicTurnRuntime
+from runtime.repair_state import RepairStateController
+from runtime.signal_buffer import SignalBuffer, SignalBufferConfig
+from runtime.source_grounding import SourceGroundingEngine
+from runtime.stage_contracts import StageFrameBuilder
+from runtime.stage_dispatcher import StageDispatcher
+from runtime.stage_event_bus import StageEventBus
+from runtime.stage_output import StageOutputPipeline
+from runtime.stage_protocol_adapter import playback_event, show_plan_event, stage_segment_event, stage_state_event
+from runtime.subconscious_loop import SubconsciousLoop as RuntimeSubconsciousLoop
+from runtime.subsystem_health import FailureKind, SubsystemHealthRegistry
+from runtime.subsystem_supervisor import SubsystemSupervisor
+from runtime.thought_model_adapter import RuntimeThoughtModelAdapter
+from runtime.transport_boundary import RuntimeTransportBoundary
+from runtime.tts_sync_policy import sync_text_with_tts_enabled, text_sync_timeout_seconds, tts_event_releases_deferred_text
+from runtime.vision_grounding import VisionGroundingPolicy, VisionGroundingReport
+from runtime.voice_manager import VoiceManager
+from runtime.vtuber_stage_version import VTUBER_STAGE_PHASES, VTUBER_STAGE_STATUS, VTUBER_STAGE_VERSION
+from screen import build_screen_text_runtime
+
+
+class PublicOutputRuntimeMixin:
+    def _stage_channel_blocked(self, channel: str, *, requester_id: str = "") -> bool:
+        try:
+            from runtime.stage_ownership import stage_channel_blocked
+            return stage_channel_blocked(self, channel, requester_id=requester_id)
+        except Exception:
+            return False
+
+    def _supersede_tts_for_new_user_turn(self, reason: str) -> bool:
+        tts = getattr(self, "tts_engine", None)
+        supersede = getattr(tts, "supersede_all", None)
+        if not callable(supersede):
+            return False
+        try:
+            return bool(supersede(reason=reason))
+        except Exception as exc:
+            self.logger.debug("[TTS] supersede failed: %s", exc)
+            return False
+
+    def _send_decision_to_body(self, decision: Decision, *, channel: str | None = None) -> None:
+        channel_name = str(channel or "").strip().lower()
+        if channel_name and self._stage_channel_blocked(channel_name):
+            self.logger.info(
+                "[stage ownership] suppressed channel=%s text=%r",
+                channel_name, str(getattr(decision, "text", "") or "")[:120],
+            )
+            return
+        payload = decision.to_payload()
+        if bool(getattr(self, "ai_runtime_enabled", False)) and getattr(self, "ai_state_reducer", None) is not None:
+            from runtime.ai_orchestrated.panel_adapter import build_ai_panel_payload
+            expression = {}
+            behavior_meta = getattr(decision, "behavior_observation_meta", None)
+            if isinstance(behavior_meta, Mapping):
+                raw_expression = behavior_meta.get("identity_expression")
+                if isinstance(raw_expression, Mapping):
+                    expression = dict(raw_expression)
+            ai_panel = build_ai_panel_payload(
+                self.ai_state_reducer.snapshot(),
+                getattr(self, "ai_discovery_runtime", None),
+                getattr(self, "ai_initiative_controller", None),
+                getattr(self, "ai_identity_consolidator", None),
+                expression,
+            )
+            payload.update(ai_panel)
+            private_digest = dict(ai_panel.get("private_mind_digest", {}) or {})
+            private_life_digest = dict(ai_panel.get("private_life_digest", {}) or {})
+        else:
+            payload.update(self._build_body_bias_payload())
+            raw_private_digest = getattr(self, "private_mind_digest", {}) or {}
+            full_private_digest = dict(raw_private_digest) if isinstance(raw_private_digest, dict) else {}
+            private_digest = self._private_mind_digest_for_payload()
+            if private_digest:
+                self.private_mind_digest = private_digest
+            private_life_digest = self._private_life_digest_for_payload()
+            if private_life_digest:
+                self.private_life_digest = private_life_digest
+            payload["emotion_debug"] = self._build_emotion_debug_payload()
+            payload["depth_v2"] = self._build_depth_v2_block(private_mind_digest=full_private_digest)
+        if channel_name == "autonomous":
+            plan = getattr(self, "last_ai_intention_plan", None)
+            if plan is not None and callable(getattr(plan, "to_dict", None)):
+                # Stage chỉ nhận IntentionPlan typed của Architecture C. Không còn
+                # AutonomousPlan/permit/opportunity legacy chen giữa model và body.
+                payload["autonomous_plan"] = plan.to_dict()
+        if channel_name == "chat":
+            # Chỉ dùng nội bộ stage: nhận ra user đang yêu cầu ERIS diễn một hành
+            # vi nghe được như cười, thở dài, giả giận. Không gửi field này cho
+            # model; nó đi sau Decision để tránh phá JSON contract.
+            payload["user_text"] = str(getattr(self, "current_stage_user_text", "") or "")
+        if isinstance(private_digest, dict) and private_digest:
+            payload["private_mind_digest"] = private_digest
+        if isinstance(private_life_digest, dict) and private_life_digest:
+            payload["private_life_digest"] = private_life_digest
+        # Stage transport consumes the Decision directly; no director/scorer pass.
+        from runtime.runtime_settings_store import runtime_text
+        # Bubble/public text và transcript phát âm là hai contract độc lập.
+        # Eris viết tiếng Việt nhưng có thể đọc bằng giọng Nhật sau bước localize.
+        stage_language = runtime_text("tts", "language", default="ja").strip().lower() or "ja"
+        if stage_language in {"", "auto"}:
+            stage_language = "ja"
+        stage_builder = getattr(self, "stage_frame_builder", None)
+        if stage_builder is None or str(getattr(stage_builder, "language_hint", "auto")) != stage_language:
+            # StageFrame là lớp dịch giữa Decision và sân khấu.  Giữ lazy-init để
+            # không làm phình __init__ của coordinator vốn đã rất đông dân.
+            stage_builder = StageFrameBuilder(language_hint=stage_language)
+            self.stage_frame_builder = stage_builder
+        stage_frame = stage_builder.build(
+            decision,
+            payload=payload,
+            channel=channel,
+            frame=None,
+            turn_id=None,
+            segment_id=0,
+        )
+        # Từ đây trở đi payload public dùng bề mặt đã qua stage transformer:
+        # UI thấy text sạch, TTS đọc text sạch, memory/chat history lưu memory_text.
+        payload["text"] = stage_frame.display_text
+        payload["memory_text"] = stage_frame.memory_text
+        payload.update(stage_frame.to_payload_patch())
+        # Observation xảy ra sau khi public surface đã xác định, nhưng trước khi
+        # dispatch. Nó chỉ ghi hậu quả cho lượt sau; không được mutate Decision.
+        try:
+            from runtime.behavior_observation import (
+                behavior_observation_summary,
+                record_public_behavior,
+            )
+
+            record_public_behavior(
+                self,
+                decision,
+                payload=payload,
+                channel=channel_name or str(channel or ""),
+                turn_id=str(getattr(decision, "director_trace_id", "") or ""),
+            )
+            # Decision.to_payload() chạy trước observation. Cập nhật summary tại
+            # đây để panel của chính lượt hiện tại cũng nhìn thấy tín hiệu mới,
+            # thay vì phải đợi lượt sau như một giao diện sống chậm hơn não.
+            observation_summary = behavior_observation_summary(decision)
+            if observation_summary:
+                payload["behavior_observation"] = observation_summary
+        except Exception as exc:
+            self.logger.debug("[behavior-observation] public record skipped: %s", exc)
+        self._record_public_turn(decision, payload=payload, channel=channel)
+        stage_output = getattr(self, "stage_output_pipeline", None)
+        if stage_output is None:
+            stage_output = StageOutputPipeline()
+            self.stage_output_pipeline = stage_output
+        stage_frames = stage_output.frames_for_tts(stage_frame)
+        if isinstance(payload.get("stage"), dict):
+            payload["stage"]["segment_count"] = len(stage_frames)
+            payload["stage"]["protocol"] = "eris.stage"
+            payload["stage"]["protocol_version"] = 1
+        # Mặc định bubble chỉ xuất hiện khi audio thật sự bắt đầu phát. Trước đây
+        # default=0 làm text hiện ngay, còn Gemini TTS bò tới sau vài giây như một
+        # bản lồng tiếng bị lệch timeline. Có thể opt-out bằng ERIS_TTS_SYNC_TEXT=0.
+        sync_text = sync_text_with_tts_enabled()
+        text_sync_timeout = text_sync_timeout_seconds()
+        text_payload_sent = False
+        text_payload_lock = threading.Lock()
+        text_release_timer = None
+        stage_payload_sent = False
+        panel_payload_sent = False
+
+        def send_stage_protocol_segments():
+            nonlocal stage_payload_sent
+            if stage_payload_sent:
+                return
+            stage_payload_sent = True
+            bus = getattr(self, "stage_event_bus", None)
+            if bus is None:
+                return
+            try:
+                if isinstance(getattr(stage_frame, "show_plan", None), dict) and stage_frame.show_plan:
+                    bus.emit(show_plan_event(stage_frame))
+            except Exception as exc:
+                self.logger.debug("[stage-protocol] show_plan emit failed: %s", exc)
+            for frame in stage_frames or (stage_frame,):
+                try:
+                    bus.emit(stage_segment_event(frame, segment_count=len(stage_frames) or 1))
+                except Exception as exc:
+                    self.logger.debug("[stage-protocol] stage_segment emit failed: %s", exc)
+
+        def send_text_payload():
+            nonlocal text_payload_sent, text_release_timer
+            with text_payload_lock:
+                if text_payload_sent:
+                    return
+                text_payload_sent = True
+                timer = text_release_timer
+                text_release_timer = None
+            if timer is not None:
+                timer.cancel()
+            send_stage_protocol_segments()
+            try:
+                # Godot chỉ cần text/action/stage. Parser trace là metadata nội
+                # bộ; gửi nó sang body khiến console in ba dòng AI Debug cho
+                # mỗi câu, trong khi chẳng giúp nhân vật cử động tốt hơn.
+                body_payload = sanitize_body_payload(payload)
+                # Panel đi một datagram riêng. Nếu để chung, payload Director /
+                # stage / diary vượt 63 KB thì transport buộc bỏ sạch emotion,
+                # private_mind và depth_v2; kết quả là mọi panel cùng trống dù
+                # cognition vẫn chạy. Tách lane để câu nói và panel không kéo
+                # nhau rơi xuống overflow fallback.
+                for panel_key in (
+                    "private_mind_digest",
+                    "private_life_digest",
+                    "emotion_debug",
+                    "depth_v2",
+                ):
+                    body_payload.pop(panel_key, None)
+                self.transport.send_json(body_payload)
+            except Exception as e:
+                self.logger.warning("Failed to send deferred chat text payload: %s", e)
+
+        def schedule_text_payload_release():
+            nonlocal text_release_timer
+            if not sync_text:
+                return
+            with text_payload_lock:
+                if text_payload_sent or text_release_timer is not None:
+                    return
+                timer = threading.Timer(text_sync_timeout, send_text_payload)
+                timer.daemon = True
+                text_release_timer = timer
+            timer.start()
+
+        def send_panel_payload():
+            nonlocal panel_payload_sent
+            if panel_payload_sent:
+                return
+            panel_payload_sent = True
+            panel_sender = getattr(self.transport, "send_panel_state", None)
+            if not callable(panel_sender):
+                return
+            try:
+                # Hardening status đi cùng lane panel, không làm phình gói chat.
+                panel_payload = dict(payload)
+                release_raw = dict(getattr(self, "hardening_release_status", {}) or {})
+                failed_release_checks = [
+                    str(item.get("name", "unknown"))
+                    for item in release_raw.get("findings", ())
+                    if isinstance(item, dict) and str(item.get("status", "")) == "fail"
+                ][:6]
+                phase7_raw = (
+                    self.phase7_validation.status()
+                    if getattr(self, "phase7_validation", None) is not None
+                    else {"status": "unavailable"}
+                )
+                stage_bus = getattr(self, "stage_event_bus", None)
+                if stage_bus is not None and callable(getattr(stage_bus, "session_snapshot", None)):
+                    panel_payload["stage_session"] = stage_bus.session_snapshot()
+                panel_payload["hardening_status"] = {
+                    "release": {
+                        "ready": bool(release_raw.get("ready", False)),
+                        "status": str(release_raw.get("status", "unknown") or "unknown"),
+                        "release_id": str(release_raw.get("release_id", "") or ""),
+                        "failed_checks": failed_release_checks,
+                    },
+                    "phase7": {
+                        "status": str(phase7_raw.get("status", "unknown") or "unknown"),
+                        "validation_id": str(phase7_raw.get("validation_id", "") or ""),
+                        "public_turns": int(phase7_raw.get("public_turns", 0) or 0),
+                        "target_turns": int(phase7_raw.get("target_turns", 0) or 0),
+                        "report_path": str(phase7_raw.get("report_path", "") or ""),
+                    },
+                }
+                packet_id = panel_sender(panel_payload)
+                if packet_id and self.observability is not None:
+                    self.observability.increment(
+                        "panel_state_sent_total",
+                        tags={"channel": str(channel or "unknown")},
+                        fields={"packet_id": packet_id},
+                    )
+            except Exception as panel_exc:
+                self.logger.warning("Failed to send panel state payload: %s", panel_exc)
+
+        def handle_tts_event(event, event_stage_frame):
+            # Task manager có thể fail trong lúc synth trước khi on_first_start
+            # được gọi. Khi đó vẫn phải trả text ra UI thay vì để bubble mất luôn.
+            if sync_text and tts_event_releases_deferred_text(getattr(event, "type", "")):
+                send_text_payload()
+            self._handle_tts_playback_event(event, stage_frame=event_stage_frame)
+
+        # TTS: đọc to câu vừa nói với emotion context (valence/arousal/stance).
+        speech_provider = self._get_runtime_provider("speech")
+        _tts = getattr(speech_provider, "engine", None) if speech_provider is not None else None
+        has_scheduled_tts = False
+        # Panel không phụ thuộc TTS. Khi sync_text đang chờ remote audio, dữ liệu
+        # cảm xúc/nhật ký vẫn phải hiện ngay chứ không đứng nhìn spinner như một
+        # nghi thức tôn giáo của UI bất đồng bộ.
+        send_panel_payload()
+        if not sync_text:
+            # Chế độ legacy: text hiện ngay, audio tới sau.
+            send_text_payload()
+        if _tts is not None and getattr(_tts, "_ok", False) and bool(payload.get("should_speak")):
+            if stage_frames and sync_text:
+                try:
+                    # Lấy emotion data từ payload emotion_debug hoặc appraisal frame
+                    _ed = payload.get("emotion_debug") or {}
+                    _mood = _ed.get("summary") if isinstance(_ed, dict) else {}
+                    _valence = float((_mood or {}).get("valence", 0.0)) if isinstance(_mood, dict) else 0.0
+                    _arousal = float((_mood or {}).get("arousal", 0.3)) if isinstance(_mood, dict) else 0.3
+                    _stance = str((_mood or {}).get("stance", "") or "") if isinstance(_mood, dict) else ""
+                    dispatcher = getattr(self, "stage_dispatcher", None)
+                    if dispatcher is None:
+                        dispatcher = StageDispatcher()
+                        self.stage_dispatcher = dispatcher
+                    has_scheduled_tts = dispatcher.dispatch_tts(
+                        stage_frames,
+                        tts_engine=_tts,
+                        valence=_valence,
+                        arousal=_arousal,
+                        stance=_stance,
+                        on_first_start=send_text_payload if sync_text else None,
+                        on_event=handle_tts_event,
+                    )
+                except Exception as _tts_exc:
+                    self.logger.debug("[TTS] speak error: %s", _tts_exc)
+                    has_scheduled_tts = False
+
+        if not has_scheduled_tts:
+            if _tts is not None and getattr(_tts, "_ok", False) and bool(payload.get("should_speak")):
+                if stage_frames:
+                    try:
+                        _ed = payload.get("emotion_debug") or {}
+                        _mood = _ed.get("summary") if isinstance(_ed, dict) else {}
+                        _valence = float((_mood or {}).get("valence", 0.0)) if isinstance(_mood, dict) else 0.0
+                        _arousal = float((_mood or {}).get("arousal", 0.3)) if isinstance(_mood, dict) else 0.3
+                        _stance = str((_mood or {}).get("stance", "") or "") if isinstance(_mood, dict) else ""
+                        dispatcher = getattr(self, "stage_dispatcher", None)
+                        if dispatcher is None:
+                            dispatcher = StageDispatcher()
+                            self.stage_dispatcher = dispatcher
+                        dispatcher.dispatch_tts(
+                            stage_frames,
+                            tts_engine=_tts,
+                            valence=_valence,
+                            arousal=_arousal,
+                            stance=_stance,
+                            on_event=handle_tts_event,
+                        )
+                    except Exception as _tts_exc:
+                        self.logger.debug("[TTS] speak error: %s", _tts_exc)
+            send_text_payload()
+        # Mọi lời ERIS thốt ra (autonomous, force_speak, session_ritual...) đều
+        # ghi vào bộ đệm hội thoại hợp nhất để lượt chat/autonomous sau nối mạch.
+        # Chat public được Architecture C ghi ở đúng commit point; không append trùng.
+        elif sync_text and not text_payload_sent:
+            schedule_text_payload_release()
+
+        if (
+            channel != "chat"
+            and bool(payload.get("should_speak"))
+            and str(payload.get("memory_text", payload.get("text", "")) or "").strip()
+        ):
+            self._append_chat_history("assistant", str(payload.get("memory_text", payload.get("text", ""))).strip())
+        if bool(payload.get("should_speak")) and str(payload.get("memory_text", payload.get("text", "")) or "").strip():
+            # Ghi mốc assistant sau khi output public đã được dựng và gửi. Đây là
+            # mốc cognition, không phải audio_done; đủ để hiểu nhịp hội thoại mà
+            # không phải chờ TTS remote hoàn tất mới biết mình vừa nói.
+            self._temporal_last_assistant_turn_at = time.time()
+            if channel_name == "autonomous":
+                # Content hook vẫn commit sau output public thật. Performer legacy
+                # đã bị xóa; nhịp sân khấu lấy trực tiếp từ IntentionPlan typed.
+                performance_meta = payload.get("performance_context") if isinstance(payload.get("performance_context"), dict) else {}
+                hook_meta = performance_meta.get("content_hook") if isinstance(performance_meta.get("content_hook"), dict) else {}
+                hook_id = str(performance_meta.get("content_hook_id") or hook_meta.get("id") or "")
+                performance_builder = getattr(self, "performance_context_builder", None)
+                content_engine = getattr(performance_builder, "content_engine", None) if performance_builder is not None else None
+                if content_engine is not None and callable(getattr(content_engine, "commit_hook_use", None)) and hook_id:
+                    try:
+                        content_engine.commit_hook_use(hook_id)
+                    except Exception as exc:
+                        self.logger.debug("[content-engine] autonomous hook commit skipped: %s", exc)
+        if bool(payload.get("should_speak")) and str(payload.get("memory_text", payload.get("text", "")) or "").strip() and self.subconscious_runtime_enabled:
+            try:
+                snapshot = self.telemetry_service.capture_snapshot(
+                    mood_score=self.mood_score,
+                    inferred_pos_x=self.inferred_pos_x,
+                )
+                self._maybe_tick_subconscious_runtime(
+                    channel=channel or "assistant_output",
+                    snapshot=snapshot,
+                    internal_state=self._get_internal_state(),
+                    user_text="",
+                    event_text=str(payload.get("memory_text", payload.get("text", "")) or ""),
+                    event_strength=0.52,
+                    allow_lane5=False,
+                    reflection=False,
+                )
+            except Exception as exc:
+                self.logger.warning("Subconscious post-output tick error: %s", exc)
+
+    def _private_mind_digest_for_payload(self) -> dict[str, object]:
+        digest = getattr(self, "private_mind_digest", None)
+        if not isinstance(digest, dict):
+            return {}
+        enriched = dict(digest)
+        reason = self._private_mind_speech_silence_reason()
+        if reason:
+            enriched["speech_silence_reason"] = reason
+            menu = dict(enriched.get("menu", {}) or {})
+            menu["speech_silence_reason"] = reason
+            enriched["menu"] = menu
+        return self._compact_private_mind_digest_for_udp(enriched)
+
+    def _compact_private_mind_digest_for_udp(self, digest: dict[str, object]) -> dict[str, object]:
+        menu = digest.get("menu", {}) if isinstance(digest, dict) else {}
+        if not isinstance(menu, dict):
+            menu = {}
+        keys = (
+            "snapshot_current",
+            "current_thought",
+            "retained_thoughts",
+            "pulled_thoughts",
+            "temporary_thoughts",
+            "open_concerns",
+            "evidence_dossier",
+            "mini_evaluators",
+            "inner_judgment",
+            "state_mutations",
+            "future_bias",
+            "surface_queue",
+            "speech_silence_reason",
+            "debug_api",
+        )
+        compact_menu = {
+            key: self._compact_private_mind_debug_value(menu.get(key), depth=0)
+            for key in keys
+            if key in menu
+        }
+        return {
+            "last_tick_at": digest.get("last_tick_at", 0.0),
+            "current": self._compact_private_mind_debug_value(digest.get("current", {}), depth=0),
+            "inner_diary": self._compact_private_mind_debug_value(digest.get("inner_diary", {}), depth=0),
+            "anchor": self._compact_private_mind_debug_value(digest.get("anchor", {}), depth=0),
+            "menu": compact_menu,
+        }
+
+    def _compact_private_mind_debug_value(self, value: object, *, depth: int = 0) -> object:
+        if depth >= 5:
+            return self._compact_private_mind_scalar(value, limit=220)
+        if isinstance(value, dict):
+            out: dict[str, object] = {}
+            for idx, (key, item) in enumerate(value.items()):
+                if idx >= 10:
+                    out["..."] = "truncated"
+                    break
+                out[str(key)[:80]] = self._compact_private_mind_debug_value(item, depth=depth + 1)
+            return out
+        if isinstance(value, (list, tuple)):
+            items = list(value)
+            return [
+                self._compact_private_mind_debug_value(item, depth=depth + 1)
+                for item in items[:8]
+            ] + (["... truncated"] if len(items) > 8 else [])
+        return self._compact_private_mind_scalar(value, limit=360)
+
+    @staticmethod
+    def _compact_private_mind_scalar(value: object, *, limit: int = 260) -> object:
+        if value is None or isinstance(value, (bool, int, float)):
+            return value
+        text = " ".join(str(value or "").split())
+        if len(text) > limit:
+            return text[: max(0, limit - 3)].rstrip() + "..."
+        return text
+
+    def _private_mind_speech_silence_reason(self) -> dict[str, object]:
+        """Tóm tắt quyền phát ngôn theo Architecture C, không đọc speech_core cũ."""
+        semantic_frame = dict(getattr(self, "last_semantic_frame", {}) or {})
+        plan = getattr(self, "last_ai_intention_plan", None)
+        plan_payload = plan.to_dict() if plan is not None and callable(getattr(plan, "to_dict", None)) else {}
+        return {
+            "architecture": "semantic_frame_v1",
+            "chat_active": bool(getattr(self, "chat_mode", False) or getattr(self, "_chat_processing", False)),
+            "autonomous_blocked_until": round(float(getattr(self, "autonomous_presence_blocked_until", 0.0) or 0.0), 3),
+            "semantic_frame": {
+                key: semantic_frame.get(key)
+                for key in ("version", "discourse_relation", "user_act", "target", "ambiguity_owner", "tool_intent")
+                if key in semantic_frame
+            },
+            "autonomous_plan": {
+                key: plan_payload.get(key)
+                for key in ("speak", "motive", "strategy", "semantics", "activity")
+                if key in plan_payload
+            },
+        }
+
+    def _handle_tts_playback_event(self, event, *, stage_frame=None) -> None:
+        """Nhận lifecycle event từ TTS worker.
+
+        Mặc định chỉ lưu/log để không phá client Godot cũ. Nếu muốn UI nhận event
+        realtime, bật ``ERIS_TTS_EVENT_PAYLOAD=1``; payload mới có ``type=tts_event``
+        nên client có thể bỏ qua nếu chưa hỗ trợ.
+        """
+        event_type = str(getattr(event, "type", "") or "")
+        turn_segments = tuple(getattr(event, "turn_segments", ()) or ())
+        try:
+            segment_count = len(turn_segments) or int(getattr(stage_frame, "segment_count", 0) or 1)
+        except (TypeError, ValueError):
+            segment_count = 1
+        record = {
+            "type": event_type,
+            "turn_id": str(getattr(event, "turn_id", "") or getattr(stage_frame, "turn_id", "") or ""),
+            "segment_id": int(getattr(event, "segment_id", getattr(stage_frame, "segment_id", 0)) or 0),
+            "segment_count": max(1, int(segment_count)),
+            "reason": str(getattr(event, "reason", "") or ""),
+            "error": str(getattr(event, "error", "") or ""),
+            "prosody_style": str(getattr(stage_frame, "prosody_style", "") or ""),
+        }
+        self.last_tts_event = record
+        if event_type == "audio_start":
+            self.logger.info(
+                "[TTS:event] audio_start turn=%s segment=%s text=%r",
+                record["turn_id"],
+                record["segment_id"],
+                str(getattr(event, "text", "") or "")[:120],
+            )
+        elif event_type == "audio_done":
+            self.logger.info(
+                "[TTS:event] audio_done turn=%s segment=%s",
+                record["turn_id"],
+                record["segment_id"],
+            )
+        elif event_type == "audio_failed":
+            self.logger.warning(
+                "[TTS:event] audio_failed turn=%s segment=%s error=%s reason=%s",
+                record["turn_id"],
+                record["segment_id"],
+                record["error"] or "<none>",
+                record["reason"] or "<none>",
+            )
+        try:
+            events = getattr(self, "tts_event_log", None)
+            if not isinstance(events, list):
+                events = []
+                self.tts_event_log = events
+            events.append(record)
+            if len(events) > 40:
+                del events[:-40]
+        except Exception:
+            pass
+
+        if event_type in {"audio_failed", "audio_cancelled"}:
+            self.logger.debug("[TTS:event] %s", record)
+        try:
+            self._ensure_voice_manager().track_tts_event(event, stage_frame=stage_frame)
+        except Exception as exc:
+            self.logger.debug("[interrupt] track tts event failed: %s", exc)
+        try:
+            bus = getattr(self, "stage_event_bus", None)
+            if bus is not None:
+                bus.emit(playback_event(event, stage_frame=stage_frame))
+        except Exception as exc:
+            self.logger.debug("[stage-protocol] playback event failed: %s", exc)
+        if os.environ.get("ERIS_TTS_EVENT_PAYLOAD", "0").strip().lower() in {"1", "true", "yes", "on"}:
+            try:
+                legacy_record = {key: value for key, value in record.items() if key != "type"}
+                self.transport.send_json({"type": "tts_event", "event_type": event_type, **legacy_record})
+            except Exception as exc:
+                self.logger.debug("[TTS:event] send failed: %s", exc)
+
+    def _ensure_public_turn_runtime(self) -> PublicTurnRuntime:
+        runtime = getattr(self, "public_turn_runtime", None)
+        if isinstance(runtime, PublicTurnRuntime) and runtime.owner is self:
+            return runtime
+        runtime = PublicTurnRuntime(self)
+        self.public_turn_runtime = runtime
+        return runtime
+
+    def _record_public_turn(self, decision: Decision, *, payload: dict | None = None, channel: str | None = None):
+        return self._ensure_public_turn_runtime().record(decision, payload=payload, channel=channel)
+
+    def _infer_public_turn_channel_from_runtime(self, decision: Decision) -> str:
+        return self._ensure_public_turn_runtime().infer_channel(decision)
+
+    def _load_rapid_burst_window(self) -> float:
+        raw = os.environ.get("ERIS_RAPID_BURST_WINDOW", "1.2").strip()
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            return 1.2
+
+    def _block_autonomous_presence_after_public_turn(
+        self,
+        now: float | None = None,
+        *,
+        seconds: float | None = None,
+    ) -> None:
+        self._ensure_public_turn_runtime().block_autonomous_presence(now, seconds=seconds)
+
+    def _link_previous_public_turn_for_chat(self, user_timestamp: float):
+        return self._ensure_public_turn_runtime().link_previous_for_chat(user_timestamp)
+
+    def _ensure_interrupt_ledger(self) -> InterruptLedger:
+        ledger = getattr(self, "interrupt_ledger", None)
+        if isinstance(ledger, InterruptLedger):
+            return ledger
+        ledger = InterruptLedger()
+        self.interrupt_ledger = ledger
+        return ledger
+
+    def _ensure_voice_manager(self) -> VoiceManager:
+        manager = getattr(self, "voice_manager", None)
+        ledger = self._ensure_interrupt_ledger()
+        if not isinstance(manager, VoiceManager) or manager.ledger is not ledger:
+            manager = VoiceManager(ledger=ledger, tts_engine=getattr(self, "tts_engine", None))
+            self.voice_manager = manager
+        else:
+            manager.bind_tts_engine(getattr(self, "tts_engine", None))
+        return manager
+
+    def _capture_speech_interrupt_for_user(self, user_text: str, *, timestamp: float | None = None):
+        """Ghi nhận user chen vào khi Eris đang phát TTS.
+
+        Đây là state phiên ngắn hạn. Ta dừng audio ngay để turn-taking có cảm giác
+        thật, nhưng chỉ đưa prompt context nếu ledger xác nhận audio đã thật sự
+        ``audio_start`` và còn phần pending đáng kể.
+        """
+        text = str(user_text or "").strip()
+        if not text:
+            return None
+        event = None
+        try:
+            result = self._ensure_voice_manager().interrupt_with_text(
+                text,
+                timestamp=time.time() if timestamp is None else float(timestamp),
+                reason="user_interrupt",
+            )
+            event = result.interrupt_event
+        except Exception as exc:
+            self.logger.debug("[interrupt] voice manager failed: %s", exc)
+
+        if event is not None:
+            self.pending_speech_interrupt_event = event
+            self.logger.info(
+                "[interrupt] user cut speech turn=%s seq=%s spoken=%r pending=%r",
+                event.interrupted_turn_id,
+                event.interrupted_seq,
+                event.spoken_text_so_far,
+                event.pending_text,
+            )
+        return event
+
+    def _consume_speech_interrupt_event(self):
+        event = getattr(self, "pending_speech_interrupt_event", None)
+        self.pending_speech_interrupt_event = None
+        return event
+
+    def _previous_public_turn_context(self, public_turn) -> str:
+        return self._ensure_public_turn_runtime().previous_turn_context(public_turn)
+
+    def _build_body_bias_payload(self) -> dict[str, object]:
+        return self.body_bias_projector.build_payload(
+            observer_frame=getattr(self, "last_observer_frame", None),
+            impulse_hint={},
+        )
+
+    def _build_emotion_debug_payload(self) -> dict[str, object]:
+        """Compact affect/state payload for the Godot emotion panel."""
+        state = self._get_internal_state()
+        appraisal = None
+        self_state = None
+        meaning = None
+        impulse = None
+        semantic_frame = dict(getattr(self, "last_semantic_frame", {}) or {})
+        relationship = getattr(state, "relationship_dynamics", None)
+        desire = getattr(state, "desire", None)
+        style = getattr(self, "fe_style_memory", None)
+        overrides = getattr(self, "_debug_overrides", {})
+
+        def clamp01(value: object) -> float:
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                numeric = 0.0
+            if numeric != numeric:
+                numeric = 0.0
+            return max(0.0, min(1.0, numeric))
+
+        def clamp_signed(value: object) -> float:
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                numeric = 0.0
+            if numeric != numeric:
+                numeric = 0.0
+            return max(-1.0, min(1.0, numeric))
+
+        def value(source: object, name: str, default: object = 0.0) -> object:
+            return getattr(source, name, default) if source is not None else default
+
+        def get_val(source: object, name: str, default: object = 0.0, is_rel: bool = False) -> object:
+            ov_key = f"rel_{name}" if is_rel else name
+            if overrides and ov_key in overrides:
+                val = overrides[ov_key]
+                return val[0] if (isinstance(val, tuple) and len(val) == 2) else val
+            if name == "warmth_level" and overrides and "warmth" in overrides:
+                val = overrides["warmth"]
+                return val[0] if (isinstance(val, tuple) and len(val) == 2) else val
+            if name == "sarcasm_level" and overrides and "sarcasm" in overrides:
+                val = overrides["sarcasm"]
+                return val[0] if (isinstance(val, tuple) and len(val) == 2) else val
+            return value(source, name, default)
+
+        def metric(label: str, raw: object, *, group: str = "", signed: bool = False, note: str = "") -> dict[str, object]:
+            numeric = clamp_signed(raw) if signed else clamp01(raw)
+            return {
+                "label": label,
+                "value": round(numeric, 3),
+                "group": group,
+                "note": note,
+            }
+
+        valence = clamp_signed(get_val(appraisal, "valence", value(state, "valence", 0.0)))
+        if valence >= 0.18:
+            mood_label = "vui"
+        elif valence <= -0.18 or clamp01(get_val(state, "irritation", 0.0)) >= 0.45:
+            mood_label = "kho_chiu"
+        else:
+            mood_label = "trung_tinh"
+
+        overload = clamp01(max(
+            clamp01(get_val(self_state, "overload", 0.0)),
+            clamp01(get_val(state, "fatigue", 0.0)),
+            clamp01(get_val(state, "cognitive_tension", 0.0)),
+            clamp01(get_val(state, "restraint_pressure", 0.0)) * 0.55,
+        ))
+        stability = clamp01(1.0 - max(
+            abs(valence) * 0.50,
+            clamp01(get_val(appraisal, "arousal", value(state, "arousal", 0.0))),
+            clamp01(get_val(state, "cognitive_tension", 0.0)),
+            clamp01(get_val(state, "irritation", 0.0)),
+        ))
+        mood_inertia = clamp01(
+            clamp01(get_val(state, "recursive_reactivation_pressure", 0.0)) * 0.34
+            + clamp01(get_val(state, "memory_replay_pressure", 0.0)) * 0.28
+            + clamp01(get_val(state, "thought_stream_pressure", 0.0)) * 0.22
+            + min(1.0, float(getattr(state, "cycle_count", 0) or 0) / 80.0) * 0.16
+        )
+        forced_reply = clamp01(min(1.0, float(getattr(state, "force_speak_ticks", 0) or 0) / 6.0))
+
+        surface_intent = str(semantic_frame.get("user_act", "") or "")
+        return {
+            "summary": {
+                "label": "vui / kho_chiu / trung_tinh",
+                "value": mood_label,
+                "valence": round(valence, 3),
+                "state": str(value(self_state, "state_label", "") or value(state, "last_self_state_label", "") or ""),
+            },
+            "private_mind": getattr(self, "private_mind_digest", {}) or {},
+            "private_life": getattr(self, "private_life_digest", {}) or {},
+            "items": {
+                "calm_aroused": metric("binh tinh <-> kich thich", get_val(appraisal, "arousal", value(state, "arousal", 0.0)), group="core"),
+                "emotional_stability": metric("on dinh cam xuc", stability, group="core"),
+                "mood_inertia": metric("quan tinh mood", mood_inertia, group="core"),
+                "attachment": metric("muc quan tam/gan bo", get_val(state, "attachment", 0.0), group="bond"),
+                "tenderness": metric("diu dang", get_val(appraisal, "tenderness", value(state, "tenderness", 0.0)), group="bond"),
+                "protectiveness": metric("muon bao ve", get_val(appraisal, "protectiveness", value(state, "protectiveness", 0.0)), group="bond"),
+                "emotional_exposure": metric("lo cam xuc nhieu hay it", get_val(relationship, "attachment_visibility", 0.0, is_rel=True), group="bond"),
+                "irritation": metric("kho chiu", get_val(state, "irritation", 0.0), group="friction"),
+                "perceived_rejection": metric("cam giac bi tu choi", get_val(relationship, "rupture", 0.0, is_rel=True), group="friction"),
+                "confrontation": metric("xu huong doi dau", max(float(get_val(appraisal, "threat", 0.0)), float(get_val(state, "irritation", 0.0))), group="friction"),
+                "post_exposure_recoil": metric("rut lai sau khi lo cam xuc", get_val(relationship, "exposure_recoil", 0.0, is_rel=True), group="friction"),
+                "curiosity": metric("to mo", max(float(get_val(state, "curiosity", 0.0)), float(get_val(state, "curiosity_pressure", 0.0))), group="attention"),
+                "attention_bias": {
+                    "label": "thien huong chu y",
+                    "value": str(semantic_frame.get("discourse_relation", "") or value(state, "last_focus_kind", "") or ""),
+                    "group": "attention",
+                    "note": "",
+                },
+                "association_pressure": metric("lien tuong lan rong", get_val(state, "association_pressure", 0.0), group="attention"),
+                "thought_stream_pressure": metric("dong suy nghi tang", get_val(state, "thought_stream_pressure", 0.0), group="attention"),
+                "speech_pressure": metric("ap luc phai noi", get_val(state, "silence_pressure", 0.0), group="speech"),
+                "social_pressure": metric("ap luc xa hoi", get_val(state, "social_pressure", 0.0), group="speech"),
+                "forced_reply": metric("bi ep phan hoi", forced_reply, group="speech"),
+                "brevity": metric("xu huong noi ngan", get_val(state, "restraint_pressure", 0.0), group="speech"),
+                "playfulness": metric("muc dua", get_val(state, "playful_pressure", 0.0), group="tone"),
+                "tease": metric("thich treu", get_val(style, "sarcasm_level", 0.0), group="tone"),
+                "sarcasm": metric("mia mai", get_val(style, "sarcasm_level", 0.0), group="tone"),
+                "warmth": metric("do am ap", get_val(style, "warmth_level", value(appraisal, "tenderness", 0.0)), group="tone"),
+                "distance": metric("giu khoang cach", get_val(relationship, "preferred_distance", 0.58, is_rel=True), group="tone"),
+                "intimacy": metric("muc than mat", get_val(appraisal, "intimacy", 0.0), group="tone"),
+                "romantic_boundary_probe": metric("do ranh gioi tinh cam", get_val(desire, "unresolved_residue", 0.0), group="tone"),
+                "restraint": metric("tu kiem che", get_val(state, "restraint_pressure", 0.0), group="control"),
+                "cognitive_tension": metric("cang thang nhan thuc", get_val(state, "cognitive_tension", 0.0), group="control"),
+                "repeating_thought": metric("suy nghi lap lai", get_val(state, "recursive_reactivation_pressure", 0.0), group="control"),
+                "unresolved_prediction": metric("du doan chua giai quyet", get_val(state, "unresolved_prediction_pressure", 0.0), group="control"),
+                "subconscious_pressure": metric("ap luc tiem thuc", get_val(state, "subconscious_pressure", 0.0), group="control"),
+                "fatigue": metric("met", get_val(appraisal, "fatigue", value(state, "fatigue", 0.0)), group="load"),
+                "overload": metric("qua tai", overload, group="load"),
+                "speech_emotional_color": {
+                    "label": "mau cam xuc khi noi",
+                    "value": str(value(style, "last_tone_label", "") or ""),
+                    "group": "surface",
+                    "note": "",
+                },
+                "emotional_reflex": {
+                    "label": "phan xa cam xuc",
+                    "value": str(semantic_frame.get("boundary_action", "") or semantic_frame.get("target", "") or ""),
+                    "group": "surface",
+                    "note": "",
+                },
+                "emotional_residue": {
+                    "label": "du am cam xuc",
+                    "value": str(semantic_frame.get("ambiguity_owner", "") or ""),
+                    "group": "surface",
+                    "note": "",
+                },
+                "surface_intent": {
+                    "label": "y dinh bieu hien ra ngoai",
+                    "value": surface_intent,
+                    "group": "surface",
+                    "note": "",
+                },
+            },
+        }
+
+    @staticmethod
+    def _body_bias_clamp(value: object) -> float:
+        return BodyBiasProjector.clamp(value)
+
+    @staticmethod
+    def _normalize_body_focus_kind(value: str) -> str:
+        return BodyBiasProjector.normalize_focus_kind(value)
+
+    @staticmethod
+
+
+    #chống “spam evidence”, tránh trùng lặp, và giữ payload gọn/ổn định khi log/telemetry.
+
+    #hàm này đảm bảo event tạo ra luôn có content thật, các field không bị rỗng/bẩn, và payload không bị phình
+
+    # quyết định mức “nhạy cảm/riêng tư” (privacy_level) theo loại telemetry
+
+    #quyết định “gợi ý độ mới/tính chất” (novelty_hint) để phân loại event cho downstream (chọn chú ý, ghi nhớ, log
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    def _build_relational_context(self, state: PersistentInternalState | None = None) -> RelationalContext:
+        state = state or self._get_internal_state()
+        recent_notes = " ".join(str(item or "") for item in tuple(getattr(state, "recent_notes", ()) or ())).lower()
+        mental_processes = getattr(state, "mental_processes", None)
+        continuity_process = getattr(mental_processes, "continuity", None)
+        session_return = min(1.0, max(0, int(getattr(state, "session_resume_count", 0) or 0)) / 2.0)
+        ritual_return = 1.0 if float(getattr(state, "last_session_ritual_at", 0.0) or 0.0) > 0.0 else 0.0
+        memory_continuity = max(
+            float(getattr(state, "recursive_reactivation_pressure", 0.0) or 0.0),
+            float(getattr(state, "memory_replay_pressure", 0.0) or 0.0),
+            float(getattr(state, "last_memory_resonance", 0.0) or 0.0),
+            float(getattr(continuity_process, "level", 0.0) or 0.0),
+        )
+        ritual_note = 1.0 if any(
+            marker in recent_notes
+            for marker in ("session_ritual", "continuity_restored", "long_silence_return", "memory_replay", "recursive")
+        ) else 0.0
+        recent_channels = tuple(str(item or "") for item in tuple(getattr(state, "recent_channels", ()) or ()))
+        long_silence_return = 1.0 if (
+            float(getattr(state, "last_elapsed_seconds", 0.0) or 0.0) >= 600.0
+            and any(item in {"chat", "force_speak"} for item in recent_channels[-4:])
+        ) else 0.0
+        sustained_presence = min(
+            1.0,
+            (
+                float(getattr(state, "last_social_presence_confidence", 0.0) or 0.0)
+                + float(getattr(state, "last_social_presence_intensity", 0.0) or 0.0)
+            )
+            * 0.5,
+        )
+        continuity_score = min(
+            1.0,
+            session_return * 0.28
+            + ritual_return * 0.18
+            + memory_continuity * 0.34
+            + ritual_note * 0.12
+            + long_silence_return * 0.10
+            + sustained_presence * 0.08,
+        )
+        attachment = float(getattr(state, "attachment", 0.0) or 0.0)
+        if continuity_score >= 0.66 and attachment >= 0.62:
+            stage = "rooted"
+        elif continuity_score >= 0.52 and attachment >= 0.50:
+            stage = "established"
+        elif continuity_score >= 0.38:
+            stage = "forming"
+        else:
+            stage = "low_context"
+        return RelationalContext(
+            attachment_level=attachment,
+            continuity_score=continuity_score,
+            social_resonance=float(getattr(state, "social_energy", 0.0) or 0.0),
+            recent_presence_density=sustained_presence,
+            abandonment_sensitivity=max(
+                float(getattr(state, "silence_pressure", 0.0) or 0.0),
+                float(getattr(getattr(state, "desire", None), "unresolved_residue", 0.0) or 0.0),
+            ),
+            trust_stability=max(
+                0.0,
+                min(1.0, float(getattr(state, "confidence", 0.0) or 0.0) - float(getattr(state, "irritation", 0.0) or 0.0) * 0.35),
+            ),
+            relationship_stage=stage,
+        )
+

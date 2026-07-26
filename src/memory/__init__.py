@@ -8,6 +8,7 @@ still needed.
 """
 
 from .memory_kernel import MemoryCoreKernel, MemoryKernel, MemoryKernelDebugSnapshot
+from .memory_services import MemoryRuntimeServices
 from .memory_kernel_contracts import (
     MaintenanceBudget,
     MemoryAnswerResult,
@@ -27,4 +28,24 @@ __all__ = [
     "MemoryAnswerResult",
     "MemoryMaintenanceReport",
     "MaintenanceBudget",
+    "MemoryRuntimeServices",
+]
+
+# Living user memory là API tùy chọn nhưng stable cho integration mới.
+from .living_user import (
+    LivingUserMemoryService,
+    LivingUserMemoryConfig,
+    UserProfileStore,
+    ProfileOperation,
+    UserMemoryScope,
+    ProfileContextPacket,
+)
+
+__all__ += [
+    "LivingUserMemoryService",
+    "LivingUserMemoryConfig",
+    "UserProfileStore",
+    "ProfileOperation",
+    "UserMemoryScope",
+    "ProfileContextPacket",
 ]

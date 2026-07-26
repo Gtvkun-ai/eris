@@ -1,0 +1,45 @@
+from __future__ import annotations
+
+import time
+
+
+class PresenceControllerMixin:
+    """Bookkeeping tối thiểu cho nhịp autonomous của Architecture C.
+
+    Cortex V2 không còn một pipeline micro-presence riêng chen trước public
+    writer. Initiative và wording nằm trong ``AIAutonomousOrchestrator``; mixin
+    này chỉ ghi lại việc Eris đã nói hay đã giữ im lặng để các read-model khác
+    có thể quan sát mà không giành quyền quyết định.
+    """
+
+    def _note_autonomous_silence(self) -> int:
+        self.presence_maintenance_silent_cycles = (
+            int(getattr(self, "presence_maintenance_silent_cycles", 0) or 0) + 1
+        )
+        self.reengagement_quiet_cycles = (
+            int(getattr(self, "reengagement_quiet_cycles", 0) or 0) + 1
+        )
+        return self.presence_maintenance_silent_cycles
+
+    def _note_autonomous_spoken(
+        self,
+        *,
+        presence_maintenance: bool = False,
+        reengagement: bool = False,
+        now: float | None = None,
+    ) -> None:
+        current_time = time.time() if now is None else float(now)
+        if presence_maintenance:
+            self.last_presence_maintenance_at = current_time
+            self.presence_maintenance_silent_cycles = 0
+        if reengagement:
+            self.last_reengagement_at = current_time
+        self.reengagement_quiet_cycles = 0
+
+        snub_tracker = getattr(self, "snub_tracker", None)
+        spoken_text = str(getattr(self, "last_text", "") or "").strip()
+        if snub_tracker is not None and spoken_text:
+            try:
+                snub_tracker.on_eris_spoke(spoken_text, channel="autonomous")
+            except Exception as exc:  # External tracker boundary.
+                self.last_snub_tracker_error = type(exc).__name__
