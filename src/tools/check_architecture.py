@@ -52,6 +52,8 @@ REQUIRED_MODULES = {
     "runtime/runtime_slo.py",
     # V31-V34 snapshot durability and release-supply-chain boundaries.
     "runtime/engagements/snapshot_journal.py",
+    # V36 companion-aware DeepSeek routing boundary.
+    "runtime/companion_model_routing.py",
 }
 
 REQUIRED_COORDINATOR_BASES = {
@@ -227,6 +229,14 @@ def main() -> int:
     for token in ("class RuntimeSLOTracker", "class RuntimeIncident", "ready_ratio"):
         if token not in slo:
             errors.append(f"runtime SLO contract missing: {token}")
+
+    companion_router = (ROOT / "runtime/companion_model_routing.py").read_text(encoding="utf-8")
+    orchestrator_text = (ROOT / "runtime/ai_orchestrated/orchestrator.py").read_text(encoding="utf-8")
+    for token in ("class CompanionModelRouter", "def route_companion_turn(", "clarification_preferred"):
+        if token not in companion_router:
+            errors.append(f"companion model routing contract missing: {token}")
+    if "route_companion_turn(user_text" not in orchestrator_text:
+        errors.append("public chat no longer uses companion-aware model routing")
 
     journal = (ROOT / "runtime/engagements/snapshot_journal.py").read_text(encoding="utf-8")
     for token in ("class EngagementSnapshotJournal", "def load(", "def stage(", "PRIMARY_KEY", "BACKUP_KEY"):

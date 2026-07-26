@@ -367,9 +367,18 @@ class RemoteModelProcessManager:
         provider = os.environ.get("ERIS_ESCALATION_PROVIDER", "").strip().lower()
         model_name = os.environ.get("ERIS_ESCALATION_MODEL", "").strip()
         base_url = os.environ.get("ERIS_ESCALATION_BASE_URL", "").strip()
-        # Không khai cấu hình riêng -> để None, LlmService reuse fallback client.
+        # DeepSeek companion routing needs a real Pro client without forcing the
+        # user to duplicate configuration.  Reuse the official endpoint and the
+        # same DeepSeek key unless an explicit escalation provider overrides it.
         if not provider and not model_name:
-            return None
+            main_provider = _normalize_remote_provider(
+                os.environ.get("ERIS_REMOTE_PROVIDER", "deepseek")
+            )
+            if main_provider != "deepseek":
+                return None
+            provider = "deepseek"
+            model_name = DEEPSEEK_STRONG_MODEL
+            base_url = os.environ.get("ERIS_REMOTE_BASE_URL", DEEPSEEK_BASE_URL).strip()
 
         provider = provider or "deepseek"
         api_key = get_secret(

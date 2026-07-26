@@ -14,6 +14,7 @@ from runtime.diagnostic_logging import safe_log
 from runtime.cognition.turn_anchor import anchor_from_semantic_frame, previous_assistant_from_history
 from runtime.cognition.normalization import normalize_vi
 from runtime.social_stance_policy import STANCE_PUBLIC_RULES_VI
+from llm.deepseek import is_deepseek
 
 from actions.contracts import VALID_SYSTEM_ACTIONS
 
@@ -686,8 +687,10 @@ class AIRuntimeModelRouter:
         personality_context: str = "",
         interrupt_context: str = "",
         engagement_context: str = "",
+        routing_context: str = "",
         use_escalation: bool = False,
         reasoning_effort: str | None = None,
+        thinking_mode: str | None = None,
         allow_fallback: bool = False,
         language_hint: str = "vi",
         planned_intention: IntentionPlan | None = None,
@@ -716,6 +719,8 @@ class AIRuntimeModelRouter:
             context_parts.append(f"Mechanical interrupt context: {interrupt_context}")
         if engagement_context:
             context_parts.append(f"Durable engagement contract: {engagement_context}")
+        if routing_context:
+            context_parts.append(f"Runtime companion routing: {routing_context}")
         if retry_instruction:
             context_parts.append(f"One-shot rewrite instruction: {retry_instruction}")
         if locked_semantic_frame:
@@ -764,13 +769,13 @@ class AIRuntimeModelRouter:
             response_name = "eris_public_wording_rewrite" if locked_semantic_frame else "eris_public_reply"
             try:
                 def invoke() -> Any:
-                    return target.create_chat_completion(
-                        messages=messages,
-                        temperature=0.48,
-                        frequency_penalty=0.0,
-                        presence_penalty=0.0,
-                        max_tokens=(360 if locked_semantic_frame else (900 if reasoning_effort else 620)),
-                        response_format={
+                    request_kwargs = {
+                        "messages": messages,
+                        "temperature": 0.48,
+                        "frequency_penalty": 0.0,
+                        "presence_penalty": 0.0,
+                        "max_tokens": (360 if locked_semantic_frame else (900 if reasoning_effort else 620)),
+                        "response_format": {
                             "type": "json_schema",
                             "json_schema": {
                                 "name": response_name,
@@ -778,8 +783,14 @@ class AIRuntimeModelRouter:
                                 "schema": response_schema,
                             },
                         },
-                        reasoning_effort=reasoning_effort,
-                    )
+                        "reasoning_effort": reasoning_effort,
+                    }
+                    if is_deepseek(
+                        getattr(target, "base_url", ""),
+                        getattr(target, "model_name", ""),
+                    ):
+                        request_kwargs["thinking_mode"] = thinking_mode
+                    return target.create_chat_completion(**request_kwargs)
 
                 raw = self._run_inference(
                     "main_cognition",

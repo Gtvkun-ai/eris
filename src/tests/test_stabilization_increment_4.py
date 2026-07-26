@@ -109,7 +109,7 @@ def test_ai_runtime_typed_settings_and_schema_v6(tmp_path, monkeypatch) -> None:
 
     migrated, changed = RuntimeSettingsStore._migrate_payload({"version": 5})
     assert changed is True
-    assert migrated["version"] == 12
+    assert migrated["version"] == 13
     assert migrated["ai_runtime"]["observer_workers"] == 2
     assert migrated["ai_runtime"]["state_persistence_interval_seconds"] == 0.5
 

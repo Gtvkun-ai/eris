@@ -26,7 +26,7 @@ from runtime.workspace_manager import default_eris_home
 
 
 _DEFAULT_SETTINGS: dict[str, Any] = {
-    "version": 12,
+    "version": 13,
     "architecture": {
         "mode": "ai_orchestrated",
         "startup_greeting": True,
@@ -43,6 +43,16 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "semantic_authority_mode": "primary_model",
         "reasoning_effort": "medium",
         "support_confidence_threshold": 0.48,
+        # Companion-aware model routing: Flash handles clear/fast turns; Pro is
+        # reserved for abstract meaning, relational subtext and expressive prose.
+        "companion_routing_enabled": True,
+        "companion_pro_threshold": 0.58,
+        "companion_max_reasoning_threshold": 0.86,
+        "companion_style_uses_pro": True,
+        "companion_abstract_uses_pro": True,
+        "companion_relational_uses_pro": True,
+        "companion_contextual_ambiguity_uses_pro": True,
+        "companion_simple_turns_stay_flash": True,
         "critique_mode": "off",
         "max_constrained_reruns": 0,
         "response_contract_gate": False,
@@ -283,6 +293,14 @@ _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
     ("chat", "semantic_authority_mode"): ("ERIS_SEMANTIC_AUTHORITY", "str"),
     ("chat", "reasoning_effort"): ("ERIS_REASONING_EFFORT", "str"),
     ("chat", "support_confidence_threshold"): ("ERIS_QWEN_SUPPORT_CONFIDENCE", "float"),
+    ("chat", "companion_routing_enabled"): ("ERIS_COMPANION_ROUTING_ENABLED", "bool"),
+    ("chat", "companion_pro_threshold"): ("ERIS_COMPANION_PRO_THRESHOLD", "float"),
+    ("chat", "companion_max_reasoning_threshold"): ("ERIS_COMPANION_MAX_REASONING_THRESHOLD", "float"),
+    ("chat", "companion_style_uses_pro"): ("ERIS_COMPANION_STYLE_USES_PRO", "bool"),
+    ("chat", "companion_abstract_uses_pro"): ("ERIS_COMPANION_ABSTRACT_USES_PRO", "bool"),
+    ("chat", "companion_relational_uses_pro"): ("ERIS_COMPANION_RELATIONAL_USES_PRO", "bool"),
+    ("chat", "companion_contextual_ambiguity_uses_pro"): ("ERIS_COMPANION_CONTEXT_USES_PRO", "bool"),
+    ("chat", "companion_simple_turns_stay_flash"): ("ERIS_COMPANION_SIMPLE_STAYS_FLASH", "bool"),
     ("chat", "max_constrained_reruns"): ("ERIS_MAX_CONSTRAINED_RERUNS", "int"),
     ("chat", "response_contract_gate"): ("ERIS_RESPONSE_CONTRACT_GATE", "bool"),
     ("chat", "director_second_pass"): ("ERIS_CHAT_DIRECTOR_SECOND_PASS", "adaptive_bool"),
@@ -625,6 +643,7 @@ class RuntimeSettingsStore:
         v7 -> v8 thêm lifecycle retention và event consumer batch policy.
         v8 -> v9 thêm reliable delivery và readiness SLO policy.
         v9 -> v10 thêm gap fail-closed, lag pressure và dead-letter recovery policy.
+        v12 -> v13 thêm companion-aware Flash/Pro routing policy.
         """
         if not isinstance(payload, Mapping):
             return {}, False
@@ -779,6 +798,19 @@ class RuntimeSettingsStore:
             engagement.setdefault("snapshot_journal_enabled", True)
             engagement.setdefault("snapshot_journal_auto_repair", True)
             out["engagement"] = engagement
+            migrated = True
+
+        if version < 13:
+            chat = dict(out.get("chat") or {}) if isinstance(out.get("chat"), Mapping) else {}
+            chat.setdefault("companion_routing_enabled", True)
+            chat.setdefault("companion_pro_threshold", 0.58)
+            chat.setdefault("companion_max_reasoning_threshold", 0.86)
+            chat.setdefault("companion_style_uses_pro", True)
+            chat.setdefault("companion_abstract_uses_pro", True)
+            chat.setdefault("companion_relational_uses_pro", True)
+            chat.setdefault("companion_contextual_ambiguity_uses_pro", True)
+            chat.setdefault("companion_simple_turns_stay_flash", True)
+            out["chat"] = chat
             migrated = True
 
         out["version"] = target_version
@@ -1006,6 +1038,8 @@ def _coerce_setting(path: str, value: Any, expected: Any) -> tuple[bool, Any]:
 
     ranges: dict[str, tuple[float, float]] = {
         "chat.support_confidence_threshold": (0.05, 0.95),
+        "chat.companion_pro_threshold": (0.2, 0.95),
+        "chat.companion_max_reasoning_threshold": (0.5, 1.0),
         "chat.max_constrained_reruns": (0, 2),
         "chat.completion_chat_tokens": (384, 4096),
         "chat.chat_timeout_seconds": (5, 120),

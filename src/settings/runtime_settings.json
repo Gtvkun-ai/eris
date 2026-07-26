@@ -1,9 +1,24 @@
 {
-  "version": 4,
+  "version": 13,
+  "architecture": {
+    "mode": "ai_orchestrated",
+    "startup_greeting": true,
+    "startup_screen_opening": true,
+    "startup_force_speak": true
+  },
   "chat": {
+    "language": "vi",
     "semantic_authority_mode": "primary_model",
     "reasoning_effort": "medium",
     "support_confidence_threshold": 0.48,
+    "companion_routing_enabled": true,
+    "companion_pro_threshold": 0.58,
+    "companion_max_reasoning_threshold": 0.86,
+    "companion_style_uses_pro": true,
+    "companion_abstract_uses_pro": true,
+    "companion_relational_uses_pro": true,
+    "companion_contextual_ambiguity_uses_pro": true,
+    "companion_simple_turns_stay_flash": true,
     "critique_mode": "advisory",
     "max_constrained_reruns": 0,
     "response_contract_gate": false,
@@ -37,6 +52,22 @@
     "weather_enabled": true,
     "now_playing_enabled": true
   },
+  "project_ops": {
+    "enabled": true,
+    "eris_home": "/home/oai/Documents/ErisLive",
+    "workspace_root": "",
+    "allow_implicit_source_repo": false,
+    "fallback_to_runtime_source": false,
+    "git_clone_timeout_seconds": 600,
+    "autonomy_mode": "full",
+    "ask_when_uncertain": true,
+    "proceed_without_user_reply": true,
+    "auto_rollback_on_failure": true,
+    "auto_package_patch": true,
+    "coding_max_tokens": 5000,
+    "coding_timeout_seconds": 120,
+    "max_repair_attempts": 2
+  },
   "prompt": {
     "hard_cap_tokens": 5100,
     "dds_enabled": false,
@@ -48,7 +79,19 @@
     "maintenance_enabled": true,
     "maintenance_budget": "small"
   },
+  "social_observer": {
+    "enabled": true,
+    "primary_model": "llama-3.1-8b-instant",
+    "deep_enabled": true,
+    "deep_model": "llama-3.3-70b-versatile",
+    "fallback_enabled": true,
+    "fallback_model": "llama-3.1-8b-instant",
+    "workers": 2,
+    "prompt_context_enabled": true,
+    "state_authority": true
+  },
   "stage": {
+    "performance_profile": "conversation",
     "performance_acts_enabled": true,
     "interrupt_enabled": true,
     "protocol_enabled": true,
@@ -58,7 +101,9 @@
     "prefetch_workers": 2,
     "max_tts_segments": 4,
     "min_split_chars": 72,
-    "performance_profile": "conversation"
+    "show_plan_enabled": true,
+    "stage_replay_enabled": true,
+    "stage_replay_size": 160
   },
   "tts": {
     "enabled": true,
@@ -68,12 +113,106 @@
     "volume": 1.0,
     "speed": 1.0,
     "stage_localize": true,
+    "speech_persona_polish": true,
+    "speech_persona_profile": "infj_5w4_subtle",
+    "speech_persona_warmth": 0.36,
+    "speech_persona_cuteness": 0.08,
+    "signature_ending_enabled": true,
+    "signature_ending": "desu_ne",
+    "signature_ending_rate": 0.55,
     "audio_polish": true
   },
-  "danger_zone": {
-    "require_preview_before_execute": true,
-    "typed_confirmation": true,
-    "allow_destructive_maintenance": false
+  "discovery": {
+    "enabled": true,
+    "local_signal_enabled": true,
+    "user_location": "",
+    "local_signal_scope": "Việt Nam",
+    "minimum_idle_seconds": 240,
+    "planning_interval_seconds": 1800,
+    "local_signal_interval_seconds": 28800,
+    "share_cooldown_seconds": 5400
+  },
+  "initiative": {
+    "enabled": true,
+    "hourly_budget": 2,
+    "global_hourly_budget": 40,
+    "minimum_interval_seconds": 60,
+    "minimum_user_silence_seconds": 12,
+    "importance_margin": 0.08,
+    "semantic_duplicate_threshold": 0.66,
+    "activity_update_cooldown_seconds": 120
+  },
+  "commentary": {
+    "enabled": true,
+    "desired_interval_seconds": 60,
+    "maximum_quiet_seconds": 120,
+    "startup_delay_seconds": 8,
+    "minimum_user_silence_seconds": 12
+  },
+  "tutor": {
+    "enabled": true,
+    "quick_search_enabled": true,
+    "research_enabled": true,
+    "self_search_enabled": false,
+    "low_confidence_clarify_threshold": 0.55,
+    "stale_result_guard_enabled": true,
+    "persist_research_memory": false
+  },
+  "ai_runtime": {
+    "observer_workers": 2,
+    "state_persistence_interval_seconds": 0.5
+  },
+  "public_turn": {
+    "reply_window_seconds": 30.0,
+    "block_min_seconds": 8.0,
+    "block_max_seconds": 120.0,
+    "default_block_seconds": 18.0
+  },
+  "engagement": {
+    "enabled": true,
+    "max_events": 160,
+    "persistence_interval_seconds": 2.0,
+    "signal_importance_threshold": 0.45,
+    "activity_key_cache_size": 256,
+    "activity_key_retention": 128,
+    "max_terminal_engagements": 64,
+    "terminal_retention_seconds": 604800.0,
+    "event_consumer_batch_size": 128,
+    "delivery_lease_seconds": 30.0,
+    "delivery_max_attempts": 5,
+    "delivery_backoff_initial_seconds": 2.0,
+    "delivery_backoff_max_seconds": 60.0,
+    "max_dead_letters": 64,
+    "delivery_stop_on_gap": true,
+    "consumer_lag_warning_events": 128,
+    "open_dead_letter_warning_count": 1,
+    "max_delivery_receipts": 512,
+    "delivery_split_poison_batches": false,
+    "delivery_split_after_attempts": 2,
+    "managed_consumer_poll_budget": 8,
+    "snapshot_journal_enabled": true,
+    "snapshot_journal_auto_repair": true
+  },
+  "observability": {
+    "slo_window_seconds": 3600.0,
+    "slo_max_samples": 720,
+    "minimum_ready_ratio": 0.95,
+    "maximum_degraded_seconds": 300.0,
+    "max_incidents": 64
+  },
+  "health": {
+    "max_events": 128
+  },
+  "protocol": {
+    "max_message_type_chars": 96,
+    "reject_non_mapping": true,
+    "record_unknown_messages": true
+  },
+  "run_loop": {
+    "startup_retry_delay_seconds": 0.2,
+    "error_backoff_initial_seconds": 0.25,
+    "error_backoff_max_seconds": 4.0,
+    "consecutive_error_stop_limit": 0
   },
   "hardening": {
     "profile": "development",
@@ -88,18 +227,9 @@
     "legacy_cross_language_tts": false,
     "legacy_romaji_tts": false
   },
-  "initiative": {
-    "enabled": true,
-    "global_hourly_budget": 40,
-    "minimum_interval_seconds": 60,
-    "minimum_user_silence_seconds": 12,
-    "activity_update_cooldown_seconds": 120
-  },
-  "commentary": {
-    "enabled": true,
-    "desired_interval_seconds": 60,
-    "maximum_quiet_seconds": 120,
-    "startup_delay_seconds": 8,
-    "minimum_user_silence_seconds": 12
+  "danger_zone": {
+    "require_preview_before_execute": true,
+    "typed_confirmation": true,
+    "allow_destructive_maintenance": false
   }
 }

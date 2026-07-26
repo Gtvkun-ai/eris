@@ -1553,7 +1553,7 @@ def test_runtime_settings_v2_migrates_only_old_warmth_baseline() -> None:
         }
     )
     assert changed is True
-    assert migrated["version"] == 12
+    assert migrated["version"] == 13
     assert migrated["tts"]["language"] == "vi"
     assert migrated["tts"]["speech_persona_warmth"] == 0.36
 

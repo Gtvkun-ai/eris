@@ -20,6 +20,7 @@ from runtime.no_fallback_policy import no_fallback_mode_enabled
 from runtime.grounding_surface_gate import evaluate_grounded_surface
 from runtime.cognition.turn_anchor import anchor_from_semantic_frame
 from runtime.social_stance_policy import guard_subjective_stance_payload
+from runtime.companion_model_routing import route_companion_turn
 from semantic_authority import SemanticAuthorityPolicy
 
 from .contracts import AI_RUNTIME_VERSION, IntentionPlan, StateEvent
@@ -410,9 +411,12 @@ class AIChatOrchestrator:
             last_chat_answer=host.last_chat_answer,
         )
         history = host._chat_history_for_llm(limit=16)[:-1]
-        use_escalation = semantic_policy.primary_uses_escalation_client if semantic_policy.qwen_first else False
-        reasoning_effort = semantic_policy.primary_reasoning_effort if semantic_policy.qwen_first else None
-
+        route_decision = route_companion_turn(user_text, recent_history=history)
+        use_escalation = route_decision.use_pro
+        reasoning_effort = route_decision.reasoning_effort
+        thinking_mode = route_decision.thinking_mode
+        routing_context = route_decision.prompt_context()
+        host.last_companion_model_route = route_decision.to_dict()
         payload: dict[str, Any] = {}
         host._set_background_memory_digest_remote_inflight(True)
         try:
@@ -425,8 +429,10 @@ class AIChatOrchestrator:
                 personality_context=personality_context,
                 interrupt_context=speech_interrupt_context,
                 engagement_context=engagement_prompt_context,
+                routing_context=routing_context,
                 use_escalation=use_escalation,
                 reasoning_effort=reasoning_effort,
+                thinking_mode=thinking_mode,
                 allow_fallback=False,
                 language_hint=_runtime_language(),
                 planned_intention=chat_plan,
@@ -441,8 +447,10 @@ class AIChatOrchestrator:
                     personality_context=personality_context,
                     interrupt_context=speech_interrupt_context,
                     engagement_context=engagement_prompt_context,
+                    routing_context=routing_context,
                     use_escalation=use_escalation,
                     reasoning_effort=reasoning_effort,
+                    thinking_mode=thinking_mode,
                     allow_fallback=True,
                     language_hint=_runtime_language(),
                     planned_intention=chat_plan,
@@ -494,8 +502,10 @@ class AIChatOrchestrator:
                         personality_context=personality_context,
                         interrupt_context=speech_interrupt_context,
                         engagement_context=engagement_prompt_context,
+                        routing_context=routing_context,
                         use_escalation=use_escalation,
                         reasoning_effort=reasoning_effort,
+                        thinking_mode=thinking_mode,
                         allow_fallback=not no_fallback_mode_enabled(),
                         language_hint=_runtime_language(),
                         planned_intention=chat_plan,

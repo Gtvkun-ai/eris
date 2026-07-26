@@ -475,6 +475,7 @@ class OpenAICompatibleClient:
         timeout=None,
         reasoning_effort=None,
         reasoning_format=None,
+        thinking_mode=None,
     ):
         messages = _preflight(messages, base_url=self.base_url, model=self.model_name)
         pressure_provider = _pressure_provider(self.base_url, self.model_name)
@@ -506,7 +507,7 @@ class OpenAICompatibleClient:
             "messages": messages,
         }
         if deepseek_request:
-            mode = deepseek_thinking_mode(self.configured_model_name)
+            mode = deepseek_thinking_mode(self.configured_model_name, requested=thinking_mode)
             payload["thinking"] = {"type": mode}
             payload["max_tokens"] = max_tokens
             if mode == "enabled":

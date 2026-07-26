@@ -11,14 +11,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "RELEASE_MANIFEST.json"
-EXPECTED_RELEASE = "V35"
-MIN_TESTS = 352
+EXPECTED_RELEASE = "V36"
+MIN_TESTS = 363
 MIN_COVERAGE_FLOOR = 36.0
-EXPECTED_SETTINGS_SCHEMA = 12
+EXPECTED_SETTINGS_SCHEMA = 13
 EXPECTED_ENGAGEMENT_SCHEMA = 7
 EXPECTED_JOURNAL_SCHEMA = 1
 EXPECTED_DIAGNOSTICS_SCHEMA = 6
-EXPECTED_BOUNDARIES = 26
+EXPECTED_BOUNDARIES = 27
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -89,7 +89,7 @@ def main() -> int:
     registry_text = (ROOT / "runtime/engagements/registry.py").read_text(encoding="utf-8")
     journal_text = (ROOT / "runtime/engagements/snapshot_journal.py").read_text(encoding="utf-8")
     diagnostics_text = (ROOT / "runtime/runtime_diagnostics.py").read_text(encoding="utf-8")
-    if int(architecture.get("settings_schema", -1)) != EXPECTED_SETTINGS_SCHEMA or '"version": 12' not in settings_text:
+    if int(architecture.get("settings_schema", -1)) != EXPECTED_SETTINGS_SCHEMA or '"version": 13' not in settings_text:
         errors.append("settings schema manifest/source mismatch")
     if int(architecture.get("engagement_snapshot_schema", -1)) != EXPECTED_ENGAGEMENT_SCHEMA or '"schema_version": 7' not in registry_text:
         errors.append("engagement snapshot schema manifest/source mismatch")
@@ -128,6 +128,9 @@ def main() -> int:
         "legacy_aggregator_removed",
         "deepseek_thinking_mode_control",
         "deepseek_text_only_vision_guard",
+        "companion_aware_flash_pro_routing",
+        "default_deepseek_pro_escalation",
+        "per_turn_deepseek_thinking_control",
     )
     for capability in required_capabilities:
         if capabilities.get(capability) is not True:
@@ -168,6 +171,17 @@ def main() -> int:
             errors.append(f"legacy aggregator dependency remains in {relative}")
     if 'payload["thinking"]' not in client_text:
         errors.append("DeepSeek thinking payload control missing")
+
+    companion_text = (ROOT / "runtime/companion_model_routing.py").read_text(encoding="utf-8")
+    orchestrator_text = (ROOT / "runtime/ai_orchestrated/orchestrator.py").read_text(encoding="utf-8")
+    if "class CompanionModelRouter" not in companion_text or "def route_companion_turn(" not in companion_text:
+        errors.append("companion-aware Flash/Pro routing boundary missing")
+    if "route_decision = route_companion_turn" not in orchestrator_text:
+        errors.append("public chat does not apply companion route decisions")
+    if "model_name = DEEPSEEK_STRONG_MODEL" not in process_text:
+        errors.append("default DeepSeek Pro escalation client missing")
+    if "thinking_mode=thinking_mode" not in orchestrator_text:
+        errors.append("per-turn DeepSeek thinking route missing")
 
     if errors:
         for error in errors:

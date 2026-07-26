@@ -11,7 +11,7 @@ def test_v8_settings_migrate_reliable_delivery_and_slo_defaults() -> None:
         {"version": 8, "engagement": {"event_consumer_batch_size": 8}}
     )
     assert changed is True
-    assert migrated["version"] == 12
+    assert migrated["version"] == 13
     assert migrated["engagement"]["event_consumer_batch_size"] == 8
     assert migrated["engagement"]["delivery_lease_seconds"] == 30.0
     assert migrated["engagement"]["delivery_max_attempts"] == 5
