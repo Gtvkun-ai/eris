@@ -41,5 +41,5 @@ class PresenceControllerMixin:
         if snub_tracker is not None and spoken_text:
             try:
                 snub_tracker.on_eris_spoke(spoken_text, channel="autonomous")
-            except Exception:
-                pass
+            except Exception as exc:  # External tracker boundary.
+                self.last_snub_tracker_error = type(exc).__name__

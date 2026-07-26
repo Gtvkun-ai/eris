@@ -28,6 +28,7 @@ import threading
 import time
 import uuid
 import weakref
+import unicodedata
 from collections import deque
 from dataclasses import asdict, dataclass, field
 from enum import Enum
@@ -147,7 +148,7 @@ def _stringify(value: Any) -> str:
         return str(value)
     try:
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"))[:4000]
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         return str(value)[:4000]
 
 
@@ -184,12 +185,8 @@ def _hash_id(prefix: str, value: str) -> str:
 
 def _norm(text: Any) -> str:
     value = str(text or "").lower().replace("đ", "d")
-    try:
-        import unicodedata
-        value = unicodedata.normalize("NFD", value)
-        value = "".join(ch for ch in value if unicodedata.category(ch) != "Mn")
-    except Exception:
-        pass
+    value = unicodedata.normalize("NFD", value)
+    value = "".join(ch for ch in value if unicodedata.category(ch) != "Mn")
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9_./:\\+\-\s]", " ", value)).strip()
 
 
@@ -253,6 +250,7 @@ class EnvironmentCapabilityRuntime:
         except TypeError:
             self._owner_ref = lambda: owner
         self.logger = logger
+        self.last_source_error: dict[str, str] = {}
         self._lock = threading.RLock()
         self._audit: deque[EnvironmentActionResult] = deque(maxlen=max(20, int(max_audit)))
         self._handlers: dict[str, Callable[[str], tuple[str, dict[str, Any], tuple[EnvironmentEvidence, ...]]]] = {
@@ -268,8 +266,21 @@ class EnvironmentCapabilityRuntime:
     def owner(self) -> Any | None:
         try:
             return self._owner_ref()
-        except Exception:
+        except ReferenceError:
             return None
+
+    def _record_source_failure(self, source: str, exc: BaseException) -> None:
+        self.last_source_error = {
+            "source": str(source or "unknown")[:80],
+            "error": type(exc).__name__,
+            "message": str(exc)[:240],
+        }
+        debug = getattr(self.logger, "debug", None)
+        if callable(debug):
+            try:
+                debug("[environment-capability] source=%s failed: %s", source, exc)
+            except (TypeError, ValueError, OSError):
+                return
 
     def contracts(self) -> tuple[EnvironmentCapabilityContract, ...]:
         return tuple(ENVIRONMENT_CAPABILITY_CONTRACTS.values())
@@ -420,8 +431,8 @@ class EnvironmentCapabilityRuntime:
                     "[environment-capability] capability=%s state=%s executed=%s verified=%s evidence=%s",
                     result.capability_id, result.state.value, result.executed, result.verified, len(result.evidence),
                 )
-            except Exception:
-                pass
+            except (TypeError, ValueError, OSError) as exc:
+                self._record_source_failure("audit_logger", exc)
         return result
 
     # ------------------------------------------------------------------
@@ -444,7 +455,8 @@ class EnvironmentCapabilityRuntime:
                     mood_score=int(getattr(owner, "mood_score", 50) or 50),
                     inferred_pos_x=float(getattr(owner, "inferred_pos_x", 0.5) or 0.5),
                 )
-            except Exception:
+            except Exception as exc:
+                self._record_source_failure("telemetry.capture_snapshot", exc)
                 return None
         return None
 
@@ -455,7 +467,8 @@ class EnvironmentCapabilityRuntime:
         if callable(getter):
             try:
                 return getter()
-            except Exception:
+            except Exception as exc:
+                self._record_source_failure("screen.snapshot", exc)
                 return None
         return None
 
@@ -467,7 +480,8 @@ class EnvironmentCapabilityRuntime:
         if callable(getter):
             try:
                 return getter()
-            except Exception:
+            except Exception as exc:
+                self._record_source_failure("workspace.active_path", exc)
                 return None
         # Bootstrap dành cho bản chạy headless/tooling. Tên env cố ý là ACTIVE;
         # không đọc ERIS_PROJECT_ROOT và không suy từ source hay memory path.
@@ -476,7 +490,7 @@ class EnvironmentCapabilityRuntime:
             try:
                 path = Path(explicit).expanduser().resolve()
                 return path if path.is_dir() else None
-            except Exception:
+            except (OSError, RuntimeError):
                 return None
         return None
 
@@ -492,7 +506,7 @@ class EnvironmentCapabilityRuntime:
         for item in dirs:
             try:
                 key = str(item.resolve())
-            except Exception:
+            except (OSError, RuntimeError):
                 key = str(item)
             if key not in seen:
                 seen.add(key)
@@ -512,7 +526,8 @@ class EnvironmentCapabilityRuntime:
             for pattern in ("eris_run_*.txt", "eris_run_*.log", "*.log"):
                 try:
                     candidates.extend(path for path in directory.glob(pattern) if path.is_file())
-                except Exception:
+                except OSError as exc:
+                    self._record_source_failure("runtime_log.glob", exc)
                     continue
         if not candidates:
             return None

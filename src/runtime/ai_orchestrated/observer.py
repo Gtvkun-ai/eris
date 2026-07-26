@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import logging
 import threading
 import time
 import uuid
@@ -162,8 +163,8 @@ class PostTurnObserver:
                 max(0.0, (time.time() - ticket.submitted_at) * 1000.0),
                 tags={"event_kind": ticket.event_kind},
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            self._log("debug", "post-observer metric emission failed: %s", exc)
         self._log(
             "info",
             "[post observer] turn=%s act=%s meaning=%s conf=%.2f repair=%s traits=%s frame=%s strategy=%s source=%s latency=%.0fms",
@@ -187,8 +188,8 @@ class PostTurnObserver:
         try:
             from runtime.inference_broker import GLOBAL_INFERENCE_BROKER
             GLOBAL_INFERENCE_BROKER.cancel_scope(f"background:post_observer:{ticket.turn_id}")
-        except Exception:
-            pass
+        except Exception as exc:
+            self._log("debug", "post-observer broker cancellation failed: %s", exc)
         # PDF annotation, pages 5 and 18-19: distinguish work dropped before
         # provider start from a late in-flight discard.  The acceptance target
         # is near-zero remote work for the former, not a vague aggregate count.
@@ -197,8 +198,8 @@ class PostTurnObserver:
         try:
             was_running = ticket.future.running()
             cancelled_before_start = bool(ticket.future.cancel())
-        except Exception:
-            pass
+        except Exception as exc:
+            self._log("debug", "post-observer future cancellation failed: %s", exc)
         try:
             from runtime.observability import GLOBAL_OBSERVABILITY
 
@@ -207,8 +208,8 @@ class PostTurnObserver:
                 "observer_discard_total",
                 tags={"stage": stage, "event_kind": ticket.event_kind},
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            self._log("debug", "post-observer discard metric failed: %s", exc)
         if ticket.user_meta is not None:
             ticket.user_meta["cognitive_observation_pending"] = False
             ticket.user_meta["cognitive_observation_timeout"] = True
@@ -230,20 +231,20 @@ class PostTurnObserver:
                 ticket._timer.cancel()
             try:
                 ticket.future.cancel()
-            except Exception:
-                pass
+            except Exception as exc:
+                self._log("debug", "post-observer ticket cancellation failed: %s", exc)
         try:
             self.executor.shutdown(wait=False, cancel_futures=True)
-        except Exception:
-            pass
+        except Exception as exc:
+            self._log("debug", "post-observer executor shutdown failed: %s", exc)
 
     def _log(self, level: str, message: str, *args: Any) -> None:
         if self.logger is None:
             return
         try:
             getattr(self.logger, level)(message, *args)
-        except Exception:
-            pass
+        except Exception as exc:
+            _LOG.debug("post-observer logger failed: %s", exc, exc_info=exc)
 
 
 __all__ = ["ObservationTicket", "PostTurnObserver"]

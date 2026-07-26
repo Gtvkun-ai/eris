@@ -238,8 +238,9 @@ class ProjectOperationsRuntime:
         if getattr(owner, "workspace_manager", None) is None:
             try:
                 setattr(owner, "workspace_manager", self.workspace_manager)
-            except Exception:
-                pass
+            except (AttributeError, TypeError) as exc:
+                if self.logger is not None:
+                    self.logger.debug("Không bind được workspace manager vào owner: %s", exc)
         self._lock = threading.RLock()
         self._audit: deque[ProjectActionResult] = deque(maxlen=max(30, int(max_audit)))
         self._handlers: dict[str, Callable[[str, str], ProjectActionResult]] = {
@@ -855,8 +856,9 @@ class ProjectOperationsRuntime:
         if callable(callback):
             try:
                 callback(dict(payload))
-            except Exception:
-                pass
+            except Exception as exc:
+                if self.logger is not None:
+                    self.logger.warning("Project question callback failed: %s", exc)
 
     def _parse_patch_paths(self, patch_text: str) -> list[str]:
         paths: list[str] = []
@@ -903,8 +905,9 @@ class ProjectOperationsRuntime:
             if value:
                 try:
                     files.append(self._guard().relative(self._guard().resolve(value)))
-                except Exception:
-                    pass
+                except (OSError, RuntimeError, ValueError) as exc:
+                    if self.logger is not None:
+                        self.logger.debug("Bỏ qua path Git không hợp lệ %s: %s", value, exc)
         return list(dict.fromkeys(files))
 
     def _latest_snapshot_operation(self) -> str:
@@ -1004,14 +1007,12 @@ class ProjectOperationsRuntime:
             ledger.parent.mkdir(parents=True, exist_ok=True)
             with ledger.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(result.to_dict(), ensure_ascii=False, default=str) + "\n")
-        except Exception:
-            pass
+        except (OSError, TypeError, ValueError) as exc:
+            if self.logger is not None:
+                self.logger.warning("Không ghi được project operation ledger: %s", exc)
         if self.logger is not None:
-            try:
-                self.logger.info("[project-ops] capability=%s operation=%s state=%s verified=%s",
-                                 result.capability_id, result.operation_id, result.state.value, result.verified)
-            except Exception:
-                pass
+            self.logger.info("[project-ops] capability=%s operation=%s state=%s verified=%s",
+                             result.capability_id, result.operation_id, result.state.value, result.verified)
         return result
 
 
@@ -1029,7 +1030,7 @@ def _parse_payload(value: str, *, keep_raw: bool = False) -> dict[str, Any]:
                 if keep_raw:
                     payload.setdefault("raw", text)
                 return payload
-        except Exception:
+        except json.JSONDecodeError:
             pass
     return {"value": text, "raw": text} if keep_raw else {"value": text}
 

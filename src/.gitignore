@@ -1,0 +1,39 @@
+# Python build/test debris
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments and packaging
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+config/secrets.json
+config/secrets_manifest.json
+config/secret_versions/
+
+# Runtime state and generated output
+logs/
+*.log
+state/
+runtime_state/
+cache/
+*.tmp
+*.bak
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

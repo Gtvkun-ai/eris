@@ -387,8 +387,8 @@ def _get_api_key() -> str:
         if pool and pool.size > 0:
             lease = pool.acquire(allow_cooling=True)
             return lease.key if lease is not None else ""
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("[TTS] key pool lookup failed: %s", _short_error(exc))
 
     # 2. Speech key (đã set trong secrets.json)
     key = os.environ.get("ERIS_SPEECH_API_KEY", "").strip()
@@ -562,8 +562,8 @@ def _edge_japanese_romaji_text(text: str) -> str:
                     output_tokens=160,
                 )
                 GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_success("gemini")
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("[TTS] token pressure record failed lane=romaji_localizer: %s", _short_error(exc))
         return _clean_edge_romaji_output(getattr(response, "text", "") or "")
     except Exception as exc:
         logger.warning("[TTS] Edge JP romaji transliterator loi: %s", _short_error(exc))
@@ -865,8 +865,8 @@ def _tts_request_cancelled(cancel_event=None, authority_check=None) -> bool:
         try:
             if cancel_event.is_set():
                 return True
-        except Exception:
-            pass
+        except (AttributeError, TypeError) as exc:
+            logger.debug("[TTS] cancel event check failed: %s", _short_error(exc))
     if callable(authority_check):
         try:
             if not bool(authority_check()):
@@ -1045,8 +1045,8 @@ def _synthesize_wav(
                         prompt_tokens=estimate_tokens([{"role": "user", "content": prompt}]),
                         output_tokens=tts_budget_plan.output_tokens,
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("[TTS] token request accounting failed: %s", _short_error(exc))
             if pool is not None and lease is not None:
                 pool.mark_success(lease=lease)
                 GLOBAL_TTS_KEY_LANE_HEALTH.record_success(getattr(lease, "index", None))
@@ -1055,8 +1055,8 @@ def _synthesize_wav(
             try:
                 from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
                 GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_success("gemini")
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("[TTS] token pressure success record failed: %s", _short_error(exc))
             break
         except Exception as exc:
             if _tts_request_cancelled(cancel_event, authority_check) or str(exc) == "tts_cancelled":
@@ -1082,8 +1082,8 @@ def _synthesize_wav(
                     is_rate_limit = True
                 if isinstance(exc, ClientError) and exc.code in (401, 403) and "reported as leaked" in str(exc).lower():
                     is_revoked = True
-            except Exception:
-                pass
+            except Exception as classify_exc:
+                logger.debug("[TTS] google ClientError classification unavailable: %s", _short_error(classify_exc))
 
             error_text = str(exc).lower()
             is_invalid_shape = "audio parts" in error_text or "parts hợp lệ" in error_text or "nonetype" in error_text
@@ -1113,8 +1113,8 @@ def _synthesize_wav(
                 try:
                     from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
                     GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_rate_limit("gemini", retry_after_s=60.0, lane="tts")
-                except Exception:
-                    pass
+                except Exception as pressure_exc:
+                    logger.debug("[TTS] rate-limit pressure record failed: %s", _short_error(pressure_exc))
 
             if is_project_permission and lease is not None:
                 logger.warning(
@@ -2015,8 +2015,8 @@ def _build_worker(voice: str, model: str, language_hint: str, *, epoch_validator
         worker = _TtsWorker(voice, model, language_hint)
         try:
             setattr(worker, "_epoch_validator", epoch_validator)
-        except Exception:
-            pass
+        except (AttributeError, TypeError) as exc:
+            logger.debug("[TTS] legacy worker epoch validator attach failed: %s", _short_error(exc))
         return worker
 
 # ── Public API ────────────────────────────────────────────────────────────────

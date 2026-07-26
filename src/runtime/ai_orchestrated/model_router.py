@@ -10,6 +10,7 @@ import time
 from dataclasses import replace
 from typing import Any, Mapping, Sequence
 
+from runtime.diagnostic_logging import safe_log
 from runtime.cognition.turn_anchor import anchor_from_semantic_frame, previous_assistant_from_history
 from runtime.cognition.normalization import normalize_vi
 from runtime.social_stance_policy import STANCE_PUBLIC_RULES_VI
@@ -632,10 +633,7 @@ class AIRuntimeModelRouter:
             return _json(_content(raw))
         except Exception as exc:  # noqa: BLE001
             if self.logger is not None:
-                try:
-                    self.logger.debug("[ai runtime model] %s failed model=%s: %s", name, model_name, exc)
-                except Exception:
-                    pass
+                safe_log(self.logger, "debug", "[ai runtime model] %s failed model=%s: %s", name, model_name, exc)
             return {}
 
     @staticmethod
@@ -687,6 +685,7 @@ class AIRuntimeModelRouter:
         relationship_context: str = "",
         personality_context: str = "",
         interrupt_context: str = "",
+        engagement_context: str = "",
         use_escalation: bool = False,
         reasoning_effort: str | None = None,
         allow_fallback: bool = False,
@@ -715,6 +714,8 @@ class AIRuntimeModelRouter:
             context_parts.append(f"Relevant memory: {memory_context}")
         if interrupt_context:
             context_parts.append(f"Mechanical interrupt context: {interrupt_context}")
+        if engagement_context:
+            context_parts.append(f"Durable engagement contract: {engagement_context}")
         if retry_instruction:
             context_parts.append(f"One-shot rewrite instruction: {retry_instruction}")
         if locked_semantic_frame:
@@ -792,10 +793,7 @@ class AIRuntimeModelRouter:
                 return parsed
             except Exception as exc:  # noqa: BLE001
                 if self.logger is not None:
-                    try:
-                        self.logger.debug("[ai public reply] model=%s failed: %s", model_name, exc)
-                    except Exception:
-                        pass
+                    safe_log(self.logger, "debug", "[ai public reply] model=%s failed: %s", model_name, exc)
                 return {}
 
         payload = call(client)
@@ -843,8 +841,8 @@ class AIRuntimeModelRouter:
                     fields={"violations": list(validation.violations)},
                     status="degraded",
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                safe_log(self.logger, "debug", "Semantic validation metric failed: %s", exc)
         return {
             "semantic_frame": validation.frame,
             "text": str(payload.get("text", "") or ""),
@@ -869,6 +867,7 @@ class AIRuntimeModelRouter:
         personality_context: str = "",
         memory_context: str = "",
         grounding_context: str = "",
+        engagement_context: str = "",
         recent_history: Sequence[Mapping[str, Any]] = (),
         avoid_text: str = "",
         allow_fallback: bool = False,
@@ -930,6 +929,7 @@ class AIRuntimeModelRouter:
             "planned_tool_input": plan.tool_input,
             "memory_context": memory_context,
             "grounding_context": grounding_context,
+            "engagement_context": engagement_context,
             "avoid_repeating": avoid_text,
         }
         messages = [
@@ -969,10 +969,7 @@ class AIRuntimeModelRouter:
                 return _json(_content(raw))
             except Exception as exc:  # noqa: BLE001
                 if self.logger is not None:
-                    try:
-                        self.logger.debug("[ai autonomous reply] model=%s failed: %s", model_name, exc)
-                    except Exception:
-                        pass
+                    safe_log(self.logger, "debug", "[ai autonomous reply] model=%s failed: %s", model_name, exc)
                 return {}
 
         payload = call(client)

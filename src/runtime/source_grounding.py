@@ -850,7 +850,7 @@ class SourceGroundingEngine:
             elif report.missing_evidence:
                 report.epistemic_mode = "fallback"
                 report.information_gap = max(0.25, 1.0 - float(report.confidence_cap or 0.0))
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             pass
 
         report.cognitive_flags = {
@@ -2188,7 +2188,7 @@ class SourceGroundingEngine:
             value = getattr(obj, key, None)
         try:
             return float(value)
-        except Exception:
+        except (TypeError, ValueError):
             return None
 
     @classmethod
@@ -2251,7 +2251,7 @@ class SourceGroundingEngine:
             return
         try:
             setattr(obj, key, value)
-        except Exception:
+        except (AttributeError, TypeError):
             return
 
     @staticmethod

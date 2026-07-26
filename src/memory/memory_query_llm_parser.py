@@ -146,7 +146,7 @@ class MemoryQueryLLMParser:
         raw = raw.strip()
         try:
             return json.loads(raw)
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError):
             pass
 
         # Salvage object đầu tiên. Đời thật bẩn, parser phải biết rửa tay.
@@ -155,7 +155,7 @@ class MemoryQueryLLMParser:
         if start >= 0 and end > start:
             try:
                 return json.loads(raw[start : end + 1])
-            except Exception:
+            except (json.JSONDecodeError, TypeError, ValueError):
                 return None
         return None
 
@@ -182,7 +182,7 @@ class MemoryQueryLLMParser:
                 warnings=warnings,
                 raw_text=raw_text,
             )
-        except Exception:
+        except (TypeError, ValueError, KeyError):
             return None
 
     def _selector(self, data: dict[str, Any]) -> MemorySelector:
@@ -210,5 +210,5 @@ def _int_or_none(value: Any) -> Optional[int]:
     try:
         ivalue = int(value)
         return ivalue if ivalue > 0 else None
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         return None

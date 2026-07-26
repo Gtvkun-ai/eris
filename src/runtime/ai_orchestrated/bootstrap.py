@@ -3,9 +3,15 @@
 
 from __future__ import annotations
 
-import os
 import threading
+import time
 from typing import Any, Mapping
+
+from runtime.persistence_gate import PersistenceGate
+from runtime.engagements.snapshot_journal import EngagementSnapshotJournal
+from runtime.diagnostic_logging import safe_log
+from runtime.policy_settings import AIRuntimeSettings, EngagementSettings, HealthSettings
+from runtime.subsystem_health import FailureKind, SubsystemHealthRegistry
 
 from .contracts import RuntimeMindState
 from .discovery import DiscoveryRuntime
@@ -25,6 +31,32 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
         host.ai_runtime_enabled = False
         return False
 
+    health = getattr(host, "subsystem_health_registry", None)
+    if not isinstance(health, SubsystemHealthRegistry):
+        health = SubsystemHealthRegistry(max_events=HealthSettings.load().max_events)
+        host.subsystem_health_registry = health
+    health.mark_starting("ai_orchestrated.runtime")
+    policy_bundle = getattr(host, "runtime_policy_settings", None)
+    ai_settings = getattr(policy_bundle, "ai_runtime", None)
+    if not isinstance(ai_settings, AIRuntimeSettings):
+        ai_settings = AIRuntimeSettings.load()
+    engagement_settings = getattr(policy_bundle, "engagement", None)
+    if not isinstance(engagement_settings, EngagementSettings):
+        engagement_settings = EngagementSettings.load()
+    runtime_clock = getattr(host, "_runtime_clock", None)
+    if not callable(runtime_clock):
+        runtime_clock = time.time
+    state_persistence_gate = PersistenceGate(
+        ai_settings.state_persistence_interval_seconds,
+        clock=runtime_clock,
+    )
+    engagement_persistence_gate = PersistenceGate(
+        engagement_settings.persistence_interval_seconds,
+        clock=runtime_clock,
+    )
+    host._ai_state_persistence_gate = state_persistence_gate
+    host._ai_engagement_persistence_gate = engagement_persistence_gate
+
     def load_state() -> RuntimeMindState:
         memory_state = getattr(host, "memory_state", None)
         if isinstance(memory_state, dict):
@@ -36,7 +68,28 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
 
     persist_lock = getattr(host, "_state_lock", None) or threading.RLock()
 
-    def persist(payload: Mapping[str, Any]) -> None:
+    def engagement_container() -> dict[str, Any] | None:
+        memory_state = getattr(host, "memory_state", None)
+        if isinstance(memory_state, dict):
+            return memory_state
+        if memory_state is None:
+            return None
+        metadata = getattr(memory_state, "metadata", None)
+        if isinstance(metadata, dict):
+            return metadata
+        try:
+            memory_state.metadata = {}
+        except (AttributeError, TypeError, ValueError):
+            return None
+        metadata = getattr(memory_state, "metadata", None)
+        return metadata if isinstance(metadata, dict) else None
+
+    engagement_snapshot_journal = EngagementSnapshotJournal(
+        engagement_container, clock=runtime_clock, health_registry=health
+    )
+    host._ai_engagement_snapshot_journal = engagement_snapshot_journal
+
+    def persist(payload: Mapping[str, Any], *, force: bool = False) -> None:
         memory_state = getattr(host, "memory_state", None)
         with persist_lock:
             if isinstance(memory_state, dict):
@@ -51,23 +104,95 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
                         metadata = None
                 if isinstance(metadata, dict):
                     metadata["ai_orchestrated_state"] = dict(payload)
+            state_persistence_gate.mark_dirty()
             saver = getattr(host, "_save_memory_state", None)
-            if callable(saver):
-                saver()
+            if callable(saver) and state_persistence_gate.should_flush(force=force):
+                try:
+                    saver()
+                except Exception as exc:
+                    health.record_failure(
+                        "ai_state.persistence",
+                        exc,
+                        kind=FailureKind.PERSISTENCE_FAILURE,
+                        degraded=True,
+                    )
+                    raise
+                else:
+                    state_persistence_gate.mark_flushed()
+                    health.record_success(
+                        "ai_state.persistence",
+                        details={"forced": bool(force)},
+                    )
+
+    # Engagement runtime is a separate semantic kernel: it persists durable
+    # interaction commitments without polluting the single-writer mind state.
+    def load_engagement_state() -> Mapping[str, Any]:
+        if engagement_settings.snapshot_journal_enabled:
+            return engagement_snapshot_journal.load(
+                auto_repair=engagement_settings.snapshot_journal_auto_repair
+            ).snapshot
+        container = engagement_container()
+        value = container.get("ai_engagement_state", {}) if container is not None else {}
+        return value if isinstance(value, Mapping) else {}
+
+    def persist_engagement(payload: Mapping[str, Any], *, force: bool = False) -> None:
+        with persist_lock:
+            if engagement_settings.snapshot_journal_enabled:
+                try:
+                    engagement_snapshot_journal.stage(payload)
+                except (TypeError, ValueError, RuntimeError) as exc:
+                    health.record_failure(
+                        "engagement.snapshot_journal",
+                        exc,
+                        kind=FailureKind.PERSISTENCE_FAILURE,
+                        degraded=True,
+                        reason="engagement snapshot could not be staged",
+                    )
+                    raise
+            else:
+                container = engagement_container()
+                if container is not None:
+                    container["ai_engagement_state"] = dict(payload)
+            events = tuple(payload.get("events", ()) or ()) if isinstance(payload, Mapping) else ()
+            last_kind = str(events[-1].get("kind", "") or "") if events and isinstance(events[-1], Mapping) else ""
+            force = bool(force or last_kind in {"engagement.completed", "engagement.cancelled", "engagement.paused"})
+            engagement_persistence_gate.mark_dirty()
+            saver = getattr(host, "_save_memory_state", None)
+            if callable(saver) and engagement_persistence_gate.should_flush(force=force):
+                try:
+                    saver()
+                except Exception as exc:
+                    health.record_failure(
+                        "engagement.persistence",
+                        exc,
+                        kind=FailureKind.PERSISTENCE_FAILURE,
+                        degraded=True,
+                    )
+                    raise
+                else:
+                    engagement_persistence_gate.mark_flushed()
+                    health.record_success(
+                        "engagement.persistence",
+                        details={"forced": bool(force)},
+                    )
 
     reducer = StateReducer(initial_state=load_state(), persist=persist, logger=getattr(host, "logger", None))
+    health.record_success("ai_orchestrated.state_reducer")
     router = AIRuntimeModelRouter(
         llm_service,
         logger=getattr(host, "logger", None),
         budget_policy=getattr(host, "model_budget_policy", None),
     )
+    health.record_success("ai_orchestrated.model_router")
     observer = PostTurnObserver(
         router,
         reducer,
         logger=getattr(host, "logger", None),
-        workers=int(os.getenv("ERIS_AI_OBSERVER_WORKERS", "2") or 2),
+        workers=ai_settings.observer_workers,
     )
+    health.record_success("ai_orchestrated.observer")
     planner = IntentionPlanner(router, reducer, logger=getattr(host, "logger", None))
+    health.record_success("ai_orchestrated.planner")
     discovery = DiscoveryRuntime(host, router, logger=getattr(host, "logger", None))
     initiative = InitiativeController(logger=getattr(host, "logger", None))
     consolidator = IdentityConsolidator(logger=getattr(host, "logger", None))
@@ -77,6 +202,7 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     host._ai_turn_seq_lock = threading.RLock()
     host._ai_turn_seq = reducer.snapshot().last_applied_turn_seq
     host.ai_state_reducer = reducer
+    host._persist_ai_runtime_state = persist
     host.ai_model_router = router
     host.ai_post_turn_observer = observer
     host.ai_intention_planner = planner
@@ -84,6 +210,34 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     host.ai_initiative_controller = initiative
     host.ai_identity_consolidator = consolidator
     host.ai_stage_planner = StagePlanner(expression_bridge=expression_bridge)
+    if engagement_settings.enabled:
+        try:
+            from runtime.engagements import EngagementRuntime
+            host.ai_engagement_runtime = EngagementRuntime(
+                initial_state=load_engagement_state(),
+                persist=persist_engagement,
+                logger=getattr(host, "logger", None),
+                health_registry=health,
+                settings=engagement_settings,
+            )
+            host._persist_ai_engagement_state = persist_engagement
+            health.record_success(
+                "engagement.runtime",
+                details={"settings": engagement_settings.to_dict()},
+            )
+        except Exception as exc:
+            host.ai_engagement_runtime = None
+            health.record_failure(
+                "engagement.runtime",
+                exc,
+                kind=FailureKind.PROGRAMMER_ERROR,
+                degraded=True,
+            )
+            safe_log(getattr(host, "logger", None), "warning", "[engagement] runtime unavailable: %s", exc)
+    else:
+        host.ai_engagement_runtime = None
+        host._persist_ai_engagement_state = persist_engagement
+        health.mark_stopped("engagement.runtime", reason="disabled_by_settings")
     # PDF annotation, pages 12-13 and 20: P2 cutover is complete.  No legacy
     # regex cognition or shadow acceptance gate is instantiated at startup.
     host.ai_pre_response_cognition = None
@@ -112,8 +266,8 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
                 relationship_state=state.relationship.to_dict(),
                 cognitive_views=build_cognitive_views(state),
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            safe_log(getattr(host, "logger", None), "warning", "Không cập nhật được panel observation: %s", exc)
         if str(getattr(event, "kind", "")) == "cognitive_observation":
             turn_id = str(getattr(event, "turn_id", "") or "")
             memory_candidate = str(payload.get("memory_candidate", "") or "").strip()
@@ -139,8 +293,8 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
                                 "evidence": list(payload.get("evidence", ()) or ()),
                             },
                         )
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        safe_log(getattr(host, "logger", None), "warning", "Không enqueue được memory digest: %s", exc)
 
     reducer.subscribe(on_state)
     reducer.subscribe(consolidator.observe)
@@ -151,12 +305,51 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
             reducer.snapshot().personality.version,
             reducer.snapshot().identity.version,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        safe_log(getattr(host, "logger", None), "debug", "Không ghi được architecture diagnostic: %s", exc)
+    health.record_success(
+        "ai_orchestrated.runtime",
+        details={"engagement_available": host.ai_engagement_runtime is not None},
+    )
     return True
 
 
 def shutdown_ai_orchestrated_runtime(host: Any) -> None:
+    health = getattr(host, "subsystem_health_registry", None)
+    reducer = getattr(host, "ai_state_reducer", None)
+    persist_state = getattr(host, "_persist_ai_runtime_state", None)
+    if reducer is not None and callable(persist_state):
+        try:
+            persist_state(reducer.snapshot().to_dict(), force=True)
+        except Exception as exc:
+            if isinstance(health, SubsystemHealthRegistry):
+                health.record_failure(
+                    "ai_state.persistence",
+                    exc,
+                    kind=FailureKind.PERSISTENCE_FAILURE,
+                    degraded=True,
+                    reason="shutdown flush failed",
+                )
+        else:
+            if isinstance(health, SubsystemHealthRegistry):
+                health.record_success("ai_state.persistence", details={"shutdown_flush": True})
+    engagement_runtime = getattr(host, "ai_engagement_runtime", None)
+    persist_engagement = getattr(host, "_persist_ai_engagement_state", None)
+    if engagement_runtime is not None and callable(persist_engagement):
+        try:
+            persist_engagement(engagement_runtime.registry.snapshot(), force=True)
+        except Exception as exc:
+            if isinstance(health, SubsystemHealthRegistry):
+                health.record_failure(
+                    "engagement.persistence",
+                    exc,
+                    kind=FailureKind.PERSISTENCE_FAILURE,
+                    degraded=True,
+                    reason="shutdown flush failed",
+                )
+        else:
+            if isinstance(health, SubsystemHealthRegistry):
+                health.record_success("engagement.persistence", details={"shutdown_flush": True})
     for name in ("ai_post_turn_observer", "ai_discovery_runtime", "ai_state_reducer"):
         obj = getattr(host, name, None)
         method_name = "shutdown" if name in {"ai_post_turn_observer", "ai_discovery_runtime"} else "close"
@@ -164,8 +357,21 @@ def shutdown_ai_orchestrated_runtime(host: Any) -> None:
         if callable(method):
             try:
                 method()
-            except Exception:
-                pass
+            except Exception as exc:
+                if isinstance(health, SubsystemHealthRegistry):
+                    health.record_failure(
+                        f"ai_orchestrated.{name}",
+                        exc,
+                        kind=FailureKind.PROGRAMMER_ERROR,
+                        degraded=True,
+                        reason="shutdown failed",
+                    )
+            else:
+                if isinstance(health, SubsystemHealthRegistry):
+                    health.mark_stopped(f"ai_orchestrated.{name}")
+    if isinstance(health, SubsystemHealthRegistry):
+        health.mark_stopped("engagement.runtime")
+        health.mark_stopped("ai_orchestrated.runtime")
 
 
 __all__ = ["install_ai_orchestrated_runtime", "shutdown_ai_orchestrated_runtime"]

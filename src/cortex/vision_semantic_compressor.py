@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Optional
 from runtime.no_fallback_policy import no_fallback_mode_enabled
+from runtime.diagnostic_logging import safe_log
 
 try:
     from cortex.observer_contracts import (
@@ -80,7 +81,7 @@ class RemoteStructureClient:
         try:
             from llm.dds import extract_text
             return str(extract_text(response) or "")
-        except Exception:
+        except (ImportError, AttributeError, TypeError, ValueError):
             pass
         # Fallback tối thiểu: OpenAI-shape.
         if isinstance(response, dict):
@@ -107,7 +108,7 @@ class RemoteStructureClient:
                 try:
                     obj = _json.loads(raw[start : end + 1])
                     return obj if isinstance(obj, dict) else None
-                except Exception:
+                except (json.JSONDecodeError, TypeError, ValueError):
                     return None
         return None
 
@@ -211,7 +212,7 @@ class RemoteCaptionClient:
         try:
             from llm.dds import extract_text
             return str(extract_text(response) or "")
-        except Exception:
+        except (ImportError, AttributeError, TypeError, ValueError):
             pass
         if isinstance(response, dict):
             choices = response.get("choices")
@@ -261,10 +262,7 @@ class RemoteCaptionClient:
                 )
         except Exception as exc:  # pragma: no cover - lỗi mạng/remote
             if self._logger is not None and callable(getattr(self._logger, "warning", None)):
-                try:
-                    self._logger.warning("[vision caption remote] lỗi: %s", exc)
-                except Exception:
-                    pass
+                safe_log(self._logger, "warning", "[vision caption remote] lỗi: %s", exc)
             return ""
         return self._extract_text(response).strip()
 
@@ -1180,10 +1178,7 @@ class VisionSemanticCompressor:
 
     def _log_warning(self, msg: str, *args: Any) -> None:
         if self.logger is not None and callable(getattr(self.logger, "warning", None)):
-            try:
-                self.logger.warning(msg, *args)
-            except Exception:
-                pass
+            safe_log(self.logger, "warning", msg, *args)
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:

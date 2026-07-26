@@ -15,6 +15,7 @@ import re
 import time
 from typing import Callable, Iterable
 
+from runtime.diagnostic_logging import safe_log
 from runtime.speech_persona_polish import (
     SpeechPersonaPolicy,
     resolve_speech_persona_policy,
@@ -91,8 +92,8 @@ def _get_api_key_lease(*, exclude_indices: Iterable[int] = ()):
             lease = pool.acquire(exclude_indices=exclude_indices)
             if lease is not None:
                 return lease.key, pool, lease
-    except Exception:
-        pass
+    except (ImportError, AttributeError, RuntimeError, ValueError) as exc:
+        safe_log(logger, "debug", "TTS key-pool lookup failed: %s", exc)
     return "", None, None
 
 
@@ -420,8 +421,8 @@ class SpeechLocalizer:
                     from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
 
                     GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_success("gemini")
-                except Exception:
-                    pass
+                except Exception as exc:
+                    safe_log(logger, "debug", "TTS localizer success telemetry failed: %s", exc)
                 return out
             except SpeechLocalizationCancelled:
                 raise
@@ -451,12 +452,12 @@ class SpeechLocalizer:
                                     retry_after_s=60.0,
                                     lane="speech_localizer",
                                 )
-                            except Exception:
-                                pass
+                            except Exception as pressure_exc:
+                                safe_log(logger, "debug", "TTS rate-limit telemetry failed: %s", pressure_exc)
                         elif str(kind) == "project_permission":
                             pool.mark_dead(3600.0, lease=lease, reason="localizer_project_permission")
-                except Exception:
-                    pass
+                except Exception as classify_exc:
+                    safe_log(logger, "debug", "TTS provider error classification failed: %s", classify_exc)
 
                 logger.warning(
                     "[TTS.Localizer] Dịch sang JP lỗi model=%s lượt %d/%d: %s",

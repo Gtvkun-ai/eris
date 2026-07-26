@@ -52,6 +52,9 @@ class CommentaryExpectation:
     seconds_since_user: float
     seconds_since_assistant: float
     anchor_kind: str
+    engagement_id: str = ""
+    engagement_kind: str = ""
+    policy_action: str = "wait"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -76,6 +79,7 @@ class CommentaryCadence:
         activity_event: bool,
         has_public_seed: bool,
         telemetry: Mapping[str, Any] | None = None,
+        engagement_decision: Any = None,
     ) -> CommentaryExpectation:
         enabled = _as_bool(_setting("enabled", True), True)
         desired = max(25.0, _as_float(_setting("desired_interval_seconds", 60.0), 60.0))
@@ -88,8 +92,28 @@ class CommentaryCadence:
         telemetry = telemetry or {}
         user_busy = bool(telemetry.get("user_busy", False) or telemetry.get("interaction_busy", False))
 
+        decision_data: Mapping[str, Any]
+        if isinstance(engagement_decision, Mapping):
+            decision_data = engagement_decision
+        elif callable(getattr(engagement_decision, "to_dict", None)):
+            try:
+                decision_data = engagement_decision.to_dict()
+            except Exception:
+                decision_data = {}
+        else:
+            decision_data = {}
+        engagement_id = str(decision_data.get("engagement_id", "") or "").strip()
+        engagement_kind = str(decision_data.get("engagement_kind", "") or "").strip()
+        engagement_action = str(decision_data.get("action", "wait") or "wait").strip()
+        engagement_due = bool(decision_data.get("due", False))
+        engagement_required = bool(decision_data.get("required", False))
+        engagement_reason = str(decision_data.get("reason", "") or "").strip()
+        engagement_anchor = str(decision_data.get("anchor_kind", "") or "").strip()
+
         anchor_kind = "persona_presence"
-        if discourse_open:
+        if engagement_id and engagement_anchor:
+            anchor_kind = engagement_anchor
+        elif discourse_open:
             anchor_kind = "conversation_continuation"
         elif activity_event:
             anchor_kind = "activity_event"
@@ -113,17 +137,29 @@ class CommentaryCadence:
             return CommentaryExpectation(True, False, False, "startup_grace", desired, maximum,
                                          since_commentary, seconds_since_user, seconds_since_assistant, anchor_kind)
 
-        event_due = bool((perception_delta or activity_event or discourse_open) and since_commentary >= min(25.0, desired))
-        due = bool(event_due or since_commentary >= desired)
-        required = bool(since_commentary >= maximum)
-        reason = (
-            "maximum_quiet_reached" if required
-            else "meaningful_event_due" if event_due
-            else "companion_cadence_due" if due
-            else "cadence_not_due"
+        if engagement_id:
+            # An active engagement owns its own rhythm. The generic companion
+            # timer must not drag ERIS into unrelated ambient chatter while a
+            # monitoring or event-driven contract explicitly says to wait.
+            event_due = False
+            due = engagement_due
+            required = engagement_required
+            reason = engagement_reason or ("engagement_due" if due else "engagement_not_due")
+        else:
+            event_due = bool((perception_delta or activity_event or discourse_open) and since_commentary >= min(25.0, desired))
+            due = bool(event_due or since_commentary >= desired)
+            required = bool(since_commentary >= maximum)
+            reason = (
+                "maximum_quiet_reached" if required
+                else "meaningful_event_due" if event_due
+                else "companion_cadence_due" if due
+                else "cadence_not_due"
+            )
+        return CommentaryExpectation(
+            True, due, required, reason, desired, maximum,
+            since_commentary, seconds_since_user, seconds_since_assistant, anchor_kind,
+            engagement_id, engagement_kind, engagement_action,
         )
-        return CommentaryExpectation(True, due, required, reason, desired, maximum,
-                                     since_commentary, seconds_since_user, seconds_since_assistant, anchor_kind)
 
 
 __all__ = ["CommentaryCadence", "CommentaryExpectation"]

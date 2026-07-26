@@ -43,6 +43,8 @@ class CognitiveActionState(str, Enum):
     FAILED_VERIFICATION = "failed_verification"
     CANCELLED = "cancelled"
 
+from runtime.diagnostic_logging import safe_log
+
 
 @dataclass(frozen=True, slots=True)
 class CognitiveCapabilityContract:
@@ -248,7 +250,7 @@ class InternalCognitiveCapabilityRuntime:
     def owner(self) -> Any | None:
         try:
             return self._owner_ref()
-        except Exception:
+        except (ReferenceError, TypeError):
             return None
 
     def contracts(self) -> tuple[CognitiveCapabilityContract, ...]:
@@ -368,8 +370,8 @@ class InternalCognitiveCapabilityRuntime:
                     result.capability_id, result.state.value, result.executed, result.verified,
                     len(result.evidence),
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                safe_log(self.logger, "debug", "[internal-cognitive] result log failed: %s", exc)
         return result
 
     @staticmethod
@@ -388,7 +390,8 @@ class InternalCognitiveCapabilityRuntime:
             return None
         try:
             return snapshot()
-        except Exception:
+        except Exception as exc:
+            safe_log(self.logger, "debug", "[internal-cognitive] snapshot failed: %s", exc)
             return None
 
     def _memory_candidate_store(self) -> Any | None:

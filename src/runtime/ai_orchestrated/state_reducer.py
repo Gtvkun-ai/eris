@@ -17,6 +17,8 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta
 from typing import Any, Callable, Mapping, Sequence
 
+from runtime.diagnostic_logging import safe_log
+
 from .contracts import (
     AppraisalState,
     CognitiveObservation,
@@ -122,8 +124,8 @@ class StateReducer:
         self._queue.put(None)
         try:
             self._worker.join(timeout=1.5)
-        except Exception:
-            pass
+        except RuntimeError as exc:
+            self._log("debug", "[state reducer] worker join failed: %s", exc)
 
     def _run(self) -> None:
         while True:
@@ -714,7 +716,7 @@ class StateReducer:
             day_text = str(key).split(":", 1)[0]
             try:
                 day = datetime.strptime(day_text, "%Y-%m-%d").date()
-            except Exception:
+            except ValueError:
                 continue
             if day >= cutoff:
                 result[str(key)] = max(0.0, float(value or 0.0))
@@ -836,10 +838,7 @@ class StateReducer:
         logger = self._logger
         if logger is None:
             return
-        try:
-            getattr(logger, level)(message, *args)
-        except Exception:
-            pass
+        safe_log(logger, level, message, *args)
 
 
 __all__ = ["StateReducer"]

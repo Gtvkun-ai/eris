@@ -28,6 +28,7 @@ from .contracts import AI_RUNTIME_VERSION, IntentionPlan, StateEvent
 from .discourse_state import DiscourseState, DiscourseStateBuilder
 from .identity import PendingStrategyUse
 from .self_context import AutonomousSelfContext, build_autonomous_self_context
+from runtime.engagements import InteractionDecision
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +57,9 @@ class SelfTurnBundle:
     activity: ActivitySession
     self_context: AutonomousSelfContext
     memory_context: str
+    engagement_context: Mapping[str, Any]
+    engagement_prompt_context: str
+    engagement_interaction: InteractionDecision
     commentary: CommentaryExpectation
 
 
@@ -300,6 +304,23 @@ class SelfTurnPipeline:
             now=perception.now,
         )
         self_context = build_autonomous_self_context(host)
+        engagement_context: Mapping[str, Any] = {"active": False}
+        engagement_prompt_context = "active_engagement: none"
+        engagement_interaction = InteractionDecision()
+        engagement_runtime = getattr(host, "ai_engagement_runtime", None)
+        if engagement_runtime is not None:
+            try:
+                engagement_runtime.observe_activity(activity, now=perception.now)
+                engagement_context = engagement_runtime.planner_context(now=perception.now)
+                engagement_prompt_context = engagement_runtime.prompt_context(now=perception.now)
+                engagement_interaction = engagement_runtime.interaction_decision(
+                    now=perception.now,
+                    seconds_since_user=seconds_since_user,
+                    seconds_since_assistant=seconds_since_assistant,
+                    telemetry=perception.telemetry,
+                )
+            except Exception as exc:
+                host.logger.debug("[engagement] autonomous context failed: %s", exc)
         commentary = self.commentary_cadence.evaluate(
             now=perception.now,
             last_commentary_at=float(getattr(host, "last_autonomous_spoken_at", 0.0) or 0.0),
@@ -311,6 +332,7 @@ class SelfTurnPipeline:
             activity_event=bool(activity.has_new_event),
             has_public_seed=bool(self_context.has_public_seed),
             telemetry=perception.telemetry,
+            engagement_decision=engagement_interaction,
         )
         return SelfTurnBundle(
             perception=perception,
@@ -323,6 +345,9 @@ class SelfTurnPipeline:
             activity=activity,
             self_context=self_context,
             memory_context=memory_context,
+            engagement_context=engagement_context,
+            engagement_prompt_context=engagement_prompt_context,
+            engagement_interaction=engagement_interaction,
             commentary=commentary,
         )
 
@@ -356,6 +381,8 @@ class SelfTurnPipeline:
             "self_context": context.self_context.to_dict(),
             "recent_self_turn_semantics": recent_initiative,
             "commentary_expectation": context.commentary.to_dict(),
+            "engagement_context": dict(context.engagement_context),
+            "engagement_interaction": context.engagement_interaction.to_dict(),
             "instruction": (
                 "You are the sole semantic authority for this self-initiated public turn. "
                 "Use observer discourse as-is; do not reclassify it from punctuation. "
@@ -363,7 +390,8 @@ class SelfTurnPipeline:
                 "Return stable semantics and activity annotations. Runtime gates only timing, privacy, and exact semantic repeats. "
                 "When commentary_expectation.due=true, companion-commentary mode is active: prefer speak=true unless "
                 "user_busy/privacy/reply_expected makes speech genuinely intrusive. When required=true, silence is not "
-                "a valid default; choose one low-risk, warm-guarded comment, question, continuation, or public-safe thought."
+                "a valid default; choose one low-risk, warm-guarded comment, question, continuation, or public-safe thought. "
+                "When engagement_context.active=true, preserve its objective, role and constraints; do not silently switch to unrelated ambient banter."
             ),
         }
         discovery_runtime = getattr(self.host, "ai_discovery_runtime", None)
@@ -716,6 +744,7 @@ class SelfTurnPipeline:
                 discovery_grounding,
                 f"AUTONOMOUS_SELF_CONTEXT:\n{context.self_context.prompt_context()}",
             ) if part),
+            engagement_context=context.engagement_prompt_context,
             recent_history=context.recent_history,
             avoid_text=str(getattr(host, "last_text", "") or ""),
             allow_fallback=not no_fallback_mode_enabled(),

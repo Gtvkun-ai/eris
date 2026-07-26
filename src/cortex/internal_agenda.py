@@ -49,7 +49,7 @@ AgendaStatus = Literal["open", "blocked", "resolved", "rejected", "expired"]
 def _clamp01(value: Any, default: float = 0.0) -> float:
     try:
         n = float(value)
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         n = default
     if math.isnan(n) or math.isinf(n):
         n = default

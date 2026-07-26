@@ -22,11 +22,11 @@ def _mapping(value: Any) -> dict[str, Any]:
     if is_dataclass(value):
         try:
             return dict(asdict(value))
-        except Exception:
+        except (TypeError, ValueError):
             return {}
     try:
         return dict(vars(value))
-    except Exception:
+    except TypeError:
         return {}
 
 
@@ -183,7 +183,7 @@ def _normalize_action_result(result: Any, *, action_name: str, action_input: str
     """
     try:
         from actions.contracts import ActionExecutionResult
-    except Exception:
+    except ImportError:
         return result
     if isinstance(result, ActionExecutionResult):
         return result
@@ -192,7 +192,7 @@ def _normalize_action_result(result: Any, *, action_name: str, action_input: str
     else:
         try:
             data = dict(vars(result))
-        except Exception:
+        except TypeError:
             data = {}
     return ActionExecutionResult(
         action_name=str(data.get("action_name") or action_name or ""),

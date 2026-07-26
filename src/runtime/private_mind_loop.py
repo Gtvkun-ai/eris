@@ -18,6 +18,7 @@ public thì đó không phải chiều sâu, đó là logcat có trang điểm.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass, field
@@ -43,6 +44,9 @@ from cortex.private_mind.inner_diary_renderer import InnerDiaryRenderer
 from cortex.private_mind.inner_diary_writer import InnerDiaryWriter
 from eris_secrets import apply_secrets_to_environ
 from runtime.private_mind_model_adapter import PrivateMindAdapterPool, RuntimePrivateMindModelAdapter
+
+
+_LOG = logging.getLogger(__name__)
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -112,6 +116,16 @@ class PrivateMindLoop:
         diary_fallback = RuntimePrivateMindModelAdapter.diary_fallback_from_env(logger=logger)
         self.diary_writer = InnerDiaryWriter(adapter=model_adapter, fallback_adapter=diary_fallback, logger=logger)
 
+    def _boundary_note(self, operation: str, exc: Exception) -> None:
+        method = getattr(self.logger, "debug", None)
+        if callable(method):
+            try:
+                method("[private mind] %s degraded: %s", operation, exc)
+                return
+            except Exception as log_exc:
+                _LOG.debug("private-mind logger failed: %s", log_exc, exc_info=log_exc)
+        _LOG.debug("[private mind] %s degraded: %s", operation, exc, exc_info=exc)
+
     @classmethod
     def from_runtime(cls, *, runtime_owner: Any, llm_service: Any = None, logger: Any = None) -> "PrivateMindLoop | None":
         apply_secrets_to_environ()
@@ -174,8 +188,8 @@ class PrivateMindLoop:
                 private_mind_advice = GLOBAL_INFERENCE_BROKER.optional_lane_advice(
                     "private_mind", provider=provider
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                self._boundary_note("inference_broker.advice", exc)
             if not bool(private_mind_advice.get("allowed", True)):
                 return self.last_result
 
@@ -202,8 +216,8 @@ class PrivateMindLoop:
                 from runtime.inference_broker import GLOBAL_INFERENCE_BROKER
                 if GLOBAL_INFERENCE_BROKER.user_turn_active():
                     return self.last_result
-            except Exception:
-                pass
+            except Exception as exc:
+                self._boundary_note("inference_broker.user_turn", exc)
             if not has_delta and not idle_due:
                 return self.last_result
             if has_delta and now - self.last_tick_at < effective_min_interval:
@@ -248,8 +262,8 @@ class PrivateMindLoop:
         try:
             dossier.metadata["recent_thoughts"] = self.continuity.recent_for_prompt()
             dossier.metadata["unresolved_threads"] = self.continuity.unresolved_for_prompt()
-        except Exception:
-            pass
+        except Exception as exc:
+            self._boundary_note("continuity.prompt_projection", exc)
         from runtime.inference_broker import inference_context
         with inference_context(
             "private_mind",
@@ -305,8 +319,8 @@ class PrivateMindLoop:
         # Q1: tự khép concern đã dịu đủ lâu, để lại dấu 'đã nguôi'.
         try:
             self.concern_store.auto_resolve_settled(now=now)
-        except Exception:
-            pass
+        except Exception as exc:
+            self._boundary_note("concern.auto_resolve", exc)
         candidate = self.surface_valve.filter(judgment)
         applied = self.mutation_bus.apply(
             judgment,
@@ -403,8 +417,8 @@ class PrivateMindLoop:
             snap = {k: data[k] for k in keys if k in data}
             if snap:
                 self._affect_snapshot = snap
-        except Exception:
-            pass
+        except Exception as exc:
+            self._boundary_note("affect.snapshot", exc)
 
     def _followup_fragments(self, dossier: Any) -> tuple[ThoughtFragment, ...]:
         """Biến mạch nghĩ dang dở thành fragment để synthesizer nghĩ tiếp.
@@ -454,11 +468,7 @@ class PrivateMindLoop:
                 source=str(getattr(judgment, "source", "synthesis") or "synthesis"),
             )
         except Exception as exc:
-            try:
-                if self.logger is not None:
-                    self.logger.warning("[ThoughtContinuity] record error: %s", exc)
-            except Exception:
-                pass
+            self._boundary_note("continuity.record", exc)
 
     def digest(self, *, surface_queue: list[Any] | None = None) -> dict[str, Any]:
         """Compact dev payload for private mind state.
@@ -584,7 +594,8 @@ class PrivateMindLoop:
             return None
         try:
             return writer.maybe_write(digest)
-        except Exception:
+        except Exception as exc:
+            self._boundary_note("inner_diary.write", exc)
             return None
 
     def drain_surface_impulses(self, queue: list[Any], *, limit: int = 4) -> tuple[Any, ...]:
@@ -804,8 +815,8 @@ class PrivateMindLoop:
             line = json.dumps({"ts": round(time.time(), 3), **dict(block)}, ensure_ascii=False)
             with path.open("a", encoding="utf-8") as fh:
                 fh.write(line + "\n")
-        except Exception:
-            pass
+        except Exception as exc:
+            self._boundary_note("anchor.journal", exc)
 
     def _update_anchor_system(self, *, dossier: Any, runtime_owner: Any) -> None:
         """Cập nhật trục neo hiện sinh từ một tick và phơi facade cho runtime.
@@ -837,8 +848,8 @@ class PrivateMindLoop:
             if runtime_owner is not None:
                 try:
                     setattr(runtime_owner, "anchor_system", self.anchor_system)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    self._boundary_note("anchor.publish", exc)
         except Exception as exc:
             self._log_anchor_warning(exc)
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 """Worker OCR tăng dần: đổi cửa sổ/đổi pixel mới đọc, không block chat."""
 
 import hashlib
+import logging
 import json
 import os
 import subprocess
@@ -21,6 +22,9 @@ from .active_window_provider import ActiveWindowProvider
 from .change_detector import ScreenChangeDetector
 from .evidence_models import ActiveWindowInfo, ScreenTextBlock, ScreenTextSnapshot
 from .windows_uia_reader import WindowsUIAReader
+
+
+_LOG = logging.getLogger(__name__)
 
 
 class SnapshotSink(Protocol):
@@ -66,7 +70,8 @@ class _RapidOCRBackend(_OCRBackend):
                 bounds = (min(xs), min(ys), max(xs)-min(xs), max(ys)-min(ys))
                 digest = hashlib.sha1(f"rapidocr|{window_title}|{index}|{text}".encode("utf-8", "ignore")).hexdigest()[:16]
                 blocks.append(ScreenTextBlock(digest, text[:1000], "ocr", max(0.35, min(0.92, score)), window_title, captured_at, bounds))
-            except Exception:
+            except (IndexError, TypeError, ValueError) as exc:
+                _LOG.debug("rapidocr block ignored index=%s error=%s", index, exc)
                 continue
         return tuple(blocks)
 
@@ -250,7 +255,8 @@ class IncrementalScreenTextWorker:
                 else:
                     raw = sct.grab(sct.monitors[0])
             return Image.frombytes("RGB", raw.size, raw.rgb)
-        except Exception:
+        except Exception as exc:
+            _LOG.debug("screen capture failed: %s", exc, exc_info=True)
             return None
 
     def _prepare(self, image: Image.Image) -> Image.Image:
@@ -417,5 +423,5 @@ class IncrementalScreenTextWorker:
             tmp = self.cache_path.with_suffix(self.cache_path.suffix + ".tmp")
             tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             tmp.replace(self.cache_path)
-        except Exception:
-            pass
+        except Exception as exc:
+            _LOG.debug("ocr snapshot cache write failed path=%s error=%s", self.cache_path, exc, exc_info=True)

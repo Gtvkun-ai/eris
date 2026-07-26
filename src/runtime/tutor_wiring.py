@@ -14,6 +14,9 @@ ghi cảnh báo một lần — KHÔNG đoán API rồi ghi rác vào memory.
 
 from __future__ import annotations
 
+from runtime.telemetry_text_policy import is_generic_telemetry_line
+from runtime.diagnostic_logging import safe_log
+
 import re
 from typing import Any, Callable, Optional
 
@@ -33,7 +36,7 @@ _GENERIC_TELEMETRY_PREFIXES = (
 )
 
 
-def _is_generic_telemetry_line(text: str) -> bool:
+def is_generic_telemetry_line(text: str) -> bool:
     """True nếu một dòng chỉ là telemetry chung chung, KHÔNG phải nội dung màn hình thật."""
 
     lowered = str(text or "").strip().lower()
@@ -215,8 +218,8 @@ def tutor_tick(runtime_owner: Any, *, observer_frame: Any = None, channel: str =
             try:
                 screen_ctx = _screen_context_from_snapshot(snapshot)
                 collector.push(collector.collect_from_observer(observer_frame, now=now, screen_context=screen_ctx))
-            except Exception:
-                pass
+            except Exception as exc:
+                _warn(getattr(runtime_owner, "logger", None), f"tutor observer collection failed: {exc!r}")
         idle = (channel == "autonomous") and not bool(getattr(runtime_owner, "chat_mode", False))
         daemon.run_once(idle=idle, now=now)
     except Exception as exc:
@@ -540,8 +543,8 @@ def _build_thought_sink(runtime_owner: Any, logger: Any) -> Optional[Any]:
                     confidence=float(priority),
                     ttl_seconds=1800.0,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                _warn(logger, f"tutor agenda sink failed: {exc!r}")
 
     return _AgendaSink()
 
@@ -619,13 +622,13 @@ def _screen_context_from_snapshot(snapshot: Any) -> str:
 
     # Lọc telemetry chung chung khỏi phần OCR: chỉ giữ dòng là nội dung màn hình thật.
     ocr_lines = [line.strip() for line in ocr_raw.splitlines() if line.strip()]
-    real_ocr_lines = [line for line in ocr_lines if not _is_generic_telemetry_line(line)]
+    real_ocr_lines = [line for line in ocr_lines if not is_generic_telemetry_line(line)]
     ocr = "\n".join(real_ocr_lines).strip()
 
     vision_facts = [
         str(item).strip()
         for item in (getattr(snapshot, "vision_facts", ()) or ())
-        if str(item).strip() and not _is_generic_telemetry_line(str(item))
+        if str(item).strip() and not is_generic_telemetry_line(str(item))
     ]
 
     # Không có ná»™i dung màn hình thật ⇒ không hỏi Gemini, để vision pipeline lo.
@@ -681,19 +684,11 @@ def _reach_semantic_store(runtime_owner: Any) -> Optional[Any]:
 
 
 def _warn(logger: Any, message: str) -> None:
-    try:
-        if logger is not None and callable(getattr(logger, "warning", None)):
-            logger.warning("%s", message)
-    except Exception:
-        pass
+    safe_log(logger, "warning", "%s", message)
 
 
 def _info(logger: Any, message: str) -> None:
-    try:
-        if logger is not None and callable(getattr(logger, "info", None)):
-            logger.info("%s", message)
-    except Exception:
-        pass
+    safe_log(logger, "info", "%s", message)
 
 
 __all__ = ["build_tutor_daemon_from_runtime", "tutor_tick"]

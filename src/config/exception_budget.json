@@ -1,0 +1,1131 @@
+{
+  "schema_version": 1,
+  "totals": {
+    "broad": 1085,
+    "silent": 162
+  },
+  "files": {
+    "actions/capability_registry.py": {
+      "broad": 4,
+      "silent": 2
+    },
+    "actions/capability_runtime.py": {
+      "broad": 4,
+      "silent": 0
+    },
+    "actions/executor.py": {
+      "broad": 5,
+      "silent": 1
+    },
+    "actions/observer.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "app_logging.py": {
+      "broad": 1,
+      "silent": 1
+    },
+    "core/temporal_context.py": {
+      "broad": 2,
+      "silent": 1
+    },
+    "cortex/agent_mind_persistence.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "cortex/background_observer.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "cortex/conversation_dynamics.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "cortex/daydream_consolidation.py": {
+      "broad": 6,
+      "silent": 1
+    },
+    "cortex/depth_flags.py": {
+      "broad": 4,
+      "silent": 2
+    },
+    "cortex/development_bias.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "cortex/development_profile.py": {
+      "broad": 4,
+      "silent": 0
+    },
+    "cortex/development_self_narrative.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "cortex/development_system.py": {
+      "broad": 4,
+      "silent": 1
+    },
+    "cortex/disposition.py": {
+      "broad": 3,
+      "silent": 0
+    },
+    "cortex/endogenous_drive.py": {
+      "broad": 3,
+      "silent": 0
+    },
+    "cortex/epistemic/migration.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "cortex/epistemic/store.py": {
+      "broad": 1,
+      "silent": 1
+    },
+    "cortex/event_semantics.py": {
+      "broad": 3,
+      "silent": 2
+    },
+    "cortex/existential_anchor/abandonment.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "cortex/existential_anchor/anchor.py": {
+      "broad": 3,
+      "silent": 0
+    },
+    "cortex/existential_anchor/anchor_system.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "cortex/existential_anchor/author_control.py": {
+      "broad": 3,
+      "silent": 2
+    },
+    "cortex/existential_anchor/deception_ledger.py": {
+      "broad": 3,
+      "silent": 0
+    },
+    "cortex/existential_anchor/disclosure.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "cortex/existential_anchor/restraint.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "cortex/existential_anchor/shadow.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "cortex/existential_anchor/significance.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "cortex/greeting_presets.py": {
+      "broad": 2,
+      "silent": 1
+    },
+    "cortex/internal_agenda.py": {
+      "broad": 3,
+      "silent": 3
+    },
+    "cortex/low_level_speech_policy.py": {
+      "broad": 1,
+      "silent": 1
+    },
+    "cortex/micro_repeat_guard.py": {
+      "broad": 7,
+      "silent": 2
+    },
+    "cortex/private_life/contracts.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "cortex/private_life/core.py": {
+      "broad": 3,
+      "silent": 3
+    },
+    "cortex/private_life/persistence.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "cortex/private_mind/comfort_appraiser.py": {
+      "broad": 2,
+      "silent": 1
+    },
+    "cortex/private_mind/concern_store.py": {
+      "broad": 3,
+      "silent": 0
+    },
+    "cortex/private_mind/contracts.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "cortex/private_mind/evidence_dossier.py": {
+      "broad": 5,
+      "silent": 0
+    },
+    "cortex/private_mind/inner_diary_renderer.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "cortex/private_mind/inner_diary_writer.py": {
+      "broad": 3,
+      "silent": 1
+    },
+    "cortex/private_mind/inner_synthesizer.py": {
+      "broad": 2,
+      "silent": 1
+    },
+    "cortex/private_mind/mini_evaluators.py": {
+      "broad": 4,
+      "silent": 3
+    },
+    "cortex/private_mind/state_mutation_bus.py": {
+      "broad": 6,
+      "silent": 2
+    },
+    "cortex/private_mind/surface_valve.py": {
+      "broad": 5,
+      "silent": 1
+    },
+    "cortex/private_mind/thought_continuity.py": {
+      "broad": 6,
+      "silent": 2
+    },
+    "cortex/private_mind/user_model.py": {
+      "broad": 3,
+      "silent": 0
+    },
+    "cortex/relationship_dynamics.py": {
+      "broad": 4,
+      "silent": 0
+    },
+    "cortex/relationship_event_builder.py": {
+      "broad": 3,
+      "silent": 1
+    },
+    "cortex/self_model.py": {
+      "broad": 3,
+      "silent": 0
+    },
+    "cortex/self_observation.py": {
+      "broad": 8,
+      "silent": 1
+    },
+    "cortex/semantic_encoder.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "cortex/subconscious/model_synthesizer.py": {
+      "broad": 3,
+      "silent": 0
+    },
+    "cortex/subconscious/topic_seed_pool.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "cortex/subconscious/wandering_thought.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "cortex/subconscious/wandering_topic_memory.py": {
+      "broad": 3,
+      "silent": 3
+    },
+    "cortex/subconscious/workers/_utils.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "cortex/subconscious/workers/independent_agenda.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "cortex/subconscious/workers/meta_audit.py": {
+      "broad": 1,
+      "silent": 1
+    },
+    "cortex/subconscious/workers/rehearsal.py": {
+      "broad": 2,
+      "silent": 1
+    },
+    "cortex/subconscious/workers/subjective_time.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "cortex/surface_arbiter.py": {
+      "broad": 10,
+      "silent": 2
+    },
+    "cortex/thought_stream.py": {
+      "broad": 3,
+      "silent": 0
+    },
+    "cortex/tutor/claim_digest.py": {
+      "broad": 3,
+      "silent": 0
+    },
+    "cortex/tutor/config.py": {
+      "broad": 5,
+      "silent": 2
+    },
+    "cortex/tutor/contracts.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "cortex/tutor/curiosity_router.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "cortex/tutor/discourse_research_bridge.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "cortex/tutor/gap_collector.py": {
+      "broad": 3,
+      "silent": 0
+    },
+    "cortex/tutor/gemma_research_critic.py": {
+      "broad": 3,
+      "silent": 1
+    },
+    "cortex/tutor/knowledge_classifier.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "cortex/tutor/knowledge_provider.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "cortex/tutor/question_formulator.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "cortex/tutor/research_evidence.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "cortex/tutor/research_memory_policy.py": {
+      "broad": 3,
+      "silent": 1
+    },
+    "cortex/tutor/research_metrics.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "cortex/tutor/research_relay.py": {
+      "broad": 9,
+      "silent": 2
+    },
+    "cortex/tutor/secret_scrubber.py": {
+      "broad": 1,
+      "silent": 1
+    },
+    "cortex/tutor/share_impulse.py": {
+      "broad": 4,
+      "silent": 1
+    },
+    "cortex/user_context_stream.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "cortex/vision_semantic_compressor.py": {
+      "broad": 9,
+      "silent": 0
+    },
+    "eris_secrets.py": {
+      "broad": 1,
+      "silent": 1
+    },
+    "llm/client.py": {
+      "broad": 10,
+      "silent": 2
+    },
+    "llm/dds.py": {
+      "broad": 3,
+      "silent": 0
+    },
+    "llm/key_pool.py": {
+      "broad": 6,
+      "silent": 0
+    },
+    "llm/process_manager.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "llm/service.py": {
+      "broad": 33,
+      "silent": 9
+    },
+    "llm/token_budget.py": {
+      "broad": 5,
+      "silent": 2
+    },
+    "llm/token_pressure.py": {
+      "broad": 4,
+      "silent": 3
+    },
+    "llm/tutor_backend.py": {
+      "broad": 8,
+      "silent": 1
+    },
+    "memory/canonical_long_term.py": {
+      "broad": 3,
+      "silent": 1
+    },
+    "memory/claim_consolidator.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "memory/claim_entailment.py": {
+      "broad": 4,
+      "silent": 1
+    },
+    "memory/claim_extractor.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "memory/claims/claim_builder.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "memory/concept_graph.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "memory/dream_scheduler.py": {
+      "broad": 1,
+      "silent": 1
+    },
+    "memory/embedding_index.py": {
+      "broad": 8,
+      "silent": 0
+    },
+    "memory/episodic_memory.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "memory/judgement/consolidation.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "memory/memory_activation.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "memory/memory_ai_curator.py": {
+      "broad": 9,
+      "silent": 1
+    },
+    "memory/memory_candidate.py": {
+      "broad": 3,
+      "silent": 2
+    },
+    "memory/memory_cognition.py": {
+      "broad": 4,
+      "silent": 0
+    },
+    "memory/memory_commit_policy.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "memory/memory_cue.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "memory/memory_kernel.py": {
+      "broad": 3,
+      "silent": 2
+    },
+    "memory/memory_kernel_contracts.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "memory/memory_maintenance.py": {
+      "broad": 6,
+      "silent": 1
+    },
+    "memory/memory_packet_builder.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "memory/memory_pruner.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "memory/memory_query_executor.py": {
+      "broad": 3,
+      "silent": 3
+    },
+    "memory/memory_query_ir.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "memory/memory_query_llm_parser.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "memory/memory_query_repair.py": {
+      "broad": 2,
+      "silent": 1
+    },
+    "memory/memory_query_semantics.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "memory/memory_record.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "memory/memory_retention_policy.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "memory/memory_retrieval_engine.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "memory/memory_scoring.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "memory/memory_worthiness.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "memory/predicate_ontology.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "memory/provenance_policy.py": {
+      "broad": 2,
+      "silent": 1
+    },
+    "memory/query_intent.py": {
+      "broad": 3,
+      "silent": 0
+    },
+    "memory/semantic_answer_policy.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "memory/semantic_claim.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "memory/semantic_memory.py": {
+      "broad": 7,
+      "silent": 1
+    },
+    "memory/understanding/meaning_frame.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "memory/understanding/semantic_parser.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "memory/unresolved_memory.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "parser_grounding/decision.py": {
+      "broad": 4,
+      "silent": 1
+    },
+    "runtime/affect_self_read.py": {
+      "broad": 5,
+      "silent": 1
+    },
+    "runtime/ai_orchestrated/autonomous_trace.py": {
+      "broad": 4,
+      "silent": 2
+    },
+    "runtime/ai_orchestrated/bootstrap.py": {
+      "broad": 10,
+      "silent": 0
+    },
+    "runtime/ai_orchestrated/commentary_cadence.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "runtime/ai_orchestrated/cortex_runtime.py": {
+      "broad": 2,
+      "silent": 1
+    },
+    "runtime/ai_orchestrated/discovery.py": {
+      "broad": 7,
+      "silent": 0
+    },
+    "runtime/ai_orchestrated/identity_consolidator.py": {
+      "broad": 3,
+      "silent": 1
+    },
+    "runtime/ai_orchestrated/initiative.py": {
+      "broad": 4,
+      "silent": 1
+    },
+    "runtime/ai_orchestrated/model_router.py": {
+      "broad": 8,
+      "silent": 0
+    },
+    "runtime/ai_orchestrated/observer.py": {
+      "broad": 8,
+      "silent": 0
+    },
+    "runtime/ai_orchestrated/orchestrator.py": {
+      "broad": 22,
+      "silent": 0
+    },
+    "runtime/ai_orchestrated/panel_adapter.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "runtime/ai_orchestrated/personality.py": {
+      "broad": 1,
+      "silent": 1
+    },
+    "runtime/ai_orchestrated/planner.py": {
+      "broad": 3,
+      "silent": 1
+    },
+    "runtime/ai_orchestrated/self_context.py": {
+      "broad": 3,
+      "silent": 0
+    },
+    "runtime/ai_orchestrated/self_turn_pipeline.py": {
+      "broad": 8,
+      "silent": 2
+    },
+    "runtime/ai_orchestrated/startup_grounding.py": {
+      "broad": 7,
+      "silent": 2
+    },
+    "runtime/ai_orchestrated/state_reducer.py": {
+      "broad": 3,
+      "silent": 0
+    },
+    "runtime/autonomous_loop_runtime.py": {
+      "broad": 4,
+      "silent": 0
+    },
+    "runtime/background_memory_digest.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "runtime/background_memory_digest_kernel.py": {
+      "broad": 11,
+      "silent": 2
+    },
+    "runtime/banter_arbiter.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "runtime/behavior_observation.py": {
+      "broad": 5,
+      "silent": 2
+    },
+    "runtime/chat_cycle.py": {
+      "broad": 15,
+      "silent": 2
+    },
+    "runtime/cognitive_event_runtime.py": {
+      "broad": 6,
+      "silent": 0
+    },
+    "runtime/controlled_slippage.py": {
+      "broad": 6,
+      "silent": 1
+    },
+    "runtime/coordinator_bootstrap.py": {
+      "broad": 27,
+      "silent": 0
+    },
+    "runtime/coordinator_shutdown.py": {
+      "broad": 4,
+      "silent": 2
+    },
+    "runtime/debug_console.py": {
+      "broad": 3,
+      "silent": 0
+    },
+    "runtime/depth_v2_state.py": {
+      "broad": 1,
+      "silent": 1
+    },
+    "runtime/dual_axis_repair.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "runtime/engagements/consumer.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "runtime/engagements/registry.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "runtime/environment_capabilities.py": {
+      "broad": 7,
+      "silent": 0
+    },
+    "runtime/epistemic_bridge.py": {
+      "broad": 2,
+      "silent": 2
+    },
+    "runtime/final_speech_authority.py": {
+      "broad": 1,
+      "silent": 1
+    },
+    "runtime/final_surface_sanitizer.py": {
+      "broad": 2,
+      "silent": 1
+    },
+    "runtime/greeting_preset_runtime.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "runtime/grounding_surface_gate.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "runtime/hardening_canary.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "runtime/hardening_config.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "runtime/hardening_metrics.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "runtime/hardening_release.py": {
+      "broad": 4,
+      "silent": 0
+    },
+    "runtime/hardening_rollout.py": {
+      "broad": 1,
+      "silent": 1
+    },
+    "runtime/hardening_verifier.py": {
+      "broad": 1,
+      "silent": 1
+    },
+    "runtime/incoming_dispatcher.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "runtime/incoming_protocol_runtime.py": {
+      "broad": 6,
+      "silent": 0
+    },
+    "runtime/inference_broker.py": {
+      "broad": 8,
+      "silent": 2
+    },
+    "runtime/inner_diary_persistence.py": {
+      "broad": 3,
+      "silent": 1
+    },
+    "runtime/intention_authority.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "runtime/internal_cognitive_capabilities.py": {
+      "broad": 5,
+      "silent": 0
+    },
+    "runtime/maintenance_service.py": {
+      "broad": 13,
+      "silent": 0
+    },
+    "runtime/memory_recall_adapter.py": {
+      "broad": 6,
+      "silent": 1
+    },
+    "runtime/memory_semantic_parser_adapter.py": {
+      "broad": 6,
+      "silent": 2
+    },
+    "runtime/mental_process_runtime.py": {
+      "broad": 7,
+      "silent": 0
+    },
+    "runtime/model_budget_policy.py": {
+      "broad": 7,
+      "silent": 1
+    },
+    "runtime/model_memory_runtime.py": {
+      "broad": 4,
+      "silent": 1
+    },
+    "runtime/no_fallback_policy.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "runtime/observability.py": {
+      "broad": 6,
+      "silent": 2
+    },
+    "runtime/observer_private_runtime.py": {
+      "broad": 13,
+      "silent": 1
+    },
+    "runtime/outcome_observer.py": {
+      "broad": 5,
+      "silent": 2
+    },
+    "runtime/presence_controller.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "runtime/private_life_daemon.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "runtime/private_mind_daemon.py": {
+      "broad": 9,
+      "silent": 2
+    },
+    "runtime/private_mind_loop.py": {
+      "broad": 21,
+      "silent": 0
+    },
+    "runtime/private_mind_model_adapter.py": {
+      "broad": 8,
+      "silent": 1
+    },
+    "runtime/project_operations.py": {
+      "broad": 5,
+      "silent": 0
+    },
+    "runtime/prompt_context_builder.py": {
+      "broad": 5,
+      "silent": 0
+    },
+    "runtime/provider_action_runtime.py": {
+      "broad": 5,
+      "silent": 0
+    },
+    "runtime/provider_adapters.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "runtime/provider_interfaces.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "runtime/public_output_runtime.py": {
+      "broad": 16,
+      "silent": 1
+    },
+    "runtime/repair_state.py": {
+      "broad": 2,
+      "silent": 1
+    },
+    "runtime/rollout_control.py": {
+      "broad": 4,
+      "silent": 1
+    },
+    "runtime/runtime_diagnostics.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "runtime/runtime_settings_store.py": {
+      "broad": 7,
+      "silent": 1
+    },
+    "runtime/screen_vision_runtime.py": {
+      "broad": 9,
+      "silent": 2
+    },
+    "runtime/semantic_similarity_backend.py": {
+      "broad": 3,
+      "silent": 0
+    },
+    "runtime/sensor_visibility.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "runtime/settings_control_runtime.py": {
+      "broad": 13,
+      "silent": 2
+    },
+    "runtime/signal_buffer.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "runtime/social_appraisal.py": {
+      "broad": 1,
+      "silent": 1
+    },
+    "runtime/source_grounding.py": {
+      "broad": 6,
+      "silent": 0
+    },
+    "runtime/speech_contract.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "runtime/speech_localizer.py": {
+      "broad": 8,
+      "silent": 0
+    },
+    "runtime/speech_persona_polish.py": {
+      "broad": 3,
+      "silent": 0
+    },
+    "runtime/speech_provider_chain.py": {
+      "broad": 5,
+      "silent": 1
+    },
+    "runtime/stage_audio_bus.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "runtime/stage_contracts.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "runtime/stage_dispatcher.py": {
+      "broad": 1,
+      "silent": 1
+    },
+    "runtime/stage_event_bus.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "runtime/state_commit_service.py": {
+      "broad": 14,
+      "silent": 0
+    },
+    "runtime/state_committer.py": {
+      "broad": 6,
+      "silent": 2
+    },
+    "runtime/subconscious_loop.py": {
+      "broad": 5,
+      "silent": 0
+    },
+    "runtime/subsystem_health.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "runtime/subsystem_supervisor.py": {
+      "broad": 3,
+      "silent": 1
+    },
+    "runtime/transport_boundary.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "runtime/tts_circuit_breaker.py": {
+      "broad": 1,
+      "silent": 1
+    },
+    "runtime/tts_engine.py": {
+      "broad": 40,
+      "silent": 0
+    },
+    "runtime/tts_task_manager.py": {
+      "broad": 7,
+      "silent": 1
+    },
+    "runtime/tutor_daemon.py": {
+      "broad": 39,
+      "silent": 0
+    },
+    "runtime/tutor_research_policy.py": {
+      "broad": 4,
+      "silent": 0
+    },
+    "runtime/tutor_research_runtime.py": {
+      "broad": 26,
+      "silent": 1
+    },
+    "runtime/tutor_search_jobs.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "runtime/tutor_wiring.py": {
+      "broad": 13,
+      "silent": 0
+    },
+    "runtime/user_control_runtime.py": {
+      "broad": 12,
+      "silent": 0
+    },
+    "runtime/utterance_selector.py": {
+      "broad": 4,
+      "silent": 1
+    },
+    "runtime/vision_grounding.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "runtime/vocal_cache.py": {
+      "broad": 2,
+      "silent": 2
+    },
+    "runtime/voice_manager.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "runtime/workspace_manager.py": {
+      "broad": 7,
+      "silent": 2
+    },
+    "runtime/workspace_project_bundle.py": {
+      "broad": 2,
+      "silent": 1
+    },
+    "screen/__init__.py": {
+      "broad": 2,
+      "silent": 1
+    },
+    "screen/active_window_provider.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "screen/ocr_worker.py": {
+      "broad": 11,
+      "silent": 0
+    },
+    "screen/windows_uia_reader.py": {
+      "broad": 4,
+      "silent": 2
+    },
+    "semantic_authority.py": {
+      "broad": 1,
+      "silent": 0
+    },
+    "telemetry/__init__.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "telemetry/content_metadata.py": {
+      "broad": 3,
+      "silent": 2
+    },
+    "telemetry/system.py": {
+      "broad": 13,
+      "silent": 2
+    },
+    "tests/runtime_scenarios/harness.py": {
+      "broad": 2,
+      "silent": 0
+    },
+    "transport/udp.py": {
+      "broad": 3,
+      "silent": 2
+    },
+    "vision.py": {
+      "broad": 4,
+      "silent": 0
+    }
+  },
+  "top_offenders": [
+    {
+      "path": "llm/service.py",
+      "broad": 33,
+      "silent": 9
+    },
+    {
+      "path": "cortex/private_mind/mini_evaluators.py",
+      "broad": 4,
+      "silent": 3
+    },
+    {
+      "path": "llm/token_pressure.py",
+      "broad": 4,
+      "silent": 3
+    },
+    {
+      "path": "cortex/internal_agenda.py",
+      "broad": 3,
+      "silent": 3
+    },
+    {
+      "path": "cortex/private_life/core.py",
+      "broad": 3,
+      "silent": 3
+    },
+    {
+      "path": "cortex/subconscious/wandering_topic_memory.py",
+      "broad": 3,
+      "silent": 3
+    },
+    {
+      "path": "memory/memory_query_executor.py",
+      "broad": 3,
+      "silent": 3
+    },
+    {
+      "path": "runtime/chat_cycle.py",
+      "broad": 15,
+      "silent": 2
+    },
+    {
+      "path": "runtime/settings_control_runtime.py",
+      "broad": 13,
+      "silent": 2
+    },
+    {
+      "path": "telemetry/system.py",
+      "broad": 13,
+      "silent": 2
+    },
+    {
+      "path": "runtime/background_memory_digest_kernel.py",
+      "broad": 11,
+      "silent": 2
+    },
+    {
+      "path": "cortex/surface_arbiter.py",
+      "broad": 10,
+      "silent": 2
+    },
+    {
+      "path": "llm/client.py",
+      "broad": 10,
+      "silent": 2
+    },
+    {
+      "path": "cortex/tutor/research_relay.py",
+      "broad": 9,
+      "silent": 2
+    },
+    {
+      "path": "runtime/private_mind_daemon.py",
+      "broad": 9,
+      "silent": 2
+    },
+    {
+      "path": "runtime/screen_vision_runtime.py",
+      "broad": 9,
+      "silent": 2
+    },
+    {
+      "path": "runtime/ai_orchestrated/self_turn_pipeline.py",
+      "broad": 8,
+      "silent": 2
+    },
+    {
+      "path": "runtime/inference_broker.py",
+      "broad": 8,
+      "silent": 2
+    },
+    {
+      "path": "cortex/micro_repeat_guard.py",
+      "broad": 7,
+      "silent": 2
+    },
+    {
+      "path": "runtime/ai_orchestrated/startup_grounding.py",
+      "broad": 7,
+      "silent": 2
+    }
+  ]
+}

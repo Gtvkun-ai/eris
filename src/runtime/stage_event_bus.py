@@ -51,7 +51,7 @@ class StageEventBus:
             if self.logger is not None:
                 try:
                     self.logger.debug("[stage-protocol] send failed: %s", exc)
-                except Exception:
+                except (AttributeError, TypeError, ValueError):
                     pass
             return False
 

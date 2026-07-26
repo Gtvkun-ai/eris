@@ -24,6 +24,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping
 
+from runtime.diagnostic_logging import safe_log
+
 
 class RolloutMode(str, Enum):
     DISABLED = "disabled"
@@ -357,8 +359,8 @@ class RolloutController:
             return
         try:
             target.increment(name, value=value, tags=tags, fields=fields)
-        except Exception:
-            pass
+        except Exception as exc:
+            safe_log(getattr(self, "logger", None), "debug", "Rollout metric failed: %s", exc)
 
     def _load_state(self) -> None:
         if not self.state_path.exists() or bool(os.getenv("PYTEST_CURRENT_TEST")):
@@ -374,7 +376,7 @@ class RolloutController:
                     config.mode = RolloutMode.parse(value.get("mode"), config.mode)
                 if "canary_percent" in value:
                     config.canary_percent = max(0.0, min(100.0, float(value.get("canary_percent", config.canary_percent))))
-        except Exception:
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
             return
 
     def _persist_state_locked(self) -> None:
@@ -431,7 +433,7 @@ def ensure_rollout_controller(owner: Any) -> RolloutController:
     current = RolloutController(observability=observability)
     try:
         setattr(owner, "rollout_controller", current)
-    except Exception:
+    except (AttributeError, TypeError):
         pass
     return current
 

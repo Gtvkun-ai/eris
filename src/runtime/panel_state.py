@@ -33,7 +33,7 @@ def memory_core_dir() -> Path:
 def _read_json(name: str) -> Any:
     try:
         return json.loads((memory_core_dir() / name).read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, UnicodeError, json.JSONDecodeError):
         return None
 
 
@@ -42,7 +42,7 @@ def _flags() -> dict[str, bool]:
         from cortex.depth_flags import all_states
 
         return all_states()
-    except Exception:
+    except (ImportError, AttributeError, RuntimeError):
         return {}
 
 
@@ -63,7 +63,7 @@ def _development() -> dict[str, Any]:
             for name, payload in axes.items():
                 try:
                     delta = float((payload or {}).get("delta", 0.0))
-                except Exception:
+                except (TypeError, ValueError):
                     delta = 0.0
                 if abs(delta) < 1e-6:
                     continue
@@ -86,7 +86,7 @@ def _attachment() -> dict[str, Any]:
         try:
             val = float(data.get("attachment_longarc", 0.0) or 0.0)
             live = True
-        except Exception:
+        except (TypeError, ValueError):
             pass
     return {"live": live, "value": round(val, 3)}
 
@@ -123,7 +123,7 @@ def _snapshot(max_age_s: float = 120.0) -> dict[str, Any]:
     try:
         if (time.time() - float(data.get("ts", 0.0))) > max_age_s:
             return {}
-    except Exception:
+    except (TypeError, ValueError):
         return {}
     return data
 

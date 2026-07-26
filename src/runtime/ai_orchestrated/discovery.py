@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from runtime.workspace_manager import default_eris_home
+from runtime.diagnostic_logging import safe_log
 
 
 DISCOVERY_SCHEMA = "eris.discovery.v1"
@@ -703,8 +704,8 @@ class DiscoveryRuntime:
                             "activity_id": activity_id,
                             "requested_at": started,
                         }
-                    except Exception:
-                        pass
+                    except (AttributeError, TypeError) as exc:
+                        self._log("debug", "[discovery] metadata bind failed: %s", exc)
                     answer = search_now(
                         plan.topic,
                         context=(
@@ -726,8 +727,8 @@ class DiscoveryRuntime:
                     meta = _mapping(getattr(daemon, "_eris_discovery_meta", {}))
                     if _compact(meta.get("activity_id", ""), 100) == activity_id:
                         daemon._eris_discovery_meta = {}
-                except Exception:
-                    pass
+                except (AttributeError, TypeError) as exc:
+                    self._log("debug", "[discovery] metadata clear failed: %s", exc)
             finished = time.time()
             if answer:
                 bundle = _mapping(getattr(daemon, "last_research_bundle", {}))
@@ -808,8 +809,8 @@ class DiscoveryRuntime:
         if callable(cancel):
             try:
                 cancel(reason=reason)
-            except Exception:
-                pass
+            except Exception as exc:
+                self._log("warning", "[discovery] cancel failed reason=%s error=%s", reason, exc)
         self._log("info", "[discovery] preempted reason=%s", reason)
         return True
 
@@ -879,8 +880,8 @@ class DiscoveryRuntime:
             )
             try:
                 plan = replace(plan, topic=topic, evidence_refs=evidence_refs)
-            except Exception:
-                pass
+            except (TypeError, ValueError) as exc:
+                self._log("debug", "[discovery] plan enrichment failed: %s", exc)
             grounding = "Verified discovery artifact:\n" + json.dumps(record.prompt_payload(), ensure_ascii=False)
             return plan, grounding, record.discovery_id
         if turn_kind == "activity_event" and speech_act == "update_own_activity":
@@ -898,8 +899,8 @@ class DiscoveryRuntime:
                     ),
                     evidence_refs=tuple(dict.fromkeys((*tuple(getattr(plan, "evidence_refs", ()) or ()), f"activity:{activity.activity_id}"))),
                 )
-            except Exception:
-                pass
+            except (TypeError, ValueError) as exc:
+                self._log("debug", "[discovery] activity plan enrichment failed: %s", exc)
             return plan, grounding, ""
         return plan, "", ""
 
@@ -1006,19 +1007,14 @@ class DiscoveryRuntime:
         if callable(cancel):
             try:
                 cancel(reason="discovery_shutdown")
-            except Exception:
-                pass
+            except Exception as exc:
+                self._log("warning", "[discovery] shutdown cancel failed: %s", exc)
         thread = self._job_thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=0.25)
 
     def _log(self, level: str, message: str, *args: Any) -> None:
-        if self.logger is None:
-            return
-        try:
-            getattr(self.logger, level)(message, *args)
-        except Exception:
-            pass
+        safe_log(self.logger, level, message, *args)
 
 
 __all__ = [

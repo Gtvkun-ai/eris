@@ -42,14 +42,14 @@ def _status_from_exception(exc: Any) -> int | None:
             value = getattr(exc, attr, None)
             if value is not None:
                 return int(value)
-        except Exception:
+        except (AttributeError, TypeError, ValueError, OverflowError):
             pass
     response = getattr(exc, "response", None)
     try:
         value = getattr(response, "status_code", None)
         if value is not None:
             return int(value)
-    except Exception:
+    except (AttributeError, TypeError, ValueError, OverflowError):
         pass
     return None
 
@@ -60,6 +60,6 @@ def _error_text(exc: Any) -> str:
     if response is not None:
         try:
             parts.append(str(response.text or ""))
-        except Exception:
+        except (AttributeError, TypeError, ValueError, OverflowError):
             pass
     return " ".join(parts)

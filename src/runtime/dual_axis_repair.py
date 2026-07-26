@@ -381,12 +381,12 @@ def apply_repair_output_guard(decision: Any, appraisal: RepairAppraisal) -> Any:
     if not policy.memory_write_allowed:
         try:
             decision.extracted_fact = ""
-        except Exception:
+        except (AttributeError, TypeError):
             pass
         extra_tags.append("assistant_claim_memory_blocked")
     try:
         decision.reasoning_tags = tuple(dict.fromkeys((*tags, *extra_tags)))
-    except Exception:
+    except (AttributeError, TypeError):
         pass
 
     current_text = str(getattr(decision, "text", "") or "")
@@ -399,7 +399,7 @@ def apply_repair_output_guard(decision: Any, appraisal: RepairAppraisal) -> Any:
             trace = str(getattr(decision, "debug_trace", "") or "").strip()
             marker = "social_appraisal:blocked_reflexive_stance_collapse"
             decision.debug_trace = " | ".join(part for part in (trace, marker) if part)
-        except Exception:
+        except (AttributeError, TypeError):
             pass
     elif output_defends_retracted_claim(current_text, appraisal):
         try:
@@ -410,7 +410,7 @@ def apply_repair_output_guard(decision: Any, appraisal: RepairAppraisal) -> Any:
             trace = str(getattr(decision, "debug_trace", "") or "").strip()
             marker = "social_appraisal:blocked_defense_of_suppressed_claim"
             decision.debug_trace = " | ".join(part for part in (trace, marker) if part)
-        except Exception:
+        except (AttributeError, TypeError):
             pass
     return decision
 

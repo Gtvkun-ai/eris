@@ -27,6 +27,7 @@ from typing import Any, Iterable, Mapping
 
 from cortex.private_life import PrivateLifeCore, PrivateLifeStore, SurfaceSeedCandidate, private_life_state_digest
 from cortex.private_life.contracts import PrivateLifeTickResult, to_plain
+from runtime.diagnostic_logging import safe_log
 
 
 @dataclass(slots=True)
@@ -91,6 +92,9 @@ class PrivateLifeDaemon:
         self.tick_count = 0
         self.skipped_count = 0
         self.last_digest: dict[str, Any] = {}
+        self.failure_count = 0
+        self.sync_failure_count = 0
+        self.last_error: dict[str, Any] = {}
         self._sync_runtime_owner()
 
     @classmethod
@@ -156,11 +160,7 @@ class PrivateLifeDaemon:
             return tick
         except Exception as exc:
             self.skipped_count += 1
-            if self.logger is not None:
-                try:
-                    self.logger.warning("PrivateLife tick error: %s", exc)
-                except Exception:
-                    pass
+            self._record_failure("tick", exc)
             tick = PrivateLifeDaemonTick(ticked=False, reason=f"error:{type(exc).__name__}", surface_queue_size=len(self.surface_queue))
             self.last_tick = tick
             return tick
@@ -182,6 +182,9 @@ class PrivateLifeDaemon:
             "last_tick_at": self.last_tick_at,
             "tick_count": self.tick_count,
             "skipped_count": self.skipped_count,
+            "failure_count": self.failure_count,
+            "sync_failure_count": self.sync_failure_count,
+            "last_error": dict(self.last_error),
             "current": state_digest,
             "surface_queue": [self._impulse_digest(item) for item in list(queue or [])[:6]],
             "last_tick": tick_dict,
@@ -216,7 +219,8 @@ class PrivateLifeDaemon:
     def _seed_to_surface_impulse(self, seed: SurfaceSeedCandidate) -> Any | None:
         try:
             from cortex.surface_arbiter import SurfaceImpulse
-        except Exception:
+        except (ImportError, AttributeError) as exc:
+            self._record_failure("surface_import", exc)
             return seed.to_dict()
         return SurfaceImpulse(
             kind=seed.kind or "private_life_surface",
@@ -253,8 +257,8 @@ class PrivateLifeDaemon:
                 if value is not None:
                     try:
                         return max(0.0, float(value or 0.0))
-                    except Exception:
-                        pass
+                    except (TypeError, ValueError, OverflowError) as exc:
+                        self._record_failure("idle_parse", exc)
         return 0.0
 
     def _sync_runtime_owner(self) -> None:
@@ -265,8 +269,31 @@ class PrivateLifeDaemon:
             owner.private_life_core = self.core
             owner.private_life_surface_queue = self.surface_queue
             owner.private_life_digest = self.digest(surface_queue=self.surface_queue)
-        except Exception:
-            pass
+        except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+            self.sync_failure_count += 1
+            self._record_failure("sync_runtime_owner", exc, increment_total=False)
+
+    def diagnostics(self) -> dict[str, Any]:
+        return {
+            "enabled": bool(self.config.enabled),
+            "tick_count": self.tick_count,
+            "skipped_count": self.skipped_count,
+            "failure_count": self.failure_count,
+            "sync_failure_count": self.sync_failure_count,
+            "surface_queue_size": len(self.surface_queue),
+            "last_error": dict(self.last_error),
+        }
+
+    def _record_failure(self, stage: str, exc: BaseException, *, increment_total: bool = True) -> None:
+        if increment_total:
+            self.failure_count += 1
+        self.last_error = {
+            "stage": stage,
+            "error_type": type(exc).__name__,
+            "message": str(exc)[:240],
+            "count": self.failure_count,
+        }
+        safe_log(self.logger, "warning", "PrivateLife failure stage=%s: %s", stage, exc)
 
     @staticmethod
     def _impulse_digest(item: Any) -> dict[str, Any]:
@@ -305,7 +332,7 @@ def _env_bool(name: str, default: bool) -> bool:
 def _env_float(name: str, default: float, *, min_value: float | None = None, max_value: float | None = None) -> float:
     try:
         value = float(os.getenv(name, str(default)))
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         value = float(default)
     if min_value is not None:
         value = max(min_value, value)
@@ -326,6 +353,6 @@ def _infer_project_root(*, runtime_owner: Any, store: PrivateLifeStore) -> Path:
         parent = store.path.parent
         if parent.name == "memory_core":
             return parent.parent.resolve()
-    except Exception:
+    except (AttributeError, TypeError, OSError, RuntimeError):
         pass
     return Path.cwd().resolve()

@@ -11,6 +11,7 @@ CognitivePipeline/autonomous/chat.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from typing import Any, Callable, Optional
@@ -24,6 +25,22 @@ except Exception:  # pragma: no cover
 
 
 _QUESTION_PREVIEW_LEN = 120
+
+
+_LOG = logging.getLogger(__name__)
+
+
+def _report_suppressed(logger: Any, event: str, exc: BaseException) -> None:
+    """Record a recoverable tutor boundary without letting it escape."""
+
+    warning = getattr(logger, "warn", None) or getattr(logger, "warning", None)
+    if callable(warning):
+        try:
+            warning(f"{event}: {type(exc).__name__}: {exc}")
+            return
+        except Exception as logger_exc:
+            _LOG.debug("tutor logger failed event=%s error=%s", event, logger_exc, exc_info=True)
+    _LOG.debug("tutor boundary degraded event=%s error=%s", event, exc, exc_info=True)
 
 
 class _CombinedCancellation:
@@ -82,13 +99,9 @@ class TutorStageEmitter:
             send = getattr(transport, "send_json", None)
             if callable(send):
                 send(payload)
-        except Exception:
+        except Exception as exc:
             # Diễn cảnh là phụ; không được chặn việc học.
-            try:
-                if self._logger is not None:
-                    self._logger.warn("popup emit failed")
-            except Exception:
-                pass
+            _report_suppressed(self._logger, "popup emit failed", exc)
 
     def emit_research_status(
         self,
@@ -137,12 +150,8 @@ class TutorStageEmitter:
             send = getattr(transport, "send_json", None)
             if callable(send):
                 send(payload)
-        except Exception:
-            try:
-                if self._logger is not None:
-                    self._logger.warn("research status emit failed")
-            except Exception:
-                pass
+        except Exception as exc:
+            _report_suppressed(self._logger, "research status emit failed", exc)
 
 
 # =============================================================================
@@ -227,7 +236,8 @@ class TutorDaemon:
                     now=now,
                     drive_level=self._drive_level(),
                 )
-        except Exception:
+        except Exception as exc:
+            _report_suppressed(self.logger, "gap selection failed", exc)
             return None
         if gap is None:
             return None
@@ -305,19 +315,19 @@ class TutorDaemon:
             if episode.claims_committed > 0:
                 try:
                     self.collector.resolve(gap)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _report_suppressed(self.logger, "gap resolution failed", exc)
                 if self.share_impulse is not None:
                     try:
                         self.share_impulse.maybe_emit(episode, now=now)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        _report_suppressed(self.logger, "share impulse failed", exc)
         else:
             # context / banter: KHÔNG lưu trí nhớ dài hạn. Đẩy một câu ngắn cho vui/đoán.
             try:
                 self.collector.resolve(gap)
-            except Exception:
-                pass
+            except Exception as exc:
+                _report_suppressed(self.logger, "ephemeral gap resolution failed", exc)
             if self.share_impulse is not None:
                 try:
                     remark = ""
@@ -327,8 +337,8 @@ class TutorDaemon:
                     if remark:
                         self.share_impulse.push_remark(remark, now=now, priority=0.6)
                         episode.shared = True
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _report_suppressed(self.logger, "ephemeral remark failed", exc)
 
         episode.stage = "done"
         episode.ended_ts = float(time.time())
@@ -416,7 +426,8 @@ class TutorDaemon:
             self.risk_guard.note_success(now)
             self._remember_episode(episode)
             return str(getattr(answer, "text", "") or "").strip() or None
-        except Exception:
+        except Exception as exc:
+            _report_suppressed(self.logger, "direct tutor request failed", exc)
             return None
         finally:
             self._run_lock.release()
@@ -449,8 +460,8 @@ class TutorDaemon:
         try:
             self.logger._emit({"kind": "research_thread", **self.last_research_thread})
             self.logger._emit({"kind": "research_metrics", **self.last_research_metrics})
-        except Exception:
-            pass
+        except Exception as exc:
+            _report_suppressed(self.logger, "research artifact log failed", exc)
 
     def _emit_research_status(self, episode: TutorEpisode, stage: str, *, mode: str, topic: str, verification: dict[str, Any] | None = None) -> None:
         emitter = getattr(self, "emitter", None)
@@ -465,8 +476,8 @@ class TutorDaemon:
                     verification=verification or {},
                     metrics=getattr(self, "last_research_metrics", {}) or {},
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                _report_suppressed(self.logger, "research status callback failed", exc)
 
     def research_now(
         self,
@@ -584,8 +595,8 @@ class TutorDaemon:
                     episode.claims_committed = 0
             try:
                 self.logger._emit({"kind": "research_memory_policy", **self.last_research_memory_decision})
-            except Exception:
-                pass
+            except Exception as exc:
+                _report_suppressed(self.logger, "research memory policy log failed", exc)
 
             episode.stage = "done"
             episode.ended_ts = float(time.time())
@@ -594,7 +605,8 @@ class TutorDaemon:
             self.risk_guard.note_success(now)
             self._remember_episode(episode)
             return relay.answer_text or None
-        except Exception:
+        except Exception as exc:
+            _report_suppressed(self.logger, "tutor_run_once_failed", exc)
             return None
         finally:
             self._run_lock.release()
@@ -717,8 +729,8 @@ class TutorDaemon:
                     episode.claims_committed = 0
             try:
                 self.logger._emit({"kind": "research_memory_policy", **self.last_research_memory_decision})
-            except Exception:
-                pass
+            except Exception as exc:
+                _report_suppressed(self.logger, "research_memory_policy_emit_failed", exc)
 
             episode.stage = "done"
             episode.ended_ts = float(time.time())
@@ -727,7 +739,8 @@ class TutorDaemon:
             self.risk_guard.note_success(now)
             self._remember_episode(episode)
             return relay.answer_text or None
-        except Exception:
+        except Exception as exc:
+            _report_suppressed(self.logger, "tutor_search_now_failed", exc)
             return None
         finally:
             self._run_lock.release()
@@ -754,8 +767,8 @@ class TutorDaemon:
                 pushed = False
         try:
             self.collector.resolve(gap)
-        except Exception:
-            pass
+        except Exception as exc:
+            _report_suppressed(self.logger, "ask-user gap resolution failed", exc)
         episode.shared = pushed
         episode.stage = "done"
         episode.ended_ts = float(time.time())
@@ -776,8 +789,8 @@ class TutorDaemon:
         if callable(cancel):
             try:
                 cancel(self._cancel_reason)
-            except Exception:
-                pass
+            except Exception as exc:
+                _report_suppressed(self.logger, "tutor cancellation failed", exc)
         return self._run_lock.locked()
 
     def stop(self) -> None:
@@ -786,8 +799,8 @@ class TutorDaemon:
             close = getattr(self.backend, "close", None)
             if callable(close):
                 close()
-        except Exception:
-            pass
+        except Exception as exc:
+            _report_suppressed(self.logger, "tutor backend close failed", exc)
 
     # ------------------------------------------------------------------
 
@@ -820,8 +833,8 @@ class TutorDaemon:
             self.last_answer_text = answer_text[:1200]
             self.last_question_text = scrub_identity(str(getattr(question, "text", "") or "")).strip()[:320]
             self.last_answer_ts = float(getattr(episode, "ended_ts", 0.0) or time.time())
-        except Exception:
-            pass
+        except Exception as exc:
+            _report_suppressed(self.logger, "remember episode failed", exc)
 
     def latest_content_seed(self, *, now: Optional[float] = None) -> Optional[dict[str, object]]:
         """Payload nhẹ để ContentHarvester biến thành ContentSeed.

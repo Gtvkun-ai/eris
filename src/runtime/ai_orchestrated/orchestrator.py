@@ -9,6 +9,7 @@ grounding/runtime. Main model không phải đi qua một phiên họp trước 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
@@ -33,6 +34,21 @@ from .startup_grounding import (
     select_startup_persona_preset,
 )
 from .self_context import build_autonomous_self_context
+
+
+_LOG = logging.getLogger(__name__)
+
+
+def _orchestrator_boundary_note(host: Any, operation: str, exc: Exception) -> None:
+    logger = getattr(host, "logger", None)
+    method = getattr(logger, "debug", None)
+    if callable(method):
+        try:
+            method("[ai orchestrator] %s degraded: %s", operation, exc)
+            return
+        except Exception as log_exc:
+            _LOG.debug("AI orchestrator logger failed: %s", log_exc, exc_info=log_exc)
+    _LOG.debug("[ai orchestrator] %s degraded: %s", operation, exc, exc_info=exc)
 
 
 
@@ -118,8 +134,8 @@ def _submit_local_startup_plan(host: Any, plan: IntentionPlan, *, turn_seq: int)
                 base_version=base_version,
             )
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        _orchestrator_boundary_note(host, "startup_plan.submit", exc)
 
 
 class _StaticIntentionPlanner:
@@ -202,6 +218,31 @@ class AIChatOrchestrator:
             mood_score=host.mood_score,
             inferred_pos_x=host.inferred_pos_x,
         )
+        telemetry_payload = (
+            snapshot.to_machine_context()
+            if callable(getattr(snapshot, "to_machine_context", None))
+            else {}
+        )
+        engagement_runtime = getattr(host, "ai_engagement_runtime", None)
+        engagement_context: dict[str, Any] = {"active": False}
+        engagement_prompt_context = "active_engagement: none"
+        if engagement_runtime is not None:
+            try:
+                active_app = str(telemetry_payload.get("active_app", "") or "").strip()
+                active_title = str(
+                    telemetry_payload.get("active_window_title", "")
+                    or telemetry_payload.get("window_title", "")
+                    or ""
+                ).strip()
+                engagement_runtime.observe_user_message(
+                    user_text,
+                    now=cycle_start,
+                    binding={"app": active_app, "window_title": active_title},
+                )
+                engagement_context = engagement_runtime.planner_context(now=cycle_start)
+                engagement_prompt_context = engagement_runtime.prompt_context(now=cycle_start)
+            except Exception as exc:
+                host.logger.debug("[engagement] chat observation failed: %s", exc)
 
         user_meta: dict[str, Any] = {
             "channel": "chat",
@@ -276,8 +317,8 @@ class AIChatOrchestrator:
             memory_context = host._filter_memory_context_for_grounding(memory_context)
         try:
             host._log_chat_source_grounding(grounding_report)
-        except Exception:
-            pass
+        except Exception as exc:
+            _orchestrator_boundary_note(host, "chat_grounding.log", exc)
 
         # Đảm bảo pending strategy của lượt trước đã vào single-writer trước khi
         # observer dùng phản ứng user hiện tại để chấm hậu quả.
@@ -325,7 +366,6 @@ class AIChatOrchestrator:
         # public writer is the only conversational meaning object.
         user_meta["semantic_authority"] = "semantic_frame.v1"
         discovery_runtime = getattr(host, "ai_discovery_runtime", None)
-        telemetry_payload = snapshot.to_machine_context() if callable(getattr(snapshot, "to_machine_context", None)) else {}
         discovery_context = (
             discovery_runtime.planner_context(telemetry_payload)
             if discovery_runtime is not None
@@ -343,6 +383,7 @@ class AIChatOrchestrator:
             "memory_available": bool(str(memory_context or "").strip()),
             "interrupt_context": speech_interrupt_context,
             "discovery": discovery_context,
+            "engagement_context": engagement_context,
         }
         chat_plan = host.ai_intention_planner.plan_chat(
             planning_snapshot,
@@ -383,6 +424,7 @@ class AIChatOrchestrator:
                 relationship_context=relationship_context,
                 personality_context=personality_context,
                 interrupt_context=speech_interrupt_context,
+                engagement_context=engagement_prompt_context,
                 use_escalation=use_escalation,
                 reasoning_effort=reasoning_effort,
                 allow_fallback=False,
@@ -398,6 +440,7 @@ class AIChatOrchestrator:
                     relationship_context=relationship_context,
                     personality_context=personality_context,
                     interrupt_context=speech_interrupt_context,
+                    engagement_context=engagement_prompt_context,
                     use_escalation=use_escalation,
                     reasoning_effort=reasoning_effort,
                     allow_fallback=True,
@@ -424,8 +467,8 @@ class AIChatOrchestrator:
                         },
                         fields={"turn_seq": turn_seq, "frame": semantic_frame},
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _orchestrator_boundary_note(host, "semantic_frame.observability", exc)
             draft_text = str(payload.get("text", "") or "")
             grounding_engine = getattr(host, "source_grounding_engine", None)
             grounding_verdict = evaluate_grounded_surface(
@@ -450,6 +493,7 @@ class AIChatOrchestrator:
                         relationship_context=relationship_context,
                         personality_context=personality_context,
                         interrupt_context=speech_interrupt_context,
+                        engagement_context=engagement_prompt_context,
                         use_escalation=use_escalation,
                         reasoning_effort=reasoning_effort,
                         allow_fallback=not no_fallback_mode_enabled(),
@@ -590,11 +634,18 @@ class AIChatOrchestrator:
             public_text = str(getattr(decision, "text", "") or "").strip()
             memory_text = public_text
         decision.text = public_text
+        if public_text:
+            engagement_runtime = getattr(host, "ai_engagement_runtime", None)
+            if engagement_runtime is not None:
+                try:
+                    engagement_runtime.observe_assistant_output(public_text, now=time.time())
+                except Exception as exc:
+                    host.logger.debug("[engagement] assistant output observation failed: %s", exc)
         try:
             from runtime.final_speech_authority import GLOBAL_FINAL_SPEECH_AUTHORITY
             decision = GLOBAL_FINAL_SPEECH_AUTHORITY.seal(decision)
-        except Exception:
-            pass
+        except Exception as exc:
+            _orchestrator_boundary_note(host, "chat_surface.seal", exc)
 
         host.last_chat_answer = public_text
         host.last_system_action = str(getattr(decision, "system_action", "") or "")
@@ -627,8 +678,8 @@ class AIChatOrchestrator:
                         max(0.0, (time.time() - started_at) * 1000.0),
                         tags={"channel": "chat", "turn_category": category},
                     )
-            except Exception:
-                pass
+            except Exception as exc:
+                _orchestrator_boundary_note(host, "chat_ttft.observe", exc)
         if memory_text:
             host._append_chat_history("assistant", memory_text, invalid=False)
         assistant_meta: dict[str, Any] | None = None
@@ -683,11 +734,18 @@ class AIAutonomousOrchestrator:
             public_text = str(getattr(decision, "text", "") or "").strip()
             memory_text = public_text
         decision.text = public_text
+        if public_text:
+            engagement_runtime = getattr(host, "ai_engagement_runtime", None)
+            if engagement_runtime is not None:
+                try:
+                    engagement_runtime.observe_assistant_output(public_text, now=time.time())
+                except Exception as exc:
+                    host.logger.debug("[engagement] autonomous output observation failed: %s", exc)
         try:
             from runtime.final_speech_authority import GLOBAL_FINAL_SPEECH_AUTHORITY
             decision = GLOBAL_FINAL_SPEECH_AUTHORITY.seal(decision)
-        except Exception:
-            pass
+        except Exception as exc:
+            _orchestrator_boundary_note(host, "autonomous_surface.seal", exc)
         if not public_text:
             return "", None
         host.last_text = public_text
@@ -699,8 +757,8 @@ class AIAutonomousOrchestrator:
         if clock is not None:
             try:
                 clock.mark_assistant_text()
-            except Exception:
-                pass
+            except Exception as exc:
+                _orchestrator_boundary_note(host, "autonomous_clock.mark", exc)
         if memory_text:
             host._append_chat_history("assistant", memory_text, invalid=False)
             if len(host.chat_history) > 32:
@@ -762,10 +820,7 @@ class AIAutonomousOrchestrator:
             }, now=now)
             return True
         except Exception as exc:
-            try:
-                host.logger.debug("[self turn body-only] failed: %s", exc)
-            except Exception:
-                pass
+            _orchestrator_boundary_note(host, "body_only.emit", exc)
             return False
 
     def run_startup(self) -> bool:
@@ -1039,8 +1094,8 @@ class AIAutonomousOrchestrator:
         if vision_facts:
             try:
                 host._attach_screen_facts(snapshot, vision_facts)
-            except Exception:
-                pass
+            except Exception as exc:
+                _orchestrator_boundary_note(host, "force_speak.attach_screen_facts", exc)
         host.long_term_memory = host._memory_recall_texts(snapshot=snapshot)
         memory_resonance = host._recall_memory_resonance(
             snapshot=snapshot,

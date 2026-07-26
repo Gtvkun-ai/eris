@@ -1,0 +1,161 @@
+# -*- coding: utf-8 -*-
+"""Interaction policy and attention arbitration for engagements."""
+from __future__ import annotations
+
+from typing import Any, Mapping, Sequence
+
+from .contracts import (
+    Engagement,
+    FocusMode,
+    InitiativeMode,
+    InteractionAction,
+    InteractionDecision,
+    InteractionSignal,
+    LifecycleStatus,
+)
+
+
+class EngagementInteractionPolicy:
+    def __init__(self, *, signal_importance_threshold: float = 0.45) -> None:
+        self.signal_importance_threshold = max(0.0, min(1.0, float(signal_importance_threshold)))
+
+    def evaluate(
+        self,
+        engagement: Engagement,
+        signals: Sequence[InteractionSignal],
+        *,
+        now: float,
+        seconds_since_user: float,
+        seconds_since_assistant: float,
+        telemetry: Mapping[str, Any] | None = None,
+    ) -> InteractionDecision:
+        telemetry = telemetry if isinstance(telemetry, Mapping) else {}
+        significant = max(signals, key=lambda item: item.importance, default=None)
+        policy = engagement.continuity
+        baseline = engagement.last_assistant_at or engagement.started_at
+        since_output = max(0.0, now - baseline)
+        user_quiet = seconds_since_user >= policy.minimum_user_silence_seconds
+        event_due = bool(
+            significant is not None
+            and significant.importance >= self.signal_importance_threshold
+            and since_output >= policy.minimum_event_gap_seconds
+            and user_quiet
+        )
+
+        # Terminal state still deserves one final delivery. Excluding completed
+        # monitors from arbitration made successful deployments disappear at the
+        # exact moment the user cared about them. A classic automation flourish.
+        if engagement.lifecycle in {LifecycleStatus.COMPLETED, LifecycleStatus.CANCELLED}:
+            if event_due:
+                action = (
+                    InteractionAction.NOTIFY
+                    if engagement.contract.initiative in {
+                        InitiativeMode.MONITORING,
+                        InitiativeMode.SILENT_UNTIL_NEEDED,
+                    }
+                    else InteractionAction.SPEAK
+                )
+                return InteractionDecision(
+                    action=action,
+                    engagement_id=engagement.engagement_id,
+                    engagement_kind=engagement.kind,
+                    reason=f"engagement_event:{significant.reason}" if significant else "engagement_terminal",
+                    priority=engagement.priority + 30,
+                    due=True,
+                    required=True,
+                    anchor_kind=f"engagement:{engagement.kind}",
+                    seconds_since_engagement_output=since_output,
+                    evidence_refs=significant.evidence_refs if significant is not None else (),
+                )
+            return InteractionDecision(
+                engagement_id=engagement.engagement_id,
+                engagement_kind=engagement.kind,
+                reason="terminal_event_not_due",
+                priority=engagement.priority,
+                anchor_kind=f"engagement:{engagement.kind}",
+                seconds_since_engagement_output=since_output,
+            )
+
+        if not engagement.active or engagement.focus == FocusMode.SUSPENDED:
+            return InteractionDecision(reason="engagement_inactive")
+        if bool(telemetry.get("user_busy", False) or telemetry.get("interaction_busy", False)):
+            return InteractionDecision(
+                engagement_id=engagement.engagement_id,
+                engagement_kind=engagement.kind,
+                reason="user_busy",
+                priority=engagement.priority,
+                anchor_kind=f"engagement:{engagement.kind}",
+                seconds_since_engagement_output=since_output,
+            )
+
+        initiative = engagement.contract.initiative
+        cadence_enabled = initiative in {
+            InitiativeMode.PROACTIVE,
+            InitiativeMode.GUIDED,
+            InitiativeMode.AMBIENT,
+        }
+        cadence_due = bool(cadence_enabled and user_quiet and since_output >= policy.desired_interval_seconds)
+        maximum_due = bool(cadence_enabled and user_quiet and since_output >= policy.maximum_quiet_seconds)
+
+        if initiative in {InitiativeMode.MONITORING, InitiativeMode.SILENT_UNTIL_NEEDED} and not event_due:
+            return InteractionDecision(
+                engagement_id=engagement.engagement_id,
+                engagement_kind=engagement.kind,
+                reason="waiting_for_meaningful_event",
+                priority=engagement.priority,
+                anchor_kind=f"engagement:{engagement.kind}",
+                seconds_since_engagement_output=since_output,
+            )
+        if event_due or cadence_due or maximum_due:
+            if initiative == InitiativeMode.MONITORING:
+                action = InteractionAction.NOTIFY
+            elif initiative == InitiativeMode.GUIDED and engagement.lifecycle == LifecycleStatus.WAITING:
+                action = InteractionAction.ASK
+            else:
+                action = InteractionAction.SPEAK
+            reason = (
+                f"engagement_event:{significant.reason}" if event_due and significant is not None
+                else "engagement_maximum_quiet" if maximum_due
+                else "engagement_cadence_due"
+            )
+            return InteractionDecision(
+                action=action,
+                engagement_id=engagement.engagement_id,
+                engagement_kind=engagement.kind,
+                reason=reason,
+                priority=engagement.priority + (20 if event_due else 10 if maximum_due else 0),
+                due=True,
+                required=maximum_due,
+                anchor_kind=f"engagement:{engagement.kind}",
+                seconds_since_engagement_output=since_output,
+                evidence_refs=significant.evidence_refs if significant is not None else (),
+            )
+        return InteractionDecision(
+            engagement_id=engagement.engagement_id,
+            engagement_kind=engagement.kind,
+            reason="engagement_not_due",
+            priority=engagement.priority,
+            anchor_kind=f"engagement:{engagement.kind}",
+            seconds_since_engagement_output=since_output,
+        )
+
+
+class AttentionManager:
+    """Choose one engagement voice candidate. Notifications are not a choir."""
+
+    def arbitrate(self, decisions: Sequence[InteractionDecision]) -> InteractionDecision:
+        candidates = [decision for decision in decisions if decision.due]
+        if not candidates:
+            informative = [decision for decision in decisions if decision.engagement_id]
+            return max(informative, key=lambda item: item.priority, default=InteractionDecision())
+        return max(
+            candidates,
+            key=lambda item: (
+                int(item.required),
+                item.priority,
+                int(item.action in {InteractionAction.NOTIFY, InteractionAction.ACT}),
+            ),
+        )
+
+
+__all__ = ["AttentionManager", "EngagementInteractionPolicy"]

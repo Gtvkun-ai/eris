@@ -13,8 +13,39 @@ from typing import Any, Mapping
 
 _RESTART_REQUIRED = {
     "chat.max_concurrency",
+    "ai_runtime.observer_workers",
+    "ai_runtime.state_persistence_interval_seconds",
     "prompt.strict_grounding",
     "memory.semantic_parser",
+    "public_turn.reply_window_seconds",
+    "public_turn.block_min_seconds",
+    "public_turn.block_max_seconds",
+    "public_turn.default_block_seconds",
+    "engagement.enabled",
+    "engagement.max_events",
+    "engagement.persistence_interval_seconds",
+    "engagement.signal_importance_threshold",
+    "engagement.activity_key_cache_size",
+    "engagement.activity_key_retention",
+    "engagement.max_terminal_engagements",
+    "engagement.terminal_retention_seconds",
+    "engagement.event_consumer_batch_size",
+    "engagement.delivery_lease_seconds",
+    "engagement.delivery_max_attempts",
+    "engagement.delivery_backoff_initial_seconds",
+    "engagement.delivery_backoff_max_seconds",
+    "engagement.max_dead_letters",
+    "engagement.delivery_stop_on_gap",
+    "engagement.consumer_lag_warning_events",
+    "engagement.open_dead_letter_warning_count",
+    "engagement.snapshot_journal_enabled",
+    "engagement.snapshot_journal_auto_repair",
+    "observability.slo_window_seconds",
+    "observability.slo_max_samples",
+    "observability.minimum_ready_ratio",
+    "observability.maximum_degraded_seconds",
+    "observability.max_incidents",
+    "health.max_events",
 }
 
 
@@ -31,6 +62,20 @@ _LEGACY_ADVANCED_MAP: dict[str, tuple[str, ...]] = {
     "ERIS_DDS_ENABLED": ("prompt", "dds_enabled"),
     "ERIS_STRICT_GROUNDING": ("prompt", "strict_grounding"),
     "ERIS_MEMORY_SEMANTIC_PARSER": ("memory", "semantic_parser"),
+    "ERIS_AI_OBSERVER_WORKERS": ("ai_runtime", "observer_workers"),
+    "ERIS_AI_STATE_PERSIST_INTERVAL_SEC": ("ai_runtime", "state_persistence_interval_seconds"),
+    "ERIS_PROTOCOL_MAX_MESSAGE_TYPE_CHARS": ("protocol", "max_message_type_chars"),
+    "ERIS_PROTOCOL_REJECT_NON_MAPPING": ("protocol", "reject_non_mapping"),
+    "ERIS_PROTOCOL_RECORD_UNKNOWN": ("protocol", "record_unknown_messages"),
+    "ERIS_RUN_LOOP_STARTUP_RETRY_DELAY_S": ("run_loop", "startup_retry_delay_seconds"),
+    "ERIS_RUN_LOOP_ERROR_BACKOFF_INITIAL_S": ("run_loop", "error_backoff_initial_seconds"),
+    "ERIS_RUN_LOOP_ERROR_BACKOFF_MAX_S": ("run_loop", "error_backoff_max_seconds"),
+    "ERIS_RUN_LOOP_ERROR_STOP_LIMIT": ("run_loop", "consecutive_error_stop_limit"),
+    "ERIS_ENGAGEMENT_STOP_ON_GAP": ("engagement", "delivery_stop_on_gap"),
+    "ERIS_ENGAGEMENT_LAG_WARNING_EVENTS": ("engagement", "consumer_lag_warning_events"),
+    "ERIS_ENGAGEMENT_OPEN_DLQ_WARNING": ("engagement", "open_dead_letter_warning_count"),
+    "ERIS_ENGAGEMENT_SNAPSHOT_JOURNAL": ("engagement", "snapshot_journal_enabled"),
+    "ERIS_ENGAGEMENT_SNAPSHOT_AUTO_REPAIR": ("engagement", "snapshot_journal_auto_repair"),
     "ERIS_MEMORY_DIGEST_MAINTENANCE": ("memory", "maintenance_enabled"),
     "ERIS_MEMORY_MAINTENANCE_BUDGET": ("memory", "maintenance_budget"),
     "ERIS_PERFORMANCE_ACTS_ENABLED": ("stage", "performance_acts_enabled"),
@@ -86,13 +131,15 @@ def normalize_settings_message(msg: Mapping[str, Any]) -> NormalizedSettingsMess
             "advanced": {
                 "chat", "personality", "project_ops", "prompt", "memory",
                 "stage", "tts", "pipeline", "tutor", "commentary",
-                "initiative", "discovery",
+                "initiative", "discovery", "ai_runtime", "public_turn", "engagement", "health",
+                "protocol", "run_loop", "observability",
             },
             "personality": {"personality"},
             "runtime": {
                 "chat", "personality", "capabilities", "project_ops", "prompt",
                 "memory", "stage", "tts", "pipeline", "tutor", "commentary",
                 "initiative", "discovery", "danger_zone",
+                "ai_runtime", "public_turn", "engagement", "health", "protocol", "run_loop", "observability",
             },
         }.get(scope, set())
         patch = {str(k): v for k, v in raw.items() if str(k) in allowed_roots}
@@ -142,11 +189,24 @@ def _normalize_legacy_value(key: str, value: Any) -> Any:
     if key in {
         "ERIS_LLM_COMPLETION_CHAT_TOKENS", "ERIS_LLM_TIMEOUT_CHAT_S", "ERIS_LLM_MAX_CONCURRENCY",
         "ERIS_LLM_PROMPT_TOTAL_TOKENS", "ERIS_LLM_PROMPT_HARD_CAP_TOKENS", "ERIS_TTS_PREFETCH_WORKERS",
+        "ERIS_AI_OBSERVER_WORKERS",
+        "ERIS_PROTOCOL_MAX_MESSAGE_TYPE_CHARS", "ERIS_RUN_LOOP_ERROR_STOP_LIMIT",
+        "ERIS_ENGAGEMENT_LAG_WARNING_EVENTS", "ERIS_ENGAGEMENT_OPEN_DLQ_WARNING",
         "ERIS_STAGE_MAX_TTS_SEGMENTS",
     }:
         try:
             return int(float(text))
-        except Exception:
+        except (TypeError, ValueError):
+            return text
+    if key in {
+        "ERIS_AI_STATE_PERSIST_INTERVAL_SEC",
+        "ERIS_RUN_LOOP_STARTUP_RETRY_DELAY_S",
+        "ERIS_RUN_LOOP_ERROR_BACKOFF_INITIAL_S",
+        "ERIS_RUN_LOOP_ERROR_BACKOFF_MAX_S",
+    }:
+        try:
+            return float(text)
+        except (TypeError, ValueError):
             return text
     if key in {
         "ERIS_DDS_ENABLED", "ERIS_STRICT_GROUNDING", "ERIS_MEMORY_SEMANTIC_PARSER",
@@ -155,6 +215,8 @@ def _normalize_legacy_value(key: str, value: Any) -> Any:
         "ERIS_TTS_TASK_MANAGER", "ERIS_TTS_STAGE_LOCALIZE", "ERIS_TTS_AUDIO_POLISH",
         "ERIS_TUTOR_ENABLED", "ERIS_TUTOR_QUICK_SEARCH_ENABLED", "ERIS_TUTOR_RESEARCH_ENABLED",
         "ERIS_TUTOR_SELF_SEARCH_ENABLED", "ERIS_TUTOR_STALE_GUARD", "ERIS_TUTOR_RESEARCH_PERSIST",
+        "ERIS_PROTOCOL_REJECT_NON_MAPPING", "ERIS_PROTOCOL_RECORD_UNKNOWN",
+        "ERIS_ENGAGEMENT_STOP_ON_GAP",
     }:
         return _bool(text)
     return text
@@ -176,7 +238,7 @@ def _bool(value: Any) -> bool:
 def _float(value: Any, fallback: float) -> float:
     try:
         return float(value)
-    except Exception:
+    except (TypeError, ValueError):
         return fallback
 
 

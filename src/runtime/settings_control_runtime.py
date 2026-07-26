@@ -1,0 +1,407 @@
+# -*- coding: utf-8 -*-
+"""Advanced settings protocol, health snapshots and live refresh.
+
+Extracted from RuntimeCoordinator so the composition root stops owning every policy.
+"""
+from __future__ import annotations
+
+import os
+import threading
+import time
+from collections.abc import Mapping
+
+
+class SettingsControlRuntimeMixin:
+    """Coordinator-facing mixin with no independent lifecycle."""
+
+    def _advanced_effective_settings_snapshot(self) -> dict:
+        """Snapshot gọn cho Advanced UI, chỉ gồm policy người dùng có thể chỉnh."""
+
+        try:
+            from runtime.runtime_settings_store import get_runtime_settings_store
+
+            store = getattr(self, "runtime_settings_store", None) or get_runtime_settings_store(logger=self.logger)
+            settings = store.snapshot()
+            selected: dict[str, dict] = {}
+            field_map = {
+                "chat": ("reasoning_effort", "completion_chat_tokens", "chat_timeout_seconds", "auto_fallback"),
+                "personality": ("retort_mode", "style_repair_mode", "allow_sharp_retort", "allow_cold_boundary"),
+                "commentary": ("enabled", "desired_interval_seconds", "maximum_quiet_seconds", "startup_delay_seconds", "minimum_user_silence_seconds"),
+                "initiative": ("enabled", "global_hourly_budget", "minimum_interval_seconds", "minimum_user_silence_seconds"),
+                "discovery": ("enabled", "local_signal_enabled"),
+                "memory": ("background_digest", "maintenance_enabled", "maintenance_budget"),
+                "tutor": ("enabled", "quick_search_enabled", "research_enabled", "self_search_enabled", "stale_result_guard_enabled", "persist_research_memory"),
+                "project_ops": ("enabled", "autonomy_mode", "ask_when_uncertain", "proceed_without_user_reply", "auto_rollback_on_failure", "auto_package_patch", "max_repair_attempts"),
+                "protocol": ("max_message_type_chars", "reject_non_mapping", "record_unknown_messages"),
+                "run_loop": ("startup_retry_delay_seconds", "error_backoff_initial_seconds", "error_backoff_max_seconds", "consecutive_error_stop_limit"),
+            }
+            for section, fields in field_map.items():
+                source = settings.get(section, {})
+                if isinstance(source, Mapping):
+                    selected[section] = {name: source.get(name) for name in fields if name in source}
+            metadata = store.metadata()
+            metadata["settings"] = selected
+            return metadata
+        except Exception as exc:
+            return {"revision": 0, "saved_at": 0.0, "settings": {}, "error": str(exc)[:240]}
+
+
+    def _main_brain_health_snapshot(self) -> dict:
+        """Trả danh tính não chính và credential hiệu lực, tuyệt đối không lộ key."""
+
+        client = getattr(getattr(self, "llm_service", None), "client", None)
+        requested_provider = str(os.environ.get("ERIS_REMOTE_PROVIDER", "") or "").strip().lower()
+        base_url = str(getattr(client, "base_url", "") or "").strip()
+        model = str(getattr(client, "model_name", "") or "").strip()
+        try:
+            from llm.token_budget import detect_provider
+            detected_provider = detect_provider(base_url, model)
+        except Exception:
+            detected_provider = requested_provider or "unknown"
+
+        pool = getattr(client, "key_pool", None)
+        try:
+            pool_snapshot = pool.snapshot() if pool is not None else {}
+        except Exception:
+            pool_snapshot = {}
+        active_fingerprint = ""
+        keys = pool_snapshot.get("keys", []) if isinstance(pool_snapshot, Mapping) else []
+        if isinstance(keys, list):
+            for item in keys:
+                if isinstance(item, Mapping) and bool(item.get("active")):
+                    active_fingerprint = str(item.get("fingerprint") or "")
+                    break
+
+        config_source = "ERIS_REMOTE_*"
+        try:
+            from eris_secrets import get_provider_profile
+            profile = get_provider_profile(requested_provider, slot="remote_main")
+            if profile:
+                config_source = f"providers.{requested_provider}.remote_main"
+        except Exception:
+            pass
+
+        fallback = getattr(getattr(self, "llm_service", None), "fallback_client", None)
+        fallback_model = str(getattr(fallback, "model_name", "") or "").strip()
+        return {
+            "ready": client is not None,
+            "requested_provider": requested_provider,
+            "provider": detected_provider,
+            "model": model,
+            "base_url": base_url,
+            "pool": "remote",
+            "configured_keys": int(pool_snapshot.get("size", 0) or 0) if isinstance(pool_snapshot, Mapping) else 0,
+            "available_keys": int(pool_snapshot.get("available", 0) or 0) if isinstance(pool_snapshot, Mapping) else 0,
+            "active_key_fingerprint": active_fingerprint,
+            "config_source": config_source,
+            "fallback_model": fallback_model,
+        }
+
+
+    def _handle_settings_connection_test(self, msg: dict) -> None:
+        """Chạy request cực ngắn bằng đúng client main đang hiệu lực.
+
+        Test chạy ở thread riêng để một provider chậm không khóa UDP/chat loop.
+        Body chỉ nhận model, latency, HTTP status và fingerprint; không có raw key.
+        """
+
+        request_id = str(msg.get("request_id") or f"brain_test_{int(time.time() * 1000)}")
+        worker = threading.Thread(
+            target=self._run_settings_connection_test,
+            args=(request_id,),
+            name="eris-settings-connection-test",
+            daemon=True,
+        )
+        worker.start()
+
+
+    def _run_settings_connection_test(self, request_id: str) -> None:
+        started = time.perf_counter()
+        snapshot = self._main_brain_health_snapshot()
+        payload = {
+            "request_id": request_id,
+            "ok": False,
+            "latency_ms": 0,
+            "response_text": "",
+            "error_kind": "",
+            "error": "",
+            "main_brain": snapshot,
+        }
+        try:
+            client = getattr(getattr(self, "llm_service", None), "client", None)
+            if client is None:
+                raise RuntimeError("main client chưa được khởi tạo")
+            from runtime.inference_broker import inference_context
+            with inference_context(
+                "chat_tool_required",
+                optional=False,
+                timeout_seconds=15.0,
+                cancel_scope=f"settings_test:{request_id}",
+                metadata={"operation": "settings_connection_test"},
+            ):
+                response = client.create_chat_completion(
+                    messages=[
+                        {"role": "system", "content": "Connection health check. Reply with exactly OK."},
+                        {"role": "user", "content": "OK"},
+                    ],
+                    temperature=0.0,
+                    frequency_penalty=0.0,
+                    presence_penalty=0.0,
+                    max_tokens=8,
+                    timeout=15,
+                    reasoning_effort="low",
+                )
+            extract = getattr(getattr(self, "llm_service", None), "_extract_content", None)
+            text_value = extract(response) if callable(extract) else ""
+            payload["ok"] = True
+            payload["response_text"] = str(text_value or "OK").strip()[:80]
+            payload["main_brain"] = self._main_brain_health_snapshot()
+        except Exception as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status in (401, 403):
+                kind = "invalid_key"
+            elif status == 404:
+                kind = "model_or_endpoint_not_found"
+            elif status == 429:
+                kind = "rate_limited"
+            elif status is not None and int(status) >= 500:
+                kind = "provider_unavailable"
+            elif isinstance(exc, TimeoutError) or "timeout" in str(exc).lower():
+                kind = "timeout"
+            else:
+                kind = "connection_error"
+            payload["error_kind"] = kind
+            payload["error"] = str(exc)[:320]
+            self.logger.warning("[settings] main brain connection test failed kind=%s error=%s", kind, exc)
+        finally:
+            payload["latency_ms"] = int(max(0.0, time.perf_counter() - started) * 1000)
+            self._send_runtime_json({
+                "type": "settings_connection_test_ack",
+                "parse_mode": "settings_connection_test_ack",
+                "should_speak": False,
+                "settings_connection_test_ack": payload,
+            }, channel="settings")
+
+
+    def _handle_settings_health(self) -> None:
+        """Gửi trạng thái ba key pool và não chính mà không lộ API key.
+
+        Trước đây nút kiểm tra chỉ gửi message nhưng coordinator chưa xử lý.
+        Handler này trả snapshot thật gồm key đang dùng, key cooldown và cooldown
+        toàn pool để UI hiển thị đúng trạng thái.
+        """
+
+        try:
+            from llm.key_pool import get_key_pool
+
+            pools = {
+                "main": get_key_pool("remote_main").snapshot(),
+                "gemini": get_key_pool("gemini").snapshot(),
+                "groq": get_key_pool("groq").snapshot(),
+            }
+            try:
+                from actions.capability_runtime import runtime_capability_snapshot
+                capability_health = runtime_capability_snapshot(refresh=True)
+            except Exception as capability_exc:
+                capability_health = {"error": f"{type(capability_exc).__name__}: {capability_exc}"}
+            try:
+                from runtime.observability import ensure_observability
+                telemetry = ensure_observability(self)
+                for provider_name, snapshot in pools.items():
+                    telemetry.record_provider_pool(provider=provider_name, snapshot=snapshot, event="settings_health")
+            except Exception:
+                pass
+            tts = getattr(self, "tts_engine", None)
+            tts_ready = bool(tts is not None and getattr(tts, "_ok", False))
+            subsystem_health = {}
+            health_registry = getattr(self, "subsystem_health_registry", None)
+            if callable(getattr(health_registry, "snapshot", None)):
+                try:
+                    subsystem_health = health_registry.snapshot(include_events=False)
+                except Exception as health_exc:
+                    subsystem_health = {"error": f"{type(health_exc).__name__}: {health_exc}"}
+            ack = {
+                "type": "settings_health_ack",
+                "parse_mode": "settings_health_ack",
+                "should_speak": False,
+                "settings_health_ack": {
+                    "pools": pools,
+                    "main_brain": self._main_brain_health_snapshot(),
+                    "tts": {"ready": tts_ready},
+                    "capabilities": capability_health,
+                    "subsystems": subsystem_health,
+                    "runtime_boundaries": {
+                        "transport": (
+                            self.transport_boundary.snapshot()
+                            if callable(getattr(getattr(self, "transport_boundary", None), "snapshot", None))
+                            else {}
+                        ),
+                        "protocol": (
+                            self.incoming_dispatcher.snapshot()
+                            if callable(getattr(getattr(self, "incoming_dispatcher", None), "snapshot", None))
+                            else {}
+                        ),
+                        "loop": (
+                            self.loop_guard.snapshot()
+                            if callable(getattr(getattr(self, "loop_guard", None), "snapshot", None))
+                            else {}
+                        ),
+                    },
+                    "runtime_diagnostics": (
+                        self.runtime_diagnostics.snapshot(include_events=False)
+                        if callable(getattr(getattr(self, "runtime_diagnostics", None), "snapshot", None))
+                        else {}
+                    ),
+                    "effective": self._advanced_effective_settings_snapshot(),
+                },
+            }
+        except Exception as exc:
+            self.logger.warning("[settings] key pool health snapshot failed: %s", exc)
+            ack = {
+                "type": "settings_health_ack",
+                "parse_mode": "settings_health_ack",
+                "should_speak": False,
+                "settings_health_ack": {
+                    "pools": {},
+                    "main_brain": self._main_brain_health_snapshot(),
+                    "tts": {"ready": False},
+                    "effective": self._advanced_effective_settings_snapshot(),
+                    "error": str(exc)[:240],
+                },
+            }
+
+        self._send_runtime_json(ack, channel="settings")
+
+
+    def _handle_settings_update(self, msg: dict) -> None:
+        """Áp dụng settings live qua schema, persist trước rồi mới refresh runtime."""
+
+        scope = str(msg.get("scope", "runtime") or "runtime").strip().lower()
+        try:
+            from runtime.runtime_settings_store import get_runtime_settings_store
+            from runtime.settings_protocol import normalize_settings_message
+
+            store = getattr(self, "runtime_settings_store", None) or get_runtime_settings_store(logger=self.logger)
+            normalized = normalize_settings_message(msg)
+            if normalized.scope not in {"tts", "advanced", "personality", "runtime"}:
+                raise ValueError(f"unsupported settings scope: {normalized.scope}")
+            if not normalized.patch:
+                raise ValueError("settings payload không có field hợp lệ")
+
+            result = store.apply_patch(
+                normalized.patch,
+                restart_required_paths=set(normalized.restart_required_paths),
+                materialize_env=False,
+            )
+            self.runtime_settings_store = store
+            self.runtime_settings = result.settings
+            rejected = list(normalized.rejected_fields) + list(result.rejected)
+
+            refresh_meta = self._refresh_runtime_after_settings(
+                scope=normalized.scope,
+                applied_paths=set(result.applied),
+            )
+            ack_payload = result.to_ack(scope=normalized.scope)
+            ack_payload["rejected"] = list(dict.fromkeys(rejected))
+            ack_payload["legacy_payload"] = bool(normalized.legacy_payload)
+            ack_payload.update(refresh_meta)
+            ack_payload["effective"] = self._advanced_effective_settings_snapshot()
+            if normalized.scope == "tts":
+                tts_settings = result.settings.get("tts", {})
+                ack_payload.update({
+                    "language": tts_settings.get("language", "ja"),
+                    "voice": tts_settings.get("voice", "Aoede"),
+                    "quality": tts_settings.get("quality", "high"),
+                    "volume": tts_settings.get("volume", 1.0),
+                    "speed": tts_settings.get("speed", 1.0),
+                })
+
+            self.logger.info(
+                "[runtime-settings] live scope=%s applied=%d rejected=%d restart=%d",
+                normalized.scope, len(result.applied), len(rejected), len(result.restart_required),
+            )
+            self._send_runtime_json({
+                "type": "settings_update_ack",
+                "parse_mode": "settings_update_ack",
+                "should_speak": False,
+                "settings_update_ack": ack_payload,
+            })
+        except Exception as exc:
+            self.logger.warning("[runtime-settings] update scope=%s failed: %s", scope, exc)
+            self._send_runtime_json({
+                "type": "settings_update_ack",
+                "parse_mode": "settings_update_ack",
+                "should_speak": False,
+                "settings_update_ack": {
+                    "scope": scope,
+                    "applied": [],
+                    "rejected": [str(exc)[:240]],
+                    "restart_required": [],
+                    "ok": False,
+                },
+            }, channel="settings")
+
+
+    def _refresh_runtime_after_settings(self, *, scope: str, applied_paths: set[str]) -> dict:
+        """Refresh các component có contract live; mục bootstrap vẫn báo restart."""
+
+        meta = {"worker_rebuilt": False, "engine_ready": False, "live_refreshed": []}
+        self.stage_frame_builder = None
+        meta["live_refreshed"].append("stage_frame_builder")
+
+        if any(path.startswith("tts.") or path.startswith("stage.") for path in applied_paths):
+            tts = getattr(self, "tts_engine", None)
+            refresh = getattr(tts, "refresh_configuration", None) if tts is not None else None
+            if callable(refresh):
+                try:
+                    meta["worker_rebuilt"] = bool(refresh())
+                    meta["live_refreshed"].append("tts_engine")
+                except Exception as exc:
+                    self.logger.warning("[runtime-settings] TTS refresh failed: %s", exc)
+            meta["engine_ready"] = bool(tts is not None and getattr(tts, "_ok", False))
+
+        if "chat.max_concurrency" in applied_paths:
+            try:
+                from llm.key_pool import reset_concurrency_limits
+                reset_concurrency_limits()
+                meta["live_refreshed"].append("provider_concurrency")
+            except Exception as exc:
+                self.logger.debug("[runtime-settings] concurrency refresh failed: %s", exc)
+
+        # Policy modules đọc store mỗi lượt nên không cần reconstruct. Ghi rõ để
+        # observability/UI biết live apply không phải một cái nút trang trí.
+        if any(path.startswith("chat.") or path.startswith("personality.") for path in applied_paths):
+            meta["live_refreshed"].append("conversation_policy")
+        if any(path.startswith("prompt.") for path in applied_paths):
+            meta["live_refreshed"].append("prompt_budget_policy")
+        if any(path.startswith("capabilities.") for path in applied_paths):
+            try:
+                from actions.capability_runtime import refresh_runtime_capabilities
+
+                refresh_runtime_capabilities(owner=self, settings=self.runtime_settings)
+                meta["live_refreshed"].append("capability_runtime_snapshot")
+            except Exception as exc:
+                self.logger.debug("[capability] live refresh failed: %s", exc)
+        if any(path.startswith("tutor.") for path in applied_paths):
+            meta["live_refreshed"].append("tutor_search_policy")
+        if any(path.startswith("commentary.") or path.startswith("initiative.") or path.startswith("discovery.") for path in applied_paths):
+            meta["live_refreshed"].append("autonomous_presence_policy")
+        if any(path.startswith("memory.") for path in applied_paths):
+            meta["live_refreshed"].append("memory_policy")
+        if any(path.startswith("project_ops.") for path in applied_paths):
+            meta["live_refreshed"].append("project_operations_policy")
+        if any(path.startswith(("public_turn.", "engagement.", "health.", "ai_runtime.", "protocol.", "run_loop.")) for path in applied_paths):
+            from runtime.policy_settings import RuntimePolicySettings
+
+            self.runtime_policy_settings = RuntimePolicySettings.load()
+            if getattr(self, "public_turn_runtime", None) is not None:
+                self.public_turn_runtime.settings = self.runtime_policy_settings.public_turn
+            if getattr(self, "incoming_dispatcher", None) is not None:
+                self.incoming_dispatcher.settings = self.runtime_policy_settings.protocol
+            if getattr(self, "loop_guard", None) is not None:
+                self.loop_guard.settings = self.runtime_policy_settings.run_loop
+            meta["live_refreshed"].append("typed_runtime_policy")
+        return meta
+
+
+__all__ = ["SettingsControlRuntimeMixin"]

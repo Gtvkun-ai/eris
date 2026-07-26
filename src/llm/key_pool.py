@@ -26,6 +26,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Iterable, List
 
+from runtime.diagnostic_logging import safe_log
+
 _LOGGER = logging.getLogger("LLM")
 
 @dataclass(frozen=True, slots=True)
@@ -405,8 +407,8 @@ class ApiKeyPool:
             GLOBAL_OBSERVABILITY.record_provider_pool(
                 provider=self.provider, snapshot=self.snapshot(), event=event
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            safe_log(_LOGGER, "debug", "Provider-pool telemetry failed: %s", exc)
 
     def next_available_in(self) -> float:
         """Số giây còn lại tới lúc ít nhất một key có thể được cấp."""
@@ -544,8 +546,8 @@ def _collect_gemini_keys() -> list[str]:
                 fallbacks = api_keys.get(fallback_name)
                 if isinstance(fallbacks, list):
                     ordered.extend(str(k) for k in fallbacks if str(k or "").strip())
-    except Exception:
-        pass
+    except Exception as exc:
+        safe_log(_LOGGER, "debug", "Private-mind key source unavailable: %s", exc)
     # T4.1: thêm key từ env (sau khi .env đã nạp) — hỗ trợ danh sách phân tách.
     ordered.extend(_split_keys_env("ERIS_PRIVATE_MIND_FALLBACK_API_KEYS", "ERIS_GEMINI_FALLBACK_API_KEYS"))
     return ordered
@@ -581,8 +583,8 @@ def _collect_remote_keys() -> list[str]:
             fallbacks = api_keys.get("ERIS_REMOTE_FALLBACK_API_KEYS")
             if isinstance(fallbacks, list):
                 ordered.extend(str(k) for k in fallbacks if not _is_placeholder(k))
-    except Exception:
-        pass
+    except Exception as exc:
+        safe_log(_LOGGER, "debug", "Remote fallback key source unavailable: %s", exc)
 
     ordered.extend(_split_keys_env("ERIS_REMOTE_FALLBACK_API_KEYS"))
     unique: list[str] = []
@@ -611,8 +613,8 @@ def _collect_groq_keys() -> list[str]:
             fallbacks = api_keys.get("ERIS_GROQ_FALLBACK_API_KEYS")
             if isinstance(fallbacks, list):
                 ordered.extend(str(k) for k in fallbacks if not _is_placeholder(k))
-    except Exception:
-        pass
+    except Exception as exc:
+        safe_log(_LOGGER, "debug", "Groq fallback key source unavailable: %s", exc)
     ordered.extend(_split_keys_env("ERIS_GROQ_FALLBACK_API_KEYS"))
     return ordered
 

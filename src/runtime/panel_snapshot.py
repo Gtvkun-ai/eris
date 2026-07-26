@@ -79,8 +79,8 @@ def add_signal(kind: str) -> None:
         with _lock:
             _signal_log.append({"kind": str(kind)[:24], "time": ts})
             del _signal_log[:-_MAX_SIGNALS]
-    except Exception:
-        pass
+    except (TypeError, ValueError):
+        return
 
 
 
@@ -116,15 +116,15 @@ def write_social_observation(
             tmp = path.with_suffix(path.suffix + ".tmp")
             tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(path)
-    except Exception:
-        pass
+    except OSError:
+        return
 
 
 def _read_existing_snapshot() -> dict[str, Any]:
     try:
         raw = json.loads(_path().read_text(encoding="utf-8"))
         return dict(raw) if isinstance(raw, dict) else {}
-    except Exception:
+    except (OSError, UnicodeError, json.JSONDecodeError):
         return {}
 
 def write(
@@ -189,5 +189,5 @@ def write(
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(path)
-    except Exception:
-        pass
+    except OSError:
+        return

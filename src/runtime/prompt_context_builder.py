@@ -12,6 +12,7 @@ from cortex.contracts import (
 from cortex.internal_state import PersistentInternalState
 from domain import Decision
 from core.temporal_context import build_temporal_context_from_runtime
+from runtime.diagnostic_logging import safe_log
 from runtime.no_fallback_policy import no_fallback_mode_enabled
 from runtime.voice_policy import VOICE_POLICY
 
@@ -90,12 +91,12 @@ class PromptContextBuilderMixin:
             if confidence != "":
                 try:
                     meta.append(f"confidence={float(confidence):.2f}")
-                except Exception:
+                except (TypeError, ValueError):
                     pass
             if pressure != "":
                 try:
                     meta.append(f"pressure={float(pressure):.2f}")
-                except Exception:
+                except (TypeError, ValueError):
                     pass
             suffix = f"; {'; '.join(meta)}" if meta else ""
             roots.append(f"{prefix}: {value[:260]}{suffix}")
@@ -113,10 +114,7 @@ class PromptContextBuilderMixin:
             except Exception as exc:
                 logger = getattr(self, "logger", None)
                 if logger is not None:
-                    try:
-                        logger.debug("Thought root unresolved_memory skipped: %s", exc)
-                    except Exception:
-                        pass
+                    safe_log(logger, "debug", "Thought root unresolved_memory skipped: %s", exc)
 
         result = getattr(self, "last_daydream_result", None)
         for insight in tuple(getattr(result, "insights", ()) or ())[: max(0, limit - len(roots))]:
@@ -135,8 +133,8 @@ class PromptContextBuilderMixin:
             try:
                 for item in top_items(limit=max(1, limit - len(roots))):
                     add("internal_agenda", getattr(item, "summary", ""), confidence=getattr(item, "confidence", ""), pressure=getattr(item, "pressure", ""))
-            except Exception:
-                pass
+            except Exception as exc:
+                safe_log(getattr(self, "logger", None), "debug", "Internal agenda roots unavailable: %s", exc)
 
         return tuple(dict.fromkeys(roots))[:limit]
 

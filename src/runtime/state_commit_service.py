@@ -9,6 +9,7 @@ from memory.memory_models import MemoryKind
 from domain import Decision
 from failure_meta import is_technical_failure_meta
 from runtime.body_bias import BodyBiasProjector
+from runtime.diagnostic_logging import safe_log
 from runtime.memory_recall_adapter import MemoryRecallAdapter
 from runtime.affect_self_read import AffectSelfReadAdapter
 from runtime.public_turn_ledger import PublicTurnLedger, infer_public_turn_channel
@@ -103,7 +104,8 @@ class StateCommitServiceMixin:
         if callable(marker):
             try:
                 marker(bool(inflight))
-            except Exception:
+            except Exception as exc:
+                safe_log(getattr(self, "logger", None), "debug", "[state-commit] inflight marker failed: %s", exc)
                 return
 
     def _memory_snapshot_for_lookup(self):
@@ -399,8 +401,8 @@ class StateCommitServiceMixin:
             receipt["facts"] = facts
             try:
                 frame.memory_ingest_receipt = receipt
-            except Exception:
-                pass
+            except (AttributeError, TypeError) as exc:
+                safe_log(getattr(self, "logger", None), "debug", "[state-commit] receipt attach failed: %s", exc)
             committed = int(receipt.get("committed_count", 0) or 0) > 0
             # Không có commit thì cho policy fallback tiếp tục chạy. Trước đây chỉ
             # cần kernel không ném exception là runtime tưởng đã xử lý xong.
@@ -446,7 +448,8 @@ class StateCommitServiceMixin:
             )
         try:
             frame.commit_requests = existing
-        except Exception:
+        except (AttributeError, TypeError) as exc:
+            safe_log(getattr(self, "logger", None), "debug", "[state-commit] commit request attach failed: %s", exc)
             return
 
     def _load_memory_state(self):

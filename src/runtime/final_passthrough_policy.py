@@ -51,7 +51,7 @@ def audit_only(decision: Any, stage: str, *, attempted_text: str = "") -> Any:
         marker += ":mutation_discarded"
     try:
         decision.debug_trace = _join_trace(getattr(decision, "debug_trace", ""), marker)
-    except Exception:
+    except (AttributeError, TypeError, ValueError):
         pass
     return decision
 
@@ -95,7 +95,7 @@ class PublicSpeechSnapshot:
         ):
             try:
                 setattr(decision, name, getattr(self, name))
-            except Exception:
+            except (AttributeError, TypeError, ValueError):
                 pass
         return audit_only(decision, stage, attempted_text=attempted)
 

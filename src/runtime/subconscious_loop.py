@@ -17,6 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
+from runtime.diagnostic_logging import safe_log
+
 from cortex.contracts import SubconsciousReport, ThoughtSurface
 from cortex.subconscious import (
     ConsciousSynthesizer,
@@ -68,11 +70,15 @@ class SubconsciousLoop:
         synthesizer: ConsciousSynthesizer | None = None,
         workers: Iterable[SubconsciousWorker] = (),
         wandering_engine: WanderingThoughtEngine | None = None,
+        logger: Any = None,
     ) -> None:
         self.blackboard = blackboard or SubconsciousBlackboard()
         self.synthesizer = synthesizer or ConsciousSynthesizer()
         self.workers = tuple(workers or ())
         self.wandering_engine = wandering_engine
+        self.logger = logger
+        self.failure_counts: dict[str, int] = {}
+        self.last_failures: dict[str, dict[str, object]] = {}
         self.last_wandering_result: dict[str, object] | None = None
         self.last_tick = SubconsciousTickResult(
             submitted_count=0,
@@ -139,8 +145,9 @@ class SubconsciousLoop:
                 wandering_payload = wandering.to_dict()
                 submitted += len(wandering.fragments)
                 self.last_wandering_result = wandering_payload
-            except Exception:
-                wandering_payload = {"error": "wandering_engine_failed"}
+            except Exception as exc:
+                self._record_failure("wandering", "wandering_engine", exc)
+                wandering_payload = {"error": "wandering_engine_failed", "error_type": type(exc).__name__}
                 self.last_wandering_result = wandering_payload
 
         if run_pre_workers:
@@ -243,7 +250,8 @@ class SubconsciousLoop:
             return None
         try:
             payload = to_dict()
-        except Exception:
+        except Exception as exc:
+            self._record_failure("projection", "inner_court_report", exc)
             return None
         return payload if isinstance(payload, dict) and payload else None
 
@@ -254,6 +262,27 @@ class SubconsciousLoop:
 
     def stop(self) -> None:
         return None
+
+    def diagnostics(self) -> dict[str, object]:
+        return {
+            "workers": len(self.workers),
+            "queued_surface_seeds": len(self._queued_surface_seeds),
+            "failure_counts": dict(self.failure_counts),
+            "last_failures": {key: dict(value) for key, value in self.last_failures.items()},
+            "last_tick": self.last_tick.to_dict(),
+        }
+
+    def _record_failure(self, stage: str, component: str, exc: BaseException) -> None:
+        key = f"{stage}:{component}"
+        self.failure_counts[key] = int(self.failure_counts.get(key, 0)) + 1
+        self.last_failures[key] = {
+            "stage": stage,
+            "component": component,
+            "error_type": type(exc).__name__,
+            "message": str(exc)[:240],
+            "count": self.failure_counts[key],
+        }
+        safe_log(self.logger, "warning", "Subconscious failure stage=%s component=%s: %s", stage, component, exc)
 
     def _context_with_snapshot(
         self,
@@ -306,12 +335,14 @@ class SubconsciousLoop:
                 continue
             try:
                 fragments = tuple(worker.run(context) or ())
-            except Exception:
+            except Exception as exc:
+                self._record_failure("worker", str(getattr(worker, "name", type(worker).__name__) or type(worker).__name__), exc)
                 continue
             for fragment in fragments:
                 try:
                     self.blackboard.submit(fragment)
-                except Exception:
+                except Exception as exc:
+                    self._record_failure("submit", str(getattr(worker, "name", type(worker).__name__) or type(worker).__name__), exc)
                     continue
                 submitted += 1
         return submitted
@@ -336,7 +367,8 @@ class SubconsciousLoop:
                 continue
             try:
                 result = audit(self.blackboard, context.blackboard_snapshot, context)
-            except Exception:
+            except Exception as exc:
+                self._record_failure("audit", str(getattr(worker, "name", type(worker).__name__) or type(worker).__name__), exc)
                 continue
             to_dict = getattr(result, "to_dict", None)
             payload = to_dict() if callable(to_dict) else result

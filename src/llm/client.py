@@ -11,6 +11,7 @@ from llm.token_budget import (
 )
 from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
 from runtime.observability import GLOBAL_OBSERVABILITY
+from runtime.diagnostic_logging import safe_log
 from runtime.inference_broker import (
     GLOBAL_INFERENCE_BROKER,
     current_inference_context,
@@ -50,8 +51,8 @@ def _record_pressure_request(base_url: str, model_name: str, messages, max_token
         GLOBAL_OBSERVABILITY.observe("output_tokens_by_lane", max_tokens, tags=metric_tags)
         snapshot = GLOBAL_TOKEN_PRESSURE_GOVERNOR.snapshot(provider, lane=lane)
         GLOBAL_OBSERVABILITY.gauge("token_pressure_ratio", snapshot.pressure, tags={"provider": provider})
-    except Exception:
-        pass
+    except Exception as exc:
+        safe_log(_LOGGER, "debug", "Token pressure request telemetry failed: %s", exc)
     return provider
 
 
@@ -218,7 +219,7 @@ def _retry_after_seconds(response, default: float = 60.0) -> float:
         match = re.search(r'"retryDelay"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)s?', body, flags=re.I)
         if match:
             return max(1.0, min(float(match.group(1)), 3600.0))
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         pass
     return max(1.0, float(default))
 
@@ -344,8 +345,8 @@ class LlamaServerClient:
             models = payload.get("data", [])
             if models:
                 return models[0].get("id", "local-model")
-        except Exception:
-            pass
+        except (requests.RequestException, TypeError, ValueError, KeyError) as exc:
+            safe_log(_LOGGER, "debug", "Local model discovery failed: %s", exc)
         return "local-model"
 
     def create_chat_completion(
@@ -953,5 +954,5 @@ class GeminiClient:
                 fh.write(f"\n===== {self.model_name} status={status} =====\n")
                 fh.write("PAYLOAD:\n" + _json.dumps(payload, ensure_ascii=False)[:4000] + "\n")
                 fh.write("BODY:\n" + (response.text or "")[:2000] + "\n")
-        except Exception:
-            pass
+        except (OSError, TypeError, ValueError) as exc:
+            safe_log(_LOGGER, "debug", "LLM debug dump failed: %s", exc)

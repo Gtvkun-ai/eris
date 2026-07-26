@@ -26,7 +26,7 @@ from runtime.workspace_manager import default_eris_home
 
 
 _DEFAULT_SETTINGS: dict[str, Any] = {
-    "version": 4,
+    "version": 12,
     "architecture": {
         "mode": "ai_orchestrated",
         "startup_greeting": True,
@@ -194,6 +194,62 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "stale_result_guard_enabled": True,
         "persist_research_memory": False,
     },
+    "ai_runtime": {
+        "observer_workers": 2,
+        "state_persistence_interval_seconds": 0.5,
+    },
+    "public_turn": {
+        "reply_window_seconds": 30.0,
+        "block_min_seconds": 8.0,
+        "block_max_seconds": 120.0,
+        "default_block_seconds": 18.0,
+    },
+    "engagement": {
+        "enabled": True,
+        "max_events": 160,
+        "persistence_interval_seconds": 2.0,
+        "signal_importance_threshold": 0.45,
+        "activity_key_cache_size": 256,
+        "activity_key_retention": 128,
+        "max_terminal_engagements": 64,
+        "terminal_retention_seconds": 604800.0,
+        "event_consumer_batch_size": 128,
+        "delivery_lease_seconds": 30.0,
+        "delivery_max_attempts": 5,
+        "delivery_backoff_initial_seconds": 2.0,
+        "delivery_backoff_max_seconds": 60.0,
+        "max_dead_letters": 64,
+        "delivery_stop_on_gap": True,
+        "consumer_lag_warning_events": 128,
+        "open_dead_letter_warning_count": 1,
+        "max_delivery_receipts": 512,
+        "delivery_split_poison_batches": False,
+        "delivery_split_after_attempts": 2,
+        "managed_consumer_poll_budget": 8,
+        "snapshot_journal_enabled": True,
+        "snapshot_journal_auto_repair": True,
+    },
+    "observability": {
+        "slo_window_seconds": 3600.0,
+        "slo_max_samples": 720,
+        "minimum_ready_ratio": 0.95,
+        "maximum_degraded_seconds": 300.0,
+        "max_incidents": 64,
+    },
+    "health": {
+        "max_events": 128,
+    },
+    "protocol": {
+        "max_message_type_chars": 96,
+        "reject_non_mapping": True,
+        "record_unknown_messages": True,
+    },
+    "run_loop": {
+        "startup_retry_delay_seconds": 0.2,
+        "error_backoff_initial_seconds": 0.25,
+        "error_backoff_max_seconds": 4.0,
+        "consecutive_error_stop_limit": 0,
+    },
     "hardening": {
         # Phase 7/8: một nguồn cấu hình cho validation + release stable. Các env
         # cũ vẫn được đọc để migration, nhưng runtime mới nên đi qua block này.
@@ -324,6 +380,48 @@ _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
     ("tutor", "self_search_enabled"): ("ERIS_TUTOR_SELF_SEARCH_ENABLED", "bool"),
     ("tutor", "stale_result_guard_enabled"): ("ERIS_TUTOR_STALE_GUARD", "bool"),
     ("tutor", "persist_research_memory"): ("ERIS_TUTOR_RESEARCH_PERSIST", "bool"),
+    ("ai_runtime", "observer_workers"): ("ERIS_AI_OBSERVER_WORKERS", "int"),
+    ("ai_runtime", "state_persistence_interval_seconds"): ("ERIS_AI_STATE_PERSIST_INTERVAL_SEC", "float"),
+    ("public_turn", "reply_window_seconds"): ("ERIS_PUBLIC_TURN_REPLY_WINDOW_SEC", "float"),
+    ("public_turn", "block_min_seconds"): ("ERIS_PUBLIC_TURN_BLOCK_MIN_SEC", "float"),
+    ("public_turn", "block_max_seconds"): ("ERIS_PUBLIC_TURN_BLOCK_MAX_SEC", "float"),
+    ("public_turn", "default_block_seconds"): ("ERIS_PUBLIC_TURN_DEFAULT_BLOCK_SEC", "float"),
+    ("engagement", "enabled"): ("ERIS_ENGAGEMENT_ENABLED", "bool"),
+    ("engagement", "max_events"): ("ERIS_ENGAGEMENT_MAX_EVENTS", "int"),
+    ("engagement", "persistence_interval_seconds"): ("ERIS_ENGAGEMENT_PERSIST_INTERVAL_SEC", "float"),
+    ("engagement", "signal_importance_threshold"): ("ERIS_ENGAGEMENT_SIGNAL_THRESHOLD", "float"),
+    ("engagement", "activity_key_cache_size"): ("ERIS_ENGAGEMENT_ACTIVITY_CACHE", "int"),
+    ("engagement", "activity_key_retention"): ("ERIS_ENGAGEMENT_ACTIVITY_RETENTION", "int"),
+    ("engagement", "max_terminal_engagements"): ("ERIS_ENGAGEMENT_MAX_TERMINAL", "int"),
+    ("engagement", "terminal_retention_seconds"): ("ERIS_ENGAGEMENT_TERMINAL_RETENTION_SEC", "float"),
+    ("engagement", "event_consumer_batch_size"): ("ERIS_ENGAGEMENT_EVENT_BATCH", "int"),
+    ("engagement", "delivery_lease_seconds"): ("ERIS_ENGAGEMENT_DELIVERY_LEASE_SEC", "float"),
+    ("engagement", "delivery_max_attempts"): ("ERIS_ENGAGEMENT_DELIVERY_MAX_ATTEMPTS", "int"),
+    ("engagement", "delivery_backoff_initial_seconds"): ("ERIS_ENGAGEMENT_DELIVERY_BACKOFF_INITIAL_SEC", "float"),
+    ("engagement", "delivery_backoff_max_seconds"): ("ERIS_ENGAGEMENT_DELIVERY_BACKOFF_MAX_SEC", "float"),
+    ("engagement", "max_dead_letters"): ("ERIS_ENGAGEMENT_MAX_DEAD_LETTERS", "int"),
+    ("engagement", "delivery_stop_on_gap"): ("ERIS_ENGAGEMENT_STOP_ON_GAP", "bool"),
+    ("engagement", "consumer_lag_warning_events"): ("ERIS_ENGAGEMENT_LAG_WARNING_EVENTS", "int"),
+    ("engagement", "open_dead_letter_warning_count"): ("ERIS_ENGAGEMENT_OPEN_DLQ_WARNING", "int"),
+    ("engagement", "snapshot_journal_enabled"): ("ERIS_ENGAGEMENT_SNAPSHOT_JOURNAL", "bool"),
+    ("engagement", "snapshot_journal_auto_repair"): ("ERIS_ENGAGEMENT_SNAPSHOT_AUTO_REPAIR", "bool"),
+    ("engagement", "max_delivery_receipts"): ("ERIS_ENGAGEMENT_MAX_DELIVERY_RECEIPTS", "int"),
+    ("engagement", "delivery_split_poison_batches"): ("ERIS_ENGAGEMENT_SPLIT_POISON_BATCHES", "bool"),
+    ("engagement", "delivery_split_after_attempts"): ("ERIS_ENGAGEMENT_SPLIT_AFTER_ATTEMPTS", "int"),
+    ("engagement", "managed_consumer_poll_budget"): ("ERIS_ENGAGEMENT_CONSUMER_POLL_BUDGET", "int"),
+    ("observability", "slo_window_seconds"): ("ERIS_OBSERVABILITY_SLO_WINDOW_SEC", "float"),
+    ("observability", "slo_max_samples"): ("ERIS_OBSERVABILITY_SLO_MAX_SAMPLES", "int"),
+    ("observability", "minimum_ready_ratio"): ("ERIS_OBSERVABILITY_MIN_READY_RATIO", "float"),
+    ("observability", "maximum_degraded_seconds"): ("ERIS_OBSERVABILITY_MAX_DEGRADED_SEC", "float"),
+    ("observability", "max_incidents"): ("ERIS_OBSERVABILITY_MAX_INCIDENTS", "int"),
+    ("health", "max_events"): ("ERIS_HEALTH_MAX_EVENTS", "int"),
+    ("protocol", "max_message_type_chars"): ("ERIS_PROTOCOL_MAX_MESSAGE_TYPE_CHARS", "int"),
+    ("protocol", "reject_non_mapping"): ("ERIS_PROTOCOL_REJECT_NON_MAPPING", "bool"),
+    ("protocol", "record_unknown_messages"): ("ERIS_PROTOCOL_RECORD_UNKNOWN", "bool"),
+    ("run_loop", "startup_retry_delay_seconds"): ("ERIS_RUN_LOOP_STARTUP_RETRY_DELAY_S", "float"),
+    ("run_loop", "error_backoff_initial_seconds"): ("ERIS_RUN_LOOP_ERROR_BACKOFF_INITIAL_S", "float"),
+    ("run_loop", "error_backoff_max_seconds"): ("ERIS_RUN_LOOP_ERROR_BACKOFF_MAX_S", "float"),
+    ("run_loop", "consecutive_error_stop_limit"): ("ERIS_RUN_LOOP_ERROR_STOP_LIMIT", "int"),
     ("hardening", "profile"): ("ERIS_HARDENING_PROFILE", "str"),
     ("hardening", "production_validation_enabled"): ("ERIS_PHASE7_VALIDATION_ENABLED", "bool"),
     ("hardening", "production_validation_turns"): ("ERIS_PHASE7_VALIDATION_TURNS", "int"),
@@ -521,6 +619,12 @@ class RuntimeSettingsStore:
         v2 -> v3 nâng đúng baseline warmth 0.18 lên 0.36; giá trị đã được
         người dùng chỉnh khác baseline cũ được giữ nguyên.
         v3 -> v4 thêm companion-commentary cadence và nới ngân sách initiative.
+        v4 -> v5 thêm typed policy blocks cho public-turn, engagement và health.
+        v5 -> v6 thêm typed policy cho AI observer và state persistence throttle.
+        v6 -> v7 thêm protocol validation và run-loop recovery policy.
+        v7 -> v8 thêm lifecycle retention và event consumer batch policy.
+        v8 -> v9 thêm reliable delivery và readiness SLO policy.
+        v9 -> v10 thêm gap fail-closed, lag pressure và dead-letter recovery policy.
         """
         if not isinstance(payload, Mapping):
             return {}, False
@@ -590,6 +694,91 @@ class RuntimeSettingsStore:
             commentary.setdefault("startup_delay_seconds", 8)
             commentary.setdefault("minimum_user_silence_seconds", 12)
             out["commentary"] = commentary
+            migrated = True
+
+        if version < 5:
+            public_turn = dict(out.get("public_turn") or {}) if isinstance(out.get("public_turn"), Mapping) else {}
+            public_turn.setdefault("reply_window_seconds", 30.0)
+            public_turn.setdefault("block_min_seconds", 8.0)
+            public_turn.setdefault("block_max_seconds", 120.0)
+            public_turn.setdefault("default_block_seconds", 18.0)
+            out["public_turn"] = public_turn
+
+            engagement = dict(out.get("engagement") or {}) if isinstance(out.get("engagement"), Mapping) else {}
+            engagement.setdefault("enabled", True)
+            engagement.setdefault("max_events", 160)
+            engagement.setdefault("persistence_interval_seconds", 2.0)
+            engagement.setdefault("signal_importance_threshold", 0.45)
+            engagement.setdefault("activity_key_cache_size", 256)
+            engagement.setdefault("activity_key_retention", 128)
+            out["engagement"] = engagement
+
+            health = dict(out.get("health") or {}) if isinstance(out.get("health"), Mapping) else {}
+            health.setdefault("max_events", 128)
+            out["health"] = health
+            migrated = True
+
+        if version < 6:
+            ai_runtime = dict(out.get("ai_runtime") or {}) if isinstance(out.get("ai_runtime"), Mapping) else {}
+            ai_runtime.setdefault("observer_workers", 2)
+            ai_runtime.setdefault("state_persistence_interval_seconds", 0.5)
+            out["ai_runtime"] = ai_runtime
+            migrated = True
+
+        if version < 7:
+            protocol = dict(out.get("protocol") or {}) if isinstance(out.get("protocol"), Mapping) else {}
+            protocol.setdefault("max_message_type_chars", 96)
+            protocol.setdefault("reject_non_mapping", True)
+            protocol.setdefault("record_unknown_messages", True)
+            out["protocol"] = protocol
+
+            run_loop = dict(out.get("run_loop") or {}) if isinstance(out.get("run_loop"), Mapping) else {}
+            run_loop.setdefault("startup_retry_delay_seconds", 0.2)
+            run_loop.setdefault("error_backoff_initial_seconds", 0.25)
+            run_loop.setdefault("error_backoff_max_seconds", 4.0)
+            run_loop.setdefault("consecutive_error_stop_limit", 0)
+            out["run_loop"] = run_loop
+            migrated = True
+
+        if version < 8:
+            engagement = dict(out.get("engagement") or {}) if isinstance(out.get("engagement"), Mapping) else {}
+            engagement.setdefault("max_terminal_engagements", 64)
+            engagement.setdefault("terminal_retention_seconds", 604800.0)
+            engagement.setdefault("event_consumer_batch_size", 128)
+            out["engagement"] = engagement
+            migrated = True
+
+        if version < 9:
+            engagement = dict(out.get("engagement") or {}) if isinstance(out.get("engagement"), Mapping) else {}
+            engagement.setdefault("delivery_lease_seconds", 30.0)
+            engagement.setdefault("delivery_max_attempts", 5)
+            engagement.setdefault("delivery_backoff_initial_seconds", 2.0)
+            engagement.setdefault("delivery_backoff_max_seconds", 60.0)
+            engagement.setdefault("max_dead_letters", 64)
+            out["engagement"] = engagement
+
+            observability = dict(out.get("observability") or {}) if isinstance(out.get("observability"), Mapping) else {}
+            observability.setdefault("slo_window_seconds", 3600.0)
+            observability.setdefault("slo_max_samples", 720)
+            observability.setdefault("minimum_ready_ratio", 0.95)
+            observability.setdefault("maximum_degraded_seconds", 300.0)
+            observability.setdefault("max_incidents", 64)
+            out["observability"] = observability
+            migrated = True
+
+        if version < 10:
+            engagement = dict(out.get("engagement") or {}) if isinstance(out.get("engagement"), Mapping) else {}
+            engagement.setdefault("delivery_stop_on_gap", True)
+            engagement.setdefault("consumer_lag_warning_events", 128)
+            engagement.setdefault("open_dead_letter_warning_count", 1)
+            out["engagement"] = engagement
+            migrated = True
+
+        if version < 12:
+            engagement = dict(out.get("engagement") or {}) if isinstance(out.get("engagement"), Mapping) else {}
+            engagement.setdefault("snapshot_journal_enabled", True)
+            engagement.setdefault("snapshot_journal_auto_repair", True)
+            out["engagement"] = engagement
             migrated = True
 
         out["version"] = target_version
@@ -830,6 +1019,33 @@ def _coerce_setting(path: str, value: Any, expected: Any) -> tuple[bool, Any]:
         "commentary.maximum_quiet_seconds": (30, 3600),
         "commentary.startup_delay_seconds": (0, 120),
         "commentary.minimum_user_silence_seconds": (3, 120),
+        "ai_runtime.observer_workers": (1, 8),
+        "ai_runtime.state_persistence_interval_seconds": (0, 60),
+        "public_turn.reply_window_seconds": (5, 300),
+        "public_turn.block_min_seconds": (0, 120),
+        "public_turn.block_max_seconds": (1, 600),
+        "public_turn.default_block_seconds": (0, 600),
+        "engagement.max_events": (24, 4096),
+        "engagement.persistence_interval_seconds": (0, 60),
+        "engagement.signal_importance_threshold": (0.0, 1.0),
+        "engagement.activity_key_cache_size": (32, 4096),
+        "engagement.activity_key_retention": (16, 4096),
+        "engagement.max_terminal_engagements": (0, 4096),
+        "engagement.terminal_retention_seconds": (0, 31536000),
+        "engagement.event_consumer_batch_size": (1, 1024),
+        "engagement.delivery_lease_seconds": (1, 3600),
+        "engagement.delivery_max_attempts": (1, 100),
+        "engagement.delivery_backoff_initial_seconds": (0, 3600),
+        "engagement.delivery_backoff_max_seconds": (0, 86400),
+        "engagement.max_dead_letters": (1, 4096),
+        "engagement.consumer_lag_warning_events": (1, 1000000),
+        "engagement.open_dead_letter_warning_count": (1, 4096),
+        "observability.slo_window_seconds": (60, 604800),
+        "observability.slo_max_samples": (16, 10000),
+        "observability.minimum_ready_ratio": (0.0, 1.0),
+        "observability.maximum_degraded_seconds": (0, 604800),
+        "observability.max_incidents": (4, 4096),
+        "health.max_events": (16, 4096),
         "hardening.production_validation_turns": (20, 30),
         "stage.prefetch_workers": (1, 8),
         "stage.max_tts_segments": (1, 12),

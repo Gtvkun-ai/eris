@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import threading
@@ -25,6 +26,9 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
+
+
+_LOG = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -386,8 +390,8 @@ class MaintenanceService:
             if callable(cancel):
                 try:
                     cancel()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    self._log("debug", "maintenance future cancellation failed for %s: %s", future_name, exc)
             if hasattr(owner, future_name):
                 setattr(owner, future_name, None)
         for queue_name in ("private_mind_surface_queue", "private_life_surface_queue", "private_mind_inquiry_plan"):
@@ -779,8 +783,8 @@ class MaintenanceService:
                         payload = json.loads(manifest.read_text(encoding="utf-8"))
                         created_at = float(payload.get("created_at") or created_at)
                         action = str(payload.get("action") or action)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        self._log("debug", "maintenance manifest parse failed for %s: %s", manifest, exc)
                 stat = self._path_stat(path)
                 candidates.append((created_at, path, action, int(stat.get("bytes", 0) or 0)))
 
@@ -825,8 +829,8 @@ class MaintenanceService:
         try:
             from runtime.observability import ensure_observability
             ensure_observability(self.owner).record_maintenance(phase=phase, payload=payload)
-        except Exception:
-            pass
+        except Exception as exc:
+            self._log("debug", "maintenance observability emission failed: %s", exc)
 
     def _backup_files(self, action: str, files: Iterable[Path], *, result: MaintenanceResult) -> str:
         stamp = time.strftime("%Y%m%d_%H%M%S")
@@ -925,13 +929,13 @@ class MaintenanceService:
             try:
                 clear()
                 return
-            except Exception:
-                pass
+            except Exception as exc:
+                self._log("debug", "maintenance container clear failed for %s: %s", name, exc)
         if value is not None:
             try:
                 setattr(owner, name, type(value)())
-            except Exception:
-                pass
+            except Exception as exc:
+                self._log("debug", "maintenance container replacement failed for %s: %s", name, exc)
 
     @staticmethod
     def _atomic_json(path: Path, payload: Any) -> None:
@@ -957,8 +961,8 @@ class MaintenanceService:
         if callable(method):
             try:
                 method(message, *args)
-            except Exception:
-                pass
+            except Exception as exc:
+                _LOG.debug("maintenance logger failed: %s", exc, exc_info=exc)
 
 
 __all__ = ["ACTION_SPECS", "MaintenanceActionSpec", "MaintenanceResult", "MaintenanceService"]
