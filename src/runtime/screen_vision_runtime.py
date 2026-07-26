@@ -15,6 +15,7 @@ import time
 from cortex.observer_contracts import ObserverFrame, SemanticSceneNote
 from cortex.vision_semantic_compressor import RemoteCaptionClient, RemoteStructureClient
 from runtime.vision_grounding import VisionGroundingPolicy, VisionGroundingReport
+from llm.deepseek import supports_image_input
 
 VISION_TRACE_MARKER = "vision_facts_attached"
 
@@ -56,8 +57,8 @@ class ScreenVisionRuntimeMixin:
         """Tầng caption (ảnh → mô tả) chạy REMOTE khi llm_service có vision_client.
 
         vision_client được dựng ở process_manager.build_vision_client() khi bật
-        ERIS_VISION_API_ENABLED (vd shopaikey grok-3-image). Có nó ⇒ thay moondream
-        local bằng API; không ⇒ trả None ⇒ compressor caption local như cũ.
+        ERIS_VISION_API_ENABLED và khai một endpoint multimodal riêng. DeepSeek
+        hiện chỉ làm text ở lane này, nên thiếu vision client thì caption rơi về local.
         """
         remote = getattr(llm_service, "vision_client", None)
         # Nếu provider chính là multimodal nhưng chưa dựng lane riêng, thử dùng
@@ -70,7 +71,14 @@ class ScreenVisionRuntimeMixin:
             }
             if use_main:
                 candidate = getattr(llm_service, "client", None)
-                if candidate is not None and callable(getattr(candidate, "create_chat_completion", None)):
+                if (
+                    candidate is not None
+                    and callable(getattr(candidate, "create_chat_completion", None))
+                    and supports_image_input(
+                        getattr(candidate, "base_url", ""),
+                        getattr(candidate, "model_name", ""),
+                    )
+                ):
                     remote = candidate
         if remote is None or not callable(getattr(remote, "create_chat_completion", None)):
             return None
@@ -84,19 +92,26 @@ class ScreenVisionRuntimeMixin:
     def _build_vision_structure_client(self, llm_service):
         """Tầng cấu trúc-hoá vision (caption → JSON) chạy REMOTE.
 
-        Ưu tiên fallback_client (glm-4.5-flash trên shopaikey) — ổn định, cùng server
-        với grok, tránh gemma 500. ERIS_VISION_STRUCTURE_REMOTE:
+        Tầng này chỉ nhận caption dạng text, nên có thể dùng DeepSeek main.
+        ERIS_VISION_STRUCTURE_REMOTE:
           0/off       → tắt (structuring local nếu có)
-          gemma/style → dùng style_client (gemma) như cũ
-          1/auto/glm  → dùng fallback_client (glm) [mặc định]
+          gemma/style → dùng style_client
+          main/deepseek → dùng main client
+          1/auto      → fallback_client, rồi style_client, rồi main client
         """
         mode = os.environ.get("ERIS_VISION_STRUCTURE_REMOTE", "auto").strip().lower()
         if mode in {"0", "false", "no", "off"}:
             return None
         if mode in {"gemma", "style"}:
             remote = getattr(llm_service, "style_client", None)
+        elif mode in {"main", "deepseek"}:
+            remote = getattr(llm_service, "client", None)
         else:
-            remote = getattr(llm_service, "fallback_client", None) or getattr(llm_service, "style_client", None)
+            remote = (
+                getattr(llm_service, "fallback_client", None)
+                or getattr(llm_service, "style_client", None)
+                or getattr(llm_service, "client", None)
+            )
         if remote is None or not callable(getattr(remote, "create_chat_completion", None)):
             self.logger.warning(
                 "[vision structure] bật nhưng không có remote client (fallback/style) — structuring rơi về local."

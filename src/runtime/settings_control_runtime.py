@@ -50,7 +50,7 @@ class SettingsControlRuntimeMixin:
         """Trả danh tính não chính và credential hiệu lực, tuyệt đối không lộ key."""
 
         client = getattr(getattr(self, "llm_service", None), "client", None)
-        requested_provider = str(os.environ.get("ERIS_REMOTE_PROVIDER", "") or "").strip().lower()
+        requested_provider = str(os.environ.get("ERIS_REMOTE_PROVIDER", "deepseek") or "deepseek").strip().lower()
         base_url = str(getattr(client, "base_url", "") or "").strip()
         model = str(getattr(client, "model_name", "") or "").strip()
         try:

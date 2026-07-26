@@ -27,7 +27,7 @@ _SECRET_PATTERNS: tuple[Pattern[str], ...] = (
     re.compile(r"\bglpat-[A-Za-z0-9_\-]{20,}\b"),
     re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{20,}\b"),
     re.compile(r"\bagt_codex_[A-Za-z0-9_\-]{12,}\b"),
-    re.compile(r"\b(?:claude|anthropic|openrouter|gemini|google|qwen|shopai)[_-]?(?:key|token)[_-]?[A-Za-z0-9_\-]{12,}\b", re.IGNORECASE),
+    re.compile(r"\b(?:claude|anthropic|openrouter|gemini|google|qwen|deepseek)[_-]?(?:key|token)[_-]?[A-Za-z0-9_\-]{12,}\b", re.IGNORECASE),
     re.compile(r"\b[A-Za-z0-9_\-]{32,}\.[A-Za-z0-9_\-]{16,}\.[A-Za-z0-9_\-]{16,}\b"),  # JWT-ish
 )
 

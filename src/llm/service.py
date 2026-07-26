@@ -865,14 +865,19 @@ class LlmService:
                     continue
                 message = choice.get("message")
                 if isinstance(message, dict):
-                    value = message.get("reasoning")
+                    for key in ("reasoning_content", "reasoning"):
+                        value = message.get(key)
+                        if isinstance(value, str) and value.strip():
+                            return value.strip()
+                for key in ("reasoning_content", "reasoning"):
+                    value = choice.get(key)
                     if isinstance(value, str) and value.strip():
                         return value.strip()
-                value = choice.get("reasoning")
-                if isinstance(value, str) and value.strip():
-                    return value.strip()
-        direct = response.get("reasoning")
-        return direct.strip() if isinstance(direct, str) else ""
+        for key in ("reasoning_content", "reasoning"):
+            direct = response.get(key)
+            if isinstance(direct, str) and direct.strip():
+                return direct.strip()
+        return ""
 
     def _extract_finish_reason(self, response: dict) -> str:
         if not isinstance(response, dict):

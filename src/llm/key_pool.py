@@ -489,7 +489,7 @@ class ApiKeyPool:
 
 
 _GROQ_PROVIDERS = {"openai", "openai_compatible", "compatible", "remote", "groq"}
-_REMOTE_MAIN_KINDS = {"main", "main_brain", "remote_main", "aggregator", "shopaikey"}
+_REMOTE_MAIN_KINDS = {"main", "main_brain", "remote_main", "deepseek"}
 
 # Có ba pool tách biệt:
 # - remote: credential dành riêng cho não chính;
@@ -565,15 +565,17 @@ def _collect_remote_keys() -> list[str]:
     try:
         from eris_secrets import _load_secrets, get_provider_profile, get_secret
 
-        provider = str(os.environ.get("ERIS_REMOTE_PROVIDER", "openai_compatible") or "").strip().lower()
-        if provider in {"", "openai", "compatible", "shopaikey"}:
+        provider = str(os.environ.get("ERIS_REMOTE_PROVIDER", "deepseek") or "").strip().lower()
+        if provider in {"", "deepseek"}:
+            provider = "deepseek"
+        elif provider in {"openai", "compatible"}:
             provider = "openai_compatible"
         profile = get_provider_profile(provider, slot="remote_main")
         profile_key = str(profile.get("api_key") or "").strip()
         if not _is_placeholder(profile_key):
             ordered.append(profile_key)
 
-        primary = get_secret("ERIS_REMOTE_API_KEY", "ERIS_AGGREGATOR_API_KEY")
+        primary = get_secret("DEEPSEEK_API_KEY", "ERIS_REMOTE_API_KEY")
         if not _is_placeholder(primary):
             ordered.append(primary)
 
@@ -623,8 +625,8 @@ def get_key_pool(kind: str = "gemini") -> ApiKeyPool:
     """Trả singleton pool theo lane ``remote`` / ``gemini`` / ``groq``.
 
     ``remote_main`` luôn phân giải sang pool ``remote`` riêng, bất kể endpoint
-    là ShopAIKey, Gemini hay Groq. Nhờ vậy não chính không âm thầm mượn pool của
-    parser, TTS hoặc private-mind.
+    là DeepSeek, Gemini, Groq hay OpenAI-compatible. Nhờ vậy não chính không âm
+    thầm mượn pool của parser, TTS hoặc private-mind.
     """
     k = _normalize_kind(kind)
     pool = _pools.get(k)

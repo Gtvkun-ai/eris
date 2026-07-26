@@ -17,6 +17,12 @@ from runtime.inference_broker import (
     current_inference_context,
 )
 from llm.key_pool import get_provider_circuit
+from llm.deepseek import (
+    is_deepseek,
+    normalize_model as normalize_deepseek_model,
+    reasoning_effort as deepseek_reasoning_effort,
+    thinking_mode as deepseek_thinking_mode,
+)
 
 _LOGGER = logging.getLogger("LLM")
 
@@ -289,7 +295,7 @@ def _chat_payload_variants(payload: dict) -> list[dict]:
 
     # Aggregator OpenAI-compatible thuần có thể không nhận các field reasoning.
     # Bỏ chúng ở cuối cùng, sau khi đã thử đường parsed reasoning chuẩn.
-    for optional_key in ("reasoning_effort", "reasoning_format", "include_reasoning"):
+    for optional_key in ("reasoning_effort", "reasoning_format", "include_reasoning", "thinking"):
         if any(optional_key in variant for variant in variants):
             for variant in list(variants):
                 if optional_key not in variant:
@@ -422,7 +428,13 @@ class OpenAICompatibleClient:
             lease = key_pool.acquire(allow_cooling=True)
             api_key = lease.key if lease is not None else ""
         self.api_key = self._normalize_api_key(api_key)
-        self.model_name = model_name.strip() or "gpt-5.4-nano"
+        configured_model = model_name.strip() or "gpt-5.4-nano"
+        self.configured_model_name = configured_model
+        self.model_name = (
+            normalize_deepseek_model(configured_model)
+            if is_deepseek(self.base_url, configured_model)
+            else configured_model
+        )
         self.timeout = timeout
         self._provider_circuit = get_provider_circuit(self.base_url)
 
@@ -487,21 +499,35 @@ class OpenAICompatibleClient:
                     last_msg["content"] = list(last_msg["content"]) + [{"type": "text", "text": "\n\nReturn the output in json format."}]
                 messages[-1] = last_msg
 
+        deepseek_request = is_deepseek(self.base_url, self.model_name)
         groq_reasoning = _is_groq_endpoint(self.base_url) and _model_supports_reasoning_format(self.model_name)
         payload = {
             "model": self.model_name,
             "messages": messages,
-            "temperature": temperature,
-            "frequency_penalty": frequency_penalty,
-            "presence_penalty": presence_penalty,
         }
-        # Groq tính reasoning + final answer chung trong completion budget. Dùng
-        # field mới để Qwen có đủ chỗ suy luận mà vẫn đóng JSON hoàn chỉnh.
-        if groq_reasoning:
-            payload["max_completion_tokens"] = max_tokens
-            payload["top_p"] = 0.95
-        else:
+        if deepseek_request:
+            mode = deepseek_thinking_mode(self.configured_model_name)
+            payload["thinking"] = {"type": mode}
             payload["max_tokens"] = max_tokens
+            if mode == "enabled":
+                payload["reasoning_effort"] = deepseek_reasoning_effort(reasoning_effort)
+            else:
+                # Sampling controls are meaningful only in non-thinking mode.
+                payload["temperature"] = temperature
+                payload["frequency_penalty"] = frequency_penalty
+                payload["presence_penalty"] = presence_penalty
+        else:
+            payload.update({
+                "temperature": temperature,
+                "frequency_penalty": frequency_penalty,
+                "presence_penalty": presence_penalty,
+            })
+            # Groq tính reasoning + final answer chung trong completion budget.
+            if groq_reasoning:
+                payload["max_completion_tokens"] = max_tokens
+                payload["top_p"] = 0.95
+            else:
+                payload["max_tokens"] = max_tokens
         if response_format is not None:
             payload["response_format"] = response_format
         if grammar is not None:

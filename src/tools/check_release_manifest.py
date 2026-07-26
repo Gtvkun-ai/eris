@@ -11,8 +11,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "RELEASE_MANIFEST.json"
-EXPECTED_RELEASE = "V34"
-MIN_TESTS = 345
+EXPECTED_RELEASE = "V35"
+MIN_TESTS = 352
 MIN_COVERAGE_FLOOR = 36.0
 EXPECTED_SETTINGS_SCHEMA = 12
 EXPECTED_ENGAGEMENT_SCHEMA = 7
@@ -124,10 +124,50 @@ def main() -> int:
         "automatic_snapshot_fallback",
         "reproducible_source_archives",
         "safe_bounded_archive_extraction",
+        "official_deepseek_provider",
+        "legacy_aggregator_removed",
+        "deepseek_thinking_mode_control",
+        "deepseek_text_only_vision_guard",
     )
     for capability in required_capabilities:
         if capabilities.get(capability) is not True:
             errors.append(f"release capability missing: {capability}")
+
+    deepseek_text = (ROOT / "llm/deepseek.py").read_text(encoding="utf-8")
+    process_text = (ROOT / "llm/process_manager.py").read_text(encoding="utf-8")
+    client_text = (ROOT / "llm/client.py").read_text(encoding="utf-8")
+    vision_text = (ROOT / "runtime/screen_vision_runtime.py").read_text(encoding="utf-8")
+    for token in (
+        'DEEPSEEK_BASE_URL = "https://api.deepseek.com"',
+        'DEEPSEEK_DEFAULT_MODEL = "deepseek-v4-flash"',
+        'DEEPSEEK_STRONG_MODEL = "deepseek-v4-pro"',
+    ):
+        if token not in deepseek_text:
+            errors.append(f"DeepSeek provider contract missing: {token}")
+    if 'ERIS_REMOTE_PROVIDER", "deepseek"' not in process_text:
+        errors.append("DeepSeek is no longer the default remote provider")
+    if 'DEEPSEEK_API_KEY' not in process_text:
+        errors.append("DeepSeek credential lookup missing")
+    if 'reasoning_content' not in (ROOT / "llm/service.py").read_text(encoding="utf-8"):
+        errors.append("DeepSeek reasoning_content isolation missing")
+    if 'supports_image_input' not in vision_text:
+        errors.append("DeepSeek text-only vision guard missing")
+    forbidden_parts = (
+        "shop" + "aikey",
+        "eris_" + "aggregator_api_key",
+        "eris_" + "aggregator_base_url",
+    )
+    for relative in (
+        "llm/process_manager.py",
+        "llm/key_pool.py",
+        "runtime/private_mind_model_adapter.py",
+        "runtime/screen_vision_runtime.py",
+    ):
+        text = (ROOT / relative).read_text(encoding="utf-8").lower()
+        if any(token in text for token in forbidden_parts):
+            errors.append(f"legacy aggregator dependency remains in {relative}")
+    if 'payload["thinking"]' not in client_text:
+        errors.append("DeepSeek thinking payload control missing")
 
     if errors:
         for error in errors:

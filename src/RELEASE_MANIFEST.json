@@ -1,7 +1,7 @@
 {
   "schema_version": 6,
-  "release": "V34",
-  "project_version": "0.34.0",
+  "release": "V35",
+  "project_version": "0.35.0",
   "architecture": {
     "coordinator_max_lines": 180,
     "coordinator_verified_lines": 136,
@@ -16,9 +16,9 @@
     "diagnostics_schema": 6
   },
   "quality": {
-    "verified_tests": 345,
+    "verified_tests": 352,
     "runtime_coverage_floor_percent": 36.0,
-    "runtime_coverage_verified_percent": 36.18,
+    "runtime_coverage_verified_percent": 36.21,
     "broad_exception_handlers": 1085,
     "silent_exception_handlers": 162,
     "v30_broad_exception_handlers": 1090,
@@ -64,6 +64,10 @@
     "snapshot_rollback_detection": true,
     "automatic_snapshot_fallback": true,
     "reproducible_source_archives": true,
-    "safe_bounded_archive_extraction": true
+    "safe_bounded_archive_extraction": true,
+    "official_deepseek_provider": true,
+    "legacy_aggregator_removed": true,
+    "deepseek_thinking_mode_control": true,
+    "deepseek_text_only_vision_guard": true
   }
 }

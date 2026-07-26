@@ -29,6 +29,7 @@ from typing import Any, Mapping
 from cortex.private_mind.contracts import EvidenceDossier, ThoughtFragment, compact_text, to_plain
 from eris_secrets import apply_secrets_to_environ, get_secret
 from llm.client import GeminiClient, OpenAICompatibleClient
+from llm.deepseek import DEEPSEEK_BASE_URL, DEEPSEEK_DEFAULT_MODEL, normalize_model as normalize_deepseek_model
 from llm.key_pool import get_key_pool
 
 
@@ -178,7 +179,7 @@ class RuntimePrivateMindModelAdapter:
         return (
             self.config.api_key
             or pool_key
-            or get_secret("ERIS_PRIVATE_MIND_API_KEY", "ERIS_REMOTE_API_KEY", "GEMINI_API_KEY")
+            or get_secret("ERIS_PRIVATE_MIND_API_KEY", "DEEPSEEK_API_KEY", "ERIS_REMOTE_API_KEY", "GEMINI_API_KEY")
         )
 
     def _rotate_to_next_key(self) -> bool:
@@ -206,20 +207,22 @@ class RuntimePrivateMindModelAdapter:
         """Adapter DỰ PHÒNG riêng cho Inner Diary.
 
         Dùng khi provider chính (Gemini gemma) chết / lỗi JSON: diary nhảy sang một
-        model OpenAI-compatible trả phí (vd qwen-plus-character qua aggregator) để
+        model DeepSeek hoặc OpenAI-compatible riêng để
         không bị câm. Trả None nếu chưa khai đủ (model + base_url + key) → khi đó
         InnerDiaryWriter chạy y như cũ (không regression).
         """
         apply_secrets_to_environ()
         if not _env_flag("ERIS_INNER_DIARY_FALLBACK", False):
             return None
-        provider = str(os.getenv("ERIS_INNER_DIARY_FALLBACK_PROVIDER", "openai_compatible") or "openai_compatible").strip().lower()
-        model = str(os.getenv("ERIS_INNER_DIARY_FALLBACK_MODEL", "") or "").strip()
-        base_url = (
-            str(os.getenv("ERIS_INNER_DIARY_FALLBACK_BASE_URL", "") or "").strip()
-            or get_secret("ERIS_AGGREGATOR_BASE_URL")
-        )
-        api_key = get_secret("ERIS_INNER_DIARY_FALLBACK_API_KEY", "ERIS_AGGREGATOR_API_KEY")
+        provider = str(os.getenv("ERIS_INNER_DIARY_FALLBACK_PROVIDER", "deepseek") or "deepseek").strip().lower()
+        if provider == "deepseek":
+            model = normalize_deepseek_model(os.getenv("ERIS_INNER_DIARY_FALLBACK_MODEL", DEEPSEEK_DEFAULT_MODEL))
+            base_url = str(os.getenv("ERIS_INNER_DIARY_FALLBACK_BASE_URL", DEEPSEEK_BASE_URL) or DEEPSEEK_BASE_URL).strip()
+            api_key = get_secret("ERIS_INNER_DIARY_FALLBACK_API_KEY", "DEEPSEEK_API_KEY", "ERIS_REMOTE_API_KEY")
+        else:
+            model = str(os.getenv("ERIS_INNER_DIARY_FALLBACK_MODEL", "") or "").strip()
+            base_url = str(os.getenv("ERIS_INNER_DIARY_FALLBACK_BASE_URL", "") or "").strip()
+            api_key = get_secret("ERIS_INNER_DIARY_FALLBACK_API_KEY")
         if not (model and base_url and api_key):
             return None
         config = PrivateMindModelAdapterConfig(
@@ -444,7 +447,7 @@ class RuntimePrivateMindModelAdapter:
                         continue
                     except Exception as exc:
                         return PrivateMindModelResult(ok=False, error=f"{type(exc).__name__}:{exc}", error_kind=_classify_transport_exception(exc))
-        if self.config.provider in {"gemini", "openai", "openai_compatible", "compatible", "remote"}:
+        if self.config.provider in {"gemini", "deepseek", "openai", "openai_compatible", "compatible", "remote"}:
             client = self._provider_client_or_build()
             if client is None:
                 return PrivateMindModelResult(ok=False, error=f"missing_provider_client:{self.config.provider}", error_kind="fixed_config")
@@ -1206,7 +1209,7 @@ class RuntimePrivateMindModelAdapter:
                         continue
                     except Exception as exc:
                         return PrivateMindModelResult(ok=False, error=f"{type(exc).__name__}:{exc}", error_kind=_classify_transport_exception(exc))
-        if self.config.provider in {"gemini", "openai", "openai_compatible", "compatible", "remote"}:
+        if self.config.provider in {"gemini", "deepseek", "openai", "openai_compatible", "compatible", "remote"}:
             return self._provider_chat_json(messages, max_tokens=max_tokens, temperature=temperature, response_schema=response_schema)
         return PrivateMindModelResult(ok=False, error=f"unsupported_provider:{self.config.provider}", error_kind="fixed_config")
 
@@ -1286,13 +1289,18 @@ class RuntimePrivateMindModelAdapter:
                 timeout=timeout, key_pool=self._key_pool,
             )
             return self._provider_client
-        if provider in {"openai", "openai_compatible", "compatible", "remote"}:
+        if provider in {"deepseek", "openai", "openai_compatible", "compatible", "remote"}:
             api_key = self._current_api_key()
             if not api_key:
                 return None
-            base_url = self.config.base_url or os.getenv("ERIS_REMOTE_BASE_URL", "https://api.openai.com/v1")
+            if provider == "deepseek":
+                base_url = self.config.base_url or os.getenv("ERIS_REMOTE_BASE_URL", DEEPSEEK_BASE_URL)
+                model_name = normalize_deepseek_model(self.config.model or DEEPSEEK_DEFAULT_MODEL)
+            else:
+                base_url = self.config.base_url or os.getenv("ERIS_REMOTE_BASE_URL", "https://api.openai.com/v1")
+                model_name = self.config.model
             self._provider_client = OpenAICompatibleClient(
-                base_url=base_url, api_key=api_key, model_name=self.config.model,
+                base_url=base_url, api_key=api_key, model_name=model_name,
                 timeout=timeout, key_pool=self._key_pool,
             )
             return self._provider_client

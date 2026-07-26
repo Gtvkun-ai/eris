@@ -30,6 +30,7 @@ PROVIDER_TPM_BUDGET: dict[str, int] = {
     "gemini": 1_000_000,
     "local": 1_000_000,
     "openai": 120_000,
+    "deepseek": 200_000,
     "default": 30_000,
 }
 
@@ -60,6 +61,8 @@ def detect_provider(base_url: str | None, model: str | None) -> str:
 
     if "groq" in url:
         return "groq"
+    if "deepseek" in url or name.startswith("deepseek-"):
+        return "deepseek"
     if "generativelanguage" in url or name.startswith(("gemma", "gemini")):
         return "gemini"
     if any(token in url for token in ("127.0.0.1", "localhost", "0.0.0.0")):
@@ -107,7 +110,7 @@ def hard_cap_for_provider(provider: str) -> int:
     2. Override CHUNG: ``ERIS_LLM_PROMPT_HARD_CAP_TOKENS`` (áp mọi provider).
     3. Mặc định = 85% TPM của provider.
 
-    Lưu ý: ưu tiên (1) > (2). Nếu chỉ muốn siết Groq mà vẫn để shopaikey/gemini
+    Lưu ý: ưu tiên (1) > (2). Nếu chỉ muốn siết Groq mà vẫn để DeepSeek/Gemini
     rộng, đặt ``ERIS_LLM_PROMPT_HARD_CAP_TOKENS_GROQ=5200`` và BỎ biến chung.
     Đặt ``ERIS_LLM_PROMPT_HARD_CAP_TOKENS=0`` để tắt hard-cap prompt.
     """

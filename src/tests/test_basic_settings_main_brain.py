@@ -19,7 +19,7 @@ def test_remote_main_pool_is_distinct_from_groq_and_gemini(monkeypatch) -> None:
     import eris_secrets
     from llm import key_pool
 
-    monkeypatch.setenv("ERIS_REMOTE_PROVIDER", "openai_compatible")
+    monkeypatch.setenv("ERIS_REMOTE_PROVIDER", "deepseek")
     monkeypatch.setenv("ERIS_REMOTE_FALLBACK_API_KEYS", "remote-fallback-1,remote-fallback-2")
     monkeypatch.setattr(
         eris_secrets,
@@ -38,6 +38,7 @@ def test_remote_main_pool_is_distinct_from_groq_and_gemini(monkeypatch) -> None:
     )
 
     assert key_pool._normalize_kind("remote_main") == "remote"
+    assert key_pool._normalize_kind("deepseek") == "remote"
     assert key_pool._normalize_kind("groq") == "groq"
     assert key_pool._normalize_kind("gemini") == "gemini"
     assert key_pool._collect_remote_keys() == [
@@ -64,9 +65,9 @@ def test_process_manager_attaches_remote_pool_to_main_openai_client(monkeypatch)
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setenv("ERIS_REMOTE_PROVIDER", "openai_compatible")
-    monkeypatch.setenv("ERIS_REMOTE_BASE_URL", "https://api-v2.shopaikey.com/v1")
-    monkeypatch.setenv("ERIS_REMOTE_MODEL", "gpt-5.6-terra")
+    monkeypatch.setenv("ERIS_REMOTE_PROVIDER", "deepseek")
+    monkeypatch.setenv("ERIS_REMOTE_BASE_URL", "https://api.deepseek.com")
+    monkeypatch.setenv("ERIS_REMOTE_MODEL", "deepseek-v4-flash")
     monkeypatch.setattr(process_manager, "apply_secrets_to_environ", lambda: None)
     monkeypatch.setattr(process_manager, "get_provider_profile", lambda *a, **k: {})
     monkeypatch.setattr(process_manager, "get_secret", lambda *a, **k: "")
@@ -76,7 +77,7 @@ def test_process_manager_attaches_remote_pool_to_main_openai_client(monkeypatch)
     manager = process_manager.RemoteModelProcessManager(logger=logging.getLogger("test"), project_root=".")
     manager._build_remote_client()
 
-    assert captured["model_name"] == "gpt-5.6-terra"
+    assert captured["model_name"] == "deepseek-v4-flash"
     assert captured["api_key"] == "main-pool-key"
     assert isinstance(captured["key_pool"], _Pool)
 
@@ -96,8 +97,8 @@ def test_main_brain_health_and_connection_ack_hide_raw_key(monkeypatch) -> None:
             }
 
     class _Client:
-        base_url = "https://api-v2.shopaikey.com/v1"
-        model_name = "gpt-5.6-terra"
+        base_url = "https://api.deepseek.com"
+        model_name = "deepseek-v4-flash"
         api_key = "SECRET-MUST-NOT-LEAK"
         key_pool = _Pool()
 
@@ -119,10 +120,10 @@ def test_main_brain_health_and_connection_ack_hide_raw_key(monkeypatch) -> None:
         fallback_client=SimpleNamespace(model_name="gpt-5.5"),
         _extract_content=lambda response: "OK",
     )
-    monkeypatch.setenv("ERIS_REMOTE_PROVIDER", "openai_compatible")
+    monkeypatch.setenv("ERIS_REMOTE_PROVIDER", "deepseek")
 
     snapshot = owner._main_brain_health_snapshot()
-    assert snapshot["model"] == "gpt-5.6-terra"
+    assert snapshot["model"] == "deepseek-v4-flash"
     assert snapshot["active_key_fingerprint"] == "abc123def456"
     assert "SECRET-MUST-NOT-LEAK" not in repr(snapshot)
 
@@ -130,7 +131,7 @@ def test_main_brain_health_and_connection_ack_hide_raw_key(monkeypatch) -> None:
     ack = owner.transport.messages[-1]["settings_connection_test_ack"]
     assert ack["ok"] is True
     assert ack["latency_ms"] >= 0
-    assert ack["main_brain"]["model"] == "gpt-5.6-terra"
+    assert ack["main_brain"]["model"] == "deepseek-v4-flash"
     assert "SECRET-MUST-NOT-LEAK" not in repr(ack)
 
 

@@ -154,7 +154,7 @@ class RemoteStructureClient:
 
 
 class RemoteCaptionClient:
-    """Adapter: bọc client OpenAI-compatible remote (vd shopaikey grok-3-image) để
+    """Adapter: bọc client OpenAI-compatible multimodal remote để
     lộ ``caption_image(image, ...)`` trả caption text.
 
     Gá»­i ảnh theo định dạng OpenAI multimodal (image_url data URI). Mọi lỗi ⇒ trả ""
@@ -401,7 +401,7 @@ class VisionSemanticCompressor:
         # Client riêng cho TẦNG cấu trúc-hoá (caption → JSON).
         # None ⇒ dùng luôn self.client nếu caller inject client tự do.
         self.structure_client = structure_client
-        # Client riêng cho TẦNG caption (ảnh → mô tả). Khi set (vd shopaikey
+        # Client riêng cho TẦNG caption (ảnh → mô tả). Khi set (endpoint multimodal riêng
         # grok-3-image), caption chạy REMOTE. None ⇒ self.client.
         self.caption_client = caption_client
         self.logger = logger
