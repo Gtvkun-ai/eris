@@ -164,3 +164,89 @@ def test_legacy_aggregator_runtime_dependency_is_removed() -> None:
     for path in critical_files:
         text = path.read_text(encoding="utf-8").lower()
         assert not any(token in text for token in forbidden), path
+
+
+def test_ds2api_fallback_integration(monkeypatch) -> None:
+    import llm.process_manager as process_manager
+    from llm.client import ChainedFallbackClient
+
+    class _Pool:
+        def acquire(self, allow_cooling=False):
+            return SimpleNamespace(key="sk-deepseek-main")
+
+    for name in (
+        "ERIS_REMOTE_PROVIDER", "ERIS_REMOTE_BASE_URL", "ERIS_REMOTE_MODEL", "ERIS_REMOTE_API_KEY",
+        "ERIS_DS2API_ENABLED", "ERIS_DS2API_BASE_URL", "ERIS_DS2API_API_KEY", "ERIS_DS2API_MODEL"
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    monkeypatch.setenv("ERIS_REMOTE_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-official")
+    monkeypatch.setenv("ERIS_DS2API_ENABLED", "1")
+    monkeypatch.setenv("ERIS_DS2API_BASE_URL", "http://localhost:6011/v1")
+    monkeypatch.setenv("ERIS_DS2API_API_KEY", "sk-ds2api-key")
+    monkeypatch.setenv("ERIS_DS2API_MODEL", "gpt-4o")
+
+    monkeypatch.setattr(process_manager, "apply_secrets_to_environ", lambda: None)
+    monkeypatch.setattr(process_manager, "get_provider_profile", lambda *a, **k: {})
+    monkeypatch.setattr(
+        process_manager,
+        "get_secret",
+        lambda *names, default="": (
+            "sk-ds2api-key" if "ERIS_DS2API_API_KEY" in names else (
+                "sk-deepseek-official" if "DEEPSEEK_API_KEY" in names else default
+            )
+        ),
+    )
+    monkeypatch.setattr(process_manager, "get_key_pool", lambda kind: _Pool() if kind == "remote_main" else None)
+
+    manager = process_manager.RemoteModelProcessManager(logger=logging.getLogger("test"), project_root=".")
+    client = manager._build_remote_client()
+
+    assert isinstance(client, ChainedFallbackClient)
+    assert len(client._clients) == 2
+
+    c1 = client._clients[0]
+    c2 = client._clients[1]
+
+    assert c1.base_url == "http://localhost:6011/v1"
+    assert c1.model_name == "gpt-4o"
+    assert c1.api_key == "sk-ds2api-key"
+
+    assert c2.base_url == "https://api.deepseek.com"
+    assert c2.model_name == "deepseek-v4-flash"
+    assert c2.api_key == "sk-deepseek-main"
+
+
+def test_ds2api_warning_logging() -> None:
+    from llm.client import ChainedFallbackClient
+
+    class FailingLocalClient:
+        base_url = "http://localhost:6011/v1"
+        model_name = "deepseek-chat"
+        key_pool = None
+        def create_chat_completion(self, **kwargs):
+            raise RuntimeError("Connection refused")
+
+    class SuccessfulOfficialClient:
+        base_url = "https://api.deepseek.com"
+        model_name = "deepseek-v4-flash"
+        key_pool = None
+        def create_chat_completion(self, **kwargs):
+            return {"ok": True}
+
+    captured_warnings = []
+    class DummyLogger:
+        def warning(self, msg, *args):
+            captured_warnings.append(msg % args if args else msg)
+
+    chained = ChainedFallbackClient(
+        [FailingLocalClient(), SuccessfulOfficialClient()],
+        logger=DummyLogger(),
+    )
+    result = chained.create_chat_completion()
+
+    assert result == {"ok": True}
+    assert any("WARNING: DS2API failed (Connection refused), falling back to Official API." in w for w in captured_warnings)
+
+

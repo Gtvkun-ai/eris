@@ -12,7 +12,10 @@ try:
     from ..memory.memory_models import MemoryKind
     from ..memory.memory_query_compiler import MemoryQueryCompiler
     from ..memory.memory_query_executor import MemoryQueryExecutor
-    from ..memory.memory_query_ir import RecallAnswer
+    from ..memory.memory_query_ir import (
+        ActRef, MemoryQueryIR, MemorySelector, QueryIntent, RecallAnswer, RoleRef, SurfaceMode
+    )
+    from .semantic_frame import MemoryAnswerMode, MemoryQueryFrame, MemoryQueryIntent
     from ..memory.memory_query_llm_parser import MemoryQueryLLMClient, MemoryQueryLLMParser
     from ..memory.memory_recall_policy import MemoryRecallSurfacePolicy
     from ..memory.memory_query_slot_parser import user_is_declaring_or_updating_fact
@@ -25,7 +28,10 @@ except ImportError:
     from memory.memory_models import MemoryKind
     from memory.memory_query_compiler import MemoryQueryCompiler
     from memory.memory_query_executor import MemoryQueryExecutor
-    from memory.memory_query_ir import RecallAnswer
+    from memory.memory_query_ir import (
+        ActRef, MemoryQueryIR, MemorySelector, QueryIntent, RecallAnswer, RoleRef, SurfaceMode
+    )
+    from runtime.semantic_frame import MemoryAnswerMode, MemoryQueryFrame, MemoryQueryIntent
     from memory.memory_query_llm_parser import MemoryQueryLLMClient, MemoryQueryLLMParser
     from memory.memory_recall_policy import MemoryRecallSurfacePolicy
     from memory.memory_query_slot_parser import user_is_declaring_or_updating_fact
@@ -89,6 +95,102 @@ class MemoryRecallAdapter:
         if outcome is None:
             return None
         return outcome.decision
+
+    def try_answer_query(self, query: MemoryQueryFrame, *, raw_text: str = "") -> Optional[Decision]:
+        """Thực thi query typed từ semantic authority, không parse lại câu user.
+
+        Đây là đường production mới cho ``reference.kind=long_term_memory``.
+        ``raw_text`` chỉ được giữ trong debug/evidence, không tham gia chọn fact.
+        """
+
+        ir = self._ir_from_typed_query(query, raw_text=raw_text)
+        if ir is None:
+            return None
+        executor = self.executor or MemoryQueryExecutor()
+        surface_policy = self.surface_policy or MemoryRecallSurfacePolicy()
+        annotator = self.annotator or TurnAnnotator()
+        turn_graph = TurnGraph.from_session_ledger(self.ledger, annotator=annotator)
+        raw = executor.execute(
+            ir,
+            turn_graph=turn_graph,
+            memory_core=self._execution_memory_core(),
+        )
+        answer = surface_policy.surface(raw)
+        if not str(getattr(answer, "text", "") or "").strip():
+            return None
+        return self._build_decision(answer, compile_result=None)
+
+    @staticmethod
+    def _ir_from_typed_query(query: MemoryQueryFrame, *, raw_text: str) -> MemoryQueryIR | None:
+        if not query.usable:
+            return None
+        if query.intent is MemoryQueryIntent.RECALL_FACT:
+            intent = QueryIntent.RECALL_FACT
+            target = MemorySelector(
+                role=RoleRef.USER,
+                act=ActRef.FACT_DISCLOSURE,
+                fact_key=query.predicate_hint,
+                semantic_hint=query.object_hint or None,
+                tags=tuple(
+                    item
+                    for item in (
+                        f"subject:{query.subject}" if query.subject else "",
+                        f"temporal:{query.temporal_scope}" if query.temporal_scope else "",
+                    )
+                    if item
+                ),
+            )
+        elif query.intent in {MemoryQueryIntent.RECALL_SUMMARY, MemoryQueryIntent.EXPLAIN_MEMORY}:
+            intent = QueryIntent.RECALL_SUMMARY
+            target = MemorySelector(
+                role=RoleRef.USER,
+                act=ActRef.ANY,
+                semantic_hint=query.object_hint or query.predicate_hint or query.subject or None,
+                tags=tuple(
+                    item
+                    for item in (
+                        f"subject:{query.subject}" if query.subject else "",
+                        f"temporal:{query.temporal_scope}" if query.temporal_scope else "",
+                    )
+                    if item
+                ),
+            )
+        elif query.intent is MemoryQueryIntent.VERIFY_MEMORY:
+            intent = QueryIntent.VERIFY_MEMORY
+            target = MemorySelector(
+                role=RoleRef.USER,
+                act=ActRef.FACT_DISCLOSURE,
+                fact_key=query.predicate_hint or None,
+                semantic_hint=query.object_hint or None,
+                tags=tuple(
+                    item
+                    for item in (
+                        f"subject:{query.subject}" if query.subject else "",
+                        f"temporal:{query.temporal_scope}" if query.temporal_scope else "",
+                    )
+                    if item
+                ),
+            )
+        else:
+            return None
+
+        surface = {
+            MemoryAnswerMode.EXACT: SurfaceMode.EXACT,
+            MemoryAnswerMode.GIST: SurfaceMode.GIST,
+            MemoryAnswerMode.SUMMARY: SurfaceMode.GIST,
+            MemoryAnswerMode.ADMIT_UNCERTAIN: SurfaceMode.ADMIT_UNCERTAIN,
+        }[query.answer_mode]
+        return MemoryQueryIR(
+            intent=intent,
+            target=target,
+            surface=surface,
+            confidence=query.confidence,
+            ambiguity=max(0.0, 1.0 - query.confidence),
+            intercept_permission=True,
+            evidence=("semantic_frame.memory_query",),
+            warnings=(),
+            raw_text=str(raw_text or ""),
+        )
 
     def try_answer_as_decision_payload(self, user_text: str) -> Optional[dict[str, Any]]:
         outcome = self._recall(user_text)

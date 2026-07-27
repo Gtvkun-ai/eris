@@ -2,6 +2,7 @@ from collections.abc import Mapping
 import re
 import time
 from dataclasses import replace
+from typing import Any
 
 from cortex.internal_state import PersistentInternalState
 from memory.memory_commit_policy import MemoryCommitPolicy
@@ -330,11 +331,25 @@ class StateCommitServiceMixin:
         self.conversation_continuity_adapter = adapter
         return adapter
 
-    def _build_conversation_continuity_decision(self, user_text: str) -> Decision | None:
-        return self._ensure_conversation_continuity_adapter().try_answer(user_text)
+    def _build_discourse_prompt_context(self, *, current_turn_index: int) -> str:
+        """Xuất trạng thái phiên cho semantic authority, không tự đoán ý định."""
 
-    def _conversation_repair_fallback_text(self, user_text: str) -> str:
-        return self._ensure_conversation_continuity_adapter().repair_fallback_text(user_text)
+        return self._ensure_conversation_continuity_adapter().prompt_context(
+            current_turn_index=current_turn_index,
+        )
+
+    def _resolve_discourse_frame(
+        self,
+        frame: Mapping[str, Any] | Any | None,
+        *,
+        current_user_turn_index: int,
+    ):
+        """Giải reference typed sau khi model đã tạo semantic frame."""
+
+        return self._ensure_conversation_continuity_adapter().resolve(
+            frame,
+            current_user_turn_index=current_user_turn_index,
+        )
 
     def _ensure_memory_recall_adapter(self) -> MemoryRecallAdapter:
         adapter = getattr(self, "memory_recall_adapter", None)
@@ -359,7 +374,12 @@ class StateCommitServiceMixin:
         return adapter
 
     def _build_memory_recall_decision(self, user_text: str) -> Decision | None:
+        """Compatibility path cho caller cũ chưa có structured memory query."""
         return self._ensure_memory_recall_adapter().try_answer(user_text)
+
+    def _build_typed_memory_recall_decision(self, query, *, raw_text: str = "") -> Decision | None:
+        """Thực thi ``MemoryQueryFrame`` mà không semantic-parse raw text lần hai."""
+        return self._ensure_memory_recall_adapter().try_answer_query(query, raw_text=raw_text)
 
     def _ensure_affect_self_read_adapter(self) -> AffectSelfReadAdapter:
         adapter = getattr(self, "affect_self_read_adapter", None)

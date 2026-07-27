@@ -337,7 +337,7 @@ SEMANTIC_FRAME_SCHEMA: dict[str, Any] = {
         "version", "turn_kind", "discourse_relation", "user_act", "target",
         "literal_question", "ambiguity_owner", "boundary_action",
         "continuation_key", "evidence_scope", "tool_intent",
-        "missing_evidence", "reply_obligation",
+        "missing_evidence", "reference", "reply_obligation", "memory_query",
     ],
     "properties": {
         "version": {"type": "string", "enum": ["semantic_frame.v1"]},
@@ -352,6 +352,29 @@ SEMANTIC_FRAME_SCHEMA: dict[str, Any] = {
         "evidence_scope": {"type": "string"},
         "tool_intent": {"type": "string"},
         "missing_evidence": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+        "reference": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "speaker", "operation", "turn_index", "turn_offset", "confidence"],
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "enum": [
+                        "none", "recent_user_turn", "recent_assistant_turn",
+                        "assistant_proposition", "open_question",
+                        "long_term_memory", "current_message"
+                    ],
+                },
+                "speaker": {"type": "string", "enum": ["none", "user", "assistant"]},
+                "operation": {
+                    "type": "string",
+                    "enum": ["none", "repeat", "recall", "clarify", "confirm", "repair", "answer"],
+                },
+                "turn_index": {"type": "integer", "minimum": 0},
+                "turn_offset": {"type": "integer", "minimum": 0, "maximum": 16},
+                "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+            },
+        },
         "reply_obligation": {
             "type": "object",
             "additionalProperties": False,
@@ -362,6 +385,47 @@ SEMANTIC_FRAME_SCHEMA: dict[str, Any] = {
                 "must_not_call_tool": {"type": "boolean"},
             },
         },
+        "memory_query": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "intent", "subject", "predicate_hint", "object_hint",
+                "temporal_scope", "answer_mode", "confidence"
+            ],
+            "properties": {
+                "intent": {
+                    "type": "string",
+                    "enum": ["none", "recall_fact", "recall_summary", "verify_memory", "explain_memory"]
+                },
+                "subject": {"type": "string"},
+                "predicate_hint": {"type": "string"},
+                "object_hint": {"type": "string"},
+                "temporal_scope": {"type": "string"},
+                "answer_mode": {
+                    "type": "string",
+                    "enum": ["exact", "gist", "summary", "admit_uncertain"]
+                },
+                "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+            },
+        },
+    },
+}
+
+ASSISTANT_ACT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["kind", "proposition_mode", "confidence"],
+    "properties": {
+        "kind": {
+            "type": "string",
+            "enum": [
+                "silence", "acknowledgement", "social", "assertion",
+                "explanation", "opinion", "answer", "confirmation",
+                "repair", "question", "action_report", "other"
+            ],
+        },
+        "proposition_mode": {"type": "string", "enum": ["none", "new", "continue"]},
+        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
     },
 }
 
@@ -371,9 +435,10 @@ PUBLIC_REPLY_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
     # PDF annotation, pages 12-13: meaning and wording are produced by one
     # semantic authority in the same remote call.
-    "required": ["semantic_frame", "text", "should_speak", "performance_hint"],
+    "required": ["semantic_frame", "assistant_act", "text", "should_speak", "performance_hint"],
     "properties": {
         "semantic_frame": SEMANTIC_FRAME_SCHEMA,
+        "assistant_act": ASSISTANT_ACT_SCHEMA,
         "text": {"type": "string"},
         "should_speak": {"type": "boolean"},
         "performance_hint": {
@@ -685,10 +750,18 @@ class AIRuntimeModelRouter:
             "Memory chỉ là continuity, không chứng minh hiện tại. Grounding là nguồn thật cho màn hình/file/tool. "
             "Planner đã sở hữu tool intent; bạn không chọn, đổi hay claim tool đã thành công. "
             "performance_hint chỉ là một preset sân khấu ngắn, không viết stage direction vào text. "
-            "Trong CÙNG JSON, luôn sinh semantic_frame.v1 trước text. Frame phải mô tả nghĩa của chính lượt user, target thật, "
-            "discourse relation, tool intent và reply obligation. Không dùng regex-marker/runtime label làm authority; history gần nhất và câu user là bằng chứng chính. "
-            "Ví dụ hỏi thăm 'hôm nay em sao' sau lời ERIS nói về mình phải là target=assistant, user_act=relational_check_in, "
-            "must_answer=true, must_not_broad_clarify=true và tool_intent rỗng. Return JSON only."
+            "Trong CÙNG JSON, sinh semantic_frame.v1, assistant_act rồi text. semantic_frame chỉ mô tả lượt USER hiện tại; "
+            "assistant_act chỉ mô tả câu ERIS sắp nói, tuyệt đối không chép user_act sang assistant turn. Dùng toàn bộ chat history và "
+            "Discourse state: history_turn_map ánh xạ message theo vị trí sang turn_index nhưng không lặp text. "
+            "Reference là discriminated contract: recent_user_turn luôn speaker=user; recent_assistant_turn và assistant_proposition luôn speaker=assistant; "
+            "long_term_memory luôn speaker=none và không có turn locator. Chỉ dùng một trong turn_index hoặc turn_offset. "
+            "Nếu user muốn nhắc lại lời mình, dùng recent_user_turn + repeat/recall. Nếu hỏi lời ERIS, dùng recent_assistant_turn. "
+            "Nếu hỏi nghĩa/độ thật/sửa một proposition trước, dùng assistant_proposition + clarify/confirm/repair và trỏ root từ candidate_references. "
+            "Nếu hỏi memory dài hạn, dùng long_term_memory + recall/answer VÀ điền memory_query có intent, subject, predicate_hint, temporal_scope, answer_mode; "
+            "runtime sẽ thực thi object này, không đọc lại raw user text. Khi không phải memory, memory_query.intent=none. "
+            "assistant_act.kind phải là loại hành vi của text. acknowledgement/social dùng proposition_mode=none; assertion/explanation/opinion/answer/question dùng new; "
+            "confirmation/repair dùng continue khi nối proposition đang active. Nếu lượt hiện tại không tham chiếu gì, reference phải none với locator bằng 0. "
+            "Ví dụ hỏi thăm trạng thái ERIS phải target=assistant, user_act=relational_check_in, must_answer=true, must_not_broad_clarify=true và tool_intent rỗng. Return JSON only."
         )
 
     def generate_public_reply(
@@ -703,6 +776,7 @@ class AIRuntimeModelRouter:
         interrupt_context: str = "",
         engagement_context: str = "",
         routing_context: str = "",
+        discourse_context: str = "",
         use_escalation: bool = False,
         reasoning_effort: str | None = None,
         thinking_mode: str | None = None,
@@ -736,6 +810,11 @@ class AIRuntimeModelRouter:
             context_parts.append(f"Durable engagement contract: {engagement_context}")
         if routing_context:
             context_parts.append(f"Runtime companion routing: {routing_context}")
+        if discourse_context:
+            context_parts.append(
+                "Discourse state (index map for the chat_history messages; no duplicated text): "
+                + discourse_context
+            )
         if retry_instruction:
             context_parts.append(f"One-shot rewrite instruction: {retry_instruction}")
         if locked_semantic_frame:
@@ -848,34 +927,59 @@ class AIRuntimeModelRouter:
             tool_input=planned_intention.tool_input if planned_intention is not None else "",
         )
 
-    @staticmethod
     def _compat_public_envelope(
+        self,
         payload: Mapping[str, Any],
         *,
         tool_intent: str = "",
         tool_input: str = "",
     ) -> dict[str, Any]:
-        from runtime.semantic_frame import validate_semantic_frame
+        """Bọc payload model cũ mà không để JSON sai kiểu làm sập chat loop."""
 
-        validation = validate_semantic_frame(payload.get("semantic_frame", {}))
-        if validation.violations:
+        from runtime.semantic_frame import validate_assistant_act, validate_semantic_frame
+
+        # ``_json`` bình thường đã trả Mapping. Lớp phòng thủ này vẫn giữ runtime
+        # sống nếu một adapter provider tùy biến trả nhầm kiểu trong tương lai.
+        data = dict(payload) if isinstance(payload, Mapping) else {}
+        validation = validate_semantic_frame(data.get("semantic_frame", {}))
+        default_assistant_act = {
+            "kind": "answer" if str(data.get("text", "") or "").strip() else "silence",
+            "proposition_mode": "new" if str(data.get("text", "") or "").strip() else "none",
+            "confidence": 0.35,
+        }
+        assistant_validation = validate_assistant_act(
+            data.get("assistant_act", default_assistant_act)
+        )
+        all_violations = (*validation.violations, *assistant_validation.violations)
+        if all_violations:
+            safe_log(
+                self.logger,
+                "warning",
+                "[semantic frame] repaired malformed payload violations=%s",
+                ",".join(all_violations),
+            )
             try:
                 from runtime.observability import GLOBAL_OBSERVABILITY
                 GLOBAL_OBSERVABILITY.log(
                     "semantic_frame_invariant_repair",
-                    tags={"count": str(len(validation.violations))},
-                    fields={"violations": list(validation.violations)},
+                    tags={"count": str(len(all_violations))},
+                    fields={"violations": list(all_violations)},
                     status="degraded",
                 )
             except Exception as exc:
                 safe_log(self.logger, "debug", "Semantic validation metric failed: %s", exc)
         return {
-            "semantic_frame": validation.frame,
-            "text": str(payload.get("text", "") or ""),
-            "should_speak": bool(payload.get("should_speak", True)),
+            "semantic_frame": validation.frame.to_dict(),
+            "assistant_act": assistant_validation.act.to_dict(),
+            # Hai object private này không được serialize ra parser/body. Orchestrator
+            # dùng chúng để không parse lại cùng contract lần thứ hai.
+            "_typed_semantic_frame": validation.frame,
+            "_typed_assistant_act": assistant_validation.act,
+            "text": str(data.get("text", "") or ""),
+            "should_speak": bool(data.get("should_speak", True)),
             "system_action": str(tool_intent or ""),
             "action_input": str(tool_input or ""),
-            "performance_hint": str(payload.get("performance_hint", "neutral") or "neutral"),
+            "performance_hint": str(data.get("performance_hint", "neutral") or "neutral"),
             "animation": "stand",
             "next_animation": "",
             "direction": 0,
@@ -1696,4 +1800,5 @@ __all__ = [
     "INTENTION_PLAN_SCHEMA",
     "PUBLIC_REPLY_SCHEMA",
     "SEMANTIC_FRAME_SCHEMA",
+    "ASSISTANT_ACT_SCHEMA",
 ]

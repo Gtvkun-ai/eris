@@ -682,13 +682,21 @@ class ChainedFallbackClient:
                 return client.create_chat_completion(**kwargs)
             except Exception as exc:  # noqa: BLE001 - thử nhà kế tiếp
                 last_error = exc
-                self._logger.warning(
-                    "[FALLBACK CHAIN] tier %d/%d (%s) loi: %s -> thu tier ke",
-                    idx + 1,
-                    len(self._clients),
-                    getattr(client, "model_name", "?"),
-                    exc,
-                )
+                client_url = getattr(client, "base_url", "")
+                is_ds2api = "api.deepseek.com" not in client_url.lower() and ("6011" in client_url or "localhost" in client_url or "127.0.0.1" in client_url)
+                if is_ds2api:
+                    self._logger.warning(
+                        "WARNING: DS2API failed (%s), falling back to Official API.",
+                        exc,
+                    )
+                else:
+                    self._logger.warning(
+                        "[FALLBACK CHAIN] tier %d/%d (%s) loi: %s -> thu tier ke",
+                        idx + 1,
+                        len(self._clients),
+                        getattr(client, "model_name", "?"),
+                        exc,
+                    )
                 continue
         if last_error is not None:
             raise last_error

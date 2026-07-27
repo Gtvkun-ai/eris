@@ -91,8 +91,14 @@ def build_degraded_reply(user_text: str, *, language_hint: str = "vi") -> dict[s
         return {}
 
     validated = validate_semantic_frame(frame).frame
+    assistant_act = {
+        "kind": "social" if cue in _GREETING_FORMS else "acknowledgement",
+        "proposition_mode": "none",
+        "confidence": 1.0,
+    }
     return {
-        "semantic_frame": validated,
+        "semantic_frame": validated.to_dict(),
+        "assistant_act": assistant_act,
         "text": text,
         "should_speak": True,
         "performance_hint": "neutral",

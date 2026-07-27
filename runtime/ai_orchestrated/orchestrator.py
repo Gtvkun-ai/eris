@@ -21,6 +21,14 @@ from runtime.grounding_surface_gate import evaluate_grounded_surface
 from runtime.cognition.turn_anchor import anchor_from_semantic_frame
 from runtime.social_stance_policy import guard_subjective_stance_payload
 from runtime.companion_model_routing import route_companion_turn
+from runtime.discourse_state import assistant_proposition_link
+from runtime.discourse_surface import DiscourseSurface, DiscourseSurfaceRenderer
+from runtime.semantic_frame import (
+    AssistantAct,
+    SemanticFrame,
+    validate_assistant_act,
+    validate_semantic_frame,
+)
 from semantic_authority import SemanticAuthorityPolicy
 
 from .contracts import AI_RUNTIME_VERSION, IntentionPlan, StateEvent
@@ -146,6 +154,58 @@ class _StaticIntentionPlanner:
     def plan_autonomous(self, _snapshot: Mapping[str, Any], *, turn_seq: int = 0) -> IntentionPlan:
         return self.plan
 
+
+
+def _serializable_public_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Loại object typed private trước khi đi qua JSON parser/body protocol."""
+
+    return {
+        key: value
+        for key, value in dict(payload or {}).items()
+        if not str(key).startswith("_typed_")
+    }
+
+
+def _previous_active_proposition_root(ledger: Any) -> int:
+    """Lấy root đang active mà không coi acknowledgement là proposition mới."""
+
+    try:
+        turns = ledger.all_turns()
+    except Exception:
+        return 0
+    for turn in reversed(turns):
+        if getattr(turn, "role", "") != "assistant":
+            continue
+        discourse = dict(getattr(turn, "meta", {}).get("discourse", {}) or {})
+        root = int(
+            discourse.get("active_proposition_root_turn_index", 0)
+            or discourse.get("proposition_root_turn_index", 0)
+            or 0
+        )
+        if root:
+            return root
+    return 0
+
+
+def _decision_from_discourse_surface(host: Any, surface: DiscourseSurface, *, user_text: str):
+    payload = {
+        "text": surface.text,
+        "should_speak": bool(surface.text),
+        "animation": "stand",
+        "next_animation": "stand",
+        "direction": 0,
+        "target_x": -1.0,
+        "bounce_action": "",
+        "system_action": "",
+        "action_input": "",
+        "delivery_hint": "focused",
+        "performance_hint": surface.performance_hint,
+    }
+    decision = host.parser.parse(json.dumps(payload, ensure_ascii=False), user_hint=user_text)
+    decision.intent = surface.intent
+    decision.parse_mode = "typed_discourse"
+    decision.reasoning_tags = ("answer_first", "typed_discourse", surface.intent)
+    return decision
 
 
 class AIChatOrchestrator:
@@ -326,57 +386,19 @@ class AIChatOrchestrator:
         host.ai_state_reducer.wait_idle(0.15)
         mind_state = host.ai_state_reducer.snapshot()
 
-        # Continuity của phiên phải được xét trước profile memory. Nếu không, câu
-        # "tôi vừa nói gì" có thể bị embedding kéo nhầm về user.name, đúng kiểu
-        # tìm rất thông minh nhưng tìm sai căn nhà.
-        deterministic_decision = None
-        deterministic_source = ""
-        build_continuity = getattr(host, "_build_conversation_continuity_decision", None)
-        if callable(build_continuity):
+        # Semantic authority phải phân loại conversation act trước khi runtime
+        # quyết định dùng session ledger hay long-term memory. Không còn bước
+        # regex đứng trước model, vì chính bước đó từng biến vài câu mới thành
+        # một cuộc săn marker vô tận.
+        discourse_context = ""
+        build_discourse_context = getattr(host, "_build_discourse_prompt_context", None)
+        if callable(build_discourse_context):
             try:
-                deterministic_decision = build_continuity(user_text)
-                if deterministic_decision is not None:
-                    deterministic_source = "conversation_continuity"
+                discourse_context = str(
+                    build_discourse_context(current_turn_index=user_turn.index) or ""
+                )
             except Exception as exc:
-                host.logger.debug("[conversation continuity] deterministic answer failed: %s", exc)
-
-        if deterministic_decision is None and (
-            grounding_report is None or bool(getattr(grounding_report, "memory_answer_allowed", True))
-        ):
-            build_memory_recall = getattr(host, "_build_memory_recall_decision", None)
-            if callable(build_memory_recall):
-                try:
-                    deterministic_decision = build_memory_recall(user_text)
-                    if deterministic_decision is not None:
-                        deterministic_source = "memory_recall"
-                except Exception as exc:
-                    host.logger.debug("[memory recall] deterministic answer failed: %s", exc)
-
-        if deterministic_decision is not None:
-            user_meta[f"{deterministic_source}_answer"] = True
-            host.logger.info(
-                "[%s] deterministic answer parse_mode=%s",
-                deterministic_source.replace("_", " "),
-                str(getattr(deterministic_decision, "parse_mode", "") or deterministic_source),
-            )
-            host.ai_stage_planner.apply(deterministic_decision, "neutral", state=mind_state, channel="chat")
-            deterministic_decision = host._execute_system_action(deterministic_decision, snapshot=snapshot, frame=None)
-            public_text, assistant_meta = self._commit(deterministic_decision)
-            host.last_user_text_for_semantics = user_text
-            recent_history = tuple(host._chat_history_for_llm(limit=8))
-            host.ai_post_turn_observer.submit(
-                turn_id=turn_id,
-                turn_seq=turn_seq,
-                user_text=user_text,
-                assistant_text=public_text,
-                recent_history=recent_history,
-                mechanical_outcomes=[],
-                state_summary=mind_state.to_dict(),
-                user_meta=user_meta,
-                assistant_meta=assistant_meta,
-                event_kind="chat",
-            )
-            return
+                host.logger.debug("[typed discourse] prompt context failed: %s", exc)
 
         personality_context = mind_state.personality_prompt_context()
         relationship_context = mind_state.relationship.prompt_summary()
@@ -404,6 +426,7 @@ class AIChatOrchestrator:
             "interrupt_context": speech_interrupt_context,
             "discovery": discovery_context,
             "engagement_context": engagement_context,
+            "discourse_context": discourse_context,
         }
         chat_plan = host.ai_intention_planner.plan_chat(
             planning_snapshot,
@@ -449,6 +472,7 @@ class AIChatOrchestrator:
                 interrupt_context=speech_interrupt_context,
                 engagement_context=engagement_prompt_context,
                 routing_context=routing_context,
+                discourse_context=discourse_context,
                 use_escalation=use_escalation,
                 reasoning_effort=reasoning_effort,
                 thinking_mode=thinking_mode,
@@ -467,6 +491,7 @@ class AIChatOrchestrator:
                     interrupt_context=speech_interrupt_context,
                     engagement_context=engagement_prompt_context,
                     routing_context=routing_context,
+                    discourse_context=discourse_context,
                     use_escalation=use_escalation,
                     reasoning_effort=reasoning_effort,
                     thinking_mode=thinking_mode,
@@ -477,25 +502,145 @@ class AIChatOrchestrator:
         finally:
             host._set_background_memory_digest_remote_inflight(False)
 
+        discourse_resolution = None
+        assistant_discourse_meta: dict[str, Any] = {}
+        deterministic_decision = None
+        deterministic_source = ""
+        typed_frame: SemanticFrame | None = None
+        assistant_act: AssistantAct = AssistantAct()
+        discourse_surface = DiscourseSurface()
+
         if payload:
             payload = guard_subjective_stance_payload(payload)
-            semantic_frame = dict(payload.get("semantic_frame", {}) or {})
-            if semantic_frame:
-                host.last_semantic_frame = semantic_frame
-                user_meta["semantic_frame"] = semantic_frame
+            typed_frame = payload.get("_typed_semantic_frame")
+            if not isinstance(typed_frame, SemanticFrame):
+                typed_frame = validate_semantic_frame(payload.get("semantic_frame", {})).frame
+            typed_assistant_act = payload.get("_typed_assistant_act")
+            if isinstance(typed_assistant_act, AssistantAct):
+                assistant_act = typed_assistant_act
+            else:
+                assistant_act = validate_assistant_act(payload.get("assistant_act", {})).act
+
+            semantic_frame = typed_frame.to_dict()
+            host.last_semantic_frame = semantic_frame
+            user_meta["semantic_frame"] = semantic_frame
+            try:
+                from runtime.observability import GLOBAL_OBSERVABILITY
+                GLOBAL_OBSERVABILITY.log(
+                    "semantic_frame_v1",
+                    tags={
+                        "user_act": typed_frame.user_act or "unknown",
+                        "target": typed_frame.target or "unknown",
+                        "relation": typed_frame.discourse_relation or "unknown",
+                    },
+                    fields={"turn_seq": turn_seq, "frame": semantic_frame},
+                )
+            except Exception as exc:
+                _orchestrator_boundary_note(host, "semantic_frame.observability", exc)
+
+            try:
+                host._ensure_session_turn_ledger().merge_turn_meta(
+                    user_turn.index,
+                    {"semantic_frame": semantic_frame},
+                )
+            except Exception as exc:
+                host.logger.debug("[typed discourse] user frame commit failed: %s", exc)
+
+            resolve_discourse = getattr(host, "_resolve_discourse_frame", None)
+            if callable(resolve_discourse):
                 try:
-                    from runtime.observability import GLOBAL_OBSERVABILITY
-                    GLOBAL_OBSERVABILITY.log(
-                        "semantic_frame_v1",
-                        tags={
-                            "user_act": str(semantic_frame.get("user_act", "unknown") or "unknown"),
-                            "target": str(semantic_frame.get("target", "unknown") or "unknown"),
-                            "relation": str(semantic_frame.get("discourse_relation", "unknown") or "unknown"),
-                        },
-                        fields={"turn_seq": turn_seq, "frame": semantic_frame},
+                    discourse_resolution = resolve_discourse(
+                        typed_frame,
+                        current_user_turn_index=user_turn.index,
                     )
+                    assistant_discourse_meta = discourse_resolution.assistant_meta(
+                        user_turn_index=user_turn.index
+                    )
+                    assistant_discourse_meta["assistant_act"] = assistant_act.to_dict()
+                    discourse_surface = DiscourseSurfaceRenderer().render(
+                        discourse_resolution.action,
+                        model_text=str(payload.get("text", "") or ""),
+                    )
+                    if discourse_surface.deterministic and discourse_surface.text:
+                        deterministic_decision = _decision_from_discourse_surface(
+                            host,
+                            discourse_surface,
+                            user_text=user_text,
+                        )
+                        assistant_discourse_meta["assistant_act"] = {
+                            "kind": "answer",
+                            "proposition_mode": "new",
+                            "confidence": 1.0,
+                        }
+                        deterministic_source = "typed_discourse"
                 except Exception as exc:
-                    _orchestrator_boundary_note(host, "semantic_frame.observability", exc)
+                    host.logger.debug("[typed discourse] resolution failed: %s", exc)
+
+            # Memory query đã được semantic authority chuẩn hóa thành object typed.
+            # Không gọi compiler trên raw user text thêm lần nữa.
+            if (
+                deterministic_decision is None
+                and discourse_resolution is not None
+                and discourse_resolution.memory_recall_requested
+                and (grounding_report is None or bool(getattr(grounding_report, "memory_answer_allowed", True)))
+            ):
+                build_memory_recall = getattr(host, "_build_typed_memory_recall_decision", None)
+                if callable(build_memory_recall):
+                    try:
+                        deterministic_decision = build_memory_recall(
+                            discourse_resolution.memory_query,
+                            raw_text=user_text,
+                        )
+                        if deterministic_decision is not None:
+                            deterministic_source = "memory_recall"
+                    except Exception as exc:
+                        host.logger.debug("[memory recall] typed fulfillment failed: %s", exc)
+
+            if deterministic_decision is not None:
+                user_meta[f"{deterministic_source}_answer"] = True
+                host.logger.info(
+                    "[%s] deterministic fulfillment parse_mode=%s",
+                    deterministic_source.replace("_", " "),
+                    str(getattr(deterministic_decision, "parse_mode", "") or deterministic_source),
+                )
+                host.ai_stage_planner.apply(
+                    deterministic_decision,
+                    "neutral",
+                    state=mind_state,
+                    channel="chat",
+                )
+                deterministic_decision = host._execute_system_action(
+                    deterministic_decision,
+                    snapshot=snapshot,
+                    frame=None,
+                )
+                public_text, assistant_meta = self._commit(
+                    deterministic_decision,
+                    assistant_meta_extra=assistant_discourse_meta,
+                )
+                host.last_user_text_for_semantics = user_text
+                recent_history = tuple(host._chat_history_for_llm(limit=8))
+                observer_state = mind_state.to_dict()
+                observer_state["semantic_frame"] = semantic_frame
+                host.ai_post_turn_observer.submit(
+                    turn_id=turn_id,
+                    turn_seq=turn_seq,
+                    user_text=user_text,
+                    assistant_text=public_text,
+                    recent_history=recent_history,
+                    mechanical_outcomes=[],
+                    state_summary=observer_state,
+                    user_meta=user_meta,
+                    assistant_meta=assistant_meta,
+                    event_kind="chat",
+                )
+                return
+
+            if discourse_surface.text and not str(payload.get("text", "") or "").strip():
+                payload["text"] = discourse_surface.text
+                payload["should_speak"] = True
+                payload["performance_hint"] = discourse_surface.performance_hint
+
             draft_text = str(payload.get("text", "") or "")
             grounding_engine = getattr(host, "source_grounding_engine", None)
             grounding_verdict = evaluate_grounded_surface(
@@ -522,13 +667,14 @@ class AIChatOrchestrator:
                         interrupt_context=speech_interrupt_context,
                         engagement_context=engagement_prompt_context,
                         routing_context=routing_context,
+                        discourse_context=discourse_context,
                         use_escalation=use_escalation,
                         reasoning_effort=reasoning_effort,
                         thinking_mode=thinking_mode,
                         allow_fallback=not no_fallback_mode_enabled(),
                         language_hint=_runtime_language(),
                         planned_intention=chat_plan,
-                                retry_instruction=retry_instruction,
+                        retry_instruction=retry_instruction,
                         # PDF annotation, page 13: wording retry is forbidden
                         # from reinterpreting discourse/meaning.  The validated
                         # frame from the first authority call is immutable.
@@ -542,6 +688,11 @@ class AIChatOrchestrator:
                     )
                     retry_grounding = retry_grounding_verdict.annotations
                     if retry_grounding_verdict.allowed:
+                        # Wording retry không được đổi assistant act/proposition mode.
+                        retried["assistant_act"] = assistant_act.to_dict()
+                        retried["_typed_assistant_act"] = assistant_act
+                        retried["semantic_frame"] = typed_frame.to_dict() if typed_frame is not None else retried.get("semantic_frame", {})
+                        retried["_typed_semantic_frame"] = typed_frame
                         payload = retried
                     else:
                         retry_codes = ["UNGROUNDED_PERCEPTION_OR_ACTION_CLAIM"] if retry_grounding else []
@@ -556,19 +707,18 @@ class AIChatOrchestrator:
 
 
         if not payload:
-            # Repair request ngắn không được biến thành im lặng. Adapter chỉ dùng
-            # session ledger và không bịa nội dung; nếu không đủ bằng chứng nó
-            # nhắc lại đúng câu user đang muốn làm rõ.
-            repair_fallback = ""
-            build_repair_fallback = getattr(host, "_conversation_repair_fallback_text", None)
-            if callable(build_repair_fallback):
-                try:
-                    repair_fallback = str(build_repair_fallback(user_text) or "").strip()
-                except Exception as exc:
-                    host.logger.debug("[conversation repair] fallback failed: %s", exc)
+            # Khi provider/grounding không để lại public text, dùng reference đã
+            # resolve nếu có. Nếu cả frame cũng không có, trả lỗi hội thoại chung
+            # thay vì im lặng; không suy ý định bằng marker câu chữ.
+            repair_fallback = str(discourse_surface.text or "").strip()
+            if not repair_fallback:
+                repair_fallback = (
+                    "Lượt này tôi chưa xử lý được trọn ý của bạn. "
+                    "Bạn nói lại nguyên ý một lần nhé."
+                )
             fallback_payload = {
                 "text": repair_fallback,
-                "should_speak": bool(repair_fallback),
+                "should_speak": True,
                 "animation": "stand",
                 "next_animation": "",
                 "direction": 0,
@@ -585,16 +735,17 @@ class AIChatOrchestrator:
                 json.dumps(fallback_payload, ensure_ascii=False),
                 user_hint=user_text,
             )
-            decision.parse_mode = "conversation_repair_fallback" if repair_fallback else "ai_runtime_format_block"
+            decision.parse_mode = "typed_discourse_fallback"
             decision.failure_meta = build_failure_meta(
                 kind="format_violation",
                 stage="ai_chat_orchestrator",
                 origin="main_model",
-                public_surface="repair_fallback" if repair_fallback else "silent",
-                recoverable=bool(repair_fallback),
+                public_surface="typed_discourse_fallback",
+                recoverable=True,
             )
         else:
-            raw = json.dumps(payload, ensure_ascii=False)
+            public_payload = _serializable_public_payload(payload)
+            raw = json.dumps(public_payload, ensure_ascii=False)
             host._log_raw_llm_output("chat_ai", raw)
             decision = host.parser.parse(raw, user_hint=user_text)
 
@@ -605,7 +756,10 @@ class AIChatOrchestrator:
             hint = str(getattr(chat_plan, "performance_hint", "") or "neutral")
         host.ai_stage_planner.apply(decision, hint, state=mind_state, channel="chat")
         decision = host._execute_system_action(decision, snapshot=snapshot, frame=None)
-        public_text, assistant_meta = self._commit(decision)
+        public_text, assistant_meta = self._commit(
+            decision,
+            assistant_meta_extra=assistant_discourse_meta,
+        )
         if public_text and discovery_id and discovery_runtime is not None:
             discovery_runtime.mark_spoken(discovery_id, public_text)
         host.last_user_text_for_semantics = user_text
@@ -662,7 +816,12 @@ class AIChatOrchestrator:
             event_kind="chat",
         )
 
-    def _commit(self, decision: Any) -> tuple[str, dict[str, Any] | None]:
+    def _commit(
+        self,
+        decision: Any,
+        *,
+        assistant_meta_extra: Mapping[str, Any] | None = None,
+    ) -> tuple[str, dict[str, Any] | None]:
         host = self.host
         try:
             from runtime.public_surface_commit import GLOBAL_PUBLIC_SURFACE_COMMITTER
@@ -727,8 +886,45 @@ class AIChatOrchestrator:
                 "architecture": AI_RUNTIME_VERSION,
                 "system_action": host.last_system_action,
                 "parse_mode": str(getattr(decision, "parse_mode", "") or "json"),
+                # Assistant turn không mang semantic frame của user. Chỉ giữ version
+                # để debug protocol, còn user_meta đã lưu frame đúng chủ thể.
+                "incoming_user_frame_version": str(
+                    dict(getattr(host, "last_semantic_frame", {}) or {}).get("version", "") or ""
+                ),
             }
-            host._ensure_session_turn_ledger().record_assistant(public_text, meta=assistant_meta)
+            extra = dict(assistant_meta_extra or {})
+            for key, value in extra.items():
+                if key == "discourse" and isinstance(value, Mapping):
+                    merged_discourse = dict(assistant_meta.get("discourse", {}) or {})
+                    merged_discourse.update(dict(value))
+                    assistant_meta["discourse"] = merged_discourse
+                else:
+                    assistant_meta[key] = value
+
+            assistant_act = validate_assistant_act(assistant_meta.get("assistant_act", {})).act
+            assistant_meta["assistant_act"] = assistant_act.to_dict()
+            discourse = dict(assistant_meta.get("discourse", {}) or {})
+            ledger = host._ensure_session_turn_ledger()
+            previous_active_root = _previous_active_proposition_root(ledger)
+            assistant_turn = ledger.record_assistant(public_text, meta=assistant_meta)
+            proposition_root, active_root = assistant_proposition_link(
+                assistant_act=assistant_act,
+                assistant_turn_index=assistant_turn.index,
+                referenced_root_turn_index=int(
+                    discourse.get("active_proposition_root_turn_index", 0) or 0
+                ),
+                previous_active_root_turn_index=previous_active_root,
+            )
+            discourse["proposition_root_turn_index"] = proposition_root
+            discourse["active_proposition_root_turn_index"] = active_root
+            assistant_meta["discourse"] = discourse
+            ledger.merge_turn_meta(
+                assistant_turn.index,
+                {
+                    "assistant_act": assistant_act.to_dict(),
+                    "discourse": discourse,
+                },
+            )
         if len(host.chat_history) > 32:
             host.chat_history = host.chat_history[-32:]
         host._apply_position_update(decision)

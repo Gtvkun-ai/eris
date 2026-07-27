@@ -90,6 +90,38 @@ class RemoteModelProcessManager:
                 raise RuntimeError("DeepSeek dang bat nhung chua co DEEPSEEK_API_KEY hoac ERIS_REMOTE_API_KEY.")
             if model_name != configured_model.strip().lower():
                 self.logger.warning("Model DeepSeek cu %s da duoc chuyen sang %s.", configured_model, model_name)
+
+            ds2api_enabled = os.environ.get("ERIS_DS2API_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+            if ds2api_enabled:
+                primary_base_url = os.environ.get("ERIS_DS2API_BASE_URL", "http://localhost:6011/v1").strip()
+                primary_key = get_secret("ERIS_DS2API_API_KEY", "DEEPSEEK_API_KEY", "ERIS_REMOTE_API_KEY")
+                primary_model = os.environ.get("ERIS_DS2API_MODEL", "deepseek-chat").strip()
+                if not primary_key:
+                    raise RuntimeError("DS2API enabled nhung chua co ERIS_DS2API_API_KEY, DEEPSEEK_API_KEY, hoac ERIS_REMOTE_API_KEY.")
+                self.logger.info(
+                    "Dung DS2API (DeepSeek Web) lam main brain tai %s voi model %s, fallback tai %s voi model %s",
+                    primary_base_url,
+                    primary_model,
+                    base_url,
+                    model_name,
+                )
+                try:
+                    primary_client = OpenAICompatibleClient(
+                        base_url=primary_base_url,
+                        api_key=primary_key,
+                        model_name=primary_model,
+                        key_pool=None,
+                    )
+                    fallback_client = OpenAICompatibleClient(
+                        base_url=base_url,
+                        api_key=api_key,
+                        model_name=model_name,
+                        key_pool=main_pool,
+                    )
+                    return ChainedFallbackClient([primary_client, fallback_client], logger=self.logger)
+                except ValueError as exc:
+                    raise RuntimeError(f"Loi API key remote deepseek chain: {exc}") from exc
+
             self.logger.info("Dung DeepSeek API tai %s voi model %s", base_url, model_name)
         else:
             base_url = (
