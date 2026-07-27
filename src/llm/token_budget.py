@@ -59,14 +59,14 @@ def detect_provider(base_url: str | None, model: str | None) -> str:
     url = (base_url or "").strip().lower()
     name = (model or "").strip().lower()
 
+    if any(token in url for token in ("127.0.0.1", "localhost", "0.0.0.0")):
+        return "local"
     if "groq" in url:
         return "groq"
     if "deepseek" in url or name.startswith("deepseek-"):
         return "deepseek"
     if "generativelanguage" in url or name.startswith(("gemma", "gemini")):
         return "gemini"
-    if any(token in url for token in ("127.0.0.1", "localhost", "0.0.0.0")):
-        return "local"
     if "openai" in url:
         return "openai"
     return "default"

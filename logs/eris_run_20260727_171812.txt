@@ -1,0 +1,111 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-27 17:18:12
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+17:18:13.509 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+17:18:13.509 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+17:18:13.527 [INFO] [Vision] Da khoi chay vision.py PID=19316
+17:18:13.561 [INFO] [Live2D] Da khoi chay renderer PID=14628, UDP=4252
+17:18:13.562 [INFO] [BodyMode] 2D -> Live2D | resident=False | bubble giữ ở Godot overlay
+17:18:14.016 [INFO] [live2d] [live2d] third-party wrapper (0.7.0.4), not affiliated with Live2D Inc.
+17:18:14.034 [INFO] [live2d] [live2d.v3] Cubism Native, Python 3.12.0
+17:18:14.047 [INFO] [live2d] [live2d.v3] official: https://www.live2d.com/sdk/download/native/
+17:18:14.399 [INFO] [live2d] [INFO]  [Pal] Init Shader Dir: C:\Users\Gtvkun\Documents\GitHub\eris\.venv\Lib\site-packages\live2d\v3\
+17:18:14.399 [INFO] [live2d] [INFO]  [CSM][I]Live2D Cubism Core version: 05.01.0000 (83951616)
+17:18:14.399 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::StartUp() is complete.
+17:18:14.399 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::Initialize() is complete.
+17:18:14.400 [INFO] [live2d] [INFO]  allocate: cpp Model(at=0000017555B59900)
+17:18:14.400 [INFO] [live2d] [INFO]  load modelSetting: C:\Users\Gtvkun\Documents\GitHub\eris\src\assets\live2d\infj\infj.model3.json
+17:18:14.401 [INFO] [live2d] [INFO]  create model: infj.moc3
+17:18:14.591 [INFO] [live2d] [Live2D] Đã mở infj.model3.json | UDP 127.0.0.1:4252
+17:18:14.592 [INFO] [live2d] [Live2D] Window pos=(486, 50) size=(520,900) fb=(520,900) screen=(1920, 1080) canvas=(1.0, 1.5) canvas_px=(1024.0, 1536.0) scale=1.00 offset=(0.00,-0.02) transparent=True decorated=False topmost=True
+17:18:14.592 [INFO] [live2d] [Live2D] Model profile: parameters=21 head=X/Z eyes=custom mirrored pair mouth=yes physics=yes expressions=0 motion_groups=0
+17:18:17.694 [INFO] [vision.py] [Vision][INFO] DS2API is already running on port 6011, reuse it.
+17:18:17.695 [INFO] [vision.py] [LLM][INFO] Dung DS2API (DeepSeek Web) lam main brain tai [URL nội bộ đã ẩn] voi model deepseek-v4-flash, fallback tai https://api.deepseek.com voi model deepseek-v4-flash
+17:18:17.697 [INFO] [vision.py] [LLM][INFO] Vision API tat: can du ERIS_VISION_API_KEY, ERIS_VISION_API_BASE_URL va ERIS_VISION_API_MODEL.
+17:18:17.697 [INFO] [vision.py] [LLM][INFO] Escalation client tat: khong tim thay key Gemini.
+17:18:17.698 [INFO] [vision.py] [LLM][INFO] Social parser client sẵn sàng: llama-3.1-8b-instant
+17:18:17.698 [INFO] [vision.py] [LLM][INFO] Social deliberator/critic client sẵn sàng: llama-3.3-70b-versatile
+17:18:17.699 [INFO] [vision.py] [LLM][INFO] Social observer fallback client sẵn sàng: llama-3.1-8b-instant
+17:18:22.112 [INFO] [vision.py] [Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=14
+17:18:22.152 [INFO] [vision.py] [Loop][INFO] [vtuber-stage] loaded version=vtuber_stage.v11 phases=8,9,10,11 status=intention_authority_ready session=stage_7e658d16a5e84a96
+17:18:22.153 [INFO] [vision.py] [Loop][INFO] Living user memory đã nối episode/profile dreaming adapter.
+17:18:22.169 [INFO] [vision.py] [Loop][INFO] [internal-cognitive] loaded version=internal_cognitive.v1.0 capabilities=8 status=read_only_verified
+17:18:22.187 [INFO] [vision.py] [Loop][INFO] [project-ops] loaded version=project_operations.v1.1 capabilities=15 mode=autonomous_project_scope
+17:18:22.187 [INFO] [vision.py] [Loop][INFO] [workspace] eris_home=[đường dẫn nội bộ đã ẩn] active=none implicit_source_repo=false
+17:18:22.984 [INFO] [vision.py] [Loop][INFO] tutor: knowledge provider đã nối vào memory recall
+17:18:23.063 [INFO] [vision.py] [Loop][INFO] [environment-capability] loaded version=environment_capability.v1.0 capabilities=6 status=read_only_verified
+17:18:23.585 [INFO] [vision.py] [Loop][INFO] [architecture C] enabled version=ai_orchestrated.v7.semantic_cutover state_version=0 personality_version=0 identity_version=0 observer=post_turn planner=local_for_chat semantic_authority=semantic_frame.v1 single_writer=1
+17:18:28.029 [INFO] [vision.py] [Loop][INFO] --- Architecture C runtime; chat vision theo yêu cầu màn hình ---
+17:18:28.411 [INFO] [vision.py] [Loop][INFO] [architecture C startup grounding] direct=0 strong=0 telemetry_tab=0 evidence=0 runtime_opening=0 metadata=0 backend=unknown wait=0.38s notes=screen_prime_lazy,screen_prime_timeout,runtime_signals_lazy
+17:18:28.416 [INFO] [vision.py] [Loop][INFO] [architecture C startup] planner skipped; using typed persona plan reason=no_opening_anchor
+17:18:28.418 [INFO] [vision.py] [Loop][INFO] [architecture C startup route] strategy=persona_opening source=persona continuity=0 forced=1
+17:18:28.450 [INFO] [vision.py] [Loop][INFO] [architecture C startup greeting] source=preset id=greet_warm_01 situation=plain_return
+17:18:30.484 [INFO] [Settings] Đang đọc não chính và ba credential pool...
+17:18:32.105 [INFO] [vision.py] [LLM][WARNING] WARNING: local DeepSeek Web proxy (Whale2API/DS2API) failed (429 Client Error: Too Many Requests for url: [URL nội bộ đã ẩn] | body: {"error":{"code":"upstream_empty_output","message":"Upstream account hit a rate limit and returned empty output.","param":null,"type":"rate_limit_error"}}), falling back to Official API.
+17:18:36.004 [INFO] [vision.py] [Loop][INFO] [architecture C startup] spoke motive=startup_opening text=Bạn đến rồi. Tốt. Tôi đã hơi mong thế.
+17:18:36.005 [INFO] [vision.py] [Loop][INFO] [screen text] worker started backend=lazy-auto poll=1.2s
+17:18:36.251 [INFO] [Settings] Giọng nói chứa toàn bộ cấu hình TTS và nghe thử; Basic chỉ giữ điều khiển nhanh.
+17:18:36.673 [INFO] [Settings] Đang đọc não chính và ba credential pool...
+17:18:36.673 [INFO] [Settings] Kết nối & dữ liệu quản lý não chính, pool credential, backup và export.
+17:18:37.417 [INFO] [Settings] Advanced điều khiển hành vi, memory, Tutor và quyền project. Một nút Áp dụng sẽ lưu lẫn cập nhật Brain.
+17:18:37.832 [INFO] [Settings] Đang đọc não chính và ba credential pool...
+17:18:37.832 [INFO] [Settings] Kết nối & dữ liệu quản lý não chính, pool credential, backup và export.
+17:18:37.880 [INFO] [vision.py] [Loop][INFO] [screen text] OCR backend resolved=rapidocr
+17:18:37.998 [INFO] [Settings] Đã đọc trạng thái não chính, TTS và ba credential pool từ Brain.
+17:18:40.104 [INFO] [Settings] Đang hiện API key; đừng chia sẻ màn hình lúc này.
+17:18:41.537 [INFO] [Settings] Đang hiện API key; đừng chia sẻ màn hình lúc này.
+17:18:42.523 [INFO] [Settings] Đã ẩn API key.
+17:18:43.657 [INFO] [Settings] Đã ẩn API key.
+17:18:45.360 [INFO] [Settings] Advanced điều khiển hành vi, memory, Tutor và quyền project. Một nút Áp dụng sẽ lưu lẫn cập nhật Brain.
+17:18:45.794 [INFO] [Settings] Danger Zone chỉ chứa thao tác reset/bảo trì thật. Mọi lệnh phá dữ liệu đều preview trước.
+17:18:46.378 [INFO] [Settings] Đã đọc trạng thái não chính, TTS và ba credential pool từ Brain.
+17:18:48.579 [INFO] [Settings] Đã đọc trạng thái não chính, TTS và ba credential pool từ Brain.
+17:18:53.263 [INFO] [Settings] Đã đọc trạng thái não chính, TTS và ba credential pool từ Brain.
+17:18:54.664 [INFO] [Settings] Đã đọc trạng thái não chính, TTS và ba credential pool từ Brain.
+17:18:55.503 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=active external=1.00 internal=0.03 interrupt=0.19 resource=0.09 vision_hint=1 budget=scheduler_allow
+17:18:56.429 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+17:18:56.430 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=unknown:unknown:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+17:18:56.430 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+17:19:00.600 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.85 pressure=0.62 surface=yes mutations=1
+17:19:11.409 [INFO] [vision.py] [LLM][WARNING] WARNING: local DeepSeek Web proxy (Whale2API/DS2API) failed (500 Client Error: Internal Server Error for url: [URL nội bộ đã ẩn] | body: {"error":{"code":"internal_error","message":"Failed to prepare request.","param":null,"type":"api_error"}}), falling back to Official API.
+17:19:17.443 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=other act=none conf=0.00 importance=0.00 gate=model_silence body_only=1
+17:19:22.094 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=1 reason=enter_chat_mode
+17:19:22.094 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+17:19:22.884 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+17:19:23.247 [INFO] [vision.py] [Loop][INFO] Người dùng: thật hả
+17:19:23.278 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference anaphora=0
+17:19:23.281 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+17:19:25.108 [INFO] [vision.py] [LLM][WARNING] [PROVIDER CIRCUIT] open provider=[URL nội bộ đã ẩn] status=500 cooldown=20s failures=2
+17:19:25.108 [INFO] [vision.py] [LLM][WARNING] WARNING: local DeepSeek Web proxy (Whale2API/DS2API) failed (500 Client Error: Internal Server Error for url: [URL nội bộ đã ẩn] | body: {"error":{"code":"internal_error","message":"Failed to prepare request.","param":null,"type":"api_error"}}), falling back to Official API.
+17:19:29.283 [INFO] [vision.py] [Loop][INFO] ERIS: Thật. Tôi không nói kiểu xã giao đâu.
+17:19:33.205 [INFO] [vision.py] [Loop][INFO] [post observer] turn=3 act=unknown meaning=neutral conf=0.00 repair=False traits=0 frame=uncertain strategy=none source=groq_observer latency=3890ms
+17:19:46.354 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+17:19:46.775 [INFO] [vision.py] [Loop][INFO] Người dùng: ok rồi hả
+17:19:46.819 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference anaphora=0
+17:19:46.821 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+17:19:48.881 [INFO] [vision.py] [LLM][WARNING] [PROVIDER CIRCUIT] open provider=[URL nội bộ đã ẩn] status=500 cooldown=20s failures=2
+17:19:48.882 [INFO] [vision.py] [LLM][WARNING] WARNING: local DeepSeek Web proxy (Whale2API/DS2API) failed (500 Client Error: Internal Server Error for url: [URL nội bộ đã ẩn] | body: {"error":{"code":"internal_error","message":"Failed to prepare request.","param":null,"type":"api_error"}}), falling back to Official API.
+17:19:52.856 [INFO] [vision.py] [Loop][INFO] ERIS: Ừ, ổn. Tôi nói thật mà, có gì mà không ổn.
+17:19:56.721 [INFO] [vision.py] [Loop][INFO] [post observer] turn=4 act=unknown meaning=neutral conf=0.00 repair=False traits=0 frame=uncertain strategy=none source=groq_observer latency=3857ms
+17:20:11.412 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+17:20:11.775 [INFO] [vision.py] [Loop][INFO] Người dùng: cute thía
+17:20:11.793 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference anaphora=0
+17:20:11.794 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+17:20:13.283 [INFO] [vision.py] [LLM][WARNING] [PROVIDER CIRCUIT] open provider=[URL nội bộ đã ẩn] status=500 cooldown=20s failures=2
+17:20:13.283 [INFO] [vision.py] [LLM][WARNING] WARNING: local DeepSeek Web proxy (Whale2API/DS2API) failed (500 Client Error: Internal Server Error for url: [URL nội bộ đã ẩn] | body: {"error":{"code":"internal_error","message":"Failed to prepare request.","param":null,"type":"api_error"}}), falling back to Official API.
+17:20:16.545 [INFO] [vision.py] [Loop][INFO] ERIS: Cảm ơn. Nhưng mà mắc cười ghê, tự nhiên khen tôi giữa câu chuyện.
+17:20:20.493 [INFO] [vision.py] [Loop][INFO] [post observer] turn=5 act=unknown meaning=neutral conf=0.00 repair=False traits=0 frame=uncertain strategy=none source=groq_observer latency=3933ms
+17:20:21.232 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=0 60s vì tts_http_429; alive=10/11
+17:20:21.232 [INFO] [vision.py] [TTS][WARNING] [TTS] Key index 0 bị rate limit/hết quota (lượt 1/4).
+17:20:37.055 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+17:20:37.055 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+17:20:43.168 [INFO] [Live2D] Dang dung renderer PID=14628...
+17:20:43.185 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::Dispose() is complete.
+17:20:43.217 [INFO] [Live2D] Renderer da thoat (code=-1, current=False).
+17:20:43.237 [INFO] [Vision] Dang dung vision.py PID=19316...
+17:20:43.260 [INFO] [Vision] vision.py da thoat (PID=19316, code=-1, unexpected=False).
+17:20:43.274 [INFO] [RunLogger] Ket thuc phien chay.

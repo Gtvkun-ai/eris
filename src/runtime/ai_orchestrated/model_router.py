@@ -581,13 +581,13 @@ def _json(text: str) -> dict[str, Any]:
     except Exception:
         match = re.search(r"\{.*\}", raw, flags=re.S)
         if not match:
-            return {}
+            return {"text": raw, "should_speak": True}
         try:
             value = json.loads(match.group(0))
             parsed = dict(value) if isinstance(value, Mapping) else {}
             return unwrap(parsed)
         except Exception:
-            return {}
+            return {"text": raw, "should_speak": True}
 
 
 class AIRuntimeModelRouter:

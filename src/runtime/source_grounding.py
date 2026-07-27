@@ -1215,6 +1215,10 @@ class SourceGroundingEngine:
         for clause in clauses:
             norm = self._normalize(clause)
             perception_claim = any(self._normalize(m) in norm for m in _ERIS_PERCEPTION_CLAIM_MARKERS)
+            if perception_claim and ("toi thay" in norm or "tui thay" in norm):
+                feeling_keywords = ("on", "kha", "vui", "buon", "met", "binh thuong", "dinh", "hay", "tot", "sao", "de chiu", "diu dang", "thich", "hop", "ngon", "la", "kieu")
+                if any(f"thay {kw}" in norm or f"thay la {kw}" in norm for kw in feeling_keywords):
+                    perception_claim = False
             action_claim = any(self._normalize(m) in norm for m in _ERIS_ACTION_CLAIM_MARKERS)
             status: ClaimStatus = "grounded"
             ground_truth = ""

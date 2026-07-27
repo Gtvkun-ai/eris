@@ -9,6 +9,7 @@ focused question instead of inventing them.
 """
 from __future__ import annotations
 
+import os
 import re
 import unicodedata
 from dataclasses import asdict, dataclass
@@ -259,12 +260,15 @@ def route_companion_turn(
     score = max(0.0, min(1.0, score))
     use_pro = score >= policy.pro_threshold
 
+    env_thinking = str(os.getenv("ERIS_DEEPSEEK_THINKING", "")).strip().lower()
+
     if not use_pro:
+        resolved_thinking = "enabled" if env_thinking == "enabled" else "disabled"
         return CompanionRouteDecision(
             tier="flash",
             score=round(score, 3),
-            reasoning_effort=None,
-            thinking_mode="disabled",
+            reasoning_effort="high" if resolved_thinking == "enabled" else None,
+            thinking_mode=resolved_thinking,
             reasons=tuple(dict.fromkeys(reasons)) or ("clear_simple_turn",),
             clarification_preferred=missing_facts,
             style_sensitive=style_sensitive,
@@ -273,7 +277,7 @@ def route_companion_turn(
     # Literary and relational turns benefit from the stronger model but not
     # necessarily visible chain-of-thought latency.  Abstract/technical turns use
     # thinking mode; very dense ones receive max effort.
-    thinking = bool(abstract_hits or technical_hits or explicit_deep_hits)
+    thinking = bool(abstract_hits or technical_hits or explicit_deep_hits) if env_thinking == "" else (env_thinking == "enabled")
     effort = "max" if thinking and score >= policy.max_reasoning_threshold else ("high" if thinking else None)
     return CompanionRouteDecision(
         tier="pro",

@@ -247,6 +247,84 @@ def test_ds2api_warning_logging() -> None:
     result = chained.create_chat_completion()
 
     assert result == {"ok": True}
-    assert any("WARNING: DS2API failed (Connection refused), falling back to Official API." in w for w in captured_warnings)
+    assert any("WARNING: local DeepSeek Web proxy (Whale2API/DS2API) failed (Connection refused), falling back to Official API." in w for w in captured_warnings)
+
+
+def test_openai_client_429_record_pressure(monkeypatch) -> None:
+    import requests
+    import llm.client as client_module
+
+    class Fake429Response:
+        status_code = 429
+        reason = "Too Many Requests"
+        url = "http://localhost:6011/v1/chat/completions"
+        headers = {}
+        text = '{"error": "rate limit"}'
+
+        def raise_for_status(self):
+            raise requests.HTTPError("429 Too Many Requests", response=self)
+
+    def fake_post(**kwargs):
+        return Fake429Response()
+
+    monkeypatch.setattr(client_module, "_brokered_post", fake_post)
+
+    client = client_module.OpenAICompatibleClient(
+        base_url="http://localhost:6011/v1",
+        api_key="sk-test",
+        model_name="gpt-4o",
+        key_pool=None,
+    )
+
+    try:
+        client.create_chat_completion(
+            messages=[{"role": "user", "content": "hi"}],
+            temperature=0.7,
+            frequency_penalty=0,
+            presence_penalty=0,
+            max_tokens=10,
+        )
+    except requests.HTTPError as exc:
+        assert exc.response.status_code == 429
+
+
+def test_openai_client_empty_output_raises_runtime_error(monkeypatch) -> None:
+    import llm.client as client_module
+
+    class FakeEmptyResponse:
+        status_code = 200
+        reason = "OK"
+        url = "http://localhost:6011/v1/chat/completions"
+        headers = {}
+        text = '{"choices": [{"message": {"content": ""}}]}'
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": ""}}]}
+
+    monkeypatch.setattr(client_module, "_brokered_post", lambda **kwargs: FakeEmptyResponse())
+
+    client = client_module.OpenAICompatibleClient(
+        base_url="http://localhost:6011/v1",
+        api_key="sk-test",
+        model_name="gpt-4o",
+        key_pool=None,
+    )
+
+    try:
+        client.create_chat_completion(
+            messages=[{"role": "user", "content": "hi"}],
+            temperature=0.7,
+            frequency_penalty=0,
+            presence_penalty=0,
+            max_tokens=10,
+        )
+        assert False, "Should have raised RuntimeError for empty output"
+    except RuntimeError as exc:
+        assert "Empty output content" in str(exc)
+
+
 
 

@@ -206,13 +206,13 @@ class AttentionOverseer:
             self.logger.info("DS2API is already running on port %d, reuse it.", port)
             return None
 
-        ds2api_dir = os.path.join(project_root, "tools", "ds2api")
-        binary = os.path.join(ds2api_dir, "ds2api.exe")
+        ds2api_dir = os.path.join(project_root, "tools", "whale2api")
+        binary = os.path.join(ds2api_dir, "whale2api.exe")
         if not os.path.exists(binary):
-            self.logger.warning("ERIS_DS2API_ENABLED=1 but ds2api.exe not found at %s", binary)
+            self.logger.warning("ERIS_DS2API_ENABLED=1 but whale2api.exe not found at %s", binary)
             return None
 
-        self.logger.info("Starting DS2API daemon from %s...", binary)
+        self.logger.info("Starting Whale2API daemon from %s...", binary)
         import subprocess
         try:
             creationflags = 0x08000000 if os.name == 'nt' else 0

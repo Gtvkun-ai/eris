@@ -410,7 +410,7 @@ class LlamaServerClient:
                 last_error = _http_error_with_body(response)
                 status_code = exc.response.status_code if exc.response is not None else None
                 if status_code == 429:
-                    _record_pressure_429(pressure_provider, response, model_name=model_name)
+                    _record_pressure_429(pressure_provider, response, model_name=self.model_name)
                 if status_code is not None and status_code < 500:
                     continue
                 raise last_error
@@ -509,7 +509,7 @@ class OpenAICompatibleClient:
         if deepseek_request:
             mode = deepseek_thinking_mode(self.configured_model_name, requested=thinking_mode)
             payload["thinking"] = {"type": mode}
-            payload["max_tokens"] = max_tokens
+            payload["max_tokens"] = max_tokens if mode == "disabled" else max(max_tokens, 2048)
             if mode == "enabled":
                 payload["reasoning_effort"] = deepseek_reasoning_effort(reasoning_effort)
             else:
@@ -596,6 +596,22 @@ class OpenAICompatibleClient:
                     except ValueError as exc:
                         last_error = exc
                         continue
+
+                    if isinstance(payload_json, dict) and "error" in payload_json:
+                        err_detail = payload_json["error"]
+                        err_msg = err_detail.get("message") if isinstance(err_detail, dict) else str(err_detail)
+                        last_error = RuntimeError(f"API error response: {err_msg}")
+                        raise last_error
+
+                    choices = payload_json.get("choices") if isinstance(payload_json, dict) else None
+                    if isinstance(choices, list) and choices:
+                        first_choice = choices[0] if isinstance(choices[0], dict) else {}
+                        message = first_choice.get("message") if isinstance(first_choice, dict) else {}
+                        content = str(message.get("content", "") or "").strip()
+                        if not content:
+                            last_error = RuntimeError("Empty output content received from provider")
+                            raise last_error
+
                     self._provider_circuit.record_success()
                     _record_pressure_success(pressure_provider)
                     if self.key_pool is not None and lease is not None:
@@ -606,7 +622,7 @@ class OpenAICompatibleClient:
                     status_code = exc.response.status_code if exc.response is not None else None
                     if status_code == 429:
                         rate_limited = True
-                        _record_pressure_429(pressure_provider, exc.response, model_name=model_name)
+                        _record_pressure_429(pressure_provider, exc.response, model_name=self.model_name)
                         break  # thoát vòng variant để xoay key
                     if status_code in (401, 403):
                         auth_failed = True
@@ -686,7 +702,7 @@ class ChainedFallbackClient:
                 is_ds2api = "api.deepseek.com" not in client_url.lower() and ("6011" in client_url or "localhost" in client_url or "127.0.0.1" in client_url)
                 if is_ds2api:
                     self._logger.warning(
-                        "WARNING: DS2API failed (%s), falling back to Official API.",
+                        "WARNING: local DeepSeek Web proxy (Whale2API/DS2API) failed (%s), falling back to Official API.",
                         exc,
                     )
                 else:
@@ -932,7 +948,7 @@ class GeminiClient:
             )
             status = last_response.status_code
             if status == 429:
-                _record_pressure_429(pressure_provider, last_response, 60.0, model_name=model_name)
+                _record_pressure_429(pressure_provider, last_response, 60.0, model_name=self.model_name)
             if status == 429 and self.key_pool is not None:
                 retry_s = _retry_after_seconds(last_response, 60.0)
                 may_rotate = self.key_pool.mark_rate_limited(

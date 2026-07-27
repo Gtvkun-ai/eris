@@ -1,0 +1,68 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-27 16:58:32
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+16:58:33.426 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+16:58:33.427 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+16:58:33.449 [INFO] [Vision] Da khoi chay vision.py PID=20396
+16:58:33.480 [INFO] [Live2D] Da khoi chay renderer PID=15740, UDP=4252
+16:58:33.481 [INFO] [BodyMode] 2D -> Live2D | resident=False | bubble giữ ở Godot overlay
+16:58:33.835 [INFO] [live2d] [live2d] third-party wrapper (0.7.0.4), not affiliated with Live2D Inc.
+16:58:33.854 [INFO] [live2d] [live2d.v3] Cubism Native, Python 3.12.0
+16:58:33.855 [INFO] [live2d] [live2d.v3] official: https://www.live2d.com/sdk/download/native/
+16:58:34.062 [INFO] [live2d] [INFO]  [Pal] Init Shader Dir: C:\Users\Gtvkun\Documents\GitHub\eris\.venv\Lib\site-packages\live2d\v3\
+16:58:34.063 [INFO] [live2d] [INFO]  [CSM][I]Live2D Cubism Core version: 05.01.0000 (83951616)
+16:58:34.063 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::StartUp() is complete.
+16:58:34.063 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::Initialize() is complete.
+16:58:34.063 [INFO] [live2d] [INFO]  allocate: cpp Model(at=000001E596DD36D0)
+16:58:34.064 [INFO] [live2d] [INFO]  load modelSetting: C:\Users\Gtvkun\Documents\GitHub\eris\src\assets\live2d\infj\infj.model3.json
+16:58:34.064 [INFO] [live2d] [INFO]  create model: infj.moc3
+16:58:34.163 [INFO] [live2d] [Live2D] Đã mở infj.model3.json | UDP 127.0.0.1:4252
+16:58:34.163 [INFO] [live2d] [Live2D] Window pos=(486, 50) size=(520,900) fb=(520,900) screen=(1920, 1080) canvas=(1.0, 1.5) canvas_px=(1024.0, 1536.0) scale=1.00 offset=(0.00,-0.02) transparent=True decorated=False topmost=True
+16:58:34.163 [INFO] [live2d] [Live2D] Model profile: parameters=21 head=X/Z eyes=custom mirrored pair mouth=yes physics=yes expressions=0 motion_groups=0
+16:58:37.344 [INFO] [vision.py] [Vision][INFO] DS2API is already running on port 6011, reuse it.
+16:58:37.345 [INFO] [vision.py] [LLM][INFO] Dung DS2API (DeepSeek Web) lam main brain tai [URL nội bộ đã ẩn] voi model deepseek-v4-flash, fallback tai https://api.deepseek.com voi model deepseek-v4-flash
+16:58:37.346 [INFO] [vision.py] [LLM][INFO] Vision API tat: can du ERIS_VISION_API_KEY, ERIS_VISION_API_BASE_URL va ERIS_VISION_API_MODEL.
+16:58:37.346 [INFO] [vision.py] [LLM][INFO] Escalation client tat: khong tim thay key Gemini.
+16:58:37.347 [INFO] [vision.py] [LLM][INFO] Social parser client sẵn sàng: llama-3.1-8b-instant
+16:58:37.347 [INFO] [vision.py] [LLM][INFO] Social deliberator/critic client sẵn sàng: llama-3.3-70b-versatile
+16:58:37.347 [INFO] [vision.py] [LLM][INFO] Social observer fallback client sẵn sàng: llama-3.1-8b-instant
+16:58:40.138 [INFO] [vision.py] [Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=14
+16:58:40.162 [INFO] [vision.py] [Loop][INFO] [vtuber-stage] loaded version=vtuber_stage.v11 phases=8,9,10,11 status=intention_authority_ready session=stage_00cf5d8a429d40a9
+16:58:40.163 [INFO] [vision.py] [Loop][INFO] Living user memory đã nối episode/profile dreaming adapter.
+16:58:40.168 [INFO] [vision.py] [Loop][INFO] [internal-cognitive] loaded version=internal_cognitive.v1.0 capabilities=8 status=read_only_verified
+16:58:40.179 [INFO] [vision.py] [Loop][INFO] [project-ops] loaded version=project_operations.v1.1 capabilities=15 mode=autonomous_project_scope
+16:58:40.179 [INFO] [vision.py] [Loop][INFO] [workspace] eris_home=[đường dẫn nội bộ đã ẩn] active=none implicit_source_repo=false
+16:58:40.639 [INFO] [vision.py] [Loop][INFO] tutor: knowledge provider đã nối vào memory recall
+16:58:40.674 [INFO] [vision.py] [Loop][INFO] [environment-capability] loaded version=environment_capability.v1.0 capabilities=6 status=read_only_verified
+16:58:41.059 [INFO] [vision.py] [Loop][INFO] [architecture C] enabled version=ai_orchestrated.v7.semantic_cutover state_version=0 personality_version=0 identity_version=0 observer=post_turn planner=local_for_chat semantic_authority=semantic_frame.v1 single_writer=1
+16:58:43.198 [INFO] [vision.py] [Loop][INFO] --- Architecture C runtime; chat vision theo yêu cầu màn hình ---
+16:58:43.654 [INFO] [vision.py] [Loop][INFO] [architecture C startup grounding] direct=0 strong=0 telemetry_tab=0 evidence=0 runtime_opening=0 metadata=0 backend=unknown wait=0.46s notes=screen_prime_lazy,screen_prime_timeout,runtime_signals_lazy
+16:58:43.658 [INFO] [vision.py] [Loop][INFO] [architecture C startup] planner skipped; using typed persona plan reason=no_opening_anchor
+16:58:43.659 [INFO] [vision.py] [Loop][INFO] [architecture C startup route] strategy=persona_opening source=persona continuity=0 forced=1
+16:58:43.683 [INFO] [vision.py] [Loop][INFO] [architecture C startup greeting] source=preset id=greet_warm_02 situation=plain_return
+16:58:46.205 [INFO] [vision.py] [LLM][WARNING] WARNING: local DeepSeek Web proxy (Whale2API/DS2API) failed (429 Client Error: Too Many Requests for url: [URL nội bộ đã ẩn] | body: {"error":{"code":"upstream_empty_output","message":"Upstream account hit a rate limit and returned empty output.","param":null,"type":"rate_limit_error"}}), falling back to Official API.
+16:58:49.313 [INFO] [vision.py] [Loop][INFO] [architecture C startup] spoke motive=startup_opening text=Bạn đây rồi. Tôi biết bạn sẽ quay lại.
+16:58:49.313 [INFO] [vision.py] [Loop][INFO] [screen text] worker started backend=lazy-auto poll=1.2s
+16:58:50.435 [INFO] [vision.py] [Loop][INFO] [screen text] OCR backend resolved=rapidocr
+16:59:06.634 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=1 reason=enter_chat_mode
+16:59:06.634 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+16:59:07.882 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+16:59:07.882 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+16:59:14.603 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+16:59:28.831 [INFO] [vision.py] [Loop][INFO] Người dùng: xin chào
+16:59:28.864 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference anaphora=0
+16:59:28.868 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+16:59:34.776 [INFO] [vision.py] [Loop][INFO] ERIS: Lượt này tôi chưa xử lý được trọn ý của bạn. Bạn nói lại nguyên ý một lần nhé.
+16:59:34.840 [INFO] [vision.py] [Loop][INFO] [post observer] turn=2 act=greeting meaning=opens_contact conf=0.88 repair=False traits=0 frame=uncertain strategy=none source=deterministic_anchor:greeting latency=0ms
+16:59:54.763 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+16:59:54.763 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+17:00:00.010 [INFO] [Live2D] Dang dung renderer PID=15740...
+17:00:00.026 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::Dispose() is complete.
+17:00:00.045 [INFO] [Live2D] Renderer da thoat (code=-1, current=False).
+17:00:00.084 [INFO] [Vision] Dang dung vision.py PID=20396...
+17:00:00.113 [INFO] [Vision] vision.py da thoat (PID=20396, code=-1, unexpected=False).
+17:00:00.120 [INFO] [RunLogger] Ket thuc phien chay.
