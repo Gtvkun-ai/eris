@@ -178,6 +178,25 @@ for src, dst in deploy_pairs:
     shutil.copy2(src, dst)
     print("  [OK] " + os.path.basename(dst) + "  md5=" + md5_short(dst))
 
+# Deploy ds2api binary and config to build directory if present
+ds2api_src = os.path.join(REPO, "tools", "ds2api")
+ds2api_dst = os.path.join(OUT, "tools", "ds2api")
+if os.path.exists(ds2api_src):
+    print("  Deploying ds2api binary and config to build...")
+    os.makedirs(ds2api_dst, exist_ok=True)
+    for fn in ["ds2api.exe", "config.json", ".env"]:
+        src_file = os.path.join(ds2api_src, fn)
+        if os.path.exists(src_file):
+            shutil.copy2(src_file, os.path.join(ds2api_dst, fn))
+            print("  [OK] ds2api " + fn)
+    static_src = os.path.join(ds2api_src, "static")
+    static_dst = os.path.join(ds2api_dst, "static")
+    if os.path.exists(static_src):
+        if os.path.exists(static_dst):
+            shutil.rmtree(static_dst)
+        shutil.copytree(static_src, static_dst)
+        print("  [OK] ds2api static folder")
+
 # Tao run_eris.bat dung venv 3.14 (inject PATH truoc khi launch Eris.exe)
 bat_path = os.path.join(OUT, "run_eris.bat")
 venv_scripts = os.path.dirname(VENV_PY)   # .venv\Scripts trong REPO

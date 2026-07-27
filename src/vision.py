@@ -58,6 +58,7 @@ class AttentionOverseer:
             logger=self.process_logger,
             project_root=project_root,
         )
+        self.ds2api_proc = self._start_ds2api_daemon(project_root)
         self.llm_client = self.process_manager.build_client(
             model_path=model_path,
             n_ctx=n_ctx,
@@ -184,6 +185,49 @@ class AttentionOverseer:
         except Exception:
             return True
 
+    def _start_ds2api_daemon(self, project_root: str):
+        enabled = os.environ.get("ERIS_DS2API_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+        if not enabled:
+            return None
+
+        import socket
+        port = 6011
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(1.0)
+        already_running = False
+        try:
+            s.connect(("127.0.0.1", port))
+            already_running = True
+            s.close()
+        except Exception:
+            pass
+
+        if already_running:
+            self.logger.info("DS2API is already running on port %d, reuse it.", port)
+            return None
+
+        ds2api_dir = os.path.join(project_root, "tools", "ds2api")
+        binary = os.path.join(ds2api_dir, "ds2api.exe")
+        if not os.path.exists(binary):
+            self.logger.warning("ERIS_DS2API_ENABLED=1 but ds2api.exe not found at %s", binary)
+            return None
+
+        self.logger.info("Starting DS2API daemon from %s...", binary)
+        import subprocess
+        try:
+            creationflags = 0x08000000 if os.name == 'nt' else 0
+            proc = subprocess.Popen(
+                [binary],
+                cwd=ds2api_dir,
+                creationflags=creationflags,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return proc
+        except Exception as exc:
+            self.logger.error("Failed to start DS2API daemon: %s", exc)
+            return None
+
     def stop(self, reason: str = ""):
         if not self.coordinator.running:
             return
@@ -193,6 +237,17 @@ class AttentionOverseer:
         self.process_manager.stop()
         if hasattr(self, "tts_engine") and self.tts_engine is not None:
             self.tts_engine.shutdown()
+        if hasattr(self, "ds2api_proc") and self.ds2api_proc is not None:
+            self.logger.info("Stopping DS2API daemon...")
+            try:
+                self.ds2api_proc.terminate()
+                self.ds2api_proc.wait(timeout=3)
+            except Exception:
+                try:
+                    self.ds2api_proc.kill()
+                except Exception:
+                    pass
+            self.ds2api_proc = None
 
     def run_loop(self):
         self.coordinator.run_loop()
