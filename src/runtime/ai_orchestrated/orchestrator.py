@@ -23,6 +23,7 @@ from runtime.social_stance_policy import guard_subjective_stance_payload
 from runtime.companion_model_routing import route_companion_turn
 from runtime.discourse_state import assistant_proposition_link
 from runtime.discourse_surface import DiscourseSurface, DiscourseSurfaceRenderer
+from runtime.json_boundary import public_payload
 from runtime.semantic_frame import (
     AssistantAct,
     SemanticFrame,
@@ -157,13 +158,9 @@ class _StaticIntentionPlanner:
 
 
 def _serializable_public_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Loại object typed private trước khi đi qua JSON parser/body protocol."""
+    """Chuẩn hóa payload public trước JSON và bỏ cache object typed nội bộ."""
 
-    return {
-        key: value
-        for key, value in dict(payload or {}).items()
-        if not str(key).startswith("_typed_")
-    }
+    return public_payload(payload)
 
 
 def _previous_active_proposition_root(ledger: Any) -> int:
@@ -1277,7 +1274,7 @@ class AIAutonomousOrchestrator:
                 "[architecture C startup] main reply unavailable; used personality fallback strategy=%s",
                 plan.strategy,
             )
-        raw = json.dumps(payload, ensure_ascii=False)
+        raw = json.dumps(_serializable_public_payload(payload), ensure_ascii=False)
         host._log_raw_llm_output("startup_ai", raw)
         decision = host.parser.parse(raw)
         if not bool(getattr(decision, "should_speak", False)) or not str(getattr(decision, "text", "") or "").strip():
@@ -1419,7 +1416,7 @@ class AIAutonomousOrchestrator:
         if not payload:
             host.logger.warning("[architecture C force_speak] generation failed")
             return
-        raw = json.dumps(payload, ensure_ascii=False)
+        raw = json.dumps(_serializable_public_payload(payload), ensure_ascii=False)
         host._log_raw_llm_output("force_speak_ai", raw)
         decision = host.parser.parse(raw)
         host.ai_stage_planner.apply(decision, plan.performance_hint, state=state, channel="force_speak")

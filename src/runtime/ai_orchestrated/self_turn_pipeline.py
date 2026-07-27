@@ -19,6 +19,7 @@ from typing import Any, Callable, Mapping
 
 from runtime.no_fallback_policy import no_fallback_mode_enabled
 from runtime.grounding_surface_gate import evaluate_grounded_surface
+from runtime.json_boundary import public_payload
 
 from .activity_session import ActivitySession, ActivitySessionTracker
 from .ambient_screen_context import AmbientScreenContext, AmbientScreenTracker
@@ -759,7 +760,7 @@ class SelfTurnPipeline:
             self._record_result(plan, result="generation_failed", gate_reason="public_generation_failed")
             host._sleep_interruptible(10)
             return True
-        raw = json.dumps(payload, ensure_ascii=False)
+        raw = json.dumps(public_payload(payload), ensure_ascii=False)
         host._log_raw_llm_output("autonomous_ai", raw)
         decision = host.parser.parse(raw)
         grounding_report = self._autonomous_grounding_report(context, plan)

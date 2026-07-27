@@ -440,7 +440,7 @@ class ApiKeyPool:
                 "dead": len(self._keys) - alive_raw,
                 "rotations": self._rotations,
                 "rate_limit_bursts": self._rate_limit_bursts,
-                "global_cooldown_ms": min(2147483647, int(max(0.0, self._global_cooldown_until - now) * 1000)),
+                "global_cooldown_ms": int(max(0.0, self._global_cooldown_until - now) * 1000),
             }
 
     def health_snapshot(self) -> dict[str, object]:
@@ -462,7 +462,7 @@ class ApiKeyPool:
             active_index = -1 if shared_cooling else self._next_alive_locked(self._index, now)
             keys: list[dict[str, object]] = []
             for idx, raw_key in enumerate(self._keys):
-                cooldown_ms = min(2147483647, int(max(0.0, self._dead_until[idx] - now) * 1000))
+                cooldown_ms = int(max(0.0, self._dead_until[idx] - now) * 1000)
                 quarantine_reason = self._quarantine_reasons[idx] if idx < len(self._quarantine_reasons) else ""
                 status = "quarantined" if cooldown_ms > 0 and quarantine_reason else ("cooldown" if cooldown_ms > 0 else "ready")
                 keys.append(
@@ -483,7 +483,7 @@ class ApiKeyPool:
                 "dead": len(self._keys) - alive_raw,
                 "rotations": self._rotations,
                 "rate_limit_bursts": self._rate_limit_bursts,
-                "global_cooldown_ms": min(2147483647, int(max(0.0, self._global_cooldown_until - now) * 1000)),
+                "global_cooldown_ms": int(max(0.0, self._global_cooldown_until - now) * 1000),
                 "keys": keys,
             }
 

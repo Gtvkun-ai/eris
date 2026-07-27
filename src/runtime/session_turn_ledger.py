@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from time import time
 from typing import Any, Iterable, Literal, Optional
 
@@ -60,6 +60,45 @@ class SessionTurnLedger:
 
     def all_turns(self) -> list[SessionTurn]:
         return list(self._turns)
+
+    def get_turn(self, index: int) -> Optional[SessionTurn]:
+        """Lấy một lượt theo chỉ số ổn định trong phiên."""
+
+        for turn in self._turns:
+            if turn.index == int(index):
+                return turn
+        return None
+
+    def recent_turns(self, *, before_index: int | None = None, limit: int = 12) -> list[SessionTurn]:
+        """Lấy cửa sổ hội thoại trước một lượt, giữ nguyên thứ tự thời gian."""
+
+        items = self._turns
+        if before_index is not None:
+            items = [turn for turn in items if turn.index < int(before_index)]
+        return list(items[-max(1, int(limit)):])
+
+    def merge_turn_meta(self, index: int, values: dict[str, Any]) -> Optional[SessionTurn]:
+        """Gộp metadata sau khi semantic frame được tạo.
+
+        ``SessionTurn`` bất biến để code đọc không sửa ngầm. Khi cần bổ sung frame
+        hoặc liên kết discourse, ledger thay nguyên record bằng ``dataclasses.replace``.
+        """
+
+        for position, turn in enumerate(self._turns):
+            if turn.index != int(index):
+                continue
+            merged = dict(turn.meta)
+            for key, value in dict(values or {}).items():
+                if key == "discourse" and isinstance(value, dict):
+                    current = dict(merged.get("discourse", {}) or {})
+                    current.update(value)
+                    merged[key] = current
+                else:
+                    merged[key] = value
+            updated = replace(turn, meta=merged)
+            self._turns[position] = updated
+            return updated
+        return None
 
     def turns_by_role(self, role: Role) -> list[SessionTurn]:
         return [turn for turn in self._turns if turn.role == role]
