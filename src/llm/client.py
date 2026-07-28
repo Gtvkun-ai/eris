@@ -16,6 +16,7 @@ from runtime.diagnostic_logging import safe_log
 from runtime.inference_broker import (
     GLOBAL_INFERENCE_BROKER,
     current_inference_context,
+    inference_context,
 )
 from llm.key_pool import get_provider_circuit
 from llm.deepseek import (
@@ -750,6 +751,10 @@ class OpenAICompatibleClient:
                     if status_code is not None and status_code < 500:
                         continue  # thử biến thể payload kế (vd bỏ grammar/response_format)
                     raise last_error
+                except (requests.Timeout, requests.ConnectionError) as exc:
+                    last_error = exc
+                    self._provider_circuit.record_failure(provider=self.base_url, status=None)
+                    break
                 except Exception as exc:
                     last_error = exc
                     raise
@@ -811,12 +816,40 @@ class ChainedFallbackClient:
     def create_chat_completion(self, **kwargs):
         last_error: Exception | None = None
         for idx, client in enumerate(self._clients):
+            client_url = str(getattr(client, "base_url", "") or "")
+            is_ds2api = "api.deepseek.com" not in client_url.lower() and (
+                "6011" in client_url or "localhost" in client_url or "127.0.0.1" in client_url
+            )
+            call_kwargs = dict(kwargs)
+            if is_ds2api:
+                try:
+                    failfast = float(os.environ.get("ERIS_DS2API_FAILFAST_TIMEOUT_S", "15") or 15)
+                except (TypeError, ValueError):
+                    failfast = 15.0
+                failfast = max(1.0, min(30.0, failfast))
+                requested = call_kwargs.get("timeout")
+                if requested is None:
+                    call_kwargs["timeout"] = failfast
+                else:
+                    try:
+                        call_kwargs["timeout"] = min(float(requested), failfast)
+                    except (TypeError, ValueError):
+                        call_kwargs["timeout"] = failfast
             try:
-                return client.create_chat_completion(**kwargs)
+                if idx == 0:
+                    return client.create_chat_completion(**call_kwargs)
+                parent_ctx = current_inference_context()
+                fallback_timeout = float(call_kwargs.get("timeout", 15.0) or 15.0)
+                fallback_timeout = max(12.0, fallback_timeout)
+                with inference_context(
+                    parent_ctx.lane,
+                    timeout_seconds=fallback_timeout,
+                    optional=parent_ctx.optional,
+                    priority=parent_ctx.priority,
+                ):
+                    return client.create_chat_completion(**call_kwargs)
             except Exception as exc:  # noqa: BLE001 - thử nhà kế tiếp
                 last_error = exc
-                client_url = getattr(client, "base_url", "")
-                is_ds2api = "api.deepseek.com" not in client_url.lower() and ("6011" in client_url or "localhost" in client_url or "127.0.0.1" in client_url)
                 if is_ds2api:
                     self._logger.warning(
                         "WARNING: local DeepSeek Web proxy (Whale2API/DS2API) failed (%s), falling back to Official API.",
@@ -1050,19 +1083,23 @@ class GeminiClient:
                 self.api_key = self._normalize_api_key(lease.key)
             self._provider_circuit.before_request(self.base_url)
             actual_timeout = self.timeout if timeout is None else timeout
-            last_response = _brokered_post(
-                base_url=self.base_url,
-                model_name=self.model_name,
-                messages=messages,
-                max_tokens=max_tokens,
-                timeout_seconds=actual_timeout,
-                url=f"{self.base_url}/models/{self.model_name}:generateContent",
-                headers={
-                    "x-goog-api-key": self.api_key,
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
+            try:
+                last_response = _brokered_post(
+                    base_url=self.base_url,
+                    model_name=self.model_name,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    timeout_seconds=actual_timeout,
+                    url=f"{self.base_url}/models/{self.model_name}:generateContent",
+                    headers={
+                        "x-goog-api-key": self.api_key,
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+            except (requests.Timeout, requests.ConnectionError):
+                self._provider_circuit.record_failure(provider=self.base_url, status=None)
+                raise
             status = last_response.status_code
             if status == 429:
                 _record_pressure_429(pressure_provider, last_response, 60.0, model_name=self.model_name)

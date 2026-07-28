@@ -146,12 +146,16 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
     },
     "tts": {
         "enabled": True,
+        "provider": "elevenlabs",
+        "elevenlabs_voice_id": "",
+        "elevenlabs_model": "eleven_v3",
+        "voice_director_enabled": True,
         # Project Eris dùng bubble Việt + voice Nhật theo mặc định.
         "language": "ja",
         "voice": "Aoede",
-        "quality": "high",
+        "quality": "balanced",
         "volume": 1.0,
-        "speed": 1.0,
+        "speed": 1.04,
         "stage_localize": True,
         # Làm mềm riêng transcript TTS, không sửa bubble/public meaning.
         "speech_persona_polish": True,

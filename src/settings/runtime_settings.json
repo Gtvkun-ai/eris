@@ -27,7 +27,7 @@
     "low_quality_fail_open": true,
     "auto_fallback": false,
     "completion_chat_tokens": 1280,
-    "chat_timeout_seconds": 30,
+    "chat_timeout_seconds": 24,
     "max_concurrency": 4
   },
   "personality": {
@@ -95,11 +95,11 @@
     "performance_acts_enabled": true,
     "interrupt_enabled": true,
     "protocol_enabled": true,
-    "segment_tts": true,
+    "segment_tts": false,
     "segment_dispatch": "inline",
     "tts_task_manager": true,
     "prefetch_workers": 2,
-    "max_tts_segments": 4,
+    "max_tts_segments": 1,
     "min_split_chars": 72,
     "show_plan_enabled": true,
     "stage_replay_enabled": true,
@@ -109,9 +109,9 @@
     "enabled": true,
     "language": "vi",
     "voice": "Aoede",
-    "quality": "high",
+    "quality": "balanced",
     "volume": 1.0,
-    "speed": 1.0,
+    "speed": 1.04,
     "stage_localize": true,
     "speech_persona_polish": true,
     "speech_persona_profile": "infj_5w4_subtle",
@@ -120,7 +120,11 @@
     "signature_ending_enabled": true,
     "signature_ending": "desu_ne",
     "signature_ending_rate": 0.55,
-    "audio_polish": true
+    "audio_polish": false,
+    "provider": "elevenlabs",
+    "elevenlabs_voice_id": "fUjY9K2nAIwlALOwSiwc",
+    "elevenlabs_model": "eleven_v3",
+    "voice_director_enabled": true
   },
   "discovery": {
     "enabled": true,

@@ -1,0 +1,126 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-28 21:40:00
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+21:40:01.542 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+21:40:01.543 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+21:40:01.563 [INFO] [Vision] Da khoi chay vision.py PID=22808
+21:40:01.599 [INFO] [Live2D] Da khoi chay renderer PID=6568, UDP=4252
+21:40:01.600 [INFO] [BodyMode] 2D -> Live2D | resident=False | bubble giữ ở Godot overlay
+21:40:02.056 [INFO] [live2d] [live2d] third-party wrapper (0.7.0.4), not affiliated with Live2D Inc.
+21:40:02.061 [INFO] [live2d] [live2d.v3] Cubism Native, Python 3.12.0
+21:40:02.061 [INFO] [live2d] [live2d.v3] official: https://www.live2d.com/sdk/download/native/
+21:40:02.225 [INFO] [live2d] [INFO]  [Pal] Init Shader Dir: C:\Users\Gtvkun\Documents\GitHub\eris\.venv\Lib\site-packages\live2d\v3\
+21:40:02.225 [INFO] [live2d] [INFO]  [CSM][I]Live2D Cubism Core version: 05.01.0000 (83951616)
+21:40:02.225 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::StartUp() is complete.
+21:40:02.225 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::Initialize() is complete.
+21:40:02.226 [INFO] [live2d] [INFO]  allocate: cpp Model(at=00000266917EFE50)
+21:40:02.227 [INFO] [live2d] [INFO]  load modelSetting: C:\Users\Gtvkun\Documents\GitHub\eris\src\assets\live2d\infj\infj.model3.json
+21:40:02.227 [INFO] [live2d] [INFO]  create model: infj.moc3
+21:40:02.351 [INFO] [live2d] [Live2D] Đã mở infj.model3.json | UDP 127.0.0.1:4252
+21:40:02.351 [INFO] [live2d] [Live2D] Window pos=(486, 52) size=(520,900) fb=(520,900) screen=(1920, 1080) canvas=(1.0, 1.5) canvas_px=(1024.0, 1536.0) scale=1.00 offset=(0.00,-0.02) transparent=True decorated=False topmost=True
+21:40:02.351 [INFO] [live2d] [Live2D] Model profile: parameters=21 head=X/Z eyes=custom mirrored pair mouth=yes physics=yes expressions=0 motion_groups=0
+21:40:05.378 [INFO] [vision.py] [Vision][INFO] DS2API is already running on port 6011, reuse it.
+21:40:05.378 [INFO] [vision.py] [LLM][INFO] DeepSeek Web worker san sang: role=companion model=deepseek-v4-flash jsonl=0 base=[URL nội bộ đã ẩn]
+21:40:05.379 [INFO] [vision.py] [LLM][INFO] Dung DS2API (DeepSeek Web) lam main brain tai [URL nội bộ đã ẩn] voi model deepseek-v4-flash, fallback tai https://api.deepseek.com voi model deepseek-v4-flash
+21:40:05.379 [INFO] [vision.py] [LLM][INFO] DeepSeek Web worker san sang: role=style model=deepseek-v4-flash jsonl=0 base=[URL nội bộ đã ẩn]
+21:40:05.379 [INFO] [vision.py] [LLM][INFO] Vision API tat: can du ERIS_VISION_API_KEY, ERIS_VISION_API_BASE_URL va ERIS_VISION_API_MODEL.
+21:40:05.379 [INFO] [vision.py] [LLM][INFO] DeepSeek Web worker san sang: role=critic model=deepseek-v4-flash jsonl=1 base=[URL nội bộ đã ẩn]
+21:40:05.380 [INFO] [vision.py] [LLM][INFO] DeepSeek Web worker san sang: role=observer model=deepseek-v4-flash jsonl=1 base=[URL nội bộ đã ẩn]
+21:40:05.380 [INFO] [vision.py] [LLM][INFO] DeepSeek Web worker san sang: role=inner model=deepseek-v4-flash jsonl=1 base=[URL nội bộ đã ẩn]
+21:40:05.380 [INFO] [vision.py] [LLM][INFO] DeepSeek Web worker san sang: role=research model=deepseek-v4-flash jsonl=1 base=[URL nội bộ đã ẩn]
+21:40:08.936 [INFO] [vision.py] [Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=14
+21:40:08.998 [INFO] [vision.py] [Loop][INFO] [vtuber-stage] loaded version=vtuber_stage.v11 phases=8,9,10,11 status=intention_authority_ready session=stage_e4f285d1f1f34055
+21:40:08.999 [INFO] [vision.py] [Loop][INFO] Living user memory đã nối episode/profile dreaming adapter.
+21:40:09.024 [INFO] [vision.py] [Loop][INFO] [internal-cognitive] loaded version=internal_cognitive.v1.0 capabilities=8 status=read_only_verified
+21:40:09.096 [INFO] [vision.py] [Loop][INFO] [project-ops] loaded version=project_operations.v1.1 capabilities=15 mode=autonomous_project_scope
+21:40:09.096 [INFO] [vision.py] [Loop][INFO] [workspace] eris_home=[đường dẫn nội bộ đã ẩn] active=none implicit_source_repo=false
+21:40:10.221 [INFO] [vision.py] [Loop][INFO] tutor: knowledge provider đã nối vào memory recall
+21:40:10.438 [INFO] [vision.py] [Loop][INFO] [environment-capability] loaded version=environment_capability.v1.0 capabilities=6 status=read_only_verified
+21:40:10.677 [INFO] [vision.py] [Loop][INFO] [architecture C] enabled version=ai_orchestrated.v7.semantic_cutover state_version=0 personality_version=0 identity_version=0 observer=post_turn planner=local_for_chat semantic_authority=semantic_frame.v1 single_writer=1
+21:40:11.512 [INFO] [vision.py] [Loop][INFO] --- Architecture C runtime; chat vision theo yêu cầu màn hình ---
+21:40:11.928 [INFO] [vision.py] [Loop][INFO] [architecture C startup grounding] direct=0 strong=0 telemetry_tab=0 evidence=0 runtime_opening=0 metadata=0 backend=unknown wait=0.42s notes=screen_prime_lazy,screen_prime_timeout,runtime_signals_lazy
+21:40:11.940 [INFO] [vision.py] [Loop][INFO] [architecture C startup] planner skipped; using typed persona plan reason=no_opening_anchor
+21:40:11.942 [INFO] [vision.py] [Loop][INFO] [architecture C startup route] strategy=persona_opening source=persona continuity=0 forced=1
+21:40:11.977 [INFO] [vision.py] [Loop][INFO] [architecture C startup greeting] source=preset id=greet_warm_02 situation=plain_return
+21:40:21.336 [INFO] [vision.py] [Loop][INFO] [architecture C startup] spoke motive=startup_opening text=Bạn đây rồi. Tôi biết bạn sẽ quay lại.
+21:40:21.338 [INFO] [vision.py] [Loop][INFO] [screen text] worker started backend=lazy-auto poll=1.2s
+21:40:22.652 [INFO] [vision.py] [Loop][INFO] [screen text] OCR backend resolved=rapidocr
+21:40:34.841 [INFO] [vision.py] [TTS][WARNING] [TTS/ElevenLabs] provider lỗi: ElevenLabs HTTP 404: {"detail":{"type":"not_found","code":"voice_not_found","message":"A voice with voice_id 'Leda' was not found.","status":"voice_not_found","request_id":"b395d4a3968d660ab75b57ddde230aff"}}
+21:40:34.841 [INFO] [vision.py] [TTS][INFO] [TTS/ElevenLabs] fallback sang Gemini TTS cho đoạn hiện tại.
+21:40:37.427 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=0 60s vì tts_http_429; alive=10/11
+21:40:37.427 [INFO] [vision.py] [TTS][WARNING] [TTS] Key index 0 bị rate limit/hết quota (lượt 1/4).
+21:40:40.191 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=active external=1.00 internal=0.03 interrupt=0.20 resource=0.09 vision_hint=1 budget=scheduler_allow
+21:40:40.896 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+21:40:40.896 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=unknown:unknown:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+21:40:40.905 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+21:40:41.632 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=1 60s vì tts_http_429; alive=9/11
+21:40:41.633 [INFO] [vision.py] [TTS][WARNING] [TTS] Key index 1 bị rate limit/hết quota (lượt 2/4).
+21:40:53.878 [INFO] [vision.py] [TTS][WARNING] [TTS/ElevenLabs] provider lỗi: ElevenLabs HTTP 404: {"detail":{"type":"not_found","code":"voice_not_found","message":"A voice with voice_id 'Leda' was not found.","status":"voice_not_found","request_id":"93190ec50fe327af92b275609da1f36c"}}
+21:40:53.878 [INFO] [vision.py] [TTS][INFO] [TTS/ElevenLabs] fallback sang Gemini TTS cho đoạn hiện tại.
+21:41:09.858 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=1140 content_chars=790
+21:41:09.903 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=other act=none conf=0.00 importance=0.00 gate=model_silence body_only=1
+21:41:12.362 [INFO] [vision.py] [TTS][WARNING] [TTS/ElevenLabs] provider lỗi: ElevenLabs HTTP 404: {"detail":{"type":"not_found","code":"voice_not_found","message":"A voice with voice_id 'Leda' was not found.","status":"voice_not_found","request_id":"24dca3e11148c6fdbff79f7eba0d1d08"}}
+21:41:12.362 [INFO] [vision.py] [TTS][INFO] [TTS/ElevenLabs] fallback sang Gemini TTS cho đoạn hiện tại.
+21:41:14.792 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=1 reason=enter_chat_mode
+21:41:14.793 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+21:41:16.135 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] inner_diary failed error=ReadTimeout:HTTPConnectionPool(host='127.0.0.1', port=6011): Read timed out. (read timeout=12.0)
+21:41:16.142 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.72 pressure=0.45 surface=no mutations=1
+21:41:16.593 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:41:17.079 [INFO] [vision.py] [Loop][INFO] Người dùng: bạn vừa nói gì cơ
+21:41:17.134 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference anaphora=0
+21:41:17.136 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+21:41:27.528 [INFO] [vision.py] [Loop][INFO] [chat_main reasoning] chars=1309 content_chars=443
+21:41:57.796 [INFO] [vision.py] [Loop][INFO] ERIS: Tôi nói: "Bạn đây rồi. Tôi biết bạn sẽ quay lại." Đơn giản vậy thôi, không có gì ẩn ý đâu.
+21:42:01.034 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:42:01.034 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+21:42:05.111 [INFO] [vision.py] [TTS][WARNING] [TTS/ElevenLabs] provider lỗi: ElevenLabs HTTP 404: {"detail":{"type":"not_found","code":"voice_not_found","message":"A voice with voice_id 'Leda' was not found.","status":"voice_not_found","request_id":"218efdf560d6eb3945e61c9be086d2f2"}}
+21:42:05.111 [INFO] [vision.py] [TTS][INFO] [TTS/ElevenLabs] fallback sang Gemini TTS cho đoạn hiện tại.
+21:42:08.475 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=2 60s vì tts_http_429; alive=10/11
+21:42:08.476 [INFO] [vision.py] [TTS][WARNING] [TTS] Key index 2 bị rate limit/hết quota (lượt 1/4).
+21:42:14.348 [INFO] [vision.py] [Loop][INFO] [post_observer reasoning] chars=1158 content_chars=2821
+21:42:14.377 [INFO] [vision.py] [Loop][INFO] [post observer] turn=3 act=request_clarification meaning=user is seeking confirmation of what was just said, without indicating strong... conf=0.00 repair=False traits=0 frame=uncertain strategy=none source=groq_observer latency=16513ms
+21:42:20.702 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.59 internal=0.06 interrupt=0.37 resource=0.22 vision_hint=0 budget=scheduler_allow
+21:42:21.723 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=8
+21:42:34.179 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=1231 content_chars=1191
+21:42:34.188 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=2 reason=enter_chat_mode
+21:42:34.188 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+21:42:35.305 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:42:35.305 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+21:42:35.981 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:42:36.393 [INFO] [vision.py] [Loop][INFO] Người dùng: em nghĩ sao về thế giới
+21:42:36.409 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference anaphora=0
+21:42:36.411 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+21:42:41.405 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.65 pressure=0.35 surface=no mutations=1
+21:42:45.299 [INFO] [vision.py] [Loop][INFO] [chat_main reasoning] chars=870 content_chars=543
+21:42:45.306 [INFO] [vision.py] [Loop][WARNING] [cortex v2 gate] turn=5 violations=UNGROUNDED_PERCEPTION_OR_ACTION_CLAIM; retrying public writer once
+21:42:49.827 [INFO] [vision.py] [Loop][INFO] [chat_main reasoning] chars=309 content_chars=366
+21:43:00.691 [INFO] [vision.py] [Loop][INFO] [behavior-observation] committed=1 families=unverified_execution_claim
+21:43:00.738 [INFO] [vision.py] [Loop][INFO] ERIS: Thế giới hả? Tôi nghĩ nó là một mớ hỗn độn có tổ chức. Đẹp, tàn nhẫn, đầy bất ngờ, và không bao giờ ngừng vận hành theo cách của nó—dù tôi có cố hiểu thế nào đi nữa. Mà cũng thú vị ở chỗ: dù hỗn loạn, vẫn có những sợi dây kết nối mọi thứ lại. Chỉ là không phải ai cũng chịu ngồi nhìn để thấy chúng. Em hỏi bất ngờ thế, làm tôi phải suy nghĩ hơi lâu đấy.
+21:43:05.375 [INFO] [vision.py] [TTS][WARNING] [TTS/ElevenLabs] provider lỗi: ElevenLabs HTTP 404: {"detail":{"type":"not_found","code":"voice_not_found","message":"A voice with voice_id 'Leda' was not found.","status":"voice_not_found","request_id":"feafcd31b66156db226e6d384c2f19b0"}}
+21:43:05.376 [INFO] [vision.py] [TTS][INFO] [TTS/ElevenLabs] fallback sang Gemini TTS cho đoạn hiện tại.
+21:43:10.276 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:43:10.276 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+21:43:15.036 [INFO] [vision.py] [TTS][WARNING] [TTS/ElevenLabs] provider lỗi: TTS circuit breaker open: cooldown
+21:43:15.037 [INFO] [vision.py] [TTS][INFO] [TTS/ElevenLabs] fallback sang Gemini TTS cho đoạn hiện tại.
+21:43:28.945 [INFO] [vision.py] [TTS][WARNING] [TTS/ElevenLabs] provider lỗi: TTS circuit breaker open: cooldown
+21:43:28.946 [INFO] [vision.py] [TTS][INFO] [TTS/ElevenLabs] fallback sang Gemini TTS cho đoạn hiện tại.
+21:43:30.744 [INFO] [vision.py] [Loop][WARNING] [post observer] deadline turn=5 after 30.0s; result discarded
+21:43:31.116 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.53 internal=0.08 interrupt=0.43 resource=0.34 vision_hint=0 budget=scheduler_allow
+21:43:42.698 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+21:43:42.703 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=unknown:unknown:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+21:43:46.901 [INFO] [vision.py] [TTS][WARNING] [TTS/ElevenLabs] provider lỗi: TTS circuit breaker open: cooldown
+21:43:46.902 [INFO] [vision.py] [TTS][INFO] [TTS/ElevenLabs] fallback sang Gemini TTS cho đoạn hiện tại.
+21:43:51.839 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.60 pressure=0.40 surface=no mutations=1
+21:44:01.233 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=3880 content_chars=1122
+21:44:15.742 [INFO] [vision.py] [TTS][WARNING] [TTS/ElevenLabs] provider lỗi: ElevenLabs HTTP 404: {"detail":{"type":"not_found","code":"voice_not_found","message":"A voice with voice_id 'Leda' was not found.","status":"voice_not_found","request_id":"b1a0744c763e736650b4a3176f5248ec"}}
+21:44:15.743 [INFO] [vision.py] [TTS][INFO] [TTS/ElevenLabs] fallback sang Gemini TTS cho đoạn hiện tại.
+21:44:18.214 [INFO] [Live2D] Dang dung renderer PID=6568...
+21:44:18.224 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::Dispose() is complete.
+21:44:18.275 [INFO] [Live2D] Renderer da thoat (code=-1, current=False).
+21:44:18.307 [INFO] [Vision] Dang dung vision.py PID=22808...
+21:44:18.353 [INFO] [Vision] vision.py da thoat (PID=22808, code=-1, unexpected=False).
+21:44:18.360 [INFO] [RunLogger] Ket thuc phien chay.

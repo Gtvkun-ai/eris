@@ -26,9 +26,9 @@ class ContinuationWait:
 class StageContinuationRuntime:
     """Quản lý generation/cancel token cho nhịp nói nhiều đoạn."""
 
-    def __init__(self, *, short_pause_max_ms: int = 600, max_wait_ms: int = 5000) -> None:
-        self.short_pause_max_ms = max(100, int(short_pause_max_ms))
-        self.max_wait_ms = max(self.short_pause_max_ms, int(max_wait_ms))
+    def __init__(self, *, short_pause_max_ms: int = 350, max_wait_ms: int = 2000) -> None:
+        self.short_pause_max_ms = max(100, min(500, int(short_pause_max_ms)))
+        self.max_wait_ms = max(self.short_pause_max_ms, min(2000, int(max_wait_ms)))
         self._lock = threading.RLock()
         self._generation = 0
         self._cancel_event = threading.Event()

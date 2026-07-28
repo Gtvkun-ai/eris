@@ -2,6 +2,8 @@ import os
 import signal
 import subprocess
 import sys
+import time
+import urllib.request
 import msvcrt
 import traceback
 
@@ -33,6 +35,16 @@ class AttentionOverseer:
         self.process_logger = get_logger("LLM")
         self.loop_logger = get_logger("Loop")
         self.action_logger = get_logger("Action")
+
+        git_commit = "unknown"
+        try:
+            root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            res = subprocess.run(["git", "-C", root_dir, "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=2.0)
+            if res.returncode == 0 and res.stdout.strip():
+                git_commit = res.stdout.strip()
+        except Exception:
+            pass
+        self.logger.info("[Environment Telemetry] interpreter=%s | file=%s | commit=%s", sys.executable, os.path.abspath(__file__), git_commit)
 
         remote_enabled = os.environ.get("ERIS_REMOTE_API_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
         if remote_enabled:
@@ -208,20 +220,17 @@ class AttentionOverseer:
         if not enabled:
             return None
 
-        import socket
         port = 6011
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(1.0)
         already_running = False
         try:
-            s.connect(("127.0.0.1", port))
-            already_running = True
-            s.close()
+            req = urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=3.0)
+            if getattr(req, "status", None) == 200:
+                already_running = True
         except Exception:
             pass
 
         if already_running:
-            self.logger.info("DS2API is already running on port %d, reuse it.", port)
+            self.logger.info("DS2API passed inference health check (/v1/models) on port %d, reuse it.", port)
             return None
 
         ds2api_dir = os.path.join(project_root, "tools", "whale2api")
@@ -231,7 +240,6 @@ class AttentionOverseer:
             return None
 
         self.logger.info("Starting Whale2API daemon from %s...", binary)
-        import subprocess
         try:
             creationflags = 0x08000000 if os.name == 'nt' else 0
             proc = subprocess.Popen(
@@ -241,6 +249,20 @@ class AttentionOverseer:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
+            started = False
+            for _ in range(12):
+                time.sleep(0.5)
+                try:
+                    res = urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=2.0)
+                    if getattr(res, "status", None) == 200:
+                        started = True
+                        break
+                except Exception:
+                    continue
+            if started:
+                self.logger.info("DS2API daemon started and passed inference health check on port %d.", port)
+            else:
+                self.logger.warning("DS2API daemon spawned (PID=%s), but inference health check on /v1/models timed out.", getattr(proc, "pid", "?"))
             return proc
         except Exception as exc:
             self.logger.error("Failed to start DS2API daemon: %s", exc)

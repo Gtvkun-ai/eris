@@ -32,7 +32,7 @@ WORKER_ROLES: tuple[str, ...] = (
 
 # Structured workers default to canonical one-line JSON whenever the caller
 # requests json_object/json_schema. Companion/style keep free-text behavior.
-_DEFAULT_JSONL_ROLES = frozenset({"observer", "critic", "inner", "research"})
+_DEFAULT_JSONL_ROLES = frozenset({"companion", "observer", "critic", "inner", "research"})
 
 
 class JsonlContractError(RuntimeError):
@@ -85,17 +85,24 @@ def _env_flag(name: str, default: bool) -> bool:
 def load_worker_spec(role: object) -> DeepSeekWorkerSpec:
     normalized = normalize_worker_role(role)
     role_prefix = f"ERIS_DS_{normalized.upper()}"
-    api_key = str(get_secret(f"{role_prefix}_API_KEY") or "").strip()
+    role_env_key = os.environ.get(f"{role_prefix}_API_KEY", "")
+    api_key = str(
+        role_env_key
+        or (get_secret("ERIS_DS2API_API_KEY") if os.environ.get("ERIS_DS2API_ENABLED") in {"1", "true"} else "")
+        or get_secret(f"{role_prefix}_API_KEY")
+        or get_secret("ERIS_DS2API_API_KEY")
+        or get_secret("ERIS_DS_API_KEY")
+    ).strip()
     base_url = str(
         get_secret(f"{role_prefix}_BASE_URL")
-        or get_secret("ERIS_DS_BASE_URL")
         or get_secret("ERIS_DS2API_BASE_URL")
+        or get_secret("ERIS_DS_BASE_URL")
         or "http://127.0.0.1:6011/v1"
     ).strip()
     model = str(
         get_secret(f"{role_prefix}_MODEL")
-        or get_secret("ERIS_DS_MODEL")
         or get_secret("ERIS_DS2API_MODEL")
+        or get_secret("ERIS_DS_MODEL")
         or "deepseek-v4-flash"
     ).strip()
     jsonl_default = normalized in _DEFAULT_JSONL_ROLES
@@ -141,6 +148,7 @@ def _structured_response_requested(response_format: Any) -> bool:
 
 def _strip_code_fence(text: str) -> str:
     clean = str(text or "").strip()
+    clean = re.sub(r"<think>.*?</think>", "", clean, flags=re.DOTALL | re.IGNORECASE).strip()
     clean = re.sub(r"^```(?:json|jsonl)?\s*", "", clean, flags=re.IGNORECASE)
     clean = re.sub(r"\s*```$", "", clean)
     return clean.strip()
@@ -156,9 +164,6 @@ def canonical_json_line(text: str) -> str:
     try:
         value = json.loads(clean)
     except json.JSONDecodeError:
-        # Be defensive with models that add a short preamble despite the
-        # contract.  Accept exactly one embedded object/array, never arbitrary
-        # trailing prose.
         object_start = clean.find("{")
         array_start = clean.find("[")
         starts = [x for x in (object_start, array_start) if x >= 0]
@@ -167,12 +172,9 @@ def canonical_json_line(text: str) -> str:
         start = min(starts)
         decoder = json.JSONDecoder()
         try:
-            value, end = decoder.raw_decode(clean[start:])
+            value, _ = decoder.raw_decode(clean[start:])
         except json.JSONDecodeError as exc:
             raise JsonlContractError(f"invalid_json:{exc.msg}") from exc
-        trailing = clean[start + end :].strip()
-        if trailing:
-            raise JsonlContractError("trailing_non_json_text")
 
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 

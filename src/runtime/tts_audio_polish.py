@@ -43,7 +43,7 @@ class AudioPolishResult:
 
 def audio_polish_enabled() -> bool:
     from runtime.runtime_settings_store import runtime_bool
-    return runtime_bool("tts", "audio_polish", default=True)
+    return runtime_bool("tts", "audio_polish", default=False)
 
 
 def polish_pcm16_mono(
@@ -71,11 +71,11 @@ def polish_pcm16_mono(
     if not samples:
         return _empty_result()
 
-    threshold = _int_env("ERIS_TTS_SILENCE_THRESHOLD", silence_threshold or 220)
-    edge_keep = _int_env("ERIS_TTS_EDGE_KEEP_MS", edge_keep_ms or 80)
-    max_silence = _int_env("ERIS_TTS_MAX_INTERNAL_SILENCE_MS", max_internal_silence_ms or 420)
-    target = _float_env("ERIS_TTS_TARGET_PEAK", target_peak if target_peak is not None else 0.82)
-    gain_cap = _float_env("ERIS_TTS_MAX_GAIN", max_gain if max_gain is not None else 1.65)
+    threshold = _int_env("ERIS_TTS_SILENCE_THRESHOLD", silence_threshold or 120)
+    edge_keep = _int_env("ERIS_TTS_EDGE_KEEP_MS", edge_keep_ms or 160)
+    max_silence = _int_env("ERIS_TTS_MAX_INTERNAL_SILENCE_MS", max_internal_silence_ms or 900)
+    target = _float_env("ERIS_TTS_TARGET_PEAK", target_peak if target_peak is not None else 0.72)
+    gain_cap = _float_env("ERIS_TTS_MAX_GAIN", max_gain if max_gain is not None else 1.25)
 
     original_len = len(samples)
     peak_before = max(abs(int(x)) for x in samples) if samples else 0

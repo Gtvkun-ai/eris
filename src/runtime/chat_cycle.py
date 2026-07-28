@@ -48,6 +48,8 @@ class ChatCycleMixin:
         self.logger.info("Entered chat mode; autonomous is paused for user messages.")
 
     def _end_chat_cycle(self) -> None:
+        if not getattr(self, "chat_mode", False):
+            return
         self.chat_mode = False
         self.last_system_action = ""
         self.last_user_signature = ""

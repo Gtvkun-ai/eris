@@ -19,6 +19,7 @@ import time
 import traceback
 import unicodedata
 from collections.abc import Mapping
+from dataclasses import replace
 from types import SimpleNamespace
 
 from actions.confirmation import public_action_text
@@ -172,6 +173,29 @@ class PublicOutputRuntimeMixin:
             turn_id=None,
             segment_id=0,
         )
+
+        # DeepSeek STYLE chỉ tinh chỉnh độ ấm/cách đọc sau khi transcript đã
+        # clean/localize. Nó không sửa text, không chia câu và không có quyền
+        # bật/tắt voice; should_speak vẫn thuộc authority public hiện có.
+        if str(stage_frame.tts_text or "").strip():
+            try:
+                from runtime.voice_director import DeepSeekVoiceDirector
+
+                voice_director = getattr(self, "voice_director", None)
+                if voice_director is None or getattr(voice_director, "llm_service", None) is not getattr(self, "llm_service", None):
+                    voice_director = DeepSeekVoiceDirector(getattr(self, "llm_service", None))
+                    self.voice_director = voice_director
+                voice_plan = voice_director.plan(
+                    stage_frame,
+                    payload=payload,
+                    channel=str(channel or ""),
+                    user_text=str(payload.get("user_text", "") or ""),
+                )
+                if voice_plan:
+                    stage_frame = replace(stage_frame, voice_plan=dict(voice_plan))
+            except Exception as voice_director_exc:
+                self.logger.debug("[voice-director] fallback to deterministic prosody: %s", voice_director_exc)
+
         # Từ đây trở đi payload public dùng bề mặt đã qua stage transformer:
         # UI thấy text sạch, TTS đọc text sạch, memory/chat history lưu memory_text.
         payload["text"] = stage_frame.display_text

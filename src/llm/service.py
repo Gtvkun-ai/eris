@@ -1863,10 +1863,15 @@ class LlmService:
         )
         def _is_recoverable_transport_exception(exc: Exception) -> bool:
             name = type(exc).__name__
+            message = str(exc).lower()
             return (
                 name == "ProviderCircuitOpen"
-                or name in {"ConnectionError", "ConnectTimeout", "ReadTimeout", "Timeout"}
-                or isinstance(exc, requests.Timeout)
+                or name in {"ConnectionError", "ConnectTimeout", "ReadTimeout", "Timeout", "JsonlContractError"}
+                or isinstance(exc, (requests.Timeout, requests.ConnectionError))
+                or "empty output content" in message
+                or "empty_jsonl_output" in message
+                or "invalid_json" in message
+                or "jsonlcontracterror" in name.lower()
             )
 
         try:

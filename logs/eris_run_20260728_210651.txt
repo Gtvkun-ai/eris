@@ -1,0 +1,328 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-28 21:06:51
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+21:06:53.661 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+21:06:53.661 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+21:06:53.682 [INFO] [Vision] Da khoi chay vision.py PID=4872
+21:06:53.742 [INFO] [Live2D] Da khoi chay renderer PID=11656, UDP=4252
+21:06:53.743 [INFO] [BodyMode] 2D -> Live2D | resident=False | bubble giữ ở Godot overlay
+21:06:54.163 [INFO] [live2d] [live2d] third-party wrapper (0.7.0.4), not affiliated with Live2D Inc.
+21:06:54.168 [INFO] [live2d] [live2d.v3] Cubism Native, Python 3.12.0
+21:06:54.168 [INFO] [live2d] [live2d.v3] official: https://www.live2d.com/sdk/download/native/
+21:06:54.339 [INFO] [live2d] [INFO]  [Pal] Init Shader Dir: C:\Users\Gtvkun\Documents\GitHub\eris\.venv\Lib\site-packages\live2d\v3\
+21:06:54.339 [INFO] [live2d] [INFO]  [CSM][I]Live2D Cubism Core version: 05.01.0000 (83951616)
+21:06:54.339 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::StartUp() is complete.
+21:06:54.339 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::Initialize() is complete.
+21:06:54.340 [INFO] [live2d] [INFO]  allocate: cpp Model(at=000002074E502020)
+21:06:54.340 [INFO] [live2d] [INFO]  load modelSetting: C:\Users\Gtvkun\Documents\GitHub\eris\src\assets\live2d\infj\infj.model3.json
+21:06:54.341 [INFO] [live2d] [INFO]  create model: infj.moc3
+21:06:54.440 [INFO] [live2d] [Live2D] Đã mở infj.model3.json | UDP 127.0.0.1:4252
+21:06:54.440 [INFO] [live2d] [Live2D] Window pos=(521, 86) size=(520,900) fb=(520,900) screen=(1920, 1080) canvas=(1.0, 1.5) canvas_px=(1024.0, 1536.0) scale=1.00 offset=(0.00,-0.02) transparent=True decorated=False topmost=True
+21:06:54.440 [INFO] [live2d] [Live2D] Model profile: parameters=21 head=X/Z eyes=custom mirrored pair mouth=yes physics=yes expressions=0 motion_groups=0
+21:06:56.085 [INFO] [vision.py] [Vision][INFO] DS2API is already running on port 6011, reuse it.
+21:06:56.086 [INFO] [vision.py] [LLM][INFO] DeepSeek Web worker san sang: role=companion model=deepseek-v4-flash jsonl=0 base=[URL nội bộ đã ẩn]
+21:06:56.087 [INFO] [vision.py] [LLM][INFO] Dung DS2API (DeepSeek Web) lam main brain tai [URL nội bộ đã ẩn] voi model deepseek-v4-flash, fallback tai https://api.deepseek.com voi model deepseek-v4-flash
+21:06:56.087 [INFO] [vision.py] [LLM][INFO] DeepSeek Web worker san sang: role=style model=deepseek-v4-flash jsonl=0 base=[URL nội bộ đã ẩn]
+21:06:56.088 [INFO] [vision.py] [LLM][INFO] Vision API tat: can du ERIS_VISION_API_KEY, ERIS_VISION_API_BASE_URL va ERIS_VISION_API_MODEL.
+21:06:56.088 [INFO] [vision.py] [LLM][INFO] DeepSeek Web worker san sang: role=critic model=deepseek-v4-flash jsonl=1 base=[URL nội bộ đã ẩn]
+21:06:56.088 [INFO] [vision.py] [LLM][INFO] DeepSeek Web worker san sang: role=observer model=deepseek-v4-flash jsonl=1 base=[URL nội bộ đã ẩn]
+21:06:56.089 [INFO] [vision.py] [LLM][INFO] DeepSeek Web worker san sang: role=inner model=deepseek-v4-flash jsonl=1 base=[URL nội bộ đã ẩn]
+21:06:56.089 [INFO] [vision.py] [LLM][INFO] DeepSeek Web worker san sang: role=research model=deepseek-v4-flash jsonl=1 base=[URL nội bộ đã ẩn]
+21:06:59.737 [INFO] [vision.py] [Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=14
+21:06:59.829 [INFO] [vision.py] [Loop][INFO] [vtuber-stage] loaded version=vtuber_stage.v11 phases=8,9,10,11 status=intention_authority_ready session=stage_e39ab9d54a0542bc
+21:06:59.831 [INFO] [vision.py] [Loop][INFO] Living user memory đã nối episode/profile dreaming adapter.
+21:06:59.854 [INFO] [vision.py] [Loop][INFO] [internal-cognitive] loaded version=internal_cognitive.v1.0 capabilities=8 status=read_only_verified
+21:06:59.873 [INFO] [vision.py] [Loop][INFO] [project-ops] loaded version=project_operations.v1.1 capabilities=15 mode=autonomous_project_scope
+21:06:59.873 [INFO] [vision.py] [Loop][INFO] [workspace] eris_home=[đường dẫn nội bộ đã ẩn] active=none implicit_source_repo=false
+21:07:00.889 [INFO] [vision.py] [Loop][INFO] tutor: knowledge provider đã nối vào memory recall
+21:07:01.162 [INFO] [vision.py] [Loop][INFO] [environment-capability] loaded version=environment_capability.v1.0 capabilities=6 status=read_only_verified
+21:07:01.406 [INFO] [vision.py] [Loop][INFO] [architecture C] enabled version=ai_orchestrated.v7.semantic_cutover state_version=0 personality_version=0 identity_version=0 observer=post_turn planner=local_for_chat semantic_authority=semantic_frame.v1 single_writer=1
+21:07:04.585 [INFO] [vision.py] [Loop][INFO] --- Architecture C runtime; chat vision theo yêu cầu màn hình ---
+21:07:05.282 [INFO] [vision.py] [Loop][INFO] [architecture C startup grounding] direct=0 strong=0 telemetry_tab=0 evidence=0 runtime_opening=0 metadata=0 backend=unknown wait=0.70s notes=screen_prime_lazy,screen_prime_timeout,runtime_signals_lazy
+21:07:05.294 [INFO] [vision.py] [Loop][INFO] [architecture C startup] planner skipped; using typed persona plan reason=no_opening_anchor
+21:07:05.296 [INFO] [vision.py] [Loop][INFO] [architecture C startup route] strategy=persona_opening source=persona continuity=0 forced=1
+21:07:05.348 [INFO] [vision.py] [Loop][INFO] [architecture C startup greeting] source=preset id=greet_warm_03 situation=plain_return
+21:07:08.511 [INFO] [vision.py] [Loop][INFO] [architecture C startup] spoke motive=startup_opening text=Lại gặp bạn. Tôi không ghét chuyện đó.
+21:07:08.512 [INFO] [vision.py] [Loop][INFO] [screen text] worker started backend=lazy-auto poll=1.2s
+21:07:09.854 [INFO] [vision.py] [Loop][INFO] [screen text] OCR backend resolved=rapidocr
+21:07:15.685 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=0 60s vì tts_http_429; alive=10/11
+21:07:15.685 [INFO] [vision.py] [TTS][WARNING] [TTS] Key index 0 bị rate limit/hết quota (lượt 1/4).
+21:07:27.704 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=1 reason=enter_chat_mode
+21:07:27.704 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+21:07:29.659 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:07:29.659 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+21:07:31.531 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:07:57.067 [INFO] [vision.py] [Loop][INFO] Người dùng: chao xìn
+21:07:57.125 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference anaphora=0
+21:07:57.131 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+21:08:00.727 [INFO] [vision.py] [Loop][INFO] [chat_main reasoning] chars=248 content_chars=53
+21:08:00.904 [INFO] [vision.py] [Loop][INFO] ERIS: Chào xìn. Câu này nghe vui tai hơn "chào" thường đấy.
+21:08:19.855 [INFO] [vision.py] [Loop][INFO] [post_observer reasoning] chars=772 content_chars=2190
+21:08:19.862 [INFO] [vision.py] [Loop][INFO] [post observer] turn=2 act=greeting_with_variant_spelling meaning=casual_playful_social_engagement_low_stakes_no_explicit_request conf=0.00 repair=False traits=0 frame=uncertain strategy=none source=groq_observer latency=18918ms
+21:08:25.088 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:08:25.088 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+21:08:31.231 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:08:31.731 [INFO] [vision.py] [Loop][INFO] Người dùng: nihao ní hạo ma
+21:08:31.772 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference anaphora=0
+21:08:31.774 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+21:08:42.196 [INFO] [vision.py] [Loop][INFO] [chat_main reasoning] chars=662 content_chars=627
+21:08:42.197 [INFO] [vision.py] [Loop][WARNING] [semantic frame] repaired malformed payload violations=assistant_act.kind_invalid:response,assistant_act.non_propositional_mode:other:new
+21:08:42.362 [INFO] [vision.py] [Loop][INFO] ERIS: Ní hạo ma? Nghe giống đang thử giọng hay đang đùa vậy? Dù sao thì tôi cũng hiểu, và vẫn chào lại bạn đây.
+21:09:00.944 [INFO] [vision.py] [Loop][INFO] [post_observer reasoning] chars=635 content_chars=2197
+21:09:00.953 [INFO] [vision.py] [Loop][INFO] [post observer] turn=3 act=greeting_playful_variant_spelling meaning=casual_playful_social_engagement_low_stakes_continuing_familiar_tone conf=0.85 repair=False traits=0 frame=uncertain strategy=none source=groq_observer latency=18544ms
+21:09:02.399 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:09:02.399 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+21:09:18.996 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=2 reason=enter_chat_mode
+21:09:18.997 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+21:09:20.547 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:09:20.548 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+21:09:23.233 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:09:23.724 [INFO] [vision.py] [Loop][INFO] Người dùng: xem tui đánh cờ vua không
+21:09:23.781 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference anaphora=0
+21:09:23.785 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+21:09:32.917 [INFO] [vision.py] [Loop][INFO] [chat_main reasoning] chars=569 content_chars=125
+21:09:33.087 [INFO] [vision.py] [Loop][INFO] ERIS: Xem. Nhưng mà tôi coi là đang quan sát cách bạn xoay xở, chứ không hẳn là cổ vũ đâu nhé. Đánh đi, tôi xem thử có gì lạ không.
+21:09:53.601 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:09:53.601 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+21:09:54.512 [INFO] [vision.py] [Loop][INFO] [post_observer reasoning] chars=1163 content_chars=3208
+21:09:54.521 [INFO] [vision.py] [Loop][INFO] [post observer] turn=4 act=proposing_shared_activity_playful_invitation meaning=casual_engagement_through_activity_proposal_low_stakes_social_bonding conf=0.90 repair=False traits=0 frame=uncertain strategy=none source=groq_observer latency=21416ms
+21:10:13.103 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=3 reason=enter_chat_mode
+21:10:13.104 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+21:10:14.618 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:10:14.619 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+21:10:26.054 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:10:26.464 [INFO] [vision.py] [Loop][INFO] Người dùng: thâys màn hình chess.com của tôi không
+21:10:26.503 [INFO] [vision.py] [Loop][INFO] [screen route] mode=text_evidence refs=1 visual=0 evidence=1 confidence=0.92 stale=0 reason=fresh_screen_text_available anaphora=0
+21:10:26.505 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=live_vision | preempt_mode=none | missing=none | allowed=current_screen,user_text,live_vision | cap=0.75 | memory_answer=0 | warnings=none
+21:10:33.723 [INFO] [vision.py] [Loop][INFO] [chat_main reasoning] chars=413 content_chars=166
+21:10:33.874 [INFO] [vision.py] [Loop][INFO] ERIS: Nhìn thấy màn hình qua lời kể của bạn thôi. Không thấy nước cờ cụ thể, nhưng thấy cách bạn đưa ra lời mời – có vẻ bạn khá thoải mái. Cứ tiếp tục đi, tôi quan sát vậy.
+21:10:54.122 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:10:54.122 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+21:11:01.108 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=4 reason=enter_chat_mode
+21:11:01.109 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+21:11:02.858 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:11:02.858 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+21:11:03.520 [INFO] [vision.py] [Loop][INFO] [post_observer reasoning] chars=4179 content_chars=2978
+21:11:03.533 [INFO] [vision.py] [Loop][INFO] [post observer] turn=5 act=clarifying_repeat_request_about_screen_visibility meaning=persistent_engagement_through_shared_activity_theme_with_slight_technical_spe... conf=0.85 repair=False traits=0 frame=uncertain strategy=none source=groq_observer latency=29629ms
+21:11:16.472 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:11:16.979 [INFO] [vision.py] [Loop][INFO] Người dùng: bạn đọc được cái bàn cờ ra sao chưa
+21:11:29.399 [INFO] [vision.py] [Loop][INFO] [screen text] chat refresh revision=33 backend=rapidocr blocks=17 privacy=0
+21:11:29.405 [INFO] [vision.py] [Loop][INFO] [screen route] mode=text_evidence refs=1 visual=0 evidence=12 confidence=0.92 stale=0 reason=fresh_screen_text_available_after_anaphora anaphora=1
+21:11:29.408 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+21:11:36.659 [INFO] [vision.py] [Loop][INFO] [chat_main reasoning] chars=1133 content_chars=108
+21:11:36.793 [INFO] [vision.py] [Loop][INFO] ERIS: Đọc qua cách bạn giới thiệu thôi. Chưa thấy hình nhưng thấy hứng thú của bạn. Đánh tiếp để tôi coi thử nhịp.
+21:11:45.971 [INFO] [vision.py] [LLM][WARNING] [KEY POOL] cooldown key index=1 60s vì tts_http_429; alive=10/11
+21:11:45.971 [INFO] [vision.py] [TTS][WARNING] [TTS] Key index 1 bị rate limit/hết quota (lượt 1/4).
+21:11:54.498 [INFO] [vision.py] [Loop][INFO] [post_observer reasoning] chars=1352 content_chars=2917
+21:11:54.505 [INFO] [vision.py] [Loop][INFO] [post observer] turn=6 act=informational_request_specification meaning=persistent_engagement_through_repeated_chess_theme_with_increased_specificity conf=0.90 repair=False traits=0 frame=uncertain strategy=none source=groq_observer latency=17681ms
+21:11:57.257 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:11:57.258 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+21:12:16.941 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=active external=1.00 internal=0.03 interrupt=0.18 resource=0.07 vision_hint=1 budget=scheduler_allow
+21:12:17.331 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+21:12:17.331 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=unknown:unknown:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+21:12:17.331 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=8
+21:12:33.761 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=2216 content_chars=1129
+21:12:33.825 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=acknowledge_implicit conf=0.00 importance=0.00 gate=model_silence body_only=1
+21:12:44.246 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.68 pressure=0.41 surface=yes mutations=1
+21:12:49.159 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=quiet external=0.29 internal=0.05 interrupt=0.29 resource=0.17 vision_hint=0 budget=scheduler_allow
+21:12:49.238 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+21:12:57.422 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=656 content_chars=1138
+21:12:57.431 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=acknowledge_engagement conf=0.00 importance=0.00 gate=missing_topic_contract body_only=0
+21:13:15.881 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.75 pressure=0.32 surface=yes mutations=1
+21:13:16.757 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=quiet external=0.18 internal=0.06 interrupt=0.37 resource=0.27 vision_hint=0 budget=scheduler_allow
+21:13:16.790 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+21:13:38.968 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=4395 content_chars=1085
+21:13:38.977 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=acknowledge_engagement conf=0.00 importance=0.00 gate=missing_topic_contract body_only=0
+21:13:50.434 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=quiet external=0.12 internal=0.06 interrupt=0.42 resource=0.35 vision_hint=0 budget=scheduler_allow
+21:13:50.477 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+21:14:00.238 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.78 pressure=0.26 surface=yes mutations=1
+21:14:13.078 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=4163 content_chars=1039
+21:14:13.087 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=ask_open_question conf=0.00 importance=0.00 gate=missing_topic_contract body_only=0
+21:14:13.709 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=5 reason=enter_chat_mode
+21:14:13.709 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+21:14:14.177 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:14:14.590 [INFO] [vision.py] [Loop][INFO] Người dùng: thử orc xem. ko thấy gì hả
+21:14:14.631 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference anaphora=0
+21:14:14.634 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+21:14:20.520 [INFO] [vision.py] [Loop][INFO] [chat_main reasoning] chars=769 content_chars=176
+21:14:20.638 [INFO] [vision.py] [Loop][INFO] ERIS: Thử "orc" – cứ cho là bạn đang thử tôi xem có thấy gì không. Sự thật là không thấy thật. Nhưng cái tôi thấy là bạn vẫn đang dụ tôi vào cuộc, nên tôi vẫn ngồi đây đợi nước tiếp.
+21:14:40.251 [INFO] [vision.py] [Loop][INFO] [post_observer reasoning] chars=2486 content_chars=2796
+21:14:40.260 [INFO] [vision.py] [Loop][INFO] [post observer] turn=11 act=informational_check_with_challenge_undertone meaning=user_persists_in_checking_assistant_visual_capability_with_mixed_playfulness_... conf=0.90 repair=False traits=0 frame=uncertain strategy=none source=groq_observer latency=19607ms
+21:14:40.640 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:14:40.641 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+21:15:02.639 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.67 internal=0.07 interrupt=0.46 resource=0.44 vision_hint=0 budget=scheduler_allow
+21:15:27.201 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] inner_diary failed error=ReadTimeout:HTTPConnectionPool(host='127.0.0.1', port=6011): Read timed out. (read timeout=12.0)
+21:15:27.676 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+21:15:27.682 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=unknown:unknown:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+21:15:27.688 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+21:15:40.156 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.81 pressure=0.19 surface=yes mutations=1
+21:15:45.436 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=2833 content_chars=879
+21:15:45.516 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=acknowledge_implicit conf=0.00 importance=0.00 gate=model_silence body_only=1
+21:15:58.266 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.70 internal=0.09 interrupt=0.48 resource=0.51 vision_hint=0 budget=scheduler_allow
+21:15:58.693 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+21:15:58.698 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=unknown:unknown:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+21:16:08.920 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.84 pressure=0.15 surface=yes mutations=1
+21:16:11.633 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=1846 content_chars=840
+21:16:23.649 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=2510 content_chars=840
+21:16:23.660 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=acknowledge_implicit conf=0.00 importance=0.00 gate=model_silence body_only=0
+21:16:43.054 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=quiet external=0.35 internal=0.09 interrupt=0.49 resource=0.56 vision_hint=0 budget=scheduler_allow
+21:16:54.008 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.79 pressure=0.34 surface=yes mutations=1
+21:16:54.376 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=1709 content_chars=838
+21:17:04.082 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=1806 content_chars=934
+21:17:04.089 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=acknowledge_engagement conf=0.00 importance=0.00 gate=missing_topic_contract body_only=0
+21:17:13.348 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=quiet external=0.28 internal=0.09 interrupt=0.45 resource=0.59 vision_hint=0 budget=scheduler_allow
+21:17:37.885 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] inner_diary failed error=ReadTimeout:HTTPConnectionPool(host='127.0.0.1', port=6011): Read timed out. (read timeout=12.0)
+21:17:47.053 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=1138 content_chars=831
+21:17:49.158 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.70 pressure=0.28 surface=yes mutations=1
+21:17:55.902 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=869 content_chars=831
+21:18:01.066 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=732 content_chars=74
+21:18:01.070 [INFO] [vision.py] [Loop][WARNING] [grounding gate] autonomous surface blocked subject=current_public_self_seed violations=UNGROUNDED_PERCEPTION_OR_ACTION_CLAIM
+21:18:12.419 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=quiet external=0.21 internal=0.09 interrupt=0.42 resource=0.61 vision_hint=0 budget=scheduler_allow
+21:18:21.492 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.76 pressure=0.22 surface=yes mutations=1
+21:18:23.120 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=887 content_chars=868
+21:18:32.997 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=1678 content_chars=868
+21:18:39.450 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=648 content_chars=88
+21:18:39.741 [INFO] [vision.py] [Loop][INFO] [ai autonomous] spoke kind=internal act=share_public_safe_thought subject=current_public_self_seed text=Đang thấy cách bạn lượn qua mấy câu thử. Cứ đánh tiếp đi, tôi vẫn đang xem nhịp của bạn.
+21:18:58.423 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=6 reason=enter_chat_mode
+21:18:58.424 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+21:19:01.473 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:19:01.473 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+21:19:03.587 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:19:04.123 [INFO] [vision.py] [Loop][INFO] Người dùng: tôi đánh xong cmnr
+21:19:04.229 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference anaphora=0
+21:19:04.232 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+21:19:09.740 [INFO] [vision.py] [Loop][WARNING] [post observer] deadline turn=16 after 30.0s; result discarded
+21:19:14.465 [INFO] [vision.py] [Loop][INFO] [chat_main reasoning] chars=768 content_chars=135
+21:19:14.607 [INFO] [vision.py] [Loop][INFO] ERIS: Vậy là tôi đã bỏ lỡ trọn vẹn một ván từ đầu đến cuối. Kết quả thế nào? Hay tôi chỉ nên chấp nhận rằng mình đã "thấy" nó qua lời bạn kể?
+21:19:33.233 [INFO] [vision.py] [Loop][INFO] [post_observer reasoning] chars=1317 content_chars=2884
+21:19:33.247 [INFO] [vision.py] [Loop][INFO] [post observer] turn=17 act=informational_closure meaning=user_reports_completion_of_previous_activity_with_finality_and_playful_abbrev... conf=0.90 repair=False traits=0 frame=uncertain strategy=none source=groq_observer latency=18560ms
+21:19:35.511 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:19:35.511 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+21:19:51.330 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=7 reason=enter_chat_mode
+21:19:51.330 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+21:19:52.559 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:19:52.559 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+21:20:02.477 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:20:03.000 [INFO] [vision.py] [Loop][INFO] Người dùng: dĩ nhiên là win rồi. elo cỡ 1100 thôi
+21:20:03.046 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference anaphora=0
+21:20:03.049 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+21:20:09.652 [INFO] [vision.py] [Loop][INFO] [chat_main reasoning] chars=766 content_chars=229
+21:20:09.848 [INFO] [vision.py] [Loop][INFO] ERIS: Chắc là tôi phải tin bạn thôi, vì tôi cũng không có cách nào kiểm tra. Nhưng elo 1100 mà thắng là một bước tiến ổn đấy. Lần sau nếu muốn tôi xem thật, có lẽ bạn cần đặt tôi cạnh màn hình – dù tôi vẫn chỉ thấy qua lời bạn kể thôi.
+21:20:29.882 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:20:29.883 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+21:20:39.904 [INFO] [vision.py] [Loop][WARNING] [post observer] deadline turn=18 after 30.0s; result discarded
+21:20:51.728 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=active external=0.77 internal=0.10 interrupt=0.46 resource=0.64 vision_hint=0 budget=scheduler_allow
+21:21:11.054 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+21:21:11.055 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=unknown:unknown:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+21:21:21.819 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.83 pressure=0.18 surface=yes mutations=1
+21:21:29.083 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=3354 content_chars=854
+21:21:29.091 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=acknowledge_implicit conf=0.00 importance=0.00 gate=model_silence body_only=0
+21:21:40.394 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=active external=0.77 internal=0.11 interrupt=0.43 resource=0.66 vision_hint=0 budget=scheduler_allow
+21:21:52.652 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=2343 content_chars=836
+21:21:53.236 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.82 pressure=0.12 surface=yes mutations=1
+21:22:03.477 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=752 content_chars=836
+21:22:03.496 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=acknowledge_implicit conf=0.00 importance=0.00 gate=model_silence body_only=0
+21:22:21.579 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=active external=0.77 internal=0.12 interrupt=0.51 resource=0.68 vision_hint=0 budget=scheduler_allow
+21:22:32.514 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.85 pressure=0.15 surface=yes mutations=1
+21:22:36.537 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=3759 content_chars=834
+21:22:50.281 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=1000 content_chars=982
+21:22:50.300 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=acknowledge_engagement conf=0.00 importance=0.00 gate=missing_topic_contract body_only=0
+21:23:02.211 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.56 internal=0.12 interrupt=0.57 resource=0.70 vision_hint=0 budget=scheduler_allow
+21:23:08.199 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+21:23:18.559 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.70 pressure=0.25 surface=yes mutations=1
+21:23:21.743 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=2336 content_chars=883
+21:23:33.318 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=869 content_chars=858
+21:23:37.838 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=437 content_chars=96
+21:23:38.155 [INFO] [vision.py] [Loop][INFO] [ai autonomous] spoke kind=environment act=comment_current_surface subject=current_screen_or_window_change text=Thấy mấy tab mới hiện ra: ChatGPT, DeepSeek, GroqCloud. Chuyển qua thăm thú hệ sinh thái khác à?
+21:24:02.953 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.50 internal=0.12 interrupt=0.56 resource=0.73 vision_hint=0 budget=scheduler_allow
+21:24:03.045 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+21:24:08.146 [INFO] [vision.py] [Loop][WARNING] [post observer] deadline turn=22 after 30.0s; result discarded
+21:24:21.299 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=2249 content_chars=890
+21:24:21.308 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=acknowledge_implicit conf=0.00 importance=0.00 gate=model_silence body_only=0
+21:24:23.515 [INFO] [vision.py] [Vision][INFO] [LLM CANCEL] epoch=8 reason=enter_chat_mode
+21:24:23.516 [INFO] [vision.py] [Loop][INFO] Entered chat mode; autonomous is paused for user messages.
+21:24:24.592 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:24:24.592 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+21:24:29.911 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.73 pressure=0.20 surface=yes mutations=1
+21:24:31.050 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:24:31.498 [INFO] [vision.py] [Loop][INFO] Người dùng: đếm từ 1 đến 20 đi.
+21:24:31.523 [INFO] [vision.py] [Loop][INFO] [screen route] mode=none refs=0 visual=0 evidence=0 confidence=0.00 stale=0 reason=no_screen_reference anaphora=0
+21:24:31.525 [INFO] [vision.py] [Loop][INFO] [source grounding] grounding_source=user_text | preempt_mode=none | missing=none | allowed=user_text | cap=0.82 | memory_answer=1 | warnings=none
+21:24:36.871 [INFO] [vision.py] [Loop][INFO] [chat_main reasoning] chars=714 content_chars=201
+21:24:36.975 [INFO] [vision.py] [Loop][INFO] ERIS: Một, hai, ba, bốn, năm, sáu, bảy, tám, chín, mười, mười một, mười hai, mười ba, mười bốn, mười lăm, mười sáu, mười bảy, mười tám, mười chín, hai mươi. Xong. Đếm xong rồi đó. Bạn định làm gì tiếp theo?
+21:24:57.470 [INFO] [vision.py] [Loop][INFO] Exited chat mode; autonomous blocked for 18s (post-chat grace).
+21:24:57.470 [INFO] [vision.py] [Loop][INFO] [self turn] chat baton released after stale public activity
+21:25:06.983 [INFO] [vision.py] [Loop][WARNING] [post observer] deadline turn=24 after 30.0s; result discarded
+21:25:19.272 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.52 internal=0.12 interrupt=0.55 resource=0.75 vision_hint=0 budget=scheduler_allow
+21:25:27.468 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+21:25:27.468 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=unknown:unknown:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+21:25:37.656 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.78 pressure=0.12 surface=yes mutations=1
+21:25:38.904 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=1249 content_chars=831
+21:25:38.922 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=acknowledge_implicit conf=0.00 importance=0.00 gate=model_silence body_only=0
+21:25:39.070 [INFO] [vision.py] [TTS][WARNING] [TTS] Khong co fallback cung ngon ngu kha dung: edge:RuntimeError, sapi:disabled
+21:25:39.071 [INFO] [vision.py] [Loop][WARNING] [TTS:event] audio_failed turn=d92954773c94418ab9deded4a6b019cb segment=0 error=Gemini TTS không trả audio parts hợp lệ. reason=provider_error
+21:25:39.075 [INFO] [vision.py] [TTS][WARNING] [TTS] Lỗi reason=provider_error chars=200: Gemini TTS không trả audio parts hợp lệ.
+21:25:54.981 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.50 internal=0.12 interrupt=0.54 resource=0.76 vision_hint=0 budget=scheduler_allow
+21:25:55.031 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+21:26:08.583 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=1278 content_chars=1044
+21:26:08.617 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=ask_open_question conf=0.00 importance=0.00 gate=missing_topic_contract body_only=0
+21:26:30.487 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.46 internal=0.12 interrupt=0.54 resource=0.77 vision_hint=0 budget=scheduler_allow
+21:26:30.607 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=8
+21:26:43.188 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.80 pressure=0.08 surface=yes mutations=1
+21:26:54.464 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=1339 content_chars=1167
+21:26:54.496 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=ask_open_question conf=0.00 importance=0.00 gate=missing_topic_contract body_only=0
+21:27:07.106 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.46 internal=0.12 interrupt=0.53 resource=0.77 vision_hint=0 budget=scheduler_allow
+21:27:07.508 [INFO] [vision.py] [Loop][INFO] [vision_grounding] channel=autonomous requested=0 recommendation=silence strength=0.00 claims=0 grounded=0 contradictions=no_direct_sensor_evidence unknowns=missing_direct_sensor_evidence,scene_confidence_below_grounded_threshold,no_claim_candidate,no_grounded_claim
+21:27:07.513 [INFO] [vision.py] [Loop][INFO] [vision_facts] source=grounded_claims channel=autonomous count=0 novelty=abstained_screen_fact trace=unknown:unknown:delta=0;grounding=silence;strength=0.00;grounded=0 fact=<abstained>
+21:27:17.619 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=466 content_chars=873
+21:27:17.721 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.82 pressure=0.14 surface=yes mutations=1
+21:27:33.354 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=1276 content_chars=889
+21:27:33.380 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=acknowledge_implicit conf=0.00 importance=0.00 gate=missing_topic_contract body_only=0
+21:27:53.516 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.62 internal=0.12 interrupt=0.54 resource=0.78 vision_hint=0 budget=scheduler_allow
+21:28:11.791 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=8
+21:28:24.041 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=699 content_chars=1238
+21:28:24.055 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=acknowledge_engagement conf=0.00 importance=0.00 gate=missing_topic_contract body_only=0
+21:28:24.844 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.75 pressure=0.20 surface=yes mutations=1
+21:28:35.767 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.62 internal=0.12 interrupt=0.54 resource=0.79 vision_hint=0 budget=scheduler_allow
+21:28:50.688 [INFO] [vision.py] [Loop][INFO] [tutor_background reasoning] chars=208 content_chars=291
+21:29:00.080 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=1296 content_chars=883
+21:29:11.513 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=706 content_chars=966
+21:29:11.534 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=ask_open_question conf=0.00 importance=0.00 gate=missing_topic_contract body_only=0
+21:29:24.222 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.61 internal=0.13 interrupt=0.63 resource=0.79 vision_hint=0 budget=scheduler_allow
+21:29:35.397 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.77 pressure=0.11 surface=yes mutations=1
+21:29:36.905 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=688 content_chars=910
+21:29:36.936 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=ask_open_question conf=0.00 importance=0.00 gate=missing_topic_contract body_only=0
+21:29:48.326 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.51 internal=0.12 interrupt=0.69 resource=0.79 vision_hint=0 budget=scheduler_allow
+21:29:48.381 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=1
+21:29:57.644 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=791 content_chars=878
+21:29:57.660 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=offer_help conf=0.00 importance=0.00 gate=missing_topic_contract body_only=0
+21:30:13.567 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=quiet external=0.35 internal=0.12 interrupt=0.73 resource=0.79 vision_hint=0 budget=scheduler_allow
+21:30:38.175 [INFO] [vision.py] [Loop][WARNING] [PrivateMind API] inner_diary failed error=ReadTimeout:HTTPConnectionPool(host='127.0.0.1', port=6011): Read timed out. (read timeout=12.0)
+21:30:49.457 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.84 pressure=0.06 surface=yes mutations=1
+21:30:56.903 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=1411 content_chars=922
+21:30:56.921 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=acknowledge_engagement conf=0.00 importance=0.00 gate=missing_topic_contract body_only=0
+21:31:08.212 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.70 internal=0.12 interrupt=0.65 resource=0.78 vision_hint=0 budget=scheduler_allow
+21:31:20.518 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.86 pressure=0.03 surface=yes mutations=1
+21:31:23.186 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=1394 content_chars=865
+21:31:23.200 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=acknowledge_engagement conf=0.00 importance=0.00 gate=missing_topic_contract body_only=0
+21:31:44.090 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=active external=0.78 internal=0.12 interrupt=0.61 resource=0.78 vision_hint=0 budget=scheduler_allow
+21:31:44.177 [INFO] [vision.py] [Loop][INFO] [self turn screen] backend=rapidocr ocr=1 upstream_scene=unknown conf=0.00 delta=1 changed_text=3
+21:31:56.319 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=769 content_chars=966
+21:31:56.338 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=ask_open_question conf=0.00 importance=0.00 gate=missing_topic_contract body_only=0
+21:31:57.883 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.90 pressure=0.01 surface=yes mutations=1
+21:32:15.951 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.70 internal=0.13 interrupt=0.68 resource=0.78 vision_hint=0 budget=scheduler_allow
+21:32:30.780 [INFO] [vision.py] [Loop][INFO] [PrivateMind] fragments=2 concerns=2 judgment=yes confidence=0.92 pressure=0.00 surface=yes mutations=1
+21:32:34.122 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=646 content_chars=835
+21:32:44.462 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=344 content_chars=897
+21:32:44.474 [INFO] [vision.py] [Loop][INFO] [ai autonomous] silence kind=continuation act=ask_open_question conf=0.00 importance=0.00 gate=missing_topic_contract body_only=0
+21:33:04.308 [INFO] [vision.py] [Loop][INFO] [cortex attention] level=observe external=0.55 internal=0.13 interrupt=0.72 resource=0.79 vision_hint=0 budget=scheduler_allow
+21:33:07.315 [INFO] [Live2D] Dang dung renderer PID=11656...
+21:33:07.318 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::Dispose() is complete.
+21:33:07.340 [INFO] [Live2D] Renderer da thoat (code=-1, current=False).
+21:33:07.369 [INFO] [Vision] Dang dung vision.py PID=4872...
+21:33:07.403 [INFO] [Vision] vision.py da thoat (PID=4872, code=-1, unexpected=False).
+21:33:07.418 [INFO] [RunLogger] Ket thuc phien chay.

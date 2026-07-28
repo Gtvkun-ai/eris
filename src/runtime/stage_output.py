@@ -16,6 +16,7 @@ from dataclasses import replace
 
 from runtime.prosody_director import ProsodyDirector
 from runtime.stage_contracts import StageFrame
+from runtime.voice_director import vocalization_text
 
 
 _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?。！？])\s+")
@@ -187,10 +188,95 @@ class StageOutputPipeline:
             copied["active_beat"] = active
         return copied
 
+    def _voice_director_frames(self, frame: StageFrame) -> tuple[StageFrame, ...]:
+        """Áp Voice Director lên toàn bộ câu mà không tạo segment mới.
+
+        Kế hoạch v2 chỉ mang delivery metadata. Transcript, display text và
+        memory text giữ nguyên; TTS luôn nhận đúng một StageFrame/clip.
+        """
+
+        plan = frame.voice_plan if isinstance(getattr(frame, "voice_plan", None), dict) else {}
+        if not plan:
+            return ()
+        delivery_raw = plan.get("delivery")
+        if not isinstance(delivery_raw, dict):
+            # Compatibility với kế hoạch cũ chỉ khi đúng một segment. Nhiều hơn
+            # bị bỏ qua để không tái sinh lỗi ngắt/drop.
+            legacy = plan.get("segments")
+            if not isinstance(legacy, list) or len(legacy) != 1 or not isinstance(legacy[0], dict):
+                return ()
+            delivery_raw = legacy[0]
+
+        voice_meta = dict(delivery_raw)
+        voice_meta["pause_after_ms"] = 0
+        cue = str(voice_meta.get("vocalization", "none") or "none").strip().lower()
+        if cue not in {"none", "soft_hum", "gentle_ack", "small_laugh", "soft_sigh", "curious_hm", "soft_surprise"}:
+            cue = "none"
+        voice_meta["vocalization"] = cue
+        cue_position = str(voice_meta.get("vocalization_position", "prefix") or "prefix").strip().lower()
+        voice_meta["vocalization_position"] = cue_position if cue_position in {"prefix", "suffix"} else "prefix"
+        voice_meta["previous_text"] = ""
+        voice_meta["next_text"] = ""
+
+        style = str(voice_meta.get("style", frame.prosody_style) or frame.prosody_style)
+        emphasis = [
+            str(item or "").strip()
+            for item in (voice_meta.get("emphasis") or ())
+            if str(item or "").strip() and str(item or "").strip() in str(frame.tts_text or "")
+        ][:2]
+        try:
+            warmth = max(0.35, min(0.85, float(voice_meta.get("warmth", 0.62) or 0.62)))
+        except (TypeError, ValueError):
+            warmth = 0.62
+
+        delivery = dict(frame.delivery) if isinstance(frame.delivery, dict) else {}
+        delivery["voice_director_segment"] = voice_meta
+        # Không tạo active_beat, pause hay performance_act. Đạo diễn chỉ chỉnh
+        # chất giọng; timeline và câu chữ không thuộc quyền hạn của nó.
+
+        notes = str(frame.prosody_notes or "").strip()
+        notes = (
+            f"{notes} Single continuous take. Warmth={warmth:.2f}; "
+            f"energy={voice_meta.get('energy', 0.42)}; pitch={voice_meta.get('pitch', 'neutral')}; "
+            f"speed={voice_meta.get('speed', 1.0)}. Keep it smooth, close, warm and natural; "
+            "no dramatic pause and no whisper."
+        ).strip()
+        if cue != "none":
+            notes = (
+                f"{notes} Add exactly one subtle {cue} at the "
+                f"{voice_meta.get('vocalization_position', 'prefix')} inside the same continuous take; "
+                "do not create a separate clip or dead-air pause."
+            ).strip()
+        if emphasis:
+            notes = f"{notes} Lightly emphasize: {', '.join(emphasis)}.".strip()
+        prosody = self.prosody.plan(
+            frame.tts_text,
+            emotion=frame.emotion,
+            style_hint=style,
+            notes_hint=notes,
+        )
+        return (
+            replace(
+                frame,
+                segment_id=0,
+                prosody_style=prosody.style,
+                prosody_notes=prosody.director_notes,
+                delivery=delivery,
+            ),
+        )
+
     def frames_for_tts(self, frame: StageFrame) -> tuple[StageFrame, ...]:
         # Một audio preset đã render ứng với toàn bộ câu. Tách segment sẽ làm
         # metadata file WAV lệch khỏi transcript và phát cùng file nhiều lần.
         if str(getattr(frame, "audio_asset", "") or "").strip():
+            return (frame,)
+
+        directed = self._voice_director_frames(frame)
+        if directed:
+            return directed
+
+        from runtime.tts_engine import _tts_provider
+        if _tts_provider() == "elevenlabs":
             return (frame,)
 
         # Autonomous act đã có speech beat do Stage Director đặt. Ưu tiên beat

@@ -770,17 +770,21 @@ def _speech_kwargs(frame: Any) -> dict[str, object]:
     }
 
 
-def _performance_kwargs(frame: Any) -> dict[str, str]:
+def _performance_kwargs(frame: Any) -> dict[str, object]:
     delivery = getattr(frame, "delivery", {}) if frame is not None else {}
     if not isinstance(delivery, dict):
         return {}
+    result: dict[str, object] = {}
     act = delivery.get("performance_act")
-    if not isinstance(act, dict):
-        return {}
-    return {
-        "vocal_cache_kind": str(act.get("kind", "") or ""),
-        "vocal_prefix": str(act.get("audible_prefix", "") or ""),
-    }
+    if isinstance(act, dict):
+        result.update({
+            "vocal_cache_kind": str(act.get("kind", "") or ""),
+            "vocal_prefix": str(act.get("audible_prefix", "") or ""),
+        })
+    voice_segment = delivery.get("voice_director_segment")
+    if isinstance(voice_segment, dict):
+        result["voice_director_segment"] = dict(voice_segment)
+    return result
 
 
 def _call_once(callback: Callable[[], None] | None) -> None:

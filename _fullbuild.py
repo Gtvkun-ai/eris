@@ -95,7 +95,7 @@ if os.path.exists(src_build):
     shutil.rmtree(src_build, onerror=remove_readonly)
 
 print("  Copy: " + src_repo + "  ->  " + src_build)
-shutil.copytree(src_repo, src_build, ignore=shutil.ignore_patterns(".git", ".pytest_cache"))
+shutil.copytree(src_repo, src_build, dirs_exist_ok=True, ignore=shutil.ignore_patterns(".git", ".pytest_cache"))
 
 for skip in SKIP_HEAVY:
     p = os.path.join(src_build, skip)
@@ -174,6 +174,8 @@ deploy_pairs = [
      os.path.join(OUT,  ".env")),
     (os.path.join(REPO, "config", "secrets.json"),
      os.path.join(OUT,  "config", "secrets.json")),
+    (os.path.join(REPO, "src", "settings", "runtime_settings.json"),
+     os.path.join(OUT,  "src", "settings", "runtime_settings.json")),
 ]
 
 # Copy Eris.exe / Eris.pck if built in REPO

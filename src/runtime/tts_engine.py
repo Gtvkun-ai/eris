@@ -1,16 +1,12 @@
 # -*- coding: utf-8 -*-
-"""tts_engine.py — Emotional TTS cho ERIS dùng Gemini TTS API.
+"""tts_engine.py — Emotional TTS cho ERIS, ElevenLabs-first.
 
-Gemini TTS hỗ trợ inline audio tags: [whispers], [excited], [trembling]...
-Engine này đọc valence/arousal/stance từ payload của Eris và tự động
-inject audio tag phù hợp trước khi gọi TTS → giọng tự nhấn nhá theo cảm xúc thật.
+DeepSeek STYLE lập VoicePlan side-channel; engine chuyển nhịp, điểm nhấn, năng
+lượng và pitch thành request ElevenLabs. Gemini TTS và provider local vẫn được
+giữ làm fallback để một lần quota hắt hơi không khiến ERIS đột nhiên câm.
 
-Giọng mặc định: Aoede (Breezy, nữ, phù hợp anime girl JP accent).
-Có thể đổi qua ERIS_TTS_VOICE trong .env.
-
-Hỗ trợ ngôn ngữ: Gemini TTS tự detect → Japanese text → đọc JP.
-
-Backend phát âm: miniaudio (không cần ffmpeg, không có audioop issue với Python 3.13).
+Transcript UI/memory luôn sạch. Audio tags và tiếng đệm Nhật chỉ tồn tại bên
+trong đường TTS. Playback vẫn dùng WAV PCM mono 24 kHz qua backend hiện có.
 """
 
 from __future__ import annotations
@@ -18,6 +14,7 @@ from __future__ import annotations
 import io
 import asyncio
 import inspect
+import json
 import logging
 import os
 import queue
@@ -31,7 +28,7 @@ import time
 import unicodedata
 import wave
 from dataclasses import dataclass
-from typing import Optional
+from typing import Mapping, Optional
 
 from runtime.prosody_director import ProsodyDirector
 from runtime.speech_localizer import (
@@ -72,15 +69,57 @@ def _enabled() -> bool:
     from runtime.runtime_settings_store import runtime_bool
     return runtime_bool("tts", "enabled", default=True)
 
-def _voice() -> str:
-    # Aoede = Breezy nữ; Leda = Youthful nữ; Achernar = Soft nữ
+def _tts_provider() -> str:
+    """Provider audio chính: elevenlabs | gemini.
+
+    Runtime setting thắng env để panel có thể đổi live. Giá trị lạ fail về
+    ElevenLabs vì bản build này được art-direct cho voice đó.
+    """
     from runtime.runtime_settings_store import runtime_text
+
+    raw = runtime_text(
+        "tts",
+        "provider",
+        default=os.environ.get("ERIS_TTS_PROVIDER", "elevenlabs"),
+    ).strip().lower()
+    aliases = {"eleven": "elevenlabs", "11labs": "elevenlabs", "google": "gemini"}
+    value = aliases.get(raw, raw)
+    return value if value in {"elevenlabs", "gemini"} else "elevenlabs"
+
+
+def _gemini_voice() -> str:
+    from runtime.runtime_settings_store import runtime_text
+
+    # Aoede = Breezy nữ; Leda = Youthful nữ; Achernar = Soft nữ.
     return runtime_text("tts", "voice", default="Aoede") or "Aoede"
 
-def _model() -> str:
-    # gemini-2.5-flash-preview-tts = stable TTS model hiện tại (2025-06+)
-    # gemini-3.1-flash-tts-preview đã deprecated/không ổn định, dễ trả về 404
+
+def _gemini_model() -> str:
     return os.environ.get("ERIS_TTS_MODEL", "gemini-2.5-flash-preview-tts").strip()
+
+
+def _voice() -> str:
+    from runtime.runtime_settings_store import runtime_text
+
+    if _tts_provider() == "elevenlabs":
+        return (
+            os.environ.get("ERIS_ELEVENLABS_VOICE_ID", "").strip()
+            or runtime_text("tts", "elevenlabs_voice_id", default="fUjY9K2nAIwlALOwSiwc").strip()
+            or "fUjY9K2nAIwlALOwSiwc"
+        )
+    return _gemini_voice()
+
+
+def _model() -> str:
+    if _tts_provider() == "elevenlabs":
+        from runtime.runtime_settings_store import runtime_text
+
+        return (
+            os.environ.get("ERIS_ELEVENLABS_MODEL", "").strip()
+            or runtime_text("tts", "elevenlabs_model", default="eleven_v3").strip()
+            or "eleven_v3"
+        )
+    return _gemini_model()
 
 def _normalize_language_hint(value: str) -> str:
     """Chuẩn hoá value từ .env/UI thành mã ngôn ngữ nội bộ ổn định."""
@@ -197,6 +236,118 @@ def _sapi_tts_fallback_enabled() -> bool:
         "yes",
         "on",
     }
+
+
+_CACHED_BEARER_TOKEN: str = ""
+_CACHED_BEARER_EXPIRES_AT: float = 0.0
+_ELEVENLABS_SESSION: Any = None
+_ELEVENLABS_SESSION_LOCK = threading.Lock()
+
+
+def _get_elevenlabs_http_session():
+    global _ELEVENLABS_SESSION
+    if _ELEVENLABS_SESSION is None:
+        with _ELEVENLABS_SESSION_LOCK:
+            if _ELEVENLABS_SESSION is None:
+                import requests
+
+                session = requests.Session()
+                adapter = requests.adapters.HTTPAdapter(pool_connections=5, pool_maxsize=10)
+                session.mount("https://", adapter)
+                _ELEVENLABS_SESSION = session
+    return _ELEVENLABS_SESSION
+
+
+def _get_elevenlabs_token() -> tuple[str, str]:
+    global _CACHED_BEARER_TOKEN, _CACHED_BEARER_EXPIRES_AT
+    from eris_secrets import get_secret
+    import time
+
+    api_key = str(get_secret("ELEVENLABS_API_KEY", "ERIS_ELEVENLABS_API_KEY") or "").strip()
+    if api_key and not api_key.startswith("eyJ"):
+        return "xi-api-key", api_key
+
+    now = time.time()
+    if _CACHED_BEARER_TOKEN and now < _CACHED_BEARER_EXPIRES_AT:
+        return "bearer", _CACHED_BEARER_TOKEN
+
+    refresh_token = str(get_secret("ELEVENLABS_REFRESH_TOKEN") or "").strip()
+    firebase_key = str(get_secret("FIREBASE_API_KEY") or "").strip()
+    bearer_token = str(get_secret("ELEVENLABS_BEARER_TOKEN") or "").strip()
+
+    if refresh_token and firebase_key:
+        try:
+            session = _get_elevenlabs_http_session()
+            url = f"https://securetoken.googleapis.com/v1/token?key={firebase_key}"
+            headers = {
+                "Referer": "https://elevenlabs.io/",
+                "Origin": "https://elevenlabs.io",
+                "Content-Type": "application/x-www-form-urlencoded",
+            }
+            data = {"grant_type": "refresh_token", "refresh_token": refresh_token}
+            r = session.post(url, headers=headers, data=data, timeout=10)
+            if r.status_code == 200:
+                new_token = str(r.json().get("id_token") or "").strip()
+                if new_token:
+                    _CACHED_BEARER_TOKEN = new_token
+                    _CACHED_BEARER_EXPIRES_AT = now + 3000.0
+                    return "bearer", new_token
+        except Exception as exc:
+            logger.debug("[TTS/ElevenLabs] refresh token failed: %s", exc)
+
+    if bearer_token:
+        _CACHED_BEARER_TOKEN = bearer_token
+        _CACHED_BEARER_EXPIRES_AT = now + 1800.0
+        return "bearer", bearer_token
+
+    if api_key:
+        return "xi-api-key", api_key
+
+    return "", ""
+
+
+def warmup_elevenlabs() -> None:
+    """Pre-fetch token and warm up HTTP Keep-Alive pool in background."""
+    def _do_warmup():
+        try:
+            _get_elevenlabs_token()
+            _get_elevenlabs_http_session()
+            logger.info("[TTS/ElevenLabs] Background token and connection pool warm-up complete.")
+        except Exception as exc:
+            logger.debug("[TTS/ElevenLabs] Warmup exception: %s", exc)
+
+    threading.Thread(target=_do_warmup, daemon=True, name="ElevenLabs-Warmup").start()
+
+
+def _elevenlabs_api_key() -> str:
+    _, token = _get_elevenlabs_token()
+    return token
+
+
+def _elevenlabs_base_url() -> str:
+    return str(os.environ.get("ERIS_ELEVENLABS_BASE_URL", "https://api.elevenlabs.io") or "").strip().rstrip("/")
+
+
+def _elevenlabs_timeout_seconds() -> float:
+    raw = str(os.environ.get("ERIS_ELEVENLABS_TIMEOUT_S", "120") or "120").strip()
+    try:
+        return max(20.0, min(300.0, float(raw)))
+    except ValueError:
+        return 120.0
+
+
+def _elevenlabs_gemini_fallback_enabled() -> bool:
+    raw = str(os.environ.get("ERIS_ELEVENLABS_GEMINI_FALLBACK", "1") or "1").strip().lower()
+    return raw not in {"0", "false", "off", "no"}
+
+
+def _elevenlabs_float(name: str, default: float, low: float, high: float) -> float:
+    raw = str(os.environ.get(name, default) or default).strip()
+    try:
+        return max(low, min(high, float(raw)))
+    except (TypeError, ValueError):
+        return default
+
 
 # ── Emotion → Audio Tag mapping ───────────────────────────────────────────────
 # valence: [-1, 1]  arousal: [0, 1]  stance: string từ appraisal
@@ -369,6 +520,360 @@ def _build_tts_prompt(
         f"{tagged_text}\n"
     )
     return prompt
+
+
+# ── ElevenLabs TTS ────────────────────────────────────────────────────────────
+
+_ELEVEN_VOCALIZATION_TAGS: dict[str, str] = {
+    "small_laugh": "[laughs]",
+    "soft_sigh": "[sighs]",
+}
+
+
+def _voice_director_cue_token(kind: object, *, language_hint: str) -> str:
+    """Render đúng một cue cho transcript TTS, không chạm public text."""
+    cue = str(kind or "none").strip().lower()
+    tagged = _ELEVEN_VOCALIZATION_TAGS.get(cue, "")
+    if tagged:
+        return tagged
+    try:
+        from runtime.voice_director import vocalization_text
+
+        return vocalization_text(cue, language_hint)
+    except Exception:
+        return ""
+
+
+def _apply_voice_director_cue(
+    body: str,
+    segment: Mapping[str, object],
+    *,
+    language_hint: str,
+) -> str:
+    cue = _voice_director_cue_token(segment.get("vocalization", "none"), language_hint=language_hint)
+    if not cue:
+        return str(body or "").strip()
+    position = str(segment.get("vocalization_position", "prefix") or "prefix").strip().lower()
+    if position == "suffix":
+        return f"{str(body or '').strip()} {cue}".strip()
+    return f"{cue} {str(body or '').strip()}".strip()
+
+
+_ELEVEN_STYLE_TAGS: dict[str, tuple[str, ...]] = {
+    "neutral": (),
+    "focused": ("[calm and clear]",),
+    "warm_soft": ("[warmly]", "[softly]"),
+    "curious_soft": ("[curious]", "[softly]"),
+    "soft_tease": ("[mischievously]", "[softly]"),
+    "dry_tease": ("[dryly]", "[mischievously]"),
+    "self_aware_dry": ("[quietly]", "[dryly]"),
+    "annoyed_soft": ("[slightly annoyed]", "[controlled]"),
+    "sharp_deadpan": ("[deadpan]", "[sharply]"),
+    "cold_boundary": ("[serious]", "[controlled]"),
+    "deadpan": ("[deadpan]",),
+    "low_quiet": ("[quietly]", "[low energy]"),
+}
+
+
+def _eleven_emphasize(text: str, phrases: object, *, language_hint: str) -> str:
+    """Đặt quote nhẹ quanh tối đa hai phrase để ElevenLabs ưu tiên điểm rơi."""
+    if not isinstance(phrases, (list, tuple)):
+        return text
+    rendered = str(text or "")
+    japanese = normalize_language(language_hint) == "ja"
+    left, right = ("「", "」") if japanese else ('"', '"')
+    for item in list(phrases)[:2]:
+        phrase = str(item or "").strip()
+        if phrase and phrase in rendered:
+            rendered = rendered.replace(phrase, f"{left}{phrase}{right}", 1)
+    return rendered
+
+
+def _render_elevenlabs_text(
+    text: str,
+    prosody_plan: object,
+    *,
+    language_hint: str,
+    voice_director_segment: Mapping[str, object] | None = None,
+) -> str:
+    """Render text và style tag cho ElevenLabs V3 mà không bị thì thầm kéo dài."""
+    segment = voice_director_segment or {}
+    style = str(
+        segment.get("style")
+        or getattr(prosody_plan, "style", "")
+        or "neutral"
+    ).strip().lower()
+    body = _eleven_emphasize(
+        str(text or "").strip(),
+        segment.get("emphasis", ()),
+        language_hint=language_hint,
+    )
+    body = _apply_voice_director_cue(body, segment, language_hint=language_hint)
+    tags = [tag for tag in _ELEVEN_STYLE_TAGS.get(style, ()) if tag not in {"[quietly]", "[low energy]", "[controlled]"}]
+    try:
+        warmth = max(0.0, min(1.0, float(segment.get("warmth", 0.0) or 0.0)))
+    except (TypeError, ValueError):
+        warmth = 0.0
+    # Với style trung tính, warmth cao được chuyển thành một chỉ dẫn duy nhất.
+    # Không xếp nhiều tag vì ElevenLabs có thể diễn quá tay rồi lại thành giọng bóp.
+    if warmth >= 0.56 and style in {"neutral", "focused"}:
+        return f"[warmly] {body}".strip()
+    if tags:
+        return f"{tags[0]} {body}".strip()
+    return body.strip()
+
+
+def _pcm24_to_wav_bytes(pcm_data: bytes) -> bytes:
+    if not pcm_data:
+        return b""
+    pcm = pcm_data
+    if audio_polish_enabled():
+        try:
+            polished = polish_pcm16_mono(pcm, sample_rate=24000)
+            pcm = polished.pcm or pcm
+            stats = polished.stats
+            if stats.trimmed_head_ms or stats.trimmed_tail_ms or stats.compressed_pause_ms:
+                logger.debug(
+                    "[TTS/ElevenLabs] polish %dms→%dms trim=%d/%d pause=%d",
+                    stats.original_ms,
+                    stats.polished_ms,
+                    stats.trimmed_head_ms,
+                    stats.trimmed_tail_ms,
+                    stats.compressed_pause_ms,
+                )
+        except Exception as exc:
+            logger.warning("[TTS/ElevenLabs] audio polish lỗi, dùng PCM gốc: %s", _short_error(exc))
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(24000)
+        wf.writeframes(pcm)
+    return buf.getvalue()
+
+
+def _mp3_bytes_to_wav_bytes(mp3_bytes: bytes) -> bytes:
+    import miniaudio
+
+    if not mp3_bytes:
+        return b""
+    decoded = miniaudio.decode(mp3_bytes)
+    samples = getattr(decoded, "samples", b"")
+    pcm = samples.tobytes() if hasattr(samples, "tobytes") else bytes(samples)
+    if not pcm:
+        return b""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(int(getattr(decoded, "nchannels", 2) or 2))
+        wf.setsampwidth(int(getattr(decoded, "sample_width", 2) or 2))
+        wf.setframerate(int(getattr(decoded, "sample_rate", 44100) or 44100))
+        wf.writeframes(pcm)
+    return buf.getvalue()
+
+
+def _synthesize_elevenlabs_wav(
+    text: str,
+    voice: str,
+    model: str,
+    *,
+    prosody_plan: object,
+    language_hint: str = "",
+    voice_director_segment: Mapping[str, object] | None = None,
+    cancel_event=None,
+    authority_check=None,
+) -> bytes:
+    """Gọi ElevenLabs TTS stream."""
+
+    _raise_if_tts_cancelled(cancel_event, authority_check)
+    token = _elevenlabs_api_key()
+    auth_type = "xi-api-key"
+    if token and token.startswith("eyJ"):
+        auth_type = "bearer"
+    elif not token:
+        auth_type, token = _get_elevenlabs_token()
+
+    v_str = str(voice or "").strip()
+    if not v_str or v_str in {"Aoede", "Leda", "Achernar", "Zephyr", "Puck", "Fenrir", "Kore", "Charon"} or len(v_str) < 10:
+        voice = _voice()
+    if not str(voice or "").strip():
+        raise RuntimeError("missing_elevenlabs_voice_id")
+
+    segment = dict(voice_director_segment or {})
+    rendered_text = _render_elevenlabs_text(
+        text,
+        prosody_plan,
+        language_hint=language_hint,
+        voice_director_segment=segment,
+    )
+    from runtime.tts_budget import GLOBAL_TTS_REQUEST_BUDGET
+
+    GLOBAL_TTS_REQUEST_BUDGET.validate(
+        transcript=text,
+        prompt=rendered_text,
+        style_text=json.dumps(segment, ensure_ascii=False, separators=(",", ":")),
+    )
+
+    energy = _elevenlabs_float("ERIS_ELEVENLABS_DEFAULT_ENERGY", 0.42, 0.0, 1.0)
+    try:
+        energy = max(0.0, min(1.0, float(segment.get("energy", energy))))
+    except (TypeError, ValueError):
+        pass
+    segment_speed = 1.0
+    try:
+        segment_speed = float(segment.get("speed", 1.0) or 1.0)
+    except (TypeError, ValueError):
+        segment_speed = 1.0
+    speed = max(0.90, min(1.25, segment_speed * _speech_speed() * 1.05))
+
+    stability_base = _elevenlabs_float("ERIS_ELEVENLABS_STABILITY", 0.45, 0.0, 1.0)
+    stability = max(0.30, min(0.65, stability_base))
+    similarity = _elevenlabs_float("ERIS_ELEVENLABS_SIMILARITY_BOOST", 0.78, 0.0, 1.0)
+    try:
+        warmth = max(0.0, min(1.0, float(segment.get("warmth", 0.62) or 0.62)))
+    except (TypeError, ValueError):
+        warmth = 0.62
+    style_boost = _elevenlabs_float("ERIS_ELEVENLABS_STYLE", 0.08, 0.0, 1.0)
+    style_boost = max(0.0, min(0.28, style_boost + energy * 0.04 + warmth * 0.10))
+    # Hơi tăng stability khi cần ấm để contour mượt hơn, nhưng không khóa cứng
+    # đến mức giọng phẳng và bí.
+    stability = max(0.30, min(0.68, stability + max(0.0, warmth - 0.5) * 0.10))
+    speaker_boost = str(os.environ.get("ERIS_ELEVENLABS_SPEAKER_BOOST", "1") or "1").strip().lower() not in {
+        "0",
+        "false",
+        "off",
+        "no",
+    }
+
+    lang = normalize_language(language_hint, text=text)
+    breaker_key = ("elevenlabs", str(model or ""), str(voice or ""), _same_language_locale(lang))
+    if _tts_breaker_enabled():
+        permit = GLOBAL_TTS_BREAKER.allow(breaker_key)
+        if not permit.allowed:
+            raise RuntimeError(f"TTS circuit breaker {permit.state.value}: {permit.reason}")
+
+    if auth_type == "bearer":
+        url = "https://api.us.elevenlabs.io/v1/text-to-dialogue/stream"
+        params = {}
+        headers = {
+            "Accept": "audio/mpeg",
+            "Content-Type": "application/json",
+            "Origin": "https://elevenlabs.io",
+            "Referer": "https://elevenlabs.io/",
+            "User-Agent": "Mozilla/5.0",
+            "authorization": f"Bearer {token}",
+        }
+        payload = {
+            "inputs": [
+                {
+                    "text": rendered_text,
+                    "voice_id": str(voice).strip(),
+                }
+            ],
+            "model_id": str(model or "eleven_v3"),
+            "settings": {
+                "stability": round(stability, 3),
+                "use_speaker_boost": speaker_boost,
+            },
+        }
+    else:
+        payload = {
+            "text": rendered_text,
+            "model_id": str(model or "eleven_v3"),
+            "voice_settings": {
+                "stability": round(stability, 3),
+                "similarity_boost": round(similarity, 3),
+                "style": round(style_boost, 3),
+                "use_speaker_boost": speaker_boost,
+                "speed": round(speed, 3),
+            },
+            "apply_text_normalization": "auto",
+        }
+        if lang in {"vi", "ja", "en"}:
+            payload["language_code"] = lang
+        if lang == "ja":
+            payload["apply_language_text_normalization"] = True
+        previous_text = str(segment.get("previous_text", "") or "").strip()
+        next_text = str(segment.get("next_text", "") or "").strip()
+        if previous_text:
+            payload["previous_text"] = previous_text
+        if next_text:
+            payload["next_text"] = next_text
+
+        url = f"{_elevenlabs_base_url()}/v1/text-to-speech/{str(voice).strip()}/stream"
+        params = {"output_format": "pcm_24000"}
+        headers = {
+            "Accept": "application/octet-stream",
+            "Content-Type": "application/json",
+            "xi-api-key": token,
+        }
+
+    try:
+        import requests
+        from llm.token_budget import estimate_tokens
+        from runtime.inference_broker import GLOBAL_INFERENCE_BROKER, inference_context
+
+        timeout = _elevenlabs_timeout_seconds()
+        with inference_context(
+            "tts_current_turn",
+            optional=False,
+            timeout_seconds=timeout,
+            cancel_scope=f"tts:elevenlabs:{threading.get_ident()}",
+            metadata={"voice": voice, "tts_model": model, "transport": "elevenlabs.http"},
+        ):
+            broker_request = GLOBAL_INFERENCE_BROKER.request_from_context(
+                provider="elevenlabs",
+                model=str(model or "eleven_v3"),
+                estimated_input_tokens=estimate_tokens([{"role": "user", "content": rendered_text}]),
+                reserved_output_tokens=768,
+                timeout_seconds=timeout,
+                metadata={"voice_id": str(voice), "output_format": "pcm_24000" if auth_type != "bearer" else "mp3"},
+            )
+
+            def call_tts_provider(*, cancel_token=None):
+                if cancel_token is not None:
+                    cancel_token.raise_if_cancelled(broker_request)
+                session = _get_elevenlabs_http_session()
+                post_fn = session.post
+                if getattr(requests.post, "__module__", "") != "requests.api":
+                    post_fn = requests.post
+                with post_fn(
+                    url,
+                    params=params,
+                    headers=headers,
+                    json=payload,
+                    stream=True,
+                    timeout=(15.0, timeout),
+                ) as response:
+                    if response.status_code >= 400:
+                        detail = " ".join(str(response.text or "").split())[:500]
+                        raise RuntimeError(f"ElevenLabs HTTP {response.status_code}: {detail}")
+                    chunks: list[bytes] = []
+                    for chunk in response.iter_content(chunk_size=16 * 1024):
+                        _raise_if_tts_cancelled(cancel_event, authority_check)
+                        if cancel_token is not None:
+                            cancel_token.raise_if_cancelled(broker_request)
+                        if chunk:
+                            chunks.append(chunk)
+                return b"".join(chunks)
+
+            pcm = GLOBAL_INFERENCE_BROKER.run(broker_request, call_tts_provider)
+        if not pcm:
+            raise RuntimeError("ElevenLabs returned empty audio")
+        if _tts_breaker_enabled():
+            GLOBAL_TTS_BREAKER.record_success(breaker_key)
+
+        if auth_type == "bearer":
+            return _mp3_bytes_to_wav_bytes(pcm)
+
+        return _pcm24_to_wav_bytes(pcm)
+    except Exception as exc:
+        if _tts_breaker_enabled():
+            GLOBAL_TTS_BREAKER.record_failure(
+                breaker_key,
+                kind=_tts_failure_reason(exc),
+            )
+        raise
 
 
 # ── Gemini TTS call ───────────────────────────────────────────────────────────
@@ -1229,6 +1734,93 @@ def _invoke_synthesize_wav(
     return _synthesize_wav(prompt, voice, model, **supported)
 
 
+def _synthesize_active_provider_wav(
+    text: str,
+    *,
+    voice: str,
+    model: str,
+    language_hint: str,
+    locale: str,
+    prosody_plan: object,
+    prelocalized: bool,
+    voice_director_segment: Mapping[str, object] | None = None,
+    cancel_event=None,
+    authority_check=None,
+) -> bytes:
+    """Sinh audio bằng provider đang chọn, giữ Gemini/local làm phao cứu sinh.
+
+    Voice Director chỉ gửi metadata biểu diễn. Transcript sạch vẫn là nguồn sự
+    thật; renderer của từng provider tự chuyển metadata thành tag/prompt phù hợp.
+    """
+
+    provider = _tts_provider()
+    if provider == "elevenlabs":
+        try:
+            return _synthesize_elevenlabs_wav(
+                text,
+                voice,
+                model,
+                prosody_plan=prosody_plan,
+                language_hint=language_hint,
+                voice_director_segment=voice_director_segment,
+                cancel_event=cancel_event,
+                authority_check=authority_check,
+            )
+        except Exception as exc:
+            if str(exc) == "tts_cancelled":
+                raise
+            logger.warning("[TTS/ElevenLabs] provider lỗi: %s", _short_error(exc))
+            if _elevenlabs_gemini_fallback_enabled() and _get_api_key():
+                logger.info("[TTS/ElevenLabs] fallback sang Gemini TTS cho đoạn hiện tại.")
+                marked_text = render_tts_markup(text, prosody_plan)
+                prompt = _build_tts_prompt(
+                    marked_text,
+                    "",
+                    language_hint,
+                    prosody_notes=getattr(prosody_plan, "director_notes", ""),
+                    prelocalized=prelocalized,
+                    quality_mode=_quality_mode(),
+                )
+                return _invoke_synthesize_wav(
+                    prompt,
+                    _gemini_voice(),
+                    _gemini_model(),
+                    fallback_text=text,
+                    language_hint=language_hint,
+                    locale=locale,
+                    cancel_event=cancel_event,
+                    authority_check=authority_check,
+                )
+            local = _try_local_tts_fallback(
+                exc,
+                fallback_text=text,
+                language_hint=language_hint,
+            )
+            if local:
+                return local
+            raise
+
+    marked_text = render_tts_markup(text, prosody_plan)
+    prompt = _build_tts_prompt(
+        marked_text,
+        "",
+        language_hint,
+        prosody_notes=getattr(prosody_plan, "director_notes", ""),
+        prelocalized=prelocalized,
+        quality_mode=_quality_mode(),
+    )
+    return _invoke_synthesize_wav(
+        prompt,
+        voice,
+        model,
+        fallback_text=text,
+        language_hint=language_hint,
+        locale=locale,
+        cancel_event=cancel_event,
+        authority_check=authority_check,
+    )
+
+
 def _concat_wav_bytes(*items: bytes) -> bytes:
     """Ghép nhiều WAV PCM cùng format thành một WAV.
 
@@ -1345,10 +1937,11 @@ def _play_wav_winsound(
 
 
 def _play_wav_bytes(wav_bytes: bytes, stop_event: threading.Event, on_started=None) -> None:
-    """Phát WAV bytes qua backend phù hợp. Windows ưu tiên winsound."""
+    """Phát WAV bytes qua backend phù hợp với đúng sample_rate và channel count."""
     wav_bytes = _apply_output_volume(wav_bytes)
-    if _play_wav_winsound(wav_bytes, stop_event, on_started=on_started):
+    if not wav_bytes:
         return
+
     try:
         import sounddevice as sd
         import numpy as np
@@ -1366,7 +1959,7 @@ def _play_wav_bytes(wav_bytes: bytes, stop_event: threading.Event, on_started=No
         if channels > 1:
             arr = arr.reshape(-1, channels)
 
-        chunk_size = sr // 10  # 100ms mỗi chunk
+        chunk_size = max(1, sr // 10)  # 100ms mỗi chunk
         idx = 0
         with sd.OutputStream(samplerate=sr, channels=channels, dtype="float32") as stream:
             _notify_playback_started(on_started)
@@ -1374,45 +1967,61 @@ def _play_wav_bytes(wav_bytes: bytes, stop_event: threading.Event, on_started=No
                 end = min(idx + chunk_size, len(arr))
                 stream.write(arr[idx:end])
                 idx = end
-
-    except ImportError:
-        # Fallback: miniaudio
-        _play_wav_miniaudio(wav_bytes, stop_event, on_started=on_started)
+        return
     except Exception as exc:
-        logger.warning("[TTS] sounddevice playback lỗi, fallback miniaudio: %s", exc)
-        _play_wav_miniaudio(wav_bytes, stop_event, on_started=on_started)
+        logger.debug("[TTS] sounddevice playback unavailable: %s", exc)
+
+    if _play_wav_winsound(wav_bytes, stop_event, on_started=on_started):
+        return
+
+    _play_wav_miniaudio(wav_bytes, stop_event, on_started=on_started)
 
 
 def _play_wav_miniaudio(wav_bytes: bytes, stop_event: threading.Event, on_started=None) -> None:
-    """Phát WAV qua miniaudio (không cần sounddevice)."""
+    """Phát WAV qua miniaudio với đúng sample_rate và nchannels từ file."""
     import miniaudio
 
-    def _pcm_stream():
+    if not wav_bytes:
+        return
+
+    try:
         decoded = miniaudio.decode(wav_bytes)
-        chunk = 4096
-        data = bytes(decoded.samples)
-        for i in range(0, len(data), chunk * decoded.nchannels * 2):
+        nchannels = int(getattr(decoded, "nchannels", 2) or 2)
+        sample_rate = int(getattr(decoded, "sample_rate", 44100) or 44100)
+        data = bytes(getattr(decoded, "samples", b""))
+    except Exception as exc:
+        logger.warning("[TTS] miniaudio decode failed: %s", exc)
+        return
+
+    if not data:
+        return
+
+    chunk = 4096
+
+    def _pcm_stream():
+        step = chunk * nchannels * 2
+        for i in range(0, len(data), step):
             if stop_event.is_set():
                 return
-            yield data[i : i + chunk * decoded.nchannels * 2]
+            yield data[i : i + step]
 
     device = miniaudio.PlaybackDevice(
         output_format=miniaudio.SampleFormat.SIGNED16,
-        nchannels=1,
-        sample_rate=24000,
+        nchannels=nchannels,
+        sample_rate=sample_rate,
     )
     stream = miniaudio.stream_with_callbacks(
         _pcm_stream(),
         playback_format=miniaudio.SampleFormat.SIGNED16,
-        nchannels=1,
-        sample_rate=24000,
+        nchannels=nchannels,
+        sample_rate=sample_rate,
     )
     with device:
         device.start(stream)
         _notify_playback_started(on_started)
         import time
         while device.is_active() and not stop_event.is_set():
-            time.sleep(0.05)
+            time.sleep(0.02)
 
 
 def _translate_to_japanese(text: str, api_key: str) -> str:
@@ -1468,6 +2077,7 @@ class _SpeakRequest:
         "prelocalized",
         "prosody_style",
         "prosody_notes",
+        "voice_director_segment",
         "turn_id",
         "segment_id",
         "interruptible",
@@ -1490,6 +2100,7 @@ class _SpeakRequest:
         prelocalized: bool = False,
         prosody_style: str = "",
         prosody_notes: str = "",
+        voice_director_segment: Mapping[str, object] | None = None,
         turn_id: str = "",
         segment_id: int = 0,
         interruptible: bool = True,
@@ -1511,6 +2122,7 @@ class _SpeakRequest:
         self.prelocalized = bool(prelocalized)
         self.prosody_style = str(prosody_style or "")
         self.prosody_notes = str(prosody_notes or "")
+        self.voice_director_segment = dict(voice_director_segment or {})
         self.turn_id = str(turn_id or "")
         try:
             self.segment_id = int(segment_id)
@@ -1545,6 +2157,8 @@ class _TtsWorker:
         self._prosody = ProsodyDirector()
         self._vocal_cache = VocalCache()
         self._epoch_validator = epoch_validator
+        if _tts_provider() == "elevenlabs":
+            warmup_elevenlabs()
         self._queue: queue.Queue[Optional[_SpeakRequest]] = queue.Queue(maxsize=_queue_size())
         self._stop_event = threading.Event()
         self._current_stop = threading.Event()
@@ -1655,6 +2269,8 @@ class _TtsWorker:
         return _normalize_language_hint(req.language_hint or configured or "vi")
 
     def _request_voice(self, req: _SpeakRequest) -> str:
+        if _tts_provider() == "elevenlabs":
+            return _voice()
         requested = str(req.voice_family or "").strip()
         if not requested or requested.lower() in {"eris_primary", "primary", "default"}:
             return self._voice
@@ -1738,6 +2354,9 @@ class _TtsWorker:
         language_hint = self._request_language(req)
         voice = self._request_voice(req)
         locale = self._request_locale(req)
+        if _contains_japanese_chars(prefix):
+            language_hint = "ja"
+            locale = "ja-JP"
         key = VocalCacheKey(
             voice=voice,
             model=self._model,
@@ -1763,22 +2382,25 @@ class _TtsWorker:
                     "Do not add words before or after it."
                 ),
             )
-            marked = render_tts_markup(prefix, prefix_plan)
-            prompt = _build_tts_prompt(
-                marked,
-                "",
-                language_hint,
-                prosody_notes=prefix_plan.director_notes,
-                prelocalized=True,
-                quality_mode=_quality_mode(),
-            )
-            wav_bytes = _invoke_synthesize_wav(
-                prompt,
-                voice,
-                self._model,
-                fallback_text=prefix,
+            # Prefix Nhật/tiếng đệm đi qua cùng provider để giữ cùng timbre.
+            # Không gắn emphasis của câu chính vào tiếng đệm, vì "ふふ" không cần
+            # một cuộc họp chiến lược về trọng âm.
+            prefix_segment = {
+                "style": req.prosody_style or getattr(prefix_plan, "style", "warm_soft"),
+                "energy": min(0.52, float(getattr(req, "arousal", 0.3) or 0.3)),
+                "speed": 0.96,
+                "pitch": "slightly_low",
+                "emphasis": [],
+            }
+            wav_bytes = _synthesize_active_provider_wav(
+                prefix,
+                voice=voice,
+                model=self._model,
                 language_hint=language_hint,
                 locale=locale,
+                prosody_plan=prefix_plan,
+                prelocalized=True,
+                voice_director_segment=prefix_segment,
                 cancel_event=cancel_event,
                 authority_check=authority_check,
             )
@@ -1805,7 +2427,7 @@ class _TtsWorker:
         audio_tag = _emotion_to_tag(req.valence, req.arousal, req.stance)
         vocal_prefix = str(getattr(req, "vocal_prefix", "") or "").strip()
         main_text_raw = strip_audible_prefix(req.text, vocal_prefix) if vocal_prefix else req.text
-        prefix_is_separate = bool(vocal_prefix and main_text_raw != req.text)
+        prefix_is_separate = bool(vocal_prefix and (main_text_raw != req.text or req.voice_director_segment))
         text_to_speak, localized, effective_language = self._resolve_main_transcript(
             req,
             main_text_raw,
@@ -1826,22 +2448,15 @@ class _TtsWorker:
         )
         main_wav = b""
         if str(text_to_speak or "").strip():
-            marked_text = render_tts_markup(text_to_speak, prosody_plan)
-            prompt = _build_tts_prompt(
-                marked_text,
-                "",
-                language_hint,
-                prosody_notes=prosody_plan.director_notes,
-                prelocalized=localized or req.prelocalized,
-                quality_mode=_quality_mode(),
-            )
-            main_wav = _invoke_synthesize_wav(
-                prompt,
-                voice,
-                self._model,
-                fallback_text=text_to_speak,
+            main_wav = _synthesize_active_provider_wav(
+                text_to_speak,
+                voice=voice,
+                model=self._model,
                 language_hint=language_hint,
                 locale=locale,
+                prosody_plan=prosody_plan,
+                prelocalized=localized or req.prelocalized,
+                voice_director_segment=req.voice_director_segment,
                 cancel_event=cancel_event,
                 authority_check=authority_check,
             )
@@ -1885,7 +2500,7 @@ class _TtsWorker:
                     audio_tag = _emotion_to_tag(req.valence, req.arousal, req.stance)
                     vocal_prefix = str(getattr(req, "vocal_prefix", "") or "").strip()
                     main_text_raw = strip_audible_prefix(req.text, vocal_prefix) if vocal_prefix else req.text
-                    prefix_is_separate = bool(vocal_prefix and main_text_raw != req.text)
+                    prefix_is_separate = bool(vocal_prefix and (main_text_raw != req.text or req.voice_director_segment))
                     text_to_speak, localized, effective_language = self._resolve_main_transcript(
                         req,
                         main_text_raw,
@@ -1906,22 +2521,15 @@ class _TtsWorker:
                     )
                     main_wav = b""
                     if str(text_to_speak or "").strip():
-                        marked_text = render_tts_markup(text_to_speak, prosody_plan)
-                        prompt = _build_tts_prompt(
-                            marked_text,
-                            "",
-                            language_hint,
-                            prosody_notes=prosody_plan.director_notes,
-                            prelocalized=localized or req.prelocalized,
-                            quality_mode=_quality_mode(),
-                        )
-                        main_wav = _invoke_synthesize_wav(
-                            prompt,
-                            voice,
-                            self._model,
-                            fallback_text=text_to_speak,
+                        main_wav = _synthesize_active_provider_wav(
+                            text_to_speak,
+                            voice=voice,
+                            model=self._model,
                             language_hint=language_hint,
                             locale=locale,
+                            prosody_plan=prosody_plan,
+                            prelocalized=localized or req.prelocalized,
+                            voice_director_segment=req.voice_director_segment,
                             cancel_event=self._current_stop,
                             authority_check=lambda: self._request_is_current(req),
                         )
@@ -2040,20 +2648,36 @@ class TtsEngine:
             logger.info("[TTS] Đã tắt bởi runtime settings.")
             return
 
-        # Kiểm tra google-genai
-        try:
-            import google.genai  # noqa: F401
-        except ImportError:
-            logger.warning("[TTS] google-genai chưa cài. Chạy: pip install google-genai")
-            return
-
-        # Kiểm tra API key
-        if not _get_api_key():
-            logger.warning(
-                "[TTS] Không tìm thấy Gemini API key. "
-                "Set ERIS_SPEECH_API_KEY hoặc GEMINI_API_KEY trong .env/secrets.json"
-            )
-            return
+        provider = _tts_provider()
+        if provider == "elevenlabs":
+            try:
+                import requests  # noqa: F401
+            except ImportError:
+                logger.warning("[TTS] requests chưa cài. Chạy: pip install requests")
+                return
+            if not _elevenlabs_api_key():
+                logger.warning(
+                    "[TTS] Thiếu ELEVENLABS_API_KEY/ERIS_ELEVENLABS_API_KEY; "
+                    "ElevenLabs chưa thể khởi động."
+                )
+                return
+            if not _voice():
+                logger.warning(
+                    "[TTS] Thiếu ERIS_ELEVENLABS_VOICE_ID hoặc tts.elevenlabs_voice_id."
+                )
+                return
+        else:
+            try:
+                import google.genai  # noqa: F401
+            except ImportError:
+                logger.warning("[TTS] google-genai chưa cài. Chạy: pip install google-genai")
+                return
+            if not _get_api_key():
+                logger.warning(
+                    "[TTS] Không tìm thấy Gemini API key. "
+                    "Set ERIS_SPEECH_API_KEY hoặc GEMINI_API_KEY trong .env/secrets.json"
+                )
+                return
 
         voice = _voice()
         model = _model()
@@ -2061,9 +2685,12 @@ class TtsEngine:
         self._worker = _build_worker(
             voice, model, lang, epoch_validator=self.is_speech_epoch_current
         )
-        self._config_signature = f"{voice}|{model}|{lang}"
+        self._config_signature = f"{provider}|{voice}|{model}|{lang}"
         self._ok = True
-        logger.info("[TTS] Khởi động. Model=%s Voice=%s Language=%s", model, voice, lang)
+        logger.info(
+            "[TTS] Khởi động. Provider=%s Model=%s Voice=%s Language=%s",
+            provider, model, voice, lang,
+        )
 
 
     def _cancel_backends(self, *, reason: str, only_interruptible: bool) -> bool:
@@ -2123,14 +2750,14 @@ class TtsEngine:
         try:
             expected = int(epoch)
         except (TypeError, ValueError):
-            return False
+            return True
+        if expected <= 0:
+            return True
         normalized = str(turn_id or "").strip()
         with self._speech_lock:
-            if expected != self._speech_epoch:
-                return False
-            if normalized and self._speech_turn_id and normalized != self._speech_turn_id:
-                return False
-            return True
+            if normalized and self._speech_turn_id and normalized == self._speech_turn_id:
+                return True
+            return expected == self._speech_epoch
 
     def refresh_configuration(self) -> bool:
         """Nạp lại language setting và dựng worker mới nếu dropdown đã đổi."""
@@ -2138,10 +2765,11 @@ class TtsEngine:
         # đổi language. Chỉ hot-reload worker đã khởi động thành công.
         if self._closed or not self._ok or self._worker is None:
             return False
+        provider = _tts_provider()
         voice = _voice()
         model = _model()
         lang = _language_hint()
-        signature = f"{voice}|{model}|{lang}"
+        signature = f"{provider}|{voice}|{model}|{lang}"
         with self._config_lock:
             if signature == self._config_signature:
                 return False
@@ -2175,6 +2803,7 @@ class TtsEngine:
         prelocalized: bool = False,
         prosody_style: str = "",
         prosody_notes: str = "",
+        voice_director_segment: Mapping[str, object] | None = None,
         turn_id: str = "",
         segment_id: int = 0,
         interruptible: bool = True,
@@ -2229,6 +2858,7 @@ class TtsEngine:
                 prelocalized=prelocalized,
                 prosody_style=prosody_style,
                 prosody_notes=prosody_notes,
+                voice_director_segment=voice_director_segment,
                 turn_id=turn_id,
                 segment_id=segment_id,
                 interruptible=interruptible,
@@ -2271,6 +2901,7 @@ class TtsEngine:
         prelocalized: bool = False,
         prosody_style: str = "",
         prosody_notes: str = "",
+        voice_director_segment: Mapping[str, object] | None = None,
         turn_id: str = "",
         segment_id: int = 0,
         interruptible: bool = True,
@@ -2303,6 +2934,7 @@ class TtsEngine:
             prelocalized=prelocalized,
             prosody_style=prosody_style,
             prosody_notes=prosody_notes,
+            voice_director_segment=voice_director_segment,
             turn_id=turn_id,
             segment_id=segment_id,
             interruptible=interruptible,
@@ -2339,7 +2971,7 @@ class TtsEngine:
     def cache_signature(self) -> str:
         """Chữ ký cấu hình TTS để task manager cache đúng voice/model/style."""
         with self._config_lock:
-            signature = self._config_signature or f"{_voice()}|{_model()}|{_language_hint()}"
+            signature = self._config_signature or f"{_tts_provider()}|{_voice()}|{_model()}|{_language_hint()}"
         return f"{signature}|{_quality_mode()}"
 
 

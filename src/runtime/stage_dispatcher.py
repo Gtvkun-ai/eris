@@ -64,20 +64,20 @@ def _speech_kwargs(frame) -> dict[str, object]:
     }
 
 
-def _performance_kwargs(frame: StageFrame) -> dict[str, str]:
-    """Rút metadata vocal cache từ delivery payload nếu có.
-
-    Dispatcher chỉ truyền metadata; TTS engine tự quyết định có dùng cache hay
-    không. Như vậy stage không biết chi tiết file/cache/audio backend.
-    """
+def _performance_kwargs(frame: StageFrame) -> dict[str, object]:
+    """Rút metadata biểu diễn mà không để dispatcher biết chi tiết provider."""
     delivery = frame.delivery if isinstance(frame.delivery, dict) else {}
+    result: dict[str, object] = {}
     act = delivery.get("performance_act") if isinstance(delivery, dict) else None
-    if not isinstance(act, dict):
-        return {}
-    return {
-        "vocal_cache_kind": str(act.get("kind", "") or ""),
-        "vocal_prefix": str(act.get("audible_prefix", "") or ""),
-    }
+    if isinstance(act, dict):
+        result.update({
+            "vocal_cache_kind": str(act.get("kind", "") or ""),
+            "vocal_prefix": str(act.get("audible_prefix", "") or ""),
+        })
+    voice_segment = delivery.get("voice_director_segment") if isinstance(delivery, dict) else None
+    if isinstance(voice_segment, dict):
+        result["voice_director_segment"] = dict(voice_segment)
+    return result
 
 
 def _opening_hold_ms(frame: StageFrame) -> int:
@@ -170,6 +170,10 @@ class StageDispatcher:
             if os.environ.get("ERIS_TTS_SEGMENT_DISPATCH", "").strip()
             else str(getattr(self._profile(), "dispatch_mode", "inline") or "inline")
         )
+        # Hội thoại mặc định ưu tiên một clip liên tục. Metadata Voice Director
+        # không được tự ý biến câu nói thành nhiều WAV rời, vì ranh giới thiết bị
+        # giữa các clip dễ tạo tiếng cụt/drop. Chỉ queued khi người vận hành bật
+        # ERIS_TTS_SEGMENT_DISPATCH=queued một cách rõ ràng.
         dispatch_frames = frame_list
         if dispatch_mode == "inline":
             joined_frame = _inline_frame(frame_list)
@@ -178,7 +182,7 @@ class StageDispatcher:
             dispatch_frames = [joined_frame]
 
         manager_enabled = (
-            _task_manager_enabled()
+            bool(os.environ.get("ERIS_TTS_TASK_MANAGER", "").strip().lower() not in {"0", "false", "off", "no", "none"})
             if os.environ.get("ERIS_TTS_TASK_MANAGER", "").strip()
             else bool(getattr(self._profile(), "task_manager_enabled", False))
         )

@@ -270,6 +270,22 @@ class AIChatOrchestrator:
         speech_interrupt_reaction: Any | None = None,
     ) -> None:
         host = self.host
+        # Discourse resolution for fallbacks / failed turns: if previous turn failed or used repair obligation,
+        # and user asks "nói lại", "gửi lại", etc., retry the specific cached failed turn text rather than
+        # treating "nói lại" as a generic/new proposition.
+        cached_failed_turn = getattr(host, "_cached_failed_user_turn", "")
+        clean_user_text = str(user_text or "").strip().lower()
+        repair_keywords = {
+            "nói lại", "nhắc lại", "gửi lại", "nói lại đi", "nhắc lại xem", "nói tiếp đi",
+            "gửi lại câu đó", "nói lại câu đó", "lại đi", "lại nào", "lại", "say again", "repeat",
+        }
+        if cached_failed_turn and (clean_user_text in repair_keywords or any(k in clean_user_text for k in ("nói lại", "nhắc lại", "gửi lại"))):
+            host.logger.info(
+                "[discourse resolution] User requested repair (%r); substituting with cached failed turn: %r",
+                user_text,
+                cached_failed_turn,
+            )
+            user_text = cached_failed_turn
         # Avoid carrying a previous turn's semantic category into telemetry when
         # the current authority call fails before producing a frame.
         host.last_semantic_frame = {}
@@ -761,7 +777,7 @@ class AIChatOrchestrator:
                 "performance_hint": str(fallback_payload.get("performance_hint", "neutral") or "neutral"),
             })
             decision = host.parser.parse(
-                json.dumps(fallback_payload, ensure_ascii=False),
+                json.dumps(_serializable_public_payload(fallback_payload), ensure_ascii=False),
                 user_hint=user_text,
             )
             decision.parse_mode = "typed_discourse_fallback"
@@ -777,6 +793,11 @@ class AIChatOrchestrator:
             raw = json.dumps(public_payload, ensure_ascii=False)
             host._log_raw_llm_output("chat_ai", raw)
             decision = host.parser.parse(raw, user_hint=user_text)
+
+        if not payload or getattr(decision, "parse_mode", "") == "typed_discourse_fallback" or bool(getattr(decision, "failure_meta", None)):
+            setattr(host, "_cached_failed_user_turn", user_text)
+        elif hasattr(host, "_cached_failed_user_turn") and getattr(host, "_cached_failed_user_turn", ""):
+            setattr(host, "_cached_failed_user_turn", "")
 
         # Main model chỉ nêu hint; StagePlanner làm phần cơ học. Legacy stage fields
         # vẫn được chấp nhận để không làm frontend gãy, nhưng không cần thiết.
@@ -1369,7 +1390,7 @@ class AIAutonomousOrchestrator:
                 "should_speak": True,
                 "performance_hint": "dry_tease",
             }
-            decision = host.parser.parse(json.dumps(fallback_payload, ensure_ascii=False))
+            decision = host.parser.parse(json.dumps(_serializable_public_payload(fallback_payload), ensure_ascii=False))
             host.logger.warning(
                 "[architecture C startup] empty/silent model decision; used personality fallback strategy=%s",
                 plan.strategy,

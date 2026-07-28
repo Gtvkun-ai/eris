@@ -57,6 +57,9 @@ class StageFrame:
     speech_act: str = ""
     preset_id: str = ""
     audio_asset: str = ""
+    # Side-channel do DeepSeek STYLE lập. Để cuối dataclass nhằm giữ thứ tự
+    # positional fields cũ cho adapter/test chưa kịp tiến hóa.
+    voice_plan: dict[str, Any] = field(default_factory=dict)
 
     def to_payload_patch(self) -> dict[str, Any]:
         """Patch gắn vào payload cũ mà không phá Godot/client hiện tại."""
@@ -82,6 +85,9 @@ class StageFrame:
         # sạch, còn body mới chỉ cần nghe một field có contract rõ ràng.
         if self.body_timeline:
             stage["body_timeline"] = dict(self.body_timeline)
+        if self.voice_plan:
+            # Chỉ gửi metadata đạo diễn, không gửi API key/prompt/model response thô.
+            stage["voice_plan"] = dict(self.voice_plan)
         return {"display_text": self.display_text, "stage": stage}
 
 
