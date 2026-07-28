@@ -105,3 +105,18 @@ Nếu ERIS câm: mở console của `eris-runtime.exe` (spec để `console=True
   `ModuleNotFoundError`, thêm tên module vào `hiddenimports` trong
   `build\eris_runtime.spec` rồi build lại.
 - Đây là quy trình cho **Windows**. Nền tảng khác cần điều chỉnh.
+
+---
+
+## Bước 5 — Biên dịch DS2API (Whale2API Go Gateway)
+
+Để biên dịch Gateway Web DS2API (`whale2api.exe`):
+
+```powershell
+cd src\tools\whale2api
+go build -o whale2api.exe ./cmd/whale2api
+```
+
+Chi tiết kiến trúc chống Ban Nick, cấu hình `.env` đầy đủ và tài liệu chi tiết xem tại:
+👉 [docs/ds2api_architecture_and_config.md](file:///c:/Users/Gtvkun/Documents/GitHub/eris/docs/ds2api_architecture_and_config.md)
+

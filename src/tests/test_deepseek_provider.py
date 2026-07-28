@@ -326,5 +326,35 @@ def test_openai_client_empty_output_raises_runtime_error(monkeypatch) -> None:
         assert "Empty output content" in str(exc)
 
 
+def test_ds2api_forces_thinking_mode_enabled(monkeypatch) -> None:
+    import llm.client as client_module
+
+    captured = {}
+
+    def fake_post(**kwargs):
+        captured.update(kwargs)
+        return _Response()
+
+    monkeypatch.setattr(client_module, "_brokered_post", fake_post)
+    monkeypatch.delenv("ERIS_DEEPSEEK_THINKING", raising=False)
+
+    client = client_module.OpenAICompatibleClient(
+        base_url="http://localhost:6011/v1",
+        api_key="sk-test-key",
+        model_name="deepseek-v4-flash",
+        key_pool=None,
+    )
+    client.create_chat_completion(
+        messages=[{"role": "user", "content": "Return JSON."}],
+        temperature=0.4,
+        frequency_penalty=0.1,
+        presence_penalty=0.2,
+        max_tokens=128,
+    )
+
+    assert captured["json"]["thinking"] == {"type": "enabled"}
+
+
+
 
 

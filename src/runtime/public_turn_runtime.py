@@ -54,6 +54,8 @@ class PublicTurnRuntime:
         public_channel = infer_public_turn_channel(decision, fallback=fallback)
         stage_payload = payload.get("stage", {})
         turn_id = str(stage_payload.get("turn_id", "") or "") if isinstance(stage_payload, dict) else ""
+        if not turn_id:
+            turn_id = str(getattr(decision, "director_trace_id", "") or "")
         return self.ensure_ledger().append(
             channel=public_channel,
             text=text,

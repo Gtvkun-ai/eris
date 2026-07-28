@@ -32,6 +32,7 @@ class PublicTurn:
 class PublicTurnLedger:
     def __init__(self) -> None:
         self._turns: list[PublicTurn] = []
+        self._turns_by_id: dict[str, PublicTurn] = {}
         self._lock = threading.RLock()
 
     def append(
@@ -46,17 +47,22 @@ class PublicTurnLedger:
         turn_id: str | None = None,
     ) -> PublicTurn:
         normalized_channel = normalize_public_turn_channel(channel)
-        turn = PublicTurn(
-            turn_id=turn_id or uuid.uuid4().hex,
-            channel=normalized_channel,
-            text=str(text or ""),
-            timestamp=time.time() if timestamp is None else float(timestamp),
-            parse_mode=str(parse_mode or ""),
-            visible_to_user=bool(visible_to_user),
-            can_be_replied_to=bool(can_be_replied_to),
-        )
+        resolved_turn_id = str(turn_id or uuid.uuid4().hex)
         with self._lock:
+            existing = self._turns_by_id.get(resolved_turn_id)
+            if existing is not None:
+                return existing
+            turn = PublicTurn(
+                turn_id=resolved_turn_id,
+                channel=normalized_channel,
+                text=str(text or ""),
+                timestamp=time.time() if timestamp is None else float(timestamp),
+                parse_mode=str(parse_mode or ""),
+                visible_to_user=bool(visible_to_user),
+                can_be_replied_to=bool(can_be_replied_to),
+            )
             self._turns.append(turn)
+            self._turns_by_id[resolved_turn_id] = turn
         return turn
 
     def record_decision(
@@ -100,7 +106,11 @@ class PublicTurnLedger:
 
     def extend(self, turns: Iterable[PublicTurn]) -> None:
         with self._lock:
-            self._turns.extend(turns)
+            for turn in turns:
+                if turn.turn_id in self._turns_by_id:
+                    continue
+                self._turns.append(turn)
+                self._turns_by_id[turn.turn_id] = turn
 
 
 def normalize_public_turn_channel(channel: str) -> str:

@@ -642,13 +642,48 @@ class AIRuntimeModelRouter:
         ):
             policy = self.budget_policy
             if policy is not None and callable(getattr(policy, "run_queued", None)):
-                return policy.run_queued(
+                res = policy.run_queued(
                     tier,
                     func,
                     reason=reason,
                     priority=priority,
                 )
-            return func()
+            else:
+                res = func()
+
+            # Extract and log reasoning telemetry for visibility/observability
+            reasoning = ""
+            if isinstance(res, Mapping):
+                choices = res.get("choices")
+                if isinstance(choices, list) and choices:
+                    for choice in choices:
+                        if isinstance(choice, Mapping):
+                            message = choice.get("message")
+                            if isinstance(message, Mapping):
+                                for key in ("reasoning_content", "reasoning"):
+                                    val = message.get(key)
+                                    if isinstance(val, str) and val.strip():
+                                        reasoning = val.strip()
+                                        break
+                        if reasoning:
+                            break
+            if reasoning and self.logger is not None:
+                content_len = 0
+                if isinstance(res, Mapping):
+                    choices = res.get("choices")
+                    if isinstance(choices, list) and choices and isinstance(choices[0], Mapping):
+                        msg = choices[0].get("message")
+                        if isinstance(msg, Mapping):
+                            content_len = len(msg.get("content", "") or "")
+                safe_log(
+                    self.logger,
+                    "info",
+                    "[%s reasoning] chars=%d content_chars=%d",
+                    lane,
+                    len(reasoning),
+                    content_len,
+                )
+            return res
 
     @property
     def observer_client(self) -> Any | None:

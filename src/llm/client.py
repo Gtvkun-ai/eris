@@ -2,6 +2,7 @@ import requests
 import re
 import os
 import logging
+import hashlib
 
 from llm.token_budget import (
     detect_provider as _detect_provider,
@@ -25,6 +26,111 @@ from llm.deepseek import (
 )
 
 _LOGGER = logging.getLogger("LLM")
+
+
+_PERSISTENT_WEB_SESSION_LANES = frozenset({
+    "chat_main",
+    "chat",
+    "chat_tool_required",
+    "directive",
+    "autonomous",
+})
+
+
+def _compact_session_component(value: object, *, limit: int = 36) -> str:
+    text = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", str(value or "").strip()).strip("-:._")
+    return (text or "unknown")[: max(8, int(limit))]
+
+
+def _response_contract_name(response_format) -> str:
+    if not isinstance(response_format, dict):
+        return ""
+    schema = response_format.get("json_schema")
+    if isinstance(schema, dict):
+        name = str(schema.get("name", "") or "").strip()
+        if name:
+            return name
+    return str(response_format.get("type", "") or "").strip()
+
+
+def _system_contract_seed(messages) -> str:
+    """Return a stable prompt-contract seed, not the whole dynamic prompt.
+
+    The public writer appends memory, grounding and relationship context to its
+    system message. Hashing the complete message would create a new remote
+    session every turn. Taking only the first paragraph preserves one session
+    per role/contract while still separating a summarizer from public chat.
+    """
+
+    for message in messages or ():
+        if not isinstance(message, dict) or str(message.get("role", "")).lower() != "system":
+            continue
+        content = message.get("content", "")
+        if not isinstance(content, str):
+            return ""
+        first_paragraph = content.split("\n\n", 1)[0]
+        return re.sub(r"\s+", " ", first_paragraph).strip()[:1200]
+    return ""
+
+
+def _web_session_header(messages, response_format=None) -> str:
+    """Build an isolated persistent Whale2API session key for this inference lane.
+
+    Only conversational lanes persist. Background observers, summarizers,
+    memory digest and generic transport calls intentionally omit the header so
+    Whale2API creates and auto-deletes a one-shot DeepSeek Web session. This
+    prevents a JSON-only summarizer prompt from becoming the immortal ancestor
+    of the next public greeting, a surprisingly effective way to make software
+    look haunted.
+    """
+
+    runtime_session = str(os.environ.get("ERIS_RUNTIME_SESSION_ID", "") or "").strip()
+    if not runtime_session:
+        return ""
+
+    mode = str(os.environ.get("ERIS_WEB_SESSION_MODE", "isolated") or "isolated").strip().lower()
+    if mode in {"off", "disabled", "none", "0"}:
+        return ""
+    if mode == "legacy":
+        return runtime_session
+
+    context = current_inference_context()
+    lane = str(getattr(context, "lane", "transport") or "transport").strip().lower()
+    configured_lanes = str(os.environ.get("ERIS_WEB_SESSION_PERSISTENT_LANES", "") or "").strip()
+    persistent_lanes = (
+        frozenset(
+            item.strip().lower()
+            for item in configured_lanes.split(",")
+            if item.strip()
+        )
+        if configured_lanes
+        else _PERSISTENT_WEB_SESSION_LANES
+    )
+    if lane not in persistent_lanes:
+        return ""
+
+    metadata = dict(getattr(context, "metadata", {}) or {})
+    purpose = str(
+        metadata.get("session_scope")
+        or metadata.get("router_reason")
+        or _response_contract_name(response_format)
+        or "conversation"
+    ).strip()
+    contract_seed = "|".join(
+        part for part in (
+            lane,
+            purpose,
+            _response_contract_name(response_format),
+            _system_contract_seed(messages),
+        ) if part
+    )
+    digest = hashlib.sha256(contract_seed.encode("utf-8", errors="ignore")).hexdigest()[:16]
+    return ":".join((
+        _compact_session_component(runtime_session, limit=48),
+        _compact_session_component(lane, limit=24),
+        _compact_session_component(purpose, limit=36),
+        digest,
+    ))
 
 
 def _runtime_reasoning_effort() -> str:
@@ -501,13 +607,18 @@ class OpenAICompatibleClient:
                 messages[-1] = last_msg
 
         deepseek_request = is_deepseek(self.base_url, self.model_name)
+        is_official_deepseek = "api.deepseek.com" in str(self.base_url or "").lower()
         groq_reasoning = _is_groq_endpoint(self.base_url) and _model_supports_reasoning_format(self.model_name)
         payload = {
             "model": self.model_name,
             "messages": messages,
         }
         if deepseek_request:
-            mode = deepseek_thinking_mode(self.configured_model_name, requested=thinking_mode)
+            is_ds2api = "api.deepseek.com" not in str(self.base_url or "").lower() and ("6011" in str(self.base_url or "") or "localhost" in str(self.base_url or "") or "127.0.0.1" in str(self.base_url or ""))
+            if is_ds2api:
+                mode = "enabled"
+            else:
+                mode = deepseek_thinking_mode(self.configured_model_name, requested=thinking_mode)
             payload["thinking"] = {"type": mode}
             payload["max_tokens"] = max_tokens if mode == "disabled" else max(max_tokens, 2048)
             if mode == "enabled":
@@ -549,6 +660,9 @@ class OpenAICompatibleClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+        session_id = _web_session_header(messages, response_format=response_format)
+        if session_id:
+            headers["X-Session-ID"] = session_id
         url = f"{self.base_url}/chat/completions"
 
         # Có pool: gặp 429 thì xoay key kế và thử lại, tối đa bằng số key trong pool.

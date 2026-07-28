@@ -158,7 +158,7 @@ for dp, dirs, _ in os.walk(src_build, topdown=False):
             cleaned += 1
 print("  Xoa " + str(cleaned) + " thu muc __pycache__/")
 
-# ── 4. Ep copy .env + secrets.json + tao run_eris.bat dung ──────────────────
+# ── 4. Ep copy .env + secrets.json + Eris.exe + tao run_eris.bat dung ──────────
 banner("4 / 5  --  Deploy .env + config/secrets.json + run_eris.bat")
 
 deploy_pairs = [
@@ -167,6 +167,12 @@ deploy_pairs = [
     (os.path.join(REPO, "config", "secrets.json"),
      os.path.join(OUT,  "config", "secrets.json")),
 ]
+
+# Copy Eris.exe / Eris.pck if built in REPO
+for binary_fn in ["Eris.exe", "Eris.pck"]:
+    src_bin = os.path.join(REPO, binary_fn)
+    if os.path.isfile(src_bin):
+        deploy_pairs.append((src_bin, os.path.join(OUT, binary_fn)))
 
 all_deploy_ok = True
 for src, dst in deploy_pairs:
@@ -184,23 +190,26 @@ ds2api_dst = os.path.join(OUT, "tools", "whale2api")
 if os.path.exists(ds2api_src):
     print("  Deploying whale2api binary and config to build...")
     os.makedirs(ds2api_dst, exist_ok=True)
-    for fn in ["whale2api.exe", "poolui.exe", ".env"]:
+    for fn in ["whale2api.exe", "poolui.exe", ".env", "accounts.csv", "whale2api.db", "whale2api.db-shm", "whale2api.db-wal"]:
         src_file = os.path.join(ds2api_src, fn)
         if os.path.exists(src_file):
             shutil.copy2(src_file, os.path.join(ds2api_dst, fn))
             print("  [OK] whale2api " + fn)
 
-# Tao run_eris.bat dung venv 3.14 (inject PATH truoc khi launch Eris.exe)
+# Tao run_eris.bat dung venv 3.14/3.12 (inject PATH truoc khi launch)
 bat_path = os.path.join(OUT, "run_eris.bat")
 venv_scripts = os.path.dirname(VENV_PY)   # .venv\Scripts trong REPO
 bat_content = (
     "@echo off\r\n"
     "REM Launcher Eris -- inject venv Python " + sys.version.split()[0] + " vao PATH\r\n"
     "REM .pyc trong build duoc compile boi chinh venv nay (magic " + exp_magic.hex().upper() + ")\r\n"
-    "REM KHONG bam thang Eris.exe -- phai qua bat nay (hoac shortcut tro vao bat)\r\n"
     "set \"PATH=" + venv_scripts + ";%PATH%\"\r\n"
     "cd /d \"%~dp0\"\r\n"
-    "start \"\" \"%~dp0Eris.exe\"\r\n"
+    "if exist \"%~dp0Eris.exe\" (\r\n"
+    "    start \"\" \"%~dp0Eris.exe\"\r\n"
+    ") else (\r\n"
+    "    \"" + VENV_PY + "\" \"%~dp0src\\vision.py\"\r\n"
+    ")\r\n"
 )
 with open(bat_path, "w", encoding="ascii") as fh:
     fh.write(bat_content)
@@ -214,7 +223,6 @@ if not all_deploy_ok:
 banner("5 / 5  --  Sanity check")
 
 must_exist = [
-    os.path.join(OUT, "Eris.exe"),
     os.path.join(OUT, "src",    "vision.py"),
     os.path.join(OUT, "src",    "actions",  "__init__.pyc"),
     os.path.join(OUT, "src",    "llm",      "client.pyc"),
@@ -232,6 +240,13 @@ for p in must_exist:
     print("  [" + tag + "] " + os.path.relpath(p, OUT))
     if not exists:
         all_ok = False
+
+# Eris.exe check (optional GUI host)
+eris_exe_path = os.path.join(OUT, "Eris.exe")
+if os.path.isfile(eris_exe_path):
+    print("  [OK ] Eris.exe")
+else:
+    print("  [NOTICE] Eris.exe (Godot GUI executable missing; run_eris.bat will launch Python runtime directly)")
 
 # Magic number check
 sample_pyc = os.path.join(OUT, "src", "actions", "__init__.pyc")
@@ -254,8 +269,9 @@ if all_ok:
     print("  BUILD THANH CONG")
     print("  Output : " + OUT)
     print("  Python : " + sys.version.split()[0])
-    print("  Chay   : " + os.path.join(OUT, "Eris.exe"))
+    print("  Chay   : " + os.path.join(OUT, "run_eris.bat"))
     print(sep)
 else:
     print("[!] BUILD CO VAN DE -- xem log phia tren.")
     sys.exit(1)
+

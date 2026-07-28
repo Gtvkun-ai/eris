@@ -21,6 +21,8 @@ from runtime.grounding_surface_gate import evaluate_grounded_surface
 from runtime.cognition.turn_anchor import anchor_from_semantic_frame
 from runtime.social_stance_policy import guard_subjective_stance_payload
 from runtime.companion_model_routing import route_companion_turn
+from runtime.public_reply_context import compile_public_reply_context
+from runtime.reply_obligation import enforce_reply_obligation
 from runtime.discourse_state import assistant_proposition_link
 from runtime.discourse_surface import DiscourseSurface, DiscourseSurfaceRenderer
 from runtime.json_boundary import public_payload
@@ -456,20 +458,32 @@ class AIChatOrchestrator:
         thinking_mode = route_decision.thinking_mode
         routing_context = route_decision.prompt_context()
         host.last_companion_model_route = route_decision.to_dict()
+        compiled_context = compile_public_reply_context(
+            route=route_decision,
+            personality=personality_context,
+            relationship=relationship_context,
+            grounding=grounding_context,
+            memory=memory_context,
+            interrupt=speech_interrupt_context,
+            engagement=engagement_prompt_context,
+            routing=routing_context,
+            discourse=discourse_context,
+        )
+        host.last_public_context_compilation = compiled_context.to_dict()
         payload: dict[str, Any] = {}
         host._set_background_memory_digest_remote_inflight(True)
         try:
             payload = host.ai_model_router.generate_public_reply(
                 chat_history=history,
                 user_text=user_message,
-                memory_context=memory_context,
-                grounding_context=grounding_context,
-                relationship_context=relationship_context,
-                personality_context=personality_context,
-                interrupt_context=speech_interrupt_context,
-                engagement_context=engagement_prompt_context,
-                routing_context=routing_context,
-                discourse_context=discourse_context,
+                memory_context=compiled_context.memory,
+                grounding_context=compiled_context.grounding,
+                relationship_context=compiled_context.relationship,
+                personality_context=compiled_context.personality,
+                interrupt_context=compiled_context.interrupt,
+                engagement_context=compiled_context.engagement,
+                routing_context=compiled_context.routing,
+                discourse_context=compiled_context.discourse,
                 use_escalation=use_escalation,
                 reasoning_effort=reasoning_effort,
                 thinking_mode=thinking_mode,
@@ -481,14 +495,14 @@ class AIChatOrchestrator:
                 payload = host.ai_model_router.generate_public_reply(
                     chat_history=history,
                     user_text=user_message,
-                    memory_context=memory_context,
-                    grounding_context=grounding_context,
-                    relationship_context=relationship_context,
-                    personality_context=personality_context,
-                    interrupt_context=speech_interrupt_context,
-                    engagement_context=engagement_prompt_context,
-                    routing_context=routing_context,
-                    discourse_context=discourse_context,
+                    memory_context=compiled_context.memory,
+                    grounding_context=compiled_context.grounding,
+                    relationship_context=compiled_context.relationship,
+                    personality_context=compiled_context.personality,
+                    interrupt_context=compiled_context.interrupt,
+                    engagement_context=compiled_context.engagement,
+                    routing_context=compiled_context.routing,
+                    discourse_context=compiled_context.discourse,
                     use_escalation=use_escalation,
                     reasoning_effort=reasoning_effort,
                     thinking_mode=thinking_mode,
@@ -614,6 +628,7 @@ class AIChatOrchestrator:
                 public_text, assistant_meta = self._commit(
                     deterministic_decision,
                     assistant_meta_extra=assistant_discourse_meta,
+                    idempotency_key=f"chat:{turn_id}:assistant",
                 )
                 host.last_user_text_for_semantics = user_text
                 recent_history = tuple(host._chat_history_for_llm(limit=8))
@@ -638,6 +653,24 @@ class AIChatOrchestrator:
                 payload["should_speak"] = True
                 payload["performance_hint"] = discourse_surface.performance_hint
 
+            obligation = enforce_reply_obligation(
+                payload,
+                user_text=user_text,
+                frame=typed_frame,
+                language_hint=_runtime_language(),
+                direct_user_turn=True,
+            )
+            payload = obligation.payload
+            if obligation.repaired:
+                host.logger.warning(
+                    "[reply obligation] repaired turn=%s reason=%s",
+                    turn_seq,
+                    obligation.reason,
+                )
+                assistant_act = validate_assistant_act(payload.get("assistant_act", {})).act
+                payload["_typed_assistant_act"] = assistant_act
+                assistant_discourse_meta["assistant_act"] = assistant_act.to_dict()
+
             draft_text = str(payload.get("text", "") or "")
             grounding_engine = getattr(host, "source_grounding_engine", None)
             grounding_verdict = evaluate_grounded_surface(
@@ -657,14 +690,14 @@ class AIChatOrchestrator:
                     retried = host.ai_model_router.generate_public_reply(
                         chat_history=history,
                         user_text=user_message,
-                        memory_context=memory_context,
-                        grounding_context=grounding_context,
-                        relationship_context=relationship_context,
-                        personality_context=personality_context,
-                        interrupt_context=speech_interrupt_context,
-                        engagement_context=engagement_prompt_context,
-                        routing_context=routing_context,
-                        discourse_context=discourse_context,
+                        memory_context=compiled_context.memory,
+                        grounding_context=compiled_context.grounding,
+                        relationship_context=compiled_context.relationship,
+                        personality_context=compiled_context.personality,
+                        interrupt_context=compiled_context.interrupt,
+                        engagement_context=compiled_context.engagement,
+                        routing_context=compiled_context.routing,
+                        discourse_context=compiled_context.discourse,
                         use_escalation=use_escalation,
                         reasoning_effort=reasoning_effort,
                         thinking_mode=thinking_mode,
@@ -707,15 +740,14 @@ class AIChatOrchestrator:
             # Khi provider/grounding không để lại public text, dùng reference đã
             # resolve nếu có. Nếu cả frame cũng không có, trả lỗi hội thoại chung
             # thay vì im lặng; không suy ý định bằng marker câu chữ.
-            repair_fallback = str(discourse_surface.text or "").strip()
-            if not repair_fallback:
-                repair_fallback = (
-                    "Lượt này tôi chưa xử lý được trọn ý của bạn. "
-                    "Bạn nói lại nguyên ý một lần nhé."
-                )
-            fallback_payload = {
-                "text": repair_fallback,
-                "should_speak": True,
+            fallback_payload = enforce_reply_obligation(
+                {"text": str(discourse_surface.text or "").strip(), "should_speak": bool(discourse_surface.text)},
+                user_text=user_text,
+                frame=typed_frame,
+                language_hint=_runtime_language(),
+                direct_user_turn=True,
+            ).payload
+            fallback_payload.update({
                 "animation": "stand",
                 "next_animation": "",
                 "direction": 0,
@@ -726,8 +758,8 @@ class AIChatOrchestrator:
                 "delivery_hint": "",
                 "nonverbal_cue": "",
                 "stage_motion": "",
-                "performance_hint": "neutral",
-            }
+                "performance_hint": str(fallback_payload.get("performance_hint", "neutral") or "neutral"),
+            })
             decision = host.parser.parse(
                 json.dumps(fallback_payload, ensure_ascii=False),
                 user_hint=user_text,
@@ -756,6 +788,7 @@ class AIChatOrchestrator:
         public_text, assistant_meta = self._commit(
             decision,
             assistant_meta_extra=assistant_discourse_meta,
+            idempotency_key=f"chat:{turn_id}:assistant",
         )
         if public_text and discovery_id and discovery_runtime is not None:
             discovery_runtime.mark_spoken(discovery_id, public_text)
@@ -818,8 +851,29 @@ class AIChatOrchestrator:
         decision: Any,
         *,
         assistant_meta_extra: Mapping[str, Any] | None = None,
+        idempotency_key: str = "",
+    ) -> tuple[str, dict[str, Any] | None]:
+        from runtime.public_turn_transaction import registry_for
+
+        return registry_for(self.host).run_once(
+            idempotency_key,
+            lambda: self._commit_once(
+                decision,
+                assistant_meta_extra=assistant_meta_extra,
+                idempotency_key=idempotency_key,
+            ),
+        )
+
+    def _commit_once(
+        self,
+        decision: Any,
+        *,
+        assistant_meta_extra: Mapping[str, Any] | None = None,
+        idempotency_key: str = "",
     ) -> tuple[str, dict[str, Any] | None]:
         host = self.host
+        if idempotency_key and not str(getattr(decision, "director_trace_id", "") or "").strip():
+            decision.director_trace_id = str(idempotency_key)
         try:
             from runtime.public_surface_commit import GLOBAL_PUBLIC_SURFACE_COMMITTER
             surfaces = GLOBAL_PUBLIC_SURFACE_COMMITTER.build(decision.text)
@@ -883,6 +937,7 @@ class AIChatOrchestrator:
                 "architecture": AI_RUNTIME_VERSION,
                 "system_action": host.last_system_action,
                 "parse_mode": str(getattr(decision, "parse_mode", "") or "json"),
+                "idempotency_key": str(idempotency_key or ""),
                 # Assistant turn không mang semantic frame của user. Chỉ giữ version
                 # để debug protocol, còn user_meta đã lưu frame đúng chủ thể.
                 "incoming_user_frame_version": str(
@@ -956,7 +1011,30 @@ class AIAutonomousOrchestrator:
         không được ghi vào continuity. Hàm này chỉ vận chuyển surface, không viết
         lại lời model.
         """
+        from runtime.public_turn_transaction import registry_for
+
+        idempotency_key = f"{str(channel or 'autonomous')}:{int(turn_seq)}:assistant"
+        return registry_for(self.host).run_once(
+            idempotency_key,
+            lambda: self._commit_public_once(
+                decision,
+                channel=channel,
+                turn_seq=turn_seq,
+                idempotency_key=idempotency_key,
+            ),
+        )
+
+    def _commit_public_once(
+        self,
+        decision: Any,
+        *,
+        channel: str,
+        turn_seq: int,
+        idempotency_key: str = "",
+    ) -> tuple[str, dict[str, Any] | None]:
         host = self.host
+        if idempotency_key and not str(getattr(decision, "director_trace_id", "") or "").strip():
+            decision.director_trace_id = str(idempotency_key)
         try:
             from runtime.public_surface_commit import GLOBAL_PUBLIC_SURFACE_COMMITTER
             surfaces = GLOBAL_PUBLIC_SURFACE_COMMITTER.build(str(getattr(decision, "text", "") or ""))
@@ -1000,6 +1078,7 @@ class AIAutonomousOrchestrator:
             "channel": channel,
             "ai_turn_seq": int(turn_seq),
             "system_action": str(getattr(decision, "system_action", "") or ""),
+            "idempotency_key": str(idempotency_key or ""),
         }
         try:
             host._ensure_session_turn_ledger().record_assistant(public_text, meta=meta)

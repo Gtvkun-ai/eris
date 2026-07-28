@@ -635,6 +635,7 @@ class StateCommitServiceMixin:
             parse_mode=str((payload or {}).get("parse_mode", getattr(decision, "parse_mode", "")) or ""),
             visible_to_user=True,
             can_be_replied_to=True,
+            turn_id=str(getattr(decision, "director_trace_id", "") or "") or None,
         )
     def _build_body_bias_payload(self) -> dict[str, object]:
         return self.body_bias_projector.build_payload(impulse_hint={})
