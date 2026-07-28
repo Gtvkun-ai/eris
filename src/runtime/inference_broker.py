@@ -53,7 +53,7 @@ LANE_POLICIES: dict[str, LanePolicy] = {
     "speech_localizer": LanePolicy(35, True, 2, 10.0, 1),
     "tts_localizer": LanePolicy(35, True, 2, 10.0, 1),
     "romaji_localizer": LanePolicy(35, True, 2, 10.0, 1),
-    "post_observer": LanePolicy(60, True, 2, 4.0, 1),
+    "post_observer": LanePolicy(60, True, 2, 30.0, 1),
     "memory_digest": LanePolicy(70, True, 2, 25.0, 1),
     "private_mind": LanePolicy(80, True, 1, 20.0, 1),
     "private_mind_optional": LanePolicy(80, True, 1, 20.0, 1),

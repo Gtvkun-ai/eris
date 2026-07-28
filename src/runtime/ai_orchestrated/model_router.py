@@ -1437,7 +1437,7 @@ class AIRuntimeModelRouter:
             name="eris_personality_reflection_deep" if deep else "eris_personality_reflection",
             max_tokens=880 if deep else 700,
             reasoning_effort=None,
-            timeout_seconds=max(2.0, min(6.0, float(os.getenv("ERIS_POST_REFLECTION_HTTP_TIMEOUT_SEC", "3.5") or 3.5))),
+            timeout_seconds=max(2.0, min(60.0, float(os.getenv("ERIS_POST_REFLECTION_HTTP_TIMEOUT_SEC", "30.0") or 30.0))),
         )
         if not reflected:
             return observation
@@ -1562,9 +1562,9 @@ class AIRuntimeModelRouter:
         started = time.perf_counter()
         fast = self._fast_observer_payload(user_text, event_kind=event_kind)
         try:
-            observer_timeout = max(0.8, min(12.0, float(os.getenv("ERIS_POST_OBSERVER_HTTP_TIMEOUT_SEC", "3.0") or 3.0)))
+            observer_timeout = max(0.8, min(60.0, float(os.getenv("ERIS_POST_OBSERVER_HTTP_TIMEOUT_SEC", "30.0") or 30.0)))
         except (TypeError, ValueError):
-            observer_timeout = 3.0
+            observer_timeout = 30.0
         if fast is not None:
             primary_payload, source = fast
         else:
@@ -1634,7 +1634,7 @@ class AIRuntimeModelRouter:
                 name="eris_cognitive_observation_deep",
                 max_tokens=820,
                 reasoning_effort=None,
-                timeout_seconds=max(observer_timeout, 4.0),
+                timeout_seconds=max(observer_timeout, 30.0),
             )
             deep = CognitiveObservation.from_mapping(
                 deep_payload,

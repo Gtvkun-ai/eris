@@ -51,9 +51,9 @@ class PostTurnObserver:
         self._tickets: dict[str, ObservationTicket] = {}
         self._lock = threading.RLock()
         try:
-            self.deadline_seconds = max(1.0, min(15.0, float(os.getenv("ERIS_POST_OBSERVER_DEADLINE_SEC", "4.0") or 4.0)))
+            self.deadline_seconds = max(1.0, min(60.0, float(os.getenv("ERIS_POST_OBSERVER_DEADLINE_SEC", "30.0") or 30.0)))
         except (TypeError, ValueError):
-            self.deadline_seconds = 4.0
+            self.deadline_seconds = 30.0
 
     def submit(
         self,

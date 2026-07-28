@@ -82,17 +82,25 @@ banner("1 / 5  --  Copy src/ tu repo")
 src_repo  = os.path.join(REPO, "src")
 src_build = os.path.join(OUT, "src")
 
+def remove_readonly(func, path, _):
+    import stat
+    try:
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+    except Exception:
+        pass
+
 if os.path.exists(src_build):
     print("  Xoa src/ cu trong build...")
-    shutil.rmtree(src_build)
+    shutil.rmtree(src_build, onerror=remove_readonly)
 
 print("  Copy: " + src_repo + "  ->  " + src_build)
-shutil.copytree(src_repo, src_build)
+shutil.copytree(src_repo, src_build, ignore=shutil.ignore_patterns(".git", ".pytest_cache"))
 
 for skip in SKIP_HEAVY:
     p = os.path.join(src_build, skip)
     if os.path.exists(p):
-        shutil.rmtree(p)
+        shutil.rmtree(p, onerror=remove_readonly)
         print("  Skip (heavy): " + skip)
 
 n_py_before = count_ext(src_build, ".py")
