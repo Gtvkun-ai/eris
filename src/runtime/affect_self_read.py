@@ -162,7 +162,7 @@ class AffectSelfReadAdapter:
     # ── gemma path ──────────────────────────────────────────────────────────
     def _gemma_line(self, state: Any, rel: Any) -> str:
         service = self.llm_service
-        client = getattr(service, "style_client", None) if service is not None else None
+        client = (getattr(service, "inner_client", None) or getattr(service, "style_client", None)) if service is not None else None
         if client is None:
             return ""
         readings = self._readings_text(state, rel)

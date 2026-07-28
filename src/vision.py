@@ -98,6 +98,8 @@ class AttentionOverseer:
         social_parser_client = self.process_manager.build_social_parser_client() if social_models_enabled else None
         social_critic_client = self.process_manager.build_social_critic_client() if social_models_enabled else None
         social_fallback_client = self.process_manager.build_social_fallback_client() if social_models_enabled else None
+        inner_client = self.process_manager.build_inner_client()
+        research_client = self.process_manager.build_research_client()
         if escalation_client is not None:
             provider_label = getattr(escalation_client, "base_url", "") or escalation_client.__class__.__name__
             self.logger.info("Escalation client (bái sư) đã sẵn sàng: %s", provider_label)
@@ -110,9 +112,25 @@ class AttentionOverseer:
             social_parser_client=social_parser_client,
             social_critic_client=social_critic_client,
             social_fallback_client=social_fallback_client,
+            observer_client=social_parser_client,
+            critic_client=social_critic_client,
+            inner_client=inner_client,
+            research_client=research_client,
             logger=self.logger,
         )
-        self.logger.info("Mô hình đã sẵn sàng.")
+        configured_workers = [
+            role
+            for role, worker in (
+                ("companion", self.llm_client),
+                ("observer", getattr(self.llm_service, "observer_client", None)),
+                ("critic", getattr(self.llm_service, "critic_client", None)),
+                ("inner", getattr(self.llm_service, "inner_client", None)),
+                ("style", getattr(self.llm_service, "style_client", None)),
+                ("research", getattr(self.llm_service, "research_client", None)),
+            )
+            if worker is not None
+        ]
+        self.logger.info("Mô hình đã sẵn sàng. cognitive_workers=%s", ",".join(configured_workers))
         self.memory_semantic_parser = build_runtime_memory_semantic_parser(
             llm_service=self.llm_service,
             logger=self.memory_logger,

@@ -4,6 +4,7 @@ from eris_secrets import apply_secrets_to_environ, get_provider_profile, get_sec
 from .client import GeminiClient, OpenAICompatibleClient, ChainedFallbackClient
 from .deepseek import DEEPSEEK_BASE_URL, DEEPSEEK_DEFAULT_MODEL, DEEPSEEK_STRONG_MODEL, normalize_model
 from .key_pool import get_key_pool
+from .deepseek_workers import JsonlWorkerClient, load_worker_spec, normalize_worker_role
 
 
 def _normalize_remote_provider(provider: str) -> str:
@@ -29,6 +30,7 @@ class RemoteModelProcessManager:
     def __init__(self, *, logger, project_root: str):
         self.logger = logger
         self.project_root = project_root
+        self._deepseek_worker_clients = {}
 
     def _env_flag(self, name: str, default: str = "0") -> bool:
         return os.environ.get(name, default).strip().lower() in {"1", "true", "yes", "on"}
@@ -86,31 +88,65 @@ class RemoteModelProcessManager:
                 or main_pool_key
                 or get_secret("DEEPSEEK_API_KEY", "ERIS_REMOTE_API_KEY")
             )
-            if not api_key:
-                raise RuntimeError("DeepSeek dang bat nhung chua co DEEPSEEK_API_KEY hoac ERIS_REMOTE_API_KEY.")
+            companion_spec = load_worker_spec("companion")
+            ds2api_enabled = (
+                os.environ.get("ERIS_DS2API_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+                or companion_spec.configured
+            )
+            if not api_key and not ds2api_enabled:
+                raise RuntimeError(
+                    "DeepSeek dang bat nhung chua co ERIS_DS_COMPANION_API_KEY, "
+                    "DEEPSEEK_API_KEY hoac ERIS_REMOTE_API_KEY."
+                )
             if model_name != configured_model.strip().lower():
                 self.logger.warning("Model DeepSeek cu %s da duoc chuyen sang %s.", configured_model, model_name)
 
-            ds2api_enabled = os.environ.get("ERIS_DS2API_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
             if ds2api_enabled:
-                primary_base_url = os.environ.get("ERIS_DS2API_BASE_URL", "http://localhost:6011/v1").strip()
-                primary_key = get_secret("ERIS_DS2API_API_KEY", "DEEPSEEK_API_KEY", "ERIS_REMOTE_API_KEY")
-                primary_model = os.environ.get("ERIS_DS2API_MODEL", "deepseek-chat").strip()
-                if not primary_key:
-                    raise RuntimeError("DS2API enabled nhung chua co ERIS_DS2API_API_KEY, DEEPSEEK_API_KEY, hoac ERIS_REMOTE_API_KEY.")
-                self.logger.info(
-                    "Dung DS2API (DeepSeek Web) lam main brain tai %s voi model %s, fallback tai %s voi model %s",
-                    primary_base_url,
-                    primary_model,
-                    base_url,
-                    model_name,
+                primary_base_url = (
+                    companion_spec.base_url
+                    if companion_spec.api_key
+                    else os.environ.get("ERIS_DS2API_BASE_URL", "http://localhost:6011/v1").strip()
                 )
+                primary_key = (
+                    companion_spec.api_key
+                    or get_secret(
+                        "ERIS_DS2API_API_KEY",
+                        "DEEPSEEK_API_KEY",
+                        "ERIS_REMOTE_API_KEY",
+                    )
+                )
+                primary_model = (
+                    companion_spec.model
+                    if companion_spec.api_key
+                    else os.environ.get("ERIS_DS2API_MODEL", "deepseek-chat").strip()
+                )
+                if not primary_key:
+                    raise RuntimeError(
+                        "DS2API enabled nhung chua co ERIS_DS_COMPANION_API_KEY, "
+                        "ERIS_DS2API_API_KEY, DEEPSEEK_API_KEY, hoac ERIS_REMOTE_API_KEY."
+                    )
                 try:
-                    primary_client = OpenAICompatibleClient(
-                        base_url=primary_base_url,
-                        api_key=primary_key,
-                        model_name=primary_model,
-                        key_pool=None,
+                    primary_client = self.build_deepseek_worker_client("companion")
+                    if primary_client is None:
+                        primary_client = OpenAICompatibleClient(
+                            base_url=primary_base_url,
+                            api_key=primary_key,
+                            model_name=primary_model,
+                            key_pool=None,
+                        )
+                    if not api_key:
+                        self.logger.info(
+                            "Dung DS2API (DeepSeek Web) lam main brain tai %s voi model %s; official fallback chua cau hinh.",
+                            primary_base_url,
+                            primary_model,
+                        )
+                        return primary_client
+                    self.logger.info(
+                        "Dung DS2API (DeepSeek Web) lam main brain tai %s voi model %s, fallback tai %s voi model %s",
+                        primary_base_url,
+                        primary_model,
+                        base_url,
+                        model_name,
                     )
                     fallback_client = OpenAICompatibleClient(
                         base_url=base_url,
@@ -233,12 +269,74 @@ class RemoteModelProcessManager:
         except ValueError as exc:
             raise RuntimeError(f"Loi API key speech remote: {exc}") from exc
 
+    def build_deepseek_worker_client(self, role: str, *, required: bool = False):
+        """Build/cache one DeepSeek Web worker selected by its gateway API key.
+
+        Whale2API remains unchanged: each ``ERIS_DS_<ROLE>_API_KEY`` is simply
+        used as the bearer token for the shared OpenAI-compatible endpoint.  In
+        PoolUI that gateway key can be pinned to one account or one role-specific
+        account pool.  Missing optional keys return ``None`` so legacy providers
+        continue to work during incremental rollout.
+        """
+
+        apply_secrets_to_environ()
+        normalized = normalize_worker_role(role)
+        cached = self._deepseek_worker_clients.get(normalized)
+        if cached is not None:
+            return cached
+
+        spec = load_worker_spec(normalized)
+        if not spec.configured:
+            if required:
+                raise RuntimeError(
+                    f"DeepSeek worker {normalized!r} chua co {normalized.upper()} API key/base/model."
+                )
+            return None
+
+        try:
+            raw_client = OpenAICompatibleClient(
+                base_url=spec.base_url,
+                api_key=spec.api_key,
+                model_name=spec.model,
+                key_pool=None,
+            )
+            client = JsonlWorkerClient(
+                raw_client,
+                role=normalized,
+                jsonl_enabled=spec.jsonl_enabled,
+                repair_attempts=spec.jsonl_repair_attempts,
+            )
+        except ValueError as exc:
+            if required:
+                raise RuntimeError(f"DeepSeek worker {normalized} khong hop le: {exc}") from exc
+            self.logger.warning("Bo qua DeepSeek worker %s: %s", normalized, exc)
+            return None
+
+        self._deepseek_worker_clients[normalized] = client
+        self.logger.info(
+            "DeepSeek Web worker san sang: role=%s model=%s jsonl=%s base=%s",
+            normalized,
+            spec.model,
+            int(spec.jsonl_enabled),
+            spec.base_url,
+        )
+        return client
+
+    def build_inner_client(self):
+        return self.build_deepseek_worker_client("inner")
+
+    def build_research_client(self):
+        return self.build_deepseek_worker_client("research")
+
     def build_client(self, *, model_path: str = "", n_ctx: int = 0, n_gpu_layers: int = 0):
         if not self._env_flag("ERIS_REMOTE_API_ENABLED", "1"):
             raise RuntimeError("Local model runtime da bi go bo; hay bat ERIS_REMOTE_API_ENABLED=1.")
         return self._build_remote_client()
 
     def build_style_client(self, *, model_path: str = "", n_ctx: int = 0, n_gpu_layers: int = 0):
+        worker = self.build_deepseek_worker_client("style")
+        if worker is not None:
+            return worker
         if self._speech_api_requested():
             return self._build_speech_client()
         return None
@@ -255,6 +353,10 @@ class RemoteModelProcessManager:
             return None
 
         chain = []
+        critic_worker = self.build_deepseek_worker_client("critic")
+        if critic_worker is not None:
+            chain.append(critic_worker)
+
         fallback_base = os.environ.get("ERIS_CHAT_FALLBACK_BASE_URL", "").strip()
         fallback_key = get_secret("ERIS_CHAT_FALLBACK_API_KEY")
         fallback_model = os.environ.get("ERIS_CHAT_FALLBACK_MODEL", "").strip()
@@ -346,6 +448,9 @@ class RemoteModelProcessManager:
             return None
 
     def build_social_parser_client(self):
+        worker = self.build_deepseek_worker_client("observer")
+        if worker is not None:
+            return worker
         model = (
             os.environ.get("ERIS_SOCIAL_OBSERVER_MODEL")
             or os.environ.get("ERIS_SOCIAL_PARSER_MODEL")
@@ -360,6 +465,9 @@ class RemoteModelProcessManager:
         return client
 
     def build_social_critic_client(self):
+        worker = self.build_deepseek_worker_client("critic")
+        if worker is not None:
+            return worker
         model = (
             os.environ.get("ERIS_SOCIAL_OBSERVER_DEEP_MODEL")
             or os.environ.get("ERIS_SOCIAL_CRITIC_MODEL")
@@ -374,6 +482,9 @@ class RemoteModelProcessManager:
         return client
 
     def build_social_fallback_client(self):
+        worker = self.build_deepseek_worker_client("observer")
+        if worker is not None:
+            return worker
         model = os.environ.get("ERIS_SOCIAL_OBSERVER_FALLBACK_MODEL", "llama-3.1-8b-instant").strip()
         client = self._build_groq_social_client(
             model_name=model,
@@ -395,6 +506,10 @@ class RemoteModelProcessManager:
         apply_secrets_to_environ()
         if not self._env_flag("ERIS_ESCALATION_ENABLED", "1"):
             return None
+
+        critic_worker = self.build_deepseek_worker_client("critic")
+        if critic_worker is not None:
+            return critic_worker
 
         provider = os.environ.get("ERIS_ESCALATION_PROVIDER", "").strip().lower()
         model_name = os.environ.get("ERIS_ESCALATION_MODEL", "").strip()

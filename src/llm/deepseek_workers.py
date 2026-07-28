@@ -1,0 +1,292 @@
+# -*- coding: utf-8 -*-
+"""DeepSeek Web cognitive-worker foundation.
+
+This module intentionally does not change Whale2API or the DeepSeek Web
+transport.  It only gives ERIS stable worker roles, one gateway API key per
+role, and a small JSONL boundary for structured tasks.
+
+The gateway key is expected to select the account/account-pool in Whale2API.
+ERIS never needs the Gmail address or the DeepSeek password.
+"""
+
+from __future__ import annotations
+
+import copy
+import json
+import os
+import re
+from dataclasses import dataclass
+from typing import Any, Mapping
+
+from eris_secrets import get_secret
+
+
+WORKER_ROLES: tuple[str, ...] = (
+    "companion",
+    "observer",
+    "critic",
+    "inner",
+    "style",
+    "research",
+)
+
+# Structured workers default to canonical one-line JSON whenever the caller
+# requests json_object/json_schema. Companion/style keep free-text behavior.
+_DEFAULT_JSONL_ROLES = frozenset({"observer", "critic", "inner", "research"})
+
+
+class JsonlContractError(RuntimeError):
+    """Raised when a structured worker still returns invalid JSON after repair."""
+
+
+@dataclass(frozen=True, slots=True)
+class DeepSeekWorkerSpec:
+    role: str
+    api_key: str
+    base_url: str
+    model: str
+    jsonl_enabled: bool
+    jsonl_repair_attempts: int = 1
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.api_key and self.base_url and self.model)
+
+
+def normalize_worker_role(role: object) -> str:
+    value = str(role or "").strip().lower().replace("-", "_")
+    aliases = {
+        "main": "companion",
+        "chat": "companion",
+        "social": "observer",
+        "deliberator": "critic",
+        "private_mind": "inner",
+        "memory": "inner",
+        "tutor": "research",
+    }
+    value = aliases.get(value, value)
+    if value not in WORKER_ROLES:
+        raise ValueError(f"Unknown DeepSeek worker role: {role!r}")
+    return value
+
+
+def worker_env_name(role: object, suffix: str = "API_KEY") -> str:
+    normalized = normalize_worker_role(role)
+    return f"ERIS_DS_{normalized.upper()}_{suffix.strip().upper()}"
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = str(os.environ.get(name, "1" if default else "0") or "").strip().lower()
+    if not raw:
+        return default
+    return raw not in {"0", "false", "no", "off", "none", "disabled"}
+
+
+def load_worker_spec(role: object) -> DeepSeekWorkerSpec:
+    normalized = normalize_worker_role(role)
+    role_prefix = f"ERIS_DS_{normalized.upper()}"
+    api_key = str(get_secret(f"{role_prefix}_API_KEY") or "").strip()
+    base_url = str(
+        get_secret(f"{role_prefix}_BASE_URL")
+        or get_secret("ERIS_DS_BASE_URL")
+        or get_secret("ERIS_DS2API_BASE_URL")
+        or "http://127.0.0.1:6011/v1"
+    ).strip()
+    model = str(
+        get_secret(f"{role_prefix}_MODEL")
+        or get_secret("ERIS_DS_MODEL")
+        or get_secret("ERIS_DS2API_MODEL")
+        or "deepseek-v4-flash"
+    ).strip()
+    jsonl_default = normalized in _DEFAULT_JSONL_ROLES
+    jsonl_enabled = _env_flag(f"{role_prefix}_JSONL", jsonl_default)
+    try:
+        repair_attempts = max(
+            0,
+            min(
+                2,
+                int(
+                    os.environ.get(
+                        f"{role_prefix}_JSONL_REPAIR_ATTEMPTS",
+                        os.environ.get("ERIS_DS_JSONL_REPAIR_ATTEMPTS", "1"),
+                    )
+                    or 1
+                ),
+            ),
+        )
+    except (TypeError, ValueError):
+        repair_attempts = 1
+    return DeepSeekWorkerSpec(
+        role=normalized,
+        api_key=api_key,
+        base_url=base_url,
+        model=model,
+        jsonl_enabled=jsonl_enabled,
+        jsonl_repair_attempts=repair_attempts,
+    )
+
+
+def configured_worker_roles() -> tuple[str, ...]:
+    return tuple(role for role in WORKER_ROLES if load_worker_spec(role).configured)
+
+
+def _structured_response_requested(response_format: Any) -> bool:
+    if not isinstance(response_format, Mapping):
+        return False
+    return str(response_format.get("type", "") or "").strip().lower() in {
+        "json_object",
+        "json_schema",
+    }
+
+
+def _strip_code_fence(text: str) -> str:
+    clean = str(text or "").strip()
+    clean = re.sub(r"^```(?:json|jsonl)?\s*", "", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"\s*```$", "", clean)
+    return clean.strip()
+
+
+def canonical_json_line(text: str) -> str:
+    """Parse one JSON value and return canonical UTF-8 JSONL content."""
+
+    clean = _strip_code_fence(text)
+    if not clean:
+        raise JsonlContractError("empty_jsonl_output")
+
+    try:
+        value = json.loads(clean)
+    except json.JSONDecodeError:
+        # Be defensive with models that add a short preamble despite the
+        # contract.  Accept exactly one embedded object/array, never arbitrary
+        # trailing prose.
+        object_start = clean.find("{")
+        array_start = clean.find("[")
+        starts = [x for x in (object_start, array_start) if x >= 0]
+        if not starts:
+            raise JsonlContractError("missing_json_value")
+        start = min(starts)
+        decoder = json.JSONDecoder()
+        try:
+            value, end = decoder.raw_decode(clean[start:])
+        except json.JSONDecodeError as exc:
+            raise JsonlContractError(f"invalid_json:{exc.msg}") from exc
+        trailing = clean[start + end :].strip()
+        if trailing:
+            raise JsonlContractError("trailing_non_json_text")
+
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _extract_openai_content(payload: Any) -> str:
+    if not isinstance(payload, Mapping):
+        return ""
+    choices = payload.get("choices")
+    if isinstance(choices, list) and choices:
+        first = choices[0] if isinstance(choices[0], Mapping) else {}
+        message = first.get("message") if isinstance(first, Mapping) else {}
+        if isinstance(message, Mapping):
+            return str(message.get("content", "") or "")
+    return ""
+
+
+def _replace_openai_content(payload: Any, content: str) -> Any:
+    if not isinstance(payload, Mapping):
+        return payload
+    result = copy.deepcopy(dict(payload))
+    choices = result.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return result
+    first = choices[0]
+    if not isinstance(first, dict):
+        return result
+    message = first.get("message")
+    if not isinstance(message, dict):
+        message = {}
+        first["message"] = message
+    message["content"] = content
+    return result
+
+
+def _append_jsonl_repair_instruction(messages: Any, *, role: str) -> list[dict[str, Any]]:
+    copied = [dict(item) for item in (messages or []) if isinstance(item, Mapping)]
+    copied.append(
+        {
+            "role": "user",
+            "content": (
+                "The previous response violated the structured-output contract. "
+                f"You are the ERIS {role} worker. Return exactly ONE valid JSON value "
+                "on ONE physical line. No markdown, no code fence, no explanation, "
+                "and no text before or after the JSON. Preserve the requested schema."
+            ),
+        }
+    )
+    return copied
+
+
+class JsonlWorkerClient:
+    """Thin client decorator for role metadata and canonical JSONL output.
+
+    Free-text requests pass through untouched.  For json_object/json_schema
+    requests, selected worker roles normalize message.content to a single JSON
+    line and can perform one strict repair retry.  This keeps existing ERIS call
+    sites compatible because the outer OpenAI-compatible response shape is not
+    changed.
+    """
+
+    def __init__(
+        self,
+        client: Any,
+        *,
+        role: str,
+        jsonl_enabled: bool = True,
+        repair_attempts: int = 1,
+    ) -> None:
+        self._client = client
+        self.worker_role = normalize_worker_role(role)
+        self.jsonl_enabled = bool(jsonl_enabled)
+        self.repair_attempts = max(0, min(2, int(repair_attempts)))
+        self.base_url = getattr(client, "base_url", "")
+        self.model_name = getattr(client, "model_name", "")
+        self.configured_model_name = getattr(client, "configured_model_name", self.model_name)
+        self.key_pool = getattr(client, "key_pool", None)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._client, name)
+
+    def create_chat_completion(self, **kwargs: Any) -> Any:
+        structured = self.jsonl_enabled and _structured_response_requested(kwargs.get("response_format"))
+        attempts = 1 + (self.repair_attempts if structured else 0)
+        last_error: Exception | None = None
+        request_kwargs = dict(kwargs)
+
+        for attempt in range(attempts):
+            if attempt:
+                request_kwargs["messages"] = _append_jsonl_repair_instruction(
+                    kwargs.get("messages"), role=self.worker_role
+                )
+            payload = self._client.create_chat_completion(**request_kwargs)
+            if not structured:
+                return payload
+            try:
+                line = canonical_json_line(_extract_openai_content(payload))
+                return _replace_openai_content(payload, line)
+            except JsonlContractError as exc:
+                last_error = exc
+                continue
+
+        raise JsonlContractError(
+            f"worker={self.worker_role} failed JSONL contract: {last_error or 'unknown'}"
+        )
+
+
+__all__ = [
+    "DeepSeekWorkerSpec",
+    "JsonlContractError",
+    "JsonlWorkerClient",
+    "WORKER_ROLES",
+    "canonical_json_line",
+    "configured_worker_roles",
+    "load_worker_spec",
+    "normalize_worker_role",
+    "worker_env_name",
+]

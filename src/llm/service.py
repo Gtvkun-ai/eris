@@ -143,11 +143,23 @@ class LlmService:
         social_parser_client=None,
         social_critic_client=None,
         social_fallback_client=None,
+        observer_client=None,
+        critic_client=None,
+        inner_client=None,
+        research_client=None,
         logger=None,
     ):
         self.client = client
+        self.companion_client = client
         self.style_client = style_client
         self.vision_client = vision_client
+        # Named cognitive workers.  Legacy aliases below remain valid so this
+        # foundation can be rolled out lane-by-lane instead of demanding a
+        # ceremonial rewrite of the whole runtime in one evening.
+        self.observer_client = observer_client or social_parser_client
+        self.critic_client = critic_client or social_critic_client or fallback_client
+        self.inner_client = inner_client or style_client or client
+        self.research_client = research_client or fallback_client or client
         # Dedicated format-recovery client (e.g. Groq llama). Preferred over
         # style_client when the main provider breaks the JSON/no-CoT contract.
         self.fallback_client = fallback_client
@@ -157,9 +169,9 @@ class LlmService:
         self.escalation_client = escalation_client
         # Hai lane advisory cho Social Cognition V2. Chúng không thay model chính
         # và không được phép làm turn chết nếu Groq lỗi.
-        self.social_parser_client = social_parser_client
-        self.social_critic_client = social_critic_client
-        self.social_fallback_client = social_fallback_client
+        self.social_parser_client = self.observer_client or social_parser_client
+        self.social_critic_client = self.critic_client or social_critic_client
+        self.social_fallback_client = self.observer_client or social_fallback_client
         self.logger = logger or logging.getLogger(__name__)
         # Một governor dùng chung cho mọi LlmService instance trong process. Nó chỉ
         # giữ số token/429 ước lượng, tuyệt đối không giữ nội dung prompt hay API key.

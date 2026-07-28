@@ -245,7 +245,7 @@ def _build_generate_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[st
     )
 
     if use_remote and llm_service is not None:
-        remote_client = llm_service.fallback_client or llm_service.client
+        remote_client = getattr(llm_service, "research_client", None) or llm_service.fallback_client or llm_service.client
         if remote_client is not None:
             # PDF annotation, pages 14 and 20: background Tutor owns a budget
             # per topic, not merely a global timer.  Repeated classifier/router
@@ -359,7 +359,7 @@ def _build_distill_fn(runtime_owner: Any, logger: Any) -> Optional[Callable[[str
     )
 
     if use_remote and llm_service is not None:
-        remote_client = llm_service.fallback_client or llm_service.client
+        remote_client = getattr(llm_service, "research_client", None) or llm_service.fallback_client or llm_service.client
         if remote_client is not None:
             last_distill_by_topic: dict[str, float] = {}
             from runtime.topic_budget import TopicBudget

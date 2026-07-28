@@ -34,6 +34,9 @@ _PERSISTENT_WEB_SESSION_LANES = frozenset({
     "chat_tool_required",
     "directive",
     "autonomous",
+    "inner",
+    "private_mind",
+    "daydream",
 })
 
 

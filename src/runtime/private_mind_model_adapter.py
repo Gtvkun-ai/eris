@@ -196,6 +196,16 @@ class RuntimePrivateMindModelAdapter:
     def from_env(cls, *, llm_service: Any = None, logger: Any = None) -> "RuntimePrivateMindModelAdapter | None":
         apply_secrets_to_environ()
         config = PrivateMindModelAdapterConfig()
+        inner_worker = getattr(llm_service, "inner_client", None) if llm_service is not None else None
+        if not config.enabled and inner_worker is not None:
+            config = replace(
+                config,
+                enabled=True,
+                provider="deepseek",
+                model=str(getattr(inner_worker, "model_name", "deepseek-v4-flash") or "deepseek-v4-flash"),
+                base_url=str(getattr(inner_worker, "base_url", "") or ""),
+                api_key="worker-managed",
+            )
         if not config.enabled:
             return None
         adapter = cls(config=config, llm_service=llm_service, logger=logger)
@@ -437,6 +447,25 @@ class RuntimePrivateMindModelAdapter:
             )
 
         if self.llm_service is not None:
+            inner_client = getattr(self.llm_service, "inner_client", None)
+            if callable(getattr(inner_client, "create_chat_completion", None)):
+                try:
+                    raw = inner_client.create_chat_completion(
+                        messages=messages,
+                        temperature=temperature,
+                        frequency_penalty=0.0,
+                        presence_penalty=0.0,
+                        max_tokens=max_tokens,
+                        response_format=None,
+                        timeout=self.config.timeout_seconds,
+                    )
+                    return _wrap(raw)
+                except Exception as exc:
+                    return PrivateMindModelResult(
+                        ok=False,
+                        error=f"{type(exc).__name__}:{exc}",
+                        error_kind=_classify_transport_exception(exc),
+                    )
             for method_name in ("chat_text", "chat", "create_chat_completion"):
                 method = getattr(self.llm_service, method_name, None)
                 if callable(method):
@@ -1197,6 +1226,34 @@ class RuntimePrivateMindModelAdapter:
         # Nếu llm_service có method chat JSON riêng thì dùng. Repo này chưa chuẩn hóa
         # hết service boundary, nên adapter phải bớt ngây thơ một chút.
         if self.llm_service is not None:
+            inner_client = getattr(self.llm_service, "inner_client", None)
+            if callable(getattr(inner_client, "create_chat_completion", None)):
+                try:
+                    raw = inner_client.create_chat_completion(
+                        messages=messages,
+                        temperature=temperature,
+                        frequency_penalty=0.0,
+                        presence_penalty=0.0,
+                        max_tokens=max_tokens,
+                        response_format=self._response_format(response_schema),
+                        timeout=self.config.timeout_seconds,
+                    )
+                    content = self._extract_content(raw)
+                    parsed = self._parse_json(content)
+                    return PrivateMindModelResult(
+                        ok=bool(parsed),
+                        parsed=parsed,
+                        content=content,
+                        raw=self._safe_raw(raw),
+                        error="" if parsed else "invalid_json",
+                        error_kind="" if parsed else "invalid_json",
+                    )
+                except Exception as exc:
+                    return PrivateMindModelResult(
+                        ok=False,
+                        error=f"{type(exc).__name__}:{exc}",
+                        error_kind=_classify_transport_exception(exc),
+                    )
             for method_name in ("chat_json", "generate_json", "create_chat_completion"):
                 method = getattr(self.llm_service, method_name, None)
                 if callable(method):
@@ -1605,6 +1662,16 @@ class PrivateMindAdapterPool:
     def from_env(cls, *, llm_service: Any = None, logger: Any = None) -> "PrivateMindAdapterPool | None":
         apply_secrets_to_environ()
         config = PrivateMindModelAdapterConfig()
+        inner_worker = getattr(llm_service, "inner_client", None) if llm_service is not None else None
+        if not config.enabled and inner_worker is not None:
+            config = replace(
+                config,
+                enabled=True,
+                provider="deepseek",
+                model=str(getattr(inner_worker, "model_name", "deepseek-v4-flash") or "deepseek-v4-flash"),
+                base_url=str(getattr(inner_worker, "base_url", "") or ""),
+                api_key="worker-managed",
+            )
         if not config.enabled:
             return None
         pool = cls(config=config, llm_service=llm_service, logger=logger)

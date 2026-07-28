@@ -505,7 +505,7 @@ class CoordinatorBootstrapMixin:
         self.last_daydream_result = None
         self.daydream_model_adapter = None
         self.daydream_consolidator = DaydreamConsolidator(
-            llm_client=getattr(llm_service, "style_client", None),
+            llm_client=(getattr(llm_service, "inner_client", None) or getattr(llm_service, "style_client", None)),
             logger=self.logger,
         )
         self.cortex_runtime = CortexRuntime(

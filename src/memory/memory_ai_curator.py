@@ -459,7 +459,7 @@ class MemoryAICurator:
         Dùng thẳng client, không qua generate_chat_reply để tránh bị wrap
         bởi toàn bộ persona/prompt/fe/ni/ti context. Curator chỉ cần plain JSON.
         """
-        client = getattr(self.llm_service, "client", None)
+        client = getattr(self.llm_service, "inner_client", None) or getattr(self.llm_service, "client", None)
         if not callable(getattr(client, "create_chat_completion", None)):
             return None
         try:

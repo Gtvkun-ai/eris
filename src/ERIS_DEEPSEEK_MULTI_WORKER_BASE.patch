@@ -1,0 +1,2146 @@
+--- a/config/deepseek.env.example
++++ b/config/deepseek.env.example
+@@ -51,3 +51,38 @@
+ ERIS_CHESS_ANALYSIS_DEPTH=2
+ ERIS_CHESS_DIRECT_MOVE_RATE=0.18
+ ERIS_CHESS_MAX_BODY_BYTES=65536
++
++# ---------------------------------------------------------------------------
++# DeepSeek Web multi-worker foundation
++# ---------------------------------------------------------------------------
++# All workers use the same Whale2API OpenAI-compatible endpoint/model by
++# default. Each bearer key should be a separate Whale2API gateway key pinned
++# to the Gmail/DeepSeek account (or account pool) assigned to that role.
++ERIS_DS_BASE_URL=http://127.0.0.1:6011/v1
++ERIS_DS_MODEL=deepseek-v4-flash
++
++ERIS_DS_COMPANION_API_KEY=
++ERIS_DS_OBSERVER_API_KEY=
++ERIS_DS_CRITIC_API_KEY=
++ERIS_DS_INNER_API_KEY=
++ERIS_DS_STYLE_API_KEY=
++ERIS_DS_RESEARCH_API_KEY=
++
++# Optional per-role endpoint/model overrides. Normally leave these unset.
++# ERIS_DS_OBSERVER_BASE_URL=http://127.0.0.1:6011/v1
++# ERIS_DS_OBSERVER_MODEL=deepseek-v4-flash
++
++# Canonical one-line JSON is enabled by default for observer, critic, inner and
++# research whenever the caller asks for json_object/json_schema. Companion and
++# style remain free-text by default. Override only when changing a lane contract.
++ERIS_DS_OBSERVER_JSONL=1
++ERIS_DS_CRITIC_JSONL=1
++ERIS_DS_INNER_JSONL=1
++ERIS_DS_RESEARCH_JSONL=1
++ERIS_DS_STYLE_JSONL=0
++ERIS_DS_COMPANION_JSONL=0
++ERIS_DS_JSONL_REPAIR_ATTEMPTS=1
++
++# The companion key is also accepted as the primary DS2API key. The old
++# ERIS_DS2API_API_KEY remains supported for backward compatibility.
++ERIS_DS2API_ENABLED=1
+--- a/llm/client.py
++++ b/llm/client.py
+@@ -34,6 +34,9 @@
+     "chat_tool_required",
+     "directive",
+     "autonomous",
++    "inner",
++    "private_mind",
++    "daydream",
+ })
+ 
+ 
+--- a/llm/process_manager.py
++++ b/llm/process_manager.py
+@@ -4,6 +4,7 @@
+ from .client import GeminiClient, OpenAICompatibleClient, ChainedFallbackClient
+ from .deepseek import DEEPSEEK_BASE_URL, DEEPSEEK_DEFAULT_MODEL, DEEPSEEK_STRONG_MODEL, normalize_model
+ from .key_pool import get_key_pool
++from .deepseek_workers import JsonlWorkerClient, load_worker_spec, normalize_worker_role
+ 
+ 
+ def _normalize_remote_provider(provider: str) -> str:
+@@ -29,6 +30,7 @@
+     def __init__(self, *, logger, project_root: str):
+         self.logger = logger
+         self.project_root = project_root
++        self._deepseek_worker_clients = {}
+ 
+     def _env_flag(self, name: str, default: str = "0") -> bool:
+         return os.environ.get(name, default).strip().lower() in {"1", "true", "yes", "on"}
+@@ -86,31 +88,65 @@
+                 or main_pool_key
+                 or get_secret("DEEPSEEK_API_KEY", "ERIS_REMOTE_API_KEY")
+             )
+-            if not api_key:
+-                raise RuntimeError("DeepSeek dang bat nhung chua co DEEPSEEK_API_KEY hoac ERIS_REMOTE_API_KEY.")
++            companion_spec = load_worker_spec("companion")
++            ds2api_enabled = (
++                os.environ.get("ERIS_DS2API_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
++                or companion_spec.configured
++            )
++            if not api_key and not ds2api_enabled:
++                raise RuntimeError(
++                    "DeepSeek dang bat nhung chua co ERIS_DS_COMPANION_API_KEY, "
++                    "DEEPSEEK_API_KEY hoac ERIS_REMOTE_API_KEY."
++                )
+             if model_name != configured_model.strip().lower():
+                 self.logger.warning("Model DeepSeek cu %s da duoc chuyen sang %s.", configured_model, model_name)
+ 
+-            ds2api_enabled = os.environ.get("ERIS_DS2API_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+             if ds2api_enabled:
+-                primary_base_url = os.environ.get("ERIS_DS2API_BASE_URL", "http://localhost:6011/v1").strip()
+-                primary_key = get_secret("ERIS_DS2API_API_KEY", "DEEPSEEK_API_KEY", "ERIS_REMOTE_API_KEY")
+-                primary_model = os.environ.get("ERIS_DS2API_MODEL", "deepseek-chat").strip()
+-                if not primary_key:
+-                    raise RuntimeError("DS2API enabled nhung chua co ERIS_DS2API_API_KEY, DEEPSEEK_API_KEY, hoac ERIS_REMOTE_API_KEY.")
+-                self.logger.info(
+-                    "Dung DS2API (DeepSeek Web) lam main brain tai %s voi model %s, fallback tai %s voi model %s",
+-                    primary_base_url,
+-                    primary_model,
+-                    base_url,
+-                    model_name,
++                primary_base_url = (
++                    companion_spec.base_url
++                    if companion_spec.api_key
++                    else os.environ.get("ERIS_DS2API_BASE_URL", "http://localhost:6011/v1").strip()
+                 )
++                primary_key = (
++                    companion_spec.api_key
++                    or get_secret(
++                        "ERIS_DS2API_API_KEY",
++                        "DEEPSEEK_API_KEY",
++                        "ERIS_REMOTE_API_KEY",
++                    )
++                )
++                primary_model = (
++                    companion_spec.model
++                    if companion_spec.api_key
++                    else os.environ.get("ERIS_DS2API_MODEL", "deepseek-chat").strip()
++                )
++                if not primary_key:
++                    raise RuntimeError(
++                        "DS2API enabled nhung chua co ERIS_DS_COMPANION_API_KEY, "
++                        "ERIS_DS2API_API_KEY, DEEPSEEK_API_KEY, hoac ERIS_REMOTE_API_KEY."
++                    )
+                 try:
+-                    primary_client = OpenAICompatibleClient(
+-                        base_url=primary_base_url,
+-                        api_key=primary_key,
+-                        model_name=primary_model,
+-                        key_pool=None,
++                    primary_client = self.build_deepseek_worker_client("companion")
++                    if primary_client is None:
++                        primary_client = OpenAICompatibleClient(
++                            base_url=primary_base_url,
++                            api_key=primary_key,
++                            model_name=primary_model,
++                            key_pool=None,
++                        )
++                    if not api_key:
++                        self.logger.info(
++                            "Dung DS2API (DeepSeek Web) lam main brain tai %s voi model %s; official fallback chua cau hinh.",
++                            primary_base_url,
++                            primary_model,
++                        )
++                        return primary_client
++                    self.logger.info(
++                        "Dung DS2API (DeepSeek Web) lam main brain tai %s voi model %s, fallback tai %s voi model %s",
++                        primary_base_url,
++                        primary_model,
++                        base_url,
++                        model_name,
+                     )
+                     fallback_client = OpenAICompatibleClient(
+                         base_url=base_url,
+@@ -233,12 +269,74 @@
+         except ValueError as exc:
+             raise RuntimeError(f"Loi API key speech remote: {exc}") from exc
+ 
++    def build_deepseek_worker_client(self, role: str, *, required: bool = False):
++        """Build/cache one DeepSeek Web worker selected by its gateway API key.
++
++        Whale2API remains unchanged: each ``ERIS_DS_<ROLE>_API_KEY`` is simply
++        used as the bearer token for the shared OpenAI-compatible endpoint.  In
++        PoolUI that gateway key can be pinned to one account or one role-specific
++        account pool.  Missing optional keys return ``None`` so legacy providers
++        continue to work during incremental rollout.
++        """
++
++        apply_secrets_to_environ()
++        normalized = normalize_worker_role(role)
++        cached = self._deepseek_worker_clients.get(normalized)
++        if cached is not None:
++            return cached
++
++        spec = load_worker_spec(normalized)
++        if not spec.configured:
++            if required:
++                raise RuntimeError(
++                    f"DeepSeek worker {normalized!r} chua co {normalized.upper()} API key/base/model."
++                )
++            return None
++
++        try:
++            raw_client = OpenAICompatibleClient(
++                base_url=spec.base_url,
++                api_key=spec.api_key,
++                model_name=spec.model,
++                key_pool=None,
++            )
++            client = JsonlWorkerClient(
++                raw_client,
++                role=normalized,
++                jsonl_enabled=spec.jsonl_enabled,
++                repair_attempts=spec.jsonl_repair_attempts,
++            )
++        except ValueError as exc:
++            if required:
++                raise RuntimeError(f"DeepSeek worker {normalized} khong hop le: {exc}") from exc
++            self.logger.warning("Bo qua DeepSeek worker %s: %s", normalized, exc)
++            return None
++
++        self._deepseek_worker_clients[normalized] = client
++        self.logger.info(
++            "DeepSeek Web worker san sang: role=%s model=%s jsonl=%s base=%s",
++            normalized,
++            spec.model,
++            int(spec.jsonl_enabled),
++            spec.base_url,
++        )
++        return client
++
++    def build_inner_client(self):
++        return self.build_deepseek_worker_client("inner")
++
++    def build_research_client(self):
++        return self.build_deepseek_worker_client("research")
++
+     def build_client(self, *, model_path: str = "", n_ctx: int = 0, n_gpu_layers: int = 0):
+         if not self._env_flag("ERIS_REMOTE_API_ENABLED", "1"):
+             raise RuntimeError("Local model runtime da bi go bo; hay bat ERIS_REMOTE_API_ENABLED=1.")
+         return self._build_remote_client()
+ 
+     def build_style_client(self, *, model_path: str = "", n_ctx: int = 0, n_gpu_layers: int = 0):
++        worker = self.build_deepseek_worker_client("style")
++        if worker is not None:
++            return worker
+         if self._speech_api_requested():
+             return self._build_speech_client()
+         return None
+@@ -255,6 +353,10 @@
+             return None
+ 
+         chain = []
++        critic_worker = self.build_deepseek_worker_client("critic")
++        if critic_worker is not None:
++            chain.append(critic_worker)
++
+         fallback_base = os.environ.get("ERIS_CHAT_FALLBACK_BASE_URL", "").strip()
+         fallback_key = get_secret("ERIS_CHAT_FALLBACK_API_KEY")
+         fallback_model = os.environ.get("ERIS_CHAT_FALLBACK_MODEL", "").strip()
+@@ -346,6 +448,9 @@
+             return None
+ 
+     def build_social_parser_client(self):
++        worker = self.build_deepseek_worker_client("observer")
++        if worker is not None:
++            return worker
+         model = (
+             os.environ.get("ERIS_SOCIAL_OBSERVER_MODEL")
+             or os.environ.get("ERIS_SOCIAL_PARSER_MODEL")
+@@ -360,6 +465,9 @@
+         return client
+ 
+     def build_social_critic_client(self):
++        worker = self.build_deepseek_worker_client("critic")
++        if worker is not None:
++            return worker
+         model = (
+             os.environ.get("ERIS_SOCIAL_OBSERVER_DEEP_MODEL")
+             or os.environ.get("ERIS_SOCIAL_CRITIC_MODEL")
+@@ -374,6 +482,9 @@
+         return client
+ 
+     def build_social_fallback_client(self):
++        worker = self.build_deepseek_worker_client("observer")
++        if worker is not None:
++            return worker
+         model = os.environ.get("ERIS_SOCIAL_OBSERVER_FALLBACK_MODEL", "llama-3.1-8b-instant").strip()
+         client = self._build_groq_social_client(
+             model_name=model,
+@@ -396,6 +507,10 @@
+         if not self._env_flag("ERIS_ESCALATION_ENABLED", "1"):
+             return None
+ 
++        critic_worker = self.build_deepseek_worker_client("critic")
++        if critic_worker is not None:
++            return critic_worker
++
+         provider = os.environ.get("ERIS_ESCALATION_PROVIDER", "").strip().lower()
+         model_name = os.environ.get("ERIS_ESCALATION_MODEL", "").strip()
+         base_url = os.environ.get("ERIS_ESCALATION_BASE_URL", "").strip()
+--- a/llm/service.py
++++ b/llm/service.py
+@@ -143,11 +143,23 @@
+         social_parser_client=None,
+         social_critic_client=None,
+         social_fallback_client=None,
++        observer_client=None,
++        critic_client=None,
++        inner_client=None,
++        research_client=None,
+         logger=None,
+     ):
+         self.client = client
++        self.companion_client = client
+         self.style_client = style_client
+         self.vision_client = vision_client
++        # Named cognitive workers.  Legacy aliases below remain valid so this
++        # foundation can be rolled out lane-by-lane instead of demanding a
++        # ceremonial rewrite of the whole runtime in one evening.
++        self.observer_client = observer_client or social_parser_client
++        self.critic_client = critic_client or social_critic_client or fallback_client
++        self.inner_client = inner_client or style_client or client
++        self.research_client = research_client or fallback_client or client
+         # Dedicated format-recovery client (e.g. Groq llama). Preferred over
+         # style_client when the main provider breaks the JSON/no-CoT contract.
+         self.fallback_client = fallback_client
+@@ -157,9 +169,9 @@
+         self.escalation_client = escalation_client
+         # Hai lane advisory cho Social Cognition V2. Chúng không thay model chính
+         # và không được phép làm turn chết nếu Groq lỗi.
+-        self.social_parser_client = social_parser_client
+-        self.social_critic_client = social_critic_client
+-        self.social_fallback_client = social_fallback_client
++        self.social_parser_client = self.observer_client or social_parser_client
++        self.social_critic_client = self.critic_client or social_critic_client
++        self.social_fallback_client = self.observer_client or social_fallback_client
+         self.logger = logger or logging.getLogger(__name__)
+         # Một governor dùng chung cho mọi LlmService instance trong process. Nó chỉ
+         # giữ số token/429 ước lượng, tuyệt đối không giữ nội dung prompt hay API key.
+--- a/memory/memory_ai_curator.py
++++ b/memory/memory_ai_curator.py
+@@ -1,522 +1,522 @@
+-# -*- coding: utf-8 -*-
+-"""
+-memory/memory_ai_curator.py
+-===========================
+-
+-AI curator cho memory — gọi Gemini để làm 2 việc rule không làm được:
+-
+-1. Episodic distillation:
+-   Nhiều episode tương đồng → 1 semantic fact ổn định.
+-   Ví dụ: 5 lần user đề cập "thích câu ngắn" → semantic: user.response_style = ngắn gọn.
+-
+-2. Concern → Long-term bridge:
+-   PrivateConcern đã chín (pressure cao, recurrence cao) → đánh giá xem có nên
+-   kết tinh thành semantic/relational memory không.
+-
+-Cả hai đều là "học từ pattern", không phải lưu raw event.
+-Curator không được bịa fact. Nó chỉ được tóm tắt/kết tinh thứ đã có evidence.
+-
+-Chạy trong background maintenance (budget=normal/deep), không phải hot path.
+-"""
+-
+-from __future__ import annotations
+-
+-import json
+-import logging
+-import time
+-from dataclasses import dataclass, field
+-from typing import Any, Mapping
+-
+-logger = logging.getLogger(__name__)
+-
+-
+-# ---------------------------------------------------------------------------
+-# Helpers
+-# ---------------------------------------------------------------------------
+-
+-def _compact(value: Any, limit: int = 400) -> str:
+-    return " ".join(str(value or "").split())[:limit]
+-
+-
+-def _safe_float(value: Any, default: float = 0.0) -> float:
+-    try:
+-        return float(value)
+-    except Exception:
+-        return default
+-
+-
+-def _get(obj: Any, key: str, default: Any = None) -> Any:
+-    if isinstance(obj, Mapping):
+-        return obj.get(key, default)
+-    return getattr(obj, key, default)
+-
+-
+-# ---------------------------------------------------------------------------
+-# Kết quả
+-# ---------------------------------------------------------------------------
+-
+-@dataclass(slots=True)
+-class CuratorResult:
+-    """Kết quả một lượt curator chạy."""
+-
+-    distilled: int = 0       # số semantic fact mới từ episodic distillation
+-    bridged: int = 0         # số concern → long-term memory
+-    skipped: int = 0
+-    warnings: list[str] = field(default_factory=list)
+-    notes: list[str] = field(default_factory=list)
+-
+-    def to_dict(self) -> dict[str, Any]:
+-        return {
+-            "distilled": self.distilled,
+-            "bridged": self.bridged,
+-            "skipped": self.skipped,
+-            "warnings": list(self.warnings),
+-            "notes": list(self.notes[:12]),
+-        }
+-
+-
+-# ---------------------------------------------------------------------------
+-# Distillation prompt
+-# ---------------------------------------------------------------------------
+-
+-_DISTILL_SYSTEM = """You are a memory distillation engine for ERIS.
+-You receive a cluster of similar episodic memory items and must distill them into ONE stable semantic fact.
+-
+-Rules:
+-- Output ONLY a JSON object, no prose.
+-- Base the fact entirely on the provided episodes. Do not invent.
+-- If the episodes do not support a clear stable fact, output {"skip": true}.
+-- Keep the claim under 200 characters.
+-- Identify the correct fact_key from the list of known keys if applicable.
+-- Use Vietnamese for the claim if the evidence is in Vietnamese.
+-
+-Known fact_keys: user.name, user.birth_year, user.birth_month, user.living_location,
+-user.hometown, user.response_style, user.preference.general, user.convention,
+-relationship.pattern, project.eris, procedural_rule
+-
+-Output schema:
+-{
+-  "claim": "string — the distilled stable fact",
+-  "fact_key": "string — best matching key or empty string",
+-  "domain": "user|self|world|technical|project|relationship|unknown",
+-  "confidence": 0.0-1.0,
+-  "decay_policy": "slow|normal|fast",
+-  "skip": false
+-}"""
+-
+-_DISTILL_USER = """Episodic cluster ({count} episodes):
+-{episodes}
+-
+-Distill into one stable semantic fact."""
+-
+-
+-# ---------------------------------------------------------------------------
+-# Concern bridge prompt
+-# ---------------------------------------------------------------------------
+-
+-_BRIDGE_SYSTEM = """You are a memory bridge engine for ERIS.
+-You receive a PrivateMind concern (internal worry/observation) and must decide if it should
+-become a stable long-term memory entry.
+-
+-Rules:
+-- Output ONLY a JSON object, no prose.
+-- Only bridge if the concern reflects a real, stable pattern — not a one-time event.
+-- If not suitable for long-term memory, output {"skip": true}.
+-- Target layer: "semantic_memory" for user/self facts, "relational_memory" for relationship patterns.
+-- Claim must be factual and grounded, not speculative. Under 200 characters.
+-- Use Vietnamese for the claim if the concern is in Vietnamese.
+-
+-Output schema:
+-{
+-  "claim": "string",
+-  "fact_key": "string or empty",
+-  "domain": "user|self|relationship|project|unknown",
+-  "target": "semantic_memory|relational_memory",
+-  "confidence": 0.0-1.0,
+-  "decay_policy": "slow|normal",
+-  "skip": false
+-}"""
+-
+-_BRIDGE_USER = """Concern:
+-theme: {theme}
+-pressure: {pressure}
+-recurrence: {recurrence}
+-open_questions: {questions}
+-future_biases: {biases}
+-
+-Should this become a long-term memory entry?"""
+-
+-
+-# ---------------------------------------------------------------------------
+-# Curator chính
+-# ---------------------------------------------------------------------------
+-
+-class MemoryAICurator:
+-    """AI curator chạy trong background maintenance."""
+-
+-    # Episodic: cần ít nhất N episodes tương đồng để gọi AI
+-    MIN_CLUSTER_SIZE = 3
+-    # Concern: cần đủ chín mới bridge
+-    MIN_CONCERN_PRESSURE = 0.72
+-    MIN_CONCERN_RECURRENCE = 3
+-    MIN_CONCERN_CONFIDENCE = 0.75  # từ InternalJudgment, không phải concern trực tiếp
+-
+-    def __init__(self, *, llm_service: Any = None, memory_core: Any = None) -> None:
+-        self.llm_service = llm_service
+-        self.memory_core = memory_core
+-
+-    # ------------------------------------------------------------------
+-    # Public entry points
+-    # ------------------------------------------------------------------
+-
+-    def run_distillation(self, *, budget: str = "normal") -> CuratorResult:
+-        """Distill episodic clusters → semantic facts."""
+-        result = CuratorResult()
+-        if self.memory_core is None or self.llm_service is None:
+-            result.skipped += 1
+-            result.warnings.append("no_memory_core_or_llm")
+-            return result
+-
+-        episodic_store = getattr(self.memory_core, "episodic", None)
+-        if episodic_store is None:
+-            result.skipped += 1
+-            return result
+-
+-        items = list(getattr(episodic_store, "load", lambda: [])())
+-        if not items:
+-            return result
+-
+-        limit = {"small": 2, "normal": 4, "deep": 8}.get(budget, 4)
+-        clusters = self._cluster_episodes(items, limit=limit)
+-
+-        for cluster in clusters:
+-            if len(cluster) < self.MIN_CLUSTER_SIZE:
+-                result.skipped += 1
+-                continue
+-            try:
+-                fact = self._distill_cluster(cluster)
+-                if fact is None or fact.get("skip"):
+-                    result.skipped += 1
+-                    continue
+-                committed = self._commit_semantic_fact(fact, evidence_ids=[item.get("id", "") for item in cluster])
+-                if committed:
+-                    result.distilled += 1
+-                    result.notes.append(f"distilled:{fact.get('fact_key') or fact.get('domain')}:{_compact(fact.get('claim',''), 60)}")
+-                else:
+-                    result.skipped += 1
+-            except Exception as exc:
+-                result.warnings.append(f"distill_error:{type(exc).__name__}:{exc}")
+-
+-        return result
+-
+-    def run_concern_bridge(self, *, concern_store_path: str | None = None, budget: str = "normal") -> CuratorResult:
+-        """Bridge concern chín → long-term memory."""
+-        result = CuratorResult()
+-        if self.memory_core is None or self.llm_service is None:
+-            result.skipped += 1
+-            result.warnings.append("no_memory_core_or_llm")
+-            return result
+-
+-        concerns = self._load_concerns(concern_store_path)
+-        if not concerns:
+-            return result
+-
+-        limit = {"small": 1, "normal": 3, "deep": 6}.get(budget, 3)
+-        ripe = self._ripe_concerns(concerns, limit=limit)
+-
+-        for concern in ripe:
+-            try:
+-                decision = self._bridge_concern(concern)
+-                if decision is None or decision.get("skip"):
+-                    result.skipped += 1
+-                    continue
+-                committed = self._commit_from_bridge(decision, evidence_ids=list(concern.get("evidence_ids", []))[:8])
+-                if committed:
+-                    result.bridged += 1
+-                    result.notes.append(
+-                        f"bridged_concern:{concern.get('id','')[:16]}→{decision.get('target')}:{_compact(decision.get('claim',''), 60)}"
+-                    )
+-                    # Đánh dấu concern đã được kết tinh để tránh bridge lại
+-                    self._mark_concern_bridged(concern, concern_store_path)
+-                else:
+-                    result.skipped += 1
+-            except Exception as exc:
+-                result.warnings.append(f"bridge_error:{type(exc).__name__}:{exc}")
+-
+-        return result
+-
+-    # ------------------------------------------------------------------
+-    # Episodic clustering
+-    # ------------------------------------------------------------------
+-
+-    def _cluster_episodes(self, items: list[Any], *, limit: int) -> list[list[dict]]:
+-        """Nhóm episode tương đồng theo summary token overlap."""
+-        dicts = [
+-            item.to_dict() if callable(getattr(item, "to_dict", None)) else dict(item)
+-            for item in items
+-        ]
+-        # Chỉ xét episode chưa được distill
+-        undistilled = [d for d in dicts if "distilled" not in (d.get("tags") or [])]
+-        if not undistilled:
+-            return []
+-
+-        clusters: list[list[dict]] = []
+-        used: set[str] = set()
+-
+-        for i, base in enumerate(undistilled):
+-            if base.get("id") in used:
+-                continue
+-            cluster = [base]
+-            base_tokens = set(_compact(base.get("summary", "")).lower().split())
+-            if len(base_tokens) < 3:
+-                continue
+-            for j, other in enumerate(undistilled):
+-                if i == j or other.get("id") in used:
+-                    continue
+-                other_tokens = set(_compact(other.get("summary", "")).lower().split())
+-                if not other_tokens:
+-                    continue
+-                overlap = len(base_tokens & other_tokens) / max(1, len(base_tokens | other_tokens))
+-                if overlap >= 0.40:
+-                    cluster.append(other)
+-                    used.add(other.get("id", ""))
+-            if len(cluster) >= self.MIN_CLUSTER_SIZE:
+-                used.add(base.get("id", ""))
+-                clusters.append(cluster)
+-                if len(clusters) >= limit:
+-                    break
+-
+-        return clusters
+-
+-    # ------------------------------------------------------------------
+-    # Distillation call
+-    # ------------------------------------------------------------------
+-
+-    def _distill_cluster(self, cluster: list[dict]) -> dict | None:
+-        episode_texts = "\n".join(
+-            f"- [{item.get('timestamp','')[:10]}] {_compact(item.get('summary',''), 160)}"
+-            for item in cluster[:8]
+-        )
+-        user_prompt = _DISTILL_USER.format(count=len(cluster), episodes=episode_texts)
+-        raw = self._call_llm(_DISTILL_SYSTEM, user_prompt, max_tokens=256)
+-        if not raw:
+-            return None
+-        return self._parse_json(raw)
+-
+-    # ------------------------------------------------------------------
+-    # Concern loading + ripeness
+-    # ------------------------------------------------------------------
+-
+-    def _load_concerns(self, path: str | None) -> list[dict]:
+-        import os, json as _json
+-        if not path:
+-            path = os.path.join(os.getenv("ERIS_MEMORY_CORE_DIR", "memory_core"), "private_concerns.json")
+-        try:
+-            with open(path, "r", encoding="utf-8") as f:
+-                data = _json.load(f)
+-            return list(data.get("concerns", []) if isinstance(data, dict) else [])
+-        except Exception:
+-            return []
+-
+-    def _ripe_concerns(self, concerns: list[dict], *, limit: int) -> list[dict]:
+-        """Lọc concern đủ chín để bridge."""
+-        ripe = []
+-        for c in concerns:
+-            if c.get("status") not in {"open", "watching"}:
+-                continue
+-            if c.get("metadata", {}).get("bridged_to_memory"):
+-                continue
+-            pressure = _safe_float(c.get("pressure", 0))
+-            recurrence = int(c.get("recurrence", 0) or 0)
+-            theme = str(c.get("theme", ""))
+-            # Bỏ qua theme degenerate (đã có filter trong ConcernStore, nhưng phòng thủ thêm)
+-            if len(theme) > 400 or theme.count("lặp") > 3:
+-                continue
+-            if pressure >= self.MIN_CONCERN_PRESSURE and recurrence >= self.MIN_CONCERN_RECURRENCE:
+-                ripe.append(c)
+-        # Sort theo pressure × recurrence để bridge concern quan trọng nhất trước
+-        ripe.sort(key=lambda c: _safe_float(c.get("pressure", 0)) * int(c.get("recurrence", 1) or 1), reverse=True)
+-        return ripe[:limit]
+-
+-    # ------------------------------------------------------------------
+-    # Bridge call
+-    # ------------------------------------------------------------------
+-
+-    def _bridge_concern(self, concern: dict) -> dict | None:
+-        theme = _compact(concern.get("theme", ""), 300)
+-        pressure = _safe_float(concern.get("pressure", 0))
+-        recurrence = int(concern.get("recurrence", 0) or 0)
+-        questions = "; ".join(str(q) for q in (concern.get("open_questions") or [])[:4])
+-        biases = "; ".join(str(b) for b in (concern.get("future_biases") or [])[:4])
+-
+-        user_prompt = _BRIDGE_USER.format(
+-            theme=theme,
+-            pressure=f"{pressure:.2f}",
+-            recurrence=recurrence,
+-            questions=questions or "(none)",
+-            biases=biases or "(none)",
+-        )
+-        raw = self._call_llm(_BRIDGE_SYSTEM, user_prompt, max_tokens=256)
+-        if not raw:
+-            return None
+-        return self._parse_json(raw)
+-
+-    # ------------------------------------------------------------------
+-    # Commit helpers
+-    # ------------------------------------------------------------------
+-
+-    def _commit_semantic_fact(self, fact: dict, *, evidence_ids: list[str]) -> bool:
+-        claim = _compact(fact.get("claim", ""), 400)
+-        if not claim:
+-            return False
+-        confidence = min(0.92, max(0.55, _safe_float(fact.get("confidence", 0.72))))
+-        request = {
+-            "target": "semantic_memory",
+-            "content": claim,
+-            "confidence": confidence,
+-            "evidence_ids": [str(e) for e in evidence_ids if str(e).strip()][:8],
+-            "storage_permission": True,
+-            "permission_required": False,
+-            "decay_policy": fact.get("decay_policy", "slow"),
+-            "reason": "episodic_distillation_by_ai_curator",
+-            "metadata": {
+-                "fact_key": str(fact.get("fact_key", "")),
+-                "domain": str(fact.get("domain", "unknown")),
+-                "importance": confidence * 0.9,
+-                "source": "ai_curator_distillation",
+-            },
+-        }
+-        try:
+-            result = self.memory_core.commit(self._to_namespace(request))
+-            outcome = str(getattr(result, "outcome", "") or "")
+-            return outcome in {"accepted", "tentative"}
+-        except Exception as exc:
+-            logger.warning("AI curator commit failed: %s", exc)
+-            return False
+-
+-    def _commit_from_bridge(self, decision: dict, *, evidence_ids: list[str]) -> bool:
+-        claim = _compact(decision.get("claim", ""), 400)
+-        if not claim:
+-            return False
+-        target = str(decision.get("target", "semantic_memory"))
+-        if target not in {"semantic_memory", "relational_memory"}:
+-            target = "semantic_memory"
+-        confidence = min(0.88, max(0.52, _safe_float(decision.get("confidence", 0.68))))
+-        request = {
+-            "target": target,
+-            "content": claim,
+-            "confidence": confidence,
+-            "evidence_ids": evidence_ids[:8],
+-            "storage_permission": True,
+-            "permission_required": False,
+-            "decay_policy": decision.get("decay_policy", "normal"),
+-            "reason": "concern_bridge_by_ai_curator",
+-            "metadata": {
+-                "fact_key": str(decision.get("fact_key", "")),
+-                "domain": str(decision.get("domain", "unknown")),
+-                "importance": confidence * 0.85,
+-                "source": "ai_curator_concern_bridge",
+-            },
+-        }
+-        try:
+-            result = self.memory_core.commit(self._to_namespace(request))
+-            outcome = str(getattr(result, "outcome", "") or "")
+-            return outcome in {"accepted", "tentative"}
+-        except Exception as exc:
+-            logger.warning("AI curator bridge commit failed: %s", exc)
+-            return False
+-
+-    def _mark_concern_bridged(self, concern: dict, path: str | None) -> None:
+-        """Đánh dấu concern đã được bridge để không gọi lại."""
+-        import os, json as _json
+-        if not path:
+-            path = os.path.join(os.getenv("ERIS_MEMORY_CORE_DIR", "memory_core"), "private_concerns.json")
+-        try:
+-            with open(path, "r", encoding="utf-8") as f:
+-                data = _json.load(f)
+-            concerns = data.get("concerns", [])
+-            for c in concerns:
+-                if c.get("id") == concern.get("id"):
+-                    if "metadata" not in c:
+-                        c["metadata"] = {}
+-                    c["metadata"]["bridged_to_memory"] = True
+-                    c["metadata"]["bridged_at"] = time.time()
+-                    break
+-            tmp = path + ".tmp"
+-            with open(tmp, "w", encoding="utf-8") as f:
+-                _json.dump(data, f, ensure_ascii=False, indent=2)
+-            os.replace(tmp, path)
+-        except Exception as exc:
+-            logger.warning("mark_concern_bridged failed: %s", exc)
+-
+-    # ------------------------------------------------------------------
+-    # LLM call
+-    # ------------------------------------------------------------------
+-
+-    def _call_llm(self, system: str, user: str, *, max_tokens: int = 256) -> str | None:
+-        """Gọi LLM qua llm_service.client (Gemini).
+-
+-        Dùng thẳng client, không qua generate_chat_reply để tránh bị wrap
+-        bởi toàn bộ persona/prompt/fe/ni/ti context. Curator chỉ cần plain JSON.
+-        """
+-        client = getattr(self.llm_service, "client", None)
+-        if not callable(getattr(client, "create_chat_completion", None)):
+-            return None
+-        try:
+-            # PDF annotation, pages 7-9: memory maintenance is optional,
+-            # coalesced background work and never competes with chat_main.
+-            from runtime.inference_broker import inference_context
+-            with inference_context(
+-                "memory_digest",
+-                optional=True,
+-                timeout_seconds=10.0,
+-                cancel_scope="background:memory_digest",
+-                coalesce_key="memory_digest:latest",
+-                metadata={"curator": True},
+-            ):
+-                response = client.create_chat_completion(
+-                    messages=[
+-                        {"role": "system", "content": system},
+-                        {"role": "user", "content": user},
+-                    ],
+-                    temperature=0.0,
+-                    frequency_penalty=0.0,
+-                    presence_penalty=0.0,
+-                    max_tokens=max_tokens,
+-                    response_format={"type": "json_object"},
+-                    grammar=None,
+-                    timeout=10.0,
+-                )
+-            # Extract content từ response — hỗ trợ Gemini và OpenAI-compat
+-            extract = getattr(self.llm_service, "_extract_content", None)
+-            if callable(extract):
+-                return str(extract(response) or "")
+-            # Fallback manual extract
+-            choices = response.get("choices") if isinstance(response, dict) else None
+-            if choices and isinstance(choices, list):
+-                msg = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
+-                return str(msg.get("content", "") or "")
+-            return None
+-        except Exception as exc:
+-            logger.warning("AI curator LLM call failed: %s", exc)
+-            return None
+-
+-    def _parse_json(self, raw: str) -> dict | None:
+-        text = str(raw or "").strip()
+-        # Tìm JSON object trong text
+-        start = text.find("{")
+-        end = text.rfind("}") + 1
+-        if start < 0 or end <= start:
+-            return None
+-        try:
+-            return json.loads(text[start:end])
+-        except Exception:
+-            return None
+-
+-    @staticmethod
+-    def _to_namespace(d: dict) -> Any:
+-        from types import SimpleNamespace
+-        return SimpleNamespace(**d)
+-
+-
+-__all__ = ["MemoryAICurator", "CuratorResult"]
++# -*- coding: utf-8 -*-
++"""
++memory/memory_ai_curator.py
++===========================
++
++AI curator cho memory — gọi Gemini để làm 2 việc rule không làm được:
++
++1. Episodic distillation:
++   Nhiều episode tương đồng → 1 semantic fact ổn định.
++   Ví dụ: 5 lần user đề cập "thích câu ngắn" → semantic: user.response_style = ngắn gọn.
++
++2. Concern → Long-term bridge:
++   PrivateConcern đã chín (pressure cao, recurrence cao) → đánh giá xem có nên
++   kết tinh thành semantic/relational memory không.
++
++Cả hai đều là "học từ pattern", không phải lưu raw event.
++Curator không được bịa fact. Nó chỉ được tóm tắt/kết tinh thứ đã có evidence.
++
++Chạy trong background maintenance (budget=normal/deep), không phải hot path.
++"""
++
++from __future__ import annotations
++
++import json
++import logging
++import time
++from dataclasses import dataclass, field
++from typing import Any, Mapping
++
++logger = logging.getLogger(__name__)
++
++
++# ---------------------------------------------------------------------------
++# Helpers
++# ---------------------------------------------------------------------------
++
++def _compact(value: Any, limit: int = 400) -> str:
++    return " ".join(str(value or "").split())[:limit]
++
++
++def _safe_float(value: Any, default: float = 0.0) -> float:
++    try:
++        return float(value)
++    except Exception:
++        return default
++
++
++def _get(obj: Any, key: str, default: Any = None) -> Any:
++    if isinstance(obj, Mapping):
++        return obj.get(key, default)
++    return getattr(obj, key, default)
++
++
++# ---------------------------------------------------------------------------
++# Kết quả
++# ---------------------------------------------------------------------------
++
++@dataclass(slots=True)
++class CuratorResult:
++    """Kết quả một lượt curator chạy."""
++
++    distilled: int = 0       # số semantic fact mới từ episodic distillation
++    bridged: int = 0         # số concern → long-term memory
++    skipped: int = 0
++    warnings: list[str] = field(default_factory=list)
++    notes: list[str] = field(default_factory=list)
++
++    def to_dict(self) -> dict[str, Any]:
++        return {
++            "distilled": self.distilled,
++            "bridged": self.bridged,
++            "skipped": self.skipped,
++            "warnings": list(self.warnings),
++            "notes": list(self.notes[:12]),
++        }
++
++
++# ---------------------------------------------------------------------------
++# Distillation prompt
++# ---------------------------------------------------------------------------
++
++_DISTILL_SYSTEM = """You are a memory distillation engine for ERIS.
++You receive a cluster of similar episodic memory items and must distill them into ONE stable semantic fact.
++
++Rules:
++- Output ONLY a JSON object, no prose.
++- Base the fact entirely on the provided episodes. Do not invent.
++- If the episodes do not support a clear stable fact, output {"skip": true}.
++- Keep the claim under 200 characters.
++- Identify the correct fact_key from the list of known keys if applicable.
++- Use Vietnamese for the claim if the evidence is in Vietnamese.
++
++Known fact_keys: user.name, user.birth_year, user.birth_month, user.living_location,
++user.hometown, user.response_style, user.preference.general, user.convention,
++relationship.pattern, project.eris, procedural_rule
++
++Output schema:
++{
++  "claim": "string — the distilled stable fact",
++  "fact_key": "string — best matching key or empty string",
++  "domain": "user|self|world|technical|project|relationship|unknown",
++  "confidence": 0.0-1.0,
++  "decay_policy": "slow|normal|fast",
++  "skip": false
++}"""
++
++_DISTILL_USER = """Episodic cluster ({count} episodes):
++{episodes}
++
++Distill into one stable semantic fact."""
++
++
++# ---------------------------------------------------------------------------
++# Concern bridge prompt
++# ---------------------------------------------------------------------------
++
++_BRIDGE_SYSTEM = """You are a memory bridge engine for ERIS.
++You receive a PrivateMind concern (internal worry/observation) and must decide if it should
++become a stable long-term memory entry.
++
++Rules:
++- Output ONLY a JSON object, no prose.
++- Only bridge if the concern reflects a real, stable pattern — not a one-time event.
++- If not suitable for long-term memory, output {"skip": true}.
++- Target layer: "semantic_memory" for user/self facts, "relational_memory" for relationship patterns.
++- Claim must be factual and grounded, not speculative. Under 200 characters.
++- Use Vietnamese for the claim if the concern is in Vietnamese.
++
++Output schema:
++{
++  "claim": "string",
++  "fact_key": "string or empty",
++  "domain": "user|self|relationship|project|unknown",
++  "target": "semantic_memory|relational_memory",
++  "confidence": 0.0-1.0,
++  "decay_policy": "slow|normal",
++  "skip": false
++}"""
++
++_BRIDGE_USER = """Concern:
++theme: {theme}
++pressure: {pressure}
++recurrence: {recurrence}
++open_questions: {questions}
++future_biases: {biases}
++
++Should this become a long-term memory entry?"""
++
++
++# ---------------------------------------------------------------------------
++# Curator chính
++# ---------------------------------------------------------------------------
++
++class MemoryAICurator:
++    """AI curator chạy trong background maintenance."""
++
++    # Episodic: cần ít nhất N episodes tương đồng để gọi AI
++    MIN_CLUSTER_SIZE = 3
++    # Concern: cần đủ chín mới bridge
++    MIN_CONCERN_PRESSURE = 0.72
++    MIN_CONCERN_RECURRENCE = 3
++    MIN_CONCERN_CONFIDENCE = 0.75  # từ InternalJudgment, không phải concern trực tiếp
++
++    def __init__(self, *, llm_service: Any = None, memory_core: Any = None) -> None:
++        self.llm_service = llm_service
++        self.memory_core = memory_core
++
++    # ------------------------------------------------------------------
++    # Public entry points
++    # ------------------------------------------------------------------
++
++    def run_distillation(self, *, budget: str = "normal") -> CuratorResult:
++        """Distill episodic clusters → semantic facts."""
++        result = CuratorResult()
++        if self.memory_core is None or self.llm_service is None:
++            result.skipped += 1
++            result.warnings.append("no_memory_core_or_llm")
++            return result
++
++        episodic_store = getattr(self.memory_core, "episodic", None)
++        if episodic_store is None:
++            result.skipped += 1
++            return result
++
++        items = list(getattr(episodic_store, "load", lambda: [])())
++        if not items:
++            return result
++
++        limit = {"small": 2, "normal": 4, "deep": 8}.get(budget, 4)
++        clusters = self._cluster_episodes(items, limit=limit)
++
++        for cluster in clusters:
++            if len(cluster) < self.MIN_CLUSTER_SIZE:
++                result.skipped += 1
++                continue
++            try:
++                fact = self._distill_cluster(cluster)
++                if fact is None or fact.get("skip"):
++                    result.skipped += 1
++                    continue
++                committed = self._commit_semantic_fact(fact, evidence_ids=[item.get("id", "") for item in cluster])
++                if committed:
++                    result.distilled += 1
++                    result.notes.append(f"distilled:{fact.get('fact_key') or fact.get('domain')}:{_compact(fact.get('claim',''), 60)}")
++                else:
++                    result.skipped += 1
++            except Exception as exc:
++                result.warnings.append(f"distill_error:{type(exc).__name__}:{exc}")
++
++        return result
++
++    def run_concern_bridge(self, *, concern_store_path: str | None = None, budget: str = "normal") -> CuratorResult:
++        """Bridge concern chín → long-term memory."""
++        result = CuratorResult()
++        if self.memory_core is None or self.llm_service is None:
++            result.skipped += 1
++            result.warnings.append("no_memory_core_or_llm")
++            return result
++
++        concerns = self._load_concerns(concern_store_path)
++        if not concerns:
++            return result
++
++        limit = {"small": 1, "normal": 3, "deep": 6}.get(budget, 3)
++        ripe = self._ripe_concerns(concerns, limit=limit)
++
++        for concern in ripe:
++            try:
++                decision = self._bridge_concern(concern)
++                if decision is None or decision.get("skip"):
++                    result.skipped += 1
++                    continue
++                committed = self._commit_from_bridge(decision, evidence_ids=list(concern.get("evidence_ids", []))[:8])
++                if committed:
++                    result.bridged += 1
++                    result.notes.append(
++                        f"bridged_concern:{concern.get('id','')[:16]}→{decision.get('target')}:{_compact(decision.get('claim',''), 60)}"
++                    )
++                    # Đánh dấu concern đã được kết tinh để tránh bridge lại
++                    self._mark_concern_bridged(concern, concern_store_path)
++                else:
++                    result.skipped += 1
++            except Exception as exc:
++                result.warnings.append(f"bridge_error:{type(exc).__name__}:{exc}")
++
++        return result
++
++    # ------------------------------------------------------------------
++    # Episodic clustering
++    # ------------------------------------------------------------------
++
++    def _cluster_episodes(self, items: list[Any], *, limit: int) -> list[list[dict]]:
++        """Nhóm episode tương đồng theo summary token overlap."""
++        dicts = [
++            item.to_dict() if callable(getattr(item, "to_dict", None)) else dict(item)
++            for item in items
++        ]
++        # Chỉ xét episode chưa được distill
++        undistilled = [d for d in dicts if "distilled" not in (d.get("tags") or [])]
++        if not undistilled:
++            return []
++
++        clusters: list[list[dict]] = []
++        used: set[str] = set()
++
++        for i, base in enumerate(undistilled):
++            if base.get("id") in used:
++                continue
++            cluster = [base]
++            base_tokens = set(_compact(base.get("summary", "")).lower().split())
++            if len(base_tokens) < 3:
++                continue
++            for j, other in enumerate(undistilled):
++                if i == j or other.get("id") in used:
++                    continue
++                other_tokens = set(_compact(other.get("summary", "")).lower().split())
++                if not other_tokens:
++                    continue
++                overlap = len(base_tokens & other_tokens) / max(1, len(base_tokens | other_tokens))
++                if overlap >= 0.40:
++                    cluster.append(other)
++                    used.add(other.get("id", ""))
++            if len(cluster) >= self.MIN_CLUSTER_SIZE:
++                used.add(base.get("id", ""))
++                clusters.append(cluster)
++                if len(clusters) >= limit:
++                    break
++
++        return clusters
++
++    # ------------------------------------------------------------------
++    # Distillation call
++    # ------------------------------------------------------------------
++
++    def _distill_cluster(self, cluster: list[dict]) -> dict | None:
++        episode_texts = "\n".join(
++            f"- [{item.get('timestamp','')[:10]}] {_compact(item.get('summary',''), 160)}"
++            for item in cluster[:8]
++        )
++        user_prompt = _DISTILL_USER.format(count=len(cluster), episodes=episode_texts)
++        raw = self._call_llm(_DISTILL_SYSTEM, user_prompt, max_tokens=256)
++        if not raw:
++            return None
++        return self._parse_json(raw)
++
++    # ------------------------------------------------------------------
++    # Concern loading + ripeness
++    # ------------------------------------------------------------------
++
++    def _load_concerns(self, path: str | None) -> list[dict]:
++        import os, json as _json
++        if not path:
++            path = os.path.join(os.getenv("ERIS_MEMORY_CORE_DIR", "memory_core"), "private_concerns.json")
++        try:
++            with open(path, "r", encoding="utf-8") as f:
++                data = _json.load(f)
++            return list(data.get("concerns", []) if isinstance(data, dict) else [])
++        except Exception:
++            return []
++
++    def _ripe_concerns(self, concerns: list[dict], *, limit: int) -> list[dict]:
++        """Lọc concern đủ chín để bridge."""
++        ripe = []
++        for c in concerns:
++            if c.get("status") not in {"open", "watching"}:
++                continue
++            if c.get("metadata", {}).get("bridged_to_memory"):
++                continue
++            pressure = _safe_float(c.get("pressure", 0))
++            recurrence = int(c.get("recurrence", 0) or 0)
++            theme = str(c.get("theme", ""))
++            # Bỏ qua theme degenerate (đã có filter trong ConcernStore, nhưng phòng thủ thêm)
++            if len(theme) > 400 or theme.count("lặp") > 3:
++                continue
++            if pressure >= self.MIN_CONCERN_PRESSURE and recurrence >= self.MIN_CONCERN_RECURRENCE:
++                ripe.append(c)
++        # Sort theo pressure × recurrence để bridge concern quan trọng nhất trước
++        ripe.sort(key=lambda c: _safe_float(c.get("pressure", 0)) * int(c.get("recurrence", 1) or 1), reverse=True)
++        return ripe[:limit]
++
++    # ------------------------------------------------------------------
++    # Bridge call
++    # ------------------------------------------------------------------
++
++    def _bridge_concern(self, concern: dict) -> dict | None:
++        theme = _compact(concern.get("theme", ""), 300)
++        pressure = _safe_float(concern.get("pressure", 0))
++        recurrence = int(concern.get("recurrence", 0) or 0)
++        questions = "; ".join(str(q) for q in (concern.get("open_questions") or [])[:4])
++        biases = "; ".join(str(b) for b in (concern.get("future_biases") or [])[:4])
++
++        user_prompt = _BRIDGE_USER.format(
++            theme=theme,
++            pressure=f"{pressure:.2f}",
++            recurrence=recurrence,
++            questions=questions or "(none)",
++            biases=biases or "(none)",
++        )
++        raw = self._call_llm(_BRIDGE_SYSTEM, user_prompt, max_tokens=256)
++        if not raw:
++            return None
++        return self._parse_json(raw)
++
++    # ------------------------------------------------------------------
++    # Commit helpers
++    # ------------------------------------------------------------------
++
++    def _commit_semantic_fact(self, fact: dict, *, evidence_ids: list[str]) -> bool:
++        claim = _compact(fact.get("claim", ""), 400)
++        if not claim:
++            return False
++        confidence = min(0.92, max(0.55, _safe_float(fact.get("confidence", 0.72))))
++        request = {
++            "target": "semantic_memory",
++            "content": claim,
++            "confidence": confidence,
++            "evidence_ids": [str(e) for e in evidence_ids if str(e).strip()][:8],
++            "storage_permission": True,
++            "permission_required": False,
++            "decay_policy": fact.get("decay_policy", "slow"),
++            "reason": "episodic_distillation_by_ai_curator",
++            "metadata": {
++                "fact_key": str(fact.get("fact_key", "")),
++                "domain": str(fact.get("domain", "unknown")),
++                "importance": confidence * 0.9,
++                "source": "ai_curator_distillation",
++            },
++        }
++        try:
++            result = self.memory_core.commit(self._to_namespace(request))
++            outcome = str(getattr(result, "outcome", "") or "")
++            return outcome in {"accepted", "tentative"}
++        except Exception as exc:
++            logger.warning("AI curator commit failed: %s", exc)
++            return False
++
++    def _commit_from_bridge(self, decision: dict, *, evidence_ids: list[str]) -> bool:
++        claim = _compact(decision.get("claim", ""), 400)
++        if not claim:
++            return False
++        target = str(decision.get("target", "semantic_memory"))
++        if target not in {"semantic_memory", "relational_memory"}:
++            target = "semantic_memory"
++        confidence = min(0.88, max(0.52, _safe_float(decision.get("confidence", 0.68))))
++        request = {
++            "target": target,
++            "content": claim,
++            "confidence": confidence,
++            "evidence_ids": evidence_ids[:8],
++            "storage_permission": True,
++            "permission_required": False,
++            "decay_policy": decision.get("decay_policy", "normal"),
++            "reason": "concern_bridge_by_ai_curator",
++            "metadata": {
++                "fact_key": str(decision.get("fact_key", "")),
++                "domain": str(decision.get("domain", "unknown")),
++                "importance": confidence * 0.85,
++                "source": "ai_curator_concern_bridge",
++            },
++        }
++        try:
++            result = self.memory_core.commit(self._to_namespace(request))
++            outcome = str(getattr(result, "outcome", "") or "")
++            return outcome in {"accepted", "tentative"}
++        except Exception as exc:
++            logger.warning("AI curator bridge commit failed: %s", exc)
++            return False
++
++    def _mark_concern_bridged(self, concern: dict, path: str | None) -> None:
++        """Đánh dấu concern đã được bridge để không gọi lại."""
++        import os, json as _json
++        if not path:
++            path = os.path.join(os.getenv("ERIS_MEMORY_CORE_DIR", "memory_core"), "private_concerns.json")
++        try:
++            with open(path, "r", encoding="utf-8") as f:
++                data = _json.load(f)
++            concerns = data.get("concerns", [])
++            for c in concerns:
++                if c.get("id") == concern.get("id"):
++                    if "metadata" not in c:
++                        c["metadata"] = {}
++                    c["metadata"]["bridged_to_memory"] = True
++                    c["metadata"]["bridged_at"] = time.time()
++                    break
++            tmp = path + ".tmp"
++            with open(tmp, "w", encoding="utf-8") as f:
++                _json.dump(data, f, ensure_ascii=False, indent=2)
++            os.replace(tmp, path)
++        except Exception as exc:
++            logger.warning("mark_concern_bridged failed: %s", exc)
++
++    # ------------------------------------------------------------------
++    # LLM call
++    # ------------------------------------------------------------------
++
++    def _call_llm(self, system: str, user: str, *, max_tokens: int = 256) -> str | None:
++        """Gọi LLM qua llm_service.client (Gemini).
++
++        Dùng thẳng client, không qua generate_chat_reply để tránh bị wrap
++        bởi toàn bộ persona/prompt/fe/ni/ti context. Curator chỉ cần plain JSON.
++        """
++        client = getattr(self.llm_service, "inner_client", None) or getattr(self.llm_service, "client", None)
++        if not callable(getattr(client, "create_chat_completion", None)):
++            return None
++        try:
++            # PDF annotation, pages 7-9: memory maintenance is optional,
++            # coalesced background work and never competes with chat_main.
++            from runtime.inference_broker import inference_context
++            with inference_context(
++                "memory_digest",
++                optional=True,
++                timeout_seconds=10.0,
++                cancel_scope="background:memory_digest",
++                coalesce_key="memory_digest:latest",
++                metadata={"curator": True},
++            ):
++                response = client.create_chat_completion(
++                    messages=[
++                        {"role": "system", "content": system},
++                        {"role": "user", "content": user},
++                    ],
++                    temperature=0.0,
++                    frequency_penalty=0.0,
++                    presence_penalty=0.0,
++                    max_tokens=max_tokens,
++                    response_format={"type": "json_object"},
++                    grammar=None,
++                    timeout=10.0,
++                )
++            # Extract content từ response — hỗ trợ Gemini và OpenAI-compat
++            extract = getattr(self.llm_service, "_extract_content", None)
++            if callable(extract):
++                return str(extract(response) or "")
++            # Fallback manual extract
++            choices = response.get("choices") if isinstance(response, dict) else None
++            if choices and isinstance(choices, list):
++                msg = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
++                return str(msg.get("content", "") or "")
++            return None
++        except Exception as exc:
++            logger.warning("AI curator LLM call failed: %s", exc)
++            return None
++
++    def _parse_json(self, raw: str) -> dict | None:
++        text = str(raw or "").strip()
++        # Tìm JSON object trong text
++        start = text.find("{")
++        end = text.rfind("}") + 1
++        if start < 0 or end <= start:
++            return None
++        try:
++            return json.loads(text[start:end])
++        except Exception:
++            return None
++
++    @staticmethod
++    def _to_namespace(d: dict) -> Any:
++        from types import SimpleNamespace
++        return SimpleNamespace(**d)
++
++
++__all__ = ["MemoryAICurator", "CuratorResult"]
+--- a/runtime/affect_self_read.py
++++ b/runtime/affect_self_read.py
+@@ -162,7 +162,7 @@
+     # ── gemma path ──────────────────────────────────────────────────────────
+     def _gemma_line(self, state: Any, rel: Any) -> str:
+         service = self.llm_service
+-        client = getattr(service, "style_client", None) if service is not None else None
++        client = (getattr(service, "inner_client", None) or getattr(service, "style_client", None)) if service is not None else None
+         if client is None:
+             return ""
+         readings = self._readings_text(state, rel)
+--- a/runtime/coordinator_bootstrap.py
++++ b/runtime/coordinator_bootstrap.py
+@@ -505,7 +505,7 @@
+         self.last_daydream_result = None
+         self.daydream_model_adapter = None
+         self.daydream_consolidator = DaydreamConsolidator(
+-            llm_client=getattr(llm_service, "style_client", None),
++            llm_client=(getattr(llm_service, "inner_client", None) or getattr(llm_service, "style_client", None)),
+             logger=self.logger,
+         )
+         self.cortex_runtime = CortexRuntime(
+--- a/runtime/private_mind_model_adapter.py
++++ b/runtime/private_mind_model_adapter.py
+@@ -196,6 +196,16 @@
+     def from_env(cls, *, llm_service: Any = None, logger: Any = None) -> "RuntimePrivateMindModelAdapter | None":
+         apply_secrets_to_environ()
+         config = PrivateMindModelAdapterConfig()
++        inner_worker = getattr(llm_service, "inner_client", None) if llm_service is not None else None
++        if not config.enabled and inner_worker is not None:
++            config = replace(
++                config,
++                enabled=True,
++                provider="deepseek",
++                model=str(getattr(inner_worker, "model_name", "deepseek-v4-flash") or "deepseek-v4-flash"),
++                base_url=str(getattr(inner_worker, "base_url", "") or ""),
++                api_key="worker-managed",
++            )
+         if not config.enabled:
+             return None
+         adapter = cls(config=config, llm_service=llm_service, logger=logger)
+@@ -437,6 +447,25 @@
+             )
+ 
+         if self.llm_service is not None:
++            inner_client = getattr(self.llm_service, "inner_client", None)
++            if callable(getattr(inner_client, "create_chat_completion", None)):
++                try:
++                    raw = inner_client.create_chat_completion(
++                        messages=messages,
++                        temperature=temperature,
++                        frequency_penalty=0.0,
++                        presence_penalty=0.0,
++                        max_tokens=max_tokens,
++                        response_format=None,
++                        timeout=self.config.timeout_seconds,
++                    )
++                    return _wrap(raw)
++                except Exception as exc:
++                    return PrivateMindModelResult(
++                        ok=False,
++                        error=f"{type(exc).__name__}:{exc}",
++                        error_kind=_classify_transport_exception(exc),
++                    )
+             for method_name in ("chat_text", "chat", "create_chat_completion"):
+                 method = getattr(self.llm_service, method_name, None)
+                 if callable(method):
+@@ -1197,6 +1226,34 @@
+         # Nếu llm_service có method chat JSON riêng thì dùng. Repo này chưa chuẩn hóa
+         # hết service boundary, nên adapter phải bớt ngây thơ một chút.
+         if self.llm_service is not None:
++            inner_client = getattr(self.llm_service, "inner_client", None)
++            if callable(getattr(inner_client, "create_chat_completion", None)):
++                try:
++                    raw = inner_client.create_chat_completion(
++                        messages=messages,
++                        temperature=temperature,
++                        frequency_penalty=0.0,
++                        presence_penalty=0.0,
++                        max_tokens=max_tokens,
++                        response_format=self._response_format(response_schema),
++                        timeout=self.config.timeout_seconds,
++                    )
++                    content = self._extract_content(raw)
++                    parsed = self._parse_json(content)
++                    return PrivateMindModelResult(
++                        ok=bool(parsed),
++                        parsed=parsed,
++                        content=content,
++                        raw=self._safe_raw(raw),
++                        error="" if parsed else "invalid_json",
++                        error_kind="" if parsed else "invalid_json",
++                    )
++                except Exception as exc:
++                    return PrivateMindModelResult(
++                        ok=False,
++                        error=f"{type(exc).__name__}:{exc}",
++                        error_kind=_classify_transport_exception(exc),
++                    )
+             for method_name in ("chat_json", "generate_json", "create_chat_completion"):
+                 method = getattr(self.llm_service, method_name, None)
+                 if callable(method):
+@@ -1605,6 +1662,16 @@
+     def from_env(cls, *, llm_service: Any = None, logger: Any = None) -> "PrivateMindAdapterPool | None":
+         apply_secrets_to_environ()
+         config = PrivateMindModelAdapterConfig()
++        inner_worker = getattr(llm_service, "inner_client", None) if llm_service is not None else None
++        if not config.enabled and inner_worker is not None:
++            config = replace(
++                config,
++                enabled=True,
++                provider="deepseek",
++                model=str(getattr(inner_worker, "model_name", "deepseek-v4-flash") or "deepseek-v4-flash"),
++                base_url=str(getattr(inner_worker, "base_url", "") or ""),
++                api_key="worker-managed",
++            )
+         if not config.enabled:
+             return None
+         pool = cls(config=config, llm_service=llm_service, logger=logger)
+--- a/runtime/tutor_wiring.py
++++ b/runtime/tutor_wiring.py
+@@ -245,7 +245,7 @@
+     )
+ 
+     if use_remote and llm_service is not None:
+-        remote_client = llm_service.fallback_client or llm_service.client
++        remote_client = getattr(llm_service, "research_client", None) or llm_service.fallback_client or llm_service.client
+         if remote_client is not None:
+             # PDF annotation, pages 14 and 20: background Tutor owns a budget
+             # per topic, not merely a global timer.  Repeated classifier/router
+@@ -359,7 +359,7 @@
+     )
+ 
+     if use_remote and llm_service is not None:
+-        remote_client = llm_service.fallback_client or llm_service.client
++        remote_client = getattr(llm_service, "research_client", None) or llm_service.fallback_client or llm_service.client
+         if remote_client is not None:
+             last_distill_by_topic: dict[str, float] = {}
+             from runtime.topic_budget import TopicBudget
+--- a/vision.py
++++ b/vision.py
+@@ -98,6 +98,8 @@
+         social_parser_client = self.process_manager.build_social_parser_client() if social_models_enabled else None
+         social_critic_client = self.process_manager.build_social_critic_client() if social_models_enabled else None
+         social_fallback_client = self.process_manager.build_social_fallback_client() if social_models_enabled else None
++        inner_client = self.process_manager.build_inner_client()
++        research_client = self.process_manager.build_research_client()
+         if escalation_client is not None:
+             provider_label = getattr(escalation_client, "base_url", "") or escalation_client.__class__.__name__
+             self.logger.info("Escalation client (bái sư) đã sẵn sàng: %s", provider_label)
+@@ -110,9 +112,25 @@
+             social_parser_client=social_parser_client,
+             social_critic_client=social_critic_client,
+             social_fallback_client=social_fallback_client,
++            observer_client=social_parser_client,
++            critic_client=social_critic_client,
++            inner_client=inner_client,
++            research_client=research_client,
+             logger=self.logger,
+         )
+-        self.logger.info("Mô hình đã sẵn sàng.")
++        configured_workers = [
++            role
++            for role, worker in (
++                ("companion", self.llm_client),
++                ("observer", getattr(self.llm_service, "observer_client", None)),
++                ("critic", getattr(self.llm_service, "critic_client", None)),
++                ("inner", getattr(self.llm_service, "inner_client", None)),
++                ("style", getattr(self.llm_service, "style_client", None)),
++                ("research", getattr(self.llm_service, "research_client", None)),
++            )
++            if worker is not None
++        ]
++        self.logger.info("Mô hình đã sẵn sàng. cognitive_workers=%s", ",".join(configured_workers))
+         self.memory_semantic_parser = build_runtime_memory_semantic_parser(
+             llm_service=self.llm_service,
+             logger=self.memory_logger,
+--- a/RELEASE_MANIFEST.json
++++ b/RELEASE_MANIFEST.json
+@@ -13,10 +13,11 @@
+     "settings_schema": 14,
+     "engagement_snapshot_schema": 7,
+     "engagement_snapshot_journal_schema": 1,
+-    "diagnostics_schema": 7
++    "diagnostics_schema": 7,
++    "deepseek_worker_roles": 6
+   },
+   "quality": {
+-    "verified_tests": 429,
++    "verified_tests": 472,
+     "runtime_coverage_floor_percent": 37.0,
+     "runtime_coverage_verified_percent": 37.3,
+     "broad_exception_handlers": 1123,
+@@ -32,7 +33,8 @@
+     "v14_broad_exception_handlers": 1177,
+     "v14_silent_exception_handlers": 284,
+     "v9_broad_exception_handlers": 1192,
+-    "v9_silent_exception_handlers": 358
++    "v9_silent_exception_handlers": 358,
++    "known_source_archive_test_failures": 2
+   },
+   "capabilities": {
+     "phased_bootstrap": true,
+@@ -100,6 +102,10 @@
+     "hard_forget_source_scrubbing": true,
+     "projection_only_memory_panel": true,
+     "responsive_compact_memory_panel": true,
+-    "memory_panel_friendly_empty_state": true
++    "memory_panel_friendly_empty_state": true,
++    "deepseek_web_multi_worker_foundation": true,
++    "role_gateway_api_keys": true,
++    "canonical_jsonl_worker_boundary": true,
++    "incremental_legacy_provider_fallback": true
+   }
+ }
+--- /dev/null
++++ b/llm/deepseek_workers.py
+@@ -0,0 +1,290 @@
++# -*- coding: utf-8 -*-
++"""DeepSeek Web cognitive-worker foundation.
++
++This module intentionally does not change Whale2API or the DeepSeek Web
++transport.  It only gives ERIS stable worker roles, one gateway API key per
++role, and a small JSONL boundary for structured tasks.
++
++The gateway key is expected to select the account/account-pool in Whale2API.
++ERIS never needs the Gmail address or the DeepSeek password.
++"""
++
++from __future__ import annotations
++
++import copy
++import json
++import os
++import re
++from dataclasses import dataclass
++from typing import Any, Mapping
++
++
++WORKER_ROLES: tuple[str, ...] = (
++    "companion",
++    "observer",
++    "critic",
++    "inner",
++    "style",
++    "research",
++)
++
++# Structured workers default to canonical one-line JSON whenever the caller
++# requests json_object/json_schema. Companion/style keep free-text behavior.
++_DEFAULT_JSONL_ROLES = frozenset({"observer", "critic", "inner", "research"})
++
++
++class JsonlContractError(RuntimeError):
++    """Raised when a structured worker still returns invalid JSON after repair."""
++
++
++@dataclass(frozen=True, slots=True)
++class DeepSeekWorkerSpec:
++    role: str
++    api_key: str
++    base_url: str
++    model: str
++    jsonl_enabled: bool
++    jsonl_repair_attempts: int = 1
++
++    @property
++    def configured(self) -> bool:
++        return bool(self.api_key and self.base_url and self.model)
++
++
++def normalize_worker_role(role: object) -> str:
++    value = str(role or "").strip().lower().replace("-", "_")
++    aliases = {
++        "main": "companion",
++        "chat": "companion",
++        "social": "observer",
++        "deliberator": "critic",
++        "private_mind": "inner",
++        "memory": "inner",
++        "tutor": "research",
++    }
++    value = aliases.get(value, value)
++    if value not in WORKER_ROLES:
++        raise ValueError(f"Unknown DeepSeek worker role: {role!r}")
++    return value
++
++
++def worker_env_name(role: object, suffix: str = "API_KEY") -> str:
++    normalized = normalize_worker_role(role)
++    return f"ERIS_DS_{normalized.upper()}_{suffix.strip().upper()}"
++
++
++def _env_flag(name: str, default: bool) -> bool:
++    raw = str(os.environ.get(name, "1" if default else "0") or "").strip().lower()
++    if not raw:
++        return default
++    return raw not in {"0", "false", "no", "off", "none", "disabled"}
++
++
++def load_worker_spec(role: object) -> DeepSeekWorkerSpec:
++    normalized = normalize_worker_role(role)
++    role_prefix = f"ERIS_DS_{normalized.upper()}"
++    api_key = str(os.environ.get(f"{role_prefix}_API_KEY", "") or "").strip()
++    base_url = str(
++        os.environ.get(f"{role_prefix}_BASE_URL")
++        or os.environ.get("ERIS_DS_BASE_URL")
++        or os.environ.get("ERIS_DS2API_BASE_URL")
++        or "http://127.0.0.1:6011/v1"
++    ).strip()
++    model = str(
++        os.environ.get(f"{role_prefix}_MODEL")
++        or os.environ.get("ERIS_DS_MODEL")
++        or os.environ.get("ERIS_DS2API_MODEL")
++        or "deepseek-v4-flash"
++    ).strip()
++    jsonl_default = normalized in _DEFAULT_JSONL_ROLES
++    jsonl_enabled = _env_flag(f"{role_prefix}_JSONL", jsonl_default)
++    try:
++        repair_attempts = max(
++            0,
++            min(
++                2,
++                int(
++                    os.environ.get(
++                        f"{role_prefix}_JSONL_REPAIR_ATTEMPTS",
++                        os.environ.get("ERIS_DS_JSONL_REPAIR_ATTEMPTS", "1"),
++                    )
++                    or 1
++                ),
++            ),
++        )
++    except (TypeError, ValueError):
++        repair_attempts = 1
++    return DeepSeekWorkerSpec(
++        role=normalized,
++        api_key=api_key,
++        base_url=base_url,
++        model=model,
++        jsonl_enabled=jsonl_enabled,
++        jsonl_repair_attempts=repair_attempts,
++    )
++
++
++def configured_worker_roles() -> tuple[str, ...]:
++    return tuple(role for role in WORKER_ROLES if load_worker_spec(role).configured)
++
++
++def _structured_response_requested(response_format: Any) -> bool:
++    if not isinstance(response_format, Mapping):
++        return False
++    return str(response_format.get("type", "") or "").strip().lower() in {
++        "json_object",
++        "json_schema",
++    }
++
++
++def _strip_code_fence(text: str) -> str:
++    clean = str(text or "").strip()
++    clean = re.sub(r"^```(?:json|jsonl)?\s*", "", clean, flags=re.IGNORECASE)
++    clean = re.sub(r"\s*```$", "", clean)
++    return clean.strip()
++
++
++def canonical_json_line(text: str) -> str:
++    """Parse one JSON value and return canonical UTF-8 JSONL content."""
++
++    clean = _strip_code_fence(text)
++    if not clean:
++        raise JsonlContractError("empty_jsonl_output")
++
++    try:
++        value = json.loads(clean)
++    except json.JSONDecodeError:
++        # Be defensive with models that add a short preamble despite the
++        # contract.  Accept exactly one embedded object/array, never arbitrary
++        # trailing prose.
++        object_start = clean.find("{")
++        array_start = clean.find("[")
++        starts = [x for x in (object_start, array_start) if x >= 0]
++        if not starts:
++            raise JsonlContractError("missing_json_value")
++        start = min(starts)
++        decoder = json.JSONDecoder()
++        try:
++            value, end = decoder.raw_decode(clean[start:])
++        except json.JSONDecodeError as exc:
++            raise JsonlContractError(f"invalid_json:{exc.msg}") from exc
++        trailing = clean[start + end :].strip()
++        if trailing:
++            raise JsonlContractError("trailing_non_json_text")
++
++    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
++
++
++def _extract_openai_content(payload: Any) -> str:
++    if not isinstance(payload, Mapping):
++        return ""
++    choices = payload.get("choices")
++    if isinstance(choices, list) and choices:
++        first = choices[0] if isinstance(choices[0], Mapping) else {}
++        message = first.get("message") if isinstance(first, Mapping) else {}
++        if isinstance(message, Mapping):
++            return str(message.get("content", "") or "")
++    return ""
++
++
++def _replace_openai_content(payload: Any, content: str) -> Any:
++    if not isinstance(payload, Mapping):
++        return payload
++    result = copy.deepcopy(dict(payload))
++    choices = result.get("choices")
++    if not isinstance(choices, list) or not choices:
++        return result
++    first = choices[0]
++    if not isinstance(first, dict):
++        return result
++    message = first.get("message")
++    if not isinstance(message, dict):
++        message = {}
++        first["message"] = message
++    message["content"] = content
++    return result
++
++
++def _append_jsonl_repair_instruction(messages: Any, *, role: str) -> list[dict[str, Any]]:
++    copied = [dict(item) for item in (messages or []) if isinstance(item, Mapping)]
++    copied.append(
++        {
++            "role": "user",
++            "content": (
++                "The previous response violated the structured-output contract. "
++                f"You are the ERIS {role} worker. Return exactly ONE valid JSON value "
++                "on ONE physical line. No markdown, no code fence, no explanation, "
++                "and no text before or after the JSON. Preserve the requested schema."
++            ),
++        }
++    )
++    return copied
++
++
++class JsonlWorkerClient:
++    """Thin client decorator for role metadata and canonical JSONL output.
++
++    Free-text requests pass through untouched.  For json_object/json_schema
++    requests, selected worker roles normalize message.content to a single JSON
++    line and can perform one strict repair retry.  This keeps existing ERIS call
++    sites compatible because the outer OpenAI-compatible response shape is not
++    changed.
++    """
++
++    def __init__(
++        self,
++        client: Any,
++        *,
++        role: str,
++        jsonl_enabled: bool = True,
++        repair_attempts: int = 1,
++    ) -> None:
++        self._client = client
++        self.worker_role = normalize_worker_role(role)
++        self.jsonl_enabled = bool(jsonl_enabled)
++        self.repair_attempts = max(0, min(2, int(repair_attempts)))
++        self.base_url = getattr(client, "base_url", "")
++        self.model_name = getattr(client, "model_name", "")
++        self.configured_model_name = getattr(client, "configured_model_name", self.model_name)
++        self.key_pool = getattr(client, "key_pool", None)
++
++    def __getattr__(self, name: str) -> Any:
++        return getattr(self._client, name)
++
++    def create_chat_completion(self, **kwargs: Any) -> Any:
++        structured = self.jsonl_enabled and _structured_response_requested(kwargs.get("response_format"))
++        attempts = 1 + (self.repair_attempts if structured else 0)
++        last_error: Exception | None = None
++        request_kwargs = dict(kwargs)
++
++        for attempt in range(attempts):
++            if attempt:
++                request_kwargs["messages"] = _append_jsonl_repair_instruction(
++                    kwargs.get("messages"), role=self.worker_role
++                )
++            payload = self._client.create_chat_completion(**request_kwargs)
++            if not structured:
++                return payload
++            try:
++                line = canonical_json_line(_extract_openai_content(payload))
++                return _replace_openai_content(payload, line)
++            except JsonlContractError as exc:
++                last_error = exc
++                continue
++
++        raise JsonlContractError(
++            f"worker={self.worker_role} failed JSONL contract: {last_error or 'unknown'}"
++        )
++
++
++__all__ = [
++    "DeepSeekWorkerSpec",
++    "JsonlContractError",
++    "JsonlWorkerClient",
++    "WORKER_ROLES",
++    "canonical_json_line",
++    "configured_worker_roles",
++    "load_worker_spec",
++    "normalize_worker_role",
++    "worker_env_name",
++]
+--- /dev/null
++++ b/tests/test_deepseek_multi_worker_base.py
+@@ -0,0 +1,158 @@
++from __future__ import annotations
++
++import json
++import logging
++
++import pytest
++
++from llm.deepseek_workers import (
++    JsonlContractError,
++    JsonlWorkerClient,
++    canonical_json_line,
++    load_worker_spec,
++)
++from llm.process_manager import RemoteModelProcessManager
++from llm.service import LlmService
++
++
++class _FakeClient:
++    base_url = "http://127.0.0.1:6011/v1"
++    model_name = "deepseek-v4-flash"
++    configured_model_name = "deepseek-v4-flash"
++    key_pool = None
++
++    def __init__(self, outputs):
++        self.outputs = list(outputs)
++        self.calls = []
++
++    def create_chat_completion(self, **kwargs):
++        self.calls.append(kwargs)
++        content = self.outputs.pop(0)
++        return {"choices": [{"message": {"content": content}}]}
++
++
++def _call(client, *, response_format=None):
++    return client.create_chat_completion(
++        messages=[{"role": "user", "content": "return json"}],
++        temperature=0.0,
++        frequency_penalty=0.0,
++        presence_penalty=0.0,
++        max_tokens=64,
++        response_format=response_format,
++    )
++
++
++def test_worker_spec_uses_exact_role_environment(monkeypatch):
++    monkeypatch.setenv("ERIS_DS_BASE_URL", "http://localhost:6011/v1")
++    monkeypatch.setenv("ERIS_DS_MODEL", "deepseek-v4-flash")
++    monkeypatch.setenv("ERIS_DS_OBSERVER_API_KEY", "observer-gateway-key")
++
++    spec = load_worker_spec("observer")
++
++    assert spec.role == "observer"
++    assert spec.api_key == "observer-gateway-key"
++    assert spec.base_url == "http://localhost:6011/v1"
++    assert spec.model == "deepseek-v4-flash"
++    assert spec.jsonl_enabled is True
++
++
++def test_jsonl_worker_canonicalizes_structured_content():
++    raw = _FakeClient(['```json\n{ "b": 2, "a": 1 }\n```'])
++    worker = JsonlWorkerClient(raw, role="observer", jsonl_enabled=True)
++
++    payload = _call(worker, response_format={"type": "json_object"})
++
++    content = payload["choices"][0]["message"]["content"]
++    assert content == '{"b":2,"a":1}'
++    assert "\n" not in content
++    assert json.loads(content) == {"b": 2, "a": 1}
++
++
++def test_jsonl_worker_repairs_once():
++    raw = _FakeClient(["not json", '{"ok":true}'])
++    worker = JsonlWorkerClient(raw, role="critic", jsonl_enabled=True, repair_attempts=1)
++
++    payload = _call(worker, response_format={"type": "json_object"})
++
++    assert payload["choices"][0]["message"]["content"] == '{"ok":true}'
++    assert len(raw.calls) == 2
++    assert "ONE valid JSON value" in raw.calls[1]["messages"][-1]["content"]
++
++
++def test_jsonl_worker_does_not_touch_free_text():
++    raw = _FakeClient(["plain style text"])
++    worker = JsonlWorkerClient(raw, role="style", jsonl_enabled=False)
++
++    payload = _call(worker, response_format=None)
++
++    assert payload["choices"][0]["message"]["content"] == "plain style text"
++
++
++def test_jsonl_worker_raises_after_failed_repair():
++    raw = _FakeClient(["bad", "still bad"])
++    worker = JsonlWorkerClient(raw, role="inner", jsonl_enabled=True, repair_attempts=1)
++
++    with pytest.raises(JsonlContractError):
++        _call(worker, response_format={"type": "json_object"})
++
++
++def test_process_manager_builds_and_caches_role_worker(monkeypatch, tmp_path):
++    monkeypatch.setenv("ERIS_DS_BASE_URL", "http://127.0.0.1:6011/v1")
++    monkeypatch.setenv("ERIS_DS_MODEL", "deepseek-v4-flash")
++    monkeypatch.setenv("ERIS_DS_RESEARCH_API_KEY", "research-gateway-key")
++    manager = RemoteModelProcessManager(logger=logging.getLogger("test"), project_root=str(tmp_path))
++
++    first = manager.build_deepseek_worker_client("research")
++    second = manager.build_deepseek_worker_client("research")
++
++    assert first is second
++    assert first.worker_role == "research"
++    assert first.api_key == "research-gateway-key"
++
++
++def test_llm_service_exposes_named_workers():
++    companion = object()
++    observer = object()
++    critic = object()
++    inner = object()
++    style = object()
++    research = object()
++
++    service = LlmService(
++        companion,
++        style_client=style,
++        observer_client=observer,
++        critic_client=critic,
++        inner_client=inner,
++        research_client=research,
++    )
++
++    assert service.companion_client is companion
++    assert service.observer_client is observer
++    assert service.critic_client is critic
++    assert service.inner_client is inner
++    assert service.style_client is style
++    assert service.research_client is research
++    assert service.social_parser_client is observer
++    assert service.social_critic_client is critic
++
++
++def test_companion_key_can_boot_without_official_deepseek_key(monkeypatch, tmp_path):
++    import llm.process_manager as pm
++
++    monkeypatch.setenv("ERIS_REMOTE_PROVIDER", "deepseek")
++    monkeypatch.setenv("ERIS_REMOTE_API_ENABLED", "1")
++    monkeypatch.setenv("ERIS_DS_COMPANION_API_KEY", "companion-gateway-key")
++    monkeypatch.setenv("ERIS_DS_BASE_URL", "http://127.0.0.1:6011/v1")
++    monkeypatch.setenv("ERIS_DS_MODEL", "deepseek-v4-flash")
++    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
++    monkeypatch.delenv("ERIS_REMOTE_API_KEY", raising=False)
++    monkeypatch.delenv("ERIS_DS2API_API_KEY", raising=False)
++    monkeypatch.setattr(pm, "get_provider_profile", lambda *args, **kwargs: {})
++    monkeypatch.setattr(pm, "_bootstrap_pool_key", lambda pool: "")
++
++    manager = RemoteModelProcessManager(logger=logging.getLogger("test"), project_root=str(tmp_path))
++    client = manager.build_client()
++
++    assert client.worker_role == "companion"
++    assert client.base_url == "http://127.0.0.1:6011/v1"
+--- /dev/null
++++ b/ERIS_DEEPSEEK_MULTI_WORKER_BASE.md
+@@ -0,0 +1,83 @@
++# ERIS DeepSeek Web Multi-Worker Base
++
++This revision adds a role-based DeepSeek Web foundation without modifying
++Whale2API or DeepSeek Web behavior.
++
++## Required gateway keys
++
++```env
++ERIS_DS_COMPANION_API_KEY=...
++ERIS_DS_OBSERVER_API_KEY=...
++ERIS_DS_CRITIC_API_KEY=...
++ERIS_DS_INNER_API_KEY=...
++ERIS_DS_STYLE_API_KEY=...
++ERIS_DS_RESEARCH_API_KEY=...
++```
++
++Each value is a Whale2API gateway API key. Configure PoolUI so each gateway key
++can use only the account/account-pool assigned to that cognitive role. ERIS does
++not need Gmail addresses or DeepSeek passwords.
++
++Shared defaults:
++
++```env
++ERIS_DS_BASE_URL=http://127.0.0.1:6011/v1
++ERIS_DS_MODEL=deepseek-v4-flash
++```
++
++Role-specific `_BASE_URL` and `_MODEL` variables are supported, for example
++`ERIS_DS_OBSERVER_MODEL`, but are optional.
++
++## Routing supplied by this base
++
++- `companion`: main DS2API chat key; official API fallback behavior is retained.
++- `observer`: preferred by social parser and social observer fallback.
++- `critic`: preferred by social critic, format fallback and escalation.
++- `inner`: exposed as `llm_service.inner_client`; used by PrivateMind,
++  daydream/affect self-read and memory curator.
++- `style`: preferred by the existing style client slot.
++- `research`: exposed as `llm_service.research_client`; used by Tutor remote
++  generation and distillation.
++
++Missing role keys do not stop startup. The old Groq/Gemini/legacy provider path
++remains as fallback, allowing incremental rollout.
++
++## JSONL boundary
++
++`llm/deepseek_workers.py` wraps role clients without changing the normal
++OpenAI-compatible response shape. When a structured worker receives
++`response_format={"type":"json_object"}` or `json_schema`, it:
++
++1. accepts one JSON object or array;
++2. removes accidental code fences;
++3. serializes it as one canonical physical line;
++4. retries once with a strict repair instruction when invalid;
++5. raises `JsonlContractError` rather than committing malformed data.
++
++JSONL defaults:
++
++- enabled: observer, critic, inner, research;
++- disabled: companion, style.
++
++These defaults can be changed with `ERIS_DS_<ROLE>_JSONL`.
++
++## Session behavior
++
++The existing isolated Web session mechanism remains unchanged. Chat and
++`autonomous` retain companion continuity. `inner`, `private_mind` and
++`daydream` are also persistent. Observer, critic, style and research remain
++one-shot/short-lived unless the inference lane configuration is changed.
++
++## Files changed
++
++- `llm/deepseek_workers.py`
++- `llm/process_manager.py`
++- `llm/service.py`
++- `llm/client.py`
++- `vision.py`
++- `runtime/private_mind_model_adapter.py`
++- `runtime/affect_self_read.py`
++- `runtime/coordinator_bootstrap.py`
++- `runtime/tutor_wiring.py`
++- `memory/memory_ai_curator.py`
++- `config/deepseek.env.example`
+--- /dev/null
++++ b/config/deepseek_workers.env.example
+@@ -0,0 +1,19 @@
++# Shared Whale2API endpoint/model
++ERIS_DS_BASE_URL=http://127.0.0.1:6011/v1
++ERIS_DS_MODEL=deepseek-v4-flash
++ERIS_DS2API_ENABLED=1
++
++# One Whale2API gateway key per cognitive role
++ERIS_DS_COMPANION_API_KEY=
++ERIS_DS_OBSERVER_API_KEY=
++ERIS_DS_CRITIC_API_KEY=
++ERIS_DS_INNER_API_KEY=
++ERIS_DS_STYLE_API_KEY=
++ERIS_DS_RESEARCH_API_KEY=
++
++# Structured worker output
++ERIS_DS_OBSERVER_JSONL=1
++ERIS_DS_CRITIC_JSONL=1
++ERIS_DS_INNER_JSONL=1
++ERIS_DS_RESEARCH_JSONL=1
++ERIS_DS_JSONL_REPAIR_ATTEMPTS=1

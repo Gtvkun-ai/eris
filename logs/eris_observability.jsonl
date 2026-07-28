@@ -42440,3 +42440,44 @@
 {"signal":"metric","name":"broker_queue_wait_ms","timestamp":1785209987.4656544,"value":1.0170936584472656,"tags":{"lane":"tts_current_turn","provider":"gemini_tts_key_1"},"trace_id":"85bf68c505ce4f6e8412e04e121895db","status":"ok"}
 {"signal":"metric","name":"broker_request_duration_ms","timestamp":1785209997.4324489,"value":9965.635300031863,"tags":{"lane":"tts_current_turn","provider":"gemini_tts_key_1","reason":"completed"},"trace_id":"85bf68c505ce4f6e8412e04e121895db","status":"ok"}
 {"signal":"metric","name":"rollout_decision_total","timestamp":1785209997.4344428,"value":1.0,"tags":{"feature":"tts_breaker","mode":"enabled","apply":"true","shadow":"false","killed":"false"},"fields":{"bucket":35.3803,"reason":"enabled"},"trace_id":"e5507a12964f4139ba4aab1cbecf3fd6","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_before","timestamp":1785235083.4969916,"value":8.0,"trace_id":"07180d7f091b490699e4355db4888d65","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_after","timestamp":1785235083.4980743,"value":8.0,"trace_id":"07180d7f091b490699e4355db4888d65","status":"ok"}
+{"signal":"metric","name":"prompt_hard_cap","timestamp":1785235083.4986115,"value":1000000000.0,"trace_id":"07180d7f091b490699e4355db4888d65","status":"ok"}
+{"signal":"log","name":"prompt_budget","timestamp":1785235083.4996674,"fields":{"prompt_blocks_retained":[],"before_tokens":"[đã ẩn:secret_field:2c624232cdd2]","after_tokens":"[đã ẩn:secret_field:2c624232cdd2]","cap":1000000000,"trimmed":false},"trace_id":"07180d7f091b490699e4355db4888d65","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_before","timestamp":1785235083.503466,"value":8.0,"trace_id":"07180d7f091b490699e4355db4888d65","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_after","timestamp":1785235083.5045307,"value":8.0,"trace_id":"07180d7f091b490699e4355db4888d65","status":"ok"}
+{"signal":"metric","name":"prompt_hard_cap","timestamp":1785235083.5051048,"value":1000000000.0,"trace_id":"07180d7f091b490699e4355db4888d65","status":"ok"}
+{"signal":"log","name":"prompt_budget","timestamp":1785235083.5056443,"fields":{"prompt_blocks_retained":[],"before_tokens":"[đã ẩn:secret_field:2c624232cdd2]","after_tokens":"[đã ẩn:secret_field:2c624232cdd2]","cap":1000000000,"trimmed":false},"trace_id":"07180d7f091b490699e4355db4888d65","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_before","timestamp":1785235083.5088758,"value":8.0,"trace_id":"07180d7f091b490699e4355db4888d65","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_after","timestamp":1785235083.509405,"value":8.0,"trace_id":"07180d7f091b490699e4355db4888d65","status":"ok"}
+{"signal":"metric","name":"prompt_hard_cap","timestamp":1785235083.5099401,"value":1000000000.0,"trace_id":"07180d7f091b490699e4355db4888d65","status":"ok"}
+{"signal":"log","name":"prompt_budget","timestamp":1785235083.5104756,"fields":{"prompt_blocks_retained":[],"before_tokens":"[đã ẩn:secret_field:2c624232cdd2]","after_tokens":"[đã ẩn:secret_field:2c624232cdd2]","cap":1000000000,"trimmed":false},"trace_id":"07180d7f091b490699e4355db4888d65","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_before","timestamp":1785235877.6072936,"value":8.0,"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_after","timestamp":1785235877.607815,"value":8.0,"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"metric","name":"prompt_hard_cap","timestamp":1785235877.608337,"value":1000000000.0,"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"log","name":"prompt_budget","timestamp":1785235877.6088552,"fields":{"prompt_blocks_retained":[],"before_tokens":"[đã ẩn:secret_field:2c624232cdd2]","after_tokens":"[đã ẩn:secret_field:2c624232cdd2]","cap":1000000000,"trimmed":false},"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_before","timestamp":1785235877.6109452,"value":8.0,"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_after","timestamp":1785235877.6109452,"value":8.0,"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"metric","name":"prompt_hard_cap","timestamp":1785235877.6114633,"value":1000000000.0,"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"log","name":"prompt_budget","timestamp":1785235877.6120298,"fields":{"prompt_blocks_retained":[],"before_tokens":"[đã ẩn:secret_field:2c624232cdd2]","after_tokens":"[đã ẩn:secret_field:2c624232cdd2]","cap":1000000000,"trimmed":false},"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_before","timestamp":1785235877.6137023,"value":8.0,"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_after","timestamp":1785235877.6142597,"value":8.0,"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"metric","name":"prompt_hard_cap","timestamp":1785235877.614808,"value":1000000000.0,"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"log","name":"prompt_budget","timestamp":1785235877.6153483,"fields":{"prompt_blocks_retained":[],"before_tokens":"[đã ẩn:secret_field:2c624232cdd2]","after_tokens":"[đã ẩn:secret_field:2c624232cdd2]","cap":1000000000,"trimmed":false},"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_before","timestamp":1785235877.6282878,"value":4.0,"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_after","timestamp":1785235877.629316,"value":4.0,"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"metric","name":"prompt_hard_cap","timestamp":1785235877.629879,"value":1000000000.0,"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"log","name":"prompt_budget","timestamp":1785235877.6303935,"fields":{"prompt_blocks_retained":[],"before_tokens":"[đã ẩn:secret_field:4b227777d4dd]","after_tokens":"[đã ẩn:secret_field:4b227777d4dd]","cap":1000000000,"trimmed":false},"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"metric","name":"429_per_provider_per_lane","timestamp":1785235877.6337311,"value":1.0,"tags":{"provider":"local","lane":"transport"},"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"metric","name":"retry_after_seconds","timestamp":1785235877.6343122,"value":20.0,"tags":{"provider":"local","lane":"transport"},"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"metric","name":"broker_rate_limit","timestamp":1785235877.634887,"value":1.0,"tags":{"provider":"local"},"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"metric","name":"rate_limit_429_total","timestamp":1785235877.635457,"value":1.0,"tags":{"provider":"local","lane":"transport","model":"gpt-4o"},"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"metric","name":"retry_after_seconds","timestamp":1785235877.635457,"value":20.0,"tags":{"provider":"local","lane":"transport","model":"gpt-4o"},"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_before","timestamp":1785235877.6376262,"value":4.0,"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_after","timestamp":1785235877.6376262,"value":4.0,"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"metric","name":"prompt_hard_cap","timestamp":1785235877.638198,"value":1000000000.0,"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"log","name":"prompt_budget","timestamp":1785235877.638198,"fields":{"prompt_blocks_retained":[],"before_tokens":"[đã ẩn:secret_field:4b227777d4dd]","after_tokens":"[đã ẩn:secret_field:4b227777d4dd]","cap":1000000000,"trimmed":false},"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_before","timestamp":1785235877.6401184,"value":8.0,"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"metric","name":"prompt_tokens_after","timestamp":1785235877.6401184,"value":8.0,"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"metric","name":"prompt_hard_cap","timestamp":1785235877.6401184,"value":1000000000.0,"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
+{"signal":"log","name":"prompt_budget","timestamp":1785235877.641129,"fields":{"prompt_blocks_retained":[],"before_tokens":"[đã ẩn:secret_field:2c624232cdd2]","after_tokens":"[đã ẩn:secret_field:2c624232cdd2]","cap":1000000000,"trimmed":false},"trace_id":"6109265c8a9d4b08845a7dd0f581f492","status":"ok"}
