@@ -121,7 +121,7 @@ class SelfTurnPipeline:
             return True
 
         self._last_deliberation_at = now
-        plan, discovery_grounding, discovery_id = self._deliberate(
+        plan, discovery_grounding, discovery_id, surface_payload = self._deliberate(
             context, planner_snapshot, discovery_runtime,
         )
         # Activity nghĩa chỉ được ghi sau khi main planner trả typed annotation.
@@ -149,6 +149,9 @@ class SelfTurnPipeline:
                 }, now=context.perception.now)
                 if alt_allowed:
                     plan = alternate
+                    # Câu do surface worker viết gắn với plan cũ; khi gate đổi
+                    # sang một plan khác phải bỏ draft để main writer viết lại.
+                    surface_payload = None
                     host.last_ai_intention_plan = plan
                     allowed, gate_reason = True, "commentary_alternate_allowed"
                 else:
@@ -169,6 +172,7 @@ class SelfTurnPipeline:
             discovery_grounding=discovery_grounding,
             discovery_id=discovery_id,
             discovery_runtime=discovery_runtime,
+            prebuilt_payload=surface_payload,
         )
 
     def _acquire_baton(self) -> bool:
@@ -378,6 +382,7 @@ class SelfTurnPipeline:
             "open_loops": list(state.open_loops),
             "latest_observation": dict(state.latest_observation),
             "recent_public_history": context.recent_history,
+            "seconds_since_user": context.seconds_since_user,
             "seconds_since_assistant": context.seconds_since_assistant,
             "self_context": context.self_context.to_dict(),
             "recent_self_turn_semantics": recent_initiative,
@@ -432,7 +437,12 @@ class SelfTurnPipeline:
                 return True, reason
         return False, "no_new_attention_signal"
 
-    def _deliberate(self, context: SelfTurnBundle, snapshot: Mapping[str, Any], discovery_runtime: Any) -> tuple[IntentionPlan, str, str]:
+    def _deliberate(
+        self,
+        context: SelfTurnBundle,
+        snapshot: Mapping[str, Any],
+        discovery_runtime: Any,
+    ) -> tuple[IntentionPlan, str, str, Mapping[str, Any] | None]:
         host = self.host
         self.trace_store.append("deliberation_input", {
             "turn_seq": context.turn_seq,
@@ -443,10 +453,30 @@ class SelfTurnPipeline:
             "reply_expected": context.discourse.reply_expected,
             "evidence_count": len(context.perception.screen.evidence_refs) + len(context.perception.vision_facts),
         }, now=context.perception.now)
-        plan = host.ai_intention_planner.plan_autonomous(snapshot, turn_seq=context.turn_seq)
+        surface_payload: Mapping[str, Any] | None = None
+        surface_turn = None
+        surface_engine = getattr(host, "ai_surface_intent_engine", None)
+        if surface_engine is not None:
+            try:
+                surface_turn = surface_engine.deliberate(snapshot, turn_seq=context.turn_seq)
+            except Exception as exc:
+                host.logger.warning("[surface intent] unavailable; fallback planner: %s", exc)
+                surface_turn = None
+        if surface_turn is not None:
+            plan = surface_turn.plan
+            surface_payload = surface_turn.public_payload or None
+            self.trace_store.append("surface_intent", {
+                "turn_seq": context.turn_seq,
+                "mode": surface_turn.mode,
+                "speak": bool(plan.speak),
+                "topic": plan.topic,
+                "reason": surface_turn.reason,
+            }, now=context.perception.now)
+        else:
+            plan = host.ai_intention_planner.plan_autonomous(snapshot, turn_seq=context.turn_seq)
         # Main planner vẫn sở hữu nghĩa. Nhưng khi đã đến nhịp companion, một
         # draft "withhold" được deliberation lại đúng một lần thay vì im mãi.
-        if context.commentary.due and not plan.speak:
+        if surface_turn is None and context.commentary.due and not plan.speak:
             recovery_snapshot = dict(snapshot)
             recovery_snapshot["commentary_recovery"] = {
                 "required": bool(context.commentary.required),
@@ -462,11 +492,12 @@ class SelfTurnPipeline:
             plan = host.ai_intention_planner.plan_autonomous(recovery_snapshot, turn_seq=context.turn_seq)
         if context.commentary.required and not plan.speak:
             plan = self._required_presence_plan(context)
+            surface_payload = None
         discovery_grounding = ""
         discovery_id = ""
         if discovery_runtime is not None:
             plan, discovery_grounding, discovery_id = discovery_runtime.bind_plan(plan)
-        return plan, discovery_grounding, discovery_id
+        return plan, discovery_grounding, discovery_id, surface_payload
 
     def _required_presence_plan(
         self,
@@ -733,24 +764,27 @@ class SelfTurnPipeline:
         discovery_grounding: str,
         discovery_id: str,
         discovery_runtime: Any,
+        prebuilt_payload: Mapping[str, Any] | None = None,
     ) -> bool:
         host = self.host
-        payload = host.ai_model_router.generate_autonomous_reply(
-            plan=plan,
-            personality_context=context.state.personality_prompt_context(),
-            memory_context=context.memory_context,
-            grounding_context="\n".join(part for part in (
-                context.perception.screen.prompt_context(),
-                "\n".join(str(item) for item in context.perception.vision_facts[-6:]),
-                discovery_grounding,
-                f"AUTONOMOUS_SELF_CONTEXT:\n{context.self_context.prompt_context()}",
-            ) if part),
-            engagement_context=context.engagement_prompt_context,
-            recent_history=context.recent_history,
-            avoid_text=str(getattr(host, "last_text", "") or ""),
-            allow_fallback=not no_fallback_mode_enabled(),
-            language_hint=self._runtime_language(),
-        )
+        payload = dict(prebuilt_payload or {})
+        if not payload:
+            payload = host.ai_model_router.generate_autonomous_reply(
+                plan=plan,
+                personality_context=context.state.personality_prompt_context(),
+                memory_context=context.memory_context,
+                grounding_context="\n".join(part for part in (
+                    context.perception.screen.prompt_context(),
+                    "\n".join(str(item) for item in context.perception.vision_facts[-6:]),
+                    discovery_grounding,
+                    f"AUTONOMOUS_SELF_CONTEXT:\n{context.self_context.prompt_context()}",
+                ) if part),
+                engagement_context=context.engagement_prompt_context,
+                recent_history=context.recent_history,
+                avoid_text=str(getattr(host, "last_text", "") or ""),
+                allow_fallback=not no_fallback_mode_enabled(),
+                language_hint=self._runtime_language(),
+            )
         if not payload:
             host.logger.warning(
                 "[ai autonomous] public generation failed kind=%s subject=%s",

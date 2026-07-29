@@ -25,6 +25,7 @@ from .orchestrator import AIChatOrchestrator, AIAutonomousOrchestrator, architec
 from .planner import IntentionPlanner
 from .stage_planner import StagePlanner
 from .state_reducer import StateReducer
+from .surface_intent import SurfaceIntentEngine
 
 
 def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
@@ -197,6 +198,11 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     health.record_success("ai_orchestrated.observer")
     planner = IntentionPlanner(router, reducer, logger=getattr(host, "logger", None))
     health.record_success("ai_orchestrated.planner")
+    surface_intent = SurfaceIntentEngine(router, reducer, logger=getattr(host, "logger", None))
+    health.record_success(
+        "ai_orchestrated.surface_intent",
+        details={"enabled": bool(surface_intent.enabled)},
+    )
     discovery = DiscoveryRuntime(host, router, logger=getattr(host, "logger", None))
     initiative = InitiativeController(logger=getattr(host, "logger", None))
     consolidator = IdentityConsolidator(logger=getattr(host, "logger", None))
@@ -210,6 +216,7 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     host.ai_model_router = router
     host.ai_post_turn_observer = observer
     host.ai_intention_planner = planner
+    host.ai_surface_intent_engine = surface_intent
     host.ai_discovery_runtime = discovery
     host.ai_initiative_controller = initiative
     host.ai_identity_consolidator = consolidator

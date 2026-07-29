@@ -76,6 +76,44 @@ def test_worker_spec_uses_exact_role_environment(monkeypatch):
     assert spec.jsonl_enabled is True
 
 
+def test_surface_worker_has_its_own_gateway_key(monkeypatch):
+    monkeypatch.setenv("ERIS_DS_BASE_URL", "http://localhost:6011/v1")
+    monkeypatch.setenv("ERIS_DS_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("ERIS_DS_SURFACE_API_KEY", "surface-gateway-key")
+
+    spec = load_worker_spec("surface")
+
+    assert spec.role == "surface"
+    assert spec.api_key == "surface-gateway-key"
+    assert spec.jsonl_enabled is True
+
+
+def test_surface_worker_ignores_example_placeholder(monkeypatch):
+    monkeypatch.setenv("ERIS_DS_BASE_URL", "http://localhost:6011/v1")
+    monkeypatch.setenv("ERIS_DS_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("ERIS_DS_SURFACE_API_KEY", "GATEWAY_KEY_SURFACE")
+
+    spec = load_worker_spec("surface")
+
+    assert spec.api_key == ""
+    assert spec.configured is False
+
+
+def test_surface_worker_does_not_borrow_generic_gateway_key(monkeypatch):
+    import llm.deepseek_workers as dw
+
+    monkeypatch.delenv("ERIS_DS_SURFACE_API_KEY", raising=False)
+    monkeypatch.setenv("ERIS_DS2API_ENABLED", "1")
+    monkeypatch.setenv("ERIS_DS2API_API_KEY", "shared-key")
+    monkeypatch.setenv("ERIS_DS_SURFACE_ALLOW_SHARED_KEY", "0")
+    monkeypatch.setattr(dw, "get_secret", lambda *names, default="": "shared-key" if "ERIS_DS2API_API_KEY" in names else "")
+
+    spec = load_worker_spec("surface")
+
+    assert spec.api_key == ""
+    assert spec.configured is False
+
+
 def test_jsonl_worker_canonicalizes_structured_content():
     raw = _FakeClient(['```json\n{ "b": 2, "a": 1 }\n```'])
     worker = JsonlWorkerClient(raw, role="observer", jsonl_enabled=True)
@@ -161,6 +199,7 @@ def test_llm_service_exposes_named_workers():
     observer = object()
     critic = object()
     inner = object()
+    surface = object()
     style = object()
     research = object()
 
@@ -170,6 +209,7 @@ def test_llm_service_exposes_named_workers():
         observer_client=observer,
         critic_client=critic,
         inner_client=inner,
+        surface_client=surface,
         research_client=research,
     )
 
@@ -177,6 +217,7 @@ def test_llm_service_exposes_named_workers():
     assert service.observer_client is observer
     assert service.critic_client is critic
     assert service.inner_client is inner
+    assert service.surface_client is surface
     assert service.style_client is style
     assert service.research_client is research
     assert service.social_parser_client is observer

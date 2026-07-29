@@ -742,6 +742,7 @@ class CoordinatorBootstrapMixin:
             self.ai_model_router = None
             self.ai_post_turn_observer = None
             self.ai_intention_planner = None
+            self.ai_surface_intent_engine = None
             self.ai_stage_planner = None
             self.ai_chat_orchestrator = None
             self.ai_autonomous_orchestrator = None

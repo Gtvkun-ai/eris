@@ -15,6 +15,7 @@ from typing import Any
 
 from .config import Live2DBodyConfig
 from .gaze import GazeController, GazeSample
+from .parameter_profile import INFJ_PARAMETER_PROFILE
 from .stage_state import Live2DStageState
 from .udp_receiver import Live2DStageReceiver
 from .window_bridge import DesktopWindowBridge, WindowGeometry
@@ -51,6 +52,7 @@ class Live2DRenderer:
         self.state = state
         self.receiver = receiver
         self.available_parameters: set[str] = set()
+        self._parameter_handles: dict[str, Any] = {}
         self._dragging_window = False
         self._drag_origin_cursor_screen = (0.0, 0.0)
         self._drag_origin_window = (0, 0)
@@ -60,7 +62,10 @@ class Live2DRenderer:
             strength_x=config.eye_strength_x,
             strength_y=config.eye_strength_y,
             right_x_sign=config.eye_right_x_sign,
+            inner_eye_ratio=config.eye_inner_ratio,
             head_follow_degrees=config.head_follow_degrees,
+            head_follow_left_degrees=config.head_follow_left_degrees,
+            head_follow_right_degrees=config.head_follow_right_degrees,
         )
         self._last_geometry: WindowGeometry | None = None
 
@@ -106,7 +111,8 @@ class Live2DRenderer:
             model.SetOffset(self.config.offset_x, self.config.offset_y)
             model.SetAutoBlinkEnable(True)
             model.SetAutoBreathEnable(True)
-            self.available_parameters = self._read_parameter_ids(model)
+            self._parameter_handles = self._read_parameter_handles(model)
+            self.available_parameters = set(self._parameter_handles)
             canvas_size = self._safe_model_call(model, "GetCanvasSize")
             canvas_pixel_size = self._safe_model_call(model, "GetCanvasSizePixel")
 
@@ -201,8 +207,16 @@ class Live2DRenderer:
                     parameters["ParamAngleX"] = parameters.get("ParamAngleX", 0.0) + gaze.head_x_degrees
                 for parameter_id, value in parameters.items():
                     if parameter_id in self.available_parameters:
-                        model.SetParameterValue(parameter_id, float(value))
+                        model.SetParameterValue(
+                            parameter_id,
+                            INFJ_PARAMETER_PROFILE.sanitize(parameter_id, float(value)),
+                        )
                 self._apply_gaze(model, gaze)
+                self._apply_eyelids(
+                    model,
+                    left_scale=snapshot.eye_open_left * gaze.left_eye_open_scale,
+                    right_scale=snapshot.eye_open_right * gaze.right_eye_open_scale,
+                )
 
                 if self.config.transparent:
                     live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
@@ -276,7 +290,28 @@ class Live2DRenderer:
             eye_values["ParamEyeBallY"] = gaze.left_y
         for parameter_id, value in eye_values.items():
             if parameter_id in self.available_parameters:
-                model.SetParameterValue(parameter_id, float(value))
+                model.SetParameterValue(
+                    parameter_id,
+                    INFJ_PARAMETER_PROFILE.sanitize(parameter_id, float(value)),
+                )
+
+    def _apply_eyelids(self, model: Any, *, left_scale: float, right_scale: float) -> None:
+        """Giữ auto-blink nhưng giới hạn độ mở mí theo mood và hướng nhìn."""
+        self._scale_eye_parameter(model, "ParamEyeLOpen", left_scale)
+        self._scale_eye_parameter(model, "ParamEyeROpen", right_scale)
+
+    def _scale_eye_parameter(self, model: Any, parameter_id: str, scale: float) -> None:
+        if parameter_id not in self.available_parameters:
+            return
+        handle = self._parameter_handles.get(parameter_id)
+        raw_value = getattr(handle, "value", None) if handle is not None else None
+        try:
+            current = float(raw_value)
+        except (TypeError, ValueError):
+            return
+        normalized_scale = max(0.0, min(1.0, float(scale)))
+        target = INFJ_PARAMETER_PROFILE.clamp_eye_open(current * normalized_scale)
+        model.SetParameterValue(parameter_id, target)
 
     def _report_geometry(self, glfw: Any, window: Any, *, force: bool = False) -> None:
         geometry = self._bridge.geometry(glfw, window)
@@ -315,17 +350,17 @@ class Live2DRenderer:
         )
 
     @staticmethod
-    def _read_parameter_ids(model: Any) -> set[str]:
-        ids: set[str] = set()
+    def _read_parameter_handles(model: Any) -> dict[str, Any]:
+        handles: dict[str, Any] = {}
         try:
             for index in range(int(model.GetParameterCount())):
                 parameter = model.GetParameter(index)
                 parameter_id = str(getattr(parameter, "id", "") or "")
                 if parameter_id:
-                    ids.add(parameter_id)
+                    handles[parameter_id] = parameter
         except Exception as exc:
             print(f"[Live2D][WARN] Không đọc được parameter list: {exc}", flush=True)
-        return ids
+        return handles
 
     @staticmethod
     def _safe_model_call(model: Any, method_name: str) -> Any:

@@ -258,18 +258,38 @@ def _get_elevenlabs_http_session():
     return _ELEVENLABS_SESSION
 
 
-def _get_elevenlabs_token() -> tuple[str, str]:
+def _get_elevenlabs_token() -> tuple[str, str, int]:
+    """Trả về (auth_type, token, account_id).
+    
+    Tải token ưu tiên từ SQLite Pool (GLOBAL_ELEVEN_POOL) để xoay tài khoản tự động.
+    """
     global _CACHED_BEARER_TOKEN, _CACHED_BEARER_EXPIRES_AT
     from eris_secrets import get_secret
     import time
 
+    now = time.time()
+    try:
+        from runtime.elevenlabs_pool_db import GLOBAL_ELEVEN_POOL
+        acc = GLOBAL_ELEVEN_POOL.get_active_account()
+        if acc:
+            if acc.bearer_token and now < acc.bearer_expires_at:
+                return "bearer", acc.bearer_token, acc.id
+            ok, msg = GLOBAL_ELEVEN_POOL.sync_subscription(acc.id)
+            if ok:
+                updated_acc = GLOBAL_ELEVEN_POOL.get_account_by_id(acc.id)
+                if updated_acc and updated_acc.bearer_token:
+                    return "bearer", updated_acc.bearer_token, updated_acc.id
+            else:
+                logger.warning("[TTS/ElevenLabsPool] Sync account %d thất bại: %s", acc.id, msg)
+    except Exception as exc:
+        logger.debug("[TTS/ElevenLabsPool] Pool check error: %s", exc)
+
     api_key = str(get_secret("ELEVENLABS_API_KEY", "ERIS_ELEVENLABS_API_KEY") or "").strip()
     if api_key and not api_key.startswith("eyJ"):
-        return "xi-api-key", api_key
+        return "xi-api-key", api_key, 0
 
-    now = time.time()
     if _CACHED_BEARER_TOKEN and now < _CACHED_BEARER_EXPIRES_AT:
-        return "bearer", _CACHED_BEARER_TOKEN
+        return "bearer", _CACHED_BEARER_TOKEN, 0
 
     refresh_token = str(get_secret("ELEVENLABS_REFRESH_TOKEN") or "").strip()
     firebase_key = str(get_secret("FIREBASE_API_KEY") or "").strip()
@@ -291,25 +311,30 @@ def _get_elevenlabs_token() -> tuple[str, str]:
                 if new_token:
                     _CACHED_BEARER_TOKEN = new_token
                     _CACHED_BEARER_EXPIRES_AT = now + 3000.0
-                    return "bearer", new_token
+                    return "bearer", new_token, 0
         except Exception as exc:
             logger.debug("[TTS/ElevenLabs] refresh token failed: %s", exc)
 
     if bearer_token:
         _CACHED_BEARER_TOKEN = bearer_token
         _CACHED_BEARER_EXPIRES_AT = now + 1800.0
-        return "bearer", bearer_token
+        return "bearer", bearer_token, 0
 
     if api_key:
-        return "xi-api-key", api_key
+        return "xi-api-key", api_key, 0
 
-    return "", ""
+    return "", "", 0
 
 
 def warmup_elevenlabs() -> None:
-    """Pre-fetch token and warm up HTTP Keep-Alive pool in background."""
+    """Pre-fetch token, start Web UI server, and warm up HTTP Keep-Alive pool in background."""
     def _do_warmup():
         try:
+            try:
+                from runtime.elevenlabs_pool_server import start_elevenlabs_pool_server
+                start_elevenlabs_pool_server()
+            except Exception as exc:
+                logger.debug("[TTS/ElevenLabsPool] Web UI server start error: %s", exc)
             _get_elevenlabs_token()
             _get_elevenlabs_http_session()
             logger.info("[TTS/ElevenLabs] Background token and connection pool warm-up complete.")
@@ -320,7 +345,7 @@ def warmup_elevenlabs() -> None:
 
 
 def _elevenlabs_api_key() -> str:
-    _, token = _get_elevenlabs_token()
+    _, token, _ = _get_elevenlabs_token()
     return token
 
 
@@ -686,12 +711,11 @@ def _synthesize_elevenlabs_wav(
     """Gọi ElevenLabs TTS stream."""
 
     _raise_if_tts_cancelled(cancel_event, authority_check)
-    token = _elevenlabs_api_key()
-    auth_type = "xi-api-key"
+    auth_type, token, pool_account_id = _get_elevenlabs_token()
     if token and token.startswith("eyJ"):
         auth_type = "bearer"
-    elif not token:
-        auth_type, token = _get_elevenlabs_token()
+    elif not auth_type:
+        auth_type = "xi-api-key"
 
     v_str = str(voice or "").strip()
     if not v_str or v_str in {"Aoede", "Leda", "Achernar", "Zephyr", "Puck", "Fenrir", "Kore", "Charon"} or len(v_str) < 10:
@@ -847,6 +871,13 @@ def _synthesize_elevenlabs_wav(
                 ) as response:
                     if response.status_code >= 400:
                         detail = " ".join(str(response.text or "").split())[:500]
+                        if pool_account_id > 0 and (response.status_code in {401, 429} or "quota" in detail.lower() or "exceeded" in detail.lower()):
+                            try:
+                                from runtime.elevenlabs_pool_db import GLOBAL_ELEVEN_POOL
+                                GLOBAL_ELEVEN_POOL.mark_exhausted(pool_account_id, 86400.0)
+                                logger.warning("[TTS/ElevenLabsPool] Account %d bị hết quota/hạn ngạch; đã đánh dấu và xoay pool", pool_account_id)
+                            except Exception:
+                                pass
                         raise RuntimeError(f"ElevenLabs HTTP {response.status_code}: {detail}")
                     chunks: list[bytes] = []
                     for chunk in response.iter_content(chunk_size=16 * 1024):
@@ -862,6 +893,13 @@ def _synthesize_elevenlabs_wav(
             raise RuntimeError("ElevenLabs returned empty audio")
         if _tts_breaker_enabled():
             GLOBAL_TTS_BREAKER.record_success(breaker_key)
+
+        if pool_account_id > 0:
+            try:
+                from runtime.elevenlabs_pool_db import GLOBAL_ELEVEN_POOL
+                GLOBAL_ELEVEN_POOL.record_usage(pool_account_id, len(rendered_text))
+            except Exception:
+                pass
 
         if auth_type == "bearer":
             return _mp3_bytes_to_wav_bytes(pcm)

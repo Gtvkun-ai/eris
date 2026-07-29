@@ -52,6 +52,37 @@ DISCOVERY_PLAN_SCHEMA: dict[str, Any] = {
     },
 }
 
+SURFACE_INTENT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "decision", "mode", "topic", "text", "confidence",
+        "performance_hint", "anchor_type", "anchor_id", "evidence_refs", "reason",
+    ],
+    "properties": {
+        "decision": {"type": "string", "enum": ["speak", "silence"]},
+        "mode": {
+            "type": "string",
+            "enum": [
+                "silence", "small_talk", "dry_tease", "soft_tease",
+                "inner_thought", "random_chat", "continuation",
+                "memory_callback", "task_followup", "screen_comment",
+            ],
+        },
+        "topic": {"type": "string"},
+        "text": {"type": "string"},
+        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "performance_hint": {"type": "string"},
+        "anchor_type": {
+            "type": "string",
+            "enum": ["none", "idle", "conversation", "self", "memory", "task", "screen"],
+        },
+        "anchor_id": {"type": "string"},
+        "evidence_refs": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
+        "reason": {"type": "string"},
+    },
+}
+
 COGNITIVE_OBSERVATION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -621,7 +652,7 @@ class AIRuntimeModelRouter:
             lane = "chat_main"
         elif "observer" in reason_key or "observation" in reason_key:
             lane = "post_observer"
-        elif "autonomous" in reason_key or "self_initiated" in reason_key:
+        elif "autonomous" in reason_key or "self_initiated" in reason_key or "surface" in reason_key:
             lane = "autonomous"
         elif "chat_intention" in reason_key:
             lane = "chat_tool_required"
@@ -696,6 +727,10 @@ class AIRuntimeModelRouter:
     @property
     def fallback_client(self) -> Any | None:
         return getattr(self.llm_service, "social_fallback_client", None)
+
+    @property
+    def surface_client(self) -> Any | None:
+        return getattr(self.llm_service, "surface_client", None)
 
     def _call(
         self,
@@ -1829,6 +1864,102 @@ class AIRuntimeModelRouter:
         )
         return IntentionPlan.from_mapping(payload, channel="autonomous") if payload else IntentionPlan.silence(channel="autonomous", reason="planner_unavailable_or_uncertain")
 
+    @staticmethod
+    def _surface_intent_prompt() -> str:
+        return (
+            "Bạn là lane SELF_SURFACE riêng của ERIS. Nhiệm vụ của bạn là chọn một kiểu biểu hiện công khai "
+            "được phép và viết luôn đúng một micro-line tự nhiên bằng ngôn ngữ gần nhất của hội thoại. "
+            "Bạn không phải observer, không viết chain-of-thought và không giải thích hệ thống. "
+            "Chỉ chọn mode nằm trong surface_contract.allowed_modes. Khi không có điều gì đáng nói hoặc user đang bận, "
+            "trả decision=silence, mode=silence, text/topic rỗng. Khi nói, topic phải là neo cụ thể và text phải tự đủ nghĩa. "
+            "small_talk là một câu đời thường; dry_tease là khịa khô nhưng không hạ nhục; soft_tease là trêu có đường lui; "
+            "inner_thought chỉ dùng một public-safe seed thật trong self_context; random_chat vẫn phải liên quan tới căn phòng, "
+            "mạch gần đây hoặc personality chứ không bịa fact; continuation nối đúng conversation_baton; memory_callback chỉ "
+            "nhắc context được cung cấp; task_followup phải giữ đúng engagement; screen_comment chỉ nói từ screen evidence tươi. "
+            "Không nói rằng bạn thấy/đọc màn hình nếu screen_context không fresh hoặc không có evidence. Không đoán user đang thắng, "
+            "thua, buồn, định làm gì hay cảm thấy gì. Không nhắc score, pressure, private mind, planner, model, API hoặc contract. "
+            "Giọng ERIS ấm kín, hơi khô và có cá tính; tránh câu phục vụ chung như 'tôi ở đây', 'cần gì cứ nói'. "
+            "evidence_refs chỉ copy id có thật từ input. Return exactly one JSON object theo schema."
+        )
+
+    def plan_surface_intent(self, snapshot: Mapping[str, Any]) -> dict[str, Any]:
+        """Cho worker ``surface`` chọn mode và viết micro-line trong một call."""
+
+        client = self.surface_client
+        if client is None:
+            return {}
+        try:
+            timeout = max(2.0, min(30.0, float(os.getenv("ERIS_SURFACE_INTENT_TIMEOUT_SEC", "12") or 12.0)))
+        except (TypeError, ValueError):
+            timeout = 12.0
+        return self._call(
+            client,
+            system=self._surface_intent_prompt(),
+            payload=snapshot,
+            schema=SURFACE_INTENT_SCHEMA,
+            name="eris_autonomous_surface_intent",
+            max_tokens=420,
+            reasoning_effort=None,
+            inference_tier="main_cognition",
+            priority=82,
+            timeout_seconds=timeout,
+        )
+
+    def build_surface_public_payload(
+        self,
+        *,
+        text: str,
+        plan: IntentionPlan,
+        mode: str,
+    ) -> dict[str, Any]:
+        """Bọc câu surface thành envelope public tương thích parser hiện tại.
+
+        Surface model đã viết câu, nên không gọi companion lần hai. Runtime vẫn
+        tạo semantic frame tối thiểu và assistant act typed để các gate/observer
+        phía sau không phải đoán lại từ dấu hỏi hay từ khóa.
+        """
+
+        social_modes = {"small_talk", "dry_tease", "soft_tease", "random_chat"}
+        assistant_kind = "social" if mode in social_modes else "opinion" if mode == "inner_thought" else "assertion"
+        proposition_mode = "none" if assistant_kind == "social" else "continue" if mode in {"continuation", "memory_callback"} else "new"
+        data = {
+            "text": str(text or "").strip(),
+            "should_speak": True,
+            "performance_hint": plan.performance_hint or "neutral",
+            "semantic_frame": {
+                "turn_kind": plan.semantics.turn_kind,
+                "discourse_relation": "continuation_autonomous" if mode in {"continuation", "memory_callback"} else "autonomous_surface",
+                "user_act": "none",
+                "target": "shared_context",
+                "literal_question": False,
+                "ambiguity_owner": "none",
+                "boundary_action": "none",
+                "continuation_key": plan.semantics.continuation_key if plan.semantics.continuation_key != "none" else "",
+                "evidence_scope": plan.semantics.evidence_scope,
+                "tool_intent": "none",
+                "missing_evidence": [],
+                "reference": {
+                    "kind": "none", "speaker": "none", "operation": "none",
+                    "turn_index": 0, "turn_offset": 0, "confidence": 0.0,
+                },
+                "reply_obligation": {
+                    "must_answer": False,
+                    "must_not_broad_clarify": False,
+                    "must_not_call_tool": True,
+                },
+                "memory_query": {
+                    "intent": "none", "subject": "", "predicate_hint": "", "object_hint": "",
+                    "temporal_scope": "current", "answer_mode": "exact", "confidence": 0.0,
+                },
+            },
+            "assistant_act": {
+                "kind": assistant_kind,
+                "proposition_mode": proposition_mode,
+                "confidence": plan.confidence,
+            },
+        }
+        return self._compat_public_envelope(data)
+
 
 __all__ = [
     "AIRuntimeModelRouter",
@@ -1838,6 +1969,7 @@ __all__ = [
     "PERSONALITY_REFLECTION_SCHEMA",
     "INTENTION_PLAN_SCHEMA",
     "PUBLIC_REPLY_SCHEMA",
+    "SURFACE_INTENT_SCHEMA",
     "SEMANTIC_FRAME_SCHEMA",
     "ASSISTANT_ACT_SCHEMA",
 ]

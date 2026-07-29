@@ -147,6 +147,7 @@ class LlmService:
         critic_client=None,
         inner_client=None,
         research_client=None,
+        surface_client=None,
         logger=None,
     ):
         self.client = client
@@ -159,6 +160,10 @@ class LlmService:
         self.observer_client = observer_client or social_parser_client
         self.critic_client = critic_client or social_critic_client or fallback_client
         self.inner_client = inner_client or style_client or client
+        # Worker chuyên chọn cách ERIS tự biểu hiện rồi viết luôn micro-line.
+        # Không fallback ngầm sang companion tại đây: pipeline cần biết rõ khi
+        # lane surface chưa được cấu hình để dùng planner cũ một cách minh bạch.
+        self.surface_client = surface_client
         self.research_client = research_client or fallback_client or client
         # Dedicated format-recovery client (e.g. Groq llama). Preferred over
         # style_client when the main provider breaks the JSON/no-CoT contract.

@@ -5,6 +5,7 @@ import json
 import socket
 from pathlib import Path
 
+from live2d_body.parameter_profile import INFJ_PARAMETER_PROFILE
 from live2d_body.stage_state import Live2DStageState
 from live2d_body.udp_receiver import Live2DStageReceiver
 
@@ -66,7 +67,10 @@ def test_gaze_keeps_custom_eyes_coupled_without_extreme_crossing() -> None:
     assert sample is not None
     assert 0.0 < sample.left_x <= 0.28
     assert -0.28 <= sample.right_x < 0.0
-    assert abs(sample.left_x + sample.right_x) < 1e-6
+    # Mắt nhìn vào sống mũi có biên nhỏ hơn mắt nhìn ra ngoài.
+    assert abs(sample.left_x) > abs(sample.right_x)
+    assert 0.0 < sample.head_x_degrees <= 2.4
+    assert 0.78 <= sample.left_eye_open_scale <= 1.0
 
 
 def test_window_geometry_is_reported_to_godot_body() -> None:
@@ -131,3 +135,51 @@ def test_renderer_control_shutdown_is_recorded() -> None:
         "type": "shutdown",
     })
     assert receiver.shutdown_requested is True
+
+
+def test_parameter_profile_matches_viewer_semantics() -> None:
+    profile = INFJ_PARAMETER_PROFILE
+    assert profile.clamp_angle_x(-99.0) == -30.0
+    assert profile.clamp_angle_x(99.0) == 10.0
+    assert profile.mouth_open_from_ratio(0.0) == -1.0
+    assert profile.mouth_open_from_ratio(0.5) == 0.0
+    assert profile.mouth_open_from_ratio(1.0) == 1.0
+
+
+def test_stage_state_closes_custom_mouth_at_minus_one() -> None:
+    state = Live2DStageState()
+    snapshot = state.advance(0.0, now=0.0)
+    assert snapshot.parameters["ParamMouthOpenY"] == -1.0
+
+
+def test_warm_expression_does_not_raise_both_brows() -> None:
+    state = Live2DStageState()
+    state.handle_payload({"protocol": "eris.stage", "type": "stage_segment", "emotion": "warm_soft"})
+    snapshot = state.advance(0.0, now=0.0)
+    assert snapshot.parameters["ParamBrowLAngle"] <= 0.0
+    assert snapshot.parameters["ParamBrowRAngle"] <= 0.0
+    assert snapshot.parameters["ParamMouthForm"] > 0.0
+
+
+def test_gaze_left_uses_larger_viewer_left_head_range() -> None:
+    from live2d_body.gaze import GazeController
+
+    gaze = GazeController(
+        strength_x=0.30,
+        strength_y=0.18,
+        head_follow_left_degrees=4.8,
+        head_follow_right_degrees=2.4,
+    )
+    sample = None
+    for _ in range(60):
+        sample = gaze.update(
+            cursor_screen=(0.0, 500.0),
+            face_screen=(1000.0, 500.0),
+            span_x=400.0,
+            span_y=300.0,
+            dt=1 / 60,
+        )
+    assert sample is not None
+    assert -4.8 <= sample.head_x_degrees < 0.0
+    assert sample.left_x < 0.0 < sample.right_x
+    assert abs(sample.right_x) > abs(sample.left_x)

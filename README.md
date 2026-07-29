@@ -83,6 +83,7 @@ ERIS càng ít bị "câm".
 - Key Gemini chính: `api_keys.ERIS_REMOTE_API_KEY`
 - Các key Gemini dự phòng (xoay vòng): thêm vào mảng `api_keys.ERIS_PRIVATE_MIND_FALLBACK_API_KEYS`
 - Key Groq chính + dự phòng: `api_keys.ERIS_GROQ_API_KEY` và `api_keys.ERIS_GROQ_FALLBACK_API_KEYS`
+- Key DeepSeek Web riêng cho surface/autonomous micro-line: `api_keys.ERIS_DS_SURFACE_API_KEY`
 
 Các giá trị bắt đầu bằng `PASTE_` được coi là placeholder và bị bỏ qua, nên cứ để
 nguyên slot nào chưa dùng.

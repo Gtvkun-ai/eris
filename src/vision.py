@@ -111,6 +111,7 @@ class AttentionOverseer:
         social_critic_client = self.process_manager.build_social_critic_client() if social_models_enabled else None
         social_fallback_client = self.process_manager.build_social_fallback_client() if social_models_enabled else None
         inner_client = self.process_manager.build_inner_client()
+        surface_client = self.process_manager.build_surface_client()
         research_client = self.process_manager.build_research_client()
         if escalation_client is not None:
             provider_label = getattr(escalation_client, "base_url", "") or escalation_client.__class__.__name__
@@ -127,6 +128,7 @@ class AttentionOverseer:
             observer_client=social_parser_client,
             critic_client=social_critic_client,
             inner_client=inner_client,
+            surface_client=surface_client,
             research_client=research_client,
             logger=self.logger,
         )
@@ -137,6 +139,7 @@ class AttentionOverseer:
                 ("observer", getattr(self.llm_service, "observer_client", None)),
                 ("critic", getattr(self.llm_service, "critic_client", None)),
                 ("inner", getattr(self.llm_service, "inner_client", None)),
+                ("surface", getattr(self.llm_service, "surface_client", None)),
                 ("style", getattr(self.llm_service, "style_client", None)),
                 ("research", getattr(self.llm_service, "research_client", None)),
             )

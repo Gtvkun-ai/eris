@@ -24,6 +24,7 @@ from eris_secrets import get_secret
 
 WORKER_ROLES: tuple[str, ...] = (
     "companion",
+    "surface",
     "observer",
     "critic",
     "inner",
@@ -33,7 +34,7 @@ WORKER_ROLES: tuple[str, ...] = (
 
 # Structured workers default to canonical one-line JSON whenever the caller
 # requests json_object/json_schema. Companion/style keep free-text behavior.
-_DEFAULT_JSONL_ROLES = frozenset({"companion", "observer", "critic", "inner", "research"})
+_DEFAULT_JSONL_ROLES = frozenset({"companion", "surface", "observer", "critic", "inner", "research"})
 
 
 class JsonlContractError(RuntimeError):
@@ -64,6 +65,9 @@ def normalize_worker_role(role: object) -> str:
         "main": "companion",
         "chat": "companion",
         "social": "observer",
+        "self_surface": "surface",
+        "autonomous_surface": "surface",
+        "small_talk": "surface",
         "deliberator": "critic",
         "private_mind": "inner",
         "memory": "inner",
@@ -87,6 +91,18 @@ def _env_flag(name: str, default: bool) -> bool:
     return raw not in {"0", "false", "no", "off", "none", "disabled"}
 
 
+def _clean_api_key(value: str) -> str:
+    candidate = str(value or "").strip()
+    marker = candidate.upper()
+    if (
+        not candidate
+        or marker.startswith("PASTE_")
+        or marker in {"GATEWAY_KEY_SURFACE", "DAN_GATEWAY_KEY_SURFACE_VAO_DAY"}
+    ):
+        return ""
+    return candidate
+
+
 def _env_float(name: str, default: float, *, minimum: float = 0.0, maximum: float = 120.0) -> float:
     raw = str(os.environ.get(name, "") or "").strip()
     if not raw:
@@ -100,14 +116,21 @@ def _env_float(name: str, default: float, *, minimum: float = 0.0, maximum: floa
 def load_worker_spec(role: object) -> DeepSeekWorkerSpec:
     normalized = normalize_worker_role(role)
     role_prefix = f"ERIS_DS_{normalized.upper()}"
-    role_env_key = os.environ.get(f"{role_prefix}_API_KEY", "")
-    api_key = str(
-        role_env_key
-        or (get_secret("ERIS_DS2API_API_KEY") if os.environ.get("ERIS_DS2API_ENABLED") in {"1", "true"} else "")
-        or get_secret(f"{role_prefix}_API_KEY")
-        or get_secret("ERIS_DS2API_API_KEY")
-        or get_secret("ERIS_DS_API_KEY")
-    ).strip()
+    role_env_key = _clean_api_key(os.environ.get(f"{role_prefix}_API_KEY", ""))
+    role_secret_key = _clean_api_key(get_secret(f"{role_prefix}_API_KEY"))
+    # Surface được tạo để có account/gateway riêng. Không âm thầm mượn key
+    # companion/generic, nếu không một câu small talk lại tranh đúng account chat
+    # chính và toàn bộ lý do tồn tại của lane mới biến thành đồ trang trí.
+    if normalized == "surface" and not _env_flag("ERIS_DS_SURFACE_ALLOW_SHARED_KEY", False):
+        api_key = role_env_key or role_secret_key
+    else:
+        api_key = _clean_api_key(
+            role_env_key
+            or (get_secret("ERIS_DS2API_API_KEY") if os.environ.get("ERIS_DS2API_ENABLED") in {"1", "true"} else "")
+            or role_secret_key
+            or get_secret("ERIS_DS2API_API_KEY")
+            or get_secret("ERIS_DS_API_KEY")
+        )
     base_url = str(
         get_secret(f"{role_prefix}_BASE_URL")
         or get_secret("ERIS_DS2API_BASE_URL")

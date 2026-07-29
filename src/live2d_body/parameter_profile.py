@@ -1,0 +1,99 @@
+# -*- coding: utf-8 -*-
+"""Quy ước parameter cho model INFJ theo góc nhìn của người dùng.
+
+Model này không hoàn toàn theo preset Cubism chuẩn: ``ParamAngleX`` có biên
+trái/phải bất đối xứng và ``ParamMouthOpenY`` dùng -1..1 thay vì 0..1. Gom mọi
+quy ước vào một profile giúp renderer, gaze và biểu cảm không tự diễn giải dấu
+theo ba cách khác nhau, một truyền thống phần mềm khá lâu đời nhưng không đáng
+duy trì.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+def _clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(float(minimum), min(float(maximum), float(value)))
+
+
+@dataclass(frozen=True, slots=True)
+class InfjParameterProfile:
+    """Miền giá trị thực tế của model, mô tả theo phía người đang nhìn model."""
+
+    # Người dùng nhìn: âm = đầu sang trái, dương = đầu sang phải.
+    angle_x_left: float = -30.0
+    angle_x_center: float = 0.0
+    angle_x_right: float = 10.0
+    angle_z_min: float = -30.0
+    angle_z_max: float = 30.0
+
+    # Mắt mở/đóng theo chuẩn Cubism.
+    eye_closed: float = 0.0
+    eye_open: float = 1.0
+
+    # Mỗi mắt có trục X riêng: -1 vào phía sống mũi, +1 ra phía thái dương.
+    eye_toward_nose: float = -1.0
+    eye_outward: float = 1.0
+    eye_down: float = -1.0
+    eye_up: float = 1.0
+
+    # Lông mày và mood miệng.
+    brow_low: float = -1.0
+    brow_neutral: float = 0.0
+    brow_raised: float = 1.0
+    mouth_bad: float = -1.0
+    mouth_neutral: float = 0.0
+    mouth_happy: float = 1.0
+
+    # Rig riêng của model: -1 đóng, 0 nửa mở, +1 mở hết.
+    mouth_closed: float = -1.0
+    mouth_half: float = 0.0
+    mouth_open: float = 1.0
+
+    def clamp_angle_x(self, value: float) -> float:
+        return _clamp(value, self.angle_x_left, self.angle_x_right)
+
+    def clamp_angle_z(self, value: float) -> float:
+        return _clamp(value, self.angle_z_min, self.angle_z_max)
+
+    def clamp_eye_open(self, value: float) -> float:
+        return _clamp(value, self.eye_closed, self.eye_open)
+
+    def clamp_eye_axis(self, value: float) -> float:
+        return _clamp(value, -1.0, 1.0)
+
+    def clamp_brow(self, value: float) -> float:
+        return _clamp(value, self.brow_low, self.brow_raised)
+
+    def clamp_mouth_form(self, value: float) -> float:
+        return _clamp(value, self.mouth_bad, self.mouth_happy)
+
+    def clamp_mouth_open(self, value: float) -> float:
+        return _clamp(value, self.mouth_closed, self.mouth_open)
+
+    def mouth_open_from_ratio(self, ratio: float) -> float:
+        """Đổi độ mở 0..1 thành miền rig -1..1 của model."""
+        normalized = _clamp(ratio, 0.0, 1.0)
+        return self.mouth_closed + (self.mouth_open - self.mouth_closed) * normalized
+
+    def sanitize(self, parameter_id: str, value: float) -> float:
+        """Clamp theo semantics trước khi giao cho Cubism Core."""
+        if parameter_id == "ParamAngleX":
+            return self.clamp_angle_x(value)
+        if parameter_id == "ParamAngleZ":
+            return self.clamp_angle_z(value)
+        if parameter_id in {"ParamEyeLOpen", "ParamEyeROpen"}:
+            return self.clamp_eye_open(value)
+        if parameter_id in {"eyeballxl", "eyeballxr", "eyebally", "eyeballyr", "ParamEyeBallX", "ParamEyeBallY"}:
+            return self.clamp_eye_axis(value)
+        if parameter_id in {"ParamBrowLAngle", "ParamBrowRAngle"}:
+            return self.clamp_brow(value)
+        if parameter_id == "ParamMouthForm":
+            return self.clamp_mouth_form(value)
+        if parameter_id == "ParamMouthOpenY":
+            return self.clamp_mouth_open(value)
+        return float(value)
+
+
+INFJ_PARAMETER_PROFILE = InfjParameterProfile()
