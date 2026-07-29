@@ -1529,6 +1529,7 @@ class AIRuntimeModelRouter:
         event_kind: str = "chat",
         session_id: str = "",
         relationship_id: str = "primary_user",
+        timeout_seconds: float | None = None,
     ) -> CognitiveObservation:
         resolved_session_id = str(
             session_id
@@ -1561,10 +1562,13 @@ class AIRuntimeModelRouter:
         }
         started = time.perf_counter()
         fast = self._fast_observer_payload(user_text, event_kind=event_kind)
-        try:
-            observer_timeout = max(0.8, min(60.0, float(os.getenv("ERIS_POST_OBSERVER_HTTP_TIMEOUT_SEC", "30.0") or 30.0)))
-        except (TypeError, ValueError):
-            observer_timeout = 30.0
+        if timeout_seconds is not None:
+            observer_timeout = max(0.8, min(60.0, float(timeout_seconds)))
+        else:
+            try:
+                observer_timeout = max(0.8, min(60.0, float(os.getenv("ERIS_POST_OBSERVER_HTTP_TIMEOUT_SEC", "15.0") or 15.0)))
+            except (TypeError, ValueError):
+                observer_timeout = 15.0
         if fast is not None:
             primary_payload, source = fast
         else:
@@ -1634,7 +1638,7 @@ class AIRuntimeModelRouter:
                 name="eris_cognitive_observation_deep",
                 max_tokens=820,
                 reasoning_effort=None,
-                timeout_seconds=max(observer_timeout, 30.0),
+                timeout_seconds=observer_timeout,
             )
             deep = CognitiveObservation.from_mapping(
                 deep_payload,

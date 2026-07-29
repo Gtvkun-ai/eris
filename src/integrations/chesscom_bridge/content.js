@@ -2,6 +2,7 @@
   "use strict";
 
   const DEFAULT_ENDPOINT = "http://127.0.0.1:8765/v1/chess/snapshot";
+  const INITIAL_BOARD_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
   const PIECES = new Set(["wp", "wn", "wb", "wr", "wq", "wk", "bp", "bn", "bb", "br", "bq", "bk"]);
   const PIECE_FEN = {wp:"P",wn:"N",wb:"B",wr:"R",wq:"Q",wk:"K",bp:"p",bn:"n",bb:"b",br:"r",bq:"q",bk:"k"};
   let lastSignature = "";
@@ -138,6 +139,19 @@
     return "";
   }
 
+  function clockRunning() {
+    // Chess.com thay class theo từng layout, nên chỉ dùng các dấu hiệu tương đối
+    // bảo thủ. Sai âm tính còn đỡ hơn tuyên bố ván bắt đầu khi người dùng mới
+    // mở bàn và chưa bấm chơi.
+    const selectors = [
+      ".clock-component.clock-player-turn",
+      "[class*='clock'][class*='player-turn']",
+      "[class*='clock'][class*='active']",
+      "[data-cy='clock-active']"
+    ];
+    return selectors.some(selector => Boolean(document.querySelector(selector)));
+  }
+
   function loadSettings() {
     return new Promise(resolve => {
       chrome.storage.local.get(
@@ -156,21 +170,36 @@
     if (Object.keys(pieces).length < 2) return;
     const boardFen = toBoardFen(pieces);
     const result = gameResult();
+    const ply = plyCount();
+    const running = clockRunning();
+    const started = ply > 0 || running || boardFen !== INITIAL_BOARD_FEN;
     const payload = {
       platform: "chess.com",
       game_id: gameId(),
       board_fen: boardFen,
       page_url: location.href,
       orientation: orientation(board),
-      ply: plyCount(),
+      ply,
       result,
-      status: result ? "completed" : "active",
+      status: result ? "completed" : (started ? "active" : "ready"),
       mode_hint: detectModeHint(),
       mode_override: settings.modeOverride === "auto" ? "" : settings.modeOverride,
       captured_at: Date.now() / 1000,
-      metadata: {title: document.title.slice(0, 180)}
+      metadata: {
+        title: document.title.slice(0, 180),
+        // Hai cờ này giúp runtime phân biệt "đã thấy bàn" với "ván đã chạy".
+        game_started: started,
+        clock_running: running
+      }
     };
-    const signature = JSON.stringify([payload.game_id, payload.board_fen, payload.ply, payload.result, payload.mode_override]);
+    const signature = JSON.stringify([
+      payload.game_id,
+      payload.board_fen,
+      payload.ply,
+      payload.result,
+      payload.status,
+      payload.mode_override
+    ]);
     if (signature === lastSignature) return;
     lastSignature = signature;
     try {

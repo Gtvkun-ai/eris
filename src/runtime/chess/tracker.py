@@ -6,7 +6,13 @@ import hashlib
 import threading
 from dataclasses import dataclass
 
-from .contracts import BoardSnapshot, ChessAssistMode, ChessObservation, MoveSuggestion
+from .contracts import (
+    BoardSnapshot,
+    ChessAssistMode,
+    ChessObservation,
+    ChessObservationPhase,
+    MoveSuggestion,
+)
 from .engine import Position, analyze, apply_move, evaluate, evaluation_label, in_check, infer_transition, move_san
 from .mode_policy import classify_mode
 
@@ -16,6 +22,7 @@ class _GameState:
     position: Position
     seen: int = 0
     last_evaluation_cp: int | None = None
+    phase: ChessObservationPhase = ChessObservationPhase.WAITING_FOR_START
 
 
 class ChessGameTracker:
@@ -32,7 +39,7 @@ class ChessGameTracker:
         key = f"{snapshot.platform}:{snapshot.game_id}"
         with self._lock:
             state = self._games.get(key)
-            game_started = state is None
+            game_started = False
             last_move = None
             last_san = ""
             resynced = False
@@ -41,7 +48,13 @@ class ChessGameTracker:
             if state is None:
                 turn = "w" if snapshot.ply % 2 == 0 else "b"
                 position = Position.from_board_fen(snapshot.board_fen, turn=turn, ply=snapshot.ply)
-                state = _GameState(position=position, seen=1)
+                phase = (
+                    ChessObservationPhase.ACTIVE
+                    if _snapshot_has_started(snapshot)
+                    else ChessObservationPhase.WAITING_FOR_START
+                )
+                state = _GameState(position=position, seen=1, phase=phase)
+                game_started = phase is ChessObservationPhase.ACTIVE
                 self._games[key] = state
             elif state.position.board_fen != snapshot.board_fen:
                 last_move, child = infer_transition(state.position, snapshot.board_fen)
@@ -54,6 +67,14 @@ class ChessGameTracker:
                     state.position = Position.from_board_fen(snapshot.board_fen, turn=turn, ply=snapshot.ply)
                     resynced = True
                 state.seen += 1
+
+            # Snapshot đầu tiên chỉ chứng minh "đã thấy bàn". Chỉ chuyển sang
+            # ACTIVE khi có nước đi, bàn không còn ở thế xuất phát, đồng hồ chạy,
+            # hoặc bridge gửi cờ game_started rõ ràng.
+            if state.phase is ChessObservationPhase.WAITING_FOR_START:
+                if last_move is not None or _snapshot_has_started(snapshot):
+                    state.phase = ChessObservationPhase.ACTIVE
+                    game_started = True
             position = state.position
 
             score = None
@@ -84,6 +105,8 @@ class ChessGameTracker:
 
             result = snapshot.result
             game_over = bool(result or snapshot.status in {"completed", "finished", "game_over", "checkmate", "draw"})
+            if game_over:
+                state.phase = ChessObservationPhase.COMPLETED
             return ChessObservation(
                 game_id=snapshot.game_id,
                 mode=mode,
@@ -99,6 +122,8 @@ class ChessGameTracker:
                 move_quality=quality,
                 hint_focus=hint_focus,
                 suggestion=suggestion,
+                phase=state.phase,
+                board_detected=True,
                 game_started=game_started,
                 game_over=game_over,
                 result=result,
@@ -143,6 +168,24 @@ def _move_quality(swing_cp: int) -> str:
     if swing_cp >= 80:
         return "good"
     return "normal"
+
+
+def _snapshot_has_started(snapshot: BoardSnapshot) -> bool:
+    """Suy ra ván đã bắt đầu từ bằng chứng đủ mạnh, không từ chữ ``active`` mơ hồ.
+
+    Bản extension cũ luôn gửi ``status=active`` ngay cả khi bàn còn nguyên vị trí
+    xuất phát. Vì thế trạng thái đó không được dùng một mình để kết luận ván đã
+    chạy. Đây là chỗ nhỏ nhưng trước kia khiến ERIS tuyên bố bắt đầu quá sớm.
+    """
+
+    metadata = snapshot.metadata if isinstance(snapshot.metadata, dict) else dict(snapshot.metadata or {})
+    if bool(metadata.get("game_started") or metadata.get("clock_running")):
+        return True
+    if snapshot.ply > 0:
+        return True
+    if snapshot.board_fen != Position.initial().board_fen:
+        return True
+    return snapshot.status in {"playing", "in_progress", "started"}
 
 
 __all__ = ["ChessGameTracker"]

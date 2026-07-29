@@ -229,6 +229,17 @@ class AIChatOrchestrator:
 
         scope = f"user_turn:{int(float(cycle_start) * 1000)}:{id(self):x}"
         with GLOBAL_INFERENCE_BROKER.user_turn(scope):
+            preempt_background = getattr(self.host, "_preempt_background_for_chat", None)
+            if callable(preempt_background):
+                try:
+                    preempt_background("user_turn")
+                except Exception as exc:
+                    logger = getattr(self.host, "logger", None)
+                    if logger is not None:
+                        try:
+                            logger.debug("background preempt failed: %s", exc)
+                        except Exception:
+                            pass
             result = self._run_unscoped(
                 user_text,
                 cycle_start=cycle_start,

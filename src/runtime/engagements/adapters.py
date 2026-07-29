@@ -209,7 +209,93 @@ class GenericEngagementAdapter:
 class ChessCompanionAdapter(GenericEngagementAdapter):
     adapter_id = "chess"
     summary_label = "Chess game"
-    expected_events = ("board position changed", "move played", "hint request", "game ended")
+    expected_events = ("board detected", "game started", "move played", "game ended")
+
+    def initial_state(self, objective: str, *, metadata: Mapping[str, Any] | None = None) -> Mapping[str, Any]:
+        """Tạo task xem cờ ở pha chờ bàn, không giả định người dùng đã vào ván."""
+
+        data = dict(super().initial_state(objective, metadata=metadata))
+        data.update({
+            "chess_phase": "waiting_for_board",
+            "board_seen": False,
+            "game_started": False,
+            "game_over": False,
+            # Nhịp hỏi riêng cho pha chờ. Policy đọc hai khóa generic này nên
+            # adapter khác cũng có thể dùng mà không phải nhét if-domain vào core.
+            "interaction_cadence_seconds": 18.0,
+            "preferred_interaction_action": "ask",
+            "waiting_prompt_count": 0,
+            "next_expected_events": [
+                "Chess.com board snapshot",
+                "bridge connection",
+                "user confirms the board is open",
+            ],
+        })
+        return data
+
+    def reduce(self, state: Mapping[str, Any], event: EngagementEvent) -> Mapping[str, Any]:
+        """Thu gọn event bridge thành state machine quan sát cờ tạm thời."""
+
+        data = dict(super().reduce(state, event))
+        kind = str(event.kind or "").strip().lower()
+        payload = dict(event.payload or {})
+        payload_phase = _compact(payload.get("phase"), 40).lower()
+
+        if kind in {"chess.board_detected", "chess.board_ready"}:
+            data["board_seen"] = True
+            data["chess_phase"] = "waiting_for_start"
+            data["interaction_cadence_seconds"] = 22.0
+            data["preferred_interaction_action"] = "ask"
+            data["waiting_prompt_count"] = 0
+            data["board_detected_at"] = event.timestamp
+            data["next_expected_events"] = [
+                "first legal move",
+                "clock starts",
+                "game started signal",
+            ]
+            data["recent_progress"] = _recent(data, "Đã thấy bàn cờ; đang chờ ván bắt đầu")
+        elif kind == "chess.game_started":
+            data["board_seen"] = True
+            data["game_started"] = True
+            data["chess_phase"] = "active"
+            data["interaction_cadence_seconds"] = 0.0
+            data["preferred_interaction_action"] = "speak"
+            data["game_started_at"] = event.timestamp
+            data["next_expected_events"] = ["move played", "position changed", "game ended"]
+            data["recent_progress"] = _recent(data, "Ván cờ đã bắt đầu")
+        elif kind in {"chess.move_played", "chess.position_changed"}:
+            data["board_seen"] = True
+            if payload_phase == "active" or kind == "chess.move_played":
+                data["game_started"] = True
+                data["chess_phase"] = "active"
+                data["interaction_cadence_seconds"] = 0.0
+                data["preferred_interaction_action"] = "speak"
+                data["next_expected_events"] = ["move played", "position changed", "game ended"]
+        elif kind in {"chess.game_over", "chess.game.ended", "chess.game.completed"}:
+            data["board_seen"] = True
+            data["game_over"] = True
+            data["chess_phase"] = "completed"
+            data["interaction_cadence_seconds"] = 0.0
+            data["preferred_interaction_action"] = "speak"
+            data["game_ended_at"] = event.timestamp
+            data["next_expected_events"] = ["final commentary", "game summary"]
+
+        if kind.startswith("chess."):
+            data["last_chess_snapshot_at"] = event.timestamp
+
+        # Sau khi ERIS vừa nói ở pha chờ, giãn lần hỏi kế tiếp để tránh biến
+        # "đã vô chưa" thành đồng hồ báo thức cứ 18 giây reo một lần.
+        if kind == "assistant.spoke" and str(data.get("chess_phase", "")).startswith("waiting_"):
+            count = max(0, int(data.get("waiting_prompt_count", 0) or 0)) + 1
+            data["waiting_prompt_count"] = count
+            data["interaction_cadence_seconds"] = 35.0 if count == 1 else 60.0
+
+        # Cho phép bridge truyền phase chính xác hơn, nhưng không cho snapshot cũ
+        # kéo task đã completed quay ngược lại active.
+        if payload_phase and data.get("chess_phase") != "completed":
+            if payload_phase in {"waiting_for_start", "active", "possibly_ended"}:
+                data["chess_phase"] = payload_phase
+        return data
 
     def accepts_evidence(self, kind: str, *, source: str, payload: Mapping[str, Any]) -> bool:
         del source, payload
@@ -217,8 +303,14 @@ class ChessCompanionAdapter(GenericEngagementAdapter):
 
     def signal_importance(self, event: EngagementEvent) -> float:
         kind = str(event.kind or "").strip().lower()
+        # Engagement vừa được tạo là tín hiệu để sau khoảng nghỉ tối thiểu ERIS
+        # hỏi ngắn xem người dùng đã mở bàn/bridge chưa, thay vì im 55 giây.
+        if kind == "engagement.started":
+            return 0.72
+        if kind in {"chess.board_detected", "chess.board_ready"}:
+            return 0.90
         if kind == "chess.game_started":
-            return 0.78
+            return 0.96
         if kind == "chess.move_played":
             return 0.94
         if kind == "chess.position_changed":
@@ -238,7 +330,29 @@ class ChessCompanionAdapter(GenericEngagementAdapter):
             if full else
             "Unknown page: cannot confirm game context — only react socially, do not suggest moves or evaluate."
         )
-        constraints = tuple(base.interaction_constraints) + (dynamic,)
+        phase = str(state.get("chess_phase") or "waiting_for_board").strip().lower()
+        phase_instruction = {
+            "waiting_for_board": (
+                "No chess-board snapshot has arrived. Do not claim to see the board. "
+                "When interaction is due, ask briefly whether the user has opened the game and whether the Chess.com bridge is connected."
+            ),
+            "waiting_for_start": (
+                "The board is visible, but there is no reliable start evidence yet. "
+                "Acknowledge that the board is visible and ask whether the game has started; do not invent moves."
+            ),
+            "active": (
+                "The game is active. Ground every comment in the latest chess event/FEN and avoid repeating commentary when no move changed."
+            ),
+            "possibly_ended": (
+                "The game may have ended. Ask or wait for a result signal instead of declaring a result without evidence."
+            ),
+            "completed": (
+                "The game is complete. Give one concise result-aware summary, then let the engagement close."
+            ),
+        }.get(phase, "Use only observed chess evidence; never invent the board state.")
+        # Chỉ PlannerProjection giữ tối đa 12 constraint. Đặt chỉ dẫn theo pha
+        # lên trước để nó không bị danh sách allowed_actions dài đẩy mất.
+        constraints = (phase_instruction, dynamic) + tuple(base.interaction_constraints)
         return PlannerProjection(
             engagement_id=base.engagement_id, kind=base.kind, objective=base.objective,
             lifecycle=base.lifecycle, focus=base.focus, priority=base.priority, role=base.role,
@@ -265,6 +379,8 @@ class ChessCompanionAdapter(GenericEngagementAdapter):
     def _state_summary(self, engagement: Engagement) -> str:
         state = engagement.domain_state
         pieces = [engagement.objective]
+        if state.get("chess_phase"):
+            pieces.append(f"phase={_compact(state.get('chess_phase'), 32)}")
         if state.get("mode"):
             pieces.append(f"mode={_compact(state.get('mode'), 32)}")
         if state.get("move_number") is not None:

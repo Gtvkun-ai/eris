@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import threading
 import time
 
 from cortex.daydream_consolidation import DaydreamPacket
@@ -31,6 +33,44 @@ class ObserverPrivateRuntimeMixin:
             except Exception as log_exc:
                 _LOG.debug("observer/private logger failed: %s", log_exc, exc_info=log_exc)
         _LOG.debug("[observer/private] %s degraded: %s", operation, exc, exc_info=exc)
+
+    def _preempt_background_for_chat(self, reason: str = "user_turn") -> None:
+        """Best-effort preemption for optional background work before public chat."""
+
+        observer = getattr(self, "ai_post_turn_observer", None)
+        discard_pending = getattr(observer, "discard_pending", None)
+        if callable(discard_pending):
+            try:
+                discard_pending(str(reason or "user_turn"))
+            except Exception as exc:
+                self._observer_boundary_note("post_observer.preempt", exc)
+
+        # Tăng generation để kết quả PrivateMind cũ không được apply sau khi
+        # user đã mở một lượt chat mới. Đồng thời xóa snapshot catch-up đang chờ.
+        schedule_lock = getattr(self, "_private_mind_schedule_lock", None)
+        if schedule_lock is None:
+            schedule_lock = threading.RLock()
+            self._private_mind_schedule_lock = schedule_lock
+        with schedule_lock:
+            self._private_mind_generation = int(getattr(self, "_private_mind_generation", 0) or 0) + 1
+            self._private_mind_dirty = False
+            self._private_mind_latest_tick_kwargs = None
+
+        pending = getattr(self, "_private_mind_future", None)
+        if pending is not None and not pending.done():
+            try:
+                if pending.cancel():
+                    self._private_mind_future = None
+                    self._private_mind_future_generation = None
+            except Exception as exc:
+                self._observer_boundary_note("private_mind.preempt_future", exc)
+
+        try:
+            from runtime.inference_broker import GLOBAL_INFERENCE_BROKER
+
+            GLOBAL_INFERENCE_BROKER.cancel_scope("background:private_mind")
+        except Exception as exc:
+            self._observer_boundary_note("private_mind.preempt_broker", exc)
 
     def _run_background_observer(
         self,
@@ -195,13 +235,19 @@ class ObserverPrivateRuntimeMixin:
         channel: str = "",
         user_text: str = "",
     ) -> None:
-        """Chạy private mind 5 phase trên thread nền — không bao giờ block main loop.
+        """Chạy PrivateMind nền theo mô hình ``single-flight + dirty/latest``.
 
-        PrivateMind gọi Gemini remote (timeout 12s + 1 retry = 24s/call, nhiều call/tick).
-        Nếu chạy đồng bộ trên main loop, Gemini lag là chat bị câm. Giải pháp: submit
-        tick vào ThreadPoolExecutor, main loop trả kết quả sau khi Future hoàn tất.
-        Future được poll mỗi lần hàm này được gọi — kết quả available thì apply ngay,
-        chưa xong thì bỏ qua (loop vẫn tiếp tục nhận chat/autonomous).
+        P2 policy:
+
+        * Chỉ có một Future PrivateMind chạy tại một thời điểm.
+        * Khi có snapshot mới trong lúc Future đang chạy, không tạo queue mới;
+          chỉ ghi ``dirty=True`` và thay bằng snapshot mới nhất.
+        * Worker được phép chạy thêm tối đa một lượt catch-up với snapshot mới nhất.
+        * User chat tăng ``generation``; kết quả thuộc generation cũ bị bỏ để tránh
+          nội tâm cũ chảy ngược vào ngữ cảnh sau khi cuộc trò chuyện đã đổi hướng.
+
+        Cách này giữ được tín hiệu mới mà không tạo một hàng đợi nhật ký nội tâm
+        dài vô tận, thứ mà ngay cả con người cũng không cần thêm.
         """
 
         daemon = getattr(self, "private_mind_daemon", None)
@@ -209,37 +255,47 @@ class ObserverPrivateRuntimeMixin:
         if daemon is None and loop is None:
             return
 
-        # --- Poll kết quả của future đang chạy (nếu có) ---
+        schedule_lock = getattr(self, "_private_mind_schedule_lock", None)
+        if schedule_lock is None:
+            schedule_lock = threading.RLock()
+            self._private_mind_schedule_lock = schedule_lock
+        if not hasattr(self, "_private_mind_generation"):
+            self._private_mind_generation = 0
+        if not hasattr(self, "_private_mind_dirty"):
+            self._private_mind_dirty = False
+        if not hasattr(self, "_private_mind_latest_tick_kwargs"):
+            self._private_mind_latest_tick_kwargs = None
+
+        # --- Poll kết quả của Future đã xong ---
         pending: "Future | None" = getattr(self, "_private_mind_future", None)
         if pending is not None and pending.done():
+            result_generation = getattr(self, "_private_mind_future_generation", None)
             self._private_mind_future = None
+            self._private_mind_future_generation = None
             try:
                 result = pending.result()
-                if result is not None:
-                    self._apply_private_mind_tick_result(result, daemon=daemon)
+                # Chỉ apply nếu user chưa preempt generation này.
+                if result_generation == int(getattr(self, "_private_mind_generation", 0) or 0):
+                    if result is not None:
+                        self._apply_private_mind_tick_result(result, daemon=daemon)
+                else:
+                    self.logger.debug(
+                        "[PrivateMind] discarded stale generation=%s current=%s",
+                        result_generation,
+                        getattr(self, "_private_mind_generation", 0),
+                    )
             except Exception as exc:
                 try:
                     self.logger.warning("PrivateMind tick (bg) error: %s", exc)
                 except Exception:
                     pass
 
-        # Chat chính có ưu tiên tuyệt đối. Có thể poll kết quả cũ ở trên, nhưng
-        # không submit thêm Gemini/PrivateMind trong lúc user đang chờ câu trả lời.
+        # Chat chính có ưu tiên tuyệt đối. Không lưu snapshot trong lúc chat vì
+        # lượt autonomous tiếp theo sẽ cung cấp state mới và đáng tin hơn.
         if getattr(self, "_chat_processing", False):
             return
 
-        # --- Nếu đang có future chạy rồi thì không submit thêm ---
-        if getattr(self, "_private_mind_future", None) is not None:
-            return
-
-        # --- Tạo executor lần đầu ---
-        if not hasattr(self, "_private_mind_executor") or self._private_mind_executor is None:
-            from concurrent.futures import ThreadPoolExecutor
-            self._private_mind_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ERIS-PrivateMind")
-
         state_committer = getattr(self, "state_committer", None)
-
-        # Snapshot các args cần thiết trước khi submit để tránh race condition.
         tick_kwargs = dict(
             user_text=user_text,
             channel=channel or "autonomous",
@@ -254,18 +310,79 @@ class ObserverPrivateRuntimeMixin:
             runtime_owner=self,
         )
 
-        def _run_tick():
+        # Future đang chạy: coalesce mọi cập nhật vào đúng snapshot mới nhất.
+        pending = getattr(self, "_private_mind_future", None)
+        if pending is not None and not pending.done():
+            with schedule_lock:
+                self._private_mind_latest_tick_kwargs = tick_kwargs
+                self._private_mind_dirty = True
+            return
+
+        # --- Tạo executor lần đầu ---
+        if not hasattr(self, "_private_mind_executor") or self._private_mind_executor is None:
+            from concurrent.futures import ThreadPoolExecutor
+
+            self._private_mind_executor = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="ERIS-PrivateMind",
+            )
+
+        try:
+            max_catchups = max(
+                0,
+                min(2, int(os.getenv("ERIS_PRIVATE_MIND_MAX_CATCHUP_TICKS", "1") or 1)),
+            )
+        except (TypeError, ValueError):
+            max_catchups = 1
+
+        with schedule_lock:
+            generation = int(getattr(self, "_private_mind_generation", 0) or 0)
+            # Nếu đã có dirty snapshot từ lúc Future cũ chạy, snapshot hiện tại
+            # thường mới hơn; dùng snapshot hiện tại rồi xóa coalesced state.
+            self._private_mind_dirty = False
+            self._private_mind_latest_tick_kwargs = None
+
+        def _run_one(current_kwargs):
             if daemon is not None and callable(getattr(daemon, "tick", None)):
-                return ("daemon", daemon.tick(**tick_kwargs))
+                return ("daemon", daemon.tick(**current_kwargs))
             if loop is not None and callable(getattr(loop, "tick", None)):
-                kw = dict(tick_kwargs)
+                kw = dict(current_kwargs)
                 kw["surface_candidate_queue"] = getattr(self, "private_mind_surface_queue", None)
                 return ("loop", loop.tick(**kw))
             return None
 
+        def _run_actor():
+            """Chạy tick đầu và tối đa một tick bắt kịp snapshot mới nhất."""
+
+            current_kwargs = tick_kwargs
+            latest_result = None
+            catchups = 0
+            while True:
+                latest_result = _run_one(current_kwargs)
+                with schedule_lock:
+                    current_generation = int(getattr(self, "_private_mind_generation", 0) or 0)
+                    if current_generation != generation or getattr(self, "_chat_processing", False):
+                        # User đã preempt; không tiếp tục catch-up bằng state cũ.
+                        self._private_mind_dirty = False
+                        self._private_mind_latest_tick_kwargs = None
+                        break
+                    if (
+                        catchups >= max_catchups
+                        or not bool(getattr(self, "_private_mind_dirty", False))
+                        or not isinstance(getattr(self, "_private_mind_latest_tick_kwargs", None), dict)
+                    ):
+                        break
+                    current_kwargs = self._private_mind_latest_tick_kwargs
+                    self._private_mind_latest_tick_kwargs = None
+                    self._private_mind_dirty = False
+                    catchups += 1
+            return latest_result
+
         try:
-            self._private_mind_future = self._private_mind_executor.submit(_run_tick)
+            self._private_mind_future_generation = generation
+            self._private_mind_future = self._private_mind_executor.submit(_run_actor)
         except Exception as exc:
+            self._private_mind_future_generation = None
             self._observer_boundary_note("private_mind.submit", exc)
 
 

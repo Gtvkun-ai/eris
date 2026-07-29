@@ -23,6 +23,21 @@ class ChessAssistMode(str, Enum):
         return self is not self.UNKNOWN
 
 
+class ChessObservationPhase(str, Enum):
+    """Vòng đời quan sát tạm thời của một ván cờ.
+
+    Trạng thái này tách chuyện "đã nhận lời xem cờ" khỏi chuyện "đã thật sự
+    nhìn thấy bàn". Nhờ vậy ERIS không còn nhảy thẳng sang đang chơi chỉ vì
+    bridge gửi snapshot đầu tiên.
+    """
+
+    WAITING_FOR_BOARD = "waiting_for_board"
+    WAITING_FOR_START = "waiting_for_start"
+    ACTIVE = "active"
+    POSSIBLY_ENDED = "possibly_ended"
+    COMPLETED = "completed"
+
+
 @dataclass(frozen=True, slots=True)
 class BoardSnapshot:
     platform: str
@@ -87,6 +102,8 @@ class ChessObservation:
     move_quality: str = ""
     hint_focus: str = ""
     suggestion: MoveSuggestion | None = None
+    phase: ChessObservationPhase = ChessObservationPhase.WAITING_FOR_START
+    board_detected: bool = True
     game_started: bool = False
     game_over: bool = False
     result: str = ""
@@ -96,6 +113,7 @@ class ChessObservation:
     def to_event_payload(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["mode"] = self.mode.value
+        payload["phase"] = self.phase.value
         payload["full_assistance"] = self.mode.full_assistance
         payload["suggestion"] = self.suggestion.to_dict() if self.suggestion else None
         if self.suggestion:
@@ -107,6 +125,7 @@ class ChessObservation:
 __all__ = [
     "BoardSnapshot",
     "ChessAssistMode",
+    "ChessObservationPhase",
     "ChessObservation",
     "MoveSuggestion",
 ]

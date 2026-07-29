@@ -100,8 +100,9 @@ def default_profiles() -> tuple[EngagementProfile, ...]:
                 initiative=InitiativeMode.PROACTIVE,
                 feedback_style="sarcastic_but_helpful",
                 allowed_actions=(
+                    "ask_if_board_is_open", "acknowledge_board_detected", "announce_game_started",
                     "comment_on_progress", "give_hint", "point_out_mistake", "ask_for_position",
-                    "evaluate_position", "state_suggested_move_when_available",
+                    "evaluate_position", "state_suggested_move_when_available", "summarize_game",
                 ),
                 forbidden_actions=("invent_board_state", "ignore_assistance_mode"),
                 preferences={

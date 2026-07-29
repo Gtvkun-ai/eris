@@ -11,7 +11,7 @@ from typing import Any, Mapping
 from runtime.engagements import EvidenceBinding
 from runtime.subsystem_health import FailureKind, SubsystemHealthRegistry
 
-from .contracts import BoardSnapshot, ChessObservation
+from .contracts import BoardSnapshot, ChessObservation, ChessObservationPhase
 from .tracker import ChessGameTracker
 
 
@@ -152,28 +152,85 @@ class ChessCompanionService:
             resource_id=f"chess:{snapshot.platform}:{snapshot.game_id}",
             tags=("chess", snapshot.platform, observation.mode.value),
         )
-        engagement = self.engagement_runtime.ensure_profile(
+        engagement = self._resolve_engagement(binding=binding, now=now)
+        event_payload = observation.to_event_payload()
+        evidence_refs = (f"chesscom:{snapshot.game_id}:{snapshot.ply}",)
+        emitted: list[str] = []
+
+        # Nếu người dùng đã ra lệnh xem cờ trước khi mở bàn, phải nối snapshot
+        # vào đúng engagement đó thay vì âm thầm tạo một task cờ thứ hai.
+        board_seen_before = bool(engagement.domain_state.get("board_seen", False))
+        if not board_seen_before:
+            emitted.append("chess.board_detected")
+
+        if observation.game_started:
+            emitted.append("chess.game_started")
+        if observation.last_move_uci:
+            emitted.append("chess.move_played")
+        elif not emitted and observation.phase is ChessObservationPhase.ACTIVE:
+            emitted.append("chess.position_changed")
+        elif not emitted and observation.phase is ChessObservationPhase.WAITING_FOR_START:
+            emitted.append("chess.board_ready")
+        if observation.game_over:
+            emitted.append("chess.game_over")
+
+        # Một snapshot có thể vừa đánh dấu bắt đầu vừa chứa nước đi đầu tiên.
+        # Ghi đủ cả hai event để planner biết "ván bắt đầu" và "nước vừa đi".
+        for kind in dict.fromkeys(emitted):
+            updated = self.engagement_runtime.emit_domain_event(
+                kind,
+                payload=event_payload,
+                engagement_id=engagement.engagement_id,
+                binding=binding,
+                evidence_refs=evidence_refs,
+                now=now,
+            )
+            if updated is not None:
+                engagement = updated
+
+        self._success({
+            "game_id": snapshot.game_id,
+            "mode": observation.mode.value,
+            "phase": observation.phase.value,
+            "events": emitted,
+        })
+        return observation
+
+    def _resolve_engagement(self, *, binding: EvidenceBinding, now: float):
+        """Nối bridge vào task cờ người dùng đã tạo, nếu task đó còn chưa có bàn.
+
+        Trước bản vá, câu "xem tôi đánh cờ" tạo một engagement không có
+        ``resource_id``; snapshot sau đó lại tạo engagement thứ hai vì resource
+        mới không khớp. Hậu quả là một task cứ hỏi "bàn đâu", task kia lại tự
+        bình luận. Tách đôi như vậy rất sáng tạo, nhưng không hữu ích.
+        """
+
+        active = tuple(self.engagement_runtime.registry.active())
+        for item in active:
+            if item.kind == "chess" and item.evidence_binding.resource_id == binding.resource_id:
+                return item
+
+        foreground = self.engagement_runtime.registry.foreground()
+        candidates = [
+            item for item in active
+            if item.kind == "chess" and not item.evidence_binding.meaningful
+        ]
+        target = foreground if foreground in candidates else (candidates[0] if candidates else None)
+        if target is not None:
+            return self.engagement_runtime.bind_engagement(
+                target.engagement_id,
+                binding,
+                now=now,
+                source="chess_bridge",
+            ) or target
+
+        return self.engagement_runtime.ensure_profile(
             "chess",
             objective="Đồng hành cùng người dùng trong ván cờ hiện tại",
             binding=binding,
             now=now,
             source="chess_bridge",
         )
-        kind = "chess.game_started" if observation.game_started else "chess.position_changed"
-        if observation.last_move_uci:
-            kind = "chess.move_played"
-        if observation.game_over:
-            kind = "chess.game_over"
-        self.engagement_runtime.emit_domain_event(
-            kind,
-            payload=observation.to_event_payload(),
-            engagement_id=engagement.engagement_id,
-            binding=binding,
-            evidence_refs=(f"chesscom:{snapshot.game_id}:{snapshot.ply}",),
-            now=now,
-        )
-        self._success({"game_id": snapshot.game_id, "mode": observation.mode.value, "event": kind})
-        return observation
 
     def diagnostics(self) -> dict[str, Any]:
         return {

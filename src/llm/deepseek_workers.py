@@ -15,6 +15,7 @@ import copy
 import json
 import os
 import re
+import threading
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -37,6 +38,10 @@ _DEFAULT_JSONL_ROLES = frozenset({"companion", "observer", "critic", "inner", "r
 
 class JsonlContractError(RuntimeError):
     """Raised when a structured worker still returns invalid JSON after repair."""
+
+
+class RoleWorkerBusyError(RuntimeError):
+    """Raised when a role-scoped worker actor intentionally refuses queued work."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +85,16 @@ def _env_flag(name: str, default: bool) -> bool:
     if not raw:
         return default
     return raw not in {"0", "false", "no", "off", "none", "disabled"}
+
+
+def _env_float(name: str, default: float, *, minimum: float = 0.0, maximum: float = 120.0) -> float:
+    raw = str(os.environ.get(name, "") or "").strip()
+    if not raw:
+        return float(default)
+    try:
+        return max(float(minimum), min(float(maximum), float(raw)))
+    except (TypeError, ValueError):
+        return float(default)
 
 
 def load_worker_spec(role: object) -> DeepSeekWorkerSpec:
@@ -251,11 +266,51 @@ class JsonlWorkerClient:
         self.model_name = getattr(client, "model_name", "")
         self.configured_model_name = getattr(client, "configured_model_name", self.model_name)
         self.key_pool = getattr(client, "key_pool", None)
+        self._actor_lock = threading.Lock()
+        self._actor_enabled = _env_flag(
+            f"ERIS_DS_{self.worker_role.upper()}_ACTOR",
+            _env_flag("ERIS_DS_ROLE_ACTORS", True),
+        )
+        self._drop_if_busy = _env_flag(
+            f"ERIS_DS_{self.worker_role.upper()}_DROP_IF_BUSY",
+            self.worker_role == "inner",
+        )
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._client, name)
 
+    def _actor_acquire_timeout(self, request_timeout: Any) -> float:
+        default_wait = _env_float("ERIS_DS_ACTOR_WAIT_TIMEOUT_S", 2.0, minimum=0.0, maximum=120.0)
+        role_wait = _env_float(
+            f"ERIS_DS_{self.worker_role.upper()}_ACTOR_WAIT_TIMEOUT_S",
+            default_wait,
+            minimum=0.0,
+            maximum=120.0,
+        )
+        try:
+            timeout = float(request_timeout)
+        except (TypeError, ValueError):
+            return role_wait
+        if timeout <= 0:
+            return role_wait
+        return max(0.0, min(role_wait, timeout))
+
     def create_chat_completion(self, **kwargs: Any) -> Any:
+        if self._actor_enabled:
+            if self._drop_if_busy:
+                acquired = self._actor_lock.acquire(blocking=False)
+            else:
+                wait_s = self._actor_acquire_timeout(kwargs.get("timeout"))
+                acquired = self._actor_lock.acquire(timeout=wait_s)
+            if not acquired:
+                raise RoleWorkerBusyError(f"worker={self.worker_role} busy")
+            try:
+                return self._create_chat_completion_locked(**kwargs)
+            finally:
+                self._actor_lock.release()
+        return self._create_chat_completion_locked(**kwargs)
+
+    def _create_chat_completion_locked(self, **kwargs: Any) -> Any:
         structured = self.jsonl_enabled and _structured_response_requested(kwargs.get("response_format"))
         attempts = 1 + (self.repair_attempts if structured else 0)
         last_error: Exception | None = None
@@ -285,6 +340,7 @@ __all__ = [
     "DeepSeekWorkerSpec",
     "JsonlContractError",
     "JsonlWorkerClient",
+    "RoleWorkerBusyError",
     "WORKER_ROLES",
     "canonical_json_line",
     "configured_worker_roles",

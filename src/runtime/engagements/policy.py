@@ -94,6 +94,22 @@ class EngagementInteractionPolicy:
             InitiativeMode.GUIDED,
             InitiativeMode.AMBIENT,
         }
+        # Adapter có thể xin một nhịp tương tác ngắn hơn trong một pha cụ thể,
+        # ví dụ task cờ đang chờ bàn. Khóa này là generic để policy không cần
+        # biết domain nào đang chạy, một sự kiềm chế hiếm hoi nhưng đáng quý.
+        try:
+            state_cadence_seconds = max(
+                0.0,
+                float(engagement.domain_state.get("interaction_cadence_seconds", 0.0) or 0.0),
+            )
+        except (TypeError, ValueError):
+            state_cadence_seconds = 0.0
+        state_cadence_due = bool(
+            cadence_enabled
+            and state_cadence_seconds > 0.0
+            and user_quiet
+            and since_output >= state_cadence_seconds
+        )
         cadence_due = bool(cadence_enabled and user_quiet and since_output >= policy.desired_interval_seconds)
         maximum_due = bool(cadence_enabled and user_quiet and since_output >= policy.maximum_quiet_seconds)
 
@@ -106,9 +122,19 @@ class EngagementInteractionPolicy:
                 anchor_kind=f"engagement:{engagement.kind}",
                 seconds_since_engagement_output=since_output,
             )
-        if event_due or cadence_due or maximum_due:
+        if event_due or state_cadence_due or cadence_due or maximum_due:
+            preferred_action = str(
+                engagement.domain_state.get("preferred_interaction_action", "") or ""
+            ).strip().lower()
             if initiative == InitiativeMode.MONITORING:
                 action = InteractionAction.NOTIFY
+            elif (
+                preferred_action == InteractionAction.ASK.value
+                and state_cadence_due
+                and not cadence_due
+                and not maximum_due
+            ):
+                action = InteractionAction.ASK
             elif initiative == InitiativeMode.GUIDED and engagement.lifecycle == LifecycleStatus.WAITING:
                 action = InteractionAction.ASK
             else:
@@ -116,6 +142,7 @@ class EngagementInteractionPolicy:
             reason = (
                 f"engagement_event:{significant.reason}" if event_due and significant is not None
                 else "engagement_maximum_quiet" if maximum_due
+                else "engagement_state_cadence" if state_cadence_due
                 else "engagement_cadence_due"
             )
             return InteractionDecision(

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 
 import pytest
 
 from llm.deepseek_workers import (
     JsonlContractError,
     JsonlWorkerClient,
+    RoleWorkerBusyError,
     canonical_json_line,
     load_worker_spec,
 )
@@ -29,6 +31,24 @@ class _FakeClient:
         self.calls.append(kwargs)
         content = self.outputs.pop(0)
         return {"choices": [{"message": {"content": content}}]}
+
+
+class _BlockingClient:
+    base_url = "http://127.0.0.1:6011/v1"
+    model_name = "deepseek-v4-flash"
+    configured_model_name = "deepseek-v4-flash"
+    key_pool = None
+
+    def __init__(self):
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.calls = []
+
+    def create_chat_completion(self, **kwargs):
+        self.calls.append(kwargs)
+        self.started.set()
+        assert self.release.wait(2.0)
+        return {"choices": [{"message": {"content": "ok"}}]}
 
 
 def _call(client, *, response_format=None):
@@ -96,6 +116,32 @@ def test_jsonl_worker_raises_after_failed_repair():
         _call(worker, response_format={"type": "json_object"})
 
 
+def test_inner_worker_drops_when_actor_is_busy(monkeypatch):
+    monkeypatch.setenv("ERIS_DS_ROLE_ACTORS", "1")
+    monkeypatch.setenv("ERIS_DS_INNER_DROP_IF_BUSY", "1")
+    raw = _BlockingClient()
+    worker = JsonlWorkerClient(raw, role="inner", jsonl_enabled=False)
+    result: list[object] = []
+
+    def _first_call():
+        try:
+            result.append(_call(worker, response_format=None))
+        except Exception as exc:  # noqa: BLE001
+            result.append(exc)
+
+    thread = threading.Thread(target=_first_call)
+    thread.start()
+    assert raw.started.wait(2.0)
+
+    with pytest.raises(RoleWorkerBusyError):
+        _call(worker, response_format=None)
+
+    raw.release.set()
+    thread.join(2.0)
+    assert result and not isinstance(result[0], Exception)
+    assert len(raw.calls) == 1
+
+
 def test_process_manager_builds_and_caches_role_worker(monkeypatch, tmp_path):
     monkeypatch.setenv("ERIS_DS_BASE_URL", "http://127.0.0.1:6011/v1")
     monkeypatch.setenv("ERIS_DS_MODEL", "deepseek-v4-flash")
@@ -138,6 +184,7 @@ def test_llm_service_exposes_named_workers():
 
 
 def test_companion_key_can_boot_without_official_deepseek_key(monkeypatch, tmp_path):
+    import llm.deepseek_workers as dw
     import llm.process_manager as pm
 
     monkeypatch.setenv("ERIS_REMOTE_PROVIDER", "deepseek")
@@ -148,6 +195,7 @@ def test_companion_key_can_boot_without_official_deepseek_key(monkeypatch, tmp_p
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("ERIS_REMOTE_API_KEY", raising=False)
     monkeypatch.delenv("ERIS_DS2API_API_KEY", raising=False)
+    monkeypatch.setattr(dw, "get_secret", lambda *names, default="": "")
     monkeypatch.setattr(pm, "get_provider_profile", lambda *args, **kwargs: {})
     monkeypatch.setattr(pm, "get_secret", lambda *names, default="": "")
     monkeypatch.setattr(pm, "_bootstrap_pool_key", lambda pool: "")
