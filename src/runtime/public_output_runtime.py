@@ -49,6 +49,7 @@ from runtime.body_bias import BodyBiasProjector
 from runtime.chat_cycle import ChatCycleMixin
 from runtime.failure_taxonomy import FailureContext
 from runtime.inner_diary_persistence import InnerDiaryPersister
+from runtime.live2d_affect_bridge import emit_runtime_affect
 from runtime.interrupt_ledger import InterruptLedger
 from runtime.loop_guard import RuntimeLoopGuard
 from runtime.model_budget_policy import ModelBudgetPolicy
@@ -253,6 +254,14 @@ class PublicOutputRuntimeMixin:
             bus = getattr(self, "stage_event_bus", None)
             if bus is None:
                 return
+            # Cập nhật khí sắc nền trước emotion của câu nói. Event chỉ chứa vector
+            # số, không mang nội dung private mind. Khi câu kết thúc, biểu cảm tạm
+            # thời sẽ tan dần về state này thay vì reset cứng thành mặt mannequin.
+            emit_runtime_affect(
+                self,
+                source=f"public_turn:{channel_name or str(channel or 'chat')}",
+                confidence=float(getattr(decision, "confidence", 0.0) or 0.0),
+            )
             try:
                 if isinstance(getattr(stage_frame, "show_plan", None), dict) and stage_frame.show_plan:
                     bus.emit(show_plan_event(stage_frame))

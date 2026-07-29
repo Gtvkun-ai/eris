@@ -44,6 +44,7 @@ from cortex.private_mind.inner_diary_renderer import InnerDiaryRenderer
 from cortex.private_mind.inner_diary_writer import InnerDiaryWriter
 from eris_secrets import apply_secrets_to_environ
 from runtime.private_mind_model_adapter import PrivateMindAdapterPool, RuntimePrivateMindModelAdapter
+from runtime.live2d_affect_bridge import emit_runtime_affect
 
 
 _LOG = logging.getLogger(__name__)
@@ -369,7 +370,23 @@ class PrivateMindLoop:
             },
         )
         self.last_result = result
+        # Mutation bus có thể vừa thay đổi PersistentInternalState. Chụp lại sau
+        # synthesis để Live2D và Inner Diary thấy state mới của chính tick này,
+        # không phải ảnh chụp trước khi não phụ làm việc.
+        self._capture_affect(runtime_owner)
         self.last_digest = self.digest(surface_queue=surface_candidate_queue)
+        fragment_pressure = max((float(getattr(item, "pressure", 0.0) or 0.0) for item in fragments), default=0.0)
+        fragment_confidence = max((float(getattr(item, "confidence", 0.0) or 0.0) for item in fragments), default=0.0)
+        judgment_pressure = float(getattr(judgment, "pressure", 0.0) or 0.0) if judgment is not None else 0.0
+        judgment_confidence = float(getattr(judgment, "confidence", 0.0) or 0.0) if judgment is not None else 0.0
+        emit_runtime_affect(
+            runtime_owner,
+            affect=self._affect_snapshot,
+            source=f"private_mind:{str(api_status.get('provider', '') or 'local')}:{channel or 'autonomous'}",
+            thought_pressure=max(fragment_pressure, judgment_pressure),
+            confidence=max(fragment_confidence, judgment_confidence),
+            diary_updated=bool(self.last_digest.get("inner_diary")),
+        )
         self._log_tick(result)
         return result
 
@@ -424,7 +441,7 @@ class PrivateMindLoop:
             keys = (
                 "valence", "arousal", "curiosity", "boredom", "social_energy",
                 "attachment", "irritation", "protectiveness", "confidence",
-                "fatigue", "tenderness",
+                "fatigue", "tenderness", "cognitive_tension",
             )
             snap = {k: data[k] for k in keys if k in data}
             if snap:

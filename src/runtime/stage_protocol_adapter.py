@@ -118,6 +118,56 @@ def playback_event(event: Any, *, stage_frame: Any = None) -> StageProtocolEvent
     )
 
 
+
+def affect_state_event(
+    *,
+    affect: dict[str, Any],
+    source: str = "runtime",
+    thought_pressure: float = 0.0,
+    confidence: float = 0.0,
+    diary_updated: bool = False,
+) -> StageProtocolEvent:
+    """Phát vector affect tối giản cho body/Live2D.
+
+    Event này cố ý không mang nội dung inner diary hay chain-of-thought. Renderer
+    chỉ cần state số để tạo dư âm cảm xúc; gửi prose riêng tư sang layer hình thể
+    vừa thừa vừa mở thêm một đường rò dữ liệu không có lý do tồn tại.
+    """
+
+    signed_keys = {"valence"}
+    allowed = (
+        "valence", "arousal", "curiosity", "boredom", "social_energy",
+        "attachment", "irritation", "protectiveness", "confidence",
+        "fatigue", "tenderness", "cognitive_tension",
+    )
+    clean: dict[str, float] = {}
+    for key in allowed:
+        if key not in affect:
+            continue
+        try:
+            value = float(affect[key])
+        except (TypeError, ValueError):
+            continue
+        if value != value:
+            continue
+        if key in signed_keys:
+            value = max(-1.0, min(1.0, value))
+        else:
+            value = max(0.0, min(1.0, value))
+        clean[key] = round(value, 4)
+
+    return StageProtocolEvent(
+        type="affect_state",
+        source=str(source or "runtime")[:120],
+        data={
+            "affect": clean,
+            "source": str(source or "runtime")[:120],
+            "thought_pressure": max(0.0, min(1.0, float(thought_pressure or 0.0))),
+            "confidence": max(0.0, min(1.0, float(confidence or 0.0))),
+            "diary_updated": bool(diary_updated),
+        },
+    )
+
 def stage_state_event(*, event_type: str, reason: str = "", data: dict[str, Any] | None = None) -> StageProtocolEvent:
     return StageProtocolEvent(
         type=event_type,
@@ -184,4 +234,4 @@ def _event_seq(event: Any, stage_frame: Any) -> int:
         return 0
 
 
-__all__ = ["playback_event", "show_plan_event", "stage_segment_event", "stage_state_event"]
+__all__ = ["affect_state_event", "playback_event", "show_plan_event", "stage_segment_event", "stage_state_event"]

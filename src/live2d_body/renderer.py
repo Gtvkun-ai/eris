@@ -211,7 +211,12 @@ class Live2DRenderer:
                             parameter_id,
                             INFJ_PARAMETER_PROFILE.sanitize(parameter_id, float(value)),
                         )
-                self._apply_gaze(model, gaze)
+                self._apply_gaze(
+                    model,
+                    gaze,
+                    bias_x=snapshot.gaze_bias_x,
+                    bias_y=snapshot.gaze_bias_y,
+                )
                 self._apply_eyelids(
                     model,
                     left_scale=snapshot.eye_open_left * gaze.left_eye_open_scale,
@@ -275,14 +280,31 @@ class Live2DRenderer:
             dt=dt,
         )
 
-    def _apply_gaze(self, model: Any, gaze: GazeSample) -> None:
-        # Model INFJ dùng mắt tách trái/phải. Trục X mắt phải được đảo để hai
-        # con ngươi nhìn cùng một điểm thay vì hội tụ vào sống mũi.
+    def _apply_gaze(
+        self,
+        model: Any,
+        gaze: GazeSample,
+        *,
+        bias_x: float = 0.0,
+        bias_y: float = 0.0,
+    ) -> None:
+        # ``bias_x`` dùng trục màn hình chung: âm nhìn trái, dương nhìn phải.
+        # Chuyển nó sang hai trục riêng của model, vẫn giữ mắt phía trong có
+        # biên nhỏ hơn để idle glance không tạo cảm giác lé.
+        screen_bias_x = max(-0.16, min(0.16, float(bias_x)))
+        vertical_bias = max(-0.12, min(0.12, float(bias_y)))
+        if screen_bias_x >= 0.0:
+            left_bias = screen_bias_x
+            right_bias = -screen_bias_x * self.config.eye_inner_ratio
+        else:
+            left_bias = screen_bias_x * self.config.eye_inner_ratio
+            right_bias = -screen_bias_x
+
         eye_values = {
-            "eyeballxl": gaze.left_x,
-            "eyeballxr": gaze.right_x,
-            "eyebally": gaze.left_y,
-            "eyeballyr": gaze.right_y,
+            "eyeballxl": gaze.left_x + left_bias,
+            "eyeballxr": gaze.right_x + right_bias,
+            "eyebally": gaze.left_y + vertical_bias,
+            "eyeballyr": gaze.right_y + vertical_bias,
         }
         if "ParamEyeBallX" in self.available_parameters:
             eye_values["ParamEyeBallX"] = gaze.left_x

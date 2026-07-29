@@ -25,3 +25,11 @@
 `infj.moc3` là embedded binary đã compile. Không nên sửa trực tiếp binary vì không có thông tin keyform/mesh an toàn để tái tạo. Những thay đổi trong gói này nằm ở runtime, metadata và `physics3.json`.
 
 Muốn chỉnh thật sự hình dáng mắt, lông mày, miệng hoặc mesh ở từng keyform cần file nguồn `.cmo3` rồi export lại `.moc3` bằng Live2D Cubism Editor.
+
+## Affect nền và idle có nhịp
+
+Runtime nhận thêm event `affect_state` chỉ chứa vector số đã chuẩn hóa. Affect nền dùng biên nhỏ và có quán tính; emotion của câu nói là lớp tạm thời ưu tiên cao hơn rồi decay về affect nền sau khi audio kết thúc.
+
+Idle không còn chỉ là hai sóng sin cố định. `IdleDirector` lên lịch các gesture ngắn như liếc mắt, nghiêng đầu, soften, ponder và slow blink, có easing vào/ra và dừng khi đang nói. Private mind/DeepSeek chỉ được phép thúc nhẹ pose `ponder` thông qua `thought_pressure`, không điều khiển parameter trực tiếp.
+
+Chi tiết kỹ thuật: `LIVE2D_AFFECT_IDLE_VI.md`.
