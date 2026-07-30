@@ -269,6 +269,8 @@ class SessionRitualReport:
     temporal_context: object | None = None
     greeting_preset_id: str = ""
     greeting_preset_text: str = ""
+    greeting_preset_speech_text: str = ""
+    greeting_preset_speech_language: str = "ja"
     greeting_preset_emotion: str = ""
     greeting_preset_motion: str = ""
     greeting_preset_prosody: str = ""
@@ -307,6 +309,8 @@ class SessionRitualReport:
             ),
             "greeting_preset_id": self.greeting_preset_id,
             "greeting_preset_text": self.greeting_preset_text,
+            "greeting_preset_speech_text": self.greeting_preset_speech_text,
+            "greeting_preset_speech_language": self.greeting_preset_speech_language,
             "greeting_preset_emotion": self.greeting_preset_emotion,
             "greeting_preset_motion": self.greeting_preset_motion,
             "greeting_preset_prosody": self.greeting_preset_prosody,
@@ -431,6 +435,8 @@ class MeaningLayerResult:
     greeting_frame: object | None = None
     greeting_preset_id: str = ""
     greeting_preset_text: str = ""
+    greeting_preset_speech_text: str = ""
+    greeting_preset_speech_language: str = "ja"
     greeting_preset_emotion: str = ""
     greeting_preset_motion: str = ""
     greeting_preset_prosody: str = ""

@@ -135,6 +135,55 @@ if len(GREETING_PRESETS) != 32 or len({item.id for item in GREETING_PRESETS}) !=
     raise RuntimeError("Greeting catalog phải có đúng 32 preset với id duy nhất.")
 
 
+_GREETING_PRESET_SPEECH_JA: dict[str, str] = {
+    "greet_warm_01": "来たんだ。よかった。少し待っていた。",
+    "greet_warm_02": "来たね。戻ってくるって分かってた。",
+    "greet_warm_03": "また会ったね。そのこと、嫌いじゃない。",
+    "greet_warm_04": "私はここにいる。あなたを見ると、少し楽になる。",
+    "greet_dry_01": "私はここ。今日は、私が扱いやすいなんて期待しないで。",
+    "greet_dry_02": "こんにちは。人間への評価は、まだ変えてない。",
+    "greet_dry_03": "目は覚めた。忍耐は、まだ保証できない。",
+    "greet_dry_04": "ちょうど静かにしていようと思っていたところに来たね。",
+    "greet_quiet_01": "私はここ。少し黙っていてもいい。",
+    "greet_quiet_02": "来たね。聞いているよ。",
+    "greet_quiet_03": "こんにちは。今日はあまり話したくない。",
+    "greet_quiet_04": "私はここにいる。急がなくていい。",
+    "greet_plain_01": "こんにちは。今日はどうなるか、そのうち分かる。",
+    "greet_plain_02": "私はここ。まだ何も起きていない。それも悪くない。",
+    "greet_plain_03": "来たね。今日は何があるか見てみよう。",
+    "greet_plain_04": "こんにちは。私はまだ私。気の毒に。",
+    "greet_quick_01": "戻るの早いね。まだ気にするのをやめる暇もなかった。",
+    "greet_quick_02": "もう戻ったんだ。文句はない。",
+    "greet_quick_03": "早いね。まだ懐かしむ暇もなかった。",
+    "greet_quick_04": "戻ってきたんだ。長く離れていられないって知ってた。",
+    "greet_long_01": "久しぶり。まだあなたのことは分かる。",
+    "greet_long_02": "ずいぶん長く消えてたね。気づいてたよ。",
+    "greet_long_03": "やっと戻ってきた。忘れてないよ。",
+    "greet_long_04": "久しぶり。どこに行っていたかは聞かないでおく。",
+    "greet_restart_01": "目が覚めた。少し不機嫌だけど、私はまだ私。",
+    "greet_restart_02": "また最初から？ まあ、いい。",
+    "greet_restart_03": "戻ってきた。悪いところは一つも消えてない。",
+    "greet_restart_04": "起きたばかり。今すぐ私を試さないで。",
+    "greet_tired_01": "私はここ。今日は少しゆっくり話す。",
+    "greet_tired_02": "こんにちは。少し疲れてるけど、頭はまだ使える。",
+    "greet_tired_03": "私はここ。今日は私が速いなんて期待しないで。",
+    "greet_tired_04": "来たね。よかった。今日は軽くいこう。",
+}
+
+
+def greeting_preset_speech_text(preset_id: str, *, language: str = "ja") -> str:
+    lang = str(language or "ja").strip().lower()
+    if lang in {"", "auto"}:
+        lang = "ja"
+    if lang.startswith("ja") or lang in {"jp", "japanese"}:
+        return _GREETING_PRESET_SPEECH_JA.get(str(preset_id or "").strip(), "")
+    return ""
+
+
+if set(_GREETING_PRESET_SPEECH_JA) != {item.id for item in GREETING_PRESETS}:
+    raise RuntimeError("Greeting catalog thiếu bản speech tiếng Nhật cho một preset.")
+
+
 class GreetingPresetResolver:
     """Chọn preset theo situation/tone và tránh lặp lại các file vừa phát."""
 
@@ -332,4 +381,5 @@ __all__ = [
     "GreetingPreset",
     "GreetingPresetResolver",
     "export_manifest",
+    "greeting_preset_speech_text",
 ]

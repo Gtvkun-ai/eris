@@ -210,7 +210,7 @@ def _prelocalize_japanese_enabled() -> bool:
 
 
 def _speech_contract_fail_open_enabled() -> bool:
-    return os.environ.get("ERIS_TTS_FAIL_OPEN_ON_LOCALIZATION_ERROR", "1").strip().lower() in {
+    return os.environ.get("ERIS_TTS_FAIL_OPEN_ON_LOCALIZATION_ERROR", "0").strip().lower() in {
         "1",
         "true",
         "yes",

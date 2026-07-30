@@ -7,7 +7,7 @@
     "startup_force_speak": true
   },
   "chat": {
-    "language": "vi",
+    "language": "ja",
     "semantic_authority_mode": "primary_model",
     "reasoning_effort": "medium",
     "support_confidence_threshold": 0.48,
@@ -112,7 +112,7 @@
     "quality": "balanced",
     "volume": 1.0,
     "speed": 1.04,
-    "stage_localize": false,
+    "stage_localize": true,
     "speech_persona_polish": true,
     "speech_persona_profile": "infj_5w4_subtle",
     "speech_persona_warmth": 0.36,

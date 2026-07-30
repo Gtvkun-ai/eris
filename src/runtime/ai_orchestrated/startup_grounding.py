@@ -577,7 +577,7 @@ def select_startup_persona_preset(frame: Any, *, avoid_text: str = "") -> Mappin
     if frame is None or str(getattr(frame, "active_anchor", "") or "").strip():
         return None
     try:
-        from cortex.greeting_presets import GreetingPresetResolver
+        from cortex.greeting_presets import GreetingPresetResolver, greeting_preset_speech_text
 
         tone = "overloaded" if float(getattr(frame, "warmth", 0.0) or 0.0) < 0.22 else "socially_warm"
         resolver = GreetingPresetResolver()
@@ -607,6 +607,10 @@ def select_startup_persona_preset(frame: Any, *, avoid_text: str = "") -> Mappin
             # rào của chính session hiện tại nên vẫn kiểm thêm một lần.
             return None
         resolver.mark_used(preset.id)
+        speech_language = str(os.getenv("ERIS_TTS_LANGUAGE", "ja") or "ja").strip().lower()
+        if speech_language in {"", "auto"}:
+            speech_language = "ja"
+        speech_text = greeting_preset_speech_text(preset.id, language=speech_language)
         return {
             "text": str(preset.text or "").strip(),
             "should_speak": True,
@@ -615,6 +619,8 @@ def select_startup_persona_preset(frame: Any, *, avoid_text: str = "") -> Mappin
             "preset_emotion": str(preset.emotion or ""),
             "preset_motion": str(preset.motion or ""),
             "preset_audio_asset": str(preset.audio_asset or ""),
+            "speech_text": speech_text,
+            "speech_language": speech_language if speech_text else "",
         }
     except Exception:
         return None

@@ -1447,6 +1447,17 @@ class AIAutonomousOrchestrator:
                     performance_preset=str(preset_payload.get("performance_hint", "dry_tease") or "dry_tease"),
                     should_speak=True,
                 )
+                preset_speech_text = str(preset_payload.get("speech_text", "") or "").strip()
+                preset_speech_language = str(preset_payload.get("speech_language", "") or "ja").strip().lower()
+                if preset_speech_text:
+                    payload["speech_text"] = preset_speech_text
+                    payload["speech_language"] = preset_speech_language or "ja"
+                    utterance = dict(payload.get("utterance") or {})
+                    utterance["speech"] = {
+                        "language": payload["speech_language"],
+                        "text": preset_speech_text,
+                    }
+                    payload["utterance"] = utterance
                 payload["preset_id"] = str(preset_payload.get("preset_id", "") or "")
                 host.logger.info(
                     "[architecture C startup greeting] source=degraded_preset id=%s situation=%s",

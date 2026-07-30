@@ -465,7 +465,7 @@ def test_vision_compressor_disabled_returns_empty_note() -> None:
     assert note.evidence[0] == "vision_compressor_disabled"
 
 
-def test_tts_worker_degrades_to_source_audio_when_japanese_localizer_breaks(monkeypatch) -> None:
+def test_tts_worker_fails_closed_on_japanese_localizer_breaks_by_default(monkeypatch) -> None:
     import pytest
     import runtime.tts_engine as tts_engine
     from runtime.speech_localizer import SpeechLocalizationError
@@ -484,15 +484,15 @@ def test_tts_worker_degrades_to_source_audio_when_japanese_localizer_breaks(monk
     )
     monkeypatch.setattr(tts_engine, "_prelocalize_japanese_enabled", lambda: True)
 
+    with pytest.raises(SpeechLocalizationError):
+        worker._resolve_main_transcript(request, request.text)
+
+    monkeypatch.setenv("ERIS_TTS_FAIL_OPEN_ON_LOCALIZATION_ERROR", "1")
     transcript, prelocalized, language = worker._resolve_main_transcript(request, request.text)
 
     assert transcript == request.text
     assert prelocalized is False
     assert language == "vi"
-
-    monkeypatch.setenv("ERIS_TTS_FAIL_OPEN_ON_LOCALIZATION_ERROR", "0")
-    with pytest.raises(SpeechLocalizationError):
-        worker._resolve_main_transcript(request, request.text)
 
 
 def test_tts_attempts_default_is_bounded(monkeypatch) -> None:

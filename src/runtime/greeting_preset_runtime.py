@@ -8,9 +8,10 @@ anchor động thì không tạo Decision preset, Qwen vẫn giữ quyền viế
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
-from cortex.greeting_presets import GreetingPresetResolver
+from cortex.greeting_presets import GreetingPresetResolver, greeting_preset_speech_text
 from cortex.startup_anchor_gate import StartupAnchorGate
 from domain import Decision
 
@@ -22,6 +23,16 @@ def decision_from_session_ritual(report: Any) -> Decision | None:
     text = str(getattr(report, "greeting_preset_text", "") or "").strip()
     if not preset_id or not text:
         return None
+    speech_language = str(
+        getattr(report, "greeting_preset_speech_language", "")
+        or os.environ.get("ERIS_TTS_LANGUAGE", "ja")
+        or "ja"
+    ).strip().lower()
+    if speech_language in {"", "auto"}:
+        speech_language = "ja"
+    speech_text = str(getattr(report, "greeting_preset_speech_text", "") or "").strip()
+    if not speech_text:
+        speech_text = greeting_preset_speech_text(preset_id, language=speech_language)
 
     # Defense in depth: resolver đã lọc preset, nhưng report có thể được tạo bởi
     # code cũ hoặc dữ liệu cache. Gate chỉ audit; tuyệt đối không rewrite preset
@@ -49,6 +60,9 @@ def decision_from_session_ritual(report: Any) -> Decision | None:
         preset_id=preset_id,
         audio_asset=str(getattr(report, "greeting_audio_asset", "") or ""),
         preset_emotion=str(getattr(report, "greeting_preset_emotion", "") or ""),
+        display_language="vi",
+        speech_text=speech_text,
+        speech_language=speech_language if speech_text else "",
     )
 
 

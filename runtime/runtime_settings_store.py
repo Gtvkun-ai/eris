@@ -515,7 +515,8 @@ class RuntimeSettingsStore:
                     payload = json.loads(self.path.read_text(encoding="utf-8"))
                     payload, migrated = self._migrate_payload(payload)
                     settings = self._validate_full(payload)
-                    if migrated:
+                    reconciled = self._apply_bootstrap_tts_language(settings)
+                    if migrated or reconciled:
                         self._atomic_save(settings)
                 except Exception as exc:
                     self._log("warning", "[runtime-settings] file lỗi, dùng env compat: %s", exc)
@@ -642,6 +643,28 @@ class RuntimeSettingsStore:
         hard_cap = str(0 if hard_cap_value is None else hard_cap_value)
         os.environ["ERIS_LLM_PROMPT_HARD_CAP_TOKENS"] = hard_cap
         os.environ["ERIS_LLM_PROMPT_TOTAL_TOKENS"] = hard_cap
+
+    @staticmethod
+    def _normalize_tts_language(value: object) -> str:
+        raw = str(value or "").strip().lower()
+        aliases = {"jp": "ja", "japanese": "ja", "ja-jp": "ja", "auto": ""}
+        return aliases.get(raw, raw)
+
+    @classmethod
+    def _apply_bootstrap_tts_language(cls, settings: dict[str, Any]) -> bool:
+        env_tts = cls._normalize_tts_language(os.environ.get("ERIS_TTS_LANGUAGE", ""))
+        if env_tts not in {"vi", "ja", "en"}:
+            return False
+        tts = settings.get("tts") if isinstance(settings.get("tts"), Mapping) else {}
+        tts = dict(tts or {})
+        current = cls._normalize_tts_language(tts.get("language", ""))
+        if current == env_tts:
+            return False
+        tts["language"] = env_tts
+        if env_tts == "ja":
+            tts["stage_localize"] = True
+        settings["tts"] = tts
+        return True
 
     @classmethod
     def _migrate_payload(cls, payload: Any) -> tuple[dict[str, Any], bool]:
