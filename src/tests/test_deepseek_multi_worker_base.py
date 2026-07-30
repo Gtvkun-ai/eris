@@ -230,6 +230,7 @@ def test_companion_key_can_boot_without_official_deepseek_key(monkeypatch, tmp_p
 
     monkeypatch.setenv("ERIS_REMOTE_PROVIDER", "deepseek")
     monkeypatch.setenv("ERIS_REMOTE_API_ENABLED", "1")
+    monkeypatch.setenv("ERIS_DS2API_ENABLED", "1")
     monkeypatch.setenv("ERIS_DS_COMPANION_API_KEY", "companion-gateway-key")
     monkeypatch.setenv("ERIS_DS_BASE_URL", "http://127.0.0.1:6011/v1")
     monkeypatch.setenv("ERIS_DS_MODEL", "deepseek-v4-flash")
@@ -246,6 +247,33 @@ def test_companion_key_can_boot_without_official_deepseek_key(monkeypatch, tmp_p
 
     assert client.worker_role == "companion"
     assert client.base_url == "http://127.0.0.1:6011/v1"
+
+
+def test_ds2api_disabled_flag_keeps_companion_key_off_main_route(monkeypatch, tmp_path):
+    import llm.deepseek_workers as dw
+    import llm.process_manager as pm
+
+    monkeypatch.setenv("ERIS_REMOTE_PROVIDER", "deepseek")
+    monkeypatch.setenv("ERIS_REMOTE_API_ENABLED", "1")
+    monkeypatch.setenv("ERIS_DS2API_ENABLED", "0")
+    monkeypatch.setenv("ERIS_DS_COMPANION_API_KEY", "companion-gateway-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-official")
+    monkeypatch.setattr(dw, "get_secret", lambda *names, default="": "")
+    monkeypatch.setattr(pm, "apply_secrets_to_environ", lambda: None)
+    monkeypatch.setattr(pm, "get_provider_profile", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        pm,
+        "get_secret",
+        lambda *names, default="": "sk-official" if "DEEPSEEK_API_KEY" in names else default,
+    )
+    monkeypatch.setattr(pm, "_bootstrap_pool_key", lambda pool: "")
+
+    manager = RemoteModelProcessManager(logger=logging.getLogger("test"), project_root=str(tmp_path))
+    client = manager.build_client()
+
+    assert client.base_url == "https://api.deepseek.com"
+    assert client.api_key == "sk-official"
+    assert manager.build_deepseek_worker_client("companion") is None
 
 
 def test_surface_worker_drops_when_actor_is_busy_by_default(monkeypatch):

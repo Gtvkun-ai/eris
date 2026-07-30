@@ -110,7 +110,9 @@ def default_profiles() -> tuple[EngagementProfile, ...]:
                     "occasionally_reveal_direct_move": True,
                 },
             ),
-            continuity=ContinuityPolicy(55, 125, 8, 8, 7200),
+            # Event-driven chess needs a near-real-time gate. Cadence chatter
+            # remains sparse, but a new move becomes eligible immediately.
+            continuity=ContinuityPolicy(55, 125, 0, 1, 7200),
             priority=78,
             direct_start_is_sufficient=True,
         ),

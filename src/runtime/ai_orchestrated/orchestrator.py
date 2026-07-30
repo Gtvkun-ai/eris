@@ -500,6 +500,9 @@ class AIChatOrchestrator:
         payload: dict[str, Any] = {}
         host._set_background_memory_digest_remote_inflight(True)
         try:
+            # Một lượt primary, rồi fallback ngay trong router nếu được phép.
+            # Bản cũ gọi lại primary lần hai trước khi chạm fallback, khiến lỗi
+            # provider biến thành gấp đôi timeout.
             payload = host.ai_model_router.generate_public_reply(
                 chat_history=history,
                 user_text=user_message,
@@ -514,29 +517,10 @@ class AIChatOrchestrator:
                 use_escalation=use_escalation,
                 reasoning_effort=reasoning_effort,
                 thinking_mode=thinking_mode,
-                allow_fallback=False,
+                allow_fallback=not no_fallback_mode_enabled(),
                 language_hint=_runtime_language(),
                 planned_intention=chat_plan,
             )
-            if not payload and not no_fallback_mode_enabled():
-                payload = host.ai_model_router.generate_public_reply(
-                    chat_history=history,
-                    user_text=user_message,
-                    memory_context=compiled_context.memory,
-                    grounding_context=compiled_context.grounding,
-                    relationship_context=compiled_context.relationship,
-                    personality_context=compiled_context.personality,
-                    interrupt_context=compiled_context.interrupt,
-                    engagement_context=compiled_context.engagement,
-                    routing_context=compiled_context.routing,
-                    discourse_context=compiled_context.discourse,
-                    use_escalation=use_escalation,
-                    reasoning_effort=reasoning_effort,
-                    thinking_mode=thinking_mode,
-                    allow_fallback=True,
-                    language_hint=_runtime_language(),
-                    planned_intention=chat_plan,
-                    )
         finally:
             host._set_background_memory_digest_remote_inflight(False)
 

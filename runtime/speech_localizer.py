@@ -58,18 +58,47 @@ def _remote_provider_is_gemini() -> bool:
     return "generativelanguage.googleapis.com" in base_url or "googleapis.com" in base_url
 
 
+def localizer_provider_name() -> str:
+    provider = os.environ.get("ERIS_TTS_LOCALIZER_PROVIDER", "").strip().lower()
+    if provider in {"deepseek", "gemini"}:
+        return provider
+    remote_provider = os.environ.get("ERIS_REMOTE_PROVIDER", "").strip().lower()
+    if remote_provider == "deepseek":
+        return "deepseek"
+    return "gemini"
+
+
 def localizer_model_name() -> str:
     """Model Gemini/Gemma dùng riêng cho transcript localization trước TTS."""
 
-    for env_name in ("ERIS_TTS_LOCALIZER_MODEL", "ERIS_SPEECH_MODEL"):
-        value = os.environ.get(env_name, "").strip()
-        if value and not value.startswith("PASTE_"):
-            return value
+    value = os.environ.get("ERIS_TTS_LOCALIZER_MODEL", "").strip()
+    if value and not value.startswith("PASTE_"):
+        return value
+    if localizer_provider_name() == "deepseek":
+        return (
+            os.environ.get("ERIS_REMOTE_MODEL", "").strip()
+            or os.environ.get("DEEPSEEK_MODEL", "").strip()
+            or "deepseek-v4-flash"
+        )
+    value = os.environ.get("ERIS_SPEECH_MODEL", "").strip()
+    if value and not value.startswith("PASTE_"):
+        return value
     return "gemini-2.5-flash"
 
 
-def _get_api_key_lease(*, exclude_indices: Iterable[int] = ()):
+def _get_api_key_lease(*, provider: str = "gemini", exclude_indices: Iterable[int] = ()):
     """Lấy key + lease, không lấy lại key pool đã thử trong cùng request."""
+
+    if provider == "deepseek":
+        for env_name in (
+            "ERIS_TTS_LOCALIZER_API_KEY",
+            "DEEPSEEK_API_KEY",
+            "ERIS_REMOTE_API_KEY",
+        ):
+            key = os.environ.get(env_name, "").strip()
+            if key and not key.startswith("PASTE_"):
+                return key, None, None
+        return "", None, None
 
     for env_name in (
         "ERIS_TTS_API_KEY",
@@ -251,6 +280,7 @@ class SpeechLocalizer:
         authority_check: Callable[[], bool] | None = None,
     ) -> str:
         _raise_if_cancelled(cancel_event, authority_check)
+        provider_name = localizer_provider_name()
 
         # Dịch Nhật là required lane khi contract đã pin ja. Budget vẫn nhỏ, nhưng
         # không được optional-skip rồi lén trả transcript Việt xuống TTS.
@@ -268,7 +298,7 @@ class SpeechLocalizer:
 
                 estimated_prompt = max(64, len(budgeted_text) // 3 + 180)
                 plan = GLOBAL_TOKEN_PRESSURE_GOVERNOR.plan_request(
-                    "gemini",
+                    provider_name,
                     lane="speech_localizer",
                     prompt_tokens=estimated_prompt,
                     requested_output_tokens=256,
@@ -328,7 +358,10 @@ class SpeechLocalizer:
                 health = None
 
             while True:
-                api_key, pool, lease = _get_api_key_lease(exclude_indices=attempted_indices)
+                api_key, pool, lease = _get_api_key_lease(
+                    provider=provider_name,
+                    exclude_indices=attempted_indices,
+                )
                 if lease is None:
                     break
                 attempted_indices.add(int(lease.index))
@@ -346,13 +379,10 @@ class SpeechLocalizer:
                     break
                 used_unpooled_key = True
             if not api_key:
-                last_exc = SpeechLocalizationError("missing_gemini_key_for_japanese_localizer")
+                last_exc = SpeechLocalizationError(f"missing_{provider_name}_key_for_japanese_localizer")
                 break
 
             try:
-                from google import genai
-
-                client = genai.Client(api_key=api_key)
                 model_name = localizer_model_name()
 
                 # PDF annotation, pages 6-9 and 15: SDK calls must not bypass
@@ -364,14 +394,14 @@ class SpeechLocalizer:
                 output_reserve = int(getattr(plan, "output_tokens", 384) or 384)
                 with inference_context(
                     "speech_localizer",
-                    optional=True,
+                    optional=False,
                     timeout_seconds=_localizer_timeout_seconds(),
                     cancel_scope="background:speech_localizer",
                     coalesce_key=stable_work_key("speech_localizer", text),
-                    metadata={"attempt": attempt, "transport": "google.genai.text"},
+                    metadata={"attempt": attempt, "transport": f"{provider_name}.text"},
                 ):
                     broker_request = GLOBAL_INFERENCE_BROKER.request_from_context(
-                        provider="gemini",
+                        provider=provider_name,
                         model=model_name,
                         estimated_input_tokens=estimate_tokens([{"role": "user", "content": prompt}]),
                         reserved_output_tokens=output_reserve,
@@ -380,23 +410,35 @@ class SpeechLocalizer:
                     def call_localizer(*, cancel_token=None):
                         if cancel_token is not None:
                             cancel_token.raise_if_cancelled(broker_request)
-                        result = client.models.generate_content(
-                            model=model_name,
-                            contents=prompt,
-                            config={
-                                "system_instruction": system_instruction,
-                                "temperature": 0.15,
-                                "max_output_tokens": 128,
-                                "thinking_config": {"thinking_level": "minimal"},
-                            },
-                        )
+                        if provider_name == "deepseek":
+                            result = _translate_with_deepseek_api(
+                                api_key=api_key,
+                                model_name=model_name,
+                                system_instruction=system_instruction,
+                                prompt=prompt,
+                                timeout_seconds=_localizer_timeout_seconds(),
+                            )
+                        else:
+                            from google import genai
+
+                            client = genai.Client(api_key=api_key)
+                            result = client.models.generate_content(
+                                model=model_name,
+                                contents=prompt,
+                                config={
+                                    "system_instruction": system_instruction,
+                                    "temperature": 0.15,
+                                    "max_output_tokens": 128,
+                                    "thinking_config": {"thinking_level": "minimal"},
+                                },
+                            )
                         if cancel_token is not None:
                             cancel_token.raise_if_cancelled(broker_request)
                         return result
 
                     response = GLOBAL_INFERENCE_BROKER.run(broker_request, call_localizer)
                 _raise_if_cancelled(cancel_event, authority_check)
-                out = _clean_translation_output(getattr(response, "text", "") or "")
+                out = _clean_translation_output(_response_text(response))
                 out = _apply_signature_surface(out, policy)
                 if not _valid_japanese_translation(
                     text, out, persona_policy=policy
@@ -411,7 +453,7 @@ class SpeechLocalizer:
                         from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
 
                         GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_request(
-                            "gemini",
+                            provider_name,
                             lane="speech_localizer",
                             prompt_tokens=estimate_tokens([{"role": "user", "content": prompt}]),
                             output_tokens=plan.output_tokens,
@@ -420,7 +462,7 @@ class SpeechLocalizer:
                         pool.mark_success(lease=lease)
                     from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
 
-                    GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_success("gemini")
+                    GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_success(provider_name)
                 except Exception as exc:
                     safe_log(logger, "debug", "TTS localizer success telemetry failed: %s", exc)
                 return out
@@ -448,7 +490,7 @@ class SpeechLocalizer:
                                 from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
 
                                 GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_rate_limit(
-                                    "gemini",
+                                    provider_name,
                                     retry_after_s=60.0,
                                     lane="speech_localizer",
                                 )
@@ -480,9 +522,11 @@ class SpeechLocalizer:
 
         if isinstance(last_exc, SpeechLocalizationError):
             raise last_exc
-        raise SpeechLocalizationError(
-            f"japanese_localization_failed:{type(last_exc).__name__ if last_exc else 'unknown'}"
-        )
+        detail = str(last_exc or "").strip()
+        suffix = type(last_exc).__name__ if last_exc else "unknown"
+        if detail:
+            suffix = f"{suffix}:{detail}"
+        raise SpeechLocalizationError(f"japanese_localization_failed:{suffix}")
 
 
 def _normalize_transcript(text: str) -> str:
@@ -503,6 +547,57 @@ def _clean_translation_output(text: str) -> str:
     raw = _STANDALONE_SIGNATURE_TAIL_RE.sub("。", raw).strip()
     lines = [" ".join(line.split()).strip() for line in raw.split("\n")]
     return "\n".join(line for line in lines if line).strip()
+
+
+def _response_text(response: object) -> str:
+    if isinstance(response, str):
+        return response
+    if isinstance(response, dict):
+        choices = response.get("choices")
+        if isinstance(choices, list) and choices:
+            first = choices[0] if isinstance(choices[0], dict) else {}
+            message = first.get("message") if isinstance(first, dict) else {}
+            if isinstance(message, dict):
+                return str(message.get("content", "") or "")
+        return str(response.get("text", "") or "")
+    return str(getattr(response, "text", "") or "")
+
+
+def _translate_with_deepseek_api(
+    *,
+    api_key: str,
+    model_name: str,
+    system_instruction: str,
+    prompt: str,
+    timeout_seconds: float,
+) -> dict[str, object]:
+    import requests
+
+    base_url = os.environ.get("ERIS_TTS_LOCALIZER_BASE_URL", "").strip()
+    if not base_url:
+        base_url = os.environ.get("ERIS_REMOTE_BASE_URL", "https://api.deepseek.com").strip()
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    payload = {
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": system_instruction},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.15,
+        "max_tokens": 128,
+        "thinking": {"type": "disabled"},
+    }
+    response = requests.post(
+        url,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=max(1.0, float(timeout_seconds or 4.0)),
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 def _apply_signature_surface(text: str, persona_policy: SpeechPersonaPolicy | None) -> str:

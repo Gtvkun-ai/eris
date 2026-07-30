@@ -289,6 +289,7 @@ def test_japanese_localizer_translate_path_uses_runtime_timeout(monkeypatch) -> 
     from runtime.speech_localizer import SpeechLocalizer, _localizer_timeout_seconds
 
     monkeypatch.setenv("ERIS_TOKEN_BUDGET_ALL_LANES", "0")
+    monkeypatch.setenv("ERIS_TTS_LOCALIZER_PROVIDER", "gemini")
     monkeypatch.setenv("ERIS_TTS_LOCALIZER_TIMEOUT_SEC", "1.5")
     monkeypatch.setenv("ERIS_TTS_API_KEY", "dummy-test-key")
 
@@ -317,7 +318,14 @@ def test_japanese_localizer_translate_path_uses_runtime_timeout(monkeypatch) -> 
     import runtime.inference_broker as broker_module
     import runtime.speech_localizer as speech_localizer
 
-    monkeypatch.setattr(broker_module, "inference_context", lambda *args, **kwargs: contextlib.nullcontext())
+    captured_context = {}
+
+    def _fake_inference_context(*args, **kwargs):
+        captured_context["args"] = args
+        captured_context["kwargs"] = kwargs
+        return contextlib.nullcontext()
+
+    monkeypatch.setattr(broker_module, "inference_context", _fake_inference_context)
     monkeypatch.setattr(speech_localizer, "_valid_japanese_translation", lambda *_args, **_kwargs: True)
 
     class _Broker:
@@ -336,6 +344,7 @@ def test_japanese_localizer_translate_path_uses_runtime_timeout(monkeypatch) -> 
     out = localizer._translate_to_japanese("Hello", prosody_style="")
     assert out == "こんにちは"
     assert fake_broker.request_kwargs["timeout_seconds"] == 1.5
+    assert captured_context["kwargs"]["optional"] is False
     assert _localizer_timeout_seconds() == 1.5
     assert _Client.last is not None
     assert _Client.last.models.config["thinking_config"]["thinking_level"] == "minimal"
@@ -380,10 +389,70 @@ def test_tts_worker_relocalizes_even_when_upstream_claims_prelocalized(monkeypat
 def test_tts_localizer_uses_speech_model_when_no_override(monkeypatch) -> None:
     from runtime.speech_localizer import localizer_model_name
 
+    monkeypatch.setenv("ERIS_TTS_LOCALIZER_PROVIDER", "gemini")
     monkeypatch.delenv("ERIS_TTS_LOCALIZER_MODEL", raising=False)
     monkeypatch.setenv("ERIS_SPEECH_MODEL", "gemma-4-31b-it")
 
     assert localizer_model_name() == "gemma-4-31b-it"
+
+
+def test_deepseek_tts_localizer_ignores_speech_model(monkeypatch) -> None:
+    from runtime.speech_localizer import localizer_model_name, localizer_provider_name
+
+    monkeypatch.setenv("ERIS_TTS_LOCALIZER_PROVIDER", "deepseek")
+    monkeypatch.delenv("ERIS_TTS_LOCALIZER_MODEL", raising=False)
+    monkeypatch.setenv("ERIS_REMOTE_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("ERIS_SPEECH_MODEL", "gemma-4-31b-it")
+
+    assert localizer_provider_name() == "deepseek"
+    assert localizer_model_name() == "deepseek-v4-flash"
+
+
+def test_deepseek_tts_localizer_translation_path(monkeypatch) -> None:
+    import contextlib
+
+    from runtime.speech_localizer import SpeechLocalizer
+
+    monkeypatch.setenv("ERIS_TOKEN_BUDGET_ALL_LANES", "0")
+    monkeypatch.setenv("ERIS_TTS_LOCALIZER_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
+    monkeypatch.setenv("ERIS_REMOTE_MODEL", "deepseek-v4-flash")
+
+    import runtime.inference_broker as broker_module
+    import runtime.speech_localizer as speech_localizer
+
+    monkeypatch.setattr(speech_localizer, "_valid_japanese_translation", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        speech_localizer,
+        "_translate_with_deepseek_api",
+        lambda **_kwargs: {"choices": [{"message": {"content": "こんにちは"}}]},
+    )
+    captured_context = {}
+
+    def _fake_inference_context(*args, **kwargs):
+        captured_context["args"] = args
+        captured_context["kwargs"] = kwargs
+        return contextlib.nullcontext()
+
+    monkeypatch.setattr(broker_module, "inference_context", _fake_inference_context)
+
+    class _Broker:
+        def request_from_context(self, **kwargs):
+            self.request_kwargs = kwargs
+            return object()
+
+        def run(self, request, func):
+            return func()
+
+    fake_broker = _Broker()
+    monkeypatch.setattr(broker_module, "GLOBAL_INFERENCE_BROKER", fake_broker)
+
+    out = SpeechLocalizer()._translate_to_japanese("Hello", prosody_style="")
+
+    assert out == "こんにちは"
+    assert fake_broker.request_kwargs["provider"] == "deepseek"
+    assert fake_broker.request_kwargs["model"] == "deepseek-v4-flash"
+    assert captured_context["kwargs"]["optional"] is False
 
 
 def test_vision_compressor_disabled_returns_empty_note() -> None:
@@ -396,7 +465,7 @@ def test_vision_compressor_disabled_returns_empty_note() -> None:
     assert note.evidence[0] == "vision_compressor_disabled"
 
 
-def test_tts_worker_fails_closed_when_japanese_localizer_breaks(monkeypatch) -> None:
+def test_tts_worker_degrades_to_source_audio_when_japanese_localizer_breaks(monkeypatch) -> None:
     import pytest
     import runtime.tts_engine as tts_engine
     from runtime.speech_localizer import SpeechLocalizationError
@@ -415,6 +484,13 @@ def test_tts_worker_fails_closed_when_japanese_localizer_breaks(monkeypatch) -> 
     )
     monkeypatch.setattr(tts_engine, "_prelocalize_japanese_enabled", lambda: True)
 
+    transcript, prelocalized, language = worker._resolve_main_transcript(request, request.text)
+
+    assert transcript == request.text
+    assert prelocalized is False
+    assert language == "vi"
+
+    monkeypatch.setenv("ERIS_TTS_FAIL_OPEN_ON_LOCALIZATION_ERROR", "0")
     with pytest.raises(SpeechLocalizationError):
         worker._resolve_main_transcript(request, request.text)
 

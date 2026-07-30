@@ -1,0 +1,10 @@
+# Bản vá độ trễ chat và cờ
+
+- Tắt `ERIS_CHAT_MAIN_VISION` mặc định: chỉ gọi vision khi câu nói thật sự trỏ màn hình.
+- Main model chỉ được gọi một lần; nếu thất bại, router chuyển sang fallback ngay thay vì gọi lại main.
+- Không dùng `ERIS_SPEECH_API_KEY` để dựng Gemini chat fallback.
+- Chess engine mặc định depth 1 cho phản hồi nhanh; có thể tăng lại depth 2 khi chơi chậm/phân tích.
+- Sự kiện nước cờ không phải chờ generic commentary grace.
+- Extension hiển thị gợi ý từ engine cục bộ ngay khi bridge trả kết quả, không chờ LLM viết lời bình.
+
+Để chẩn đoán provider trong một phiên, đặt `ERIS_LOG_PROFILE=debug`.

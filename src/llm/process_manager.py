@@ -35,6 +35,15 @@ class RemoteModelProcessManager:
     def _env_flag(self, name: str, default: str = "0") -> bool:
         return os.environ.get(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
+    def _explicit_env_flag(self, name: str) -> bool | None:
+        raw = os.environ.get(name)
+        if raw is None:
+            return None
+        value = raw.strip().lower()
+        if not value:
+            return None
+        return value in {"1", "true", "yes", "on"}
+
     def _build_remote_client(self):
         apply_secrets_to_environ()
         provider = _normalize_remote_provider(os.environ.get("ERIS_REMOTE_PROVIDER", "deepseek"))
@@ -89,10 +98,8 @@ class RemoteModelProcessManager:
                 or get_secret("DEEPSEEK_API_KEY", "ERIS_REMOTE_API_KEY")
             )
             companion_spec = load_worker_spec("companion")
-            ds2api_enabled = (
-                os.environ.get("ERIS_DS2API_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
-                or companion_spec.configured
-            )
+            ds2api_flag = self._explicit_env_flag("ERIS_DS2API_ENABLED")
+            ds2api_enabled = companion_spec.configured if ds2api_flag is None else ds2api_flag
             if not api_key and not ds2api_enabled:
                 raise RuntimeError(
                     "DeepSeek dang bat nhung chua co ERIS_DS_COMPANION_API_KEY, "
@@ -280,6 +287,14 @@ class RemoteModelProcessManager:
         """
 
         apply_secrets_to_environ()
+        ds2api_flag = self._explicit_env_flag("ERIS_DS2API_ENABLED")
+        if ds2api_flag is False:
+            if required:
+                raise RuntimeError(
+                    f"DeepSeek worker {normalize_worker_role(role)!r} bi tat boi ERIS_DS2API_ENABLED=0."
+                )
+            return None
+
         normalized = normalize_worker_role(role)
         cached = self._deepseek_worker_clients.get(normalized)
         if cached is not None:
@@ -433,7 +448,10 @@ class RemoteModelProcessManager:
         remote_provider = _normalize_remote_provider(os.environ.get("ERIS_REMOTE_PROVIDER", "deepseek"))
         remote_base_url = os.environ.get("ERIS_REMOTE_BASE_URL", "").strip().lower()
         remote_is_gemini = remote_provider == "gemini" or "generativelanguage.googleapis.com" in remote_base_url
-        gemini_key = get_secret("GEMINI_API_KEY", "ERIS_SPEECH_API_KEY")
+        # Chat fallback chỉ nhận credential Gemini rõ ràng. ERIS_SPEECH_API_KEY
+        # có thể thuộc provider speech khác; dùng nó ở đây tạo client Gemini giả,
+        # rồi circuit breaker nổ trong hot path dù startup báo không có Gemini key.
+        gemini_key = get_secret("GEMINI_API_KEY", "ERIS_GEMINI_API_KEY")
         if not gemini_key and remote_is_gemini:
             gemini_key = get_secret("ERIS_REMOTE_API_KEY")
         if gemini_key:

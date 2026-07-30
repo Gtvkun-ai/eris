@@ -209,6 +209,19 @@ def _prelocalize_japanese_enabled() -> bool:
     return runtime_bool("tts", "stage_localize", default=True)
 
 
+def _speech_contract_fail_open_enabled() -> bool:
+    return os.environ.get("ERIS_TTS_FAIL_OPEN_ON_LOCALIZATION_ERROR", "1").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _fallback_language_for_transcript(text: str) -> str:
+    return "ja" if _contains_japanese_chars(text) else "vi"
+
+
 def _local_tts_fallback_enabled() -> bool:
     return os.environ.get("ERIS_TTS_LOCAL_FALLBACK", "1").strip().lower() in {
         "1",
@@ -2329,9 +2342,9 @@ class _TtsWorker:
         """Khóa transcript theo language contract trước khi gọi provider audio.
 
         ``prelocalized=True`` chỉ là metadata từ upstream, không phải bằng chứng.
-        Nếu contract là Nhật mà localizer lỗi, audio phải fail-closed. Display text
-        vẫn còn nguyên ở stage, nhưng tuyệt đối không đẩy transcript Việt xuống
-        voice Nhật rồi giả vờ đó là cùng một giọng.
+        Nếu contract là Nhật mà localizer lỗi, mặc định vẫn phát transcript gốc
+        thay vì im lặng. Có thể khôi phục strict fail-closed bằng
+        ERIS_TTS_FAIL_OPEN_ON_LOCALIZATION_ERROR=0.
         """
 
         language_hint = self._request_language(req)
@@ -2341,6 +2354,9 @@ class _TtsWorker:
         if _contains_japanese_chars(text_to_speak):
             return text_to_speak, True, "ja"
         if not _prelocalize_japanese_enabled():
+            if _speech_contract_fail_open_enabled():
+                logger.warning("[TTS] JP localization disabled; audio degraded to source transcript.")
+                return text_to_speak, bool(req.prelocalized), _fallback_language_for_transcript(text_to_speak)
             logger.warning("[TTS] JP localization disabled; audio fail-closed for Japanese contract.")
             raise SpeechLocalizationError("japanese_speech_contract_unavailable:localizer_disabled")
 
@@ -2357,6 +2373,12 @@ class _TtsWorker:
         except SpeechLocalizationCancelled:
             raise
         except Exception as exc:
+            if _speech_contract_fail_open_enabled():
+                logger.warning(
+                    "[TTS] JP localization lỗi (%s); audio degraded to source transcript.",
+                    _short_error(exc),
+                )
+                return source_text, False, _fallback_language_for_transcript(source_text)
             logger.warning(
                 "[TTS] JP localization lỗi (%s); audio fail-closed, giữ display transcript.",
                 _short_error(exc),
@@ -2367,6 +2389,11 @@ class _TtsWorker:
                 f"japanese_speech_contract_unavailable:{type(exc).__name__}"
             ) from exc
         if not _contains_japanese_chars(text_to_speak):
+            if _speech_contract_fail_open_enabled():
+                logger.warning(
+                    "[TTS] JP localizer trả transcript không phải tiếng Nhật; audio degraded to source transcript."
+                )
+                return source_text, False, _fallback_language_for_transcript(source_text)
             logger.warning(
                 "[TTS] JP localizer trả transcript không phải tiếng Nhật; audio fail-closed."
             )
