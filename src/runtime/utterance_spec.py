@@ -32,7 +32,12 @@ def _mapping(value: Any) -> Mapping[str, Any]:
 
 
 def _text(value: Any, limit: int = 8000) -> str:
-    return str(value or "").strip()[: max(1, int(limit))]
+    text = "".join(
+        ch
+        for ch in str(value or "")
+        if not (0xD800 <= ord(ch) <= 0xDFFF or ord(ch) > 0xFFFF)
+    )
+    return text.strip()[: max(1, int(limit))]
 
 
 def _first_text(*values: Any, limit: int = 8000) -> str:
@@ -132,7 +137,7 @@ class UtteranceSpec:
         utterance_raw = root.get("utterance")
         nested = _mapping(utterance_raw)
         if nested:
-            root = nested
+            root = {**root, **nested}
         elif not isinstance(utterance_raw, Mapping) and _text(utterance_raw):
             fallback_text = _text(utterance_raw)
 

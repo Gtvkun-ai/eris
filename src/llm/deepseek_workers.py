@@ -185,6 +185,53 @@ def _structured_response_requested(response_format: Any) -> bool:
     }
 
 
+def _response_schema(response_format: Any) -> Mapping[str, Any]:
+    if not isinstance(response_format, Mapping):
+        return {}
+    if str(response_format.get("type", "") or "").strip().lower() == "json_schema":
+        envelope = response_format.get("json_schema")
+        if isinstance(envelope, Mapping) and isinstance(envelope.get("schema"), Mapping):
+            return envelope["schema"]
+    schema = response_format.get("schema")
+    return schema if isinstance(schema, Mapping) else {}
+
+
+def _validate_schema_shape(value: Any, schema: Mapping[str, Any], *, path: str = "$") -> None:
+    expected_type = str(schema.get("type", "") or "").strip().lower()
+    if expected_type == "object":
+        if not isinstance(value, Mapping):
+            raise JsonlContractError(f"schema_type:{path}:object")
+        missing = [
+            str(name)
+            for name in (schema.get("required") or ())
+            if str(name) not in value
+        ]
+        required_count = len(schema.get("required") or ())
+        allowed_missing = required_count // 10 if path == "$" and required_count >= 10 else 0
+        if len(missing) > allowed_missing:
+            raise JsonlContractError(f"schema_required_missing:{path}:{','.join(missing)}")
+    elif expected_type == "array":
+        if not isinstance(value, list):
+            raise JsonlContractError(f"schema_type:{path}:array")
+
+
+def _append_schema_instruction(messages: Any, *, role: str, response_format: Any) -> list[dict[str, Any]]:
+    copied = [dict(item) for item in (messages or []) if isinstance(item, Mapping)]
+    schema = _response_schema(response_format)
+    required = [str(name) for name in (schema.get("required") or ())]
+    if not required:
+        return copied
+    copied.append({
+        "role": "user",
+        "content": (
+            f"ERIS {role} structured-output contract: return the OUTPUT object only; "
+            "do not echo the input envelope and do not invent a wrapper object. "
+            f"Required top-level keys: {', '.join(required)}. JSON only."
+        ),
+    })
+    return copied
+
+
 def _strip_code_fence(text: str) -> str:
     clean = str(text or "").strip()
     clean = re.sub(r"<think>.*?</think>", "", clean, flags=re.DOTALL | re.IGNORECASE).strip()
@@ -248,8 +295,18 @@ def _replace_openai_content(payload: Any, content: str) -> Any:
     return result
 
 
-def _append_jsonl_repair_instruction(messages: Any, *, role: str) -> list[dict[str, Any]]:
+def _append_jsonl_repair_instruction(
+    messages: Any,
+    *,
+    role: str,
+    response_format: Any = None,
+    error: Exception | None = None,
+) -> list[dict[str, Any]]:
     copied = [dict(item) for item in (messages or []) if isinstance(item, Mapping)]
+    schema = _response_schema(response_format)
+    required = [str(name) for name in (schema.get("required") or ())]
+    required_clause = f" Required top-level keys: {', '.join(required)}." if required else ""
+    error_clause = f" Validation failure: {error}." if error is not None else ""
     copied.append(
         {
             "role": "user",
@@ -257,7 +314,8 @@ def _append_jsonl_repair_instruction(messages: Any, *, role: str) -> list[dict[s
                 "The previous response violated the structured-output contract. "
                 f"You are the ERIS {role} worker. Return exactly ONE valid JSON value "
                 "on ONE physical line. No markdown, no code fence, no explanation, "
-                "and no text before or after the JSON. Preserve the requested schema."
+                "and no text before or after the JSON. Do not echo the input envelope. "
+                f"Preserve the requested schema.{required_clause}{error_clause}"
             ),
         }
     )
@@ -339,17 +397,31 @@ class JsonlWorkerClient:
         attempts = 1 + (self.repair_attempts if structured else 0)
         last_error: Exception | None = None
         request_kwargs = dict(kwargs)
+        base_messages = kwargs.get("messages")
+        if structured:
+            base_messages = _append_schema_instruction(
+                base_messages,
+                role=self.worker_role,
+                response_format=kwargs.get("response_format"),
+            )
+            request_kwargs["messages"] = base_messages
 
         for attempt in range(attempts):
             if attempt:
                 request_kwargs["messages"] = _append_jsonl_repair_instruction(
-                    kwargs.get("messages"), role=self.worker_role
+                    base_messages,
+                    role=self.worker_role,
+                    response_format=kwargs.get("response_format"),
+                    error=last_error,
                 )
             payload = self._client.create_chat_completion(**request_kwargs)
             if not structured:
                 return payload
             try:
                 line = canonical_json_line(_extract_openai_content(payload))
+                schema = _response_schema(kwargs.get("response_format"))
+                if schema:
+                    _validate_schema_shape(json.loads(line), schema)
                 return _replace_openai_content(payload, line)
             except JsonlContractError as exc:
                 last_error = exc

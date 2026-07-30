@@ -52,7 +52,12 @@ class PublicLifecycleController:
                     "turn_id": turn_id,
                     "channel": channel,
                     "state": state,
-                    "label": "Đang suy nghĩ…" if state in {"RECEIVED", "COMPOSING", "CONTENT_COMMITTED", "AUDIO_BUFFERING"} else "",
+                    "label": {
+                        "RECEIVED": "Đã nhận yêu cầu…",
+                        "COMPOSING": "Đang suy nghĩ…",
+                        "CONTENT_COMMITTED": "Đang chuẩn bị trả lời…",
+                        "AUDIO_BUFFERING": "Đang chuẩn bị giọng…",
+                    }.get(state, ""),
                 },
             )
 

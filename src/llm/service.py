@@ -2145,11 +2145,19 @@ class LlmService:
             return len(rewritten) <= 180
         if len(rewritten) > max(280, int(len(original) * 2.2)):
             return False
-        if "?" in original and "?" not in rewritten:
+        if ("?" in original) != ("?" in rewritten):
             return False
 
         original_norm = self._normalize_for_claim_diff(original)
         rewritten_norm = self._normalize_for_claim_diff(rewritten)
+        rhetorical_question_cues = (
+            "ki\u1ec3u g\u00ec",
+            "l\u00e0m sao",
+            "sao m\u00e0",
+            "n\u00e0o \u0111\u01b0\u1ee3c",
+        )
+        if any(cue in rewritten_norm and cue not in original_norm for cue in rhetorical_question_cues):
+            return False
         original_tokens = set(original_norm.split())
         rewritten_tokens = set(rewritten_norm.split())
         if original_tokens and rewritten_tokens:

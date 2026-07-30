@@ -119,6 +119,47 @@ def test_assistant_act_contract_prevents_acknowledgement_from_becoming_propositi
     assert active_root == 3
 
 
+def test_assistant_act_contract_normalizes_observed_compound_web_labels() -> None:
+    invitation = validate_assistant_act(
+        {
+            "kind": "accept_invitation_with_condition",
+            "proposition_mode": "new",
+        }
+    )
+    follow_up = validate_assistant_act(
+        {
+            "kind": "acknowledge_and_question",
+            "proposition_mode": "new",
+        }
+    )
+
+    assert invitation.act.kind is AssistantActKind.ANSWER
+    assert invitation.act.proposition_mode is PropositionMode.NEW
+    assert follow_up.act.kind is AssistantActKind.QUESTION
+    assert follow_up.act.proposition_mode is PropositionMode.NEW
+
+    short_accept = validate_assistant_act(
+        {"kind": "accept", "proposition_mode": "new"}
+    )
+    assert short_accept.act.kind is AssistantActKind.ANSWER
+
+
+def test_semantic_frame_unwraps_v1_provider_wrapper() -> None:
+    result = validate_semantic_frame(
+        {
+            "v1": {
+                "user_act": "invitation",
+                "target": "assistant",
+                "reply_obligation": {"must_answer": True},
+            }
+        }
+    )
+
+    assert result.frame.user_act == "invitation"
+    assert result.frame.target == "assistant"
+    assert "semantic_frame.wrapper_alias:v1" in result.violations
+
+
 def test_confirmation_continues_existing_proposition_root() -> None:
     act = AssistantAct(
         kind=AssistantActKind.CONFIRMATION,

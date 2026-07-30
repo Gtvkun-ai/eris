@@ -84,6 +84,16 @@ class PropositionMode(_TextEnum):
     CONTINUE = "continue"
 
 
+_ASSISTANT_ACT_KIND_ALIASES: dict[str, AssistantActKind] = {
+    "accept": AssistantActKind.ANSWER,
+    "acceptance": AssistantActKind.ANSWER,
+    "accept_invitation": AssistantActKind.ANSWER,
+    "accept_and_clarify_condition": AssistantActKind.ANSWER,
+    "accept_invitation_with_condition": AssistantActKind.ANSWER,
+    "acknowledge_and_question": AssistantActKind.QUESTION,
+}
+
+
 # Mỗi kind tự định nghĩa speaker và operation hợp lệ. Runtime không còn để một
 # field ``speaker`` mâu thuẫn lật ngược nghĩa của ``kind``.
 _REFERENCE_RULES: dict[ReferenceKind, tuple[frozenset[ReferenceSpeaker], frozenset[ReferenceOperation], ReferenceOperation]] = {
@@ -539,6 +549,12 @@ def validate_semantic_frame(value: Mapping[str, Any] | SemanticFrame | Any | Non
 
     violations: list[str] = []
     payload = _mapping_or_empty(value, field="semantic_frame", violations=violations)
+    for wrapper in ("v1", "semantic_frame.v1"):
+        nested = payload.get(wrapper)
+        if isinstance(nested, Mapping):
+            payload = dict(nested)
+            violations.append(f"semantic_frame.wrapper_alias:{wrapper}")
+            break
     reference = _parse_reference(payload.get("reference"), violations)
     obligation = _parse_obligation(payload.get("reply_obligation"), violations)
 
@@ -609,7 +625,12 @@ def validate_assistant_act(value: Mapping[str, Any] | AssistantAct | Any | None)
         return AssistantActValidation(act=value, violations=())
     violations: list[str] = []
     payload = _mapping_or_empty(value, field="assistant_act", violations=violations)
-    kind = _enum(payload.get("kind"), AssistantActKind, field="assistant_act.kind", default=AssistantActKind.OTHER, violations=violations)
+    raw_kind = str(payload.get("kind", "") or "").strip().lower().replace("-", "_").replace(" ", "_")
+    kind = _ASSISTANT_ACT_KIND_ALIASES.get(raw_kind)
+    if kind is not None:
+        violations.append(f"assistant_act.kind_alias:{raw_kind}:{kind.value}")
+    else:
+        kind = _enum(payload.get("kind"), AssistantActKind, field="assistant_act.kind", default=AssistantActKind.OTHER, violations=violations)
     mode = _enum(payload.get("proposition_mode"), PropositionMode, field="assistant_act.proposition_mode", default=PropositionMode.NONE, violations=violations)
     confidence = _bounded_float(payload.get("confidence", 0.0), field="assistant_act.confidence", minimum=0.0, maximum=1.0, violations=violations)
 

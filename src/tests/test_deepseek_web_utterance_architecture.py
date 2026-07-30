@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 import logging
 from types import SimpleNamespace
 
 from domain.decision import Decision
 from llm import process_manager
+from llm.service import LlmService
+from runtime.ai_orchestrated.contracts import CognitiveObservation
 from runtime.public_lifecycle import PublicLifecycleController
 from runtime.stage_contracts import StageFrameBuilder
 from runtime.utterance_spec import UtteranceSpec, degrade_surface_payload
@@ -74,6 +77,115 @@ def test_utterance_spec_recovers_mild_provider_shape_drift():
     assert flat_spec.speech.text == "ここにいる。"
 
 
+def test_split_web_envelope_keeps_top_level_surfaces():
+    spec = UtteranceSpec.from_mapping(
+        {
+            "display": {"text": "display survives"},
+            "speech": {"text": "speech survives"},
+            "utterance": {
+                "performance": {
+                    "preset": "casual_warm",
+                    "intensity": 0.6,
+                    "nonverbal": "none",
+                }
+            },
+        }
+    )
+
+    assert spec.display.text == "display survives"
+    assert spec.speech.text == "speech survives"
+
+
+def test_structured_worker_parser_unwraps_schema_payload_without_public_salvage():
+    from runtime.ai_orchestrated.model_router import AIRuntimeModelRouter
+
+    class Client:
+        model_name = "deepseek-v4-flash"
+
+        def create_chat_completion(self, **_kwargs):
+            return {
+                "choices": [{
+                    "message": {
+                        "content": json.dumps({
+                            "turn_id": "probe-1",
+                            "user_text": "echoed input",
+                            "observation": {
+                                "user_act": "direct_request",
+                                "confidence": 0.82,
+                                "notes": "kept",
+                            },
+                        })
+                    }
+                }]
+            }
+
+    schema = {
+        "type": "object",
+        "required": ["user_act", "confidence"],
+        "properties": {
+            "user_act": {"type": "string"},
+            "confidence": {"type": "number"},
+            "notes": {"type": "string"},
+        },
+    }
+    payload = AIRuntimeModelRouter(SimpleNamespace())._call(
+        Client(),
+        system="return observation json",
+        payload={"user_text": "probe"},
+        schema=schema,
+        name="observer_probe",
+        max_tokens=128,
+    )
+
+    assert payload == {
+        "user_act": "direct_request",
+        "confidence": 0.82,
+        "notes": "kept",
+    }
+
+
+def test_style_safety_rejects_new_question_intent():
+    service = LlmService(object())
+
+    assert service._style_rewrite_is_safe(
+        "Original statement remains declarative.",
+        "Original statement becomes a question?",
+    ) is False
+    assert service._style_rewrite_is_safe(
+        "Toi chua the di nuoc.",
+        "Toi chua the di nuoc, ki\u1ec3u g\u00ec.",
+    ) is False
+
+
+def test_web_reply_parser_blocks_malformed_json_tail_from_public_text():
+    from runtime.ai_orchestrated.model_router import _json
+
+    payload = _json(
+        'もう一回ね…深く吸って…ゆっくり吐いて…聞こえた？ 😌" }, '
+        '"performance": { "preset": "warmtease" }, "responsemove": "direct_answer'
+    )
+
+    assert payload["text"] == "もう一回ね…深く吸って…ゆっくり吐いて…聞こえた？"
+    assert "performance" not in payload["text"]
+    assert "responsemove" not in payload["text"]
+    assert all(ord(ch) <= 0xFFFF for ch in payload["text"])
+
+
+def test_utterance_spec_strips_godot_unsafe_emoji_surrogates():
+    spec = UtteranceSpec.from_mapping(
+        {
+            "text": "Ừ thì nghe đây 😏",
+            "speech_text": "うん、聞いてる 😏",
+        },
+        default_display_language="vi",
+        default_speech_language="ja",
+    )
+
+    assert spec.display.text == "Ừ thì nghe đây"
+    assert spec.speech.text == "うん、聞いてる"
+    assert all(ord(ch) <= 0xFFFF for ch in spec.display.text + spec.speech.text)
+
+
 def test_stage_uses_committed_speech_without_localizer():
     class FailingLocalizer:
         def localize(self, *_args, **_kwargs):
@@ -105,6 +217,31 @@ def test_stage_uses_committed_speech_without_localizer():
     assert frame.turn_id == "turn_1842"
     assert frame.speech_contract["language"] == "ja"
     assert frame.speech_contract["prelocalized"] is True
+
+
+def test_stage_pins_japanese_speech_contract_even_if_payload_downgrades_it():
+    payload = _canonical_payload()
+    payload["speech_text"] = "Xin chào."
+    payload["speech_language"] = "vi"
+    payload["utterance"]["speech"]["text"] = "Xin chào."
+    payload["utterance"]["speech"]["language"] = "vi"
+
+    decision = Decision(
+        text="Xin chào.",
+        animation="stand",
+        speech_text="Xin chào.",
+        speech_language="vi",
+        display_language="vi",
+    )
+
+    frame = StageFrameBuilder(language_hint="ja").build(
+        decision,
+        payload=payload,
+        channel="chat",
+    )
+
+    assert frame.speech_contract["language"] == "ja"
+    assert frame.tts_text == "Xin chào."
 
 
 def test_post_commit_rewrite_degrades_both_surfaces_honestly():
@@ -209,3 +346,19 @@ def test_web_semantic_turn_uses_one_deadlined_remote_attempt(monkeypatch):
     assert len(primary.calls) == 1
     assert primary.calls[0]["timeout"] == 12.0
     assert fallback.calls == []
+
+
+def test_casual_memory_does_not_trigger_personality_reflection():
+    from runtime.ai_orchestrated.model_router import AIRuntimeModelRouter
+
+    observation = CognitiveObservation(
+        turn_id="turn-casual-memory",
+        turn_seq=1,
+        event_kind="chat",
+        confidence=0.9,
+        memory_worthy=True,
+        relational_delta=0.2,
+        playful_safety_delta=0.2,
+    )
+
+    assert AIRuntimeModelRouter._should_reflect_personality(observation) is False

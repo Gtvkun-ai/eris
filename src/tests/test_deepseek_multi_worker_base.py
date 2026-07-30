@@ -137,6 +137,36 @@ def test_jsonl_worker_repairs_once():
     assert "ONE valid JSON value" in raw.calls[1]["messages"][-1]["content"]
 
 
+def test_jsonl_worker_repairs_valid_json_with_wrong_schema_shape():
+    raw = _FakeClient([
+        '{"turn_id":"1","observation":{"user_act":"request","confidence":0.8}}',
+        '{"user_act":"request","confidence":0.8}',
+    ])
+    worker = JsonlWorkerClient(raw, role="observer", jsonl_enabled=True, repair_attempts=1)
+    response_format = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "observer",
+            "schema": {
+                "type": "object",
+                "required": ["user_act", "confidence"],
+                "properties": {
+                    "user_act": {"type": "string"},
+                    "confidence": {"type": "number"},
+                },
+            },
+        },
+    }
+
+    payload = _call(worker, response_format=response_format)
+
+    assert payload["choices"][0]["message"]["content"] == '{"user_act":"request","confidence":0.8}'
+    assert len(raw.calls) == 2
+    repair_prompt = raw.calls[1]["messages"][-1]["content"]
+    assert "Required top-level keys: user_act, confidence" in repair_prompt
+    assert "schema_required_missing" in repair_prompt
+
+
 def test_jsonl_worker_does_not_touch_free_text():
     raw = _FakeClient(["plain style text"])
     worker = JsonlWorkerClient(raw, role="style", jsonl_enabled=False)

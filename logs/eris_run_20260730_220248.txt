@@ -1,0 +1,64 @@
+﻿==================================================
+ Eris run log
+ Bat dau : 2026-07-30 22:02:48
+ Exe     : D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe
+ Editor  : True
+ OS      : Windows
+==================================================
+22:02:48.901 [INFO] [Vision] Python (venv baseDir): C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe
+22:02:48.902 [INFO] [Vision] Dung Python dev: C:/Users/Gtvkun/Documents/GitHub/eris/.venv\Scripts\python.exe "C:/Users/Gtvkun/Documents/GitHub/eris/src\vision.py"
+22:02:48.915 [INFO] [Vision] Da khoi chay vision.py PID=14676
+22:02:48.936 [INFO] [Live2D] Da khoi chay renderer PID=17380, UDP=4252
+22:02:48.938 [INFO] [BodyMode] 2D -> Live2D | resident=False | bubble giữ ở Godot overlay
+22:02:49.344 [INFO] [live2d] [live2d] third-party wrapper (0.7.0.4), not affiliated with Live2D Inc.
+22:02:49.350 [INFO] [live2d] [live2d.v3] Cubism Native, Python 3.12.0
+22:02:49.350 [INFO] [live2d] [live2d.v3] official: https://www.live2d.com/sdk/download/native/
+22:02:49.512 [INFO] [live2d] [INFO]  [Pal] Init Shader Dir: C:\Users\Gtvkun\Documents\GitHub\eris\.venv\Lib\site-packages\live2d\v3\
+22:02:49.512 [INFO] [live2d] [INFO]  [CSM][I]Live2D Cubism Core version: 05.01.0000 (83951616)
+22:02:49.512 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::StartUp() is complete.
+22:02:49.512 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::Initialize() is complete.
+22:02:49.513 [INFO] [live2d] [INFO]  allocate: cpp Model(at=000001F92D50FB80)
+22:02:49.513 [INFO] [live2d] [INFO]  load modelSetting: C:\Users\Gtvkun\Documents\GitHub\eris\src\assets\live2d\infj\infj.model3.json
+22:02:49.514 [INFO] [live2d] [INFO]  create model: infj.moc3
+22:02:49.619 [INFO] [live2d] [Live2D] Đã mở infj.model3.json | UDP 127.0.0.1:4252
+22:02:49.619 [INFO] [live2d] [Live2D] Window pos=(486, 50) size=(520,900) fb=(520,900) screen=(1920, 1080) canvas=(1.0, 1.5) canvas_px=(1024.0, 1536.0) scale=1.00 offset=(0.00,-0.02) transparent=True decorated=False topmost=True
+22:02:49.619 [INFO] [live2d] [Live2D] Model profile: parameters=21 head=X/Z eyes=custom mirrored pair mouth=yes physics=yes expressions=0 motion_groups=0
+22:02:52.235 [INFO] [vision.py] [Vision][INFO] [Environment Telemetry] interpreter=[đường dẫn nội bộ đã ẩn] | file=[đường dẫn nội bộ đã ẩn] | commit=465cd67
+22:02:52.293 [INFO] [vision.py] [Vision][INFO] DS2API passed inference health check (/v1/models) on port 6011, reuse it.
+22:02:52.296 [INFO] [vision.py] [LLM][INFO] DeepSeek Web worker san sang: role=companion model=deepseek-v4-flash jsonl=0 base=[URL nội bộ đã ẩn]
+22:02:52.296 [INFO] [vision.py] [LLM][INFO] Dung DS2API (DeepSeek Web) lam main brain tai [URL nội bộ đã ẩn] voi model deepseek-v4-flash, fallback tai https://api.deepseek.com voi model deepseek-v4-flash
+22:02:52.297 [INFO] [vision.py] [LLM][INFO] DeepSeek Web worker san sang: role=style model=deepseek-v4-flash jsonl=0 base=[URL nội bộ đã ẩn]
+22:02:52.298 [INFO] [vision.py] [LLM][INFO] Dung vision API rieng tai https://api.groq.com/openai/v1 voi model qwen/qwen3.6-27b
+22:02:52.300 [INFO] [vision.py] [LLM][INFO] DeepSeek Web worker san sang: role=observer model=deepseek-v4-flash jsonl=1 base=[URL nội bộ đã ẩn]
+22:02:52.300 [INFO] [vision.py] [LLM][INFO] DeepSeek Web worker san sang: role=critic model=deepseek-v4-flash jsonl=1 base=[URL nội bộ đã ẩn]
+22:02:52.301 [INFO] [vision.py] [LLM][INFO] DeepSeek Web worker san sang: role=inner model=deepseek-v4-flash jsonl=1 base=[URL nội bộ đã ẩn]
+22:02:52.301 [INFO] [vision.py] [LLM][INFO] Inner Diary owner: DeepSeek worker role=inner
+22:02:52.302 [INFO] [vision.py] [LLM][INFO] DeepSeek Web worker san sang: role=surface model=deepseek-v4-flash jsonl=1 base=[URL nội bộ đã ẩn]
+22:02:52.302 [INFO] [vision.py] [LLM][INFO] Surface worker owner: social candidate + public wording
+22:02:52.303 [INFO] [vision.py] [LLM][INFO] DeepSeek Web worker san sang: role=research model=deepseek-v4-flash jsonl=1 base=[URL nội bộ đã ẩn]
+22:02:54.799 [INFO] [vision.py] [Loop][INFO] [runtime-settings] loaded path=[đường dẫn nội bộ đã ẩn] version=14
+22:02:54.853 [INFO] [vision.py] [Loop][INFO] [vtuber-stage] loaded version=vtuber_stage.v11 phases=8,9,10,11 status=intention_authority_ready session=stage_c6be7d77de4d497b
+22:02:54.854 [INFO] [vision.py] [Loop][INFO] Living user memory đã nối episode/profile dreaming adapter.
+22:02:54.870 [INFO] [vision.py] [Loop][INFO] [internal-cognitive] loaded version=internal_cognitive.v1.0 capabilities=8 status=read_only_verified
+22:02:54.910 [INFO] [vision.py] [Loop][INFO] [project-ops] loaded version=project_operations.v1.1 capabilities=15 mode=autonomous_project_scope
+22:02:54.910 [INFO] [vision.py] [Loop][INFO] [workspace] eris_home=[đường dẫn nội bộ đã ẩn] active=none implicit_source_repo=false
+22:03:04.452 [INFO] [vision.py] [Loop][INFO] tutor: knowledge provider đã nối vào memory recall
+22:03:04.540 [INFO] [vision.py] [Loop][INFO] [environment-capability] loaded version=environment_capability.v1.0 capabilities=6 status=read_only_verified
+22:03:05.022 [INFO] [vision.py] [Loop][INFO] [chess-bridge] listening on [URL nội bộ đã ẩn]
+22:03:05.025 [INFO] [vision.py] [Loop][INFO] [architecture C] enabled version=ai_orchestrated.v18.social_initiative_governor state_version=0 personality_version=0 identity_version=0 observer=post_turn autonomous_initiative=deterministic surface=wording_only semantic_authority=semantic_frame.v1 single_writer=1
+22:03:06.737 [INFO] [vision.py] [TTS][INFO] [TTS/ElevenLabs] Background token and connection pool warm-up complete.
+22:03:06.739 [INFO] [vision.py] [Loop][INFO] --- Architecture C runtime; chat vision theo yêu cầu màn hình ---
+22:03:07.080 [INFO] [vision.py] [Loop][INFO] [architecture C startup grounding] direct=0 strong=0 telemetry_tab=0 evidence=0 runtime_opening=0 metadata=0 backend=unknown wait=0.34s notes=screen_prime_lazy,screen_prime_timeout,runtime_signals_lazy
+22:03:07.091 [INFO] [vision.py] [Loop][INFO] [architecture C startup] planner skipped; using typed persona plan reason=no_opening_anchor
+22:03:07.093 [INFO] [vision.py] [Loop][INFO] [architecture C startup route] strategy=persona_opening source=persona continuity=0 forced=1
+22:03:14.474 [INFO] [vision.py] [Loop][INFO] [autonomous reasoning] chars=939 content_chars=449
+22:03:14.478 [INFO] [vision.py] [Loop][INFO] [architecture C startup greeting] source=deepseek_web score=0.653 accepted=1 reasons=none situation=plain_return
+22:03:19.772 [INFO] [vision.py] [Loop][INFO] [architecture C startup] spoke motive=startup_opening text=Muộn thế này rồi mà vẫn còn ánh sáng màn hình. Tôi chỉ đang nghĩ xem tối nay có gì thú vị không thôi.
+22:03:19.773 [INFO] [vision.py] [Loop][INFO] [screen text] worker started backend=lazy-auto poll=1.2s
+22:03:20.765 [INFO] [vision.py] [Loop][INFO] [screen text] OCR backend resolved=rapidocr
+22:03:37.570 [INFO] [Live2D] Dang dung renderer PID=17380...
+22:03:37.587 [INFO] [live2d] [INFO]  [CSM][I]CubismFramework::Dispose() is complete.
+22:03:37.600 [INFO] [Live2D] Renderer da thoat (code=-1, current=False).
+22:03:37.618 [INFO] [Vision] Dang dung vision.py PID=14676...
+22:03:37.650 [INFO] [Vision] vision.py da thoat (PID=14676, code=-1, unexpected=False).
+22:03:37.655 [INFO] [RunLogger] Ket thuc phien chay.

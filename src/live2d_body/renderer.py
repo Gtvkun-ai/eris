@@ -52,7 +52,7 @@ class Live2DRenderer:
         self.state = state
         self.receiver = receiver
         self.available_parameters: set[str] = set()
-        self._parameter_handles: dict[str, Any] = {}
+        self._parameter_indices: dict[str, int] = {}
         self._dragging_window = False
         self._drag_origin_cursor_screen = (0.0, 0.0)
         self._drag_origin_window = (0, 0)
@@ -111,8 +111,8 @@ class Live2DRenderer:
             model.SetOffset(self.config.offset_x, self.config.offset_y)
             model.SetAutoBlinkEnable(True)
             model.SetAutoBreathEnable(True)
-            self._parameter_handles = self._read_parameter_handles(model)
-            self.available_parameters = set(self._parameter_handles)
+            self._parameter_indices = self._read_parameter_indices(model)
+            self.available_parameters = set(self._parameter_indices)
             canvas_size = self._safe_model_call(model, "GetCanvasSize")
             canvas_pixel_size = self._safe_model_call(model, "GetCanvasSizePixel")
 
@@ -323,14 +323,27 @@ class Live2DRenderer:
         self._scale_eye_parameter(model, "ParamEyeROpen", right_scale)
 
     def _scale_eye_parameter(self, model: Any, parameter_id: str, scale: float) -> None:
-        if parameter_id not in self.available_parameters:
+        """Nhân mood/speech scale với giá trị mí *của frame hiện tại*.
+
+        ``GetParameter()`` có thể trả một object snapshot. Cache object đó từ lúc
+        load model rồi đọc ``.value`` ở các frame sau sẽ ghi đè auto-blink bằng
+        giá trị cũ (thường là 1.0), khiến nhân vật mở mắt như đang trực ca đêm.
+        Vì vậy chỉ cache index và đọc lại bằng ``GetParameterValue(index)`` sau
+        ``model.Update()``.
+        """
+
+        index = self._parameter_indices.get(parameter_id)
+        if index is None:
             return
-        handle = self._parameter_handles.get(parameter_id)
-        raw_value = getattr(handle, "value", None) if handle is not None else None
         try:
-            current = float(raw_value)
-        except (TypeError, ValueError):
-            return
+            current = float(model.GetParameterValue(index))
+        except (AttributeError, TypeError, ValueError, RuntimeError):
+            # Fallback cho build live2d-py cũ: lấy object mới ở chính frame này,
+            # tuyệt đối không dùng object đã cache từ lúc load model.
+            try:
+                current = float(getattr(model.GetParameter(index), "value"))
+            except (AttributeError, TypeError, ValueError, RuntimeError):
+                return
         normalized_scale = max(0.0, min(1.0, float(scale)))
         target = INFJ_PARAMETER_PROFILE.clamp_eye_open(current * normalized_scale)
         model.SetParameterValue(parameter_id, target)
@@ -372,17 +385,17 @@ class Live2DRenderer:
         )
 
     @staticmethod
-    def _read_parameter_handles(model: Any) -> dict[str, Any]:
-        handles: dict[str, Any] = {}
+    def _read_parameter_indices(model: Any) -> dict[str, int]:
+        indices: dict[str, int] = {}
         try:
             for index in range(int(model.GetParameterCount())):
                 parameter = model.GetParameter(index)
                 parameter_id = str(getattr(parameter, "id", "") or "")
                 if parameter_id:
-                    handles[parameter_id] = parameter
+                    indices[parameter_id] = index
         except Exception as exc:
             print(f"[Live2D][WARN] Không đọc được parameter list: {exc}", flush=True)
-        return handles
+        return indices
 
     @staticmethod
     def _safe_model_call(model: Any, method_name: str) -> Any:

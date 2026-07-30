@@ -704,7 +704,113 @@ def _content(payload: Any) -> str:
     return ""
 
 
-def _json(text: str) -> dict[str, Any]:
+_PROTOCOL_TEXT_FIELDS = (
+    "performance",
+    "delivery",
+    "responsemove",
+    "response_move",
+    "should_speak",
+    "semantic_frame",
+    "assistant_act",
+    "utterance",
+    "display",
+    "speech",
+    "protocol",
+    "parse_mode",
+    "debug_trace",
+)
+
+
+def _strip_transport_unsafe_unicode(text: str) -> str:
+    return "".join(
+        ch
+        for ch in str(text or "")
+        if not (0xD800 <= ord(ch) <= 0xDFFF or ord(ch) > 0xFFFF)
+    )
+
+
+def _clean_public_text_fragment(value: Any) -> str:
+    text = _strip_transport_unsafe_unicode(str(value or ""))
+    text = text.replace("\\n", " ").replace("\r", " ").replace("\n", " ")
+    text = re.split(
+        r'(?:[\"\']?\s*,\s*)?[\"\'](?:' + "|".join(re.escape(field) for field in _PROTOCOL_TEXT_FIELDS) + r')[\"\']\s*:',
+        text,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    text = re.sub(r"\s*[}\]]+\s*$", "", text).strip()
+    for _ in range(3):
+        before = text
+        text = text.strip().strip(",;")
+        text = re.sub(r"\s*[}\]]+\s*$", "", text).strip()
+        if len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'"}:
+            text = text[1:-1].strip()
+        if text.endswith('"') and text.count('"') % 2 == 1:
+            text = text[:-1].rstrip(" ,;")
+        if text == before:
+            break
+    return " ".join(text.split())
+
+
+def _decode_json_string_fragment(value: str) -> str:
+    raw = str(value or "")
+    try:
+        return str(json.loads(f'"{raw}"') or "")
+    except Exception:
+        return raw.replace(r"\"", '"').replace(r"\\", "\\")
+
+
+def _extract_string_field_from_malformed_json(raw: str, field_names: Sequence[str]) -> str:
+    for field in field_names:
+        match = re.search(
+            rf'"{re.escape(field)}"\s*:\s*"(?P<value>(?:\\.|[^"\\])*)',
+            raw,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if match:
+            cleaned = _clean_public_text_fragment(_decode_json_string_fragment(match.group("value")))
+            if cleaned:
+                return cleaned
+    return ""
+
+
+def _looks_jsonish_or_protocolish(raw: str) -> bool:
+    lowered = str(raw or "").lower()
+    if "{" in lowered or "}" in lowered or '":' in lowered:
+        return True
+    return any(f'"{field}"' in lowered or f"{field}:" in lowered for field in _PROTOCOL_TEXT_FIELDS)
+
+
+def _has_meaningful_public_reply(payload: Mapping[str, Any]) -> bool:
+    return any(
+        key in payload
+        for key in (
+            "text",
+            "utterance",
+            "semantic_frame",
+            "assistant_act",
+            "should_speak",
+            "display",
+            "speech",
+            "display_text",
+            "speech_text",
+        )
+    )
+
+
+def _salvage_malformed_public_reply(raw: str) -> dict[str, Any]:
+    text = _extract_string_field_from_malformed_json(
+        raw,
+        ("text", "display_text", "speech_text", "reply", "response", "message", "content"),
+    )
+    if not text:
+        text = _clean_public_text_fragment(raw)
+    if not text:
+        return {}
+    return {"text": text, "should_speak": True, "llm_malformed_json_repair": True}
+
+
+def _json(text: str, *, public_reply: bool = True) -> dict[str, Any]:
     raw = str(text or "").strip()
     if not raw:
         return {}
@@ -724,17 +830,79 @@ def _json(text: str) -> dict[str, Any]:
     try:
         value = json.loads(raw)
         parsed = dict(value) if isinstance(value, Mapping) else {}
+        if (
+            public_reply
+            and parsed
+            and not _has_meaningful_public_reply(unwrap(parsed))
+            and _looks_jsonish_or_protocolish(raw)
+        ):
+            return _salvage_malformed_public_reply(raw)
         return unwrap(parsed)
     except Exception:
         match = re.search(r"\{.*\}", raw, flags=re.S)
         if not match:
-            return {"text": raw, "should_speak": True}
+            if not public_reply:
+                return {}
+            if _looks_jsonish_or_protocolish(raw):
+                return _salvage_malformed_public_reply(raw)
+            cleaned = _clean_public_text_fragment(raw)
+            return {"text": cleaned, "should_speak": True} if cleaned else {}
         try:
             value = json.loads(match.group(0))
             parsed = dict(value) if isinstance(value, Mapping) else {}
+            if (
+                public_reply
+                and parsed
+                and not _has_meaningful_public_reply(unwrap(parsed))
+                and _looks_jsonish_or_protocolish(raw)
+            ):
+                return _salvage_malformed_public_reply(raw)
             return unwrap(parsed)
         except Exception:
-            return {"text": raw, "should_speak": True}
+            return _salvage_malformed_public_reply(raw) if public_reply else {}
+
+
+def _unwrap_schema_payload(
+    payload: Mapping[str, Any] | Any,
+    schema: Mapping[str, Any] | Any,
+) -> dict[str, Any]:
+    """Select the nested object that best matches a structured worker schema."""
+
+    root = dict(payload) if isinstance(payload, Mapping) else {}
+    schema_map = schema if isinstance(schema, Mapping) else {}
+    required = {
+        str(name)
+        for name in (schema_map.get("required") or ())
+        if str(name or "").strip()
+    }
+    properties = {
+        str(name)
+        for name in (schema_map.get("properties") or {}).keys()
+        if str(name or "").strip()
+    }
+    targets = required or properties
+    if not root or not targets:
+        return root
+
+    def score(value: Mapping[str, Any]) -> tuple[int, int]:
+        keys = {str(key) for key in value.keys()}
+        return len(required & keys), len(properties & keys)
+
+    best = root
+    best_score = score(root)
+    for value in root.values():
+        if not isinstance(value, Mapping):
+            continue
+        candidate = dict(value)
+        candidate_score = score(candidate)
+        if candidate_score > best_score:
+            best = candidate
+            best_score = candidate_score
+
+    minimum_match = 1 if len(targets) == 1 else 2
+    if best is not root and sum(best_score) >= minimum_match:
+        return best
+    return root
 
 
 class AIRuntimeModelRouter:
@@ -848,6 +1016,11 @@ class AIRuntimeModelRouter:
     def surface_client(self) -> Any | None:
         return getattr(self.llm_service, "surface_client", None)
 
+    @staticmethod
+    def _client_source_label(client: Any, fallback: str) -> str:
+        role = str(getattr(client, "worker_role", "") or "").strip().lower()
+        return f"deepseek_web_{role}" if role else fallback
+
     def _call(
         self,
         client: Any,
@@ -897,7 +1070,8 @@ class AIRuntimeModelRouter:
                 reason=name,
                 priority=int(priority if priority is not None else (45 if "deep" in name else 35)),
             )
-            return _json(_content(raw))
+            parsed = _json(_content(raw), public_reply=False)
+            return _unwrap_schema_payload(parsed, schema)
         except Exception as exc:  # noqa: BLE001
             if self.logger is not None:
                 safe_log(self.logger, "debug", "[ai runtime model] %s failed model=%s: %s", name, getattr(client, "model_name", ""), exc)
@@ -914,9 +1088,9 @@ class AIRuntimeModelRouter:
         display_language = language_names.get(display_code, "ngôn ngữ của người dùng")
         speech_language = language_names.get(speech_code, display_language)
         return (
-            f"Bạn là ERIS. Hãy phản ứng từ bản thân hiện tại. Trong một JSON duy nhất, render display.text tự nhiên bằng {display_language} "
-            f"và speech.text tự nhiên bằng {speech_language}. Hai bề mặt phải cùng semantic intent, cùng mức thân mật và cùng cá tính; "
-            "speech.text là lời ERIS thực sự sẽ đọc, không phải chú thích hay bản dịch máy móc. "
+            f"Bạn là ERIS. Hãy phản ứng từ bản thân hiện tại. Trong một JSON duy nhất, render utterance.display.text tự nhiên bằng {display_language} "
+            f"và utterance.speech.text tự nhiên bằng {speech_language}. Hai bề mặt phải cùng semantic intent, cùng mức thân mật và cùng cá tính; "
+            "utterance.speech.text là lời ERIS thực sự sẽ đọc, không phải chú thích hay bản dịch máy móc. "
             "Không cố diễn một nhãn MBTI, Enneagram, tritype hay archetype. Mô tả personality được cung cấp là quán tính hiện tại, "
             "không phải danh sách động tác phải biểu diễn. Có thể dịu, sắc, hóm hỉnh, phòng thủ, chủ động hoặc mâu thuẫn theo đúng ngữ cảnh. "
             "Không phải support bot, không giả dễ thương, không biến mọi cảm xúc thành thơ. "
@@ -1528,10 +1702,13 @@ class AIRuntimeModelRouter:
             )
         return bool(
             observation.repair_needed
-            or observation.memory_worthy
-            or relational_signal >= 0.16
+            or relational_signal >= 0.30
             or observation.appraisal.novelty >= 0.44
             or has_consequence
+            or (
+                observation.memory_worthy
+                and observation.appraisal.novelty >= 0.58
+            )
         )
 
     @staticmethod
@@ -1757,7 +1934,7 @@ class AIRuntimeModelRouter:
                 reasoning_effort=None,
                 timeout_seconds=observer_timeout,
             )
-            source = "groq_observer"
+            source = self._client_source_label(self.observer_client, "groq_observer")
             fallback_enabled = str(
                 os.getenv("ERIS_POST_OBSERVER_FALLBACK_ENABLED", "0") or "0"
             ).strip().lower() in {"1", "true", "yes", "on"}
@@ -1771,7 +1948,7 @@ class AIRuntimeModelRouter:
                     max_tokens=520,
                     timeout_seconds=observer_timeout,
                 )
-                source = "groq_observer_fallback"
+                source = self._client_source_label(self.fallback_client, "groq_observer_fallback")
         primary = CognitiveObservation.from_mapping(
             primary_payload,
             turn_id=turn_id,
@@ -1821,7 +1998,7 @@ class AIRuntimeModelRouter:
                 turn_seq=turn_seq,
                 session_id=resolved_session_id,
                 relationship_id=relationship_id,
-                source="groq_observer_deep",
+                source=self._client_source_label(self.deep_client, "groq_observer_deep"),
                 latency_ms=(time.perf_counter() - deep_started) * 1000.0,
             )
             if deep.confidence >= max(0.62, primary.confidence + 0.04):

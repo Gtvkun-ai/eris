@@ -12,6 +12,29 @@ MAX_UDP_PAYLOAD_BYTES = 63000
 PANEL_STATE_PACKET_TYPE = "panel_state_update"
 
 
+def _strip_udp_unsafe_text(text: str) -> str:
+    return "".join(
+        ch
+        for ch in str(text or "")
+        if not (0xD800 <= ord(ch) <= 0xDFFF or ord(ch) > 0xFFFF)
+    )
+
+
+def _sanitize_udp_payload(value):
+    if isinstance(value, str):
+        return _strip_udp_unsafe_text(value)
+    if isinstance(value, dict):
+        return {
+            _strip_udp_unsafe_text(str(key)): _sanitize_udp_payload(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_sanitize_udp_payload(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_sanitize_udp_payload(item) for item in value)
+    return value
+
+
 def _compact_private_mind_for_udp_overflow(value):
     if not isinstance(value, dict):
         return {}
@@ -411,13 +434,14 @@ class UdpTransport:
         self._panel_seq = 0
 
     def send_text(self, message: str) -> None:
-        self._send_sock.sendto(message.encode("utf-8"), self._send_target)
+        self._send_sock.sendto(_strip_udp_unsafe_text(message).encode("utf-8"), self._send_target)
     # send_json là một phương thức để gửi dữ liệu dưới dạng JSON,
     #  nó nhận một đối tượng Python, chuyển đổi nó thành một chuỗi JSON,
     #  và sau đó gửi chuỗi đó qua socket UDP đến địa chỉ và cổng
 #  đã được cấu hình trong phương thức __init__. Việc sử dụng json.dumps với ensure_ascii=False đảm bảo rằng các ký tự Unicode được giữ nguyên trong chuỗi JSON,
 #  cho phép gửi dữ liệu có chứa các ký tự đặc biệt hoặc ngôn ngữ khác một cách chính xác.
     def send_json(self, payload: dict) -> None:
+        payload = _sanitize_udp_payload(payload)
         message = json.dumps(payload, ensure_ascii=False)
         if len(message.encode("utf-8")) <= MAX_UDP_PAYLOAD_BYTES:
             self.send_text(message)

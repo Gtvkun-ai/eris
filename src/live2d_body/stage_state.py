@@ -18,6 +18,7 @@ from __future__ import annotations
 import math
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -267,6 +268,8 @@ class Live2DStageState:
         self._speech_contexts: dict[tuple[str, int], SpeechContext] = {}
         self._latest_speech_context = SpeechContext()
         self._latest_speech_key: tuple[str, int] = ("", 0)
+        self._recent_event_ids: deque[str] = deque(maxlen=256)
+        self._recent_event_id_set: set[str] = set()
 
         neutral = _EMOTION_TARGETS["neutral"]
         self._current: dict[str, float] = neutral.parameters()
@@ -280,12 +283,27 @@ class Live2DStageState:
         protocol = str(payload.get("protocol", "") or "")
         event_type = str(payload.get("type", "") or "").strip().lower()
         with self._lock:
+            if protocol == "eris.stage" and self._is_duplicate_stage_event(payload):
+                return
             if protocol == "eris.stage":
                 self._handle_stage_event(payload, event_type)
             else:
                 self._handle_legacy_payload(payload)
             self._last_event_type = event_type
             self._last_event_at = time.monotonic()
+
+    def _is_duplicate_stage_event(self, payload: Mapping[str, Any]) -> bool:
+        event_id = str(payload.get("event_id", "") or "").strip()
+        if not event_id:
+            return False
+        if event_id in self._recent_event_id_set:
+            return True
+        if len(self._recent_event_ids) == self._recent_event_ids.maxlen:
+            expired = self._recent_event_ids.popleft()
+            self._recent_event_id_set.discard(expired)
+        self._recent_event_ids.append(event_id)
+        self._recent_event_id_set.add(event_id)
+        return False
 
     def _handle_stage_event(self, payload: Mapping[str, Any], event_type: str) -> None:
         speech_context = SpeechContext.from_payload(payload)

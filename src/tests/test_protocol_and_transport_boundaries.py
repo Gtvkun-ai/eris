@@ -10,6 +10,17 @@ from runtime.subsystem_health import HealthStatus, SubsystemHealthRegistry
 from runtime.transport_boundary import RuntimeTransportBoundary
 
 
+def test_udp_payload_sanitizer_removes_godot_unsafe_emoji() -> None:
+    from transport.udp import _sanitize_udp_payload
+
+    payload = _sanitize_udp_payload(
+        {"text": "nghe đây 😏", "nested": {"speech_text": "聞いてる 😌"}}
+    )
+
+    assert payload == {"text": "nghe đây ", "nested": {"speech_text": "聞いてる "}}
+    assert all(ord(ch) <= 0xFFFF for ch in payload["text"] + payload["nested"]["speech_text"])
+
+
 class _Transport:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail

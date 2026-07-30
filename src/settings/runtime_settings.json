@@ -107,7 +107,7 @@
   },
   "tts": {
     "enabled": true,
-    "language": "vi",
+    "language": "ja",
     "voice": "Aoede",
     "quality": "balanced",
     "volume": 1.0,

@@ -28,6 +28,8 @@ public partial class UdpListener : Node2D
 		public bool DiaryUpdated;
 		public bool Speaking;
 		public bool Thinking;
+		public bool ReachedSpeaking;
+		public ulong NoticeUntilMs;
 		public ulong LastPacketAtMs;
 		public ulong LastAffectAtMs;
 	}
@@ -72,7 +74,14 @@ public partial class UdpListener : Node2D
 			if (string.IsNullOrWhiteSpace(turnId))
 				turnId = RuntimePresenceString(data, "turn_id");
 			if (!string.IsNullOrWhiteSpace(turnId))
+			{
+				if (!string.Equals(_runtimePresence.TurnId, turnId, StringComparison.Ordinal))
+				{
+					_runtimePresence.ReachedSpeaking = false;
+					_runtimePresence.NoticeUntilMs = 0;
+				}
 				_runtimePresence.TurnId = turnId;
+			}
 
 			string lifecycleState = RuntimePresenceString(data, "state").Trim().ToUpperInvariant();
 			if (!string.IsNullOrWhiteSpace(lifecycleState))
@@ -138,6 +147,9 @@ public partial class UdpListener : Node2D
 				case "audio_playback_started":
 					_runtimePresence.Speaking = true;
 					_runtimePresence.Thinking = false;
+					_runtimePresence.ReachedSpeaking = true;
+					_runtimePresence.NoticeUntilMs = 0;
+					_runtimePresence.StatusLabel = "";
 					_runtimePresence.Stage = "speaking";
 					break;
 				case "degraded":
@@ -146,8 +158,12 @@ public partial class UdpListener : Node2D
 				case "interrupted":
 					SetRuntimePresenceTerminal("interrupted");
 					break;
-				case "done":
 				case "audio_playback_done":
+					SetRuntimePresenceTerminal("afterglow");
+					break;
+				case "done":
+					SetRuntimePresenceTerminal("afterglow", showSilentNotice: !_runtimePresence.ReachedSpeaking);
+					break;
 				case "stage_segment_cancelled":
 				case "stage_segment_failed":
 				case "continuation_cancelled":
@@ -182,6 +198,12 @@ public partial class UdpListener : Node2D
 	private void TickRuntimePresencePanel()
 	{
 		ulong now = Time.GetTicksMsec();
+		if (_runtimePresence.NoticeUntilMs > 0 && now >= _runtimePresence.NoticeUntilMs)
+		{
+			_runtimePresence.NoticeUntilMs = 0;
+			_runtimePresence.StatusLabel = "";
+			RefreshRuntimePresenceIndicator();
+		}
 		if ((_runtimePresence.Thinking || _runtimePresence.Speaking)
 			&& _runtimePresence.LastPacketAtMs > 0
 			&& now - _runtimePresence.LastPacketAtMs > 45000)
@@ -211,17 +233,32 @@ public partial class UdpListener : Node2D
 	{
 		_runtimePresence.Thinking = true;
 		_runtimePresence.Speaking = false;
+		_runtimePresence.NoticeUntilMs = 0;
 		_runtimePresence.Stage = stage;
-		if (string.IsNullOrWhiteSpace(_runtimePresence.StatusLabel))
-			_runtimePresence.StatusLabel = "Đang suy nghĩ…";
+		_runtimePresence.StatusLabel = stage switch
+		{
+			"received" => "Đã nhận yêu cầu…",
+			"content_committed" => "Đang chuẩn bị trả lời…",
+			"audio_buffering" => "Đang chuẩn bị giọng…",
+			_ => "Đang suy nghĩ…",
+		};
 	}
 
-	private void SetRuntimePresenceTerminal(string stage)
+	private void SetRuntimePresenceTerminal(string stage, bool showSilentNotice = false)
 	{
 		_runtimePresence.Speaking = false;
 		_runtimePresence.Thinking = false;
 		_runtimePresence.Stage = stage;
-		_runtimePresence.StatusLabel = "";
+		if (showSilentNotice)
+		{
+			_runtimePresence.StatusLabel = "Không phát lời";
+			_runtimePresence.NoticeUntilMs = Time.GetTicksMsec() + 1600;
+		}
+		else
+		{
+			_runtimePresence.StatusLabel = "";
+			_runtimePresence.NoticeUntilMs = 0;
+		}
 	}
 
 	private void ApplyThinkingFinishedTarget(string lifecycleState)
@@ -231,6 +268,9 @@ public partial class UdpListener : Node2D
 			case "SPEAKING":
 				_runtimePresence.Speaking = true;
 				_runtimePresence.Thinking = false;
+				_runtimePresence.ReachedSpeaking = true;
+				_runtimePresence.NoticeUntilMs = 0;
+				_runtimePresence.StatusLabel = "";
 				_runtimePresence.Stage = "speaking";
 				break;
 			case "DEGRADED":
@@ -240,7 +280,7 @@ public partial class UdpListener : Node2D
 				SetRuntimePresenceTerminal("interrupted");
 				break;
 			case "DONE":
-				SetRuntimePresenceTerminal("afterglow");
+				SetRuntimePresenceTerminal("afterglow", showSilentNotice: !_runtimePresence.ReachedSpeaking);
 				break;
 			default:
 				_runtimePresence.Thinking = false;
@@ -276,7 +316,8 @@ public partial class UdpListener : Node2D
 	private void RefreshRuntimePresenceIndicator()
 	{
 		RefreshConversationPresenceFromRuntime();
-		bool visible = _runtimePresence.Thinking && !_runtimePresence.Speaking;
+		bool visible = (_runtimePresence.Thinking && !_runtimePresence.Speaking)
+			|| (_runtimePresence.NoticeUntilMs > Time.GetTicksMsec());
 		if (!visible && _runtimePresenceIndicator == null)
 			return;
 		EnsureRuntimePresenceIndicator();

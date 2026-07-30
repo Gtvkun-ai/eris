@@ -1015,7 +1015,16 @@ class RuntimePrivateMindModelAdapter:
         }
 
     def debug_status(self) -> dict[str, Any]:
-        api_key_configured = bool(self.config.api_key or get_secret("ERIS_PRIVATE_MIND_API_KEY", "ERIS_REMOTE_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY"))
+        selected_client = getattr(self.llm_service, self.client_attr, None) if self.llm_service is not None else None
+        effective_role = str(getattr(selected_client, "worker_role", "") or "").strip()
+        effective_provider = "deepseek_web" if effective_role else self.config.provider
+        effective_model = str(getattr(selected_client, "model_name", "") or self.config.model)
+        effective_base_url = str(getattr(selected_client, "base_url", "") or self.config.base_url)
+        api_key_configured = bool(
+            selected_client is not None
+            or self.config.api_key
+            or get_secret("ERIS_PRIVATE_MIND_API_KEY", "ERIS_REMOTE_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY")
+        )
         average_latency = self._total_latency_ms / self._calls if self._calls else 0.0
         # Suy degraded_cause từ _last_error_kind và trạng thái cooldown
         if self._transient_cooldown_active() or self._last_error_kind == "transient" or self._last_error == "transient_cooldown":
@@ -1026,9 +1035,10 @@ class RuntimePrivateMindModelAdapter:
             degraded_cause = ""
         return {
             "enabled": bool(self.config.enabled),
-            "provider": self.config.provider,
-            "model": self.config.model,
-            "base_url": self.config.base_url,
+            "provider": effective_provider,
+            "model": effective_model,
+            "base_url": effective_base_url,
+            "worker_role": effective_role,
             "api_key_configured": api_key_configured,
             "api_degraded": bool(self._last_error or self._json_cooldown_active() or self._transient_cooldown_active()),
             "calls": self._calls,

@@ -75,6 +75,9 @@ class SpeechContractResolver:
             ),
             text=text,
         )
+        default_language = normalize_language(self.default_language, text=text)
+        if default_language == "ja" and language != "ja":
+            language = "ja"
         locale = str(supplied.get("locale") or _LOCALES.get(language, language)).strip()
         voice_family = str(
             supplied.get("voice_family")
