@@ -26,11 +26,17 @@ def _has_marker(normalized: str, marker: str) -> bool:
 
 class ScreenRelevanceRouter:
     SCREEN_MARKERS = (
-        "man hinh", "screen", "tren man", "cua so nay", "nhin man hinh", "xem man hinh",
+        "man hinh", "screen", "vision", "tren man", "cua so nay",
+        "nhin man hinh", "xem man hinh", "nhin man hinh tui", "nhin man hinh toi",
+        "em nhin man hinh", "em xem man hinh",
         "xem di", "ban xem di", "dang hien gi", "toi dang code gi", "doan dang mo",
         "file dang mo", "loi nay tren man hinh", "tab nay", "panel nay", "tab dang mo",
         "tab telemetry", "panel telemetry", "cua so telemetry", "doc tab telemetry",
         "doc duoc tab telemetry", "telemetry cua toi", "telemetry toi",
+        # PATCH: các câu đời thường sau một lượt vision cũng là tham chiếu màn hình.
+        # Không có nhóm này, câu kiểu “em còn mù vision hả” bị route về mode=none.
+        "mu vision", "con mu vision", "em con mu vision",
+        "khong nhin duoc", "khong thay duoc", "khong thay gi",
     )
     TEXT_MARKERS = (
         # "chu" đã xóa: particle cuối câu "chứ" bị false-match → text_task=True sai
@@ -38,14 +44,25 @@ class ScreenRelevanceRouter:
         "exception", "error", "loi", "thong bao", "ghi gi", "doc", "file", "ham",
         "class", "tab", "panel", "telemetry", "uia", "ocr", "metric", "status",
     )
-    SCREEN_CAPABILITY_MARKERS = ("doc duoc", "nhin duoc", "thay duoc", "xem duoc", "co doc", "co thay")
-    SCREEN_RESOURCE_MARKERS = ("telemetry", "tab", "panel", "uia", "ocr", "cua so")
+    SCREEN_CAPABILITY_MARKERS = (
+        "doc duoc", "nhin duoc", "thay duoc", "xem duoc", "co doc", "co thay",
+        "khong doc duoc", "khong nhin duoc", "khong thay duoc",
+        # PATCH: “mù vision” là capability complaint, không phải small talk.
+        "mu", "blind",
+    )
+    SCREEN_RESOURCE_MARKERS = (
+        "telemetry", "tab", "panel", "uia", "ocr", "cua so",
+        # PATCH: ghép capability + vision/screen để cứu câu hỏi về thị giác.
+        "vision", "man hinh", "screen", "mat",
+    )
     # Yêu cầu model TỰ NHÌN vào ảnh — bỏ qua OCR text matching, thẳng vào vision.
     # Khác VISUAL_MARKERS (hỏi về layout/màu sắc): đây là "phân tích cái đang hiện"
     # mà không biết trước nội dung là gì.
     DIRECT_VISION_MARKERS = (
         "tu xem", "tu nhin", "xem thu", "nhin thu", "xem giup", "nhin giup",
         "ban co the xem", "ban co the nhin", "em xem di", "em nhin di",
+        "em nhin man hinh", "em xem man hinh",
+        "nhin man hinh tui", "nhin man hinh toi",
         "tu phan tich", "phan tich man hinh", "xem man hinh giup",
         "look at", "take a look", "check the screen", "see for yourself",
     )

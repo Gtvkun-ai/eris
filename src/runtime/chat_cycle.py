@@ -302,14 +302,23 @@ class ChatCycleMixin:
         direct_terms = tuple(
             normalize_vi(item)
             for item in (
-                "màn hình", "trên màn hình", "screenshot", "screen",
-                "nhìn màn hình", "xem màn hình", "look at this", "this screen",
+                "màn hình", "trên màn hình", "screenshot", "screen", "vision",
+                "nhìn màn hình", "xem màn hình",
+                "nhìn màn hình tui", "nhìn màn hình tôi",
+                "em nhìn màn hình", "em xem màn hình",
+                "look at this", "this screen",
                 "xem đi", "bạn xem đi", "tôi đang code gì", "đang code gì",
+                "xem được tui làm gì", "xem được tôi làm gì", "thấy được tui làm gì", "thấy được tôi làm gì",
+                "em không xem được", "không xem được tui làm gì", "không xem được tôi làm gì",
+                "biết tui làm gì", "biết tôi làm gì",
                 "đoạn đang mở", "file đang mở", "đang hiện gì", "lỗi này trên màn hình",
-                # Yêu cầu model tự nhìn vào ảnh — không tìm chữ qua OCR
+                # Yêu cầu model tự nhìn vào ảnh — không tìm chữ qua OCR.
                 "tự xem", "tự nhìn", "tự phân tích", "xem thử đi", "nhìn thử đi",
                 "xem giúp", "nhìn giúp", "em xem đi", "em nhìn đi",
                 "phân tích màn hình", "look at", "take a look", "check the screen",
+                # PATCH: follow-up/phàn nàn về vision phải giữ mode màn hình.
+                "mù vision", "còn mù vision", "em còn mù vision",
+                "không nhìn được", "không thấy được", "không thấy gì",
             )
         )
         if any(term and term in normalized for term in direct_terms):
@@ -486,6 +495,42 @@ class ChatCycleMixin:
             except Exception as exc:
                 self.logger.warning("[vision chat] không nén được screenshot: %s", exc)
         return data_uri
+
+    def _chat_vision_status_prompt_context(self, *, screen_image_data_uri: str = "") -> str:
+        """Prompt guard cho stance khi có frame nhưng chưa có grounded vision claim.
+
+        PATCH: lượt chat có thể đã capture screenshot nhưng compressor/grounding
+        vẫn trả grounded_claims=0. Khi đó public writer không được nói như thể
+        đã thấy màn hình. Nó chỉ được nói thật: đã thử lấy frame, bằng chứng chưa
+        đủ; nếu có OCR evidence thì chỉ nhận là đọc được một phần chữ.
+        """
+
+        if not str(screen_image_data_uri or "").strip():
+            return ""
+
+        route = getattr(self, "_chat_screen_route_decision", None)
+        if not bool(getattr(route, "references_screen", False)):
+            return ""
+
+        report = getattr(self, "last_vision_grounding_report", None)
+        grounded = tuple(getattr(report, "grounded_claims", ()) or ()) if report is not None else ()
+        if grounded:
+            return ""
+
+        text_evidence_count = len(tuple(getattr(self, "_chat_screen_text_evidence", ()) or ()))
+        return (
+            "[VISION_STATUS]\n"
+            "fresh_screen_capture: yes\n"
+            "grounded_visual_claims: 0\n"
+            f"screen_text_evidence_count: {text_evidence_count}\n"
+            "rule: Không được nói 'đang nhìn đây', 'tôi thấy', 'tôi đang xem', "
+            "hoặc khẳng định như đã hiểu hình ảnh trên màn hình.\n"
+            "required_stance: Nói thật rằng đã thử lấy khung hình nhưng chưa đủ bằng chứng "
+            "để mô tả chắc. Nếu có OCR/text evidence, chỉ nói là đọc được một phần chữ/OCR, "
+            "không gọi đó là nhìn thấy toàn cảnh.\n"
+            "[/VISION_STATUS]"
+        )
+
 
     def _chat_source_grounding_screen_facts(self, snapshot, *, screen_image_data_uri: str = "") -> tuple[object, ...]:
         route = getattr(self, "_chat_screen_route_decision", None)

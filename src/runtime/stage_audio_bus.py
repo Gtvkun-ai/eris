@@ -35,6 +35,9 @@ class StageAudioEvent:
     motion: str = ""
     prosody_style: str = ""
     turn_segments: tuple[dict[str, object], ...] = ()
+    audio_envelope: tuple[float, ...] = ()
+    audio_frame_ms: int = 0
+    audio_duration_ms: int = 0
 
 
 class StageAudioBus:
@@ -68,6 +71,9 @@ class StageAudioBus:
         reason: str = "",
         error: str = "",
         turn_segments: tuple[dict[str, object], ...] = (),
+        audio_envelope: tuple[float, ...] = (),
+        audio_frame_ms: int = 0,
+        audio_duration_ms: int = 0,
         callback: Callable[[Any, Any], None] | None = None,
     ) -> StageAudioEvent:
         event = StageAudioEvent(
@@ -81,6 +87,9 @@ class StageAudioBus:
             motion=str(getattr(stage_frame, "motion", "") or ""),
             prosody_style=str(getattr(stage_frame, "prosody_style", "") or ""),
             turn_segments=tuple(turn_segments or ()),
+            audio_envelope=tuple(float(value) for value in (audio_envelope or ())),
+            audio_frame_ms=max(0, int(audio_frame_ms or 0)),
+            audio_duration_ms=max(0, int(audio_duration_ms or 0)),
         )
         self.emit(event, stage_frame=stage_frame, callback=callback)
         return event

@@ -277,9 +277,14 @@ ClaimStatus = Literal["grounded", "ungrounded", "known_false"]
 # Dấu hiệu ERIS đang CLAIM tri giác/hành động trực tiếp (không phải user hỏi).
 # Dùng cho annotate: nếu một mệnh đề mang dấu này mà evidence thiếu → ungrounded.
 _ERIS_PERCEPTION_CLAIM_MARKERS = (
-    "tôi thấy", "toi thay", "tôi nhìn", "toi nhin", "tôi đang xem", "tôi đọc được",
-    "trên màn hình", "tren man hinh", "màn hình của bạn", "cửa sổ", "tab ",
-    "file này", "trong file", "nội dung file",
+    "tôi thấy", "toi thay", "tôi nhìn", "toi nhin",
+    # PATCH: bắt cả câu cụt “đang nhìn đây”/“đang nhìn” để annotate không lọt
+    # perception claim thiếu evidence. Guard này là dây an toàn sau prompt guard.
+    "đang nhìn đây", "dang nhin day", "đang nhìn", "dang nhin",
+    "tôi đang xem", "toi dang xem", "tôi đọc được", "toi doc duoc",
+    "trên màn hình", "tren man hinh", "màn hình của bạn", "man hinh cua ban",
+    "cửa sổ", "cua so", "tab ",
+    "file này", "file nay", "trong file", "nội dung file", "noi dung file",
 )
 _ERIS_ACTION_CLAIM_MARKERS = (
     "tôi đã làm", "toi da lam", "tôi đã sửa", "tôi đã chạy", "tôi đã mở",
@@ -404,6 +409,9 @@ class SourceGroundingEngine:
         "màn hình", "screen", "trên màn", "cửa sổ này",
         "nhìn này", "nhìn cái này", "nhìn màn hình", "nhìn vào màn hình",
         "xem màn hình", "đọc màn hình", "xem đi", "bạn xem đi",
+        "xem được tui làm gì", "xem được tôi làm gì", "thấy được tui làm gì", "thấy được tôi làm gì",
+        "em không xem được", "không xem được tui làm gì", "không xem được tôi làm gì",
+        "biết tui làm gì", "biết tôi làm gì",
         "what is on my screen", "this screen", "look at this", "look at my screen",
         "tôi đang code gì", "đang code gì", "đoạn đang mở",
     )

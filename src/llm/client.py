@@ -826,7 +826,7 @@ class ChainedFallbackClient:
                     failfast = float(os.environ.get("ERIS_DS2API_FAILFAST_TIMEOUT_S", "15") or 15)
                 except (TypeError, ValueError):
                     failfast = 15.0
-                failfast = max(1.0, min(30.0, failfast))
+                failfast = max(1.0, min(300.0, failfast))
                 requested = call_kwargs.get("timeout")
                 if requested is None:
                     call_kwargs["timeout"] = failfast

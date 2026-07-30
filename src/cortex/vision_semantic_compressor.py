@@ -951,6 +951,12 @@ class VisionSemanticCompressor:
             novelty_floor = 0.18 if source_text else 0.0
         important = self._extract_important_lines(source_text)
         evidence = [reason]
+        # PATCH: OCR fallback phải mang provenance trực tiếp, nếu không
+        # VisionGroundingPolicy sẽ đánh missing_direct_sensor_evidence và claims=0.
+        if source_text:
+            evidence.append(f"ocr_text:{compact_text(source_text, 90)}")
+        if signal_snapshot is not None and getattr(signal_snapshot, "screen_hash", ""):
+            evidence.append(f"screen_hash:{getattr(signal_snapshot, 'screen_hash')}")
         if clean_caption:
             evidence.append(f"vision_caption:{compact_text(clean_caption, 90)}")
         if observer_frame is not None:

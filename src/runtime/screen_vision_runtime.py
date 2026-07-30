@@ -466,6 +466,81 @@ class ScreenVisionRuntimeMixin:
             return False
 
 
+    def _chat_screen_text_as_ocr_text(self, *, limit: int = 1600) -> str:
+        """Gom OCR/text evidence của router thành một chuỗi cho vision fallback.
+
+        PATCH: log cho thấy route có text_evidence nhưng vision compressor không
+        nhận được ocr_text đủ rõ, dẫn đến no_claim_candidate. Helper này cho phép
+        chat vision salvage từ chính evidence đã dùng để route.
+        """
+
+        lines: list[str] = []
+        seen: set[str] = set()
+        for block in tuple(getattr(self, "_chat_screen_text_evidence", ()) or ()): 
+            text = " ".join(str(getattr(block, "text", "") or "").split()).strip()
+            if not text:
+                continue
+            key = text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            lines.append(text)
+        return "\n".join(lines)[: max(80, int(limit))]
+
+    def _chat_screen_text_note_from_route(self) -> SemanticSceneNote | None:
+        """Tạo SemanticSceneNote an toàn từ OCR route evidence khi VLM im lặng.
+
+        PATCH: đây không giả vờ hiểu toàn cảnh. Nó chỉ biến các dòng text/OCR đã
+        có provenance thành visible_text claims, để ERIS có thể nói “tôi đọc được
+        vài chữ...” thay vì claims=0 hoặc bịa là đã thấy giao diện.
+        """
+
+        ocr_text = self._chat_screen_text_as_ocr_text()
+        if not ocr_text:
+            return None
+
+        lines = [line.strip() for line in ocr_text.splitlines() if line.strip()][:8]
+        if not lines:
+            return None
+
+        route = getattr(self, "_chat_screen_route_decision", None)
+        route_confidence = float(getattr(route, "confidence", 0.0) or 0.0)
+        confidence = max(0.78, min(0.90, route_confidence or 0.82))
+        digest = hashlib.sha1(ocr_text.encode("utf-8", errors="ignore")).hexdigest()[:12]
+
+        note = SemanticSceneNote(
+            visible_context=lines[0],
+            important_text=lines,
+            activity_intent="reading",
+            semantic_family="screen_text",
+            novelty=0.35,
+            salience=0.55,
+            possible_error=0.0,
+            should_interrupt_user=False,
+            confidence=confidence,
+            content_summary=lines[0],
+            content_affect="neutral",
+            relation_to_user="",
+            delta="",
+            source="screen_text_evidence",
+            evidence=[
+                "screen_capture:chat_current",
+                f"ocr_text:{digest}",
+            ],
+            debug={
+                "fallback_reason": "vision_claim_empty_salvaged_from_chat_screen_text",
+                "route_confidence": route_confidence,
+            },
+        )
+        assign = getattr(getattr(self, "vision_semantic_compressor", None), "_assign_scene_continuity", None)
+        if callable(assign):
+            try:
+                assign(note)
+            except Exception:
+                pass
+        return note
+
+
     def _refresh_screen_facts_from_data_uri(
         self,
         *,
@@ -477,11 +552,15 @@ class ScreenVisionRuntimeMixin:
         force_refresh: bool = False,
         started_at: float | None = None,
     ) -> tuple[str, ...]:
-        requested = bool(
-            channel == "chat"
-            and callable(getattr(self, "_looks_like_screen_vision_request", None))
+        route = getattr(self, "_chat_screen_route_decision", None)
+        route_refs_screen = bool(getattr(route, "references_screen", False))
+        looks_like_request = bool(
+            callable(getattr(self, "_looks_like_screen_vision_request", None))
             and self._looks_like_screen_vision_request(user_text)
         )
+        # PATCH: requested phải tin cả router/anaphora. Nếu chỉ tin regex tại đây,
+        # follow-up “còn mù vision hả” rơi thành requested=0 dù route đã cứu được.
+        requested = bool(channel == "chat" and (route_refs_screen or looks_like_request))
         policy = getattr(self, "vision_grounding_policy", None)
         if not isinstance(policy, VisionGroundingPolicy):
             policy = VisionGroundingPolicy()
@@ -536,6 +615,14 @@ class ScreenVisionRuntimeMixin:
                         )
                     except Exception as exc:
                         self.logger.warning("[vision_facts] signal snapshot fallback: %s", exc)
+                ocr_text_for_vision = (
+                    str(getattr(signal_snapshot, "ocr_text", "") or "")
+                    if signal_snapshot is not None
+                    else ""
+                )
+                if channel == "chat" and not ocr_text_for_vision:
+                    # PATCH: route đã có OCR evidence, compressor cũng phải được đọc nó.
+                    ocr_text_for_vision = self._chat_screen_text_as_ocr_text()
                 note = self.model_budget_policy.run_queued(
                     "vision_compressor",
                     compressor.compress,
@@ -543,7 +630,7 @@ class ScreenVisionRuntimeMixin:
                     priority=45 if channel == "chat" else 25,
                     timeout_seconds=self._vision_queue_timeout_seconds(channel),
                     image_data_uri=data_uri,
-                    ocr_text=str(getattr(signal_snapshot, "ocr_text", "") or "") if signal_snapshot is not None else "",
+                    ocr_text=ocr_text_for_vision,
                     observer_frame=observer_frame,
                     signal_snapshot=signal_snapshot,
                     extra_context=user_text if channel == "chat" else "",
@@ -579,6 +666,21 @@ class ScreenVisionRuntimeMixin:
             requested=requested,
             stale=False,
         )
+        if channel == "chat" and requested and not tuple(getattr(report, "grounded_claims", ()) or ()):
+            salvage_note = self._chat_screen_text_note_from_route()
+            if salvage_note is not None:
+                # PATCH: VLM/structure có thể im lặng, nhưng OCR route evidence vẫn là
+                # bằng chứng trực tiếp. Salvage chỉ sinh visible_text, không bịa scene.
+                self.logger.info(
+                    "[vision_facts] salvage=screen_text_evidence reason=no_grounded_vision_claim"
+                )
+                note = salvage_note
+                trace = self._vision_trace_from_scene_note(note)
+                report, cleaned = self._ground_semantic_scene_note(
+                    note,
+                    requested=True,
+                    stale=False,
+                )
         self.last_vision_grounding_report = report
         self.vision_failure_count = 0
         self.vision_disabled_until = 0.0

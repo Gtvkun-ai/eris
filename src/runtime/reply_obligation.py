@@ -68,10 +68,10 @@ def _minimal_text(frame: SemanticFrame | None, *, language_hint: str) -> tuple[s
             "vi": ("Đúng, lượt trước tôi đã không trả lời trực tiếp. Bạn gửi lại đúng câu đó một lần nhé.", "repair"),
         }.get(language, ("Đúng, lượt trước tôi đã không trả lời trực tiếp. Bạn gửi lại đúng câu đó một lần nhé.", "repair"))
     return {
-        "en": ("I couldn't complete this reply. Please send the same message once more.", "repair"),
-        "ja": ("この返答を完了できなかった。同じメッセージをもう一度送って。", "repair"),
-        "vi": ("Lượt này tôi chưa xử lý được trọn ý của bạn. Bạn gửi lại đúng câu đó một lần nhé.", "repair"),
-    }.get(language, ("Lượt này tôi chưa xử lý được trọn ý của bạn. Bạn gửi lại đúng câu đó một lần nhé.", "repair"))
+        "en": ("I missed a beat there, but I'm still with you. Say it a little more plainly and I'll follow from here.", "repair"),
+        "ja": ("今の返答で少し取りこぼした。でも聞いているよ。もう少しだけ噛み砕いてくれたら、そこから追う。", "repair"),
+        "vi": ("Tôi hụt nhịp ở lượt này, nhưng vẫn đang nghe. Cậu nói rõ thêm một chút, tôi bám tiếp từ đây.", "repair"),
+    }.get(language, ("Tôi hụt nhịp ở lượt này, nhưng vẫn đang nghe. Cậu nói rõ thêm một chút, tôi bám tiếp từ đây.", "repair"))
 
 
 def enforce_reply_obligation(

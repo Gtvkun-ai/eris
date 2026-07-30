@@ -297,7 +297,7 @@ def _get_elevenlabs_token() -> tuple[str, str, int]:
     except Exception as exc:
         logger.debug("[TTS/ElevenLabsPool] Pool check error: %s", exc)
 
-    api_key = str(_elevenlabs_api_key() or "").strip()
+    api_key = str(_direct_elevenlabs_api_key() or "").strip()
     if api_key and not api_key.startswith("eyJ"):
         return "xi-api-key", api_key, 0
 
@@ -355,6 +355,17 @@ def warmup_elevenlabs() -> None:
             logger.debug("[TTS/ElevenLabs] Warmup exception: %s", exc)
 
     threading.Thread(target=_do_warmup, daemon=True, name="ElevenLabs-Warmup").start()
+
+
+def _direct_elevenlabs_api_key() -> str:
+    from eris_secrets import get_secret
+
+    return str(
+        os.environ.get("ELEVENLABS_API_KEY", "").strip()
+        or os.environ.get("ERIS_ELEVENLABS_API_KEY", "").strip()
+        or get_secret("ELEVENLABS_API_KEY", "ERIS_ELEVENLABS_API_KEY")
+        or ""
+    ).strip()
 
 
 def _elevenlabs_api_key() -> str:
@@ -2722,8 +2733,8 @@ class TtsEngine:
                 return
             if not _elevenlabs_api_key():
                 logger.warning(
-                    "[TTS] Thiếu ELEVENLABS_API_KEY/ERIS_ELEVENLABS_API_KEY; "
-                    "ElevenLabs chưa thể khởi động."
+                    "[TTS] Missing ElevenLabs auth: account pool/Firebase refresh token "
+                    "or ELEVENLABS_API_KEY/ERIS_ELEVENLABS_API_KEY is required."
                 )
                 return
             if not _voice():

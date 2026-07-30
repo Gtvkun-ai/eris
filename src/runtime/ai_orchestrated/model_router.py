@@ -39,7 +39,7 @@ def _semantic_deadline_seconds() -> float:
             raw = runtime_float("chat", "chat_timeout_seconds", default=12.0)
     except (TypeError, ValueError, ImportError):
         raw = 12.0
-    return max(3.0, min(60.0, float(raw)))
+    return max(3.0, min(300.0, float(raw)))
 
 
 DISCOVERY_PLAN_SCHEMA: dict[str, Any] = {

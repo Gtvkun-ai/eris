@@ -450,6 +450,21 @@ class AIChatOrchestrator:
         personality_context = mind_state.personality_prompt_context()
         relationship_context = mind_state.relationship.prompt_summary()
         grounding_context = str(getattr(grounding_report, "prompt_context", "") or "")
+        vision_status_context = ""
+        build_vision_status = getattr(host, "_chat_vision_status_prompt_context", None)
+        if callable(build_vision_status):
+            try:
+                vision_status_context = str(
+                    build_vision_status(screen_image_data_uri=screen_image_data_uri) or ""
+                )
+            except Exception as exc:
+                host.logger.debug("[vision status] prompt context failed: %s", exc)
+        if vision_status_context:
+            # PATCH: source grounding có thể nói “có frame”, nhưng nếu grounded_claims=0
+            # public writer phải giữ stance trung thực, không mở bằng “đang nhìn đây”.
+            grounding_context = "\n\n".join(
+                part for part in (grounding_context, vision_status_context) if str(part).strip()
+            )
         # PDF annotation, pages 12-13 and 20: P2 cleanup removed the legacy
         # discourse/semantic committee entirely. ``semantic_frame.v1`` from the
         # public writer is the only conversational meaning object.

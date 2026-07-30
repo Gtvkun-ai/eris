@@ -85,8 +85,8 @@ class InnerDiaryWriter:
             return None
 
         facts = self._build_facts(digest)
-        if not facts.get("hien_tai"):
-            # Chưa có judgment để mà tự sự thì khỏi gọi LLM.
+        if not any(str(facts.get(key, "") or "").strip() for key in ("hien_tai", "ban_tam", "phan_tich", "tuong_lai", "muon_noi")):
+            # Chưa có vật liệu nội tâm thì khỏi gọi LLM.
             return self._cached_voice
 
         now = time.time() if now is None else float(now)

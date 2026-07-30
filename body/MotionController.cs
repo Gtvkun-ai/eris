@@ -272,6 +272,13 @@ public sealed class MotionController
         }
     }
 
+    public void ApplySilentPose(string poseAnimation, int facingDir = 0)
+    {
+        string pose = NormalizePose(poseAnimation);
+        int facing = facingDir < 0 ? -1 : facingDir > 0 ? 1 : 0;
+        ApplyStaticAction(pose == "stand_walk" ? "stand" : pose, facing, playSound: false);
+    }
+
     public void ApplyVisualState(AnimatedSprite2D monika, Control bubble, Vector2 bodyPosition, Vector2 screenSize)
     {
         if (_climbPhase == ClimbPhase.GoingToWall)
@@ -389,7 +396,7 @@ public sealed class MotionController
         _playSound?.Invoke("climb");
     }
 
-    private void ApplyStaticAction(string action, int facingDir)
+    private void ApplyStaticAction(string action, int facingDir, bool playSound = true)
     {
         CancelClimbState();
         _targetX = float.NaN;
@@ -400,7 +407,8 @@ public sealed class MotionController
         _currentAction = string.IsNullOrEmpty(action) ? "stand" : action;
         if (facingDir != 0)
             _facingDir = facingDir;
-        _playSound?.Invoke(_currentAction);
+        if (playSound)
+            _playSound?.Invoke(_currentAction);
     }
 
     //Va tường khi đi bộ

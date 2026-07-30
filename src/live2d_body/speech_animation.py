@@ -1,0 +1,553 @@
+# -*- coding: utf-8 -*-
+"""Nhịp nói và diễn xuất bề mặt cho Live2D Eris.
+
+Moc3 hiện chỉ cho runtime hai trục miệng: ``ParamMouthForm`` và
+``ParamMouthOpenY``. Độ mở ưu tiên envelope RMS rút trực tiếp từ WAV đang phát;
+chuỗi pseudo-viseme từ cụm nguyên âm chỉ bổ sung dáng miệng và làm fallback khi
+event cũ không có envelope. Cách này không giả vờ nhận dạng phoneme, nhưng giữ
+đúng nhịp tiếng, khoảng im lặng và dấu câu thay vì bắt môi chạy bằng sóng sin.
+
+Cùng context sân khấu (prosody, speech act, action, motion) còn được chiếu sang
+đầu, mí, mày và hướng nhìn. Biên cố ý nhỏ; emotion/affect vẫn là lớp chính.
+"""
+
+from __future__ import annotations
+
+import bisect
+import math
+import re
+import unicodedata
+from dataclasses import dataclass
+from typing import Any, Iterable, Mapping
+
+
+_WORD_OR_MARK = re.compile(r"[^\W_]+|[…]|[^\w\s]", re.UNICODE)
+_VOWELS = frozenset("aeiouy")
+
+
+def _clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(float(minimum), min(float(maximum), float(value)))
+
+
+def _base_letter(value: str) -> str:
+    decomposed = unicodedata.normalize("NFD", str(value or "").lower())
+    for char in decomposed:
+        if unicodedata.category(char) != "Mn":
+            return char
+    return ""
+
+
+def _smoothstep(value: float) -> float:
+    x = _clamp(value, 0.0, 1.0)
+    return x * x * (3.0 - 2.0 * x)
+
+
+def _pulse(now: float, start: float, duration: float, *, power: float = 1.35) -> float:
+    if duration <= 0.0 or now < start or now > start + duration:
+        return 0.0
+    progress = (now - start) / duration
+    return math.sin(math.pi * progress) ** max(0.2, float(power))
+
+
+def _unique_strings(values: Iterable[Any]) -> tuple[str, ...]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        value = str(raw or "").strip().lower()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return tuple(result)
+
+
+@dataclass(frozen=True, slots=True)
+class SpeechContext:
+    text: str = ""
+    prosody_style: str = "neutral"
+    speech_act: str = ""
+    actions: tuple[str, ...] = ()
+    motion: str = ""
+    delivery: Mapping[str, Any] | None = None
+    audio_envelope: tuple[float, ...] = ()
+    audio_frame_ms: int = 0
+    audio_duration_ms: int = 0
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "SpeechContext":
+        data = payload.get("data") if isinstance(payload.get("data"), Mapping) else {}
+        assert isinstance(data, Mapping)
+        raw_delivery = data.get("delivery")
+        delivery = dict(raw_delivery) if isinstance(raw_delivery, Mapping) else {}
+        performance_act = delivery.get("performance_act") if isinstance(delivery, Mapping) else None
+        performance_kind = (
+            str(performance_act.get("kind", "") or "").strip().lower()
+            if isinstance(performance_act, Mapping)
+            else ""
+        )
+        actions = list(data.get("actions") or ()) if isinstance(data.get("actions"), (list, tuple)) else []
+        if performance_kind:
+            actions.append(performance_kind)
+        raw_envelope = data.get("audio_envelope")
+        envelope: tuple[float, ...] = ()
+        if isinstance(raw_envelope, (list, tuple)):
+            clean_envelope: list[float] = []
+            for raw in raw_envelope[:2400]:
+                try:
+                    value = float(raw)
+                except (TypeError, ValueError):
+                    continue
+                if value == value:
+                    clean_envelope.append(_clamp(value, 0.0, 0.90))
+            envelope = tuple(clean_envelope)
+        try:
+            audio_frame_ms = max(0, min(200, int(data.get("audio_frame_ms", 0) or 0)))
+        except (TypeError, ValueError):
+            audio_frame_ms = 0
+        try:
+            audio_duration_ms = max(0, int(data.get("audio_duration_ms", 0) or 0))
+        except (TypeError, ValueError):
+            audio_duration_ms = 0
+        return cls(
+            text=str(payload.get("tts_text", payload.get("display_text", "")) or ""),
+            prosody_style=str(data.get("prosody_style", payload.get("prosody_style", "neutral")) or "neutral").strip().lower(),
+            speech_act=str(data.get("speech_act", payload.get("speech_act", "")) or "").strip().lower(),
+            actions=_unique_strings(actions),
+            motion=str(payload.get("motion", "") or "").strip().lower(),
+            delivery=delivery,
+            audio_envelope=envelope,
+            audio_frame_ms=audio_frame_ms,
+            audio_duration_ms=audio_duration_ms,
+        )
+
+    def merged(self, other: "SpeechContext") -> "SpeechContext":
+        """Ưu tiên field có dữ liệu ở context mới, giữ cache cho event audio mỏng."""
+
+        return SpeechContext(
+            text=other.text or self.text,
+            prosody_style=(
+                other.prosody_style
+                if other.prosody_style and other.prosody_style != "neutral"
+                else self.prosody_style or "neutral"
+            ),
+            speech_act=other.speech_act or self.speech_act,
+            actions=_unique_strings((*self.actions, *other.actions)),
+            motion=other.motion or self.motion,
+            delivery=other.delivery or self.delivery,
+            audio_envelope=other.audio_envelope or self.audio_envelope,
+            audio_frame_ms=other.audio_frame_ms or self.audio_frame_ms,
+            audio_duration_ms=other.audio_duration_ms or self.audio_duration_ms,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SpeechPose:
+    mouth_open_ratio: float = 0.0
+    mouth_form_scale: float = 1.0
+    mouth_form_offset: float = 0.0
+    brow_left: float = 0.0
+    brow_right: float = 0.0
+    angle_x: float = 0.0
+    angle_z: float = 0.0
+    eye_open_left_scale: float = 1.0
+    eye_open_right_scale: float = 1.0
+    gaze_bias_x: float = 0.0
+    gaze_bias_y: float = 0.0
+    cue: str = "silent"
+
+
+@dataclass(frozen=True, slots=True)
+class _MouthCue:
+    start: float
+    duration: float
+    openness: float
+    vowel: str = ""
+
+    @property
+    def end(self) -> float:
+        return self.start + self.duration
+
+
+_STYLE_TEMPO = {
+    "focused": 1.08,
+    "curious_soft": 1.02,
+    "soft_tease": 0.98,
+    "dry_tease": 0.91,
+    "self_aware_dry": 0.94,
+    "annoyed_soft": 1.06,
+    "sharp_deadpan": 0.96,
+    "cold_boundary": 0.92,
+    "deadpan": 0.92,
+    "low_quiet": 0.84,
+    "warm_soft": 0.95,
+}
+
+_STYLE_OPENNESS = {
+    "focused": 0.95,
+    "curious_soft": 1.00,
+    "soft_tease": 0.94,
+    "dry_tease": 0.86,
+    "self_aware_dry": 0.88,
+    "annoyed_soft": 0.88,
+    "sharp_deadpan": 0.84,
+    "cold_boundary": 0.80,
+    "deadpan": 0.82,
+    "low_quiet": 0.74,
+    "warm_soft": 0.90,
+}
+
+_VOWEL_OPENNESS = {
+    "a": 0.72,
+    "e": 0.57,
+    "i": 0.42,
+    "o": 0.66,
+    "u": 0.49,
+    "y": 0.43,
+}
+
+
+class SpeechAnimator:
+    """Sinh mouth pose và vi diễn xuất theo context của đoạn đang phát."""
+
+    def __init__(self) -> None:
+        self._active = False
+        self._started_at = 0.0
+        self._context = SpeechContext()
+        self._cues: tuple[_MouthCue, ...] = ()
+        self._cue_starts: tuple[float, ...] = ()
+        self._duration = 0.0
+        self._phase = 0.0
+        self._audio_envelope: tuple[float, ...] = ()
+        self._audio_frame_ms = 0
+        self._audio_duration_ms = 0
+
+    @property
+    def active(self) -> bool:
+        return self._active
+
+    @property
+    def context(self) -> SpeechContext:
+        return self._context
+
+    def start(self, *, now: float, context: SpeechContext) -> None:
+        self._active = True
+        self._started_at = float(now)
+        self._context = context
+        self._cues = self._build_mouth_cues(context.text, context.prosody_style)
+        self._cue_starts = tuple(cue.start for cue in self._cues)
+        self._duration = max((cue.end for cue in self._cues), default=0.0)
+        self._audio_envelope = tuple(context.audio_envelope or ())
+        self._audio_frame_ms = max(0, int(context.audio_frame_ms or 0))
+        self._audio_duration_ms = max(0, int(context.audio_duration_ms or 0))
+        # Phase ổn định theo text, tránh mọi câu cùng gật ở đúng một nhịp.
+        checksum = sum((index + 1) * ord(char) for index, char in enumerate(context.text[:160]))
+        self._phase = (checksum % 997) / 997.0 * math.tau
+
+    def stop(self) -> None:
+        self._active = False
+
+    def sample(self, *, now: float) -> SpeechPose:
+        if not self._active:
+            return SpeechPose()
+
+        elapsed = max(0.0, float(now) - self._started_at)
+        mouth_ratio, vowel = self._sample_mouth(elapsed)
+        context = self._context
+        tags = set(context.actions)
+        if context.motion:
+            tags.add(context.motion)
+        style = context.prosody_style or "neutral"
+        text = context.text.rstrip()
+        is_question = (
+            "?" in text[-4:]
+            or context.speech_act in {"question", "ask", "clarify", "curious"}
+            or "curious_hm" in tags
+        )
+        is_exclamation = "!" in text[-4:]
+
+        # Nhịp đầu rất nhỏ, đủ để mặt không đứng yên như ảnh căn cước khi nói.
+        entry = _smoothstep(elapsed / 0.22)
+        living = math.sin(elapsed * 1.55 + self._phase)
+        angle_x = living * 0.16 * entry
+        angle_z = math.sin(elapsed * 1.13 + self._phase * 0.63) * 0.13 * entry
+        brow_left = 0.0
+        brow_right = 0.0
+        mouth_form_offset = 0.0
+        eye_left = 1.0
+        eye_right = 1.0
+        gaze_x = 0.0
+        gaze_y = 0.0
+        cue_names: list[str] = []
+
+        if style in {"warm_soft", "soft_tease"}:
+            mouth_form_offset += 0.035 if style == "warm_soft" else 0.055
+            eye_left *= 0.975
+            eye_right *= 0.982
+            cue_names.append("warm")
+        elif style in {"dry_tease", "self_aware_dry", "deadpan", "sharp_deadpan"}:
+            brow_left += 0.080 if style == "dry_tease" else 0.025
+            brow_right -= 0.030
+            eye_left *= 0.94
+            eye_right *= 0.965
+            gaze_x -= 0.018
+            mouth_form_offset += 0.018 if style == "dry_tease" else -0.015
+            cue_names.append("dry")
+        elif style in {"annoyed_soft", "cold_boundary"}:
+            brow_left -= 0.075
+            brow_right -= 0.070
+            eye_left *= 0.91
+            eye_right *= 0.92
+            mouth_form_offset -= 0.055
+            angle_x -= 0.18
+            cue_names.append("firm")
+        elif style == "low_quiet":
+            brow_left -= 0.025
+            brow_right -= 0.020
+            eye_left *= 0.92
+            eye_right *= 0.93
+            gaze_y -= 0.018
+            angle_x -= 0.16
+            cue_names.append("quiet")
+        elif style == "curious_soft":
+            brow_left += 0.090
+            brow_right += 0.025
+            eye_left *= 0.99
+            angle_z += 0.24
+            gaze_y += 0.016
+            cue_names.append("curious")
+        elif style == "focused":
+            brow_left -= 0.035
+            brow_right -= 0.035
+            eye_left *= 0.965
+            eye_right *= 0.965
+            cue_names.append("focused")
+
+        if is_question:
+            brow_left += 0.105
+            brow_right += 0.030
+            angle_z += 0.32
+            gaze_y += 0.022
+            cue_names.append("question")
+        elif is_exclamation:
+            brow_left += 0.055
+            brow_right += 0.050
+            eye_left *= 1.02
+            eye_right *= 1.02
+            cue_names.append("emphasis")
+
+        if tags & {"small_smile", "laugh_soft", "audible_laugh_soft", "playful_laugh"}:
+            mouth_form_offset += 0.075
+            eye_left *= 0.955
+            eye_right *= 0.970
+            cue_names.append("smile")
+        if tags & {"look_away", "look_aside", "scoff_soft", "requested_tease"}:
+            gaze_x -= 0.085
+            angle_x -= 0.38
+            brow_left += 0.035
+            cue_names.append("look_away")
+        if tags & {"look_down", "sigh", "sigh_soft", "soft_sigh"}:
+            gaze_y -= 0.075
+            angle_x -= 0.48
+            eye_left *= 0.91
+            eye_right *= 0.92
+            mouth_form_offset -= 0.025
+            cue_names.append("look_down")
+        if tags & {"tilt_head", "curious_hm"}:
+            angle_z += 0.58
+            brow_left += 0.075
+            brow_right -= 0.018
+            gaze_y += 0.020
+            cue_names.append("tilt")
+        if tags & {"lean_in_small", "soft_near"}:
+            angle_x += 0.34
+            eye_left *= 0.975
+            eye_right *= 0.980
+            cue_names.append("near")
+        if tags & {"squint_soft", "scoff_soft"}:
+            eye_left *= 0.88
+            eye_right *= 0.90
+            cue_names.append("squint")
+
+        # Action một lần ở đầu câu, không giữ mắt đóng suốt cả đoạn. Con người đã
+        # phát minh ra wink, không phải chế độ tiết kiệm điện cho một bên mắt.
+        if "wink" in tags:
+            wink = _pulse(elapsed, 0.22, 0.42, power=1.0)
+            eye_left *= 1.0 - wink * 0.88
+            brow_left += wink * 0.12
+            cue_names.append("wink")
+        if tags & {"blink_slow", "soft_breath"}:
+            blink = _pulse(elapsed, 0.18, 0.62, power=0.72)
+            eye_left *= 1.0 - blink * 0.56
+            eye_right *= 1.0 - blink * 0.54
+            cue_names.append("slow_blink")
+        if "nod_small" in tags:
+            nod = _pulse(elapsed, 0.12, 0.72, power=1.0)
+            angle_x += math.sin(elapsed * math.pi / 0.36) * 0.48 * nod
+            cue_names.append("nod")
+        if "shake_head_small" in tags:
+            shake = _pulse(elapsed, 0.12, 0.86, power=0.9)
+            angle_z += math.sin(elapsed * math.pi / 0.19) * 0.58 * shake
+            cue_names.append("shake")
+
+        # Khi miệng mở, giảm độ kéo khóe theo mức mở thay vì nhân cứng một hệ số.
+        # Các âm a/o mở rộng hơn i/u nhưng vẫn tôn trọng MouthForm của emotion.
+        vowel_rounding = 0.0
+        if vowel in {"o", "u"}:
+            vowel_rounding = -0.020 * mouth_ratio
+        elif vowel in {"a", "e"}:
+            vowel_rounding = 0.012 * mouth_ratio
+        mouth_form_offset += vowel_rounding
+        mouth_form_scale = 1.0 - mouth_ratio * 0.26
+
+        return SpeechPose(
+            mouth_open_ratio=_clamp(mouth_ratio, 0.0, 0.88),
+            mouth_form_scale=_clamp(mouth_form_scale, 0.70, 1.0),
+            mouth_form_offset=_clamp(mouth_form_offset, -0.16, 0.16),
+            brow_left=_clamp(brow_left, -0.20, 0.28),
+            brow_right=_clamp(brow_right, -0.20, 0.24),
+            angle_x=_clamp(angle_x, -1.25, 0.85),
+            angle_z=_clamp(angle_z, -1.20, 1.35),
+            eye_open_left_scale=_clamp(eye_left, 0.08, 1.04),
+            eye_open_right_scale=_clamp(eye_right, 0.08, 1.04),
+            gaze_bias_x=_clamp(gaze_x, -0.13, 0.13),
+            gaze_bias_y=_clamp(gaze_y, -0.11, 0.11),
+            cue="+".join(cue_names) or "speech",
+        )
+
+    def _sample_mouth(self, elapsed: float) -> tuple[float, str]:
+        if self._audio_envelope and self._audio_frame_ms > 0:
+            ratio = self._sample_audio_envelope(elapsed)
+            cue_elapsed = elapsed
+            if self._audio_duration_ms > 0 and self._duration > 0.0:
+                cue_elapsed = elapsed * self._duration / max(0.001, self._audio_duration_ms / 1000.0)
+            return (ratio, self._vowel_at(cue_elapsed))
+
+        if not self._cues:
+            # Fallback cho event cũ không có text: bất quy tắc hơn hai sin bình
+            # phương và có lúc khép hẳn. Đây vẫn chỉ là phương án cứu hộ.
+            gate = max(0.0, math.sin(elapsed * 8.4 + self._phase))
+            detail = max(0.0, math.sin(elapsed * 13.7 + 1.3 + self._phase * 0.4))
+            ratio = (gate ** 1.55) * 0.46 + (detail ** 2.2) * 0.12
+            return (_clamp(ratio, 0.0, 0.62), "")
+
+        index = bisect.bisect_right(self._cue_starts, elapsed) - 1
+        if 0 <= index < len(self._cues):
+            cue = self._cues[index]
+            if elapsed <= cue.end:
+                progress = _clamp((elapsed - cue.start) / max(1e-6, cue.duration), 0.0, 1.0)
+                attack = _smoothstep(progress / 0.20)
+                release = _smoothstep((1.0 - progress) / 0.28)
+                envelope = min(attack, release)
+                # Plateau nhẹ ở giữa, attack nhanh và release rõ để có khe đóng.
+                ratio = cue.openness * envelope
+                return (_clamp(ratio, 0.0, 0.88), cue.vowel)
+
+        if elapsed <= self._duration + 0.16:
+            return (0.0, "")
+
+        # Nếu audio thực tế dài hơn ước lượng, tiếp tục một nhịp nhỏ thay vì kẹt
+        # miệng đóng. Playback-done vẫn là nguồn sự thật để dừng hoàn toàn.
+        overrun = elapsed - self._duration
+        gate = max(0.0, math.sin(overrun * 7.1 + self._phase))
+        return (_clamp((gate ** 1.8) * 0.34, 0.0, 0.38), "")
+
+    def _sample_audio_envelope(self, elapsed: float) -> float:
+        frame_seconds = max(0.001, self._audio_frame_ms / 1000.0)
+        position = max(0.0, float(elapsed)) / frame_seconds
+        index = int(math.floor(position))
+        if index >= len(self._audio_envelope):
+            return 0.0
+        current = self._audio_envelope[index]
+        if index + 1 >= len(self._audio_envelope):
+            return _clamp(current, 0.0, 0.88)
+        fraction = position - index
+        following = self._audio_envelope[index + 1]
+        return _clamp(current + (following - current) * fraction, 0.0, 0.88)
+
+    def _vowel_at(self, elapsed: float) -> str:
+        if not self._cues:
+            return ""
+        index = bisect.bisect_right(self._cue_starts, elapsed) - 1
+        if 0 <= index < len(self._cues):
+            cue = self._cues[index]
+            if elapsed <= cue.end:
+                return cue.vowel
+        return ""
+
+    @classmethod
+    def _build_mouth_cues(cls, text: str, style: str) -> tuple[_MouthCue, ...]:
+        clean = str(text or "").strip()
+        if not clean:
+            return ()
+
+        style_key = str(style or "neutral").strip().lower()
+        tempo = _STYLE_TEMPO.get(style_key, 1.0)
+        openness_scale = _STYLE_OPENNESS.get(style_key, 0.92)
+        cursor = 0.070
+        cues: list[_MouthCue] = []
+        token_index = 0
+
+        for token in _WORD_OR_MARK.findall(clean):
+            if len(token) == 1 and not token.isalnum() and token != "_":
+                cursor += cls._punctuation_pause(token, tempo=tempo)
+                continue
+
+            groups = cls._vowel_groups(token)
+            if not groups:
+                groups = ("",)
+            group_count = len(groups)
+            for group_index, vowel in enumerate(groups):
+                base = _VOWEL_OPENNESS.get(vowel, 0.46)
+                variation_seed = (token_index * 17 + group_index * 29 + len(token) * 11) % 13
+                variation = (variation_seed - 6) * 0.006
+                openness = (base + variation) * openness_scale
+                if group_index == group_count - 1 and token[-1:].lower() in {"m", "n", "p", "t", "c", "k"}:
+                    openness *= 0.90
+                duration = (0.142 + min(0.032, len(token) * 0.003)) / tempo
+                cues.append(
+                    _MouthCue(
+                        start=cursor,
+                        duration=duration,
+                        openness=_clamp(openness, 0.28, 0.80),
+                        vowel=vowel,
+                    )
+                )
+                cursor += duration + (0.040 / tempo)
+            cursor += (0.035 + min(0.028, len(token) * 0.0015)) / tempo
+            token_index += 1
+
+        return tuple(cues)
+
+    @staticmethod
+    def _vowel_groups(word: str) -> tuple[str, ...]:
+        groups: list[str] = []
+        previous_was_vowel = False
+        current = ""
+        for char in str(word or ""):
+            base = _base_letter(char)
+            is_vowel = base in _VOWELS
+            if is_vowel:
+                if not previous_was_vowel:
+                    current = base
+                    groups.append(current)
+                else:
+                    # Với cụm nguyên âm, giữ âm mở nhất làm đại diện hình miệng.
+                    if _VOWEL_OPENNESS.get(base, 0.0) > _VOWEL_OPENNESS.get(groups[-1], 0.0):
+                        groups[-1] = base
+            previous_was_vowel = is_vowel
+        return tuple(groups)
+
+    @staticmethod
+    def _punctuation_pause(mark: str, *, tempo: float) -> float:
+        if mark in {",", "，"}:
+            return 0.125 / tempo
+        if mark in {";", ":"}:
+            return 0.165 / tempo
+        if mark in {".", "!", "?", "。", "！", "？"}:
+            return 0.255 / tempo
+        if mark == "…":
+            return 0.380 / tempo
+        return 0.065 / tempo
+
+
+__all__ = ["SpeechAnimator", "SpeechContext", "SpeechPose"]

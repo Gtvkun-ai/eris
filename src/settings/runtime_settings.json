@@ -11,7 +11,7 @@
     "semantic_authority_mode": "primary_model",
     "reasoning_effort": "medium",
     "support_confidence_threshold": 0.48,
-    "companion_routing_enabled": true,
+    "companion_routing_enabled": false,
     "companion_pro_threshold": 0.58,
     "companion_max_reasoning_threshold": 0.86,
     "companion_style_uses_pro": true,
@@ -112,7 +112,7 @@
     "quality": "balanced",
     "volume": 1.0,
     "speed": 1.04,
-    "stage_localize": true,
+    "stage_localize": false,
     "speech_persona_polish": true,
     "speech_persona_profile": "infj_5w4_subtle",
     "speech_persona_warmth": 0.36,
@@ -124,7 +124,7 @@
     "provider": "elevenlabs",
     "elevenlabs_voice_id": "fUjY9K2nAIwlALOwSiwc",
     "elevenlabs_model": "eleven_v3",
-    "voice_director_enabled": true
+    "voice_director_enabled": false
   },
   "discovery": {
     "enabled": true,

@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from runtime.audio_lip_sync import build_lip_sync_envelope
 from runtime.stage_audio_bus import StageAudioBus
 from runtime.stage_continuation import StageContinuationRuntime
 from runtime.speech_localizer import SpeechLocalizationError
@@ -393,6 +394,7 @@ class TtsTaskManager:
                     self._pending_tasks.pop(task.key, None)
                     self._pending_callbacks.pop(task.key, None)
 
+                lip_sync = build_lip_sync_envelope(wav_bytes)
                 started_lock = threading.Lock()
                 started = False
 
@@ -410,6 +412,9 @@ class TtsTaskManager:
                         stage_frame=task.frame,
                         text=task.text,
                         turn_segments=turn_segments,
+                        audio_envelope=lip_sync.values,
+                        audio_frame_ms=lip_sync.frame_ms,
+                        audio_duration_ms=lip_sync.duration_ms,
                         callback=on_event,
                     )
 

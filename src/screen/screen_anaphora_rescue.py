@@ -46,16 +46,23 @@ class ScreenAnaphoraRescue:
         "cai nay", "cai do", "cai kia", "no do", "no day", "do ne", "day ne",
         "dang nghe ma", "dang xem ma", "dang phat ma", "tren do", "o tren do",
         "thay chua", "doc chua", "xem chua",
+        # PATCH: câu kiểm tra năng lực vision ngay sau lượt “nhìn màn hình”
+        # phải kế thừa anchor màn hình từ câu trước, không bị rơi về chat thường.
+        "mu vision ha", "con mu vision ha", "em con mu vision ha",
+        "khong nhin duoc ha", "khong thay duoc ha",
     )
     DEICTIC_MARKERS = (
         "no", "cai nay", "cai do", "cai kia", "do", "day", "kia", "tren do",
     )
     # Chủ thể trong câu Eris trước phải có khả năng được kiểm tra trên màn hình.
     PRIOR_SCREEN_ANCHORS = (
-        "man hinh", "screen", "cua so", "tab", "panel", "trinh duyet", "browser",
+        "man hinh", "screen", "vision", "cua so", "tab", "panel", "trinh duyet", "browser",
         "youtube", "spotify", "video", "clip", "bai hat", "bai nhac", "nhac",
         "dang nghe", "dang xem", "dang phat", "game", "anh", "hinh", "code",
         "file dang mo", "loi dang hien",
+        # PATCH: nếu assistant vừa nói/nhắc đang nhìn hoặc đọc, follow-up sau đó
+        # được coi là còn nằm trong cuộc nói chuyện về màn hình.
+        "toi thay", "toi nhin", "dang nhin", "doc duoc", "thay duoc",
     )
 
     def resolve(

@@ -3813,10 +3813,22 @@ public partial class UdpListener : Node2D
 		TryApplyDebugCommandAck(raw);
 		TryApplyIdentityControlAck(raw);
 		TryApplySettingsUpdateAck(raw);
-		if (payload.IsControlEnvelope)
-			return;
+
+		// eris.stage là control envelope đối với text, nhưng body_timeline trong đó
+		// vẫn là lệnh sân khấu thật. Thi hành body directive trước khi return; nếu
+		// không, Live2D biết Eris đang nghĩ còn body 2D đứng như tượng vì parser đã
+		// đọc đúng timeline rồi tự vứt nó ở cửa kiểm soát.
 		if (payload.HasBodyBias)
 			_bodyAutonomy?.ApplyCognitionBias(payload.BodyBias);
+		if (payload.HasRemoteMotion || payload.HasBodyTimeline)
+			_lastRemoteMotionAt = GetRuntimeSeconds();
+		if (payload.HasBodyTimeline)
+			ScheduleBodyTimeline(payload.BodyTimeline);
+		else if (payload.HasExplicitMotion)
+			_motion.ApplyCommand(payload.MotionCommand, _body.Position, GetViewportRect().Size);
+
+		if (payload.IsControlEnvelope)
+			return;
 
 		if (!string.IsNullOrEmpty(payload.ParseMode) || !string.IsNullOrEmpty(payload.DebugTrace) || !string.IsNullOrEmpty(payload.ParserTrace))
 		{
@@ -3827,16 +3839,8 @@ public partial class UdpListener : Node2D
 				GD.Print($"[AI Debug] parser={payload.ParserTrace}");
 		}
 
-		if (payload.HasRemoteMotion || payload.HasBodyTimeline)
-			_lastRemoteMotionAt = GetRuntimeSeconds();
-
 		if ((payload.HasTextField || !payload.ParsedJson) && !string.IsNullOrWhiteSpace(payload.Text))
 			ApplyTypewriterEffect(payload.Text);
-
-		if (payload.HasBodyTimeline)
-			ScheduleBodyTimeline(payload.BodyTimeline);
-		else if (payload.HasExplicitMotion)
-			_motion.ApplyCommand(payload.MotionCommand, _body.Position, GetViewportRect().Size);
 	}
 
 	private bool TryHandleTtsEvent(string raw)

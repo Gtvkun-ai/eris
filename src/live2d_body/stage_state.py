@@ -24,6 +24,7 @@ from typing import Any, Mapping
 from .affect import AffectPose, AffectVector, NEUTRAL_AFFECT
 from .idle import IdleDirector
 from .parameter_profile import INFJ_PARAMETER_PROFILE
+from .speech_animation import SpeechAnimator, SpeechContext
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +42,8 @@ class Live2DSnapshot:
     idle_action: str = "settle"
     explicit_emotion_weight: float = 0.0
     last_event_type: str = ""
+    mouth_open_ratio: float = 0.0
+    speech_cue: str = "silent"
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,7 +224,7 @@ _MOTION_OFFSETS: dict[str, dict[str, float]] = {
 }
 
 _PARAMETER_RESPONSE = {
-    "ParamMouthOpenY": 18.0,
+    "ParamMouthOpenY": 22.0,
     "ParamMouthForm": 7.5,
     "ParamBrowLAngle": 6.5,
     "ParamBrowRAngle": 6.5,
@@ -260,6 +263,10 @@ class Live2DStageState:
         self._thought_pressure = 0.0
         self._thought_confidence = 0.0
         self._idle = IdleDirector(seed=idle_seed)
+        self._speech = SpeechAnimator()
+        self._speech_contexts: dict[tuple[str, int], SpeechContext] = {}
+        self._latest_speech_context = SpeechContext()
+        self._latest_speech_key: tuple[str, int] = ("", 0)
 
         neutral = _EMOTION_TARGETS["neutral"]
         self._current: dict[str, float] = neutral.parameters()
@@ -281,6 +288,10 @@ class Live2DStageState:
             self._last_event_at = time.monotonic()
 
     def _handle_stage_event(self, payload: Mapping[str, Any], event_type: str) -> None:
+        speech_context = SpeechContext.from_payload(payload)
+        if event_type not in {"affect_state", "cognitive_affect", "inner_affect"}:
+            self._remember_speech_context(payload, speech_context)
+
         if event_type in {"affect_state", "cognitive_affect", "inner_affect"}:
             self._handle_affect_event(payload)
             return
@@ -314,6 +325,8 @@ class Live2DStageState:
         elif event_type in {"speaking", "audio_playback_started"}:
             self._thinking = False
             self._speaking = True
+            resolved_context = self._resolve_speech_context(payload, speech_context)
+            self._speech.start(now=now, context=resolved_context)
         elif event_type in {
             "done",
             "degraded",
@@ -325,6 +338,7 @@ class Live2DStageState:
         }:
             self._thinking = False
             self._speaking = False
+            self._speech.stop()
             self._motion = motion or "stand"
             self._motion_at = now
         elif event_type == "thinking_finished":
@@ -369,9 +383,76 @@ class Live2DStageState:
             self._motion_at = now
         if "should_speak" in payload:
             self._speaking = bool(payload.get("should_speak"))
+            if self._speaking:
+                legacy_context = SpeechContext(
+                    text=str(payload.get("tts_text", payload.get("text", "")) or ""),
+                    prosody_style=str(payload.get("prosody_style", "neutral") or "neutral").strip().lower(),
+                    speech_act=str(payload.get("speech_act", "") or "").strip().lower(),
+                    actions=tuple(str(item or "").strip().lower() for item in (payload.get("actions") or ()) if str(item or "").strip()),
+                    motion=motion,
+                )
+                self._latest_speech_context = self._latest_speech_context.merged(legacy_context)
+                self._speech.start(now=now, context=self._latest_speech_context)
+            else:
+                self._speech.stop()
         raw_affect = payload.get("affect")
         if isinstance(raw_affect, Mapping):
             self._handle_affect_event({"data": {"affect": raw_affect, "source": "legacy"}})
+
+    @staticmethod
+    def _speech_context_key(payload: Mapping[str, Any]) -> tuple[str, int]:
+        turn_id = str(payload.get("turn_id", "") or "")
+        try:
+            seq = int(payload.get("seq", payload.get("segment_id", 0)) or 0)
+        except (TypeError, ValueError):
+            seq = 0
+        return turn_id, seq
+
+    def _remember_speech_context(
+        self,
+        payload: Mapping[str, Any],
+        context: SpeechContext,
+    ) -> None:
+        has_surface_data = bool(
+            context.text
+            or context.actions
+            or context.motion
+            or context.speech_act
+            or (context.prosody_style and context.prosody_style != "neutral")
+        )
+        if not has_surface_data:
+            return
+        key = self._speech_context_key(payload)
+        previous = self._speech_contexts.get(key, SpeechContext())
+        merged = previous.merged(context)
+        self._speech_contexts[key] = merged
+        self._latest_speech_context = merged
+        self._latest_speech_key = key
+        # Cache chỉ để nối stage_segment với audio_start. Giữ vô hạn vì vài chuỗi
+        # text ngắn là một cách rất chậm để phát minh memory leak.
+        while len(self._speech_contexts) > 24:
+            oldest = next(iter(self._speech_contexts))
+            self._speech_contexts.pop(oldest, None)
+
+    def _resolve_speech_context(
+        self,
+        payload: Mapping[str, Any],
+        event_context: SpeechContext,
+    ) -> SpeechContext:
+        key = self._speech_context_key(payload)
+        cached = self._speech_contexts.get(key)
+        if cached is not None:
+            resolved = cached.merged(event_context)
+        elif not key[0] or key[0] == self._latest_speech_key[0]:
+            resolved = self._latest_speech_context.merged(event_context)
+        else:
+            # Turn mới không được thừa kế wink/look-away của turn trước chỉ vì
+            # audio event đến thiếu stage_segment tương ứng. Kịch câm có giới hạn.
+            resolved = event_context
+        self._speech_contexts[key] = resolved
+        self._latest_speech_context = resolved
+        self._latest_speech_key = key
+        return resolved
 
     @staticmethod
     def _normalize_emotion(value: str) -> str:
@@ -428,13 +509,20 @@ class Live2DStageState:
             target["ParamBrowRAngle"] += idle_pose.brow_right * idle_scale
             target["ParamMouthForm"] += idle_pose.mouth_form * idle_scale
 
-            if self._speaking:
-                fast = math.sin(timestamp * 16.7)
-                detail = math.sin(timestamp * 29.3 + 0.8)
-                open_ratio = 0.16 + 0.55 * (fast * fast) + 0.13 * (detail * detail)
-                mouth_open = INFJ_PARAMETER_PROFILE.mouth_open_from_ratio(min(0.90, open_ratio))
-                # Khi mở miệng, giảm nhẹ form để khóe miệng không bị kéo quá tay.
-                target["ParamMouthForm"] *= 0.78
+            speech_pose = self._speech.sample(now=timestamp) if self._speaking else None
+            if speech_pose is not None:
+                target["ParamAngleX"] += speech_pose.angle_x
+                target["ParamAngleZ"] += speech_pose.angle_z
+                target["ParamBrowLAngle"] += speech_pose.brow_left
+                target["ParamBrowRAngle"] += speech_pose.brow_right
+                target["ParamMouthForm"] = (
+                    target["ParamMouthForm"] * speech_pose.mouth_form_scale
+                    + speech_pose.mouth_form_offset
+                )
+
+            if self._speaking and speech_pose is not None:
+                open_ratio = speech_pose.mouth_open_ratio
+                mouth_open = INFJ_PARAMETER_PROFILE.mouth_open_from_ratio(open_ratio)
             elif self._emotion == "surprise" and max(0.0, timestamp - self._emotion_at) < 0.8:
                 mouth_open = INFJ_PARAMETER_PROFILE.mouth_open_from_ratio(0.58)
             else:
@@ -443,14 +531,19 @@ class Live2DStageState:
 
             keys = set(self._current) | set(target)
             for key in keys:
-                response = _PARAMETER_RESPONSE.get(key, 7.0)
-                blend = 1.0 - math.exp(-response * dt) if dt > 0.0 else 1.0
                 current = self._current.get(key, 0.0)
                 desired = INFJ_PARAMETER_PROFILE.sanitize(key, target.get(key, 0.0))
+                response = _PARAMETER_RESPONSE.get(key, 7.0)
+                if key == "ParamMouthOpenY" and desired < current:
+                    # Đóng nhanh hơn mở để giữa hai âm tiết thật sự có khe khép.
+                    response = 32.0
+                blend = 1.0 - math.exp(-response * dt) if dt > 0.0 else 1.0
                 self._current[key] = current + (desired - current) * blend
 
-            desired_eye_left = composed.eye_open_left * idle_pose.eye_open_left_scale
-            desired_eye_right = composed.eye_open_right * idle_pose.eye_open_right_scale
+            speech_eye_left = speech_pose.eye_open_left_scale if speech_pose is not None else 1.0
+            speech_eye_right = speech_pose.eye_open_right_scale if speech_pose is not None else 1.0
+            desired_eye_left = composed.eye_open_left * idle_pose.eye_open_left_scale * speech_eye_left
+            desired_eye_right = composed.eye_open_right * idle_pose.eye_open_right_scale * speech_eye_right
             eye_blend = 1.0 - math.exp(-7.0 * dt) if dt > 0.0 else 1.0
             self._eye_open_left += (desired_eye_left - self._eye_open_left) * eye_blend
             self._eye_open_right += (desired_eye_right - self._eye_open_right) * eye_blend
@@ -464,16 +557,22 @@ class Live2DStageState:
                 eye_open_left=INFJ_PARAMETER_PROFILE.clamp_eye_open(self._eye_open_left),
                 eye_open_right=INFJ_PARAMETER_PROFILE.clamp_eye_open(self._eye_open_right),
                 gaze_bias_x=INFJ_PARAMETER_PROFILE.clamp_eye_axis(
-                    affect_pose.gaze_bias_x + idle_pose.gaze_bias_x * idle_scale
+                    affect_pose.gaze_bias_x
+                    + idle_pose.gaze_bias_x * idle_scale
+                    + (speech_pose.gaze_bias_x if speech_pose is not None else 0.0)
                 ),
                 gaze_bias_y=INFJ_PARAMETER_PROFILE.clamp_eye_axis(
-                    affect_pose.gaze_bias_y + idle_pose.gaze_bias_y * idle_scale
+                    affect_pose.gaze_bias_y
+                    + idle_pose.gaze_bias_y * idle_scale
+                    + (speech_pose.gaze_bias_y if speech_pose is not None else 0.0)
                 ),
                 affect=visual_affect.to_dict(),
                 affect_source=self._affect_source,
                 idle_action=idle_pose.action,
                 explicit_emotion_weight=emotion_weight,
                 last_event_type=self._last_event_type,
+                mouth_open_ratio=(speech_pose.mouth_open_ratio if speech_pose is not None else 0.0),
+                speech_cue=(speech_pose.cue if speech_pose is not None else "silent"),
             )
 
     def _explicit_emotion_weight(self, timestamp: float) -> float:

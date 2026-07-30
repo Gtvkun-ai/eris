@@ -24,6 +24,22 @@ _GREETING_FORMS = frozenset({
 _ACK_FORMS = frozenset({
     "ok", "okay", "duoc", "duoc roi", "hieu roi", "cam on", "cam on em",
 })
+_SMALL_TALK_REQUEST_MARKERS = (
+    "kiem chuyen",
+    "noi chuyen gi do",
+    "noi gi do",
+    "ke gi do",
+    "bat chuyen",
+    "goi chuyen",
+)
+_SCREEN_CAPABILITY_MARKERS = (
+    "xem duoc tui lam gi",
+    "xem duoc toi lam gi",
+    "thay duoc tui lam gi",
+    "thay duoc toi lam gi",
+    "biet tui lam gi",
+    "biet toi lam gi",
+)
 
 
 def _enabled() -> bool:
@@ -87,12 +103,64 @@ def build_degraded_reply(user_text: str, *, language_hint: str = "vi") -> dict[s
                 "must_not_call_tool": True,
             },
         }
+    elif any(marker in cue for marker in _SMALL_TALK_REQUEST_MARKERS):
+        text = {
+            "en": "Then I'll start small: what's the tiny thing on your mind right now?",
+            "ja": "じゃあ小さく始めよう。今いちばん気になってることは何？",
+            "vi": "Vậy tôi khởi đầu nhẹ nha: trong đầu cậu lúc này đang vướng điều gì nhất?",
+        }.get(language, "Vậy tôi khởi đầu nhẹ nha: trong đầu cậu lúc này đang vướng điều gì nhất?")
+        frame = {
+            "turn_kind": "chat_response",
+            "discourse_relation": "new_or_direct_turn",
+            "user_act": "small_talk_request",
+            "target": "assistant",
+            "literal_question": False,
+            "ambiguity_owner": "none",
+            "boundary_action": "none",
+            "continuation_key": "recent_assistant_thread",
+            "evidence_scope": "user_text",
+            "tool_intent": "none",
+            "missing_evidence": [],
+            "reply_obligation": {
+                "must_answer": True,
+                "must_not_broad_clarify": False,
+                "must_not_call_tool": True,
+            },
+        }
+    elif any(marker in cue for marker in _SCREEN_CAPABILITY_MARKERS):
+        text = {
+            "en": "I can use screen evidence when capture/OCR gives me something grounded. Right now I shouldn't pretend I saw details that did not resolve.",
+            "ja": "画面は、キャプチャやOCRが根拠のある情報を出した時だけ扱える。今は見えたふりはしない。",
+            "vi": "Có, nhưng chỉ khi capture/OCR cho ra bằng chứng đủ chắc. Lúc nãy tôi không nên giả vờ thấy chi tiết khi phần nhìn chưa resolve được.",
+        }.get(language, "Có, nhưng chỉ khi capture/OCR cho ra bằng chứng đủ chắc. Lúc nãy tôi không nên giả vờ thấy chi tiết khi phần nhìn chưa resolve được.")
+        frame = {
+            "turn_kind": "chat_response",
+            "discourse_relation": "answer",
+            "user_act": "capability_question",
+            "target": "assistant",
+            "literal_question": True,
+            "ambiguity_owner": "none",
+            "boundary_action": "none",
+            "continuation_key": "screen_capability",
+            "evidence_scope": "runtime_capability",
+            "tool_intent": "none",
+            "missing_evidence": ["grounded_screen_evidence"],
+            "reply_obligation": {
+                "must_answer": True,
+                "must_not_broad_clarify": True,
+                "must_not_call_tool": True,
+            },
+        }
     else:
         return {}
 
     validated = validate_semantic_frame(frame).frame
     assistant_act = {
-        "kind": "social" if cue in _GREETING_FORMS else "acknowledgement",
+        "kind": (
+            "social"
+            if cue in _GREETING_FORMS or any(marker in cue for marker in _SMALL_TALK_REQUEST_MARKERS)
+            else ("answer" if any(marker in cue for marker in _SCREEN_CAPABILITY_MARKERS) else "acknowledgement")
+        ),
         "proposition_mode": "none",
         "confidence": 1.0,
     }

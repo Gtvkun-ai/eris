@@ -1,6 +1,7 @@
 using Godot;
 using System;
 using System.Collections.Generic;
+using System.Text;
 using System.Text.Json;
 
 public partial class UdpListener : Node2D
@@ -18,6 +19,10 @@ public partial class UdpListener : Node2D
 		public string Motion = "";
 		public string TurnId = "";
 		public string LastEventType = "";
+		public string LifecycleState = "IDLE";
+		public string StatusLabel = "";
+		public string SessionId = "";
+		public long EventSeq;
 		public float ThoughtPressure;
 		public float Confidence;
 		public bool DiaryUpdated;
@@ -29,6 +34,9 @@ public partial class UdpListener : Node2D
 
 	private readonly RuntimePresenceState _runtimePresence = new();
 	private ulong _runtimePresenceLastUiRefreshMs;
+	private PanelContainer _runtimePresenceIndicator;
+	private Label _runtimePresenceIndicatorLabel;
+	private string _runtimePresenceAvatarReadySession = "";
 
 	private void TryCaptureRuntimePresence(string raw)
 	{
@@ -47,13 +55,31 @@ public partial class UdpListener : Node2D
 			if (!stageProtocol && !RuntimePresenceEventTypes.Contains(eventType))
 				return;
 
+			JsonElement data = RuntimePresenceObject(root, "data");
+			string sessionId = RuntimePresenceString(root, "session_id");
+			long eventSeq = RuntimePresenceLong(root, "event_seq", 0L);
+			if (stageProtocol)
+			{
+				EnsureStageAvatarReady(sessionId);
+				SendStageAck(sessionId, eventSeq, eventType);
+				if (!AcceptStageEvent(sessionId, eventSeq))
+					return;
+			}
+
 			_runtimePresence.LastPacketAtMs = Time.GetTicksMsec();
 			_runtimePresence.LastEventType = eventType;
 			string turnId = RuntimePresenceString(root, "turn_id");
+			if (string.IsNullOrWhiteSpace(turnId))
+				turnId = RuntimePresenceString(data, "turn_id");
 			if (!string.IsNullOrWhiteSpace(turnId))
 				_runtimePresence.TurnId = turnId;
 
-			JsonElement data = RuntimePresenceObject(root, "data");
+			string lifecycleState = RuntimePresenceString(data, "state").Trim().ToUpperInvariant();
+			if (!string.IsNullOrWhiteSpace(lifecycleState))
+				_runtimePresence.LifecycleState = lifecycleState;
+			string statusLabel = RuntimePresenceString(data, "label").Trim();
+			if (!string.IsNullOrWhiteSpace(statusLabel))
+				_runtimePresence.StatusLabel = statusLabel;
 			string topSource = RuntimePresenceString(root, "source");
 			string dataSource = RuntimePresenceString(data, "source");
 			string resolvedSource = !string.IsNullOrWhiteSpace(dataSource) ? dataSource : topSource;
@@ -90,27 +116,42 @@ public partial class UdpListener : Node2D
 
 			switch (eventType)
 			{
+				case "received":
+					SetRuntimePresenceThinking("received");
+					break;
 				case "thinking_started":
-					_runtimePresence.Thinking = true;
-					_runtimePresence.Speaking = false;
-					_runtimePresence.Stage = "thinking";
+					SetRuntimePresenceThinking("thinking");
+					break;
+				case "content_committed":
+					SetRuntimePresenceThinking("content_committed");
+					break;
+				case "audio_buffering":
+				case "stage_segment_prepare":
+				case "stage_segment_queued":
+				case "tts_audio_ready":
+					SetRuntimePresenceThinking("audio_buffering");
 					break;
 				case "thinking_finished":
-					_runtimePresence.Thinking = false;
-					_runtimePresence.Stage = "settling";
+					ApplyThinkingFinishedTarget(lifecycleState);
 					break;
+				case "speaking":
 				case "audio_playback_started":
 					_runtimePresence.Speaking = true;
 					_runtimePresence.Thinking = false;
 					_runtimePresence.Stage = "speaking";
 					break;
+				case "degraded":
+					SetRuntimePresenceTerminal("degraded");
+					break;
+				case "interrupted":
+					SetRuntimePresenceTerminal("interrupted");
+					break;
+				case "done":
 				case "audio_playback_done":
 				case "stage_segment_cancelled":
 				case "stage_segment_failed":
 				case "continuation_cancelled":
-					_runtimePresence.Speaking = false;
-					_runtimePresence.Thinking = false;
-					_runtimePresence.Stage = "afterglow";
+					SetRuntimePresenceTerminal("afterglow");
 					break;
 				case "stage_segment":
 					if (!_runtimePresence.Speaking && !_runtimePresence.Thinking)
@@ -122,6 +163,8 @@ public partial class UdpListener : Node2D
 					break;
 			}
 
+			ApplyRuntimePresencePose(eventType, lifecycleState);
+			RefreshRuntimePresenceIndicator();
 			_latestEmotionDebug = MergeRuntimePresence(_latestEmotionDebug);
 			if (_emotionPanel != null && _emotionPanel.Visible)
 				RefreshEmotionPanel();
@@ -138,9 +181,16 @@ public partial class UdpListener : Node2D
 
 	private void TickRuntimePresencePanel()
 	{
+		ulong now = Time.GetTicksMsec();
+		if ((_runtimePresence.Thinking || _runtimePresence.Speaking)
+			&& _runtimePresence.LastPacketAtMs > 0
+			&& now - _runtimePresence.LastPacketAtMs > 45000)
+		{
+			SetRuntimePresenceTerminal("idle");
+			RefreshRuntimePresenceIndicator();
+		}
 		if (_emotionPanel == null || !_emotionPanel.Visible)
 			return;
-		ulong now = Time.GetTicksMsec();
 		if (now - _runtimePresenceLastUiRefreshMs < 500)
 			return;
 		_runtimePresenceLastUiRefreshMs = now;
@@ -155,6 +205,211 @@ public partial class UdpListener : Node2D
 		}
 		_latestEmotionDebug = MergeRuntimePresence(_latestEmotionDebug);
 		RefreshEmotionPanel();
+	}
+
+	private void SetRuntimePresenceThinking(string stage)
+	{
+		_runtimePresence.Thinking = true;
+		_runtimePresence.Speaking = false;
+		_runtimePresence.Stage = stage;
+		if (string.IsNullOrWhiteSpace(_runtimePresence.StatusLabel))
+			_runtimePresence.StatusLabel = "Đang suy nghĩ…";
+	}
+
+	private void SetRuntimePresenceTerminal(string stage)
+	{
+		_runtimePresence.Speaking = false;
+		_runtimePresence.Thinking = false;
+		_runtimePresence.Stage = stage;
+		_runtimePresence.StatusLabel = "";
+	}
+
+	private void ApplyThinkingFinishedTarget(string lifecycleState)
+	{
+		switch (lifecycleState)
+		{
+			case "SPEAKING":
+				_runtimePresence.Speaking = true;
+				_runtimePresence.Thinking = false;
+				_runtimePresence.Stage = "speaking";
+				break;
+			case "DEGRADED":
+				SetRuntimePresenceTerminal("degraded");
+				break;
+			case "INTERRUPTED":
+				SetRuntimePresenceTerminal("interrupted");
+				break;
+			case "DONE":
+				SetRuntimePresenceTerminal("afterglow");
+				break;
+			default:
+				_runtimePresence.Thinking = false;
+				_runtimePresence.Stage = "settling";
+				break;
+		}
+	}
+
+	private void ApplyRuntimePresencePose(string eventType, string lifecycleState)
+	{
+		if (_isLive2DMode || _motion == null || _body == null)
+			return;
+		bool thinkingEvent = eventType is "received" or "thinking_started" or "content_committed" or "audio_buffering";
+		if (thinkingEvent)
+		{
+			_lastRemoteMotionAt = GetRuntimeSeconds();
+			if (!string.Equals(_motion.CurrentAction, "read", StringComparison.Ordinal))
+				_motion.ApplySilentPose("read", -1);
+			return;
+		}
+		bool terminalEvent = eventType is "done" or "degraded" or "interrupted"
+			or "audio_playback_done" or "stage_segment_cancelled" or "stage_segment_failed"
+			or "continuation_cancelled";
+		bool thinkingFinishedTerminal = eventType == "thinking_finished"
+			&& (lifecycleState == "DEGRADED" || lifecycleState == "INTERRUPTED" || lifecycleState == "DONE");
+		if ((terminalEvent || thinkingFinishedTerminal)
+			&& !string.Equals(_motion.CurrentAction, "stand", StringComparison.Ordinal))
+		{
+			_motion.ApplySilentPose("stand");
+		}
+	}
+
+	private void RefreshRuntimePresenceIndicator()
+	{
+		bool visible = _runtimePresence.Thinking && !_runtimePresence.Speaking;
+		if (!visible && _runtimePresenceIndicator == null)
+			return;
+		EnsureRuntimePresenceIndicator();
+		if (_runtimePresenceIndicator == null || _runtimePresenceIndicatorLabel == null)
+			return;
+		_runtimePresenceIndicatorLabel.Text = string.IsNullOrWhiteSpace(_runtimePresence.StatusLabel)
+			? "Đang suy nghĩ…"
+			: _runtimePresence.StatusLabel;
+		_runtimePresenceIndicator.Visible = visible;
+	}
+
+	private void EnsureRuntimePresenceIndicator()
+	{
+		if (_runtimePresenceIndicator != null && GodotObject.IsInstanceValid(_runtimePresenceIndicator))
+			return;
+		Control root = GetNodeOrNull<Control>("CanvasLayer/Control");
+		if (root == null)
+			return;
+
+		var panel = new PanelContainer
+		{
+			Name = "RuntimePresenceIndicator",
+			Visible = false,
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+			ZIndex = 120,
+			CustomMinimumSize = new Vector2(196f, 38f),
+		};
+		panel.AnchorLeft = 0.5f;
+		panel.AnchorRight = 0.5f;
+		panel.AnchorTop = 0f;
+		panel.AnchorBottom = 0f;
+		panel.OffsetLeft = -98f;
+		panel.OffsetRight = 98f;
+		panel.OffsetTop = 18f;
+		panel.OffsetBottom = 56f;
+		panel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(0.07f, 0.06f, 0.09f, 0.88f),
+			BorderColor = new Color(0.92f, 0.72f, 0.84f, 0.72f),
+			BorderWidthLeft = 1,
+			BorderWidthTop = 1,
+			BorderWidthRight = 1,
+			BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 18,
+			CornerRadiusTopRight = 18,
+			CornerRadiusBottomLeft = 18,
+			CornerRadiusBottomRight = 18,
+			ContentMarginLeft = 16f,
+			ContentMarginRight = 16f,
+			ContentMarginTop = 7f,
+			ContentMarginBottom = 7f,
+			ShadowColor = new Color(0f, 0f, 0f, 0.28f),
+			ShadowSize = 3,
+		});
+
+		var label = new Label
+		{
+			Text = "Đang suy nghĩ…",
+			HorizontalAlignment = HorizontalAlignment.Center,
+			VerticalAlignment = VerticalAlignment.Center,
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		label.AddThemeColorOverride("font_color", new Color(1f, 0.93f, 0.97f, 1f));
+		label.AddThemeFontSizeOverride("font_size", 14);
+		panel.AddChild(label);
+		root.AddChild(panel);
+		_runtimePresenceIndicator = panel;
+		_runtimePresenceIndicatorLabel = label;
+	}
+
+	private bool AcceptStageEvent(string sessionId, long eventSeq)
+	{
+		if (!string.IsNullOrWhiteSpace(sessionId)
+			&& !string.Equals(sessionId, _runtimePresence.SessionId, StringComparison.Ordinal))
+		{
+			_runtimePresence.SessionId = sessionId;
+			_runtimePresence.EventSeq = 0;
+			_runtimePresence.TurnId = "";
+		}
+		if (eventSeq <= 0)
+			return true;
+		if (eventSeq <= _runtimePresence.EventSeq)
+			return false;
+		_runtimePresence.EventSeq = eventSeq;
+		return true;
+	}
+
+	private void EnsureStageAvatarReady(string sessionId)
+	{
+		if (string.IsNullOrWhiteSpace(sessionId)
+			|| string.Equals(_runtimePresenceAvatarReadySession, sessionId, StringComparison.Ordinal))
+			return;
+		_runtimePresenceAvatarReadySession = sessionId;
+		SendStageInbound(new
+		{
+			protocol = "eris.stage",
+			version = 2,
+			type = "avatar_ready",
+			session_id = sessionId,
+			timestamp = Time.GetUnixTimeFromSystem(),
+		});
+	}
+
+	private void SendStageAck(string sessionId, long eventSeq, string eventType)
+	{
+		if (eventSeq <= 0 || string.IsNullOrWhiteSpace(sessionId))
+			return;
+		if (string.Equals(eventType, "stage_ack_received", StringComparison.Ordinal)
+			|| string.Equals(eventType, "avatar_ready_ack", StringComparison.Ordinal)
+			|| eventType.EndsWith("_ack", StringComparison.Ordinal))
+			return;
+		SendStageInbound(new
+		{
+			protocol = "eris.stage",
+			version = 2,
+			type = "stage_ack",
+			session_id = sessionId,
+			event_seq = eventSeq,
+			timestamp = Time.GetUnixTimeFromSystem(),
+			data = new { event_seq = eventSeq },
+		});
+	}
+
+	private void SendStageInbound(object payload)
+	{
+		try
+		{
+			string raw = JsonSerializer.Serialize(payload);
+			_chatSend.PutPacket(Encoding.UTF8.GetBytes(raw));
+		}
+		catch (Exception ex)
+		{
+			GD.PrintErr($"[RuntimePresence] inbound stage event failed: {ex.Message}");
+		}
 	}
 
 	private EmotionDebug MergeRuntimePresence(EmotionDebug baseline)
@@ -288,6 +543,11 @@ public partial class UdpListener : Node2D
 		_runtimePresence.Motion = "";
 		_runtimePresence.TurnId = "";
 		_runtimePresence.LastEventType = "";
+		_runtimePresence.LifecycleState = "IDLE";
+		_runtimePresence.StatusLabel = "";
+		_runtimePresence.SessionId = "";
+		_runtimePresence.EventSeq = 0;
+		_runtimePresenceAvatarReadySession = "";
 		_runtimePresence.ThoughtPressure = 0f;
 		_runtimePresence.Confidence = 0f;
 		_runtimePresence.DiaryUpdated = false;
@@ -296,6 +556,8 @@ public partial class UdpListener : Node2D
 		_runtimePresence.LastPacketAtMs = 0;
 		_runtimePresence.LastAffectAtMs = 0;
 		_runtimePresenceLastUiRefreshMs = 0;
+		if (_runtimePresenceIndicator != null)
+			_runtimePresenceIndicator.Visible = false;
 	}
 
 	private void RuntimePresenceReadAffect(JsonElement affect)
@@ -334,7 +596,9 @@ public partial class UdpListener : Node2D
 	private static readonly HashSet<string> RuntimePresenceEventTypes = new(StringComparer.Ordinal)
 	{
 		"affect_state", "cognitive_affect", "inner_affect", "stage_segment", "show_plan",
-		"thinking_started", "thinking_finished", "continuation_cancelled",
+		"received", "thinking_started", "content_committed", "audio_buffering", "thinking_finished",
+		"speaking", "done", "degraded", "interrupted", "continuation_cancelled",
+		"stage_segment_prepare", "stage_segment_queued", "tts_audio_ready",
 		"audio_playback_started", "audio_playback_done", "stage_segment_cancelled", "stage_segment_failed",
 	};
 
@@ -359,6 +623,14 @@ public partial class UdpListener : Node2D
 		return value.ValueKind == JsonValueKind.True ? true : value.ValueKind == JsonValueKind.False ? false : fallback;
 	}
 
+	private static long RuntimePresenceLong(JsonElement root, string key, long fallback)
+	{
+		if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty(key, out JsonElement value)
+			|| value.ValueKind != JsonValueKind.Number || !value.TryGetInt64(out long number))
+			return fallback;
+		return number;
+	}
+
 	private static float RuntimePresenceFloat(JsonElement root, string key, float fallback, bool signed)
 	{
 		if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty(key, out JsonElement value)
@@ -369,8 +641,13 @@ public partial class UdpListener : Node2D
 
 	private static string RuntimePresenceStageVi(string stage) => stage switch
 	{
+		"received" => "đã nhận lượt",
 		"thinking" => "đang suy nghĩ",
+		"content_committed" => "đã chốt nội dung",
+		"audio_buffering" => "đang chuẩn bị giọng",
 		"speaking" => "đang nói",
+		"degraded" => "đã hạ cấp",
+		"interrupted" => "đã bị ngắt",
 		"staged" => "đã xếp câu diễn",
 		"planning" => "đang dựng nhịp",
 		"settling" => "đang hạ nhịp",
