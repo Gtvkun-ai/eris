@@ -8,56 +8,6 @@
   let lastSignature = "";
   let timer = null;
 
-  let hintTimer = null;
-
-  function fastHintText(observation) {
-    if (!observation || typeof observation !== "object") return "";
-    const suggestion = observation.suggestion || {};
-    const san = String(suggestion.san || observation.suggested_move_san || "").trim();
-    const uci = String(suggestion.uci || observation.suggested_move_uci || "").trim();
-    if (san || uci) return `ERIS gợi ý: ${san || uci}${san && uci ? `  (${uci})` : ""}`;
-    const focus = String(observation.hint_focus || "").trim();
-    const labels = {
-      king_safety: "Ưu tiên an toàn vua.",
-      forcing_check: "Có nước chiếu đáng xem.",
-      forcing_capture: "Kiểm tra các nước bắt quân cưỡng bức.",
-      develop_piece: "Phát triển quân còn kẹt.",
-      central_control: "Tranh chấp trung tâm.",
-      improve_piece_activity: "Cải thiện hoạt động của quân."
-    };
-    return labels[focus] ? `ERIS: ${labels[focus]}` : "";
-  }
-
-  function showFastHint(observation) {
-    const text = fastHintText(observation);
-    if (!text) return;
-    let node = document.getElementById("eris-chess-fast-hint");
-    if (!node) {
-      node = document.createElement("div");
-      node.id = "eris-chess-fast-hint";
-      Object.assign(node.style, {
-        position: "fixed",
-        left: "50%",
-        bottom: "28px",
-        transform: "translateX(-50%)",
-        zIndex: "2147483647",
-        maxWidth: "min(720px, 86vw)",
-        padding: "10px 14px",
-        borderRadius: "10px",
-        background: "rgba(18, 18, 20, 0.92)",
-        color: "#fff",
-        font: "600 15px/1.35 system-ui, sans-serif",
-        boxShadow: "0 8px 30px rgba(0,0,0,.35)",
-        pointerEvents: "none"
-      });
-      document.documentElement.appendChild(node);
-    }
-    node.textContent = text;
-    node.style.display = "block";
-    clearTimeout(hintTimer);
-    hintTimer = setTimeout(() => { node.style.display = "none"; }, 2600);
-  }
-
   function remember(update) {
     try {
       chrome.storage.local.set(Object.assign({lastStatusAt: Date.now()}, update));
@@ -284,7 +234,6 @@
       });
       const response = await chrome.runtime.sendMessage({type: "eris_chess_snapshot", payload});
       if (!response || !response.ok) throw new Error(response && response.error || "bridge unavailable");
-      showFastHint(response.observation || {});
       document.documentElement.dataset.erisChessBridge = "connected";
     } catch (error) {
       document.documentElement.dataset.erisChessBridge = "disconnected";

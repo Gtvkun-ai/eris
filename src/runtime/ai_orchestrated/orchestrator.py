@@ -73,6 +73,11 @@ def architecture_c_enabled() -> bool:
     return True
 
 
+def _deepseek_web_authority_mode() -> bool:
+    provider = str(os.getenv("ERIS_REMOTE_PROVIDER", "") or "").strip().lower().replace("-", "_")
+    return provider in {"deepseek_web", "ds2api", "whale2api", "whale"}
+
+
 def _runtime_language() -> str:
     """Ngôn ngữ câu public của Main AI.
 
@@ -92,6 +97,22 @@ def _runtime_language() -> str:
     }
     language = aliases.get(raw, raw)
     return language if language in {"vi", "ja", "en"} else "vi"
+
+
+def _runtime_speech_language() -> str:
+    """Ngôn ngữ transcript TTS do cùng semantic authority render."""
+    try:
+        from runtime.runtime_settings_store import runtime_text
+        raw = str(runtime_text("tts", "language", default="ja") or "ja").strip().lower()
+    except Exception:
+        raw = "ja"
+    aliases = {
+        "": "ja", "auto": "ja", "jp": "ja", "ja-jp": "ja", "japanese": "ja",
+        "vn": "vi", "vi-vn": "vi", "vietnamese": "vi",
+        "en-us": "en", "english": "en",
+    }
+    language = aliases.get(raw, raw)
+    return language if language in {"vi", "ja", "en"} else "ja"
 
 
 def _next_ai_turn_seq(host: Any, *, fallback: int = 1) -> int:
@@ -480,7 +501,7 @@ class AIChatOrchestrator:
         )
         history = host._chat_history_for_llm(limit=16)[:-1]
         route_decision = route_companion_turn(user_text, recent_history=history)
-        use_escalation = route_decision.use_pro
+        use_escalation = bool(route_decision.use_pro and not _deepseek_web_authority_mode())
         reasoning_effort = route_decision.reasoning_effort
         thinking_mode = route_decision.thinking_mode
         routing_context = route_decision.prompt_context()
@@ -500,9 +521,6 @@ class AIChatOrchestrator:
         payload: dict[str, Any] = {}
         host._set_background_memory_digest_remote_inflight(True)
         try:
-            # Một lượt primary, rồi fallback ngay trong router nếu được phép.
-            # Bản cũ gọi lại primary lần hai trước khi chạm fallback, khiến lỗi
-            # provider biến thành gấp đôi timeout.
             payload = host.ai_model_router.generate_public_reply(
                 chat_history=history,
                 user_text=user_message,
@@ -517,10 +535,35 @@ class AIChatOrchestrator:
                 use_escalation=use_escalation,
                 reasoning_effort=reasoning_effort,
                 thinking_mode=thinking_mode,
-                allow_fallback=not no_fallback_mode_enabled(),
+                allow_fallback=False,
                 language_hint=_runtime_language(),
+                speech_language_hint=_runtime_speech_language(),
                 planned_intention=chat_plan,
             )
+            if (
+                not payload
+                and not no_fallback_mode_enabled()
+                and not _deepseek_web_authority_mode()
+            ):
+                payload = host.ai_model_router.generate_public_reply(
+                    chat_history=history,
+                    user_text=user_message,
+                    memory_context=compiled_context.memory,
+                    grounding_context=compiled_context.grounding,
+                    relationship_context=compiled_context.relationship,
+                    personality_context=compiled_context.personality,
+                    interrupt_context=compiled_context.interrupt,
+                    engagement_context=compiled_context.engagement,
+                    routing_context=compiled_context.routing,
+                    discourse_context=compiled_context.discourse,
+                    use_escalation=use_escalation,
+                    reasoning_effort=reasoning_effort,
+                    thinking_mode=thinking_mode,
+                    allow_fallback=True,
+                    language_hint=_runtime_language(),
+                    speech_language_hint=_runtime_speech_language(),
+                    planned_intention=chat_plan,
+                    )
         finally:
             host._set_background_memory_digest_remote_inflight(False)
 
@@ -690,61 +733,74 @@ class AIChatOrchestrator:
             grounding_annotations = grounding_verdict.annotations
             if not grounding_verdict.allowed:
                 violation_codes = ["UNGROUNDED_PERCEPTION_OR_ACTION_CLAIM"]
-                host.logger.warning(
-                    "[cortex v2 gate] turn=%s violations=%s; retrying public writer once",
-                    turn_seq,
-                    ",".join(violation_codes),
-                )
-                retry_instruction = grounding_verdict.retry_instruction()
-                host._set_background_memory_digest_remote_inflight(True)
-                try:
-                    retried = host.ai_model_router.generate_public_reply(
-                        chat_history=history,
-                        user_text=user_message,
-                        memory_context=compiled_context.memory,
-                        grounding_context=compiled_context.grounding,
-                        relationship_context=compiled_context.relationship,
-                        personality_context=compiled_context.personality,
-                        interrupt_context=compiled_context.interrupt,
-                        engagement_context=compiled_context.engagement,
-                        routing_context=compiled_context.routing,
-                        discourse_context=compiled_context.discourse,
-                        use_escalation=use_escalation,
-                        reasoning_effort=reasoning_effort,
-                        thinking_mode=thinking_mode,
-                        allow_fallback=not no_fallback_mode_enabled(),
-                        language_hint=_runtime_language(),
-                        planned_intention=chat_plan,
-                        retry_instruction=retry_instruction,
-                        # PDF annotation, page 13: wording retry is forbidden
-                        # from reinterpreting discourse/meaning.  The validated
-                        # frame from the first authority call is immutable.
-                        locked_semantic_frame=payload.get("semantic_frame", {}),
+                if _deepseek_web_authority_mode():
+                    # DeepSeek Web owns one atomic semantic attempt. An unsafe
+                    # candidate is suppressed and degraded locally; a second
+                    # remote rewrite would violate the one-authority/one-deadline
+                    # contract and can double perceived latency.
+                    host.logger.warning(
+                        "[cortex v2 gate] turn=%s violations=%s; suppressing web commit without remote retry",
+                        turn_seq,
+                        ",".join(violation_codes),
                     )
-                finally:
-                    host._set_background_memory_digest_remote_inflight(False)
-                if retried:
-                    retry_grounding_verdict = evaluate_grounded_surface(
-                        grounding_engine, str(retried.get("text", "") or ""), report=grounding_report
-                    )
-                    retry_grounding = retry_grounding_verdict.annotations
-                    if retry_grounding_verdict.allowed:
-                        # Wording retry không được đổi assistant act/proposition mode.
-                        retried["assistant_act"] = assistant_act.to_dict()
-                        retried["_typed_assistant_act"] = assistant_act
-                        retried["semantic_frame"] = typed_frame.to_dict() if typed_frame is not None else retried.get("semantic_frame", {})
-                        retried["_typed_semantic_frame"] = typed_frame
-                        payload = retried
-                    else:
-                        retry_codes = ["UNGROUNDED_PERCEPTION_OR_ACTION_CLAIM"] if retry_grounding else []
-                        host.logger.warning(
-                            "[cortex v2 gate] retry still invalid turn=%s violations=%s; suppressing unsafe surface",
-                            turn_seq,
-                            ",".join(retry_codes),
-                        )
-                        payload = {}
-                else:
                     payload = {}
+                else:
+                    host.logger.warning(
+                        "[cortex v2 gate] turn=%s violations=%s; retrying public writer once",
+                        turn_seq,
+                        ",".join(violation_codes),
+                    )
+                    retry_instruction = grounding_verdict.retry_instruction()
+                    host._set_background_memory_digest_remote_inflight(True)
+                    try:
+                        retried = host.ai_model_router.generate_public_reply(
+                            chat_history=history,
+                            user_text=user_message,
+                            memory_context=compiled_context.memory,
+                            grounding_context=compiled_context.grounding,
+                            relationship_context=compiled_context.relationship,
+                            personality_context=compiled_context.personality,
+                            interrupt_context=compiled_context.interrupt,
+                            engagement_context=compiled_context.engagement,
+                            routing_context=compiled_context.routing,
+                            discourse_context=compiled_context.discourse,
+                            use_escalation=use_escalation,
+                            reasoning_effort=reasoning_effort,
+                            thinking_mode=thinking_mode,
+                            allow_fallback=not no_fallback_mode_enabled(),
+                            language_hint=_runtime_language(),
+                            speech_language_hint=_runtime_speech_language(),
+                            planned_intention=chat_plan,
+                            retry_instruction=retry_instruction,
+                            # PDF annotation, page 13: wording retry is forbidden
+                            # from reinterpreting discourse/meaning.  The validated
+                            # frame from the first authority call is immutable.
+                            locked_semantic_frame=payload.get("semantic_frame", {}),
+                        )
+                    finally:
+                        host._set_background_memory_digest_remote_inflight(False)
+                    if retried:
+                        retry_grounding_verdict = evaluate_grounded_surface(
+                            grounding_engine, str(retried.get("text", "") or ""), report=grounding_report
+                        )
+                        retry_grounding = retry_grounding_verdict.annotations
+                        if retry_grounding_verdict.allowed:
+                            # Wording retry không được đổi assistant act/proposition mode.
+                            retried["assistant_act"] = assistant_act.to_dict()
+                            retried["_typed_assistant_act"] = assistant_act
+                            retried["semantic_frame"] = typed_frame.to_dict() if typed_frame is not None else retried.get("semantic_frame", {})
+                            retried["_typed_semantic_frame"] = typed_frame
+                            payload = retried
+                        else:
+                            retry_codes = ["UNGROUNDED_PERCEPTION_OR_ACTION_CLAIM"] if retry_grounding else []
+                            host.logger.warning(
+                                "[cortex v2 gate] retry still invalid turn=%s violations=%s; suppressing unsafe surface",
+                                turn_seq,
+                                ",".join(retry_codes),
+                            )
+                            payload = {}
+                    else:
+                        payload = {}
 
 
         if not payload:
@@ -788,6 +844,11 @@ class AIChatOrchestrator:
             raw = json.dumps(public_payload, ensure_ascii=False)
             host._log_raw_llm_output("chat_ai", raw)
             decision = host.parser.parse(raw, user_hint=user_text)
+
+        if not str(getattr(decision, "utterance_turn_id", "") or "").strip():
+            decision.utterance_turn_id = str(
+                getattr(host, "_active_public_lifecycle_turn_id", "") or turn_id
+            )
 
         if not payload or getattr(decision, "parse_mode", "") == "typed_discourse_fallback" or bool(getattr(decision, "failure_meta", None)):
             setattr(host, "_cached_failed_user_turn", user_text)
@@ -1299,6 +1360,16 @@ class AIAutonomousOrchestrator:
             )
             return False
 
+        from runtime.public_lifecycle import lifecycle_for
+        startup_turn_id = str(plan.plan_id or f"startup:{turn_seq}")
+        host._active_public_lifecycle_turn_id = startup_turn_id
+        lifecycle_for(host).begin(
+            turn_id=startup_turn_id,
+            channel="session_ritual",
+            reason="startup_composing",
+            received=False,
+        )
+
         continuity_context = {
             "relationship": relationship_summary,
             "open_loops": list(state.open_loops)[:3],
@@ -1309,47 +1380,62 @@ class AIAutonomousOrchestrator:
         }
         language = _runtime_language()
         avoid_text = str(getattr(host, "last_text", "") or "")
-        payload = None
-        if plan.strategy == "persona_opening":
-            payload = select_startup_persona_preset(greeting_frame, avoid_text=avoid_text)
-            if payload:
-                host.logger.info(
-                    "[architecture C startup greeting] source=preset id=%s situation=%s",
-                    str(payload.get("preset_id", "") or "none"),
-                    str(getattr(greeting_frame, "situation", "unknown") or "unknown"),
-                )
-        if not payload:
-            payload = host.ai_model_router.generate_autonomous_reply(
-                plan=plan,
-                personality_context=(
-                    f"{state.personality_prompt_context()}\n\n"
-                    f"{greeting_frame.to_prompt_block()}"
-                ),
-                memory_context=json.dumps(continuity_context, ensure_ascii=False),
-                grounding_context=(
-                    f"{startup_grounding.prompt_context()}\n\n"
-                    "STARTUP_WORDING_CONTRACT:\n"
-                    "- GreetingFrame is the encounter model, not public text.\n"
-                    "- Prefer ordinary spoken Vietnamese over slogans or philosophical declarations.\n"
-                    "- Do not explain your role, availability, standards, principles, or abstract worldview."
-                ),
-                recent_history=recent_history,
+        # Online startup follows the same single semantic-authority path as chat.
+        # Preset prose is reserved for degraded mode; it must not silently bypass
+        # the bilingual UtteranceSpec contract when DeepSeek Web is available.
+        model_router = getattr(host, "ai_model_router", None)
+        generate_autonomous = getattr(model_router, "generate_autonomous_reply", None)
+        payload = generate_autonomous(
+            plan=plan,
+            personality_context=(
+                f"{state.personality_prompt_context()}\n\n"
+                f"{greeting_frame.to_prompt_block()}"
+            ),
+            memory_context=json.dumps(continuity_context, ensure_ascii=False),
+            grounding_context=(
+                f"{startup_grounding.prompt_context()}\n\n"
+                "STARTUP_WORDING_CONTRACT:\n"
+                "- GreetingFrame is the encounter model, not public text.\n"
+                "- Prefer ordinary spoken Vietnamese over slogans or philosophical declarations.\n"
+                "- Do not explain your role, availability, standards, principles, or abstract worldview."
+            ),
+            recent_history=recent_history,
+            avoid_text=avoid_text,
+            allow_fallback=not no_fallback_mode_enabled(),
+            language_hint=language,
+            speech_language_hint=_runtime_speech_language(),
+        ) if callable(generate_autonomous) else {}
+        if payload and plan.strategy in {"persona_opening", "continuity_opening"}:
+            _selected_text, quality = choose_startup_text(
+                str(payload.get("text", "") or ""),
+                greeting_frame,
                 avoid_text=avoid_text,
-                allow_fallback=not no_fallback_mode_enabled(),
-                language_hint=language,
             )
-            if payload and plan.strategy in {"persona_opening", "continuity_opening"}:
-                selected_text, quality = choose_startup_text(
-                    str(payload.get("text", "") or ""),
-                    greeting_frame,
-                    avoid_text=avoid_text,
+            # Quality is observational only. Replacing display alone would break
+            # the committed Japanese speech surface and create a second writer.
+            host.logger.info(
+                "[architecture C startup greeting] source=deepseek_web score=%.3f accepted=%s reasons=%s situation=%s",
+                float(quality.get("score", 0.0) or 0.0),
+                int(bool(quality.get("accepted", False))),
+                ",".join(str(item) for item in (quality.get("reasons", ()) or ())) or "none",
+                str(getattr(greeting_frame, "situation", "unknown") or "unknown"),
+            )
+        if not payload:
+            preset_payload = select_startup_persona_preset(greeting_frame, avoid_text=avoid_text)
+            if preset_payload:
+                from runtime.utterance_spec import degrade_surface_payload
+                payload = degrade_surface_payload(
+                    preset_payload,
+                    text=str(preset_payload.get("text", "") or ""),
+                    language=language,
+                    reason="startup_web_unavailable_preset",
+                    performance_preset=str(preset_payload.get("performance_hint", "dry_tease") or "dry_tease"),
+                    should_speak=True,
                 )
-                payload["text"] = selected_text
+                payload["preset_id"] = str(preset_payload.get("preset_id", "") or "")
                 host.logger.info(
-                    "[architecture C startup greeting] source=model score=%.3f accepted=%s reasons=%s situation=%s",
-                    float(quality.get("score", 0.0) or 0.0),
-                    int(bool(quality.get("accepted", False))),
-                    ",".join(str(item) for item in (quality.get("reasons", ()) or ())) or "none",
+                    "[architecture C startup greeting] source=degraded_preset id=%s situation=%s",
+                    payload.get("preset_id") or "none",
                     str(getattr(greeting_frame, "situation", "unknown") or "unknown"),
                 )
         if not payload:
@@ -1360,11 +1446,15 @@ class AIAutonomousOrchestrator:
                 avoid_text=avoid_text,
                 language=language,
             )
-            payload = {
-                "text": fallback_text,
-                "should_speak": True,
-                "performance_hint": "dry_tease",
-            }
+            from runtime.utterance_spec import degrade_surface_payload
+            payload = degrade_surface_payload(
+                {"performance_hint": "dry_tease"},
+                text=fallback_text,
+                language=language,
+                reason="startup_semantic_deadline",
+                performance_preset="dry_tease",
+                should_speak=True,
+            )
             host.logger.warning(
                 "[architecture C startup] main reply unavailable; used personality fallback strategy=%s",
                 plan.strategy,
@@ -1372,6 +1462,8 @@ class AIAutonomousOrchestrator:
         raw = json.dumps(_serializable_public_payload(payload), ensure_ascii=False)
         host._log_raw_llm_output("startup_ai", raw)
         decision = host.parser.parse(raw)
+        if not str(getattr(decision, "utterance_turn_id", "") or "").strip():
+            decision.utterance_turn_id = str(plan.plan_id or f"startup:{turn_seq}")
         if not bool(getattr(decision, "should_speak", False)) or not str(getattr(decision, "text", "") or "").strip():
             fallback_text = build_startup_fallback_text(
                 open_loops=state.open_loops,
@@ -1380,12 +1472,17 @@ class AIAutonomousOrchestrator:
                 avoid_text=str(getattr(host, "last_text", "") or ""),
                 language=language,
             )
-            fallback_payload = {
-                "text": fallback_text,
-                "should_speak": True,
-                "performance_hint": "dry_tease",
-            }
+            from runtime.utterance_spec import degrade_surface_payload
+            fallback_payload = degrade_surface_payload(
+                {"performance_hint": "dry_tease"},
+                text=fallback_text,
+                language=language,
+                reason="startup_empty_commit",
+                performance_preset="dry_tease",
+                should_speak=True,
+            )
             decision = host.parser.parse(json.dumps(_serializable_public_payload(fallback_payload), ensure_ascii=False))
+            decision.utterance_turn_id = str(plan.plan_id or f"startup:{turn_seq}")
             host.logger.warning(
                 "[architecture C startup] empty/silent model decision; used personality fallback strategy=%s",
                 plan.strategy,
@@ -1397,6 +1494,9 @@ class AIAutonomousOrchestrator:
             turn_seq=turn_seq,
         )
         if not text:
+            lifecycle_for(host).transition(
+                "DEGRADED", turn_id=startup_turn_id, reason="empty_public_commit"
+            )
             return False
         spoken_at = time.time()
         host.last_autonomous_spoken_at = spoken_at
@@ -1489,6 +1589,16 @@ class AIAutonomousOrchestrator:
                 channel="force_speak",
             )
 
+        from runtime.public_lifecycle import lifecycle_for
+        force_turn_id = str(plan.plan_id or f"force_speak:{turn_seq}")
+        host._active_public_lifecycle_turn_id = force_turn_id
+        lifecycle_for(host).begin(
+            turn_id=force_turn_id,
+            channel="force_speak",
+            reason="force_speak_composing",
+            received=False,
+        )
+
         payload = host.ai_model_router.generate_autonomous_reply(
             plan=plan,
             personality_context=state.personality_prompt_context(),
@@ -1507,17 +1617,26 @@ class AIAutonomousOrchestrator:
             )[-1800:] or str(getattr(host, "last_text", "") or ""),
             allow_fallback=not no_fallback_mode_enabled(),
             language_hint=_runtime_language(),
+            speech_language_hint=_runtime_speech_language(),
         )
         if not payload:
+            lifecycle_for(host).transition(
+                "DEGRADED", turn_id=force_turn_id, reason="semantic_deadline"
+            )
             host.logger.warning("[architecture C force_speak] generation failed")
             return
         raw = json.dumps(_serializable_public_payload(payload), ensure_ascii=False)
         host._log_raw_llm_output("force_speak_ai", raw)
         decision = host.parser.parse(raw)
+        if not str(getattr(decision, "utterance_turn_id", "") or "").strip():
+            decision.utterance_turn_id = str(plan.plan_id or f"force_speak:{turn_seq}")
         host.ai_stage_planner.apply(decision, plan.performance_hint, state=state, channel="force_speak")
         decision = host._execute_system_action(decision, snapshot=snapshot, frame=None)
         text = str(getattr(decision, "text", "") or "").strip()
         if not text:
+            lifecycle_for(host).transition(
+                "DEGRADED", turn_id=force_turn_id, reason="empty_public_commit"
+            )
             return
         turn_id = f"force_speak:{turn_seq}"
         text, assistant_meta = self._commit_public(

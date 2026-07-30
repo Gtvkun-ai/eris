@@ -375,7 +375,7 @@ def test_wording_retry_reuses_locked_semantic_frame() -> None:
 
     schema = captured["response_format"]["json_schema"]["schema"]
     assert "semantic_frame" not in schema["properties"]
-    assert captured["max_tokens"] == 360
+    assert captured["max_tokens"] == 520
     assert payload["semantic_frame"] == locked
     assert payload["text"] == "Câu đã viết lại."
 

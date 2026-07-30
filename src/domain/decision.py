@@ -35,6 +35,15 @@ class Decision:
     # Preset duy nhất main model cần chọn trong architecture C. Runtime map preset
     # này sang các field sân khấu ở trên.
     performance_hint: str = ""
+    # Canonical utterance surfaces committed by the semantic authority.  Stage
+    # renderers read these fields directly; no runtime translation/model pass.
+    display_language: str = "vi"
+    speech_text: str = ""
+    speech_language: str = ""
+    performance_intensity: float = 0.5
+    delivery_priority: str = "normal"
+    interruptible: bool = True
+    utterance_turn_id: str = ""
     # Metadata audio preset. Các field này do runtime gắn, không yêu cầu LLM sinh.
     speech_act: str = ""
     preset_id: str = ""
@@ -130,6 +139,13 @@ class Decision:
             "nonverbal_cue": self.nonverbal_cue,
             "stage_motion": self.stage_motion,
             "performance_hint": self.performance_hint,
+            "display_language": self.display_language,
+            "speech_text": self.speech_text,
+            "speech_language": self.speech_language,
+            "performance_intensity": self.performance_intensity,
+            "delivery_priority": self.delivery_priority,
+            "interruptible": self.interruptible,
+            "utterance_turn_id": self.utterance_turn_id,
             "speech_act": self.speech_act,
             "preset_id": self.preset_id,
             "audio_asset": self.audio_asset,

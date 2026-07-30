@@ -18,6 +18,11 @@ class ChatCycleMixin:
 
     def _enter_chat_cycle(self) -> None:
         self._chat_last_activity_at = time.time()
+        try:
+            from runtime.public_lifecycle import lifecycle_for
+            lifecycle_for(self).interrupt(reason="new_user_input")
+        except Exception as exc:
+            self.logger.debug("Public lifecycle interrupt failed: %s", exc)
         supersede_tts = getattr(self, "_supersede_tts_for_new_user_turn", None)
         if callable(supersede_tts):
             try:
@@ -83,6 +88,18 @@ class ChatCycleMixin:
             return
 
         self._chat_processing = True
+        lifecycle_turn_id = f"chat:{int(cycle_start * 1000)}"
+        self._active_public_lifecycle_turn_id = lifecycle_turn_id
+        try:
+            from runtime.public_lifecycle import lifecycle_for
+            lifecycle_for(self).begin(
+                turn_id=lifecycle_turn_id,
+                channel="chat",
+                reason="chat_composing",
+                received=True,
+            )
+        except Exception as exc:
+            self.logger.debug("Public lifecycle begin failed: %s", exc)
         clock = getattr(self, "interaction_clock", None)
         if clock is not None:
             clock.mark_user_turn(cycle_start)
@@ -154,6 +171,14 @@ class ChatCycleMixin:
                     max(0.0, (time.time() - cycle_start) * 1000.0),
                     tags={"channel": "chat", "turn_category": category},
                 )
+            except Exception:
+                pass
+            try:
+                from runtime.public_lifecycle import lifecycle_for
+                lifecycle = lifecycle_for(self)
+                state = lifecycle.snapshot()
+                if state.turn_id == lifecycle_turn_id and state.state == "COMPOSING":
+                    lifecycle.transition("DEGRADED", turn_id=lifecycle_turn_id, reason="no_public_commit")
             except Exception:
                 pass
             self._temporal_last_user_turn_at = cycle_start

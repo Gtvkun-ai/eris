@@ -175,27 +175,36 @@ class PublicOutputRuntimeMixin:
             segment_id=0,
         )
 
-        # DeepSeek STYLE chỉ tinh chỉnh độ ấm/cách đọc sau khi transcript đã
-        # clean/localize. Nó không sửa text, không chia câu và không có quyền
-        # bật/tắt voice; should_speak vẫn thuộc authority public hiện có.
+        from runtime.public_lifecycle import lifecycle_for
+        public_lifecycle = lifecycle_for(self)
+        lifecycle_snapshot = public_lifecycle.snapshot()
+        if lifecycle_snapshot.turn_id != stage_frame.turn_id:
+            public_lifecycle.begin(
+                turn_id=stage_frame.turn_id,
+                channel=channel_name or str(channel or "unknown"),
+                reason="public_surface_composing",
+                received=False,
+            )
+        public_lifecycle.transition(
+            "CONTENT_COMMITTED",
+            turn_id=stage_frame.turn_id,
+            reason="utterance_committed",
+        )
+
+        # Performance đã được semantic authority chốt trong UtteranceSpec.
+        # Stage chỉ compile preset thành metadata ElevenLabs/Live2D, hoàn toàn local,
+        # không gọi một model thứ hai để diễn giải lại cùng một câu.
         if str(stage_frame.tts_text or "").strip():
             try:
-                from runtime.voice_director import DeepSeekVoiceDirector
+                from runtime.voice_profile_compiler import compile_voice_plan_from_payload
 
-                voice_director = getattr(self, "voice_director", None)
-                if voice_director is None or getattr(voice_director, "llm_service", None) is not getattr(self, "llm_service", None):
-                    voice_director = DeepSeekVoiceDirector(getattr(self, "llm_service", None))
-                    self.voice_director = voice_director
-                voice_plan = voice_director.plan(
-                    stage_frame,
-                    payload=payload,
-                    channel=str(channel or ""),
-                    user_text=str(payload.get("user_text", "") or ""),
+                voice_plan = compile_voice_plan_from_payload(
+                    payload,
+                    fallback_style=stage_frame.prosody_style,
                 )
-                if voice_plan:
-                    stage_frame = replace(stage_frame, voice_plan=dict(voice_plan))
-            except Exception as voice_director_exc:
-                self.logger.debug("[voice-director] fallback to deterministic prosody: %s", voice_director_exc)
+                stage_frame = replace(stage_frame, voice_plan=dict(voice_plan))
+            except Exception as voice_compile_exc:
+                self.logger.debug("[voice-profile] deterministic compile skipped: %s", voice_compile_exc)
 
         # Từ đây trở đi payload public dùng bề mặt đã qua stage transformer:
         # UI thấy text sạch, TTS đọc text sạch, memory/chat history lưu memory_text.
@@ -273,7 +282,7 @@ class PublicOutputRuntimeMixin:
                 except Exception as exc:
                     self.logger.debug("[stage-protocol] stage_segment emit failed: %s", exc)
 
-        def send_text_payload():
+        def send_text_payload(release_reason: str = "immediate"):
             nonlocal text_payload_sent, text_release_timer
             with text_payload_lock:
                 if text_payload_sent:
@@ -283,6 +292,18 @@ class PublicOutputRuntimeMixin:
                 text_release_timer = None
             if timer is not None:
                 timer.cancel()
+            if release_reason == "audio_start":
+                public_lifecycle.transition(
+                    "SPEAKING",
+                    turn_id=stage_frame.turn_id,
+                    reason="audio_playback_started",
+                )
+            elif release_reason in {"audio_failed", "no_tts", "sync_timeout"}:
+                public_lifecycle.transition(
+                    "DEGRADED",
+                    turn_id=stage_frame.turn_id,
+                    reason=release_reason,
+                )
             send_stage_protocol_segments()
             try:
                 # Godot chỉ cần text/action/stage. Parser trace là metadata nội
@@ -312,7 +333,7 @@ class PublicOutputRuntimeMixin:
             with text_payload_lock:
                 if text_payload_sent or text_release_timer is not None:
                     return
-                timer = threading.Timer(text_sync_timeout, send_text_payload)
+                timer = threading.Timer(text_sync_timeout, lambda: send_text_payload("sync_timeout"))
                 timer.daemon = True
                 text_release_timer = timer
             timer.start()
@@ -368,10 +389,37 @@ class PublicOutputRuntimeMixin:
                 self.logger.warning("Failed to send panel state payload: %s", panel_exc)
 
         def handle_tts_event(event, event_stage_frame):
-            # Task manager có thể fail trong lúc synth trước khi on_first_start
-            # được gọi. Khi đó vẫn phải trả text ra UI thay vì để bubble mất luôn.
-            if sync_text and tts_event_releases_deferred_text(getattr(event, "type", "")):
-                send_text_payload()
+            event_type = str(getattr(event, "type", "") or "").strip().lower()
+            if event_type in {"audio_prepare", "audio_queued", "audio_buffer_ready"}:
+                public_lifecycle.transition(
+                    "AUDIO_BUFFERING",
+                    turn_id=stage_frame.turn_id,
+                    reason=event_type,
+                )
+            elif event_type == "audio_start":
+                if sync_text:
+                    send_text_payload("audio_start")
+                else:
+                    public_lifecycle.transition(
+                        "SPEAKING",
+                        turn_id=stage_frame.turn_id,
+                        reason=event_type,
+                    )
+            elif event_type == "audio_done":
+                public_lifecycle.transition(
+                    "DONE",
+                    turn_id=stage_frame.turn_id,
+                    reason=event_type,
+                )
+            elif event_type == "audio_cancelled":
+                public_lifecycle.transition(
+                    "INTERRUPTED",
+                    turn_id=stage_frame.turn_id,
+                    reason=event_type,
+                )
+            # Task manager có thể fail trong lúc synth trước khi on_first_start.
+            if sync_text and tts_event_releases_deferred_text(event_type):
+                send_text_payload("audio_failed")
             self._handle_tts_playback_event(event, stage_frame=event_stage_frame)
 
         # TTS: đọc to câu vừa nói với emotion context (valence/arousal/stance).
@@ -384,57 +432,43 @@ class PublicOutputRuntimeMixin:
         send_panel_payload()
         if not sync_text:
             # Chế độ legacy: text hiện ngay, audio tới sau.
-            send_text_payload()
-        if _tts is not None and getattr(_tts, "_ok", False) and bool(payload.get("should_speak")):
-            if stage_frames and sync_text:
-                try:
-                    # Lấy emotion data từ payload emotion_debug hoặc appraisal frame
-                    _ed = payload.get("emotion_debug") or {}
-                    _mood = _ed.get("summary") if isinstance(_ed, dict) else {}
-                    _valence = float((_mood or {}).get("valence", 0.0)) if isinstance(_mood, dict) else 0.0
-                    _arousal = float((_mood or {}).get("arousal", 0.3)) if isinstance(_mood, dict) else 0.3
-                    _stance = str((_mood or {}).get("stance", "") or "") if isinstance(_mood, dict) else ""
-                    dispatcher = getattr(self, "stage_dispatcher", None)
-                    if dispatcher is None:
-                        dispatcher = StageDispatcher()
-                        self.stage_dispatcher = dispatcher
-                    has_scheduled_tts = dispatcher.dispatch_tts(
-                        stage_frames,
-                        tts_engine=_tts,
-                        valence=_valence,
-                        arousal=_arousal,
-                        stance=_stance,
-                        on_first_start=send_text_payload if sync_text else None,
-                        on_event=handle_tts_event,
-                    )
-                except Exception as _tts_exc:
-                    self.logger.debug("[TTS] speak error: %s", _tts_exc)
-                    has_scheduled_tts = False
+            send_text_payload("immediate")
+        if (
+            _tts is not None
+            and getattr(_tts, "_ok", False)
+            and bool(payload.get("should_speak"))
+            and stage_frames
+        ):
+            try:
+                _ed = payload.get("emotion_debug") or {}
+                _mood = _ed.get("summary") if isinstance(_ed, dict) else {}
+                _valence = float((_mood or {}).get("valence", 0.0)) if isinstance(_mood, dict) else 0.0
+                _arousal = float((_mood or {}).get("arousal", 0.3)) if isinstance(_mood, dict) else 0.3
+                _stance = str((_mood or {}).get("stance", "") or "") if isinstance(_mood, dict) else ""
+                dispatcher = getattr(self, "stage_dispatcher", None)
+                if dispatcher is None:
+                    dispatcher = StageDispatcher()
+                    self.stage_dispatcher = dispatcher
+                public_lifecycle.transition(
+                    "AUDIO_BUFFERING",
+                    turn_id=stage_frame.turn_id,
+                    reason="tts_dispatch",
+                )
+                has_scheduled_tts = bool(dispatcher.dispatch_tts(
+                    stage_frames,
+                    tts_engine=_tts,
+                    valence=_valence,
+                    arousal=_arousal,
+                    stance=_stance,
+                    on_first_start=(lambda: send_text_payload("audio_start")) if sync_text else None,
+                    on_event=handle_tts_event,
+                ))
+            except Exception as _tts_exc:
+                self.logger.debug("[TTS] speak error: %s", _tts_exc)
+                has_scheduled_tts = False
 
         if not has_scheduled_tts:
-            if _tts is not None and getattr(_tts, "_ok", False) and bool(payload.get("should_speak")):
-                if stage_frames:
-                    try:
-                        _ed = payload.get("emotion_debug") or {}
-                        _mood = _ed.get("summary") if isinstance(_ed, dict) else {}
-                        _valence = float((_mood or {}).get("valence", 0.0)) if isinstance(_mood, dict) else 0.0
-                        _arousal = float((_mood or {}).get("arousal", 0.3)) if isinstance(_mood, dict) else 0.3
-                        _stance = str((_mood or {}).get("stance", "") or "") if isinstance(_mood, dict) else ""
-                        dispatcher = getattr(self, "stage_dispatcher", None)
-                        if dispatcher is None:
-                            dispatcher = StageDispatcher()
-                            self.stage_dispatcher = dispatcher
-                        dispatcher.dispatch_tts(
-                            stage_frames,
-                            tts_engine=_tts,
-                            valence=_valence,
-                            arousal=_arousal,
-                            stance=_stance,
-                            on_event=handle_tts_event,
-                        )
-                    except Exception as _tts_exc:
-                        self.logger.debug("[TTS] speak error: %s", _tts_exc)
-            send_text_payload()
+            send_text_payload("no_tts" if sync_text else "immediate")
         # Mọi lời ERIS thốt ra (autonomous, force_speak, session_ritual...) đều
         # ghi vào bộ đệm hội thoại hợp nhất để lượt chat/autonomous sau nối mạch.
         # Chat public được Architecture C ghi ở đúng commit point; không append trùng.

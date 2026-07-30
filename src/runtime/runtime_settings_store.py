@@ -59,9 +59,9 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "director_candidate_mode": "off",
         "director_second_pass": "off",
         "low_quality_fail_open": True,
-        "auto_fallback": True,
+        "auto_fallback": False,
         "completion_chat_tokens": 1280,
-        "chat_timeout_seconds": 30,
+        "chat_timeout_seconds": 12,
         "max_concurrency": 4,
     },
     "personality": {
@@ -149,14 +149,14 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "provider": "elevenlabs",
         "elevenlabs_voice_id": "",
         "elevenlabs_model": "eleven_v3",
-        "voice_director_enabled": True,
+        "voice_director_enabled": False,
         # Project Eris dùng bubble Việt + voice Nhật theo mặc định.
         "language": "ja",
         "voice": "Aoede",
         "quality": "balanced",
         "volume": 1.0,
         "speed": 1.04,
-        "stage_localize": True,
+        "stage_localize": False,
         # Làm mềm riêng transcript TTS, không sửa bubble/public meaning.
         "speech_persona_polish": True,
         "speech_persona_profile": "infj_5w4_subtle",

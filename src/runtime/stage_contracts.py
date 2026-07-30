@@ -22,9 +22,10 @@ from runtime.intention_authority import IntentionObserver
 from runtime.prosody_director import ProsodyDirector
 from runtime.speech_delivery_planner import SpeechDeliveryPlanner, affect_signals_from
 from runtime.speech_contract import SpeechContractResolver
-from runtime.stage_performance_planner import PerformanceRequestPlanner
+from runtime.stage_performance_planner import PerformanceRequestPlanner, PerformanceSurfaces
 from runtime.stage_transformers import StageTransformerChain
 from runtime.stage_show_runtime import StageShowRuntime
+from runtime.utterance_spec import UtteranceSpec
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,6 +199,20 @@ class StageFrameBuilder:
         segment_id: int = 0,
     ) -> StageFrame:
         raw_text = str(payload.get("text", getattr(decision, "text", "")) or "")
+        has_utterance_commit = bool(
+            isinstance(payload.get("utterance"), dict)
+            or str(payload.get("speech_text", getattr(decision, "speech_text", "")) or "").strip()
+        )
+        utterance = UtteranceSpec.from_mapping(
+            payload,
+            fallback_text=raw_text,
+            default_display_language=str(payload.get("display_language", getattr(decision, "display_language", "vi")) or "vi"),
+            default_speech_language=str(payload.get("speech_language", getattr(decision, "speech_language", self.language_hint)) or self.language_hint),
+            fallback_preset=str(payload.get("performance_hint", getattr(decision, "performance_hint", "neutral")) or "neutral"),
+            turn_id=str(payload.get("utterance_turn_id", getattr(decision, "utterance_turn_id", "")) or ""),
+        )
+        display_raw = utterance.display.text if has_utterance_commit else raw_text
+        speech_raw = utterance.speech.text if has_utterance_commit else ""
         if str(channel or "").strip().lower() == "autonomous":
             plan_payload = payload.get("autonomous_plan") if isinstance(payload.get("autonomous_plan"), dict) else {}
             semantics = plan_payload.get("semantics") if isinstance(plan_payload.get("semantics"), dict) else {}
@@ -216,55 +231,98 @@ class StageFrameBuilder:
                 "observable_result": payload.get("observable_result", ""),
                 "target_ref": payload.get("intent_target", ""),
             }
-            intention_observation = self.intention_observer.validate(raw_text, intention_context)
+            intention_observation = self.intention_observer.validate(display_raw, intention_context)
             observation_payload = intention_observation.to_payload()
             payload["intention_observation"] = observation_payload
             payload["intention_authority"] = observation_payload
-            raw_text = intention_observation.text
-        surfaces = self.transformers.transform(raw_text)
+            if intention_observation.text != display_raw:
+                # Safety observer changed the committed claim. Do not let an old
+                # translated speech surface contradict the corrected public text.
+                display_raw = intention_observation.text
+                speech_raw = display_raw
+                has_utterance_commit = False
+
+        display_surfaces = self.transformers.transform(display_raw)
         user_text = str(payload.get("user_text", "") or "")
         delivery_hint = str(payload.get("delivery_hint", getattr(decision, "delivery_hint", "")) or "").strip()
-        nonverbal_cue = str(payload.get("nonverbal_cue", getattr(decision, "nonverbal_cue", "")) or "").strip()
+        nonverbal_cue = str(
+            payload.get("nonverbal_cue", getattr(decision, "nonverbal_cue", ""))
+            or utterance.performance.nonverbal
+            or ""
+        ).strip()
         stage_motion = str(payload.get("stage_motion", getattr(decision, "stage_motion", "")) or "").strip()
-        performance = self.performance_planner.apply(
-            surfaces,
-            user_text=user_text,
-            intent=str(getattr(decision, "intent", "") or ""),
-            delivery_hint=delivery_hint,
-            nonverbal_cue=nonverbal_cue,
-            stage_motion=stage_motion,
-            extracted_actions=surfaces.marks.actions,
-        )
 
-        tts_source = performance.tts_text
-        speech_contract = self.speech_contract_resolver.resolve(payload, text=tts_source)
-        prelocalized = False
-        if self.localizer is not None and tts_source and speech_contract.can_translate:
-            try:
-                tts_text = str(
-                    self.localizer.localize(
-                        tts_source,
-                        language_hint=speech_contract.language,
-                        prosody_style=performance.delivery_hint,
-                    ) or ""
-                ).strip()
-                prelocalized = bool(tts_text and tts_text != tts_source)
-            except Exception:
-                tts_text = tts_source
+        if has_utterance_commit:
+            # Canonical commit: sanitize each renderer surface independently.
+            # Stage may remove markup/tags, but it may not translate or rewrite.
+            speech_surfaces = self.transformers.transform(speech_raw or display_raw)
+            merged_actions = tuple(dict.fromkeys(
+                tuple(display_surfaces.marks.actions)
+                + tuple(speech_surfaces.marks.actions)
+                + ((nonverbal_cue,) if nonverbal_cue and nonverbal_cue != "none" else ())
+            ))
+            performance = PerformanceSurfaces(
+                display_text=display_surfaces.display_text,
+                tts_text=speech_surfaces.tts_text,
+                memory_text=display_surfaces.memory_text,
+                delivery_hint=delivery_hint or utterance.performance.preset,
+                nonverbal_cue="" if nonverbal_cue == "none" else nonverbal_cue,
+                stage_motion=stage_motion,
+                actions=merged_actions,
+                performance_act=None,
+            )
+            tts_text = performance.tts_text
+            contract_payload = dict(payload)
+            supplied_contract = dict(contract_payload.get("speech_contract") or {}) if isinstance(contract_payload.get("speech_contract"), dict) else {}
+            supplied_contract.update({
+                "language": utterance.speech.language,
+                "can_translate": False,
+            })
+            contract_payload["speech_contract"] = supplied_contract
+            contract_payload["tts_language"] = utterance.speech.language
+            speech_contract = self.speech_contract_resolver.resolve(contract_payload, text=tts_text)
+            prelocalized = True
         else:
-            tts_text = tts_source
+            performance = self.performance_planner.apply(
+                display_surfaces,
+                user_text=user_text,
+                intent=str(getattr(decision, "intent", "") or ""),
+                delivery_hint=delivery_hint,
+                nonverbal_cue=nonverbal_cue,
+                stage_motion=stage_motion,
+                extracted_actions=display_surfaces.marks.actions,
+            )
+            tts_source = performance.tts_text
+            speech_contract = self.speech_contract_resolver.resolve(payload, text=tts_source)
+            prelocalized = False
+            # Legacy localizer is migration-only. New UtteranceSpec turns never
+            # enter this branch and therefore never add a second model call.
+            if self.localizer is not None and tts_source and speech_contract.can_translate:
+                try:
+                    tts_text = str(
+                        self.localizer.localize(
+                            tts_source,
+                            language_hint=speech_contract.language,
+                            prosody_style=performance.delivery_hint,
+                        ) or ""
+                    ).strip()
+                    prelocalized = bool(tts_text and tts_text != tts_source)
+                except Exception:
+                    tts_text = tts_source
+            else:
+                tts_text = tts_source
 
         should_speak = bool(payload.get("should_speak", getattr(decision, "should_speak", True)))
         affect = affect_signals_from(payload, frame=frame)
         preset_emotion = str(payload.get("preset_emotion", getattr(decision, "preset_emotion", "")) or "").strip()
-        base_emotion = preset_emotion or surfaces.marks.emotion_hint or _emotion_from_payload(payload, frame=frame)
+        base_emotion = preset_emotion or display_surfaces.marks.emotion_hint or _emotion_from_payload(payload, frame=frame)
         explicit_motion = _motion_from_decision(decision)
         delivery = self.delivery_planner.plan(
             performance.display_text or performance.tts_text,
             intent=str(getattr(decision, "intent", "") or ""),
             delivery_hint=performance.delivery_hint,
             explicit_emotion=base_emotion,
-            explicit_motion=performance.stage_motion or surfaces.marks.motion_hint,
+            explicit_motion=performance.stage_motion or display_surfaces.marks.motion_hint,
             extracted_actions=performance.actions,
             affect=affect,
         )
@@ -274,6 +332,12 @@ class StageFrameBuilder:
         valence, arousal, stance = _prosody_numbers(payload, frame=frame)
         prosody_notes = delivery.prosody_notes
         delivery_payload = delivery.to_payload()
+        delivery_payload.update({
+            "performance_preset": utterance.performance.preset,
+            "performance_intensity": utterance.performance.intensity,
+            "delivery_priority": utterance.delivery.priority,
+            "semantic_nonverbal": utterance.performance.nonverbal,
+        })
         if performance.performance_act is not None:
             act_payload = performance.performance_act.to_payload()
             delivery_payload["performance_act"] = act_payload
@@ -309,7 +373,7 @@ class StageFrameBuilder:
         speech_payload = speech_contract.to_payload()
         if prelocalized:
             speech_payload["prelocalized"] = True
-        resolved_turn_id = str(turn_id or uuid.uuid4().hex)
+        resolved_turn_id = str(turn_id or utterance.turn_id or getattr(decision, "utterance_turn_id", "") or uuid.uuid4().hex)
         timeline = self.body_choreography.plan(
             turn_id=resolved_turn_id,
             text=tts_text or performance.display_text,
@@ -332,7 +396,7 @@ class StageFrameBuilder:
             stage_act=autonomous_act.to_payload() if autonomous_act is not None else {},
             speech_contract=speech_payload,
             body_timeline=timeline.to_payload() if timeline is not None else {},
-            interruptible=bool(should_speak and str(channel or "").strip().lower() not in {"system_warning"}),
+            interruptible=bool(should_speak and utterance.delivery.interruptible and str(channel or "").strip().lower() not in {"system_warning"}),
             body_only=bool(not should_speak and (motion or performance.actions)),
             source=f"decision:{str(getattr(decision, 'intent', '') or channel or 'unknown')}",
             speech_act=str(payload.get("speech_act", getattr(decision, "speech_act", "")) or ""),

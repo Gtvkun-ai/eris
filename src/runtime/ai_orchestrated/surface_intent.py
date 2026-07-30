@@ -21,6 +21,7 @@ from .contracts import IntentionPlan, StateEvent
 from .cognitive_blackboard import TypedCognitiveBlackboard
 from .initiative import SpeechIntent
 from .semantic_contracts import compact, semantic_key
+from runtime.utterance_spec import UtteranceSpec
 
 
 SURFACE_MODES: tuple[str, ...] = (
@@ -57,6 +58,27 @@ def _clamp01(value: Any, default: float = 0.0) -> float:
     except (TypeError, ValueError):
         number = default
     return max(0.0, min(1.0, number))
+
+
+def _surface_languages() -> tuple[str, str]:
+    try:
+        from runtime.runtime_settings_store import runtime_text
+        display = str(runtime_text("chat", "language", default="vi") or "vi").strip().lower()
+        speech = str(runtime_text("tts", "language", default="ja") or "ja").strip().lower()
+    except Exception:
+        display, speech = "vi", "ja"
+    aliases = {
+        "": "vi", "auto": "vi", "vn": "vi", "vi-vn": "vi", "vietnamese": "vi",
+        "jp": "ja", "ja-jp": "ja", "japanese": "ja", "en-us": "en", "english": "en",
+    }
+    display = aliases.get(display, display)
+    speech_aliases = dict(aliases)
+    speech_aliases.update({"": "ja", "auto": "ja"})
+    speech = speech_aliases.get(speech, speech)
+    return (
+        display if display in {"vi", "ja", "en"} else "vi",
+        speech if speech in {"vi", "ja", "en"} else "ja",
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +123,7 @@ class SurfaceIntentEngine:
 
         if not self.enabled:
             return None
+        display_language, speech_language = _surface_languages()
         request = {
             "speech_intent": intent.to_dict(),
             "blackboard": blackboard.public_view(),
@@ -112,6 +135,8 @@ class SurfaceIntentEngine:
                 "fixed_anchor_id": intent.anchor_id,
                 "allowed_evidence_refs": list(intent.evidence_refs),
                 "max_sentences": intent.max_sentences,
+                "display_language": display_language,
+                "speech_language": speech_language,
                 "rule": (
                     "Write one concise public line. Do not decide speak/silence, change the topic owner, "
                     "invent evidence, or mention internal contracts."
@@ -124,9 +149,16 @@ class SurfaceIntentEngine:
         raw = writer(request)
         if not isinstance(raw, Mapping) or not raw:
             return None
-        text = compact(raw.get("text", ""), 520)
+        utterance = UtteranceSpec.from_mapping(
+            raw,
+            default_display_language=display_language,
+            default_speech_language=speech_language,
+            fallback_preset=intent.plan.performance_hint or "neutral",
+            turn_id=intent.plan.plan_id,
+        )
+        text = compact(utterance.display.text, 520)
         confidence = _clamp01(raw.get("confidence", 0.0))
-        if not text or confidence < 0.25:
+        if not text or not utterance.speech.text or confidence < 0.25:
             return None
         returned_refs = tuple(
             ref for ref in (compact(value, 120) for value in _sequence(raw.get("evidence_refs"))[:6]) if ref
@@ -135,12 +167,29 @@ class SurfaceIntentEngine:
             self._log("warning", "[surface worker] rejected unknown evidence refs mode=%s", intent.mode)
             return None
         performance_hint = compact(
-            raw.get("performance_hint", intent.plan.performance_hint or "neutral"), 60
+            utterance.performance.preset or intent.plan.performance_hint or "neutral", 60
         ).lower() or intent.plan.performance_hint or "neutral"
         plan_data = intent.plan.to_dict()
         plan_data["performance_hint"] = performance_hint
         plan = IntentionPlan.from_mapping(plan_data, channel="autonomous")
-        payload = self.router.build_surface_public_payload(text=text, plan=plan, mode=intent.mode)
+        try:
+            payload = self.router.build_surface_public_payload(
+                utterance=utterance.to_dict(),
+                plan=plan,
+                mode=intent.mode,
+                display_language=display_language,
+                speech_language=speech_language,
+            )
+        except TypeError as exc:
+            # External/test routers may still expose the previous wording-only
+            # signature. Production keeps the typed bilingual path above.
+            if "utterance" not in str(exc):
+                raise
+            payload = self.router.build_surface_public_payload(
+                text=text,
+                plan=plan,
+                mode=intent.mode,
+            )
         reason = compact(raw.get("reason", "surface_realized"), 180) or "surface_realized"
         self._log(
             "info",
@@ -213,7 +262,13 @@ class SurfaceIntentEngine:
             )
         avoid = str(avoid_text or "").strip().casefold()
         text = next((item for item in options if item.casefold() != avoid), options[0])
-        return self.router.build_surface_public_payload(text=text, plan=intent.plan, mode=mode)
+        return self.router.build_surface_public_payload(
+            text=text,
+            plan=intent.plan,
+            mode=mode,
+            display_language=language,
+            speech_language=language,
+        )
 
     def _log(self, level: str, message: str, *args: Any) -> None:
         if self.logger is None:
@@ -254,7 +309,14 @@ class SurfaceIntentEngine:
         if mode not in allowed_modes:
             return self._silence(turn_seq=turn_seq, reason=f"surface_mode_not_allowed:{mode}")
 
-        text = compact(raw.get("text", ""), 520)
+        display_language, speech_language = _surface_languages()
+        utterance = UtteranceSpec.from_mapping(
+            raw,
+            default_display_language=display_language,
+            default_speech_language=speech_language,
+            fallback_preset="neutral",
+        )
+        text = compact(utterance.display.text or raw.get("text", ""), 520)
         topic = compact(raw.get("topic", ""), 240)
         confidence = _clamp01(raw.get("confidence", 0.0))
         if not text or not topic or confidence < 0.35:
@@ -291,17 +353,32 @@ class SurfaceIntentEngine:
             mode=mode,
             topic=topic,
             confidence=confidence,
-            performance_hint=compact(raw.get("performance_hint", "neutral"), 60).lower() or "neutral",
+            performance_hint=compact(utterance.performance.preset or raw.get("performance_hint", "neutral"), 60).lower() or "neutral",
             evidence_refs=evidence_refs,
             snapshot=snapshot,
             reason=reason,
         )
         self._submit(plan, turn_seq=turn_seq)
-        payload = self.router.build_surface_public_payload(
-            text=text,
-            plan=plan,
-            mode=mode,
-        )
+        try:
+            payload = self.router.build_surface_public_payload(
+                utterance=utterance.to_dict() if utterance.display.text else None,
+                text=text,
+                plan=plan,
+                mode=mode,
+                display_language=display_language,
+                speech_language=speech_language,
+            )
+        except TypeError as exc:
+            # Compatibility for external/test routers that still implement the
+            # pre-UtteranceSpec method. Production router always takes the typed
+            # bilingual commit; this branch does not add another model call.
+            if "utterance" not in str(exc):
+                raise
+            payload = self.router.build_surface_public_payload(
+                text=text,
+                plan=plan,
+                mode=mode,
+            )
         if self.logger is not None:
             try:
                 self.logger.info(

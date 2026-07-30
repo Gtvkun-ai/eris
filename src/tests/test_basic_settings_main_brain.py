@@ -139,13 +139,13 @@ def test_tts_text_sync_timeout_defaults_to_audio_start_window(monkeypatch) -> No
     from runtime.tts_sync_policy import text_sync_timeout_seconds
 
     monkeypatch.delenv("ERIS_TTS_TEXT_SYNC_TIMEOUT", raising=False)
-    assert text_sync_timeout_seconds() == 8.0
-
-    monkeypatch.setenv("ERIS_TTS_TEXT_SYNC_TIMEOUT", "99")
     assert text_sync_timeout_seconds() == 30.0
 
+    monkeypatch.setenv("ERIS_TTS_TEXT_SYNC_TIMEOUT", "99")
+    assert text_sync_timeout_seconds() == 99.0
+
     monkeypatch.setenv("ERIS_TTS_TEXT_SYNC_TIMEOUT", "bad")
-    assert text_sync_timeout_seconds() == 8.0
+    assert text_sync_timeout_seconds() == 30.0
 
 
 def test_send_decision_to_body_releases_text_when_tts_never_starts(monkeypatch) -> None:

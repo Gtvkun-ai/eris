@@ -24,6 +24,22 @@ from .identity import CONFLICT_TEMPLATES, DEFAULT_DEFENSES, DEFAULT_EMERGENT_VAL
 from .personality import DEFAULT_CORE, DEFAULT_MOOD, DEFAULT_TEMPERAMENT
 
 
+def _deepseek_web_authority_mode() -> bool:
+    provider = str(os.getenv("ERIS_REMOTE_PROVIDER", "") or "").strip().lower().replace("-", "_")
+    return provider in {"deepseek_web", "ds2api", "whale2api", "whale"}
+
+
+def _semantic_deadline_seconds() -> float:
+    explicit = str(os.getenv("ERIS_MAIN_SEMANTIC_DEADLINE_SEC", "") or "").strip()
+    try:
+        if explicit:
+            raw = float(explicit)
+        else:
+            from runtime.runtime_settings_store import runtime_float
+            raw = runtime_float("chat", "chat_timeout_seconds", default=12.0)
+    except (TypeError, ValueError, ImportError):
+        raw = 12.0
+    return max(3.0, min(60.0, float(raw)))
 
 
 DISCOVERY_PLAN_SCHEMA: dict[str, Any] = {
@@ -121,18 +137,8 @@ SOCIAL_INITIATIVE_SCHEMA: dict[str, Any] = {
     },
 }
 
-SURFACE_REALIZATION_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["text", "confidence", "performance_hint", "evidence_refs", "reason"],
-    "properties": {
-        "text": {"type": "string"},
-        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-        "performance_hint": {"type": "string"},
-        "evidence_refs": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
-        "reason": {"type": "string"},
-    },
-}
+# Filled after UTTERANCE_SCHEMA is declared; kept here for module layout compatibility.
+SURFACE_REALIZATION_SCHEMA: dict[str, Any] = {}
 
 COGNITIVE_OBSERVATION_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -512,40 +518,99 @@ ASSISTANT_ACT_SCHEMA: dict[str, Any] = {
 }
 
 
-PUBLIC_REPLY_SCHEMA: dict[str, Any] = {
+PERFORMANCE_PRESET_SCHEMA: dict[str, Any] = {
+    "type": "string",
+    "enum": [
+        "neutral", "soft_warm", "warm_embarrassed", "dry_tease",
+        "playful", "curious", "focused", "cold_precision",
+        "annoyed_soft", "sad_distant", "repair", "surprised"
+    ],
+}
+
+UTTERANCE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    # PDF annotation, pages 12-13: meaning and wording are produced by one
-    # semantic authority in the same remote call.
-    "required": ["semantic_frame", "assistant_act", "text", "should_speak", "performance_hint"],
+    "required": ["display", "speech", "performance", "delivery"],
     "properties": {
-        "semantic_frame": SEMANTIC_FRAME_SCHEMA,
-        "assistant_act": ASSISTANT_ACT_SCHEMA,
-        "text": {"type": "string"},
-        "should_speak": {"type": "boolean"},
-        "performance_hint": {
-            "type": "string",
-            "enum": [
-                "neutral", "soft_warm", "warm_embarrassed", "dry_tease",
-                "playful", "curious", "focused", "cold_precision",
-                "annoyed_soft", "sad_distant", "repair", "surprised"
-            ],
+        "display": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["language", "text"],
+            "properties": {
+                "language": {"type": "string", "enum": ["vi", "ja", "en"]},
+                "text": {"type": "string"},
+            },
+        },
+        "speech": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["language", "text"],
+            "properties": {
+                "language": {"type": "string", "enum": ["vi", "ja", "en"]},
+                "text": {"type": "string"},
+            },
+        },
+        "performance": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["preset", "intensity", "nonverbal"],
+            "properties": {
+                "preset": PERFORMANCE_PRESET_SCHEMA,
+                "intensity": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "nonverbal": {"type": "string"},
+            },
+        },
+        "delivery": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["priority", "interruptible"],
+            "properties": {
+                "priority": {
+                    "type": "string",
+                    "enum": ["background", "low", "normal", "high", "urgent"],
+                },
+                "interruptible": {"type": "boolean"},
+            },
         },
     },
 }
 
+SURFACE_REALIZATION_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["utterance", "confidence", "evidence_refs", "reason"],
+    "properties": {
+        "utterance": UTTERANCE_SCHEMA,
+        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "evidence_refs": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
+        "reason": {"type": "string"},
+    },
+}
 
-# PDF annotation, page 13: a failed wording/grounding gate must not cause the
-# model to reinterpret the user turn.  Retry only the public wording while the
-# already validated semantic frame remains immutable in runtime.
+PUBLIC_REPLY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    # Meaning, both language surfaces and performance are committed by one
+    # semantic authority in the same DeepSeek Web turn.
+    "required": ["semantic_frame", "assistant_act", "should_speak", "utterance"],
+    "properties": {
+        "semantic_frame": SEMANTIC_FRAME_SCHEMA,
+        "assistant_act": ASSISTANT_ACT_SCHEMA,
+        "should_speak": {"type": "boolean"},
+        "utterance": UTTERANCE_SCHEMA,
+    },
+}
+
+
+# A grounding retry may rewrite both surfaces, but cannot reinterpret the
+# already validated semantic frame or assistant act.
 PUBLIC_WORDING_REWRITE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["text", "should_speak", "performance_hint"],
+    "required": ["should_speak", "utterance"],
     "properties": {
-        "text": {"type": "string"},
         "should_speak": {"type": "boolean"},
-        "performance_hint": PUBLIC_REPLY_SCHEMA["properties"]["performance_hint"],
+        "utterance": UTTERANCE_SCHEMA,
     },
 }
 
@@ -839,14 +904,19 @@ class AIRuntimeModelRouter:
             return {}
 
     @staticmethod
-    def _public_reply_prompt(language_hint: str = "vi") -> str:
-        language = {
-            "ja": "tiếng Nhật",
-            "en": "tiếng Anh",
-            "vi": "tiếng Việt",
-        }.get(str(language_hint or "vi").strip().lower(), "ngôn ngữ của người dùng")
+    def _public_reply_prompt(
+        display_language_hint: str = "vi",
+        speech_language_hint: str = "ja",
+    ) -> str:
+        language_names = {"ja": "tiếng Nhật", "en": "tiếng Anh", "vi": "tiếng Việt"}
+        display_code = str(display_language_hint or "vi").strip().lower()
+        speech_code = str(speech_language_hint or display_code).strip().lower()
+        display_language = language_names.get(display_code, "ngôn ngữ của người dùng")
+        speech_language = language_names.get(speech_code, display_language)
         return (
-            f"Bạn là ERIS. Hãy phản ứng từ bản thân hiện tại và viết nguyên câu public tự nhiên bằng {language}. "
+            f"Bạn là ERIS. Hãy phản ứng từ bản thân hiện tại. Trong một JSON duy nhất, render display.text tự nhiên bằng {display_language} "
+            f"và speech.text tự nhiên bằng {speech_language}. Hai bề mặt phải cùng semantic intent, cùng mức thân mật và cùng cá tính; "
+            "speech.text là lời ERIS thực sự sẽ đọc, không phải chú thích hay bản dịch máy móc. "
             "Không cố diễn một nhãn MBTI, Enneagram, tritype hay archetype. Mô tả personality được cung cấp là quán tính hiện tại, "
             "không phải danh sách động tác phải biểu diễn. Có thể dịu, sắc, hóm hỉnh, phòng thủ, chủ động hoặc mâu thuẫn theo đúng ngữ cảnh. "
             "Không phải support bot, không giả dễ thương, không biến mọi cảm xúc thành thơ. "
@@ -870,8 +940,8 @@ class AIRuntimeModelRouter:
             "'sai nhịp', 'lệch nhịp', 'tôi hiểu sai', 'tôi rút lại' trong bất đồng xã hội thông thường; thừa nhận khác biệt rồi giữ hoặc điều chỉnh lập trường tự nhiên. "
             "Memory chỉ là continuity, không chứng minh hiện tại. Grounding là nguồn thật cho màn hình/file/tool. "
             "Planner đã sở hữu tool intent; bạn không chọn, đổi hay claim tool đã thành công. "
-            "performance_hint chỉ là một preset sân khấu ngắn, không viết stage direction vào text. "
-            "Trong CÙNG JSON, sinh semantic_frame.v1, assistant_act rồi text. semantic_frame chỉ mô tả lượt USER hiện tại; "
+            "utterance.performance.preset chỉ là một preset sân khấu ngắn; intensity nằm trong 0..1 và nonverbal là cue ngắn, không viết stage direction vào text. "
+            "Trong CÙNG JSON, sinh semantic_frame.v1, assistant_act, should_speak và utterance. semantic_frame chỉ mô tả lượt USER hiện tại; "
             "assistant_act chỉ mô tả câu ERIS sắp nói, tuyệt đối không chép user_act sang assistant turn. Dùng toàn bộ chat history và "
             "Discourse state: history_turn_map ánh xạ message theo vị trí sang turn_index nhưng không lặp text. "
             "Reference là discriminated contract: recent_user_turn luôn speaker=user; recent_assistant_turn và assistant_proposition luôn speaker=assistant; "
@@ -903,6 +973,7 @@ class AIRuntimeModelRouter:
         thinking_mode: str | None = None,
         allow_fallback: bool = False,
         language_hint: str = "vi",
+        speech_language_hint: str = "ja",
         planned_intention: IntentionPlan | None = None,
         retry_instruction: str = "",
         locked_semantic_frame: Mapping[str, Any] | None = None,
@@ -959,12 +1030,12 @@ class AIRuntimeModelRouter:
                     ensure_ascii=False,
                 )
             )
-        system = self._public_reply_prompt(language_hint)
+        system = self._public_reply_prompt(language_hint, speech_language_hint)
         if locked_semantic_frame:
             system += (
-                "\n\nThis is a wording-only retry. Return only text, should_speak and "
-                "performance_hint. The semantic frame above is immutable and runtime will "
-                "reuse it verbatim. Do not classify the turn again."
+                "\n\nThis is a wording-only retry. Return only should_speak and a complete utterance. "
+                "The semantic frame and assistant act above are immutable and runtime will reuse them verbatim. "
+                "Rewrite display and speech together; do not classify the turn again."
             )
         if context_parts:
             system += "\n\n" + "\n".join(context_parts)
@@ -989,7 +1060,7 @@ class AIRuntimeModelRouter:
                         "temperature": 0.48,
                         "frequency_penalty": 0.0,
                         "presence_penalty": 0.0,
-                        "max_tokens": (360 if locked_semantic_frame else (900 if reasoning_effort else 620)),
+                        "max_tokens": (520 if locked_semantic_frame else (980 if reasoning_effort else 760)),
                         "response_format": {
                             "type": "json_schema",
                             "json_schema": {
@@ -999,6 +1070,7 @@ class AIRuntimeModelRouter:
                             },
                         },
                         "reasoning_effort": reasoning_effort,
+                        "timeout": _semantic_deadline_seconds(),
                     }
                     if is_deepseek(
                         getattr(target, "base_url", ""),
@@ -1023,8 +1095,8 @@ class AIRuntimeModelRouter:
                 return {}
 
         payload = call(client)
-        if not payload and allow_fallback:
-            fallback = getattr(self.llm_service, "fallback_client", None) or getattr(self.llm_service, "style_client", None)
+        if not payload and allow_fallback and not _deepseek_web_authority_mode():
+            fallback = getattr(self.llm_service, "fallback_client", None)
             if fallback is not client:
                 payload = call(fallback)
         if not payload:
@@ -1089,6 +1161,16 @@ class AIRuntimeModelRouter:
                 )
             except Exception as exc:
                 safe_log(self.logger, "debug", "Semantic validation metric failed: %s", exc)
+        from runtime.utterance_spec import UtteranceSpec
+
+        utterance = UtteranceSpec.from_mapping(
+            data,
+            fallback_text=str(data.get("text", "") or ""),
+            default_display_language="vi",
+            default_speech_language="ja",
+            fallback_preset=str(data.get("performance_hint", "neutral") or "neutral"),
+        )
+        flattened = utterance.to_flat_payload()
         return {
             "semantic_frame": validation.frame.to_dict(),
             "assistant_act": assistant_validation.act.to_dict(),
@@ -1096,18 +1178,16 @@ class AIRuntimeModelRouter:
             # dùng chúng để không parse lại cùng contract lần thứ hai.
             "_typed_semantic_frame": validation.frame,
             "_typed_assistant_act": assistant_validation.act,
-            "text": str(data.get("text", "") or ""),
+            **flattened,
             "should_speak": bool(data.get("should_speak", True)),
             "system_action": str(tool_intent or ""),
             "action_input": str(tool_input or ""),
-            "performance_hint": str(data.get("performance_hint", "neutral") or "neutral"),
             "animation": "stand",
             "next_animation": "",
             "direction": 0,
             "target_x": -1.0,
             "bounce_action": "",
             "delivery_hint": "",
-            "nonverbal_cue": "",
             "stage_motion": "",
         }
 
@@ -1123,14 +1203,21 @@ class AIRuntimeModelRouter:
         avoid_text: str = "",
         allow_fallback: bool = False,
         language_hint: str = "vi",
+        speech_language_hint: str = "ja",
     ) -> dict[str, Any]:
         client = getattr(self.llm_service, "client", None)
         language = {"ja": "tiếng Nhật", "en": "tiếng Anh", "vi": "tiếng Việt"}.get(
             str(language_hint or "vi").strip().lower(),
             "ngôn ngữ gần nhất của cuộc trò chuyện",
         )
+        speech_language = {"ja": "tiếng Nhật", "en": "tiếng Anh", "vi": "tiếng Việt"}.get(
+            str(speech_language_hint or "ja").strip().lower(),
+            "tiếng Nhật",
+        )
         system = (
-            f"Bạn là ERIS đang có một ý định chủ động đã được planner duyệt. Viết bằng {language}. "
+            f"Bạn là ERIS đang có một ý định chủ động đã được planner duyệt. "
+            f"Trong cùng một JSON, render display bằng {language} và speech bằng {speech_language}. "
+            "Hai bề mặt phải cùng nghĩa, cùng speech act và cùng thái độ; speech là bản nói tự nhiên, không phải dịch từng chữ. "
             "Hãy hành động từ personality hiện tại; không diễn nhãn MBTI/Enneagram/archetype. "
             "Viết đúng một micro-line public tự nhiên, ngắn, có lý do rõ; không nhắc planner, motive, score hay nội bộ. "
             "Nếu motive=startup_opening, đi theo strategy planner đã chọn. grounded_environment_opening dùng đúng một "
@@ -1166,7 +1253,10 @@ class AIRuntimeModelRouter:
             "App/window literal có thể làm neo cho một câu hỏi chung, nhưng không đủ để bịa mục tiêu, cảm xúc hay kết quả. "
             "Không nói chỉ vì im lặng hoặc buồn chán. Không bịa screen fact. "
             "Memory chỉ tạo continuity. Planner đã sở hữu tool intent; không chọn hoặc đổi tool. "
-            "performance_hint ưu tiên preset planner đã chọn. Return JSON only."
+            "semantic_frame và assistant_act phải mô tả đúng lượt public này. "
+            "utterance.performance.preset ưu tiên planned_performance_hint; intensity nằm trong [0,1], nonverbal ngắn hoặc 'none'. "
+            "utterance.delivery.interruptible thường là true; chỉ false khi một câu bắt buộc phải phát trọn vẹn. "
+            "Return JSON only theo schema; không thêm prose ngoài JSON."
         )
         context = {
             "current_personality": personality_context,
@@ -1200,7 +1290,8 @@ class AIRuntimeModelRouter:
                         temperature=0.52,
                         frequency_penalty=0.0,
                         presence_penalty=0.0,
-                        max_tokens=420,
+                        max_tokens=620,
+                        timeout=_semantic_deadline_seconds(),
                         response_format={
                             "type": "json_schema",
                             "json_schema": {
@@ -1224,14 +1315,12 @@ class AIRuntimeModelRouter:
                 return {}
 
         payload = call(client)
-        if not payload and allow_fallback:
-            fallback = getattr(self.llm_service, "fallback_client", None) or getattr(self.llm_service, "style_client", None)
+        if not payload and allow_fallback and not _deepseek_web_authority_mode():
+            fallback = getattr(self.llm_service, "fallback_client", None)
             if fallback is not client:
                 payload = call(fallback)
         if not payload:
             return {}
-        if not str(payload.get("performance_hint", "") or "").strip():
-            payload["performance_hint"] = plan.performance_hint or "neutral"
         return self._compat_public_envelope(
             payload,
             tool_intent=plan.tool_intent,
@@ -2003,13 +2092,15 @@ class AIRuntimeModelRouter:
     def _surface_realizer_prompt() -> str:
         return (
             "Bạn là SURFACE WORKER duy nhất của ERIS. InitiativeController đã quyết định SPEECH và đã khóa mode, "
-            "anchor, topic, evidence scope. Bạn CHỈ viết một micro-line public tự nhiên bằng ngôn ngữ gần nhất của hội thoại. "
+            "anchor, topic, evidence scope. Trong MỘT JSON, render cùng semantic intent thành utterance.display theo "
+            "surface_contract.display_language và utterance.speech theo surface_contract.speech_language. "
+            "Hai bề mặt phải cùng nghĩa, cùng mức thân mật và cùng cá tính; speech là lời thực sự đưa vào ElevenLabs. "
+            "Chọn performance preset/intensity/nonverbal ngay trong utterance; không viết stage direction vào text. "
             "Không được trả silence, đổi mode, đổi topic owner, tự thêm memory/screen fact, hay giải thích contract. "
             "speech_intent.plan.topic là mục tiêu giao tiếp, không phải câu cần chép. blackboard chỉ là public-safe context. "
-            "Nếu anchor là screen, chỉ dùng literal app/window/evidence được đưa; có thể hỏi chung nhưng không đoán user đang thắng, "
-            "thua, buồn, định làm gì hoặc nội dung không nhìn thấy. Nếu anchor là self, chỉ surface seed đã được duyệt, không lộ raw thought. "
-            "Giọng ERIS ấm kín, hơi khô, có cá tính; tránh câu support-bot như 'tôi ở đây' hoặc 'cần gì cứ nói'. "
-            "Tối đa số câu trong surface_contract.max_sentences. evidence_refs chỉ copy id trong allowed_evidence_refs. Return JSON only."
+            "Nếu anchor là screen, chỉ dùng literal app/window/evidence được đưa; không đoán user đang thắng, thua, buồn hay định làm gì. "
+            "Nếu anchor là self, chỉ surface seed đã được duyệt, không lộ raw thought. Giọng ERIS ấm kín, hơi khô, có cá tính; "
+            "tránh câu support-bot. Tối đa số câu trong surface_contract.max_sentences. evidence_refs chỉ copy id được phép. Return JSON only."
         )
 
     def realize_surface_speech(self, request: Mapping[str, Any]) -> dict[str, Any]:
@@ -2042,24 +2133,30 @@ class AIRuntimeModelRouter:
     def build_surface_public_payload(
         self,
         *,
-        text: str,
         plan: IntentionPlan,
         mode: str,
+        utterance: Mapping[str, Any] | None = None,
+        text: str = "",
+        display_language: str = "vi",
+        speech_language: str = "vi",
     ) -> dict[str, Any]:
-        """Bọc câu surface thành envelope public tương thích parser hiện tại.
-
-        Surface model đã viết câu, nên không gọi companion lần hai. Runtime vẫn
-        tạo semantic frame tối thiểu và assistant act typed để các gate/observer
-        phía sau không phải đoán lại từ dấu hỏi hay từ khóa.
-        """
+        """Wrap one autonomous UtteranceSpec without a second companion call."""
+        from runtime.utterance_spec import UtteranceSpec
 
         social_modes = {"small_talk", "dry_tease", "soft_tease", "random_chat"}
         assistant_kind = "social" if mode in social_modes else "opinion" if mode == "inner_thought" else "assertion"
         proposition_mode = "none" if assistant_kind == "social" else "continue" if mode in {"continuation", "memory_callback"} else "new"
+        spec = UtteranceSpec.from_mapping(
+            {"utterance": dict(utterance or {})} if utterance else {"text": text},
+            fallback_text=text,
+            default_display_language=display_language,
+            default_speech_language=speech_language,
+            fallback_preset=plan.performance_hint or "neutral",
+            turn_id=plan.plan_id,
+        )
         data = {
-            "text": str(text or "").strip(),
             "should_speak": True,
-            "performance_hint": plan.performance_hint or "neutral",
+            "utterance": spec.to_dict(),
             "semantic_frame": {
                 "turn_kind": plan.semantics.turn_kind,
                 "discourse_relation": "continuation_autonomous" if mode in {"continuation", "memory_callback"} else "autonomous_surface",
@@ -2093,6 +2190,7 @@ class AIRuntimeModelRouter:
             },
         }
         return self._compat_public_envelope(data)
+
 
 
 __all__ = [

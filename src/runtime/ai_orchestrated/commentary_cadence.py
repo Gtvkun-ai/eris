@@ -124,21 +124,16 @@ class CommentaryCadence:
         elif str(telemetry.get("active_window", "") or telemetry.get("window_title", "") or "").strip():
             anchor_kind = "active_window"
 
-        fast_engagement_event = bool(
-            engagement_kind == "chess"
-            and engagement_due
-            and engagement_reason.startswith("engagement_event:")
-        )
         if not enabled:
             return CommentaryExpectation(False, False, False, "commentary_disabled", desired, maximum,
                                          since_commentary, seconds_since_user, seconds_since_assistant, anchor_kind)
         if user_busy:
             return CommentaryExpectation(True, False, False, "user_busy", desired, maximum,
                                          since_commentary, seconds_since_user, seconds_since_assistant, anchor_kind)
-        if seconds_since_user < min_user_silence and not fast_engagement_event:
+        if seconds_since_user < min_user_silence:
             return CommentaryExpectation(True, False, False, "user_recently_active", desired, maximum,
                                          since_commentary, seconds_since_user, seconds_since_assistant, anchor_kind)
-        if since_commentary < startup_delay and not fast_engagement_event:
+        if since_commentary < startup_delay:
             return CommentaryExpectation(True, False, False, "startup_grace", desired, maximum,
                                          since_commentary, seconds_since_user, seconds_since_assistant, anchor_kind)
 

@@ -301,22 +301,32 @@ class Live2DStageState:
             self._motion = motion
             self._motion_at = now
 
-        if event_type == "audio_playback_started":
-            self._speaking = True
-        elif event_type in {
-            "audio_playback_done",
-            "stage_segment_cancelled",
-            "stage_segment_failed",
-            "continuation_cancelled",
-        }:
-            self._speaking = False
-        elif event_type == "thinking_started":
+        if event_type in {"received", "thinking_started", "content_committed", "audio_buffering"}:
+            # Content may already be committed while its bubble remains hidden
+            # waiting for ElevenLabs. The body keeps the same visible thinking
+            # state until playback truly starts.
             self._thinking = True
             self._motion = motion or "thinking_small"
             self._motion_at = now
             if not emotion:
                 self._emotion = "thinking"
                 self._emotion_at = now
+        elif event_type in {"speaking", "audio_playback_started"}:
+            self._thinking = False
+            self._speaking = True
+        elif event_type in {
+            "done",
+            "degraded",
+            "interrupted",
+            "audio_playback_done",
+            "stage_segment_cancelled",
+            "stage_segment_failed",
+            "continuation_cancelled",
+        }:
+            self._thinking = False
+            self._speaking = False
+            self._motion = motion or "stand"
+            self._motion_at = now
         elif event_type == "thinking_finished":
             self._thinking = False
             self._motion = motion or "stand"

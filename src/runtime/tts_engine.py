@@ -297,7 +297,7 @@ def _get_elevenlabs_token() -> tuple[str, str, int]:
     except Exception as exc:
         logger.debug("[TTS/ElevenLabsPool] Pool check error: %s", exc)
 
-    api_key = str(get_secret("ELEVENLABS_API_KEY", "ERIS_ELEVENLABS_API_KEY") or "").strip()
+    api_key = str(_elevenlabs_api_key() or "").strip()
     if api_key and not api_key.startswith("eyJ"):
         return "xi-api-key", api_key, 0
 

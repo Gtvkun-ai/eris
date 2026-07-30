@@ -13,6 +13,7 @@ from typing import Any, Mapping
 
 from runtime.degraded_chat_fastpath import build_degraded_reply
 from runtime.semantic_frame import SemanticFrame, validate_semantic_frame
+from runtime.utterance_spec import degrade_surface_payload
 
 
 class ReplyRequirement(str, Enum):
@@ -88,8 +89,13 @@ def enforce_reply_obligation(
     requirement = requirement_from_frame(typed, direct_user_turn=direct_user_turn)
 
     if requirement is ReplyRequirement.FORBIDDEN:
-        data["text"] = ""
-        data["should_speak"] = False
+        data = degrade_surface_payload(
+            data,
+            text="",
+            language=language_hint,
+            reason="reply_forbidden",
+            should_speak=False,
+        )
         return ReplyObligationResult(data, requirement, repaired=True, reason="reply_forbidden")
 
     text = str(data.get("text", "") or "").strip()
@@ -104,6 +110,14 @@ def enforce_reply_obligation(
         if typed is not None:
             local["semantic_frame"] = typed.to_dict()
             local["_typed_semantic_frame"] = typed
+        local = degrade_surface_payload(
+            local,
+            text=str(local.get("text", "") or ""),
+            language=language_hint,
+            reason="exact_local_required_reply",
+            performance_preset=str(local.get("performance_hint", "neutral") or "neutral"),
+            should_speak=True,
+        )
         return ReplyObligationResult(local, requirement, repaired=True, reason="exact_local_required_reply")
 
     text, act_kind = _minimal_text(typed, language_hint=language_hint)
@@ -111,9 +125,6 @@ def enforce_reply_obligation(
         data["semantic_frame"] = typed.to_dict()
         data["_typed_semantic_frame"] = typed
     data.update({
-        "text": text,
-        "should_speak": True,
-        "performance_hint": "repair" if act_kind == "repair" else "neutral",
         "assistant_act": {
             "kind": act_kind,
             "proposition_mode": "continue" if act_kind == "repair" else "none",
@@ -121,6 +132,14 @@ def enforce_reply_obligation(
         },
         "reply_obligation_repair": True,
     })
+    data = degrade_surface_payload(
+        data,
+        text=text,
+        language=language_hint,
+        reason="required_reply_repair",
+        performance_preset="repair" if act_kind == "repair" else "neutral",
+        should_speak=True,
+    )
     return ReplyObligationResult(data, requirement, repaired=True, reason="required_reply_repair")
 
 

@@ -153,10 +153,17 @@ def guard_subjective_stance_payload(payload: Mapping[str, Any] | None) -> dict[s
         return data
     if not needs_direct_stance_rewrite(data.get("text", "")):
         return data
-    data["text"] = build_direct_stance_text()
-    if str(data.get("performance_hint", "") or "").strip().lower() == "repair":
-        data["performance_hint"] = "soft_warm"
-    return data
+    from runtime.utterance_spec import degrade_surface_payload
+
+    preset = "soft_warm" if str(data.get("performance_hint", "") or "").strip().lower() == "repair" else None
+    return degrade_surface_payload(
+        data,
+        text=build_direct_stance_text(),
+        language=str(data.get("display_language", "vi") or "vi"),
+        reason="deterministic_stance_guard",
+        performance_preset=preset,
+        should_speak=True,
+    )
 
 
 __all__ = [

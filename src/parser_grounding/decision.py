@@ -353,6 +353,14 @@ class ParserGroundingMixin:
             "delivery_hint": "",
             "nonverbal_cue": "",
             "stage_motion": "",
+            "performance_hint": "",
+            "display_language": "vi",
+            "speech_text": "",
+            "speech_language": "",
+            "performance_intensity": 0.5,
+            "delivery_priority": "normal",
+            "interruptible": True,
+            "utterance_turn_id": "",
             "parse_mode": parse_mode,
         }
         structural_fields = {"should_speak", "animation"}
@@ -437,6 +445,13 @@ class ParserGroundingMixin:
             "nonverbal_cue": data.get("nonverbal_cue", ""),
             "stage_motion": data.get("stage_motion", ""),
             "performance_hint": data.get("performance_hint", ""),
+            "display_language": data.get("display_language", "vi"),
+            "speech_text": data.get("speech_text", ""),
+            "speech_language": data.get("speech_language", ""),
+            "performance_intensity": data.get("performance_intensity", 0.5),
+            "delivery_priority": data.get("delivery_priority", "normal"),
+            "interruptible": data.get("interruptible", True),
+            "utterance_turn_id": data.get("utterance_turn_id", ""),
             "failure_meta": data.get("failure_meta"),
         }, user_hint=user_hint)
 
@@ -1395,6 +1410,24 @@ class ParserGroundingMixin:
         nonverbal_cue = self._sanitize_nonverbal_cue(decision.get("nonverbal_cue", ""))
         stage_motion = self._sanitize_stage_motion(decision.get("stage_motion", ""))
         performance_hint = self._normalize_salvaged_text(str(decision.get("performance_hint", "") or "")).strip().lower()[:60]
+        display_language = str(decision.get("display_language", "vi") or "vi").strip().lower()
+        display_language = {"vn": "vi", "vi-vn": "vi", "jp": "ja", "ja-jp": "ja"}.get(display_language, display_language)
+        if display_language not in {"vi", "ja", "en"}:
+            display_language = "vi"
+        speech_text = str(decision.get("speech_text", "") or "").strip()[:8000]
+        speech_language = str(decision.get("speech_language", "") or "").strip().lower()
+        speech_language = {"vn": "vi", "vi-vn": "vi", "jp": "ja", "ja-jp": "ja"}.get(speech_language, speech_language)
+        if speech_language not in {"vi", "ja", "en"}:
+            speech_language = display_language
+        try:
+            performance_intensity = max(0.0, min(1.0, float(decision.get("performance_intensity", 0.5) or 0.5)))
+        except (TypeError, ValueError):
+            performance_intensity = 0.5
+        delivery_priority = str(decision.get("delivery_priority", "normal") or "normal").strip().lower()
+        if delivery_priority not in {"background", "low", "normal", "high", "urgent"}:
+            delivery_priority = "normal"
+        interruptible = self._coerce_bool(decision.get("interruptible", True), fallback=True)
+        utterance_turn_id = str(decision.get("utterance_turn_id", "") or "").strip()[:120]
         semantic_stage = _SEMANTIC_ANIMATION_STAGE_ALIASES.get(raw_animation_value, {})
         if semantic_stage:
             delivery_hint = delivery_hint or semantic_stage.get("delivery_hint", "")
@@ -1464,6 +1497,13 @@ class ParserGroundingMixin:
             "nonverbal_cue": nonverbal_cue,
             "stage_motion": stage_motion,
             "performance_hint": performance_hint,
+            "display_language": display_language,
+            "speech_text": speech_text,
+            "speech_language": speech_language,
+            "performance_intensity": performance_intensity,
+            "delivery_priority": delivery_priority,
+            "interruptible": interruptible,
+            "utterance_turn_id": utterance_turn_id,
             "failure_meta": failure_meta,
         }
 

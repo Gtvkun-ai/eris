@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 
 _TRUE = {"1", "true", "yes", "on"}
-_DEFAULT_TEXT_SYNC_TIMEOUT_SECONDS = 8.0
+_DEFAULT_TEXT_SYNC_TIMEOUT_SECONDS = 30.0
 
 
 def sync_text_with_tts_enabled() -> bool:
@@ -26,7 +26,7 @@ def text_sync_timeout_seconds() -> float:
     if not raw:
         return _DEFAULT_TEXT_SYNC_TIMEOUT_SECONDS
     try:
-        return max(0.15, min(30.0, float(raw)))
+        return max(0.15, min(120.0, float(raw)))
     except ValueError:
         return _DEFAULT_TEXT_SYNC_TIMEOUT_SECONDS
 

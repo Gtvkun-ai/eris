@@ -232,6 +232,17 @@ class SelfTurnPipeline:
                     body_motion=decision.body_motion,
                 )
 
+        from runtime.public_lifecycle import lifecycle_for
+        lifecycle_turn_id = str(plan.plan_id or f"autonomous:{context.turn_seq}")
+        host._active_public_lifecycle_turn_id = lifecycle_turn_id
+        public_lifecycle = lifecycle_for(host)
+        public_lifecycle.begin(
+            turn_id=lifecycle_turn_id,
+            channel="autonomous",
+            reason="autonomous_composing",
+            received=False,
+        )
+
         surface_payload = None
         surface_engine = getattr(host, "ai_surface_intent_engine", None)
         surface_turn = None
@@ -261,6 +272,11 @@ class SelfTurnPipeline:
                     speech_intent.mode,
                 )
         if not surface_payload:
+            public_lifecycle.transition(
+                "DEGRADED",
+                turn_id=lifecycle_turn_id,
+                reason="surface_unavailable",
+            )
             return self._finish_silence(
                 plan=plan, context=context, activity=activity, gate_reason="surface_unavailable",
                 force_body_only=True, body_motion=decision.body_motion,
@@ -764,6 +780,7 @@ class SelfTurnPipeline:
                 avoid_text=str(getattr(host, "last_text", "") or ""),
                 allow_fallback=not no_fallback_mode_enabled(),
                 language_hint=self._runtime_language(),
+                speech_language_hint=self._runtime_speech_language(),
             )
         if not payload:
             host.logger.warning(
@@ -777,6 +794,8 @@ class SelfTurnPipeline:
         raw = json.dumps(public_payload(payload), ensure_ascii=False)
         host._log_raw_llm_output("autonomous_ai", raw)
         decision = host.parser.parse(raw)
+        if not str(getattr(decision, "utterance_turn_id", "") or "").strip():
+            decision.utterance_turn_id = str(plan.plan_id or f"autonomous:{context.turn_seq}")
         grounding_report = self._autonomous_grounding_report(context, plan)
         validator = getattr(host, "ai_autonomous_grounding_validator", None)
         if validator is not None:
@@ -903,6 +922,22 @@ class SelfTurnPipeline:
                 self.host.logger.debug("[self turn observability] failed: %s", exc)
             except Exception:
                 pass
+
+    @staticmethod
+    def _runtime_speech_language() -> str:
+        try:
+            from runtime.runtime_settings_store import runtime_text
+            raw = str(runtime_text("tts", "language", default="ja") or "ja").strip().lower()
+        except Exception:
+            raw = "ja"
+        aliases = {
+            "": "ja", "auto": "ja", "jp": "ja", "ja-jp": "ja", "japanese": "ja",
+            "vn": "vi", "vi-vn": "vi", "vietnamese": "vi",
+            "en-us": "en", "english": "en",
+        }
+        language = aliases.get(raw, raw)
+        return language if language in {"vi", "ja", "en"} else "ja"
+
 
     @staticmethod
     def _runtime_language() -> str:

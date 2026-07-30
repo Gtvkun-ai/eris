@@ -11,6 +11,8 @@ def _normalize_remote_provider(provider: str) -> str:
     value = str(provider or "").strip().lower()
     if value in {"", "deepseek"}:
         return "deepseek"
+    if value in {"deepseek_web", "deepseek-web", "ds2api", "whale2api", "whale"}:
+        return "deepseek_web"
     if value in {"openai", "compatible"}:
         return "openai_compatible"
     return value
@@ -51,6 +53,20 @@ class RemoteModelProcessManager:
         # Não chính có pool riêng, không dùng chung key với Gemini/Groq phụ.
         main_pool = get_key_pool("remote_main")
         main_pool_key = _bootstrap_pool_key(main_pool)
+
+        if provider == "deepseek_web":
+            # Explicit provider means exactly one semantic authority: the
+            # companion worker behind Whale2API/DS2API. Never append an official
+            # DeepSeek/Gemini/Groq API fallback behind it, otherwise a late
+            # response can silently change model identity and contract behavior.
+            client = self.build_deepseek_worker_client("companion", required=True)
+            spec = load_worker_spec("companion")
+            self.logger.info(
+                "Dung DeepSeek Web lam semantic authority duy nhat: base=%s model=%s role=companion",
+                spec.base_url,
+                spec.model,
+            )
+            return client
 
         if provider == "gemini":
             base_url = (
@@ -413,6 +429,17 @@ class RemoteModelProcessManager:
         if critic_worker is not None:
             chain.append(critic_worker)
 
+        if _normalize_remote_provider(os.environ.get("ERIS_REMOTE_PROVIDER", "deepseek")) == "deepseek_web":
+            if critic_worker is None:
+                self.logger.info(
+                    "DeepSeek Web format fallback tat: khong co critic worker; khong tu chen provider API khac."
+                )
+                return None
+            self.logger.info(
+                "DeepSeek Web format fallback dung critic worker cung gateway; external API fallback bi khoa."
+            )
+            return critic_worker
+
         fallback_base = os.environ.get("ERIS_CHAT_FALLBACK_BASE_URL", "").strip()
         fallback_key = get_secret("ERIS_CHAT_FALLBACK_API_KEY")
         fallback_model = os.environ.get("ERIS_CHAT_FALLBACK_MODEL", "").strip()
@@ -448,10 +475,7 @@ class RemoteModelProcessManager:
         remote_provider = _normalize_remote_provider(os.environ.get("ERIS_REMOTE_PROVIDER", "deepseek"))
         remote_base_url = os.environ.get("ERIS_REMOTE_BASE_URL", "").strip().lower()
         remote_is_gemini = remote_provider == "gemini" or "generativelanguage.googleapis.com" in remote_base_url
-        # Chat fallback chỉ nhận credential Gemini rõ ràng. ERIS_SPEECH_API_KEY
-        # có thể thuộc provider speech khác; dùng nó ở đây tạo client Gemini giả,
-        # rồi circuit breaker nổ trong hot path dù startup báo không có Gemini key.
-        gemini_key = get_secret("GEMINI_API_KEY", "ERIS_GEMINI_API_KEY")
+        gemini_key = get_secret("GEMINI_API_KEY", "ERIS_SPEECH_API_KEY")
         if not gemini_key and remote_is_gemini:
             gemini_key = get_secret("ERIS_REMOTE_API_KEY")
         if gemini_key:
