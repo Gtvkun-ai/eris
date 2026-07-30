@@ -42,6 +42,7 @@ class ChessCompanionService:
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._lock = threading.RLock()
+        self._last_snapshot_summary: dict[str, Any] = {}
 
     @property
     def running(self) -> bool:
@@ -124,6 +125,11 @@ class ChessCompanionService:
             )
             self._thread.start()
             self._success({"host": self.host, "port": self.port})
+            if self.logger is not None:
+                try:
+                    self.logger.info("[chess-bridge] listening on http://%s:%s", self.host, self.port)
+                except (AttributeError, TypeError, ValueError, RuntimeError):
+                    pass
             return self
 
     def stop(self) -> None:
@@ -146,6 +152,35 @@ class ChessCompanionService:
         snapshot = BoardSnapshot.from_mapping(payload)
         observation = self.tracker.observe(snapshot)
         now = snapshot.captured_at or float(self.clock())
+        phase = getattr(getattr(observation, "phase", ""), "value", getattr(observation, "phase", ""))
+        phase = str(phase or "unknown")
+        self._last_snapshot_summary = {
+            "game_id": snapshot.game_id,
+            "mode": observation.mode.value,
+            "phase": phase,
+            "board_fen": snapshot.board_fen,
+            "side_to_move": observation.side_to_move,
+            "move_number": observation.move_number,
+            "last_move_uci": observation.last_move_uci,
+            "suggested_move_uci": (
+                observation.suggestion.uci if observation.suggestion is not None else ""
+            ),
+            "received_at": now,
+        }
+        if self.logger is not None:
+            try:
+                self.logger.info(
+                    "[chess-bridge] snapshot game=%s mode=%s phase=%s move=%s turn=%s last=%s suggestion=%s",
+                    snapshot.game_id,
+                    observation.mode.value,
+                    phase,
+                    observation.move_number,
+                    observation.side_to_move,
+                    observation.last_move_uci or "-",
+                    self._last_snapshot_summary["suggested_move_uci"] or "-",
+                )
+            except (AttributeError, TypeError, ValueError, RuntimeError):
+                pass
         binding = EvidenceBinding(
             app="chess.com",
             surface_key=f"chess.com:{snapshot.game_id}",
@@ -239,6 +274,7 @@ class ChessCompanionService:
             "host": self.host,
             "port": self.port,
             "token_required": bool(self.token),
+            "last_snapshot": dict(self._last_snapshot_summary),
         }
 
     def _success(self, details: Mapping[str, Any]) -> None:

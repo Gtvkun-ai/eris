@@ -1728,7 +1728,7 @@ def test_screen_router_uses_previous_public_turn_to_retrieve_ocr_media_text() ->
     assert route.evidence[0].block_id == "yt-title"
 
 
-def test_chat_screen_route_forces_ocr_refresh_before_vision() -> None:
+def test_chat_screen_route_forces_ocr_refresh_before_vision(monkeypatch) -> None:
     import time
     from types import SimpleNamespace
 
@@ -1737,6 +1737,7 @@ def test_chat_screen_route_forces_ocr_refresh_before_vision() -> None:
     from screen.screen_evidence_store import ScreenEvidenceStore
     from screen.screen_relevance_router import ScreenRelevanceRouter
 
+    monkeypatch.setenv("ERIS_CHAT_MAIN_VISION", "0")
     store = ScreenEvidenceStore()
 
     class _Worker:
@@ -1800,6 +1801,56 @@ def test_chat_screen_route_forces_ocr_refresh_before_vision() -> None:
     assert host.screen_text_worker.refreshed is True
     assert host._chat_screen_route_decision.mode in {"text_evidence", "text_evidence_soft"}
     assert host._chat_screen_text_evidence[0].block_id == "video-title"
+
+
+def test_chat_main_vision_captures_regular_turn(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from runtime.chat_cycle import ChatCycleMixin
+
+    monkeypatch.setenv("ERIS_CHAT_MAIN_VISION", "1")
+
+    class _Logger:
+        def info(self, *_args, **_kwargs) -> None:
+            return None
+        def warning(self, *_args, **_kwargs) -> None:
+            return None
+        def debug(self, *_args, **_kwargs) -> None:
+            return None
+
+    class _Host(ChatCycleMixin):
+        def __init__(self) -> None:
+            self.refresh_calls = []
+
+        def _refresh_screen_facts_from_data_uri(self, **kwargs):
+            self.refresh_calls.append(kwargs)
+            self.last_vision_grounding_report = SimpleNamespace(
+                grounded_claims=("visible editor window",),
+                recommendation="speak",
+                source="groq",
+            )
+            snapshot = kwargs.get("snapshot")
+            if snapshot is not None:
+                snapshot.vision_facts = ("visible editor window",)
+            return ("visible editor window",)
+
+    host = _Host()
+    host.screen_text_worker = None
+    host.screen_relevance_router = None
+    host.logger = _Logger()
+    host.telemetry_service = SimpleNamespace(
+        capture_screen_frame_data_uri=lambda: "data:image/png;base64,AAAA"
+    )
+    host.reply_context = SimpleNamespace(previous_public_turn=None)
+    host._chat_snapshot_for_vision = SimpleNamespace(vision_facts=())
+
+    result = host._capture_screen_frame_for_chat("ừ tiếp đi")
+
+    assert result == "data:image/png;base64,AAAA"
+    assert host._chat_screen_capture_present is True
+    assert host._chat_screen_capture_interpreted is True
+    assert host.refresh_calls[0]["channel"] == "chat"
+    assert host.refresh_calls[0]["force_refresh"] is True
 
 
 def test_tts_failure_reason_distinguishes_rate_limit_from_long_text() -> None:

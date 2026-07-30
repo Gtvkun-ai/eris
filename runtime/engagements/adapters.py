@@ -162,7 +162,7 @@ class GenericEngagementAdapter:
         for key in (
             "fen", "pgn", "move_number", "file", "test_status", "step", "progress",
             "result", "status", "state", "outcome", "error", "url", "artifact",
-            "mode", "full_assistance", "side_to_move", "last_move_uci",
+            "mode", "full_assistance", "board_fen", "side_to_move", "last_move_uci",
             "last_move_san", "evaluation_cp", "evaluation_label",
             "suggested_move_uci", "suggested_move_san", "confidence",
             "evaluation_swing_cp", "move_quality", "hint_focus",

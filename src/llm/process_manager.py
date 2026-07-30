@@ -616,19 +616,39 @@ class RemoteModelProcessManager:
 
         DeepSeek's current public Chat Completions API is text-only, so the main
         DeepSeek credential is never reused for image captioning. Configure a
-        separate multimodal endpoint with ERIS_VISION_API_* or keep local vision.
+        separate multimodal endpoint with ERIS_VISION_API_* or use the Groq
+        vision default when ERIS_GROQ_API_KEY is available.
         """
         apply_secrets_to_environ()
         raw_mode = os.environ.get("ERIS_VISION_API_ENABLED", "0").strip().lower()
         if raw_mode in {"", "0", "false", "no", "off", "auto"}:
             return None
 
-        api_key = get_secret("ERIS_VISION_API_KEY")
+        provider = os.environ.get("ERIS_VISION_API_PROVIDER", os.environ.get("ERIS_VISION_PROVIDER", "")).strip().lower()
         base_url = os.environ.get("ERIS_VISION_API_BASE_URL", "").strip()
         model_name = os.environ.get("ERIS_VISION_API_MODEL", "").strip()
+        groq_requested = (
+            provider == "groq"
+            or "api.groq.com" in base_url.lower()
+            or model_name.startswith("qwen/")
+        )
+        groq_default = not base_url and not get_secret("ERIS_VISION_API_KEY") and get_secret("ERIS_GROQ_API_KEY")
+        if groq_requested or groq_default:
+            base_url = base_url or os.environ.get("ERIS_GROQ_BASE_URL", "https://api.groq.com/openai/v1").strip()
+            if not model_name or (groq_default and model_name.startswith("gpt-")):
+                model_name = os.environ.get("ERIS_GROQ_VISION_MODEL", "qwen/qwen3.6-27b").strip()
+            pool = get_key_pool("groq")
+            api_key = (
+                get_secret("ERIS_VISION_API_KEY")
+                or _bootstrap_pool_key(pool)
+                or get_secret("ERIS_GROQ_API_KEY")
+            )
+        else:
+            pool = None
+            api_key = get_secret("ERIS_VISION_API_KEY")
         if not (api_key and base_url and model_name):
             self.logger.info(
-                "Vision API tat: can du ERIS_VISION_API_KEY, ERIS_VISION_API_BASE_URL va ERIS_VISION_API_MODEL."
+                "Vision API tat: can ERIS_VISION_API_* hoac ERIS_GROQ_API_KEY cho Groq vision."
             )
             return None
 
@@ -638,7 +658,7 @@ class RemoteModelProcessManager:
                 base_url=base_url,
                 api_key=api_key,
                 model_name=model_name,
-                key_pool=None,
+                key_pool=pool,
             )
         except ValueError as exc:
             self.logger.warning("Khong dung duoc vision API: %s", exc)

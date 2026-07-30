@@ -335,11 +335,16 @@ class ChatCycleMixin:
         )
         return True
 
+    def _chat_main_vision_enabled(self) -> bool:
+        raw = os.environ.get("ERIS_CHAT_MAIN_VISION", "0").strip().lower()
+        return raw in {"1", "true", "yes", "on", "always"}
+
     def _capture_screen_frame_for_chat(self, user_text: str, *, previous_public_turn=None) -> str:
         self._chat_screen_route_decision = None
         self._chat_screen_text_evidence = ()
         self._chat_screen_capture_present = False
         self._chat_screen_capture_interpreted = False
+        force_chat_vision = self._chat_main_vision_enabled()
         previous_assistant_text = self._previous_assistant_text_for_screen_route(previous_public_turn)
         explicit_or_inherited_request = self._looks_like_screen_vision_request(
             user_text,
@@ -381,7 +386,7 @@ class ChatCycleMixin:
                 self.logger.warning("[screen route] reroute sau OCR lỗi: %s", exc)
 
         if route is None:
-            if not explicit_or_inherited_request:
+            if not explicit_or_inherited_request and not force_chat_vision:
                 self.logger.debug("[screen route] mode=none reason=no_screen_reference")
                 return ""
             try:
@@ -391,7 +396,17 @@ class ChatCycleMixin:
                     reason="router_unavailable_explicit_or_inherited_request",
                 )
             except Exception:
-                return ""
+                from types import SimpleNamespace
+                route = SimpleNamespace(
+                    mode="vision",
+                    references_screen=True,
+                    needs_visual=True,
+                    evidence=(),
+                    confidence=0.55 if force_chat_vision else 0.70,
+                    stale=False,
+                    reason="router_unavailable_main_vision" if force_chat_vision else "router_unavailable_explicit_request",
+                    debug={},
+                )
 
         self._chat_screen_route_decision = route
         self._chat_screen_text_evidence = tuple(getattr(route, "evidence", ()) or ())
@@ -408,8 +423,10 @@ class ChatCycleMixin:
             int(bool(debug.get("anaphora_inherited", False))),
         )
         mode = str(getattr(route, "mode", "none") or "none")
-        if mode != "vision":
+        if mode != "vision" and not force_chat_vision:
             return ""
+        if mode != "vision" and force_chat_vision:
+            self.logger.info("[vision chat] forcing main vision despite route mode=%s", mode)
         capture_fn = getattr(self.telemetry_service, "capture_screen_frame_data_uri", None)
         if not callable(capture_fn):
             self.logger.info("[vision chat] telemetry service không hỗ trợ chụp màn hình.")
@@ -447,7 +464,10 @@ class ChatCycleMixin:
 
     def _chat_source_grounding_screen_facts(self, snapshot, *, screen_image_data_uri: str = "") -> tuple[object, ...]:
         route = getattr(self, "_chat_screen_route_decision", None)
-        if route is None or str(getattr(route, "mode", "none") or "none") == "none":
+        if (
+            (route is None or str(getattr(route, "mode", "none") or "none") == "none")
+            and not screen_image_data_uri
+        ):
             return ()
         now = time.time()
         text_items: list[object] = []

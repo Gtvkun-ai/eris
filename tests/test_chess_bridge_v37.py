@@ -126,11 +126,17 @@ def test_settings_v13_migrate_chess_bridge_defaults(monkeypatch) -> None:
 
 def test_extension_bundle_is_present_and_local_only() -> None:
     root = Path(__file__).resolve().parents[1] / "integrations" / "chesscom_bridge"
+    if not root.exists():
+        root = Path(__file__).resolve().parents[1] / "src" / "integrations" / "chesscom_bridge"
     manifest = (root / "manifest.json").read_text(encoding="utf-8")
     content = (root / "content.js").read_text(encoding="utf-8")
+    background = (root / "background.js").read_text(encoding="utf-8")
+    popup = (root / "popup.js").read_text(encoding="utf-8")
     assert '"manifest_version": 3' in manifest
     assert "127.0.0.1:8765" in manifest
     assert "MutationObserver" in content
+    assert "lastStatus" in background
+    assert "lastBoardFen" in popup
     assert "eval(" not in content
 
 
@@ -173,6 +179,9 @@ def test_http_bridge_accepts_local_snapshot_with_token() -> None:
             payload = json.loads(response.read().decode("utf-8"))
         assert payload["ok"] is True
         assert payload["observation"]["mode"] == "analysis"
+        diagnostics = service.diagnostics()
+        assert diagnostics["last_snapshot"]["game_id"] == "http-game"
+        assert diagnostics["last_snapshot"]["board_fen"] == Position.initial().board_fen
         assert runtime.registry.foreground().kind == "chess"
     finally:
         service.stop()

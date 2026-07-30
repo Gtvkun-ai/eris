@@ -8,6 +8,14 @@
   let lastSignature = "";
   let timer = null;
 
+  function remember(update) {
+    try {
+      chrome.storage.local.set(Object.assign({lastStatusAt: Date.now()}, update));
+    } catch (_error) {
+      // Best-effort diagnostics only.
+    }
+  }
+
   function boardNode() {
     const selectors = [
       "wc-chess-board",
@@ -163,11 +171,24 @@
 
   async function capture() {
     const settings = await loadSettings();
-    if (!settings.enabled) return;
+    if (!settings.enabled) {
+      remember({lastStatus: "Bridge disabled", lastError: ""});
+      return;
+    }
     const board = boardNode();
-    if (!board) return;
+    if (!board) {
+      remember({lastStatus: "No Chess.com board found in this tab", lastError: ""});
+      return;
+    }
     const pieces = extractPieces(board);
-    if (Object.keys(pieces).length < 2) return;
+    const pieceCount = Object.keys(pieces).length;
+    if (pieceCount < 2) {
+      remember({
+        lastStatus: "Board found, but pieces were not readable",
+        lastError: `pieces=${pieceCount}`
+      });
+      return;
+    }
     const boardFen = toBoardFen(pieces);
     const result = gameResult();
     const ply = plyCount();
@@ -203,11 +224,20 @@
     if (signature === lastSignature) return;
     lastSignature = signature;
     try {
+      remember({
+        lastStatus: "Board captured; sending snapshot",
+        lastError: "",
+        lastBoardFen: boardFen,
+        lastGameId: payload.game_id,
+        lastModeHint: payload.mode_hint,
+        lastPageUrl: payload.page_url
+      });
       const response = await chrome.runtime.sendMessage({type: "eris_chess_snapshot", payload});
       if (!response || !response.ok) throw new Error(response && response.error || "bridge unavailable");
       document.documentElement.dataset.erisChessBridge = "connected";
     } catch (error) {
       document.documentElement.dataset.erisChessBridge = "disconnected";
+      remember({lastStatus: "Snapshot failed", lastError: String(error), lastBoardFen: boardFen});
       console.debug("[ERIS chess bridge]", error);
     }
   }
