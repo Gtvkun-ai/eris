@@ -34,8 +34,13 @@ from .discovery import (
     ExternalNeedGate,
 )
 from .expression import IdentityExpression, IdentityExpressionBridge
+from .cognitive_blackboard import CognitiveAnchor, TypedCognitiveBlackboard
+from .grounding_validator import AutonomousGroundingValidator, GroundingDecision
 from .identity_consolidator import IdentityConsolidator
-from .initiative import InitiativeController, InitiativeEvent, InitiativeState
+from .initiative import (
+    InitiativeAction, InitiativeController, InitiativeDecision, InitiativeEvent,
+    InitiativeState, SpeechIntent,
+)
 from .stage_planner import StagePlan, StagePlanner
 from .panel_adapter import build_ai_panel_payload
 from .views import build_cognitive_views
@@ -51,10 +56,17 @@ __all__ = [
     "ExternalNeedGate",
     "IdentityExpression",
     "IdentityExpressionBridge",
+    "CognitiveAnchor",
+    "TypedCognitiveBlackboard",
+    "AutonomousGroundingValidator",
+    "GroundingDecision",
     "IdentityConsolidator",
+    "InitiativeAction",
     "InitiativeController",
+    "InitiativeDecision",
     "InitiativeEvent",
     "InitiativeState",
+    "SpeechIntent",
     "AppraisalState",
     "CognitiveObservation",
     "ConsequenceAssessment",

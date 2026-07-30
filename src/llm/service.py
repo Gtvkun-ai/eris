@@ -146,6 +146,7 @@ class LlmService:
         observer_client=None,
         critic_client=None,
         inner_client=None,
+        diary_client=None,
         research_client=None,
         surface_client=None,
         logger=None,
@@ -160,6 +161,10 @@ class LlmService:
         self.observer_client = observer_client or social_parser_client
         self.critic_client = critic_client or social_critic_client or fallback_client
         self.inner_client = inner_client or style_client or client
+        # Inner Diary có owner riêng. Không fallback ngầm sang companion: nếu worker
+        # diary chưa cấu hình, renderer dùng dữ kiện thô thay vì để một lane khác
+        # âm thầm viết nhật ký hộ rồi ownership lại hóa thành truyện trinh thám.
+        self.diary_client = diary_client
         # Worker chuyên chọn cách ERIS tự biểu hiện rồi viết luôn micro-line.
         # Không fallback ngầm sang companion tại đây: pipeline cần biết rõ khi
         # lane surface chưa được cấu hình để dùng planner cũ một cách minh bạch.

@@ -256,6 +256,25 @@ class InnerDiaryRenderer:
             out.append(section)
         return out
 
+    def _memory_echo(self, digest: Mapping[str, Any], voice: Mapping[str, Any]) -> dict[str, Any]:
+        """Ký ức vọng lại có provenance thật, không lấy open loop giả làm memory."""
+
+        menu = _as_dict(digest.get("menu"))
+        dossier = _as_dict(menu.get("evidence_dossier") or digest.get("evidence_dossier"))
+        hits = [_as_dict(item) for item in _as_list(dossier.get("memory_hits"))]
+        first = next((item for item in hits if _short(item.get("text") or item.get("summary") or item.get("claim"), 180)), {})
+        authored = _short(voice.get("memory_echo"), 220)
+        raw_text = _short(first.get("text") or first.get("summary") or first.get("claim"), 220)
+        text = authored or raw_text
+        if not text:
+            return {}
+        return {
+            "text": text,
+            "evidence_id": _short(first.get("evidence_id") or first.get("id"), 120),
+            "source": _short(first.get("source"), 80) or "memory_hit",
+            "authored": bool(authored),
+        }
+
     def render(self, digest: Mapping[str, Any], voice: Mapping[str, Any] | None = None) -> dict[str, Any]:
         menu = _as_dict(digest.get("menu"))
         current = _as_dict(menu.get("current_thought") or digest.get("current"))
@@ -402,10 +421,15 @@ class InnerDiaryRenderer:
             text_parts.extend(str(line) for line in section.get("lines", ()))
             text_parts.append("")
 
+        memory_echo = self._memory_echo(digest, voice)
+        writer = _as_dict(voice.get("_writer"))
+
         return {
             "mode": "debug_private",
             "title": "Inner Diary",
             "text": "\n".join(text_parts).strip(),
             "sections": sections,
             "emotion_board": emotion_board,
+            "memory_echo": memory_echo,
+            "writer": writer,
         }

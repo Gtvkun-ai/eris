@@ -153,9 +153,9 @@ def load_worker_spec(role: object) -> DeepSeekWorkerSpec:
                 int(
                     os.environ.get(
                         f"{role_prefix}_JSONL_REPAIR_ATTEMPTS",
-                        os.environ.get("ERIS_DS_JSONL_REPAIR_ATTEMPTS", "1"),
+                        os.environ.get("ERIS_DS_JSONL_REPAIR_ATTEMPTS", "0" if normalized == "surface" else "1"),
                     )
-                    or 1
+                    or (0 if normalized == "surface" else 1)
                 ),
             ),
         )
@@ -296,7 +296,7 @@ class JsonlWorkerClient:
         )
         self._drop_if_busy = _env_flag(
             f"ERIS_DS_{self.worker_role.upper()}_DROP_IF_BUSY",
-            self.worker_role == "inner",
+            self.worker_role in {"inner", "surface"},
         )
 
     def __getattr__(self, name: str) -> Any:

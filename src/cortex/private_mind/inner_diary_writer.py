@@ -76,7 +76,7 @@ class InnerDiaryWriter:
         self._cached_voice: dict[str, Any] | None = None
 
     def maybe_write(self, digest: Mapping[str, Any], *, now: float | None = None) -> dict[str, Any] | None:
-        """Trả dict giọng Eris (5 trường) hoặc None nếu nên dùng fallback thô."""
+        """Trả diary voice hoặc None nếu renderer nên dùng fallback thô."""
 
         if not self.enabled or self.adapter is None:
             return None
@@ -180,12 +180,25 @@ class InnerDiaryWriter:
             if seed:
                 surface_lines.append(seed)
 
+        dossier = _as_dict(menu.get("evidence_dossier") or digest.get("evidence_dossier"))
+        memory_echoes: list[dict[str, str]] = []
+        for hit in [_as_dict(x) for x in _as_list(dossier.get("memory_hits"))[:4]]:
+            text = _short(hit.get("text") or hit.get("summary") or hit.get("claim"), 180)
+            if not text:
+                continue
+            memory_echoes.append({
+                "text": text,
+                "evidence_id": _short(hit.get("evidence_id") or hit.get("id"), 120),
+                "source": _short(hit.get("source"), 80),
+            })
+
         return {
             "hien_tai": _short(current.get("dominant_judgment"), 240),
             "ban_tam": concern_lines,
             "phan_tich": fragment_lines,
             "tuong_lai": future_lines,
             "muon_noi": surface_lines,
+            "memory_echoes": memory_echoes,
         }
 
     def _signature(self, facts: Mapping[str, Any]) -> str:
@@ -195,9 +208,18 @@ class InnerDiaryWriter:
     def _sanitize(self, voice: Any) -> dict[str, Any] | None:
         if not isinstance(voice, Mapping):
             return None
-        keys = ("hien_tai", "tuong_lai", "ban_tam", "phan_tich", "muon_noi")
+        keys = ("hien_tai", "tuong_lai", "ban_tam", "phan_tich", "muon_noi", "memory_echo")
         out = {k: _short(voice.get(k), 240) for k in keys}
-        if not any(out.values()):
+        writer = voice.get("_writer")
+        if isinstance(writer, Mapping):
+            out["_writer"] = {
+                "owner": _short(writer.get("owner"), 64),
+                "role": _short(writer.get("role"), 48),
+                "provider": _short(writer.get("provider"), 48),
+                "model": _short(writer.get("model"), 96),
+                "configured": bool(writer.get("configured")),
+            }
+        if not any(out.get(k) for k in keys):
             return None
         return out
 

@@ -1,10 +1,76 @@
-# DeepSeek Surface Worker cho ERIS
+# DeepSeek Surface Worker V17 cho ERIS
 
-Bản vá thêm một lane DeepSeek Web riêng tên **`surface`**. Lane này dùng để chọn cách ERIS tự biểu hiện trong autonomous rồi viết luôn một micro-line, thay vì gọi planner bằng account companion và sau đó gọi companion thêm lần nữa để viết câu.
+Bản V17 giữ đúng **một DeepSeek worker `surface`** làm giọng public cho autonomous, nhưng tước khỏi nó quyền quyết định có nên nói hay không. Quyền đó chuyển sang `InitiativeController` deterministic.
 
-## 1. Chỗ cấu hình API key mới
+## 1. Kiến trúc có chú thích
 
-Thêm một gateway key Whale2API riêng vào `config/secrets.json`:
+```text
+Background cognition
+    observer      # latest_observation typed từ lượt public đã xảy ra
+    inner         # tạo public-safe seed, không phát raw thought
+    critic        # chỉ đánh dấu reviewed khi deep-observer thực sự chạy
+    memory        # chỉ tạo memory anchor khi có evidence/provenance
+       │
+       ▼
+Typed Cognitive Blackboard
+    # Chuẩn hóa signal thành contract có kiểu.
+    # Không chứa raw chain-of-thought, raw diary hay text riêng tư.
+       │
+       ▼
+Initiative Controller
+    # Code thường, không gọi model, chạy ở mức mili-giây.
+    # Quyết định đúng một trong ba action:
+       │
+       ├── NO_OP
+       │     # Không có neo public đủ tốt hoặc đang chờ user.
+       │
+       ├── BODY_ONLY
+       │     # Live2D vẫn có phản ứng nhẹ, nhưng không phát lời.
+       │
+       └── SPEECH
+             # Tạo SpeechIntent typed: topic, mode, anchor, evidence.
+               │
+               ▼
+        Surface Worker
+        # Chỉ viết wording cho SpeechIntent đã duyệt.
+        # Không được đổi speak/silence, mode, topic owner hay evidence.
+               │
+               ▼
+        Grounding Validator
+        # Preflight trước model và postflight sau khi có text.
+        # Chặn claim màn hình/memory/task không có provenance.
+               │
+               ▼
+          TTS + Live2D
+          # Public commit, voice, stage và animation.
+```
+
+## 2. Vì sao V17 không còn treo lâu rồi im
+
+Luồng cũ:
+
+```text
+Surface model quyết định speak/silence + viết câu
+→ InitiativeController mới gate
+→ provider timeout/retry
+→ có thể cuối cùng vẫn silence
+```
+
+Luồng mới:
+
+```text
+Controller quyết định trong code
+→ chỉ khi SPEECH mới gọi Surface Worker
+→ deadline ngắn 4 giây
+→ lỗi thì local micro-fallback hoặc BODY_ONLY
+→ không gọi Main AI/planner lần hai
+```
+
+Một câu small talk optional không còn được quyền giữ cả nhân vật đứng im hàng chục giây. Một nguyên tắc đáng lẽ hiển nhiên, nhưng phần mềm thường cần vài phiên bản để nhớ lại phẩm giá của mình.
+
+## 3. Cấu hình Surface worker
+
+Thêm gateway key riêng trong `config/secrets.json`:
 
 ```json
 {
@@ -14,97 +80,114 @@ Thêm một gateway key Whale2API riêng vào `config/secrets.json`:
 }
 ```
 
-Cũng có thể đặt bằng biến môi trường:
+Hoặc dùng biến môi trường:
 
 ```env
 ERIS_DS_SURFACE_API_KEY=DAN_GATEWAY_KEY_SURFACE_VAO_DAY
 ```
 
-Gateway key này nên bind vào **một DeepSeek account riêng** trong Whale2API. Mặc định lane surface không mượn key generic/companion. Chỉ khi chủ động chấp nhận dùng chung mới bật:
+Khuyến nghị bind key này vào một DeepSeek account/pool riêng trong Whale2API.
 
 ```env
-ERIS_DS_SURFACE_ALLOW_SHARED_KEY=1
-```
-
-Dùng chung key không được khuyến nghị, vì một câu small talk chậm có thể tranh đúng account phục vụ chat chính. Loài người vốn đã đủ giỏi tự tạo nút thắt cổ chai, phần mềm không cần học thêm.
-
-## 2. Các mode surface
-
-Worker có thể chọn đúng một mode trong danh sách runtime cho phép:
-
-- `silence`: im lặng.
-- `small_talk`: bắt chuyện đời thường.
-- `dry_tease`: khịa khô, không hạ nhục.
-- `soft_tease`: trêu nhẹ, có đường lui.
-- `inner_thought`: nói một public-safe seed từ PrivateMind/agenda.
-- `random_chat`: một ý ngẫu hứng nhưng vẫn có neo thật.
-- `continuation`: nối mạch hội thoại đang mở.
-- `memory_callback`: gọi lại context đã được cung cấp.
-- `task_followup`: bám task/engagement đang hoạt động.
-- `screen_comment`: bình luận màn hình khi có evidence tươi.
-
-Model chọn mode và viết câu trong **một request**. Code phía ngoài vẫn kiểm tra evidence, privacy, task active, topic, confidence, semantic cooldown và grounding.
-
-## 3. Luồng autonomous mới
-
-```text
-attention/commentary/task/screen/self seed
-        ↓
-DeepSeek role=surface
-        ↓
-chọn mode + topic + viết text
-        ↓
-SurfaceIntentEngine kiểm tra contract
-        ↓
-InitiativeController + grounding gate
-        ↓
-parser / stage / TTS / public commit
-```
-
-Nếu surface key chưa cấu hình, provider lỗi hoặc JSON không hợp lệ, runtime tự quay về autonomous planner cũ.
-
-## 4. Biến cấu hình
-
-```env
-ERIS_SURFACE_INTENT_ENABLED=1
-ERIS_SURFACE_INTENT_TIMEOUT_SEC=12
-ERIS_DS_SURFACE_JSONL=1
 ERIS_DS_SURFACE_ALLOW_SHARED_KEY=0
 ```
 
-Tắt nhanh lane mới:
+Không có key riêng thì worker `surface` không khởi tạo. Runtime vẫn không treo: deterministic local fallback hoặc body-only sẽ tiếp quản.
+
+## 4. Cấu hình deadline
 
 ```env
-ERIS_SURFACE_INTENT_ENABLED=0
+ERIS_SURFACE_INTENT_ENABLED=1
+ERIS_SURFACE_REALIZER_TIMEOUT_SEC=4
+ERIS_SURFACE_LOCAL_FALLBACK_ENABLED=1
+ERIS_DS_SURFACE_JSONL=1
+ERIS_DS_SURFACE_JSONL_REPAIR_ATTEMPTS=0
+ERIS_DS_SURFACE_DROP_IF_BUSY=1
 ```
 
-## 5. Dấu hiệu đúng trong log
+Giải thích:
 
-Khi khởi động:
+- `ERIS_SURFACE_REALIZER_TIMEOUT_SEC=4`: tổng deadline một call Surface, runtime clamp trong khoảng 2–6 giây.
+- `ERIS_SURFACE_LOCAL_FALLBACK_ENABLED=1`: cho phép câu local cực ngắn khi intent đã được controller duyệt nhưng provider lỗi.
+- `ERIS_DS_SURFACE_JSONL_REPAIR_ATTEMPTS=0`: Surface không tự gọi thêm một vòng repair, tránh biến deadline 4 giây thành 8–12 giây.
+- `ERIS_DS_SURFACE_DROP_IF_BUSY=1`: nếu worker đang xử lý lượt cũ thì bỏ lượt mới ngay và dùng local fallback/body-only, không xếp hàng chờ.
+
+Biến cũ `ERIS_SURFACE_INTENT_TIMEOUT_SEC` chỉ còn phục vụ compatibility shim, production self-turn không dùng đường cũ.
+
+## 5. Ba action của Initiative Controller
+
+### `NO_OP`
+
+Dùng khi:
+
+- không có public anchor;
+- đang chờ câu trả lời của user;
+- cooldown/budget chặn và không có lý do body-only;
+- privacy hoặc provenance không hợp lệ.
+
+### `BODY_ONLY`
+
+Dùng khi:
+
+- user đang bận nhưng màn hình/activity vừa đổi;
+- speech bị cooldown nhưng một phản ứng phi ngôn ngữ vẫn hợp lý;
+- Surface worker lỗi và không nên phát local text.
+
+Ví dụ Live2D:
+
+- liếc nhẹ;
+- nghiêng đầu;
+- `quiet_presence`;
+- `curious_glance`;
+- `small_acknowledge`.
+
+### `SPEECH`
+
+Chỉ xuất hiện khi controller đã chọn một typed anchor thật:
+
+- `conversation`;
+- `task`;
+- `discovery`;
+- `screen/activity`;
+- `self` public-safe;
+- `presence` khi cadence đến hạn.
+
+## 6. Dấu hiệu đúng trong log
+
+Khởi động:
 
 ```text
 DeepSeek Web worker san sang: role=surface ...
 Mô hình đã sẵn sàng. cognitive_workers=...,surface,...
 ```
 
-Khi autonomous cân nhắc:
+Một lượt nói bình thường:
 
 ```text
-[surface intent] decision=speak mode=dry_tease confidence=0.82 topic=...
+[initiative] action=speech anchor=presence reason=allowed
+[surface worker] realized mode=small_talk confidence=0.84 anchor=presence
+[ai autonomous] spoke ...
 ```
 
-Hoặc:
+Provider Surface lỗi hoặc timeout:
 
 ```text
-[surface intent] decision=silence reason=...
+[surface worker] local fallback mode=small_talk reason=provider_unavailable_or_timeout
 ```
 
-Nếu không thấy `role=surface`, kiểm tra key mới trong `config/secrets.json` và gateway mapping ở Whale2API.
+Nếu không có text fallback phù hợp:
 
-## 6. Quy tắc an toàn quan trọng
+```text
+[ai autonomous] silence ... gate=surface_unavailable body_only=1
+```
 
-- `screen_comment` bị từ chối nếu screen evidence không tươi hoặc privacy bị khóa.
-- `task_followup` bị từ chối nếu không có engagement active.
-- `inner_thought` bị từ chối nếu không có public-safe self seed.
-- Engagement đang chạy không cho surface đổi sang random chat không liên quan.
-- User chat đến trong lúc surface đang suy nghĩ thì draft cũ bị bỏ trước khi phát public.
+## 7. Ranh giới trách nhiệm
+
+- Observer không viết lời public.
+- Inner không phát raw thought.
+- Critic không được quyền chặn/nói trực tiếp.
+- Memory chỉ cấp evidence có provenance.
+- Initiative Controller quyết định action.
+- Surface Worker chỉ viết wording.
+- Grounding Validator quyết định câu có đủ căn cứ để public hay không.
+- TTS và Live2D chỉ thực thi public turn đã commit.

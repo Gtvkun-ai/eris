@@ -104,6 +104,7 @@ public partial class UdpListener : Node2D
 		_settingsMainPoolStatusLabel = null;
 		_settingsPoolStatusLabel = null;
 		_settingsFallbackStatusLabel = null;
+		_settingsElevenLabsPoolStatusLabel = null;
 		_settingsPoolHealthLabel = null;
 		_settingsTtsEngineStatusLabel = null;
 		_settingsStatusNoteLabel = null;
@@ -152,6 +153,7 @@ public partial class UdpListener : Node2D
 		_advancedEffectiveSummaryLabel = null;
 		_advancedEffectiveDetailLabel = null;
 		_advancedApplyResultLabel = null;
+		ResetRuntimeSchemaSettingsUiReferences();
 		ResetDangerSettingsUiReferences();
 	}
 
@@ -602,14 +604,13 @@ public partial class UdpListener : Node2D
 
 	private void WriteAdvancedSettingsToSecrets(JsonObject env)
 	{
-		foreach (var pair in BuildAdvancedEnvironmentValues())
-			env[pair.Key] = pair.Value;
+		// Legacy no-op. Runtime policy thuộc Brain runtime store và chỉ được
+		// thay đổi qua settings_update, không ghi lén vào secrets.json.
 	}
 
 	private void AppendAdvancedSettingsToDotEnv(Dictionary<string, string> updates)
 	{
-		foreach (var pair in BuildAdvancedEnvironmentValues())
-			updates[pair.Key] = pair.Value;
+		// Legacy no-op. .env chỉ giữ bootstrap route, không phải mirror schema runtime.
 	}
 
 	private void ApplyAdvancedSettingsLive()
@@ -696,37 +697,7 @@ public partial class UdpListener : Node2D
 
 	private void PersistRuntimeSettingsJson()
 	{
-		try
-		{
-			string path = GetRuntimeSettingsPath();
-			Directory.CreateDirectory(Path.GetDirectoryName(path) ?? GetRuntimeBaseDirForSettings());
-			JsonObject root = new JsonObject();
-			if (File.Exists(path))
-			{
-				try { root = JsonNode.Parse(File.ReadAllText(path, Encoding.UTF8))?.AsObject() ?? new JsonObject(); }
-				catch { root = new JsonObject(); }
-			}
-			root["version"] = 4;
-			MergeAdvancedRuntimePatch(root, BuildAdvancedRuntimeSettingsPatch());
-
-			var tts = root["tts"] as JsonObject ?? new JsonObject();
-			tts["enabled"] = _settingsTtsEnabled;
-			tts["language"] = NormalizeSettingsTtsLanguage(_settingsTtsLanguage);
-			tts["voice"] = string.IsNullOrWhiteSpace(_settingsTtsVoice) ? "Aoede" : _settingsTtsVoice.Trim();
-			tts["quality"] = string.IsNullOrWhiteSpace(_settingsTtsQuality) ? "high" : _settingsTtsQuality.Trim().ToLowerInvariant();
-			tts["volume"] = Math.Round(_settingsTtsVolume, 2);
-			tts["speed"] = Math.Round(_settingsTtsSpeed, 2);
-			root["tts"] = tts;
-
-			string temp = path + ".tmp";
-			File.WriteAllText(temp, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
-			File.Move(temp, path, true);
-			RunLogger.Log($"[Settings] Da ghi runtime settings schema: {path}");
-		}
-		catch (Exception ex)
-		{
-			RunLogger.LogErr($"[Settings] Khong ghi duoc runtime_settings.json: {ex.Message}");
-		}
+		// Legacy no-op. Body không sở hữu runtime_settings.json.
 	}
 
 	private static void MergeAdvancedRuntimePatch(JsonObject target, JsonObject patch)
@@ -783,28 +754,12 @@ public partial class UdpListener : Node2D
 
 	private void ApplyAdvancedSettingsAck(JsonElement ack)
 	{
-		int appliedCount = JsonArrayCount(ack, "applied");
-		int rejectedCount = JsonArrayCount(ack, "rejected");
-		int restartCount = JsonArrayCount(ack, "restart_required");
-		string rejected = FirstJsonArrayText(ack, "rejected");
-		string text = $"Đã áp dụng {appliedCount} mục";
-		if (restartCount > 0) text += $" · {restartCount} cần restart";
-		if (rejectedCount > 0) text += $" · từ chối: {rejected}";
-		if (_advancedApplyResultLabel != null)
-			_advancedApplyResultLabel.Text = text;
-		SetSettingsStatus(text + ".");
-		if (ack.TryGetProperty("effective", out JsonElement effective) && effective.ValueKind == JsonValueKind.Object)
-			ApplyAdvancedEffectiveSnapshot(effective);
+		ApplyRuntimeSettingsAck(ack);
 	}
 
 	private void ApplyAdvancedHealthSnapshot(JsonElement healthAck)
 	{
-		if (healthAck.TryGetProperty("effective", out JsonElement effective) && effective.ValueKind == JsonValueKind.Object)
-		{
-			ApplyAdvancedEffectiveSnapshot(effective);
-			if (_advancedApplyResultLabel != null)
-				_advancedApplyResultLabel.Text = "Đã đọc cấu hình hiệu lực từ Brain.";
-		}
+		ApplyRuntimeSettingsHealthSnapshot(healthAck);
 	}
 
 	private void ApplyAdvancedEffectiveSnapshot(JsonElement effective)

@@ -1,9 +1,10 @@
 using Godot;
 using System;
+using System.Collections.Generic;
 using System.Text.Json;
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  TAB GIA SƯ — Eris đi hỏi trợ lý Gemini.
+//  TAB GIA SƯ — Eris dùng lane tutor/research nền.
 //  Một thẻ nhỏ nổi góc màn hình: tiêu đề + trạng thái động (đang gõ/đọc/ghi nhớ),
 //  câu hỏi gõ ra từng chữ (typewriter), rồi câu trả lời gõ ra khi xong. Tự ẩn.
 //  Data đến qua UDP 4242 với parse_mode="tutor_event" (xem TutorStageEmitter).
@@ -28,6 +29,7 @@ public partial class UdpListener : Node2D
 		public bool SurfaceCaution { get; init; }
 		public bool HasMetrics { get; init; }
 		public bool HasVerification { get; init; }
+		public bool Persisted { get; init; }
 	}
 
 	private static readonly Vector2 TutorPanelMinSize = new(560f, 190f);
@@ -37,7 +39,8 @@ public partial class UdpListener : Node2D
 	private Label _tutorTitleLabel;
 	private Label _tutorStatusLabel;
 	private HBoxContainer _tutorResearchChipRow;
-	private ProgressBar _tutorResearchProgress;
+	private HBoxContainer _tutorStageRow;
+	private readonly Dictionary<string, Label> _tutorStageLabels = new();
 	private Label _tutorModeChipLabel;
 	private Label _tutorVerifyChipLabel;
 	private Label _tutorSourceChipLabel;
@@ -99,7 +102,7 @@ public partial class UdpListener : Node2D
 		header.MouseFilter = Control.MouseFilterEnum.Ignore;
 		root.AddChild(header);
 
-		_tutorTitleLabel = MakeTutorLabel("✦ Eris hỏi trợ lý Gemini", 15, TutorInk);
+		_tutorTitleLabel = MakeTutorLabel("✦ Eris đang nghiên cứu", 15, TutorInk);
 		_tutorTitleLabel.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
 		header.AddChild(_tutorTitleLabel);
 
@@ -108,7 +111,7 @@ public partial class UdpListener : Node2D
 		header.AddChild(_tutorStatusLabel);
 
 		// Nút Ẩn — phần DUY NHẤT bấm được. Mọi chỗ khác click xuyên qua, user không
-		// thể chạm vào phần Eris đang hỏi Gemini (tránh bấm bậy làm AI lỗi).
+		// thể chạm vào lane nghiên cứu nền của Eris (tránh bấm bậy làm AI lỗi).
 		_tutorHideButton = new Button
 		{
 			Text = "✕",
@@ -154,32 +157,28 @@ public partial class UdpListener : Node2D
 		_tutorResearchChipRow.AddChild(_tutorSourceChipLabel);
 		_tutorResearchChipRow.AddChild(_tutorCitationChipLabel);
 
-		_tutorResearchProgress = new ProgressBar
+		_tutorStageRow = new HBoxContainer
 		{
 			Visible = false,
-			MinValue = 0,
-			MaxValue = 100,
-			Value = 0,
-			ShowPercentage = false,
-			CustomMinimumSize = new Vector2(0f, 5f),
 			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
 			MouseFilter = Control.MouseFilterEnum.Ignore,
 		};
-		var progressBg = new StyleBoxFlat
+		_tutorStageRow.AddThemeConstantOverride("separation", 5);
+		foreach (var step in new (string Key, string Label)[]
 		{
-			BgColor = new Color(0.96f, 0.82f, 0.88f, 0.55f),
-			CornerRadiusTopLeft = 5, CornerRadiusTopRight = 5,
-			CornerRadiusBottomRight = 5, CornerRadiusBottomLeft = 5,
-		};
-		var progressFill = new StyleBoxFlat
+			("queued", "Xếp lượt"),
+			("collecting", "Thu thập"),
+			("verifying", "Kiểm chứng"),
+			("synthesizing", "Tổng hợp"),
+			("done", "Hoàn tất"),
+		})
 		{
-			BgColor = new Color(0.97f, 0.46f, 0.66f, 0.82f),
-			CornerRadiusTopLeft = 5, CornerRadiusTopRight = 5,
-			CornerRadiusBottomRight = 5, CornerRadiusBottomLeft = 5,
-		};
-		_tutorResearchProgress.AddThemeStyleboxOverride("background", progressBg);
-		_tutorResearchProgress.AddThemeStyleboxOverride("fill", progressFill);
-		root.AddChild(_tutorResearchProgress);
+			Label chip = MakeTutorChip(step.Label, TutorInkSoft);
+			chip.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+			_tutorStageLabels[step.Key] = chip;
+			_tutorStageRow.AddChild(chip);
+		}
+		root.AddChild(_tutorStageRow);
 
 		root.AddChild(new ColorRect
 		{
@@ -297,7 +296,7 @@ public partial class UdpListener : Node2D
 		if (!_tutorPanel.Visible)
 			ShowTutorPanel();
 		_tutorHideAtMs = 0; // còn diễn tiến thì không tự ẩn
-		StartTutorPulse();  // "thở" nhẹ để Ngài biết Eris đang đi hỏi Gemini
+		StartTutorPulse();  // "thở" nhẹ để Ngài biết Eris đang dùng lane nghiên cứu
 		UpdateTutorResearchChips(research);
 
 		switch (stage)
@@ -310,7 +309,7 @@ public partial class UdpListener : Node2D
 				break;
 			case "asking_tutor":
 				SetTutorQuestion(TutorTopicForDisplay(research, question));
-				StartTutorDots(TutorModeVerb(research, "đang hỏi Tutor"));
+				StartTutorDots(TutorModeVerb(research, "đang thu thập"));
 				break;
 			case "verifying":
 				SetTutorQuestion(TutorTopicForDisplay(research, question));
@@ -327,7 +326,7 @@ public partial class UdpListener : Node2D
 				StartTutorDots("đang nghĩ câu hỏi");
 				break;
 			case "opening":
-				StartTutorDots("đang mở Gemini");
+				StartTutorDots("đang mở trợ lý nghiên cứu");
 				break;
 			case "asking":
 				StopTutorDots("đang gõ…");
@@ -373,7 +372,7 @@ public partial class UdpListener : Node2D
 		if (mode == "quick_search")
 			return "đang search nhanh";
 		if (mode == "research")
-			return "đang hỏi Tutor";
+			return "đang hỏi nguồn nghiên cứu";
 		return fallback;
 	}
 
@@ -393,10 +392,12 @@ public partial class UdpListener : Node2D
 	private static string TutorDoneText(int claims, ResearchPanelState research)
 	{
 		if (claims > 0)
-			return $"đã học ✓ ({claims})";
+			return $"đã kiểm chứng và lưu {claims} claim ✓";
+		if (research != null && research.Persisted)
+			return "đã kiểm chứng và lưu ✓";
 		if (research != null)
-			return TutorVerifiedText(research);
-		return "xong ✓";
+			return TutorVerifiedText(research) + " · chưa xác nhận lưu";
+		return "đã hoàn tất ✓";
 	}
 
 	private static string TutorVerifyChipText(string verifyText, ResearchPanelState research)
@@ -425,7 +426,7 @@ public partial class UdpListener : Node2D
 		switch (reason)
 		{
 			case "captcha_or_expired": return "cần đăng nhập lại…";
-			case "timeout": return "Gemini lâu quá, thôi vậy";
+			case "timeout": return "trợ lý nghiên cứu phản hồi quá lâu";
 			case "empty_answer": return "không rõ câu trả lời";
 			case "formulation_failed": return "chưa nghĩ ra câu hỏi";
 			case "gate_rejected_known": return "cái này biết rồi";
@@ -444,22 +445,19 @@ public partial class UdpListener : Node2D
 		if (research == null)
 		{
 			_tutorResearchChipRow.Visible = false;
-			if (_tutorResearchProgress != null)
-			{
-				_tutorResearchProgress.Visible = false;
-				_tutorResearchProgress.Value = 0;
-			}
+			if (_tutorStageRow != null)
+				_tutorStageRow.Visible = false;
 			if (_tutorTitleLabel != null)
-				_tutorTitleLabel.Text = "✦ Eris hỏi trợ lý Gemini";
+				_tutorTitleLabel.Text = "✦ Eris đang nghiên cứu";
 			return;
 		}
 
 		_tutorResearchChipRow.Visible = true;
-		UpdateTutorResearchProgress(research);
+		UpdateTutorResearchStage(research.Stage);
 		if (_tutorTitleLabel != null)
 			_tutorTitleLabel.Text = research.Mode == "quick_search"
-				? "✦ Eris search nhanh qua Tutor"
-				: "✦ Eris hỏi Tutor rồi tự kiểm chứng";
+				? "✦ Eris đang tìm nhanh"
+				: "✦ Eris đang nghiên cứu và kiểm chứng";
 		string modeText = research.Mode == "quick_search" ? "search nhanh" : "research";
 		SetTutorChip(_tutorModeChipLabel, modeText, TutorInkSoft);
 
@@ -499,30 +497,39 @@ public partial class UdpListener : Node2D
 		CallDeferred(nameof(FitTutorPanelHeight));
 	}
 
-	private void UpdateTutorResearchProgress(ResearchPanelState research)
+	private void UpdateTutorResearchStage(string rawStage)
 	{
-		if (_tutorResearchProgress == null)
+		if (_tutorStageRow == null)
 			return;
-		if (research == null)
+		_tutorStageRow.Visible = true;
+		string active = NormalizeTutorStage(rawStage);
+		string[] order = { "queued", "collecting", "verifying", "synthesizing", "done" };
+		int activeIndex = Array.IndexOf(order, active);
+		for (int index = 0; index < order.Length; index++)
 		{
-			_tutorResearchProgress.Visible = false;
-			_tutorResearchProgress.Value = 0;
-			return;
+			if (!_tutorStageLabels.TryGetValue(order[index], out Label label))
+				continue;
+			bool current = index == activeIndex;
+			bool completed = activeIndex >= 0 && index < activeIndex;
+			Color color = current ? TutorPink : completed ? TutorGreen : TutorInkSoft;
+			label.AddThemeColorOverride("font_color", color);
+			label.Modulate = new Color(1f, 1f, 1f, current ? 1f : completed ? 0.82f : 0.52f);
 		}
-		_tutorResearchProgress.Visible = true;
-		float value = 12f;
-		switch (research.Stage)
-		{
-			case "queued": value = 18f; break;
-			case "asking_tutor": value = 45f; break;
-			case "verifying": value = 72f; break;
-			case "verified": value = 92f; break;
-			case "done": value = 100f; break;
-		}
-		if (research.HasVerification)
-			value = Mathf.Max(value, 88f);
-		_tutorResearchProgress.Value = Mathf.Clamp(value, 0f, 100f);
 	}
+
+	private static string NormalizeTutorStage(string stage)
+	{
+		return (stage ?? "").Trim().ToLowerInvariant() switch
+		{
+			"queued" or "forming" => "queued",
+			"asking_tutor" or "opening" or "asking" or "reading" => "collecting",
+			"verifying" => "verifying",
+			"verified" or "digesting" => "synthesizing",
+			"done" => "done",
+			_ => "",
+		};
+	}
+
 
 	private void SetTutorChip(Label label, string text, Color color)
 	{
@@ -551,6 +558,7 @@ public partial class UdpListener : Node2D
 		float citationCoverage = 0f;
 		bool surfaceCaution = false;
 		bool hasVerification = false;
+		bool persisted = TutorBool(research, "persisted") || TutorBool(research, "memory_persisted");
 		if (research.TryGetProperty("verification", out var verification) && verification.ValueKind == JsonValueKind.Object)
 		{
 			hasVerification = true;
@@ -598,6 +606,7 @@ public partial class UdpListener : Node2D
 			SurfaceCaution = surfaceCaution,
 			HasMetrics = hasMetrics,
 			HasVerification = hasVerification,
+			Persisted = persisted,
 		};
 	}
 
@@ -678,7 +687,7 @@ public partial class UdpListener : Node2D
 			_tutorStatusLabel.Text = finalText ?? "";
 	}
 
-	// "Thở" nhẹ toàn panel khi Eris đang đi hỏi Gemini — tín hiệu để Ngài biết.
+	// "Thở" nhẹ toàn panel khi Eris đang dùng lane nghiên cứu — tín hiệu để Ngài biết.
 	private void StartTutorPulse()
 	{
 		if (_tutorPanel == null)

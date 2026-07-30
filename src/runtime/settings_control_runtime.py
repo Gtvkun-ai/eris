@@ -15,35 +15,29 @@ class SettingsControlRuntimeMixin:
     """Coordinator-facing mixin with no independent lifecycle."""
 
     def _advanced_effective_settings_snapshot(self) -> dict:
-        """Snapshot gọn cho Advanced UI, chỉ gồm policy người dùng có thể chỉnh."""
+        """Snapshot đầy đủ cho Settings UI, không chứa credential.
+
+        Body không tự đoán schema hay đọc file runtime_settings.json. Brain trả
+        settings hiệu lực cùng catalog owner/type để panel dựng đúng control.
+        """
 
         try:
             from runtime.runtime_settings_store import get_runtime_settings_store
+            from runtime.settings_catalog import build_settings_catalog
 
             store = getattr(self, "runtime_settings_store", None) or get_runtime_settings_store(logger=self.logger)
             settings = store.snapshot()
-            selected: dict[str, dict] = {}
-            field_map = {
-                "chat": ("reasoning_effort", "completion_chat_tokens", "chat_timeout_seconds", "auto_fallback"),
-                "personality": ("retort_mode", "style_repair_mode", "allow_sharp_retort", "allow_cold_boundary"),
-                "commentary": ("enabled", "desired_interval_seconds", "maximum_quiet_seconds", "startup_delay_seconds", "minimum_user_silence_seconds"),
-                "initiative": ("enabled", "global_hourly_budget", "minimum_interval_seconds", "minimum_user_silence_seconds"),
-                "discovery": ("enabled", "local_signal_enabled"),
-                "memory": ("background_digest", "maintenance_enabled", "maintenance_budget"),
-                "tutor": ("enabled", "quick_search_enabled", "research_enabled", "self_search_enabled", "stale_result_guard_enabled", "persist_research_memory"),
-                "project_ops": ("enabled", "autonomy_mode", "ask_when_uncertain", "proceed_without_user_reply", "auto_rollback_on_failure", "auto_package_patch", "max_repair_attempts"),
-                "protocol": ("max_message_type_chars", "reject_non_mapping", "record_unknown_messages"),
-                "run_loop": ("startup_retry_delay_seconds", "error_backoff_initial_seconds", "error_backoff_max_seconds", "consecutive_error_stop_limit"),
-            }
-            for section, fields in field_map.items():
-                source = settings.get(section, {})
-                if isinstance(source, Mapping):
-                    selected[section] = {name: source.get(name) for name in fields if name in source}
             metadata = store.metadata()
-            metadata["settings"] = selected
+            metadata["settings"] = {
+                str(section): dict(values)
+                for section, values in settings.items()
+                if section != "version" and isinstance(values, Mapping)
+            }
+            metadata["catalog"] = build_settings_catalog(settings)
+            metadata["authority"] = "brain_runtime_store"
             return metadata
         except Exception as exc:
-            return {"revision": 0, "saved_at": 0.0, "settings": {}, "error": str(exc)[:240]}
+            return {"revision": 0, "saved_at": 0.0, "settings": {}, "catalog": {}, "error": str(exc)[:240]}
 
 
     def _main_brain_health_snapshot(self) -> dict:
@@ -184,7 +178,7 @@ class SettingsControlRuntimeMixin:
 
 
     def _handle_settings_health(self) -> None:
-        """Gửi trạng thái ba key pool và não chính mà không lộ API key.
+        """Gửi trạng thái credential owner và não chính mà không lộ API key.
 
         Trước đây nút kiểm tra chỉ gửi message nhưng coordinator chưa xử lý.
         Handler này trả snapshot thật gồm key đang dùng, key cooldown và cooldown
@@ -199,6 +193,38 @@ class SettingsControlRuntimeMixin:
                 "gemini": get_key_pool("gemini").snapshot(),
                 "groq": get_key_pool("groq").snapshot(),
             }
+            # ElevenLabs là credential đơn, không đi qua llm.key_pool. Vẫn trả
+            # cùng shape health để Body không phải bịa thêm một loại UI riêng.
+            try:
+                import hashlib
+                from eris_secrets import get_secret
+
+                eleven_key = str(get_secret("ELEVENLABS_API_KEY", "ERIS_ELEVENLABS_API_KEY") or "").strip()
+                eleven_fingerprint = hashlib.sha256(eleven_key.encode("utf-8")).hexdigest()[:12] if eleven_key else ""
+                pools["elevenlabs"] = {
+                    "provider": "elevenlabs",
+                    "size": 1 if eleven_key else 0,
+                    "available": 1 if eleven_key else 0,
+                    "dead": 0,
+                    "global_cooldown_ms": 0,
+                    "keys": ([{
+                        "index": 0,
+                        "fingerprint": eleven_fingerprint,
+                        "status": "configured",
+                        "reason": "",
+                        "cooldown_ms": 0,
+                        "active": True,
+                    }] if eleven_key else []),
+                }
+            except Exception:
+                pools["elevenlabs"] = {
+                    "provider": "elevenlabs",
+                    "size": 0,
+                    "available": 0,
+                    "dead": 0,
+                    "global_cooldown_ms": 0,
+                    "keys": [],
+                }
             try:
                 from actions.capability_runtime import runtime_capability_snapshot
                 capability_health = runtime_capability_snapshot(refresh=True)
@@ -213,6 +239,23 @@ class SettingsControlRuntimeMixin:
                 pass
             tts = getattr(self, "tts_engine", None)
             tts_ready = bool(tts is not None and getattr(tts, "_ok", False))
+            try:
+                from runtime.runtime_settings_store import get_runtime_settings_store
+
+                tts_settings = (getattr(self, "runtime_settings_store", None) or get_runtime_settings_store(logger=self.logger)).snapshot().get("tts", {})
+            except Exception:
+                tts_settings = {}
+            tts_health = {
+                "ready": tts_ready,
+                "provider": str(tts_settings.get("provider", "elevenlabs") or "elevenlabs"),
+                "language": str(tts_settings.get("language", "ja") or "ja"),
+                "voice": str(tts_settings.get("voice", "Aoede") or "Aoede"),
+                "elevenlabs_voice_id": str(tts_settings.get("elevenlabs_voice_id", "") or ""),
+                "elevenlabs_model": str(tts_settings.get("elevenlabs_model", "eleven_v3") or "eleven_v3"),
+                "quality": str(tts_settings.get("quality", "balanced") or "balanced"),
+                "volume": float(tts_settings.get("volume", 1.0) or 1.0),
+                "speed": float(tts_settings.get("speed", 1.04) or 1.04),
+            }
             subsystem_health = {}
             health_registry = getattr(self, "subsystem_health_registry", None)
             if callable(getattr(health_registry, "snapshot", None)):
@@ -227,7 +270,7 @@ class SettingsControlRuntimeMixin:
                 "settings_health_ack": {
                     "pools": pools,
                     "main_brain": self._main_brain_health_snapshot(),
-                    "tts": {"ready": tts_ready},
+                    "tts": tts_health,
                     "capabilities": capability_health,
                     "subsystems": subsystem_health,
                     "runtime_boundaries": {
@@ -309,11 +352,14 @@ class SettingsControlRuntimeMixin:
             if normalized.scope == "tts":
                 tts_settings = result.settings.get("tts", {})
                 ack_payload.update({
+                    "provider": tts_settings.get("provider", "elevenlabs"),
                     "language": tts_settings.get("language", "ja"),
                     "voice": tts_settings.get("voice", "Aoede"),
-                    "quality": tts_settings.get("quality", "high"),
+                    "elevenlabs_voice_id": tts_settings.get("elevenlabs_voice_id", ""),
+                    "elevenlabs_model": tts_settings.get("elevenlabs_model", "eleven_v3"),
+                    "quality": tts_settings.get("quality", "balanced"),
                     "volume": tts_settings.get("volume", 1.0),
-                    "speed": tts_settings.get("speed", 1.0),
+                    "speed": tts_settings.get("speed", 1.04),
                 })
 
             self.logger.info(

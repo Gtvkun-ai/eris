@@ -1,0 +1,37 @@
+{
+  "schema": "eris.autonomous_initiative_manifest.v17",
+  "runtime_version": "ai_orchestrated.v17.deterministic_initiative",
+  "architecture": [
+    "background_cognition",
+    "typed_cognitive_blackboard",
+    "deterministic_initiative_controller",
+    "surface_worker_wording_only",
+    "autonomous_grounding_validator",
+    "public_commit_tts_live2d"
+  ],
+  "actions": ["no_op", "body_only", "speech"],
+  "surface": {
+    "role": "surface",
+    "timeout_env": "ERIS_SURFACE_REALIZER_TIMEOUT_SEC",
+    "default_timeout_seconds": 4,
+    "drop_if_busy_env": "ERIS_DS_SURFACE_DROP_IF_BUSY",
+    "drop_if_busy_default": true,
+    "jsonl_repair_attempts_default": 0,
+    "local_fallback_default": true
+  },
+  "contracts": [
+    "eris.cognitive_blackboard.v1",
+    "eris.initiative_decision.v1",
+    "eris.speech_intent.v1"
+  ],
+  "documentation": [
+    "AUTONOMOUS_INITIATIVE_V17_VI.md",
+    "HUONG_DAN_DEEPSEEK_SURFACE_VI.md"
+  ],
+  "verification": {
+    "focused_tests_passed": 124,
+    "repository_tests_passed": 525,
+    "preexisting_failures": 8,
+    "collection_error_preexisting": "tests/test_release_archive_hardening_v34.py requires missing tools.package_source"
+  }
+}

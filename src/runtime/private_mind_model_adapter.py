@@ -146,10 +146,20 @@ class PrivateMindModelResult:
 class RuntimePrivateMindModelAdapter:
     """Adapter chung cho 4 mini-evaluator và GemmaInnerSynthesizer."""
 
-    def __init__(self, *, config: PrivateMindModelAdapterConfig | None = None, llm_service: Any = None, logger: Any = None) -> None:
+    def __init__(
+        self,
+        *,
+        config: PrivateMindModelAdapterConfig | None = None,
+        llm_service: Any = None,
+        logger: Any = None,
+        client_attr: str = "inner_client",
+        strict_client_attr: bool = False,
+    ) -> None:
         self.config = config or PrivateMindModelAdapterConfig()
         self.llm_service = llm_service
         self.logger = logger
+        self.client_attr = str(client_attr or "inner_client").strip() or "inner_client"
+        self.strict_client_attr = bool(strict_client_attr)
         self._provider_client: Any | None = None
         self._calls = 0
         self._ok_calls = 0
@@ -447,10 +457,10 @@ class RuntimePrivateMindModelAdapter:
             )
 
         if self.llm_service is not None:
-            inner_client = getattr(self.llm_service, "inner_client", None)
-            if callable(getattr(inner_client, "create_chat_completion", None)):
+            selected_client = getattr(self.llm_service, self.client_attr, None)
+            if callable(getattr(selected_client, "create_chat_completion", None)):
                 try:
-                    raw = inner_client.create_chat_completion(
+                    raw = selected_client.create_chat_completion(
                         messages=messages,
                         temperature=temperature,
                         frequency_penalty=0.0,
@@ -466,6 +476,12 @@ class RuntimePrivateMindModelAdapter:
                         error=f"{type(exc).__name__}:{exc}",
                         error_kind=_classify_transport_exception(exc),
                     )
+            if self.strict_client_attr:
+                return PrivateMindModelResult(
+                    ok=False,
+                    error=f"missing_dedicated_client:{self.client_attr}",
+                    error_kind="fixed_config",
+                )
             for method_name in ("chat_text", "chat", "create_chat_completion"):
                 method = getattr(self.llm_service, method_name, None)
                 if callable(method):
@@ -596,8 +612,8 @@ class RuntimePrivateMindModelAdapter:
     def write_inner_diary(self, facts: Mapping[str, Any]) -> Mapping[str, Any] | None:
         """Viết lại các dữ kiện nội tâm thành nhật ký giọng Eris (ngôi thứ nhất).
 
-        Trả dict 5 trường tiếng Việt: hien_tai, tuong_lai, ban_tam, phan_tich, muon_noi.
-        Lá»—i/cooldown → None để renderer fallback về text thô.
+        Trả dict tiếng Việt cho Inner Diary; memory_echo chỉ được viết từ memory_hits đã cấp.
+        Lỗi/cooldown → None để renderer fallback về text thô.
         """
         messages = self._diary_messages(facts)
         result = self._tracked_chat_json(
@@ -634,7 +650,8 @@ class RuntimePrivateMindModelAdapter:
                     "tuong_lai (tôi đang nghiêng về điều gì sắp tới), "
                     "ban_tam (điều đang khiến tôi bận lòng), "
                     "phan_tich (điều tôi vừa nhận ra hoặc tự đánh giá), "
-                    "muon_noi (điều tôi muốn ngỏ với bạn, hoặc để trống)."
+                    "muon_noi (điều tôi muốn ngỏ với bạn, hoặc để trống), "
+                    "memory_echo (một ký ức đang vọng lại, CHỈ dùng memory_echoes trong input; không có thì để trống)."
                 ),
             },
             {"role": "user", "content": user_content},
@@ -650,8 +667,9 @@ class RuntimePrivateMindModelAdapter:
                 "ban_tam": str_field,
                 "phan_tich": str_field,
                 "muon_noi": str_field,
+                "memory_echo": str_field,
             },
-            "propertyOrdering": ["hien_tai", "tuong_lai", "ban_tam", "phan_tich", "muon_noi"],
+            "propertyOrdering": ["hien_tai", "tuong_lai", "ban_tam", "phan_tich", "muon_noi", "memory_echo"],
             "required": ["hien_tai"],
         }
 
@@ -1226,10 +1244,10 @@ class RuntimePrivateMindModelAdapter:
         # Nếu llm_service có method chat JSON riêng thì dùng. Repo này chưa chuẩn hóa
         # hết service boundary, nên adapter phải bớt ngây thơ một chút.
         if self.llm_service is not None:
-            inner_client = getattr(self.llm_service, "inner_client", None)
-            if callable(getattr(inner_client, "create_chat_completion", None)):
+            selected_client = getattr(self.llm_service, self.client_attr, None)
+            if callable(getattr(selected_client, "create_chat_completion", None)):
                 try:
-                    raw = inner_client.create_chat_completion(
+                    raw = selected_client.create_chat_completion(
                         messages=messages,
                         temperature=temperature,
                         frequency_penalty=0.0,
@@ -1254,6 +1272,12 @@ class RuntimePrivateMindModelAdapter:
                         error=f"{type(exc).__name__}:{exc}",
                         error_kind=_classify_transport_exception(exc),
                     )
+            if self.strict_client_attr:
+                return PrivateMindModelResult(
+                    ok=False,
+                    error=f"missing_dedicated_client:{self.client_attr}",
+                    error_kind="fixed_config",
+                )
             for method_name in ("chat_json", "generate_json", "create_chat_completion"):
                 method = getattr(self.llm_service, method_name, None)
                 if callable(method):
@@ -1658,18 +1682,42 @@ class PrivateMindAdapterPool:
             config=self._config, llm_service=llm_service, logger=logger
         )
 
+        # Inner Diary có một owner DeepSeek rõ ràng, chọn từ các worker role hiện
+        # có qua LlmService.diary_client. Adapter này strict: thiếu worker thì trả
+        # None để renderer dùng dữ kiện thô, không mượn companion/critic/style.
+        diary_client = getattr(llm_service, "diary_client", None) if llm_service is not None else None
+        diary_config = self._config
+        if diary_client is not None:
+            diary_config = replace(
+                self._config,
+                enabled=True,
+                provider="deepseek",
+                model=str(getattr(diary_client, "model_name", self._config.model) or self._config.model),
+                base_url=str(getattr(diary_client, "base_url", self._config.base_url) or self._config.base_url),
+                api_key="worker-managed",
+            )
+        self._diary_adapter = RuntimePrivateMindModelAdapter(
+            config=diary_config,
+            llm_service=llm_service,
+            logger=logger,
+            client_attr="diary_client",
+            strict_client_attr=True,
+        )
+
     @classmethod
     def from_env(cls, *, llm_service: Any = None, logger: Any = None) -> "PrivateMindAdapterPool | None":
         apply_secrets_to_environ()
         config = PrivateMindModelAdapterConfig()
         inner_worker = getattr(llm_service, "inner_client", None) if llm_service is not None else None
-        if not config.enabled and inner_worker is not None:
+        diary_worker = getattr(llm_service, "diary_client", None) if llm_service is not None else None
+        bootstrap_worker = inner_worker or diary_worker
+        if not config.enabled and bootstrap_worker is not None:
             config = replace(
                 config,
                 enabled=True,
                 provider="deepseek",
-                model=str(getattr(inner_worker, "model_name", "deepseek-v4-flash") or "deepseek-v4-flash"),
-                base_url=str(getattr(inner_worker, "base_url", "") or ""),
+                model=str(getattr(bootstrap_worker, "model_name", "deepseek-v4-flash") or "deepseek-v4-flash"),
+                base_url=str(getattr(bootstrap_worker, "base_url", "") or ""),
                 api_key="worker-managed",
             )
         if not config.enabled:
@@ -1681,13 +1729,17 @@ class PrivateMindAdapterPool:
             # synthesis. In RÕ cả hai để nhìn log là biết vai trò nào chạy ở đâu,
             # tránh hiểu nhầm "fragment×5" đi cùng provider với synthesis.
             frag_cfg = PrivateMindModelAdapterConfig.fragment_overlay_from_env(config)
+            diary_meta = pool.diary_metadata()
             fn(
-                "[PrivateMind API] ready fragment(%s/%s)×%d + synthesis(%s/%s)×1",
+                "[PrivateMind API] ready fragment(%s/%s)×%d + synthesis(%s/%s)×1 + diary(role=%s model=%s configured=%d)×1",
                 frag_cfg.provider,
                 frag_cfg.model,
                 len(_EVALUATOR_ROLES),
                 config.provider,
                 config.model,
+                diary_meta.get("role", ""),
+                diary_meta.get("model", ""),
+                int(bool(diary_meta.get("configured", False))),
             )
         return pool
 
@@ -1699,8 +1751,22 @@ class PrivateMindAdapterPool:
     def synthesis_adapter(self) -> RuntimePrivateMindModelAdapter:
         return self._synthesis_adapter
 
+    @property
+    def diary_adapter(self) -> RuntimePrivateMindModelAdapter:
+        return self._diary_adapter
+
+    def diary_metadata(self) -> dict[str, Any]:
+        client = getattr(self._llm_service, "diary_client", None) if self._llm_service is not None else None
+        return {
+            "owner": "deepseek_worker",
+            "role": str(getattr(client, "worker_role", "") or ""),
+            "provider": "deepseek" if client is not None else "",
+            "model": str(getattr(client, "model_name", "") or ""),
+            "configured": bool(client is not None),
+        }
+
     # --- Delegate interface giống RuntimePrivateMindModelAdapter ---
-    # để code dùng pool như má»™t adapter bình thường vẫn hoạt động.
+    # để code dùng pool như một adapter bình thường vẫn hoạt động.
 
     def evaluate_fragment(self, evaluator_name: str, dossier: EvidenceDossier) -> Any:
         return self.fragment_adapter(evaluator_name).evaluate_fragment(evaluator_name, dossier)
@@ -1709,7 +1775,12 @@ class PrivateMindAdapterPool:
         return self._synthesis_adapter.synthesize_judgment(dossier, fragments)
 
     def write_inner_diary(self, facts: Mapping[str, Any]) -> Any:
-        return self._synthesis_adapter.write_inner_diary(facts)
+        result = self._diary_adapter.write_inner_diary(facts)
+        if not isinstance(result, Mapping):
+            return result
+        payload = dict(result)
+        payload["_writer"] = self.diary_metadata()
+        return payload
 
     def debug_status(self) -> dict[str, Any]:
         """Aggregate status của tất cả adapter trong pool."""
@@ -1718,12 +1789,17 @@ class PrivateMindAdapterPool:
             for role, adapter in self._fragment_adapters.items()
         }
         synthesis_status = self._synthesis_adapter.debug_status()
+        diary_status = self._diary_adapter.debug_status()
         # Tổng hợp calls/tokens
-        total_calls = synthesis_status.get("calls", 0) + sum(
+        total_calls = synthesis_status.get("calls", 0) + diary_status.get("calls", 0) + sum(
             s.get("calls", 0) for s in fragment_statuses.values()
         )
-        total_tokens = synthesis_status.get("usage", {}).get("total_tokens", 0) + sum(
-            s.get("usage", {}).get("total_tokens", 0) for s in fragment_statuses.values()
+        total_tokens = (
+            synthesis_status.get("usage", {}).get("total_tokens", 0)
+            + diary_status.get("usage", {}).get("total_tokens", 0)
+            + sum(
+                s.get("usage", {}).get("total_tokens", 0) for s in fragment_statuses.values()
+            )
         )
         return {
             "pool": True,
@@ -1741,6 +1817,7 @@ class PrivateMindAdapterPool:
             "synthesis_invalid_json_streak": synthesis_status.get("synthesis_invalid_json_streak", 0),
             "synthesis_json_cooldown_until": synthesis_status.get("synthesis_json_cooldown_until", 0.0),
             "synthesis": synthesis_status,
+            "diary": {**diary_status, **self.diary_metadata()},
             "fragments": fragment_statuses,
             "usage": {
                 "total_tokens": total_tokens,

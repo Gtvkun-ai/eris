@@ -5,7 +5,7 @@ using System.Text.Json;
 
 public partial class UdpListener : Node2D
 {
-	// Adapter UI cho private_mind_digest của Architecture C v5. Panel nhật ký cũ
+	// Adapter UI cho private_mind_digest của Architecture C v7 semantic cutover. Panel nhật ký cũ
 	// vẫn giữ layout dễ đọc, nhưng nội dung không còn bịa từ Ni/Fe legacy.
 	private static bool IsModernIdentityDigest(JsonElement root)
 	{

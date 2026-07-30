@@ -359,6 +359,95 @@ class UserControlRuntimeMixin:
         except Exception as exc:  # pragma: no cover - ack debug không được làm rơi runtime
             self.logger.debug("[debug_command] không gửi được ack: %s", exc)
 
+    def _handle_identity_control(self, msg: dict) -> None:
+        """Typed administration surface for the Identity panel.
+
+        This replaces the old habit of routing normal panel buttons through the
+        free-form debug console.  The Emotion panel may keep its debug terminal,
+        but Identity controls now have a small, explicit protocol and an ACK.
+        """
+        action = str(msg.get("action") or "").strip().lower()
+        request_id = str(msg.get("request_id") or "")[:120]
+        ok = True
+        result = ""
+        data: dict[str, object] = {}
+        try:
+            reducer = getattr(self, "ai_state_reducer", None)
+            if action == "set_learning":
+                if reducer is None:
+                    raise RuntimeError("identity reducer chưa sẵn sàng")
+                from runtime.ai_orchestrated.contracts import StateEvent
+
+                enabled = bool(msg.get("enabled", True))
+                snapshot = reducer.snapshot()
+                event = StateEvent(
+                    kind="admin_control",
+                    turn_seq=snapshot.last_applied_turn_seq,
+                    turn_id=f"identity-control-learning-{int(time.time() * 1000)}",
+                    payload={"action": "set_learning", "enabled": enabled},
+                    base_version=snapshot.version,
+                    source="identity_panel",
+                )
+                reducer.apply_now(event)
+                result = "learning=normal" if enabled else "learning=observe_only"
+                data = {"enabled": enabled}
+            elif action == "snapshot":
+                if reducer is None:
+                    raise RuntimeError("identity reducer chưa sẵn sàng")
+                consolidator = getattr(self, "ai_identity_consolidator", None)
+                if consolidator is None:
+                    raise RuntimeError("identity consolidator chưa sẵn sàng")
+                write_result = consolidator.write(reducer.snapshot(), reason="identity_panel")
+                ok = bool(write_result.get("ok"))
+                result = str(write_result.get("path") or write_result.get("error") or "snapshot failed")
+                data = {"path": str(write_result.get("path") or "")}
+            elif action == "reset_discovery":
+                runtime = getattr(self, "ai_discovery_runtime", None)
+                if runtime is None:
+                    raise RuntimeError("discovery runtime chưa sẵn sàng")
+                runtime.reset()
+                result = "discovery archive đã reset"
+            elif action in {"reset_mood", "reset_relationship"}:
+                if reducer is None:
+                    raise RuntimeError("identity reducer chưa sẵn sàng")
+                from runtime.ai_orchestrated.contracts import StateEvent
+
+                snapshot = reducer.snapshot()
+                event = StateEvent(
+                    kind="admin_control",
+                    turn_seq=snapshot.last_applied_turn_seq,
+                    turn_id=f"identity-control-{action}-{int(time.time() * 1000)}",
+                    payload={"action": action},
+                    base_version=snapshot.version,
+                    source="identity_panel",
+                )
+                reducer.apply_now(event)
+                result = action
+            else:
+                raise ValueError(f"identity_control action không hợp lệ: {action or '(rỗng)'}")
+        except Exception as exc:
+            ok = False
+            result = str(exc)
+            self.logger.warning("[identity_control] action=%s failed: %s", action, exc)
+
+        try:
+            self.transport.send_json(
+                {
+                    "type": "identity_control_ack",
+                    "parse_mode": "identity_control_ack",
+                    "should_speak": False,
+                    "identity_control_ack": {
+                        "request_id": request_id,
+                        "action": action,
+                        "ok": ok,
+                        "result": str(result or "")[:500],
+                        "data": data,
+                    },
+                }
+            )
+        except Exception as exc:  # pragma: no cover - ACK không được làm rơi runtime
+            self.logger.debug("[identity_control] không gửi được ack: %s", exc)
+
     def _handle_anchor_control(self, msg: dict) -> None:
         """Tác_Giả bật/tắt trục tối từ panel Godot (R5.5, R10.4).
 

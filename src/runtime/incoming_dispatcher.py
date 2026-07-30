@@ -104,6 +104,7 @@ class IncomingMessageDispatcher:
             "chat": self._handle_chat,
             "force_speak": self._handle_force_speak,
             "anchor_control": owner._handle_anchor_control,
+            "identity_control": getattr(owner, "_handle_identity_control", lambda _msg: None),
             "depth_control": owner._handle_depth_control,
             "settings_update": owner._handle_settings_update,
             "settings_health": lambda _msg: owner._handle_settings_health(),

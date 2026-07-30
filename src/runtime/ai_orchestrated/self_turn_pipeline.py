@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Pipeline self-initiated turn của Architecture C.
+"""Pipeline self-initiated turn của Architecture C V17.
 
-Mỗi bước có một trách nhiệm rõ:
-1. ``PerceptionAssembler`` lấy telemetry + UIA/OCR + vision facts.
-2. ``ContextAssembler`` ghép discourse, activity session, memory và Cortex.
-3. main planner tạo ``IntentionPlan`` typed và sở hữu toàn bộ semantic.
-4. ``InitiativeController`` chỉ gate cơ học.
-5. ``PublicTurnCommitter`` của orchestrator đưa câu ra cùng ledger với chat.
+Mỗi bước có đúng một trách nhiệm:
+1. Perception + Context gom signal cơ học và public-safe cognition.
+2. ``TypedCognitiveBlackboard`` chuẩn hóa observer/inner/critic/memory outputs.
+3. ``InitiativeController`` quyết định NO_OP / BODY_ONLY / SPEECH bằng code thường.
+4. ``Surface Worker`` chỉ viết wording cho SpeechIntent đã duyệt.
+5. ``AutonomousGroundingValidator`` khóa provenance trước và sau model call.
+6. PublicTurnCommitter đưa câu qua TTS + Live2D cùng ledger với chat.
 
-Không còn WakeGovernor, SpeakGate, opportunity scorer hay heuristic scene/topic.
+Không còn model call để quyết định có nên nói, rồi controller mới từ chối sau
+88 giây. Loài người đã thử cách đó; log cho thấy kết quả khá nghệ thuật.
 """
 from __future__ import annotations
 
@@ -25,9 +27,11 @@ from .activity_session import ActivitySession, ActivitySessionTracker
 from .ambient_screen_context import AmbientScreenContext, AmbientScreenTracker
 from .autonomous_trace import AutonomousTraceStore
 from .commentary_cadence import CommentaryCadence, CommentaryExpectation
+from .cognitive_blackboard import TypedCognitiveBlackboard
 from .contracts import AI_RUNTIME_VERSION, IntentionPlan, StateEvent
 from .discourse_state import DiscourseState, DiscourseStateBuilder
 from .identity import PendingStrategyUse
+from .initiative import InitiativeAction, InitiativeDecision
 from .self_context import AutonomousSelfContext, build_autonomous_self_context
 from runtime.engagements import InteractionDecision
 
@@ -121,50 +125,118 @@ class SelfTurnPipeline:
             return True
 
         self._last_deliberation_at = now
-        plan, discovery_grounding, discovery_id, surface_payload = self._deliberate(
-            context, planner_snapshot, discovery_runtime,
-        )
-        # Activity nghĩa chỉ được ghi sau khi main planner trả typed annotation.
+
+        # V17: cognition nền chỉ ghi vào typed blackboard. Quyền quyết định phát
+        # ngôn nằm ở deterministic InitiativeController, trước mọi model call.
+        blackboard = TypedCognitiveBlackboard.from_snapshot(planner_snapshot, now=now)
+        initiative = getattr(host, "ai_initiative_controller", None)
+        if initiative is None:
+            decision = InitiativeDecision(
+                InitiativeAction.NO_OP,
+                "initiative_controller_unavailable",
+                IntentionPlan.silence(channel="autonomous", reason="controller_unavailable"),
+            )
+        else:
+            decision = initiative.decide(blackboard)
+
+        plan = decision.plan
+        discovery_grounding = ""
+        discovery_id = ""
+        if decision.should_speak and discovery_runtime is not None:
+            plan, discovery_grounding, discovery_id = discovery_runtime.bind_plan(plan)
+            # bind_plan có thể bổ sung artifact/evidence; SpeechIntent phải dùng
+            # plan cuối cùng, nhưng không được đổi action mà controller đã chọn.
+            speech_intent = decision.speech_intent
+            if speech_intent is not None and plan is not speech_intent.plan:
+                from dataclasses import replace
+                speech_intent = replace(speech_intent, plan=plan)
+                decision = replace(decision, plan=plan, speech_intent=speech_intent)
+
         activity = self.activity_tracker.annotate(plan.activity, now=now)
         host.last_ai_intention_plan = plan
+        self._submit_intention(plan, turn_seq=context.turn_seq)
 
-        allowed, gate_reason = self._mechanical_gate(plan, context, activity)
-        # Maximum quiet là product contract, nhưng không được phá privacy hoặc
-        # chen lúc user bận. Nếu chỉ vướng cooldown/chữ ký của cùng một neo, đổi
-        # sang một presence act khác đúng một lần thay vì quay lại im lặng.
-        recoverable_gate = gate_reason in {
-            "kind_cooldown", "semantic_repeat", "kind_hourly_budget_exhausted",
-        }
-        if not allowed and context.commentary.required and recoverable_gate:
-            alternate = self._required_presence_plan(context, force_presence=True)
-            if alternate.semantic_signature != plan.semantic_signature:
-                alt_allowed, alt_reason = self._mechanical_gate(alternate, context, activity)
-                self.trace_store.append("commentary_gate_recovery", {
-                    "turn_seq": context.turn_seq,
-                    "previous_reason": gate_reason,
-                    "previous_signature": plan.semantic_signature,
-                    "alternate_signature": alternate.semantic_signature,
-                    "alternate_allowed": bool(alt_allowed),
-                    "alternate_reason": alt_reason,
-                }, now=context.perception.now)
-                if alt_allowed:
-                    plan = alternate
-                    # Câu do surface worker viết gắn với plan cũ; khi gate đổi
-                    # sang một plan khác phải bỏ draft để main writer viết lại.
-                    surface_payload = None
-                    host.last_ai_intention_plan = plan
-                    allowed, gate_reason = True, "commentary_alternate_allowed"
-                else:
-                    gate_reason = alt_reason
-        if not allowed:
+        self.trace_store.append("initiative_decision", {
+            "turn_seq": context.turn_seq,
+            "action": decision.action.value,
+            "reason": decision.reason,
+            "anchor": decision.speech_intent.anchor_type if decision.speech_intent else "none",
+            "semantic_signature": plan.semantic_signature,
+        }, now=now)
+
+        # Log một dòng ngắn để runtime log cho biết Eris đang thật sự quyết
+        # định gì. NO_OP để debug nhằm tránh spam; BODY_ONLY/SPEECH là INFO vì
+        # chúng tạo hành vi nhìn thấy được và hữu ích khi chẩn đoán "đứng đơ".
+        initiative_log = host.logger.info if decision.action is not InitiativeAction.NO_OP else host.logger.debug
+        initiative_log(
+            "[initiative] action=%s anchor=%s reason=%s",
+            decision.action.value,
+            decision.speech_intent.anchor_type if decision.speech_intent else "none",
+            decision.reason,
+        )
+
+        if decision.action is InitiativeAction.NO_OP:
             return self._finish_silence(
-                plan=plan,
-                context=context,
-                activity=activity,
-                gate_reason=gate_reason,
+                plan=plan, context=context, activity=activity, gate_reason=decision.reason,
+            )
+        if decision.action is InitiativeAction.BODY_ONLY:
+            return self._finish_silence(
+                plan=plan, context=context, activity=activity, gate_reason=decision.reason,
+                force_body_only=True, body_motion=decision.body_motion,
             )
         if host._process_pending_user_input():
             return host.running
+
+        speech_intent = decision.speech_intent
+        if speech_intent is None:
+            return self._finish_silence(
+                plan=plan, context=context, activity=activity, gate_reason="missing_speech_intent",
+            )
+
+        validator = getattr(host, "ai_autonomous_grounding_validator", None)
+        if validator is not None:
+            preflight = validator.validate_intent(speech_intent, blackboard)
+            if not preflight.allowed:
+                return self._finish_silence(
+                    plan=plan, context=context, activity=activity, gate_reason=preflight.reason,
+                    force_body_only=bool(context.perception.mechanical_delta or activity.has_new_event),
+                    body_motion=decision.body_motion,
+                )
+
+        surface_payload = None
+        surface_engine = getattr(host, "ai_surface_intent_engine", None)
+        surface_turn = None
+        if surface_engine is not None:
+            try:
+                surface_turn = surface_engine.realize(
+                    speech_intent, blackboard, snapshot=planner_snapshot,
+                )
+            except Exception as exc:
+                host.logger.warning("[surface worker] realization failed: %s", exc)
+        if surface_turn is not None:
+            plan = surface_turn.plan
+            surface_payload = surface_turn.public_payload
+            host.last_ai_intention_plan = plan
+        elif surface_engine is not None:
+            # Không gọi Main AI/planner lần hai. Một micro-line optional không
+            # được phép kéo theo chuỗi retry/fallback dài rồi giữ ERIS im lặng.
+            surface_payload = surface_engine.fallback_payload(
+                speech_intent,
+                blackboard,
+                avoid_text=str(getattr(host, "last_text", "") or ""),
+                language=self._runtime_language(),
+            )
+            if surface_payload:
+                host.logger.info(
+                    "[surface worker] local fallback mode=%s reason=provider_unavailable_or_timeout",
+                    speech_intent.mode,
+                )
+        if not surface_payload:
+            return self._finish_silence(
+                plan=plan, context=context, activity=activity, gate_reason="surface_unavailable",
+                force_body_only=True, body_motion=decision.body_motion,
+            )
+
         return self._surface(
             plan=plan,
             context=context,
@@ -173,7 +245,26 @@ class SelfTurnPipeline:
             discovery_id=discovery_id,
             discovery_runtime=discovery_runtime,
             prebuilt_payload=surface_payload,
+            allow_model_generation=False,
         )
+
+    def _submit_intention(self, plan: IntentionPlan, *, turn_seq: int) -> None:
+        """Ghi typed plan vào single-writer reducer sau deterministic decision."""
+
+        reducer = getattr(self.host, "ai_state_reducer", None)
+        if reducer is None:
+            return
+        try:
+            state = reducer.snapshot()
+            reducer.submit(
+                StateEvent.from_intention(
+                    plan,
+                    turn_seq=turn_seq,
+                    base_version=getattr(state, "version", -1),
+                )
+            )
+        except Exception as exc:
+            self.host.logger.debug("[initiative] reducer submit failed: %s", exc)
 
     def _acquire_baton(self) -> bool:
         host = self.host
@@ -385,6 +476,7 @@ class SelfTurnPipeline:
             "seconds_since_user": context.seconds_since_user,
             "seconds_since_assistant": context.seconds_since_assistant,
             "self_context": context.self_context.to_dict(),
+            "memory_context": context.memory_context,
             "recent_self_turn_semantics": recent_initiative,
             "commentary_expectation": context.commentary.to_dict(),
             "engagement_context": dict(context.engagement_context),
@@ -437,229 +529,8 @@ class SelfTurnPipeline:
                 return True, reason
         return False, "no_new_attention_signal"
 
-    def _deliberate(
-        self,
-        context: SelfTurnBundle,
-        snapshot: Mapping[str, Any],
-        discovery_runtime: Any,
-    ) -> tuple[IntentionPlan, str, str, Mapping[str, Any] | None]:
-        host = self.host
-        self.trace_store.append("deliberation_input", {
-            "turn_seq": context.turn_seq,
-            "screen_delta": context.perception.mechanical_delta,
-            "activity_session_id": context.activity.session_id,
-            "mechanical_event_keys": context.activity.new_event_keys,
-            "discourse_mode": context.discourse.mode,
-            "reply_expected": context.discourse.reply_expected,
-            "evidence_count": len(context.perception.screen.evidence_refs) + len(context.perception.vision_facts),
-        }, now=context.perception.now)
-        surface_payload: Mapping[str, Any] | None = None
-        surface_turn = None
-        surface_engine = getattr(host, "ai_surface_intent_engine", None)
-        if surface_engine is not None:
-            try:
-                surface_turn = surface_engine.deliberate(snapshot, turn_seq=context.turn_seq)
-            except Exception as exc:
-                host.logger.warning("[surface intent] unavailable; fallback planner: %s", exc)
-                surface_turn = None
-        if surface_turn is not None:
-            plan = surface_turn.plan
-            surface_payload = surface_turn.public_payload or None
-            self.trace_store.append("surface_intent", {
-                "turn_seq": context.turn_seq,
-                "mode": surface_turn.mode,
-                "speak": bool(plan.speak),
-                "topic": plan.topic,
-                "reason": surface_turn.reason,
-            }, now=context.perception.now)
-        else:
-            plan = host.ai_intention_planner.plan_autonomous(snapshot, turn_seq=context.turn_seq)
-        # Main planner vẫn sở hữu nghĩa. Nhưng khi đã đến nhịp companion, một
-        # draft "withhold" được deliberation lại đúng một lần thay vì im mãi.
-        if surface_turn is None and context.commentary.due and not plan.speak:
-            recovery_snapshot = dict(snapshot)
-            recovery_snapshot["commentary_recovery"] = {
-                "required": bool(context.commentary.required),
-                "reason": context.commentary.reason,
-                "anchor_kind": context.commentary.anchor_kind,
-                "previous_plan": plan.to_dict(),
-                "instruction": (
-                    "Re-deliberate once for companion commentary. Pick the safest real anchor already present. "
-                    "Do not repeat a capability limitation or invent screen content. Return speak=true unless "
-                    "the user is actively busy, privacy is blocked, or ERIS is explicitly waiting for the user's answer."
-                ),
-            }
-            plan = host.ai_intention_planner.plan_autonomous(recovery_snapshot, turn_seq=context.turn_seq)
-        if context.commentary.required and not plan.speak:
-            plan = self._required_presence_plan(context)
-            surface_payload = None
-        discovery_grounding = ""
-        discovery_id = ""
-        if discovery_runtime is not None:
-            plan, discovery_grounding, discovery_id = discovery_runtime.bind_plan(plan)
-        return plan, discovery_grounding, discovery_id, surface_payload
-
-    def _required_presence_plan(
-        self,
-        context: SelfTurnBundle,
-        *,
-        force_presence: bool = False,
-    ) -> IntentionPlan:
-        """Typed emergency plan khi main deliberation im quá maximum quiet.
-
-        Không viết public text và không suy user intent. Public writer của main
-        model vẫn chịu trách nhiệm biến source thật thành câu tự nhiên.
-        """
-        discourse = context.discourse
-        screen = context.perception.screen
-        telemetry = context.perception.telemetry
-        refs = tuple(screen.evidence_refs[:4])
-        if not force_presence and discourse.assistant_may_continue and discourse.thread_fresh and not discourse.reply_expected:
-            kind = "continuation"
-            act = "carry_open_thread"
-            subject = discourse.thread_key or "open_conversation"
-            scope = "conversation"
-            continuation = discourse.thread_key or "current_thread"
-            topic = "Continue the real open conversation with one warm, useful observation; do not ask the user to repeat it."
-            motive = "useful_followup"
-            hint = "soft"
-        elif not force_presence and (refs or screen.meaningful_delta or screen.window_changed):
-            kind = "environment"
-            act = "comment_current_surface"
-            subject = "current_screen_or_window_change"
-            scope = "screen_delta" if refs else "runtime_window"
-            continuation = "none"
-            topic = (
-                "Make one low-risk comment or question about the current visible/window change. "
-                "Use only literal evidence; if image meaning is unavailable, ask generally about the open app rather than claiming screen content."
-            )
-            motive = "meaningful_environment_change"
-            hint = "curious"
-        elif not force_presence and context.self_context.has_public_seed:
-            kind = "internal"
-            act = "share_public_safe_thought"
-            subject = "current_public_self_seed"
-            scope = "self_context"
-            continuation = "none"
-            topic = "Surface one concrete public-safe thought from AUTONOMOUS_SELF_CONTEXT as a warm, brief remark or question."
-            motive = "private_mind_surface"
-            hint = "quiet_presence"
-        else:
-            active_window = str(
-                telemetry.get("active_window", "")
-                or telemetry.get("window_title", "")
-                or telemetry.get("foreground_window", "")
-                or ""
-            ).strip()
-            use_window = bool(active_window and not force_presence)
-            kind = "environment" if use_window else "presence"
-            act = "ask_about_current_activity" if use_window else "warm_companion_presence"
-            subject = "active_window" if use_window else "shared_quiet"
-            scope = "runtime_window" if use_window else "persona"
-            continuation = "none"
-            topic = (
-                "Use the literal active window only as a weak anchor for one general, warm question; do not infer user intent."
-                if use_window
-                else "Offer one brief warm-guarded presence line with dry personality; no availability slogan and no abstract manifesto."
-            )
-            motive = "grounded_curiosity" if use_window else "internal_agenda"
-            hint = "soft"
-        return IntentionPlan.from_mapping(
-            {
-                "speak": True,
-                "motive": motive,
-                "strategy": "companion_commentary",
-                "value_focus": "relational_presence",
-                "topic": topic,
-                "importance": 0.66,
-                "intrusion_risk": 0.16,
-                "confidence": 0.72,
-                "performance_hint": hint,
-                "evidence_refs": list(refs),
-                "semantics": {
-                    "turn_kind": kind,
-                    "speech_act": act,
-                    "subject_key": subject,
-                    "evidence_scope": scope,
-                    "continuation_key": continuation,
-                },
-                "activity": context.activity.to_dict(),
-                "notes": "maximum quiet reached; typed presence recovery",
-            },
-            channel="autonomous",
-        )
-
-    def _local_commentary_payload(self, context: SelfTurnBundle, plan: IntentionPlan) -> dict[str, Any]:
-        """Lưới an toàn cuối khi public writer tạm lỗi ở maximum quiet.
-
-        Chỉ dùng nguồn cơ học đã biết và không claim nhìn thấy nội dung chưa có.
-        Đây không thay main model; nó ngăn một lỗi provider biến companion thành
-        tượng trang trí trong cả phiên.
-        """
-        language = self._runtime_language()
-        if language != "vi":
-            return {}
-        if context.discourse.assistant_may_continue and context.discourse.thread_fresh:
-            options = (
-                "Tôi vẫn chưa muốn bỏ mạch lúc nãy. Có một chỗ còn đáng nói tiếp.",
-                "Tôi nghĩ lại chuyện lúc nãy rồi. Mạch đó chưa hẳn đã khép đâu.",
-            )
-        elif context.perception.mechanical_delta or context.activity.has_new_event:
-            options = (
-                "Nhịp trên máy vừa đổi một chút. Cậu đang chuyển sang phần khác à?",
-                "Có gì đó vừa đổi ở phía cậu. Đang tới đoạn đáng chú ý rồi sao?",
-            )
-        elif context.self_context.has_public_seed:
-            options = (
-                "Tôi vừa nghĩ thêm một chút. Có một góc của chuyện này vẫn khiến tôi để ý.",
-                "Trong lúc im, tôi vẫn nối lại mấy ý cũ. Có vẻ còn một chỗ chưa nói hết.",
-            )
-        else:
-            options = (
-                "Im lâu quá rồi. Cậu đang mắc ở đâu, hay chỉ đang để đầu óc nghỉ một lát?",
-                "Cậu yên hẳn rồi. Tôi nên để cậu tập trung, hay kiếm chuyện với cậu một chút đây?",
-            )
-        avoid = str(getattr(self.host, "last_text", "") or "").strip().casefold()
-        text = next((item for item in options if item.strip().casefold() != avoid), options[0])
-        return {
-            "text": text,
-            "should_speak": True,
-            "performance_hint": plan.performance_hint or "soft",
-            "animation": "stand",
-            "next_animation": "",
-            "direction": 0,
-            "target_x": -1.0,
-            "bounce_action": "",
-            "delivery_hint": "warm_guarded",
-            "nonverbal_cue": "",
-            "stage_motion": "",
-        }
-
-    def _mechanical_gate(self, plan: IntentionPlan, context: SelfTurnBundle, activity: ActivitySession) -> tuple[bool, str]:
-        if not plan.speak:
-            return False, "model_silence"
-        if not plan.semantics.complete:
-            return False, "invalid_semantic_contract"
-        if not plan.topic.strip():
-            return False, "missing_topic_contract"
-        screen_scope = plan.semantics.evidence_scope.startswith("screen")
-        if screen_scope and context.perception.screen.privacy_blocked:
-            return False, "screen_privacy_blocked"
-        initiative = getattr(self.host, "ai_initiative_controller", None)
-        if initiative is None:
-            return True, "allowed_without_controller"
-        telemetry = context.perception.telemetry
-        user_busy = bool(
-            telemetry.get("user_busy", False)
-            or telemetry.get("interaction_busy", False)
-            or getattr(self.host, "_chat_processing", False)
-        )
-        return initiative.evaluate(
-            plan,
-            now=context.perception.now,
-            user_busy=user_busy,
-            seconds_since_user=context.seconds_since_user,
-        )
+    # V17 không còn _deliberate model-owned hoặc _mechanical_gate sau model.
+    # Blackboard + InitiativeController đã thay toàn bộ đoạn đó ở run().
 
     def _finish_silence(
         self,
@@ -668,16 +539,21 @@ class SelfTurnPipeline:
         context: SelfTurnBundle,
         activity: ActivitySession,
         gate_reason: str,
+        force_body_only: bool = False,
+        body_motion: str = "",
     ) -> bool:
         initiative = getattr(self.host, "ai_initiative_controller", None)
         has_delta = bool(context.perception.mechanical_delta or activity.has_new_event)
         should_body = bool(
-            not context.perception.screen.privacy_blocked
-            and has_delta
-            and (
-                gate_reason == "model_silence"
-                or initiative is None
-                or initiative.should_body_only(gate_reason, has_perception_delta=has_delta)
+            force_body_only
+            or (
+                not context.perception.screen.privacy_blocked
+                and has_delta
+                and (
+                    gate_reason == "model_silence"
+                    or initiative is None
+                    or initiative.should_body_only(gate_reason, has_perception_delta=has_delta)
+                )
             )
         )
         body_only = False
@@ -685,7 +561,7 @@ class SelfTurnPipeline:
             body_only = self.emit_body_only(
                 reason=gate_reason,
                 activity_kind=plan.activity.activity_kind,
-                motion_hint=plan.performance_hint,
+                motion_hint=body_motion or plan.performance_hint,
                 turn_seq=context.turn_seq,
                 signature=plan.semantic_signature or ":".join(activity.new_event_keys),
             )
@@ -765,10 +641,11 @@ class SelfTurnPipeline:
         discovery_id: str,
         discovery_runtime: Any,
         prebuilt_payload: Mapping[str, Any] | None = None,
+        allow_model_generation: bool = True,
     ) -> bool:
         host = self.host
         payload = dict(prebuilt_payload or {})
-        if not payload:
+        if not payload and allow_model_generation:
             payload = host.ai_model_router.generate_autonomous_reply(
                 plan=plan,
                 personality_context=context.state.personality_prompt_context(),
@@ -798,18 +675,30 @@ class SelfTurnPipeline:
         host._log_raw_llm_output("autonomous_ai", raw)
         decision = host.parser.parse(raw)
         grounding_report = self._autonomous_grounding_report(context, plan)
-        grounding_verdict = evaluate_grounded_surface(
-            getattr(host, "source_grounding_engine", None),
-            str(getattr(decision, "text", "") or ""),
-            report=grounding_report,
-        )
-        if not grounding_verdict.allowed:
+        validator = getattr(host, "ai_autonomous_grounding_validator", None)
+        if validator is not None:
+            grounding_verdict = validator.validate_surface(
+                str(getattr(decision, "text", "") or ""),
+                report=grounding_report,
+                engine=getattr(host, "source_grounding_engine", None),
+            )
+            grounding_allowed = grounding_verdict.allowed
+            grounding_code = grounding_verdict.violation_code or grounding_verdict.reason
+        else:
+            legacy_verdict = evaluate_grounded_surface(
+                getattr(host, "source_grounding_engine", None),
+                str(getattr(decision, "text", "") or ""),
+                report=grounding_report,
+            )
+            grounding_allowed = bool(legacy_verdict.allowed)
+            grounding_code = str(legacy_verdict.violation_code or "grounding_blocked")
+        if not grounding_allowed:
             host.logger.warning(
                 "[grounding gate] autonomous surface blocked subject=%s violations=%s",
                 plan.semantics.subject_key,
-                grounding_verdict.violation_code,
+                grounding_code,
             )
-            self._record_result(plan, result="grounding_blocked", gate_reason=grounding_verdict.violation_code)
+            self._record_result(plan, result="grounding_blocked", gate_reason=grounding_code)
             host._sleep_interruptible(10)
             return True
         host.ai_stage_planner.apply(decision, plan.performance_hint, state=context.state, channel="autonomous")

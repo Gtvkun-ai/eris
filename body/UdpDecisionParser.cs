@@ -49,8 +49,16 @@ public sealed class EmotionDebug
 	public static bool TryFromJson(JsonElement root, out EmotionDebug debug)
 	{
 		debug = null;
-		if (!root.TryGetProperty("emotion_debug", out var emotionRoot) || emotionRoot.ValueKind != JsonValueKind.Object)
+		JsonElement emotionRoot;
+		if (!root.TryGetProperty("emotion_debug", out emotionRoot) || emotionRoot.ValueKind != JsonValueKind.Object)
+		{
+			// Architecture C mới coi identity_runtime là contract panel chính.
+			// Chuyển summary/appraisal sang EmotionDebug để UI cũ vẫn render được
+			// mà không bắt backend phải gửi compatibility block mãi mãi.
+			if (TryFromIdentityRuntime(root, out debug))
+				return true;
 			return false;
+		}
 
 		string summaryLabel = "";
 		string summaryValue = "";
@@ -116,6 +124,15 @@ public sealed class EmotionDebug
 			}
 		}
 
+		if (items.Count == 0
+			&& string.IsNullOrWhiteSpace(summaryLabel)
+			&& string.IsNullOrWhiteSpace(summaryValue)
+			&& TryFromIdentityRuntime(root, out EmotionDebug identityDebug))
+		{
+			debug = identityDebug;
+			return true;
+		}
+
 		debug = new EmotionDebug
 		{
 			SummaryLabel = summaryLabel,
@@ -123,6 +140,71 @@ public sealed class EmotionDebug
 			SummaryState = summaryState,
 			SummaryValence = summaryValence,
 			HasSummaryValence = hasSummaryValence,
+			Items = items,
+		};
+		return true;
+	}
+
+	private static bool TryFromIdentityRuntime(JsonElement root, out EmotionDebug debug)
+	{
+		debug = null;
+		if (!root.TryGetProperty("identity_runtime", out JsonElement identity) || identity.ValueKind != JsonValueKind.Object)
+			return false;
+		JsonElement summary = identity.TryGetProperty("summary", out JsonElement summaryNode) && summaryNode.ValueKind == JsonValueKind.Object
+			? summaryNode : default;
+		JsonElement appraisal = identity.TryGetProperty("appraisal", out JsonElement appraisalNode) && appraisalNode.ValueKind == JsonValueKind.Object
+			? appraisalNode : default;
+
+		var items = new List<EmotionDebugItem>();
+		if (appraisal.ValueKind == JsonValueKind.Object)
+		{
+			foreach (JsonProperty property in appraisal.EnumerateObject())
+			{
+				if (property.Value.ValueKind != JsonValueKind.Number || !property.Value.TryGetSingle(out float number))
+					continue;
+				number = Math.Clamp(number, 0f, 1f);
+				items.Add(new EmotionDebugItem
+				{
+					Key = property.Name,
+					Label = property.Name.Replace('_', ' '),
+					Group = "appraisal",
+					ValueText = number.ToString("0.00"),
+					NumericValue = number,
+					HasNumericValue = true,
+				});
+			}
+		}
+
+		float valence = 0f;
+		bool hasValence = summary.ValueKind == JsonValueKind.Object
+			&& summary.TryGetProperty("valence", out JsonElement valenceNode)
+			&& valenceNode.ValueKind == JsonValueKind.Number
+			&& valenceNode.TryGetSingle(out valence);
+		string mood = summary.ValueKind == JsonValueKind.Object ? ReadString(summary, "mood") : "";
+		if (summary.ValueKind == JsonValueKind.Object
+			&& summary.TryGetProperty("arousal", out JsonElement arousalNode)
+			&& arousalNode.ValueKind == JsonValueKind.Number
+			&& arousalNode.TryGetSingle(out float arousal))
+		{
+			arousal = Math.Clamp(arousal, 0f, 1f);
+			items.Insert(0, new EmotionDebugItem
+			{
+				Key = "calm_aroused",
+				Label = "arousal",
+				Group = "appraisal",
+				ValueText = arousal.ToString("0.00"),
+				NumericValue = arousal,
+				HasNumericValue = true,
+			});
+		}
+		string architecture = ReadString(identity, "architecture");
+		debug = new EmotionDebug
+		{
+			SummaryLabel = "identity runtime",
+			SummaryValue = string.IsNullOrWhiteSpace(mood) ? "trung_tinh" : mood,
+			SummaryState = architecture,
+			SummaryValence = hasValence ? Math.Clamp(valence, -1f, 1f) : 0f,
+			HasSummaryValence = hasValence,
 			Items = items,
 		};
 		return true;
@@ -193,7 +275,11 @@ public sealed class UdpDecisionParser
 			string envelopeType = root.TryGetProperty("type", out var typeElement) && typeElement.ValueKind == JsonValueKind.String
 				? typeElement.GetString() ?? ""
 				: "";
-			isControlEnvelope = envelopeType.StartsWith("maintenance_", StringComparison.Ordinal)
+			string protocol = root.TryGetProperty("protocol", out var protocolElement) && protocolElement.ValueKind == JsonValueKind.String
+				? protocolElement.GetString() ?? ""
+				: "";
+			isControlEnvelope = string.Equals(protocol, "eris.stage", StringComparison.OrdinalIgnoreCase)
+				|| envelopeType.StartsWith("maintenance_", StringComparison.Ordinal)
 				|| envelopeType.StartsWith("settings_", StringComparison.Ordinal)
 				|| string.Equals(envelopeType, "panel_state_update", StringComparison.Ordinal)
 				|| envelopeType.EndsWith("_ack", StringComparison.Ordinal);

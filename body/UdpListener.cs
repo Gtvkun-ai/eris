@@ -111,7 +111,7 @@ public partial class UdpListener : Node2D
 	private Texture2D _emotionFillTexture;
 	private Texture2D _emotionTrackTexture;
 
-	// Casual mode UI
+	// Chế độ đọc nhanh cho khí sắc sống
 	private bool _isCasualMode = false;
 	private Label _casualNarrativeLabel;
 	private Control _moodDotCanvas;
@@ -122,7 +122,7 @@ public partial class UdpListener : Node2D
 	internal string _moodStateDesc = "";   // mô tả phụ từ AI, ví dụ "ít căng thẳng"
 	private readonly List<(Control FillClip, Control Fill, Label WordLabel)> _casualBars = new();
 
-	// Dev mode UI
+	// Chế độ runtime chi tiết
 	private Control _devContentRoot;
 	private Label _devHeaderLabel;          // valence / arousal / state
 	private VBoxContainer _devItemList;     // container chứa tất cả raw item rows
@@ -182,14 +182,20 @@ public partial class UdpListener : Node2D
 	private Control _diaryConcernToggle; // nút "+ N mục khác" / "Thu gọn"
 	private Label _diaryMemoryEchoLabel;
 	private Label _diaryMemoryEchoMetaLabel;
+	private Label _privateMindFreshnessLabel;
+	private double _privateMindReceivedAtUnix;
+	private bool _privateMindLoadedFromCache;
 	private const float EmotionBarWidth = 160f;
 	private const float EmotionBarHeight = 26f;
 	private readonly Random _rng = new Random();
 	private EmotionDebug _latestEmotionDebug;
 	private string _latestPrivateMindDebugJson = "";
-	private const string PrivateMindStatePath = "user://inner_diary_state.json";	private Control _bubble;
-	private string _latestDepthV2Json = "";
-	private const string DepthV2StatePath = "user://depth_v2_state.json";
+	private const string PrivateMindStatePath = "user://inner_diary_state.json";
+	private const string LegacyPrivateMindStatePath = "user://inner_state_panel.json";
+	private Control _bubble;
+	private string _latestIdentityRuntimeJson = "";
+	private const string IdentityRuntimeStatePath = "user://identity_runtime_state.json";
+	private const string LegacyDepthV2StatePath = "user://depth_v2_state.json";
 	private string _latestHardeningStatusJson = "";
 	private string _lastPanelPacketId = "";
 	private bool _grabModeArmed = false;
@@ -606,6 +612,7 @@ public partial class UdpListener : Node2D
 		UpdateTutorPanelAutoHide();
 		TickSettingsPanelRuntimeStatus();
 		TickMemoryPanelStatus();
+		TickRuntimePresencePanel();
 
 		while (_udp.GetAvailablePacketCount() > 0)
 		{
@@ -1261,15 +1268,15 @@ public partial class UdpListener : Node2D
 		}
 
 		ConfigureContextMenuButton(_contextChatButton, "Chat", "res://asset/Resource/chat.png");
-		ConfigureContextMenuButton(_contextTouchButton, "Cham / Keo / Nem", "res://asset/Resource/tought.png");
-		ConfigureContextMenuButton(_contextForceSpeakButton, "Noi ngay", "res://asset/Resource/force.png");
-		ConfigureContextMenuButton(_contextEmotionButton, "Cam xuc", "res://asset/Resource/emotion.png");
-		ConfigureContextMenuButton(_contextPrivateMindButton, "Nhật ký nội tâm", "res://asset/Resource/emotion.png");
+		ConfigureContextMenuButton(_contextTouchButton, "Chạm / kéo / thả", "res://asset/Resource/tought.png");
+		ConfigureContextMenuButton(_contextForceSpeakButton, "Nói ngay", "res://asset/Resource/force.png");
+		ConfigureContextMenuButton(_contextEmotionButton, "Khí sắc & hiện diện", "res://asset/Resource/emotion.png");
+		ConfigureContextMenuButton(_contextPrivateMindButton, "Inner Diary", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextDepthButton, "Identity Runtime", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextMemoryButton, "ERIS nhớ gì về bạn", "res://asset/Resource/emotion.png");
-		ConfigureContextMenuButton(_contextSettingsButton, "Cai dat", "res://asset/Resource/emotion.png");
-		ConfigureContextMenuButton(_contextExitButton, "Thoat ERIS", "res://asset/Resource/exit.png");
-		ConfigureContextMenuButton(_contextCloseButton, "Dong", "res://asset/Resource/exit.png");
+		ConfigureContextMenuButton(_contextSettingsButton, "Cài đặt", "res://asset/Resource/emotion.png");
+		ConfigureContextMenuButton(_contextExitButton, "Thoát ERIS", "res://asset/Resource/exit.png");
+		ConfigureContextMenuButton(_contextCloseButton, "Đóng", "res://asset/Resource/exit.png");
 	}
 
 	private void ConfigureContextMenuButton(Button button, string text, string iconPath)
@@ -1387,9 +1394,9 @@ public partial class UdpListener : Node2D
 			ApplyContextHintVisibility();
 		}
 
-	// ── Dev mode content ──────────────────────────────────────────────────────
+	// ── Runtime detail content ─────────────────────────────────────────────────
 
-	// Màu sắc dev mode — monochrome hơn, hồng nhạt tông lạnh
+	// Màu sắc runtime detail — monochrome hơn, hồng nhạt tông lạnh
 	private static readonly Color DevBg        = new(0.98f, 0.96f, 0.975f, 0.96f);
 	private static readonly Color DevBorder     = new(0.90f, 0.76f, 0.84f, 0.80f);
 	private static readonly Color DevGroupFg    = new(0.72f, 0.30f, 0.52f, 1.00f);  // group header
@@ -1482,7 +1489,7 @@ public partial class UdpListener : Node2D
 		root.AddChild(_emotionHintLabel);
 
 		// Placeholder khi chưa có data
-		_devItemList.AddChild(DevPlaceholderLabel("Chưa có dữ liệu emotion_debug."));
+		_devItemList.AddChild(DevPlaceholderLabel("Đang chờ affect_state hoặc identity_runtime."));
 	}
 
 	private Label DevPlaceholderLabel(string text)
@@ -1709,7 +1716,7 @@ public partial class UdpListener : Node2D
 		if (_latestEmotionDebug == null || _latestEmotionDebug.Items == null || _latestEmotionDebug.Items.Count == 0)
 		{
 			_devHeaderLabel.Text = "valence —  |  arousal —  |  state: chưa có";
-			_devItemList.AddChild(DevPlaceholderLabel("Chưa có dữ liệu emotion_debug."));
+			_devItemList.AddChild(DevPlaceholderLabel("Đang chờ affect_state hoặc identity_runtime."));
 			if (_emotionHintLabel != null) _emotionHintLabel.Text = "";
 			return;
 		}
@@ -1720,7 +1727,7 @@ public partial class UdpListener : Node2D
 		float rawValence = debug.HasSummaryValence ? debug.SummaryValence : float.NaN;
 		float rawArousal = 0f;
 		foreach (var it in debug.Items)
-			if (it.Key == "calm_aroused" && it.HasNumericValue) { rawArousal = it.NumericValue; break; }
+			if ((it.Key == "calm_aroused" || it.Key == "arousal") && it.HasNumericValue) { rawArousal = it.NumericValue; break; }
 
 		string valStr   = float.IsNaN(rawValence) ? "—" : $"{rawValence:+0.00;-0.00}";
 		string aroStr   = $"{rawArousal:0.00}";
@@ -1746,12 +1753,12 @@ public partial class UdpListener : Node2D
 			_devItemList.AddChild(BuildDevItemRow(item));
 		}
 
-		// Hint: romcom summary
+		// Dòng tóm tắt affect hiện hành
 		if (_emotionHintLabel != null)
 		{
 			var byKey = new Dictionary<string, EmotionDebugItem>(debug.Items.Count, StringComparer.Ordinal);
 			foreach (var it in debug.Items) byKey[it.Key] = it;
-			_emotionHintLabel.Text = BuildRomcomHint(byKey, debug);
+			_emotionHintLabel.Text = BuildAffectHint(byKey, debug);
 		}
 	}
 
@@ -1838,21 +1845,21 @@ public partial class UdpListener : Node2D
 		return row;
 	}
 
-	// ── Casual mode content ───────────────────────────────────────────────────
+	// ── Readable presence content ──────────────────────────────────────────────
 
-	// Casual mode constants
+	// Readable mode constants
 	private static readonly Color CasualBarFill  = new(0.97f, 0.55f, 0.72f);
 	private static readonly Color CasualBarTrack = new(1.00f, 0.88f, 0.93f);
 	private static readonly Color CasualBarWord  = new(0.80f, 0.18f, 0.45f);
 
 	private static readonly (string Icon, string Name, string Key1, string Key2, string Key3, string[] Levels)[] CasualBarDefs =
 	{
-		("♡", "Gắn bó",    "attachment", "tenderness",  "warmth",
-			new[] { "xa lắm", "hơi xa", "vừa đủ", "gần", "rất gần" }),
-		("~", "Nhịp điệu", "emotional_stability", "", "",
-			new[] { "dao động", "hơi bất ổn", "ổn", "khá vững", "rất vững" }),
-		("✦", "Muốn nói",  "speech_pressure", "social_pressure", "",
-			new[] { "im lặng", "ít muốn nói", "muốn nói", "đang hứng", "rất hứng" }),
+		("♡", "Độ ấm",       "attachment", "tenderness",  "protectiveness",
+			new[] { "lạnh", "kín", "dịu", "ấm", "rất ấm" }),
+		("~", "Ổn định",     "emotional_stability", "", "",
+			new[] { "dao động", "hơi chao", "ổn", "khá vững", "rất vững" }),
+		("✦", "Xung lực nói", "speech_pressure", "social_energy", "thought_pressure",
+			new[] { "im lặng", "thấp", "vừa", "cao", "rất cao" }),
 	};
 
 	private void BuildCasualContent()
@@ -1874,7 +1881,7 @@ public partial class UdpListener : Node2D
 		const float StartY = 108f;
 
 		// ── Narrative ─────────────────────────────────────────────────────────
-		var narrativeHeader = CreateUiLabel("♡  Hôm nay mình...", 13, new Color(0.62f, 0.14f, 0.38f));
+		var narrativeHeader = CreateUiLabel("♡  Hiện diện lúc này", 13, new Color(0.62f, 0.14f, 0.38f));
 		narrativeHeader.Position     = new Vector2(SafeX, StartY);
 		narrativeHeader.Size         = new Vector2(SafeW, 18f);
 		narrativeHeader.AutowrapMode = TextServer.AutowrapMode.Off;
@@ -2131,8 +2138,10 @@ public partial class UdpListener : Node2D
 		var titleLabel = CreateUiLabel("Inner Diary", 30, new Color(0.62f, 0.10f, 0.36f));
 		titleCol.AddChild(titleLabel);
 
-		var subtitleLabel = CreateUiLabel("Chỉ Ngài mới được phép xem.", 13, new Color(0.74f, 0.46f, 0.60f));
+		var subtitleLabel = CreateUiLabel("Nhật ký nội tâm do một DeepSeek worker viết từ state đã rút gọn; không chứa raw chain-of-thought.", 13, new Color(0.74f, 0.46f, 0.60f));
 		titleCol.AddChild(subtitleLabel);
+		_privateMindFreshnessLabel = CreateUiLabel("chưa có snapshot", 11, new Color(0.64f, 0.44f, 0.56f));
+		titleCol.AddChild(_privateMindFreshnessLabel);
 
 		// Khoảng trống đẩy capsule điều khiển về góc phải
 		var headerSpacer = new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
@@ -2488,11 +2497,11 @@ public partial class UdpListener : Node2D
 	{
 		PanelContainer card = CreateDiarySidebarCard(out VBoxContainer content, 0);
 		card.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-		AddDiaryCardHeader(content, "diary_memory", "Memory Echo", new Color(0.72f, 0.52f, 0.88f));
+		AddDiaryCardHeader(content, "diary_memory", "Mạch liên tục", new Color(0.72f, 0.52f, 0.88f));
 
 		_diaryMemoryEchoLabel = new Label
 		{
-			Text = "\u201cchưa có ký ức nào vọng lại.\u201d",
+			Text = "\u201cchưa có open loop nào cần giữ.\u201d",
 			AutowrapMode = TextServer.AutowrapMode.WordSmart,
 			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
 		};
@@ -2889,11 +2898,11 @@ public partial class UdpListener : Node2D
 			CustomMinimumSize = new Vector2(112f, 25f),
 			Size = new Vector2(112f, 25f),
 			MouseDefaultCursorShape = Control.CursorShape.PointingHand,
-			Text = "Dev",
+			Text = "Runtime",
 			Alignment = HorizontalAlignment.Left,
 		};
-		dropdown.AddItem("Dev Mode");
-		dropdown.AddItem("Casual Mode");
+		dropdown.AddItem("Runtime sống");
+		dropdown.AddItem("Dễ đọc");
 		dropdown.Select(0);
 
 		var normalStyle = new StyleBoxFlat
@@ -3094,7 +3103,7 @@ public partial class UdpListener : Node2D
 			return;
 
 		bool wantCasual = index == 1;
-		_modeDropdown.Text = wantCasual ? "Casual" : "Dev";
+		_modeDropdown.Text = wantCasual ? "Dễ đọc" : "Runtime";
 		if (_isCasualMode != wantCasual)
 		{
 			_isCasualMode = wantCasual;
@@ -3767,6 +3776,7 @@ public partial class UdpListener : Node2D
 
 	private void ParseAndApply(string raw)
 	{
+		TryCaptureRuntimePresence(raw);
 		if (TryHandleTtsEvent(raw))
 			return;
 		if (TryHandleTutorEvent(raw))
@@ -3776,7 +3786,7 @@ public partial class UdpListener : Node2D
 		var payload = _decisionParser.Parse(raw);
 		if (payload.HasEmotionDebug)
 		{
-			_latestEmotionDebug = payload.EmotionDebug;
+			_latestEmotionDebug = MergeRuntimePresence(payload.EmotionDebug);
 			if (_emotionPanel != null && _emotionPanel.Visible)
 				RefreshEmotionPanel();
 		}
@@ -3789,14 +3799,19 @@ public partial class UdpListener : Node2D
 			if (PrivateMindDigestHasContent(payload.PrivateMindDebugJson))
 			{
 				_latestPrivateMindDebugJson = payload.PrivateMindDebugJson;
+				_privateMindLoadedFromCache = false;
+				_privateMindReceivedAtUnix = PrivateMindGeneratedAt(payload.PrivateMindDebugJson);
+				if (_privateMindReceivedAtUnix <= 0)
+					_privateMindReceivedAtUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 				SavePrivateMindState();
 				if (_privateMindPanel != null && _privateMindPanel.Visible)
 					RefreshPrivateMindPanel();
 			}
 		}
-		TryCaptureDepthV2Block(raw);
+		TryCaptureIdentityRuntimeBlock(raw);
 		TryCaptureAndAcknowledgePanelState(raw);
 		TryApplyDebugCommandAck(raw);
+		TryApplyIdentityControlAck(raw);
 		TryApplySettingsUpdateAck(raw);
 		if (payload.IsControlEnvelope)
 			return;
@@ -3936,11 +3951,13 @@ public partial class UdpListener : Node2D
 				&& JsonObjectHasContent(privateMind);
 			bool hasEmotion = root.TryGetProperty("emotion_debug", out JsonElement emotion)
 				&& JsonObjectHasContent(emotion);
-			bool hasDepth = root.TryGetProperty("depth_v2", out JsonElement depth)
+			bool hasLegacyDepth = root.TryGetProperty("depth_v2", out JsonElement depth)
 				&& JsonObjectHasContent(depth);
 			bool hasIdentity = root.TryGetProperty("identity_runtime", out JsonElement identityRuntime)
 				&& JsonObjectHasContent(identityRuntime);
-			bool complete = hasPrivateMind && hasEmotion && hasDepth && hasIdentity;
+			// identity_runtime là contract chính; depth_v2 chỉ còn compatibility alias.
+			bool hasDepth = hasIdentity || hasLegacyDepth;
+			bool complete = hasIdentity && (hasEmotion || hasPrivateMind);
 
 			if (root.TryGetProperty("hardening_status", out JsonElement hardening)
 				&& hardening.ValueKind == JsonValueKind.Object)
@@ -4016,7 +4033,7 @@ public partial class UdpListener : Node2D
 
 		if (_latestEmotionDebug == null || _latestEmotionDebug.Items == null || _latestEmotionDebug.Items.Count == 0)
 		{
-			_emotionText.Text = "[i]Chua co frame cam xuc.[/i]";
+			_emotionText.Text = "[i]Đang chờ khí sắc sống.[/i]";
 			return;
 		}
 
@@ -4080,7 +4097,7 @@ public partial class UdpListener : Node2D
 			if (root.ValueKind == JsonValueKind.Object
 				&& root.TryGetProperty("menu", out var m) && m.ValueKind == JsonValueKind.Object)
 				menu = m;
-			return IsModernIdentityDigest(root)
+			return TryReadDiarySections(root).Count > 0
 				|| ExtractCurrentThought(menu, root).Count > 0
 				|| ExtractFutureThought(menu, root).Count > 0
 				|| ExtractConcerns(menu).Count > 0
@@ -4093,6 +4110,93 @@ public partial class UdpListener : Node2D
 		}
 	}
 
+
+	private static double PrivateMindGeneratedAt(string json)
+	{
+		if (string.IsNullOrWhiteSpace(json))
+			return 0.0;
+		try
+		{
+			using JsonDocument doc = JsonDocument.Parse(json);
+			JsonElement root = doc.RootElement;
+			if (root.ValueKind == JsonValueKind.Object
+				&& root.TryGetProperty("generated_at", out JsonElement value)
+				&& value.ValueKind == JsonValueKind.Number
+				&& value.TryGetDouble(out double timestamp))
+				return timestamp;
+		}
+		catch { }
+		return 0.0;
+	}
+
+	private static string PrivateMindWriterSummary(string json)
+	{
+		if (string.IsNullOrWhiteSpace(json))
+			return "";
+		try
+		{
+			using JsonDocument doc = JsonDocument.Parse(json);
+			JsonElement root = doc.RootElement;
+			JsonElement writer = default;
+			if (root.ValueKind == JsonValueKind.Object
+				&& root.TryGetProperty("inner_diary", out JsonElement diary)
+				&& diary.ValueKind == JsonValueKind.Object
+				&& diary.TryGetProperty("writer", out JsonElement diaryWriter)
+				&& diaryWriter.ValueKind == JsonValueKind.Object)
+			{
+				writer = diaryWriter;
+			}
+			else if (root.ValueKind == JsonValueKind.Object
+				&& root.TryGetProperty("inner_diary_contract", out JsonElement contract)
+				&& contract.ValueKind == JsonValueKind.Object
+				&& contract.TryGetProperty("writer", out JsonElement contractWriter)
+				&& contractWriter.ValueKind == JsonValueKind.Object)
+			{
+				writer = contractWriter;
+			}
+
+			if (writer.ValueKind != JsonValueKind.Object)
+				return "";
+			string role = writer.TryGetProperty("role", out JsonElement roleEl) && roleEl.ValueKind == JsonValueKind.String
+				? roleEl.GetString() ?? ""
+				: "";
+			string model = writer.TryGetProperty("model", out JsonElement modelEl) && modelEl.ValueKind == JsonValueKind.String
+				? modelEl.GetString() ?? ""
+				: "";
+			if (!string.IsNullOrWhiteSpace(role) && !string.IsNullOrWhiteSpace(model))
+				return $"DeepSeek {role} · {model}";
+			if (!string.IsNullOrWhiteSpace(role))
+				return $"DeepSeek {role}";
+			return model;
+		}
+		catch
+		{
+			return "";
+		}
+	}
+
+	private void UpdatePrivateMindFreshness()
+	{
+		if (_privateMindFreshnessLabel == null)
+			return;
+		if (string.IsNullOrWhiteSpace(_latestPrivateMindDebugJson))
+		{
+			_privateMindFreshnessLabel.Text = "chưa có snapshot";
+			return;
+		}
+		string writer = PrivateMindWriterSummary(_latestPrivateMindDebugJson);
+		string writerSuffix = string.IsNullOrWhiteSpace(writer) ? "" : $" · writer: {writer}";
+		if (_privateMindReceivedAtUnix <= 0)
+		{
+			_privateMindFreshnessLabel.Text = (_privateMindLoadedFromCache ? "CACHE · không rõ thời điểm" : "LIVE · chưa có timestamp") + writerSuffix;
+			return;
+		}
+		double age = Math.Max(0.0, DateTimeOffset.UtcNow.ToUnixTimeSeconds() - _privateMindReceivedAtUnix);
+		string ageText = age < 60 ? $"{Math.Max(0, (int)age)} giây" : age < 3600 ? $"{Math.Max(1, (int)Math.Ceiling(age / 60.0))} phút" : $"{Math.Max(1, (int)Math.Ceiling(age / 3600.0))} giờ";
+		_privateMindFreshnessLabel.Text = (_privateMindLoadedFromCache
+			? $"CACHE · snapshot cũ khoảng {ageText}"
+			: $"LIVE · cập nhật cách đây {ageText}") + writerSuffix;
+	}
 
 	private void SavePrivateMindState()
 	{
@@ -4114,14 +4218,21 @@ public partial class UdpListener : Node2D
 	{
 		try
 		{
-			if (!Godot.FileAccess.FileExists(PrivateMindStatePath))
+			string path = Godot.FileAccess.FileExists(PrivateMindStatePath)
+				? PrivateMindStatePath
+				: (Godot.FileAccess.FileExists(LegacyPrivateMindStatePath) ? LegacyPrivateMindStatePath : "");
+			if (string.IsNullOrWhiteSpace(path))
 				return;
-			using var file = Godot.FileAccess.Open(PrivateMindStatePath, Godot.FileAccess.ModeFlags.Read);
+			using var file = Godot.FileAccess.Open(path, Godot.FileAccess.ModeFlags.Read);
 			if (file == null)
 				return;
 			string content = file.GetAsText();
 			if (!string.IsNullOrWhiteSpace(content) && PrivateMindDigestHasContent(content))
+			{
 				_latestPrivateMindDebugJson = content;
+				_privateMindLoadedFromCache = true;
+				_privateMindReceivedAtUnix = PrivateMindGeneratedAt(content);
+			}
 		}
 		catch (Exception ex)
 		{
@@ -4131,6 +4242,7 @@ public partial class UdpListener : Node2D
 
 	private void RefreshPrivateMindPanel()
 	{
+		UpdatePrivateMindFreshness();
 		if (_privateMindSectionList == null || _privateMindText == null)
 			return;
 		foreach (Node child in _privateMindSectionList.GetChildren())
@@ -4161,54 +4273,33 @@ public partial class UdpListener : Node2D
 			}
 		}
 
-		bool modernIdentity = hasData && IsModernIdentityDigest(root);
-		var slots = new List<PrivateMindDiarySection>();
-		if (modernIdentity)
+		var diaryByTitle = new Dictionary<string, List<PrivateMindDiaryItem>>();
+		if (hasData)
 		{
-			// Architecture C: hiển thị motive/defense/conflict/discovery thật, không
-			// cố dịch ngược về Ni/Fe và diary template đời trước.
-			slots = BuildModernIdentityDiarySlots(root);
-		}
-		else
-		{
-			// Cache legacy vẫn đọc được để người dùng không mất dữ liệu cũ khi nâng cấp.
-			var diaryByTitle = new Dictionary<string, List<PrivateMindDiaryItem>>();
-			if (hasData)
+			foreach (var sec in TryReadDiarySections(root))
 			{
-				foreach (var sec in TryReadDiarySections(root))
-				{
-					if (!string.IsNullOrWhiteSpace(sec.Title))
-						diaryByTitle[sec.Title.Trim()] = sec.Items;
-				}
+				if (!string.IsNullOrWhiteSpace(sec.Title))
+					diaryByTitle[sec.Title.Trim()] = sec.Items;
 			}
-			slots = new List<PrivateMindDiarySection>
-			{
-				BuildDiarySlot("Suy nghĩ hiện tại", PreferDiarySection(diaryByTitle, "Suy nghĩ hiện tại", hasData ? ExtractCurrentThought(menu, root) : null)),
-				BuildDiarySlot("Suy nghĩ tương lai", PreferDiarySection(diaryByTitle, "Suy nghĩ tương lai", hasData ? ExtractFutureThought(menu, root) : null)),
-				BuildDiarySlot("Đang bận tâm", PreferDiarySection(diaryByTitle, "Đang bận tâm", hasData ? ExtractConcerns(menu) : null)),
-				BuildDiarySlot("Phân tích gần đây", PreferDiarySection(diaryByTitle, "Phân tích gần đây", hasData ? ExtractFragments(menu, root) : null)),
-				BuildDiarySlot("Muốn nói", PreferDiarySection(diaryByTitle, "Muốn nói", hasData ? ExtractSurface(menu, root) : null)),
-			};
 		}
+
+		var slots = new List<PrivateMindDiarySection>
+		{
+			BuildDiarySlot("Suy nghĩ hiện tại", PreferDiarySection(diaryByTitle, "Suy nghĩ hiện tại", hasData ? ExtractCurrentThought(menu, root) : null)),
+			BuildDiarySlot("Suy nghĩ tương lai", PreferDiarySection(diaryByTitle, "Suy nghĩ tương lai", hasData ? ExtractFutureThought(menu, root) : null)),
+			BuildDiarySlot("Đang bận tâm", PreferDiarySection(diaryByTitle, "Đang bận tâm", hasData ? ExtractConcerns(menu) : null)),
+			BuildDiarySlot("Phân tích gần đây", PreferDiarySection(diaryByTitle, "Phân tích gần đây", hasData ? ExtractFragments(menu, root) : null)),
+			BuildDiarySlot("Muốn nói", PreferDiarySection(diaryByTitle, "Muốn nói", hasData ? ExtractSurface(menu, root) : null)),
+		};
 
 		foreach (PrivateMindDiarySection slot in slots)
 			_privateMindSectionList.AddChild(BuildPrivateMindSectionCard(slot));
 
 		RefreshDiaryMood();
-		if (modernIdentity)
-		{
-			RefreshModernIdentityConcernStack(root);
-			RefreshModernIdentityMemoryEcho(root);
-		}
-		else
-		{
-			RefreshDiaryConcernStack(menu, hasData);
-			RefreshDiaryMemoryEcho(menu, hasData);
-		}
+		RefreshDiaryConcernStack(menu, hasData);
+		RefreshDiaryMemoryEcho(root, menu, hasData);
 
-		_privateMindText.Text = hasData
-			? (modernIdentity ? RenderModernIdentityDigest(root) : RenderDiary(root))
-			: "[i]Chưa có dữ liệu.[/i]";
+		_privateMindText.Text = hasData ? RenderDiary(root) : "[i]Chưa có dữ liệu.[/i]";
 		doc?.Dispose();
 	}
 
@@ -4358,48 +4449,44 @@ public partial class UdpListener : Node2D
 		return result;
 	}
 
-	private void RefreshDiaryMemoryEcho(JsonElement menu, bool hasData)
+	private void RefreshDiaryMemoryEcho(JsonElement root, JsonElement menu, bool hasData)
 	{
 		if (_diaryMemoryEchoLabel == null)
 			return;
 
 		string quote = "";
-		if (hasData)
+		string source = "";
+		string evidenceId = "";
+		bool authored = false;
+		if (hasData && root.ValueKind == JsonValueKind.Object
+			&& root.TryGetProperty("inner_diary", out JsonElement diary)
+			&& diary.ValueKind == JsonValueKind.Object
+			&& diary.TryGetProperty("memory_echo", out JsonElement echo)
+			&& echo.ValueKind == JsonValueKind.Object)
 		{
-			JsonElement retained = default;
-			bool has = false;
-			if (menu.ValueKind == JsonValueKind.Object
-				&& menu.TryGetProperty("retained_thoughts", out var rt) && rt.ValueKind == JsonValueKind.Object
-				&& rt.TryGetProperty("items", out retained) && retained.ValueKind == JsonValueKind.Array)
-				has = true;
-			else if (menu.ValueKind == JsonValueKind.Object
-				&& menu.TryGetProperty("retained_thoughts", out retained) && retained.ValueKind == JsonValueKind.Array)
-				has = true;
-
-			if (has)
-			{
-				foreach (var r in retained.EnumerateArray())
-				{
-					if (r.ValueKind == JsonValueKind.String)
-						quote = r.GetString() ?? "";
-					else if (r.ValueKind == JsonValueKind.Object)
-						quote = FirstStr(r, "claim", "text", "thought", "summary");
-					quote = CompactText(quote, 160);
-					if (!string.IsNullOrWhiteSpace(quote))
-						break;
-				}
-			}
+			quote = DiaryStr(echo, "text", 180);
+			source = DiaryStr(echo, "source", 80);
+			evidenceId = DiaryStr(echo, "evidence_id", 100);
+			if (echo.TryGetProperty("authored", out JsonElement authoredNode)
+				&& (authoredNode.ValueKind == JsonValueKind.True || authoredNode.ValueKind == JsonValueKind.False))
+				authored = authoredNode.GetBoolean();
 		}
 
 		if (string.IsNullOrWhiteSpace(quote))
 		{
-			_diaryMemoryEchoLabel.Text = "\u201cchưa có ký ức nào vọng lại.\u201d";
-			if (_diaryMemoryEchoMetaLabel != null) _diaryMemoryEchoMetaLabel.Text = "";
+			_diaryMemoryEchoLabel.Text = "“chưa có ký ức nào vọng lại.”";
+			if (_diaryMemoryEchoMetaLabel != null) _diaryMemoryEchoMetaLabel.Text = "owner: memory_hits";
+			return;
 		}
-		else
+
+		_diaryMemoryEchoLabel.Text = $"“{quote}”";
+		if (_diaryMemoryEchoMetaLabel != null)
 		{
-			_diaryMemoryEchoLabel.Text = $"\u201c{quote}\u201d";
-			if (_diaryMemoryEchoMetaLabel != null) _diaryMemoryEchoMetaLabel.Text = "\u2014 vừa nhớ lại";
+			var meta = new List<string>();
+			if (!string.IsNullOrWhiteSpace(source)) meta.Add(source);
+			if (!string.IsNullOrWhiteSpace(evidenceId)) meta.Add(evidenceId);
+			if (authored) meta.Add("diary worker viết lại");
+			_diaryMemoryEchoMetaLabel.Text = meta.Count > 0 ? "— " + string.Join(" · ", meta) : "— memory hit";
 		}
 	}
 
@@ -4708,12 +4795,12 @@ public partial class UdpListener : Node2D
 	{
 		switch (title)
 		{
-			case "Suy nghĩ hiện tại": return ("diary_now", "Hiện tại", new Color(0.95f, 0.42f, 0.66f));
-			case "Suy nghĩ tương lai": return ("diary_future", "Dự đoán", new Color(0.66f, 0.50f, 0.92f));
-			case "Đang bận tâm": return ("diary_concern_card", "Ưu tiên cao", new Color(0.95f, 0.46f, 0.42f));
-			case "Phân tích gần đây": return ("diary_analysis", "Phân tích", new Color(0.40f, 0.66f, 0.86f));
-			case "Muốn nói": return ("diary_surface", "Bề mặt", new Color(0.94f, 0.40f, 0.60f));
-			default: return ("diary_now", "", new Color(0.95f, 0.42f, 0.66f));
+			case "Suy nghĩ hiện tại": return ("diary_now", "NOW", new Color(0.95f, 0.42f, 0.66f));
+			case "Suy nghĩ tương lai": return ("diary_future", "NEXT", new Color(0.66f, 0.50f, 0.92f));
+			case "Đang bận tâm": return ("diary_concern_card", "CONCERN", new Color(0.95f, 0.46f, 0.42f));
+			case "Phân tích gần đây": return ("diary_analysis", "REFLECTION", new Color(0.40f, 0.66f, 0.86f));
+			case "Muốn nói": return ("diary_surface", "UNSAID", new Color(0.94f, 0.40f, 0.60f));
+			default: return ("diary_now", "DIARY", new Color(0.95f, 0.42f, 0.66f));
 		}
 	}
 
@@ -5335,9 +5422,8 @@ public partial class UdpListener : Node2D
 		return clean.Substring(0, Math.Max(0, limit - 3)).TrimEnd() + "...";
 	}
 
-	// Định nghĩa 4 thanh cố định cho panel cảm xúc.
-	// Mỗi thanh tổng hợp từ một hoặc nhiều key trong emotion_debug.items,
-	// ánh xạ trực tiếp tới ngữ nghĩa mà user nhìn thấy.
+	// Bốn thanh tóm tắt vector affect hiện hành. emotion_debug chỉ còn fallback;
+	// nguồn ưu tiên là affect_state được hợp nhất bởi RuntimePresence.
 	private readonly struct EmotionPanelSlot
 	{
 		public readonly string Title;
@@ -5356,30 +5442,25 @@ public partial class UdpListener : Node2D
 
 	private static readonly EmotionPanelSlot[] EmotionPanelSlots =
 	{
-		// Bình tĩnh = arousal thấp + overload thấp + irritation thấp
-		new("Bình tĩnh", "Arousal thấp, không quá tải, không khó chịu.",
-			("calm_aroused",   0.45f, true),   // arousal cao → bình tĩnh thấp
-			("overload",       0.30f, true),   // overload cao → bình tĩnh thấp
-			("irritation",     0.25f, true)),  // irritation cao → bình tĩnh thấp
+		new("Bình tĩnh", "Arousal, irritation và căng nhận thức đều thấp.",
+			("calm_aroused",      0.40f, true),
+			("irritation",        0.25f, true),
+			("cognitive_tension", 0.35f, true)),
 
-		// Kích thích = arousal + curiosity + thought_stream_pressure
-		new("Kích thích", "Hưng phấn, phấn khích, dòng suy nghĩ đang tăng.",
-			("calm_aroused",            0.55f, false),
+		new("Kích hoạt", "Arousal, tò mò và áp lực suy nghĩ đang hoạt động.",
+			("calm_aroused",            0.40f, false),
 			("curiosity",               0.25f, false),
-			("thought_stream_pressure", 0.20f, false)),
+			("thought_stream_pressure", 0.35f, false)),
 
-		// Mood = stability cao + inertia thấp, lệch theo valence
-		new("Mood", "Ổn định tâm trạng, quán tính mood, hướng valence.",
-			("emotional_stability", 0.50f, false),
-			("mood_inertia",        0.30f, true),   // inertia cao = mood kém ổn
-			("calm_aroused",        0.20f, true)),  // arousal cao cũng kéo mood
+		new("Năng lượng xã hội", "Mức sẵn sàng tương tác và biểu đạt.",
+			("social_energy",  0.45f, false),
+			("speech_pressure", 0.35f, false),
+			("attachment",     0.20f, false)),
 
-		// Cảm xúc tích cực = valence gốc + warmth + tenderness + attachment + intimacy
-		new("Cảm xúc tích cực", "Ấm áp, gắn bó, dịu dàng, thân mật.",
-			("warmth",      0.28f, false),
-			("tenderness",  0.26f, false),
-			("attachment",  0.26f, false),
-			("intimacy",    0.20f, false)),
+		new("Độ ấm", "Dịu dàng, gắn bó và khuynh hướng bảo vệ.",
+			("tenderness",     0.38f, false),
+			("attachment",     0.34f, false),
+			("protectiveness", 0.28f, false)),
 	};
 
 	private void RefreshEmotionPanelRows()
@@ -5389,9 +5470,9 @@ public partial class UdpListener : Node2D
 
 		if (_latestEmotionDebug == null || _latestEmotionDebug.Items == null || _latestEmotionDebug.Items.Count == 0)
 		{
-			_emotionSummaryLabel.Text = "Cảm xúc";
+			_emotionSummaryLabel.Text = "Khí sắc & hiện diện";
 			if (_emotionHintLabel != null)
-				_emotionHintLabel.Text = "Chưa có frame cảm xúc.";
+				_emotionHintLabel.Text = "Đang chờ khí sắc sống.";
 			return;
 		}
 
@@ -5405,12 +5486,12 @@ public partial class UdpListener : Node2D
 		string summaryState = string.IsNullOrWhiteSpace(_latestEmotionDebug.SummaryState) ? "" : _latestEmotionDebug.SummaryState;
 		string summaryDisplay = FormatSummaryValue(summaryMood);
 		_emotionSummaryLabel.Text = string.IsNullOrWhiteSpace(summaryDisplay) || summaryDisplay == "unknown"
-			? "Cảm xúc"
-			: $"Cảm xúc — {summaryDisplay}";
+			? "Khí sắc & hiện diện"
+			: $"Khí sắc — {summaryDisplay}";
 
-		// Hint line: romcom-style summary
+		// Dòng tóm tắt affect cho chế độ đọc nhanh
 		if (_emotionHintLabel != null)
-			_emotionHintLabel.Text = BuildRomcomHint(byKey, _latestEmotionDebug);
+			_emotionHintLabel.Text = BuildAffectHint(byKey, _latestEmotionDebug);
 
 		// Render 4 slot cố định
 		for (int i = 0; i < _emotionRows.Count && i < EmotionPanelSlots.Length; i++)
@@ -5445,42 +5526,28 @@ public partial class UdpListener : Node2D
 	}
 
 	/// <summary>
-	/// Tạo một dòng hint ngắn kiểu romcom từ trạng thái hiện tại,
-	/// ví dụ: "Hôm nay ổn, hơi rung động, muốn gần vừa đủ, vẫn giữ nhịp."
+	/// Tạo một dòng tóm tắt dễ đọc từ affect hiện hành.
+	/// Không suy diễn raw diary hay chain-of-thought.
 	/// </summary>
-	private static string BuildRomcomHint(Dictionary<string, EmotionDebugItem> byKey, EmotionDebug debug)
+	private static string BuildAffectHint(Dictionary<string, EmotionDebugItem> byKey, EmotionDebug debug)
 	{
 		float GetVal(string key) => byKey.TryGetValue(key, out var it) && it.HasNumericValue ? it.NumericValue : 0f;
 
 		float arousal    = GetVal("calm_aroused");
 		float stability  = GetVal("emotional_stability");
-		float attachment = GetVal("attachment");
-		float tenderness = GetVal("tenderness");
-		float warmth     = GetVal("warmth");
-		float distance   = GetVal("distance");
-		float irritation = GetVal("irritation");
-		float intimacy   = GetVal("intimacy");
+		float tension      = GetVal("cognitive_tension");
+		float irritation   = GetVal("irritation");
+		float curiosity    = GetVal("curiosity");
+		float socialEnergy = GetVal("social_energy");
+		float fatigue      = GetVal("fatigue");
 
-		// Trạng thái nền
-		string mood = (arousal < 0.30f && irritation < 0.25f) ? "ổn" :
-		              (irritation >= 0.50f)                   ? "hơi căng" :
-		              (arousal >= 0.65f)                      ? "đang hứng" : "bình thường";
+		string stage = string.IsNullOrWhiteSpace(debug.SummaryState) ? "idle sống" : debug.SummaryState;
+		string activation = arousal >= 0.66f ? "kích hoạt cao" : arousal >= 0.34f ? "kích hoạt vừa" : "nhịp thấp";
+		string cognition = tension >= 0.58f ? "đang căng nhận thức" : curiosity >= 0.55f ? "đang tò mò" : "đầu óc khá thoáng";
+		string social = irritation >= 0.52f ? "hơi khó chịu" : socialEnergy >= 0.58f ? "sẵn sàng tương tác" : "giữ năng lượng";
+		string body = fatigue >= 0.58f ? "idle sẽ nhẹ hơn" : stability >= 0.68f ? "nhịp ổn định" : "nhịp đang dao động";
 
-		// Rung động / cảm xúc tích cực
-		float warmCore = (warmth + tenderness + attachment) / 3f;
-		string feel = warmCore >= 0.65f ? "rung động nhiều" :
-		              warmCore >= 0.40f ? "hơi rung động"   :
-		              warmCore >= 0.20f ? "dịu vừa"         : "phẳng lặng";
-
-		// Khoảng cách xã hội
-		string proximity = (intimacy >= 0.55f && distance <= 0.45f) ? "muốn gần" :
-		                   (distance >= 0.65f)                       ? "giữ khoảng cách" : "vừa đủ";
-
-		// Ổn định nhịp
-		string rhythm = stability >= 0.70f ? "giữ nhịp rất đẹp" :
-		                stability >= 0.45f ? "nhịp ổn"          : "nhịp hơi dao động";
-
-		return $"{mood}, {feel}, {proximity}, {rhythm}.";
+		return $"{stage} · {activation} · {cognition} · {social} · {body}.";
 	}
 
 	private static string BuildMeter(float value)
@@ -5503,7 +5570,10 @@ public partial class UdpListener : Node2D
 			"tone" => "tone xa hoi",
 			"control" => "kiem che / tiem thuc",
 			"load" => "tai nhan thuc",
-			"surface" => "be mat loi noi",
+			"surface" => "bề mặt lời nói",
+			"presence" => "hiện diện runtime",
+			"live_affect" => "affect sống",
+			"appraisal" => "appraisal Architecture C",
 			_ => group,
 		};
 	}
@@ -5816,10 +5886,10 @@ public partial class UdpListener : Node2D
 
 		// Narrative label
 		if (_casualNarrativeLabel != null)
-			_casualNarrativeLabel.Text = $"\"{BuildRomcomCore(byKey)}\"";
+			_casualNarrativeLabel.Text = $"\"{BuildAffectCore(byKey)}\"";
 
 		// Circumplex dot: valence từ summary, arousal từ calm_aroused
-		//   valence: positive=vui (trái), negative=khó chịu (phải) → map sang -1..1
+		//   valence: âm ở trái, dương ở phải; khớp contract affect_state.
 		float rawValence = debug.HasSummaryValence ? Mathf.Clamp(debug.SummaryValence, -1f, 1f) : 0f;
 		float rawArousal = GetVal("calm_aroused") * 2f - 1f; // 0..1 → -1..1 (1=kích thích cao)
 		_moodDotValence = rawValence;
@@ -5832,14 +5902,14 @@ public partial class UdpListener : Node2D
 		// 3 casual bars
 		if (_casualBars.Count >= 3)
 		{
-			// Bar 0: Gắn bó
-			float bond = (GetVal("attachment") + GetVal("tenderness") + GetVal("warmth")) / 3f;
-			UpdateCasualBar(0, bond, CasualBarDefs[0].Levels);
-			// Bar 1: Nhịp điệu (stability, invert mood_inertia)
-			float rhythm = GetVal("emotional_stability") * 0.6f + (1f - GetVal("mood_inertia")) * 0.4f;
+			// Bar 0: độ ấm xã hội từ vector affect hiện hành.
+			float warmth = (GetVal("attachment") + GetVal("tenderness") + GetVal("protectiveness")) / 3f;
+			UpdateCasualBar(0, warmth, CasualBarDefs[0].Levels);
+			// Bar 1: độ ổn định trực tiếp từ affect đã hợp nhất.
+			float rhythm = GetVal("emotional_stability");
 			UpdateCasualBar(1, Mathf.Clamp(rhythm, 0f, 1f), CasualBarDefs[1].Levels);
-			// Bar 2: Muốn nói (payload gửi silence_pressure dưới key "speech_pressure")
-			float speech = Mathf.Clamp((GetVal("speech_pressure") + GetVal("social_pressure")) * 0.5f, 0f, 1f);
+			// Bar 2: xung lực biểu đạt từ social energy và thought pressure.
+			float speech = Mathf.Clamp(Mathf.Max(GetVal("speech_pressure"), Mathf.Max(GetVal("social_energy"), GetVal("thought_pressure") * 0.65f)), 0f, 1f);
 			UpdateCasualBar(2, speech, CasualBarDefs[2].Levels);
 		}
 
@@ -5859,33 +5929,29 @@ public partial class UdpListener : Node2D
 		wordLabel.Text = ValueToWord(value, levels);
 	}
 
-	/// <summary>Phiên bản rút gọn của BuildRomcomHint — chỉ lấy core phrase.</summary>
-	private static string BuildRomcomCore(Dictionary<string, EmotionDebugItem> byKey)
+	/// <summary>Tóm tắt affect ngắn cho chế độ dễ đọc.</summary>
+	private static string BuildAffectCore(Dictionary<string, EmotionDebugItem> byKey)
 	{
 		float GetVal(string key) => byKey.TryGetValue(key, out var it) && it.HasNumericValue ? it.NumericValue : 0f;
 		float arousal    = GetVal("calm_aroused");
 		float irritation = GetVal("irritation");
-		float warmCore   = (GetVal("warmth") + GetVal("tenderness") + GetVal("attachment")) / 3f;
-		float intimacy   = GetVal("intimacy");
-		float distance   = GetVal("distance");
+		float tension    = GetVal("cognitive_tension");
+		float curiosity  = GetVal("curiosity");
+		float fatigue    = GetVal("fatigue");
 
-		string mood = arousal < 0.30f && irritation < 0.25f ? "ổn, bình tĩnh" :
-		              irritation >= 0.55f                   ? "hơi bồn chồn"   :
-		              arousal >= 0.65f                      ? "đang hứng khởi" : "bình thường";
+		string mood = irritation >= 0.55f ? "khó chịu nhẹ" :
+		              arousal >= 0.65f    ? "kích hoạt cao" :
+		              arousal <= 0.30f    ? "bình tĩnh" : "nhịp vừa";
+		string mind = tension >= 0.58f ? "đang suy nghĩ căng" : curiosity >= 0.55f ? "tò mò" : "ổn định";
+		string body = fatigue >= 0.58f ? "idle nhẹ" : "idle sống";
 
-		string feel = warmCore >= 0.60f ? "rung động" :
-		              warmCore >= 0.35f ? "ấm áp vừa" : "khá phẳng";
-
-		string prox = intimacy >= 0.55f && distance <= 0.45f ? "muốn gần" :
-		              distance >= 0.65f                       ? "giữ khoảng cách" : "vừa đủ";
-
-		return $"{mood}, {feel}, {prox}";
+		return $"{mood}, {mind}, {body}";
 	}
 }
 
 /// <summary>
 /// Control vẽ 2D circumplex wheel — hình tròn gradient + mood dot.
-/// valence: -1=vui vẻ(trái) … +1=khó chịu(phải)
+/// valence: -1=khó chịu(trái) … +1=dễ chịu(phải)
 /// arousal: +1=hưng phấn(trên) … -1=bình tĩnh(dưới)
 /// </summary>
 public sealed partial class _MoodDotCanvas : Control
@@ -5930,20 +5996,20 @@ public sealed partial class _MoodDotCanvas : Control
 			DrawCircle(new Vector2(cx, cy), ri, fillColor);
 		}
 
-		// Lớp gradient màu hồng lan toa phía dưới-trái (calm+vui = ấm áp)
+		// Lớp gradient hồng phía dưới-phải (calm + valence dương = ấm áp)
 		for (int i = 0; i < 18; i++)
 		{
 			float t = (float)i / 18f;
-			float gx = cx - r * 0.25f;
+			float gx = cx + r * 0.25f;
 			float gy = cy + r * 0.30f;
 			float gr = r * 0.55f * (1f - t);
 			DrawCircle(new Vector2(gx, gy), gr, new Color(1.0f, 0.82f, 0.72f, 0.04f));
 		}
-		// Lớp gradient tím nhạt phía trên-phải (arousal cao + khó chịu)
+		// Lớp gradient tím nhạt phía trên-trái (arousal cao + valence âm)
 		for (int i = 0; i < 14; i++)
 		{
 			float t = (float)i / 14f;
-			float gx = cx + r * 0.30f;
+			float gx = cx - r * 0.30f;
 			float gy = cy - r * 0.25f;
 			float gr = r * 0.50f * (1f - t);
 			DrawCircle(new Vector2(gx, gy), gr, new Color(0.78f, 0.72f, 0.96f, 0.045f));
@@ -5980,13 +6046,13 @@ public sealed partial class _MoodDotCanvas : Control
 		}
 
 		// ── Heart icon tại 4 điểm cực (nằm trên vòng tròn) ──────────────
-		// Top (hưng phấn), Bottom (bình tĩnh), Left (vui vẻ), Right (khó chịu)
+		// Top (hưng phấn), Bottom (bình tĩnh), Left (khó chịu), Right (dễ chịu)
 		var heartPositions = new (float Angle, string Label, float LabelDx, float LabelDy)[]
 		{
 			(-Mathf.Pi * 0.5f, "hưng phấn", -28f, -26f),
 			( Mathf.Pi * 0.5f, "bình tĩnh", -22f,   8f),
-			( Mathf.Pi,        "vui vẻ",    -50f,  -8f),
-			( 0f,              "khó chịu",   10f,  -8f),
+			( Mathf.Pi,        "khó chịu",  -58f,  -8f),
+			( 0f,              "dễ chịu",    10f,  -8f),
 		};
 		foreach (var (angle, label, ldx, ldy) in heartPositions)
 		{
@@ -6014,8 +6080,8 @@ public sealed partial class _MoodDotCanvas : Control
 		// ♡ + label bên ngoài vòng tròn
 		DrawString(font, new Vector2(cx - 24f, cy - r - 14f), "♡  hưng phấn",  HorizontalAlignment.Center, -1, fs, labelCol);
 		DrawString(font, new Vector2(cx - 18f, cy + r + 22f), "♡  bình tĩnh",  HorizontalAlignment.Center, -1, fs, labelCol);
-		DrawString(font, new Vector2(cx - r - 64f, cy + 4f),  "♡  vui vẻ",     HorizontalAlignment.Left,   -1, fs, labelCol);
-		DrawString(font, new Vector2(cx + r + 8f,  cy + 4f),  "♡  khó chịu",   HorizontalAlignment.Left,   -1, fs, labelCol);
+		DrawString(font, new Vector2(cx - r - 72f, cy + 4f),  "♡  khó chịu",   HorizontalAlignment.Left,   -1, fs, labelCol);
+		DrawString(font, new Vector2(cx + r + 8f,  cy + 4f),  "♡  dễ chịu",    HorizontalAlignment.Left,   -1, fs, labelCol);
 
 		if (_owner == null) return;
 

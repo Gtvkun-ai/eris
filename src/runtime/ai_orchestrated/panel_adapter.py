@@ -748,11 +748,15 @@ def build_ai_panel_payload(
         "consolidation": consolidator_view,
         "authority": views.get("authority", {}),
         "controls": {
-            "freeze_learning": "identity freeze on|off",
-            "snapshot": "identity snapshot",
-            "reset_mood": "identity reset mood",
-            "reset_relationship": "identity reset relationship",
-            "reset_discovery": "identity reset discovery",
+            "schema": "eris.identity_control.v1",
+            "transport": "identity_control",
+            "actions": {
+                "set_learning": {"owner": "identity_reducer", "fields": ["enabled"]},
+                "snapshot": {"owner": "identity_consolidator", "fields": []},
+                "reset_mood": {"owner": "identity_reducer", "fields": []},
+                "reset_relationship": {"owner": "identity_reducer", "fields": []},
+                "reset_discovery": {"owner": "discovery_runtime", "fields": []},
+            },
         },
     }
 
@@ -882,8 +886,18 @@ def build_ai_panel_payload(
         "expression": expression_view,
     }
     private_mind_digest = {
+        "schema": "eris.inner_state.panel.v1",
         "architecture": AI_RUNTIME_VERSION,
+        "generated_at": round(time.time(), 3),
         "surface": False,
+        "authority": {
+            "current_intention": "identity_reducer.latest_intention",
+            "open_loops": "runtime_mind_state.open_loops",
+            "conflict_and_defense": "identity_kernel",
+            "motives_and_values": "identity_kernel",
+            "share_candidates": "discovery_runtime.ready_to_share",
+            "memory_echo": "not_provided_by_this_contract",
+        },
         "open_loops": list(state.open_loops[-5:]),
         "latest_intention": intention,
         "personality_direction_30d": personality.get("direction_30d", {}),

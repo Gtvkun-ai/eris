@@ -111,11 +111,19 @@ class PrivateMindLoop:
         # Snapshot cảm xúc liên tục thật (valence/arousal/...) chụp ở tick gần nhất,
         # để Inner Diary vẽ bảng cảm xúc theo state thật thay vì hằng số gán cứng.
         self._affect_snapshot: dict[str, Any] = {}
-        # Bộ viết nhật ký giọng Eris (throttle/cache nội bộ). Dùng chung model_adapter.
-        # Kèm adapter DỰ PHÒNG (vd qwen-plus-character qua aggregator) để diary không
-        # chết khi Gemini lỗi/hết quota. Chưa khai aggregator thì fallback=None (như cũ).
-        diary_fallback = RuntimePrivateMindModelAdapter.diary_fallback_from_env(logger=logger)
-        self.diary_writer = InnerDiaryWriter(adapter=model_adapter, fallback_adapter=diary_fallback, logger=logger)
+        # Inner Diary có owner riêng. Với PrivateMindAdapterPool, diary_adapter chỉ
+        # gọi LlmService.diary_client (một DeepSeek worker role được chọn rõ ràng).
+        # Không fallback sang lane khác theo mặc định; thiếu worker thì renderer dùng
+        # dữ kiện thô, trung thực hơn việc companion âm thầm giả làm nhật ký.
+        diary_adapter = getattr(model_adapter, "diary_adapter", None)
+        if diary_adapter is None and callable(getattr(model_adapter, "write_inner_diary", None)):
+            diary_adapter = model_adapter
+        diary_fallback = (
+            RuntimePrivateMindModelAdapter.diary_fallback_from_env(logger=logger)
+            if _env_flag("ERIS_INNER_DIARY_ALLOW_FALLBACK", False)
+            else None
+        )
+        self.diary_writer = InnerDiaryWriter(adapter=diary_adapter, fallback_adapter=diary_fallback, logger=logger)
 
     def _boundary_note(self, operation: str, exc: Exception) -> None:
         method = getattr(self.logger, "debug", None)
@@ -607,7 +615,13 @@ class PrivateMindLoop:
             "affect": dict(getattr(self, "_affect_snapshot", {}) or {}),
             "debug": to_plain(getattr(result, "debug", {}) if result is not None else {}),
         }
+        digest["generated_at"] = round(time.time(), 3)
         digest["inner_diary"] = InnerDiaryRenderer().render(digest, voice=self._diary_voice(digest))
+        digest["inner_diary_contract"] = {
+            "schema": "eris.inner_diary.v2",
+            "owner": "private_mind.inner_diary",
+            "writer": to_plain(digest["inner_diary"].get("writer", {})),
+        }
         try:
             anchor_block = self._build_anchor_block()
             digest["anchor"] = anchor_block

@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Lane DeepSeek riêng cho lời chủ động của ERIS.
+"""Surface Worker duy nhất cho lời chủ động của ERIS.
 
-Worker ``surface`` được phép chọn *cách* biểu hiện (small talk, khịa nhẹ,
-inner thought, nối mạch, bình luận màn hình...) và viết luôn một micro-line.
-Runtime vẫn giữ các ranh giới cơ học: privacy, evidence, task, cooldown và
-semantic repeat. Model được sáng tạo, nhưng không được tự cấp bằng chứng.
+Kiến trúc V17 tách quyền rất rõ:
+
+- InitiativeController quyết định NO_OP / BODY_ONLY / SPEECH bằng code thường;
+- Surface Worker chỉ hiện thực hóa một ``SpeechIntent`` đã được duyệt;
+- Grounding Validator kiểm tra provenance trước và sau câu model viết.
+
+Phần ``deliberate`` cũ còn giữ như compatibility shim cho test/plugin cũ, nhưng
+production self-turn không dùng nó để quyết định có nói hay không nữa.
 """
 from __future__ import annotations
 
@@ -13,6 +17,8 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from .contracts import IntentionPlan, StateEvent
+from .cognitive_blackboard import TypedCognitiveBlackboard
+from .initiative import SpeechIntent
 from .semantic_contracts import compact, semantic_key
 
 
@@ -27,6 +33,7 @@ SURFACE_MODES: tuple[str, ...] = (
     "memory_callback",
     "task_followup",
     "screen_comment",
+    "discovery_share",
 )
 
 
@@ -59,10 +66,11 @@ class SurfaceTurn:
     public_payload: Mapping[str, Any]
     mode: str
     reason: str = ""
+    source: str = "surface_worker"
 
 
 class SurfaceIntentEngine:
-    """Chọn lane surface và khóa kết quả vào contract autonomous hiện tại."""
+    """Hiện thực hóa lời nói; không sở hữu quyết định initiative."""
 
     def __init__(self, router: Any, reducer: Any, *, logger: Any | None = None) -> None:
         self.router = router
@@ -75,6 +83,145 @@ class SurfaceIntentEngine:
             _flag("ERIS_SURFACE_INTENT_ENABLED", True)
             and getattr(self.router, "surface_client", None) is not None
         )
+
+    def realize(
+        self,
+        intent: SpeechIntent,
+        blackboard: TypedCognitiveBlackboard,
+        *,
+        snapshot: Mapping[str, Any] | None = None,
+    ) -> SurfaceTurn | None:
+        """Gọi Surface Worker đúng một lần để viết câu từ SpeechIntent.
+
+        Model không được trả ``silence`` hay đổi mode. Nếu provider/schema lỗi,
+        trả ``None`` ngay để pipeline chọn local fallback hoặc body-only; tuyệt
+        đối không gọi planner/main companion lần hai.
+        """
+
+        if not self.enabled:
+            return None
+        request = {
+            "speech_intent": intent.to_dict(),
+            "blackboard": blackboard.public_view(),
+            "recent_public_history": list(_sequence(_mapping(snapshot or {}).get("recent_public_history"))[-6:]),
+            "surface_contract": {
+                "authority": "wording_only",
+                "fixed_mode": intent.mode,
+                "fixed_anchor_type": intent.anchor_type,
+                "fixed_anchor_id": intent.anchor_id,
+                "allowed_evidence_refs": list(intent.evidence_refs),
+                "max_sentences": intent.max_sentences,
+                "rule": (
+                    "Write one concise public line. Do not decide speak/silence, change the topic owner, "
+                    "invent evidence, or mention internal contracts."
+                ),
+            },
+        }
+        writer = getattr(self.router, "realize_surface_speech", None)
+        if not callable(writer):
+            return None
+        raw = writer(request)
+        if not isinstance(raw, Mapping) or not raw:
+            return None
+        text = compact(raw.get("text", ""), 520)
+        confidence = _clamp01(raw.get("confidence", 0.0))
+        if not text or confidence < 0.25:
+            return None
+        returned_refs = tuple(
+            ref for ref in (compact(value, 120) for value in _sequence(raw.get("evidence_refs"))[:6]) if ref
+        )
+        if any(ref not in set(intent.evidence_refs) for ref in returned_refs):
+            self._log("warning", "[surface worker] rejected unknown evidence refs mode=%s", intent.mode)
+            return None
+        performance_hint = compact(
+            raw.get("performance_hint", intent.plan.performance_hint or "neutral"), 60
+        ).lower() or intent.plan.performance_hint or "neutral"
+        plan_data = intent.plan.to_dict()
+        plan_data["performance_hint"] = performance_hint
+        plan = IntentionPlan.from_mapping(plan_data, channel="autonomous")
+        payload = self.router.build_surface_public_payload(text=text, plan=plan, mode=intent.mode)
+        reason = compact(raw.get("reason", "surface_realized"), 180) or "surface_realized"
+        self._log(
+            "info",
+            "[surface worker] realized mode=%s confidence=%.2f anchor=%s",
+            intent.mode,
+            confidence,
+            intent.anchor_type,
+        )
+        return SurfaceTurn(
+            plan=plan,
+            public_payload=payload,
+            mode=intent.mode,
+            reason=reason,
+            source="surface_worker",
+        )
+
+    def fallback_payload(
+        self,
+        intent: SpeechIntent,
+        blackboard: TypedCognitiveBlackboard,
+        *,
+        avoid_text: str = "",
+        language: str = "vi",
+    ) -> Mapping[str, Any] | None:
+        """Micro fallback deterministic, chỉ dùng khi speech intent đã duyệt.
+
+        Fallback không phát minh fact và không thay quyền Surface Worker. Nó là
+        lưới an toàn chống một provider timeout biến ERIS thành tượng sáp.
+        """
+
+        if not _flag("ERIS_SURFACE_LOCAL_FALLBACK_ENABLED", True):
+            return None
+        if str(language or "vi").lower() != "vi":
+            return None
+        mode = intent.mode
+        if mode == "continuation":
+            options = (
+                "Tôi vẫn còn để ý mạch lúc nãy. Có một chỗ chưa nên bỏ qua.",
+                "Chuyện lúc nãy vẫn còn một đầu mối đáng nối tiếp.",
+            )
+        elif mode == "task_followup":
+            options = (
+                "Tôi vẫn đang theo mạch việc này. Có gì vừa thay đổi không?",
+                "Mạch đang làm vẫn còn mở. Cậu muốn tôi bám tiếp chỗ nào?",
+            )
+        elif mode == "discovery_share":
+            options = (
+                "Tôi vừa có một phát hiện đã kiểm lại. Chỗ này đáng kể cho cậu nghe.",
+                "Có một kết quả mới khá đáng chú ý. Tôi nói gọn nhé.",
+            )
+        elif mode == "screen_comment" and blackboard.screen_title:
+            title = compact(blackboard.screen_title, 90)
+            options = (
+                f"Cậu vừa chuyển sang {title} à?",
+                f"Nhịp bên cậu đổi sang {title} rồi nhỉ.",
+            )
+        elif mode == "memory_callback":
+            options = (
+                "Có một chuyện cũ vừa nối lại với mạch hiện tại. Tôi muốn nhắc nó thật gọn.",
+                "Một ký ức có nguồn vừa vọng lại đúng lúc. Chỗ này đáng nối thêm một câu.",
+            )
+        elif mode == "inner_thought":
+            options = (
+                "Tôi vừa nối được một ý trong lúc im. Nó vẫn còn hơi vướng.",
+                "Trong lúc yên, tôi nghĩ thêm được một đoạn khá đáng giữ lại.",
+            )
+        else:
+            options = (
+                "Im lâu quá rồi. Cậu đang tập trung, hay chỉ đang thả đầu óc nghỉ một lát?",
+                "Cậu yên hẳn rồi. Tôi nên để cậu tập trung, hay kiếm chuyện nhẹ một chút đây?",
+            )
+        avoid = str(avoid_text or "").strip().casefold()
+        text = next((item for item in options if item.casefold() != avoid), options[0])
+        return self.router.build_surface_public_payload(text=text, plan=intent.plan, mode=mode)
+
+    def _log(self, level: str, message: str, *args: Any) -> None:
+        if self.logger is None:
+            return
+        try:
+            getattr(self.logger, level)(message, *args)
+        except Exception:
+            pass
 
     def deliberate(self, snapshot: Mapping[str, Any], *, turn_seq: int) -> SurfaceTurn | None:
         """Gọi worker surface đúng một lần; ``None`` nghĩa là dùng planner cũ.

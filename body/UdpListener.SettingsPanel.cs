@@ -35,6 +35,7 @@ public partial class UdpListener : Node2D
 	private Button _settingsMainPoolStatusLabel;
 	private Button _settingsPoolStatusLabel;
 	private Button _settingsFallbackStatusLabel;
+	private Button _settingsElevenLabsPoolStatusLabel;
 	private Label _settingsPoolHealthLabel;
 	private Label _settingsTtsEngineStatusLabel;
 	private Label _settingsStatusNoteLabel;
@@ -72,12 +73,15 @@ public partial class UdpListener : Node2D
 	private string _settingsKeyPoolKind = "";
 	private ulong _settingsNextRuntimeRefreshMs;
 	private bool _settingsTtsEnabled = true;
+	private string _settingsTtsProvider = "elevenlabs";
 	private string _settingsTtsVoice = "Aoede";
+	private string _settingsElevenLabsVoiceId = "";
+	private string _settingsElevenLabsModel = "eleven_v3";
 	private string _settingsTtsLanguage = "ja";
 	private int _settingsLoadedSchemaVersion = 0;
-	private string _settingsTtsQuality = "high";
+	private string _settingsTtsQuality = "balanced";
 	private float _settingsTtsVolume = 1.00f;
-	private float _settingsTtsSpeed = 1.00f;
+	private float _settingsTtsSpeed = 1.04f;
 
 	private const string SettingsStatePath = "user://eris_settings.json";
 	private const string SettingsExportFileName = "eris_settings_export.json";
@@ -190,7 +194,7 @@ public partial class UdpListener : Node2D
 
 		if (_settingsModePage == SettingsModePage.Voice)
 		{
-			BuildVoiceSettingsPage(root);
+			BuildRuntimeVoiceSettingsPage(root);
 			BuildSettingsConnectionOverlay(root);
 			RefreshSettingsPanel();
 			return;
@@ -208,7 +212,7 @@ public partial class UdpListener : Node2D
 
 		if (_settingsModePage == SettingsModePage.Advanced)
 		{
-			BuildAdvancedSettingsPage(root);
+			BuildRuntimeSchemaSettingsPage(root);
 			RefreshSettingsPanel();
 			return;
 		}
@@ -545,7 +549,10 @@ public partial class UdpListener : Node2D
 		tts.Size = new Vector2(180f, 24f);
 		parent.AddChild(tts);
 
-		var voiceValue = CreateUiLabel($"{_settingsTtsVoice} · {NormalizeSettingsTtsLanguage(_settingsTtsLanguage)}", 10, SettingsInkSoft);
+		string voiceSummary = string.Equals(_settingsTtsProvider, "elevenlabs", StringComparison.OrdinalIgnoreCase)
+			? $"ElevenLabs · {(string.IsNullOrWhiteSpace(_settingsElevenLabsVoiceId) ? "chưa có Voice ID" : CompactSettingsKey(_settingsElevenLabsVoiceId))}"
+			: $"Gemini · {_settingsTtsVoice} · {NormalizeSettingsTtsLanguage(_settingsTtsLanguage)}";
+		var voiceValue = CreateUiLabel(voiceSummary, 10, SettingsInkSoft);
 		voiceValue.Position = new Vector2(20f, 78f);
 		voiceValue.Size = new Vector2(parent.Size.X - 40f, 20f);
 		StyleSettingsSingleLineLabel(voiceValue);
@@ -611,7 +618,7 @@ public partial class UdpListener : Node2D
 		hint.AutowrapMode = TextServer.AutowrapMode.WordSmart;
 		parent.AddChild(hint);
 
-		var apply = CreateSettingsButton("Áp dụng", SaveSettingsState, primary: true);
+		var apply = CreateSettingsButton("Lưu giao diện", SaveSettingsState, primary: true);
 		apply.Position = new Vector2(18f, 364f);
 		apply.Size = new Vector2(parent.Size.X - 36f, 34f);
 		parent.AddChild(apply);
@@ -666,7 +673,7 @@ public partial class UdpListener : Node2D
 
 		AddSettingsPageFooter(
 			root,
-			"Main Brain là pool riêng. Gemini và Groq chỉ phục vụ các lane phụ, không còn bị nhập nhằng với key GPT/Terra.",
+			"Bốn credential owner tách biệt: Main Brain, Gemini phụ, Groq phụ và ElevenLabs TTS.",
 			showBackupActions: true);
 	}
 
@@ -688,17 +695,16 @@ public partial class UdpListener : Node2D
 
 		var note = CreateUiLabel(noteText, 11, SettingsInkSoft);
 		note.Position = new Vector2(90f, 624f);
-		note.Size = new Vector2(showBackupActions ? 560f : 650f, 22f);
+		note.Size = new Vector2(showBackupActions ? 560f : 720f, 22f);
 		StyleSettingsSingleLineLabel(note);
 		root.AddChild(note);
 
 		_settingsStatusNoteLabel = CreateUiLabel("", 10, SettingsInk);
 		_settingsStatusNoteLabel.Position = new Vector2(90f, 646f);
-		_settingsStatusNoteLabel.Size = new Vector2(showBackupActions ? 560f : 650f, 16f);
+		_settingsStatusNoteLabel.Size = new Vector2(showBackupActions ? 560f : 720f, 16f);
 		StyleSettingsSingleLineLabel(_settingsStatusNoteLabel);
 		root.AddChild(_settingsStatusNoteLabel);
 
-		float closeX;
 		if (showBackupActions)
 		{
 			var backup = CreateSettingsButton("Sao lưu", BackupSettingsAndSecrets, primary: false);
@@ -710,28 +716,36 @@ public partial class UdpListener : Node2D
 			export.Position = new Vector2(746f, 622f);
 			export.Size = new Vector2(104f, 38f);
 			root.AddChild(export);
-			closeX = 858f;
+
+			var close = CreateSettingsButton("Đóng", CloseSettingsPanel, primary: false);
+			close.Position = new Vector2(858f, 622f);
+			close.Size = new Vector2(76f, 38f);
+			root.AddChild(close);
+
+			var saveCredentials = CreateSettingsButton("Lưu credential", () => SaveSettingsState(true, writeSecrets: true), primary: false);
+			saveCredentials.Position = new Vector2(942f, 620f);
+			saveCredentials.Size = new Vector2(104f, 42f);
+			saveCredentials.AddThemeFontSizeOverride("font_size", 9);
+			root.AddChild(saveCredentials);
+
+			var restart = CreateSettingsButton("Lưu & Restart", SaveSettingsAndRestart, primary: true);
+			restart.Position = new Vector2(1054f, 620f);
+			restart.Size = new Vector2(94f, 42f);
+			restart.AddThemeFontSizeOverride("font_size", 8);
+			root.AddChild(restart);
+			return;
 		}
-		else
-		{
-			closeX = 858f;
-		}
 
-		var close = CreateSettingsButton("Đóng", CloseSettingsPanel, primary: false);
-		close.Position = new Vector2(closeX, 622f);
-		close.Size = new Vector2(76f, 38f);
-		root.AddChild(close);
+		var closeLocal = CreateSettingsButton("Đóng", CloseSettingsPanel, primary: false);
+		closeLocal.Position = new Vector2(970f, 622f);
+		closeLocal.Size = new Vector2(76f, 38f);
+		root.AddChild(closeLocal);
 
-		var save = CreateSettingsButton("Áp dụng", SaveSettingsState, primary: true);
-		save.Position = new Vector2(closeX + 84f, 620f);
-		save.Size = new Vector2(86f, 42f);
-		root.AddChild(save);
-
-		var restart = CreateSettingsButton("Lưu & Restart", SaveSettingsAndRestart, primary: true);
-		restart.Position = new Vector2(closeX + 178f, 620f);
-		restart.Size = new Vector2(112f, 42f);
-		restart.AddThemeFontSizeOverride("font_size", 9);
-		root.AddChild(restart);
+		var saveLocal = CreateSettingsButton("Lưu Body", SaveSettingsState, primary: true);
+		saveLocal.Position = new Vector2(1054f, 620f);
+		saveLocal.Size = new Vector2(94f, 42f);
+		saveLocal.AddThemeFontSizeOverride("font_size", 9);
+		root.AddChild(saveLocal);
 	}
 
 	private void BuildSettingsConnectionOverlay(Control root)
@@ -1049,28 +1063,37 @@ public partial class UdpListener : Node2D
 		int groqCount = _settingsKeyDrafts.TryGetValue("groq", out List<string> groqRows)
 			? NormalizeSettingsKeyRows(groqRows).Count
 			: ReadEditableKeysForPool("groq").Count;
+		int elevenLabsCount = _settingsKeyDrafts.TryGetValue("elevenlabs", out List<string> elevenLabsRows)
+			? NormalizeSettingsKeyRows(elevenLabsRows).Count
+			: ReadEditableKeysForPool("elevenlabs").Count;
 
 		float innerWidth = parent.Size.X - 36f;
-		float tabGap = 8f;
-		float tabWidth = (innerWidth - tabGap * 2f) / 3f;
+		float tabGap = 6f;
+		float tabWidth = (innerWidth - tabGap * 3f) / 4f;
 
-		_settingsMainPoolStatusLabel = CreateSettingsButton($"Main Brain · {mainCount}", () => SwitchSettingsKeyPool("main"), primary: _settingsKeyPoolKind == "main");
+		_settingsMainPoolStatusLabel = CreateSettingsButton($"Main · {mainCount}", () => SwitchSettingsKeyPool("main"), primary: _settingsKeyPoolKind == "main");
 		_settingsMainPoolStatusLabel.Position = new Vector2(18f, 46f);
 		_settingsMainPoolStatusLabel.Size = new Vector2(tabWidth, 30f);
-		_settingsMainPoolStatusLabel.TooltipText = "Credential dùng riêng cho model chính, ví dụ GPT-5.6 Terra";
+		_settingsMainPoolStatusLabel.TooltipText = "Credential của Main Brain / remote_main";
 		parent.AddChild(_settingsMainPoolStatusLabel);
 
-		_settingsPoolStatusLabel = CreateSettingsButton($"Gemini phụ · {geminiCount}", () => SwitchSettingsKeyPool("gemini"), primary: _settingsKeyPoolKind == "gemini");
+		_settingsPoolStatusLabel = CreateSettingsButton($"Gemini · {geminiCount}", () => SwitchSettingsKeyPool("gemini"), primary: _settingsKeyPoolKind == "gemini");
 		_settingsPoolStatusLabel.Position = new Vector2(18f + tabWidth + tabGap, 46f);
 		_settingsPoolStatusLabel.Size = new Vector2(tabWidth, 30f);
-		_settingsPoolStatusLabel.TooltipText = "Key cho TTS, private-mind hoặc lane Gemini phụ";
+		_settingsPoolStatusLabel.TooltipText = "Credential cho private mind và lane Gemini; không mặc định sở hữu TTS";
 		parent.AddChild(_settingsPoolStatusLabel);
 
-		_settingsFallbackStatusLabel = CreateSettingsButton($"Groq phụ · {groqCount}", () => SwitchSettingsKeyPool("groq"), primary: _settingsKeyPoolKind == "groq");
+		_settingsFallbackStatusLabel = CreateSettingsButton($"Groq · {groqCount}", () => SwitchSettingsKeyPool("groq"), primary: _settingsKeyPoolKind == "groq");
 		_settingsFallbackStatusLabel.Position = new Vector2(18f + (tabWidth + tabGap) * 2f, 46f);
 		_settingsFallbackStatusLabel.Size = new Vector2(tabWidth, 30f);
-		_settingsFallbackStatusLabel.TooltipText = "Key cho parser, social lane và fallback Groq";
+		_settingsFallbackStatusLabel.TooltipText = "Credential cho parser, social lane và fallback Groq";
 		parent.AddChild(_settingsFallbackStatusLabel);
+
+		_settingsElevenLabsPoolStatusLabel = CreateSettingsButton($"11Labs · {elevenLabsCount}", () => SwitchSettingsKeyPool("elevenlabs"), primary: _settingsKeyPoolKind == "elevenlabs");
+		_settingsElevenLabsPoolStatusLabel.Position = new Vector2(18f + (tabWidth + tabGap) * 3f, 46f);
+		_settingsElevenLabsPoolStatusLabel.Size = new Vector2(tabWidth, 30f);
+		_settingsElevenLabsPoolStatusLabel.TooltipText = "Credential riêng của provider TTS ElevenLabs";
+		parent.AddChild(_settingsElevenLabsPoolStatusLabel);
 
 		_settingsPoolHealthLabel = CreateUiLabel("Chưa đọc trạng thái runtime", 10, SettingsInkSoft);
 		_settingsPoolHealthLabel.Position = new Vector2(20f, 80f);
@@ -1152,6 +1175,10 @@ public partial class UdpListener : Node2D
 		}, primary: true);
 		add.Position = new Vector2(18f, buttonY);
 		add.Size = new Vector2(132f, 30f);
+		add.Disabled = _settingsKeyPoolKind == "elevenlabs" && _settingsKeyInputs.Count >= 1;
+		add.TooltipText = _settingsKeyPoolKind == "elevenlabs"
+			? "ElevenLabs hiện dùng một credential; sửa trực tiếp dòng đang có."
+			: "Thêm credential fallback vào pool.";
 		parent.AddChild(add);
 
 		var import = CreateSettingsButton("Nhập secrets…", OpenImportSecretsDialog, primary: false);
@@ -1182,7 +1209,9 @@ public partial class UdpListener : Node2D
 		var hint = CreateUiLabel(
 			_settingsKeyPoolKind == "main"
 				? "Pool Main Brain gắn trực tiếp với provider/model ở card bên trái."
-				: "Pool phụ không thay model chính; chúng chỉ phục vụ lane chuyên biệt.",
+				: _settingsKeyPoolKind == "elevenlabs"
+					? "ElevenLabs sở hữu credential TTS riêng; chỉ key ưu tiên 1 được runtime sử dụng."
+					: "Pool phụ không thay model chính; chúng chỉ phục vụ lane chuyên biệt.",
 			9,
 			SettingsInkSoft);
 		hint.Position = new Vector2(20f, 356f);
@@ -1211,6 +1240,8 @@ public partial class UdpListener : Node2D
 		string kind = (poolKind ?? "").Trim().ToLowerInvariant();
 		if (kind is "main" or "main_brain" or "remote_main" or "remote")
 			return "main";
+		if (kind is "elevenlabs" or "eleven" or "11labs" or "tts_elevenlabs")
+			return "elevenlabs";
 		return IsGroqPool(kind) ? "groq" : "gemini";
 	}
 
@@ -1220,6 +1251,7 @@ public partial class UdpListener : Node2D
 		{
 			"main" => "Main Brain",
 			"groq" => "Groq phụ",
+			"elevenlabs" => "ElevenLabs TTS",
 			_ => "Gemini phụ",
 		};
 	}
@@ -1286,6 +1318,7 @@ public partial class UdpListener : Node2D
 		{
 			"main" => "Main Brain",
 			"groq" => "Groq",
+			"elevenlabs" => "ElevenLabs",
 			_ => "Gemini",
 		};
 		return $"{provider} {Math.Max(1, rowNumber):00}";
@@ -1307,13 +1340,18 @@ public partial class UdpListener : Node2D
 		int groq = _settingsKeyDrafts.TryGetValue("groq", out List<string> groqRows)
 			? NormalizeSettingsKeyRows(groqRows).Count
 			: ReadEditableKeysForPool("groq").Count;
+		int elevenLabs = _settingsKeyDrafts.TryGetValue("elevenlabs", out List<string> elevenLabsRows)
+			? NormalizeSettingsKeyRows(elevenLabsRows).Count
+			: ReadEditableKeysForPool("elevenlabs").Count;
 
 		if (_settingsMainPoolStatusLabel != null)
-			_settingsMainPoolStatusLabel.Text = $"Main Brain · {main}";
+			_settingsMainPoolStatusLabel.Text = $"Main · {main}";
 		if (_settingsPoolStatusLabel != null)
-			_settingsPoolStatusLabel.Text = $"Gemini phụ · {gemini}";
+			_settingsPoolStatusLabel.Text = $"Gemini · {gemini}";
 		if (_settingsFallbackStatusLabel != null)
-			_settingsFallbackStatusLabel.Text = $"Groq phụ · {groq}";
+			_settingsFallbackStatusLabel.Text = $"Groq · {groq}";
+		if (_settingsElevenLabsPoolStatusLabel != null)
+			_settingsElevenLabsPoolStatusLabel.Text = $"11Labs · {elevenLabs}";
 	}
 
 
@@ -2011,7 +2049,9 @@ public partial class UdpListener : Node2D
 
 	private void SaveSettingsState()
 	{
-		SaveSettingsState(true, writeSecrets: true);
+		// Nút lưu chung chỉ sở hữu state cục bộ của Body. Runtime policy được
+		// áp dụng qua settings_update; credential/bootstrap có nút riêng ở Data.
+		SaveSettingsState(true, writeSecrets: false);
 	}
 
 	private void SaveSettingsAndRestart()
@@ -2024,7 +2064,6 @@ public partial class UdpListener : Node2D
 	private void SaveSettingsState(bool showStatus, bool writeSecrets)
 	{
 		SyncSettingsInputsToFields();
-		SyncAdvancedSettingsInputsToFields();
 		CaptureCurrentSettingsKeyDraft();
 		try
 		{
@@ -2036,28 +2075,19 @@ public partial class UdpListener : Node2D
 			var state = BuildSanitizedSettingsNode();
 			state["saved_at"] = DateTime.Now.ToString("O");
 			File.WriteAllText(path, state.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
-			// Ghi schema runtime riêng để Brain khởi động lại vẫn dùng đúng settings,
-			// không phải bói lại từ một rừng env key.
-			PersistRuntimeSettingsJson();
+
 			if (writeSecrets)
 			{
+				// Chỉ tab Kết nối & dữ liệu được ghi credential/bootstrap. Không
+				// materialize tts.*, stage.*, personality.* hay policy runtime ra env.
 				WriteRuntimeSettingsToSecrets(backup: true);
 				WriteRuntimeSettingsToDotEnv();
-				if (_settingsModePage is SettingsModePage.Basic or SettingsModePage.Voice)
-					SendTtsRuntimeSettingsUpdate();
 			}
+
 			if (showStatus)
 				SetSettingsStatus(writeSecrets
-					? (_settingsModePage == SettingsModePage.Advanced
-						? "Đã lưu Advanced. Dùng Áp dụng live hoặc Restart cho mục có cache."
-						: _settingsModePage == SettingsModePage.Danger
-							? "Danger Zone không dùng Lưu; thao tác được thực thi qua maintenance protocol."
-							: _settingsModePage == SettingsModePage.Voice
-								? "Đã lưu và áp dụng cấu hình giọng nói xuống runtime."
-								: _settingsModePage == SettingsModePage.Data
-									? "Đã lưu route não chính và các credential pool. Restart Brain để nạp key/model mới."
-									: "Đã lưu Basic; thay đổi cửa sổ/TTS đã áp dụng.")
-					: "Đã lưu user settings.");
+					? "Đã lưu credential và route khởi động. Restart Brain để nạp thay đổi."
+					: "Đã lưu trạng thái cục bộ của Body.");
 		}
 		catch (Exception ex)
 		{
@@ -2070,7 +2100,7 @@ public partial class UdpListener : Node2D
 		string path = GetSecretsPath();
 		Directory.CreateDirectory(Path.GetDirectoryName(path) ?? GetRuntimeBaseDirForSettings());
 		if (backup)
-			BackupFileIfExists(path, "secrets_before_basic_save");
+			BackupFileIfExists(path, "secrets_before_connection_save");
 
 		JsonObject root = LoadSecretsRoot();
 		JsonObject env = EnsureObject(root, "env");
@@ -2078,22 +2108,12 @@ public partial class UdpListener : Node2D
 		env["ERIS_REMOTE_PROVIDER"] = RemoteApiProvider ?? "";
 		env["ERIS_REMOTE_BASE_URL"] = RemoteApiBaseUrl ?? "";
 		env["ERIS_REMOTE_MODEL"] = RemoteApiModelName ?? "";
-		env["ERIS_TTS_ENABLED"] = _settingsTtsEnabled ? "1" : "0";
-		env["ERIS_TTS_VOICE"] = _settingsTtsVoice ?? "Aoede";
-		env["ERIS_TTS_LANGUAGE"] = NormalizeSettingsTtsLanguage(_settingsTtsLanguage);
-		env["ERIS_TTS_QUALITY"] = _settingsTtsQuality ?? "high";
-		env["ERIS_TTS_VOLUME"] = _settingsTtsVolume.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
-		env["ERIS_TTS_SPEED"] = _settingsTtsSpeed.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
-		WriteAdvancedSettingsToSecrets(env);
 
-		// Provider/model là danh tính của não chính, nên luôn ghi profile ngay cả
-		// khi người dùng chưa mở editor key. Không còn cảnh đổi Terra nhưng profile
-		// remote_main vẫn âm thầm giữ model cũ.
 		WriteMainBrainProviderProfile(root, ReadConfiguredMainKeysFromSecretsOnly());
 
-		// Ghi cả ba bản nháp. Đổi tab pool rồi lưu không còn làm mất phần đã sửa
-		// ở tab trước, cũng không bắt người dùng lưu riêng từng provider.
-		foreach (string kind in new[] { "main", "gemini", "groq" })
+		// Mỗi pool credential có owner rõ ràng. Runtime settings không được
+		// lẫn vào đây chỉ vì cùng mang hình dạng key/value, một thói quen khá phá hoại.
+		foreach (string kind in new[] { "main", "gemini", "groq", "elevenlabs" })
 		{
 			if (_settingsKeyDrafts.TryGetValue(kind, out List<string> draftRows))
 				ReplaceEditableKeysForPool(root, kind, NormalizeSettingsKeyRows(draftRows));
@@ -2107,14 +2127,11 @@ public partial class UdpListener : Node2D
 		string path = Path.Combine(GetRuntimeBaseDirForSettings(), ".env");
 		var updates = new Dictionary<string, string>(StringComparer.Ordinal)
 		{
-			["ERIS_TTS_ENABLED"] = _settingsTtsEnabled ? "1" : "0",
-			["ERIS_TTS_VOICE"] = string.IsNullOrWhiteSpace(_settingsTtsVoice) ? "Aoede" : _settingsTtsVoice.Trim(),
-			["ERIS_TTS_LANGUAGE"] = NormalizeSettingsTtsLanguage(_settingsTtsLanguage),
-			["ERIS_TTS_QUALITY"] = string.IsNullOrWhiteSpace(_settingsTtsQuality) ? "high" : _settingsTtsQuality.Trim().ToLowerInvariant(),
-			["ERIS_TTS_VOLUME"] = _settingsTtsVolume.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
-			["ERIS_TTS_SPEED"] = _settingsTtsSpeed.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
+			["ERIS_REMOTE_API_ENABLED"] = EnableRemoteCognitionApi ? "1" : "0",
+			["ERIS_REMOTE_PROVIDER"] = RemoteApiProvider ?? "",
+			["ERIS_REMOTE_BASE_URL"] = RemoteApiBaseUrl ?? "",
+			["ERIS_REMOTE_MODEL"] = RemoteApiModelName ?? "",
 		};
-		AppendAdvancedSettingsToDotEnv(updates);
 
 		var lines = File.Exists(path)
 			? new List<string>(File.ReadAllLines(path, Encoding.UTF8))
@@ -2146,30 +2163,39 @@ public partial class UdpListener : Node2D
 	private void ApplyLiveTtsSettingsFromPanel(string changedField)
 	{
 		SyncSettingsInputsToFields();
-		SaveSettingsState(false, writeSecrets: true);
-		SetSettingsStatus($"Đã áp dụng {changedField} TTS: {NormalizeSettingsTtsLanguage(_settingsTtsLanguage)}.");
+		SaveSettingsState(false, writeSecrets: false);
+		SendTtsRuntimeSettingsUpdate();
+		SetSettingsStatus($"Đã gửi {changedField} TTS xuống Brain runtime.");
 	}
 
 	private void SendTtsRuntimeSettingsUpdate()
 	{
 		if (_chatSend == null)
 			return;
-		var payload = new
+
+		var tts = new JsonObject
 		{
-			type = "settings_update",
-			scope = "tts",
-			tts_enabled = _settingsTtsEnabled,
-			tts_language = NormalizeSettingsTtsLanguage(_settingsTtsLanguage),
-			tts_voice = string.IsNullOrWhiteSpace(_settingsTtsVoice) ? "Aoede" : _settingsTtsVoice.Trim(),
-			tts_quality = string.IsNullOrWhiteSpace(_settingsTtsQuality) ? "high" : _settingsTtsQuality.Trim().ToLowerInvariant(),
-			tts_volume = Math.Round(_settingsTtsVolume, 2),
-			tts_speed = Math.Round(_settingsTtsSpeed, 2),
+			["enabled"] = _settingsTtsEnabled,
+			["provider"] = string.IsNullOrWhiteSpace(_settingsTtsProvider) ? "elevenlabs" : _settingsTtsProvider.Trim().ToLowerInvariant(),
+			["language"] = NormalizeSettingsTtsLanguage(_settingsTtsLanguage),
+			["voice"] = string.IsNullOrWhiteSpace(_settingsTtsVoice) ? "Aoede" : _settingsTtsVoice.Trim(),
+			["elevenlabs_voice_id"] = _settingsElevenLabsVoiceId ?? "",
+			["elevenlabs_model"] = string.IsNullOrWhiteSpace(_settingsElevenLabsModel) ? "eleven_v3" : _settingsElevenLabsModel.Trim(),
+			["quality"] = string.IsNullOrWhiteSpace(_settingsTtsQuality) ? "balanced" : _settingsTtsQuality.Trim().ToLowerInvariant(),
+			["volume"] = Math.Round(_settingsTtsVolume, 2),
+			["speed"] = Math.Round(_settingsTtsSpeed, 2),
 		};
-		Error error = _chatSend.PutPacket(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload)));
+		var payload = new JsonObject
+		{
+			["type"] = "settings_update",
+			["scope"] = "tts",
+			["settings"] = new JsonObject { ["tts"] = tts },
+		};
+		Error error = _chatSend.PutPacket(Encoding.UTF8.GetBytes(payload.ToJsonString()));
 		if (error != Error.Ok)
 			RunLogger.LogErr($"[Settings] Khong gui duoc TTS settings_update: {error}");
 		else
-			RunLogger.Log($"[Settings] Da gui TTS settings_update language={payload.tts_language} voice={payload.tts_voice} volume={payload.tts_volume} speed={payload.tts_speed}");
+			RunLogger.Log($"[Settings] Da gui TTS settings_update provider={_settingsTtsProvider} language={_settingsTtsLanguage}");
 	}
 
 
@@ -2200,17 +2226,19 @@ public partial class UdpListener : Node2D
 				}
 				else
 				{
-				string language = ack.TryGetProperty("language", out JsonElement langEl) ? langEl.GetString() ?? "" : "";
-				string voice = ack.TryGetProperty("voice", out JsonElement voiceEl) ? voiceEl.GetString() ?? "" : "";
-				bool rebuilt = ack.TryGetProperty("worker_rebuilt", out JsonElement rebuiltEl) && rebuiltEl.ValueKind == JsonValueKind.True;
-				bool ready = ack.TryGetProperty("engine_ready", out JsonElement readyEl) && readyEl.ValueKind == JsonValueKind.True;
-				float volume = ack.TryGetProperty("volume", out JsonElement volumeEl) && volumeEl.TryGetSingle(out float parsedVolume) ? parsedVolume : _settingsTtsVolume;
-				float speed = ack.TryGetProperty("speed", out JsonElement speedEl) && speedEl.TryGetSingle(out float parsedSpeed) ? parsedSpeed : _settingsTtsSpeed;
-				if (_settingsTtsEngineStatusLabel != null)
-					_settingsTtsEngineStatusLabel.Text = ready ? $"Engine: sẵn sàng · {volume * 100f:0}% · {speed:0.00}×" : "Engine: chưa sẵn sàng";
-				SetSettingsStatus(ready
-					? $"Backend đã nhận TTS: {language}, {voice}{(rebuilt ? " · worker đã nạp lại" : "")}"
-					: "Backend đã nhận setting nhưng TTS chưa sẵn sàng; kiểm tra key hoặc Lưu & Restart.");
+					ApplyRuntimeSettingsAck(ack);
+					string provider = ack.TryGetProperty("provider", out JsonElement providerEl) ? providerEl.GetString() ?? _settingsTtsProvider : _settingsTtsProvider;
+					string language = ack.TryGetProperty("language", out JsonElement langEl) ? langEl.GetString() ?? "" : "";
+					string voice = ack.TryGetProperty("voice", out JsonElement voiceEl) ? voiceEl.GetString() ?? "" : "";
+					bool rebuilt = ack.TryGetProperty("worker_rebuilt", out JsonElement rebuiltEl) && rebuiltEl.ValueKind == JsonValueKind.True;
+					bool ready = ack.TryGetProperty("engine_ready", out JsonElement readyEl) && readyEl.ValueKind == JsonValueKind.True;
+					float volume = ack.TryGetProperty("volume", out JsonElement volumeEl) && volumeEl.TryGetSingle(out float parsedVolume) ? parsedVolume : _settingsTtsVolume;
+					float speed = ack.TryGetProperty("speed", out JsonElement speedEl) && speedEl.TryGetSingle(out float parsedSpeed) ? parsedSpeed : _settingsTtsSpeed;
+					if (_settingsTtsEngineStatusLabel != null)
+						_settingsTtsEngineStatusLabel.Text = ready ? $"{provider}: sẵn sàng · {volume * 100f:0}% · {speed:0.00}×" : $"{provider}: chưa sẵn sàng";
+					SetSettingsStatus(ready
+						? $"Brain đã nhận TTS {provider}: {language}, {voice}{(rebuilt ? " · worker đã nạp lại" : "")}"
+						: $"Brain đã nhận setting {provider} nhưng engine chưa sẵn sàng; kiểm tra đúng credential owner.");
 				}
 			}
 
@@ -2221,7 +2249,7 @@ public partial class UdpListener : Node2D
 					ApplyMainBrainHealthSnapshot(mainBrain);
 				if (healthAck.TryGetProperty("pools", out JsonElement pools) && pools.ValueKind == JsonValueKind.Object)
 				{
-					foreach (string kind in new[] { "main", "gemini", "groq" })
+					foreach (string kind in new[] { "main", "gemini", "groq", "elevenlabs" })
 					{
 						if (!pools.TryGetProperty(kind, out JsonElement pool) || pool.ValueKind != JsonValueKind.Object)
 							continue;
@@ -2258,11 +2286,16 @@ public partial class UdpListener : Node2D
 				if (healthAck.TryGetProperty("tts", out JsonElement tts) && tts.ValueKind == JsonValueKind.Object)
 				{
 					bool ready = tts.TryGetProperty("ready", out JsonElement readyEl) && readyEl.ValueKind == JsonValueKind.True;
+					string provider = tts.TryGetProperty("provider", out JsonElement providerEl) ? providerEl.GetString() ?? _settingsTtsProvider : _settingsTtsProvider;
+					string model = string.Equals(provider, "elevenlabs", StringComparison.OrdinalIgnoreCase)
+						? (tts.TryGetProperty("elevenlabs_model", out JsonElement modelEl) ? modelEl.GetString() ?? _settingsElevenLabsModel : _settingsElevenLabsModel)
+						: "Gemini TTS";
+					_settingsTtsProvider = provider;
 					if (_settingsTtsEngineStatusLabel != null)
-						_settingsTtsEngineStatusLabel.Text = ready ? "Engine: sẵn sàng" : "Engine: chưa sẵn sàng";
+						_settingsTtsEngineStatusLabel.Text = ready ? $"{provider}: sẵn sàng · {model}" : $"{provider}: chưa sẵn sàng · {model}";
 				}
 				RefreshSettingsKeyRowHealthIndicators();
-				SetSettingsStatus("Đã đọc trạng thái não chính, TTS và ba credential pool từ Brain.");
+				SetSettingsStatus("Đã đọc trạng thái Main Brain, TTS và bốn credential owner từ Brain.");
 			}
 
 			if (root.TryGetProperty("settings_connection_test_ack", out JsonElement connectionAck) && connectionAck.ValueKind == JsonValueKind.Object)
@@ -2372,7 +2405,7 @@ public partial class UdpListener : Node2D
 	private JsonObject BuildSettingsKeyAliasesNode()
 	{
 		var root = new JsonObject();
-		foreach (string kind in new[] { "main", "gemini", "groq" })
+		foreach (string kind in new[] { "main", "gemini", "groq", "elevenlabs" })
 		{
 			List<string> values = _settingsKeyDrafts.TryGetValue(kind, out List<string> draftValues)
 				? new List<string>(draftValues)
@@ -2923,6 +2956,15 @@ public partial class UdpListener : Node2D
 	}
 
 
+	private static string CompactSettingsKey(string value)
+	{
+		string text = (value ?? "").Trim();
+		if (text.Length <= 12)
+			return text;
+		return text.Substring(0, 5) + "…" + text.Substring(text.Length - 4);
+	}
+
+
 	private static string SettingsKeyFingerprint(string rawKey)
 	{
 		if (string.IsNullOrWhiteSpace(rawKey))
@@ -2970,7 +3012,7 @@ public partial class UdpListener : Node2D
 
 	private List<string> ReadConfiguredMainKeys()
 	{
-		var keys = ReadConfiguredKeys("ERIS_REMOTE_API_KEY", "ERIS_REMOTE_FALLBACK_API_KEYS", "ERIS_AGGREGATOR_API_KEY");
+		var keys = ReadConfiguredKeys("DEEPSEEK_API_KEY", "ERIS_REMOTE_API_KEY", "ERIS_REMOTE_FALLBACK_API_KEYS");
 		string profileKey = ReadMainBrainProfileApiKey();
 		if (!string.IsNullOrWhiteSpace(profileKey))
 		{
@@ -2987,7 +3029,7 @@ public partial class UdpListener : Node2D
 
 	private List<string> ReadConfiguredGroqKeys()
 	{
-		return ReadConfiguredKeys("ERIS_GROQ_API_KEY", "ERIS_GROQ_FALLBACK_API_KEYS", "ERIS_CHAT_FALLBACK_API_KEY");
+		return ReadConfiguredKeys("ERIS_GROQ_API_KEY", "ERIS_GROQ_FALLBACK_API_KEYS");
 	}
 
 	private string ReadMainBrainProfileApiKey()
@@ -3022,13 +3064,14 @@ public partial class UdpListener : Node2D
 		{
 			"main" => ReadConfiguredMainKeysFromSecretsOnly(),
 			"groq" => ReadConfiguredKeysFromSecretsOnly("ERIS_GROQ_API_KEY", "ERIS_GROQ_FALLBACK_API_KEYS"),
+			"elevenlabs" => ReadConfiguredKeysFromSecretsOnly("ELEVENLABS_API_KEY", "ERIS_ELEVENLABS_API_KEY"),
 			_ => ReadConfiguredKeysFromSecretsOnly("GEMINI_API_KEY", "ERIS_PRIVATE_MIND_API_KEY", "ERIS_PRIVATE_MIND_FALLBACK_API_KEYS", "ERIS_GEMINI_FALLBACK_API_KEYS"),
 		};
 	}
 
 	private List<string> ReadConfiguredMainKeysFromSecretsOnly()
 	{
-		var keys = ReadConfiguredKeysFromSecretsOnly("ERIS_REMOTE_API_KEY", "ERIS_REMOTE_FALLBACK_API_KEYS", "ERIS_AGGREGATOR_API_KEY");
+		var keys = ReadConfiguredKeysFromSecretsOnly("DEEPSEEK_API_KEY", "ERIS_REMOTE_API_KEY", "ERIS_REMOTE_FALLBACK_API_KEYS");
 		string profileKey = ReadMainBrainProfileApiKey();
 		if (!string.IsNullOrWhiteSpace(profileKey))
 		{
@@ -3073,8 +3116,9 @@ public partial class UdpListener : Node2D
 		string kind = NormalizeSettingsPoolKind(poolKind);
 		string[] controlled = kind switch
 		{
-			"main" => new[] { "ERIS_REMOTE_API_KEY", "ERIS_REMOTE_FALLBACK_API_KEYS" },
+			"main" => new[] { "DEEPSEEK_API_KEY", "ERIS_REMOTE_API_KEY", "ERIS_REMOTE_FALLBACK_API_KEYS" },
 			"groq" => new[] { "ERIS_GROQ_API_KEY", "ERIS_GROQ_FALLBACK_API_KEYS" },
+			"elevenlabs" => new[] { "ELEVENLABS_API_KEY", "ERIS_ELEVENLABS_API_KEY" },
 			_ => new[] { "GEMINI_API_KEY", "ERIS_PRIVATE_MIND_API_KEY", "ERIS_PRIVATE_MIND_FALLBACK_API_KEYS", "ERIS_GEMINI_FALLBACK_API_KEYS" },
 		};
 
@@ -3101,6 +3145,14 @@ public partial class UdpListener : Node2D
 
 		if (keys.Count == 0)
 			return;
+
+		if (kind == "elevenlabs")
+		{
+			// Runtime ElevenLabs hiện nhận một credential. UI vẫn giữ contract pool
+			// chung nhưng chỉ key ưu tiên 1 được materialize.
+			apiKeys["ELEVENLABS_API_KEY"] = keys[0];
+			return;
+		}
 
 		if (kind == "groq")
 		{

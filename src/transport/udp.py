@@ -20,7 +20,8 @@ def _compact_private_mind_for_udp_overflow(value):
     # đúng dữ liệu mà panel mới cần.
     if any(key in value for key in ("active_motives", "activated_defenses", "active_conflict", "self_interpretation")):
         modern_keys = (
-            "architecture", "surface", "open_loops", "latest_intention",
+            "schema", "architecture", "generated_at", "authority",
+            "surface", "open_loops", "latest_intention",
             "personality_direction_30d", "active_personality_forms",
             "active_identity_forms", "active_motives", "activated_defenses",
             "active_conflict", "value_choice", "self_interpretation",
@@ -107,7 +108,8 @@ def _slim_private_mind_core(private_mind):
         return {}
     if any(key in private_mind for key in ("active_motives", "activated_defenses", "active_conflict", "self_interpretation")):
         modern_keys = (
-            "architecture", "open_loops", "latest_intention", "active_motives",
+            "schema", "architecture", "generated_at", "authority",
+            "open_loops", "latest_intention", "active_motives",
             "activated_defenses", "active_conflict", "value_choice",
             "self_interpretation", "expression", "discovery",
         )

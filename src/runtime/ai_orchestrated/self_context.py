@@ -58,6 +58,14 @@ def _surface_preview(item: Any) -> dict[str, Any]:
             data = {}
     else:
         data = {}
+    raw_evidence = data.get("evidence_refs", data.get("evidence_ids", ()))
+    if isinstance(raw_evidence, str):
+        raw_evidence = (raw_evidence,) if raw_evidence.strip() else ()
+    elif not isinstance(raw_evidence, (list, tuple)):
+        raw_evidence = ()
+    evidence_refs = tuple(
+        item for item in (_compact(value, 120) for value in raw_evidence[:6]) if item
+    )
     return {
         "id": _compact(data.get("id", ""), 80),
         "kind": _compact(data.get("kind", ""), 80),
@@ -67,6 +75,7 @@ def _surface_preview(item: Any) -> dict[str, Any]:
         "pressure": _clamp01(data.get("pressure", data.get("vital_pressure", 0.0))),
         "score": _clamp01(data.get("score", data.get("usefulness", 0.0))),
         "reason": _compact(data.get("reason", ""), 160),
+        "evidence_refs": list(evidence_refs),
     }
 
 

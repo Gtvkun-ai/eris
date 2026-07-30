@@ -6,7 +6,7 @@ using System.Text.Json;
 
 public partial class UdpListener : Node2D
 {
-	// Panel cũ "Chiều sâu" từng phụ thuộc Ni/Fe/ToM legacy. Từ Architecture C v5,
+	// Panel cũ "Chiều sâu" từng phụ thuộc Ni/Fe/ToM legacy. Từ Architecture C v7 semantic cutover,
 	// nó trở thành bảng Identity & Life Runtime, đọc đúng một contract
 	// identity_runtime. Tên method/field cũ được giữ để không làm vỡ UdpListener.
 	private static readonly Vector2 DepthPanelMinSize = new(1400f, 820f);
@@ -106,8 +106,8 @@ public partial class UdpListener : Node2D
 	{
 		if (_depthPanel == null)
 			return;
-		if (string.IsNullOrWhiteSpace(_latestDepthV2Json))
-			LoadDepthV2State();
+		if (string.IsNullOrWhiteSpace(_latestIdentityRuntimeJson))
+			LoadIdentityRuntimeState();
 
 		foreach (Node child in _depthPanel.GetChildren())
 			child.QueueFree();
@@ -152,7 +152,7 @@ public partial class UdpListener : Node2D
 		titleBlock.AddThemeConstantOverride("separation", -1);
 		_depthTitleLabel = NewLabel("IDENTITY & LIFE RUNTIME", 23, new Color(0.45f, 0.15f, 0.31f), true);
 		_depthTitleLabel.ClipText = true;
-		_depthStatusLabel = NewLabel("v5.3.0  •  ai_orchestrated", 10, IdentityMuted, false);
+		_depthStatusLabel = NewLabel("Architecture C  •  chờ identity_runtime", 10, IdentityMuted, false);
 		_depthStatusLabel.ClipText = true;
 		titleBlock.AddChild(_depthTitleLabel);
 		titleBlock.AddChild(_depthStatusLabel);
@@ -248,20 +248,20 @@ public partial class UdpListener : Node2D
 		_depthFreezeButton.CustomMinimumSize = new Vector2(184f, 42f);
 		controls.AddChild(_depthFreezeButton);
 
-		var exportButton = NewFooterButton("Xuất snapshot", IdentityAsset("identity_action_export.png"), "⇩", () => SendDebugCommand("identity snapshot"), IdentityBlue);
+		var exportButton = NewFooterButton("Xuất snapshot", IdentityAsset("identity_action_export.png"), "⇩", () => SendIdentityControl("snapshot"), IdentityBlue);
 		exportButton.CustomMinimumSize = new Vector2(174f, 42f);
 		controls.AddChild(exportButton);
 
 		controls.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
 		controls.AddChild(NewActionDivider());
 
-		var resetMood = NewFooterButton("Reset mood", IdentityAsset("identity_action_reset_mood.png"), "☺", () => SendDebugCommand("identity reset mood"), IdentityPink);
+		var resetMood = NewFooterButton("Reset mood", IdentityAsset("identity_action_reset_mood.png"), "☺", () => SendIdentityControl("reset_mood"), IdentityPink);
 		resetMood.CustomMinimumSize = new Vector2(148f, 42f);
 		controls.AddChild(resetMood);
-		var resetRelationship = NewFooterButton("Reset quan hệ", IdentityAsset("identity_action_reset_relationship.png"), "♧", () => SendDebugCommand("identity reset relationship"), IdentityAccent);
+		var resetRelationship = NewFooterButton("Reset quan hệ", IdentityAsset("identity_action_reset_relationship.png"), "♧", () => SendIdentityControl("reset_relationship"), IdentityAccent);
 		resetRelationship.CustomMinimumSize = new Vector2(154f, 42f);
 		controls.AddChild(resetRelationship);
-		var resetDiscovery = NewFooterButton("Reset discovery", IdentityAsset("identity_action_reset_discovery.png"), "✦", () => SendDebugCommand("identity reset discovery"), IdentityOrange);
+		var resetDiscovery = NewFooterButton("Reset discovery", IdentityAsset("identity_action_reset_discovery.png"), "✦", () => SendIdentityControl("reset_discovery"), IdentityOrange);
 		resetDiscovery.CustomMinimumSize = new Vector2(164f, 42f);
 		controls.AddChild(resetDiscovery);
 
@@ -435,10 +435,47 @@ public partial class UdpListener : Node2D
 
 	private void ToggleIdentityLearning()
 	{
-		SendDebugCommand(_depthLearningEnabled ? "identity freeze on" : "identity freeze off");
+		SendIdentityControl("set_learning", !_depthLearningEnabled);
 	}
 
-	private void TryCaptureDepthV2Block(string raw)
+
+	private void SendIdentityControl(string action, bool? enabled = null)
+	{
+		var payload = new Dictionary<string, object>
+		{
+			["type"] = "identity_control",
+			["request_id"] = Guid.NewGuid().ToString("N"),
+			["action"] = action ?? "",
+		};
+		if (enabled.HasValue)
+			payload["enabled"] = enabled.Value;
+		Error error = _chatSend.PutPacket(System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload)));
+		if (_depthStatusLabel != null)
+			_depthStatusLabel.Text = error == Error.Ok ? $"đã gửi {action}" : $"gửi {action} lỗi: {error}";
+	}
+
+	private void TryApplyIdentityControlAck(string raw)
+	{
+		if (string.IsNullOrWhiteSpace(raw) || raw.IndexOf("identity_control_ack", StringComparison.Ordinal) < 0)
+			return;
+		try
+		{
+			using JsonDocument doc = JsonDocument.Parse(raw);
+			if (!doc.RootElement.TryGetProperty("identity_control_ack", out JsonElement ack) || ack.ValueKind != JsonValueKind.Object)
+				return;
+			bool ok = ReadBool(ack, "ok", false);
+			string action = ReadString(ack, "action");
+			string result = ReadString(ack, "result");
+			if (_depthStatusLabel != null)
+				_depthStatusLabel.Text = ok ? $"{action} ✓ · {TrimForPanel(result, 72)}" : $"{action} lỗi · {TrimForPanel(result, 72)}";
+		}
+		catch (Exception ex)
+		{
+			GD.PrintErr($"[IdentityPanel] ACK parse failed: {ex.Message}");
+		}
+	}
+
+	private void TryCaptureIdentityRuntimeBlock(string raw)
 	{
 		if (string.IsNullOrWhiteSpace(raw))
 			return;
@@ -451,19 +488,19 @@ public partial class UdpListener : Node2D
 				&& root.TryGetProperty("identity_runtime", out block)
 				&& block.ValueKind == JsonValueKind.Object)
 			{
-				_latestDepthV2Json = block.GetRawText();
+				_latestIdentityRuntimeJson = block.GetRawText();
 			}
 			else if (root.ValueKind == JsonValueKind.Object
 				&& root.TryGetProperty("depth_v2", out block)
 				&& block.ValueKind == JsonValueKind.Object)
 			{
-				_latestDepthV2Json = block.GetRawText();
+				_latestIdentityRuntimeJson = block.GetRawText();
 			}
 			else
 			{
 				return;
 			}
-			SaveDepthV2State();
+			SaveIdentityRuntimeState();
 			if (_depthPanel != null && _depthPanel.Visible)
 				RefreshDepthPanel();
 		}
@@ -473,14 +510,14 @@ public partial class UdpListener : Node2D
 		}
 	}
 
-	private void SaveDepthV2State()
+	private void SaveIdentityRuntimeState()
 	{
-		if (string.IsNullOrWhiteSpace(_latestDepthV2Json))
+		if (string.IsNullOrWhiteSpace(_latestIdentityRuntimeJson))
 			return;
 		try
 		{
-			using var file = Godot.FileAccess.Open(DepthV2StatePath, Godot.FileAccess.ModeFlags.Write);
-			file?.StoreString(_latestDepthV2Json);
+			using var file = Godot.FileAccess.Open(IdentityRuntimeStatePath, Godot.FileAccess.ModeFlags.Write);
+			file?.StoreString(_latestIdentityRuntimeJson);
 		}
 		catch (Exception ex)
 		{
@@ -488,15 +525,21 @@ public partial class UdpListener : Node2D
 		}
 	}
 
-	private void LoadDepthV2State()
+	private void LoadIdentityRuntimeState()
 	{
 		try
 		{
-			if (!Godot.FileAccess.FileExists(DepthV2StatePath))
+			string path = Godot.FileAccess.FileExists(IdentityRuntimeStatePath)
+				? IdentityRuntimeStatePath
+				: Godot.FileAccess.FileExists(LegacyDepthV2StatePath) ? LegacyDepthV2StatePath : "";
+			if (string.IsNullOrWhiteSpace(path))
 				return;
-			using var file = Godot.FileAccess.Open(DepthV2StatePath, Godot.FileAccess.ModeFlags.Read);
+			using var file = Godot.FileAccess.Open(path, Godot.FileAccess.ModeFlags.Read);
 			if (file != null)
-				_latestDepthV2Json = file.GetAsText();
+				_latestIdentityRuntimeJson = file.GetAsText();
+			if (string.Equals(path, LegacyDepthV2StatePath, StringComparison.Ordinal)
+				&& !string.IsNullOrWhiteSpace(_latestIdentityRuntimeJson))
+				SaveIdentityRuntimeState();
 		}
 		catch (Exception ex)
 		{
@@ -514,7 +557,7 @@ public partial class UdpListener : Node2D
 			child.QueueFree();
 		}
 
-		if (string.IsNullOrWhiteSpace(_latestDepthV2Json))
+		if (string.IsNullOrWhiteSpace(_latestIdentityRuntimeJson))
 		{
 			AddInfoCard("Chưa có dữ liệu", new[]
 			{
@@ -528,7 +571,7 @@ public partial class UdpListener : Node2D
 
 		try
 		{
-			using JsonDocument doc = JsonDocument.Parse(_latestDepthV2Json);
+			using JsonDocument doc = JsonDocument.Parse(_latestIdentityRuntimeJson);
 			JsonElement root = doc.RootElement;
 			int turn = ReadInt(root, "turn_seq");
 			int version = ReadInt(root, "state_version");
@@ -587,7 +630,7 @@ public partial class UdpListener : Node2D
 		body.AddChild(right);
 
 		RenderOverviewMood(left, root);
-		RenderSpeechDrive(left, root);
+		RenderOverviewInitiative(left, root);
 		RenderTopMotives(left, root);
 		RenderDefenseAndConflict(left, root);
 
@@ -616,47 +659,34 @@ public partial class UdpListener : Node2D
 		string mood = PrettyIdentityKey(ReadString(summary, "mood"));
 		textBox.AddChild(NewLabel(string.IsNullOrWhiteSpace(mood) ? "Trung tính" : mood, 20, IdentityInk, true));
 		textBox.AddChild(NewLabel(BuildMoodSubtitle(summary, root), 14, new Color(0.39f, 0.23f, 0.47f), false));
-		textBox.AddChild(NewLabel("Bình ổn · Quan sát · Chọn lọc", 11, IdentityMuted, false));
+		textBox.AddChild(NewLabel(BuildMoodAuthorityLine(root), 11, IdentityMuted, false));
 		row.AddChild(textBox);
 	}
 
 
-	private void RenderSpeechDrive(VBoxContainer parent, JsonElement root)
+	private static string BuildMoodAuthorityLine(JsonElement root)
 	{
-		JsonElement speech = Obj(root, "speech_drive");
-		JsonElement initiative = Obj(root, "initiative");
-		JsonElement decision = Obj(speech, "decision");
-		if (decision.ValueKind != JsonValueKind.Object)
-			decision = Obj(initiative, "last_decision");
+		JsonElement appraisal = Obj(root, "appraisal");
+		float pressure = ReadFirstFloat(appraisal, "pressure", "irritation", "novelty");
+		JsonElement learning = Obj(root, "learning");
+		string learningMode = ReadBool(learning, "enabled", true) ? "học bình thường" : "chỉ quan sát";
+		return pressure >= 0.60f ? $"áp lực cao · {learningMode}" : pressure >= 0.30f ? $"đang cân nhắc · {learningMode}" : $"nhịp thấp · {learningMode}";
+	}
 
-		float want = ReadFirstFloat(speech, "want_to_speak", "expression_urge", "urge", "speech_drive");
-		float content = ReadFirstFloat(speech, "content_readiness", "has_content", "content");
-		float toward = ReadFirstFloat(speech, "user_directed_motivation", "toward_user", "user_motivation");
-		float restraint = ReadFirstFloat(speech, "restraint", "self_restraint", "inhibition");
-		JsonElement discovery = Obj(root, "discovery");
-		if (content <= 0f && Arr(discovery, "ready_to_share").ValueKind == JsonValueKind.Array)
-			content = Arr(discovery, "ready_to_share").GetArrayLength() > 0 ? 0.72f : 0f;
-		if (want <= 0f)
-			want = Mathf.Clamp(content * 0.52f + toward * 0.30f + ReadFloat(Obj(root, "expression"), "initiative_bias") * 0.18f, 0f, 1f);
-		if (restraint <= 0f)
-			restraint = ReadTopScore(Arr(root, "defenses_top"), "intellectualization", 0.34f);
 
-		bool allowed = ReadBool(decision, "allowed", false);
-		string reason = ReadString(decision, "reason");
-		string status = allowed ? "Sẵn sàng nói" : (want >= 0.35f ? "Đang giữ lại" : "Đang yên");
-		var card = NewIdentityCard("Xung lực chủ động", IdentityAsset("identity_card_speech_drive.png"), "ϟ", IdentityPink, 190f);
-		parent.AddChild(card);
-		var box = (VBoxContainer)card.GetChild(0);
-		var stateRow = new HBoxContainer();
-		stateRow.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
-		stateRow.AddChild(NewPill(status, allowed ? IdentityGreen : IdentityPink, false));
-		box.AddChild(stateRow);
-		AddMetricBar(box, "Muốn nói", want, IdentityPink);
-		AddMetricBar(box, "Có nội dung", content, new Color(0.92f, 0.35f, 0.60f));
-		AddMetricBar(box, "Hướng tới bạn", toward, new Color(0.86f, 0.37f, 0.68f));
-		AddMetricBar(box, "Tự kìm", restraint, IdentityPurple);
-		if (!string.IsNullOrWhiteSpace(reason))
-			box.AddChild(NewLabel("Giữ lại vì " + PrettyIdentityKey(reason), 10, IdentityMuted, false));
+	private void RenderOverviewInitiative(VBoxContainer parent, JsonElement root)
+	{
+		JsonElement discoveryRuntime = Obj(root, "discovery_runtime");
+		if (discoveryRuntime.ValueKind != JsonValueKind.Object)
+		{
+			var card = NewIdentityCard("Nhịp chủ động", IdentityAsset("identity_card_speech_drive.png"), "∿", IdentityMuted, 142f);
+			parent.AddChild(card);
+			var box = (VBoxContainer)card.GetChild(0);
+			box.AddChild(NewLabel("Backend chưa gửi discovery_runtime.initiative.", 11, IdentityMuted, false));
+			box.AddChild(NewLabel("Panel không tự suy ra xung lực nói từ mood hay defense.", 10, IdentityMuted, false));
+			return;
+		}
+		RenderInitiativeRhythm(parent, discoveryRuntime);
 	}
 
 
@@ -1412,17 +1442,18 @@ public partial class UdpListener : Node2D
 			});
 		}
 
-		JsonElement speech = Obj(root, "speech_drive");
-		JsonElement speechDecision = Obj(speech, "decision");
-		float want = ReadFirstFloat(speech, "want_to_speak", "expression_urge", "urge", "speech_drive");
-		if (want >= 0.25f && events.Count < 5)
+		JsonElement discoveryRuntime = Obj(root, "discovery_runtime");
+		JsonElement initiative = Obj(discoveryRuntime, "initiative");
+		JsonElement initiativeDecision = Obj(initiative, "last_decision");
+		if (initiativeDecision.ValueKind == JsonValueKind.Object && events.Count < 5)
 		{
-			bool allowed = ReadBool(speechDecision, "allowed", false);
+			bool allowed = ReadBool(initiativeDecision, "allowed", false);
+			string reason = ReadString(initiativeDecision, "reason");
 			events.Add(new IdentityLiveEvent
 			{
-				Title = allowed ? "Đang có động lực chủ động nói" : "Muốn nói nhưng chọn giữ lại",
-				Detail = PrettyIdentityKey(ReadString(speechDecision, "reason")),
-				Tag = allowed ? "ready" : "withholding",
+				Title = allowed ? "Initiative gate đã cho ý định đi tiếp" : "Initiative gate đã giữ một ý định",
+				Detail = PrettyInitiativeReason(reason),
+				Tag = allowed ? "ready" : "held",
 				IconPath = allowed ? IdentityAsset("identity_event_ready.png") : IdentityAsset("identity_event_withholding.png"),
 				FallbackGlyph = allowed ? "➤" : "▢",
 				Accent = allowed ? IdentityGreen : IdentityOrange,

@@ -325,6 +325,29 @@ class RemoteModelProcessManager:
     def build_inner_client(self):
         return self.build_deepseek_worker_client("inner")
 
+    def build_diary_client(self):
+        """Chọn đúng MỘT worker DeepSeek hiện có để viết Inner Diary.
+
+        Không tạo role thứ tám chỉ để khoe sơ đồ kiến trúc. Mặc định dùng role
+        ``inner``; có thể chuyển sang một role hiện có bằng
+        ``ERIS_INNER_DIARY_WORKER_ROLE``. Sai role thì fallback về ``inner`` và
+        ghi log rõ ràng.
+        """
+
+        requested = str(os.environ.get("ERIS_INNER_DIARY_WORKER_ROLE", "inner") or "inner").strip().lower()
+        try:
+            normalized = normalize_worker_role(requested)
+        except ValueError:
+            self.logger.warning(
+                "Inner Diary worker role khong hop le: %s; fallback ve inner",
+                requested,
+            )
+            normalized = "inner"
+        client = self.build_deepseek_worker_client(normalized)
+        if client is not None:
+            self.logger.info("Inner Diary owner: DeepSeek worker role=%s", normalized)
+        return client
+
     def build_surface_client(self):
         """Dựng worker riêng cho lời chủ động/small talk của ERIS.
 
@@ -334,7 +357,13 @@ class RemoteModelProcessManager:
         động được. Phần mềm cũng nên biết sống chung với cấu hình chưa hoàn tất.
         """
 
-        return self.build_deepseek_worker_client("surface")
+        client = self.build_deepseek_worker_client("surface")
+        if client is None:
+            self.logger.warning(
+                "Surface worker chua cau hinh; autonomous se dung local fallback/body-only "
+                "(can ERIS_DS_SURFACE_API_KEY de bat mot public voice rieng)."
+            )
+        return client
 
     def build_research_client(self):
         return self.build_deepseek_worker_client("research")

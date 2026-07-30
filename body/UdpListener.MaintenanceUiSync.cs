@@ -54,7 +54,7 @@ public partial class UdpListener : Node2D
 				action,
 				scope = scope.ToString(),
 				private_mind_cache = string.IsNullOrWhiteSpace(_latestPrivateMindDebugJson) ? "cleared" : "sanitized",
-				depth_cache = string.IsNullOrWhiteSpace(_latestDepthV2Json) ? "cleared" : "retained",
+				depth_cache = string.IsNullOrWhiteSpace(_latestIdentityRuntimeJson) ? "cleared" : "retained",
 			}));
 	}
 
@@ -151,6 +151,7 @@ public partial class UdpListener : Node2D
 	private void ResetEmotionUi()
 	{
 		_latestEmotionDebug = null;
+		ResetRuntimePresenceState();
 		_moodDotValence = 0f;
 		_moodDotArousal = 0f;
 		_moodStateName = "";
@@ -158,7 +159,7 @@ public partial class UdpListener : Node2D
 		_moodDotCanvas?.QueueRedraw();
 
 		if (_casualNarrativeLabel != null)
-			_casualNarrativeLabel.Text = "\"Chưa có frame cảm xúc.\"";
+			_casualNarrativeLabel.Text = "\"Đang chờ affect_state.\"";
 		for (int i = 0; i < _casualBars.Count && i < CasualBarDefs.Length; i++)
 			UpdateCasualBar(i, 0f, CasualBarDefs[i].Levels);
 
@@ -166,11 +167,11 @@ public partial class UdpListener : Node2D
 			RefreshDevMode();
 
 		if (_emotionSummaryLabel != null)
-			_emotionSummaryLabel.Text = "Cảm xúc";
+			_emotionSummaryLabel.Text = "Khí sắc & hiện diện";
 		if (_emotionHintLabel != null)
-			_emotionHintLabel.Text = "Chưa có frame cảm xúc.";
+			_emotionHintLabel.Text = "Đang chờ affect_state hoặc identity_runtime.";
 		if (_emotionText != null)
-			_emotionText.Text = "[i]Chưa có frame cảm xúc.[/i]";
+			_emotionText.Text = "[i]Đang chờ khí sắc runtime.[/i]";
 
 		for (int i = 0; i < _emotionRows.Count && i < EmotionPanelSlots.Length; i++)
 		{
@@ -277,8 +278,9 @@ public partial class UdpListener : Node2D
 
 	private void ResetDepthUi()
 	{
-		_latestDepthV2Json = "";
-		DeleteUserStateFile(DepthV2StatePath);
+		_latestIdentityRuntimeJson = "";
+		DeleteUserStateFile(IdentityRuntimeStatePath);
+		DeleteUserStateFile(LegacyDepthV2StatePath);
 		if (_depthContentList != null || _depthPanel != null)
 			RefreshDepthPanel();
 	}

@@ -52,7 +52,7 @@ placeholder_text = "Nhan tin voi ERIS..."
 
 [node name="SendButton" type="Button" parent="CanvasLayer/Control/ChatPanel/HBoxContainer" unique_id=576196245]
 layout_mode = 2
-text = "Gui"
+text = "Gửi"
 
 [node name="CloseButton" type="Button" parent="CanvasLayer/Control/ChatPanel/HBoxContainer" unique_id=784276559]
 layout_mode = 2
@@ -82,19 +82,19 @@ text = "Chat"
 
 [node name="TouchButton" type="Button" parent="CanvasLayer/Control/CharacterContextMenu/VBoxContainer" unique_id=1122334460]
 layout_mode = 2
-text = "Cham / Nem"
+text = "Chạm / kéo / thả"
 
 [node name="ForceSpeakButton" type="Button" parent="CanvasLayer/Control/CharacterContextMenu/VBoxContainer" unique_id=1122334459]
 layout_mode = 2
-text = "Noi ngay"
+text = "Nói ngay"
 
 [node name="EmotionButton" type="Button" parent="CanvasLayer/Control/CharacterContextMenu/VBoxContainer" unique_id=1122334461]
 layout_mode = 2
-text = "Cam xuc"
+text = "Khí sắc"
 
 [node name="CloseButton" type="Button" parent="CanvasLayer/Control/CharacterContextMenu/VBoxContainer" unique_id=1122334458]
 layout_mode = 2
-text = "Dong"
+text = "Đóng"
 
 [node name="EmotionPanel" type="Panel" parent="CanvasLayer/Control" unique_id=1122334462]
 visible = false
@@ -120,7 +120,7 @@ layout_mode = 2
 [node name="TitleLabel" type="Label" parent="CanvasLayer/Control/EmotionPanel/VBoxContainer/Header" unique_id=1122334465]
 layout_mode = 2
 size_flags_horizontal = 3
-text = "Cam xuc"
+text = "Khí sắc"
 
 [node name="CloseButton" type="Button" parent="CanvasLayer/Control/EmotionPanel/VBoxContainer/Header" unique_id=1122334466]
 layout_mode = 2

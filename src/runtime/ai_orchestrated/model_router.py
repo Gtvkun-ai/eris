@@ -83,6 +83,20 @@ SURFACE_INTENT_SCHEMA: dict[str, Any] = {
     },
 }
 
+
+SURFACE_REALIZATION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["text", "confidence", "performance_hint", "evidence_refs", "reason"],
+    "properties": {
+        "text": {"type": "string"},
+        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "performance_hint": {"type": "string"},
+        "evidence_refs": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
+        "reason": {"type": "string"},
+    },
+}
+
 COGNITIVE_OBSERVATION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -1889,9 +1903,9 @@ class AIRuntimeModelRouter:
         if client is None:
             return {}
         try:
-            timeout = max(2.0, min(30.0, float(os.getenv("ERIS_SURFACE_INTENT_TIMEOUT_SEC", "12") or 12.0)))
+            timeout = max(2.0, min(6.0, float(os.getenv("ERIS_SURFACE_INTENT_TIMEOUT_SEC", "4") or 4.0)))
         except (TypeError, ValueError):
-            timeout = 12.0
+            timeout = 4.0
         return self._call(
             client,
             system=self._surface_intent_prompt(),
@@ -1899,6 +1913,46 @@ class AIRuntimeModelRouter:
             schema=SURFACE_INTENT_SCHEMA,
             name="eris_autonomous_surface_intent",
             max_tokens=420,
+            reasoning_effort=None,
+            inference_tier="main_cognition",
+            priority=82,
+            timeout_seconds=timeout,
+        )
+
+    @staticmethod
+    def _surface_realizer_prompt() -> str:
+        return (
+            "Bạn là SURFACE WORKER duy nhất của ERIS. InitiativeController đã quyết định SPEECH và đã khóa mode, "
+            "anchor, topic, evidence scope. Bạn CHỈ viết một micro-line public tự nhiên bằng ngôn ngữ gần nhất của hội thoại. "
+            "Không được trả silence, đổi mode, đổi topic owner, tự thêm memory/screen fact, hay giải thích contract. "
+            "speech_intent.plan.topic là mục tiêu giao tiếp, không phải câu cần chép. blackboard chỉ là public-safe context. "
+            "Nếu anchor là screen, chỉ dùng literal app/window/evidence được đưa; có thể hỏi chung nhưng không đoán user đang thắng, "
+            "thua, buồn, định làm gì hoặc nội dung không nhìn thấy. Nếu anchor là self, chỉ surface seed đã được duyệt, không lộ raw thought. "
+            "Giọng ERIS ấm kín, hơi khô, có cá tính; tránh câu support-bot như 'tôi ở đây' hoặc 'cần gì cứ nói'. "
+            "Tối đa số câu trong surface_contract.max_sentences. evidence_refs chỉ copy id trong allowed_evidence_refs. Return JSON only."
+        )
+
+    def realize_surface_speech(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        """Surface Worker chỉ viết wording từ SpeechIntent đã được duyệt.
+
+        Deadline cố ý ngắn. Autonomous speech là optional presence, không có lý
+        do gì để giữ UI im lặng hàng chục giây chỉ vì một micro-line.
+        """
+
+        client = self.surface_client
+        if client is None:
+            return {}
+        try:
+            timeout = max(2.0, min(6.0, float(os.getenv("ERIS_SURFACE_REALIZER_TIMEOUT_SEC", "4") or 4.0)))
+        except (TypeError, ValueError):
+            timeout = 4.0
+        return self._call(
+            client,
+            system=self._surface_realizer_prompt(),
+            payload=request,
+            schema=SURFACE_REALIZATION_SCHEMA,
+            name="eris_autonomous_surface_realizer",
+            max_tokens=240,
             reasoning_effort=None,
             inference_tier="main_cognition",
             priority=82,
@@ -1969,7 +2023,7 @@ __all__ = [
     "PERSONALITY_REFLECTION_SCHEMA",
     "INTENTION_PLAN_SCHEMA",
     "PUBLIC_REPLY_SCHEMA",
-    "SURFACE_INTENT_SCHEMA",
+    "SURFACE_INTENT_SCHEMA", "SURFACE_REALIZATION_SCHEMA",
     "SEMANTIC_FRAME_SCHEMA",
     "ASSISTANT_ACT_SCHEMA",
 ]

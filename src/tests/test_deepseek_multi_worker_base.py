@@ -246,3 +246,29 @@ def test_companion_key_can_boot_without_official_deepseek_key(monkeypatch, tmp_p
 
     assert client.worker_role == "companion"
     assert client.base_url == "http://127.0.0.1:6011/v1"
+
+
+def test_surface_worker_drops_when_actor_is_busy_by_default(monkeypatch):
+    monkeypatch.setenv("ERIS_DS_ROLE_ACTORS", "1")
+    monkeypatch.delenv("ERIS_DS_SURFACE_DROP_IF_BUSY", raising=False)
+    raw = _BlockingClient()
+    worker = JsonlWorkerClient(raw, role="surface", jsonl_enabled=False)
+    result: list[object] = []
+
+    def _first_call():
+        try:
+            result.append(_call(worker, response_format=None))
+        except Exception as exc:  # noqa: BLE001
+            result.append(exc)
+
+    thread = threading.Thread(target=_first_call)
+    thread.start()
+    assert raw.started.wait(2.0)
+
+    with pytest.raises(RoleWorkerBusyError):
+        _call(worker, response_format=None)
+
+    raw.release.set()
+    thread.join(2.0)
+    assert result and not isinstance(result[0], Exception)
+    assert len(raw.calls) == 1

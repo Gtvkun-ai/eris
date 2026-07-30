@@ -11,48 +11,9 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 
-_RESTART_REQUIRED = {
-    "chat.max_concurrency",
-    "ai_runtime.observer_workers",
-    "ai_runtime.state_persistence_interval_seconds",
-    "prompt.strict_grounding",
-    "memory.semantic_parser",
-    "public_turn.reply_window_seconds",
-    "public_turn.block_min_seconds",
-    "public_turn.block_max_seconds",
-    "public_turn.default_block_seconds",
-    "engagement.enabled",
-    "engagement.max_events",
-    "engagement.persistence_interval_seconds",
-    "engagement.signal_importance_threshold",
-    "engagement.activity_key_cache_size",
-    "engagement.activity_key_retention",
-    "engagement.max_terminal_engagements",
-    "engagement.terminal_retention_seconds",
-    "engagement.event_consumer_batch_size",
-    "engagement.delivery_lease_seconds",
-    "engagement.delivery_max_attempts",
-    "engagement.delivery_backoff_initial_seconds",
-    "engagement.delivery_backoff_max_seconds",
-    "engagement.max_dead_letters",
-    "engagement.delivery_stop_on_gap",
-    "engagement.consumer_lag_warning_events",
-    "engagement.open_dead_letter_warning_count",
-    "engagement.snapshot_journal_enabled",
-    "engagement.snapshot_journal_auto_repair",
-    "chess_bridge.enabled",
-    "chess_bridge.host",
-    "chess_bridge.port",
-    "chess_bridge.analysis_depth",
-    "chess_bridge.direct_move_rate",
-    "chess_bridge.max_body_bytes",
-    "observability.slo_window_seconds",
-    "observability.slo_max_samples",
-    "observability.minimum_ready_ratio",
-    "observability.maximum_degraded_seconds",
-    "observability.max_incidents",
-    "health.max_events",
-}
+from runtime.settings_catalog import RESTART_REQUIRED_PATHS
+
+_RESTART_REQUIRED = set(RESTART_REQUIRED_PATHS)
 
 
 _LEGACY_ADVANCED_MAP: dict[str, tuple[str, ...]] = {
@@ -121,11 +82,34 @@ class NormalizedSettingsMessage:
 
 def normalize_settings_message(msg: Mapping[str, Any]) -> NormalizedSettingsMessage:
     scope = str(msg.get("scope", "runtime") or "runtime").strip().lower()
-    if scope == "tts":
+    raw = msg.get("settings")
+
+    # Contract mới: mọi scope đều gửi object nested. TTS vẫn nhận payload phẳng
+    # cũ để các body trước schema v14 không chết ngay trong ngày nâng cấp.
+    if isinstance(raw, Mapping):
+        from runtime.runtime_settings_store import RuntimeSettingsStore
+
+        all_roots = {str(key) for key in RuntimeSettingsStore.defaults().keys() if str(key) != "version"}
+        allowed_roots = {
+            "advanced": all_roots - {"tts"},
+            "voice": {"tts"},
+            "tts": {"tts"},
+            "danger": {"danger_zone"},
+            "personality": {"personality"},
+            "runtime": all_roots,
+        }.get(scope, set())
+        patch = {str(k): v for k, v in raw.items() if str(k) in allowed_roots}
+        rejected = tuple(str(k) for k in raw.keys() if str(k) not in allowed_roots)
+        return NormalizedSettingsMessage(
+            scope="tts" if scope == "voice" else scope,
+            patch=patch,
+            restart_required_paths=frozenset(_RESTART_REQUIRED),
+            rejected_fields=rejected,
+        )
+
+    if scope in {"tts", "voice"}:
         language = _language(msg.get("tts_language", "vi"))
         patch = {
-            # Selector này chỉ điều khiển transcript phát âm. Ngôn ngữ public
-            # thuộc chat.language và không được đổi chỉ vì đổi giọng TTS.
             "tts": {
                 "enabled": _bool(msg.get("tts_enabled", True)),
                 "language": language,
@@ -136,32 +120,6 @@ def normalize_settings_message(msg: Mapping[str, Any]) -> NormalizedSettingsMess
             }
         }
         return NormalizedSettingsMessage(scope="tts", patch=patch, restart_required_paths=frozenset())
-
-    raw = msg.get("settings")
-    if isinstance(raw, Mapping):
-        allowed_roots = {
-            "advanced": {
-                "chat", "personality", "project_ops", "prompt", "memory",
-                "stage", "tts", "pipeline", "tutor", "commentary",
-                "initiative", "discovery", "ai_runtime", "public_turn", "engagement", "health",
-                "protocol", "run_loop", "observability", "chess_bridge",
-            },
-            "personality": {"personality"},
-            "runtime": {
-                "chat", "personality", "capabilities", "project_ops", "prompt",
-                "memory", "stage", "tts", "pipeline", "tutor", "commentary",
-                "initiative", "discovery", "danger_zone",
-                "ai_runtime", "public_turn", "engagement", "health", "protocol", "run_loop", "observability", "chess_bridge",
-            },
-        }.get(scope, set())
-        patch = {str(k): v for k, v in raw.items() if str(k) in allowed_roots}
-        rejected = tuple(str(k) for k in raw.keys() if str(k) not in allowed_roots)
-        return NormalizedSettingsMessage(
-            scope=scope,
-            patch=patch,
-            restart_required_paths=frozenset(_RESTART_REQUIRED),
-            rejected_fields=rejected,
-        )
 
     legacy = msg.get("advanced_env")
     if scope == "advanced" and isinstance(legacy, Mapping):
