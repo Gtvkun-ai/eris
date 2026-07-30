@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Pipeline self-initiated turn của Architecture C V17.
+"""Pipeline self-initiated turn của Architecture C V18.
 
 Mỗi bước có đúng một trách nhiệm:
 1. Perception + Context gom signal cơ học và public-safe cognition.
 2. ``TypedCognitiveBlackboard`` chuẩn hóa observer/inner/critic/memory outputs.
-3. ``InitiativeController`` quyết định NO_OP / BODY_ONLY / SPEECH bằng code thường.
-4. ``Surface Worker`` chỉ viết wording cho SpeechIntent đã duyệt.
-5. ``AutonomousGroundingValidator`` khóa provenance trước và sau model call.
-6. PublicTurnCommitter đưa câu qua TTS + Live2D cùng ledger với chat.
+3. ``Social Initiative Worker`` đề xuất desire/topic bằng typed candidate.
+4. ``InitiativeController`` chỉ làm governor timing/quyền phát.
+5. ``Surface Worker`` chỉ viết wording cho SpeechIntent đã duyệt.
+6. ``AutonomousGroundingValidator`` khóa provenance trước và sau model call.
+7. PublicTurnCommitter đưa câu qua TTS + Live2D cùng ledger với chat.
 
 Không còn model call để quyết định có nên nói, rồi controller mới từ chối sau
 88 giây. Loài người đã thử cách đó; log cho thấy kết quả khá nghệ thuật.
@@ -15,6 +16,8 @@ Không còn model call để quyết định có nên nói, rồi controller m�
 from __future__ import annotations
 
 import json
+import os
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
@@ -90,6 +93,8 @@ class SelfTurnPipeline:
         self.commentary_cadence = CommentaryCadence()
         self._last_deliberation_at = 0.0
         self._last_probe_at = 0.0
+        self._observer_thread: threading.Thread | None = None
+        self._observer_thread_lock = threading.Lock()
 
     def run(self) -> bool:
         host = self.host
@@ -107,9 +112,15 @@ class SelfTurnPipeline:
             host._sleep_interruptible(min(4.0, max(0.2, blocked_until - now)))
             return True
 
+        phase_started = time.monotonic()
         perception = self._assemble_perception(now)
+        perception_ms = (time.monotonic() - phase_started) * 1000.0
+        phase_started = time.monotonic()
         context = self._assemble_context(perception)
+        context_ms = (time.monotonic() - phase_started) * 1000.0
+        phase_started = time.monotonic()
         planner_snapshot, discovery_runtime = self._planner_snapshot(context)
+        snapshot_ms = (time.monotonic() - phase_started) * 1000.0
         should_deliberate, trigger_reason = self._should_deliberate(context, planner_snapshot)
         if not should_deliberate:
             self.trace_store.append("attention_skip", {
@@ -126,9 +137,16 @@ class SelfTurnPipeline:
 
         self._last_deliberation_at = now
 
-        # V17: cognition nền chỉ ghi vào typed blackboard. Quyền quyết định phát
-        # ngôn nằm ở deterministic InitiativeController, trước mọi model call.
+        # V18: model sở hữu *mong muốn và topic*, runtime chỉ làm governor.
+        # Candidate worker dùng cùng role=surface nhưng contract riêng; nó chưa có
+        # quyền phát ngôn và không viết câu cuối.
         blackboard = TypedCognitiveBlackboard.from_snapshot(planner_snapshot, now=now)
+        candidate_started = time.monotonic()
+        candidate = None
+        social_engine = getattr(host, "ai_social_initiative_engine", None)
+        if social_engine is not None:
+            candidate = social_engine.propose(blackboard, snapshot=planner_snapshot)
+        candidate_ms = (time.monotonic() - candidate_started) * 1000.0
         initiative = getattr(host, "ai_initiative_controller", None)
         if initiative is None:
             decision = InitiativeDecision(
@@ -137,7 +155,17 @@ class SelfTurnPipeline:
                 IntentionPlan.silence(channel="autonomous", reason="controller_unavailable"),
             )
         else:
-            decision = initiative.decide(blackboard)
+            decision = initiative.decide(blackboard, candidate)
+        host.logger.info(
+            "[autonomous latency] perception=%.0fms context=%.0fms snapshot=%.0fms candidate=%.0fms total_to_governor=%.0fms",
+            perception_ms, context_ms, snapshot_ms, candidate_ms,
+            perception_ms + context_ms + snapshot_ms + candidate_ms,
+        )
+        if candidate is not None:
+            host.logger.info(
+                "[social initiative] source=%s kind=%s anchor=%s confidence=%.2f relevance=%.2f reason=%s",
+                candidate.source, candidate.kind, candidate.anchor_type, candidate.confidence, candidate.relevance, candidate.reason,
+            )
 
         plan = decision.plan
         discovery_grounding = ""
@@ -162,6 +190,7 @@ class SelfTurnPipeline:
             "reason": decision.reason,
             "anchor": decision.speech_intent.anchor_type if decision.speech_intent else "none",
             "semantic_signature": plan.semantic_signature,
+            "candidate": candidate.to_dict() if candidate is not None else None,
         }, now=now)
 
         # Log một dòng ngắn để runtime log cho biết Eris đang thật sự quyết
@@ -317,35 +346,35 @@ class SelfTurnPipeline:
             )
         )
         previous_observer = getattr(host, "last_observer_frame", None)
-        try:
-            vision_facts = host._maybe_update_screen_facts(
-                snapshot=snapshot,
-                channel="autonomous",
-                force_refresh=force_visual_refresh,
-                started_at=now,
+        # Không để autonomous turn chờ observer/model vision. Nếu chưa có cached
+        # observer, ta schedule refresh nền và dùng facts đã grounded từ tick trước.
+        # Tick sau sẽ nhận kết quả; UI không đứng đợi một lane advisory đi họp.
+        if previous_observer is None:
+            vision_facts = tuple(
+                () if bool(getattr(host, "vision_facts_are_stale", False))
+                else tuple(getattr(host, "vision_facts", ()) or ())
             )
-        except TypeError:
-            vision_facts = host._maybe_update_screen_facts()
-        vision_facts = tuple(vision_facts or ())
+            self._schedule_observer_refresh(snapshot, vision_facts, now)
+        else:
+            try:
+                vision_facts = host._maybe_update_screen_facts(
+                    snapshot=snapshot,
+                    channel="autonomous",
+                    observer_frame=previous_observer,
+                    force_refresh=force_visual_refresh,
+                    started_at=now,
+                )
+            except TypeError:
+                vision_facts = host._maybe_update_screen_facts()
+            vision_facts = tuple(vision_facts or ())
+            self._schedule_observer_refresh(snapshot, vision_facts, now)
         if vision_facts:
             try:
                 host._attach_screen_facts(snapshot, vision_facts)
             except Exception:
                 pass
 
-        observer_frame = getattr(host, "last_observer_frame", None)
-        observer_runner = getattr(host, "_run_background_observer", None)
-        if observer_frame is previous_observer and callable(observer_runner):
-            try:
-                observer_frame = observer_runner(
-                    snapshot=snapshot,
-                    channel="autonomous",
-                    user_text="",
-                    vision_facts=vision_facts,
-                    started_at=now,
-                )
-            except Exception as exc:
-                host.logger.warning("[ai autonomous] cortex observer unavailable: %s", exc)
+        observer_frame = previous_observer
         if screen.meaningful_delta or screen.scene_kind != "unknown":
             host.logger.info(
                 "[self turn screen] backend=%s ocr=%s upstream_scene=%s conf=%.2f delta=%s changed_text=%s",
@@ -364,6 +393,47 @@ class SelfTurnPipeline:
             vision_facts=vision_facts,
             observer_frame=observer_frame,
         )
+
+    def _schedule_observer_refresh(
+        self,
+        snapshot: Any,
+        vision_facts: tuple[Any, ...],
+        started_at: float,
+    ) -> None:
+        """Refresh observer ở daemon thread; autonomous turn không chờ kết quả."""
+
+        runner = getattr(self.host, "_run_background_observer", None)
+        if not callable(runner):
+            return
+        with self._observer_thread_lock:
+            thread = self._observer_thread
+            if thread is not None and thread.is_alive():
+                return
+
+            def work() -> None:
+                began = time.monotonic()
+                try:
+                    runner(
+                        snapshot=snapshot,
+                        channel="autonomous",
+                        user_text="",
+                        vision_facts=vision_facts,
+                        started_at=started_at,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    self.host.logger.warning("[background observer] refresh failed: %s", exc)
+                finally:
+                    self.host.logger.debug(
+                        "[background observer] refresh finished latency=%.0fms",
+                        (time.monotonic() - began) * 1000.0,
+                    )
+
+            self._observer_thread = threading.Thread(
+                target=work,
+                name="eris-autonomous-observer",
+                daemon=True,
+            )
+            self._observer_thread.start()
 
     def _assemble_context(self, perception: PerceptionBundle) -> SelfTurnBundle:
         host = self.host
@@ -465,6 +535,11 @@ class SelfTurnPipeline:
             "conversation_baton": context.discourse.to_dict(),
             "activity_session": context.activity.to_dict(),
             "vision_facts": list(perception.vision_facts),
+            "vision_grounding": (
+                getattr(self.host, "last_vision_grounding_report", None).to_dict()
+                if callable(getattr(getattr(self.host, "last_vision_grounding_report", None), "to_dict", None))
+                else {}
+            ),
             "personality": state.personality.panel_view(),
             "personality_summary": state.personality_prompt_context(),
             "identity": state.identity.panel_view(),
@@ -482,14 +557,13 @@ class SelfTurnPipeline:
             "engagement_context": dict(context.engagement_context),
             "engagement_interaction": context.engagement_interaction.to_dict(),
             "instruction": (
-                "You are the sole semantic authority for this self-initiated public turn. "
-                "Use observer discourse as-is; do not reclassify it from punctuation. "
-                "Use telemetry/OCR/vision as evidence, not as proof of user intent. "
-                "Return stable semantics and activity annotations. Runtime gates only timing, privacy, and exact semantic repeats. "
-                "When commentary_expectation.due=true, companion-commentary mode is active: prefer speak=true unless "
-                "user_busy/privacy/reply_expected makes speech genuinely intrusive. When required=true, silence is not "
-                "a valid default; choose one low-risk, warm-guarded comment, question, continuation, or public-safe thought. "
-                "When engagement_context.active=true, preserve its objective, role and constraints; do not silently switch to unrelated ambient banter."
+                "This snapshot feeds a typed Social Initiative candidate generator. "
+                "Observer/inner/critic/memory contribute public-safe signals; they do not own public speech. "
+                "The candidate model owns desire and topic only. Runtime owns permission and timing. "
+                "Surface owns final wording. Grounding owns factual claims. "
+                "Raw OCR/window titles are mechanical deltas, never public facts unless vision_grounding contains "
+                "a grounded non-stale claim with evidence ids. Social chat may be non-factual and require no screen anchor. "
+                "When engagement_context.active=true, preserve its objective and do not switch to unrelated banter."
             ),
         }
         discovery_runtime = getattr(self.host, "ai_discovery_runtime", None)
@@ -511,7 +585,26 @@ class SelfTurnPipeline:
             float(attention.get("internal_drive", 0.0) or 0.0),
         )
         now = context.perception.now
-        presence_probe_due = now - self._last_probe_at >= 300.0
+        # Liveness wake-up chỉ mời Social Initiative Worker đề xuất topic; nó
+        # không ép nói. Dùng cùng soft-silence contract thay vì một hằng số 300s
+        # nằm lạc trong scheduler, vì hằng số bí mật là cách runtime nuôi ma.
+        try:
+            soft_silence = max(45.0, min(3600.0, float(
+                os.getenv("ERIS_SOCIAL_INITIATIVE_SOFT_SILENCE_SEC", "180") or 180.0
+            )))
+        except (TypeError, ValueError):
+            soft_silence = 180.0
+        try:
+            probe_interval = max(30.0, min(600.0, float(
+                os.getenv(
+                    "ERIS_SOCIAL_INITIATIVE_PROBE_INTERVAL_SEC",
+                    str(min(180.0, max(45.0, soft_silence / 2.0))),
+                ) or 90.0
+            )))
+        except (TypeError, ValueError):
+            probe_interval = min(180.0, max(45.0, soft_silence / 2.0))
+        quiet_opportunity = context.seconds_since_assistant >= soft_silence
+        presence_probe_due = quiet_opportunity and now - self._last_probe_at >= probe_interval
         checks = (
             (context.discourse.assistant_may_continue and context.discourse.thread_fresh, "open_discourse"),
             (context.perception.mechanical_delta, "perception_delta"),
@@ -529,8 +622,8 @@ class SelfTurnPipeline:
                 return True, reason
         return False, "no_new_attention_signal"
 
-    # V17 không còn _deliberate model-owned hoặc _mechanical_gate sau model.
-    # Blackboard + InitiativeController đã thay toàn bộ đoạn đó ở run().
+    # V18 không còn planner model-owned tự quyết speak/silence trong Surface.
+    # Candidate model -> governor -> realizer đã thay đường đó ở run().
 
     def _finish_silence(
         self,
@@ -603,32 +696,42 @@ class SelfTurnPipeline:
         from runtime.source_grounding import SourceGroundingReport
 
         screen = context.perception.screen
+        report = getattr(getattr(self, "host", None), "last_vision_grounding_report", None)
+        grounded_claims = tuple(getattr(report, "grounded_claims", ()) or ())
+        plan_refs = tuple(str(item) for item in getattr(plan, "evidence_refs", ()) or () if str(item).strip())
+        grounded_ids = {
+            str(evidence_id)
+            for claim in grounded_claims
+            for evidence_id in tuple(getattr(claim, "evidence_ids", ()) or ())
+            if str(evidence_id).strip()
+        }
+        screen_scope = str(plan.semantics.evidence_scope or "").startswith("screen")
+        selected_ids = [ref for ref in plan_refs if ref in grounded_ids]
         fresh_screen = bool(
-            screen.fresh
+            screen_scope
             and not screen.privacy_blocked
-            and (screen.window_title or screen.evidence_refs or screen.visible_text or context.perception.vision_facts)
+            and str(getattr(report, "recommendation", "silence") or "silence") == "speak"
+            and selected_ids
         )
-        evidence_ids = list(screen.evidence_refs)
-        if fresh_screen and screen.window_title:
-            evidence_ids.append("screen:window_title")
-        evidence_ids.extend(
-            f"vision:fact:{index}" for index, _item in enumerate(context.perception.vision_facts[:6])
-        )
-        previews = [str(item) for item in context.perception.vision_facts[:6] if str(item).strip()]
-        previews.extend(str(item) for item in screen.visible_text[:6] if str(item).strip())
+        previews = [
+            str(getattr(claim, "text", "") or "").strip()
+            for claim in grounded_claims
+            if str(getattr(claim, "text", "") or "").strip()
+            and any(ref in selected_ids for ref in tuple(getattr(claim, "evidence_ids", ()) or ()))
+        ]
         return SourceGroundingReport(
             user_text="",
             primary_source="runtime_state",
-            confidence_cap=0.82 if fresh_screen else 0.58,
-            refers_to_current_screen=str(plan.semantics.evidence_scope or "").startswith("screen"),
+            confidence_cap=0.86 if fresh_screen else 0.58,
+            refers_to_current_screen=screen_scope,
             screen_reference_strength=1.0 if fresh_screen else 0.0,
             screen_evidence_present=fresh_screen,
             screen_facts_preview=list(dict.fromkeys(previews))[:8],
-            screen_facts_are_stale=not fresh_screen,
-            evidence_ids=list(dict.fromkeys(evidence_ids)),
+            screen_facts_are_stale=not fresh_screen if screen_scope else False,
+            evidence_ids=list(dict.fromkeys(selected_ids)),
             allowed_sources=["runtime_state"] + (["current_screen"] if fresh_screen else []),
             grounding_source="current_screen" if fresh_screen else "runtime_state",
-            missing_evidence=[] if fresh_screen else ["screen_evidence"],
+            missing_evidence=[] if (fresh_screen or not screen_scope) else ["grounded_screen_evidence"],
         )
 
     def _surface(

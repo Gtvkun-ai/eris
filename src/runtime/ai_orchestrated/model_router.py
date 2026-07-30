@@ -84,6 +84,43 @@ SURFACE_INTENT_SCHEMA: dict[str, Any] = {
 }
 
 
+
+SOCIAL_INITIATIVE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "decision", "kind", "topic", "speech_act", "anchor_type", "anchor_id",
+        "evidence_refs", "requires_grounding", "confidence", "relevance",
+        "urgency", "tone", "reason",
+    ],
+    "properties": {
+        "decision": {"type": "string", "enum": ["candidate", "none"]},
+        "kind": {
+            "type": "string",
+            "enum": [
+                "continuation", "task_followup", "discovery_share",
+                "screen_comment", "memory_callback", "inner_thought",
+                "social_check_in", "casual_curiosity", "playful_prompt",
+                "random_chat",
+            ],
+        },
+        "topic": {"type": "string"},
+        "speech_act": {"type": "string"},
+        "anchor_type": {
+            "type": "string",
+            "enum": ["none", "idle", "conversation", "self", "memory", "task", "screen", "discovery"],
+        },
+        "anchor_id": {"type": "string"},
+        "evidence_refs": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
+        "requires_grounding": {"type": "boolean"},
+        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "relevance": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "urgency": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "tone": {"type": "string"},
+        "reason": {"type": "string"},
+    },
+}
+
 SURFACE_REALIZATION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -1919,6 +1956,49 @@ class AIRuntimeModelRouter:
             timeout_seconds=timeout,
         )
 
+
+    @staticmethod
+    def _social_initiative_prompt() -> str:
+        return (
+            "Bạn là SOCIAL INITIATIVE lane của ERIS. Bạn sở hữu mong muốn và chủ đề cho một lượt chủ động, "
+            "nhưng KHÔNG sở hữu timing/quyền phát và KHÔNG viết câu public cuối. Trả nhiều nhất một typed candidate. "
+            "Bạn có thể đề xuất social_check_in, casual_curiosity, playful_prompt hoặc random_chat mà không cần screen fact; "
+            "đó là trò chuyện xã hội, không phải factual claim. Với continuation/task/discovery/memory/inner/screen, chỉ chọn anchor "
+            "có thật trong blackboard.anchors. screen_comment bắt buộc requires_grounding=true và copy evidence_refs từ grounded "
+            "screen anchor; raw window title/OCR delta không phải bằng chứng. Không suy đoán user buồn/vui/thắng/thua/định làm gì. "
+            "Không lộ private mind, raw diary, planner, score, API hay contract. topic là mục tiêu giao tiếp cụ thể, chưa phải lời thoại. "
+            "Runtime governor sẽ approve/defer; Surface Realizer sẽ viết wording sau. Nếu không có ý nào đáng đề xuất, decision=none. "
+            "Return exactly one JSON object theo schema."
+        )
+
+    def propose_social_initiative(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        """Dùng cùng worker ``surface`` để nghĩ topic, không tạo thêm role/account.
+
+        Deadline ngắn và drop-if-busy ở actor role bảo đảm một ý bắt chuyện không
+        xếp hàng sau request cũ. Khi lỗi, initiative service dùng liveness fallback
+        typed; governor không tự bịa topic.
+        """
+
+        client = self.surface_client
+        if client is None:
+            return {}
+        try:
+            timeout = max(1.5, min(5.0, float(os.getenv("ERIS_SOCIAL_INITIATIVE_TIMEOUT_SEC", "3") or 3.0)))
+        except (TypeError, ValueError):
+            timeout = 3.0
+        return self._call(
+            client,
+            system=self._social_initiative_prompt(),
+            payload=request,
+            schema=SOCIAL_INITIATIVE_SCHEMA,
+            name="eris_social_initiative_candidate",
+            max_tokens=280,
+            reasoning_effort=None,
+            inference_tier="main_cognition",
+            priority=84,
+            timeout_seconds=timeout,
+        )
+
     @staticmethod
     def _surface_realizer_prompt() -> str:
         return (
@@ -2023,7 +2103,7 @@ __all__ = [
     "PERSONALITY_REFLECTION_SCHEMA",
     "INTENTION_PLAN_SCHEMA",
     "PUBLIC_REPLY_SCHEMA",
-    "SURFACE_INTENT_SCHEMA", "SURFACE_REALIZATION_SCHEMA",
+    "SOCIAL_INITIATIVE_SCHEMA", "SURFACE_INTENT_SCHEMA", "SURFACE_REALIZATION_SCHEMA",
     "SEMANTIC_FRAME_SCHEMA",
     "ASSISTANT_ACT_SCHEMA",
 ]

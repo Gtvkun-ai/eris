@@ -4,7 +4,7 @@
 Triết lý rất thẳng:
 - Main model sở hữu lời public.
 - Observer model diễn giải điều vừa xảy ra.
-- Chat planner đề xuất ý định trong lane chat; autonomous dùng deterministic InitiativeController trước Surface Worker.
+- Chat planner đề xuất ý định trong lane chat; autonomous dùng Social Initiative Worker -> runtime governor -> Surface Realizer.
 - Reducer là nơi duy nhất được ghi state.
 - Runtime chỉ thực thi sự thật cơ học.
 
@@ -38,7 +38,7 @@ from .personality import (
 )
 
 
-AI_RUNTIME_VERSION = "ai_orchestrated.v17.deterministic_initiative"
+AI_RUNTIME_VERSION = "ai_orchestrated.v18.social_initiative_governor"
 
 
 def clamp01(value: Any, default: float = 0.0) -> float:

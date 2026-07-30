@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """Surface Worker duy nhất cho lời chủ động của ERIS.
 
-Kiến trúc V17 tách quyền rất rõ:
+Kiến trúc V18 tách quyền rất rõ:
 
-- InitiativeController quyết định NO_OP / BODY_ONLY / SPEECH bằng code thường;
+- Social Initiative Worker đề xuất desire/topic bằng candidate typed;
+- Runtime Initiative Governor quyết định NO_OP / BODY_ONLY / SPEECH;
 - Surface Worker chỉ hiện thực hóa một ``SpeechIntent`` đã được duyệt;
 - Grounding Validator kiểm tra provenance trước và sau câu model viết.
 
@@ -190,12 +191,11 @@ class SurfaceIntentEngine:
                 "Tôi vừa có một phát hiện đã kiểm lại. Chỗ này đáng kể cho cậu nghe.",
                 "Có một kết quả mới khá đáng chú ý. Tôi nói gọn nhé.",
             )
-        elif mode == "screen_comment" and blackboard.screen_title:
-            title = compact(blackboard.screen_title, 90)
-            options = (
-                f"Cậu vừa chuyển sang {title} à?",
-                f"Nhịp bên cậu đổi sang {title} rồi nhỉ.",
-            )
+        elif mode == "screen_comment":
+            # Không local-fallback cho screen. Một template nhìn raw title đã tạo
+            # đúng lỗi "Brave là chủ đề moc3" trong log. Nếu Surface unavailable,
+            # pipeline chuyển body-only; factual speech chờ grounded worker.
+            return None
         elif mode == "memory_callback":
             options = (
                 "Có một chuyện cũ vừa nối lại với mạch hiện tại. Tôi muốn nhắc nó thật gọn.",

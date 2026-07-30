@@ -1,0 +1,37 @@
+{
+  "version": "ai_orchestrated.v18.social_initiative_governor",
+  "blackboard_schema": "eris.cognitive_blackboard.v2",
+  "candidate_schema": "eris.social_speech_candidate.v1",
+  "speech_intent_schema": "eris.speech_intent.v1",
+  "worker_role": "surface",
+  "worker_contracts": [
+    "social_candidate",
+    "public_wording"
+  ],
+  "runtime_governor_owns": [
+    "user_busy",
+    "reply_baton",
+    "cooldown",
+    "budget",
+    "duplicate",
+    "privacy",
+    "provenance"
+  ],
+  "runtime_governor_does_not_own": [
+    "desire",
+    "topic",
+    "public_wording"
+  ],
+  "screen_speech_requires_grounded_claim": true,
+  "raw_window_title_is_speech_evidence": false,
+  "screen_local_wording_fallback": false,
+  "observer_refresh": "daemon_non_blocking",
+  "surface_shared_ds2api_default": true,
+  "default_timeouts_seconds": {
+    "social_candidate": 3,
+    "surface_realizer": 4,
+    "soft_silence": 180,
+    "hard_silence_opportunity": 600,
+    "initiative_probe_interval": 90
+  }
+}

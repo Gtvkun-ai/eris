@@ -349,20 +349,21 @@ class RemoteModelProcessManager:
         return client
 
     def build_surface_client(self):
-        """Dựng worker riêng cho lời chủ động/small talk của ERIS.
+        """Dựng một worker ``surface`` cho candidate + public wording.
 
-        Worker này dùng gateway key riêng để một lượt ``surface`` chậm không giữ
-        account companion đang phục vụ chat trực tiếp. Nếu chưa cấu hình key,
-        runtime sẽ quay về planner autonomous cũ thay vì làm ứng dụng không khởi
-        động được. Phần mềm cũng nên biết sống chung với cấu hình chưa hoàn tất.
+        Mặc định worker dùng chung DS2API gateway/account pool đã cấu hình. Có thể
+        ép key riêng bằng ERIS_DS_SURFACE_ALLOW_SHARED_KEY=0. Hai contract typed
+        tách trách nhiệm trong code, không cần thêm một worker chỉ để đặt tên.
         """
 
         client = self.build_deepseek_worker_client("surface")
         if client is None:
             self.logger.warning(
-                "Surface worker chua cau hinh; autonomous se dung local fallback/body-only "
-                "(can ERIS_DS_SURFACE_API_KEY de bat mot public voice rieng)."
+                "Surface worker chua cau hinh; social initiative se dung liveness fallback "
+                "va wording se dung local fallback/body-only. Kiem tra DS2API key/base/model."
             )
+        else:
+            self.logger.info("Surface worker owner: social candidate + public wording")
         return client
 
     def build_research_client(self):

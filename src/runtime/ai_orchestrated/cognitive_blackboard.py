@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping, Sequence
 
 
-BLACKBOARD_SCHEMA = "eris.cognitive_blackboard.v1"
+BLACKBOARD_SCHEMA = "eris.cognitive_blackboard.v2"
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -88,6 +88,10 @@ class TypedCognitiveBlackboard:
     screen_fresh: bool = False
     screen_title: str = ""
     screen_evidence_refs: tuple[str, ...] = ()
+    vision_grounding_recommendation: str = "silence"
+    vision_grounding_strength: float = 0.0
+    grounded_screen_claims: tuple[str, ...] = ()
+    grounded_screen_evidence_refs: tuple[str, ...] = ()
     public_seed_ready: bool = False
     public_seed_score: float = 0.0
     discovery_ready: bool = False
@@ -127,6 +131,7 @@ class TypedCognitiveBlackboard:
         engagement = _mapping(snapshot.get("engagement_context"))
         engagement_interaction = _mapping(snapshot.get("engagement_interaction"))
         latest_observation = _mapping(snapshot.get("latest_observation"))
+        vision_grounding = _mapping(snapshot.get("vision_grounding"))
 
         user_busy = bool(
             telemetry.get("user_busy", False)
@@ -145,6 +150,23 @@ class TypedCognitiveBlackboard:
             or telemetry.get("foreground_window"),
             180,
         )
+        grounding_recommendation = _compact(vision_grounding.get("recommendation", "silence"), 24).lower() or "silence"
+        grounding_strength = _clamp01(vision_grounding.get("evidence_strength", 0.0))
+        grounded_claims_raw = [
+            _mapping(item) for item in _sequence(vision_grounding.get("claims"))[:8] if isinstance(item, Mapping)
+        ]
+        grounded_claims = tuple(
+            _compact(item.get("text", ""), 240)
+            for item in grounded_claims_raw
+            if bool(item.get("grounded", False)) and not bool(item.get("stale", False)) and _compact(item.get("text", ""), 240)
+        )
+        grounded_refs = tuple(dict.fromkeys(
+            ref
+            for item in grounded_claims_raw
+            if bool(item.get("grounded", False)) and not bool(item.get("stale", False))
+            for ref in (_compact(value, 140) for value in _sequence(item.get("evidence_ids"))[:6])
+            if ref
+        ))
         mechanical_delta = bool(screen.get("meaningful_delta", False) or screen.get("window_changed", False))
         new_event_keys = tuple(
             key for key in (_compact(item, 120) for item in _sequence(activity.get("new_event_keys"))[:8]) if key
@@ -257,17 +279,29 @@ class TypedCognitiveBlackboard:
                 },
             ))
 
-        # 4) Screen/activity là literal mechanical evidence. App title được phép
-        # làm neo yếu, nhưng không chứng minh user intent hay nội dung gameplay.
-        if (mechanical_delta or activity_event) and (screen_fresh or screen_title):
+        # 4) Screen chỉ trở thành *speech anchor* khi VisionGroundingPolicy đã
+        # duyệt ít nhất một grounded claim có provenance. Window title/OCR delta
+        # thô vẫn giữ cho body-only gesture, nhưng không được tự thăng chức thành
+        # sự thật công khai. Đây là chỗ chặn câu kiểu "Brave là chủ đề moc3".
+        grounded_screen_ready = bool(
+            grounding_recommendation == "speak"
+            and grounded_claims
+            and grounded_refs
+            and not privacy_blocked
+        )
+        if (mechanical_delta or activity_event) and grounded_screen_ready:
             anchors.append(CognitiveAnchor(
                 kind="screen" if mechanical_delta else "activity",
-                anchor_id=screen_refs[0] if screen_refs else (new_event_keys[0] if new_event_keys else "runtime_window"),
-                topic_seed=screen_title or "current screen or activity changed",
-                confidence=0.76 if screen_refs else 0.58,
-                priority=0.82 if screen_refs else 0.70,
-                evidence_refs=screen_refs,
-                metadata={"new_event_keys": list(new_event_keys)},
+                anchor_id=grounded_refs[0],
+                topic_seed=grounded_claims[0],
+                confidence=max(0.72, grounding_strength),
+                priority=0.84,
+                evidence_refs=grounded_refs,
+                metadata={
+                    "new_event_keys": list(new_event_keys),
+                    "grounded_claims": list(grounded_claims),
+                    "raw_window_title_withheld": bool(screen_title),
+                },
             ))
 
         # 5) Chỉ dùng public-safe queue/agenda. Không đọc raw private mind.
@@ -345,6 +379,10 @@ class TypedCognitiveBlackboard:
             screen_fresh=screen_fresh,
             screen_title=screen_title,
             screen_evidence_refs=screen_refs,
+            vision_grounding_recommendation=grounding_recommendation,
+            vision_grounding_strength=grounding_strength,
+            grounded_screen_claims=grounded_claims,
+            grounded_screen_evidence_refs=grounded_refs,
             public_seed_ready=public_seed_ready,
             public_seed_score=public_seed_score,
             discovery_ready=discovery_ready,
@@ -378,8 +416,16 @@ class TypedCognitiveBlackboard:
             "seconds_since_assistant": round(self.seconds_since_assistant, 2),
             "reply_expected": self.reply_expected,
             "privacy_blocked": self.privacy_blocked,
-            "screen_fresh": self.screen_fresh,
-            "screen_title": self.screen_title,
+            "screen_fresh": bool(self.grounded_screen_claims),
+            # Chỉ public title/claim đã grounded; raw title vẫn ở telemetry nội bộ
+            # để UI/body biết có delta nhưng không được đưa cho topic generator.
+            "screen_title": self.grounded_screen_claims[0] if self.grounded_screen_claims else "",
+            "vision_grounding": {
+                "recommendation": self.vision_grounding_recommendation,
+                "evidence_strength": round(self.vision_grounding_strength, 3),
+                "grounded_claims": list(self.grounded_screen_claims),
+                "evidence_refs": list(self.grounded_screen_evidence_refs),
+            },
             "commentary_due": self.commentary_due,
             "commentary_required": self.commentary_required,
             "engagement_active": self.engagement_active,
@@ -398,6 +444,8 @@ class TypedCognitiveBlackboard:
         return {
             **asdict(self),
             "screen_evidence_refs": list(self.screen_evidence_refs),
+            "grounded_screen_claims": list(self.grounded_screen_claims),
+            "grounded_screen_evidence_refs": list(self.grounded_screen_evidence_refs),
             "anchors": [item.to_dict() for item in self.anchors],
         }
 

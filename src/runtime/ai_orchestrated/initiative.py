@@ -1,15 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Deterministic Initiative Controller cho self-initiated public turn.
+"""Runtime Initiative Governor cho self-initiated public turn.
 
-V17 giao controller hai trách nhiệm có thể kiểm chứng bằng code:
-
-- đọc ``TypedCognitiveBlackboard`` và chọn NO_OP / BODY_ONLY / SPEECH;
-- áp cooldown, ngân sách và semantic-repeat trước khi gọi Surface Worker.
-
-Controller không đọc câu tự nhiên, không dò keyword từ OCR, không gọi model và
-không viết lời public. Surface Worker chỉ nhận SpeechIntent sau khi policy đã
-duyệt. Như vậy một provider chậm không còn được quyền trì hoãn cả quyết định im
-hay nói, một đặc quyền trước đây được trao khá hào phóng.
+V18 giao controller đúng một trách nhiệm: kiểm quyền phát cho một typed candidate
+do Social Initiative Worker đề xuất. Controller không nghĩ topic, không đọc OCR
+thô, không gọi model và không viết lời public. Nó chỉ áp user-busy, reply baton,
+cooldown, budget, duplicate và provenance trước Surface Realizer.
 """
 from __future__ import annotations
 
@@ -24,8 +19,9 @@ from typing import Any, Mapping
 
 from runtime.workspace_manager import default_eris_home
 from .contracts import IntentionPlan
-from .cognitive_blackboard import CognitiveAnchor, TypedCognitiveBlackboard
+from .cognitive_blackboard import TypedCognitiveBlackboard
 from .semantic_contracts import TurnSemantics
+from .social_initiative import SocialSpeechCandidate
 
 
 def _setting(name: str, default: Any) -> Any:
@@ -205,6 +201,9 @@ class InitiativeState:
         }
 
 
+_CANDIDATE_UNSET = object()
+
+
 class InitiativeController:
     def __init__(self, *, state_path: Path | None = None, logger: Any | None = None) -> None:
         self.logger = logger
@@ -215,22 +214,27 @@ class InitiativeController:
         self._last_persist_at = 0.0
         self._persist_debounce_seconds = max(2.0, _as_float(_setting("persist_debounce_seconds", 12.0), 12.0))
 
-    def decide(self, blackboard: TypedCognitiveBlackboard) -> InitiativeDecision:
-        """Quyết định initiative bằng code thường, không gọi model.
+    def decide(
+        self,
+        blackboard: TypedCognitiveBlackboard,
+        candidate: SocialSpeechCandidate | None | object = _CANDIDATE_UNSET,
+    ) -> InitiativeDecision:
+        """Governor thuần timing/quyền phát cho một model-owned candidate.
 
-        Thứ tự authority:
-        1. hard mechanical boundaries;
-        2. chọn một typed anchor có provenance;
-        3. dựng IntentionPlan local;
-        4. áp cooldown/budget/duplicate gate;
-        5. trả đúng một trong NO_OP, BODY_ONLY hoặc SPEECH.
-
-        Hàm này phải chạy ở mức mili-giây. Nếu nó cần internet để biết có nên
-        nói hay không thì kiến trúc đã tự viết đơn xin treo.
+        V18 không còn bắt runtime tự nghĩ topic. Social Initiative Worker sở hữu
+        ``candidate.topic`` và ``candidate.speech_act``; governor chỉ kiểm hard
+        boundaries, cooldown, budget, duplicate và provenance. Nếu không có
+        candidate, kết quả là NO_OP hoặc BODY_ONLY chứ không tự bịa small talk.
         """
 
         silence = IntentionPlan.silence(channel="autonomous", reason="initiative_no_op")
         has_delta = bool(blackboard.mechanical_delta or blackboard.activity_event)
+        # Compatibility cho test/caller cũ gọi decide(board) trực tiếp. Production
+        # luôn truyền candidate (kể cả None), nên nhánh này không trao lại quyền
+        # nghĩ topic cho runtime self-turn.
+        compatibility_call = candidate is _CANDIDATE_UNSET
+        if compatibility_call:
+            candidate = self._compat_candidate_from_blackboard(blackboard)
 
         if not _as_bool(_setting("enabled", True), True):
             return InitiativeDecision(InitiativeAction.NO_OP, "initiative_disabled", silence)
@@ -240,19 +244,21 @@ class InitiativeController:
         if blackboard.user_busy:
             action = InitiativeAction.BODY_ONLY if has_delta and not blackboard.privacy_blocked else InitiativeAction.NO_OP
             return InitiativeDecision(action, "user_busy", silence, body_motion="small_acknowledge")
-
-        anchor = self._select_anchor(blackboard)
-        if anchor is None:
+        if candidate is None or not candidate.available:
             if has_delta and not blackboard.privacy_blocked:
                 return InitiativeDecision(
                     InitiativeAction.BODY_ONLY,
-                    "mechanical_delta_without_speech_anchor",
+                    "mechanical_delta_without_candidate",
                     silence,
                     body_motion="curious_glance",
                 )
-            return InitiativeDecision(InitiativeAction.NO_OP, "no_public_anchor", silence)
+            return InitiativeDecision(
+                InitiativeAction.NO_OP,
+                "no_public_anchor" if compatibility_call else "no_speech_candidate",
+                silence,
+            )
 
-        plan, mode, motion = self._plan_for_anchor(anchor, blackboard)
+        plan, mode, motion, anchor_type, anchor_id, refs = self._plan_for_candidate(candidate, blackboard)
         allowed, reason = self.evaluate(
             plan,
             now=blackboard.now,
@@ -267,9 +273,9 @@ class InitiativeController:
         speech_intent = SpeechIntent(
             plan=plan,
             mode=mode,
-            anchor_type=anchor.kind,
-            anchor_id=anchor.anchor_id,
-            evidence_refs=anchor.evidence_refs,
+            anchor_type=anchor_type,
+            anchor_id=anchor_id,
+            evidence_refs=refs,
             max_sentences=2,
         )
         return InitiativeDecision(
@@ -281,161 +287,126 @@ class InitiativeController:
         )
 
     @staticmethod
-    def _select_anchor(blackboard: TypedCognitiveBlackboard) -> CognitiveAnchor | None:
-        """Chọn neo cao nhất nhưng vẫn tuân thủ privacy/provenance."""
+    def _compat_candidate_from_blackboard(
+        blackboard: TypedCognitiveBlackboard,
+    ) -> SocialSpeechCandidate | None:
+        """Adapter rollout-only cho API V17; không dùng trong production V18."""
 
-        for anchor in blackboard.anchors:
-            if anchor.kind in {"screen", "activity"} and blackboard.privacy_blocked:
-                continue
-            if anchor.kind == "screen" and not (blackboard.screen_fresh or blackboard.screen_title):
-                continue
-            if anchor.kind == "conversation" and blackboard.reply_expected:
-                continue
-            return anchor
-        return None
+        anchor = blackboard.strongest_anchor()
+        if anchor is None:
+            return None
+        mapping = {
+            "conversation": ("continuation", "carry_open_thread", False),
+            "task": ("task_followup", "task_followup", False),
+            "discovery": ("discovery_share", "share_discovery", bool(anchor.evidence_refs)),
+            "screen": ("screen_comment", "comment_current_surface", True),
+            "activity": ("screen_comment", "comment_current_surface", True),
+            "memory": ("memory_callback", "memory_callback", True),
+            "self": ("inner_thought", "share_public_safe_thought", False),
+            "presence": ("social_check_in", "warm_companion_presence", False),
+        }
+        kind, act, needs_grounding = mapping.get(anchor.kind, ("random_chat", "social_check_in", False))
+        return SocialSpeechCandidate(
+            decision="candidate",
+            kind=kind,
+            topic=anchor.topic_seed,
+            speech_act=act,
+            anchor_type="idle" if anchor.kind == "presence" else anchor.kind,
+            anchor_id=anchor.anchor_id,
+            evidence_refs=anchor.evidence_refs,
+            requires_grounding=needs_grounding,
+            confidence=anchor.confidence,
+            relevance=anchor.priority,
+            urgency=0.15,
+            tone="soft",
+            reason="v17_direct_call_compatibility",
+            source="compatibility_adapter",
+        )
 
     @staticmethod
-    def _plan_for_anchor(
-        anchor: CognitiveAnchor,
+    def _plan_for_candidate(
+        candidate: SocialSpeechCandidate,
         blackboard: TypedCognitiveBlackboard,
-    ) -> tuple[IntentionPlan, str, str]:
-        """Dựng semantic plan local từ một anchor typed.
+    ) -> tuple[IntentionPlan, str, str, str, str, tuple[str, ...]]:
+        """Đóng candidate model-owned thành plan typed, không viết lại topic."""
 
-        Đây là policy mapping, không phải text generation. ``topic`` mô tả mục
-        tiêu giao tiếp để Surface Worker viết câu sau đó.
-        """
-
-        kind = anchor.kind
-        refs = list(anchor.evidence_refs[:5])
-        common = {
+        kind = candidate.kind
+        refs = tuple(candidate.evidence_refs[:5])
+        mode_map = {
+            "continuation": ("continuation", "soft", "continuation", "conversation"),
+            "task_followup": ("task_followup", "focused", "activity_event", "task"),
+            "discovery_share": ("discovery_share", "curious", "discovery", "discovery"),
+            "screen_comment": ("screen_comment", "curious", "environment", "screen"),
+            "memory_callback": ("memory_callback", "soft", "internal", "memory"),
+            "inner_thought": ("inner_thought", "quiet_presence", "internal", "self"),
+            "social_check_in": ("small_talk", "soft", "presence", "idle"),
+            "casual_curiosity": ("random_chat", "curious", "presence", "idle"),
+            "playful_prompt": ("soft_tease", "playful", "presence", "idle"),
+            "random_chat": ("random_chat", "soft", "presence", "idle"),
+        }
+        mode, motion, turn_kind, default_anchor = mode_map.get(
+            kind, ("random_chat", "soft", "presence", "idle")
+        )
+        evidence_scope = {
+            "screen_comment": "screen_grounded_claim",
+            "memory_callback": "memory",
+            "discovery_share": "discovery_artifact",
+            "task_followup": "engagement_runtime",
+            "continuation": "conversation",
+            "inner_thought": "self_context",
+        }.get(kind, "social_context")
+        strategy = {
+            "continuation": "continue_public_thread",
+            "task_followup": "preserve_active_engagement",
+            "discovery_share": "share_discovery",
+            "screen_comment": "grounded_curiosity",
+            "memory_callback": "share_grounded_memory_callback",
+            "inner_thought": "share_public_safe_thought",
+            "social_check_in": "social_check_in",
+            "casual_curiosity": "casual_curiosity",
+            "playful_prompt": "playful_prompt",
+            "random_chat": "companion_presence",
+        }.get(kind, "companion_presence")
+        importance = max(0.42, min(0.94, 0.48 + 0.30 * candidate.relevance + 0.16 * candidate.urgency))
+        intrusion = max(0.05, min(0.60, 0.24 - 0.12 * candidate.relevance + 0.10 * candidate.urgency))
+        anchor_type = candidate.anchor_type or default_anchor
+        anchor_id = candidate.anchor_id or "shared_quiet"
+        mapping = {
             "speak": True,
-            "importance": max(0.45, min(0.92, anchor.priority)),
-            "intrusion_risk": 0.10 if blackboard.commentary_required else 0.16,
-            "confidence": max(0.45, min(0.95, anchor.confidence)),
+            "motive": kind,
+            "strategy": strategy,
+            "value_focus": "relational_presence" if turn_kind == "presence" else "continuity",
+            # Candidate topic is model-owned. Runtime only carries it; it does
+            # not decorate it with a new hidden agenda.
+            "topic": candidate.topic,
+            "importance": importance,
+            "intrusion_risk": intrusion,
+            "confidence": max(0.40, min(0.96, candidate.confidence)),
+            "performance_hint": candidate.tone or motion,
             "tool_intent": "",
             "tool_input": "",
-            "evidence_refs": refs,
+            "evidence_refs": list(refs),
             "activity": {
                 "activity_kind": "unknown", "phase": "unknown", "event": "",
-                "event_key": "none", "confidence": 0.0, "evidence_refs": refs,
+                "event_key": "none", "confidence": 0.0, "evidence_refs": list(refs),
             },
+            "semantics": {
+                "turn_kind": turn_kind,
+                "speech_act": candidate.speech_act or kind,
+                "subject_key": anchor_id,
+                "evidence_scope": evidence_scope,
+                "continuation_key": blackboard.thread_key if kind == "continuation" else "none",
+            },
+            "notes": f"social_candidate source={candidate.source} reason={candidate.reason}",
         }
-        mapping: dict[str, Any]
-        mode: str
-        motion: str
-        if kind == "conversation":
-            mode, motion = "continuation", "soft"
-            mapping = {
-                **common,
-                "motive": "useful_followup",
-                "strategy": "continue_public_thread",
-                "value_focus": "continuity",
-                "topic": f"Continue the real open public thread: {anchor.topic_seed}",
-                "performance_hint": "soft",
-                "semantics": {
-                    "turn_kind": "continuation", "speech_act": "carry_open_thread",
-                    "subject_key": anchor.anchor_id or blackboard.thread_key,
-                    "evidence_scope": "conversation",
-                    "continuation_key": blackboard.thread_key or anchor.anchor_id or "current_thread",
-                },
-            }
-        elif kind == "task":
-            mode, motion = "task_followup", "focused"
-            mapping = {
-                **common,
-                "motive": "engagement_followup",
-                "strategy": "preserve_active_engagement",
-                "value_focus": "task_continuity",
-                "topic": f"Follow up the active {blackboard.engagement_kind or 'engagement'} without unrelated banter: {anchor.topic_seed}",
-                "performance_hint": "focused",
-                "semantics": {
-                    "turn_kind": "activity_event", "speech_act": "task_followup",
-                    "subject_key": anchor.anchor_id or "active_engagement",
-                    "evidence_scope": "engagement_runtime", "continuation_key": "none",
-                },
-            }
-        elif kind == "discovery":
-            mode, motion = "discovery_share", "curious"
-            mapping = {
-                **common,
-                "motive": "share_verified_discovery",
-                "strategy": "share_discovery",
-                "value_focus": "curiosity",
-                "topic": f"Share one concise verified discovery from this artifact: {anchor.topic_seed}",
-                "performance_hint": "curious",
-                "semantics": {
-                    "turn_kind": "discovery", "speech_act": "share_discovery",
-                    "subject_key": anchor.anchor_id or "verified_discovery",
-                    "evidence_scope": "discovery_artifact", "continuation_key": "none",
-                },
-            }
-        elif kind in {"screen", "activity"}:
-            mode, motion = "screen_comment", "curious"
-            mapping = {
-                **common,
-                "motive": "meaningful_environment_change",
-                "strategy": "grounded_curiosity",
-                "value_focus": "shared_attention",
-                "topic": (
-                    f"Make one low-risk comment or question about the literal current app/window anchor: {anchor.topic_seed}. "
-                    "Do not infer user intent or unseen content."
-                ),
-                "performance_hint": "curious",
-                "semantics": {
-                    "turn_kind": "environment" if kind == "screen" else "activity_event",
-                    "speech_act": "comment_current_surface",
-                    "subject_key": anchor.anchor_id or "current_surface",
-                    "evidence_scope": "screen_delta" if anchor.evidence_refs else "runtime_window",
-                    "continuation_key": "none",
-                },
-            }
-        elif kind == "memory":
-            mode, motion = "memory_callback", "soft"
-            mapping = {
-                **common,
-                "motive": "memory_resonance",
-                "strategy": "share_grounded_memory_callback",
-                "value_focus": "continuity",
-                "topic": f"Share one brief memory callback using only the approved memory seed and evidence: {anchor.topic_seed}",
-                "performance_hint": "soft",
-                "semantics": {
-                    "turn_kind": "internal", "speech_act": "memory_callback",
-                    "subject_key": anchor.anchor_id or "grounded_memory",
-                    "evidence_scope": "memory", "continuation_key": "none",
-                },
-            }
-        elif kind == "self":
-            mode, motion = "inner_thought", "quiet_presence"
-            mapping = {
-                **common,
-                "motive": "private_mind_surface",
-                "strategy": "share_public_safe_thought",
-                "value_focus": "self_authorship",
-                "topic": f"Surface one brief public-safe thought from the approved seed: {anchor.topic_seed}",
-                "performance_hint": "quiet_presence",
-                "semantics": {
-                    "turn_kind": "internal", "speech_act": "share_public_safe_thought",
-                    "subject_key": anchor.anchor_id or "public_self_seed",
-                    "evidence_scope": "self_context", "continuation_key": "none",
-                },
-            }
-        else:
-            mode, motion = "small_talk", "soft"
-            mapping = {
-                **common,
-                "motive": "internal_agenda",
-                "strategy": "companion_presence",
-                "value_focus": "relational_presence",
-                "topic": "Offer one brief warm-guarded companion line or question grounded only in the current public context.",
-                "performance_hint": "soft",
-                "semantics": {
-                    "turn_kind": "presence", "speech_act": "warm_companion_presence",
-                    "subject_key": anchor.anchor_id or "shared_quiet",
-                    "evidence_scope": "persona", "continuation_key": "none",
-                },
-            }
-        mapping["notes"] = f"deterministic_initiative anchor={kind}"
-        return IntentionPlan.from_mapping(mapping, channel="autonomous"), mode, motion
+        return (
+            IntentionPlan.from_mapping(mapping, channel="autonomous"),
+            mode,
+            motion,
+            anchor_type,
+            anchor_id,
+            refs,
+        )
 
     def evaluate(
         self,

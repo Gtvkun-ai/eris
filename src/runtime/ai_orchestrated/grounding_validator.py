@@ -43,9 +43,15 @@ class AutonomousGroundingValidator:
         if blackboard.privacy_blocked and scope.startswith("screen"):
             return GroundingDecision(False, "screen_privacy_blocked", "screen_privacy_blocked")
         if intent.anchor_type in {"screen", "activity"}:
-            if not (blackboard.screen_fresh or blackboard.screen_title):
-                return GroundingDecision(False, "screen_anchor_not_fresh", "missing_screen_anchor")
-            available = set(blackboard.screen_evidence_refs)
+            # Raw window title/OCR delta chỉ đủ cho body gesture. Public speech
+            # bắt buộc có grounded claim và evidence id từ VisionGroundingPolicy.
+            if blackboard.vision_grounding_recommendation != "speak":
+                return GroundingDecision(False, "vision_grounding_recommends_silence", "ungrounded_screen_anchor")
+            available = set(blackboard.grounded_screen_evidence_refs)
+            if not blackboard.grounded_screen_claims or not available:
+                return GroundingDecision(False, "screen_without_grounded_claim", "missing_grounded_screen_claim")
+            if not intent.evidence_refs:
+                return GroundingDecision(False, "screen_without_evidence_ref", "missing_screen_evidence")
             unknown = [ref for ref in intent.evidence_refs if ref not in available]
             if unknown:
                 return GroundingDecision(False, "unknown_screen_evidence_ref", "unknown_evidence_ref")

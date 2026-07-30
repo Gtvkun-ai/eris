@@ -118,10 +118,11 @@ def load_worker_spec(role: object) -> DeepSeekWorkerSpec:
     role_prefix = f"ERIS_DS_{normalized.upper()}"
     role_env_key = _clean_api_key(os.environ.get(f"{role_prefix}_API_KEY", ""))
     role_secret_key = _clean_api_key(get_secret(f"{role_prefix}_API_KEY"))
-    # Surface được tạo để có account/gateway riêng. Không âm thầm mượn key
-    # companion/generic, nếu không một câu small talk lại tranh đúng account chat
-    # chính và toàn bộ lý do tồn tại của lane mới biến thành đồ trang trí.
-    if normalized == "surface" and not _env_flag("ERIS_DS_SURFACE_ALLOW_SHARED_KEY", False):
+    # V18 mặc định cho Surface dùng chung DS2API gateway key vì user đã có
+    # daemon/account pool chung. Có thể đặt ERIS_DS_SURFACE_ALLOW_SHARED_KEY=0
+    # để cô lập account riêng; đừng bắt người dùng khai lại cùng một key chỉ để
+    # module chịu thừa nhận worker đang tồn tại.
+    if normalized == "surface" and not _env_flag("ERIS_DS_SURFACE_ALLOW_SHARED_KEY", True):
         api_key = role_env_key or role_secret_key
     else:
         api_key = _clean_api_key(

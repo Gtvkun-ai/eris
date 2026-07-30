@@ -42,6 +42,7 @@ from .initiative import (
     InitiativeState, SpeechIntent,
 )
 from .stage_planner import StagePlan, StagePlanner
+from .social_initiative import SocialInitiativeEngine, SocialSpeechCandidate
 from .panel_adapter import build_ai_panel_payload
 from .views import build_cognitive_views
 from .state_reducer import StateReducer
@@ -67,6 +68,8 @@ __all__ = [
     "InitiativeEvent",
     "InitiativeState",
     "SpeechIntent",
+    "SocialInitiativeEngine",
+    "SocialSpeechCandidate",
     "AppraisalState",
     "CognitiveObservation",
     "ConsequenceAssessment",

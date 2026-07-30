@@ -27,6 +27,7 @@ from .planner import IntentionPlanner
 from .stage_planner import StagePlanner
 from .state_reducer import StateReducer
 from .surface_intent import SurfaceIntentEngine
+from .social_initiative import SocialInitiativeEngine
 
 
 def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
@@ -199,6 +200,11 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     health.record_success("ai_orchestrated.observer")
     planner = IntentionPlanner(router, reducer, logger=getattr(host, "logger", None))
     health.record_success("ai_orchestrated.planner")
+    social_initiative = SocialInitiativeEngine(router, logger=getattr(host, "logger", None))
+    health.record_success(
+        "ai_orchestrated.social_initiative",
+        details={"enabled": bool(social_initiative.enabled), "worker_role": "surface"},
+    )
     surface_intent = SurfaceIntentEngine(router, reducer, logger=getattr(host, "logger", None))
     health.record_success(
         "ai_orchestrated.surface_intent",
@@ -219,6 +225,7 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     host.ai_model_router = router
     host.ai_post_turn_observer = observer
     host.ai_intention_planner = planner
+    host.ai_social_initiative_engine = social_initiative
     host.ai_surface_intent_engine = surface_intent
     host.ai_discovery_runtime = discovery
     host.ai_initiative_controller = initiative

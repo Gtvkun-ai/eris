@@ -1587,32 +1587,43 @@ def test_grounding_surface_gate_uses_current_evidence_not_user_wording() -> None
     assert evaluate_grounded_surface(engine, "Tôi thấy cửa sổ Brave.", report=grounded).allowed is True
 
 
-def test_autonomous_grounding_report_accepts_fresh_window_title() -> None:
+def test_autonomous_grounding_report_requires_grounded_claim_not_raw_window_title() -> None:
     from types import SimpleNamespace
 
     from runtime.ai_orchestrated.contracts import IntentionPlan
     from runtime.ai_orchestrated.self_turn_pipeline import SelfTurnPipeline
 
     pipeline = object.__new__(SelfTurnPipeline)
+    pipeline.host = SimpleNamespace(
+        last_vision_grounding_report=SimpleNamespace(
+            recommendation="speak",
+            grounded_claims=(SimpleNamespace(
+                text="Live2D Cubism is visible.",
+                evidence_ids=("ocr:live2d",),
+            ),),
+        )
+    )
     screen = SimpleNamespace(
         fresh=True, privacy_blocked=False, window_title="Live2D Cubism",
-        evidence_refs=(), visible_text=(),
+        evidence_refs=("screen:raw-title",), visible_text=(),
     )
     context = SimpleNamespace(
         perception=SimpleNamespace(screen=screen, vision_facts=()),
     )
     plan = IntentionPlan.from_mapping({
-        "speak": True, "topic": "Mention the visible app",
+        "speak": True, "topic": "Mention the grounded visible app",
+        "evidence_refs": ["ocr:live2d"],
         "semantics": {
             "turn_kind": "environment", "speech_act": "comment_current_surface",
-            "subject_key": "live2d", "evidence_scope": "screen_window",
+            "subject_key": "live2d", "evidence_scope": "screen_grounded_claim",
             "continuation_key": "none",
         },
     }, channel="autonomous")
 
     report = pipeline._autonomous_grounding_report(context, plan)
     assert report.screen_evidence_present is True
-    assert "screen:window_title" in report.evidence_ids
+    assert report.evidence_ids == ["ocr:live2d"]
+    assert "screen:raw-title" not in report.evidence_ids
 
 
 def test_post_observer_skips_llm_for_plain_greeting() -> None:
