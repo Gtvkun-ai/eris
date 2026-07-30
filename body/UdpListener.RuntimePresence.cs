@@ -275,7 +275,12 @@ public partial class UdpListener : Node2D
 
 	private void RefreshRuntimePresenceIndicator()
 	{
-		bool visible = _runtimePresence.Thinking && !_runtimePresence.Speaking;
+		RefreshConversationPresenceFromRuntime();
+		// Khi khung chat mở, trạng thái đã nằm ngay trong luồng hội thoại. Chỉ dùng
+		// pill nổi làm fallback lúc panel đóng để không lặp cùng một thông báo hai nơi.
+		bool visible = _runtimePresence.Thinking
+			&& !_runtimePresence.Speaking
+			&& !(_chatPanel?.Visible ?? false);
 		if (!visible && _runtimePresenceIndicator == null)
 			return;
 		EnsureRuntimePresenceIndicator();
@@ -313,8 +318,8 @@ public partial class UdpListener : Node2D
 		panel.OffsetBottom = 56f;
 		panel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
 		{
-			BgColor = new Color(0.07f, 0.06f, 0.09f, 0.88f),
-			BorderColor = new Color(0.92f, 0.72f, 0.84f, 0.72f),
+			BgColor = new Color(0.035f, 0.10f, 0.065f, 0.92f),
+			BorderColor = new Color(0.21f, 0.79f, 0.47f, 0.82f),
 			BorderWidthLeft = 1,
 			BorderWidthTop = 1,
 			BorderWidthRight = 1,
@@ -338,7 +343,7 @@ public partial class UdpListener : Node2D
 			VerticalAlignment = VerticalAlignment.Center,
 			MouseFilter = Control.MouseFilterEnum.Ignore,
 		};
-		label.AddThemeColorOverride("font_color", new Color(1f, 0.93f, 0.97f, 1f));
+		label.AddThemeColorOverride("font_color", new Color(0.91f, 0.98f, 0.94f, 1f));
 		label.AddThemeFontSizeOverride("font_size", 14);
 		panel.AddChild(label);
 		root.AddChild(panel);

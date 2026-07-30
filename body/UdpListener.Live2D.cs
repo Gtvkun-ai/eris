@@ -112,6 +112,7 @@ public partial class UdpListener
 			}
 
 			_isLive2DMode = true;
+			SyncSpeechBubbleMode();
 			HideOnly2DSpriteVisual();
 			if (resident)
 				SendLive2DControl("set_visibility", visible: true);
@@ -122,6 +123,7 @@ public partial class UdpListener
 		{
 			bool wasLive2D = _isLive2DMode;
 			_isLive2DMode = false;
+			SyncSpeechBubbleMode();
 			if (_live2DManager?.IsRunning ?? false)
 				SendLive2DControl("set_visibility", visible: false);
 			Restore2DSpriteVisual();
@@ -199,6 +201,7 @@ public partial class UdpListener
 		if (!_isLive2DMode)
 			return;
 		_isLive2DMode = false;
+		SyncSpeechBubbleMode();
 		Restore2DSpriteVisual();
 		_hasLive2DWindowRect = false;
 		if (_body != null)
@@ -302,21 +305,23 @@ public partial class UdpListener
 
 	private void ApplyLive2DBubbleVisualState()
 	{
-		if (!_isLive2DMode || _bubble == null)
+		if (!_isLive2DMode)
 			return;
-		// Live2D không lật cả sprite như body pixel. Giữ bubble và chữ không bị
-		// mirror theo trạng thái facing còn sót lại của MotionController.
+		Control liveBubble = Live2DSpeechBubbleControl();
+		if (liveBubble == null)
+			return;
+		// Bubble Live2D nằm hẳn trong CanvasLayer, không dùng transform của sprite 2D.
 		if (_monika != null)
 			_monika.Scale = Vector2.One;
-		_bubble.Scale = Vector2.One;
+		liveBubble.Scale = Vector2.One;
 		if (_hasLive2DWindowRect)
-			PositionLive2DBubbleBesideModel();
-		else
-			_bubble.Position = _bubbleBasePos;
+			PositionLive2DBubbleBesideModel(liveBubble);
 	}
 
-	private void PositionLive2DBubbleBesideModel()
+	private void PositionLive2DBubbleBesideModel(Control liveBubble)
 	{
+		if (liveBubble == null)
+			return;
 		Vector2 viewportSize = GetViewportRect().Size;
 		if (viewportSize.X <= 0f || viewportSize.Y <= 0f)
 			return;
@@ -327,11 +332,11 @@ public partial class UdpListener
 				_live2DWindowRectScreen.Position.X - overlayScreenPosition.X,
 				_live2DWindowRectScreen.Position.Y - overlayScreenPosition.Y),
 			new Vector2(_live2DWindowRectScreen.Size.X, _live2DWindowRectScreen.Size.Y));
-		Vector2 bubbleSize = _bubble.Size;
+		Vector2 bubbleSize = liveBubble.Size;
 		if (bubbleSize.X <= 0f || bubbleSize.Y <= 0f)
-			bubbleSize = new Vector2(560f, 230f);
+			bubbleSize = new Vector2(500f, 174f);
 
-		float margin = 8f;
+		float margin = 10f;
 		float gap = Mathf.Clamp(Live2DBubbleGap, 8f, 96f);
 		float rightSpace = viewportSize.X - liveRect.End.X;
 		float leftSpace = liveRect.Position.X;
@@ -350,7 +355,7 @@ public partial class UdpListener
 			+ liveRect.Size.Y * Mathf.Clamp(Live2DBubbleSideAnchorY, 0.05f, 0.75f);
 		x = Mathf.Clamp(x, margin, Math.Max(margin, viewportSize.X - bubbleSize.X - margin));
 		y = Mathf.Clamp(y, margin, Math.Max(margin, viewportSize.Y - bubbleSize.Y - margin));
-		_bubble.GlobalPosition = new Vector2(x, y);
+		liveBubble.GlobalPosition = new Vector2(x, y);
 	}
 
 	private void SendLive2DControl(string type, bool visible = true)

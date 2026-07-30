@@ -495,6 +495,37 @@ def test_tts_worker_fails_closed_on_japanese_localizer_breaks_by_default(monkeyp
     assert language == "vi"
 
 
+def test_tts_worker_uses_style_key_rescue_when_primary_returns_non_japanese(monkeypatch) -> None:
+    import runtime.speech_localizer as speech_localizer
+
+    monkeypatch.setenv("ERIS_TTS_LOCALIZER_PROVIDER", "deepseek")
+    monkeypatch.setenv("ERIS_TTS_LOCALIZER_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "primary-key")
+    monkeypatch.setenv("ERIS_DS_STYLE_API_KEY", "style-key")
+    monkeypatch.setenv("ERIS_TTS_FAIL_OPEN_ON_LOCALIZATION_ERROR", "0")
+
+    monkeypatch.setattr(
+        speech_localizer,
+        "_valid_japanese_translation",
+        lambda _source, translated, **_kwargs: translated == "こんにちは",
+    )
+    monkeypatch.setattr(speech_localizer, "_apply_signature_surface", lambda text, _policy: text)
+
+    calls: list[str] = []
+
+    def fake_translate(*, api_key: str, **_kwargs):
+        calls.append(api_key)
+        content = "Tôi đây." if api_key == "primary-key" else "こんにちは"
+        return {"choices": [{"message": {"content": content}}]}
+
+    monkeypatch.setattr(speech_localizer, "_translate_with_deepseek_api", fake_translate)
+
+    out = speech_localizer.SpeechLocalizer()._translate_to_japanese("Tôi đây.", prosody_style="")
+
+    assert out == "こんにちは"
+    assert calls == ["primary-key", "style-key"]
+
+
 def test_tts_attempts_default_is_bounded(monkeypatch) -> None:
     import runtime.tts_engine as tts_engine
 

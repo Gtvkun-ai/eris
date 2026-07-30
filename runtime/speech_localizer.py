@@ -15,6 +15,7 @@ import re
 import time
 from typing import Callable, Iterable
 
+from eris_secrets import get_secret
 from runtime.diagnostic_logging import safe_log
 from runtime.speech_persona_polish import (
     SpeechPersonaPolicy,
@@ -124,6 +125,13 @@ def _get_api_key_lease(*, provider: str = "gemini", exclude_indices: Iterable[in
     except (ImportError, AttributeError, RuntimeError, ValueError) as exc:
         safe_log(logger, "debug", "TTS key-pool lookup failed: %s", exc)
     return "", None, None
+
+
+def _style_rescue_api_key() -> str:
+    key = get_secret("ERIS_DS_STYLE_API_KEY", "ERIS_STYLE_API_KEY").strip()
+    if key and not key.startswith("PASTE_"):
+        return key
+    return ""
 
 
 def _already_japanese(text: str) -> bool:
@@ -344,6 +352,56 @@ class SpeechLocalizer:
         attempted_indices: set[int] = set()
         used_unpooled_key = False
         last_exc: Exception | None = None
+        style_rescue_key = _style_rescue_api_key() if provider_name == "deepseek" else ""
+        style_rescue_used = False
+
+        def _try_style_rescue() -> str:
+            nonlocal style_rescue_used
+            if style_rescue_used or not style_rescue_key:
+                return ""
+            style_rescue_used = True
+            try:
+                rescue_response = _translate_with_deepseek_api(
+                    api_key=style_rescue_key,
+                    model_name=localizer_model_name(),
+                    system_instruction=system_instruction,
+                    prompt=prompt,
+                    timeout_seconds=_localizer_timeout_seconds(),
+                )
+                rescue_out = _clean_translation_output(_response_text(rescue_response))
+                rescue_out = _apply_signature_surface(rescue_out, policy)
+                if not _valid_japanese_translation(text, rescue_out, persona_policy=policy):
+                    raise SpeechLocalizationError(
+                        "style_key_rescue_invalid_or_persona_boundary_violation"
+                    )
+                try:
+                    if plan is not None:
+                        from llm.token_budget import estimate_tokens
+                        from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
+
+                        GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_request(
+                            provider_name,
+                            lane="speech_localizer",
+                            prompt_tokens=estimate_tokens([{"role": "user", "content": prompt}]),
+                            output_tokens=plan.output_tokens,
+                        )
+                    from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
+
+                    GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_success(provider_name)
+                except Exception as exc:
+                    safe_log(logger, "debug", "TTS localizer rescue telemetry failed: %s", exc)
+                logger.warning(
+                    "[TTS.Localizer] style key rescue succeeded model=%s",
+                    localizer_model_name(),
+                )
+                return rescue_out
+            except Exception as rescue_exc:
+                logger.warning(
+                    "[TTS.Localizer] style key rescue failed model=%s: %s",
+                    localizer_model_name(),
+                    rescue_exc,
+                )
+                return ""
 
         for attempt in range(attempts):
             _raise_if_cancelled(cancel_event, authority_check)
@@ -379,6 +437,9 @@ class SpeechLocalizer:
                     break
                 used_unpooled_key = True
             if not api_key:
+                rescue = _try_style_rescue()
+                if rescue:
+                    return rescue
                 last_exc = SpeechLocalizationError(f"missing_{provider_name}_key_for_japanese_localizer")
                 break
 
@@ -443,6 +504,9 @@ class SpeechLocalizer:
                 if not _valid_japanese_translation(
                     text, out, persona_policy=policy
                 ):
+                    rescue = _try_style_rescue()
+                    if rescue:
+                        return rescue
                     raise SpeechLocalizationError(
                         "localizer_returned_invalid_or_persona_boundary_violation"
                     )
