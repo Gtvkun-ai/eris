@@ -71,6 +71,8 @@ class InnerDiaryWriter:
             else max(0.0, float(throttle_seconds))
         )
         self.logger = logger
+        self.startup_grace_seconds = max(0.0, _env_float("ERIS_INNER_DIARY_STARTUP_GRACE_SEC", 60.0))
+        self._created_at = time.time()
         self._last_call_at: float = 0.0
         self._last_signature: str = ""
         self._cached_voice: dict[str, Any] | None = None
@@ -90,6 +92,9 @@ class InnerDiaryWriter:
             return self._cached_voice
 
         now = time.time() if now is None else float(now)
+        if now - self._created_at < self.startup_grace_seconds:
+            # Public startup must get the gateway before this optional prose lane.
+            return self._cached_voice
         signature = self._signature(facts)
 
         # Nội dung không đổi → giữ bản giọng Eris đã viết, không gọi lại.

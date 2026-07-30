@@ -67,6 +67,7 @@ from runtime.stage_contracts import StageFrameBuilder
 from runtime.stage_dispatcher import StageDispatcher
 from runtime.stage_event_bus import StageEventBus
 from runtime.stage_output import StageOutputPipeline
+from runtime.stage_protocol import StageProtocolEvent
 from runtime.stage_protocol_adapter import playback_event, show_plan_event, stage_segment_event, stage_state_event
 from runtime.subconscious_loop import SubconsciousLoop as RuntimeSubconsciousLoop
 from runtime.subsystem_health import FailureKind, SubsystemHealthRegistry
@@ -255,6 +256,62 @@ class PublicOutputRuntimeMixin:
         stage_payload_sent = False
         panel_payload_sent = False
 
+        def send_live2d_audio_edge(
+            edge_type: str,
+            event_stage_frame,
+            *,
+            event=None,
+            fallback: bool = False,
+        ) -> None:
+            """Đưa lifecycle audio thẳng tới Live2D, không phụ thuộc Godot/UI protocol."""
+
+            bus = getattr(self, "stage_event_bus", None)
+            mirror = getattr(bus, "emit_live2d", None) if bus is not None else None
+            if not callable(mirror):
+                return
+            frame = event_stage_frame or stage_frame
+            turn_id = str(getattr(event, "turn_id", "") or getattr(frame, "turn_id", "") or "")
+            try:
+                seq = int(getattr(event, "segment_id", getattr(frame, "segment_id", 0)) or 0)
+            except (TypeError, ValueError):
+                seq = 0
+            stable_turn = turn_id or "anonymous"
+            event_id = (
+                f"audio-fallback:{stable_turn}:{seq}:{edge_type}"
+                if fallback
+                else f"audio:{stable_turn}:{seq}:{edge_type}"
+            )
+            data: dict[str, object] = {
+                "prosody_style": str(getattr(frame, "prosody_style", "") or ""),
+                "speech_act": str(getattr(frame, "speech_act", "") or ""),
+            }
+            if event is not None:
+                envelope = tuple(getattr(event, "audio_envelope", ()) or ())
+                if envelope:
+                    data["audio_envelope"] = list(envelope)
+                frame_ms = int(getattr(event, "audio_frame_ms", 0) or 0)
+                duration_ms = int(getattr(event, "audio_duration_ms", 0) or 0)
+                if frame_ms > 0:
+                    data["audio_frame_ms"] = frame_ms
+                if duration_ms > 0:
+                    data["audio_duration_ms"] = duration_ms
+            try:
+                mirror(StageProtocolEvent(
+                    type=str(edge_type or ""),
+                    turn_id=turn_id,
+                    seq=seq,
+                    event_id=event_id,
+                    tts_text=str(getattr(event, "text", "") or getattr(frame, "tts_text", "") or ""),
+                    display_text=str(getattr(frame, "display_text", "") or ""),
+                    emotion=str(getattr(event, "emotion", "") or getattr(frame, "emotion", "") or ""),
+                    motion=str(getattr(event, "motion", "") or getattr(frame, "motion", "") or ""),
+                    interruptible=bool(getattr(frame, "interruptible", True)),
+                    source=str(getattr(frame, "source", "") or ""),
+                    data={key: value for key, value in data.items() if value not in ("", [], (), {}, None)},
+                ))
+            except Exception as exc:
+                self.logger.debug("[live2d] direct audio edge failed: %s", exc)
+
         def send_stage_protocol_segments():
             nonlocal stage_payload_sent
             if stage_payload_sent:
@@ -390,6 +447,15 @@ class PublicOutputRuntimeMixin:
 
         def handle_tts_event(event, event_stage_frame):
             event_type = str(getattr(event, "type", "") or "").strip().lower()
+            live2d_edge = {
+                "audio_start": "audio_playback_started",
+                "audio_done": "audio_playback_done",
+                "audio_cancelled": "interrupted",
+                "audio_failed": "degraded",
+                "audio_localization_failed": "degraded",
+            }.get(event_type)
+            if live2d_edge:
+                send_live2d_audio_edge(live2d_edge, event_stage_frame, event=event)
             if event_type in {"audio_prepare", "audio_queued", "audio_buffer_ready"}:
                 public_lifecycle.transition(
                     "AUDIO_BUFFERING",
@@ -454,13 +520,23 @@ class PublicOutputRuntimeMixin:
                     turn_id=stage_frame.turn_id,
                     reason="tts_dispatch",
                 )
+                def on_first_audio_start() -> None:
+                    # Đây là callback sát thời điểm thiết bị bắt đầu phát nhất.
+                    # Gửi một edge ``speaking`` cứu hộ trước; event audio_start
+                    # giàu envelope sẽ tới ngay sau và thay thế animation bằng
+                    # nhịp audio thật. Nếu callback lifecycle bị rơi, miệng vẫn
+                    # không đứng im như ảnh hồ sơ.
+                    send_live2d_audio_edge("speaking", stage_frames[0], fallback=True)
+                    if sync_text:
+                        send_text_payload("audio_start")
+
                 has_scheduled_tts = bool(dispatcher.dispatch_tts(
                     stage_frames,
                     tts_engine=_tts,
                     valence=_valence,
                     arousal=_arousal,
                     stance=_stance,
-                    on_first_start=(lambda: send_text_payload("audio_start")) if sync_text else None,
+                    on_first_start=on_first_audio_start,
                     on_event=handle_tts_event,
                 ))
             except Exception as _tts_exc:

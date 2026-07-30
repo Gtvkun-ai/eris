@@ -5,6 +5,7 @@ import logging
 from types import SimpleNamespace
 
 from cortex.private_mind.inner_diary_renderer import InnerDiaryRenderer
+from cortex.private_mind.inner_diary_writer import InnerDiaryWriter
 from llm.process_manager import RemoteModelProcessManager
 from llm.service import LlmService
 from runtime.private_mind_model_adapter import (
@@ -45,6 +46,27 @@ class _ExplodingClient:
     def create_chat_completion(self, **kwargs):
         self.calls += 1
         raise AssertionError("non-diary lane must not be called")
+
+
+def test_inner_diary_defers_remote_writing_during_startup():
+    class Adapter:
+        def __init__(self):
+            self.calls = 0
+
+        def write_inner_diary(self, _facts):
+            self.calls += 1
+            return {"hien_tai": "ready"}
+
+    adapter = Adapter()
+    writer = InnerDiaryWriter(adapter=adapter, throttle_seconds=0.0)
+    writer._created_at = 100.0
+    writer.startup_grace_seconds = 60.0
+
+    assert writer.maybe_write({"current": {"dominant_judgment": "boot thought"}}, now=120.0) is None
+    assert adapter.calls == 0
+
+    assert writer.maybe_write({"current": {"dominant_judgment": "boot thought"}}, now=161.0) == {"hien_tai": "ready", "tuong_lai": "", "ban_tam": "", "phan_tich": "", "muon_noi": "", "memory_echo": ""}
+    assert adapter.calls == 1
 
 
 def _config() -> PrivateMindModelAdapterConfig:

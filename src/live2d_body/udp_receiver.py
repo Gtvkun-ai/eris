@@ -72,6 +72,18 @@ class Live2DStageReceiver:
                         continue
                     self.state.handle_payload(payload)
                     self.packet_count += 1
+                    event_type = str(payload.get("type", "") or "").strip().lower()
+                    if event_type in {
+                        "speaking", "audio_start", "audio_playback_started",
+                        "audio_done", "audio_playback_done", "audio_cancelled",
+                        "audio_failed", "interrupted", "degraded",
+                    }:
+                        print(
+                            "[Live2D][Stage] "
+                            f"recv={event_type} turn={str(payload.get('turn_id', '') or '')[:36]} "
+                            f"seq={payload.get('seq', 0)} event_id={str(payload.get('event_id', '') or '')[:64]}",
+                            flush=True,
+                        )
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                 self.last_error = f"invalid packet: {exc}"
 

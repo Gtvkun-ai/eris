@@ -68,6 +68,21 @@ class StageEventBus:
         self._mirror_live2d(payload)
         return sent
 
+    def emit_live2d(self, event: StageProtocolEvent) -> bool:
+        """Gửi một edge điều khiển thẳng tới renderer, kể cả khi stage protocol UI bị tắt.
+
+        Playback start/done là tín hiệu thời gian thực của hình thể, không phải
+        metadata tùy chọn của frontend. Nếu setting ``protocol_enabled`` bị tắt
+        hoặc Godot chưa forward event mới, model vẫn phải mở/khép miệng đúng lúc.
+        ``event_id`` ổn định ở caller giúp renderer bỏ bản trùng khi lane chuẩn
+        cũng gửi cùng edge sau đó.
+        """
+
+        if not self._live2d_mirror_enabled:
+            return False
+        prepared = self.session.prepare(event)
+        self._mirror_live2d(prepared.to_payload())
+        return True
 
     def _mirror_live2d(self, payload: Mapping[str, Any]) -> None:
         if not self._live2d_mirror_enabled:

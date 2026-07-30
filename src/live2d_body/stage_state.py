@@ -265,6 +265,7 @@ class Live2DStageState:
         self._thought_confidence = 0.0
         self._idle = IdleDirector(seed=idle_seed)
         self._speech = SpeechAnimator()
+        self._speech_deadline = -1.0e9
         self._speech_contexts: dict[tuple[str, int], SpeechContext] = {}
         self._latest_speech_context = SpeechContext()
         self._latest_speech_key: tuple[str, int] = ("", 0)
@@ -340,16 +341,27 @@ class Live2DStageState:
             if not emotion:
                 self._emotion = "thinking"
                 self._emotion_at = now
-        elif event_type in {"speaking", "audio_playback_started"}:
+        elif event_type in {"speaking", "audio_start", "audio_playback_started"}:
             self._thinking = False
             self._speaking = True
             resolved_context = self._resolve_speech_context(payload, speech_context)
             self._speech.start(now=now, context=resolved_context)
+            if resolved_context.audio_duration_ms > 0:
+                expected_seconds = resolved_context.audio_duration_ms / 1000.0
+            else:
+                # Cứu hộ cho callback thiếu audio_done. Ước lượng rộng để không
+                # cắt câu dài, nhưng không cho miệng mắc kẹt đến tận thế.
+                expected_seconds = max(1.2, min(28.0, len(resolved_context.text) * 0.085 + 0.9))
+            self._speech_deadline = now + expected_seconds + 1.8
         elif event_type in {
             "done",
             "degraded",
             "interrupted",
             "audio_playback_done",
+            "audio_done",
+            "audio_cancelled",
+            "audio_failed",
+            "audio_localization_failed",
             "stage_segment_cancelled",
             "stage_segment_failed",
             "continuation_cancelled",
@@ -357,6 +369,7 @@ class Live2DStageState:
             self._thinking = False
             self._speaking = False
             self._speech.stop()
+            self._speech_deadline = -1.0e9
             self._motion = motion or "stand"
             self._motion_at = now
         elif event_type == "thinking_finished":
@@ -494,6 +507,11 @@ class Live2DStageState:
                 freshness = 1.0
             else:
                 freshness = math.exp(-(affect_age - 75.0) / 240.0)
+            if self._speaking and timestamp > self._speech_deadline:
+                self._speaking = False
+                self._speech.stop()
+                self._speech_deadline = -1.0e9
+
             visual_affect = NEUTRAL_AFFECT.lerp(self._affect_current, freshness)
             affect_pose = visual_affect.visual_pose(thought_pressure=self._thought_pressure)
             affect_target = ExpressionTarget.from_affect_pose(affect_pose)
@@ -533,10 +551,10 @@ class Live2DStageState:
                 target["ParamAngleZ"] += speech_pose.angle_z
                 target["ParamBrowLAngle"] += speech_pose.brow_left
                 target["ParamBrowRAngle"] += speech_pose.brow_right
-                target["ParamMouthForm"] = (
-                    target["ParamMouthForm"] * speech_pose.mouth_form_scale
-                    + speech_pose.mouth_form_offset
-                )
+                # MouthForm giữ mood của mặt; MouthOpenY xử lý độ há riêng.
+                # Hai trục được Cubism phối trên cùng lưới keyform, nên runtime
+                # chỉ cộng style cảm xúc nhỏ chứ không trung hòa mood theo âm lượng.
+                target["ParamMouthForm"] += speech_pose.mouth_form_offset
 
             if self._speaking and speech_pose is not None:
                 open_ratio = speech_pose.mouth_open_ratio

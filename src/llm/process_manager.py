@@ -330,6 +330,7 @@ class RemoteModelProcessManager:
                 api_key=spec.api_key,
                 model_name=spec.model,
                 key_pool=None,
+                provider_circuit_id=f"{spec.base_url.rstrip('/')}#deepseek_web:{normalized}",
             )
             client = JsonlWorkerClient(
                 raw_client,

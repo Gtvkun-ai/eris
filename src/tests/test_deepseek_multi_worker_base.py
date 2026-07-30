@@ -17,6 +17,25 @@ from llm.process_manager import RemoteModelProcessManager
 from llm.service import LlmService
 
 
+def test_deepseek_role_workers_do_not_share_provider_circuit():
+    from llm.client import OpenAICompatibleClient
+
+    companion = OpenAICompatibleClient(
+        base_url="http://127.0.0.1:6011/v1",
+        api_key="companion-key",
+        model_name="deepseek-v4-flash",
+        provider_circuit_id="http://127.0.0.1:6011/v1#deepseek_web:companion",
+    )
+    inner = OpenAICompatibleClient(
+        base_url="http://127.0.0.1:6011/v1",
+        api_key="inner-key",
+        model_name="deepseek-v4-flash",
+        provider_circuit_id="http://127.0.0.1:6011/v1#deepseek_web:inner",
+    )
+
+    assert companion._provider_circuit is not inner._provider_circuit
+
+
 class _FakeClient:
     base_url = "http://127.0.0.1:6011/v1"
     model_name = "deepseek-v4-flash"
@@ -63,6 +82,10 @@ def _call(client, *, response_format=None):
 
 
 def test_worker_spec_uses_exact_role_environment(monkeypatch):
+    monkeypatch.delenv("ERIS_DS_OBSERVER_BASE_URL", raising=False)
+    monkeypatch.delenv("ERIS_DS_OBSERVER_MODEL", raising=False)
+    monkeypatch.delenv("ERIS_DS2API_BASE_URL", raising=False)
+    monkeypatch.delenv("ERIS_DS2API_MODEL", raising=False)
     monkeypatch.setenv("ERIS_DS_BASE_URL", "http://localhost:6011/v1")
     monkeypatch.setenv("ERIS_DS_MODEL", "deepseek-v4-flash")
     monkeypatch.setenv("ERIS_DS_OBSERVER_API_KEY", "observer-gateway-key")

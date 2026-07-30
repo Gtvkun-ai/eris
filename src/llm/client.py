@@ -531,7 +531,15 @@ class LlamaServerClient:
 
 
 class OpenAICompatibleClient:
-    def __init__(self, base_url: str, api_key: str, model_name: str, timeout: int = 30, key_pool=None):
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        model_name: str,
+        timeout: int = 30,
+        key_pool=None,
+        provider_circuit_id: str | None = None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.key_pool = key_pool
         if not (api_key or "").strip() and key_pool is not None:
@@ -546,7 +554,11 @@ class OpenAICompatibleClient:
             else configured_model
         )
         self.timeout = timeout
-        self._provider_circuit = get_provider_circuit(self.base_url)
+        # Dedicated DeepSeek Web workers share a gateway but not a request budget.
+        # A slow optional lane (inner/observer/style) must never open the circuit
+        # for the companion lane that produces public chat.
+        self.provider_circuit_id = str(provider_circuit_id or self.base_url).strip() or self.base_url
+        self._provider_circuit = get_provider_circuit(self.provider_circuit_id)
 
     def _normalize_api_key(self, raw_value: str) -> str:
         candidate = (raw_value or "").strip()
@@ -696,7 +708,7 @@ class OpenAICompatibleClient:
                 seen_signatures.add(signature)
 
                 try:
-                    self._provider_circuit.before_request(self.base_url)
+                    self._provider_circuit.before_request(self.provider_circuit_id)
                     actual_timeout = self.timeout if timeout is None else timeout
                     response = _brokered_post(
                         base_url=self.base_url,
@@ -753,7 +765,7 @@ class OpenAICompatibleClient:
                     raise last_error
                 except (requests.Timeout, requests.ConnectionError) as exc:
                     last_error = exc
-                    self._provider_circuit.record_failure(provider=self.base_url, status=None)
+                    self._provider_circuit.record_failure(provider=self.provider_circuit_id, status=None)
                     break
                 except Exception as exc:
                     last_error = exc
@@ -782,7 +794,7 @@ class OpenAICompatibleClient:
                 # 5xx thuộc provider/model, không đầu độc API key. Mở circuit
                 # và để fallback chain xử lý provider khác.
                 status = getattr(getattr(last_error, "response", None), "status_code", None)
-                self._provider_circuit.record_failure(provider=self.base_url, status=status)
+                self._provider_circuit.record_failure(provider=self.provider_circuit_id, status=status)
             break
 
         if last_error is not None:

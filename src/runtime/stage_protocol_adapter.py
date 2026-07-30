@@ -106,10 +106,14 @@ def playback_event(event: Any, *, stage_frame: Any = None) -> StageProtocolEvent
             else ""
         ),
     }
+    turn_id = str(getattr(event, "turn_id", "") or getattr(frame, "turn_id", "") or "")
+    seq = _event_seq(event, frame)
+    stable_turn = turn_id or "anonymous"
     return StageProtocolEvent(
         type=protocol_type,
-        turn_id=str(getattr(event, "turn_id", "") or getattr(frame, "turn_id", "") or ""),
-        seq=_event_seq(event, frame),
+        turn_id=turn_id,
+        seq=seq,
+        event_id=f"audio:{stable_turn}:{seq}:{protocol_type}",
         display_text=str(getattr(frame, "display_text", "") or ""),
         tts_text=str(getattr(event, "text", "") or getattr(frame, "tts_text", "") or ""),
         emotion=str(getattr(event, "emotion", "") or getattr(frame, "emotion", "") or ""),

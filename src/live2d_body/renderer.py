@@ -68,6 +68,8 @@ class Live2DRenderer:
             head_follow_right_degrees=config.head_follow_right_degrees,
         )
         self._last_geometry: WindowGeometry | None = None
+        self._last_speaking = False
+        self._mouth_probe_at = -1.0
 
     def run(self) -> None:
         glfw, live2d = _load_dependencies()
@@ -192,6 +194,21 @@ class Live2DRenderer:
                 dt = min(0.10, max(0.0, now - last))
                 last = now
                 snapshot = self.state.advance(dt, now=now)
+                if snapshot.speaking and not self._last_speaking:
+                    self._mouth_probe_at = now + 0.16
+                if snapshot.speaking and self._mouth_probe_at > 0.0 and now >= self._mouth_probe_at:
+                    print(
+                        "[Live2D][Mouth] "
+                        f"ratio={snapshot.mouth_open_ratio:.3f} "
+                        f"form={float(snapshot.parameters.get('ParamMouthForm', 0.0)):.3f} "
+                        f"open={float(snapshot.parameters.get('ParamMouthOpenY', -1.0)):.3f} "
+                        f"cue={snapshot.speech_cue}",
+                        flush=True,
+                    )
+                    self._mouth_probe_at = -1.0
+                if not snapshot.speaking:
+                    self._mouth_probe_at = -1.0
+                self._last_speaking = snapshot.speaking
                 if not window_visible:
                     # 20 Hz control check, gần như không tốn render CPU/GPU.
                     time.sleep(0.05)

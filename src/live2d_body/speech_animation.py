@@ -389,19 +389,14 @@ class SpeechAnimator:
             angle_z += math.sin(elapsed * math.pi / 0.19) * 0.58 * shake
             cue_names.append("shake")
 
-        # Khi miệng mở, giảm độ kéo khóe theo mức mở thay vì nhân cứng một hệ số.
-        # Các âm a/o mở rộng hơn i/u nhưng vẫn tôn trọng MouthForm của emotion.
-        vowel_rounding = 0.0
-        if vowel in {"o", "u"}:
-            vowel_rounding = -0.020 * mouth_ratio
-        elif vowel in {"a", "e"}:
-            vowel_rounding = 0.012 * mouth_ratio
-        mouth_form_offset += vowel_rounding
-        mouth_form_scale = 1.0 - mouth_ratio * 0.26
+        # Rig INFJ dùng một lưới hai chiều: MouthForm là mood (-1..1), còn
+        # MouthOpenY là độ mở (-1..1). Không được dùng MouthForm làm viseme hay
+        # làm nhạt mood khi há miệng; cả hai trục phải được giữ và áp đồng thời.
+        # Style/action vẫn có thể cộng một offset cảm xúc rất nhỏ ở phía trên.
 
         return SpeechPose(
-            mouth_open_ratio=_clamp(mouth_ratio, 0.0, 0.88),
-            mouth_form_scale=_clamp(mouth_form_scale, 0.70, 1.0),
+            mouth_open_ratio=_clamp(mouth_ratio, 0.0, 1.0),
+            mouth_form_scale=1.0,
             mouth_form_offset=_clamp(mouth_form_offset, -0.16, 0.16),
             brow_left=_clamp(brow_left, -0.20, 0.28),
             brow_right=_clamp(brow_right, -0.20, 0.24),
@@ -440,7 +435,7 @@ class SpeechAnimator:
                 envelope = min(attack, release)
                 # Plateau nhẹ ở giữa, attack nhanh và release rõ để có khe đóng.
                 ratio = cue.openness * envelope
-                return (_clamp(ratio, 0.0, 0.88), cue.vowel)
+                return (_clamp(ratio, 0.0, 1.0), cue.vowel)
 
         if elapsed <= self._duration + 0.16:
             return (0.0, "")
@@ -459,10 +454,10 @@ class SpeechAnimator:
             return 0.0
         current = self._audio_envelope[index]
         if index + 1 >= len(self._audio_envelope):
-            return _clamp(current, 0.0, 0.88)
+            return _clamp(current, 0.0, 1.0)
         fraction = position - index
         following = self._audio_envelope[index + 1]
-        return _clamp(current + (following - current) * fraction, 0.0, 0.88)
+        return _clamp(current + (following - current) * fraction, 0.0, 1.0)
 
     def _vowel_at(self, elapsed: float) -> str:
         if not self._cues:

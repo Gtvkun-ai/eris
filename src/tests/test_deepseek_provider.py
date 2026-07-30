@@ -168,6 +168,7 @@ def test_legacy_aggregator_runtime_dependency_is_removed() -> None:
 
 def test_ds2api_fallback_integration(monkeypatch) -> None:
     import llm.process_manager as process_manager
+    from llm.deepseek_workers import WORKER_ROLES
     from llm.client import ChainedFallbackClient
 
     class _Pool:
@@ -179,6 +180,8 @@ def test_ds2api_fallback_integration(monkeypatch) -> None:
         "ERIS_DS2API_ENABLED", "ERIS_DS2API_BASE_URL", "ERIS_DS2API_API_KEY", "ERIS_DS2API_MODEL"
     ):
         monkeypatch.delenv(name, raising=False)
+    for role in WORKER_ROLES:
+        monkeypatch.delenv(f"ERIS_DS_{role.upper()}_API_KEY", raising=False)
 
     monkeypatch.setenv("ERIS_REMOTE_PROVIDER", "deepseek")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-official")
@@ -353,7 +356,6 @@ def test_ds2api_forces_thinking_mode_enabled(monkeypatch) -> None:
     )
 
     assert captured["json"]["thinking"] == {"type": "enabled"}
-
 
 
 
