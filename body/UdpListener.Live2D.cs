@@ -113,6 +113,8 @@ public partial class UdpListener
 
 			_isLive2DMode = true;
 			SyncSpeechBubbleMode();
+			ConfigureLive2DSpeechBubbleVisual();
+			ConfigureLegacySpeechBubbleVisual();
 			HideOnly2DSpriteVisual();
 			if (resident)
 				SendLive2DControl("set_visibility", visible: true);
@@ -124,6 +126,8 @@ public partial class UdpListener
 			bool wasLive2D = _isLive2DMode;
 			_isLive2DMode = false;
 			SyncSpeechBubbleMode();
+			ConfigureLive2DSpeechBubbleVisual();
+			ConfigureLegacySpeechBubbleVisual();
 			if (_live2DManager?.IsRunning ?? false)
 				SendLive2DControl("set_visibility", visible: false);
 			Restore2DSpriteVisual();
@@ -305,17 +309,19 @@ public partial class UdpListener
 
 	private void ApplyLive2DBubbleVisualState()
 	{
-		if (!_isLive2DMode)
-			return;
 		Control liveBubble = Live2DSpeechBubbleControl();
-		if (liveBubble == null)
+		if (!_isLive2DMode || liveBubble == null)
 			return;
-		// Bubble Live2D nằm hẳn trong CanvasLayer, không dùng transform của sprite 2D.
+		EnsureControlOnCanvasLayer(liveBubble, 999);
+		// Live2D không lật cả sprite như body pixel. Giữ bubble và chữ không bị
+		// mirror theo trạng thái facing còn sót lại của MotionController.
 		if (_monika != null)
 			_monika.Scale = Vector2.One;
 		liveBubble.Scale = Vector2.One;
 		if (_hasLive2DWindowRect)
 			PositionLive2DBubbleBesideModel(liveBubble);
+		else
+			liveBubble.Position = _bubbleBasePos;
 	}
 
 	private void PositionLive2DBubbleBesideModel(Control liveBubble)
@@ -334,9 +340,9 @@ public partial class UdpListener
 			new Vector2(_live2DWindowRectScreen.Size.X, _live2DWindowRectScreen.Size.Y));
 		Vector2 bubbleSize = liveBubble.Size;
 		if (bubbleSize.X <= 0f || bubbleSize.Y <= 0f)
-			bubbleSize = new Vector2(500f, 174f);
+			bubbleSize = new Vector2(560f, 230f);
 
-		float margin = 10f;
+		float margin = 8f;
 		float gap = Mathf.Clamp(Live2DBubbleGap, 8f, 96f);
 		float rightSpace = viewportSize.X - liveRect.End.X;
 		float leftSpace = liveRect.Position.X;
@@ -430,17 +436,12 @@ public partial class UdpListener
 
 		Rect2 interactiveRect = new(new Vector2(-8f, -8f), Vector2.One);
 		bool hasInteractiveRect = false;
-		if (_bubble != null && _bubble.Visible && _bubble.Size.X > 0f && _bubble.Size.Y > 0f)
-		{
-			interactiveRect = new Rect2(_bubble.GlobalPosition, _bubble.Size);
-			hasInteractiveRect = true;
-		}
-		if (_tutorPanel != null && _tutorPanel.Visible && _tutorPanel.Size.X > 0f)
-		{
-			Rect2 tutorRect = new(_tutorPanel.GlobalPosition, _tutorPanel.Size);
-			interactiveRect = hasInteractiveRect ? interactiveRect.Merge(tutorRect) : tutorRect;
-			hasInteractiveRect = true;
-		}
+		MergeVisibleControlRect(ref interactiveRect, ref hasInteractiveRect, Live2DSpeechBubbleControl(), 2f);
+		MergeVisibleControlRect(ref interactiveRect, ref hasInteractiveRect, _runtimePresenceIndicator, 2f);
+		MergeVisibleControlRect(ref interactiveRect, ref hasInteractiveRect, _tutorPanel, 2f);
+
+		if (!hasInteractiveRect)
+			interactiveRect = new Rect2(new Vector2(-8f, -8f), Vector2.One);
 
 		bool unchanged =
 			!_passthroughFullCapture

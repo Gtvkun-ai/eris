@@ -35,6 +35,16 @@ def _text(value: Any, limit: int = 8000) -> str:
     return str(value or "").strip()[: max(1, int(limit))]
 
 
+def _first_text(*values: Any, limit: int = 8000) -> str:
+    for value in values:
+        if isinstance(value, Mapping) or isinstance(value, (list, tuple, set)):
+            continue
+        text = _text(value, limit)
+        if text:
+            return text
+    return ""
+
+
 def _language(value: Any, fallback: str) -> str:
     raw = _text(value, 24).lower()
     normalized = _LANGUAGE_ALIASES.get(raw, raw)
@@ -119,20 +129,40 @@ class UtteranceSpec:
         turn_id: str = "",
     ) -> "UtteranceSpec":
         root = _mapping(value)
-        nested = _mapping(root.get("utterance"))
+        utterance_raw = root.get("utterance")
+        nested = _mapping(utterance_raw)
         if nested:
             root = nested
+        elif not isinstance(utterance_raw, Mapping) and _text(utterance_raw):
+            fallback_text = _text(utterance_raw)
 
-        display_raw = _mapping(root.get("display"))
-        speech_raw = _mapping(root.get("speech"))
+        display_value = root.get("display")
+        speech_value = root.get("speech")
+        display_raw = _mapping(display_value)
+        speech_raw = _mapping(speech_value)
         performance_raw = _mapping(root.get("performance"))
         delivery_raw = _mapping(root.get("delivery"))
 
-        legacy_display = _text(root.get("text", fallback_text))
-        display_text = _text(display_raw.get("text", legacy_display))
-        speech_text = _text(
-            speech_raw.get("text", root.get("speech_text", display_text))
-        ) or display_text
+        legacy_display = _first_text(
+            root.get("text"),
+            root.get("display_text"),
+            root.get("reply"),
+            root.get("response"),
+            root.get("message"),
+            root.get("content"),
+            fallback_text,
+        )
+        display_text = _first_text(
+            display_raw.get("text") if display_raw else None,
+            display_value if not display_raw else None,
+            legacy_display,
+        )
+        speech_text = _first_text(
+            speech_raw.get("text") if speech_raw else None,
+            speech_value if not speech_raw else None,
+            root.get("speech_text"),
+            display_text,
+        )
 
         display_language = _language(
             display_raw.get("language", root.get("display_language", "")),

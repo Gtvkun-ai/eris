@@ -174,6 +174,32 @@ def test_required_greeting_cannot_silently_disappear() -> None:
     assert result.payload["text"] == "Chào bạn. Tôi đây."
 
 
+def test_required_reply_keeps_model_text_when_silence_flag_is_wrong() -> None:
+    from runtime.reply_obligation import ReplyRequirement, enforce_reply_obligation
+    from runtime.semantic_frame import SemanticFrame
+
+    frame = SemanticFrame(user_act="relational_check_in", target="assistant")
+    result = enforce_reply_obligation(
+        {
+            "text": "Ừ, tôi hơi khựng một nhịp. Không phải tôi biến mất đâu.",
+            "speech_text": "うん、少し止まっただけ。消えたわけじゃない。",
+            "speech_language": "ja",
+            "should_speak": False,
+            "semantic_frame": frame.to_dict(),
+        },
+        user_text="dị hả",
+        frame=frame,
+        language_hint="vi",
+    )
+
+    assert result.requirement is ReplyRequirement.REQUIRED
+    assert result.repaired is True
+    assert result.reason == "required_reply_should_speak"
+    assert result.payload["should_speak"] is True
+    assert result.payload["text"].startswith("Ừ, tôi hơi khựng")
+    assert result.payload["speech_text"].startswith("うん、少し")
+
+
 def test_public_turn_transaction_runs_side_effect_once() -> None:
     from runtime.public_turn_transaction import PublicTurnTransactionRegistry
 

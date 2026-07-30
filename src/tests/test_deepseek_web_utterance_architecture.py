@@ -50,6 +50,30 @@ def test_utterance_spec_parses_one_bilingual_commit():
     assert spec.delivery.interruptible is True
 
 
+def test_utterance_spec_recovers_mild_provider_shape_drift():
+    string_spec = UtteranceSpec.from_mapping(
+        {
+            "utterance": "Ừ, tôi nghe đây.",
+            "speech_text": "うん、聞いてる。",
+        },
+        default_display_language="vi",
+        default_speech_language="ja",
+    )
+    flat_spec = UtteranceSpec.from_mapping(
+        {
+            "display_text": "Tôi đây.",
+            "speech": "ここにいる。",
+        },
+        default_display_language="vi",
+        default_speech_language="ja",
+    )
+
+    assert string_spec.display.text == "Ừ, tôi nghe đây."
+    assert string_spec.speech.text == "うん、聞いてる。"
+    assert flat_spec.display.text == "Tôi đây."
+    assert flat_spec.speech.text == "ここにいる。"
+
+
 def test_stage_uses_committed_speech_without_localizer():
     class FailingLocalizer:
         def localize(self, *_args, **_kwargs):

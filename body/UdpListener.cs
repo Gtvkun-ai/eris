@@ -40,6 +40,14 @@ public partial class UdpListener : Node2D
 	private AnimatedSprite2D _monika;
 	private CharacterBody2D _body;
 	private RichTextLabel _label;
+	private TextureRect _bubbleFrame;
+	private bool _speechBubblePromotedToOverlay;
+	private CanvasLayer _speechOverlayLayer;
+	private Control _speechOverlayRoot;
+	private bool _transientOverlayRefreshQueued;
+	private PanelContainer _live2DSpeechBubble;
+	private RichTextLabel _live2DSpeechLabel;
+	private Label _live2DSpeechStatus;
 	private MotionController _motion;
 	private LocalBodyAutonomy _bodyAutonomy;
 	private BodyAudioController _audio;
@@ -96,6 +104,7 @@ public partial class UdpListener : Node2D
 	private Button _contextTouchButton;
 	private Button _contextForceSpeakButton;
 	private Button _contextEmotionButton;
+	private Button _contextConversationHistoryButton;
 	private Button _contextPrivateMindButton;
 	private Button _contextSettingsButton;
 	private Button _contextExitButton;
@@ -324,6 +333,7 @@ public partial class UdpListener : Node2D
 		_monika = GetNode<AnimatedSprite2D>("Monika2/Monika");
 		_label  = GetNode<RichTextLabel>("Monika2/Monika/BubbleContainer/TextureRect/MessageLabel");
 		_bubble   = GetNode<Control>("Monika2/Monika/BubbleContainer");
+		_bubbleFrame = GetNodeOrNull<TextureRect>("Monika2/Monika/BubbleContainer/TextureRect");
 	_chatPanel = GetNode<Panel>("CanvasLayer/Control/ChatPanel");
 	_chatSendButton = GetNode<Button>("CanvasLayer/Control/ChatPanel/HBoxContainer/SendButton");
 	_chatCloseButton = GetNode<Button>("CanvasLayer/Control/ChatPanel/HBoxContainer/CloseButton");
@@ -335,7 +345,7 @@ public partial class UdpListener : Node2D
 		_contextCloseButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/CloseButton");
 		_characterContextMenu.CustomMinimumSize = CharacterContextMenuMinSize;
 		_characterContextMenu.Size = CharacterContextMenuMinSize;
-		_characterContextMenu.ZIndex = 150;
+		_characterContextMenu.ZIndex = 100;
 		BuildCharacterContextMenuUi();
 		InitializeMemoryPanel();
 		_emotionPanel = GetNode<Panel>("CanvasLayer/Control/EmotionPanel");
@@ -375,12 +385,15 @@ public partial class UdpListener : Node2D
 		BuildSettingsPanelUi();
 		_chatInput = GetNode<LineEdit>("CanvasLayer/Control/ChatPanel/HBoxContainer/LineEdit");
 		BuildChatPanelUi();
+		BuildConversationUi();
 	_chatSendButton.Pressed += OnSendPressed;
 	_chatCloseButton.Pressed += CloseChatPanel;
 	_contextChatButton.Pressed += OnContextChatPressed;
 	_contextTouchButton.Pressed += OnContextTouchPressed;
 	_contextForceSpeakButton.Pressed += OnContextForceSpeakPressed;
 	_contextEmotionButton.Pressed += OnContextEmotionPressed;
+	if (_contextConversationHistoryButton != null)
+		_contextConversationHistoryButton.Pressed += OnContextConversationHistoryPressed;
 	if (_contextPrivateMindButton != null)
 		_contextPrivateMindButton.Pressed += OnContextPrivateMindPressed;
 	if (_contextDepthButton != null)
@@ -400,6 +413,7 @@ public partial class UdpListener : Node2D
 		MakePanelDraggable(_emotionPanel);
 		MakePanelDraggable(_privateMindPanel);
 		MakePanelDraggable(_chatPanel);
+		MakePanelDraggable(_conversationHistoryPanel);
 		MakePanelDraggable(_tutorPanel);
 		MakePanelDraggable(_depthPanel);
 		MakePanelDraggable(_settingsPanel);
@@ -419,6 +433,11 @@ public partial class UdpListener : Node2D
 		Vector2 screenSize = GetViewportRect().Size;
 		Vector2 groundedPos = _body.GlobalPosition;
 		_bubbleBasePos = _bubble.Position;
+		PromoteLegacySpeechBubbleToUiOverlay();
+		BuildLive2DSpeechBubble();
+		ConfigureLegacySpeechBubbleVisual();
+		ConfigureLive2DSpeechBubbleVisual();
+		SyncSpeechBubbleMode();
 		_audio = new BodyAudioController();
 		_audio.Attach(this, () => _motion?.CurrentAction ?? "stand");
 		_motion = new MotionController(PlaySoundForAnimation);
@@ -499,6 +518,7 @@ public partial class UdpListener : Node2D
 			|| (_depthPanel?.Visible ?? false)
 			|| (_settingsPanel?.Visible ?? false)
 			|| (_memoryPanel?.Visible ?? false)
+			|| (_conversationHistoryPanel?.Visible ?? false)
 			|| _grabModeArmed
 			|| _isDraggingCharacter;
 
@@ -525,25 +545,13 @@ public partial class UdpListener : Node2D
 		Vector2 size = _spriteHalfSize * 2f + new Vector2(pad * 2f, pad * 2f);
 		var rect = new Rect2(tl, size);
 
-		// Khi bong bóng thoại đang hiện, gộp luôn vùng của nó vào passthrough.
-		// Vừa cho phép click trúng bong bóng, vừa buộc cửa sổ overlay trong suốt
-		// vẽ lại vùng đó ngay (nếu không bong bóng hay bị "kẹt" không hiện cho tới
-		// khi có sự kiện cửa sổ khác như mở context menu).
-		bool bubbleVisible = _bubble != null && _bubble.Visible && _bubble.Size.X > 0f;
-		if (bubbleVisible)
-		{
-			var bubbleRect = new Rect2(_bubble.GlobalPosition, _bubble.Size);
-			rect = rect.Merge(bubbleRect);
-		}
-
-		// TutorPanel là panel trang trí/click xuyên, nhưng nút ẩn vẫn cần bắt chuột.
-		// Gộp vùng panel vào mouse region thay vì khóa toàn màn hình như các panel nặng.
-		bool tutorVisible = _tutorPanel != null && _tutorPanel.Visible && _tutorPanel.Size.X > 0f;
-		if (tutorVisible)
-		{
-			var tutorRect = new Rect2(_tutorPanel.GlobalPosition, _tutorPanel.Size);
-			rect = rect.Merge(tutorRect);
-		}
+		// Các overlay tạm phải nằm trong hit-test region ngay cả khi chúng MouseFilter.Ignore.
+		// Đây cũng là workaround ổn định cho transparent HWND trên Windows: nếu region
+		// bị thu lại khi context menu đóng, thinking pill/bubble có thể ngừng được composite.
+		bool hasRect = true;
+		MergeVisibleControlRect(ref rect, ref hasRect, ActiveSpeechBubble(), 2f);
+		MergeVisibleControlRect(ref rect, ref hasRect, _runtimePresenceIndicator, 2f);
+		MergeVisibleControlRect(ref rect, ref hasRect, _tutorPanel, 2f);
 
 		// Tránh gọi mỗi frame khi nhân vật đứng yên và bong bóng không đổi.
 		bool unchanged =
@@ -599,6 +607,7 @@ public partial class UdpListener : Node2D
 		}
 		_motion.ApplyVisualState(_monika, _bubble, _body.Position, screenSize);
 		ApplyLive2DBubbleVisualState();
+		SyncLegacySpeechBubbleOverlayTransform();
 		ClampBubbleToScreen();
 		UpdateMousePassthrough();
 		if (_privateMindPanel != null && _privateMindPanel.Visible)
@@ -724,6 +733,17 @@ public partial class UdpListener : Node2D
 				GetViewport().SetInputAsHandled();
 				return;
 			}
+			if (_conversationHistoryPanel != null && _conversationHistoryPanel.Visible && IsMouseOverControl(_conversationHistoryPanel, mouseEvent.Position))
+			{
+				GetViewport().SetInputAsHandled();
+				return;
+			}
+			if (_conversationHistoryPanel != null && _conversationHistoryPanel.Visible)
+			{
+				CloseConversationHistoryPanel();
+				GetViewport().SetInputAsHandled();
+				return;
+			}
 
 			if (IsMouseOverCharacter(mouseEvent.Position))
 			{
@@ -756,6 +776,11 @@ public partial class UdpListener : Node2D
 			if (_memoryPanel != null && _memoryPanel.Visible)
 			{
 				CloseMemoryPanel();
+				GetViewport().SetInputAsHandled();
+			}
+			if (_conversationHistoryPanel != null && _conversationHistoryPanel.Visible)
+			{
+				CloseConversationHistoryPanel();
 				GetViewport().SetInputAsHandled();
 			}
 
@@ -806,6 +831,15 @@ public partial class UdpListener : Node2D
 		{
 			CloseMemoryPanel();
 		}
+		if (
+			mouseEvent.ButtonIndex == MouseButton.Left
+			&& _conversationHistoryPanel != null
+			&& _conversationHistoryPanel.Visible
+			&& !IsMouseOverControl(_conversationHistoryPanel, mouseEvent.Position)
+		)
+		{
+			CloseConversationHistoryPanel();
+		}
 	}
 
 	public override void _UnhandledInput(InputEvent @event)
@@ -847,6 +881,278 @@ public partial class UdpListener : Node2D
 		CloseChatPanel();
 	}
 
+	private void ConfigureLegacySpeechBubbleVisual()
+	{
+		if (_bubble != null)
+		{
+			_bubble.MouseFilter = Control.MouseFilterEnum.Ignore;
+			_bubble.ZIndex = 999;
+			_bubble.ZAsRelative = false;
+			_bubble.Modulate = Colors.White;
+		}
+		if (_bubbleFrame != null)
+		{
+			_bubbleFrame.MouseFilter = Control.MouseFilterEnum.Ignore;
+			_bubbleFrame.Modulate = Colors.White;
+			_bubbleFrame.SelfModulate = Colors.White;
+		}
+		if (_label != null)
+		{
+			_label.MouseFilter = Control.MouseFilterEnum.Ignore;
+			_label.AddThemeColorOverride("default_color", new Color(0.34f, 0.29f, 0.34f, 1f));
+			_label.AddThemeFontSizeOverride("normal_font_size", 17);
+			_label.AddThemeFontSizeOverride("bold_font_size", 17);
+			_label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		}
+	}
+
+	private void ConfigureLive2DSpeechBubbleVisual()
+	{
+		if (_live2DSpeechBubble != null)
+		{
+			_live2DSpeechBubble.MouseFilter = Control.MouseFilterEnum.Ignore;
+			_live2DSpeechBubble.ZIndex = 999;
+			_live2DSpeechBubble.ZAsRelative = false;
+		}
+	}
+
+	private void BuildLive2DSpeechBubble()
+	{
+		Control root = UiOverlayRoot();
+		if (root == null || _live2DSpeechBubble != null)
+			return;
+
+		_live2DSpeechBubble = new PanelContainer
+		{
+			Name = "Live2DSpeechBubbleV2",
+			Visible = false,
+			Size = new Vector2(500f, 174f),
+			CustomMinimumSize = new Vector2(500f, 174f),
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+			ZIndex = 999,
+		};
+		_live2DSpeechBubble.AddThemeStyleboxOverride("panel", MakeFlatStyle(
+			new Color(0.035f, 0.10f, 0.065f, 0.97f),
+			new Color(0.20f, 0.72f, 0.41f, 0.95f),
+			18,
+			1,
+			18f,
+			shadow: true));
+		root.AddChild(_live2DSpeechBubble);
+		_live2DSpeechBubble.AddChild(BuildSpeechBubbleContent(out _live2DSpeechStatus, out _live2DSpeechLabel, darkText: false));
+		ConfigureLive2DSpeechBubbleVisual();
+	}
+
+	private VBoxContainer BuildSpeechBubbleContent(out Label status, out RichTextLabel text, bool darkText)
+	{
+		var root = new VBoxContainer
+		{
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+		};
+		root.AddThemeConstantOverride("separation", 8);
+
+		var header = new HBoxContainer();
+		header.AddThemeConstantOverride("separation", 8);
+		root.AddChild(header);
+
+		var dot = new Label { Text = "◆" };
+		dot.AddThemeColorOverride("font_color", new Color(0.20f, 0.72f, 0.41f, 1f));
+		dot.AddThemeFontSizeOverride("font_size", 13);
+		header.AddChild(dot);
+
+		var name = new Label { Text = "ERIS" };
+		name.AddThemeColorOverride("font_color", darkText ? new Color(0.12f, 0.27f, 0.18f, 1f) : new Color(0.91f, 0.98f, 0.94f, 1f));
+		name.AddThemeFontSizeOverride("font_size", 13);
+		header.AddChild(name);
+
+		status = new Label
+		{
+			Text = "đang trả lời",
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			HorizontalAlignment = HorizontalAlignment.Left,
+		};
+		status.AddThemeColorOverride("font_color", darkText ? new Color(0.36f, 0.49f, 0.41f, 1f) : new Color(0.64f, 0.66f, 0.69f, 1f));
+		status.AddThemeFontSizeOverride("font_size", 12);
+		header.AddChild(status);
+
+		text = new RichTextLabel
+		{
+			BbcodeEnabled = false,
+			FitContent = false,
+			ScrollActive = false,
+			AutowrapMode = TextServer.AutowrapMode.WordSmart,
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		text.AddThemeColorOverride("default_color", darkText ? new Color(0.08f, 0.16f, 0.11f, 1f) : new Color(0.91f, 0.98f, 0.94f, 1f));
+		text.AddThemeFontSizeOverride("normal_font_size", 17);
+		root.AddChild(text);
+		return root;
+	}
+
+	private Control UiOverlayRoot()
+	{
+		if (_speechOverlayRoot != null && GodotObject.IsInstanceValid(_speechOverlayRoot))
+		{
+			if (_speechOverlayLayer != null && GodotObject.IsInstanceValid(_speechOverlayLayer))
+			{
+				_speechOverlayLayer.Layer = 200;
+				_speechOverlayLayer.Visible = true;
+			}
+			_speechOverlayRoot.Visible = true;
+			_speechOverlayRoot.MouseFilter = Control.MouseFilterEnum.Ignore;
+			_speechOverlayRoot.ClipContents = false;
+			return _speechOverlayRoot;
+		}
+
+		_speechOverlayLayer = GetNodeOrNull<CanvasLayer>("SpeechOverlayLayer");
+		if (_speechOverlayLayer == null)
+		{
+			_speechOverlayLayer = new CanvasLayer
+			{
+				Name = "SpeechOverlayLayer",
+				Layer = 200,
+			};
+			AddChild(_speechOverlayLayer);
+		}
+		else
+		{
+			_speechOverlayLayer.Layer = 200;
+		}
+
+		_speechOverlayRoot = _speechOverlayLayer.GetNodeOrNull<Control>("Control");
+		if (_speechOverlayRoot == null)
+		{
+			_speechOverlayRoot = new Control
+			{
+				Name = "Control",
+				MouseFilter = Control.MouseFilterEnum.Ignore,
+				AnchorLeft = 0f,
+				AnchorTop = 0f,
+				AnchorRight = 1f,
+				AnchorBottom = 1f,
+				OffsetLeft = 0f,
+				OffsetTop = 0f,
+				OffsetRight = 0f,
+				OffsetBottom = 0f,
+				ClipContents = false,
+			};
+			_speechOverlayLayer.AddChild(_speechOverlayRoot);
+		}
+
+		// Đây là lớp UI tồn tại độc lập với CharacterContextMenu. Không để việc
+		// đóng menu vô tình làm mất thinking pill hoặc speech bubble trên Windows.
+		_speechOverlayLayer.Layer = 200;
+		_speechOverlayLayer.Visible = true;
+		_speechOverlayRoot.Visible = true;
+		_speechOverlayRoot.MouseFilter = Control.MouseFilterEnum.Ignore;
+		_speechOverlayRoot.ClipContents = false;
+		return _speechOverlayRoot;
+	}
+
+	private void EnsureControlOnCanvasLayer(Control control, int zIndex, bool keepGlobalPosition = true)
+	{
+		if (control == null)
+			return;
+		Control root = UiOverlayRoot();
+		if (root == null)
+			return;
+
+		Vector2 globalPosition = control.GlobalPosition;
+		Node parent = control.GetParent();
+		if (parent != root)
+		{
+			parent?.RemoveChild(control);
+			root.AddChild(control);
+			if (keepGlobalPosition)
+				control.GlobalPosition = globalPosition;
+		}
+		control.ZIndex = zIndex;
+		control.ZAsRelative = false;
+		root.MoveChild(control, root.GetChildCount() - 1);
+	}
+
+	private static void MergeVisibleControlRect(ref Rect2 aggregate, ref bool hasRect, Control control, float grow = 0f)
+	{
+		if (control == null || !GodotObject.IsInstanceValid(control) || !control.Visible || !control.IsVisibleInTree())
+			return;
+
+		Rect2 rect = control.GetGlobalRect();
+		if (rect.Size.X <= 0f || rect.Size.Y <= 0f)
+			return;
+		if (grow > 0f)
+			rect = rect.Grow(grow);
+
+		if (hasRect)
+			aggregate = aggregate.Merge(rect);
+		else
+		{
+			aggregate = rect;
+			hasRect = true;
+		}
+	}
+
+	private void ScheduleTransientOverlayRefresh()
+	{
+		Control root = UiOverlayRoot();
+		root?.QueueRedraw();
+		_runtimePresenceIndicator?.QueueRedraw();
+		_live2DSpeechBubble?.QueueRedraw();
+		_bubble?.QueueRedraw();
+
+		// Cập nhật ngay vùng HWND nhận chuột. Trên overlay trong suốt của Windows,
+		// region cũ có thể khiến control vừa hiện trông như biến mất khi context menu đóng.
+		UpdateMousePassthrough();
+
+		if (_transientOverlayRefreshQueued || !IsInsideTree())
+			return;
+		_transientOverlayRefreshQueued = true;
+		CallDeferred(nameof(RefreshTransientOverlaySurfaceDeferred));
+	}
+
+	private void RefreshTransientOverlaySurfaceDeferred()
+	{
+		_transientOverlayRefreshQueued = false;
+		if (!IsInsideTree())
+			return;
+
+		UiOverlayRoot();
+		if (_runtimePresenceIndicator != null && _runtimePresenceIndicator.Visible)
+			EnsureControlOnCanvasLayer(_runtimePresenceIndicator, 1000);
+		if (_live2DSpeechBubble != null && _live2DSpeechBubble.Visible)
+			EnsureControlOnCanvasLayer(_live2DSpeechBubble, 999);
+		if (_bubble != null && _bubble.Visible)
+			EnsureControlOnCanvasLayer(_bubble, 999);
+
+		_speechOverlayRoot?.QueueRedraw();
+		UpdateMousePassthrough();
+	}
+
+	private void PromoteLegacySpeechBubbleToUiOverlay()
+	{
+		if (_speechBubblePromotedToOverlay || _bubble == null)
+			return;
+		EnsureControlOnCanvasLayer(_bubble, 999);
+		_speechBubblePromotedToOverlay = _bubble.GetParent() == UiOverlayRoot();
+	}
+
+	private void SyncLegacySpeechBubbleOverlayTransform()
+	{
+		if (!_speechBubblePromotedToOverlay || _bubble == null || _body == null || _monika == null || _isLive2DMode)
+			return;
+
+		float inheritedScaleX = Mathf.IsZeroApprox(_monika.Scale.X) ? 1f : _monika.Scale.X;
+		Vector2 motionLocalPosition = _bubble.Position;
+		_bubble.Scale = Vector2.One;
+		_bubble.GlobalPosition = new Vector2(
+			_body.GlobalPosition.X + inheritedScaleX * motionLocalPosition.X,
+			_body.GlobalPosition.Y + motionLocalPosition.Y);
+		if (_bubble.Visible)
+			EnsureControlOnCanvasLayer(_bubble, 999);
+	}
+
 	// Ẩn bong bóng thoại sau khi đã nói xong + chừa thời gian đọc, để màn hình
 	// không bị khung thoại nằm lì khi Eris im lặng.
 	private void UpdateBubbleAutoHide()
@@ -860,12 +1166,11 @@ public partial class UdpListener : Node2D
 			return;
 		HideAllSpeechBubbles();
 		_bubbleHideAtMs = 0;
-		if (!_runtimePresence.Thinking && !_runtimePresence.Speaking)
-			ConversationSetState("idle", "Sẵn sàng");
 	}
 
 	private void ToggleChatPanel()
 	{
+		CloseCharacterContextMenu();
 		if (_chatPanel.Visible)
 			CloseChatPanel();
 		else
@@ -875,8 +1180,6 @@ public partial class UdpListener : Node2D
 			UpdateChatPanelLayout();
 			_chatPanel.Visible = true;
 			_chatInput.GrabFocus();
-			CallDeferred(nameof(ScrollConversationToBottom));
-			RefreshRuntimePresenceIndicator();
 			SendChatSignal("chat_start");
 		}
 	}
@@ -886,12 +1189,12 @@ public partial class UdpListener : Node2D
 		_bodyAutonomy?.RecordUserInteraction();
 		_chatPanel.Visible = false;
 		_chatInput.Text = "";
-		RefreshRuntimePresenceIndicator();
 		SendChatSignal("chat_end");
 	}
 
 	private void OnContextChatPressed()
 	{
+		CloseCharacterContextMenu();
 		if (!_chatPanel.Visible)
 			ToggleChatPanel();
 		else
@@ -998,12 +1301,123 @@ public partial class UdpListener : Node2D
 
 	private void BuildChatPanelUi()
 	{
-		BuildConversationUi();
+		if (_chatPanel == null || _chatInput == null || _chatSendButton == null || _chatCloseButton == null)
+			return;
+
+		_chatFrameTexture = GD.Load<Texture2D>("res://asset/Resource/chatframe.png");
+		_chatSubmitTexture = GD.Load<Texture2D>("res://asset/Resource/submitchatframe.png");
+		_chatCloseTexture = GD.Load<Texture2D>("res://asset/Resource/exitschatframe.png");
+
+		_chatPanel.AddThemeStyleboxOverride("panel", new StyleBoxTexture
+		{
+			Texture = _chatFrameTexture,
+			TextureMarginLeft = 26f,
+			TextureMarginTop = 26f,
+			TextureMarginRight = 26f,
+			TextureMarginBottom = 26f,
+			AxisStretchHorizontal = StyleBoxTexture.AxisStretchMode.Stretch,
+			AxisStretchVertical = StyleBoxTexture.AxisStretchMode.Stretch,
+			ContentMarginLeft = 14f,
+			ContentMarginTop = 14f,
+			ContentMarginRight = 14f,
+			ContentMarginBottom = 14f,
+		});
+
+		if (GetNodeOrNull<HBoxContainer>("CanvasLayer/Control/ChatPanel/HBoxContainer") is { } row)
+		{
+			row.Alignment = BoxContainer.AlignmentMode.Center;
+			row.AddThemeConstantOverride("separation", 12);
+			row.OffsetLeft = 12f;
+			row.OffsetTop = 12f;
+			row.OffsetRight = -12f;
+			row.OffsetBottom = -12f;
+		}
+
+		_chatInput.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		_chatInput.Alignment = HorizontalAlignment.Left;
+		_chatInput.PlaceholderText = "Nhan tin voi ERIS...";
+		_chatInput.AddThemeColorOverride("font_color", new Color(0.43f, 0.39f, 0.42f));
+		_chatInput.AddThemeColorOverride("font_placeholder_color", new Color(0.64f, 0.60f, 0.63f));
+
+		ConfigureChatActionButton(_chatSendButton, "Gui", _chatSubmitTexture, 22);
+		ConfigureChatActionButton(_chatCloseButton, "X", _chatCloseTexture, 20);
+		UpdateChatPanelLayout();
 	}
 
 	private void UpdateChatPanelLayout()
 	{
-		UpdateConversationUiLayout();
+		if (_chatPanel == null || _chatInput == null || _chatSendButton == null || _chatCloseButton == null || _chatFrameTexture == null)
+			return;
+
+		Vector2 viewport = GetViewportRect().Size;
+		float targetWidth = Mathf.Clamp(viewport.X - 28f, 460f, 880f);
+		float scale = Mathf.Clamp(targetWidth / 880f, 0.7f, 1f);
+		// Keep height stable to avoid squishing the baked-in circular icon in chatframe.png.
+		float targetHeight = 64f;
+		float outerPadding = Mathf.Clamp(7f * scale, 5f, 7f);
+		// Leave room for the decorative "chat" button area baked into the frame texture.
+		float leftInset = Mathf.Clamp(72f * scale, 44f, 72f);
+		float gap = Mathf.Clamp(8f * scale, 6f, 8f);
+		float buttonHeight = Mathf.Clamp(40f * scale, 32f, 40f);
+		// Icon removed from ChatPanel; keep layout compact.
+		float submitWidth = Mathf.Clamp(88f * scale, 70f, 88f);
+		float closeWidth = Mathf.Clamp(40f * scale, 32f, 40f);
+		float fontSize = Mathf.Clamp(Mathf.RoundToInt(16f * scale), 12, 16);
+		float buttonFontSize = Mathf.Clamp(Mathf.RoundToInt(16f * scale), 12, 16);
+		float closeFontSize = Mathf.Clamp(Mathf.RoundToInt(14f * scale), 12, 14);
+		float radius = Mathf.Clamp(Mathf.RoundToInt(12f * scale), 9, 12);
+		float inputPadding = Mathf.Clamp(12f * scale, 9f, 12f);
+		float borderPadding = Mathf.Clamp(2f * scale, 1f, 2f);
+
+		_chatPanel.CustomMinimumSize = new Vector2(targetWidth, targetHeight);
+		_chatPanel.Size = new Vector2(targetWidth, targetHeight);
+		_chatPanel.Position = new Vector2(
+			Mathf.Max(0f, (viewport.X - targetWidth) * 0.5f),
+			Mathf.Max(0f, viewport.Y - targetHeight - 8f));
+
+		if (GetNodeOrNull<HBoxContainer>("CanvasLayer/Control/ChatPanel/HBoxContainer") is { } row)
+		{
+			row.AddThemeConstantOverride("separation", (int)gap);
+			row.OffsetLeft = outerPadding + leftInset;
+			row.OffsetTop = outerPadding;
+			row.OffsetRight = -outerPadding;
+			row.OffsetBottom = -outerPadding;
+		}
+
+		_chatInput.CustomMinimumSize = new Vector2(140f, buttonHeight);
+		_chatInput.AddThemeFontSizeOverride("font_size", (int)fontSize);
+		_chatInput.AddThemeStyleboxOverride("normal", new StyleBoxFlat
+		{
+			BgColor = new Color(1f, 1f, 1f, 0.98f),
+			CornerRadiusTopLeft = (int)radius,
+			CornerRadiusTopRight = (int)radius,
+			CornerRadiusBottomRight = (int)radius,
+			CornerRadiusBottomLeft = (int)radius,
+			ContentMarginLeft = inputPadding,
+			ContentMarginTop = Mathf.Clamp(9f * scale, 7f, 9f),
+			ContentMarginRight = inputPadding,
+			ContentMarginBottom = Mathf.Clamp(9f * scale, 7f, 9f),
+		});
+		_chatInput.AddThemeStyleboxOverride("focus", new StyleBoxFlat
+		{
+			BgColor = new Color(1f, 1f, 1f, 0.98f),
+			BorderColor = new Color(1f, 0.63f, 0.79f, 0.9f),
+			BorderWidthLeft = (int)borderPadding,
+			BorderWidthTop = (int)borderPadding,
+			BorderWidthRight = (int)borderPadding,
+			BorderWidthBottom = (int)borderPadding,
+			CornerRadiusTopLeft = (int)radius,
+			CornerRadiusTopRight = (int)radius,
+			CornerRadiusBottomRight = (int)radius,
+			CornerRadiusBottomLeft = (int)radius,
+			ContentMarginLeft = Mathf.Max(8f, inputPadding - borderPadding),
+			ContentMarginTop = Mathf.Max(6f, Mathf.Clamp(9f * scale, 7f, 9f) - borderPadding),
+			ContentMarginRight = Mathf.Max(8f, inputPadding - borderPadding),
+			ContentMarginBottom = Mathf.Max(6f, Mathf.Clamp(9f * scale, 7f, 9f) - borderPadding),
+		});
+
+		ApplyChatButtonLayout(_chatSendButton, "", _chatSubmitTexture, new Vector2(submitWidth, buttonHeight), buttonFontSize, scale);
+		ApplyChatButtonLayout(_chatCloseButton, "X", _chatCloseTexture, new Vector2(closeWidth, buttonHeight), closeFontSize, scale);
 	}
 
 	private void ConfigureChatActionButton(Button button, string text, Texture2D texture, int fontSize)
@@ -1125,29 +1539,62 @@ public partial class UdpListener : Node2D
 			container.OffsetTop = 8f;
 			container.OffsetRight = -6f;
 			container.OffsetBottom = -8f;
-			container.AddThemeConstantOverride("separation", 0);
+			if (_contextPrivateMindButton == null)
+			{
+				_contextPrivateMindButton = new Button { Name = "PrivateMindButton" };
+				container.AddChild(_contextPrivateMindButton);
+				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
+				container.MoveChild(_contextPrivateMindButton, Mathf.Max(0, closeIndex));
+			}
+			if (_contextConversationHistoryButton == null)
+			{
+				_contextConversationHistoryButton = new Button { Name = "ConversationHistoryButton" };
+				container.AddChild(_contextConversationHistoryButton);
+				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
+				container.MoveChild(_contextConversationHistoryButton, Mathf.Max(0, closeIndex));
+			}
+			if (_contextDepthButton == null)
+			{
+				_contextDepthButton = new Button { Name = "DepthButton" };
+				container.AddChild(_contextDepthButton);
+				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
+				container.MoveChild(_contextDepthButton, Mathf.Max(0, closeIndex));
+			}
+			if (_contextMemoryButton == null)
+			{
+				_contextMemoryButton = new Button { Name = "MemoryButton" };
+				container.AddChild(_contextMemoryButton);
+				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
+				container.MoveChild(_contextMemoryButton, Mathf.Max(0, closeIndex));
+			}
+			if (_contextSettingsButton == null)
+			{
+				_contextSettingsButton = new Button { Name = "SettingsButton" };
+				container.AddChild(_contextSettingsButton);
+				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
+				container.MoveChild(_contextSettingsButton, Mathf.Max(0, closeIndex));
+			}
+			if (_contextExitButton == null)
+			{
+				_contextExitButton = new Button { Name = "ExitButton" };
+				container.AddChild(_contextExitButton);
+				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
+				container.MoveChild(_contextExitButton, Mathf.Max(0, closeIndex));
+			}
+			EnsureLive2DContextButton(container);
 		}
 
-		ConfigureContextMenuButton(_contextChatButton, "Trò chuyện với Eris", "res://asset/Resource/chat.png");
-		HideContextMenuButton(_contextTouchButton);
-		HideContextMenuButton(_contextForceSpeakButton);
-		HideContextMenuButton(_contextEmotionButton);
-		HideContextMenuButton(_contextPrivateMindButton);
-		HideContextMenuButton(_contextDepthButton);
-		HideContextMenuButton(_contextMemoryButton);
-		HideContextMenuButton(_contextSettingsButton);
-		HideContextMenuButton(_contextExitButton);
-		HideContextMenuButton(_contextCloseButton);
-	}
-
-	private static void HideContextMenuButton(Button button)
-	{
-		if (button == null)
-			return;
-		button.Visible = false;
-		button.Disabled = true;
-		button.MouseFilter = Control.MouseFilterEnum.Ignore;
-		button.CustomMinimumSize = Vector2.Zero;
+		ConfigureContextMenuButton(_contextChatButton, "Chat", "res://asset/Resource/chat.png");
+		ConfigureContextMenuButton(_contextTouchButton, "Chạm / kéo / thả", "res://asset/Resource/tought.png");
+		ConfigureContextMenuButton(_contextForceSpeakButton, "Nói ngay", "res://asset/Resource/force.png");
+		ConfigureContextMenuButton(_contextEmotionButton, "Khí sắc & hiện diện", "res://asset/Resource/emotion.png");
+		ConfigureContextMenuButton(_contextConversationHistoryButton, "Lịch sử hội thoại", "res://asset/Resource/chat.png");
+		ConfigureContextMenuButton(_contextPrivateMindButton, "Inner Diary", "res://asset/Resource/emotion.png");
+		ConfigureContextMenuButton(_contextDepthButton, "Identity Runtime", "res://asset/Resource/emotion.png");
+		ConfigureContextMenuButton(_contextMemoryButton, "ERIS nhớ gì về bạn", "res://asset/Resource/emotion.png");
+		ConfigureContextMenuButton(_contextSettingsButton, "Cài đặt", "res://asset/Resource/emotion.png");
+		ConfigureContextMenuButton(_contextExitButton, "Thoát ERIS", "res://asset/Resource/exit.png");
+		ConfigureContextMenuButton(_contextCloseButton, "Đóng", "res://asset/Resource/exit.png");
 	}
 
 	private void ConfigureContextMenuButton(Button button, string text, string iconPath)
@@ -3120,11 +3567,16 @@ public partial class UdpListener : Node2D
 	{
 		UpdateBodyModeButton();
 		_characterContextMenu.Visible = true;
-		_characterContextMenu.ZIndex = 150;
+		_characterContextMenu.ZIndex = 100;
 
-		float buttonHeight = _contextChatButton?.GetCombinedMinimumSize().Y ?? 40f;
-		float height = Mathf.Max(56f, buttonHeight + 16f);
-		_characterContextMenu.CustomMinimumSize = new Vector2(CharacterContextMenuMinSize.X, height);
+		// Tự co chiều cao theo số nút thực tế — tránh tràn khi thêm tab mới
+		// (vd "Chieu Sau") làm menu cao hơn CharacterContextMenuMinSize cố định.
+		float height = CharacterContextMenuMinSize.Y;
+		if (GetNodeOrNull<VBoxContainer>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer") is { } menuBox)
+		{
+			float needed = menuBox.GetCombinedMinimumSize().Y + 16f; // offset top(8)+bottom(8)
+			height = Mathf.Max(CharacterContextMenuMinSize.Y, needed);
+		}
 		_characterContextMenu.Size = new Vector2(CharacterContextMenuMinSize.X, height);
 
 		Vector2 screenSize = GetViewportRect().Size;
@@ -3132,13 +3584,54 @@ public partial class UdpListener : Node2D
 		Vector2 clamped = new(
 			Mathf.Clamp(mousePosition.X, 0f, Mathf.Max(0f, screenSize.X - menuSize.X)),
 			Mathf.Clamp(mousePosition.Y, 0f, Mathf.Max(0f, screenSize.Y - menuSize.Y)));
+		clamped = AvoidSpeechBubbleOverlap(clamped, menuSize, screenSize);
 
 		_characterContextMenu.Position = clamped;
+		ScheduleTransientOverlayRefresh();
+	}
+
+	private Vector2 AvoidSpeechBubbleOverlap(Vector2 menuPosition, Vector2 menuSize, Vector2 screenSize)
+	{
+		Control bubble = ActiveSpeechBubble();
+		if (bubble == null || !bubble.Visible || bubble.Size.X <= 0f || bubble.Size.Y <= 0f)
+			return menuPosition;
+
+		Rect2 menuRect = new(menuPosition, menuSize);
+		Rect2 bubbleRect = new Rect2(bubble.GlobalPosition, bubble.Size * bubble.Scale.Abs()).Grow(10f);
+		if (!menuRect.Intersects(bubbleRect))
+			return menuPosition;
+
+		Vector2 rightOfBubble = new(
+			bubbleRect.End.X + 10f,
+			Mathf.Clamp(menuPosition.Y, 0f, Mathf.Max(0f, screenSize.Y - menuSize.Y)));
+		if (rightOfBubble.X + menuSize.X <= screenSize.X)
+			return rightOfBubble;
+
+		Vector2 leftOfBubble = new(
+			bubbleRect.Position.X - menuSize.X - 10f,
+			Mathf.Clamp(menuPosition.Y, 0f, Mathf.Max(0f, screenSize.Y - menuSize.Y)));
+		if (leftOfBubble.X >= 0f)
+			return leftOfBubble;
+
+		Vector2 belowBubble = new(
+			Mathf.Clamp(menuPosition.X, 0f, Mathf.Max(0f, screenSize.X - menuSize.X)),
+			bubbleRect.End.Y + 10f);
+		if (belowBubble.Y + menuSize.Y <= screenSize.Y)
+			return belowBubble;
+
+		return new Vector2(
+			Mathf.Clamp(menuPosition.X, 0f, Mathf.Max(0f, screenSize.X - menuSize.X)),
+			Mathf.Max(0f, bubbleRect.Position.Y - menuSize.Y - 10f));
 	}
 
 	private void CloseCharacterContextMenu()
 	{
+		if (_characterContextMenu == null)
+			return;
+		bool wasVisible = _characterContextMenu.Visible;
 		_characterContextMenu.Visible = false;
+		if (wasVisible)
+			ScheduleTransientOverlayRefresh();
 	}
 
 	private bool IsMouseOverCharacter(Vector2 mousePosition)
@@ -3186,10 +3679,21 @@ public partial class UdpListener : Node2D
 	{
 		if (@event is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left && mb.Pressed)
 		{
+			if (!CanStartPanelDrag(panel, mb.Position))
+				return;
 			_draggingPanel = panel;
 			_panelDragOffset = panel.GetGlobalMousePosition() - panel.GlobalPosition;
+			if (panel == _conversationHistoryPanel)
+				_conversationHistoryUserPositioned = true;
 			panel.AcceptEvent();
 		}
+	}
+
+	private bool CanStartPanelDrag(Control panel, Vector2 localPosition)
+	{
+		if (panel == _conversationHistoryPanel)
+			return localPosition.Y <= 72f;
+		return true;
 	}
 
 	private void UpdatePanelDrag()
@@ -3213,19 +3717,17 @@ public partial class UdpListener : Node2D
 	private void OnSendPressed()
 	{
 		string msg = _chatInput.Text.Trim();
-		if (string.IsNullOrEmpty(msg))
-			return;
+		if (string.IsNullOrEmpty(msg)) return;
 		_bodyAutonomy?.RecordUserInteraction();
 		MarkChatActivity();
 		_chatInput.Text = "";
-		ConversationAppendUserMessage(msg);
-		ConversationSetState("thinking", "Eris đang suy nghĩ…");
-		// JsonSerializer.Serialize(msg) để escape chuỗi; backend nhận đúng một turn chat.
+		RecordConversationUserMessage(msg);
+		// JsonSerializer.Serialize(msg) để escape chuỗi. Không tự nối raw string ngu ngốc
 		string payload = $"{{\"type\":\"chat\",\"message\":{JsonSerializer.Serialize(msg)}}}";
 		_chatSend.PutPacket(Encoding.UTF8.GetBytes(payload));
-		// Giữ panel mở để người dùng thấy lịch sử và trạng thái backend thay đổi.
-		_chatPanel.Visible = true;
-		_chatInput.GrabFocus();
+		ApplyTypewriterEffect($"[Chủ nhân]: {msg}");
+		// Gửi xong là ẩn khung chat + báo chat_end để backend nối lại nhịp autonomous.
+		CloseChatPanel();
 	}
 
 	private void SendChatSignal(string type)
@@ -3250,26 +3752,46 @@ public partial class UdpListener : Node2D
 		}
 	}
 
-	private void ApplyTypewriterEffect(string text)
-	{
+	private void ApplyTypewriterEffect(string text){
 		if (_textTween != null && _textTween.IsValid())
+		{
 			_textTween.Kill();
+		}
 
 		text ??= "";
+
+		// Câu rỗng = không có gì để đọc → ẩn bong bóng luôn.
 		if (string.IsNullOrWhiteSpace(text))
 		{
 			HideAllSpeechBubbles();
 			_bubbleHideAtMs = 0;
-			RichTextLabel emptyLabel = ActiveSpeechLabel();
-			if (emptyLabel != null)
-				emptyLabel.Text = "";
+			if (_label != null)
+				_label.Text = "";
+			if (_live2DSpeechLabel != null)
+				_live2DSpeechLabel.Text = "";
+			if (_live2DSpeechStatus != null)
+				_live2DSpeechStatus.Text = "";
 			return;
 		}
 
-		ConversationAppendAssistantMessage(text);
-		CloseCharacterContextMenu();
-		ConversationSetState("speaking", "Eris đang nói");
+		RecordConversationAssistantMessage(text);
 		SyncSpeechBubbleMode();
+		if (_isLive2DMode)
+		{
+			BuildLive2DSpeechBubble();
+			ConfigureLive2DSpeechBubbleVisual();
+			EnsureControlOnCanvasLayer(_live2DSpeechBubble, 999);
+			ApplyLive2DBubbleVisualState();
+		}
+		else
+		{
+			PromoteLegacySpeechBubbleToUiOverlay();
+			EnsureControlOnCanvasLayer(_bubble, 999);
+			ConfigureLegacySpeechBubbleVisual();
+			SyncLegacySpeechBubbleOverlayTransform();
+			ClampBubbleToScreen();
+		}
+
 		Control activeBubble = ActiveSpeechBubble();
 		RichTextLabel activeLabel = ActiveSpeechLabel();
 		Label activeStatus = ActiveSpeechStatusLabel();
@@ -3277,40 +3799,60 @@ public partial class UdpListener : Node2D
 			return;
 
 		activeLabel.ClipContents = true;
-		activeLabel.ScrollActive = false;
-		activeLabel.ScrollFollowing = false;
+		activeLabel.ScrollActive = true;
+		activeLabel.ScrollFollowing = true;
 		activeLabel.VisibleCharacters = -1;
 		activeLabel.Text = "";
 		if (activeStatus != null)
 			activeStatus.Text = "đang trả lời";
-		activeBubble.Visible = true;
 
+		activeBubble.Visible = true;
+		if (_isLive2DMode)
+			ApplyLive2DBubbleVisualState();
+		else
+			SyncLegacySpeechBubbleOverlayTransform();
+		ScheduleTransientOverlayRefresh();
+	
 		_textTween = CreateTween();
-		float speedPerChar = Mathf.Clamp(0.042f, 0.025f, 0.055f);
+
+		float speedPerChar = 0.05f;
 		float totalDuration = Mathf.Max(0.01f, text.Length * speedPerChar);
+
+		// Lên lịch tự ẩn: gõ xong + chừa thời gian đọc (tỉ lệ theo độ dài câu).
 		if (BubbleReadSeconds > 0f)
 		{
-			float readSeconds = Mathf.Max(BubbleReadSeconds, text.Length * 0.045f);
+			float readSeconds = Mathf.Max(BubbleReadSeconds, text.Length * 0.06f);
 			_bubbleHideAtMs = Time.GetTicksMsec() + (ulong)((totalDuration + readSeconds) * 1000f);
 		}
 		else
 		{
-			_bubbleHideAtMs = 0;
+			_bubbleHideAtMs = 0; // không tự ẩn
 		}
 
-		_textTween.TweenMethod(
-			Callable.From<int>(count => RevealTypewriterText(activeLabel, text, count)),
-			0,
-			text.Length,
-			totalDuration);
+		// thực thi hiệu ứng gõ chữ
+		_textTween.TweenMethod(Callable.From<int>(count => RevealTypewriterText(text, count)), 0, text.Length, totalDuration);
 	}
 
-	private static void RevealTypewriterText(RichTextLabel target, string fullText, int count)
+	private void RevealTypewriterText(string fullText, int count)
+	{
+		fullText ??= "";
+		count = Mathf.Clamp(count, 0, fullText.Length);
+		string partial = fullText.Substring(0, count);
+
+		// Đồng bộ cả hai presenter. Nếu người dùng đổi 2D/Live2D từ context menu
+		// giữa lúc đang gõ, tween không tiếp tục viết vào bubble đã bị ẩn.
+		SetSpeechLabelText(_label, partial);
+		SetSpeechLabelText(_live2DSpeechLabel, partial);
+	}
+
+	private static void SetSpeechLabelText(RichTextLabel target, string text)
 	{
 		if (target == null)
 			return;
-		count = Mathf.Clamp(count, 0, fullText.Length);
-		target.Text = fullText.Substring(0, count);
+		target.Text = text ?? "";
+		VScrollBar scrollBar = target.GetVScrollBar();
+		if (scrollBar != null)
+			scrollBar.Value = scrollBar.MaxValue;
 	}
 
 	private void UpdateAnimation()
@@ -3413,14 +3955,17 @@ public partial class UdpListener : Node2D
 
 	private void ClampBubbleToScreen()
 	{
+		Control bubble = ActiveSpeechBubble();
+		if (bubble == null)
+			return;
 		Vector2 screenSize = GetViewportRect().Size;
-		Vector2 bubbleGlobal = _bubble.GlobalPosition;
-		float bubbleW = _bubble.Size.X;
+		Vector2 bubbleGlobal = bubble.GlobalPosition;
+		float bubbleW = bubble.Size.X;
 		if (bubbleW <= 0f) return;
 
 		float clampedX = Mathf.Clamp(bubbleGlobal.X, 0f, screenSize.X - bubbleW);
 		if (!Mathf.IsEqualApprox(clampedX, bubbleGlobal.X))
-			_bubble.GlobalPosition = new Vector2(clampedX, bubbleGlobal.Y);
+			bubble.GlobalPosition = new Vector2(clampedX, bubbleGlobal.Y);
 	}
 
 	private void ScheduleBodyTimeline(BodyTimeline timeline)

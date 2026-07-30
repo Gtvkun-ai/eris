@@ -57,6 +57,27 @@ def test_semantic_frame_is_typed_and_still_mapping_compatible() -> None:
     assert "reference.operation_incompatible:recent_user_turn:confirm" in result.violations
 
 
+def test_reference_continue_alias_keeps_recent_assistant_context() -> None:
+    result = validate_semantic_frame(
+        {
+            "reference": {
+                "kind": "continue",
+                "speaker": "assistant",
+                "operation": "recall",
+                "turn_index": 0,
+                "turn_offset": 1,
+                "confidence": 0.7,
+            }
+        }
+    )
+
+    assert result.frame.reference.kind is ReferenceKind.RECENT_ASSISTANT_TURN
+    assert result.frame.reference.speaker is ReferenceSpeaker.ASSISTANT
+    assert result.frame.reply_obligation.must_answer is True
+    assert result.frame.reply_obligation.must_not_broad_clarify is True
+    assert "reference.kind_alias:continue:recent_assistant_turn" in result.violations
+
+
 def test_boolean_strings_are_not_treated_as_true() -> None:
     result = validate_semantic_frame(
         {

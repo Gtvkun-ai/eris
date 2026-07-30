@@ -103,6 +103,14 @@ def enforce_reply_obligation(
     if requirement is not ReplyRequirement.REQUIRED or (text and should_speak):
         return ReplyObligationResult(data, requirement)
 
+    if text and not should_speak:
+        if typed is not None:
+            data["semantic_frame"] = typed.to_dict()
+            data["_typed_semantic_frame"] = typed
+        data["should_speak"] = True
+        data["reply_obligation_repair"] = True
+        return ReplyObligationResult(data, requirement, repaired=True, reason="required_reply_should_speak")
+
     # Exact local forms are preferable because they preserve a correct typed
     # semantic frame and avoid inventing content during provider degradation.
     local = build_degraded_reply(user_text, language_hint=language_hint)

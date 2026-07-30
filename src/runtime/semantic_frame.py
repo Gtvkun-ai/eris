@@ -145,6 +145,14 @@ _REFERENCE_DEFAULT_SPEAKER: dict[ReferenceKind, ReferenceSpeaker] = {
     ReferenceKind.CURRENT_MESSAGE: ReferenceSpeaker.USER,
 }
 
+_REFERENCE_KIND_ALIASES: dict[str, ReferenceKind] = {
+    "continue": ReferenceKind.RECENT_ASSISTANT_TURN,
+    "continuation": ReferenceKind.RECENT_ASSISTANT_TURN,
+    "previous_assistant": ReferenceKind.RECENT_ASSISTANT_TURN,
+    "previous_assistant_turn": ReferenceKind.RECENT_ASSISTANT_TURN,
+    "assistant_turn": ReferenceKind.RECENT_ASSISTANT_TURN,
+}
+
 
 _PROPOSITIONAL_ASSISTANT_ACTS = frozenset(
     {
@@ -448,7 +456,12 @@ def _enum(value: Any, enum_type: type[_TextEnum], *, field: str, default: _TextE
 
 def _parse_reference(value: Any, violations: list[str]) -> DiscourseReference:
     payload = _mapping_or_empty(value, field="reference", violations=violations)
-    kind = _enum(payload.get("kind"), ReferenceKind, field="reference.kind", default=ReferenceKind.NONE, violations=violations)
+    raw_kind = str(payload.get("kind", "") or "").strip().lower()
+    if raw_kind in _REFERENCE_KIND_ALIASES:
+        kind = _REFERENCE_KIND_ALIASES[raw_kind]
+        violations.append(f"reference.kind_alias:{raw_kind}:{kind.value}")
+    else:
+        kind = _enum(payload.get("kind"), ReferenceKind, field="reference.kind", default=ReferenceKind.NONE, violations=violations)
     speaker = _enum(payload.get("speaker"), ReferenceSpeaker, field="reference.speaker", default=ReferenceSpeaker.NONE, violations=violations)
     operation = _enum(payload.get("operation"), ReferenceOperation, field="reference.operation", default=ReferenceOperation.NONE, violations=violations)
     turn_index = _bounded_int(payload.get("turn_index", 0), field="reference.turn_index", minimum=0, maximum=1_000_000, violations=violations)

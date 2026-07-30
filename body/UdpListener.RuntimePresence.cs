@@ -276,27 +276,33 @@ public partial class UdpListener : Node2D
 	private void RefreshRuntimePresenceIndicator()
 	{
 		RefreshConversationPresenceFromRuntime();
-		// Khi khung chat mở, trạng thái đã nằm ngay trong luồng hội thoại. Chỉ dùng
-		// pill nổi làm fallback lúc panel đóng để không lặp cùng một thông báo hai nơi.
-		bool visible = _runtimePresence.Thinking
-			&& !_runtimePresence.Speaking
-			&& !(_chatPanel?.Visible ?? false);
+		bool visible = _runtimePresence.Thinking && !_runtimePresence.Speaking;
 		if (!visible && _runtimePresenceIndicator == null)
 			return;
 		EnsureRuntimePresenceIndicator();
 		if (_runtimePresenceIndicator == null || _runtimePresenceIndicatorLabel == null)
 			return;
+
+		bool wasVisible = _runtimePresenceIndicator.Visible;
+		EnsureControlOnCanvasLayer(_runtimePresenceIndicator, 1000);
 		_runtimePresenceIndicatorLabel.Text = string.IsNullOrWhiteSpace(_runtimePresence.StatusLabel)
 			? "Đang suy nghĩ…"
 			: _runtimePresence.StatusLabel;
 		_runtimePresenceIndicator.Visible = visible;
+		if (visible)
+			EnsureControlOnCanvasLayer(_runtimePresenceIndicator, 1000);
+
+		// Visibility của indicator thuộc lifecycle backend, tuyệt đối không phụ thuộc
+		// CharacterContextMenu. Refresh cả CanvasLayer và Windows hit-test region ngay.
+		if (wasVisible != visible || visible)
+			ScheduleTransientOverlayRefresh();
 	}
 
 	private void EnsureRuntimePresenceIndicator()
 	{
 		if (_runtimePresenceIndicator != null && GodotObject.IsInstanceValid(_runtimePresenceIndicator))
 			return;
-		Control root = GetNodeOrNull<Control>("CanvasLayer/Control");
+		Control root = UiOverlayRoot();
 		if (root == null)
 			return;
 
@@ -305,7 +311,9 @@ public partial class UdpListener : Node2D
 			Name = "RuntimePresenceIndicator",
 			Visible = false,
 			MouseFilter = Control.MouseFilterEnum.Ignore,
-			ZIndex = 120,
+			ZIndex = 1000,
+			ZAsRelative = false,
+			ClipContents = false,
 			CustomMinimumSize = new Vector2(196f, 38f),
 		};
 		panel.AnchorLeft = 0.5f;
