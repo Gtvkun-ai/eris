@@ -13,7 +13,9 @@ from runtime.engagements import EvidenceBinding
 from runtime.subsystem_health import FailureKind, SubsystemHealthRegistry
 
 from .contracts import BoardSnapshot, ChessObservation, ChessObservationPhase
-from .engine import Position, analyze
+from .analyzer import ChessAnalyzer, HybridChessAnalyzer, LocalChessAnalyzer
+from .engine import Position, move_san
+from .stockfish_adapter import StockfishConfig, StockfishUCIAnalyzer
 from .tracker import ChessGameTracker
 from .surface import ChessSurfaceState, chess_turn_relevant
 from .companion_policy import build_companion_signal
@@ -34,6 +36,16 @@ class ChessCompanionService:
         token: str = "",
         analysis_depth: int = 2,
         direct_move_rate: float = 0.18,
+        stockfish_enabled: bool = True,
+        stockfish_path: str = "",
+        stockfish_threads: int = 1,
+        stockfish_hash_mb: int = 96,
+        stockfish_multipv: int = 3,
+        stockfish_movetime_ms: int = 180,
+        stockfish_on_demand_movetime_ms: int = 700,
+        stockfish_startup_timeout_seconds: float = 4.0,
+        stockfish_analysis_timeout_seconds: float = 2.5,
+        analyzer: ChessAnalyzer | None = None,
         max_body_bytes: int = 65536,
         logger: Any | None = None,
         health_registry: SubsystemHealthRegistry | None = None,
@@ -53,7 +65,35 @@ class ChessCompanionService:
         # tự gọi LLM và không để OCR phân tích lại bàn cờ đã có FEN.
         self.semantic_context_callback = semantic_context_callback if callable(semantic_context_callback) else None
         self.clock = clock or time.time
-        self.tracker = ChessGameTracker(depth=analysis_depth, direct_move_rate=direct_move_rate)
+
+        # Stockfish là dependency tùy chọn. Không có binary thì Hybrid analyzer
+        # dùng engine nội bộ ngay, không làm bridge khởi động thất bại.
+        if analyzer is None:
+            local_analyzer = LocalChessAnalyzer(depth=analysis_depth)
+            stockfish_analyzer = StockfishUCIAnalyzer(
+                StockfishConfig(
+                    enabled=stockfish_enabled,
+                    path=stockfish_path,
+                    threads=stockfish_threads,
+                    hash_mb=stockfish_hash_mb,
+                    multipv=stockfish_multipv,
+                    movetime_ms=stockfish_movetime_ms,
+                    on_demand_movetime_ms=stockfish_on_demand_movetime_ms,
+                    startup_timeout_seconds=stockfish_startup_timeout_seconds,
+                    analysis_timeout_seconds=stockfish_analysis_timeout_seconds,
+                ),
+                logger=logger,
+            )
+            analyzer = HybridChessAnalyzer(
+                primary=stockfish_analyzer if stockfish_analyzer.available else None,
+                fallback=local_analyzer,
+                logger=logger,
+            )
+        self.tracker = ChessGameTracker(
+            depth=analysis_depth,
+            direct_move_rate=direct_move_rate,
+            analyzer=analyzer,
+        )
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._lock = threading.RLock()
@@ -158,6 +198,7 @@ class ChessCompanionService:
             server.server_close()
         if thread is not None and thread.is_alive():
             thread.join(timeout=2.0)
+        self.tracker.close()
         if self.health_registry is not None:
             self.health_registry.mark_stopped("chess.bridge")
 
@@ -193,6 +234,14 @@ class ChessCompanionService:
                 "evaluation_swing_cp": getattr(observation, "evaluation_swing_cp", None),
                 "move_quality": str(getattr(observation, "move_quality", "") or ""),
                 "hint_focus": str(getattr(observation, "hint_focus", "") or ""),
+                "analysis_provider": str(getattr(observation, "analysis_provider", "") or ""),
+                "analysis_depth": int(getattr(observation, "analysis_depth", 0) or 0),
+                "analysis_nodes": int(getattr(observation, "analysis_nodes", 0) or 0),
+                "analysis_elapsed_ms": int(getattr(observation, "analysis_elapsed_ms", 0) or 0),
+                "analysis_degraded": bool(getattr(observation, "analysis_degraded", False)),
+                "analysis_error": str(getattr(observation, "analysis_error", "") or "")[:500],
+                "mate_in": getattr(observation, "mate_in", None),
+                "principal_variation": list(getattr(observation, "principal_variation", ()) or ())[:24],
                 "result": str(getattr(observation, "result", "") or ""),
                 "orientation": str(getattr(snapshot, "orientation", "") or ""),
                 "captured_at": snapshot.captured_at or received_at,
@@ -204,7 +253,7 @@ class ChessCompanionService:
         if self.logger is not None:
             try:
                 self.logger.info(
-                    "[chess-bridge] snapshot game=%s mode=%s phase=%s move=%s turn=%s last=%s suggestion=%s",
+                    "[chess-bridge] snapshot game=%s mode=%s phase=%s move=%s turn=%s last=%s suggestion=%s engine=%s",
                     snapshot.game_id,
                     observation.mode.value,
                     phase,
@@ -216,6 +265,7 @@ class ChessCompanionService:
                         if observation.suggestion is not None
                         else "-"
                     ),
+                    str(getattr(observation, "analysis_provider", "") or "none"),
                 )
             except (AttributeError, TypeError, ValueError, RuntimeError):
                 pass
@@ -424,6 +474,7 @@ class ChessCompanionService:
             "token_required": bool(self.token),
             "last_snapshot": last_snapshot,
             "last_wakeup_reason": self._last_wakeup_reason,
+            "tracker": self.tracker.diagnostics(),
         }
 
     def current_grounding_evidence(
@@ -464,10 +515,19 @@ class ChessCompanionService:
                 turn = "w" if side_to_move in {"white", "w"} else "b"
                 ply = max(0, (move_number - 1) * 2 + (1 if turn == "b" else 0))
                 position = Position.from_board_fen(board_fen, turn=turn, ply=ply)
-                candidates = analyze(position, depth=self.tracker.depth, top_n=1)
-                if candidates:
-                    suggestion = candidates[0][0].uci
+                analysis = self.tracker.analyze_position(position, top_n=1, on_demand=True)
+                if analysis.candidates:
+                    candidate = analysis.candidates[0]
+                    suggestion = candidate.move.uci
                     item["suggested_move_uci"] = suggestion
+                    item["suggested_move_san"] = move_san(position, candidate.move)
+                    item["analysis_provider"] = analysis.provider
+                    item["analysis_depth"] = analysis.depth
+                    item["analysis_nodes"] = analysis.nodes
+                    item["analysis_elapsed_ms"] = analysis.elapsed_ms
+                    item["analysis_degraded"] = analysis.degraded
+                    item["mate_in"] = analysis.mate_in
+                    item["principal_variation"] = list(candidate.pv)[:24]
                     typed = ChessSurfaceState.from_mapping(item)
             except Exception as exc:  # noqa: BLE001 - evidence provider phải degrade yên
                 if self.logger is not None:

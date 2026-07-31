@@ -200,7 +200,9 @@ def build_companion_signal(
         commentary_focus = (
             f"React to {actor_phrase} {last_move or '(unknown SAN)'}. "
             f"Use move_quality={quality or 'unknown'}, evaluation_swing_cp={observation.evaluation_swing_cp}, "
-            f"evaluation={observation.evaluation_label or 'unknown'}, motif={focus or 'none'}. "
+            f"evaluation={observation.evaluation_label or 'unknown'}, motif={focus or 'none'}, "
+            f"analysis_provider={observation.analysis_provider or 'unknown'}, depth={observation.analysis_depth}, "
+            f"mate_in={observation.mate_in}. "
             + (
                 "Do not recommend a move unless the user asks; behave as a watch-along spectator."
                 if mode == "spectator"

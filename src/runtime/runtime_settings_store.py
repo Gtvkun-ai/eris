@@ -255,6 +255,15 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "port": 8765,
         "analysis_depth": 2,
         "direct_move_rate": 0.18,
+        "stockfish_enabled": True,
+        "stockfish_path": "",
+        "stockfish_threads": 1,
+        "stockfish_hash_mb": 96,
+        "stockfish_multipv": 3,
+        "stockfish_movetime_ms": 180,
+        "stockfish_on_demand_movetime_ms": 700,
+        "stockfish_startup_timeout_seconds": 4.0,
+        "stockfish_analysis_timeout_seconds": 2.5,
         "max_body_bytes": 65536,
     },
     "observability": {
@@ -446,6 +455,15 @@ _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
     ("chess_bridge", "port"): ("ERIS_CHESS_BRIDGE_PORT", "int"),
     ("chess_bridge", "analysis_depth"): ("ERIS_CHESS_ANALYSIS_DEPTH", "int"),
     ("chess_bridge", "direct_move_rate"): ("ERIS_CHESS_DIRECT_MOVE_RATE", "float"),
+    ("chess_bridge", "stockfish_enabled"): ("ERIS_STOCKFISH_ENABLED", "bool"),
+    ("chess_bridge", "stockfish_path"): ("ERIS_STOCKFISH_PATH", "str"),
+    ("chess_bridge", "stockfish_threads"): ("ERIS_STOCKFISH_THREADS", "int"),
+    ("chess_bridge", "stockfish_hash_mb"): ("ERIS_STOCKFISH_HASH_MB", "int"),
+    ("chess_bridge", "stockfish_multipv"): ("ERIS_STOCKFISH_MULTIPV", "int"),
+    ("chess_bridge", "stockfish_movetime_ms"): ("ERIS_STOCKFISH_MOVETIME_MS", "int"),
+    ("chess_bridge", "stockfish_on_demand_movetime_ms"): ("ERIS_STOCKFISH_ON_DEMAND_MOVETIME_MS", "int"),
+    ("chess_bridge", "stockfish_startup_timeout_seconds"): ("ERIS_STOCKFISH_STARTUP_TIMEOUT_SECONDS", "float"),
+    ("chess_bridge", "stockfish_analysis_timeout_seconds"): ("ERIS_STOCKFISH_ANALYSIS_TIMEOUT_SECONDS", "float"),
     ("chess_bridge", "max_body_bytes"): ("ERIS_CHESS_MAX_BODY_BYTES", "int"),
     ("engagement", "max_delivery_receipts"): ("ERIS_ENGAGEMENT_MAX_DELIVERY_RECEIPTS", "int"),
     ("engagement", "delivery_split_poison_batches"): ("ERIS_ENGAGEMENT_SPLIT_POISON_BATCHES", "bool"),
@@ -869,6 +887,15 @@ class RuntimeSettingsStore:
             chess_bridge.setdefault("port", 8765)
             chess_bridge.setdefault("analysis_depth", 2)
             chess_bridge.setdefault("direct_move_rate", 0.18)
+            chess_bridge.setdefault("stockfish_enabled", True)
+            chess_bridge.setdefault("stockfish_path", "")
+            chess_bridge.setdefault("stockfish_threads", 1)
+            chess_bridge.setdefault("stockfish_hash_mb", 96)
+            chess_bridge.setdefault("stockfish_multipv", 3)
+            chess_bridge.setdefault("stockfish_movetime_ms", 180)
+            chess_bridge.setdefault("stockfish_on_demand_movetime_ms", 700)
+            chess_bridge.setdefault("stockfish_startup_timeout_seconds", 4.0)
+            chess_bridge.setdefault("stockfish_analysis_timeout_seconds", 2.5)
             chess_bridge.setdefault("max_body_bytes", 65536)
             out["chess_bridge"] = chess_bridge
             migrated = True
@@ -1138,6 +1165,13 @@ def _coerce_setting(path: str, value: Any, expected: Any) -> tuple[bool, Any]:
         "chess_bridge.port": (1024, 65535),
         "chess_bridge.analysis_depth": (1, 4),
         "chess_bridge.direct_move_rate": (0.0, 1.0),
+        "chess_bridge.stockfish_threads": (1, 32),
+        "chess_bridge.stockfish_hash_mb": (16, 4096),
+        "chess_bridge.stockfish_multipv": (1, 8),
+        "chess_bridge.stockfish_movetime_ms": (25, 10000),
+        "chess_bridge.stockfish_on_demand_movetime_ms": (50, 30000),
+        "chess_bridge.stockfish_startup_timeout_seconds": (0.5, 30.0),
+        "chess_bridge.stockfish_analysis_timeout_seconds": (0.5, 60.0),
         "chess_bridge.max_body_bytes": (4096, 1048576),
         "observability.slo_window_seconds": (60, 604800),
         "observability.slo_max_samples": (16, 10000),

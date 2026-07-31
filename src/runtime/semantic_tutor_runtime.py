@@ -5,7 +5,8 @@ Mục tiêu của module này không phải tạo thêm một nhân cách biết
 phân rã dữ liệu thô (OCR/DOM/telemetry/vision/chess) thành một nền ngữ nghĩa dùng
 chung cho chat, autonomous và các domain như cờ.
 
-+- Không gọi model theo timer. Chỉ gọi khi scene bị invalidated bởi app/tab/URL,
+Nguyên tắc quan trọng:
+- Không gọi model theo timer. Chỉ gọi khi scene bị invalidated bởi app/tab/URL,
   media, foreground entity, ván cờ hoặc thay đổi màn hình đủ lớn.
 - Chỉ giữ một job mới nhất. Nếu user đổi tab liên tục, job cũ được bỏ kết quả.
 - Chat không bị chặn. Khi packet chưa sẵn sàng, chat nhận raw facts an toàn.

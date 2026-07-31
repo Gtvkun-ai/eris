@@ -81,6 +81,10 @@ class MoveSuggestion:
     san: str = ""
     score_cp: int = 0
     depth: int = 0
+    # Provenance để Surface/Tutor biết đây là Stockfish hay fallback nội bộ.
+    provider: str = ""
+    mate_in: int | None = None
+    pv: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -105,6 +109,14 @@ class ChessObservation:
     move_quality: str = ""
     hint_focus: str = ""
     suggestion: MoveSuggestion | None = None
+    analysis_provider: str = ""
+    analysis_depth: int = 0
+    analysis_nodes: int = 0
+    analysis_elapsed_ms: int = 0
+    analysis_degraded: bool = False
+    analysis_error: str = ""
+    mate_in: int | None = None
+    principal_variation: tuple[str, ...] = ()
     phase: ChessObservationPhase = ChessObservationPhase.WAITING_FOR_START
     board_detected: bool = True
     game_started: bool = False

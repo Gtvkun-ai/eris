@@ -250,6 +250,15 @@ class ChessBridgeSettings:
     port: int = 8765
     analysis_depth: int = 2
     direct_move_rate: float = 0.18
+    stockfish_enabled: bool = True
+    stockfish_path: str = ""
+    stockfish_threads: int = 1
+    stockfish_hash_mb: int = 96
+    stockfish_multipv: int = 3
+    stockfish_movetime_ms: int = 180
+    stockfish_on_demand_movetime_ms: int = 700
+    stockfish_startup_timeout_seconds: float = 4.0
+    stockfish_analysis_timeout_seconds: float = 2.5
     max_body_bytes: int = 65536
 
     @classmethod
@@ -269,6 +278,36 @@ class ChessBridgeSettings:
             direct_move_rate=_clamp_float(
                 runtime_float("chess_bridge", "direct_move_rate", default=0.18),
                 0.18, minimum=0.0, maximum=1.0,
+            ),
+            stockfish_enabled=runtime_bool("chess_bridge", "stockfish_enabled", default=True),
+            stockfish_path=str(runtime_text("chess_bridge", "stockfish_path", default="") or "")[:1024],
+            stockfish_threads=_clamp_int(
+                runtime_int("chess_bridge", "stockfish_threads", default=1),
+                1, minimum=1, maximum=32,
+            ),
+            stockfish_hash_mb=_clamp_int(
+                runtime_int("chess_bridge", "stockfish_hash_mb", default=96),
+                96, minimum=16, maximum=4096,
+            ),
+            stockfish_multipv=_clamp_int(
+                runtime_int("chess_bridge", "stockfish_multipv", default=3),
+                3, minimum=1, maximum=8,
+            ),
+            stockfish_movetime_ms=_clamp_int(
+                runtime_int("chess_bridge", "stockfish_movetime_ms", default=180),
+                180, minimum=25, maximum=10000,
+            ),
+            stockfish_on_demand_movetime_ms=_clamp_int(
+                runtime_int("chess_bridge", "stockfish_on_demand_movetime_ms", default=700),
+                700, minimum=50, maximum=30000,
+            ),
+            stockfish_startup_timeout_seconds=_clamp_float(
+                runtime_float("chess_bridge", "stockfish_startup_timeout_seconds", default=4.0),
+                4.0, minimum=0.5, maximum=30.0,
+            ),
+            stockfish_analysis_timeout_seconds=_clamp_float(
+                runtime_float("chess_bridge", "stockfish_analysis_timeout_seconds", default=2.5),
+                2.5, minimum=0.5, maximum=60.0,
             ),
             max_body_bytes=_clamp_int(
                 runtime_int("chess_bridge", "max_body_bytes", default=65536),

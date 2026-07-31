@@ -68,6 +68,13 @@ class ChessSurfaceState:
     evaluation_swing_cp: int | None = None
     move_quality: str = ""
     hint_focus: str = ""
+    analysis_provider: str = ""
+    analysis_depth: int = 0
+    analysis_nodes: int = 0
+    analysis_elapsed_ms: int = 0
+    analysis_degraded: bool = False
+    mate_in: int | None = None
+    principal_variation: tuple[str, ...] = ()
     result: str = ""
     orientation: str = ""
     companion_mode: str = ""
@@ -106,6 +113,13 @@ class ChessSurfaceState:
             evaluation_swing_cp=_optional_integer(data.get("evaluation_swing_cp")),
             move_quality=_text(data.get("move_quality")).lower(),
             hint_focus=_text(data.get("hint_focus")).lower(),
+            analysis_provider=_text(data.get("analysis_provider")).lower(),
+            analysis_depth=_integer(data.get("analysis_depth"), 0),
+            analysis_nodes=_integer(data.get("analysis_nodes"), 0),
+            analysis_elapsed_ms=_integer(data.get("analysis_elapsed_ms"), 0),
+            analysis_degraded=bool(data.get("analysis_degraded", False)),
+            mate_in=_optional_integer(data.get("mate_in")),
+            principal_variation=tuple(str(item) for item in (data.get("principal_variation") or ()) if str(item).strip())[:24],
             result=_text(data.get("result")),
             orientation=_text(data.get("orientation")).lower(),
             companion_mode=_text(data.get("companion_mode")).lower(),
@@ -159,6 +173,8 @@ class ChessSurfaceState:
                 self.side_to_move,
                 self.event,
                 self.speech_reason,
+                self.analysis_provider,
+                str(self.analysis_depth),
                 hashlib.sha1(self.board_fen.encode("utf-8", "ignore")).hexdigest()[:12] if self.board_fen else "",
                 self.result,
             )
