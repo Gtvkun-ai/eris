@@ -3,6 +3,7 @@ import re
 import time
 from dataclasses import replace
 from typing import Any
+from types import SimpleNamespace
 
 from cortex.internal_state import PersistentInternalState
 from memory.memory_commit_policy import MemoryCommitPolicy
@@ -416,6 +417,33 @@ class StateCommitServiceMixin:
         if frame_id:
             return f"frame:{frame_id}"
         return None
+
+    def _ingest_user_turn_memory_hot_path(self, user_text: str, *, turn_id: str = "") -> bool:
+        """Wire the already-existing fast memory intake into every chat turn.
+
+        The addressing store is the immediate authority; MemoryKernel remains the
+        durable semantic source for recall and profile views. Background digest is
+        also enqueued for richer extraction, but the current reply never waits for it.
+        """
+        frame = SimpleNamespace(
+            frame_id=str(turn_id or "").strip(),
+            channel="chat",
+            permission=None,
+            memory_ingest_receipt=None,
+        )
+        committed = self._ingest_user_turn_via_memory_kernel(
+            frame,
+            str(user_text or ""),
+            turn_id=str(turn_id or "").strip() or None,
+        )
+        self._enqueue_background_memory_digest(
+            str(user_text or ""),
+            turn_id=str(turn_id or "").strip(),
+            source="chat_turn",
+            priority="high" if committed else "normal",
+            context={"channel": "chat", "hot_path_committed": bool(committed)},
+        )
+        return committed
 
     def _ingest_user_turn_via_memory_kernel(self, frame, user_text: str, *, turn_id: str | None = None) -> bool:
         kernel = self._memory_kernel()

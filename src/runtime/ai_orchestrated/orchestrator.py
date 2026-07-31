@@ -419,6 +419,15 @@ class AIChatOrchestrator:
         if previous_public_context and not prior_public_history:
             prior_public_history = ({"role": "assistant", "content": previous_public_context},)
         host._append_chat_history("user", user_text)
+        ingest_hot = getattr(host, "_ingest_user_turn_memory_hot_path", None)
+        if callable(ingest_hot):
+            try:
+                ingest_hot(user_text, turn_id=turn_id)
+            except Exception as exc:
+                host.logger.warning("[memory hot path] user turn ingest failed: %s", exc)
+        merge_addressing = getattr(host, "_merge_user_addressing_context", None)
+        if callable(merge_addressing):
+            memory_context = merge_addressing(memory_context)
 
         host._chat_snapshot_for_vision = snapshot
         try:
@@ -511,6 +520,11 @@ class AIChatOrchestrator:
             "discovery": discovery_context,
             "engagement_context": engagement_context,
             "discourse_context": discourse_context,
+            "user_addressing": (
+                host._user_addressing_snapshot()
+                if callable(getattr(host, "_user_addressing_snapshot", None))
+                else {}
+            ),
         }
         chat_plan = host.ai_intention_planner.plan_chat(
             planning_snapshot,

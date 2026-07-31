@@ -477,7 +477,7 @@ def _extract_gender_identity(raw: str) -> str:
 
     patterns = (
         r"(?:^|\b)giới\s*tính\s+(?:của\s+)?(?:tôi|mình|tui)\s*(?:là|:)\s*([^.,;!?]{2,40})",
-        r"(?:^|\b)(?:tôi|mình|tui)\s+(?:là|thuộc\s+giới\s+tính)\s+(nam|nữ|non[- ]?binary|phi nhị nguyên|chuyển giới)(?=$|[.,;!?])",
+        r"(?:^|\b)(?:tôi|toi|mình|minh|tui|em)\s+(?:là|la|thuộc\s+giới\s+tính|thuoc\s+gioi\s+tinh)\s+(nam|nữ|nu|non[- ]?binary|phi nhị nguyên|phi nhi nguyen|chuyển giới|chuyen gioi)\b",
     )
     for pattern in patterns:
         match = re.search(pattern, raw, flags=re.IGNORECASE | re.UNICODE)

@@ -14,6 +14,8 @@ worker cùng giành micro. Một cải tiến nhỏ cho văn minh phần mềm.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+import re
+import unicodedata
 from typing import Any, Mapping, Sequence
 
 
@@ -43,6 +45,123 @@ def _clamp01(value: Any, default: float = 0.0) -> float:
     if number != number:
         number = default
     return max(0.0, min(1.0, number))
+
+
+def _fold(value: Any) -> str:
+    text = unicodedata.normalize("NFD", str(value or "").lower())
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+    text = text.replace("đ", "d")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _claim_evidence_refs(item: Mapping[str, Any]) -> tuple[str, ...]:
+    return tuple(
+        ref for ref in (_compact(value, 140) for value in _sequence(item.get("evidence_ids"))[:6]) if ref
+    )
+
+
+def _select_grounded_screen_claim(
+    claims: Sequence[Mapping[str, Any]],
+    *,
+    telemetry: Mapping[str, Any],
+    screen: Mapping[str, Any],
+    grounding_strength: float,
+) -> tuple[str, tuple[str, ...], str, float]:
+    """Pick a conversational focus instead of blindly taking claim zero.
+
+    The selector remains evidence-bound: it can only choose among grounded, fresh
+    claims. Content metadata merely ranks those claims; it never manufactures a
+    new public fact. Active media receives a deliberate salience bonus because a
+    playing song/video is foreground state, while a list of open apps is usually
+    background inventory.
+    """
+
+    eligible = [
+        item for item in claims
+        if bool(item.get("grounded", False))
+        and not bool(item.get("stale", False))
+        and _compact(item.get("text", ""), 240)
+        and _claim_evidence_refs(item)
+    ]
+    if not eligible:
+        return "", (), "none", 0.0
+
+    content = _mapping(telemetry.get("content_metadata"))
+    privacy = _fold(content.get("privacy_level", "normal")) in {"private", "sensitive"}
+    title = _compact(content.get("title", ""), 220) if not privacy else ""
+    creator = _compact(content.get("creator", ""), 120) if not privacy else ""
+    media_state = _fold(content.get("media_state", ""))
+    page_kind = _fold(content.get("page_kind", ""))
+    content_confidence = _clamp01(content.get("confidence", 0.0))
+    media_active = bool(
+        title
+        and content_confidence >= 0.52
+        and (
+            media_state in {"playing", "play", "active", "buffering", "paused"}
+            or page_kind in {"media", "music", "video", "youtube", "streaming"}
+        )
+    )
+
+    title_fold = _fold(title)
+    creator_fold = _fold(creator)
+    stop = {
+        "youtube", "spotify", "music", "video", "official", "audio", "lyrics",
+        "google", "chrome", "brave", "microsoft", "edge", "tab", "playing",
+    }
+    title_tokens = {token for token in re.findall(r"[a-z0-9]{3,}", title_fold) if token not in stop}
+    creator_tokens = {token for token in re.findall(r"[a-z0-9]{3,}", creator_fold) if token not in stop}
+    active_title = _fold(
+        screen.get("window_title")
+        or telemetry.get("active_window")
+        or telemetry.get("window_title")
+        or telemetry.get("foreground_window")
+    )
+    changed_text = tuple(_fold(item) for item in _sequence(screen.get("changed_text"))[:8])
+    app_inventory_tokens = {"facebook", "zalo", "meet", "youtube", "bandicam", "discord", "telegram", "messenger"}
+    media_words = {"bai hat", "bai nhac", "nhac", "song", "music", "video", "youtube", "spotify", "dang phat", "playing"}
+
+    ranked: list[tuple[float, str, tuple[str, ...], str]] = []
+    for item in eligible:
+        text = _compact(item.get("text", ""), 240)
+        folded = _fold(text)
+        refs = _claim_evidence_refs(item)
+        score = 0.40 + 0.22 * _clamp01(item.get("confidence", grounding_strength), grounding_strength)
+        focus_kind = "screen"
+
+        if active_title and (folded in active_title or active_title in folded):
+            score += 0.12
+        if any(changed and (changed in folded or folded in changed) for changed in changed_text):
+            score += 0.12
+
+        if media_active:
+            tokens = set(re.findall(r"[a-z0-9]{3,}", folded))
+            overlap = 0.0
+            if title_tokens:
+                overlap = len(tokens & title_tokens) / max(1, len(title_tokens))
+            creator_overlap = 0.0
+            if creator_tokens:
+                creator_overlap = len(tokens & creator_tokens) / max(1, len(creator_tokens))
+            exactish = bool(title_fold and (title_fold in folded or folded in title_fold))
+            media_word_hit = any(word in folded for word in media_words)
+            if exactish:
+                score += 0.72
+            else:
+                score += 0.50 * min(1.0, overlap)
+                score += 0.18 * min(1.0, creator_overlap)
+            if media_word_hit:
+                score += 0.18
+            if exactish or overlap >= 0.35 or (media_word_hit and overlap > 0.0):
+                focus_kind = "media_playback"
+                score += 0.16 if media_state == "playing" else 0.08
+
+        inventory_hits = sum(1 for token in app_inventory_tokens if token in folded)
+        if inventory_hits >= 3 and focus_kind != "media_playback":
+            score -= 0.28
+        ranked.append((score, text, refs, focus_kind))
+
+    ranked.sort(key=lambda row: row[0], reverse=True)
+    score, text, refs, focus_kind = ranked[0]
+    return text, refs, focus_kind, max(0.0, min(1.5, score))
 
 
 @dataclass(frozen=True, slots=True)
@@ -362,19 +481,31 @@ class TypedCognitiveBlackboard:
             and not privacy_blocked
         )
         if (mechanical_delta or activity_event) and grounded_screen_ready:
-            anchors.append(CognitiveAnchor(
-                kind="screen" if mechanical_delta else "activity",
-                anchor_id=grounded_refs[0],
-                topic_seed=grounded_claims[0],
-                confidence=max(0.72, grounding_strength),
-                priority=0.84,
-                evidence_refs=grounded_refs,
-                metadata={
-                    "new_event_keys": list(new_event_keys),
-                    "grounded_claims": list(grounded_claims),
-                    "raw_window_title_withheld": bool(screen_title),
-                },
-            ))
+            selected_claim, selected_refs, focus_kind, focus_score = _select_grounded_screen_claim(
+                grounded_claims_raw,
+                telemetry=telemetry,
+                screen=screen,
+                grounding_strength=grounding_strength,
+            )
+            if selected_claim and selected_refs:
+                anchor_kind = "media" if focus_kind == "media_playback" else (
+                    "screen" if mechanical_delta else "activity"
+                )
+                anchors.append(CognitiveAnchor(
+                    kind=anchor_kind,
+                    anchor_id=selected_refs[0],
+                    topic_seed=selected_claim,
+                    confidence=max(0.72, grounding_strength),
+                    priority=0.90 if focus_kind == "media_playback" else 0.84,
+                    evidence_refs=selected_refs,
+                    metadata={
+                        "new_event_keys": list(new_event_keys),
+                        "grounded_claims": list(grounded_claims),
+                        "selected_focus_kind": focus_kind,
+                        "selected_focus_score": round(focus_score, 3),
+                        "raw_window_title_withheld": bool(screen_title),
+                    },
+                ))
 
         # 5) Chỉ dùng public-safe queue/agenda. Không đọc raw private mind.
         if public_seed_ready:

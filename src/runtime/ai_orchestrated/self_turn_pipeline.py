@@ -574,6 +574,11 @@ class SelfTurnPipeline:
             "seconds_since_assistant": context.seconds_since_assistant,
             "self_context": context.self_context.to_dict(),
             "memory_context": context.memory_context,
+            "user_addressing": (
+                self.host._user_addressing_snapshot()
+                if callable(getattr(self.host, "_user_addressing_snapshot", None))
+                else {}
+            ),
             "recent_self_turn_semantics": recent_initiative,
             "commentary_expectation": context.commentary.to_dict(),
             "engagement_context": dict(context.engagement_context),

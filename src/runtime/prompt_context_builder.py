@@ -15,6 +15,11 @@ from core.temporal_context import build_temporal_context_from_runtime
 from runtime.diagnostic_logging import safe_log
 from runtime.no_fallback_policy import no_fallback_mode_enabled
 from runtime.voice_policy import VOICE_POLICY
+from runtime.user_addressing_state import (
+    observe_user_addressing,
+    user_addressing_prompt_context,
+    user_addressing_snapshot,
+)
 
 
 class PromptContextBuilderMixin:
@@ -277,7 +282,46 @@ class PromptContextBuilderMixin:
             )
         return valid_entries[-limit:]
 
+    def _user_addressing_snapshot(self) -> dict[str, object]:
+        return user_addressing_snapshot().to_dict()
+
+    def _user_addressing_prompt_context(self) -> str:
+        return user_addressing_prompt_context()
+
+    def _merge_user_addressing_context(self, context: str) -> str:
+        addressing = self._user_addressing_prompt_context().strip()
+        existing = str(context or "").strip()
+        return "\n\n".join(part for part in (addressing, existing) if part).strip()
+
     def _append_chat_history(self, role: str, content: str, *, invalid: bool = False) -> None:
+        # Explicit addressing correction is synchronous shared state. It must be
+        # visible to the very reply generated for this user turn, not to some
+        # later background digest after the social damage is already done.
+        if role == "user" and not invalid:
+            turn_id = ""
+            try:
+                turns = self._ensure_session_turn_ledger().user_turns()
+                if turns:
+                    latest = turns[-1]
+                    turn_id = str(getattr(latest, "turn_id", "") or f"session_turn:{latest.index}")
+            except Exception:
+                turn_id = ""
+            try:
+                changed = observe_user_addressing(content, turn_id=turn_id)
+                if changed:
+                    logger = getattr(self, "logger", None)
+                    if logger is not None:
+                        safe_log(
+                            logger,
+                            "info",
+                            "[user-addressing] updated version=%s vocative=%s source=%s",
+                            user_addressing_snapshot().version,
+                            user_addressing_snapshot().user_vocative,
+                            turn_id or "chat_history",
+                        )
+            except Exception as exc:
+                safe_log(getattr(self, "logger", None), "warning", "[user-addressing] update failed: %s", exc)
+
         entry = {"role": role, "content": content, "ts": time.time()}
         if invalid:
             entry["invalid"] = True
@@ -337,13 +381,16 @@ class PromptContextBuilderMixin:
         return "\n".join(lines)
 
     def _merge_conversation_context(self, memory_context: str) -> str:
-        """Ghép đuôi hội thoại gần nhất vào memory_context của autonomous."""
+        """Ghép shared identity/addressing + đuôi hội thoại cho autonomous.
+
+        Addressing state luôn có mặt, kể cả khi conversation TTL đã hết. Identity
+        của user không được phai sau 15 phút chỉ vì một timer tiện tay tồn tại.
+        """
         convo = self._build_conversation_context()
-        if not convo:
-            return memory_context
-        if memory_context and memory_context.strip():
-            return f"{memory_context}\n\n{convo}".strip()
-        return convo
+        merged = "\n\n".join(
+            part for part in (str(memory_context or "").strip(), convo.strip()) if part
+        )
+        return self._merge_user_addressing_context(merged)
 
 
 

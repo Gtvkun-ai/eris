@@ -886,10 +886,12 @@ class ChatCycleMixin:
         return (
             "[VISION_STATUS]\n"
             "fresh_screen_capture: yes\n"
+            "grounded_visual_claims: 0\n"
             f"screen_text_evidence_count: {text_evidence_count}\n"
-            "rule: Sử dụng mọi tiêu đề, tên ứng dụng, tiêu đề video/bài hát hoặc văn bản OCR thu thập được làm bằng chứng trực quan.\n"
-            "required_stance: Chủ động trao đổi, bình luận hoặc hỏi thêm người dùng về bài hát/video/nội dung đang mở. "
-            "Nếu hình ảnh hoặc thông tin chưa hoàn toàn chi tiết, hãy thảo luận hoặc hỏi thêm dựa trên tiêu đề/nội dung đã quan sát.\n"
+            "epistemic_status: screenshot captured, but no visual claim passed grounding.\n"
+            "rule: OCR/window-title text is partial text evidence only; it does not prove the full scene or user activity.\n"
+            "required_stance: Không được nói hoặc ám chỉ 'tôi thấy', 'tôi thấy bàn cờ', hay bất kỳ khẳng định thị giác tương đương nào. "
+            "You may cautiously quote a specific OCR/title fragment as partial evidence, explicitly hedge uncertainty, or ask the user to confirm.\n"
             "[/VISION_STATUS]"
         )
 

@@ -17,6 +17,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from runtime.user_addressing_state import user_addressing_snapshot
+
 
 _LEGACY_TERM = r"(?:ng\u00e0i|ngai|master)"
 
@@ -84,6 +86,76 @@ def _replacement_at(match: re.Match[str], replacement: str) -> str:
     if at_sentence_start:
         return replacement[:1].upper() + replacement[1:]
     return replacement
+
+
+_DYNAMIC_VERBS = (
+    r"đang|dang|đã|da|sẽ|se|có|co|muốn|muon|cần|can|nghĩ|nghi|thấy|thay|"
+    r"nhớ|nho|nói|noi|hỏi|hoi|làm|lam|thích|thich|không|khong|chưa|chua|"
+    r"vẫn|van|vừa|vua|định|dinh|bảo|bao|muon|biết|biet|ngồi|ngoi|mở|mo|bật|bat"
+)
+
+def _replace_case(match: re.Match[str], replacement: str) -> str:
+    token = match.group(0)
+    if token[:1].isupper():
+        return replacement[:1].upper() + replacement[1:]
+    return replacement
+
+
+def _sanitize_dynamic_user_vocative(text: str) -> tuple[str, tuple[str, ...]]:
+    """Enforce explicit user addressing state on public text.
+
+    Chỉ sửa các vị trí có hình dạng xưng hô trực tiếp/chủ ngữ/sở hữu. Không global
+    replace mọi ``chị``/``anh`` vì assistant vẫn có thể nói về một người thứ ba.
+    """
+
+    state = user_addressing_snapshot()
+    target = str(state.user_vocative or "bạn").strip().lower()
+    forbidden = tuple(str(x or "").strip().lower() for x in state.forbidden_user_vocatives if str(x or "").strip())
+    if target not in {"anh", "chị", "bạn"} or not forbidden:
+        return text, ()
+
+    out = str(text or "")
+    rules: list[str] = []
+    for wrong in forbidden:
+        escaped = re.escape(wrong)
+        # Lời gọi ở đầu câu hoặc sau dấu ngắt mạnh.
+        vocative = re.compile(
+            rf"(?P<prefix>^|[.!?]\s+)(?P<honor>(?:thưa\s+)?{escaped}(?:\s+ơi)?)(?=\s*[,;:!?.-]|\s)",
+            re.IGNORECASE,
+        )
+        def vocative_repl(match: re.Match[str]) -> str:
+            honor = match.group("honor")
+            repl = target
+            if "ơi" in honor.lower():
+                repl += " ơi"
+            if honor[:1].isupper():
+                repl = repl[:1].upper() + repl[1:]
+            return match.group("prefix") + repl
+        out2, count = vocative.subn(vocative_repl, out)
+        if count:
+            out = out2
+            rules.append("dynamic_vocative")
+
+        # Sở hữu và các giới từ hướng thẳng vào người đang đối thoại.
+        directed = re.compile(
+            rf"(?P<prefix>\b(?:của|cua|với|voi|cho|gọi|goi|hỏi|hoi|nhắc|nhac|nói với|noi voi|trả lời|tra loi)\s+){escaped}\b",
+            re.IGNORECASE,
+        )
+        def directed_repl(match: re.Match[str]) -> str:
+            return match.group("prefix") + _replace_case(match, target)
+        out2, count = directed.subn(directed_repl, out)
+        if count:
+            out = out2
+            rules.append("dynamic_directed")
+
+        # Chủ ngữ trực tiếp: ``chị đang...``, ``anh có...``.
+        subject = re.compile(rf"\b{escaped}\s+(?=(?:{_DYNAMIC_VERBS})\b)", re.IGNORECASE)
+        out2, count = subject.subn(lambda m: _replace_case(m, target) + " ", out)
+        if count:
+            out = out2
+            rules.append("dynamic_subject")
+
+    return _squash(out), tuple(dict.fromkeys(rules))
 
 
 def sanitize_legacy_addressing(text: str, *, surface: str = "display") -> AddressingResult:
@@ -159,6 +231,8 @@ def sanitize_legacy_addressing(text: str, *, surface: str = "display") -> Addres
 
     out = _squash(out)
     out = re.sub(r"\b[Bb]\u1ea1n\s+[Bb]\u1ea1n\b", lambda m: "Bạn" if m.group(0)[:1].isupper() else "bạn", out)
+    out, dynamic_rules = _sanitize_dynamic_user_vocative(out)
+    rules.extend(dynamic_rules)
     return AddressingResult(out, changed=out != raw, rules=tuple(dict.fromkeys(rules)))
 
 
