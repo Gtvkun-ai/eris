@@ -263,6 +263,7 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
                             max_body_bytes=chess_bridge_settings.max_body_bytes,
                             logger=getattr(host, "logger", None),
                             health_registry=health,
+                            wake_callback=getattr(host, "_wake_autonomous_loop", None),
                             clock=runtime_clock,
                         ).start()
 

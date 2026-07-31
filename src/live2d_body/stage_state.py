@@ -269,6 +269,10 @@ class Live2DStageState:
         self._speech_contexts: dict[tuple[str, int], SpeechContext] = {}
         self._latest_speech_context = SpeechContext()
         self._latest_speech_key: tuple[str, int] = ("", 0)
+        # Turn/segment đang thật sự sở hữu audio. Stage bus có cả event lifecycle
+        # mirror không mang turn_id; chúng không được phép cắt miệng của audio có
+        # owner rõ ràng chỉ vì cùng mang chữ ``interrupted`` hoặc ``degraded``.
+        self._active_speech_key: tuple[str, int] = ("", 0)
         self._recent_event_ids: deque[str] = deque(maxlen=256)
         self._recent_event_id_set: set[str] = set()
 
@@ -345,6 +349,11 @@ class Live2DStageState:
             self._thinking = False
             self._speaking = True
             resolved_context = self._resolve_speech_context(payload, speech_context)
+            event_key = self._speech_context_key(payload)
+            # Event mirror rỗng thường đến ngay sau event audio có turn_id. Giữ
+            # owner có khóa thay vì để payload rỗng xóa danh tính câu đang phát.
+            if event_key[0] or not self._active_speech_key[0]:
+                self._active_speech_key = event_key
             self._speech.start(now=now, context=resolved_context)
             if resolved_context.audio_duration_ms > 0:
                 expected_seconds = resolved_context.audio_duration_ms / 1000.0
@@ -366,16 +375,41 @@ class Live2DStageState:
             "stage_segment_failed",
             "continuation_cancelled",
         }:
+            terminal_key = self._speech_context_key(payload)
+            if not self._terminal_event_owns_active_speech(terminal_key):
+                # Chỉ bỏ qua terminal mirror vô chủ; event có đúng turn/segment
+                # vẫn dừng ngay. Nhờ vậy log có thể lặp, nhưng cái miệng không bị
+                # ba bản sao hành chính cùng lao vào bóp cổ giữa một câu.
+                return
             self._thinking = False
             self._speaking = False
             self._speech.stop()
             self._speech_deadline = -1.0e9
+            self._active_speech_key = ("", 0)
             self._motion = motion or "stand"
             self._motion_at = now
         elif event_type == "thinking_finished":
             self._thinking = False
             self._motion = motion or "stand"
             self._motion_at = now
+
+
+    def _terminal_event_owns_active_speech(self, event_key: tuple[str, int]) -> bool:
+        """Chỉ terminal của đúng turn/segment mới được dừng audio đang nói."""
+
+        if not self._speaking:
+            return True
+        active_turn, active_seq = self._active_speech_key
+        event_turn, event_seq = event_key
+        if not active_turn:
+            return True
+        if not event_turn or event_turn != active_turn:
+            return False
+        # Seq=0 thường có nghĩa frontend cũ không biết segment. Chỉ so cứng khi
+        # cả hai phía đều có seq thực, để vẫn tương thích event legacy.
+        if active_seq and event_seq and active_seq != event_seq:
+            return False
+        return True
 
     def _handle_affect_event(self, payload: Mapping[str, Any]) -> None:
         data = payload.get("data") if isinstance(payload.get("data"), Mapping) else payload
@@ -423,9 +457,11 @@ class Live2DStageState:
                     motion=motion,
                 )
                 self._latest_speech_context = self._latest_speech_context.merged(legacy_context)
+                self._active_speech_key = ("", 0)
                 self._speech.start(now=now, context=self._latest_speech_context)
             else:
                 self._speech.stop()
+                self._active_speech_key = ("", 0)
         raw_affect = payload.get("affect")
         if isinstance(raw_affect, Mapping):
             self._handle_affect_event({"data": {"affect": raw_affect, "source": "legacy"}})
@@ -511,6 +547,7 @@ class Live2DStageState:
                 self._speaking = False
                 self._speech.stop()
                 self._speech_deadline = -1.0e9
+                self._active_speech_key = ("", 0)
 
             visual_affect = NEUTRAL_AFFECT.lerp(self._affect_current, freshness)
             affect_pose = visual_affect.visual_pose(thought_pressure=self._thought_pressure)

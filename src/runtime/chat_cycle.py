@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 
 from runtime.interrupt_reaction_policy import InterruptReactionPolicy
@@ -299,6 +300,9 @@ class ChatCycleMixin:
         normalized = normalize_vi(user_text)
         if not normalized:
             return False
+        raw_lower = str(user_text or "").lower()
+        if re.search(r"(?<!\w)bàn(?!\w)", raw_lower):
+            return True
         direct_terms = tuple(
             normalize_vi(item)
             for item in (
@@ -329,6 +333,224 @@ class ChatCycleMixin:
             explicit_reference=False,
         )
         return bool(resolution.references_screen)
+
+    def _chat_ambient_screen_blocks(self) -> tuple[object, ...]:
+        """Lấy OCR/UIA cache cho mọi lượt chat, không cưỡng bức OCR lại."""
+
+        store = getattr(self, "screen_evidence_store", None)
+        ambient = getattr(store, "ambient_blocks", None)
+        if callable(ambient):
+            try:
+                return tuple(ambient(max_age_seconds=8.0, max_items=8) or ())
+            except Exception as exc:
+                self.logger.debug("[screen text] ambient cache read failed: %s", exc)
+        snapshot_fn = getattr(store, "snapshot", None)
+        if not callable(snapshot_fn):
+            return ()
+        try:
+            snapshot = snapshot_fn()
+        except Exception:
+            return ()
+        if bool(getattr(snapshot, "privacy_blocked", False)):
+            return ()
+        now = time.time()
+        blocks = [
+            block
+            for block in tuple(getattr(snapshot, "blocks", ()) or ())
+            if now - float(getattr(block, "captured_at", 0.0) or 0.0) <= 8.0
+            and str(getattr(block, "text", "") or "").strip()
+        ]
+        blocks.sort(
+            key=lambda block: (
+                float(getattr(block, "confidence", 0.0) or 0.0),
+                float(getattr(block, "captured_at", 0.0) or 0.0),
+            ),
+            reverse=True,
+        )
+        return tuple(blocks[:8])
+
+    @staticmethod
+    def _merge_chat_screen_blocks(*groups) -> tuple[object, ...]:
+        merged: list[object] = []
+        seen: set[str] = set()
+        for group in groups:
+            for block in tuple(group or ()):
+                key = str(
+                    getattr(block, "block_id", "")
+                    or getattr(block, "content_hash", "")
+                    or getattr(block, "text", "")
+                    or id(block)
+                ).strip()
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                merged.append(block)
+        return tuple(merged)
+
+    def _looks_like_chess_context_request(self, user_text: str) -> bool:
+        """Route câu ngắn vào chess context khi bridge đang có FEN tươi."""
+
+        bridge = getattr(self, "chess_bridge_service", None)
+        evidence_fn = getattr(bridge, "current_grounding_evidence", None)
+        if not callable(evidence_fn):
+            return False
+        try:
+            if not tuple(evidence_fn(max_age_seconds=8.0, relevant_to_turn=False) or ()):
+                return False
+        except Exception:
+            return False
+
+        normalized = normalize_vi(user_text)
+        if not normalized:
+            return False
+        padded = f" {normalized} "
+        markers = (
+            "co vua", "chess", "fen", "ban co", "van co", "nuoc co",
+            "nuoc nao", "di gi", "di nuoc", "chi tui", "chi toi", "chi minh",
+            "van nay", "ban nay", "quan nao", "trang di", "den di",
+            "chieu tuong", "chieu het", "nhap thanh", "phong hau",
+        )
+        if any(f" {normalize_vi(marker)} " in padded for marker in markers):
+            return True
+        # Khi engagement đang active, các token này đủ để bind câu ngắn kiểu
+        # “nước?”, “ván này sao”, “chỉ tui”. Không dùng token trần “đi” vì loài
+        # người còn dùng nó cho khoảng ba trăm mục đích khác.
+        tokens = set(normalized.split())
+        return bool(tokens & {"nuoc", "van", "quan"}) or normalized in {
+            "chi", "chi tui", "chi toi", "chi minh",
+        }
+
+    def _chat_structured_grounding_facts(self, user_text: str) -> tuple[object, ...]:
+        bridge = getattr(self, "chess_bridge_service", None)
+        evidence_fn = getattr(bridge, "current_grounding_evidence", None)
+        if not callable(evidence_fn):
+            return ()
+        relevant = self._looks_like_chess_context_request(user_text)
+        try:
+            return tuple(
+                evidence_fn(max_age_seconds=8.0, relevant_to_turn=relevant) or ()
+            )
+        except Exception as exc:
+            self.logger.debug("[chess grounding] evidence unavailable: %s", exc)
+            return ()
+
+    def _chat_window_identity(self) -> tuple[str, int]:
+        store = getattr(self, "screen_evidence_store", None)
+        snapshot_fn = getattr(store, "snapshot", None)
+        if not callable(snapshot_fn):
+            return "", 0
+        try:
+            snapshot = snapshot_fn()
+        except Exception:
+            return "", 0
+        window = getattr(snapshot, "window", None)
+        key = "|".join(
+            (
+                str(getattr(window, "process_name", "") or "").strip().lower(),
+                str(getattr(window, "hwnd", 0) or 0),
+                str(getattr(window, "title", "") or "").strip().lower(),
+            )
+        )
+        return key, int(getattr(snapshot, "revision", 0) or 0)
+
+    def _chat_active_chess_engagement_id(self) -> str:
+        facts = self._chat_structured_grounding_facts("")
+        if not facts:
+            return ""
+        item = facts[0]
+        if isinstance(item, dict):
+            return str(item.get("engagement_id", "") or "")
+        return str(getattr(item, "engagement_id", "") or "")
+
+    def _queue_next_turn_vision(self, *, reason: str, user_text: str) -> None:
+        try:
+            from screen.evidence_models import PendingVisionEscalation
+        except Exception:
+            return
+        now = time.time()
+        try:
+            ttl = max(8.0, min(90.0, float(os.environ.get("ERIS_CHAT_VISION_PENDING_TTL_SEC", "30") or 30.0)))
+        except (TypeError, ValueError):
+            ttl = 30.0
+        window_key, revision = self._chat_window_identity()
+        pending = PendingVisionEscalation(
+            pending=True,
+            reason=str(reason or "ocr_ambiguous")[:160],
+            requested_at=now,
+            expires_at=now + ttl,
+            window_key=window_key,
+            screen_revision=revision,
+            engagement_id=self._chat_active_chess_engagement_id(),
+            query_hint=" ".join(str(user_text or "").split())[:240],
+        )
+        self._chat_pending_vision_escalation = pending
+        self.logger.info(
+            "[vision pending] queued reason=%s ttl=%.0fs revision=%d",
+            pending.reason,
+            ttl,
+            revision,
+        )
+
+    def _consume_next_turn_vision(self, *, user_text: str) -> bool:
+        pending = getattr(self, "_chat_pending_vision_escalation", None)
+        active = getattr(pending, "active", None)
+        now = time.time()
+        if not callable(active) or not active(now=now):
+            clear = getattr(pending, "clear", None)
+            if callable(clear):
+                clear()
+            return False
+
+        # Structured chess state supersedes a queued screenshot. Nếu extension
+        # vừa gửi FEN đủ dùng thì vision không còn lý do để nhìn lại bàn.
+        if self._looks_like_chess_context_request(user_text):
+            pending.clear()
+            self.logger.info("[vision pending] cancelled reason=fresh_chess_bridge")
+            return False
+
+        current_window, _revision = self._chat_window_identity()
+        current_engagement = self._chat_active_chess_engagement_id()
+        same_window = bool(not pending.window_key or pending.window_key == current_window)
+        same_engagement = bool(
+            pending.engagement_id
+            and current_engagement
+            and pending.engagement_id == current_engagement
+        )
+        if not same_window and not same_engagement:
+            pending.clear()
+            self.logger.info("[vision pending] dropped reason=context_changed")
+            return False
+
+        reason = pending.reason
+        pending.clear()
+        self.logger.info("[vision pending] consumed reason=%s", reason or "ocr_ambiguous")
+        return True
+
+    def _ocr_needs_next_turn_vision(self, route) -> bool:
+        if route is None or not bool(getattr(route, "references_screen", False)):
+            return False
+        if bool(getattr(route, "needs_visual", False)):
+            return False
+        mode = str(getattr(route, "mode", "none") or "none")
+        evidence = tuple(getattr(route, "evidence", ()) or ())
+        confidence = float(getattr(route, "confidence", 0.0) or 0.0)
+        useful_chars = sum(
+            len("".join(str(getattr(block, "text", "") or "").split()))
+            for block in evidence[:6]
+        )
+        try:
+            threshold = max(
+                0.48,
+                min(0.78, float(os.environ.get("ERIS_CHAT_OCR_VISION_ESCALATION_CONFIDENCE", "0.62") or 0.62)),
+            )
+        except (TypeError, ValueError):
+            threshold = 0.62
+        return bool(
+            mode == "vision"
+            or not evidence
+            or (mode == "text_evidence_soft" and confidence < threshold)
+            or useful_chars < 16
+        )
 
     def _ensure_screen_text_worker_for_request(self) -> None:
         worker = getattr(self, "screen_text_worker", None)
@@ -375,17 +597,23 @@ class ChatCycleMixin:
 
     def _capture_screen_frame_for_chat(self, user_text: str, *, previous_public_turn=None) -> str:
         self._chat_screen_route_decision = None
-        self._chat_screen_text_evidence = ()
+        ambient_blocks = self._chat_ambient_screen_blocks()
+        self._chat_screen_text_evidence = ambient_blocks
         self._chat_screen_capture_present = False
         self._chat_screen_capture_interpreted = False
+
         force_chat_vision = self._chat_main_vision_enabled()
+        pending_force_vision = self._consume_next_turn_vision(user_text=user_text)
         previous_assistant_text = self._previous_assistant_text_for_screen_route(previous_public_turn)
         explicit_or_inherited_request = self._looks_like_screen_vision_request(
             user_text,
             previous_assistant_text=previous_assistant_text,
         )
-        if explicit_or_inherited_request:
+        chess_relevant = self._looks_like_chess_context_request(user_text)
+
+        if explicit_or_inherited_request and not chess_relevant:
             self._ensure_screen_text_worker_for_request()
+
         router = getattr(self, "screen_relevance_router", None)
         route = None
         if router is not None:
@@ -400,10 +628,11 @@ class ChatCycleMixin:
             except Exception as exc:
                 self.logger.warning("[screen route] router lỗi: %s", exc)
 
-        # OCR nền có thể vừa đổi frame nhưng chưa đến poll. Nếu route đã nhận ra
-        # tham chiếu mà chưa có evidence đủ dùng, làm mới một lần rồi route lại.
+        # OCR nền có thể vừa đổi frame nhưng chưa đến poll. Chỉ refresh cưỡng bức
+        # khi user thật sự hỏi màn hình và structured chess state không đủ trả lời.
         if (
-            route is not None
+            not chess_relevant
+            and route is not None
             and bool(getattr(route, "references_screen", False))
             and (not tuple(getattr(route, "evidence", ()) or ()) or bool(getattr(route, "stale", False)))
             and self._refresh_screen_text_for_chat_request()
@@ -419,59 +648,131 @@ class ChatCycleMixin:
             except Exception as exc:
                 self.logger.warning("[screen route] reroute sau OCR lỗi: %s", exc)
 
-        if route is None:
-            if not explicit_or_inherited_request and not force_chat_vision:
+        # Hai classifier từng bất đồng: request detector nhận ra “xem giúp”, router
+        # lại trả mode=none. Explicit request thắng để evidence ladder còn hoạt động.
+        route_mode = str(getattr(route, "mode", "none") or "none") if route is not None else "none"
+        if route is None or (route_mode == "none" and explicit_or_inherited_request):
+            if route is None and not explicit_or_inherited_request and not force_chat_vision and not pending_force_vision:
                 self.logger.debug("[screen route] mode=none reason=no_screen_reference")
+                # Không return sớm khỏi grounding: ambient OCR vẫn được đọc trực
+                # tiếp từ ScreenEvidenceStore trong _chat_source_grounding_screen_facts.
                 return ""
             try:
                 from screen.evidence_models import ScreenRouteDecision
                 route = ScreenRouteDecision(
-                    mode="vision", references_screen=True,
-                    reason="router_unavailable_explicit_or_inherited_request",
+                    mode="vision",
+                    references_screen=True,
+                    needs_visual=bool(pending_force_vision),
+                    reason=(
+                        "pending_vision_escalation"
+                        if pending_force_vision
+                        else "explicit_request_overrode_none_route"
+                    ),
+                    evidence=tuple(getattr(route, "evidence", ()) or ()) if route is not None else (),
+                    confidence=float(getattr(route, "confidence", 0.0) or 0.0) if route is not None else 0.0,
+                    stale=bool(getattr(route, "stale", False)) if route is not None else False,
+                    debug=dict(getattr(route, "debug", {}) or {}) if route is not None else {},
                 )
             except Exception:
                 from types import SimpleNamespace
                 route = SimpleNamespace(
                     mode="vision",
                     references_screen=True,
-                    needs_visual=True,
+                    needs_visual=bool(pending_force_vision),
                     evidence=(),
-                    confidence=0.55 if force_chat_vision else 0.70,
+                    confidence=0.70,
                     stale=False,
-                    reason="router_unavailable_main_vision" if force_chat_vision else "router_unavailable_explicit_request",
+                    reason="pending_vision_escalation" if pending_force_vision else "explicit_request_overrode_none_route",
                     debug={},
                 )
 
+        # Pending escalation luôn force vision ở lượt N+1, kể cả router lượt mới
+        # chỉ thấy text evidence. Nó là một lần consume, không phải always-on vision.
+        if pending_force_vision and str(getattr(route, "mode", "none") or "none") != "vision":
+            try:
+                from screen.evidence_models import ScreenRouteDecision
+                route = ScreenRouteDecision(
+                    mode="vision",
+                    references_screen=True,
+                    needs_visual=True,
+                    requires_strong_evidence=bool(getattr(route, "requires_strong_evidence", False)),
+                    reason="pending_vision_escalation",
+                    evidence=tuple(getattr(route, "evidence", ()) or ()),
+                    confidence=float(getattr(route, "confidence", 0.0) or 0.0),
+                    stale=bool(getattr(route, "stale", False)),
+                    debug=dict(getattr(route, "debug", {}) or {}),
+                )
+            except Exception:
+                pass
+
+        route_blocks = tuple(getattr(route, "evidence", ()) or ())
         self._chat_screen_route_decision = route
-        self._chat_screen_text_evidence = tuple(getattr(route, "evidence", ()) or ())
+        self._chat_screen_text_evidence = self._merge_chat_screen_blocks(
+            ambient_blocks,
+            route_blocks,
+        )
         debug = dict(getattr(route, "debug", {}) or {})
         self.logger.info(
-            "[screen route] mode=%s refs=%s visual=%s evidence=%d confidence=%.2f stale=%s reason=%s anaphora=%s",
+            "[screen route] mode=%s refs=%s visual=%s evidence=%d ambient=%d confidence=%.2f stale=%s reason=%s anaphora=%s",
             str(getattr(route, "mode", "none") or "none"),
             int(bool(getattr(route, "references_screen", False))),
             int(bool(getattr(route, "needs_visual", False))),
-            len(self._chat_screen_text_evidence),
+            len(route_blocks),
+            len(ambient_blocks),
             float(getattr(route, "confidence", 0.0) or 0.0),
             int(bool(getattr(route, "stale", False))),
             str(getattr(route, "reason", "") or "none"),
             int(bool(debug.get("anaphora_inherited", False))),
         )
+
+        # FEN tươi từ extension là direct structured evidence. Không chụp vision
+        # lại bàn cờ và cũng không queue một escalation vô ích.
+        if chess_relevant:
+            self.logger.info("[chess route] structured bridge selected; vision skipped")
+            pending = getattr(self, "_chat_pending_vision_escalation", None)
+            clear = getattr(pending, "clear", None)
+            if callable(clear):
+                clear()
+            return ""
+
         mode = str(getattr(route, "mode", "none") or "none")
-        if mode != "vision" and not force_chat_vision:
+        should_capture_now = bool(
+            force_chat_vision
+            or pending_force_vision
+            or (mode == "vision" and bool(getattr(route, "needs_visual", False)))
+        )
+
+        # OCR mơ hồ ở lượt N chỉ đặt cờ. Vision được nhét vào lượt N+1 nếu vẫn
+        # cùng window/engagement, thay vì gọi model ảnh ngay trong mọi request.
+        if not should_capture_now and self._ocr_needs_next_turn_vision(route):
+            self._queue_next_turn_vision(
+                reason=str(getattr(route, "reason", "ocr_ambiguous") or "ocr_ambiguous"),
+                user_text=user_text,
+            )
+            return ""
+
+        if not should_capture_now:
             return ""
         if mode != "vision" and force_chat_vision:
             self.logger.info("[vision chat] forcing main vision despite route mode=%s", mode)
-        capture_fn = getattr(self.telemetry_service, "capture_screen_frame_data_uri", None)
+
+        capture_fn = getattr(getattr(self, "telemetry_service", None), "capture_screen_frame_data_uri", None)
         if not callable(capture_fn):
             self.logger.info("[vision chat] telemetry service không hỗ trợ chụp màn hình.")
+            if pending_force_vision:
+                self._queue_next_turn_vision(reason="pending_capture_unavailable", user_text=user_text)
             return ""
         try:
             data_uri = capture_fn()
         except Exception as exc:
             self.logger.warning("[vision chat] không chụp được màn hình: %s", exc)
+            if pending_force_vision:
+                self._queue_next_turn_vision(reason="pending_capture_failed", user_text=user_text)
             return ""
         if not str(data_uri or "").strip():
             self.logger.warning("[vision chat] screen capture trả dữ liệu rỗng")
+            if pending_force_vision:
+                self._queue_next_turn_vision(reason="pending_capture_empty", user_text=user_text)
             return ""
         self._chat_screen_capture_present = True
         self.logger.info("[vision chat] captured=1 bytes=%d", len(str(data_uri)))
@@ -533,54 +834,97 @@ class ChatCycleMixin:
 
 
     def _chat_source_grounding_screen_facts(self, snapshot, *, screen_image_data_uri: str = "") -> tuple[object, ...]:
+        """Gộp ambient OCR + route OCR + grounded vision cho mọi lượt chat."""
+
         route = getattr(self, "_chat_screen_route_decision", None)
-        if (
-            (route is None or str(getattr(route, "mode", "none") or "none") == "none")
-            and not screen_image_data_uri
-        ):
-            return ()
         now = time.time()
-        text_items: list[object] = []
-        for block in tuple(getattr(self, "_chat_screen_text_evidence", ()) or ()):
+        blocks = self._merge_chat_screen_blocks(
+            self._chat_ambient_screen_blocks(),
+            tuple(getattr(self, "_chat_screen_text_evidence", ()) or ()),
+            tuple(getattr(route, "evidence", ()) or ()) if route is not None else (),
+        )
+        items: list[object] = []
+        seen: set[str] = set()
+
+        for block in blocks:
             to_item = getattr(block, "to_grounding_item", None)
+            item = None
             if callable(to_item):
                 try:
-                    text_items.append(to_item(now=now, stale_after=8.0))
-                    continue
+                    item = dict(to_item(now=now, stale_after=8.0))
                 except Exception:
-                    pass
-            text = str(getattr(block, "text", "") or "").strip()
-            if text:
-                text_items.append({
+                    item = None
+            if item is None:
+                text = str(getattr(block, "text", "") or "").strip()
+                if not text:
+                    continue
+                captured_at = float(getattr(block, "captured_at", 0.0) or 0.0)
+                item = {
                     "id": str(getattr(block, "block_id", "screen_text") or "screen_text"),
                     "source": str(getattr(block, "source", "screen_text_index") or "screen_text_index"),
                     "claim": text,
                     "confidence": float(getattr(block, "confidence", 0.65) or 0.65),
                     "grounded": True,
-                    "stale": bool(getattr(route, "stale", False)),
-                    "tags": ["screen", "screen_text"],
-                })
-        if text_items and not screen_image_data_uri:
-            return tuple(text_items)
+                    "stale": bool(captured_at and now - captured_at > 8.0),
+                    "captured_at": captured_at,
+                    "tags": ["screen", "screen_text", "ocr_ambient"],
+                }
+            item.setdefault("role", "ambient")
+            tags = list(item.get("tags", ()) or ())
+            if "ocr_ambient" not in tags:
+                tags.append("ocr_ambient")
+            item["tags"] = tags
+            item_id = str(item.get("id", "") or item.get("claim", ""))
+            if item_id in seen:
+                continue
+            seen.add(item_id)
+            items.append(item)
+
         report = getattr(self, "last_vision_grounding_report", None)
         if report is not None and screen_image_data_uri and not bool(getattr(report, "stale", False)):
             to_items = getattr(report, "to_evidence_items", None)
             if callable(to_items):
-                facts = tuple(to_items(grounded_only=True))
-                if facts:
-                    return facts
-        if text_items:
-            return tuple(text_items)
-        if screen_image_data_uri:
-            return ({
+                try:
+                    for raw in tuple(to_items(grounded_only=True) or ()):
+                        item = dict(raw) if isinstance(raw, dict) else raw
+                        item_id = str(
+                            item.get("id", "") if isinstance(item, dict)
+                            else getattr(item, "id", "")
+                        )
+                        if item_id and item_id in seen:
+                            continue
+                        if item_id:
+                            seen.add(item_id)
+                        items.append(item)
+                except Exception:
+                    pass
+
+        if screen_image_data_uri and not self._chat_screen_capture_interpreted:
+            items.append({
                 "id": "chat_screen_frame_unresolved",
                 "source": "screen_capture",
                 "claim": "fresh screenshot captured but no grounded semantic claim",
                 "confidence": 0.25,
                 "grounded": False,
+                "stale": False,
                 "tags": ["vision", "screen", "chat", "ungrounded"],
-            },)
-        return ()
+            })
+        return tuple(items)
+
+    @staticmethod
+    def _chat_screen_grounding_items_stale(items: tuple[object, ...]) -> bool:
+        grounded: list[object] = []
+        for item in tuple(items or ()):
+            marker = item.get("grounded") if isinstance(item, dict) else getattr(item, "grounded", None)
+            if marker is False or str(marker).strip().lower() == "false":
+                continue
+            grounded.append(item)
+        if not grounded:
+            return False
+        return all(
+            bool(item.get("stale", False)) if isinstance(item, dict) else bool(getattr(item, "stale", False))
+            for item in grounded
+        )
 
     def _build_chat_source_grounding_report(
         self, *, user_text: str, frame, snapshot, memory_resonance=None,
@@ -590,13 +934,15 @@ class ChatCycleMixin:
         if not isinstance(engine, SourceGroundingEngine):
             engine = SourceGroundingEngine()
             self.source_grounding_engine = engine
+        screen_items = self._chat_source_grounding_screen_facts(
+            snapshot, screen_image_data_uri=screen_image_data_uri,
+        )
         return engine.analyze(
             user_text,
             frame=frame,
-            screen_facts=self._chat_source_grounding_screen_facts(
-                snapshot, screen_image_data_uri=screen_image_data_uri,
-            ),
-            screen_facts_stale=bool(getattr(getattr(self, "_chat_screen_route_decision", None), "stale", False)),
+            screen_facts=screen_items,
+            screen_facts_stale=self._chat_screen_grounding_items_stale(screen_items),
+            structured_facts=self._chat_structured_grounding_facts(user_text),
             memory_packet=memory_resonance,
             runtime_state=snapshot,
             allow_web=False,

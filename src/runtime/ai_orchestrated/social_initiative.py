@@ -159,8 +159,12 @@ class SocialInitiativeEngine:
         """
 
         # Hard timing boundaries có thể chặn trước model call. Đây là governor
-        # preflight, không phải runtime nghĩ topic.
-        if blackboard.user_busy or blackboard.reply_expected:
+        # preflight, không phải runtime nghĩ topic. Một event cờ mới từ bridge
+        # được phép thắng reply baton cũ vì structured runtime đã cung cấp câu
+        # trả lời thực tế; tiếp tục chờ user xác nhận lúc này chỉ làm Eris đứng im.
+        if blackboard.user_busy:
+            return None
+        if blackboard.reply_expected and not self._chess_event_overrides_reply_baton(blackboard):
             return None
         soft = _env_float("ERIS_SOCIAL_INITIATIVE_SOFT_SILENCE_SEC", 180.0, minimum=45.0, maximum=3600.0)
         has_typed_opportunity = any(anchor.kind != "presence" for anchor in blackboard.anchors)
@@ -209,6 +213,13 @@ class SocialInitiativeEngine:
             return self.fallback_candidate(blackboard, reason="worker_no_candidate")
         if candidate.confidence < 0.32 or candidate.relevance < 0.24:
             return self.fallback_candidate(blackboard, reason="worker_low_confidence")
+
+        # Task event đang due không được bị một candidate xã giao hợp lệ nhưng
+        # lạc đề chiếm micro. Model vẫn được đề xuất wording direction; runtime
+        # chỉ ép đúng lane task khi engagement đã phát ra một event cụ thể.
+        task_fallback = self._task_followup_candidate(blackboard, reason="worker_missed_due_task")
+        if task_fallback is not None and candidate.kind != "task_followup":
+            return task_fallback
         if not self._candidate_matches_blackboard(candidate, blackboard):
             self._log(
                 "warning",
@@ -226,6 +237,10 @@ class SocialInitiativeEngine:
         vẫn có thể hoãn vì user busy, cooldown hoặc reply baton. Như vậy không có
         ``silence_forever()``, cũng không biến hard ceiling thành đồng hồ báo nói.
         """
+
+        task_candidate = self._task_followup_candidate(blackboard, reason=reason)
+        if task_candidate is not None:
+            return task_candidate
 
         soft = _env_float("ERIS_SOCIAL_INITIATIVE_SOFT_SILENCE_SEC", 180.0, minimum=45.0, maximum=3600.0)
         hard = _env_float("ERIS_SOCIAL_INITIATIVE_HARD_SILENCE_SEC", 600.0, minimum=120.0, maximum=7200.0)
@@ -256,6 +271,62 @@ class SocialInitiativeEngine:
             tone="casual_warm",
             reason=f"liveness_fallback:{reason}",
             source="initiative_local_liveness",
+        )
+
+    @staticmethod
+    def _task_anchor(blackboard: TypedCognitiveBlackboard) -> CognitiveAnchor | None:
+        if not blackboard.engagement_active or not (blackboard.engagement_due or blackboard.engagement_required):
+            return None
+        return next((anchor for anchor in blackboard.anchors if anchor.kind == "task"), None)
+
+    @classmethod
+    def _chess_event_overrides_reply_baton(cls, blackboard: TypedCognitiveBlackboard) -> bool:
+        anchor = cls._task_anchor(blackboard)
+        return bool(
+            anchor is not None
+            and str(blackboard.engagement_kind or anchor.metadata.get("engagement_kind", "")).lower() == "chess"
+        )
+
+    @classmethod
+    def _task_followup_candidate(
+        cls,
+        blackboard: TypedCognitiveBlackboard,
+        *,
+        reason: str,
+    ) -> SocialSpeechCandidate | None:
+        """Deterministic lane fallback cho event engagement đã đến hạn.
+
+        Đây không phải local small-talk generator. Nó chỉ giữ task/event đã có
+        provenance khỏi biến mất khi Surface worker lỗi, trả ``none`` hoặc chọn
+        nhầm một lane xã giao. Surface Realizer vẫn viết câu public cuối cùng.
+        """
+
+        anchor = cls._task_anchor(blackboard)
+        if anchor is None:
+            return None
+        engagement_kind = str(
+            blackboard.engagement_kind or anchor.metadata.get("engagement_kind", "task") or "task"
+        ).strip().lower()
+        topic = (
+            f"Continue the active {engagement_kind} engagement from its newest structured event/state. "
+            f"Current task reason: {anchor.topic_seed}. Do not ask the user to restate facts already "
+            "available in engagement context."
+        )
+        return SocialSpeechCandidate(
+            decision="candidate",
+            kind="task_followup",
+            topic=_compact(topic, 300),
+            speech_act="comment_on_progress",
+            anchor_type="task",
+            anchor_id=anchor.anchor_id,
+            evidence_refs=anchor.evidence_refs,
+            requires_grounding=False,
+            confidence=max(0.82, anchor.confidence),
+            relevance=max(0.92, anchor.priority),
+            urgency=0.78 if blackboard.engagement_required else 0.64,
+            tone="focused",
+            reason=f"deterministic_engagement_fallback:{reason}",
+            source="initiative_local_task_fallback",
         )
 
     @staticmethod

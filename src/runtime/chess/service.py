@@ -8,14 +8,21 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Mapping
 
+from runtime.cognition.normalization import normalize_vi
 from runtime.engagements import EvidenceBinding
 from runtime.subsystem_health import FailureKind, SubsystemHealthRegistry
 
 from .contracts import BoardSnapshot, ChessObservation, ChessObservationPhase
+from .engine import Position, analyze
 from .tracker import ChessGameTracker
 
 
 class ChessCompanionService:
+    # Contract generic cho StructuredEvidenceProvider. Chat pipeline chỉ biết
+    # đây là một nguồn structured state, không cần hard-code ChessCompanionService.
+    structured_source_id = "chess_bridge"
+    engagement_kind = "chess"
+
     def __init__(
         self,
         engagement_runtime,
@@ -28,6 +35,7 @@ class ChessCompanionService:
         max_body_bytes: int = 65536,
         logger: Any | None = None,
         health_registry: SubsystemHealthRegistry | None = None,
+        wake_callback: Any | None = None,
         clock=None,
     ) -> None:
         self.engagement_runtime = engagement_runtime
@@ -37,12 +45,14 @@ class ChessCompanionService:
         self.max_body_bytes = max(1024, int(max_body_bytes))
         self.logger = logger
         self.health_registry = health_registry
+        self.wake_callback = wake_callback if callable(wake_callback) else None
         self.clock = clock or time.time
         self.tracker = ChessGameTracker(depth=analysis_depth, direct_move_rate=direct_move_rate)
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._lock = threading.RLock()
         self._last_snapshot_summary: dict[str, Any] = {}
+        self._last_wakeup_reason = ""
 
     @property
     def running(self) -> bool:
@@ -151,22 +161,28 @@ class ChessCompanionService:
     def handle_snapshot(self, payload: Mapping[str, Any]) -> ChessObservation:
         snapshot = BoardSnapshot.from_mapping(payload)
         observation = self.tracker.observe(snapshot)
-        now = snapshot.captured_at or float(self.clock())
+        received_at = float(self.clock())
+        now = snapshot.captured_at or received_at
         phase = getattr(getattr(observation, "phase", ""), "value", getattr(observation, "phase", ""))
         phase = str(phase or "unknown")
-        self._last_snapshot_summary = {
-            "game_id": snapshot.game_id,
-            "mode": observation.mode.value,
-            "phase": phase,
-            "board_fen": snapshot.board_fen,
-            "side_to_move": observation.side_to_move,
-            "move_number": observation.move_number,
-            "last_move_uci": observation.last_move_uci,
-            "suggested_move_uci": (
-                observation.suggestion.uci if observation.suggestion is not None else ""
-            ),
-            "received_at": now,
-        }
+        with self._lock:
+            self._last_snapshot_summary = {
+                "game_id": snapshot.game_id,
+                "mode": observation.mode.value,
+                "phase": phase,
+                "board_fen": snapshot.board_fen,
+                "side_to_move": observation.side_to_move,
+                "move_number": observation.move_number,
+                "last_move_uci": observation.last_move_uci,
+                "suggested_move_uci": (
+                    observation.suggestion.uci if observation.suggestion is not None else ""
+                ),
+                "captured_at": snapshot.captured_at or received_at,
+                # Freshness phải dựa trên lúc bridge NHẬN snapshot. Timestamp từ
+                # extension có thể dùng clock khác hoặc bị serialize theo ms.
+                "received_at": received_at,
+                "engagement_id": "",
+            }
         if self.logger is not None:
             try:
                 self.logger.info(
@@ -177,7 +193,11 @@ class ChessCompanionService:
                     observation.move_number,
                     observation.side_to_move,
                     observation.last_move_uci or "-",
-                    self._last_snapshot_summary["suggested_move_uci"] or "-",
+                    (
+                        observation.suggestion.uci
+                        if observation.suggestion is not None
+                        else "-"
+                    ),
                 )
             except (AttributeError, TypeError, ValueError, RuntimeError):
                 pass
@@ -188,6 +208,9 @@ class ChessCompanionService:
             tags=("chess", snapshot.platform, observation.mode.value),
         )
         engagement = self._resolve_engagement(binding=binding, now=now)
+        with self._lock:
+            if self._last_snapshot_summary.get("game_id") == snapshot.game_id:
+                self._last_snapshot_summary["engagement_id"] = engagement.engagement_id
         event_payload = observation.to_event_payload()
         evidence_refs = (f"chesscom:{snapshot.game_id}:{snapshot.ply}",)
         emitted: list[str] = []
@@ -223,6 +246,17 @@ class ChessCompanionService:
             if updated is not None:
                 engagement = updated
 
+        wake_events = tuple(
+            kind for kind in dict.fromkeys(emitted)
+            if kind in {"chess.board_detected", "chess.game_started", "chess.move_played", "chess.game_over"}
+        )
+        if wake_events:
+            self._wake_autonomous(
+                game_id=snapshot.game_id,
+                move_number=observation.move_number,
+                events=wake_events,
+            )
+
         self._success({
             "game_id": snapshot.game_id,
             "mode": observation.mode.value,
@@ -230,6 +264,21 @@ class ChessCompanionService:
             "events": emitted,
         })
         return observation
+
+    def _wake_autonomous(self, *, game_id: str, move_number: int, events: tuple[str, ...]) -> None:
+        callback = self.wake_callback
+        if callback is None:
+            return
+        reason = f"chess_event:{events[-1]}:game={game_id}:move={move_number}"
+        self._last_wakeup_reason = reason
+        try:
+            callback(reason)
+        except Exception as exc:  # noqa: BLE001 - callback boundary must not break bridge HTTP
+            if self.logger is not None:
+                try:
+                    self.logger.warning("[chess-bridge] autonomous wake failed: %s", exc)
+                except (AttributeError, TypeError, ValueError, RuntimeError):
+                    pass
 
     def _resolve_engagement(self, *, binding: EvidenceBinding, now: float):
         """Nối bridge vào task cờ người dùng đã tạo, nếu task đó còn chưa có bàn.
@@ -267,15 +316,167 @@ class ChessCompanionService:
             source="chess_bridge",
         )
 
+
+    def active_engagement_id(self) -> str:
+        """Trả engagement id đang active, độc lập với độ tươi của FEN."""
+
+        with self._lock:
+            engagement_id = str(self._last_snapshot_summary.get("engagement_id", "") or "").strip()
+        if not engagement_id:
+            return ""
+        try:
+            engagement = self.engagement_runtime.registry.get(engagement_id)
+        except Exception:
+            return ""
+        return engagement_id if engagement is not None and bool(getattr(engagement, "active", False)) else ""
+
+    def is_engagement_active(self) -> bool:
+        """Phiên cờ còn active không đồng nghĩa snapshot FEN vẫn còn tươi."""
+
+        return bool(self.active_engagement_id())
+
+    def is_state_fresh(self, *, max_age_seconds: float = 30.0) -> bool:
+        """Kiểm riêng freshness của board snapshot, không dùng nó làm lifecycle."""
+
+        with self._lock:
+            item = dict(self._last_snapshot_summary)
+        received_at = float(item.get("received_at", 0.0) or 0.0)
+        board_fen = str(item.get("board_fen", "") or "").strip()
+        if not board_fen or not received_at:
+            return False
+        age = max(0.0, float(self.clock()) - received_at)
+        return age <= max(0.5, float(max_age_seconds))
+
+    def matches_turn(self, user_text: str) -> bool:
+        """Nhận câu hỏi về trạng thái/nước cờ, không nhận câu hỏi thuần UI.
+
+        FEN trả lời được quân, lượt và nước đi; nó không biết màu highlight, popup
+        hay vị trí nút trên Chess.com. Những câu đó phải tiếp tục đi vision.
+        """
+
+        if not self.is_engagement_active():
+            return False
+        normalized = normalize_vi(user_text)
+        if not normalized:
+            return False
+        visual_only_markers = (
+            "mau gi", "mau nao", "highlight", "to mau", "o sang", "o chop",
+            "nut nao", "popup", "bo cuc", "vi tri tren man hinh", "giao dien",
+        )
+        state_markers = (
+            "co vua", "chess", "fen", "ban co", "van co", "nuoc co",
+            "nuoc nao", "di gi", "danh gi", "nen danh", "nen di", "di sao",
+            "di nuoc", "chi tui", "chi toi", "chi minh",
+            "van nay", "ban nay", "quan nao", "trang di", "den di",
+            "chieu tuong", "chieu het", "nhap thanh", "phong hau",
+            "the co", "luot ai", "nuoc vua di", "nuoc tiep theo",
+        )
+        if any(marker in normalized for marker in visual_only_markers) and not any(
+            marker in normalized for marker in state_markers
+        ):
+            return False
+        if any(marker in normalized for marker in state_markers):
+            return True
+        tokens = set(normalized.split())
+        return bool(tokens & {"nuoc", "van", "quan", "fen"}) or normalized in {
+            "chi", "chi tui", "chi toi", "chi minh",
+        }
+
     def diagnostics(self) -> dict[str, Any]:
+        with self._lock:
+            last_snapshot = dict(self._last_snapshot_summary)
         return {
             "ok": True,
             "running": self.running,
             "host": self.host,
             "port": self.port,
             "token_required": bool(self.token),
-            "last_snapshot": dict(self._last_snapshot_summary),
+            "last_snapshot": last_snapshot,
+            "last_wakeup_reason": self._last_wakeup_reason,
         }
+
+    def current_grounding_evidence(
+        self,
+        *,
+        max_age_seconds: float = 30.0,
+        relevant_to_turn: bool = False,
+    ) -> tuple[dict[str, object], ...]:
+        """Xuất snapshot cờ tươi thành provenance chính thức cho chat grounding.
+
+        Đây là state có cấu trúc từ extension, vì vậy nó đáng tin hơn việc bắt
+        vision nhìn lại cùng một bàn cờ. ``relevant_to_turn`` chỉ quyết định vai
+        trò primary/ambient; snapshot vẫn được đưa vào context khi engagement
+        đang hoạt động để giữ continuity giữa các lượt.
+        """
+
+        with self._lock:
+            item = dict(self._last_snapshot_summary)
+        board_fen = str(item.get("board_fen", "") or "").strip()
+        received_at = float(item.get("received_at", 0.0) or 0.0)
+        age = max(0.0, float(self.clock()) - received_at) if received_at else float("inf")
+        if not board_fen or age > max(0.5, float(max_age_seconds)):
+            return ()
+
+        game_id = str(item.get("game_id", "") or "unknown")
+        move_number = int(item.get("move_number", 0) or 0)
+        phase = str(item.get("phase", "unknown") or "unknown")
+        side_to_move = str(item.get("side_to_move", "unknown") or "unknown")
+        last_move = str(item.get("last_move_uci", "") or "-")
+        suggestion = str(item.get("suggested_move_uci", "") or "-")
+        if relevant_to_turn and suggestion == "-":
+            # Tỷ lệ direct_move_rate chỉ điều khiển việc ERIS tự buột miệng gợi ý
+            # trong autonomous. Khi user hỏi thẳng “nên đánh gì”, phải phân tích
+            # ngay từ FEN hiện tại, không trả lời khai cuộc chung chung như sách
+            # nhập môn bị thất lạc trang.
+            try:
+                turn = "w" if side_to_move in {"white", "w"} else "b"
+                ply = max(0, (move_number - 1) * 2 + (1 if turn == "b" else 0))
+                position = Position.from_board_fen(board_fen, turn=turn, ply=ply)
+                candidates = analyze(position, depth=self.tracker.depth, top_n=1)
+                if candidates:
+                    suggestion = candidates[0][0].uci
+            except Exception as exc:  # noqa: BLE001 - evidence provider phải degrade yên
+                if self.logger is not None:
+                    try:
+                        self.logger.debug("[chess-bridge] on-demand suggestion failed: %s", exc)
+                    except Exception:
+                        pass
+        claim = (
+            "Chess board snapshot: "
+            f"phase={phase}; side_to_move={side_to_move}; move_number={move_number}; "
+            f"last_move={last_move}; suggested_move={suggestion}; board_fen={board_fen}"
+        )
+        return ({
+            "id": f"chess:{game_id}:{move_number}",
+            "source": self.structured_source_id,
+            "evidence_kind": "structured_runtime",
+            "engagement_kind": self.engagement_kind,
+            "engagement_active": self.is_engagement_active(),
+            "state_fresh": True,
+            "claim": claim,
+            "confidence": 1.0,
+            "grounded": True,
+            "stale": False,
+            "captured_at": float(item.get("captured_at", received_at) or received_at),
+            "received_at": received_at,
+            "relevant_to_turn": bool(relevant_to_turn),
+            "role": "primary_candidate" if relevant_to_turn else "ambient",
+            "engagement_id": str(item.get("engagement_id", "") or ""),
+            "game_id": game_id,
+            "phase": phase,
+            "board_fen": board_fen,
+            "side_to_move": side_to_move,
+            "move_number": move_number,
+            "last_move_uci": "" if last_move == "-" else last_move,
+            "suggested_move_uci": "" if suggestion == "-" else suggestion,
+            "tags": [
+                "chess",
+                "board",
+                "extension",
+                "structured_sensor",
+                "direct_sensor",
+            ],
+        },)
 
     def _success(self, details: Mapping[str, Any]) -> None:
         if self.health_registry is not None:

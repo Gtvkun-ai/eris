@@ -238,7 +238,13 @@ class InitiativeController:
 
         if not _as_bool(_setting("enabled", True), True):
             return InitiativeDecision(InitiativeAction.NO_OP, "initiative_disabled", silence)
-        if blackboard.reply_expected:
+        chess_event_override = bool(
+            blackboard.engagement_active
+            and (blackboard.engagement_due or blackboard.engagement_required)
+            and str(blackboard.engagement_kind or "").lower() == "chess"
+            and any(anchor.kind == "task" for anchor in blackboard.anchors)
+        )
+        if blackboard.reply_expected and not chess_event_override:
             action = InitiativeAction.BODY_ONLY if has_delta and not blackboard.privacy_blocked else InitiativeAction.NO_OP
             return InitiativeDecision(action, "waiting_for_user_reply", silence, body_motion="quiet_presence")
         if blackboard.user_busy:

@@ -236,7 +236,19 @@ class SpeechAnimator:
         self._cues = self._build_mouth_cues(context.text, context.prosody_style)
         self._cue_starts = tuple(cue.start for cue in self._cues)
         self._duration = max((cue.end for cue in self._cues), default=0.0)
-        self._audio_envelope = tuple(context.audio_envelope or ())
+        raw_envelope = tuple(context.audio_envelope or ())
+        # RMS từ vài backend có biên rất thấp dù audio nghe rõ. Chuẩn hóa chỉ khi
+        # peak yếu, giữ nguyên số 0 để khoảng im vẫn khép miệng thật và không biến
+        # Eris thành cá cảnh đang thở theo nhiễu nền.
+        peak = max(raw_envelope, default=0.0)
+        if 0.015 < peak < 0.55:
+            gain = min(8.0, 0.72 / peak)
+            self._audio_envelope = tuple(
+                0.0 if value <= 0.003 else _clamp(value * gain, 0.0, 0.90)
+                for value in raw_envelope
+            )
+        else:
+            self._audio_envelope = raw_envelope
         self._audio_frame_ms = max(0, int(context.audio_frame_ms or 0))
         self._audio_duration_ms = max(0, int(context.audio_duration_ms or 0))
         # Phase ổn định theo text, tránh mọi câu cùng gật ở đúng một nhịp.
@@ -265,13 +277,22 @@ class SpeechAnimator:
         )
         is_exclamation = "!" in text[-4:]
 
-        # Nhịp đầu rất nhỏ, đủ để mặt không đứng yên như ảnh căn cước khi nói.
+        # Chuyển động nền khi nói phải nhìn thấy được trên model 520x900. Bản cũ
+        # chỉ dao động 0.1 độ, về toán học là có tồn tại nhưng về thị giác gần như
+        # một lời đồn. Vẫn giữ biên nhỏ để không biến hội thoại thành lắc đầu liên tục.
         entry = _smoothstep(elapsed / 0.22)
         living = math.sin(elapsed * 1.55 + self._phase)
-        angle_x = living * 0.16 * entry
-        angle_z = math.sin(elapsed * 1.13 + self._phase * 0.63) * 0.13 * entry
-        brow_left = 0.0
-        brow_right = 0.0
+        phrase_beat = math.sin(elapsed * 3.15 + self._phase * 0.37) * mouth_ratio
+        angle_x = (living * 0.52 + phrase_beat * 0.24) * entry
+        angle_z = (
+            math.sin(elapsed * 1.13 + self._phase * 0.63) * 0.42
+            + math.sin(elapsed * 2.35 + self._phase) * mouth_ratio * 0.13
+        ) * entry
+        # Năng lượng âm tiết làm mày/đầu nhúc nhích rất nhẹ; không thay emotion,
+        # chỉ giúp khuôn mặt không rơi về hai trạng thái thở và chớp mắt.
+        syllable_energy = _smoothstep(mouth_ratio)
+        brow_left = syllable_energy * 0.025
+        brow_right = syllable_energy * 0.018
         mouth_form_offset = 0.0
         eye_left = 1.0
         eye_right = 1.0
@@ -400,8 +421,8 @@ class SpeechAnimator:
             mouth_form_offset=_clamp(mouth_form_offset, -0.16, 0.16),
             brow_left=_clamp(brow_left, -0.20, 0.28),
             brow_right=_clamp(brow_right, -0.20, 0.24),
-            angle_x=_clamp(angle_x, -1.25, 0.85),
-            angle_z=_clamp(angle_z, -1.20, 1.35),
+            angle_x=_clamp(angle_x, -1.80, 1.45),
+            angle_z=_clamp(angle_z, -1.75, 1.85),
             eye_open_left_scale=_clamp(eye_left, 0.08, 1.04),
             eye_open_right_scale=_clamp(eye_right, 0.08, 1.04),
             gaze_bias_x=_clamp(gaze_x, -0.13, 0.13),
@@ -457,7 +478,10 @@ class SpeechAnimator:
             return _clamp(current, 0.0, 1.0)
         fraction = position - index
         following = self._audio_envelope[index + 1]
-        return _clamp(current + (following - current) * fraction, 0.0, 1.0)
+        value = _clamp(current + (following - current) * fraction, 0.0, 1.0)
+        # Sai số float ở đúng biên frame không được giữ miệng hé 1e-14. Cubism
+        # không cần một cuộc tranh luận triết học về việc số đó có phải zero không.
+        return 0.0 if value < 1.0e-5 else value
 
     def _vowel_at(self, elapsed: float) -> str:
         if not self._cues:

@@ -23,6 +23,11 @@ class _GameState:
     seen: int = 0
     last_evaluation_cp: int | None = None
     phase: ChessObservationPhase = ChessObservationPhase.WAITING_FOR_START
+    last_ply: int = 0
+    # Chess.com /play/computer có thể giữ nguyên URL/game_id và còn gửi status
+    # ``completed`` của ván trước trong vài snapshot đầu ván mới. Khi đã phát hiện
+    # ply quay về đầu, tạm bỏ qua status terminal cũ cho tới khi có result thật.
+    ignore_stale_terminal_status: bool = False
 
 
 class ChessGameTracker:
@@ -45,7 +50,22 @@ class ChessGameTracker:
             resynced = False
             mover = ""
             previous_score = state.last_evaluation_cp if state is not None else None
-            if state is None:
+
+            # Trang chơi với máy thường tái sử dụng cùng game_id. Dấu hiệu chắc
+            # nhất của ván mới là tracker đã COMPLETED nhưng ply quay lùi mạnh
+            # hoặc trở về đầu trong khi bàn đã đổi. Nếu không reset tại đây, mọi
+            # nước của ván sau sẽ tiếp tục mang phase=completed, một cách rất
+            # hiệu quả để khiến trợ lý tuyên bố đám tang giữa khai cuộc.
+            reset_completed_game = bool(
+                state is not None
+                and state.phase is ChessObservationPhase.COMPLETED
+                and state.position.board_fen != snapshot.board_fen
+                and (
+                    snapshot.ply < state.last_ply
+                    or snapshot.ply <= 1
+                )
+            )
+            if state is None or reset_completed_game:
                 turn = "w" if snapshot.ply % 2 == 0 else "b"
                 position = Position.from_board_fen(snapshot.board_fen, turn=turn, ply=snapshot.ply)
                 phase = (
@@ -53,9 +73,17 @@ class ChessGameTracker:
                     if _snapshot_has_started(snapshot)
                     else ChessObservationPhase.WAITING_FOR_START
                 )
-                state = _GameState(position=position, seen=1, phase=phase)
+                state = _GameState(
+                    position=position,
+                    seen=1,
+                    phase=phase,
+                    last_ply=snapshot.ply,
+                    ignore_stale_terminal_status=reset_completed_game,
+                )
+                previous_score = None
                 game_started = phase is ChessObservationPhase.ACTIVE
                 self._games[key] = state
+                resynced = reset_completed_game
             elif state.position.board_fen != snapshot.board_fen:
                 last_move, child = infer_transition(state.position, snapshot.board_fen)
                 if child is not None and last_move is not None:
@@ -75,6 +103,7 @@ class ChessGameTracker:
                 if last_move is not None or _snapshot_has_started(snapshot):
                     state.phase = ChessObservationPhase.ACTIVE
                     game_started = True
+            state.last_ply = snapshot.ply
             position = state.position
 
             score = None
@@ -104,7 +133,16 @@ class ChessGameTracker:
                     )
 
             result = snapshot.result
-            game_over = bool(result or snapshot.status in {"completed", "finished", "game_over", "checkmate", "draw"})
+            terminal_status = snapshot.status in {"completed", "finished", "game_over", "checkmate", "draw"}
+            if state.ignore_stale_terminal_status and not result:
+                # Sau reset ván mới, status terminal có thể còn dính từ DOM cũ.
+                # Chỉ tin lại status khi extension đã gửi một trạng thái không
+                # terminal; result rõ ràng thì luôn thắng cơ chế cứu hộ này.
+                if terminal_status:
+                    terminal_status = False
+                else:
+                    state.ignore_stale_terminal_status = False
+            game_over = bool(result or terminal_status)
             if game_over:
                 state.phase = ChessObservationPhase.COMPLETED
             return ChessObservation(

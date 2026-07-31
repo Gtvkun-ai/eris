@@ -31,6 +31,7 @@ SourceKind = Literal[
     "pasted_code",
     "uploaded_file",
     "filename_only",
+    "chess_bridge",
     "current_screen",
     "live_vision",
     "user_text",
@@ -211,6 +212,11 @@ class SourceGroundingReport:
     # True khi facts màn hình là từ lượt TRƯỚC (không chụp tươi lượt này). ERIS vẫn
     # hiểu nó có màn hình, nhưng phải nói "lúc nãy" thay vì claim "đang hiển thị".
     screen_facts_are_stale: bool = False
+    # Structured extension/bridge state is not screen OCR. Keep it separate so
+    # it can remain ambient on unrelated turns and become primary only when the
+    # user is continuing that engagement.
+    structured_facts_preview: list[str] = field(default_factory=list)
+    structured_evidence_ids: list[str] = field(default_factory=list)
 
     pasted_code_detected: bool = False
     code_language: str = "unknown"
@@ -341,6 +347,7 @@ class SourceGroundingEngine:
     CONFIDENCE_CAPS: dict[SourceKind, float] = {
         "pasted_code": 0.95,
         "uploaded_file": 0.92,
+        "chess_bridge": 0.98,
         "current_screen": 0.78,
         "user_text": 0.86,
         "memory": 0.68,
@@ -354,6 +361,7 @@ class SourceGroundingEngine:
     # Khi nguồn được nhắc nhưng thiếu evidence trực tiếp.
     MISSING_SOURCE_CAPS: dict[SourceKind, float] = {
         "uploaded_file": 0.28,
+        "chess_bridge": 0.40,
         "current_screen": 0.25,
         "memory": 0.42,
         "web": 0.35,
@@ -462,6 +470,7 @@ class SourceGroundingEngine:
         active_files: Sequence[Any] | None = None,
         screen_facts: Sequence[Any] | None = None,
         screen_facts_stale: bool = False,
+        structured_facts: Sequence[Any] | None = None,
         memory_packet: Any = None,
         runtime_state: Any = None,
         allow_web: bool = False,
@@ -480,6 +489,8 @@ class SourceGroundingEngine:
             Danh sách file/evidence file mà runtime đã biết. Có thể là string, dict, dataclass.
         screen_facts:
             OCR/vision/screen facts hiện có. Nếu None, engine tự thử đọc từ frame.
+        structured_facts:
+            Evidence có cấu trúc từ extension/bridge, hiện dùng cho chess bridge.
         memory_packet:
             MemoryPacket nếu prompt muốn dùng memory như context phụ.
         runtime_state:
@@ -530,6 +541,7 @@ class SourceGroundingEngine:
 
         file_evidence = self._collect_file_evidence(frame=frame, active_files=active_files, runtime_state=runtime_state)
         screen_evidence = self._collect_screen_evidence(frame=frame, screen_facts=screen_facts, runtime_state=runtime_state)
+        structured_evidence = self._collect_structured_evidence(structured_facts=structured_facts)
         memory_evidence = self._collect_memory_evidence(frame=frame, memory_packet=memory_packet)
         user_evidence = self._collect_user_text_evidence(frame=frame, user_text=text)
 
@@ -553,6 +565,7 @@ class SourceGroundingEngine:
         screen_strength = (
             0.72 if has_fresh_vision else (0.55 if has_stale_vision else (0.5 if explicit_screen_request else 0.0))
         )
+        has_relevant_chess = bool(structured_evidence["present"] and structured_evidence["relevant"])
         memory_profile = self._derive_memory_answer_profile(
             normalized=normalized,
             user_text=text,
@@ -617,6 +630,17 @@ class SourceGroundingEngine:
                         missing=["screen_evidence"],
                     )
                 )
+
+        if has_relevant_chess:
+            candidates.append(
+                SourceCandidate(
+                    kind="chess_bridge",
+                    confidence=0.98,
+                    reason="Active chess engagement có snapshot FEN trực tiếp từ extension.",
+                    evidence_ids=structured_evidence["ids"],
+                    evidence_preview=structured_evidence["preview"],
+                )
+            )
 
         if memory_ref:
             if memory_evidence["present"]:
@@ -716,7 +740,15 @@ class SourceGroundingEngine:
 
         # Referent màn hình được phân giải theo bằng chứng, không phải keyword.
         # Pasted code luôn thắng: "đoạn này" sau khi paste là trỏ vào code, không phải màn hình.
-        if refers_to_screen and not user_code:
+        if has_relevant_chess and not user_code and not asks_about_file:
+            primary_source = "chess_bridge"
+            grounding_source = "chess_bridge"
+            confidence_cap_override = 0.98
+            memory_surface_allowed = False
+            memory_answer_allowed = False
+            memory_allowed_layers = ("procedural",)
+            notes.append("structured_chess_bridge_overrides_ocr_or_vision")
+        elif refers_to_screen and not user_code:
             if has_fresh_vision:
                 primary_source = "live_vision"
                 grounding_source = "live_vision"
@@ -809,11 +841,13 @@ class SourceGroundingEngine:
             screen_evidence_present=has_any_screen,
             screen_facts_are_stale=bool(has_stale_vision),
             screen_facts_preview=[str(p) for p in (screen_evidence.get("preview") or []) if str(p).strip()][:4],
+            structured_facts_preview=[str(p) for p in (structured_evidence.get("preview") or []) if str(p).strip()][:3],
+            structured_evidence_ids=[str(p) for p in (structured_evidence.get("ids") or []) if str(p).strip()][:8],
             pasted_code_detected=bool(code_info["detected"]),
             code_language=str(code_info["language"]),
             code_block_count=int(code_info["block_count"]),
             candidates=candidates,
-            evidence_ids=self._dedupe([*primary.evidence_ids, *file_evidence["ids"], *screen_evidence["ids"], *memory_evidence["ids"], *user_evidence["ids"]])[:20],
+            evidence_ids=self._dedupe([*primary.evidence_ids, *file_evidence["ids"], *structured_evidence["ids"], *screen_evidence["ids"], *memory_evidence["ids"], *user_evidence["ids"]])[:20],
             allowed_sources=self._dedupe(allowed_sources),
             grounding_source=grounding_source,
             missing_evidence=missing_evidence,
@@ -911,6 +945,8 @@ class SourceGroundingEngine:
             role: EvidenceRole = "primary" if candidate.kind == report.primary_source else "supporting"
             if candidate.kind in {"current_screen", "live_vision"}:
                 role = "primary" if report.refers_to_current_screen and candidate.kind == report.primary_source else "ambient"
+            elif candidate.kind == "chess_bridge":
+                role = "primary" if report.primary_source == "chess_bridge" else "ambient"
             for index, preview in enumerate(previews[:3]):
                 evidence_id = (candidate.evidence_ids[index] if index < len(candidate.evidence_ids) else "") or f"{candidate.kind}:{index}"
                 items.append(
@@ -942,6 +978,27 @@ class SourceGroundingEngine:
                     role=screen_role,
                     text=text,
                     confidence=0.78 if report.screen_evidence_present else 0.55,
+                )
+            )
+
+        known_structured = {item.text for item in items if item.source == "chess_bridge"}
+        structured_role: EvidenceRole = "primary" if report.primary_source == "chess_bridge" else "ambient"
+        for index, preview in enumerate(report.structured_facts_preview[:3]):
+            text = str(preview or "").strip()
+            if not text or text in known_structured:
+                continue
+            evidence_id = (
+                report.structured_evidence_ids[index]
+                if index < len(report.structured_evidence_ids)
+                else f"chess_bridge:{index}"
+            )
+            items.append(
+                GroundingEvidence(
+                    evidence_id=str(evidence_id),
+                    source="chess_bridge",
+                    role=structured_role,
+                    text=text,
+                    confidence=0.98,
                 )
             )
         return items
@@ -1178,7 +1235,7 @@ class SourceGroundingEngine:
                     "what is on screen right now; do NOT volunteer unless asked):"
                 )
             else:
-                lines.append("screen_context (vision summary — text only, do NOT describe or volunteer unless asked):")
+                lines.append("screen_context (OCR/UIA/vision summary — text only, do NOT describe or volunteer unless asked):")
             for fact in screen_previews[:4]:
                 lines.append(f"  {fact[:200]}")
 
@@ -1642,6 +1699,7 @@ class SourceGroundingEngine:
 
         priority: dict[SourceKind, int] = {
             "pasted_code": 100,
+            "chess_bridge": 96,
             "uploaded_file": 92,
             "filename_only": 91,
             "live_vision": 90,
@@ -1762,6 +1820,14 @@ class SourceGroundingEngine:
                 [
                     "Chỉ trả lời dựa trên file evidence đã có.",
                     "Nếu file evidence thiếu, yêu cầu user gửi/paste file thay vì đoán.",
+                ]
+            )
+        elif primary == "chess_bridge":
+            rules.extend(
+                [
+                    "Dùng snapshot FEN/turn/move từ chess bridge làm nguồn chính cho trạng thái bàn cờ.",
+                    "Không bắt vision nhìn lại bàn cờ khi chess bridge còn tươi và đủ dữ liệu.",
+                    "OCR chỉ là ambient context; không được phủ định structured chess state.",
                 ]
             )
         elif primary == "filename_only":
@@ -2064,6 +2130,52 @@ class SourceGroundingEngine:
             "ids": ids,
             "preview": previews,
             "confidence": confidence,
+        }
+
+    def _collect_structured_evidence(
+        self,
+        *,
+        structured_facts: Sequence[Any] | None = None,
+    ) -> dict[str, Any]:
+        """Thu evidence từ extension/bridge mà không giả làm OCR hay vision."""
+
+        items: list[Any] = []
+        relevant = False
+        for item in self._as_list(structured_facts):
+            grounded_marker = (
+                item.get("grounded") if isinstance(item, Mapping) else getattr(item, "grounded", None)
+            )
+            if grounded_marker is False or str(grounded_marker).strip().lower() == "false":
+                continue
+            source = str(
+                item.get("source", "") if isinstance(item, Mapping) else getattr(item, "source", "")
+            ).strip().lower()
+            tags = [
+                str(tag or "").strip().lower()
+                for tag in self._as_list(
+                    item.get("tags", ()) if isinstance(item, Mapping) else getattr(item, "tags", ())
+                )
+                if str(tag or "").strip()
+            ]
+            if source != "chess_bridge" and "chess" not in tags:
+                continue
+            if not self._preview_item(item):
+                continue
+            items.append(item)
+            marker = (
+                item.get("relevant_to_turn", False)
+                if isinstance(item, Mapping)
+                else getattr(item, "relevant_to_turn", False)
+            )
+            relevant = bool(relevant or marker)
+
+        ids, previews, confidence = self._summarize_evidence_items(items, default_confidence=0.95)
+        return {
+            "present": bool(items),
+            "relevant": relevant,
+            "ids": ids,
+            "preview": previews,
+            "confidence": min(1.0, max(0.0, confidence)),
         }
 
     def _collect_memory_evidence(self, *, frame: Any = None, memory_packet: Any = None) -> dict[str, Any]:

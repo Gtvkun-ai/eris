@@ -506,8 +506,8 @@ class LlmService:
         )
         if asks_user_knowledge and asks_to_try:
             return (
-                "Tôi vẫn theo mạch câu trước: tôi chỉ biết những gì bạn đã nói trong cuộc trò chuyện "
-                "và những ký ức runtime còn lưu, nhưng lượt gọi model vừa lỗi nên tôi chưa dám bịa thêm."
+                "Câu trước đang hỏi tôi biết gì về bạn. Tôi chỉ có những điều bạn đã nói trong cuộc trò chuyện "
+                "và ký ức runtime còn lưu; lượt gọi model vừa lỗi nên tôi không tự dựng thêm chi tiết."
             )
         if asks_user_knowledge:
             return (
@@ -515,7 +515,7 @@ class LlmService:
                 "lượt gọi model vừa lỗi nên tôi sẽ không tự dựng thêm chi tiết."
             )
         if assistant_texts and asks_to_try:
-            return f"Tôi vẫn theo mạch vừa rồi: {assistant_texts[-1]}"
+            return f"Câu trả lời gần nhất của tôi là: {assistant_texts[-1]}"
         return ""
 
     def _log_final_prompt(self, messages: list[dict], *, channel: str, stage: str) -> None:

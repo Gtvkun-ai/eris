@@ -80,3 +80,35 @@ class ScreenRouteDecision:
     @property
     def should_call_vision(self) -> bool:
         return self.mode == "vision"
+
+
+@dataclass(slots=True)
+class PendingVisionEscalation:
+    """Một yêu cầu vision trì hoãn sang lượt chat kế tiếp.
+
+    OCR/UIA được thử trước ở lượt hiện tại. Nếu evidence quá mơ hồ, runtime
+    không chụp vision ngay mà ghi một escalation ngắn hạn. Lượt chat kế tiếp
+    chỉ consume escalation khi vẫn còn cùng cửa sổ hoặc cùng engagement.
+    """
+
+    pending: bool = False
+    reason: str = ""
+    requested_at: float = 0.0
+    expires_at: float = 0.0
+    window_key: str = ""
+    screen_revision: int = 0
+    engagement_id: str = ""
+    query_hint: str = ""
+
+    def active(self, *, now: float) -> bool:
+        return bool(self.pending and self.expires_at > float(now))
+
+    def clear(self) -> None:
+        self.pending = False
+        self.reason = ""
+        self.requested_at = 0.0
+        self.expires_at = 0.0
+        self.window_key = ""
+        self.screen_revision = 0
+        self.engagement_id = ""
+        self.query_hint = ""

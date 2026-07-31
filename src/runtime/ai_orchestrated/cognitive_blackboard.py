@@ -102,7 +102,13 @@ class TypedCognitiveBlackboard:
     engagement_active: bool = False
     engagement_due: bool = False
     engagement_required: bool = False
+    engagement_preempts_reply_baton: bool = False
     engagement_kind: str = ""
+    # Giữ state domain tới tận Surface/local fallback. Nếu chỉ giữ chữ “task”,
+    # fallback sẽ nói “theo mạch” như thể đó là một đơn vị đo lường hợp pháp.
+    engagement_state_summary: str = ""
+    engagement_last_event_kind: str = ""
+    engagement_evidence_refs: tuple[str, ...] = ()
     attention_pressure: float = 0.0
     observer_ready: bool = False
     observer_confidence: float = 0.0
@@ -130,6 +136,7 @@ class TypedCognitiveBlackboard:
         commentary = _mapping(snapshot.get("commentary_expectation"))
         engagement = _mapping(snapshot.get("engagement_context"))
         engagement_interaction = _mapping(snapshot.get("engagement_interaction"))
+        engagement_foreground = _mapping(engagement.get("foreground"))
         latest_observation = _mapping(snapshot.get("latest_observation"))
         vision_grounding = _mapping(snapshot.get("vision_grounding"))
 
@@ -213,21 +220,57 @@ class TypedCognitiveBlackboard:
         engagement_active = bool(engagement.get("active", False))
         engagement_due = bool(engagement_interaction.get("due", False))
         engagement_required = bool(engagement_interaction.get("required", False))
+        interaction_declares_preemption = "preempts_reply_baton" in engagement_interaction
+        engagement_preempts_reply_baton = bool(
+            engagement_interaction.get("preempts_reply_baton", False)
+        )
         engagement_kind = _compact(
-            engagement_interaction.get("engagement_kind") or engagement.get("kind", ""), 80
+            engagement_interaction.get("engagement_kind")
+            or engagement_foreground.get("kind")
+            or engagement.get("kind", ""),
+            80,
+        )
+        engagement_state_summary = _compact(
+            engagement_foreground.get("current_state_summary")
+            or engagement_foreground.get("objective")
+            or engagement.get("objective", ""),
+            420,
+        )
+        engagement_last_event_kind = _compact(
+            engagement_foreground.get("last_event_kind")
+            or engagement_interaction.get("reason", ""),
+            120,
+        )
+        engagement_evidence_refs = tuple(
+            ref for ref in (
+                _compact(item, 160)
+                for item in _sequence(engagement_interaction.get("evidence_refs"))[:8]
+            ) if ref
         )
         if engagement_active and (engagement_due or engagement_required):
             anchors.append(CognitiveAnchor(
                 kind="task",
                 anchor_id=_compact(engagement_interaction.get("engagement_id", "active_engagement"), 120),
-                topic_seed=_compact(
-                    engagement_interaction.get("reason") or engagement.get("objective", "follow up active engagement"),
+                # State summary có quân/lượt/nước đi hữu ích hơn chữ reason kiểu
+                # ``engagement_event:chess.move_played``. Reason vẫn làm fallback
+                # cuối nếu adapter chưa có projection.
+                topic_seed=engagement_state_summary or _compact(
+                    engagement_interaction.get("reason") or "follow up active engagement",
                     240,
                 ),
                 confidence=0.86 if engagement_required else 0.76,
                 priority=0.94 if engagement_required else 0.88,
-                evidence_refs=(),
-                metadata={"engagement_kind": engagement_kind},
+                evidence_refs=engagement_evidence_refs,
+                metadata={
+                    "engagement_kind": engagement_kind,
+                    "last_event_kind": engagement_last_event_kind,
+                    "state_summary": engagement_state_summary,
+                    **(
+                        {"preempts_reply_baton": engagement_preempts_reply_baton}
+                        if interaction_declares_preemption
+                        else {}
+                    ),
+                },
             ))
 
         # 3) Discovery chỉ được surface khi DiscoveryRuntime đã đánh dấu một
@@ -393,7 +436,11 @@ class TypedCognitiveBlackboard:
             engagement_active=engagement_active,
             engagement_due=engagement_due,
             engagement_required=engagement_required,
+            engagement_preempts_reply_baton=engagement_preempts_reply_baton,
             engagement_kind=engagement_kind,
+            engagement_state_summary=engagement_state_summary,
+            engagement_last_event_kind=engagement_last_event_kind,
+            engagement_evidence_refs=engagement_evidence_refs,
             attention_pressure=attention_pressure,
             observer_ready=observer_ready,
             observer_confidence=observer_confidence,
@@ -429,6 +476,13 @@ class TypedCognitiveBlackboard:
             "commentary_due": self.commentary_due,
             "commentary_required": self.commentary_required,
             "engagement_active": self.engagement_active,
+            "engagement_preempts_reply_baton": self.engagement_preempts_reply_baton,
+            "engagement": {
+                "kind": self.engagement_kind,
+                "state_summary": self.engagement_state_summary,
+                "last_event_kind": self.engagement_last_event_kind,
+                "evidence_refs": list(self.engagement_evidence_refs),
+            },
             "background_cognition": {
                 "observer_ready": self.observer_ready,
                 "observer_confidence": round(self.observer_confidence, 3),

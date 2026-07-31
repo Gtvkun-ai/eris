@@ -110,6 +110,30 @@ def test_bridge_updates_durable_chess_engagement() -> None:
     assert runtime.registry.foreground().last_event_kind == "chess.move_played"
 
 
+def test_bridge_exports_fresh_structured_grounding_evidence() -> None:
+    now = [40.0]
+    runtime = EngagementRuntime(clock=lambda: now[0])
+    service = ChessCompanionService(runtime, analysis_depth=1, clock=lambda: now[0])
+    service.handle_snapshot({
+        "platform": "chess.com",
+        "game_id": "grounding-export",
+        "board_fen": Position.initial().board_fen,
+        "page_url": "https://www.chess.com/play/computer",
+        "ply": 0,
+        "captured_at": 40.0,
+    })
+
+    evidence = service.current_grounding_evidence(relevant_to_turn=True)
+    assert len(evidence) == 1
+    assert evidence[0]["source"] == "chess_bridge"
+    assert evidence[0]["grounded"] is True
+    assert evidence[0]["relevant_to_turn"] is True
+    assert evidence[0]["board_fen"] == Position.initial().board_fen
+
+    now[0] = 60.0
+    assert service.current_grounding_evidence(max_age_seconds=8.0) == ()
+
+
 def test_user_chess_task_is_reused_when_bridge_sees_board() -> None:
     """Không được tạo hai engagement: một cái hỏi bàn đâu, một cái tự bình luận."""
 

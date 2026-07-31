@@ -79,11 +79,35 @@ from screen import build_screen_text_runtime
 
 
 class AutonomousLoopRuntimeMixin:
+    def _wake_autonomous_loop(self, reason: str = "external_event") -> None:
+        """Đánh thức vòng self-turn mà không phát ngôn từ thread nguồn event."""
+
+        self._autonomous_wakeup_reason = str(reason or "external_event")[:180]
+        wake_event = getattr(self, "_autonomous_wakeup_event", None)
+        if wake_event is None:
+            wake_event = threading.Event()
+            self._autonomous_wakeup_event = wake_event
+        wake_event.set()
+        logger = getattr(self, "logger", None)
+        if logger is not None:
+            try:
+                logger.info("[autonomous wake] reason=%s", self._autonomous_wakeup_reason)
+            except (AttributeError, TypeError, ValueError, RuntimeError):
+                pass
+
     def _sleep_interruptible(self, seconds: float):
-        end_at = time.time() + seconds
-        # Trong khi còn self.running và chưa tới end_at, nó time.sleep(0.2).
+        end_at = time.time() + max(0.0, float(seconds))
+        wake_event = getattr(self, "_autonomous_wakeup_event", None)
+        # Event.wait thay cho sleep thuần để bridge cờ có thể đánh thức planner
+        # ngay. Callback chỉ mở mắt vòng loop; quyền nói vẫn thuộc governor.
         while self.running and time.time() < end_at:
-            time.sleep(0.2) # Mục đích: giữ app phản hồi nhanh, không bị block lâu.
+            remaining = max(0.0, end_at - time.time())
+            interval = min(0.2, remaining)
+            if wake_event is not None and wake_event.wait(interval):
+                wake_event.clear()
+                return
+            if wake_event is None:
+                time.sleep(interval)
             if not self.body_running_fn():
                 self.stop()
                 return

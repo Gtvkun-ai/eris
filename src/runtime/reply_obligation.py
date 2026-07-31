@@ -67,11 +67,13 @@ def _minimal_text(frame: SemanticFrame | None, *, language_hint: str) -> tuple[s
             "ja": ("その通り。直接答えられていなかった。同じ文をもう一度送って。", "repair"),
             "vi": ("Đúng, lượt trước tôi đã không trả lời trực tiếp. Bạn gửi lại đúng câu đó một lần nhé.", "repair"),
         }.get(language, ("Đúng, lượt trước tôi đã không trả lời trực tiếp. Bạn gửi lại đúng câu đó một lần nhé.", "repair"))
+    # Chỉ dùng khi provider thật sự không trả được bất kỳ public text nào. Không
+    # dùng văn mẫu “hụt nhịp/bám mạch” vì nó vừa vô nghĩa vừa che mất lỗi thật.
     return {
-        "en": ("I missed a beat there, but I'm still with you. Say it a little more plainly and I'll follow from here.", "repair"),
-        "ja": ("今の返答で少し取りこぼした。でも聞いているよ。もう少しだけ噛み砕いてくれたら、そこから追う。", "repair"),
-        "vi": ("Tôi hụt nhịp ở lượt này, nhưng vẫn đang nghe. Cậu nói rõ thêm một chút, tôi bám tiếp từ đây.", "repair"),
-    }.get(language, ("Tôi hụt nhịp ở lượt này, nhưng vẫn đang nghe. Cậu nói rõ thêm một chút, tôi bám tiếp từ đây.", "repair"))
+        "en": ("I received that message, but the reply generator returned no usable text.", "repair"),
+        "ja": ("そのメッセージは受け取ったが、返答生成から使える文が返らなかった。", "repair"),
+        "vi": ("Tôi đã nhận câu này, nhưng bộ sinh lời không trả về câu dùng được.", "repair"),
+    }.get(language, ("Tôi đã nhận câu này, nhưng bộ sinh lời không trả về câu dùng được.", "repair"))
 
 
 def enforce_reply_obligation(

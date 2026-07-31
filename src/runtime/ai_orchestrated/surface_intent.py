@@ -60,6 +60,64 @@ def _clamp01(value: Any, default: float = 0.0) -> float:
     return max(0.0, min(1.0, number))
 
 
+def _summary_fields(summary: str) -> dict[str, str]:
+    """Tách ``key=value`` từ PlannerProjection mà không hiểu domain sâu."""
+
+    fields: dict[str, str] = {}
+    for part in str(summary or "").split(";"):
+        item = " ".join(part.split()).strip()
+        if not item or "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        fields[key.strip().lower()] = value.strip()
+    return fields
+
+
+def _chess_task_fallback_text(blackboard: TypedCognitiveBlackboard) -> str:
+    """Viết đúng một câu từ state cờ, không dùng văn mẫu “theo mạch”."""
+
+    summary = str(blackboard.engagement_state_summary or "").strip()
+    fields = _summary_fields(summary)
+    phase = fields.get("phase", "").lower()
+    side = fields.get("to_move", "").lower()
+    last_move = fields.get("last", "")
+    suggestion = fields.get("suggestion", "")
+    result = fields.get("result", "")
+    move_number = ""
+    for part in summary.split(";"):
+        compact_part = " ".join(part.split()).strip().lower()
+        if compact_part.startswith("move "):
+            move_number = compact_part[5:].strip()
+            break
+    side_vi = {"white": "trắng", "black": "đen", "w": "trắng", "b": "đen"}.get(side, side)
+
+    last_event = str(blackboard.engagement_last_event_kind or "").strip().lower()
+    # Ưu tiên dữ liệu nước cờ cụ thể hơn phase. Một số frontend từng giữ chữ
+    # ``completed`` của ván trước trong vài snapshot đầu ván mới; suggestion/
+    # last_move mới là bằng chứng đang sống và hữu ích cho câu hiện tại.
+    if suggestion:
+        suffix = f"; hiện đến lượt {side_vi}" if side_vi else ""
+        return f"Nước gợi ý hiện tại là {suggestion}{suffix}."
+    if last_move:
+        suffix = f"; hiện đến lượt {side_vi}" if side_vi else ""
+        return f"Nước vừa đi là {last_move}{suffix}."
+    if result or "game_over" in last_event or "game.ended" in last_event or "game.completed" in last_event:
+        return f"Ván đã kết thúc{f': {result}' if result else ''}."
+    if phase in {"waiting_for_start", "waiting", "ready"}:
+        return "Bàn cờ đã được nhận; ván chưa bắt đầu."
+    if side_vi:
+        move_text = f" ở nước {move_number}" if move_number else ""
+        return f"Bàn cờ đã được nhận{move_text}; hiện đến lượt {side_vi}."
+    return ""
+
+
+def _anchor_topic(blackboard: TypedCognitiveBlackboard, kind: str) -> str:
+    for anchor in blackboard.anchors:
+        if str(anchor.kind or "") == kind and str(anchor.topic_seed or "").strip():
+            return str(anchor.topic_seed).strip()
+    return ""
+
+
 def _surface_languages() -> tuple[str, str]:
     try:
         from runtime.runtime_settings_store import runtime_text
@@ -226,15 +284,26 @@ class SurfaceIntentEngine:
             return None
         mode = intent.mode
         if mode == "continuation":
+            topic = _anchor_topic(blackboard, "conversation")
+            if not topic or topic == "continue the open public thread":
+                return None
             options = (
-                "Tôi vẫn còn để ý mạch lúc nãy. Có một chỗ chưa nên bỏ qua.",
-                "Chuyện lúc nãy vẫn còn một đầu mối đáng nối tiếp.",
+                f"Chỗ còn dang dở là: {topic}",
+                f"Ý chưa khép lại lúc nãy là: {topic}",
             )
         elif mode == "task_followup":
-            options = (
-                "Tôi vẫn đang theo mạch việc này. Có gì vừa thay đổi không?",
-                "Mạch đang làm vẫn còn mở. Cậu muốn tôi bám tiếp chỗ nào?",
-            )
+            if blackboard.engagement_kind == "chess":
+                chess_text = _chess_task_fallback_text(blackboard)
+                if not chess_text:
+                    # Không có state cụ thể thì im/body-only. Một câu “theo mạch”
+                    # không tự nhiên trở nên hữu ích chỉ vì provider đang timeout.
+                    return None
+                options = (chess_text,)
+            else:
+                summary = str(blackboard.engagement_state_summary or "").strip()
+                if not summary:
+                    return None
+                options = (f"Trạng thái hiện tại: {summary}.",)
         elif mode == "discovery_share":
             options = (
                 "Tôi vừa có một phát hiện đã kiểm lại. Chỗ này đáng kể cho cậu nghe.",
@@ -246,9 +315,12 @@ class SurfaceIntentEngine:
             # pipeline chuyển body-only; factual speech chờ grounded worker.
             return None
         elif mode == "memory_callback":
+            topic = _anchor_topic(blackboard, "memory")
+            if not topic:
+                return None
             options = (
-                "Có một chuyện cũ vừa nối lại với mạch hiện tại. Tôi muốn nhắc nó thật gọn.",
-                "Một ký ức có nguồn vừa vọng lại đúng lúc. Chỗ này đáng nối thêm một câu.",
+                f"Một chi tiết cũ vừa liên quan trực tiếp tới chuyện này: {topic}",
+                f"Ký ức có nguồn đang liên quan ở đây là: {topic}",
             )
         elif mode == "inner_thought":
             options = (

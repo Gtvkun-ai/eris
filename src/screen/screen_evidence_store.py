@@ -63,10 +63,32 @@ class ScreenEvidenceStore:
         return tuple(selected)
 
     def ambient_facts(self, *, max_age_seconds: float = 8.0, max_items: int = 6) -> tuple[str, ...]:
+        return tuple(
+            block.text
+            for block in self.ambient_blocks(
+                max_age_seconds=max_age_seconds,
+                max_items=max_items,
+            )
+            if block.text.strip()
+        )
+
+    def ambient_blocks(
+        self,
+        *,
+        max_age_seconds: float = 8.0,
+        max_items: int = 6,
+    ) -> tuple[ScreenTextBlock, ...]:
+        """Trả các block OCR/UIA tươi nhất để làm ambient chat context.
+
+        Khác ``query()``, hàm này không yêu cầu câu user phải chứa marker màn
+        hình. Nhờ vậy mọi lượt chat đều nhận được OCR cache hiện có mà không ép
+        worker chạy OCR lại và cũng không tự biến screen thành primary source.
+        """
+
         now = time.time()
         snapshot = self.snapshot()
         if snapshot.privacy_blocked:
             return ()
         items = [block for block in snapshot.blocks if now - float(block.captured_at) <= max_age_seconds]
         items.sort(key=lambda block: (block.confidence, block.captured_at), reverse=True)
-        return tuple(block.text for block in items[:max_items] if block.text.strip())
+        return tuple(block for block in items[:max_items] if block.text.strip())

@@ -186,6 +186,56 @@ def _serializable_public_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     return public_payload(payload)
 
 
+def _structured_chess_fallback_text(report: Any, user_text: str) -> str:
+    """Dựng câu tối thiểu từ chess evidence khi provider thật sự không trả text.
+
+    Đây không phải fallback văn mẫu. Nó chỉ đọc field có cấu trúc đã nằm trong
+    SourceGroundingReport, nên câu luôn nói rõ trạng thái/nước cờ thay vì lẩm bẩm
+    về một cái “mạch” không ai biết là mạch gì.
+    """
+
+    if str(getattr(report, "primary_source", "") or "") not in {"chess_bridge", "structured_runtime"}:
+        return ""
+    previews = tuple(getattr(report, "structured_facts_preview", ()) or ())
+    claim = " ".join(str(item or "") for item in previews if str(item or "").strip())
+    if not claim:
+        return ""
+
+    def field(name: str) -> str:
+        match = re.search(rf"(?:^|[; ]){re.escape(name)}=([^;]+)", claim, flags=re.IGNORECASE)
+        return str(match.group(1) if match else "").strip()
+
+    phase = field("phase").lower()
+    side = field("side_to_move").lower()
+    last_move = field("last_move")
+    suggestion = field("suggested_move")
+    move_number = field("move_number")
+    side_vi = {"white": "trắng", "black": "đen", "w": "trắng", "b": "đen"}.get(side, side)
+    suggestion = "" if suggestion in {"", "-", "none", "unknown"} else suggestion
+    last_move = "" if last_move in {"", "-", "none", "unknown"} else last_move
+
+    normalized_user = " ".join(str(user_text or "").lower().split())
+    asks_move = any(marker in normalized_user for marker in (
+        "nước nào", "nuoc nao", "đánh gì", "danh gi", "đi gì", "di gi",
+        "nên đánh", "nen danh", "nước tiếp", "nuoc tiep",
+    ))
+    if asks_move and suggestion:
+        return f"Nước gợi ý hiện tại là {suggestion}."
+    # Field nước cờ cụ thể thắng phase mơ hồ/stale. Chess.com từng giữ status
+    # completed của ván cũ trên cùng route, nên tuyên bố kết thúc trước khi đọc
+    # last_move là cách rất nhanh để nói sai với vẻ đầy tự tin.
+    if suggestion:
+        return f"Chess bridge đang gợi ý {suggestion}."
+    if last_move and side_vi:
+        return f"Nước vừa đi là {last_move}; hiện đến lượt {side_vi}."
+    if phase in {"completed", "game_over", "finished"}:
+        return "Ván cờ đã kết thúc."
+    if side_vi:
+        suffix = f" ở nước {move_number}" if move_number else ""
+        return f"Bàn cờ đã được nhận{suffix}; hiện đến lượt {side_vi}."
+    return "Bàn cờ đã được chess bridge nhận, nhưng snapshot này chưa có nước gợi ý."
+
+
 def _previous_active_proposition_root(ledger: Any) -> int:
     """Lấy root đang active mà không coi acknowledgement là proposition mới."""
 
@@ -747,83 +797,40 @@ class AIChatOrchestrator:
             )
             grounding_annotations = grounding_verdict.annotations
             if not grounding_verdict.allowed:
+                # Chính sách V41: gate chỉ GẮN NHÃN rủi ro, không được xóa câu,
+                # không retry và không đẩy lượt chat sang văn mẫu fallback. Annotator
+                # hiện còn dựa khá nhiều vào marker chữ; dùng nó như telemetry thì
+                # hữu ích, dùng nó làm công tắc bịt miệng thì không.
                 violation_codes = ["UNGROUNDED_PERCEPTION_OR_ACTION_CLAIM"]
-                if _deepseek_web_authority_mode():
-                    # DeepSeek Web owns one atomic semantic attempt. An unsafe
-                    # candidate is suppressed and degraded locally; a second
-                    # remote rewrite would violate the one-authority/one-deadline
-                    # contract and can double perceived latency.
-                    host.logger.warning(
-                        "[cortex v2 gate] turn=%s violations=%s; suppressing web commit without remote retry",
-                        turn_seq,
-                        ",".join(violation_codes),
-                    )
-                    payload = {}
-                else:
-                    host.logger.warning(
-                        "[cortex v2 gate] turn=%s violations=%s; retrying public writer once",
-                        turn_seq,
-                        ",".join(violation_codes),
-                    )
-                    retry_instruction = grounding_verdict.retry_instruction()
-                    host._set_background_memory_digest_remote_inflight(True)
-                    try:
-                        retried = host.ai_model_router.generate_public_reply(
-                            chat_history=history,
-                            user_text=user_message,
-                            memory_context=compiled_context.memory,
-                            grounding_context=compiled_context.grounding,
-                            relationship_context=compiled_context.relationship,
-                            personality_context=compiled_context.personality,
-                            interrupt_context=compiled_context.interrupt,
-                            engagement_context=compiled_context.engagement,
-                            routing_context=compiled_context.routing,
-                            discourse_context=compiled_context.discourse,
-                            use_escalation=use_escalation,
-                            reasoning_effort=reasoning_effort,
-                            thinking_mode=thinking_mode,
-                            allow_fallback=not no_fallback_mode_enabled(),
-                            language_hint=_runtime_language(),
-                            speech_language_hint=_runtime_speech_language(),
-                            planned_intention=chat_plan,
-                            retry_instruction=retry_instruction,
-                            # PDF annotation, page 13: wording retry is forbidden
-                            # from reinterpreting discourse/meaning.  The validated
-                            # frame from the first authority call is immutable.
-                            locked_semantic_frame=payload.get("semantic_frame", {}),
-                        )
-                    finally:
-                        host._set_background_memory_digest_remote_inflight(False)
-                    if retried:
-                        retry_grounding_verdict = evaluate_grounded_surface(
-                            grounding_engine, str(retried.get("text", "") or ""), report=grounding_report
-                        )
-                        retry_grounding = retry_grounding_verdict.annotations
-                        if retry_grounding_verdict.allowed:
-                            # Wording retry không được đổi assistant act/proposition mode.
-                            retried["assistant_act"] = assistant_act.to_dict()
-                            retried["_typed_assistant_act"] = assistant_act
-                            retried["semantic_frame"] = typed_frame.to_dict() if typed_frame is not None else retried.get("semantic_frame", {})
-                            retried["_typed_semantic_frame"] = typed_frame
-                            payload = retried
-                        else:
-                            retry_codes = ["UNGROUNDED_PERCEPTION_OR_ACTION_CLAIM"] if retry_grounding else []
-                            host.logger.warning(
-                                "[cortex v2 gate] retry still invalid turn=%s violations=%s; suppressing unsafe surface",
-                                turn_seq,
-                                ",".join(retry_codes),
-                            )
-                            payload = {}
-                    else:
-                        payload = {}
+                payload["grounding_risk"] = {
+                    "allowed": False,
+                    "violations": violation_codes,
+                    "annotations": [
+                        item.to_dict() if callable(getattr(item, "to_dict", None)) else str(item)
+                        for item in grounding_annotations
+                    ],
+                    "policy": "annotate_and_pass_through",
+                }
+                payload["grounding_confidence_cap"] = min(
+                    float(payload.get("grounding_confidence_cap", 1.0) or 1.0),
+                    float(getattr(grounding_report, "confidence_cap", 0.45) or 0.45),
+                )
+                host.logger.warning(
+                    "[cortex v2 gate] turn=%s violations=%s; passing original draft without retry",
+                    turn_seq,
+                    ",".join(violation_codes),
+                )
+
 
 
         if not payload:
-            # Khi provider/grounding không để lại public text, dùng reference đã
-            # resolve nếu có. Nếu cả frame cũng không có, trả lỗi hội thoại chung
-            # thay vì im lặng; không suy ý định bằng marker câu chữ.
+            # Chỉ vào đây khi provider thật sự không có câu. Nếu structured chess
+            # evidence đã tồn tại, dựng câu từ chính state đó; tuyệt đối không rơi
+            # về “hụt nhịp/theo mạch” rồi bắt user mô tả lại bàn cờ.
+            chess_text = _structured_chess_fallback_text(grounding_report, user_text)
+            seed_text = chess_text or str(discourse_surface.text or "").strip()
             fallback_payload = enforce_reply_obligation(
-                {"text": str(discourse_surface.text or "").strip(), "should_speak": bool(discourse_surface.text)},
+                {"text": seed_text, "should_speak": bool(seed_text)},
                 user_text=user_text,
                 frame=typed_frame,
                 language_hint=_runtime_language(),

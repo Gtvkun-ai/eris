@@ -815,14 +815,22 @@ class SelfTurnPipeline:
             grounding_allowed = bool(legacy_verdict.allowed)
             grounding_code = str(legacy_verdict.violation_code or "grounding_blocked")
         if not grounding_allowed:
+            # V41: postflight chỉ ghi telemetry. Không được vứt câu đã sinh hoặc
+            # kéo autonomous sang fallback chung chung vì một word-marker nhận
+            # nhầm claim. Preflight provenance vẫn giữ privacy/evidence boundary.
             host.logger.warning(
-                "[grounding gate] autonomous surface blocked subject=%s violations=%s",
+                "[grounding gate] autonomous surface risk subject=%s violations=%s; passing through",
                 plan.semantics.subject_key,
                 grounding_code,
             )
-            self._record_result(plan, result="grounding_blocked", gate_reason=grounding_code)
-            host._sleep_interruptible(10)
-            return True
+            try:
+                setattr(decision, "grounding_risk", {
+                    "allowed": False,
+                    "violation": grounding_code,
+                    "policy": "annotate_and_pass_through",
+                })
+            except Exception:
+                pass
         host.ai_stage_planner.apply(decision, plan.performance_hint, state=context.state, channel="autonomous")
         decision = host._execute_system_action(decision, snapshot=context.perception.snapshot, frame=None)
         if isinstance(getattr(decision, "action_result_meta", None), Mapping):

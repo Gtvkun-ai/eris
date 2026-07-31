@@ -1,4 +1,10 @@
-from .evidence_models import ActiveWindowInfo, ScreenRouteDecision, ScreenTextBlock, ScreenTextSnapshot
+from .evidence_models import (
+    ActiveWindowInfo,
+    PendingVisionEscalation,
+    ScreenRouteDecision,
+    ScreenTextBlock,
+    ScreenTextSnapshot,
+)
 from .screen_anaphora_rescue import ScreenAnaphoraResolution, ScreenAnaphoraRescue
 from .screen_evidence_store import ScreenEvidenceStore
 from .screen_relevance_router import ScreenRelevanceRouter
@@ -29,6 +35,7 @@ def build_screen_text_runtime(*, logger=None):
 
 __all__ = [
     "ActiveWindowInfo",
+    "PendingVisionEscalation",
     "ScreenRouteDecision",
     "ScreenTextBlock",
     "ScreenTextSnapshot",
