@@ -15,8 +15,11 @@ from runtime.chess import (
 )
 
 
-def _fake_stockfish(tmp_path: Path) -> Path:
-    script = tmp_path / "stockfish-fake"
+import sys
+
+
+def _fake_stockfish(tmp_path: Path) -> str:
+    script = tmp_path / "stockfish-fake.py"
     script.write_text(
         """#!/usr/bin/env python3
 import sys
@@ -40,7 +43,7 @@ for raw in sys.stdin:
         encoding="utf-8",
     )
     script.chmod(0o755)
-    return script
+    return f'"{sys.executable}" "{script}"'
 
 
 def test_stockfish_uci_parses_multipv_and_provenance(tmp_path: Path) -> None:

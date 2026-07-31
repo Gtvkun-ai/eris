@@ -214,6 +214,8 @@ class GenericEngagementAdapter:
                 "result", "status", "state", "outcome", "error", "url", "artifact",
                 "mode", "full_assistance", "board_fen", "side_to_move", "last_move_uci",
                 "last_move_san", "evaluation_cp", "evaluation_label",
+                "evaluation_cp_white", "evaluation_label_white",
+                "evaluation_cp_user", "evaluation_label_user", "advantage_side", "user_position",
                 "suggested_move_uci", "suggested_move_san", "confidence",
                 "evaluation_swing_cp", "move_quality", "hint_focus", "orientation",
                 "user_side", "mover_side", "actor", "actor_is_user", "event", "speech_act",
@@ -504,8 +506,12 @@ class ChessCompanionAdapter(GenericEngagementAdapter):
             pieces.append(f"to_move={_compact(state.get('side_to_move'), 16)}")
         if state.get("last_move_san") or state.get("last_move_uci"):
             pieces.append(f"last={_compact(state.get('last_move_san') or state.get('last_move_uci'), 24)}")
-        if state.get("evaluation_label"):
-            pieces.append(f"evaluation={_compact(state.get('evaluation_label'), 40)}")
+        if state.get("evaluation_label_user") and state.get("user_side"):
+            pieces.append(f"user_position={_compact(state.get('evaluation_label_user'), 40)}")
+        elif state.get("advantage_side"):
+            pieces.append(f"advantage_side={_compact(state.get('advantage_side'), 16)}")
+        elif state.get("evaluation_label"):
+            pieces.append(f"evaluation_white={_compact(state.get('evaluation_label'), 40)}")
         if state.get("move_quality"):
             pieces.append(f"move_quality={_compact(state.get('move_quality'), 24)}")
         if state.get("hint_focus"):

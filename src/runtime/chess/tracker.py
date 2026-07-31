@@ -13,8 +13,39 @@ from .contracts import (
     ChessObservationPhase,
     MoveSuggestion,
 )
-from .engine import Position, apply_move, in_check, infer_transition, move_san
+from .engine import Position, apply_move, evaluation_label, in_check, infer_transition, move_san
 from .mode_policy import classify_mode
+
+
+def _user_position_label(score_cp_user: int | None) -> str:
+    """Nhãn lợi thế theo góc nhìn người dùng, không gắn nhầm màu quân.
+
+    Score dương nghĩa là user tốt hơn, score âm nghĩa là user xấu hơn. Khi
+    chưa biết user cầm màu nào, trả ``unknown`` thay vì tự nhận một phía.
+    """
+
+    if score_cp_user is None:
+        return "unknown"
+    score = int(score_cp_user)
+    absolute = abs(score)
+    if absolute < 40:
+        return "balanced"
+    degree = (
+        "slightly" if absolute < 120 else
+        "clearly" if absolute < 300 else
+        "winning" if absolute < 700 else
+        "decisively"
+    )
+    relation = "better" if score > 0 else "worse"
+    return f"{degree}_{relation}"
+
+
+def _advantage_side(score_cp_white: int | None) -> str:
+    """Bên đang lợi thế theo score chuẩn Trắng."""
+
+    if score_cp_white is None or abs(int(score_cp_white)) < 40:
+        return "equal"
+    return "white" if int(score_cp_white) > 0 else "black"
 
 
 @dataclass(slots=True)
@@ -109,6 +140,9 @@ class ChessGameTracker:
 
             score = None
             label = ""
+            evaluation_cp_user = None
+            evaluation_label_user = "unknown"
+            advantage_side = "unknown"
             swing = None
             quality = ""
             suggestion = None
@@ -170,6 +204,15 @@ class ChessGameTracker:
             ).strip().lower()
             user_side = "white" if raw_user_side in {"w", "white"} else "black" if raw_user_side in {"b", "black"} else ""
             mover_side = "white" if mover == "w" else "black" if mover == "b" else ""
+
+            # Engine lưu score theo Trắng để swing/history có một chuẩn ổn định.
+            # Chỉ ở biên public mới đổi sang góc nhìn user. Nếu chưa biết màu,
+            # tuyệt đối không suy đoán rằng score dương là user đang hơn.
+            advantage_side = _advantage_side(score) if score is not None else "unknown"
+            if score is not None and user_side:
+                evaluation_cp_user = int(score) if user_side == "white" else -int(score)
+                evaluation_label_user = _user_position_label(evaluation_cp_user)
+
             return ChessObservation(
                 game_id=snapshot.game_id,
                 mode=mode,
@@ -184,6 +227,12 @@ class ChessGameTracker:
                 last_move_san=last_san,
                 evaluation_cp=score,
                 evaluation_label=label,
+                evaluation_cp_white=score,
+                evaluation_label_white=label,
+                evaluation_cp_user=evaluation_cp_user,
+                evaluation_label_user=evaluation_label_user,
+                advantage_side=advantage_side,
+                user_position=evaluation_label_user,
                 evaluation_swing_cp=swing,
                 move_quality=quality,
                 hint_focus=hint_focus,

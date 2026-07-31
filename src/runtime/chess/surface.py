@@ -63,8 +63,15 @@ class ChessSurfaceState:
     last_move_san: str = ""
     suggested_move_uci: str = ""
     suggested_move_san: str = ""
+    # Legacy evaluation_* là góc nhìn Trắng; public wording dùng *_user.
     evaluation_cp: int | None = None
     evaluation_label: str = ""
+    evaluation_cp_white: int | None = None
+    evaluation_label_white: str = ""
+    evaluation_cp_user: int | None = None
+    evaluation_label_user: str = ""
+    advantage_side: str = ""
+    user_position: str = "unknown"
     evaluation_swing_cp: int | None = None
     move_quality: str = ""
     hint_focus: str = ""
@@ -110,6 +117,12 @@ class ChessSurfaceState:
             suggested_move_san=_text(data.get("suggested_move_san")),
             evaluation_cp=_optional_integer(data.get("evaluation_cp")),
             evaluation_label=_text(data.get("evaluation_label")),
+            evaluation_cp_white=_optional_integer(data.get("evaluation_cp_white") if "evaluation_cp_white" in data else data.get("evaluation_cp")),
+            evaluation_label_white=_text(data.get("evaluation_label_white") or data.get("evaluation_label")),
+            evaluation_cp_user=_optional_integer(data.get("evaluation_cp_user")),
+            evaluation_label_user=_text(data.get("evaluation_label_user")),
+            advantage_side=_text(data.get("advantage_side")).lower(),
+            user_position=_text(data.get("user_position") or data.get("evaluation_label_user") or "unknown").lower(),
             evaluation_swing_cp=_optional_integer(data.get("evaluation_swing_cp")),
             move_quality=_text(data.get("move_quality")).lower(),
             hint_focus=_text(data.get("hint_focus")).lower(),
@@ -175,6 +188,9 @@ class ChessSurfaceState:
                 self.speech_reason,
                 self.analysis_provider,
                 str(self.analysis_depth),
+                str(self.evaluation_cp_user),
+                self.user_position,
+                self.advantage_side,
                 hashlib.sha1(self.board_fen.encode("utf-8", "ignore")).hexdigest()[:12] if self.board_fen else "",
                 self.result,
             )

@@ -197,10 +197,17 @@ def build_companion_signal(
     suggestions_allowed = mode == "coach"
     if event in {"user_move", "opponent_move", "move"}:
         actor_phrase = "the user's move" if actor_is_user else "the opponent's move" if mover_side else "the latest move"
+        # Surface phải nhận rõ hai hệ quy chiếu. Khi user_side chưa biết, chỉ
+        # được nói bên Trắng/Đen đang hơn; không được gán lợi thế cho user.
         commentary_focus = (
             f"React to {actor_phrase} {last_move or '(unknown SAN)'}. "
             f"Use move_quality={quality or 'unknown'}, evaluation_swing_cp={observation.evaluation_swing_cp}, "
-            f"evaluation={observation.evaluation_label or 'unknown'}, motif={focus or 'none'}, "
+            f"evaluation_cp_white={observation.evaluation_cp_white}, "
+            f"evaluation_white={observation.evaluation_label_white or observation.evaluation_label or 'unknown'}, "
+            f"advantage_side={observation.advantage_side or 'unknown'}, user_side={user_side or 'unknown'}, "
+            f"evaluation_cp_user={observation.evaluation_cp_user}, "
+            f"user_position={observation.user_position or observation.evaluation_label_user or 'unknown'}, "
+            f"motif={focus or 'none'}, "
             f"analysis_provider={observation.analysis_provider or 'unknown'}, depth={observation.analysis_depth}, "
             f"mate_in={observation.mate_in}. "
             + (

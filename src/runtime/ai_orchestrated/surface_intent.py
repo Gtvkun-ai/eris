@@ -173,6 +173,8 @@ class SurfaceIntentEngine:
             request["surface_contract"]["domain_rules"] = [
                 "Use chess_typed_state as authoritative board context. Ignore OCR/window inventory while chess owns foreground focus.",
                 "Comment on the concrete move, positional consequence, tactical motif, or plan.",
+                "For advantage wording, use evaluation_cp_user/user_position only when user_side is known. Legacy evaluation_cp/evaluation_label and *_white are from White's perspective, not automatically the user's perspective.",
+                "If user_side is unknown, name White or Black explicitly from advantage_side; never say the user is better/worse.",
                 "Light dry teasing is allowed only when supported by the move or evaluation.",
                 "Never say telemetry such as board detected, current suggestion, tracking the task, or following the thread.",
                 f"Companion mode is {companion_mode}; preserve that role instead of inventing a different chess relationship.",

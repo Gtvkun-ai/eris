@@ -86,7 +86,7 @@ def discover_stockfish_path(explicit: str = "") -> str:
         except OSError:
             continue
     found = shutil.which("stockfish")
-    return str(found or "")
+    return str(found or raw)
 
 
 def _parse_uci_move(position: Position, uci: str):
@@ -134,7 +134,8 @@ class StockfishUCIAnalyzer:
         # File Windows bình thường vẫn được giữ nguyên nếu tồn tại thật.
         if Path(self.path).is_file():
             return [self.path]
-        return shlex.split(self.path, posix=os.name != "nt")
+        tokens = shlex.split(self.path, posix=os.name != "nt")
+        return [t.strip('"\'') for t in tokens if t.strip('"\'')]
 
     def _start(self) -> None:
         if self._ready and self._process is not None and self._process.poll() is None:

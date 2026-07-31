@@ -229,8 +229,16 @@ class ChessCompanionService:
                 "suggested_move_san": (
                     observation.suggestion.san if observation.suggestion is not None else ""
                 ),
+                # Hai hệ quy chiếu được giữ song song: *_white cho engine/history,
+                # *_user cho Tutor/Surface. Legacy fields vẫn là góc nhìn Trắng.
                 "evaluation_cp": getattr(observation, "evaluation_cp", None),
                 "evaluation_label": str(getattr(observation, "evaluation_label", "") or ""),
+                "evaluation_cp_white": getattr(observation, "evaluation_cp_white", None),
+                "evaluation_label_white": str(getattr(observation, "evaluation_label_white", "") or ""),
+                "evaluation_cp_user": getattr(observation, "evaluation_cp_user", None),
+                "evaluation_label_user": str(getattr(observation, "evaluation_label_user", "") or ""),
+                "advantage_side": str(getattr(observation, "advantage_side", "") or ""),
+                "user_position": str(getattr(observation, "user_position", "") or "unknown"),
                 "evaluation_swing_cp": getattr(observation, "evaluation_swing_cp", None),
                 "move_quality": str(getattr(observation, "move_quality", "") or ""),
                 "hint_focus": str(getattr(observation, "hint_focus", "") or ""),
@@ -535,10 +543,15 @@ class ChessCompanionService:
                         self.logger.debug("[chess-bridge] on-demand suggestion failed: %s", exc)
                     except Exception:
                         pass
+        perspective = (
+            f"evaluation_cp_white={typed.evaluation_cp_white}; advantage_side={typed.advantage_side}; "
+            f"user_side={typed.user_side or 'unknown'}; evaluation_cp_user={typed.evaluation_cp_user}; "
+            f"user_position={typed.user_position or 'unknown'}"
+        )
         claim = (
             "Chess board snapshot: "
             f"phase={phase}; side_to_move={side_to_move}; move_number={move_number}; "
-            f"last_move={last_move}; suggested_move={suggestion}; board_fen={board_fen}"
+            f"last_move={last_move}; suggested_move={suggestion}; board_fen={board_fen}; {perspective}"
         )
         return ({
             "id": f"chess:{game_id}:{move_number}",

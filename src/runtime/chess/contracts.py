@@ -103,8 +103,17 @@ class ChessObservation:
     actor_is_user: bool = False
     last_move_uci: str = ""
     last_move_san: str = ""
+    # ``evaluation_cp``/``evaluation_label`` được giữ tương thích ngược và
+    # luôn mang góc nhìn Trắng. Các lane public phải ưu tiên nhóm *_user khi
+    # biết màu của người dùng, tránh khen nhầm khi họ đang cầm Đen.
     evaluation_cp: int | None = None
     evaluation_label: str = ""
+    evaluation_cp_white: int | None = None
+    evaluation_label_white: str = ""
+    evaluation_cp_user: int | None = None
+    evaluation_label_user: str = ""
+    advantage_side: str = ""
+    user_position: str = "unknown"
     evaluation_swing_cp: int | None = None
     move_quality: str = ""
     hint_focus: str = ""
