@@ -552,6 +552,28 @@ class CoordinatorBootstrapMixin:
             failure_kind=FailureKind.PROVIDER_TRANSIENT,
             stop_methods=("stop", "shutdown", "close"),
         )
+        # Semantic Tutor khác Curiosity Tutor: lane này dùng DeepSeek tutor key
+        # để phân rã scene theo sự kiện và cấp một packet chung cho chat/chess/
+        # autonomous. Không phát ngôn public, không chạy theo timer.
+        def _build_semantic_tutor_runtime():
+            from runtime.semantic_tutor_runtime import EventDrivenSemanticTutor
+            return EventDrivenSemanticTutor(
+                self,
+                client=getattr(llm_service, "tutor_client", None),
+                logger=self.logger,
+            )
+        self.semantic_tutor_runtime = self.subsystem_supervisor.start(
+            "runtime.semantic_tutor",
+            _build_semantic_tutor_runtime,
+            failure_kind=FailureKind.PROVIDER_TRANSIENT,
+            stop_methods=("stop", "shutdown", "close"),
+            details={"mode": "event_driven_shared_context"},
+        )
+        if self.semantic_tutor_runtime is not None:
+            self.logger.info(
+                "[semantic-tutor] ready available=%s mode=event-driven",
+                int(bool(getattr(self.semantic_tutor_runtime, "available", False))),
+            )
         self._state_lock = threading.RLock()
         def _build_maintenance_service():
             from runtime.maintenance_service import MaintenanceService

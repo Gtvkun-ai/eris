@@ -35,6 +35,7 @@ SURFACE_MODES: tuple[str, ...] = (
     "memory_callback",
     "task_followup",
     "screen_comment",
+    "semantic_scene",
     "discovery_share",
 )
 
@@ -150,6 +151,17 @@ class SurfaceIntentEngine:
                 ),
             },
         }
+        if intent.anchor_type == "semantic_scene":
+            semantic = blackboard.public_view().get("shared_semantic_context", {})
+            request["surface_contract"]["domain_rules"] = [
+                "Use shared_semantic_context as the stable scene baseline; do not reinterpret raw OCR or window inventory.",
+                "Facts may be stated directly. bounded_inferences must remain tentative. unknowns must not be filled by invention.",
+                "Choose between screen analysis, screen-related small talk, cross-context connection, or silence according to response_mode_scores and the approved SpeechIntent.",
+                "Develop the topic naturally instead of reciting the packet fields or mentioning Tutor/scene IDs.",
+                "Do not claim the user likes, wants, intends, feels, or will buy/do something unless that claim is a direct fact.",
+                f"Current semantic activity: {semantic.get('activity', '')}; foreground: {semantic.get('foreground', '')}.",
+            ]
+
         if blackboard.engagement_kind == "chess":
             # Chess có state typed và event snapshot riêng. Surface phải thật sự
             # bàn luận từ thế/nước, không đọc field như telemetry và không dùng
@@ -167,6 +179,7 @@ class SurfaceIntentEngine:
                 f"Latest chess speech reason is {chess_state.get('speech_reason', '')}; actor is {chess_state.get('actor', '')}.",
                 commentary_focus or "Use only the latest meaningful structured chess event.",
                 "In spectator mode, do not volunteer a best move, hint, or coaching unless the user explicitly asks.",
+                "Use shared_semantic_context only for the human situation around the game (focus, likely stuck state, session context, related foreground); chess_typed_state remains authoritative for board facts.",
                 "Do not output a generic progress check. If the state is too weak to say something specific, return no usable payload.",
             ]
 

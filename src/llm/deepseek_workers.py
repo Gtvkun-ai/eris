@@ -30,11 +30,12 @@ WORKER_ROLES: tuple[str, ...] = (
     "inner",
     "style",
     "research",
+    "tutor",
 )
 
 # Structured workers default to canonical one-line JSON whenever the caller
 # requests json_object/json_schema. Companion/style keep free-text behavior.
-_DEFAULT_JSONL_ROLES = frozenset({"companion", "surface", "observer", "critic", "inner", "research"})
+_DEFAULT_JSONL_ROLES = frozenset({"companion", "surface", "observer", "critic", "inner", "research", "tutor"})
 
 
 class JsonlContractError(RuntimeError):
@@ -71,7 +72,6 @@ def normalize_worker_role(role: object) -> str:
         "deliberator": "critic",
         "private_mind": "inner",
         "memory": "inner",
-        "tutor": "research",
     }
     value = aliases.get(value, value)
     if value not in WORKER_ROLES:

@@ -66,6 +66,8 @@ class SelfTurnBundle:
     activity: ActivitySession
     self_context: AutonomousSelfContext
     memory_context: str
+    shared_semantic_context: Mapping[str, Any]
+    semantic_prompt_context: str
     engagement_context: Mapping[str, Any]
     engagement_prompt_context: str
     engagement_interaction: InteractionDecision
@@ -389,6 +391,27 @@ class SelfTurnPipeline:
                 pass
 
         observer_frame = previous_observer
+
+        # Semantic Tutor nhận cùng screen contract + structured chess state. Nó
+        # tự quyết định có scene invalidation hay không; tick không đổi chỉ cập
+        # nhật raw cache và không gọi DeepSeek.
+        semantic_tutor = getattr(host, "semantic_tutor_runtime", None)
+        if semantic_tutor is not None:
+            try:
+                chess_state = {}
+                chess_bridge = getattr(host, "chess_bridge_service", None)
+                if chess_bridge is not None and callable(getattr(chess_bridge, "current_surface_state", None)):
+                    chess_state = chess_bridge.current_surface_state()
+                semantic_tutor.observe(
+                    channel="autonomous",
+                    telemetry=telemetry,
+                    screen_context=screen,
+                    vision_facts=vision_facts,
+                    chess_state=chess_state,
+                )
+            except Exception as exc:
+                host.logger.debug("[semantic-tutor] autonomous observe failed: %s", exc)
+
         if screen.meaningful_delta or screen.scene_kind != "unknown":
             host.logger.info(
                 "[self turn screen] backend=%s ocr=%s upstream_scene=%s conf=%.2f delta=%s changed_text=%s",
@@ -460,6 +483,19 @@ class SelfTurnPipeline:
         memory_context = host._merge_conversation_context(
             host._build_memory_context(perception.snapshot, memory_resonance=memory_resonance)
         )
+        shared_semantic_context: Mapping[str, Any] = {}
+        semantic_prompt_context = ""
+        semantic_tutor = getattr(host, "semantic_tutor_runtime", None)
+        if semantic_tutor is not None:
+            try:
+                shared_semantic_context = semantic_tutor.planner_context()
+                semantic_prompt_context = semantic_tutor.prompt_context(channel="autonomous", wait_ms=0)
+                if semantic_prompt_context:
+                    memory_context = "\n\n".join(
+                        part for part in (memory_context, semantic_prompt_context) if str(part).strip()
+                    )
+            except Exception as exc:
+                host.logger.debug("[semantic-tutor] autonomous context failed: %s", exc)
         state = host.ai_state_reducer.snapshot()
         turn_seq = self.next_turn_seq(host)
         recent = tuple(host._chat_history_for_llm(limit=8))
@@ -533,6 +569,8 @@ class SelfTurnPipeline:
             activity=activity,
             self_context=self_context,
             memory_context=memory_context,
+            shared_semantic_context=shared_semantic_context,
+            semantic_prompt_context=semantic_prompt_context,
             engagement_context=engagement_context,
             engagement_prompt_context=engagement_prompt_context,
             engagement_interaction=engagement_interaction,
@@ -574,6 +612,7 @@ class SelfTurnPipeline:
             "seconds_since_assistant": context.seconds_since_assistant,
             "self_context": context.self_context.to_dict(),
             "memory_context": context.memory_context,
+            "shared_semantic_context": dict(context.shared_semantic_context),
             "user_addressing": (
                 self.host._user_addressing_snapshot()
                 if callable(getattr(self.host, "_user_addressing_snapshot", None))
@@ -590,7 +629,9 @@ class SelfTurnPipeline:
                 "Surface owns final wording. Grounding owns factual claims. "
                 "Raw OCR/window titles are mechanical deltas, never public facts unless vision_grounding contains "
                 "a grounded non-stale claim with evidence ids. Social chat may be non-factual and require no screen anchor. "
-                "When engagement_context.active=true, preserve its objective and do not switch to unrelated banter."
+                "When engagement_context.active=true, preserve its objective and do not switch to unrelated banter. "
+                "When shared_semantic_context.packet exists, use its foreground/facts/options as the stable scene baseline; "
+                "do not reinterpret raw OCR into a competing story."
             ),
         }
         discovery_runtime = getattr(self.host, "ai_discovery_runtime", None)

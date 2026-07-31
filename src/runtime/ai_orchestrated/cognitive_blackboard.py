@@ -219,6 +219,21 @@ class TypedCognitiveBlackboard:
     vision_grounding_strength: float = 0.0
     grounded_screen_claims: tuple[str, ...] = ()
     grounded_screen_evidence_refs: tuple[str, ...] = ()
+    # Semantic Tutor là nền ý nghĩa dùng chung. Nó không thay thế evidence thô,
+    # nhưng cung cấp activity/foreground/fact đã phân rã để chat và autonomous
+    # không phải tự đọc lại cùng một nồi OCR theo hai cách khác nhau.
+    semantic_context_ready: bool = False
+    semantic_scene_id: str = ""
+    semantic_packet_version: int = 0
+    semantic_generated_at: float = 0.0
+    semantic_activity: str = ""
+    semantic_foreground: str = ""
+    semantic_facts: tuple[str, ...] = ()
+    semantic_inferences: tuple[str, ...] = ()
+    semantic_unknowns: tuple[str, ...] = ()
+    semantic_topic_options: tuple[str, ...] = ()
+    semantic_response_mode_scores: Mapping[str, float] = field(default_factory=dict)
+    semantic_evidence_refs: tuple[str, ...] = ()
     public_seed_ready: bool = False
     public_seed_score: float = 0.0
     discovery_ready: bool = False
@@ -268,6 +283,8 @@ class TypedCognitiveBlackboard:
         engagement_foreground = _mapping(engagement.get("foreground"))
         latest_observation = _mapping(snapshot.get("latest_observation"))
         vision_grounding = _mapping(snapshot.get("vision_grounding"))
+        semantic_context = _mapping(snapshot.get("shared_semantic_context"))
+        semantic_packet = _mapping(semantic_context.get("packet"))
 
         user_busy = bool(
             telemetry.get("user_busy", False)
@@ -327,6 +344,40 @@ class TypedCognitiveBlackboard:
         # review. Không suy "critic chắc đã chạy" từ việc client tồn tại.
         critic_reviewed = bool("deep" in observation_source or "critic" in observation_source)
         repair_pending = bool(latest_observation.get("repair_needed", False))
+
+        # Packet chỉ có quyền public khi đúng scene hiện tại và trạng thái ready.
+        # TTL đã được runtime kiểm trước khi đưa prompt; ở blackboard ta vẫn kiểm
+        # scene_id để packet cũ không sống dai sau lúc user đổi tab.
+        semantic_scene_id = _compact(semantic_packet.get("scene_id", ""), 120)
+        semantic_context_ready = bool(
+            semantic_scene_id
+            and semantic_scene_id == _compact(semantic_context.get("scene_id", ""), 120)
+            and _compact(semantic_packet.get("status", ""), 24).lower() == "ready"
+        )
+        semantic_generated_at = max(0.0, float(semantic_packet.get("generated_at", 0.0) or 0.0))
+        semantic_activity = _compact(semantic_packet.get("activity", ""), 120)
+        semantic_foreground = _compact(semantic_packet.get("foreground_summary", ""), 500)
+        semantic_facts = tuple(
+            item for item in (_compact(value, 360) for value in _sequence(semantic_packet.get("facts"))[:12]) if item
+        )
+        semantic_inferences = tuple(
+            item for item in (_compact(value, 360) for value in _sequence(semantic_packet.get("inferences"))[:8]) if item
+        )
+        semantic_unknowns = tuple(
+            item for item in (_compact(value, 280) for value in _sequence(semantic_packet.get("unknowns"))[:8]) if item
+        )
+        semantic_topic_options = tuple(
+            item for item in (_compact(value, 300) for value in _sequence(semantic_packet.get("conversation_options"))[:8]) if item
+        )
+        semantic_scores = {
+            _compact(key, 64): _clamp01(value)
+            for key, value in _mapping(semantic_packet.get("response_mode_scores")).items()
+            if _compact(key, 64)
+        }
+        semantic_refs = tuple(
+            f"semantic:{semantic_scene_id}:fact:{index}"
+            for index, _ in enumerate(semantic_facts)
+        )
 
         anchors: list[CognitiveAnchor] = []
 
@@ -481,7 +532,46 @@ class TypedCognitiveBlackboard:
                 },
             ))
 
-        # 4) Screen chỉ trở thành *speech anchor* khi VisionGroundingPolicy đã
+        # 4) Semantic scene là neo ý nghĩa đã được Tutor phân rã. Neo này đứng
+        # trước OCR/vision claim thô vì nó đã hợp nhất app, tab, media, DOM và
+        # structured domain state. Packet mới có priority cao; packet nền cũ vẫn
+        # sống để chat/autonomous phát triển chủ đề nhưng không ép nói theo timer.
+        if semantic_context_ready and not privacy_blocked and not engagement_exclusive_focus:
+            semantic_age = max(0.0, float(now if now is not None else snapshot.get("time", 0.0) or 0.0) - semantic_generated_at) if semantic_generated_at else 9999.0
+            semantic_novel = semantic_age <= 24.0
+            best_mode = max(
+                (
+                    semantic_scores.get("screen_analysis", 0.0),
+                    semantic_scores.get("screen_related_small_talk", 0.0),
+                    semantic_scores.get("deep_analysis", 0.0),
+                    semantic_scores.get("cross_context_connection", 0.0),
+                ),
+                default=0.0,
+            )
+            topic_seed = semantic_foreground or (semantic_topic_options[0] if semantic_topic_options else "")
+            if topic_seed:
+                anchors.append(CognitiveAnchor(
+                    kind="semantic_scene",
+                    anchor_id=semantic_scene_id,
+                    topic_seed=topic_seed,
+                    confidence=max(0.70, min(0.96, 0.64 + 0.28 * best_mode)),
+                    priority=(0.90 if semantic_novel else 0.64) + 0.08 * best_mode,
+                    evidence_refs=semantic_refs,
+                    metadata={
+                        "activity": semantic_activity,
+                        "foreground": semantic_foreground,
+                        "facts": list(semantic_facts),
+                        "bounded_inferences": list(semantic_inferences),
+                        "unknowns": list(semantic_unknowns),
+                        "topic_options": list(semantic_topic_options),
+                        "response_mode_scores": dict(semantic_scores),
+                        "packet_version": int(semantic_packet.get("version", 0) or 0),
+                        "generated_at": semantic_generated_at,
+                        "novel": semantic_novel,
+                    },
+                ))
+
+        # 5) Screen chỉ trở thành *speech anchor* khi VisionGroundingPolicy đã
         # duyệt ít nhất một grounded claim có provenance. Window title/OCR delta
         # thô vẫn giữ cho body-only gesture, nhưng không được tự thăng chức thành
         # sự thật công khai. Đây là chỗ chặn câu kiểu "Brave là chủ đề moc3".
@@ -518,7 +608,7 @@ class TypedCognitiveBlackboard:
                     },
                 ))
 
-        # 5) Chỉ dùng public-safe queue/agenda. Không đọc raw private mind.
+        # 6) Chỉ dùng public-safe queue/agenda. Không đọc raw private mind.
         if public_seed_ready and not engagement_exclusive_focus:
             candidates: list[Mapping[str, Any]] = []
             for group in ("agenda", "private_mind_surface", "private_life_surface"):
@@ -559,7 +649,7 @@ class TypedCognitiveBlackboard:
                 metadata={"source": source_kind},
             ))
 
-        # 6) Presence là neo sản phẩm cuối cùng, chỉ tồn tại khi cadence nói due.
+        # 7) Presence là neo sản phẩm cuối cùng, chỉ tồn tại khi cadence nói due.
         # Nó không mang nội dung sẵn; Surface Worker sẽ viết từ persona/public
         # context, còn controller vẫn quyết định có phát biểu hay không.
         commentary_due = bool(commentary.get("due", False))
@@ -604,6 +694,18 @@ class TypedCognitiveBlackboard:
             vision_grounding_strength=grounding_strength,
             grounded_screen_claims=grounded_claims,
             grounded_screen_evidence_refs=grounded_refs,
+            semantic_context_ready=semantic_context_ready,
+            semantic_scene_id=semantic_scene_id,
+            semantic_packet_version=max(0, int(semantic_packet.get("version", 0) or 0)),
+            semantic_generated_at=semantic_generated_at,
+            semantic_activity=semantic_activity,
+            semantic_foreground=semantic_foreground,
+            semantic_facts=semantic_facts,
+            semantic_inferences=semantic_inferences,
+            semantic_unknowns=semantic_unknowns,
+            semantic_topic_options=semantic_topic_options,
+            semantic_response_mode_scores=semantic_scores,
+            semantic_evidence_refs=semantic_refs,
             public_seed_ready=public_seed_ready,
             public_seed_score=public_seed_score,
             discovery_ready=discovery_ready,
@@ -662,6 +764,19 @@ class TypedCognitiveBlackboard:
                 "grounded_claims": list(self.grounded_screen_claims),
                 "evidence_refs": list(self.grounded_screen_evidence_refs),
             },
+            "shared_semantic_context": {
+                "ready": self.semantic_context_ready,
+                "scene_id": self.semantic_scene_id,
+                "version": self.semantic_packet_version,
+                "activity": self.semantic_activity,
+                "foreground": self.semantic_foreground,
+                "facts": list(self.semantic_facts),
+                "bounded_inferences": list(self.semantic_inferences),
+                "unknowns": list(self.semantic_unknowns),
+                "topic_options": list(self.semantic_topic_options),
+                "response_mode_scores": dict(self.semantic_response_mode_scores),
+                "evidence_refs": list(self.semantic_evidence_refs),
+            },
             "commentary_due": self.commentary_due,
             "commentary_required": self.commentary_required,
             "engagement_active": self.engagement_active,
@@ -691,6 +806,12 @@ class TypedCognitiveBlackboard:
             "screen_evidence_refs": list(self.screen_evidence_refs),
             "grounded_screen_claims": list(self.grounded_screen_claims),
             "grounded_screen_evidence_refs": list(self.grounded_screen_evidence_refs),
+            "semantic_facts": list(self.semantic_facts),
+            "semantic_inferences": list(self.semantic_inferences),
+            "semantic_unknowns": list(self.semantic_unknowns),
+            "semantic_topic_options": list(self.semantic_topic_options),
+            "semantic_response_mode_scores": dict(self.semantic_response_mode_scores),
+            "semantic_evidence_refs": list(self.semantic_evidence_refs),
             "anchors": [item.to_dict() for item in self.anchors],
         }
 

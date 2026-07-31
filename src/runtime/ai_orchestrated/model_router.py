@@ -91,7 +91,7 @@ SURFACE_INTENT_SCHEMA: dict[str, Any] = {
         "performance_hint": {"type": "string"},
         "anchor_type": {
             "type": "string",
-            "enum": ["none", "idle", "conversation", "self", "memory", "task", "screen"],
+            "enum": ["none", "idle", "conversation", "self", "memory", "task", "screen", "semantic_scene"],
         },
         "anchor_id": {"type": "string"},
         "evidence_refs": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
@@ -115,7 +115,7 @@ SOCIAL_INITIATIVE_SCHEMA: dict[str, Any] = {
             "type": "string",
             "enum": [
                 "continuation", "followup_reminder", "task_followup", "discovery_share",
-                "screen_comment", "memory_callback", "inner_thought",
+                "screen_comment", "semantic_scene", "memory_callback", "inner_thought",
                 "social_check_in", "casual_curiosity", "playful_prompt",
                 "random_chat",
             ],
@@ -124,7 +124,7 @@ SOCIAL_INITIATIVE_SCHEMA: dict[str, Any] = {
         "speech_act": {"type": "string"},
         "anchor_type": {
             "type": "string",
-            "enum": ["none", "idle", "conversation", "self", "memory", "task", "screen", "discovery"],
+            "enum": ["none", "idle", "conversation", "self", "memory", "task", "screen", "semantic_scene", "discovery"],
         },
         "anchor_id": {"type": "string"},
         "evidence_refs": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
@@ -2279,6 +2279,8 @@ class AIRuntimeModelRouter:
             "Không được trả silence, đổi mode, đổi topic owner, tự thêm memory/screen fact, hay giải thích contract. "
             "speech_intent.plan.topic là mục tiêu giao tiếp, không phải câu cần chép. blackboard chỉ là public-safe context. "
             "Nếu anchor là screen, chỉ dùng literal app/window/evidence được đưa; không đoán user đang thắng, thua, buồn hay định làm gì. "
+            "Nếu anchor là semantic_scene, dùng shared_semantic_context làm baseline: fact được nói thẳng, inference phải dè dặt, "
+            "unknown tuyệt đối không tự lấp; không đọc lại raw OCR và không nhắc contract nội bộ. "
             "Nếu anchor là self, chỉ surface seed đã được duyệt, không lộ raw thought. Nếu speech_act=followup_reminder, "
             "nhắc lại đúng một lần bằng một câu ngắn, giả định user chưa để ý, không nhắc chuyện bị lờ và không thêm câu hỏi mới. "
             "Nếu speech_act=independent_topic_shift, bỏ hẳn chủ đề cũ, nói một ý khác tự đủ nghĩa với giọng hơi dè lại; không dỗi, "

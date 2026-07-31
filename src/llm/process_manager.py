@@ -401,6 +401,14 @@ class RemoteModelProcessManager:
     def build_research_client(self):
         return self.build_deepseek_worker_client("research")
 
+    def build_tutor_client(self):
+        """Worker DeepSeek riêng để phân rã ngữ nghĩa scene theo sự kiện.
+
+        Không alias sang research: user có thể cấp ERIS_DS_TUTOR_API_KEY riêng,
+        nhờ vậy lane semantic nền không tranh quota với search/research.
+        """
+        return self.build_deepseek_worker_client("tutor")
+
     def build_client(self, *, model_path: str = "", n_ctx: int = 0, n_gpu_layers: int = 0):
         if not self._env_flag("ERIS_REMOTE_API_ENABLED", "1"):
             raise RuntimeError("Local model runtime da bi go bo; hay bat ERIS_REMOTE_API_ENABLED=1.")

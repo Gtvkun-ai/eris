@@ -148,6 +148,7 @@ class LlmService:
         inner_client=None,
         diary_client=None,
         research_client=None,
+        tutor_client=None,
         surface_client=None,
         logger=None,
     ):
@@ -170,6 +171,9 @@ class LlmService:
         # lane surface chưa được cấu hình để dùng planner cũ một cách minh bạch.
         self.surface_client = surface_client
         self.research_client = research_client or fallback_client or client
+        # Worker tutor chỉ phân rã scene thành shared semantic context; không có
+        # quyền viết câu public và không fallback ngầm sang companion.
+        self.tutor_client = tutor_client
         # Dedicated format-recovery client (e.g. Groq llama). Preferred over
         # style_client when the main provider breaks the JSON/no-CoT contract.
         self.fallback_client = fallback_client

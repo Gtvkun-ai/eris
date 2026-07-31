@@ -264,6 +264,15 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
                             logger=getattr(host, "logger", None),
                             health_registry=health,
                             wake_callback=getattr(host, "_wake_autonomous_loop", None),
+                            semantic_context_callback=(
+                                (lambda state, events=(), trigger_hint="": host.semantic_tutor_runtime.observe(
+                                    channel="chess",
+                                    chess_state=state,
+                                    trigger_hint=trigger_hint,
+                                ))
+                                if getattr(host, "semantic_tutor_runtime", None) is not None
+                                else None
+                            ),
                             clock=runtime_clock,
                         ).start()
 

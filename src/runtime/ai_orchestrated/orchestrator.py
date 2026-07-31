@@ -452,6 +452,38 @@ class AIChatOrchestrator:
         except Exception as exc:
             _orchestrator_boundary_note(host, "chat_grounding.log", exc)
 
+        # Nạp scene vào DeepSeek Semantic Tutor theo sự kiện. Chat chỉ chờ một
+        # budget rất nhỏ; nếu packet chưa xong thì nhận raw OCR/structured facts
+        # an toàn, không đứng khựng giữa câu vì một worker nền đang suy nghĩ.
+        semantic_prompt_context = ""
+        semantic_tutor = getattr(host, "semantic_tutor_runtime", None)
+        if semantic_tutor is not None:
+            try:
+                screen_snapshot = None
+                screen_store = getattr(host, "screen_evidence_store", None)
+                if screen_store is not None and callable(getattr(screen_store, "snapshot", None)):
+                    screen_snapshot = screen_store.snapshot()
+                chess_state = {}
+                chess_bridge = getattr(host, "chess_bridge_service", None)
+                if chess_bridge is not None and callable(getattr(chess_bridge, "current_surface_state", None)):
+                    chess_state = chess_bridge.current_surface_state()
+                explicit_screen = False
+                screen_request = getattr(host, "_looks_like_screen_vision_request", None)
+                if callable(screen_request):
+                    explicit_screen = bool(screen_request(user_text))
+                semantic_tutor.observe(
+                    channel="chat",
+                    telemetry=telemetry_payload,
+                    screen_context=screen_snapshot,
+                    vision_facts=tuple(getattr(host, "vision_facts", ()) or ()),
+                    chess_state=chess_state,
+                    user_text=user_text,
+                    explicit=explicit_screen,
+                )
+                semantic_prompt_context = semantic_tutor.prompt_context(channel="chat")
+            except Exception as exc:
+                host.logger.debug("[semantic-tutor] chat context failed: %s", exc)
+
         # Đảm bảo pending strategy của lượt trước đã vào single-writer trước khi
         # observer dùng phản ứng user hiện tại để chấm hậu quả.
         host.ai_state_reducer.wait_idle(0.15)
@@ -474,6 +506,10 @@ class AIChatOrchestrator:
         personality_context = mind_state.personality_prompt_context()
         relationship_context = mind_state.relationship.prompt_summary()
         grounding_context = str(getattr(grounding_report, "prompt_context", "") or "")
+        if semantic_prompt_context:
+            grounding_context = "\n\n".join(
+                part for part in (grounding_context, semantic_prompt_context) if str(part).strip()
+            )
         vision_status_context = ""
         build_vision_status = getattr(host, "_chat_vision_status_prompt_context", None)
         if callable(build_vision_status):
@@ -523,6 +559,11 @@ class AIChatOrchestrator:
             "user_addressing": (
                 host._user_addressing_snapshot()
                 if callable(getattr(host, "_user_addressing_snapshot", None))
+                else {}
+            ),
+            "shared_semantic_context": (
+                semantic_tutor.planner_context()
+                if semantic_tutor is not None and callable(getattr(semantic_tutor, "planner_context", None))
                 else {}
             ),
         }

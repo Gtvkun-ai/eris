@@ -314,6 +314,7 @@ class InitiativeController:
             "discovery": ("discovery_share", "share_discovery", bool(anchor.evidence_refs)),
             "screen": ("screen_comment", "comment_current_surface", True),
             "activity": ("screen_comment", "comment_current_surface", True),
+            "semantic_scene": ("semantic_scene", "develop_semantic_context", False),
             "memory": ("memory_callback", "memory_callback", True),
             "self": ("inner_thought", "share_public_safe_thought", False),
             "presence": ("social_check_in", "warm_companion_presence", False),
@@ -351,6 +352,7 @@ class InitiativeController:
             "task_followup": ("task_followup", "focused", "activity_event", "task"),
             "discovery_share": ("discovery_share", "curious", "discovery", "discovery"),
             "screen_comment": ("screen_comment", "curious", "environment", "screen"),
+            "semantic_scene": ("semantic_scene", "curious", "semantic_context", "semantic_scene"),
             "memory_callback": ("memory_callback", "soft", "internal", "memory"),
             "inner_thought": ("inner_thought", "quiet_presence", "internal", "self"),
             "social_check_in": ("small_talk", "soft", "presence", "idle"),
@@ -363,6 +365,7 @@ class InitiativeController:
         )
         evidence_scope = {
             "screen_comment": "screen_grounded_claim",
+            "semantic_scene": "shared_semantic_context",
             "memory_callback": "memory",
             "discovery_share": "discovery_artifact",
             "task_followup": "engagement_runtime",
@@ -376,6 +379,7 @@ class InitiativeController:
             "task_followup": "preserve_active_engagement",
             "discovery_share": "share_discovery",
             "screen_comment": "grounded_curiosity",
+            "semantic_scene": "develop_shared_semantic_context",
             "memory_callback": "share_grounded_memory_callback",
             "inner_thought": "share_public_safe_thought",
             "social_check_in": "social_check_in",

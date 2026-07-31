@@ -55,6 +55,15 @@ class AutonomousGroundingValidator:
             unknown = [ref for ref in intent.evidence_refs if ref not in available]
             if unknown:
                 return GroundingDecision(False, "unknown_screen_evidence_ref", "unknown_evidence_ref")
+        if intent.anchor_type == "semantic_scene":
+            # Packet semantic có provenance riêng: mỗi fact được ánh xạ thành một
+            # evidence ref ổn định theo scene. Surface chỉ được dùng refs thuộc
+            # packet hiện hành, không được mượn packet cũ sau lúc đổi tab.
+            if not blackboard.semantic_context_ready:
+                return GroundingDecision(False, "semantic_context_not_ready", "missing_semantic_context")
+            available = set(blackboard.semantic_evidence_refs)
+            if intent.evidence_refs and not set(intent.evidence_refs).issubset(available):
+                return GroundingDecision(False, "unknown_semantic_evidence_ref", "unknown_evidence_ref")
         if intent.anchor_type == "conversation" and blackboard.reply_expected:
             # Ngoại lệ duy nhất: appraisal đã cho phép nhắc lại đúng một lần và
             # semantic act của plan xác nhận đây thật sự là reminder, không phải

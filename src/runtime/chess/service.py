@@ -38,6 +38,7 @@ class ChessCompanionService:
         logger: Any | None = None,
         health_registry: SubsystemHealthRegistry | None = None,
         wake_callback: Any | None = None,
+        semantic_context_callback: Any | None = None,
         clock=None,
     ) -> None:
         self.engagement_runtime = engagement_runtime
@@ -48,6 +49,9 @@ class ChessCompanionService:
         self.logger = logger
         self.health_registry = health_registry
         self.wake_callback = wake_callback if callable(wake_callback) else None
+        # Callback typed sang Semantic Tutor. Bridge chỉ chuyển state; nó không
+        # tự gọi LLM và không để OCR phân tích lại bàn cờ đã có FEN.
+        self.semantic_context_callback = semantic_context_callback if callable(semantic_context_callback) else None
         self.clock = clock or time.time
         self.tracker = ChessGameTracker(depth=analysis_depth, direct_move_rate=direct_move_rate)
         self._server: ThreadingHTTPServer | None = None
@@ -268,6 +272,27 @@ class ChessCompanionService:
             )
             if updated is not None:
                 engagement = updated
+
+        # Nạp state cờ vào shared semantic context. Routine move chỉ cập nhật
+        # state thô; move đáng nói/game start/end mới invalidates semantic packet.
+        if self.semantic_context_callback is not None:
+            try:
+                semantic_events = tuple(dict.fromkeys(emitted))
+                trigger_hint = companion_signal.speech_reason if companion_signal.should_wake else ""
+                self.semantic_context_callback(
+                    self.current_surface_state(),
+                    events=semantic_events,
+                    trigger_hint=trigger_hint,
+                )
+            except TypeError:
+                try:
+                    self.semantic_context_callback(self.current_surface_state(), events=tuple(dict.fromkeys(emitted)))
+                except Exception as exc:
+                    if self.logger is not None:
+                        self.logger.debug("[chess-bridge] semantic callback failed: %s", exc)
+            except Exception as exc:
+                if self.logger is not None:
+                    self.logger.debug("[chess-bridge] semantic callback failed: %s", exc)
 
         wake_events = tuple(
             kind for kind in dict.fromkeys(emitted)

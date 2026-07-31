@@ -114,6 +114,7 @@ class AttentionOverseer:
         diary_client = self.process_manager.build_diary_client()
         surface_client = self.process_manager.build_surface_client()
         research_client = self.process_manager.build_research_client()
+        tutor_client = self.process_manager.build_tutor_client()
         if escalation_client is not None:
             provider_label = getattr(escalation_client, "base_url", "") or escalation_client.__class__.__name__
             self.logger.info("Escalation client (bái sư) đã sẵn sàng: %s", provider_label)
@@ -132,6 +133,7 @@ class AttentionOverseer:
             diary_client=diary_client,
             surface_client=surface_client,
             research_client=research_client,
+            tutor_client=tutor_client,
             logger=self.logger,
         )
         configured_workers = [
@@ -145,6 +147,7 @@ class AttentionOverseer:
                 ("surface", getattr(self.llm_service, "surface_client", None)),
                 ("style", getattr(self.llm_service, "style_client", None)),
                 ("research", getattr(self.llm_service, "research_client", None)),
+                ("tutor", getattr(self.llm_service, "tutor_client", None)),
             )
             if worker is not None
         ]

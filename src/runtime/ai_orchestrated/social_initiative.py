@@ -72,6 +72,7 @@ _ALLOWED_KINDS = {
     "task_followup",
     "discovery_share",
     "screen_comment",
+    "semantic_scene",
     "memory_callback",
     "inner_thought",
     "social_check_in",
@@ -244,7 +245,8 @@ class SocialInitiativeEngine:
                 "social_kinds_do_not_require_grounding": sorted(_SOCIAL_KINDS),
                 "rule": (
                     "Propose at most one public-safe topic. Runtime owns permission/timing; "
-                    "Surface Realizer owns final wording. Return none when nothing is worth proposing."
+                    "Surface Realizer owns final wording. Prefer semantic_scene over unrelated small talk when a "
+                    "ready shared semantic context exists. Return none when nothing is worth proposing."
                 ),
             },
         }
@@ -366,6 +368,10 @@ class SocialInitiativeEngine:
         if blackboard.engagement_exclusive_focus and blackboard.engagement_active:
             return None
 
+        semantic_candidate = self._semantic_scene_candidate(blackboard, reason=reason)
+        if semantic_candidate is not None:
+            return semantic_candidate
+
         policy = _autonomous_surface_policy()
         user_enabled = bool(policy.get("enabled", False))
         desired = max(20.0, float(policy.get("desired", 35.0) or 35.0)) if user_enabled else _env_float(
@@ -403,6 +409,58 @@ class SocialInitiativeEngine:
             tone="casual_warm",
             reason=f"surface_route:{'user_preference' if user_enabled else 'quiet_ceiling'}:{reason}",
             source="runtime_surface_route" if user_enabled else "initiative_local_liveness",
+        )
+
+    @staticmethod
+    def _semantic_scene_candidate(
+        blackboard: TypedCognitiveBlackboard,
+        *,
+        reason: str,
+    ) -> SocialSpeechCandidate | None:
+        """Giữ semantic scene khỏi rơi xuống generic small talk khi model lỗi.
+
+        Đây vẫn chỉ là route semantic tới Surface, không phải câu hard-code.
+        Packet nền cũ chỉ được dùng khi cadence đã due; packet mới có thể mở một
+        cơ hội bình luận ngay vì nó tương ứng app/tab/media/content vừa đổi.
+        """
+
+        if not blackboard.semantic_context_ready:
+            return None
+        anchor = next((item for item in blackboard.anchors if item.kind == "semantic_scene"), None)
+        if anchor is None:
+            return None
+        novel = bool(anchor.metadata.get("novel", False))
+        if not novel and not blackboard.commentary_due:
+            return None
+        scores = dict(blackboard.semantic_response_mode_scores or {})
+        analysis_score = max(
+            float(scores.get("screen_analysis", 0.0) or 0.0),
+            float(scores.get("deep_analysis", 0.0) or 0.0),
+        )
+        small_talk_score = max(
+            float(scores.get("screen_related_small_talk", 0.0) or 0.0),
+            float(scores.get("cross_context_connection", 0.0) or 0.0),
+        )
+        if max(analysis_score, small_talk_score) < 0.28:
+            return None
+        speech_act = "analyze_foreground" if analysis_score >= small_talk_score else "screen_related_small_talk"
+        topic_options = tuple(blackboard.semantic_topic_options or ())
+        topic = topic_options[0] if topic_options else blackboard.semantic_foreground
+        return SocialSpeechCandidate(
+            decision="candidate",
+            kind="semantic_scene",
+            topic=_compact(topic or anchor.topic_seed, 300),
+            speech_act=speech_act,
+            anchor_type="semantic_scene",
+            anchor_id=anchor.anchor_id,
+            evidence_refs=anchor.evidence_refs,
+            requires_grounding=False,
+            confidence=max(0.72, anchor.confidence),
+            relevance=max(0.78, anchor.priority),
+            urgency=0.34 if novel else 0.14,
+            tone="curious" if speech_act == "analyze_foreground" else "casual_warm",
+            reason=f"semantic_scene_route:{reason}",
+            source="semantic_context_fallback",
         )
 
     @staticmethod
@@ -486,6 +544,7 @@ class SocialInitiativeEngine:
                 "task_followup": "task",
                 "discovery_share": "discovery",
                 "screen_comment": "screen",
+                "semantic_scene": "semantic_scene",
                 "memory_callback": "memory",
                 "inner_thought": "self",
             }.get(candidate.kind, candidate.anchor_type)
