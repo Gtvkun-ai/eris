@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Mapping, Protocol
 
 from .state_patch import apply_tri_state_patch
+from .detector import normalize
 from .contracts import (
     Engagement,
     EngagementEvent,
@@ -39,6 +40,50 @@ def _status(payload: Mapping[str, Any]) -> str:
 
 def _ends_with(kind: str, values: tuple[str, ...]) -> bool:
     return any(kind == item or kind.endswith(f".{item}") for item in values)
+
+
+def _chess_companion_mode(objective: str) -> str:
+    text = normalize(objective)
+    if any(marker in text for marker in (
+        "xem toi", "xem tui", "coi toi", "coi tui", "lam khan gia", "khan gia", "watch me",
+    )):
+        return "spectator"
+    if any(marker in text for marker in (
+        "chi toi", "goi y", "giup toi", "giup tui", "day toi", "huong dan", "phan tich", "nen di", "nen danh",
+    )):
+        return "coach"
+    if any(marker in text for marker in (
+        "choi voi toi", "choi voi tui", "dau voi toi", "dau voi tui", "play against me",
+    )):
+        return "opponent"
+    return "companion"
+
+
+def _explicit_chess_role_update(text: str) -> str:
+    normalized = normalize(text)
+    if any(marker in normalized for marker in (
+        "lam khan gia", "em lam khan gia", "chi xem", "chi coi", "xem toi choi", "xem tui choi",
+        "dung chi nuoc", "khong chi nuoc", "watch me",
+    )):
+        return "spectator"
+    if any(marker in normalized for marker in (
+        "chi toi", "goi y cho toi", "goi y cho tui", "coach toi", "coach tui", "phan tich cho toi",
+    )):
+        return "coach"
+    if any(marker in normalized for marker in (
+        "choi voi toi", "choi voi tui", "dau voi toi", "dau voi tui",
+    )):
+        return "opponent"
+    return ""
+
+
+def _explicit_chess_user_side(text: str) -> str:
+    normalized = normalize(text)
+    if any(marker in normalized for marker in ("toi ben trang", "tui ben trang", "toi cam trang", "tui cam trang")):
+        return "white"
+    if any(marker in normalized for marker in ("toi ben den", "tui ben den", "toi cam den", "tui cam den")):
+        return "black"
+    return ""
 
 
 class EngagementAdapter(Protocol):
@@ -171,6 +216,10 @@ class GenericEngagementAdapter:
                 "last_move_san", "evaluation_cp", "evaluation_label",
                 "suggested_move_uci", "suggested_move_san", "confidence",
                 "evaluation_swing_cp", "move_quality", "hint_focus", "orientation",
+                "user_side", "mover_side", "actor", "actor_is_user", "event", "speech_act",
+                "commentary_focus", "speech_reason", "speech_priority", "should_speak",
+                "should_wake", "suppress_generic_screen_topics", "suggestions_allowed",
+                "companion_mode",
             ),
         )
         return data
@@ -220,11 +269,19 @@ class ChessCompanionAdapter(GenericEngagementAdapter):
         """Tạo task xem cờ ở pha chờ bàn, không giả định người dùng đã vào ván."""
 
         data = dict(super().initial_state(objective, metadata=metadata))
+        companion_mode = _chess_companion_mode(objective)
         data.update({
             "chess_phase": "waiting_for_board",
             "board_seen": False,
             "game_started": False,
             "game_over": False,
+            "companion_mode": companion_mode,
+            "exclusive_focus": True,
+            "suppress_generic_screen_topics": True,
+            "suggestions_allowed": companion_mode == "coach",
+            "event_driven_only": False,
+            "user_side": "",
+            "last_commented_fingerprint": "",
             # Nhịp hỏi riêng cho pha chờ. Policy đọc hai khóa generic này nên
             # adapter khác cũng có thể dùng mà không phải nhét if-domain vào core.
             "interaction_cadence_seconds": 18.0,
@@ -246,9 +303,23 @@ class ChessCompanionAdapter(GenericEngagementAdapter):
         payload = dict(event.payload or {})
         payload_phase = _compact(payload.get("phase"), 40).lower()
 
+        if kind == "user.message_received":
+            user_text = str(payload.get("text") or payload.get("detail") or "")
+            role_update = _explicit_chess_role_update(user_text)
+            side_update = _explicit_chess_user_side(user_text)
+            if role_update:
+                data["companion_mode"] = role_update
+                data["suggestions_allowed"] = role_update == "coach"
+                data["exclusive_focus"] = True
+                data["event_driven_only"] = str(data.get("chess_phase", "")) == "active"
+                data["recent_progress"] = _recent(data, f"Chess role updated: {role_update}")
+            if side_update:
+                data["user_side"] = side_update
+
         if kind in {"chess.board_detected", "chess.board_ready"}:
             data["board_seen"] = True
             data["chess_phase"] = "waiting_for_start"
+            data["event_driven_only"] = False
             data["interaction_cadence_seconds"] = 22.0
             data["preferred_interaction_action"] = "ask"
             data["waiting_prompt_count"] = 0
@@ -263,8 +334,9 @@ class ChessCompanionAdapter(GenericEngagementAdapter):
             data["board_seen"] = True
             data["game_started"] = True
             data["chess_phase"] = "active"
+            data["event_driven_only"] = True
             data["interaction_cadence_seconds"] = 0.0
-            data["preferred_interaction_action"] = "speak"
+            data["preferred_interaction_action"] = "speak" if bool(payload.get("should_speak", True)) else "wait"
             data["game_started_at"] = event.timestamp
             data["next_expected_events"] = ["move played", "position changed", "game ended"]
             data["recent_progress"] = _recent(data, "Ván cờ đã bắt đầu")
@@ -273,8 +345,9 @@ class ChessCompanionAdapter(GenericEngagementAdapter):
             if payload_phase == "active" or kind == "chess.move_played":
                 data["game_started"] = True
                 data["chess_phase"] = "active"
+                data["event_driven_only"] = True
                 data["interaction_cadence_seconds"] = 0.0
-                data["preferred_interaction_action"] = "speak"
+                data["preferred_interaction_action"] = "speak" if bool(payload.get("should_speak", False)) else "wait"
                 data["next_expected_events"] = ["move played", "position changed", "game ended"]
         elif kind in {"chess.game_over", "chess.game.ended", "chess.game.completed"}:
             data["board_seen"] = True
@@ -294,6 +367,8 @@ class ChessCompanionAdapter(GenericEngagementAdapter):
             count = max(0, int(data.get("waiting_prompt_count", 0) or 0)) + 1
             data["waiting_prompt_count"] = count
             data["interaction_cadence_seconds"] = 35.0 if count == 1 else 60.0
+            if str(data.get("chess_phase", "")) == "waiting_for_start":
+                data["board_acknowledged"] = True
 
         # Cho phép bridge truyền phase chính xác hơn, nhưng không cho snapshot cũ
         # kéo task đã completed quay ngược lại active.
@@ -312,16 +387,21 @@ class ChessCompanionAdapter(GenericEngagementAdapter):
         # hỏi ngắn xem người dùng đã mở bàn/bridge chưa, thay vì im 55 giây.
         if kind == "engagement.started":
             return 0.72
+        payload = dict(event.payload or {})
+        try:
+            typed_priority = max(0.0, min(1.0, float(payload.get("speech_priority", 0.0) or 0.0)))
+        except (TypeError, ValueError):
+            typed_priority = 0.0
         if kind in {"chess.board_detected", "chess.board_ready"}:
-            return 0.90
+            return max(0.42, typed_priority)
         if kind == "chess.game_started":
-            return 0.96
+            return max(0.78, typed_priority)
         if kind == "chess.move_played":
-            return 0.94
+            return typed_priority
         if kind == "chess.position_changed":
-            return 0.82
+            return min(0.44, typed_priority)
         if kind in {"chess.game_over", "chess.game.ended", "chess.game.completed"}:
-            return 0.99
+            return max(0.99, typed_priority)
         return super().signal_importance(event)
 
     def project(self, engagement: Engagement, *, now: float) -> PlannerProjection:
@@ -330,9 +410,25 @@ class ChessCompanionAdapter(GenericEngagementAdapter):
         # All modes (analysis, bot, private, live) now receive full assistance.
         # The only exception is UNKNOWN pages which send full_assistance=False.
         full = bool(state.get("full_assistance", True))
+        companion_mode = str(state.get("companion_mode") or "companion").strip().lower()
+        mode_rule = {
+            "spectator": (
+                "The user asked for a watch-along spectator. React to meaningful moves and consequences; "
+                "do not volunteer engine moves or coaching unless the user explicitly asks."
+            ),
+            "coach": (
+                "The user asked for coaching. Concrete suggestions are allowed only when present in typed state, "
+                "and each suggestion needs one tactical or positional reason."
+            ),
+            "opponent": (
+                "The user asked to play against ERIS, but this bridge only observes the external game. "
+                "Do not pretend ERIS controls either side; clarify only when directly relevant."
+            ),
+            "companion": "Stay with the active game and comment selectively on meaningful changes.",
+        }.get(companion_mode, "Stay with the active game and comment selectively on meaningful changes.")
         dynamic = (
             "Discuss the concrete position or consequence of the latest move. Light dry teasing is welcome when grounded. "
-            "If giving a move, explain one tactical or positional reason. Never narrate bridge telemetry or say the board was received."
+            "Never narrate bridge telemetry or OCR. " + mode_rule
             if full else
             "Unknown page: cannot confirm game context — only react socially, do not suggest moves or evaluate."
         )
@@ -390,6 +486,16 @@ class ChessCompanionAdapter(GenericEngagementAdapter):
         pieces = [engagement.objective]
         if state.get("chess_phase"):
             pieces.append(f"phase={_compact(state.get('chess_phase'), 32)}")
+        if state.get("companion_mode"):
+            pieces.append(f"companion_mode={_compact(state.get('companion_mode'), 24)}")
+        if state.get("event"):
+            pieces.append(f"event={_compact(state.get('event'), 32)}")
+        if state.get("actor"):
+            pieces.append(f"actor={_compact(state.get('actor'), 16)}")
+        if state.get("speech_reason"):
+            pieces.append(f"speech_reason={_compact(state.get('speech_reason'), 48)}")
+        if state.get("commentary_focus"):
+            pieces.append(f"focus={_compact(state.get('commentary_focus'), 160)}")
         if state.get("mode"):
             pieces.append(f"mode={_compact(state.get('mode'), 32)}")
         if state.get("move_number") is not None:

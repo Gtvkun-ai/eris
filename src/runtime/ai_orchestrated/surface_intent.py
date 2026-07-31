@@ -155,11 +155,18 @@ class SurfaceIntentEngine:
             # bàn luận từ thế/nước, không đọc field như telemetry và không dùng
             # câu hard-code. Provider lỗi thì pipeline im, nên đây là nơi duy nhất
             # tạo banter/mỉa mai công khai cho autonomous chess.
+            chess_state = dict(blackboard.engagement_state or {})
+            companion_mode = str(chess_state.get("companion_mode") or "companion")
+            commentary_focus = str(chess_state.get("commentary_focus") or "").strip()
             request["surface_contract"]["domain_rules"] = [
-                "Use chess_typed_state as authoritative board context.",
+                "Use chess_typed_state as authoritative board context. Ignore OCR/window inventory while chess owns foreground focus.",
                 "Comment on the concrete move, positional consequence, tactical motif, or plan.",
                 "Light dry teasing is allowed only when supported by the move or evaluation.",
                 "Never say telemetry such as board detected, current suggestion, tracking the task, or following the thread.",
+                f"Companion mode is {companion_mode}; preserve that role instead of inventing a different chess relationship.",
+                f"Latest chess speech reason is {chess_state.get('speech_reason', '')}; actor is {chess_state.get('actor', '')}.",
+                commentary_focus or "Use only the latest meaningful structured chess event.",
+                "In spectator mode, do not volunteer a best move, hint, or coaching unless the user explicitly asks.",
                 "Do not output a generic progress check. If the state is too weak to say something specific, return no usable payload.",
             ]
 

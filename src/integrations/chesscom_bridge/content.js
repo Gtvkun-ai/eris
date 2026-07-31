@@ -193,13 +193,14 @@
     const result = gameResult();
     const ply = plyCount();
     const running = clockRunning();
+    const boardOrientation = orientation(board);
     const started = ply > 0 || running || boardFen !== INITIAL_BOARD_FEN;
     const payload = {
       platform: "chess.com",
       game_id: gameId(),
       board_fen: boardFen,
       page_url: location.href,
-      orientation: orientation(board),
+      orientation: boardOrientation,
       ply,
       result,
       status: result ? "completed" : (started ? "active" : "ready"),
@@ -208,6 +209,12 @@
       captured_at: Date.now() / 1000,
       metadata: {
         title: document.title.slice(0, 180),
+        // Orientation on a live/computer board is the best structured signal for
+        // which side the user is controlling. Runtime keeps it typed instead of
+        // asking OCR to rediscover the obvious from pixels.
+        player_side: boardOrientation,
+        tab_visible: document.visibilityState === "visible",
+        board_focused: document.visibilityState === "visible" && Boolean(board.getBoundingClientRect().width > 120),
         // Hai cờ này giúp runtime phân biệt "đã thấy bàn" với "ván đã chạy".
         game_started: started,
         clock_running: running

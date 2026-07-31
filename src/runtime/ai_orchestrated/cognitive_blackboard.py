@@ -230,6 +230,7 @@ class TypedCognitiveBlackboard:
     engagement_due: bool = False
     engagement_required: bool = False
     engagement_preempts_reply_baton: bool = False
+    engagement_exclusive_focus: bool = False
     engagement_kind: str = ""
     # Giữ state domain tới tận Surface. Chess không có local text fallback;
     # state typed phải tới model nguyên vẹn để nó thật sự bàn luận thế cờ.
@@ -377,6 +378,12 @@ class TypedCognitiveBlackboard:
             80,
         )
         engagement_state = dict(_mapping(engagement_foreground.get("current_state")))
+        engagement_exclusive_focus = bool(
+            engagement_active
+            and str(engagement_kind or "").strip().lower() == "chess"
+            and str(engagement_foreground.get("focus") or "foreground").strip().lower() == "foreground"
+            and bool(engagement_state.get("exclusive_focus", True))
+        )
         engagement_state_summary = _compact(
             engagement_foreground.get("current_state_summary")
             or engagement_foreground.get("objective")
@@ -412,6 +419,10 @@ class TypedCognitiveBlackboard:
                     "engagement_kind": engagement_kind,
                     "last_event_kind": engagement_last_event_kind,
                     "state_summary": engagement_state_summary,
+                    "exclusive_focus": engagement_exclusive_focus,
+                    "speech_reason": _compact(engagement_state.get("speech_reason", ""), 80),
+                    "speech_act": _compact(engagement_state.get("speech_act", ""), 80),
+                    "commentary_focus": _compact(engagement_state.get("commentary_focus", ""), 260),
                     "state": engagement_state,
                     **(
                         {"preempts_reply_baton": engagement_preempts_reply_baton}
@@ -431,7 +442,7 @@ class TypedCognitiveBlackboard:
             if isinstance(item, Mapping)
         ]
         artifact = ready_items[0] if ready_items else _mapping(discovery.get("artifact"))
-        if discovery_ready:
+        if discovery_ready and not engagement_exclusive_focus:
             discovery_id = _compact(
                 artifact.get("discovery_id")
                 or artifact.get("id")
@@ -480,7 +491,7 @@ class TypedCognitiveBlackboard:
             and grounded_refs
             and not privacy_blocked
         )
-        if (mechanical_delta or activity_event) and grounded_screen_ready:
+        if (mechanical_delta or activity_event) and grounded_screen_ready and not engagement_exclusive_focus:
             selected_claim, selected_refs, focus_kind, focus_score = _select_grounded_screen_claim(
                 grounded_claims_raw,
                 telemetry=telemetry,
@@ -508,7 +519,7 @@ class TypedCognitiveBlackboard:
                 ))
 
         # 5) Chỉ dùng public-safe queue/agenda. Không đọc raw private mind.
-        if public_seed_ready:
+        if public_seed_ready and not engagement_exclusive_focus:
             candidates: list[Mapping[str, Any]] = []
             for group in ("agenda", "private_mind_surface", "private_life_surface"):
                 candidates.extend(_mapping(item) for item in _sequence(self_context.get(group))[:5])
@@ -553,7 +564,7 @@ class TypedCognitiveBlackboard:
         # context, còn controller vẫn quyết định có phát biểu hay không.
         commentary_due = bool(commentary.get("due", False))
         commentary_required = bool(commentary.get("required", False))
-        if commentary_due:
+        if commentary_due and not engagement_exclusive_focus:
             anchors.append(CognitiveAnchor(
                 kind="presence",
                 anchor_id=_compact(commentary.get("anchor_kind", "shared_quiet"), 120),
@@ -604,6 +615,7 @@ class TypedCognitiveBlackboard:
             engagement_due=engagement_due,
             engagement_required=engagement_required,
             engagement_preempts_reply_baton=engagement_preempts_reply_baton,
+            engagement_exclusive_focus=engagement_exclusive_focus,
             engagement_kind=engagement_kind,
             engagement_state_summary=engagement_state_summary,
             engagement_state=engagement_state,
@@ -654,6 +666,7 @@ class TypedCognitiveBlackboard:
             "commentary_required": self.commentary_required,
             "engagement_active": self.engagement_active,
             "engagement_preempts_reply_baton": self.engagement_preempts_reply_baton,
+            "engagement_exclusive_focus": self.engagement_exclusive_focus,
             "engagement": {
                 "kind": self.engagement_kind,
                 "state_summary": self.engagement_state_summary,

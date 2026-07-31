@@ -16,6 +16,7 @@ from .contracts import BoardSnapshot, ChessObservation, ChessObservationPhase
 from .engine import Position, analyze
 from .tracker import ChessGameTracker
 from .surface import ChessSurfaceState, chess_turn_relevant
+from .companion_policy import build_companion_signal
 
 
 class ChessCompanionService:
@@ -224,9 +225,18 @@ class ChessCompanionService:
         with self._lock:
             if self._last_snapshot_summary.get("game_id") == snapshot.game_id:
                 self._last_snapshot_summary["engagement_id"] = engagement.engagement_id
+        companion_signal = build_companion_signal(
+            observation,
+            snapshot,
+            engagement.domain_state,
+        )
         event_payload = observation.to_event_payload()
+        event_payload.update(companion_signal.to_dict())
         evidence_refs = (f"chesscom:{snapshot.game_id}:{snapshot.ply}",)
         emitted: list[str] = []
+        with self._lock:
+            if self._last_snapshot_summary.get("game_id") == snapshot.game_id:
+                self._last_snapshot_summary.update(companion_signal.to_dict())
 
         # Nếu người dùng đã ra lệnh xem cờ trước khi mở bàn, phải nối snapshot
         # vào đúng engagement đó thay vì âm thầm tạo một task cờ thứ hai.
@@ -263,7 +273,10 @@ class ChessCompanionService:
             kind for kind in dict.fromkeys(emitted)
             if kind in {"chess.board_detected", "chess.game_started", "chess.move_played", "chess.game_over"}
         )
-        if wake_events:
+        # The bridge always records structured state, but it only wakes the public
+        # initiative loop for a meaningful chess beat. Routine moves remain
+        # available to chat without turning ERIS into a move-by-move alarm clock.
+        if wake_events and companion_signal.should_wake:
             self._wake_autonomous(
                 game_id=snapshot.game_id,
                 move_number=observation.move_number,

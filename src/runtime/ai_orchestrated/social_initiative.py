@@ -191,6 +191,17 @@ class SocialInitiativeEngine:
         if blackboard.reply_expected and not self._chess_event_overrides_reply_baton(blackboard):
             return None
 
+        # A foreground structured engagement owns topic selection. While watching
+        # chess, no OCR, private seed, abandoned-thread shift, or generic silence
+        # timer may invent a different subject. Only a due chess event can open the
+        # public lane.
+        if (
+            blackboard.engagement_exclusive_focus
+            and blackboard.engagement_active
+            and not (blackboard.engagement_due or blackboard.engagement_required)
+        ):
+            return None
+
         # Nếu câu hỏi cũ đã bị bỏ sau một lần nhắc, chuyển sang một chủ đề khác.
         # Candidate chỉ mô tả stance/mục tiêu; Surface vẫn tự viết câu cuối.
         topic_shift_candidate = self._abandoned_topic_shift_candidate(blackboard)
@@ -352,6 +363,8 @@ class SocialInitiativeEngine:
         task_candidate = self._task_followup_candidate(blackboard, reason=reason)
         if task_candidate is not None:
             return task_candidate
+        if blackboard.engagement_exclusive_focus and blackboard.engagement_active:
+            return None
 
         policy = _autonomous_surface_policy()
         user_enabled = bool(policy.get("enabled", False))

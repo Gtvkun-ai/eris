@@ -41,6 +41,14 @@ def _optional_integer(value: Any) -> int | None:
         return None
 
 
+def _float01(value: Any) -> float:
+    try:
+        number = float(value or 0.0)
+    except (TypeError, ValueError):
+        number = 0.0
+    return max(0.0, min(1.0, number))
+
+
 @dataclass(frozen=True, slots=True)
 class ChessSurfaceState:
     """Snapshot bất biến đủ cho wording và semantic fingerprint."""
@@ -62,6 +70,17 @@ class ChessSurfaceState:
     hint_focus: str = ""
     result: str = ""
     orientation: str = ""
+    companion_mode: str = ""
+    user_side: str = ""
+    mover_side: str = ""
+    actor: str = ""
+    actor_is_user: bool = False
+    event: str = ""
+    speech_act: str = ""
+    speech_reason: str = ""
+    speech_priority: float = 0.0
+    commentary_focus: str = ""
+    suggestions_allowed: bool = False
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any] | None) -> "ChessSurfaceState":
@@ -89,6 +108,17 @@ class ChessSurfaceState:
             hint_focus=_text(data.get("hint_focus")).lower(),
             result=_text(data.get("result")),
             orientation=_text(data.get("orientation")).lower(),
+            companion_mode=_text(data.get("companion_mode")).lower(),
+            user_side=_text(data.get("user_side")).lower(),
+            mover_side=_text(data.get("mover_side")).lower(),
+            actor=_text(data.get("actor")).lower(),
+            actor_is_user=bool(data.get("actor_is_user", False)),
+            event=_text(data.get("event")).lower(),
+            speech_act=_text(data.get("speech_act")).lower(),
+            speech_reason=_text(data.get("speech_reason")).lower(),
+            speech_priority=_float01(data.get("speech_priority", 0.0)),
+            commentary_focus=_text(data.get("commentary_focus")),
+            suggestions_allowed=bool(data.get("suggestions_allowed", False)),
         )
 
     @property
@@ -127,6 +157,8 @@ class ChessSurfaceState:
                 self.last_move_uci,
                 self.suggested_move_uci,
                 self.side_to_move,
+                self.event,
+                self.speech_reason,
                 hashlib.sha1(self.board_fen.encode("utf-8", "ignore")).hexdigest()[:12] if self.board_fen else "",
                 self.result,
             )

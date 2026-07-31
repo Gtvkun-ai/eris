@@ -94,6 +94,9 @@ class ChessObservation:
     board_fen: str
     side_to_move: str
     move_number: int
+    user_side: str = ""
+    mover_side: str = ""
+    actor_is_user: bool = False
     last_move_uci: str = ""
     last_move_san: str = ""
     evaluation_cp: int | None = None

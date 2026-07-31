@@ -145,6 +145,10 @@ class ChessGameTracker:
             game_over = bool(result or terminal_status)
             if game_over:
                 state.phase = ChessObservationPhase.COMPLETED
+            metadata = snapshot.metadata if isinstance(snapshot.metadata, dict) else dict(snapshot.metadata or {})
+            raw_user_side = str(metadata.get("player_side") or metadata.get("user_side") or snapshot.orientation or "").strip().lower()
+            user_side = "white" if raw_user_side in {"w", "white"} else "black" if raw_user_side in {"b", "black"} else ""
+            mover_side = "white" if mover == "w" else "black" if mover == "b" else ""
             return ChessObservation(
                 game_id=snapshot.game_id,
                 mode=mode,
@@ -152,6 +156,9 @@ class ChessGameTracker:
                 board_fen=position.board_fen,
                 side_to_move="white" if position.turn == "w" else "black",
                 move_number=position.fullmove,
+                user_side=user_side,
+                mover_side=mover_side,
+                actor_is_user=bool(user_side and mover_side and user_side == mover_side),
                 last_move_uci=last_move.uci if last_move else "",
                 last_move_san=last_san,
                 evaluation_cp=score,

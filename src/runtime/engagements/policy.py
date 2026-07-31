@@ -110,8 +110,10 @@ class EngagementInteractionPolicy:
             and user_quiet
             and since_output >= state_cadence_seconds
         )
-        cadence_due = bool(cadence_enabled and user_quiet and since_output >= policy.desired_interval_seconds)
-        maximum_due = bool(cadence_enabled and user_quiet and since_output >= policy.maximum_quiet_seconds)
+        event_driven_only = bool(engagement.domain_state.get("event_driven_only", False))
+        generic_cadence_enabled = cadence_enabled and not event_driven_only
+        cadence_due = bool(generic_cadence_enabled and user_quiet and since_output >= policy.desired_interval_seconds)
+        maximum_due = bool(generic_cadence_enabled and user_quiet and since_output >= policy.maximum_quiet_seconds)
 
         if initiative in {InitiativeMode.MONITORING, InitiativeMode.SILENT_UNTIL_NEEDED} and not event_due:
             return InteractionDecision(
