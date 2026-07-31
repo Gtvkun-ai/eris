@@ -23,6 +23,7 @@ from runtime.social_stance_policy import guard_subjective_stance_payload
 from runtime.companion_model_routing import route_companion_turn
 from runtime.public_reply_context import compile_public_reply_context
 from runtime.reply_obligation import enforce_reply_obligation
+from runtime.chess.surface import render_chess_surface_text
 from runtime.discourse_state import assistant_proposition_link
 from runtime.discourse_surface import DiscourseSurface, DiscourseSurfaceRenderer
 from runtime.json_boundary import public_payload
@@ -187,53 +188,15 @@ def _serializable_public_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _structured_chess_fallback_text(report: Any, user_text: str) -> str:
-    """Dựng câu tối thiểu từ chess evidence khi provider thật sự không trả text.
-
-    Đây không phải fallback văn mẫu. Nó chỉ đọc field có cấu trúc đã nằm trong
-    SourceGroundingReport, nên câu luôn nói rõ trạng thái/nước cờ thay vì lẩm bẩm
-    về một cái “mạch” không ai biết là mạch gì.
-    """
+    """Fallback chat dùng typed state và cùng renderer với autonomous."""
 
     if str(getattr(report, "primary_source", "") or "") not in {"chess_bridge", "structured_runtime"}:
         return ""
-    previews = tuple(getattr(report, "structured_facts_preview", ()) or ())
-    claim = " ".join(str(item or "") for item in previews if str(item or "").strip())
-    if not claim:
-        return ""
-
-    def field(name: str) -> str:
-        match = re.search(rf"(?:^|[; ]){re.escape(name)}=([^;]+)", claim, flags=re.IGNORECASE)
-        return str(match.group(1) if match else "").strip()
-
-    phase = field("phase").lower()
-    side = field("side_to_move").lower()
-    last_move = field("last_move")
-    suggestion = field("suggested_move")
-    move_number = field("move_number")
-    side_vi = {"white": "trắng", "black": "đen", "w": "trắng", "b": "đen"}.get(side, side)
-    suggestion = "" if suggestion in {"", "-", "none", "unknown"} else suggestion
-    last_move = "" if last_move in {"", "-", "none", "unknown"} else last_move
-
-    normalized_user = " ".join(str(user_text or "").lower().split())
-    asks_move = any(marker in normalized_user for marker in (
-        "nước nào", "nuoc nao", "đánh gì", "danh gi", "đi gì", "di gi",
-        "nên đánh", "nen danh", "nước tiếp", "nuoc tiep",
-    ))
-    if asks_move and suggestion:
-        return f"Nước gợi ý hiện tại là {suggestion}."
-    # Field nước cờ cụ thể thắng phase mơ hồ/stale. Chess.com từng giữ status
-    # completed của ván cũ trên cùng route, nên tuyên bố kết thúc trước khi đọc
-    # last_move là cách rất nhanh để nói sai với vẻ đầy tự tin.
-    if suggestion:
-        return f"Chess bridge đang gợi ý {suggestion}."
-    if last_move and side_vi:
-        return f"Nước vừa đi là {last_move}; hiện đến lượt {side_vi}."
-    if phase in {"completed", "game_over", "finished"}:
-        return "Ván cờ đã kết thúc."
-    if side_vi:
-        suffix = f" ở nước {move_number}" if move_number else ""
-        return f"Bàn cờ đã được nhận{suffix}; hiện đến lượt {side_vi}."
-    return "Bàn cờ đã được chess bridge nhận, nhưng snapshot này chưa có nước gợi ý."
+    return render_chess_surface_text(
+        getattr(report, "structured_state", None),
+        user_text=user_text,
+        autonomous=False,
+    )
 
 
 def _previous_active_proposition_root(ledger: Any) -> int:

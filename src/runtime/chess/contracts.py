@@ -116,9 +116,10 @@ class ChessObservation:
         payload["phase"] = self.phase.value
         payload["full_assistance"] = self.mode.full_assistance
         payload["suggestion"] = self.suggestion.to_dict() if self.suggestion else None
-        if self.suggestion:
-            payload["suggested_move_uci"] = self.suggestion.uci
-            payload["suggested_move_san"] = self.suggestion.san
+        # None ở đây là lệnh xóa thật, không phải “provider quên gửi”. Reducer
+        # tri-state sẽ dọn suggestion của nước trước khi snapshot mới không có.
+        payload["suggested_move_uci"] = self.suggestion.uci if self.suggestion else None
+        payload["suggested_move_san"] = self.suggestion.san if self.suggestion else None
         return payload
 
 

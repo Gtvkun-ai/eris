@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from runtime.workspace_manager import default_eris_home
+from runtime.chess.surface import ChessSurfaceState
 from .contracts import IntentionPlan
 from .cognitive_blackboard import TypedCognitiveBlackboard
 from .semantic_contracts import TurnSemantics
@@ -377,6 +378,25 @@ class InitiativeController:
         intrusion = max(0.05, min(0.60, 0.24 - 0.12 * candidate.relevance + 0.10 * candidate.urgency))
         anchor_type = candidate.anchor_type or default_anchor
         anchor_id = candidate.anchor_id or "shared_quiet"
+        subject_key = anchor_id
+        activity_payload = {
+            "activity_kind": "unknown", "phase": "unknown", "event": "",
+            "event_key": "none", "confidence": 0.0, "evidence_refs": list(refs),
+        }
+        if kind == "task_followup" and blackboard.engagement_kind == "chess":
+            # Dedupe theo position/event thật. Hai nước khác nhau không được coi
+            # là lặp chỉ vì cùng mang nhãn task_followup.
+            state = ChessSurfaceState.from_mapping(blackboard.engagement_state)
+            event_key = state.event_fingerprint(blackboard.engagement_last_event_kind)
+            subject_key = f"{anchor_id}:{event_key}"
+            activity_payload = {
+                "activity_kind": "chess",
+                "phase": state.phase or "unknown",
+                "event": blackboard.engagement_last_event_kind,
+                "event_key": event_key,
+                "confidence": 1.0 if state.meaningful else 0.0,
+                "evidence_refs": list(refs),
+            }
         mapping = {
             "speak": True,
             "motive": kind,
@@ -392,14 +412,11 @@ class InitiativeController:
             "tool_intent": "",
             "tool_input": "",
             "evidence_refs": list(refs),
-            "activity": {
-                "activity_kind": "unknown", "phase": "unknown", "event": "",
-                "event_key": "none", "confidence": 0.0, "evidence_refs": list(refs),
-            },
+            "activity": activity_payload,
             "semantics": {
                 "turn_kind": turn_kind,
                 "speech_act": candidate.speech_act or kind,
-                "subject_key": anchor_id,
+                "subject_key": subject_key,
                 "evidence_scope": evidence_scope,
                 "continuation_key": blackboard.thread_key if kind == "continuation" else "none",
             },

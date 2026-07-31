@@ -15,6 +15,7 @@ from runtime.subsystem_health import FailureKind, SubsystemHealthRegistry
 from .contracts import BoardSnapshot, ChessObservation, ChessObservationPhase
 from .engine import Position, analyze
 from .tracker import ChessGameTracker
+from .surface import ChessSurfaceState, chess_turn_relevant
 
 
 class ChessCompanionService:
@@ -173,10 +174,22 @@ class ChessCompanionService:
                 "board_fen": snapshot.board_fen,
                 "side_to_move": observation.side_to_move,
                 "move_number": observation.move_number,
+                "ply": snapshot.ply,
                 "last_move_uci": observation.last_move_uci,
+                "last_move_san": str(getattr(observation, "last_move_san", "") or ""),
                 "suggested_move_uci": (
                     observation.suggestion.uci if observation.suggestion is not None else ""
                 ),
+                "suggested_move_san": (
+                    observation.suggestion.san if observation.suggestion is not None else ""
+                ),
+                "evaluation_cp": getattr(observation, "evaluation_cp", None),
+                "evaluation_label": str(getattr(observation, "evaluation_label", "") or ""),
+                "evaluation_swing_cp": getattr(observation, "evaluation_swing_cp", None),
+                "move_quality": str(getattr(observation, "move_quality", "") or ""),
+                "hint_focus": str(getattr(observation, "hint_focus", "") or ""),
+                "result": str(getattr(observation, "result", "") or ""),
+                "orientation": str(getattr(snapshot, "orientation", "") or ""),
                 "captured_at": snapshot.captured_at or received_at,
                 # Freshness phải dựa trên lúc bridge NHẬN snapshot. Timestamp từ
                 # extension có thể dùng clock khác hoặc bị serialize theo ms.
@@ -348,39 +361,19 @@ class ChessCompanionService:
         return age <= max(0.5, float(max_age_seconds))
 
     def matches_turn(self, user_text: str) -> bool:
-        """Nhận câu hỏi về trạng thái/nước cờ, không nhận câu hỏi thuần UI.
+        """Nhận ngôn ngữ cờ tự nhiên; câu UI thuần vẫn để vision xử lý."""
 
-        FEN trả lời được quân, lượt và nước đi; nó không biết màu highlight, popup
-        hay vị trí nút trên Chess.com. Những câu đó phải tiếp tục đi vision.
-        """
+        return chess_turn_relevant(
+            user_text,
+            engagement_active=self.is_engagement_active(),
+        )
 
-        if not self.is_engagement_active():
-            return False
-        normalized = normalize_vi(user_text)
-        if not normalized:
-            return False
-        visual_only_markers = (
-            "mau gi", "mau nao", "highlight", "to mau", "o sang", "o chop",
-            "nut nao", "popup", "bo cuc", "vi tri tren man hinh", "giao dien",
-        )
-        state_markers = (
-            "co vua", "chess", "fen", "ban co", "van co", "nuoc co",
-            "nuoc nao", "di gi", "danh gi", "nen danh", "nen di", "di sao",
-            "di nuoc", "chi tui", "chi toi", "chi minh",
-            "van nay", "ban nay", "quan nao", "trang di", "den di",
-            "chieu tuong", "chieu het", "nhap thanh", "phong hau",
-            "the co", "luot ai", "nuoc vua di", "nuoc tiep theo",
-        )
-        if any(marker in normalized for marker in visual_only_markers) and not any(
-            marker in normalized for marker in state_markers
-        ):
-            return False
-        if any(marker in normalized for marker in state_markers):
-            return True
-        tokens = set(normalized.split())
-        return bool(tokens & {"nuoc", "van", "quan", "fen"}) or normalized in {
-            "chi", "chi tui", "chi toi", "chi minh",
-        }
+    def current_surface_state(self) -> dict[str, Any]:
+        """Snapshot typed bất biến dùng chung cho chat và autonomous Surface."""
+
+        with self._lock:
+            item = dict(self._last_snapshot_summary)
+        return ChessSurfaceState.from_mapping(item).to_dict()
 
     def diagnostics(self) -> dict[str, Any]:
         with self._lock:
@@ -417,12 +410,13 @@ class ChessCompanionService:
         if not board_fen or age > max(0.5, float(max_age_seconds)):
             return ()
 
-        game_id = str(item.get("game_id", "") or "unknown")
-        move_number = int(item.get("move_number", 0) or 0)
-        phase = str(item.get("phase", "unknown") or "unknown")
-        side_to_move = str(item.get("side_to_move", "unknown") or "unknown")
-        last_move = str(item.get("last_move_uci", "") or "-")
-        suggestion = str(item.get("suggested_move_uci", "") or "-")
+        typed = ChessSurfaceState.from_mapping(item)
+        game_id = typed.game_id or "unknown"
+        move_number = typed.move_number
+        phase = typed.phase or "unknown"
+        side_to_move = typed.side_to_move or "unknown"
+        last_move = typed.last_move_uci or "-"
+        suggestion = typed.suggested_move_uci or "-"
         if relevant_to_turn and suggestion == "-":
             # Tỷ lệ direct_move_rate chỉ điều khiển việc ERIS tự buột miệng gợi ý
             # trong autonomous. Khi user hỏi thẳng “nên đánh gì”, phải phân tích
@@ -435,6 +429,8 @@ class ChessCompanionService:
                 candidates = analyze(position, depth=self.tracker.depth, top_n=1)
                 if candidates:
                     suggestion = candidates[0][0].uci
+                    item["suggested_move_uci"] = suggestion
+                    typed = ChessSurfaceState.from_mapping(item)
             except Exception as exc:  # noqa: BLE001 - evidence provider phải degrade yên
                 if self.logger is not None:
                     try:
@@ -454,6 +450,9 @@ class ChessCompanionService:
             "engagement_active": self.is_engagement_active(),
             "state_fresh": True,
             "claim": claim,
+            # State typed là nguồn chính; claim text chỉ giữ để log/plugin cũ.
+            "state": typed.to_dict(),
+            "event_fingerprint": typed.event_fingerprint("chess.snapshot"),
             "confidence": 1.0,
             "grounded": True,
             "stale": False,

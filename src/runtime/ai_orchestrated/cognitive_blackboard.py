@@ -107,6 +107,7 @@ class TypedCognitiveBlackboard:
     # Giữ state domain tới tận Surface/local fallback. Nếu chỉ giữ chữ “task”,
     # fallback sẽ nói “theo mạch” như thể đó là một đơn vị đo lường hợp pháp.
     engagement_state_summary: str = ""
+    engagement_state: Mapping[str, Any] = field(default_factory=dict)
     engagement_last_event_kind: str = ""
     engagement_evidence_refs: tuple[str, ...] = ()
     attention_pressure: float = 0.0
@@ -230,6 +231,7 @@ class TypedCognitiveBlackboard:
             or engagement.get("kind", ""),
             80,
         )
+        engagement_state = dict(_mapping(engagement_foreground.get("current_state")))
         engagement_state_summary = _compact(
             engagement_foreground.get("current_state_summary")
             or engagement_foreground.get("objective")
@@ -265,6 +267,7 @@ class TypedCognitiveBlackboard:
                     "engagement_kind": engagement_kind,
                     "last_event_kind": engagement_last_event_kind,
                     "state_summary": engagement_state_summary,
+                    "state": engagement_state,
                     **(
                         {"preempts_reply_baton": engagement_preempts_reply_baton}
                         if interaction_declares_preemption
@@ -439,6 +442,7 @@ class TypedCognitiveBlackboard:
             engagement_preempts_reply_baton=engagement_preempts_reply_baton,
             engagement_kind=engagement_kind,
             engagement_state_summary=engagement_state_summary,
+            engagement_state=engagement_state,
             engagement_last_event_kind=engagement_last_event_kind,
             engagement_evidence_refs=engagement_evidence_refs,
             attention_pressure=attention_pressure,
@@ -480,6 +484,7 @@ class TypedCognitiveBlackboard:
             "engagement": {
                 "kind": self.engagement_kind,
                 "state_summary": self.engagement_state_summary,
+                "state": dict(self.engagement_state),
                 "last_event_kind": self.engagement_last_event_kind,
                 "evidence_refs": list(self.engagement_evidence_refs),
             },

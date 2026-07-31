@@ -388,37 +388,19 @@ class ChatCycleMixin:
         return tuple(merged)
 
     def _looks_like_chess_context_request(self, user_text: str) -> bool:
-        """Route câu ngắn vào chess context khi bridge đang có FEN tươi."""
+        """Bind chat vào state cờ typed thay vì săn vài word marker cứng."""
 
         bridge = getattr(self, "chess_bridge_service", None)
-        evidence_fn = getattr(bridge, "current_grounding_evidence", None)
-        if not callable(evidence_fn):
+        matches = getattr(bridge, "matches_turn", None)
+        fresh = getattr(bridge, "is_state_fresh", None)
+        if not callable(matches):
             return False
         try:
-            if not tuple(evidence_fn(max_age_seconds=8.0, relevant_to_turn=False) or ()):
+            if callable(fresh) and not bool(fresh(max_age_seconds=30.0)):
                 return False
+            return bool(matches(user_text))
         except Exception:
             return False
-
-        normalized = normalize_vi(user_text)
-        if not normalized:
-            return False
-        padded = f" {normalized} "
-        markers = (
-            "co vua", "chess", "fen", "ban co", "van co", "nuoc co",
-            "nuoc nao", "di gi", "di nuoc", "chi tui", "chi toi", "chi minh",
-            "van nay", "ban nay", "quan nao", "trang di", "den di",
-            "chieu tuong", "chieu het", "nhap thanh", "phong hau",
-        )
-        if any(f" {normalize_vi(marker)} " in padded for marker in markers):
-            return True
-        # Khi engagement đang active, các token này đủ để bind câu ngắn kiểu
-        # “nước?”, “ván này sao”, “chỉ tui”. Không dùng token trần “đi” vì loài
-        # người còn dùng nó cho khoảng ba trăm mục đích khác.
-        tokens = set(normalized.split())
-        return bool(tokens & {"nuoc", "van", "quan"}) or normalized in {
-            "chi", "chi tui", "chi toi", "chi minh",
-        }
 
     def _chat_structured_grounding_facts(self, user_text: str) -> tuple[object, ...]:
         bridge = getattr(self, "chess_bridge_service", None)
@@ -428,7 +410,7 @@ class ChatCycleMixin:
         relevant = self._looks_like_chess_context_request(user_text)
         try:
             return tuple(
-                evidence_fn(max_age_seconds=8.0, relevant_to_turn=relevant) or ()
+                evidence_fn(max_age_seconds=30.0, relevant_to_turn=relevant) or ()
             )
         except Exception as exc:
             self.logger.debug("[chess grounding] evidence unavailable: %s", exc)

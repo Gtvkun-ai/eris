@@ -597,6 +597,9 @@ class PlannerProjection:
     interaction_constraints: tuple[str, ...]
     age_seconds: float
     seconds_since_progress: float
+    # State typed đi xuyên planner -> blackboard -> Surface. Chuỗi summary chỉ
+    # còn phục vụ log/UI cũ, không còn là nguồn để regex ngược ra nước cờ.
+    current_state: Mapping[str, JsonValue] = field(default_factory=dict)
     evidence_binding: Mapping[str, JsonValue] = field(default_factory=dict)
     last_event_kind: str = ""
     lifecycle_changed_at: float = 0.0

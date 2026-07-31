@@ -217,6 +217,8 @@ class SourceGroundingReport:
     # user is continuing that engagement.
     structured_facts_preview: list[str] = field(default_factory=list)
     structured_evidence_ids: list[str] = field(default_factory=list)
+    structured_kind: str = ""
+    structured_state: dict[str, Any] = field(default_factory=dict)
 
     pasted_code_detected: bool = False
     code_language: str = "unknown"
@@ -843,6 +845,8 @@ class SourceGroundingEngine:
             screen_facts_preview=[str(p) for p in (screen_evidence.get("preview") or []) if str(p).strip()][:4],
             structured_facts_preview=[str(p) for p in (structured_evidence.get("preview") or []) if str(p).strip()][:3],
             structured_evidence_ids=[str(p) for p in (structured_evidence.get("ids") or []) if str(p).strip()][:8],
+            structured_kind=str(structured_evidence.get("kind") or ""),
+            structured_state=dict(structured_evidence.get("state") or {}),
             pasted_code_detected=bool(code_info["detected"]),
             code_language=str(code_info["language"]),
             code_block_count=int(code_info["block_count"]),
@@ -1239,6 +1243,14 @@ class SourceGroundingEngine:
             for fact in screen_previews[:4]:
                 lines.append(f"  {fact[:200]}")
 
+        structured_state = getattr(report, "structured_state", None) or {}
+        if structured_state and str(getattr(report, "structured_kind", "") or "") == "chess":
+            lines.append("chess_typed_state: " + json.dumps(structured_state, ensure_ascii=False, separators=(",", ":")))
+            lines.append("chess_surface_rules:")
+            lines.append("- This typed state is authoritative for the board, side to move, last move and suggestion.")
+            lines.append("- Answer a direct move question with the move first, then one concrete positional reason.")
+            lines.append("- Discuss the position naturally; light dry teasing is allowed when grounded in the move/position.")
+            lines.append("- Never narrate telemetry such as 'bàn cờ đã được nhận' or 'nước gợi ý hiện tại'.")
         lines.append("[/SOURCE_GROUNDING]")
         return "\n".join(lines)
 
@@ -2141,6 +2153,8 @@ class SourceGroundingEngine:
 
         items: list[Any] = []
         relevant = False
+        state: dict[str, Any] = {}
+        kind = ""
         for item in self._as_list(structured_facts):
             grounded_marker = (
                 item.get("grounded") if isinstance(item, Mapping) else getattr(item, "grounded", None)
@@ -2162,6 +2176,12 @@ class SourceGroundingEngine:
             if not self._preview_item(item):
                 continue
             items.append(item)
+            if isinstance(item, Mapping):
+                nested = item.get("state")
+                if isinstance(nested, Mapping):
+                    state = dict(nested)
+                if not kind:
+                    kind = str(item.get("engagement_kind", "") or "")
             marker = (
                 item.get("relevant_to_turn", False)
                 if isinstance(item, Mapping)
@@ -2176,6 +2196,8 @@ class SourceGroundingEngine:
             "ids": ids,
             "preview": previews,
             "confidence": min(1.0, max(0.0, confidence)),
+            "kind": kind,
+            "state": state,
         }
 
     def _collect_memory_evidence(self, *, frame: Any = None, memory_packet: Any = None) -> dict[str, Any]:

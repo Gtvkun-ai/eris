@@ -241,7 +241,12 @@ class SpeechAnimator:
         # peak yếu, giữ nguyên số 0 để khoảng im vẫn khép miệng thật và không biến
         # Eris thành cá cảnh đang thở theo nhiễu nền.
         peak = max(raw_envelope, default=0.0)
-        if 0.015 < peak < 0.55:
+        # Backend đôi khi gửi envelope đúng độ dài nhưng toàn số 0. Nếu vẫn ưu
+        # tiên nó, miệng sẽ đứng hình suốt audio. Chỉ cần một peak thật là đủ
+        # tin envelope; còn toàn số 0 thì cue chữ phải tiếp quản.
+        if peak <= 0.018:
+            self._audio_envelope = ()
+        elif peak < 0.55:
             gain = min(8.0, 0.72 / peak)
             self._audio_envelope = tuple(
                 0.0 if value <= 0.003 else _clamp(value * gain, 0.0, 0.90)

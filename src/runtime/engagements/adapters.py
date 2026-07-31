@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Protocol
 
+from .state_patch import apply_tri_state_patch
 from .contracts import (
     Engagement,
     EngagementEvent,
@@ -159,16 +160,19 @@ class GenericEngagementAdapter:
         elif kind in {"engagement.completed", "engagement.cancelled"}:
             data["waiting_for_user"] = False
             data["recent_progress"] = _recent(data, detail or kind.replace("engagement.", "Engagement "))
-        for key in (
-            "fen", "pgn", "move_number", "file", "test_status", "step", "progress",
-            "result", "status", "state", "outcome", "error", "url", "artifact",
-            "mode", "full_assistance", "board_fen", "side_to_move", "last_move_uci",
-            "last_move_san", "evaluation_cp", "evaluation_label",
-            "suggested_move_uci", "suggested_move_san", "confidence",
-            "evaluation_swing_cp", "move_quality", "hint_focus",
-        ):
-            if key in payload:
-                data[key] = payload[key]
+        # Patch ba trạng thái: key vắng mặt giữ nguyên; None xóa; giá trị khác
+        # ghi đè. Nhờ vậy suggestion cũ không sống dai sang nước mới.
+        data = apply_tri_state_patch(
+            data, payload,
+            keys=(
+                "fen", "pgn", "move_number", "ply", "file", "test_status", "step", "progress",
+                "result", "status", "state", "outcome", "error", "url", "artifact",
+                "mode", "full_assistance", "board_fen", "side_to_move", "last_move_uci",
+                "last_move_san", "evaluation_cp", "evaluation_label",
+                "suggested_move_uci", "suggested_move_san", "confidence",
+                "evaluation_swing_cp", "move_quality", "hint_focus", "orientation",
+            ),
+        )
         return data
 
     def _state_summary(self, engagement: Engagement) -> str:
@@ -199,6 +203,7 @@ class GenericEngagementAdapter:
             interaction_constraints=constraints[:12],
             age_seconds=max(0.0, now - engagement.started_at),
             seconds_since_progress=max(0.0, now - engagement.last_progress_at),
+            current_state=dict(state),
             evidence_binding=engagement.evidence_binding.to_dict(),
             last_event_kind=engagement.last_event_kind,
             lifecycle_changed_at=engagement.lifecycle_changed_at,
@@ -326,7 +331,8 @@ class ChessCompanionAdapter(GenericEngagementAdapter):
         # The only exception is UNKNOWN pages which send full_assistance=False.
         full = bool(state.get("full_assistance", True))
         dynamic = (
-            "May evaluate the position, tease mistakes, offer hints, and occasionally state the suggested move directly."
+            "Discuss the concrete position or consequence of the latest move. Light dry teasing is welcome when grounded. "
+            "If giving a move, explain one tactical or positional reason. Never narrate bridge telemetry or say the board was received."
             if full else
             "Unknown page: cannot confirm game context — only react socially, do not suggest moves or evaluate."
         )
@@ -337,11 +343,13 @@ class ChessCompanionAdapter(GenericEngagementAdapter):
                 "When interaction is due, ask briefly whether the user has opened the game and whether the Chess.com bridge is connected."
             ),
             "waiting_for_start": (
-                "The board is visible, but there is no reliable start evidence yet. "
-                "Acknowledge that the board is visible and ask whether the game has started; do not invent moves."
+                "The position is available but play has not started. Invite the first move naturally; "
+                "do not announce telemetry such as 'board detected/received'."
             ),
             "active": (
-                "The game is active. Ground every comment in the latest chess event/FEN and avoid repeating commentary when no move changed."
+                "The game is active. Ground every comment in the latest typed state/FEN. React to the actual move, "
+                "discuss a tactical or positional consequence, and use light teasing when deserved. "
+                "Do not repeat commentary when no move changed."
             ),
             "possibly_ended": (
                 "The game may have ended. Ask or wait for a result signal instead of declaring a result without evidence."
@@ -360,6 +368,7 @@ class ChessCompanionAdapter(GenericEngagementAdapter):
             current_state_summary=base.current_state_summary, recent_progress=base.recent_progress,
             next_expected_events=base.next_expected_events, interaction_constraints=constraints[:12],
             age_seconds=base.age_seconds, seconds_since_progress=base.seconds_since_progress,
+            current_state=base.current_state,
             evidence_binding=base.evidence_binding, last_event_kind=base.last_event_kind,
             lifecycle_changed_at=base.lifecycle_changed_at, last_event_log_seq=base.last_event_log_seq,
             resume_focus=base.resume_focus,

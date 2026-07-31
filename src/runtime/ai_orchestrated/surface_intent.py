@@ -22,6 +22,7 @@ from .cognitive_blackboard import TypedCognitiveBlackboard
 from .initiative import SpeechIntent
 from .semantic_contracts import compact, semantic_key
 from runtime.utterance_spec import UtteranceSpec
+from runtime.chess.surface import render_chess_surface_text
 
 
 SURFACE_MODES: tuple[str, ...] = (
@@ -60,55 +61,14 @@ def _clamp01(value: Any, default: float = 0.0) -> float:
     return max(0.0, min(1.0, number))
 
 
-def _summary_fields(summary: str) -> dict[str, str]:
-    """Tách ``key=value`` từ PlannerProjection mà không hiểu domain sâu."""
-
-    fields: dict[str, str] = {}
-    for part in str(summary or "").split(";"):
-        item = " ".join(part.split()).strip()
-        if not item or "=" not in item:
-            continue
-        key, value = item.split("=", 1)
-        fields[key.strip().lower()] = value.strip()
-    return fields
-
-
 def _chess_task_fallback_text(blackboard: TypedCognitiveBlackboard) -> str:
-    """Viết đúng một câu từ state cờ, không dùng văn mẫu “theo mạch”."""
+    """Một renderer chung; thiếu dữ kiện thì im, không đọc thông báo nhà ga."""
 
-    summary = str(blackboard.engagement_state_summary or "").strip()
-    fields = _summary_fields(summary)
-    phase = fields.get("phase", "").lower()
-    side = fields.get("to_move", "").lower()
-    last_move = fields.get("last", "")
-    suggestion = fields.get("suggestion", "")
-    result = fields.get("result", "")
-    move_number = ""
-    for part in summary.split(";"):
-        compact_part = " ".join(part.split()).strip().lower()
-        if compact_part.startswith("move "):
-            move_number = compact_part[5:].strip()
-            break
-    side_vi = {"white": "trắng", "black": "đen", "w": "trắng", "b": "đen"}.get(side, side)
-
-    last_event = str(blackboard.engagement_last_event_kind or "").strip().lower()
-    # Ưu tiên dữ liệu nước cờ cụ thể hơn phase. Một số frontend từng giữ chữ
-    # ``completed`` của ván trước trong vài snapshot đầu ván mới; suggestion/
-    # last_move mới là bằng chứng đang sống và hữu ích cho câu hiện tại.
-    if suggestion:
-        suffix = f"; hiện đến lượt {side_vi}" if side_vi else ""
-        return f"Nước gợi ý hiện tại là {suggestion}{suffix}."
-    if last_move:
-        suffix = f"; hiện đến lượt {side_vi}" if side_vi else ""
-        return f"Nước vừa đi là {last_move}{suffix}."
-    if result or "game_over" in last_event or "game.ended" in last_event or "game.completed" in last_event:
-        return f"Ván đã kết thúc{f': {result}' if result else ''}."
-    if phase in {"waiting_for_start", "waiting", "ready"}:
-        return "Bàn cờ đã được nhận; ván chưa bắt đầu."
-    if side_vi:
-        move_text = f" ở nước {move_number}" if move_number else ""
-        return f"Bàn cờ đã được nhận{move_text}; hiện đến lượt {side_vi}."
-    return ""
+    return render_chess_surface_text(
+        blackboard.engagement_state,
+        event_kind=blackboard.engagement_last_event_kind,
+        autonomous=True,
+    )
 
 
 def _anchor_topic(blackboard: TypedCognitiveBlackboard, kind: str) -> str:
