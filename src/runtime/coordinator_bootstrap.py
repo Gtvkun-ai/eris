@@ -747,6 +747,19 @@ class CoordinatorBootstrapMixin:
                 safe_log(self.logger, "warning", "Không refresh được environment capabilities: %s", exc)
         except Exception as exc:
             self.logger.warning("Không khởi tạo được environment capabilities: %s", exc)
+        # Browser DOM Bridge — HTTP server daemon thread cho Brave/Chrome extension
+        self.browser_bridge_server = None
+        try:
+            from runtime.browser_bridge_server import start_browser_bridge_server
+            self.browser_bridge_server = self.subsystem_supervisor.start(
+                "runtime.browser_bridge",
+                lambda: start_browser_bridge_server(logger=self.logger),
+                failure_kind=FailureKind.EXPECTED_DEGRADATION,
+                stop_methods=("stop", "shutdown", "close"),
+                details={"port": 7422, "purpose": "browser_dom_L4_bridge"},
+            )
+        except Exception as exc:
+            self.logger.warning("[browser_bridge] Không khởi động được: %s", exc)
 
     def _bootstrap_thought_and_ai(self, *, llm_service) -> None:
         self.thought_model_adapter = RuntimeThoughtModelAdapter.from_env(logger=self.logger)

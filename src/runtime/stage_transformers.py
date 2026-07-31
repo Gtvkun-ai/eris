@@ -258,11 +258,17 @@ class ActionTagExtractor:
         )
 
 
+_JAPANESE_BRACKET_CLEAN_RE = re.compile(r"\s*「[\u3040-\u30ff\u3400-\u9fff\s\S]*?」\s*")
+
+
 class DisplayFilter:
-    """Text cho UI: đẹp, gọn, không chứa tag nội bộ."""
+    """Text cho UI: đẹp, gọn, không chứa tag nội bộ hay câu tiếng Nhật đính kèm."""
 
     def clean(self, text: str) -> str:
-        return clean_forbidden_honorifics(_strip_markdown(text, code_placeholder="[code]"))
+        cleaned = clean_forbidden_honorifics(_strip_markdown(text, code_placeholder="[code]"))
+        cleaned = _JAPANESE_BRACKET_CLEAN_RE.sub("", cleaned)
+        return _squash(cleaned)
+
 
 
 class TTSFilter:

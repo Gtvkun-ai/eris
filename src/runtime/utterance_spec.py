@@ -169,10 +169,23 @@ class UtteranceSpec:
             display_text,
         )
 
+        # Trích xuất nếu model lọt câu tiếng Nhật dạng 「...」 vào display_text
+        import re
+        jp_match = re.search(r"「([\u3040-\u30ff\u3400-\u9fff\s\S]+?)」", display_text)
+        if jp_match:
+            extracted_jp = jp_match.group(1).strip()
+            clean_display = re.sub(r"\s*「[\u3040-\u30ff\u3400-\u9fff\s\S]+?」\s*", "", display_text).strip()
+            if clean_display:
+                display_text = clean_display
+            if (not speech_raw or not speech_raw.get("text")) and not root.get("speech_text"):
+                speech_text = extracted_jp
+
+
         display_language = _language(
             display_raw.get("language", root.get("display_language", "")),
             default_display_language,
         )
+
         speech_language = _language(
             speech_raw.get("language", root.get("speech_language", "")),
             default_speech_language or display_language,

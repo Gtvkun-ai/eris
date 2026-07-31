@@ -428,6 +428,7 @@ class SourceGroundingEngine:
         "biết tui làm gì", "biết tôi làm gì",
         "what is on my screen", "this screen", "look at this", "look at my screen",
         "tôi đang code gì", "đang code gì", "đoạn đang mở",
+        "bài tôi đang nghe", "bài đang nghe", "đang nghe bài", "bài hát", "bài gì", "nhạc gì", "đang nghe nhạc", "bài đang phát", "đang phát bài", "đang nghe", "bài hát tên",
     )
 
     MEMORY_REFERENCE_MARKERS = (
@@ -645,11 +646,12 @@ class SourceGroundingEngine:
                     )
                 )
 
-        if has_relevant_chess:
+        if structured_evidence["present"]:
+            confidence = 0.98 if (has_relevant_chess or refers_to_screen) else 0.65
             candidates.append(
                 SourceCandidate(
                     kind="chess_bridge",
-                    confidence=0.98,
+                    confidence=confidence,
                     reason="Active chess engagement có snapshot FEN trực tiếp từ extension.",
                     evidence_ids=structured_evidence["ids"],
                     evidence_preview=structured_evidence["preview"],

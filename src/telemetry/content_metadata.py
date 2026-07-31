@@ -240,7 +240,16 @@ class ContentMetadataCollector:
         return fallback
 
     def _read_dom_bridge(self, *, now: float, current_url: str) -> ContentMetadata | None:
+        # Thử đọc fresh trước (stale_after = dom_stale_after, mặc định 12s)
         data = self._read_fresh_json(self.dom_paths, now=now, stale_after=self.dom_stale_after)
+        stale_fallback = False
+        if not data:
+            # Không có data tươi → thử đọc data stale cũ hơn nhưng vẫn trong 300s
+            # (5 phút). Trường hợp xảy ra khi Eris vừa khởi động lại, extension
+            # chưa kịp gửi POST mới. Data cũ vẫn có URL/title hữu ích; chỉ cần
+            # hạ confidence để downstream không overfit vào nó.
+            data = self._read_fresh_json(self.dom_paths, now=now, stale_after=300.0)
+            stale_fallback = bool(data)
         if not data:
             return None
 
@@ -258,6 +267,10 @@ class ContentMetadataCollector:
         if source not in SOURCE_TIERS:
             source = "browser_dom"
         tier, cap = SOURCE_TIERS[source]
+        # Data stale có cap thấp hơn — tối đa ngang L1 (browser_url) để tránh
+        # override OCR/accessibility tươi bằng URL cũ 1 tiếng.
+        if stale_fallback:
+            cap = min(cap, SOURCE_TIERS["browser_url"][1])
         url = _clean_text(data.get("url") or current_url, 500)
         page_kind = _infer_page_kind(url=url, title=str(data.get("title") or ""))
         title = _clean_text(data.get("title") or data.get("video_title") or data.get("og_title"), 180)
@@ -275,6 +288,11 @@ class ContentMetadataCollector:
         if not any((title, caption, visible_text, hashtags)):
             return None
 
+        evidence_notes: tuple[str, ...] = (
+            ("browser DOM bridge cache (stale fallback)",)
+            if stale_fallback
+            else ("browser DOM bridge cache",)
+        )
         return ContentMetadata(
             source=source,
             tier=tier,
@@ -291,7 +309,7 @@ class ContentMetadataCollector:
             media_state=media_state,
             collected_at=now,
             stale_after_seconds=self.dom_stale_after,
-            evidence_notes=("browser DOM bridge cache",),
+            evidence_notes=evidence_notes,
         )
 
     def _read_media_session_cache(self, *, now: float, current_url: str) -> ContentMetadata | None:

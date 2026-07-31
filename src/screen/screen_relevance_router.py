@@ -33,6 +33,9 @@ class ScreenRelevanceRouter:
         "file dang mo", "loi nay tren man hinh", "tab nay", "panel nay", "tab dang mo",
         "tab telemetry", "panel telemetry", "cua so telemetry", "doc tab telemetry",
         "doc duoc tab telemetry", "telemetry cua toi", "telemetry toi",
+        # Music / Media screen references
+        "bai dang nghe", "dang nghe bai", "bai toi dang nghe", "bai hat", "nhac",
+        "bai gi", "nhac gi", "dang nghe nhac", "dang phat", "media", "spotify", "youtube",
         # PATCH: các câu đời thường sau một lượt vision cũng là tham chiếu màn hình.
         # Không có nhóm này, câu kiểu “em còn mù vision hả” bị route về mode=none.
         "mu vision", "con mu vision", "em con mu vision",
@@ -43,6 +46,7 @@ class ScreenRelevanceRouter:
         "text", "dong", "log", "terminal", "console", "code", "traceback",
         "exception", "error", "loi", "thong bao", "ghi gi", "doc", "file", "ham",
         "class", "tab", "panel", "telemetry", "uia", "ocr", "metric", "status",
+        "bai", "bai hat", "nhac", "tieu de", "artist", "ca si", "song", "track", "spotify", "youtube", "media",
     )
     SCREEN_CAPABILITY_MARKERS = (
         "doc duoc", "nhin duoc", "thay duoc", "xem duoc", "co doc", "co thay",
@@ -53,7 +57,7 @@ class ScreenRelevanceRouter:
     SCREEN_RESOURCE_MARKERS = (
         "telemetry", "tab", "panel", "uia", "ocr", "cua so",
         # PATCH: ghép capability + vision/screen để cứu câu hỏi về thị giác.
-        "vision", "man hinh", "screen", "mat",
+        "vision", "man hinh", "screen", "mat", "bai", "nhac", "media", "spotify", "youtube",
     )
     # Yêu cầu model TỰ NHÌN vào ảnh — bỏ qua OCR text matching, thẳng vào vision.
     # Khác VISUAL_MARKERS (hỏi về layout/màu sắc): đây là "phân tích cái đang hiện"
@@ -119,8 +123,13 @@ class ScreenRelevanceRouter:
             resolution.query_text or user_text,
             generic_screen_request=bool(generic or resolution.inherited),
         )
-        confidence = max((block.confidence for block in evidence), default=0.0)
+        useful_evidence = tuple(
+            block for block in evidence
+            if not any(prefix in str(getattr(block, "text", "") or "").lower() for prefix in ("[chu nhan]:", "[user]:", "chu nhan:"))
+        )
+        confidence = max((block.confidence for block in useful_evidence), default=0.0)
         stale = bool(evidence and time.time() - max(block.captured_at for block in evidence) > 8.0)
+
         debug = {
             "anaphora_inherited": resolution.inherited,
             "anaphora_reason": resolution.reason,

@@ -188,6 +188,10 @@ class VisionGroundingReport:
     source: str = "unknown"
     observed_at: float = field(default_factory=time.time)
     debug: dict[str, Any] = field(default_factory=dict)
+    # Đặt True khi user có vẻ trỏ vào một đối tượng cụ thể ("bài đó", "cái này")
+    # nhưng grounding không thể xác nhận đối tượng đó là gì. Downstream có thể
+    # dùng cờ này để Eris hỏi lại thay vì im lặng hoàn toàn.
+    anaphoric_reference_unresolved: bool = False
 
     @property
     def grounded_claims(self) -> tuple[GroundedClaim, ...]:
@@ -232,6 +236,7 @@ class VisionGroundingReport:
             "source": self.source,
             "observed_at": self.observed_at,
             "debug": dict(self.debug),
+            "anaphoric_reference_unresolved": self.anaphoric_reference_unresolved,
         }
 
 
@@ -275,6 +280,7 @@ class VisionGroundingPolicy:
         source: str = "unknown",
         unknowns: Sequence[str] = (),
         contradictions: Sequence[str] = (),
+        anaphoric_reference_unresolved: bool = False,
     ) -> VisionGroundingReport:
         return VisionGroundingReport(
             claims=(),
@@ -286,6 +292,7 @@ class VisionGroundingPolicy:
             requested=requested,
             stale=stale,
             source=source,
+            anaphoric_reference_unresolved=anaphoric_reference_unresolved,
         )
 
     def evaluate(
@@ -441,6 +448,14 @@ class VisionGroundingPolicy:
             stale=stale,
             source=source,
             observed_at=float(observed_at if observed_at is not None else time.time()),
+            # Đánh dấu khi user có vẻ hỏi về một đối tượng cụ thể (requested=True)
+            # nhưng không có claim nào được grounded — tức là màn hình không đủ
+            # bằng chứng để Eris trả lời câu trỏ chỉ của user.
+            anaphoric_reference_unresolved=(
+                requested
+                and not grounded
+                and "no_grounded_claim" in unknowns
+            ),
             debug={
                 "note_confidence": round(note_confidence, 4),
                 "has_direct_evidence": has_direct_evidence,
@@ -523,4 +538,5 @@ __all__ = [
     "VisionGroundingPolicy",
     "VisionGroundingReport",
     "VisionRecommendation",
+    "VisionClaimKind",
 ]

@@ -245,11 +245,20 @@ class SocialInitiativeEngine:
                 "social_kinds_do_not_require_grounding": sorted(_SOCIAL_KINDS),
                 "rule": (
                     "Propose at most one public-safe topic. Runtime owns permission/timing; "
-                    "Surface Realizer owns final wording. Prefer semantic_scene over unrelated small talk when a "
-                    "ready shared semantic context exists. Return none when nothing is worth proposing."
+                    "Surface Realizer owns final wording. Eris may initiate freely without "
+                    "waiting for an important event, including a brief observation, gentle tease, "
+                    "or topic opener when it is personally relevant to the user, the current scene, "
+                    "or the relationship. Do not comment on everything, narrate routine actions, "
+                    "fill silence, or manufacture engagement. Prefer one thoughtful and specific "
+                    "remark over frequent generic small talk. Silence is a valid intentional choice. "
+                    "Prefer semantic_scene over unrelated small talk when a ready shared semantic "
+                    "context exists. Return none when the impulse is generic, repetitive, distracting, "
+                    "or merely intended to avoid silence."
                 ),
             },
         }
+        if blackboard.engagement_kind == "chess":
+            request["candidate_contract"]["rule"] += " However, since chess engagement is active, actively act as a commentator and proactively propose topics discussing the recent moves, tactics, or board state."
         try:
             raw = writer(request)
         except Exception as exc:  # noqa: BLE001
@@ -362,9 +371,12 @@ class SocialInitiativeEngine:
         thử lại nhịp sau; không có loa phường hard-code chen vào.
         """
 
-        task_candidate = self._task_followup_candidate(blackboard, reason=reason)
-        if task_candidate is not None:
-            return task_candidate
+        # Tôn trọng quyết định im lặng của INFJ model (worker_no_candidate)
+        # Chỉ ép task_followup nếu worker bị lỗi (worker_error) hoặc low_confidence
+        if reason != "worker_no_candidate":
+            task_candidate = self._task_followup_candidate(blackboard, reason=reason)
+            if task_candidate is not None:
+                return task_candidate
         if blackboard.engagement_exclusive_focus and blackboard.engagement_active:
             return None
 

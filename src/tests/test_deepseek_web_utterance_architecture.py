@@ -362,3 +362,19 @@ def test_casual_memory_does_not_trigger_personality_reflection():
     )
 
     assert AIRuntimeModelRouter._should_reflect_personality(observation) is False
+
+
+def test_utterance_spec_cleans_japanese_brackets_from_display_text():
+    raw_payload = {
+        "text": (
+            "Vậy thì không cần ép mình làm gì cả. Chỉ là chiều thứ Sáu, có thể ngồi yên một chút cũng được, "
+            "hoặc nếu bạn thích, tôi có thể gợi ý vài thứ linh tinh. "
+            "「じゃあ、無理に何かしなくていいよ。金曜の夕方、ただぼんやりしてるのもありだし、もし何か思いついたら教えてくれる？」"
+        )
+    }
+    spec = UtteranceSpec.from_mapping(raw_payload, default_display_language="vi", default_speech_language="ja")
+
+    assert "「" not in spec.display.text
+    assert spec.display.text.startswith("Vậy thì không cần ép mình")
+    assert spec.speech.text.startswith("じゃあ、無理に何かしなくていいよ")
+

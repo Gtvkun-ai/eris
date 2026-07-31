@@ -146,8 +146,8 @@ class SurfaceIntentEngine:
                 "display_language": display_language,
                 "speech_language": speech_language,
                 "rule": (
-                    "Write one concise public line. Do not decide speak/silence, change the topic owner, "
-                    "invent evidence, or mention internal contracts."
+                    f"Write one concise public line in {display_language} (display) and provide its {speech_language} translation (speech). "
+                    "Do not decide speak/silence, change the topic owner, invent evidence, or mention internal contracts."
                 ),
             },
         }
@@ -205,9 +205,11 @@ class SurfaceIntentEngine:
         returned_refs = tuple(
             ref for ref in (compact(value, 120) for value in _sequence(raw.get("evidence_refs"))[:6]) if ref
         )
-        if any(ref not in set(intent.evidence_refs) for ref in returned_refs):
-            self._log("warning", "[surface worker] rejected unknown evidence refs mode=%s", intent.mode)
-            return None
+        # Filter out common LLM filler words for empty lists before validating
+        actual_refs = [r for r in returned_refs if r.lower() not in {"none", "null", "unknown", "n/a", "[]"}]
+        unknown_refs = [ref for ref in actual_refs if ref not in set(intent.evidence_refs)]
+        if unknown_refs:
+            self._log("warning", "[surface worker] stripped unknown evidence refs mode=%s. Refs: %s", intent.mode, unknown_refs)
         performance_hint = compact(
             utterance.performance.preset or intent.plan.performance_hint or "neutral", 60
         ).lower() or intent.plan.performance_hint or "neutral"

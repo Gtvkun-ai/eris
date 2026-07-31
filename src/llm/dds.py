@@ -119,7 +119,7 @@ def distill_block(
     text: str,
     max_bullets: int = 3,
     max_tokens: int = 160,
-    timeout: float | None = 12.0,
+    timeout: float | None = 90.0,
     min_chars_to_distill: int = 400,
 ) -> str:
     """Rút gọn MỘT khối ngữ cảnh thành vài gạch đầu dòng (text thuần).
@@ -168,7 +168,7 @@ def distill_blocks_parallel(
     provider: str = "gemini",
     max_bullets: int = 3,
     max_tokens: int = 160,
-    timeout: float | None = 12.0,
+    timeout: float | None = 90.0,
     min_chars_to_distill: int = 400,
     max_workers: int | None = None,
 ) -> dict[str, str]:

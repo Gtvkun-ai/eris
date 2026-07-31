@@ -1730,12 +1730,12 @@ class LlmService:
             force_local_fallback = False
         if request_timeout is None:
             timeout_defaults = {
-                "chat": 30.0,
-                "directive": 15.0,
-                "autonomous": 15.0,
-                "parser": 10.0,
-                "repair": 10.0,
-                "micro_presence": 10.0,
+                "chat": 90.0,
+                "directive": 90.0,
+                "autonomous": 90.0,
+                "parser": 90.0,
+                "repair": 90.0,
+                "micro_presence": 90.0,
             }
             env_key = f"ERIS_LLM_TIMEOUT_{str(channel or 'default').upper()}_S"
             try:
@@ -1745,9 +1745,9 @@ class LlmService:
                         "chat", "chat_timeout_seconds", default=timeout_defaults["chat"]
                     )
                 else:
-                    request_timeout = float(os.environ.get(env_key, timeout_defaults.get(channel, 20.0)))
+                    request_timeout = float(os.environ.get(env_key, timeout_defaults.get(channel, 90.0)))
             except (TypeError, ValueError):
-                request_timeout = timeout_defaults.get(channel, 20.0)
+                request_timeout = timeout_defaults.get(channel, 90.0)
         # Completion budget bao gồm reasoning + final JSON trên Groq.
         max_tokens = self._decision_completion_budget(
             channel=channel,

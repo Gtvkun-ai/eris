@@ -148,10 +148,11 @@
   },
   "commentary": {
     "enabled": true,
-    "desired_interval_seconds": 60,
-    "maximum_quiet_seconds": 120,
+    "user_requested_autonomous_surface": true,
+    "desired_interval_seconds": 35,
+    "maximum_quiet_seconds": 70,
     "startup_delay_seconds": 8,
-    "minimum_user_silence_seconds": 12
+    "minimum_user_silence_seconds": 10
   },
   "tutor": {
     "enabled": true,

@@ -329,6 +329,11 @@ class ActionRouter:
         "hay khong",
         "phai khong",
         "dung khong",
+        "hong",
+        "khong",
+        "chua",
+        "ha",
+        "a",
     )
 
     def _route_now_playing(self, raw: str, norm: str) -> RouteCandidate:

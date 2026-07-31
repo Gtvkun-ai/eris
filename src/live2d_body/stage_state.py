@@ -596,12 +596,25 @@ class Live2DStageState:
                 target["ParamMouthForm"] += speech_pose.mouth_form_offset
 
             if self._speaking and speech_pose is not None:
-                open_ratio = speech_pose.mouth_open_ratio
-                mouth_open = INFJ_PARAMETER_PROFILE.mouth_open_from_speech_ratio(open_ratio)
+                # Ghép hai trục miệng thành một pose duy nhất mỗi frame:
+                # MouthForm giữ mood (-1 bực, 0 thường, +1 vui), MouthOpenY bám
+                # voice (-1 đóng, 0 nửa mở, +1 mở hết). Mood chỉ bias độ há rất
+                # nhẹ để mặt vui/bực không mất nét khi đang nói.
+                mouth_form, mouth_open = INFJ_PARAMETER_PROFILE.compose_speaking_mouth(
+                    mood_form=target.get("ParamMouthForm", 0.0),
+                    speech_ratio=speech_pose.mouth_open_ratio,
+                )
             elif self._emotion == "surprise" and max(0.0, timestamp - self._emotion_at) < 0.8:
+                mouth_form = INFJ_PARAMETER_PROFILE.clamp_mouth_form(
+                    target.get("ParamMouthForm", 0.0)
+                )
                 mouth_open = INFJ_PARAMETER_PROFILE.mouth_open_from_ratio(0.58)
             else:
+                mouth_form = INFJ_PARAMETER_PROFILE.clamp_mouth_form(
+                    target.get("ParamMouthForm", 0.0)
+                )
                 mouth_open = INFJ_PARAMETER_PROFILE.mouth_closed
+            target["ParamMouthForm"] = mouth_form
             target["ParamMouthOpenY"] = mouth_open
 
             keys = set(self._current) | set(target)

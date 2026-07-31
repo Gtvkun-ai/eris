@@ -1578,28 +1578,57 @@ class AIAutonomousOrchestrator:
         if not str(getattr(decision, "utterance_turn_id", "") or "").strip():
             decision.utterance_turn_id = str(plan.plan_id or f"startup:{turn_seq}")
         if not bool(getattr(decision, "should_speak", False)) or not str(getattr(decision, "text", "") or "").strip():
-            fallback_text = build_startup_fallback_text(
-                open_loops=state.open_loops,
-                latest_observation=latest_observation,
-                relationship=relationship_payload,
-                avoid_text=str(getattr(host, "last_text", "") or ""),
-                language=language,
-            )
-            from runtime.utterance_spec import degrade_surface_payload
-            fallback_payload = degrade_surface_payload(
-                {"performance_hint": "dry_tease"},
-                text=fallback_text,
-                language=language,
-                reason="startup_empty_commit",
-                performance_preset="dry_tease",
-                should_speak=True,
-            )
-            decision = host.parser.parse(json.dumps(_serializable_public_payload(fallback_payload), ensure_ascii=False))
-            decision.utterance_turn_id = str(plan.plan_id or f"startup:{turn_seq}")
-            host.logger.warning(
-                "[architecture C startup] empty/silent model decision; used personality fallback strategy=%s",
-                plan.strategy,
-            )
+            # Model trả should_speak=false hoặc text rỗng tại startup (thường xảy
+            # ra khi chiến lược grounded_* không tìm được OCR đủ tốt nhưng acc vẫn
+            # sống). Ưu tiên lấy text thô từ payload gốc trước khi gọi hardcode
+            # fallback — tránh câu cứng "Tôi đây..." khi DeepSeek đã trả về nội dung.
+            recovered_text = ""
+            if payload:
+                _utt = payload.get("utterance") or {}
+                recovered_text = (
+                    str((_utt.get("display") or {}).get("text", "") or "").strip()
+                    or str((_utt.get("speech") or {}).get("text", "") or "").strip()
+                    or str(payload.get("text", "") or "").strip()
+                )
+            if recovered_text:
+                from runtime.utterance_spec import degrade_surface_payload
+                fallback_payload = degrade_surface_payload(
+                    {"performance_hint": str(payload.get("performance_hint", "neutral") or "neutral")},
+                    text=recovered_text,
+                    language=language,
+                    reason="startup_should_speak_override",
+                    performance_preset=str(payload.get("performance_hint", "neutral") or "neutral"),
+                    should_speak=True,
+                )
+                decision = host.parser.parse(json.dumps(_serializable_public_payload(fallback_payload), ensure_ascii=False))
+                decision.utterance_turn_id = str(plan.plan_id or f"startup:{turn_seq}")
+                host.logger.info(
+                    "[architecture C startup] model should_speak=false overridden; recovered text from payload strategy=%s",
+                    plan.strategy,
+                )
+            else:
+                fallback_text = build_startup_fallback_text(
+                    open_loops=state.open_loops,
+                    latest_observation=latest_observation,
+                    relationship=relationship_payload,
+                    avoid_text=str(getattr(host, "last_text", "") or ""),
+                    language=language,
+                )
+                from runtime.utterance_spec import degrade_surface_payload
+                fallback_payload = degrade_surface_payload(
+                    {"performance_hint": "dry_tease"},
+                    text=fallback_text,
+                    language=language,
+                    reason="startup_empty_commit",
+                    performance_preset="dry_tease",
+                    should_speak=True,
+                )
+                decision = host.parser.parse(json.dumps(_serializable_public_payload(fallback_payload), ensure_ascii=False))
+                decision.utterance_turn_id = str(plan.plan_id or f"startup:{turn_seq}")
+                host.logger.warning(
+                    "[architecture C startup] empty/silent model decision; used personality fallback strategy=%s",
+                    plan.strategy,
+                )
         host.ai_stage_planner.apply(decision, plan.performance_hint, state=state, channel="session_ritual")
         text, _assistant_meta = self._commit_public(
             decision,

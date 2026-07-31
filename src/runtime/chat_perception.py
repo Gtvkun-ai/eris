@@ -104,6 +104,10 @@ class ChatPerceptionCoordinator:
                 "phân tích màn hình", "look at", "take a look", "check the screen",
                 "mù vision", "còn mù vision", "em còn mù vision",
                 "không nhìn được", "không thấy được", "không thấy gì",
+                # Music / Media screen requests
+                "bài tôi đang nghe", "bài đang nghe", "đang nghe bài", "đang nghe",
+                "biết bài", "biết bài hát", "bài hát tên", "bài gì", "nhạc gì",
+                "đang nghe nhạc", "bài đang phát", "đang phát bài", "bài hát",
             )
         )
         if any(term and term in normalized for term in direct_terms):

@@ -55,3 +55,36 @@ def test_vision_status_blocks_seen_claim_without_grounded_visual_claims() -> Non
 
     assert "grounded_visual_claims: 0" in context
     assert "Không được nói" in context
+
+
+def test_screen_router_recognizes_music_and_media_queries() -> None:
+    from screen.screen_evidence_store import ScreenEvidenceStore
+    from screen.screen_relevance_router import ScreenRelevanceRouter
+
+    store = ScreenEvidenceStore()
+    router = ScreenRelevanceRouter(store)
+
+    route = router.route("em biết bài tôi đang nghe hong")
+    assert route.references_screen is True
+    # Without non-chat OCR evidence, it escalates to vision
+    assert route.mode == "vision"
+
+
+def test_screen_router_filters_self_chat_bubbles() -> None:
+    from screen.evidence_models import ScreenTextBlock
+    from screen.screen_evidence_store import ScreenEvidenceStore
+    from screen.screen_relevance_router import ScreenRelevanceRouter
+
+    store = ScreenEvidenceStore()
+    import time
+    store.blocks = [ScreenTextBlock("id1", "[Chu nhan]: ne, xem di", "ocr", 0.85, "Eris", time.time())]
+
+
+    router = ScreenRelevanceRouter(store)
+    route = router.route("nè, xem đi")
+
+    assert route.references_screen is True
+    # Chat bubble text should be ignored, escalating to vision
+    assert route.mode == "vision"
+
+

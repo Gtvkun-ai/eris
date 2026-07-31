@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>ERIS Bridge</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      width: 280px; padding: 14px;
+      background: #0f0f13; color: #e8e8f0;
+    }
+    .header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+    .dot {
+      width: 9px; height: 9px; border-radius: 50%;
+      background: #22c55e; flex-shrink: 0; transition: background 0.3s;
+    }
+    .dot.amber { background: #f59e0b; }
+    .dot.red   { background: #ef4444; }
+    .dot.blue  { background: #6366f1; animation: spin 1.2s ease-in-out infinite; }
+    @keyframes spin { 0%,100%{opacity:1} 50%{opacity:0.3} }
+    h1 { font-size: 13px; font-weight: 600; color: #c4b5fd; }
+    .rows { display: flex; flex-direction: column; gap: 3px; margin-bottom: 10px; }
+    .row { font-size: 11px; color: #6b7280; }
+    .row span { color: #e2e8f0; font-weight: 500; margin-left: 4px; }
+    .bar {
+      padding: 7px 9px; border-radius: 7px;
+      background: #1a1a24; font-size: 10.5px; color: #6b7280; line-height: 1.4;
+    }
+    .bar.green { color: #4ade80; }
+    .bar.amber { color: #fbbf24; }
+    .bar.red   { color: #f87171; }
+    .age { font-size: 9.5px; color: #374151; margin-top: 5px; text-align: right; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="dot blue" id="dot"></div>
+    <h1>ERIS Browser Bridge</h1>
+  </div>
+  <div class="rows">
+    <div class="row">Tab:<span id="tab">—</span></div>
+    <div class="row">Media:<span id="media">—</span></div>
+    <div class="row">State:<span id="state">—</span></div>
+  </div>
+  <div class="bar" id="bar">Đang khởi động...</div>
+  <div class="age" id="age"></div>
+
+  <script>
+    async function fetchState() {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
+        const res = await fetch("http://127.0.0.1:7422/state", { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (res.status === 204) return null;
+        if (!res.ok) throw new Error("Server error: " + res.status);
+        return await res.json();
+      } catch (err) {
+        throw err;
+      }
+    }
+
+    async function refresh() {
+      const dot = document.getElementById("dot");
+      const bar = document.getElementById("bar");
+
+      try {
+        const d = await fetchState();
+
+        if (!d) {
+          dot.className = "dot amber";
+          bar.className = "bar amber";
+          bar.textContent = "⏳ Chưa có dữ liệu — ERIS đang chờ tab...";
+          return;
+        }
+
+        document.getElementById("tab").textContent   = " " + (d.active_tab_title || d.title || "—").slice(0, 36);
+        document.getElementById("media").textContent = " " + (d.media_title || "—").slice(0, 36);
+        document.getElementById("state").textContent = " " + (d.media_state  || "—");
+
+        const age = Math.round(Date.now() / 1000 - (d.timestamp || 0));
+        document.getElementById("age").textContent = age < 600 ? "Cập nhật " + age + "s trước" : "";
+
+        dot.className = "dot";
+        bar.className = "bar green";
+        bar.textContent = "✓ Đang kết nối trực tiếp với ERIS";
+      } catch (e) {
+        dot.className = "dot red";
+        bar.className = "bar red";
+        bar.textContent = "Lỗi kết nối ERIS (port 7422)";
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 2000);
+  </script>
+</body>
+</html>

@@ -97,6 +97,25 @@ class InfjParameterProfile:
         promoted_ratio = 0.51 + 0.41 * (voiced ** 0.68)
         return self.mouth_open_from_ratio(promoted_ratio)
 
+    def compose_speaking_mouth(
+        self,
+        *,
+        mood_form: float,
+        speech_ratio: float,
+    ) -> tuple[float, float]:
+        """Ghép mood miệng và độ há thành một pose hai trục.
+
+        ``ParamMouthForm`` luôn giữ nghĩa mood ``-1..1``. Envelope voice chỉ
+        điều khiển ``ParamMouthOpenY``; mood vui nới độ há rất nhẹ, mood xấu
+        siết rất nhẹ để hai trục chuyển động cùng nhau mà không làm sai nhịp
+        audio. Biên 8% là cố ý nhỏ vì phần còn lại đã nằm trong keyform của rig.
+        """
+
+        form = self.clamp_mouth_form(mood_form)
+        ratio = _clamp(speech_ratio, 0.0, 1.0)
+        coupled_ratio = _clamp(ratio * (1.0 + form * 0.08), 0.0, 1.0)
+        return form, self.mouth_open_from_speech_ratio(coupled_ratio)
+
     def sanitize(self, parameter_id: str, value: float) -> float:
         """Clamp theo semantics trước khi giao cho Cubism Core."""
         if parameter_id == "ParamAngleX":

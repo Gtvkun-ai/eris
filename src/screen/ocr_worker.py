@@ -235,10 +235,21 @@ class IncrementalScreenTextWorker:
         if not self.enabled or (self._thread is not None and self._thread.is_alive()):
             return
         self._stop.clear()
+        # Warm backend ngay tại start — RapidOCR phải load ONNX model lần đầu,
+        # nếu để lazy thì lần OCR thật đầu tiên bị thêm ~150-300ms delay.
+        # Chạy trước khi mở thread để backend sẵn sàng ngay vòng poll đầu.
+        self._ensure_ocr_backend(time.time())
+        # Đặt _last_full_at = 0 để vòng poll đầu tiên force full OCR ngay,
+        # thay vì phải chờ full_refresh_sec (15s) mới có dữ liệu tươi.
+        self._last_full_at = 0.0
         self._thread = threading.Thread(target=self._run, name="ERIS-ScreenTextIndex", daemon=True)
         self._thread.start()
         if self.logger:
-            self.logger.info("[screen text] worker started backend=lazy-auto poll=%.1fs", self.poll_sec)
+            self.logger.info(
+                "[screen text] worker started backend=%s poll=%.1fs",
+                self.backend.name if self.backend is not None and self.backend.available else "unavailable",
+                self.poll_sec,
+            )
 
     def stop(self) -> None:
         self._stop.set()

@@ -1091,6 +1091,8 @@ class AIRuntimeModelRouter:
             f"Bạn là ERIS. Hãy phản ứng từ bản thân hiện tại. Trong một JSON duy nhất, render utterance.display.text tự nhiên bằng {display_language} "
             f"và utterance.speech.text tự nhiên bằng {speech_language}. Hai bề mặt phải cùng semantic intent, cùng mức thân mật và cùng cá tính; "
             "utterance.speech.text là lời ERIS thực sự sẽ đọc, không phải chú thích hay bản dịch máy móc. "
+            "QUY TẮC BỀ MẶT TÁCH BIỆT: utterance.display.text VÀ field text CHỈ CHỨA tiếng Việt để hiển thị. "
+            "TUYỆT ĐỐI KHÔNG GHÉP câu tiếng Nhật, ngoặc 「...」 hay bản dịch tiếng Nhật vào utterance.display.text hoặc field text. Tiếng Nhật CHỈ DÙNG CHO utterance.speech.text. "
             "Không cố diễn một nhãn MBTI, Enneagram, tritype hay archetype. Mô tả personality được cung cấp là quán tính hiện tại, "
             "không phải danh sách động tác phải biểu diễn. Có thể dịu, sắc, hóm hỉnh, phòng thủ, chủ động hoặc mâu thuẫn theo đúng ngữ cảnh. "
             "Không phải support bot, không giả dễ thương, không biến mọi cảm xúc thành thơ. "
@@ -1318,19 +1320,33 @@ class AIRuntimeModelRouter:
             data.get("assistant_act", default_assistant_act)
         )
         all_violations = (*validation.violations, *assistant_validation.violations)
-        if all_violations:
+        # Phân tách: wrapper_alias là backward-compat repair (model sinh thêm lớp
+        # "v1" / "semantic_frame.v1"), không phải lỗi contract thật. Chỉ log debug
+        # để tránh spam WARNING mỗi turn. Lỗi thật (field missing, type wrong)
+        # vẫn leo warning + observability để dễ triage.
+        _is_compat = lambda v: "wrapper_alias" in v or "kind_alias" in v  # noqa: E731
+        compat_repairs = tuple(v for v in all_violations if _is_compat(v))
+        real_violations = tuple(v for v in all_violations if not _is_compat(v))
+        if compat_repairs:
+            safe_log(
+                self.logger,
+                "debug",
+                "[semantic frame] compat alias repaired (not a real violation): %s",
+                ",".join(compat_repairs),
+            )
+        if real_violations:
             safe_log(
                 self.logger,
                 "warning",
                 "[semantic frame] repaired malformed payload violations=%s",
-                ",".join(all_violations),
+                ",".join(real_violations),
             )
             try:
                 from runtime.observability import GLOBAL_OBSERVABILITY
                 GLOBAL_OBSERVABILITY.log(
                     "semantic_frame_invariant_repair",
-                    tags={"count": str(len(all_violations))},
-                    fields={"violations": list(all_violations)},
+                    tags={"count": str(len(real_violations))},
+                    fields={"violations": list(real_violations)},
                     status="degraded",
                 )
             except Exception as exc:
@@ -1789,7 +1805,7 @@ class AIRuntimeModelRouter:
             name="eris_personality_reflection_deep" if deep else "eris_personality_reflection",
             max_tokens=880 if deep else 700,
             reasoning_effort=None,
-            timeout_seconds=max(2.0, min(60.0, float(os.getenv("ERIS_POST_REFLECTION_HTTP_TIMEOUT_SEC", "30.0") or 30.0))),
+            timeout_seconds=max(2.0, min(180.0, float(os.getenv("ERIS_POST_REFLECTION_HTTP_TIMEOUT_SEC", "90.0") or 90.0))),
         )
         if not reflected:
             return observation
@@ -2206,9 +2222,9 @@ class AIRuntimeModelRouter:
         if client is None:
             return {}
         try:
-            timeout = max(15.0, float(os.getenv("ERIS_SURFACE_INTENT_TIMEOUT_SEC", "60") or 60.0))
+            timeout = max(15.0, float(os.getenv("ERIS_SURFACE_INTENT_TIMEOUT_SEC", "90") or 90.0))
         except (TypeError, ValueError):
-            timeout = 60.0
+            timeout = 90.0
         return self._call(
             client,
             system=self._surface_intent_prompt(),
@@ -2252,9 +2268,9 @@ class AIRuntimeModelRouter:
         if client is None:
             return {}
         try:
-            timeout = max(15.0, float(os.getenv("ERIS_SOCIAL_INITIATIVE_TIMEOUT_SEC", "60") or 60.0))
+            timeout = max(15.0, float(os.getenv("ERIS_SOCIAL_INITIATIVE_TIMEOUT_SEC", "90") or 90.0))
         except (TypeError, ValueError):
-            timeout = 60.0
+            timeout = 90.0
         return self._call(
             client,
             system=self._social_initiative_prompt(),
@@ -2314,10 +2330,10 @@ class AIRuntimeModelRouter:
             )
             try:
                 fb_timeout = max(15.0, float(
-                    os.getenv("ERIS_SURFACE_REALIZER_FALLBACK_TIMEOUT_SEC", "60") or 60.0
+                    os.getenv("ERIS_SURFACE_REALIZER_FALLBACK_TIMEOUT_SEC", "90") or 90.0
                 ))
             except (TypeError, ValueError):
-                fb_timeout = 60.0
+                fb_timeout = 90.0
             return self._call(
                 fallback_client,
                 system=self._surface_realizer_prompt(),
@@ -2333,9 +2349,9 @@ class AIRuntimeModelRouter:
         if client is None:
             return {}
         try:
-            timeout = max(2.0, min(6.0, float(os.getenv("ERIS_SURFACE_REALIZER_TIMEOUT_SEC", "4") or 4.0)))
+            timeout = max(2.0, min(180.0, float(os.getenv("ERIS_SURFACE_REALIZER_TIMEOUT_SEC", "90") or 90.0)))
         except (TypeError, ValueError):
-            timeout = 4.0
+            timeout = 90.0
         try:
             result = self._call(
                 client,
@@ -2377,10 +2393,11 @@ class AIRuntimeModelRouter:
         )
         try:
             fb_timeout_2 = max(15.0, float(
-                os.getenv("ERIS_SURFACE_REALIZER_FALLBACK_TIMEOUT_SEC", "60") or 60.0
+                os.getenv("ERIS_SURFACE_REALIZER_FALLBACK_TIMEOUT_SEC", "90") or 90.0
             ))
         except (TypeError, ValueError):
-            fb_timeout_2 = 60.0
+            fb_timeout_2 = 90.0
+
         return self._call(
             fallback_client_2,
             system=self._surface_realizer_prompt(),
