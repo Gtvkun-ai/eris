@@ -271,7 +271,11 @@ def _get_elevenlabs_http_session():
     return _ELEVENLABS_SESSION
 
 
-def _get_elevenlabs_token() -> tuple[str, str, int]:
+def _get_elevenlabs_token(
+    *,
+    required_characters: int = 0,
+    excluded_account_ids: set[int] | None = None,
+) -> tuple[str, str, int]:
     """Trả về (auth_type, token, account_id).
     
     Tải token ưu tiên từ SQLite Pool (GLOBAL_ELEVEN_POOL) để xoay tài khoản tự động.
@@ -281,21 +285,40 @@ def _get_elevenlabs_token() -> tuple[str, str, int]:
     import time
 
     now = time.time()
+    pool_configured = False
     try:
         from runtime.elevenlabs_pool_db import GLOBAL_ELEVEN_POOL
-        acc = GLOBAL_ELEVEN_POOL.get_active_account()
-        if acc:
+        pool_configured = GLOBAL_ELEVEN_POOL.has_accounts()
+        excluded = set(excluded_account_ids or set())
+        # Thử lần lượt các account đủ quota. Account dưới 100 quota bị pool
+        # loại trước khi runtime kịp gửi request.
+        for _ in range(64):
+            acc = GLOBAL_ELEVEN_POOL.get_active_account(
+                required_characters=required_characters,
+                exclude_account_ids=excluded,
+            )
+            if acc is None:
+                break
             if acc.bearer_token and now < acc.bearer_expires_at:
                 return "bearer", acc.bearer_token, acc.id
             ok, msg = GLOBAL_ELEVEN_POOL.sync_subscription(acc.id)
-            if ok:
-                updated_acc = GLOBAL_ELEVEN_POOL.get_account_by_id(acc.id)
-                if updated_acc and updated_acc.bearer_token:
-                    return "bearer", updated_acc.bearer_token, updated_acc.id
-            else:
-                logger.warning("[TTS/ElevenLabsPool] Sync account %d thất bại: %s", acc.id, msg)
+            updated_acc = GLOBAL_ELEVEN_POOL.get_account_by_id(acc.id)
+            if (
+                ok
+                and updated_acc is not None
+                and updated_acc.status == "active"
+                and updated_acc.bearer_token
+            ):
+                return "bearer", updated_acc.bearer_token, updated_acc.id
+            excluded.add(acc.id)
+            logger.warning("[TTS/ElevenLabsPool] Bỏ account %d: %s", acc.id, msg)
     except Exception as exc:
         logger.debug("[TTS/ElevenLabsPool] Pool check error: %s", exc)
+
+    if pool_configured:
+        # Pool có account nhưng không account nào đạt ngưỡng 100/đủ độ dài.
+        # Không quay lại key đơn vì rất có thể đó chính là account vừa bị loại.
+        return "", "", 0
 
     api_key = str(_direct_elevenlabs_api_key() or "").strip()
     if api_key and not api_key.startswith("eyJ"):
@@ -348,6 +371,11 @@ def warmup_elevenlabs() -> None:
                 start_elevenlabs_pool_server()
             except Exception as exc:
                 logger.debug("[TTS/ElevenLabsPool] Web UI server start error: %s", exc)
+            try:
+                from runtime.elevenlabs_pool_db import GLOBAL_ELEVEN_POOL
+                GLOBAL_ELEVEN_POOL.start_background_sync()
+            except Exception as exc:
+                logger.debug("[TTS/ElevenLabsPool] Auto-sync thread start error: %s", exc)
             _get_elevenlabs_token()
             _get_elevenlabs_http_session()
             logger.info("[TTS/ElevenLabs] Background token and connection pool warm-up complete.")
@@ -721,6 +749,22 @@ def _mp3_bytes_to_wav_bytes(mp3_bytes: bytes) -> bytes:
     return buf.getvalue()
 
 
+
+def _is_elevenlabs_quota_error(exc: BaseException) -> bool:
+    """Nhận diện quota failure để xoay account ngay trong cùng lượt TTS."""
+    text = str(exc or "").lower()
+    return any(
+        marker in text
+        for marker in (
+            "quota_exceeded",
+            "exceeds your quota",
+            "credits remaining",
+            "character limit",
+            "elevenlabs http 429",
+        )
+    )
+
+
 def _synthesize_elevenlabs_wav(
     text: str,
     voice: str,
@@ -731,15 +775,12 @@ def _synthesize_elevenlabs_wav(
     voice_director_segment: Mapping[str, object] | None = None,
     cancel_event=None,
     authority_check=None,
+    _excluded_pool_account_ids: set[int] | None = None,
+    _rotation_depth: int = 0,
 ) -> bytes:
     """Gọi ElevenLabs TTS stream."""
 
     _raise_if_tts_cancelled(cancel_event, authority_check)
-    auth_type, token, pool_account_id = _get_elevenlabs_token()
-    if token and token.startswith("eyJ"):
-        auth_type = "bearer"
-    elif not auth_type:
-        auth_type = "xi-api-key"
 
     v_str = str(voice or "").strip()
     if not v_str or v_str in {"Aoede", "Leda", "Achernar", "Zephyr", "Puck", "Fenrir", "Kore", "Charon"} or len(v_str) < 10:
@@ -761,6 +802,17 @@ def _synthesize_elevenlabs_wav(
         prompt=rendered_text,
         style_text=json.dumps(segment, ensure_ascii=False, separators=(",", ":")),
     )
+
+    auth_type, token, pool_account_id = _get_elevenlabs_token(
+        required_characters=len(rendered_text),
+        excluded_account_ids=set(_excluded_pool_account_ids or set()),
+    )
+    if not token:
+        raise RuntimeError("Không có ElevenLabs account nào còn từ 100 quota trở lên")
+    if token.startswith("eyJ"):
+        auth_type = "bearer"
+    elif not auth_type:
+        auth_type = "xi-api-key"
 
     energy = _elevenlabs_float("ERIS_ELEVENLABS_DEFAULT_ENERGY", 0.42, 0.0, 1.0)
     try:
@@ -794,7 +846,13 @@ def _synthesize_elevenlabs_wav(
     }
 
     lang = normalize_language(language_hint, text=text)
-    breaker_key = ("elevenlabs", str(model or ""), str(voice or ""), _same_language_locale(lang))
+    breaker_key = (
+        "elevenlabs",
+        str(pool_account_id or "direct"),
+        str(model or ""),
+        str(voice or ""),
+        _same_language_locale(lang),
+    )
     if _tts_breaker_enabled():
         permit = GLOBAL_TTS_BREAKER.allow(breaker_key)
         if not permit.allowed:
@@ -862,6 +920,11 @@ def _synthesize_elevenlabs_wav(
         from runtime.inference_broker import GLOBAL_INFERENCE_BROKER, inference_context
 
         timeout = _elevenlabs_timeout_seconds()
+        broker_provider = (
+            f"elevenlabs_account_{pool_account_id}"
+            if pool_account_id > 0
+            else "elevenlabs"
+        )
         with inference_context(
             "tts_current_turn",
             optional=False,
@@ -870,7 +933,9 @@ def _synthesize_elevenlabs_wav(
             metadata={"voice": voice, "tts_model": model, "transport": "elevenlabs.http"},
         ):
             broker_request = GLOBAL_INFERENCE_BROKER.request_from_context(
-                provider="elevenlabs",
+                # Quota/cooldown phải tách theo account. Một account 429 không
+                # được đóng circuit của account kế tiếp trong pool.
+                provider=broker_provider,
                 model=str(model or "eleven_v3"),
                 estimated_input_tokens=estimate_tokens([{"role": "user", "content": rendered_text}]),
                 reserved_output_tokens=768,
@@ -895,7 +960,10 @@ def _synthesize_elevenlabs_wav(
                 ) as response:
                     if response.status_code >= 400:
                         detail = " ".join(str(response.text or "").split())[:500]
-                        if pool_account_id > 0 and (response.status_code in {401, 429} or "quota" in detail.lower() or "exceeded" in detail.lower()):
+                        quota_failure = _is_elevenlabs_quota_error(
+                            RuntimeError(f"ElevenLabs HTTP {response.status_code}: {detail}")
+                        )
+                        if pool_account_id > 0 and quota_failure:
                             try:
                                 from runtime.elevenlabs_pool_db import GLOBAL_ELEVEN_POOL
                                 GLOBAL_ELEVEN_POOL.mark_exhausted(pool_account_id, 86400.0)
@@ -930,6 +998,30 @@ def _synthesize_elevenlabs_wav(
 
         return _pcm24_to_wav_bytes(pcm)
     except Exception as exc:
+        if (
+            pool_account_id > 0
+            and _is_elevenlabs_quota_error(exc)
+            and _rotation_depth < 32
+        ):
+            excluded = set(_excluded_pool_account_ids or set())
+            excluded.add(pool_account_id)
+            logger.warning(
+                "[TTS/ElevenLabsPool] Xoay account ngay trong cùng request; bỏ account=%d depth=%d",
+                pool_account_id,
+                _rotation_depth + 1,
+            )
+            return _synthesize_elevenlabs_wav(
+                text,
+                voice,
+                model,
+                prosody_plan=prosody_plan,
+                language_hint=language_hint,
+                voice_director_segment=voice_director_segment,
+                cancel_event=cancel_event,
+                authority_check=authority_check,
+                _excluded_pool_account_ids=excluded,
+                _rotation_depth=_rotation_depth + 1,
+            )
         if _tts_breaker_enabled():
             GLOBAL_TTS_BREAKER.record_failure(
                 breaker_key,

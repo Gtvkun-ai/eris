@@ -79,6 +79,14 @@ class TypedCognitiveBlackboard:
     privacy_blocked: bool = False
     reply_expected: bool = False
     assistant_may_continue: bool = False
+    # Follow-up appraisal được đưa tới governor/Surface dưới dạng typed state.
+    followup_state: str = "none"
+    followup_reminder_due: bool = False
+    followup_reminder_count: int = 0
+    followup_abandoned: bool = False
+    suppress_same_topic: bool = False
+    may_start_new_topic: bool = False
+    social_distance: float = 0.0
     thread_fresh: bool = False
     thread_key: str = "none"
     seconds_since_user: float = 0.0
@@ -104,8 +112,8 @@ class TypedCognitiveBlackboard:
     engagement_required: bool = False
     engagement_preempts_reply_baton: bool = False
     engagement_kind: str = ""
-    # Giữ state domain tới tận Surface/local fallback. Nếu chỉ giữ chữ “task”,
-    # fallback sẽ nói “theo mạch” như thể đó là một đơn vị đo lường hợp pháp.
+    # Giữ state domain tới tận Surface. Chess không có local text fallback;
+    # state typed phải tới model nguyên vẹn để nó thật sự bàn luận thế cờ.
     engagement_state_summary: str = ""
     engagement_state: Mapping[str, Any] = field(default_factory=dict)
     engagement_last_event_kind: str = ""
@@ -205,6 +213,24 @@ class TypedCognitiveBlackboard:
         # 1) Conversation continuity có quyền ưu tiên cao nhất vì đây là mạch
         # công khai đã tồn tại, không phải một ý nghĩ nền muốn chen hàng.
         thread_key = _compact(baton.get("thread_key", "none"), 120) or "none"
+
+        # Câu nhắc lại là một ngoại lệ có kiểm soát: observer vẫn nói đang chờ
+        # user, nhưng appraisal cho phép đúng một continuation rất ngắn để giả
+        # định rằng user có thể chưa để ý. Anchor này không được dùng để hỏi dồn.
+        if bool(baton.get("followup_reminder_due", False)) and not bool(baton.get("followup_abandoned", False)):
+            anchors.append(CognitiveAnchor(
+                kind="conversation",
+                anchor_id=thread_key,
+                topic_seed=_compact(baton.get("unresolved_point", ""), 240) or "the pending user-facing question",
+                confidence=max(0.72, _clamp01(baton.get("confidence", 0.72), 0.72)),
+                priority=0.99,
+                evidence_refs=(),
+                metadata={
+                    "followup_reminder": True,
+                    "reminder_count": int(baton.get("followup_reminder_count", 0) or 0),
+                },
+            ))
+
         if bool(baton.get("assistant_may_continue", False)) and bool(baton.get("thread_fresh", False)):
             anchors.append(CognitiveAnchor(
                 kind="conversation",
@@ -416,6 +442,13 @@ class TypedCognitiveBlackboard:
             privacy_blocked=privacy_blocked,
             reply_expected=bool(baton.get("reply_expected", False)),
             assistant_may_continue=bool(baton.get("assistant_may_continue", False)),
+            followup_state=_compact(baton.get("followup_state", "none"), 48).lower() or "none",
+            followup_reminder_due=bool(baton.get("followup_reminder_due", False)),
+            followup_reminder_count=max(0, int(baton.get("followup_reminder_count", 0) or 0)),
+            followup_abandoned=bool(baton.get("followup_abandoned", False)),
+            suppress_same_topic=bool(baton.get("suppress_same_topic", False)),
+            may_start_new_topic=bool(baton.get("may_start_new_topic", False)),
+            social_distance=_clamp01(baton.get("social_distance", 0.0)),
             thread_fresh=bool(baton.get("thread_fresh", False)),
             thread_key=thread_key,
             seconds_since_user=max(0.0, float(snapshot.get("seconds_since_user", 0.0) or 0.0)),
@@ -466,6 +499,15 @@ class TypedCognitiveBlackboard:
             "seconds_since_user": round(self.seconds_since_user, 2),
             "seconds_since_assistant": round(self.seconds_since_assistant, 2),
             "reply_expected": self.reply_expected,
+            "followup": {
+                "state": self.followup_state,
+                "reminder_due": self.followup_reminder_due,
+                "reminder_count": self.followup_reminder_count,
+                "abandoned": self.followup_abandoned,
+                "suppress_same_topic": self.suppress_same_topic,
+                "may_start_new_topic": self.may_start_new_topic,
+                "social_distance": round(self.social_distance, 3),
+            },
             "privacy_blocked": self.privacy_blocked,
             "screen_fresh": bool(self.grounded_screen_claims),
             # Chỉ public title/claim đã grounded; raw title vẫn ở telemetry nội bộ

@@ -77,6 +77,26 @@ class InfjParameterProfile:
         normalized = _clamp(ratio, 0.0, 1.0)
         return self.mouth_closed + (self.mouth_open - self.mouth_closed) * normalized
 
+    def mouth_open_from_speech_ratio(self, ratio: float) -> float:
+        """Đổi năng lượng lời nói sang độ há nhìn thấy rõ trên rig INFJ.
+
+        Envelope vẫn giữ semantics 0..1: số 0 là khoảng im và phải đóng hẳn.
+        Khi frame đã có tiếng, rig cần đi nhanh qua vùng ``ParamMouthOpenY > 0``
+        để trông như đang nói, thay vì chỉ hé môi quanh -0.9..-0.3. Curve này
+        chỉ dùng lúc speaking; các biểu cảm như surprise vẫn dùng mapping tuyến
+        tính chuẩn ở :meth:`mouth_open_from_ratio`.
+        """
+        raw = _clamp(ratio, 0.0, 1.0)
+        if raw <= 0.025:
+            return self.mouth_closed
+
+        # Bỏ noise floor rồi nâng phần voiced lên vùng mở vừa. Giá trị thấp vẫn
+        # tạo phụ âm nhẹ, còn âm tiết mạnh tiến dần tới khoảng 0.7..0.8 thay vì
+        # há hết cỡ ở mọi khung hình.
+        voiced = _clamp((raw - 0.025) / 0.975, 0.0, 1.0)
+        promoted_ratio = 0.51 + 0.41 * (voiced ** 0.68)
+        return self.mouth_open_from_ratio(promoted_ratio)
+
     def sanitize(self, parameter_id: str, value: float) -> float:
         """Clamp theo semantics trước khi giao cho Cubism Core."""
         if parameter_id == "ParamAngleX":

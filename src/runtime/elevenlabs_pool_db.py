@@ -20,6 +20,15 @@ _LOGGER = logging.getLogger("ElevenPool")
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
+# Tài khoản còn dưới ngưỡng này bị loại khỏi vòng xoay.
+# ElevenLabs gọi đơn vị này là credits/characters tùy endpoint; runtime
+# chỉ cần một luật duy nhất để không cố dùng account gần cạn.
+ELEVENLABS_MIN_REMAINING_QUOTA = 100
+
+# Ngưỡng "sắp cạn": account dưới mức này sẽ được auto-sync để kiểm tra quota thực.
+# Phòng trường hợp user dùng ElevenLabs từ web/app khác làm lệch character_count nội bộ.
+ELEVENLABS_LOW_QUOTA_SYNC_THRESHOLD = 500
+
 
 def _resolve_db_path() -> Path:
     env_root = os.environ.get("ERIS_PROJECT_ROOT", "").strip()
@@ -184,6 +193,13 @@ class ElevenPoolDB:
                 row = conn.execute("SELECT * FROM elevenlabs_accounts WHERE id = ?", (account_id,)).fetchone()
                 return self._row_to_account(row) if row else None
 
+    def has_accounts(self) -> bool:
+        """Cho biết pool có credential được cấu hình hay chưa."""
+        with self._lock:
+            with self._connection() as conn:
+                row = conn.execute("SELECT 1 FROM elevenlabs_accounts LIMIT 1").fetchone()
+                return row is not None
+
     def list_accounts(self) -> List[ElevenAccount]:
         now = time.time()
         # Auto-heal: reset exhausted accounts whose reset_at has passed
@@ -216,26 +232,59 @@ class ElevenPoolDB:
                 )
                 conn.commit()
 
-    def get_active_account(self) -> Optional[ElevenAccount]:
-        """Lấy tài khoản tốt nhất khả dụng: status == 'active', còn quota, không bị cooldown."""
+    def get_active_account(
+        self,
+        *,
+        required_characters: int = 0,
+        exclude_account_ids: Optional[set[int]] = None,
+    ) -> Optional[ElevenAccount]:
+        """Lấy account đủ quota cho chính request hiện tại.
+
+        Luật cố ý cứng: account còn dưới 100 quota bị loại hẳn, kể cả request
+        rất ngắn. ``required_characters`` còn bảo đảm một đoạn dài không bị giao
+        cho account chỉ vừa đủ vượt ngưỡng rồi chết giữa request.
+        """
         now = time.time()
         self._check_auto_resets(now)
+        excluded = {int(item) for item in (exclude_account_ids or set()) if int(item) > 0}
+        required = max(ELEVENLABS_MIN_REMAINING_QUOTA, int(required_characters or 0))
 
         with self._lock:
             with self._connection() as conn:
+                # Dọn account gần cạn trước khi chọn. Không để một account còn
+                # 52 credits cứ được "thử vận may" ở mọi lượt TTS.
+                conn.execute(
+                    """
+                    UPDATE elevenlabs_accounts
+                    SET status = 'exhausted'
+                    WHERE status = 'active'
+                      AND character_limit > 0
+                      AND (character_limit - character_count) < ?
+                    """,
+                    (ELEVENLABS_MIN_REMAINING_QUOTA,),
+                )
                 rows = conn.execute(
                     """
                     SELECT * FROM elevenlabs_accounts
                     WHERE status = 'active'
                       AND cooldown_until <= ?
-                      AND (character_limit == 0 OR character_count < character_limit)
-                    ORDER BY (character_limit - character_count) DESC, last_used_at ASC
+                      AND (
+                            character_limit == 0
+                            OR (character_limit - character_count) >= ?
+                      )
+                    ORDER BY
+                        CASE WHEN character_limit == 0 THEN 1 ELSE 0 END ASC,
+                        (character_limit - character_count) DESC,
+                        last_used_at ASC
                     """,
-                    (now,),
+                    (now, required),
                 ).fetchall()
+                conn.commit()
 
-                if rows:
-                    return self._row_to_account(rows[0])
+                for row in rows:
+                    account = self._row_to_account(row)
+                    if account.id not in excluded:
+                        return account
                 return None
 
     def update_bearer_token(self, account_id: int, bearer_token: str, expires_in_seconds: float = 3000.0) -> None:
@@ -257,7 +306,12 @@ class ElevenPoolDB:
                 if row:
                     new_count = int(row["character_count"] or 0) + max(0, char_count)
                     limit = int(row["character_limit"] or 10000)
-                    new_status = "exhausted" if limit > 0 and new_count >= limit else "active"
+                    remaining = max(0, limit - new_count) if limit > 0 else ELEVENLABS_MIN_REMAINING_QUOTA
+                    new_status = (
+                        "exhausted"
+                        if limit > 0 and remaining < ELEVENLABS_MIN_REMAINING_QUOTA
+                        else "active"
+                    )
                     conn.execute(
                         """
                         UPDATE elevenlabs_accounts
@@ -376,7 +430,8 @@ class ElevenPoolDB:
                 reset_unix = float(info.get("next_character_count_reset_unix", 0) or 0.0)
 
                 new_status = "active"
-                if char_limit > 0 and char_count >= char_limit:
+                remaining = max(0, char_limit - char_count) if char_limit > 0 else ELEVENLABS_MIN_REMAINING_QUOTA
+                if char_limit > 0 and remaining < ELEVENLABS_MIN_REMAINING_QUOTA:
                     new_status = "exhausted"
 
                 with self._lock:
@@ -417,6 +472,118 @@ class ElevenPoolDB:
             "total_characters_used": total_characters_used,
             "total_characters_remaining": total_characters_remaining,
         }
+    def start_background_sync(
+        self,
+        *,
+        interval_seconds: float = 1800.0,
+        low_quota_threshold: int | None = None,
+    ) -> threading.Thread:
+        """Chạy background thread tự động sync quota cho các account sắp cạn.
+
+        Mục tiêu: phát hiện sớm account đã cạn quota do user dùng từ web/app
+        khác (làm lệch ``character_count`` nội bộ) trước khi TTS thật sự thất
+        bại và gây mất tiếng một lượt.
+
+        Args:
+            interval_seconds: Khoảng thời gian giữa hai lần quét (mặc định 30 phút).
+            low_quota_threshold: Account còn dưới ngưỡng này sẽ được sync ngay.
+                Mặc định đọc từ ``ERIS_ELEVEN_LOW_QUOTA_SYNC_THRESHOLD`` env hoặc
+                hằng số ``ELEVENLABS_LOW_QUOTA_SYNC_THRESHOLD`` (500).
+        """
+
+        try:
+            env_threshold = int(
+                os.environ.get("ERIS_ELEVEN_LOW_QUOTA_SYNC_THRESHOLD", "").strip() or 0
+            )
+        except (ValueError, TypeError):
+            env_threshold = 0
+        threshold = (
+            low_quota_threshold
+            if low_quota_threshold is not None
+            else (env_threshold if env_threshold > 0 else ELEVENLABS_LOW_QUOTA_SYNC_THRESHOLD)
+        )
+
+        try:
+            env_interval = float(
+                os.environ.get("ERIS_ELEVEN_AUTO_SYNC_INTERVAL_S", "").strip() or 0
+            )
+        except (ValueError, TypeError):
+            env_interval = 0.0
+        effective_interval = max(60.0, env_interval if env_interval > 0 else interval_seconds)
+
+        def _run_sync_loop():
+            _LOGGER.info(
+                "[ElevenPool] Background auto-sync khởi động: interval=%.0fs low_quota_threshold=%d",
+                effective_interval,
+                threshold,
+            )
+            while True:
+                time.sleep(effective_interval)
+                try:
+                    self._run_one_auto_sync(threshold)
+                except Exception as exc:
+                    _LOGGER.debug("[ElevenPool] Auto-sync lỗi không ngờ: %s", exc)
+
+        thread = threading.Thread(
+            target=_run_sync_loop,
+            daemon=True,
+            name="ElevenPool-AutoSync",
+        )
+        thread.start()
+        return thread
+
+    def _run_one_auto_sync(self, low_quota_threshold: int) -> None:
+        """Một lượt quét: sync mọi account active có remaining < threshold.
+
+        Không sync disabled/exhausted (vô nghĩa và tốn quota Firebase).
+        Sync lặp lại cùng account trong cùng interval nếu còn dưới ngưỡng sau
+        sync trước không được phòng tránh ở đây — interval đủ dài để không spam.
+        """
+        now = time.time()
+        self._check_auto_resets(now)
+        with self._lock:
+            with self._connection() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM elevenlabs_accounts
+                    WHERE status = 'active'
+                      AND character_limit > 0
+                      AND (character_limit - character_count) < ?
+                    ORDER BY (character_limit - character_count) ASC
+                    """,
+                    (low_quota_threshold,),
+                ).fetchall()
+        candidates = [self._row_to_account(row) for row in rows]
+        if not candidates:
+            return
+        _LOGGER.info(
+            "[ElevenPool] Auto-sync %d account(s) sắp cạn quota (remaining < %d ký tự)...",
+            len(candidates),
+            low_quota_threshold,
+        )
+        for acc in candidates:
+            try:
+                ok, msg = self.sync_subscription(acc.id)
+                if ok:
+                    refreshed = self.get_account_by_id(acc.id)
+                    if refreshed and refreshed.remaining_characters < ELEVENLABS_MIN_REMAINING_QUOTA:
+                        _LOGGER.warning(
+                            "[ElevenPool] Account %d (%s) đã cạn quota thực tế (%d ký tự còn lại); đánh dấu exhausted.",
+                            acc.id,
+                            acc.label,
+                            refreshed.remaining_characters,
+                        )
+                    else:
+                        _LOGGER.info(
+                            "[ElevenPool] Account %d (%s) sync OK: %d ký tự còn lại.",
+                            acc.id,
+                            acc.label,
+                            refreshed.remaining_characters if refreshed else -1,
+                        )
+                else:
+                    _LOGGER.warning("[ElevenPool] Account %d (%s) sync thất bại: %s", acc.id, acc.label, msg)
+            except Exception as exc:
+                _LOGGER.debug("[ElevenPool] Sync account %d lỗi: %s", acc.id, exc)
 
 
 # Singleton Pool DB Instance

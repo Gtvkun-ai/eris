@@ -289,7 +289,7 @@ class PrivateMindLoop:
         with inference_context(
             "private_mind",
             optional=True,
-            timeout_seconds=20.0,
+            timeout_seconds=90.0,
             cancel_scope="background:private_mind",
             coalesce_key="private_mind:latest_state",
             metadata={
@@ -324,7 +324,7 @@ class PrivateMindLoop:
         with inference_context(
             "private_mind",
             optional=True,
-            timeout_seconds=20.0,
+            timeout_seconds=90.0,
             cancel_scope="background:private_mind",
             coalesce_key="private_mind:latest_state",
             metadata={

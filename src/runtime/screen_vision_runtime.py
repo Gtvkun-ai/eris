@@ -301,17 +301,29 @@ class ScreenVisionRuntimeMixin:
         if any(term in normalized for term in meet_terms):
             return 0.80 if any(term in normalized for term in meet_change_terms) else 0.18
 
-        passive_media_terms = (
+        media_terms = (
+            "nhac",
+            "music",
+            "bai hat",
+            "song",
+            "track",
+            "artist",
+            "lofi",
+            "audio",
+            "dang phat",
+            "playing",
+            "now playing",
             "youtube",
             "video",
-            "danh sách video",
+            "danh sach video",
             "playlist",
-            "đang hiển thị danh sách",
             "trang web youtube",
-            "elysium legacy",
+            "tieu de",
+            "title",
+            "dang xem",
         )
-        if any(term in normalized for term in passive_media_terms):
-            return 0.15
+        if any(term in normalized for term in media_terms):
+            return 0.85
 
         task_change_terms = (
             "file_saved",

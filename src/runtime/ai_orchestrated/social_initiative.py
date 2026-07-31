@@ -50,8 +50,25 @@ def _env_float(name: str, default: float, *, minimum: float, maximum: float) -> 
     return max(minimum, min(maximum, value))
 
 
+def _autonomous_surface_policy() -> dict[str, Any]:
+    """Đọc preference user đã lưu; không phát câu tại đây."""
+    try:
+        from runtime.runtime_settings_store import runtime_bool, runtime_float
+        enabled = runtime_bool("commentary", "user_requested_autonomous_surface", default=False)
+        return {
+            "enabled": enabled,
+            "surface_only": runtime_bool("commentary", "surface_only", default=True),
+            "open_topic": runtime_bool("commentary", "open_topic", default=True),
+            "desired": runtime_float("commentary", "desired_interval_seconds", default=35.0),
+            "maximum": runtime_float("commentary", "maximum_quiet_seconds", default=70.0),
+        }
+    except Exception:
+        return {"enabled": False, "surface_only": True, "open_topic": True, "desired": 35.0, "maximum": 70.0}
+
+
 _ALLOWED_KINDS = {
     "continuation",
+    "followup_reminder",
     "task_followup",
     "discovery_share",
     "screen_comment",
@@ -164,9 +181,25 @@ class SocialInitiativeEngine:
         # trả lời thực tế; tiếp tục chờ user xác nhận lúc này chỉ làm Eris đứng im.
         if blackboard.user_busy:
             return None
+
+        # Appraisal được phép mở đúng một khe nhỏ qua reply baton: một câu nhắc
+        # nhẹ, giả định user chưa để ý. Sau đó baton lại thuộc user tuyệt đối.
+        reminder_candidate = self._followup_reminder_candidate(blackboard)
+        if reminder_candidate is not None:
+            return reminder_candidate
+
         if blackboard.reply_expected and not self._chess_event_overrides_reply_baton(blackboard):
             return None
-        soft = _env_float("ERIS_SOCIAL_INITIATIVE_SOFT_SILENCE_SEC", 180.0, minimum=45.0, maximum=3600.0)
+
+        # Nếu câu hỏi cũ đã bị bỏ sau một lần nhắc, chuyển sang một chủ đề khác.
+        # Candidate chỉ mô tả stance/mục tiêu; Surface vẫn tự viết câu cuối.
+        topic_shift_candidate = self._abandoned_topic_shift_candidate(blackboard)
+        if topic_shift_candidate is not None:
+            return topic_shift_candidate
+
+        surface_policy = _autonomous_surface_policy()
+        soft_default = float(surface_policy.get("desired", 35.0)) if surface_policy.get("enabled") else 180.0
+        soft = _env_float("ERIS_SOCIAL_INITIATIVE_SOFT_SILENCE_SEC", soft_default, minimum=20.0, maximum=3600.0)
         has_typed_opportunity = any(anchor.kind != "presence" for anchor in blackboard.anchors)
         social_opportunity_due = bool(
             blackboard.commentary_due
@@ -193,6 +226,7 @@ class SocialInitiativeEngine:
                 "relationship": source_snapshot.get("relationship", {}),
                 "recent_self_turn_semantics": list(source_snapshot.get("recent_self_turn_semantics", ()))[-6:],
             },
+            "autonomous_surface_preference": surface_policy,
             "candidate_contract": {
                 "authority": "desire_and_topic_only",
                 "allowed_kinds": sorted(_ALLOWED_KINDS),
@@ -230,47 +264,132 @@ class SocialInitiativeEngine:
             return self.fallback_candidate(blackboard, reason="candidate_not_grounded")
         return candidate
 
-    def fallback_candidate(self, blackboard: TypedCognitiveBlackboard, *, reason: str) -> SocialSpeechCandidate | None:
-        """Liveness fallback thuộc initiative service, không thuộc governor.
 
-        Fallback chỉ tạo *cơ hội/chủ đề xã hội* khi quiet ceiling đã tới. Governor
-        vẫn có thể hoãn vì user busy, cooldown hoặc reply baton. Như vậy không có
-        ``silence_forever()``, cũng không biến hard ceiling thành đồng hồ báo nói.
+    @staticmethod
+    def _followup_reminder_candidate(
+        blackboard: TypedCognitiveBlackboard,
+    ) -> SocialSpeechCandidate | None:
+        """Tạo route nhắc lại đúng một lần, không tạo câu public hard-code."""
+
+        if not blackboard.followup_reminder_due or blackboard.followup_reminder_count > 0:
+            return None
+        anchor = next(
+            (
+                item for item in blackboard.anchors
+                if item.kind == "conversation" and bool(item.metadata.get("followup_reminder", False))
+            ),
+            None,
+        )
+        if anchor is None:
+            return None
+        return SocialSpeechCandidate(
+            decision="candidate",
+            kind="followup_reminder",
+            topic=(
+                "Briefly bring back the pending question exactly once. Assume the user may simply not have noticed. "
+                "Paraphrase rather than repeat verbatim, preserve the user's face, add no accusation or guilt, and do "
+                "not append a second new question. Keep it to one short sentence."
+            ),
+            speech_act="followup_reminder",
+            anchor_type="conversation",
+            anchor_id=anchor.anchor_id,
+            evidence_refs=(),
+            requires_grounding=False,
+            confidence=max(0.82, anchor.confidence),
+            relevance=0.94,
+            urgency=0.42,
+            tone="gentle_reminder",
+            reason="followup_appraisal:user_may_not_have_noticed",
+            source="followup_appraisal",
+        )
+
+    @staticmethod
+    def _abandoned_topic_shift_candidate(
+        blackboard: TypedCognitiveBlackboard,
+    ) -> SocialSpeechCandidate | None:
+        """Rút khỏi thread cũ và mở một ý khác với khoảng cách xã hội nhẹ."""
+
+        if not (
+            blackboard.followup_abandoned
+            and blackboard.may_start_new_topic
+            and blackboard.suppress_same_topic
+        ):
+            return None
+        return SocialSpeechCandidate(
+            decision="candidate",
+            kind="random_chat",
+            topic=(
+                "Silently abandon the previous unanswered topic and start one different, self-contained public-safe "
+                "thought from ERIS's own curiosity or the recent shared context. Treat lack of interest only as a weak "
+                "inference: do not mention being ignored, do not revive the old question, do not guilt-trip, and do not "
+                "ask the user to explain the silence. Sound slightly more self-contained and reserved for this turn, "
+                "but remain civil and leave an easy path back. Prefer a statement or observation over another question."
+            ),
+            speech_act="independent_topic_shift",
+            anchor_type="idle",
+            anchor_id="abandoned_thread_shift",
+            evidence_refs=(),
+            requires_grounding=False,
+            confidence=0.80,
+            relevance=0.86,
+            urgency=0.24,
+            tone="slightly_reserved",
+            reason=(
+                f"followup_appraisal:abandoned_thread:distance={blackboard.social_distance:.2f}"
+            ),
+            source="followup_appraisal",
+        )
+
+    def fallback_candidate(self, blackboard: TypedCognitiveBlackboard, *, reason: str) -> SocialSpeechCandidate | None:
+        """Chỉ tạo typed route tới Surface, tuyệt đối không tạo câu local.
+
+        Event engagement có provenance vẫn cần một candidate cơ học để tới Surface.
+        Với quiet companion, candidate chỉ được tạo khi user đã bật preference
+        nói tự động. Nếu Surface provider không viết được câu, pipeline sẽ im và
+        thử lại nhịp sau; không có loa phường hard-code chen vào.
         """
 
         task_candidate = self._task_followup_candidate(blackboard, reason=reason)
         if task_candidate is not None:
             return task_candidate
 
-        soft = _env_float("ERIS_SOCIAL_INITIATIVE_SOFT_SILENCE_SEC", 180.0, minimum=45.0, maximum=3600.0)
-        hard = _env_float("ERIS_SOCIAL_INITIATIVE_HARD_SILENCE_SEC", 600.0, minimum=120.0, maximum=7200.0)
-        if blackboard.seconds_since_assistant < soft and not blackboard.commentary_due:
+        policy = _autonomous_surface_policy()
+        user_enabled = bool(policy.get("enabled", False))
+        desired = max(20.0, float(policy.get("desired", 35.0) or 35.0)) if user_enabled else _env_float(
+            "ERIS_SOCIAL_INITIATIVE_SOFT_SILENCE_SEC", 180.0, minimum=45.0, maximum=3600.0
+        )
+        maximum = max(desired + 15.0, float(policy.get("maximum", 70.0) or 70.0)) if user_enabled else _env_float(
+            "ERIS_SOCIAL_INITIATIVE_HARD_SILENCE_SEC", 600.0, minimum=120.0, maximum=7200.0
+        )
+        if blackboard.seconds_since_assistant < desired and not blackboard.commentary_due:
             return None
-        required = bool(blackboard.commentary_required or blackboard.seconds_since_assistant >= hard)
-        if not required and blackboard.seconds_since_user < soft:
+        required = bool(blackboard.commentary_required or blackboard.seconds_since_assistant >= maximum)
+        if not required and blackboard.seconds_since_user < desired:
             return None
-        kind = "casual_curiosity" if blackboard.seconds_since_user >= hard else "social_check_in"
-        topic = (
-            "Open one light, non-factual conversation thread because the shared silence has lasted a while; "
-            "ask about the user's current headspace without claiming to know it."
-            if kind == "casual_curiosity"
-            else "Offer one brief social check-in that does not rely on screen facts or private cognition."
+        route_kind = "random_chat" if user_enabled else (
+            "casual_curiosity" if blackboard.seconds_since_user >= maximum else "social_check_in"
         )
         return SocialSpeechCandidate(
             decision="candidate",
-            kind=kind,
-            topic=topic,
-            speech_act=kind,
+            kind=route_kind,
+            topic=(
+                "Create one brief, original companion utterance. "
+                + ("The user explicitly enabled automatic speech. " if user_enabled else "The shared silence reached the configured ceiling. ")
+                + "Choose the content yourself from public-safe context or harmless "
+                "imagination. Do not ask the user to supply a topic, do not claim observations, time, "
+                "weather, actions, or memories without evidence, and do not repeat a canned check-in."
+            ),
+            speech_act=route_kind,
             anchor_type="idle",
-            anchor_id="long_shared_quiet" if required else "soft_shared_quiet",
+            anchor_id="user_requested_autonomous_surface",
             evidence_refs=(),
             requires_grounding=False,
-            confidence=0.66 if required else 0.54,
-            relevance=0.64 if required else 0.48,
-            urgency=0.22 if required else 0.10,
+            confidence=0.78 if user_enabled else 0.66,
+            relevance=0.86 if user_enabled else 0.64,
+            urgency=0.35 if required else 0.18,
             tone="casual_warm",
-            reason=f"liveness_fallback:{reason}",
-            source="initiative_local_liveness",
+            reason=f"surface_route:{'user_preference' if user_enabled else 'quiet_ceiling'}:{reason}",
+            source="runtime_surface_route" if user_enabled else "initiative_local_liveness",
         )
 
     @staticmethod

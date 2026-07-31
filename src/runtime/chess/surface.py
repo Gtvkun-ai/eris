@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Typed chess state và renderer dùng chung cho chat/autonomous.
+"""Typed chess state và câu trả lời engine có thẩm quyền.
 
-Renderer này chỉ là lưới an toàn khi Surface model không trả câu. Nó không đọc
-chuỗi ``key=value`` và không phát thông báo kiểu máy. Mỗi câu phải bám vào thế cờ,
-nước vừa đi, gợi ý, chất lượng nước hoặc kết quả; thiếu dữ liệu thì im.
+Module này KHÔNG dựng lời bình autonomous và không giả lập cá tính khi Surface
+provider lỗi. Bình luận, mỉa mai và đọc thế cờ thuộc Surface model. Đường local
+chỉ được dùng cho một trường hợp hẹp: user hỏi thẳng nước nào và chess analyzer
+đã trả đúng một suggestion có provenance. Khi đó runtime có thể phát kết quả
+engine tối giản; thiếu suggestion thì im, tuyệt đối không rơi vào câu mẫu.
 """
 from __future__ import annotations
 
@@ -163,130 +165,62 @@ def chess_turn_relevant(user_text: str, *, engagement_active: bool = False) -> b
     return bool(tokens & {"nuoc", "quan", "trang", "den"})
 
 
-def _pick(seed: str, *options: str) -> str:
-    clean = tuple(option for option in options if option)
-    if not clean:
-        return ""
-    digest = hashlib.sha1(seed.encode("utf-8", "ignore")).digest()
-    return clean[int.from_bytes(digest[:4], "big") % len(clean)]
 
+def chess_move_question(user_text: str) -> bool:
+    """True khi user đang hỏi trực tiếp nước nên đi hoặc xác nhận một nước.
 
-def _move_reason(state: ChessSurfaceState) -> str:
-    return {
-        "forcing_check": "Ép vua trước, đừng cho bên kia kịp bày thêm trò.",
-        "forcing_capture": "Có quân treo trước mặt mà bỏ qua thì hơi phụ lòng đối thủ.",
-        "develop_piece": "Kéo quân ra chơi đi; để nó ngồi làm nội thất mãi cũng phí.",
-        "central_control": "Chiếm trung tâm trước khi bên kia đem đồ đạc tới đóng trại.",
-        "king_safety": "Đưa vua vào chỗ tử tế trước, đừng bắt nó sống giữa công trường.",
-        "improve_piece_activity": "Nước này sửa thế quân mà không tự khoét thêm lỗ.",
-    }.get(state.hint_focus, "Nước này giữ thế gọn hơn và bắt bên kia phải trả lời.")
+    Đây là classifier miền cờ, không phải router vision. Nó chỉ quyết định có
+    được phép dùng kết quả analyzer tối giản khi Surface provider không trả lời.
+    """
 
-
-def _quality_comment(state: ChessSurfaceState) -> str:
-    move = state.last_move
-    quality = state.move_quality
-    if not move:
-        return ""
-    seed = f"{state.game_id}:{state.ply}:{move}:{quality}"
-    if quality == "blunder":
-        return _pick(
-            seed,
-            f"{move} à? Hào phóng ghê, biếu đối thủ nguyên một cơ hội.",
-            f"Nước {move} vừa rồi hơi giống hoạt động từ thiện quân cờ đấy.",
-        )
-    if quality == "mistake":
-        return _pick(
-            seed,
-            f"{move} làm thế xấu đi kha khá. Chưa chết, nhưng đừng tặng thêm.",
-            f"Nước {move} hơi đau. Bên kia mà tỉnh là cậu phải trả học phí ngay.",
-        )
-    if quality == "inaccuracy":
-        return _pick(
-            seed,
-            f"{move} hơi mềm. Bên kia chưa phạt thì coi như còn được tha.",
-            f"Nước {move} không hỏng hẳn, chỉ mở cửa cho đối thủ nghịch thôi.",
-        )
-    if quality in {"strong", "good"}:
-        return _pick(
-            seed,
-            f"{move} ổn đấy. Ít nhất lần này tôi chưa phải viết điếu văn cho thế cờ.",
-            f"Nước {move} khá sạch. Bên kia bắt đầu phải tự giải bài của mình rồi.",
-        )
-    return _pick(
-        seed,
-        f"Sau {move}, thế vẫn chơi được. Chưa đẹp đến mức khoe, cũng chưa xấu đến mức giấu.",
-        f"{move} giữ ván còn nguyên. Tạm thời bàn cờ chưa cần gọi cấp cứu.",
+    normalized = normalize_vi(user_text)
+    if not normalized:
+        return False
+    markers = (
+        "nuoc nao", "danh gi", "di gi", "nen danh", "nen di", "di sao",
+        "danh nuoc", "toi danh", "tui danh", "hay sao", "dung hong",
+        "dung khong", "co nen", "an quan nao", "bat quan nao",
+    )
+    return any(marker in normalized for marker in markers) or bool(
+        _COORD_RE.search(str(user_text or ""))
     )
 
 
-def render_chess_surface_text(
+def authoritative_chess_answer_text(
     state: ChessSurfaceState | Mapping[str, Any] | None,
     *,
-    user_text: str = "",
-    event_kind: str = "",
-    autonomous: bool = False,
+    user_text: str,
 ) -> str:
-    """Viết một câu cờ tự nhiên, có nhận xét và chút mỉa nhẹ.
+    """Trả kết quả analyzer tối giản cho câu hỏi nước đi trực tiếp.
 
-    Không trả câu telemetry kiểu “bàn cờ đã được nhận” hoặc “nước gợi ý hiện tại”.
-    Nếu state không đủ cụ thể thì trả chuỗi rỗng để pipeline im/body-only.
+    Đây là tool result có thẩm quyền, KHÔNG phải Surface fallback:
+    - chỉ chạy khi user thật sự hỏi nước;
+    - bắt buộc có suggestion từ analyzer/bridge;
+    - không mỉa, không kể chuyện, không đọc telemetry;
+    - không có suggestion thì trả rỗng để caller im.
     """
 
     typed = state if isinstance(state, ChessSurfaceState) else ChessSurfaceState.from_mapping(state)
-    if not typed.meaningful:
+    if not chess_move_question(user_text):
+        return ""
+    move = typed.suggested_move
+    if not move:
         return ""
 
-    normalized = normalize_vi(user_text)
-    asks_move = any(marker in normalized for marker in (
-        "nuoc nao", "danh gi", "di gi", "nen danh", "nen di", "di sao",
-        "danh nuoc", "toi danh", "tui danh", "hay sao", "dung hong", "dung khong",
-    )) or bool(_COORD_RE.search(str(user_text or "")))
-
-    if typed.result or typed.phase in {"completed", "game_over", "finished"}:
-        if typed.result:
-            return f"Xong ván, kết quả {typed.result}. Giờ mới đến phần thú vị: xem ai phải nhận trách nhiệm cho đống đổ nát này."
-        return "Ván xong rồi. Đừng chạy; còn phải mổ lại chỗ thế cờ bắt đầu trượt nữa."
-
-    if typed.phase in {"waiting_for_board"}:
-        return "Mở bàn đi. Tôi chưa có gì để soi ngoài sự tự tin đáng ngờ của cậu."
-    if typed.phase in {"waiting_for_start", "waiting", "ready"} and not typed.last_move:
-        return _pick(
-            typed.game_id or typed.board_fen,
-            "Bàn mở rồi đấy. Đi nước đầu đi, tôi ngồi đây soi xem cậu chơi cờ hay hiến quân.",
-            "Ván chưa chạy. Cứ đi nước đầu; tôi hứa chỉ mỉa khi thật sự đáng mỉa.",
-        )
-
-    suggestion = typed.suggested_move
-    quality_line = _quality_comment(typed)
-    if asks_move and suggestion:
-        return f"{suggestion} đi. {_move_reason(typed)}"
-    if asks_move and not suggestion:
-        if typed.last_move:
-            return f"Sau {typed.last_move}, tôi chưa có nước ép đủ sạch để phán bừa. Đi chậm lại một nhịp, đừng tự hiến quân vì nóng ruột."
-        return "Tôi có thế cờ nhưng chưa có nước nào đủ sạch để chỉ thẳng. Đừng bắt tôi bói bằng lòng tự trọng của cậu."
-
-    if suggestion and quality_line:
-        return f"{quality_line} Tôi nghiêng về {suggestion}; {_move_reason(typed).lower()}"
-    if suggestion:
-        return _pick(
-            f"{typed.game_id}:{typed.ply}:{suggestion}",
-            f"{suggestion} nhìn khó chịu nhất cho bên kia. {_move_reason(typed)}",
-            f"Tôi sẽ cân {suggestion}. {_move_reason(typed)}",
-        )
-    if quality_line:
-        return quality_line
-
-    if typed.last_move:
-        return f"Nước {typed.last_move} vừa xuống. Thế còn sống, nhưng chưa ai được phép tự mãn cả."
-    if autonomous:
-        return ""
-    if typed.side_vi:
-        return f"Đến lượt {typed.side_vi}. Cứ đi đi; tôi đang chờ một nước đủ hay để khen, hoặc đủ tệ để có chuyện nói."
-    return ""
+    reason = {
+        "forcing_check": "Đây là nước chiếu cưỡng bức.",
+        "forcing_capture": "Đây là nước bắt quân cưỡng bức.",
+        "develop_piece": "Nước này phát triển quân và cải thiện hoạt động.",
+        "central_control": "Nước này giành thêm quyền kiểm soát trung tâm.",
+        "king_safety": "Nước này ưu tiên an toàn cho vua.",
+        "improve_piece_activity": "Nước này cải thiện vị trí quân mà không tạo thêm điểm yếu.",
+    }.get(typed.hint_focus, "")
+    return f"{move}. {reason}".strip() if reason else f"{move}."
 
 
 __all__ = [
     "ChessSurfaceState",
     "chess_turn_relevant",
-    "render_chess_surface_text",
+    "chess_move_question",
+    "authoritative_chess_answer_text",
 ]

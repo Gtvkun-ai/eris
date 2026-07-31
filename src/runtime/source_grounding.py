@@ -219,6 +219,10 @@ class SourceGroundingReport:
     structured_evidence_ids: list[str] = field(default_factory=list)
     structured_kind: str = ""
     structured_state: dict[str, Any] = field(default_factory=dict)
+    # Runtime sensors/tool state như system clock và weather. Tách khỏi screen
+    # để model không bịa giờ/thời tiết chỉ vì OCR có vài con số trông khả nghi.
+    runtime_facts_preview: list[str] = field(default_factory=list)
+    runtime_evidence_ids: list[str] = field(default_factory=list)
 
     pasted_code_detected: bool = False
     code_language: str = "unknown"
@@ -473,6 +477,7 @@ class SourceGroundingEngine:
         screen_facts: Sequence[Any] | None = None,
         screen_facts_stale: bool = False,
         structured_facts: Sequence[Any] | None = None,
+        runtime_facts: Sequence[Any] | None = None,
         memory_packet: Any = None,
         runtime_state: Any = None,
         allow_web: bool = False,
@@ -493,6 +498,8 @@ class SourceGroundingEngine:
             OCR/vision/screen facts hiện có. Nếu None, engine tự thử đọc từ frame.
         structured_facts:
             Evidence có cấu trúc từ extension/bridge, hiện dùng cho chess bridge.
+        runtime_facts:
+            Sensor/tool state tươi như system clock, weather hoặc policy vừa áp.
         memory_packet:
             MemoryPacket nếu prompt muốn dùng memory như context phụ.
         runtime_state:
@@ -544,6 +551,7 @@ class SourceGroundingEngine:
         file_evidence = self._collect_file_evidence(frame=frame, active_files=active_files, runtime_state=runtime_state)
         screen_evidence = self._collect_screen_evidence(frame=frame, screen_facts=screen_facts, runtime_state=runtime_state)
         structured_evidence = self._collect_structured_evidence(structured_facts=structured_facts)
+        runtime_evidence = self._collect_runtime_evidence(runtime_facts=runtime_facts)
         memory_evidence = self._collect_memory_evidence(frame=frame, memory_packet=memory_packet)
         user_evidence = self._collect_user_text_evidence(frame=frame, user_text=text)
 
@@ -568,6 +576,10 @@ class SourceGroundingEngine:
             0.72 if has_fresh_vision else (0.55 if has_stale_vision else (0.5 if explicit_screen_request else 0.0))
         )
         has_relevant_chess = bool(structured_evidence["present"] and structured_evidence["relevant"])
+        asks_system_clock = self._asks_system_clock(normalized)
+        asks_weather = self._asks_weather(normalized)
+        has_clock = bool(runtime_evidence.get("clock_present"))
+        has_weather = bool(runtime_evidence.get("weather_present"))
         memory_profile = self._derive_memory_answer_profile(
             normalized=normalized,
             user_text=text,
@@ -667,6 +679,25 @@ class SourceGroundingEngine:
                     )
                 )
 
+        if asks_system_clock and has_clock:
+            candidates.append(SourceCandidate(
+                kind="runtime_state",
+                confidence=0.99,
+                reason="System clock local là sensor runtime trực tiếp.",
+                evidence_ids=list(runtime_evidence["clock_ids"]),
+                evidence_preview=list(runtime_evidence["clock_preview"]),
+            ))
+        if asks_weather and has_weather:
+            candidates.append(SourceCandidate(
+                kind="runtime_state",
+                confidence=0.95,
+                reason="Weather telemetry/tool result có provenance runtime.",
+                evidence_ids=list(runtime_evidence["weather_ids"]),
+                evidence_preview=list(runtime_evidence["weather_preview"]),
+            ))
+        if asks_weather and not has_weather:
+            notes.append("weather_runtime_evidence_missing_do_not_invent")
+
         if internal_capability_ref:
             candidates.append(
                 SourceCandidate(
@@ -742,7 +773,17 @@ class SourceGroundingEngine:
 
         # Referent màn hình được phân giải theo bằng chứng, không phải keyword.
         # Pasted code luôn thắng: "đoạn này" sau khi paste là trỏ vào code, không phải màn hình.
-        if has_relevant_chess and not user_code and not asks_about_file:
+        if asks_system_clock and has_clock and not user_code and not asks_about_file:
+            primary_source = "runtime_state"
+            grounding_source = "runtime_state"
+            confidence_cap_override = 0.99
+            notes.append("system_clock_runtime_primary")
+        elif asks_weather and has_weather and not user_code and not asks_about_file:
+            primary_source = "runtime_state"
+            grounding_source = "runtime_state"
+            confidence_cap_override = 0.95
+            notes.append("weather_runtime_primary")
+        elif has_relevant_chess and not user_code and not asks_about_file:
             primary_source = "chess_bridge"
             grounding_source = "chess_bridge"
             confidence_cap_override = 0.98
@@ -821,6 +862,8 @@ class SourceGroundingEngine:
         allowed_sources = [candidate.kind for candidate in candidates if not candidate.missing and candidate.confidence >= 0.45]
         if primary_source == "live_vision":
             allowed_sources = self._dedupe([*allowed_sources, "live_vision"])
+        if runtime_evidence["present"]:
+            allowed_sources = self._dedupe([*allowed_sources, "runtime_state"])
         confidence_cap = confidence_cap_override if confidence_cap_override is not None else self._cap_for(primary, missing_evidence=missing_evidence)
         preempt_mode = ""
         if should_preempt:
@@ -847,11 +890,13 @@ class SourceGroundingEngine:
             structured_evidence_ids=[str(p) for p in (structured_evidence.get("ids") or []) if str(p).strip()][:8],
             structured_kind=str(structured_evidence.get("kind") or ""),
             structured_state=dict(structured_evidence.get("state") or {}),
+            runtime_facts_preview=[str(p) for p in (runtime_evidence.get("preview") or []) if str(p).strip()][:6],
+            runtime_evidence_ids=[str(p) for p in (runtime_evidence.get("ids") or []) if str(p).strip()][:10],
             pasted_code_detected=bool(code_info["detected"]),
             code_language=str(code_info["language"]),
             code_block_count=int(code_info["block_count"]),
             candidates=candidates,
-            evidence_ids=self._dedupe([*primary.evidence_ids, *file_evidence["ids"], *structured_evidence["ids"], *screen_evidence["ids"], *memory_evidence["ids"], *user_evidence["ids"]])[:20],
+            evidence_ids=self._dedupe([*primary.evidence_ids, *file_evidence["ids"], *structured_evidence["ids"], *runtime_evidence["ids"], *screen_evidence["ids"], *memory_evidence["ids"], *user_evidence["ids"]])[:20],
             allowed_sources=self._dedupe(allowed_sources),
             grounding_source=grounding_source,
             missing_evidence=missing_evidence,
@@ -984,6 +1029,25 @@ class SourceGroundingEngine:
                     confidence=0.78 if report.screen_evidence_present else 0.55,
                 )
             )
+
+        known_runtime = {item.text for item in items if item.source == "runtime_state"}
+        runtime_role: EvidenceRole = "primary" if report.primary_source == "runtime_state" else "ambient"
+        for index, preview in enumerate(report.runtime_facts_preview[:6]):
+            text = str(preview or "").strip()
+            if not text or text in known_runtime:
+                continue
+            evidence_id = (
+                report.runtime_evidence_ids[index]
+                if index < len(report.runtime_evidence_ids)
+                else f"runtime_state:{index}"
+            )
+            items.append(GroundingEvidence(
+                evidence_id=str(evidence_id),
+                source="runtime_state",
+                role=runtime_role,
+                text=text,
+                confidence=1.0 if "System local time" in text else 0.95,
+            ))
 
         known_structured = {item.text for item in items if item.source == "chess_bridge"}
         structured_role: EvidenceRole = "primary" if report.primary_source == "chess_bridge" else "ambient"
@@ -1226,6 +1290,13 @@ class SourceGroundingEngine:
             lines.append("answer_rules:")
             for rule in report.answer_style_rules[:8]:
                 lines.append(f"- {rule}")
+
+        runtime_previews = [str(f).strip() for f in (getattr(report, "runtime_facts_preview", None) or []) if str(f).strip()]
+        if runtime_previews:
+            lines.append("runtime_facts (authoritative local sensors/tool state):")
+            for fact in runtime_previews[:6]:
+                lines.append(f"  {fact[:240]}")
+            lines.append("runtime_rule: use the exact system clock when asked; never invent weather when no weather fact is present.")
 
         # Luôn render vision/screen facts vào grounding context — dù user không hỏi
         # màn hình. Đây là tóm tắt văn bản từ vision model/OCR, KHÔNG
@@ -2142,6 +2213,55 @@ class SourceGroundingEngine:
             "ids": ids,
             "preview": previews,
             "confidence": confidence,
+        }
+
+    @staticmethod
+    def _asks_system_clock(normalized: str) -> bool:
+        text = str(normalized or "")
+        return any(marker in text for marker in (
+            "may gio", "mấy giờ", "gio nao", "giờ nào", "bay gio la", "bây giờ là",
+            "hom nay ngay", "hôm nay ngày", "thu may", "thứ mấy", "current time", "what time",
+        ))
+
+    @staticmethod
+    def _asks_weather(normalized: str) -> bool:
+        text = str(normalized or "")
+        return any(marker in text for marker in (
+            "thoi tiet", "thời tiết", "nhiet do", "nhiệt độ", "troi mua", "trời mưa",
+            "troi nang", "trời nắng", "weather", "temperature",
+        ))
+
+    def _collect_runtime_evidence(self, *, runtime_facts: Sequence[Any] | None = None) -> dict[str, Any]:
+        items: list[Any] = []
+        clock_items: list[Any] = []
+        weather_items: list[Any] = []
+        for item in self._as_list(runtime_facts):
+            grounded = item.get("grounded") if isinstance(item, Mapping) else getattr(item, "grounded", None)
+            if grounded is False or str(grounded).strip().lower() == "false":
+                continue
+            source = str(item.get("source", "") if isinstance(item, Mapping) else getattr(item, "source", "")).strip().lower()
+            tags = [
+                str(tag or "").strip().lower()
+                for tag in self._as_list(item.get("tags", ()) if isinstance(item, Mapping) else getattr(item, "tags", ()))
+                if str(tag or "").strip()
+            ]
+            if source != "runtime_state" and "runtime_state" not in tags:
+                continue
+            if not self._preview_item(item):
+                continue
+            items.append(item)
+            kind = str(item.get("kind", "") if isinstance(item, Mapping) else getattr(item, "kind", "")).lower()
+            if kind == "system_clock" or "system_clock" in tags:
+                clock_items.append(item)
+            if kind == "weather" or "weather" in tags:
+                weather_items.append(item)
+        ids, previews, confidence = self._summarize_evidence_items(items, default_confidence=0.95)
+        clock_ids, clock_preview, _ = self._summarize_evidence_items(clock_items, default_confidence=1.0)
+        weather_ids, weather_preview, _ = self._summarize_evidence_items(weather_items, default_confidence=0.95)
+        return {
+            "present": bool(items), "ids": ids, "preview": previews, "confidence": confidence,
+            "clock_present": bool(clock_items), "clock_ids": clock_ids, "clock_preview": clock_preview,
+            "weather_present": bool(weather_items), "weather_ids": weather_ids, "weather_preview": weather_preview,
         }
 
     def _collect_structured_evidence(

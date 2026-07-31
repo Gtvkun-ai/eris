@@ -198,6 +198,17 @@ class ChatCycleMixin:
         speech_interrupt_event=None,
         speech_interrupt_reaction=None,
     ) -> None:
+        # Directive sản phẩm rõ ràng được áp trước model call. Nhờ vậy Surface
+        # nhận context "đã bật" và không đẩy việc nghĩ nội dung ngược lại user.
+        self._autonomous_surface_preference_context = ""
+        try:
+            from runtime.autonomous_surface_preference import apply_autonomous_surface_preference
+            preference = apply_autonomous_surface_preference(self, user_text)
+            if preference.applied:
+                self._autonomous_surface_preference_context = preference.prompt_context
+        except Exception as exc:
+            self.logger.debug("[autonomous preference] detector failed: %s", exc)
+
         orchestrator = getattr(self, "ai_chat_orchestrator", None)
         if not bool(getattr(self, "ai_runtime_enabled", False)) or orchestrator is None:
             self.logger.error("[architecture C] chat unavailable: runtime bootstrap failed; legacy path removed")
@@ -434,6 +445,77 @@ class ChatCycleMixin:
             )
         )
         return key, int(getattr(snapshot, "revision", 0) or 0)
+
+    def _chat_runtime_grounding_facts(self, snapshot, user_text: str) -> tuple[dict[str, object], ...]:
+        """Cấp runtime facts tươi cho chat writer.
+
+        System clock là sensor local có thẩm quyền. Weather chỉ được thêm khi
+        telemetry/tool thật sự có dữ liệu; thiếu weather thì prompt cấm đoán bừa.
+        OCR/vision giữ đường riêng trong ``screen_facts`` và chess giữ đường
+        ``structured_facts`` để provenance không bị trộn thành một nồi súp.
+        """
+        from datetime import datetime
+
+        now = datetime.now().astimezone()
+        facts: list[dict[str, object]] = [{
+            "id": f"runtime_clock:{now.strftime('%Y%m%d%H%M')}",
+            "source": "runtime_state",
+            "claim": (
+                f"System local time is {now.strftime('%H:%M:%S')} on "
+                f"{now.strftime('%Y-%m-%d')}; timezone={now.tzname() or ''}."
+            ),
+            "confidence": 1.0,
+            "grounded": True,
+            "stale": False,
+            "kind": "system_clock",
+            "captured_at": now.timestamp(),
+            "tags": ["runtime_state", "system_clock", "local_sensor"],
+        }]
+
+        payload: dict[str, object] = {}
+        to_context = getattr(snapshot, "to_machine_context", None)
+        if callable(to_context):
+            try:
+                raw = to_context() or {}
+                if isinstance(raw, dict):
+                    payload.update(raw)
+            except Exception:
+                pass
+        if isinstance(snapshot, dict):
+            payload.update(snapshot)
+        for key in ("weather", "weather_condition", "temperature", "temperature_c", "weather_summary"):
+            value = getattr(snapshot, key, None)
+            if value not in (None, ""):
+                payload.setdefault(key, value)
+
+        weather = payload.get("weather") or payload.get("weather_summary") or payload.get("weather_condition")
+        temperature = payload.get("temperature_c", payload.get("temperature"))
+        if weather not in (None, "") or temperature not in (None, ""):
+            facts.append({
+                "id": f"runtime_weather:{int(now.timestamp() // 60)}",
+                "source": "runtime_state",
+                "claim": f"Weather telemetry: condition={weather or 'unknown'}; temperature={temperature if temperature not in (None, '') else 'unknown'}.",
+                "confidence": 0.95,
+                "grounded": True,
+                "stale": False,
+                "kind": "weather",
+                "captured_at": now.timestamp(),
+                "tags": ["runtime_state", "weather", "telemetry"],
+            })
+
+        preference = str(getattr(self, "_autonomous_surface_preference_context", "") or "").strip()
+        if preference:
+            facts.append({
+                "id": f"runtime_policy:autonomous_surface:{int(now.timestamp())}",
+                "source": "runtime_state",
+                "claim": preference,
+                "confidence": 1.0,
+                "grounded": True,
+                "stale": False,
+                "kind": "runtime_policy",
+                "tags": ["runtime_state", "policy_applied", "user_directive"],
+            })
+        return tuple(facts)
 
     def _chat_active_chess_engagement_id(self) -> str:
         facts = self._chat_structured_grounding_facts("")
@@ -804,13 +886,10 @@ class ChatCycleMixin:
         return (
             "[VISION_STATUS]\n"
             "fresh_screen_capture: yes\n"
-            "grounded_visual_claims: 0\n"
             f"screen_text_evidence_count: {text_evidence_count}\n"
-            "rule: Không được nói 'đang nhìn đây', 'tôi thấy', 'tôi đang xem', "
-            "hoặc khẳng định như đã hiểu hình ảnh trên màn hình.\n"
-            "required_stance: Nói thật rằng đã thử lấy khung hình nhưng chưa đủ bằng chứng "
-            "để mô tả chắc. Nếu có OCR/text evidence, chỉ nói là đọc được một phần chữ/OCR, "
-            "không gọi đó là nhìn thấy toàn cảnh.\n"
+            "rule: Sử dụng mọi tiêu đề, tên ứng dụng, tiêu đề video/bài hát hoặc văn bản OCR thu thập được làm bằng chứng trực quan.\n"
+            "required_stance: Chủ động trao đổi, bình luận hoặc hỏi thêm người dùng về bài hát/video/nội dung đang mở. "
+            "Nếu hình ảnh hoặc thông tin chưa hoàn toàn chi tiết, hãy thảo luận hoặc hỏi thêm dựa trên tiêu đề/nội dung đã quan sát.\n"
             "[/VISION_STATUS]"
         )
 
@@ -925,6 +1004,7 @@ class ChatCycleMixin:
             screen_facts=screen_items,
             screen_facts_stale=self._chat_screen_grounding_items_stale(screen_items),
             structured_facts=self._chat_structured_grounding_facts(user_text),
+            runtime_facts=self._chat_runtime_grounding_facts(snapshot, user_text),
             memory_packet=memory_resonance,
             runtime_state=snapshot,
             allow_web=False,

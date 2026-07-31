@@ -225,7 +225,9 @@ _MOTION_OFFSETS: dict[str, dict[str, float]] = {
 }
 
 _PARAMETER_RESPONSE = {
-    "ParamMouthOpenY": 22.0,
+    # Mở nhanh để âm tiết đầu không bị smoothing giữ quanh -1. Rig này dùng
+    # -1 đóng, 0 nửa mở, +1 mở hết nên vài frame chậm là nhìn như không nói.
+    "ParamMouthOpenY": 88.0,
     "ParamMouthForm": 7.5,
     "ParamBrowLAngle": 6.5,
     "ParamBrowRAngle": 6.5,
@@ -595,7 +597,7 @@ class Live2DStageState:
 
             if self._speaking and speech_pose is not None:
                 open_ratio = speech_pose.mouth_open_ratio
-                mouth_open = INFJ_PARAMETER_PROFILE.mouth_open_from_ratio(open_ratio)
+                mouth_open = INFJ_PARAMETER_PROFILE.mouth_open_from_speech_ratio(open_ratio)
             elif self._emotion == "surprise" and max(0.0, timestamp - self._emotion_at) < 0.8:
                 mouth_open = INFJ_PARAMETER_PROFILE.mouth_open_from_ratio(0.58)
             else:
@@ -608,8 +610,9 @@ class Live2DStageState:
                 desired = INFJ_PARAMETER_PROFILE.sanitize(key, target.get(key, 0.0))
                 response = _PARAMETER_RESPONSE.get(key, 7.0)
                 if key == "ParamMouthOpenY" and desired < current:
-                    # Đóng nhanh hơn mở để giữa hai âm tiết thật sự có khe khép.
-                    response = 32.0
+                    # Đóng nhanh hơn mở để giữa hai âm tiết thật sự có khe khép,
+                    # nhưng không giật từ vùng dương về -1 chỉ trong một frame.
+                    response = 96.0
                 blend = 1.0 - math.exp(-response * dt) if dt > 0.0 else 1.0
                 self._current[key] = current + (desired - current) * blend
 

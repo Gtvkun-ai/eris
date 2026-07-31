@@ -835,24 +835,30 @@ class ChainedFallbackClient:
             call_kwargs = dict(kwargs)
             if is_ds2api:
                 try:
-                    failfast = float(os.environ.get("ERIS_DS2API_FAILFAST_TIMEOUT_S", "15") or 15)
+                    failfast = float(os.environ.get("ERIS_DS2API_FAILFAST_TIMEOUT_S", "90") or 90)
                 except (TypeError, ValueError):
-                    failfast = 15.0
+                    failfast = 90.0
                 failfast = max(1.0, min(300.0, failfast))
                 requested = call_kwargs.get("timeout")
                 if requested is None:
                     call_kwargs["timeout"] = failfast
                 else:
                     try:
-                        call_kwargs["timeout"] = min(float(requested), failfast)
+                        if os.environ.get("ERIS_DS2API_STRICT_TIMEOUT", "0") in {"1", "true"}:
+                            call_kwargs["timeout"] = min(float(requested), failfast)
+                        else:
+                            call_kwargs["timeout"] = max(float(requested), failfast)
                     except (TypeError, ValueError):
                         call_kwargs["timeout"] = failfast
             try:
                 if idx == 0:
                     return client.create_chat_completion(**call_kwargs)
                 parent_ctx = current_inference_context()
-                fallback_timeout = float(call_kwargs.get("timeout", 15.0) or 15.0)
-                fallback_timeout = max(12.0, fallback_timeout)
+                requested_timeout = float(call_kwargs.get("timeout", 15.0) or 15.0)
+                # Tier dự phòng (Official API/Groq/Gemini) cần fail-fast (15s) để
+                # không treo UI khi nhà chính Whale2API dính rate limit.
+                fallback_timeout = max(5.0, min(15.0, requested_timeout))
+                call_kwargs["timeout"] = fallback_timeout
                 with inference_context(
                     parent_ctx.lane,
                     timeout_seconds=fallback_timeout,

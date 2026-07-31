@@ -191,6 +191,12 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "activity_update_cooldown_seconds": 120,
     },
     "commentary": {
+        # Preference do user nói trực tiếp trong chat. Đặt cùng cadence để không
+        # sinh thêm một section UI chỉ nhằm chứa ba boolean khá tự phụ.
+        "user_requested_autonomous_surface": False,
+        "surface_only": True,
+        "open_topic": True,
+        "preference_updated_at": 0,
         # Companion mode: người dùng mở Eris để nghe cô ấy sống cùng phiên làm
         # việc, không phải để ngắm một hệ thống rất thông minh quyết định im.
         "enabled": True,
@@ -1100,6 +1106,7 @@ def _coerce_setting(path: str, value: Any, expected: Any) -> tuple[bool, Any]:
         "chat.max_concurrency": (1, 16),
         "prompt.hard_cap_tokens": (0, 1_000_000),
         "project_ops.max_repair_attempts": (0, 5),
+        "commentary.preference_updated_at": (0, 4102444800),
         "initiative.global_hourly_budget": (0, 120),
         "initiative.minimum_interval_seconds": (15, 3600),
         "initiative.minimum_user_silence_seconds": (3, 120),

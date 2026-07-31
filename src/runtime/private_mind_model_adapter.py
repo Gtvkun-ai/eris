@@ -88,13 +88,13 @@ class PrivateMindModelAdapterConfig:
     model: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_MODEL", os.getenv("ERIS_DAYDREAM_MODEL", "gemma-4-31b-it")) or "gemma-4-31b-it").strip())
     base_url: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_BASE_URL", os.getenv("ERIS_REMOTE_BASE_URL", "")) or "").strip())
     api_key: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_API_KEY", "") or "").strip())
-    timeout_seconds: float = field(default_factory=lambda: max(4.0, _as_float(os.getenv("ERIS_PRIVATE_MIND_TIMEOUT", "12"), 12.0)))
-    # T1.3: synthesis/judgment nặng hơn fragment → timeout dài hơn (mặc định 20s
-    # hoặc ≥ timeout chung). Fragment vẫn fail-fast bằng timeout_seconds (12s).
+    timeout_seconds: float = field(default_factory=lambda: max(4.0, _as_float(os.getenv("ERIS_PRIVATE_MIND_TIMEOUT", "90"), 90.0)))
+    # T1.3: synthesis/judgment nặng hơn fragment → timeout dài hơn (mặc định 90s
+    # hoặc ≥ timeout chung). Fragment vẫn fail-fast bằng timeout_seconds (90s).
     synthesis_timeout_seconds: float = field(
         default_factory=lambda: max(
-            _as_float(os.getenv("ERIS_PRIVATE_MIND_TIMEOUT", "12"), 12.0),
-            _as_float(os.getenv("ERIS_PRIVATE_MIND_SYNTHESIS_TIMEOUT", "20"), 20.0),
+            _as_float(os.getenv("ERIS_PRIVATE_MIND_TIMEOUT", "90"), 90.0),
+            _as_float(os.getenv("ERIS_PRIVATE_MIND_SYNTHESIS_TIMEOUT", "90"), 90.0),
         )
     )
     # Nhiệt độ thấp khiến model nhỏ (gemma) dễ lặp từ hoặc dính RECITATION filter,

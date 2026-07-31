@@ -93,10 +93,10 @@ class PostTurnObserver:
         try:
             self.deadline_seconds = max(
                 1.0,
-                min(120.0, float(os.getenv("ERIS_POST_OBSERVER_DEADLINE_SEC", "30.0") or 30.0)),
+                min(300.0, float(os.getenv("ERIS_POST_OBSERVER_DEADLINE_SEC", "120.0") or 120.0)),
             )
         except (TypeError, ValueError):
-            self.deadline_seconds = 30.0
+            self.deadline_seconds = 120.0
         try:
             self.idle_wait_seconds = max(
                 0.0,
@@ -107,10 +107,10 @@ class PostTurnObserver:
         try:
             self.inference_timeout_seconds = max(
                 1.0,
-                min(60.0, float(os.getenv("ERIS_POST_OBSERVER_HTTP_TIMEOUT_SEC", "15.0") or 15.0)),
+                min(120.0, float(os.getenv("ERIS_POST_OBSERVER_HTTP_TIMEOUT_SEC", "90.0") or 90.0)),
             )
         except (TypeError, ValueError):
-            self.inference_timeout_seconds = 15.0
+            self.inference_timeout_seconds = 90.0
         try:
             self.latest_wins = str(os.getenv("ERIS_POST_OBSERVER_LATEST_WINS", "1") or "1").strip().lower() not in {
                 "0",

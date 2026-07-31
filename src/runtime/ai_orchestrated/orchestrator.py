@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import time
 from typing import Any, Mapping
 
@@ -23,7 +22,7 @@ from runtime.social_stance_policy import guard_subjective_stance_payload
 from runtime.companion_model_routing import route_companion_turn
 from runtime.public_reply_context import compile_public_reply_context
 from runtime.reply_obligation import enforce_reply_obligation
-from runtime.chess.surface import render_chess_surface_text
+from runtime.chess.surface import authoritative_chess_answer_text, chess_turn_relevant
 from runtime.discourse_state import assistant_proposition_link
 from runtime.discourse_surface import DiscourseSurface, DiscourseSurfaceRenderer
 from runtime.json_boundary import public_payload
@@ -187,16 +186,19 @@ def _serializable_public_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     return public_payload(payload)
 
 
-def _structured_chess_fallback_text(report: Any, user_text: str) -> str:
-    """Fallback chat dùng typed state và cùng renderer với autonomous."""
+def _authoritative_chess_result_text(report: Any, user_text: str) -> str:
+    """Lấy tool result có thẩm quyền cho câu hỏi nước đi trực tiếp.
 
-    if str(getattr(report, "primary_source", "") or "") not in {"chess_bridge", "structured_runtime"}:
+    Không dùng cho autonomous và không giả lập banter. Chỉ structured chess
+    state có provenance mới được phép trả một nước analyzer đã tính.
+    """
+
+    if str(getattr(report, "structured_kind", "") or "") != "chess":
         return ""
-    return render_chess_surface_text(
-        getattr(report, "structured_state", None),
-        user_text=user_text,
-        autonomous=False,
-    )
+    state = getattr(report, "structured_state", None) or {}
+    if not state or not chess_turn_relevant(user_text, engagement_active=True):
+        return ""
+    return authoritative_chess_answer_text(state, user_text=user_text)
 
 
 def _previous_active_proposition_root(ledger: Any) -> int:
@@ -477,6 +479,13 @@ class AIChatOrchestrator:
             # public writer phải giữ stance trung thực, không mở bằng “đang nhìn đây”.
             grounding_context = "\n\n".join(
                 part for part in (grounding_context, vision_status_context) if str(part).strip()
+            )
+        preference_context = str(
+            getattr(host, "_autonomous_surface_preference_context", "") or ""
+        ).strip()
+        if preference_context:
+            grounding_context = "\n\n".join(
+                part for part in (grounding_context, preference_context) if str(part).strip()
             )
         # PDF annotation, pages 12-13 and 20: P2 cleanup removed the legacy
         # discourse/semantic committee entirely. ``semantic_frame.v1`` from the
@@ -787,43 +796,89 @@ class AIChatOrchestrator:
 
 
         if not payload:
-            # Chỉ vào đây khi provider thật sự không có câu. Nếu structured chess
-            # evidence đã tồn tại, dựng câu từ chính state đó; tuyệt đối không rơi
-            # về “hụt nhịp/theo mạch” rồi bắt user mô tả lại bàn cờ.
-            chess_text = _structured_chess_fallback_text(grounding_report, user_text)
-            seed_text = chess_text or str(discourse_surface.text or "").strip()
-            fallback_payload = enforce_reply_obligation(
-                {"text": seed_text, "should_speak": bool(seed_text)},
-                user_text=user_text,
-                frame=typed_frame,
-                language_hint=_runtime_language(),
-                direct_user_turn=True,
-            ).payload
-            fallback_payload.update({
-                "animation": "stand",
-                "next_animation": "",
-                "direction": 0,
-                "target_x": -1.0,
-                "bounce_action": "",
-                "system_action": "",
-                "action_input": "",
-                "delivery_hint": "",
-                "nonverbal_cue": "",
-                "stage_motion": "",
-                "performance_hint": str(fallback_payload.get("performance_hint", "neutral") or "neutral"),
-            })
-            decision = host.parser.parse(
-                json.dumps(_serializable_public_payload(fallback_payload), ensure_ascii=False),
-                user_hint=user_text,
-            )
-            decision.parse_mode = "typed_discourse_fallback"
-            decision.failure_meta = build_failure_meta(
-                kind="format_violation",
-                stage="ai_chat_orchestrator",
-                origin="main_model",
-                public_surface="typed_discourse_fallback",
-                recoverable=True,
-            )
+            authoritative_text = _authoritative_chess_result_text(grounding_report, user_text)
+            if authoritative_text:
+                # Đây là kết quả analyzer có provenance, không phải Surface
+                # fallback. Chỉ dùng khi user hỏi thẳng nước nào và bridge đã có
+                # suggestion. Không thêm banter local; banter thuộc model.
+                payload = enforce_reply_obligation(
+                    {"text": authoritative_text, "should_speak": True},
+                    user_text=user_text,
+                    frame=typed_frame,
+                    language_hint=_runtime_language(),
+                    direct_user_turn=True,
+                ).payload
+                payload.update({
+                    "animation": "stand",
+                    "next_animation": "",
+                    "direction": 0,
+                    "target_x": -1.0,
+                    "bounce_action": "",
+                    "system_action": "",
+                    "action_input": "",
+                    "delivery_hint": "direct",
+                    "nonverbal_cue": "focused",
+                    "stage_motion": "",
+                    "performance_hint": "focused",
+                    "source": "authoritative_chess_analyzer",
+                })
+                decision = host.parser.parse(
+                    json.dumps(_serializable_public_payload(payload), ensure_ascii=False),
+                    user_hint=user_text,
+                )
+                decision.parse_mode = "authoritative_chess_result"
+                host.logger.info("[chat chess] emitted authoritative analyzer result; surface unavailable")
+            elif str(getattr(grounding_report, "structured_kind", "") or "") == "chess":
+                # Có chess state nhưng không có suggestion đủ thẩm quyền: im.
+                # Không dựng câu local, không đọc telemetry, không giả banter.
+                payload = {
+                    "text": "",
+                    "should_speak": False,
+                    "animation": "stand",
+                    "performance_hint": "focused",
+                }
+                decision = host.parser.parse(
+                    json.dumps(_serializable_public_payload(payload), ensure_ascii=False),
+                    user_hint=user_text,
+                )
+                decision.parse_mode = "chess_surface_unavailable"
+                host.logger.info("[chat chess] surface unavailable; no authoritative move, local text fallback disabled")
+            else:
+                # Compatibility cho chat phi-chess. Chess tuyệt đối không đi qua
+                # nhánh discourse fallback này.
+                seed_text = str(discourse_surface.text or "").strip()
+                fallback_payload = enforce_reply_obligation(
+                    {"text": seed_text, "should_speak": bool(seed_text)},
+                    user_text=user_text,
+                    frame=typed_frame,
+                    language_hint=_runtime_language(),
+                    direct_user_turn=True,
+                ).payload
+                fallback_payload.update({
+                    "animation": "stand",
+                    "next_animation": "",
+                    "direction": 0,
+                    "target_x": -1.0,
+                    "bounce_action": "",
+                    "system_action": "",
+                    "action_input": "",
+                    "delivery_hint": "",
+                    "nonverbal_cue": "",
+                    "stage_motion": "",
+                    "performance_hint": str(fallback_payload.get("performance_hint", "neutral") or "neutral"),
+                })
+                decision = host.parser.parse(
+                    json.dumps(_serializable_public_payload(fallback_payload), ensure_ascii=False),
+                    user_hint=user_text,
+                )
+                decision.parse_mode = "typed_discourse_fallback"
+                decision.failure_meta = build_failure_meta(
+                    kind="format_violation",
+                    stage="ai_chat_orchestrator",
+                    origin="main_model",
+                    public_surface="typed_discourse_fallback",
+                    recoverable=True,
+                )
         else:
             public_payload = _serializable_public_payload(payload)
             raw = json.dumps(public_payload, ensure_ascii=False)
@@ -835,7 +890,14 @@ class AIChatOrchestrator:
                 getattr(host, "_active_public_lifecycle_turn_id", "") or turn_id
             )
 
-        if not payload or getattr(decision, "parse_mode", "") == "typed_discourse_fallback" or bool(getattr(decision, "failure_meta", None)):
+        if (
+            not payload
+            or getattr(decision, "parse_mode", "") == "typed_discourse_fallback"
+            or bool(getattr(decision, "failure_meta", None))
+        ) and getattr(decision, "parse_mode", "") not in {
+            "authoritative_chess_result",
+            "chess_surface_unavailable",
+        }:
             setattr(host, "_cached_failed_user_turn", user_text)
         elif hasattr(host, "_cached_failed_user_turn") and getattr(host, "_cached_failed_user_turn", ""):
             setattr(host, "_cached_failed_user_turn", "")
@@ -1509,6 +1571,11 @@ class AIAutonomousOrchestrator:
 
     def run_force_speak(self) -> None:
         host = self.host
+        try:
+            from llm.key_pool import reset_provider_circuits
+            reset_provider_circuits()
+        except Exception:
+            pass
         snapshot = host.telemetry_service.capture_snapshot(
             mood_score=host.mood_score,
             inferred_pos_x=host.inferred_pos_x,

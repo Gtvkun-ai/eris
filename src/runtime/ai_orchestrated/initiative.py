@@ -245,7 +245,13 @@ class InitiativeController:
             and str(blackboard.engagement_kind or "").lower() == "chess"
             and any(anchor.kind == "task" for anchor in blackboard.anchors)
         )
-        if blackboard.reply_expected and not chess_event_override:
+        reminder_override = bool(
+            blackboard.followup_reminder_due
+            and blackboard.followup_reminder_count <= 0
+            and candidate is not None
+            and getattr(candidate, "kind", "") == "followup_reminder"
+        )
+        if blackboard.reply_expected and not chess_event_override and not reminder_override:
             action = InitiativeAction.BODY_ONLY if has_delta and not blackboard.privacy_blocked else InitiativeAction.NO_OP
             return InitiativeDecision(action, "waiting_for_user_reply", silence, body_motion="quiet_presence")
         if blackboard.user_busy:
@@ -341,6 +347,7 @@ class InitiativeController:
         refs = tuple(candidate.evidence_refs[:5])
         mode_map = {
             "continuation": ("continuation", "soft", "continuation", "conversation"),
+            "followup_reminder": ("continuation", "gentle_reminder", "continuation", "conversation"),
             "task_followup": ("task_followup", "focused", "activity_event", "task"),
             "discovery_share": ("discovery_share", "curious", "discovery", "discovery"),
             "screen_comment": ("screen_comment", "curious", "environment", "screen"),
@@ -360,10 +367,12 @@ class InitiativeController:
             "discovery_share": "discovery_artifact",
             "task_followup": "engagement_runtime",
             "continuation": "conversation",
+            "followup_reminder": "conversation",
             "inner_thought": "self_context",
         }.get(kind, "social_context")
         strategy = {
             "continuation": "continue_public_thread",
+            "followup_reminder": "gentle_followup_reminder",
             "task_followup": "preserve_active_engagement",
             "discovery_share": "share_discovery",
             "screen_comment": "grounded_curiosity",
@@ -418,7 +427,7 @@ class InitiativeController:
                 "speech_act": candidate.speech_act or kind,
                 "subject_key": subject_key,
                 "evidence_scope": evidence_scope,
-                "continuation_key": blackboard.thread_key if kind == "continuation" else "none",
+                "continuation_key": blackboard.thread_key if kind in {"continuation", "followup_reminder"} else "none",
             },
             "notes": f"social_candidate source={candidate.source} reason={candidate.reason}",
         }

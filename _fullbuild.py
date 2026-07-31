@@ -178,6 +178,12 @@ deploy_pairs = [
      os.path.join(OUT,  "src", "settings", "runtime_settings.json")),
 ]
 
+# Copy optional root memory files if present in REPO
+for mem_fn in ["long_term_memory.json", "goal_memory.json", "goal_profiles.json"]:
+    src_mem = os.path.join(REPO, mem_fn)
+    if os.path.isfile(src_mem):
+        deploy_pairs.append((src_mem, os.path.join(OUT, mem_fn)))
+
 # Copy Eris.exe / Eris.pck if built in REPO
 for binary_fn in ["Eris.exe", "Eris.pck"]:
     src_bin = os.path.join(REPO, binary_fn)
@@ -194,6 +200,29 @@ for src, dst in deploy_pairs:
     shutil.copy2(src, dst)
     print("  [OK] " + os.path.basename(dst) + "  md5=" + md5_short(dst))
 
+# Deploy memory_core directory to build directory if present
+mem_core_src = os.path.join(REPO, "memory_core")
+mem_core_dst = os.path.join(OUT, "memory_core")
+if os.path.exists(mem_core_src):
+    print("  Deploying memory_core directory to build...")
+    try:
+        shutil.copytree(mem_core_src, mem_core_dst, dirs_exist_ok=True)
+        print("  [OK] memory_core directory deployed")
+    except Exception as exc:
+        print("  [NOTICE] memory_core file(s) locked by running process; copying un-locked files...")
+        for root, dirs, files in os.walk(mem_core_src):
+            rel_path = os.path.relpath(root, mem_core_src)
+            dest_dir = os.path.join(mem_core_dst, rel_path) if rel_path != "." else mem_core_dst
+            os.makedirs(dest_dir, exist_ok=True)
+            for f in files:
+                sf = os.path.join(root, f)
+                df = os.path.join(dest_dir, f)
+                try:
+                    shutil.copy2(sf, df)
+                except PermissionError:
+                    pass
+        print("  [OK] memory_core deployed (skipped locked files)")
+
 # Deploy whale2api binary and config to build directory if present
 ds2api_src = os.path.join(REPO, "tools", "whale2api")
 ds2api_dst = os.path.join(OUT, "tools", "whale2api")
@@ -203,8 +232,12 @@ if os.path.exists(ds2api_src):
     for fn in ["whale2api.exe", "poolui.exe", ".env", "accounts.csv", "whale2api.db", "whale2api.db-shm", "whale2api.db-wal"]:
         src_file = os.path.join(ds2api_src, fn)
         if os.path.exists(src_file):
-            shutil.copy2(src_file, os.path.join(ds2api_dst, fn))
-            print("  [OK] whale2api " + fn)
+            try:
+                shutil.copy2(src_file, os.path.join(ds2api_dst, fn))
+                print("  [OK] whale2api " + fn)
+            except PermissionError:
+                print("  [SKIP] whale2api " + fn + "  (file dang bi lock boi process dang chay -- skip)")
+
 
 # Tao run_eris.bat dung venv 3.14/3.12 (inject PATH truoc khi launch)
 bat_path = os.path.join(OUT, "run_eris.bat")

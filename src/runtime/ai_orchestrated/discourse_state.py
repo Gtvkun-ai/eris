@@ -24,6 +24,15 @@ class DiscourseState:
     topic_closed: bool = False
     reply_expected: bool = False
     assistant_may_continue: bool = False
+    # Follow-up appraisal là trạng thái tạm thời, không phải relationship lâu dài.
+    # Nó cho phép nhắc đúng một lần rồi rút khỏi thread nếu user vẫn im.
+    followup_state: str = "none"
+    followup_reminder_due: bool = False
+    followup_reminder_count: int = 0
+    followup_abandoned: bool = False
+    suppress_same_topic: bool = False
+    may_start_new_topic: bool = False
+    social_distance: float = 0.0
     unresolved_point: str = ""
     thread_key: str = "unknown"
     open_loops: tuple[str, ...] = ()
@@ -40,13 +49,22 @@ class DiscourseState:
             "topic_closed": self.topic_closed,
             "reply_expected": self.reply_expected,
             "assistant_may_continue": self.assistant_may_continue,
+            "followup_state": self.followup_state,
+            "followup_reminder_due": self.followup_reminder_due,
+            "followup_reminder_count": self.followup_reminder_count,
+            "followup_abandoned": self.followup_abandoned,
+            "suppress_same_topic": self.suppress_same_topic,
+            "may_start_new_topic": self.may_start_new_topic,
+            "social_distance": round(self.social_distance, 3),
             "unresolved_point": self.unresolved_point,
             "thread_key": self.thread_key,
             "open_loops": list(self.open_loops),
             "confidence": round(self.confidence, 3),
             "instruction": (
                 "This frame came from the post-turn semantic observer. Do not reclassify it from punctuation, "
-                "keywords, or recency. waiting_user/reply_expected means ERIS must not nag."
+                "keywords, or recency. waiting_user/reply_expected means ERIS must not nag and normally waits. "
+                "followup_reminder_due permits one face-saving reminder; followup_abandoned closes the old topic "
+                "and permits one slightly reserved topic shift without blaming the user."
             ),
         }
 

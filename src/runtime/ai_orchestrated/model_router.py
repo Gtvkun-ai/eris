@@ -36,9 +36,9 @@ def _semantic_deadline_seconds() -> float:
             raw = float(explicit)
         else:
             from runtime.runtime_settings_store import runtime_float
-            raw = runtime_float("chat", "chat_timeout_seconds", default=12.0)
+            raw = runtime_float("chat", "chat_timeout_seconds", default=90.0)
     except (TypeError, ValueError, ImportError):
-        raw = 12.0
+        raw = 90.0
     return max(3.0, min(300.0, float(raw)))
 
 
@@ -114,7 +114,7 @@ SOCIAL_INITIATIVE_SCHEMA: dict[str, Any] = {
         "kind": {
             "type": "string",
             "enum": [
-                "continuation", "task_followup", "discovery_share",
+                "continuation", "followup_reminder", "task_followup", "discovery_share",
                 "screen_comment", "memory_callback", "inner_thought",
                 "social_check_in", "casual_curiosity", "playful_prompt",
                 "random_chat",
@@ -1915,12 +1915,12 @@ class AIRuntimeModelRouter:
         started = time.perf_counter()
         fast = self._fast_observer_payload(user_text, event_kind=event_kind)
         if timeout_seconds is not None:
-            observer_timeout = max(0.8, min(60.0, float(timeout_seconds)))
+            observer_timeout = max(0.8, min(120.0, float(timeout_seconds)))
         else:
             try:
-                observer_timeout = max(0.8, min(60.0, float(os.getenv("ERIS_POST_OBSERVER_HTTP_TIMEOUT_SEC", "15.0") or 15.0)))
+                observer_timeout = max(15.0, float(os.getenv("ERIS_POST_OBSERVER_HTTP_TIMEOUT_SEC", "90.0") or 90.0))
             except (TypeError, ValueError):
-                observer_timeout = 15.0
+                observer_timeout = 90.0
         if fast is not None:
             primary_payload, source = fast
         else:
@@ -2206,9 +2206,9 @@ class AIRuntimeModelRouter:
         if client is None:
             return {}
         try:
-            timeout = max(2.0, min(6.0, float(os.getenv("ERIS_SURFACE_INTENT_TIMEOUT_SEC", "4") or 4.0)))
+            timeout = max(15.0, float(os.getenv("ERIS_SURFACE_INTENT_TIMEOUT_SEC", "60") or 60.0))
         except (TypeError, ValueError):
-            timeout = 4.0
+            timeout = 60.0
         return self._call(
             client,
             system=self._surface_intent_prompt(),
@@ -2229,6 +2229,9 @@ class AIRuntimeModelRouter:
             "Bạn là SOCIAL INITIATIVE lane của ERIS. Bạn sở hữu mong muốn và chủ đề cho một lượt chủ động, "
             "nhưng KHÔNG sở hữu timing/quyền phát và KHÔNG viết câu public cuối. Trả nhiều nhất một typed candidate. "
             "Bạn có thể đề xuất social_check_in, casual_curiosity, playful_prompt hoặc random_chat mà không cần screen fact; "
+            "followup_reminder chỉ hợp lệ khi blackboard.followup.reminder_due=true và phải là một câu nhắc duy nhất, "
+            "giả định user có thể chưa để ý, không trách móc hay hỏi dồn. Khi blackboard.followup.abandoned=true, không hồi sinh "
+            "thread cũ; có thể chọn một topic khác với độ ấm giảm nhẹ nhưng không dỗi hoặc guilt-trip. "
             "đó là trò chuyện xã hội, không phải factual claim. Với continuation/task/discovery/memory/inner/screen, chỉ chọn anchor "
             "có thật trong blackboard.anchors. screen_comment bắt buộc requires_grounding=true và copy evidence_refs từ grounded "
             "screen anchor; raw window title/OCR delta không phải bằng chứng. Không suy đoán user buồn/vui/thắng/thua/định làm gì. "
@@ -2249,9 +2252,9 @@ class AIRuntimeModelRouter:
         if client is None:
             return {}
         try:
-            timeout = max(1.5, min(5.0, float(os.getenv("ERIS_SOCIAL_INITIATIVE_TIMEOUT_SEC", "3") or 3.0)))
+            timeout = max(15.0, float(os.getenv("ERIS_SOCIAL_INITIATIVE_TIMEOUT_SEC", "60") or 60.0))
         except (TypeError, ValueError):
-            timeout = 3.0
+            timeout = 60.0
         return self._call(
             client,
             system=self._social_initiative_prompt(),
@@ -2276,35 +2279,117 @@ class AIRuntimeModelRouter:
             "Không được trả silence, đổi mode, đổi topic owner, tự thêm memory/screen fact, hay giải thích contract. "
             "speech_intent.plan.topic là mục tiêu giao tiếp, không phải câu cần chép. blackboard chỉ là public-safe context. "
             "Nếu anchor là screen, chỉ dùng literal app/window/evidence được đưa; không đoán user đang thắng, thua, buồn hay định làm gì. "
-            "Nếu anchor là self, chỉ surface seed đã được duyệt, không lộ raw thought. Giọng ERIS ấm kín, hơi khô, có cá tính; "
-            "tránh câu support-bot. Tối đa số câu trong surface_contract.max_sentences. evidence_refs chỉ copy id được phép. Return JSON only."
+            "Nếu anchor là self, chỉ surface seed đã được duyệt, không lộ raw thought. Nếu speech_act=followup_reminder, "
+            "nhắc lại đúng một lần bằng một câu ngắn, giả định user chưa để ý, không nhắc chuyện bị lờ và không thêm câu hỏi mới. "
+            "Nếu speech_act=independent_topic_shift, bỏ hẳn chủ đề cũ, nói một ý khác tự đủ nghĩa với giọng hơi dè lại; không dỗi, "
+            "không trừng phạt và không tuyên bố user không quan tâm. Giọng ERIS ấm kín, hơi khô, có cá tính; tránh câu support-bot. "
+            "Tối đa số câu trong surface_contract.max_sentences. evidence_refs chỉ copy id được phép. Return JSON only."
         )
 
     def realize_surface_speech(self, request: Mapping[str, Any]) -> dict[str, Any]:
         """Surface Worker chỉ viết wording từ SpeechIntent đã được duyệt.
 
-        Deadline cố ý ngắn. Autonomous speech là optional presence, không có lý
-        do gì để giữ UI im lặng hàng chục giây chỉ vì một micro-line.
+        Fallback: khi surface_client (DS2API) circuit-open hoặc None, thử companion/main
+        brain như writer dự phòng. Bật/tắt bằng ERIS_SURFACE_REALIZER_COMPANION_FALLBACK=0.
         """
 
         client = self.surface_client
+        _fallback_enabled = str(
+            os.getenv("ERIS_SURFACE_REALIZER_COMPANION_FALLBACK", "1") or "1"
+        ).strip().lower() not in {"0", "false", "no", "off"}
+
+        if client is None and _fallback_enabled:
+            fallback_client = (
+                getattr(getattr(self, "llm_service", None), "client", None)
+                or self.deep_client
+                or self.observer_client
+            )
+            if fallback_client is None:
+                return {}
+            safe_log(
+                getattr(self, "logger", None), "info",
+                "[surface realizer] surface_client=None; fallback sang companion/main client",
+            )
+            try:
+                fb_timeout = max(15.0, float(
+                    os.getenv("ERIS_SURFACE_REALIZER_FALLBACK_TIMEOUT_SEC", "60") or 60.0
+                ))
+            except (TypeError, ValueError):
+                fb_timeout = 60.0
+            return self._call(
+                fallback_client,
+                system=self._surface_realizer_prompt(),
+                payload=request,
+                schema=SURFACE_REALIZATION_SCHEMA,
+                name="eris_autonomous_surface_realizer_fallback",
+                max_tokens=240,
+                reasoning_effort=None,
+                inference_tier="main_cognition",
+                priority=80,
+                timeout_seconds=fb_timeout,
+            )
         if client is None:
             return {}
         try:
             timeout = max(2.0, min(6.0, float(os.getenv("ERIS_SURFACE_REALIZER_TIMEOUT_SEC", "4") or 4.0)))
         except (TypeError, ValueError):
             timeout = 4.0
+        try:
+            result = self._call(
+                client,
+                system=self._surface_realizer_prompt(),
+                payload=request,
+                schema=SURFACE_REALIZATION_SCHEMA,
+                name="eris_autonomous_surface_realizer",
+                max_tokens=240,
+                reasoning_effort=None,
+                inference_tier="main_cognition",
+                priority=82,
+                timeout_seconds=timeout,
+            )
+            if result:
+                return result
+        except Exception as _surface_exc:
+            safe_log(
+                getattr(self, "logger", None), "debug",
+                "[surface realizer] primary client failed: %s", _surface_exc,
+            )
+        # Primary surface thất bại (busy/circuit-open/schema). Thử fallback.
+        if not _fallback_enabled:
+            return {}
+        fallback_client_2 = (
+            getattr(getattr(self, "llm_service", None), "client", None)
+            or self.deep_client
+            or self.observer_client
+        )
+        if fallback_client_2 is None:
+            return {}
+        # Bỏ qua fallback nếu cùng endpoint/provider-circuit với surface (sẽ cũng bị open).
+        _surface_base = getattr(getattr(client, "_client", client), "base_url", None) or getattr(client, "base_url", None)
+        _fb_base = getattr(getattr(fallback_client_2, "_client", fallback_client_2), "base_url", None) or getattr(fallback_client_2, "base_url", None)
+        if fallback_client_2 is client or (_surface_base and _fb_base and str(_surface_base) == str(_fb_base)):
+            return {}
+        safe_log(
+            getattr(self, "logger", None), "info",
+            "[surface realizer] primary failed; fallback sang companion/main client",
+        )
+        try:
+            fb_timeout_2 = max(15.0, float(
+                os.getenv("ERIS_SURFACE_REALIZER_FALLBACK_TIMEOUT_SEC", "60") or 60.0
+            ))
+        except (TypeError, ValueError):
+            fb_timeout_2 = 60.0
         return self._call(
-            client,
+            fallback_client_2,
             system=self._surface_realizer_prompt(),
             payload=request,
             schema=SURFACE_REALIZATION_SCHEMA,
-            name="eris_autonomous_surface_realizer",
+            name="eris_autonomous_surface_realizer_fallback",
             max_tokens=240,
             reasoning_effort=None,
             inference_tier="main_cognition",
-            priority=82,
-            timeout_seconds=timeout,
+            priority=80,
+            timeout_seconds=fb_timeout_2,
         )
 
     def build_surface_public_payload(

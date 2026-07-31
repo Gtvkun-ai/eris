@@ -338,10 +338,6 @@ class MiniEvaluatorPipeline:
         if not to_run:
             return ()
 
-        # Ghi nhận chữ ký ngay khi quyết định gọi: một trạng thái bằng chứng chỉ
-        # đáng nghĩ một lần. Lỗi API tạm thời do adapter pool tự throttle/cooldown.
-        self._last_signatures.update(fresh_sigs)
-
         def _run(evaluator: BaseMiniEvaluator) -> ThoughtFragment | None:
             try:
                 return evaluator.evaluate(dossier)
@@ -349,11 +345,24 @@ class MiniEvaluatorPipeline:
                 return None
 
         fragments: list[ThoughtFragment] = []
+        successful_evaluators: set[str] = set()
         with ThreadPoolExecutor(max_workers=max(1, len(to_run))) as pool:
             futures = {pool.submit(_run, ev): ev for ev in to_run}
             for future in as_completed(futures):
+                ev = futures[future]
                 result = future.result()
-                if result is not None and result.claim and result.score >= 0.24:
-                    fragments.append(result)
+                # Nếu API throttle, ta vẫn có thể muốn giãn cách thay vì spam,
+                # nhưng với drop_if_busy thì ta nên thử lại lượt sau. 
+                # Chấp nhận thử lại nếu fail hoàn toàn.
+                if result is not None:
+                    successful_evaluators.add(ev.name)
+                    if result.claim and result.score >= 0.24:
+                        fragments.append(result)
+
+        # Chỉ ghi nhận chữ ký cho những mảnh đã CHẠY THÀNH CÔNG (dù có ra fragment hay không,
+        # miễn là API trả về kết quả hợp lệ, result != None).
+        for name in successful_evaluators:
+            if name in fresh_sigs:
+                self._last_signatures[name] = fresh_sigs[name]
 
         return tuple(sorted(fragments, key=lambda f: f.score, reverse=True)[:8])

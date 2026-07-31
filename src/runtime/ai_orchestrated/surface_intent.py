@@ -22,7 +22,6 @@ from .cognitive_blackboard import TypedCognitiveBlackboard
 from .initiative import SpeechIntent
 from .semantic_contracts import compact, semantic_key
 from runtime.utterance_spec import UtteranceSpec
-from runtime.chess.surface import render_chess_surface_text
 
 
 SURFACE_MODES: tuple[str, ...] = (
@@ -59,16 +58,6 @@ def _clamp01(value: Any, default: float = 0.0) -> float:
     except (TypeError, ValueError):
         number = default
     return max(0.0, min(1.0, number))
-
-
-def _chess_task_fallback_text(blackboard: TypedCognitiveBlackboard) -> str:
-    """Một renderer chung; thiếu dữ kiện thì im, không đọc thông báo nhà ga."""
-
-    return render_chess_surface_text(
-        blackboard.engagement_state,
-        event_kind=blackboard.engagement_last_event_kind,
-        autonomous=True,
-    )
 
 
 def _anchor_topic(blackboard: TypedCognitiveBlackboard, kind: str) -> str:
@@ -135,8 +124,8 @@ class SurfaceIntentEngine:
         """Gọi Surface Worker đúng một lần để viết câu từ SpeechIntent.
 
         Model không được trả ``silence`` hay đổi mode. Nếu provider/schema lỗi,
-        trả ``None`` ngay để pipeline chọn local fallback hoặc body-only; tuyệt
-        đối không gọi planner/main companion lần hai.
+        trả ``None`` ngay. Với chess, caller bắt buộc im/body-only; không có local
+        text fallback giả làm bình luận viên.
         """
 
         if not self.enabled:
@@ -161,6 +150,19 @@ class SurfaceIntentEngine:
                 ),
             },
         }
+        if blackboard.engagement_kind == "chess":
+            # Chess có state typed và event snapshot riêng. Surface phải thật sự
+            # bàn luận từ thế/nước, không đọc field như telemetry và không dùng
+            # câu hard-code. Provider lỗi thì pipeline im, nên đây là nơi duy nhất
+            # tạo banter/mỉa mai công khai cho autonomous chess.
+            request["surface_contract"]["domain_rules"] = [
+                "Use chess_typed_state as authoritative board context.",
+                "Comment on the concrete move, positional consequence, tactical motif, or plan.",
+                "Light dry teasing is allowed only when supported by the move or evaluation.",
+                "Never say telemetry such as board detected, current suggestion, tracking the task, or following the thread.",
+                "Do not output a generic progress check. If the state is too weak to say something specific, return no usable payload.",
+            ]
+
         writer = getattr(self.router, "realize_surface_speech", None)
         if not callable(writer):
             return None
@@ -232,75 +234,14 @@ class SurfaceIntentEngine:
         avoid_text: str = "",
         language: str = "vi",
     ) -> Mapping[str, Any] | None:
-        """Micro fallback deterministic, chỉ dùng khi speech intent đã duyệt.
+        """Local text fallback đã bị vô hiệu hóa toàn cục.
 
-        Fallback không phát minh fact và không thay quyền Surface Worker. Nó là
-        lưới an toàn chống một provider timeout biến ERIS thành tượng sáp.
+        Candidate typed có thể do runtime route để giữ một event/cadence, nhưng
+        câu public luôn phải do DeepSeek Surface viết. Provider unavailable thì
+        caller im/body-only và thử lại sau; đây là thất bại rõ ràng, không phải
+        một câu canned đội tóc giả AI.
         """
-
-        if not _flag("ERIS_SURFACE_LOCAL_FALLBACK_ENABLED", True):
-            return None
-        if str(language or "vi").lower() != "vi":
-            return None
-        mode = intent.mode
-        if mode == "continuation":
-            topic = _anchor_topic(blackboard, "conversation")
-            if not topic or topic == "continue the open public thread":
-                return None
-            options = (
-                f"Chỗ còn dang dở là: {topic}",
-                f"Ý chưa khép lại lúc nãy là: {topic}",
-            )
-        elif mode == "task_followup":
-            if blackboard.engagement_kind == "chess":
-                chess_text = _chess_task_fallback_text(blackboard)
-                if not chess_text:
-                    # Không có state cụ thể thì im/body-only. Một câu “theo mạch”
-                    # không tự nhiên trở nên hữu ích chỉ vì provider đang timeout.
-                    return None
-                options = (chess_text,)
-            else:
-                summary = str(blackboard.engagement_state_summary or "").strip()
-                if not summary:
-                    return None
-                options = (f"Trạng thái hiện tại: {summary}.",)
-        elif mode == "discovery_share":
-            options = (
-                "Tôi vừa có một phát hiện đã kiểm lại. Chỗ này đáng kể cho cậu nghe.",
-                "Có một kết quả mới khá đáng chú ý. Tôi nói gọn nhé.",
-            )
-        elif mode == "screen_comment":
-            # Không local-fallback cho screen. Một template nhìn raw title đã tạo
-            # đúng lỗi "Brave là chủ đề moc3" trong log. Nếu Surface unavailable,
-            # pipeline chuyển body-only; factual speech chờ grounded worker.
-            return None
-        elif mode == "memory_callback":
-            topic = _anchor_topic(blackboard, "memory")
-            if not topic:
-                return None
-            options = (
-                f"Một chi tiết cũ vừa liên quan trực tiếp tới chuyện này: {topic}",
-                f"Ký ức có nguồn đang liên quan ở đây là: {topic}",
-            )
-        elif mode == "inner_thought":
-            options = (
-                "Tôi vừa nối được một ý trong lúc im. Nó vẫn còn hơi vướng.",
-                "Trong lúc yên, tôi nghĩ thêm được một đoạn khá đáng giữ lại.",
-            )
-        else:
-            options = (
-                "Im lâu quá rồi. Cậu đang tập trung, hay chỉ đang thả đầu óc nghỉ một lát?",
-                "Cậu yên hẳn rồi. Tôi nên để cậu tập trung, hay kiếm chuyện nhẹ một chút đây?",
-            )
-        avoid = str(avoid_text or "").strip().casefold()
-        text = next((item for item in options if item.casefold() != avoid), options[0])
-        return self.router.build_surface_public_payload(
-            text=text,
-            plan=intent.plan,
-            mode=mode,
-            display_language=language,
-            speech_language=language,
-        )
+        return None
 
     def _log(self, level: str, message: str, *args: Any) -> None:
         if self.logger is None:

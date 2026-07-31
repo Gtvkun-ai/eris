@@ -33,6 +33,7 @@ from .commentary_cadence import CommentaryCadence, CommentaryExpectation
 from .cognitive_blackboard import TypedCognitiveBlackboard
 from .contracts import AI_RUNTIME_VERSION, IntentionPlan, StateEvent
 from .discourse_state import DiscourseState, DiscourseStateBuilder
+from .followup_appraisal import FollowUpAppraisalLayer
 from .identity import PendingStrategyUse
 from .initiative import InitiativeAction, InitiativeDecision
 from .self_context import AutonomousSelfContext, build_autonomous_self_context
@@ -89,6 +90,9 @@ class SelfTurnPipeline:
         self.screen_tracker = AmbientScreenTracker()
         self.activity_tracker = ActivitySessionTracker()
         self.discourse_builder = DiscourseStateBuilder()
+        # Lớp này quản lý chu kỳ hỏi -> nhắc một lần -> bỏ chủ đề. Nó sống cùng
+        # pipeline để nhớ được lần nhắc giữa nhiều tick autonomous.
+        self.followup_appraisal = FollowUpAppraisalLayer()
         self.trace_store = AutonomousTraceStore(logger=getattr(host, "logger", None))
         self.commentary_cadence = CommentaryCadence()
         self._last_deliberation_at = 0.0
@@ -258,19 +262,13 @@ class SelfTurnPipeline:
             surface_payload = surface_turn.public_payload
             host.last_ai_intention_plan = plan
         elif surface_engine is not None:
-            # Không gọi Main AI/planner lần hai. Một micro-line optional không
-            # được phép kéo theo chuỗi retry/fallback dài rồi giữ ERIS im lặng.
-            surface_payload = surface_engine.fallback_payload(
-                speech_intent,
-                blackboard,
-                avoid_text=str(getattr(host, "last_text", "") or ""),
-                language=self._runtime_language(),
+            # Surface là writer duy nhất cho autonomous speech. Provider lỗi thì
+            # giữ event/cadence cho nhịp sau và chuyển body-only; không có câu
+            # small-talk mẫu hay domain template giả làm DeepSeek.
+            host.logger.info(
+                "[surface worker] unavailable mode=%s; local text fallback disabled",
+                speech_intent.mode,
             )
-            if surface_payload:
-                host.logger.info(
-                    "[surface worker] local fallback mode=%s reason=provider_unavailable_or_timeout",
-                    speech_intent.mode,
-                )
         if not surface_payload:
             public_lifecycle.transition(
                 "DEGRADED",
@@ -480,6 +478,14 @@ class SelfTurnPipeline:
             seconds_since_user=seconds_since_user,
             seconds_since_assistant=seconds_since_assistant,
         )
+        # Observer quyết định ERIS có đang chờ user hay không. Follow-up layer chỉ
+        # quyết định cách cư xử theo thời gian: chờ, nhắc đúng một lần, rồi thôi.
+        discourse = self.followup_appraisal.evaluate(
+            discourse,
+            now=perception.now,
+            user_turn_at=float(getattr(host, "_temporal_last_user_turn_at", 0.0) or 0.0),
+            assistant_turn_at=float(getattr(host, "_temporal_last_assistant_turn_at", 0.0) or 0.0),
+        )
         activity = self.activity_tracker.observe(
             perception.screen,
             telemetry=perception.telemetry,
@@ -622,6 +628,11 @@ class SelfTurnPipeline:
         quiet_opportunity = context.seconds_since_assistant >= soft_silence
         presence_probe_due = quiet_opportunity and now - self._last_probe_at >= probe_interval
         checks = (
+            # Hai trạng thái này phải đánh thức pipeline ngay, nếu không lớp mới
+            # sẽ tính đúng mà chẳng bao giờ có cơ hội phát candidate. Phần mềm,
+            # như thường lệ, rất giỏi hiểu chuyện trong im lặng tuyệt đối.
+            (context.discourse.followup_reminder_due, "followup_reminder_due"),
+            (context.discourse.followup_abandoned and context.discourse.may_start_new_topic, "abandoned_topic_shift"),
             (context.discourse.assistant_may_continue and context.discourse.thread_fresh, "open_discourse"),
             (context.perception.mechanical_delta, "perception_delta"),
             (context.activity.has_new_event, "activity_delta"),
@@ -854,6 +865,9 @@ class SelfTurnPipeline:
 
         host.last_autonomous_spoken_at = time.time()
         host._note_autonomous_spoken()
+        # Chỉ ghi nhận sau public commit thành công. Nếu Surface/TTS pipeline không
+        # tạo được text, reminder vẫn còn due để thử lại thay vì bị mất oan.
+        self.followup_appraisal.note_spoken(plan, now=host.last_autonomous_spoken_at)
         initiative = getattr(host, "ai_initiative_controller", None)
         if initiative is not None:
             initiative.record_spoken(plan, now=host.last_autonomous_spoken_at, channel="autonomous")

@@ -562,6 +562,19 @@ class CoordinatorBootstrapMixin:
             failure_kind=FailureKind.PROGRAMMER_ERROR,
             stop_methods=("shutdown", "close", "stop"),
         )
+        # Memory GC daemon — dọn rác định kỳ mỗi 20 phút khi idle
+        self.memory_gc_service = None
+        try:
+            from runtime.memory_gc_service import build_memory_gc_service
+            self.memory_gc_service = build_memory_gc_service(
+                memory_core=self.memory_core,
+                llm_service=llm_service,
+                idle_probe=getattr(self, "_background_memory_digest_idle_probe", None),
+            )
+            if self.memory_gc_service is not None:
+                self.logger.info("[memory_gc] service started (interval=%.0fs)", self.memory_gc_service.interval_seconds)
+        except Exception as exc:
+            self.logger.warning("[memory_gc] Không khởi tạo được memory GC service: %s", exc)
 
     def _bootstrap_session_and_perception(self) -> None:
         '''Các biến này lưu trạng thái hội thoại:

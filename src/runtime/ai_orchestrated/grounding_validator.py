@@ -56,7 +56,16 @@ class AutonomousGroundingValidator:
             if unknown:
                 return GroundingDecision(False, "unknown_screen_evidence_ref", "unknown_evidence_ref")
         if intent.anchor_type == "conversation" and blackboard.reply_expected:
-            return GroundingDecision(False, "waiting_for_user_reply", "conversation_baton_owned_by_user")
+            # Ngoại lệ duy nhất: appraisal đã cho phép nhắc lại đúng một lần và
+            # semantic act của plan xác nhận đây thật sự là reminder, không phải
+            # continuation lén lút mượn danh câu hỏi cũ.
+            is_single_reminder = bool(
+                blackboard.followup_reminder_due
+                and blackboard.followup_reminder_count <= 0
+                and str(intent.plan.semantics.speech_act or "").strip().lower() == "followup_reminder"
+            )
+            if not is_single_reminder:
+                return GroundingDecision(False, "waiting_for_user_reply", "conversation_baton_owned_by_user")
         if intent.anchor_type == "self" and not blackboard.public_seed_ready:
             return GroundingDecision(False, "private_seed_not_public", "private_cognition_boundary")
         if intent.anchor_type == "memory":

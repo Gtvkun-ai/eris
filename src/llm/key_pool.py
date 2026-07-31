@@ -783,13 +783,13 @@ def get_provider_circuit(provider_id: str) -> ProviderCircuitBreaker:
         circuit = _provider_circuits.get(key)
         if circuit is None:
             try:
-                threshold = int(os.environ.get("ERIS_PROVIDER_CIRCUIT_FAILURES", "2"))
+                threshold = int(os.environ.get("ERIS_PROVIDER_CIRCUIT_FAILURES", "4"))
             except ValueError:
-                threshold = 2
+                threshold = 4
             try:
-                cooldown = float(os.environ.get("ERIS_PROVIDER_CIRCUIT_COOLDOWN_S", "20"))
+                cooldown = float(os.environ.get("ERIS_PROVIDER_CIRCUIT_COOLDOWN_S", "10"))
             except ValueError:
-                cooldown = 20.0
+                cooldown = 10.0
             circuit = ProviderCircuitBreaker(failure_threshold=threshold, cooldown_s=cooldown)
             _provider_circuits[key] = circuit
         return circuit
