@@ -1,8 +1,0 @@
-pyc_count = 638
-py_remaining = vision.py
-gguf = none
-env_lines = 132
-secrets = True
-Eris_exe = True
-Eris_pck = True
-data_dir = True
