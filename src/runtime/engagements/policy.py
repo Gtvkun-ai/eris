@@ -107,6 +107,7 @@ class EngagementInteractionPolicy:
         state_cadence_due = bool(
             cadence_enabled
             and state_cadence_seconds > 0.0
+            and not bool(engagement.domain_state.get("event_driven_only", False))
             and user_quiet
             and since_output >= state_cadence_seconds
         )

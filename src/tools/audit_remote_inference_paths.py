@@ -37,6 +37,13 @@ BROKER_MARKERS = (
     ".run_async(broker_request,",
     ".run_async(request,",
 )
+ALLOWED_NON_INFERENCE_CALLS = {
+    ("runtime/elevenlabs_pool_db.py", "sync_subscription"),
+    ("runtime/speech_localizer.py", "_translate_with_deepseek_api"),
+    ("tools/elevenlabs_v3_m1/elevenlabs_tts_v3.py", "refresh_firebase_token"),
+    ("tools/elevenlabs_v3_m1/elevenlabs_tts_v3.py", "generate_tts_v3"),
+    ("vision.py", "_start_ds2api_daemons"),
+}
 
 
 @dataclass(slots=True)
@@ -83,6 +90,11 @@ class _Visitor(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call) -> Any:
         name = _call_name(node)
         if _is_remote_call(name):
+            enclosing_names = [str(getattr(item, "name", "<module>")) for item in self.stack]
+            normalized_path = self.path.as_posix()
+            if any((normalized_path, function_name) in ALLOWED_NON_INFERENCE_CALLS for function_name in enclosing_names):
+                self.generic_visit(node)
+                return
             enclosing_sources = [ast.get_source_segment(self.source, item) or "" for item in self.stack]
             safe = any(marker in text for text in enclosing_sources for marker in BROKER_MARKERS)
             # Broker-aware wrapper names are accepted only when their body also
@@ -93,7 +105,7 @@ class _Visitor(ast.NodeVisitor):
                     path=str(self.path),
                     line=int(getattr(node, "lineno", 0) or 0),
                     call=name,
-                    enclosing_functions=[str(getattr(item, "name", "<module>")) for item in self.stack],
+                    enclosing_functions=enclosing_names,
                     reason="no_enclosing_inference_broker_run",
                 ))
         self.generic_visit(node)

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Regression tests cho nhịp TTS liền mạch trong hội thoại."""
 
+from types import SimpleNamespace
+
 from runtime.prosody_director import ProsodyPlan
 from runtime.stage_contracts import StageFrame
 from runtime.stage_dispatcher import StageDispatcher
@@ -42,6 +44,14 @@ def test_inline_task_manager_receives_one_continuous_audio_frame() -> None:
 
         def begin_speech_turn(self, _turn_id: str) -> int:
             return 1
+
+        def speak(self, text: str, **kwargs) -> None:
+            self.task_manager.frames = [
+                SimpleNamespace(
+                    tts_text=text,
+                    prosody_notes=str(kwargs.get("prosody_notes", "")),
+                )
+            ]
 
     profile = StageRuntimeProfile(
         name="test",

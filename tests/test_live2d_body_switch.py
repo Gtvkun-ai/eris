@@ -10,7 +10,7 @@ from live2d_body.udp_receiver import Live2DStageReceiver
 
 
 def test_model_bundle_has_runtime_references() -> None:
-    model = Path(__file__).resolve().parents[1] / "assets" / "live2d" / "infj" / "infj.model3.json"
+    model = Path(__file__).resolve().parents[1] / "src" / "assets" / "live2d" / "infj" / "infj.model3.json"
     payload = json.loads(model.read_text(encoding="utf-8"))
     refs = payload["FileReferences"]
     referenced = [refs["Moc"], *refs["Textures"], refs["Physics"], refs["DisplayInfo"]]
@@ -66,7 +66,7 @@ def test_gaze_keeps_custom_eyes_coupled_without_extreme_crossing() -> None:
     assert sample is not None
     assert 0.0 < sample.left_x <= 0.28
     assert -0.28 <= sample.right_x < 0.0
-    assert abs(sample.left_x + sample.right_x) < 1e-6
+    assert abs(abs(sample.right_x) / sample.left_x - 0.78) < 1e-6
 
 
 def test_window_geometry_is_reported_to_godot_body() -> None:

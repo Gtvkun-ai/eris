@@ -265,7 +265,7 @@ def test_no_phrase_marker_classifier_remains_in_runtime_path() -> None:
 
 
 def test_settings_cooldown_still_uses_int64() -> None:
-    source = (Path(__file__).resolve().parents[1] / "body" / "UdpListener.SettingsPanel.cs").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parents[2] / "body" / "UdpListener.SettingsPanel.cs").read_text(encoding="utf-8")
 
     assert "public long CooldownMs" in source
     assert 'ReadJsonInt64(pool, "global_cooldown_ms", 0L)' in source

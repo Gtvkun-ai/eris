@@ -126,7 +126,9 @@ def test_runtime_public_writer_passes_route_thinking_to_deepseek() -> None:
 
 
 def test_deepseek_default_escalation_client_reuses_main_key(monkeypatch) -> None:
+    import llm.deepseek_workers as deepseek_workers
     import llm.process_manager as process_manager
+    from llm.deepseek_workers import WORKER_ROLES
 
     captured: dict[str, object] = {}
 
@@ -139,8 +141,16 @@ def test_deepseek_default_escalation_client_reuses_main_key(monkeypatch) -> None
         "ERIS_ESCALATION_MODEL",
         "ERIS_ESCALATION_BASE_URL",
         "ERIS_ESCALATION_API_KEY",
+        "ERIS_REMOTE_BASE_URL",
+        "ERIS_REMOTE_MODEL",
+        "ERIS_REMOTE_API_KEY",
+        "ERIS_DS2API_ENABLED",
+        "ERIS_DS2API_API_KEY",
+        "ERIS_DS_API_KEY",
     ):
         monkeypatch.delenv(name, raising=False)
+    for role in WORKER_ROLES:
+        monkeypatch.delenv(f"ERIS_DS_{role.upper()}_API_KEY", raising=False)
     monkeypatch.setenv("ERIS_REMOTE_PROVIDER", "deepseek")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-main-deepseek")
     monkeypatch.setattr(process_manager, "apply_secrets_to_environ", lambda: None)
@@ -149,6 +159,7 @@ def test_deepseek_default_escalation_client_reuses_main_key(monkeypatch) -> None
         "get_secret",
         lambda *names, default="": "sk-main-deepseek" if "DEEPSEEK_API_KEY" in names else default,
     )
+    monkeypatch.setattr(deepseek_workers, "get_secret", lambda *names, default="": default)
     monkeypatch.setattr(process_manager, "OpenAICompatibleClient", _Client)
 
     manager = process_manager.RemoteModelProcessManager(

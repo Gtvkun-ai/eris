@@ -251,8 +251,8 @@ def test_semantic_reference_rejects_ambiguous_locator_and_speaker_conflict() -> 
 
 def test_no_phrase_marker_classifier_remains_in_runtime_path() -> None:
     root = Path(__file__).resolve().parents[1]
-    intent_source = (root / "core" / "conversation_intent.py").read_text(encoding="utf-8")
-    continuity_source = (root / "runtime" / "conversation_continuity.py").read_text(encoding="utf-8")
+    intent_source = (root / "src" / "core" / "conversation_intent.py").read_text(encoding="utf-8")
+    continuity_source = (root / "src" / "runtime" / "conversation_continuity.py").read_text(encoding="utf-8")
     discourse_source = (root / "runtime" / "discourse_state.py").read_text(encoding="utf-8")
     orchestrator_source = (root / "runtime" / "ai_orchestrated" / "orchestrator.py").read_text(encoding="utf-8")
 

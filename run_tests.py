@@ -3,9 +3,16 @@ import subprocess
 import sys
 
 
-WORKDIR = r"c:\Users\Gtvkun\Documents\GitHub\eris"
+WORKDIR = os.path.dirname(os.path.abspath(__file__))
 PYTEST_BASE_ARGS = ["--tb=line", "-q", "--no-header"]
 PROFILE_TARGETS = {
+    "smoke": [
+        "tests/test_runtime_readiness_v18.py",
+        "tests/test_runtime_diagnostics_v14.py",
+        "tests/test_policy_settings_and_supervisor.py",
+        "tests/test_deepseek_provider.py",
+        "tests/test_basic_settings_main_brain.py",
+    ],
     "humanness": [
         "tests/test_eris_humanness_suite.py",
         "tests/test_eris_pathology_scenarios.py",
@@ -63,7 +70,12 @@ def main() -> int:
             return _run_humanness_transcript()
 
     profile, command = _build_pytest_command(sys.argv[1:])
-    env = {**os.environ, "PYTHONPATH": "src"}
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join([os.path.join(WORKDIR, "src"), WORKDIR]),
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8",
+    }
     result = subprocess.run(
         command,
         capture_output=True,

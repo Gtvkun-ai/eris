@@ -151,10 +151,10 @@ def build_companion_signal(
         speech_act = "react_to_user_move" if actor_is_user else "react_to_opponent_move"
         reason = f"{event}_routine"
 
-        # Spectator mode: user đang xem, mọi nước đi đều đáng một phản ứng.
-        # Base priority cao hơn để mỉa mai / bình luận thường xuyên hơn.
+        # Spectator mode should feel present without becoming move-by-move noise.
+        # User moves get light attention; routine opponent replies stay silent.
         if mode == "spectator":
-            priority = 0.46 if actor_is_user else 0.34
+            priority = 0.36 if actor_is_user else 0.20
         else:
             priority = 0.30 if actor_is_user else 0.20
 
@@ -197,10 +197,7 @@ def build_companion_signal(
 
         if focus in {"forcing_check", "forcing_capture"}:
             priority = max(priority, 0.66)
-        # Spectator bonus: tăng priority của mọi nước để Eris chủ động hơn.
-        if mode == "spectator":
-            priority = min(1.0, priority + 0.10)
-        if observation.game_started:
+        if observation.game_started and actor_is_user:
             priority = max(priority, 0.80)
             reason = f"{event}_opens_game"
 
@@ -223,9 +220,7 @@ def build_companion_signal(
         or priority >= threshold
     )
 
-    # User đã cho phép Eris chỉ nước / thế cờ bất kỳ khi nào muốn.
-    # suggestions_allowed=True cho mọi mode; Surface tự quyết định có nên nói không.
-    suggestions_allowed = True
+    suggestions_allowed = mode != "spectator"
     if event in {"user_move", "opponent_move", "move"}:
         actor_phrase = "the user's move" if actor_is_user else "the opponent's move" if mover_side else "the latest move"
         # Surface phải nhận rõ hai hệ quy chiếu. Khi user_side chưa biết, chỉ
@@ -334,6 +329,7 @@ def build_companion_signal(
             commentary_focus = (
                 base_context + tone_hint
                 + " Language: Vietnamese when context is Vietnamese. "
+                  "Do not recommend a move unless the user explicitly asks for coaching. "
                   "If you suggest a specific move, it MUST exactly match suggested_move_san/uci in typed state. Never derive or invent another move from FEN."
             )
         else:

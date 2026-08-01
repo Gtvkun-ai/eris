@@ -167,6 +167,7 @@ def test_legacy_aggregator_runtime_dependency_is_removed() -> None:
 
 
 def test_ds2api_fallback_integration(monkeypatch) -> None:
+    import llm.deepseek_workers as deepseek_workers
     import llm.process_manager as process_manager
     from llm.deepseek_workers import WORKER_ROLES
     from llm.client import ChainedFallbackClient
@@ -198,6 +199,17 @@ def test_ds2api_fallback_integration(monkeypatch) -> None:
         lambda *names, default="": (
             "sk-ds2api-key" if "ERIS_DS2API_API_KEY" in names else (
                 "sk-deepseek-official" if "DEEPSEEK_API_KEY" in names else default
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        deepseek_workers,
+        "get_secret",
+        lambda *names, default="": (
+            "sk-ds2api-key" if "ERIS_DS2API_API_KEY" in names else (
+                "http://localhost:6011/v1" if "ERIS_DS2API_BASE_URL" in names else (
+                    "gpt-4o" if "ERIS_DS2API_MODEL" in names else default
+                )
             )
         ),
     )
@@ -356,7 +368,5 @@ def test_ds2api_forces_thinking_mode_enabled(monkeypatch) -> None:
     )
 
     assert captured["json"]["thinking"] == {"type": "enabled"}
-
-
 
 

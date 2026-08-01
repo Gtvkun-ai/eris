@@ -149,7 +149,7 @@ def test_eleven_renderer_uses_warm_tag_without_touching_public_text():
 
 
 def test_eleven_stream_uses_single_clip_metadata(monkeypatch):
-    monkeypatch.setattr(tts, "_elevenlabs_api_key", lambda: "test-key")
+    monkeypatch.setattr(tts, "_get_elevenlabs_token", lambda **_kwargs: ("api_key", "test-key", 0))
     monkeypatch.setattr(tts, "_elevenlabs_base_url", lambda: "https://api.elevenlabs.io")
     monkeypatch.setattr(tts, "_tts_breaker_enabled", lambda: False)
     monkeypatch.setattr(tts, "audio_polish_enabled", lambda: False)
@@ -273,7 +273,7 @@ def test_eleven_renderer_adds_sigh_as_prefix_in_same_text():
 
 
 def test_eleven_stream_with_vocalization_still_posts_once(monkeypatch):
-    monkeypatch.setattr(tts, "_elevenlabs_api_key", lambda: "test-key")
+    monkeypatch.setattr(tts, "_get_elevenlabs_token", lambda **_kwargs: ("api_key", "test-key", 0))
     monkeypatch.setattr(tts, "_elevenlabs_base_url", lambda: "https://api.elevenlabs.io")
     monkeypatch.setattr(tts, "_tts_breaker_enabled", lambda: False)
     monkeypatch.setattr(tts, "audio_polish_enabled", lambda: False)

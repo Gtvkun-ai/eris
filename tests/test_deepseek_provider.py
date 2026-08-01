@@ -155,10 +155,10 @@ def test_deepseek_provider_detection_and_vision_capability() -> None:
 def test_legacy_aggregator_runtime_dependency_is_removed() -> None:
     root = Path(__file__).resolve().parents[1]
     critical_files = (
-        root / "llm/process_manager.py",
-        root / "llm/key_pool.py",
-        root / "runtime/private_mind_model_adapter.py",
-        root / "runtime/screen_vision_runtime.py",
+        root / "src/llm/process_manager.py",
+        root / "src/llm/key_pool.py",
+        root / "src/runtime/private_mind_model_adapter.py",
+        root / "src/runtime/screen_vision_runtime.py",
     )
     forbidden = ("shop" + "aikey", "api." + "shop" + "aikey", "eris_" + "aggregator_api_key", "eris_" + "aggregator_base_url")
     for path in critical_files:
@@ -168,6 +168,7 @@ def test_legacy_aggregator_runtime_dependency_is_removed() -> None:
 
 def test_ds2api_fallback_integration(monkeypatch) -> None:
     import llm.process_manager as process_manager
+    from llm.deepseek_workers import WORKER_ROLES
     from llm.client import ChainedFallbackClient
 
     class _Pool:
@@ -179,6 +180,8 @@ def test_ds2api_fallback_integration(monkeypatch) -> None:
         "ERIS_DS2API_ENABLED", "ERIS_DS2API_BASE_URL", "ERIS_DS2API_API_KEY", "ERIS_DS2API_MODEL"
     ):
         monkeypatch.delenv(name, raising=False)
+    for role in WORKER_ROLES:
+        monkeypatch.delenv(f"ERIS_DS_{role.upper()}_API_KEY", raising=False)
 
     monkeypatch.setenv("ERIS_REMOTE_PROVIDER", "deepseek")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-official")
@@ -247,6 +250,5 @@ def test_ds2api_warning_logging() -> None:
     result = chained.create_chat_completion()
 
     assert result == {"ok": True}
-    assert any("WARNING: DS2API failed (Connection refused), falling back to Official API." in w for w in captured_warnings)
-
+    assert any("WARNING: local DeepSeek Web proxy (Whale2API/DS2API) failed (Connection refused), falling back to Official API." in w for w in captured_warnings)
 

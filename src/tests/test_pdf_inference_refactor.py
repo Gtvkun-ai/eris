@@ -695,7 +695,8 @@ def test_remote_inference_static_audit_is_clean() -> None:
 
     from tools.audit_remote_inference_paths import audit
 
-    report = audit(Path(".").resolve())
+    root = (Path(".") / "src").resolve() if (Path(".") / "src").is_dir() else Path(".").resolve()
+    report = audit(root)
     assert report["parse_errors"] == []
     assert report["findings"] == []
     assert report["passed"] is True
@@ -853,7 +854,8 @@ def test_live_semantic_authority_audit_is_clean() -> None:
 
     from tools.audit_semantic_authority_paths import audit
 
-    report = audit(Path(".").resolve())
+    root = (Path(".") / "src").resolve() if (Path(".") / "src").is_dir() else Path(".").resolve()
+    report = audit(root)
     assert report["parse_errors"] == []
     assert report["findings"] == []
     assert report["passed"] is True

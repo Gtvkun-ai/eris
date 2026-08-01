@@ -695,7 +695,7 @@ def test_remote_inference_static_audit_is_clean() -> None:
 
     from tools.audit_remote_inference_paths import audit
 
-    report = audit(Path(".").resolve())
+    report = audit((Path(".") / "src").resolve())
     assert report["parse_errors"] == []
     assert report["findings"] == []
     assert report["passed"] is True
