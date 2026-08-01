@@ -117,7 +117,7 @@ Chạy helper đăng nhập:
 
 Một số công cụ trong repo này đã được chỉnh riêng cho Eris, nên không nên cài bằng hướng dẫn upstream rồi coi là tương đương. Cách khuyến nghị là dùng gói assets đi kèm project.
 
-`tools\` hiện là junction trỏ tới `src\tools\`. Hai đường dẫn đó là cùng một cây nội dung, không phải hai bản tool độc lập.
+Trong workspace dev, `tools\` có thể là junction trỏ tới `src\tools\`. Trên bản clone sạch từ Git, `tools\` sẽ được tạo khi giải nén gói assets.
 
 Binary, cache và model nặng không đưa vào Git. Sau khi clone source, tải gói assets tại:
 
@@ -163,11 +163,14 @@ Invoke-RestMethod http://127.0.0.1:6011/v1/models
 Nếu không dùng gói assets thì mới build lại từ source trong repo:
 
 ```powershell
-cd tools\whale2api
+cd src\tools\whale2api
 go mod download
 go build -o whale2api.exe .\cmd\whale2api
 go build -o poolui.exe .\cmd\poolui
-cd ..\..
+New-Item -ItemType Directory -Force ..\..\..\tools\whale2api
+Copy-Item .\whale2api.exe ..\..\..\tools\whale2api\whale2api.exe -Force
+Copy-Item .\poolui.exe ..\..\..\tools\whale2api\poolui.exe -Force
+cd ..\..\..
 ```
 
 Không thay bằng binary upstream khác, vì bản này có chỉnh riêng cho lane DS2API, endpoint, schema, pool DB và hành vi stream của Eris.
