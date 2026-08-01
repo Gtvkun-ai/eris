@@ -103,6 +103,12 @@ class ChessObservation:
     actor_is_user: bool = False
     last_move_uci: str = ""
     last_move_san: str = ""
+    # Theo dõi quan hệ nhân quả giữa một nước ERIS đã thật sự nêu công khai và
+    # nước người dùng đi ngay sau đó. Các field này không suy đoán từ engine.
+    previous_suggested_move_uci: str = ""
+    previous_suggested_move_san: str = ""
+    user_followed_previous_suggestion: bool = False
+    suggestion_outcome: str = ""
     # ``evaluation_cp``/``evaluation_label`` được giữ tương thích ngược và
     # luôn mang góc nhìn Trắng. Các lane public phải ưu tiên nhóm *_user khi
     # biết màu của người dùng, tránh khen nhầm khi họ đang cầm Đen.

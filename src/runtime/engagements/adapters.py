@@ -337,7 +337,7 @@ class ChessCompanionAdapter(GenericEngagementAdapter):
             data["game_started"] = True
             data["chess_phase"] = "active"
             data["event_driven_only"] = True
-            data["interaction_cadence_seconds"] = 0.0
+            data["interaction_cadence_seconds"] = 45.0
             data["preferred_interaction_action"] = "speak" if bool(payload.get("should_speak", True)) else "wait"
             data["game_started_at"] = event.timestamp
             data["next_expected_events"] = ["move played", "position changed", "game ended"]
@@ -348,9 +348,22 @@ class ChessCompanionAdapter(GenericEngagementAdapter):
                 data["game_started"] = True
                 data["chess_phase"] = "active"
                 data["event_driven_only"] = True
-                data["interaction_cadence_seconds"] = 0.0
+                data["interaction_cadence_seconds"] = 45.0
                 data["preferred_interaction_action"] = "speak" if bool(payload.get("should_speak", False)) else "wait"
                 data["next_expected_events"] = ["move played", "position changed", "game ended"]
+            # Ghi lịch sử chất lượng nước để companion_policy phát hiện xu hướng
+            # (ví dụ: 3 blunder liên tiếp, user đang vào form tốt, v.v.).
+            if kind == "chess.move_played":
+                q_entry = {
+                    "san": _compact(payload.get("last_move_san") or payload.get("last_move_uci"), 12),
+                    "quality": _compact(payload.get("move_quality"), 16).lower(),
+                    "actor": _compact(payload.get("actor"), 12),
+                    "move_number": int(payload.get("move_number") or 0),
+                    "swing": int(payload.get("evaluation_swing_cp") or 0),
+                }
+                history = list(data.get("recent_move_qualities", []) or [])
+                history.append(q_entry)
+                data["recent_move_qualities"] = history[-16:]  # giữ 16 nước gần nhất
         elif kind in {"chess.game_over", "chess.game.ended", "chess.game.completed"}:
             data["board_seen"] = True
             data["game_over"] = True
@@ -395,11 +408,16 @@ class ChessCompanionAdapter(GenericEngagementAdapter):
         except (TypeError, ValueError):
             typed_priority = 0.0
         if kind in {"chess.board_detected", "chess.board_ready"}:
-            return max(0.42, typed_priority)
+            # Phải vượt threshold 0.45 để kernel tạo signal và Eris biết
+            # người dùng vừa mở bàn cờ. 0.42 cũ luôn bị drop.
+            return max(0.62, typed_priority)
         if kind == "chess.game_started":
             return max(0.78, typed_priority)
         if kind == "chess.move_played":
-            return typed_priority
+            # companion_policy đã quyết định nước nào đáng wake; ở đây không filter
+            # lại. Đảm bảo mọi move_played đều vượt threshold mặc định 0.45 để
+            # engagement kernel tạo signal thay vì âm thầm drop event.
+            return max(0.48, typed_priority)
         if kind == "chess.position_changed":
             return min(0.44, typed_priority)
         if kind in {"chess.game_over", "chess.game.ended", "chess.game.completed"}:

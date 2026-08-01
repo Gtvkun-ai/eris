@@ -170,12 +170,15 @@ class SurfaceIntentEngine:
             chess_state = dict(blackboard.engagement_state or {})
             companion_mode = str(chess_state.get("companion_mode") or "companion")
             commentary_focus = str(chess_state.get("commentary_focus") or "").strip()
+            request["chess_typed_state"] = chess_state
             request["surface_contract"]["domain_rules"] = [
                 "Use chess_typed_state as authoritative board context. Ignore OCR/window inventory while chess owns foreground focus.",
                 "Comment on the concrete move, positional consequence, tactical motif, or plan.",
                 "For advantage wording, use evaluation_cp_user/user_position only when user_side is known. Legacy evaluation_cp/evaluation_label and *_white are from White's perspective, not automatically the user's perspective.",
                 "If user_side is unknown, name White or Black explicitly from advantage_side; never say the user is better/worse.",
                 "Light dry teasing is allowed only when supported by the move or evaluation.",
+                "Any specific move must exactly match suggested_move_san/uci. Phrase it naturally in Vietnamese, such as 'mã lên e4', rather than exposing raw UCI like e2e4.",
+                "When user_followed_previous_suggestion=true, remember that the user played ERIS's delivered recommendation; acknowledge that causal link and never deny having suggested it.",
                 "Never say telemetry such as board detected, current suggestion, tracking the task, or following the thread.",
                 f"Companion mode is {companion_mode}; preserve that role instead of inventing a different chess relationship.",
                 f"Latest chess speech reason is {chess_state.get('speech_reason', '')}; actor is {chess_state.get('actor', '')}.",

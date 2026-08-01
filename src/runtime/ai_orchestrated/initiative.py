@@ -359,6 +359,7 @@ class InitiativeController:
             "casual_curiosity": ("random_chat", "curious", "presence", "idle"),
             "playful_prompt": ("soft_tease", "playful", "presence", "idle"),
             "random_chat": ("random_chat", "soft", "presence", "idle"),
+            "force_speak": ("random_chat", "focused", "force_speak", "presence"),
         }
         mode, motion, turn_kind, default_anchor = mode_map.get(
             kind, ("random_chat", "soft", "presence", "idle")
@@ -480,7 +481,9 @@ class InitiativeController:
             return self._remember(False, "kind_cooldown", plan, now, profile=profile)
 
         signature = semantics.signature if semantics.complete else ""
-        if signature and profile.duplicate_window_seconds > 0.0:
+        # force_speak là lệnh tường minh từ user; không bao giờ bị duplicate/repeat
+        # chặn bất kể signature hay window.
+        if profile.kind != "force_speak" and signature and profile.duplicate_window_seconds > 0.0:
             for item in reversed(events):
                 if now - item.timestamp > profile.duplicate_window_seconds:
                     break

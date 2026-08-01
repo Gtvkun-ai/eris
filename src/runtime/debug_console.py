@@ -552,14 +552,14 @@ class DebugConsole:
         handle_force = getattr(self.coord, "_handle_force_speak_request", None)
         if callable(handle_force):
             handle_force()
-            return "Đã ép Surface Worker khởi động & phát ngôn ngay lập tức!"
+            return "Đã đưa cờ force_speak và đánh thức lượt autonomous!"
 
-        orchestrator = getattr(self.coord, "ai_autonomous_orchestrator", None)
-        if orchestrator is not None and callable(getattr(orchestrator, "run_force_speak", None)):
-            orchestrator.run_force_speak()
-            return "Đã ép Surface Worker khởi động & phát ngôn ngay lập tức!"
-
-        return "Không tìm thấy handler cho Surface Worker force_speak"
+        setattr(self.coord, "_autonomous_force_speak_pending", True)
+        setattr(self.coord, "autonomous_presence_blocked_until", 0.0)
+        wake = getattr(self.coord, "_wake_autonomous_loop", None)
+        if callable(wake):
+            wake(reason="debug_force_speak")
+        return "Đã đưa cờ force_speak và đánh thức lượt autonomous trực tiếp!"
 
     _cmd_speak = _cmd_force_speak
     _cmd_noi = _cmd_force_speak

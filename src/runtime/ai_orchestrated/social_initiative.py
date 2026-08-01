@@ -109,6 +109,8 @@ class SocialSpeechCandidate:
 
     @property
     def available(self) -> bool:
+        if self.kind == "force_speak" and self.decision in {"speak", "candidate"}:
+            return True
         return self.decision == "candidate" and self.kind in _ALLOWED_KINDS and bool(self.topic)
 
     @property
@@ -180,6 +182,20 @@ class SocialInitiativeEngine:
         # preflight, không phải runtime nghĩ topic. Một event cờ mới từ bridge
         # được phép thắng reply baton cũ vì structured runtime đã cung cấp câu
         # trả lời thực tế; tiếp tục chờ user xác nhận lúc này chỉ làm Eris đứng im.
+        if getattr(blackboard, "force_speak_pending", False):
+            return SocialSpeechCandidate(
+                decision="speak",
+                kind="force_speak",
+                topic="Respond to the explicit request for presence with one short grounded line.",
+                speech_act="presence_response",
+                anchor_type="presence",
+                anchor_id="force_speak",
+                confidence=1.0,
+                relevance=1.0,
+                urgency=1.0,
+                reason="explicit_user_pull",
+            )
+
         if blackboard.user_busy:
             return None
 
@@ -258,7 +274,12 @@ class SocialInitiativeEngine:
             },
         }
         if blackboard.engagement_kind == "chess":
-            request["candidate_contract"]["rule"] += " However, since chess engagement is active, actively act as a commentator and proactively propose topics discussing the recent moves, tactics, or board state."
+            request["candidate_contract"]["rule"] += (
+                " However, since chess engagement is active, actively act as an entertaining commentator. "
+                "Do not stay completely silent during the game; occasionally mock poor moves with dry sarcasm, "
+                "offer playful praise for good ones, or tease the user about their strategy. A playful prompt "
+                "or soft tease is better than returning none."
+            )
         try:
             raw = writer(request)
         except Exception as exc:  # noqa: BLE001

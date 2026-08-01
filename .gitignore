@@ -1,4 +1,9 @@
 .godot/
+.kiro/
+.dotnet/
+.vs/
+.pytest_cache/
+.hypothesis/
 __pycache__/
 **/__pycache__/
 *.pyc
@@ -52,4 +57,3 @@ build/_work/
 
 # HuggingFace model cache directory
 src/embedding_model/
-

@@ -633,7 +633,11 @@ class SelfTurnPipeline:
                 "When shared_semantic_context.packet exists, use its foreground/facts/options as the stable scene baseline; "
                 "do not reinterpret raw OCR into a competing story."
             ),
+            "force_speak_pending": getattr(self.host, "_autonomous_force_speak_pending", False),
         }
+        if getattr(self.host, "_autonomous_force_speak_pending", False):
+            setattr(self.host, "_autonomous_force_speak_pending", False)
+            
         discovery_runtime = getattr(self.host, "ai_discovery_runtime", None)
         if discovery_runtime is not None:
             snapshot["discovery"] = discovery_runtime.planner_context(perception.telemetry, now=perception.now)
@@ -677,6 +681,7 @@ class SelfTurnPipeline:
             # Hai trạng thái này phải đánh thức pipeline ngay, nếu không lớp mới
             # sẽ tính đúng mà chẳng bao giờ có cơ hội phát candidate. Phần mềm,
             # như thường lệ, rất giỏi hiểu chuyện trong im lặng tuyệt đối.
+            (bool(snapshot.get("force_speak_pending")), "force_speak_pending"),
             (context.discourse.followup_reminder_due, "followup_reminder_due"),
             (context.discourse.followup_abandoned and context.discourse.may_start_new_topic, "abandoned_topic_shift"),
             (context.discourse.assistant_may_continue and context.discourse.thread_fresh, "open_discourse"),
@@ -822,6 +827,22 @@ class SelfTurnPipeline:
         host = self.host
         payload = dict(prebuilt_payload or {})
         if not payload and allow_model_generation:
+            chess_context = ""
+            chess_bridge = getattr(host, "chess_bridge_service", None)
+            if chess_bridge is not None and callable(getattr(chess_bridge, "current_surface_state", None)):
+                chess_state = chess_bridge.current_surface_state()
+                if chess_state:
+                    chess_context = (
+                        "chess_typed_state: " + json.dumps(chess_state, ensure_ascii=False, separators=(",", ":")) + "\n"
+                        "chess_surface_rules:\n"
+                        "- This typed state is authoritative for the board, side to move, last move and suggestion.\n"
+                        "- Answer a direct move question with exactly suggested_move_san/uci, then one concrete positional reason; never invent another move.\n"
+                        "- Phrase the move naturally in Vietnamese, such as 'mã lên e4'; avoid raw UCI like e2e4 unless asked.\n"
+                        "- If user_followed_previous_suggestion=true, acknowledge that the user just followed ERIS's recommendation and that the current position came from that shared choice.\n"
+                        "- Discuss the position naturally; light dry teasing is allowed when grounded in the move/position.\n"
+                        "- Never narrate telemetry such as 'bàn cờ đã được nhận' or 'nước gợi ý hiện tại'."
+                    )
+            
             payload = host.ai_model_router.generate_autonomous_reply(
                 plan=plan,
                 personality_context=context.state.personality_prompt_context(),
@@ -830,6 +851,7 @@ class SelfTurnPipeline:
                     context.perception.screen.prompt_context(),
                     "\n".join(str(item) for item in context.perception.vision_facts[-6:]),
                     discovery_grounding,
+                    chess_context,
                     f"AUTONOMOUS_SELF_CONTEXT:\n{context.self_context.prompt_context()}",
                 ) if part),
                 engagement_context=context.engagement_prompt_context,

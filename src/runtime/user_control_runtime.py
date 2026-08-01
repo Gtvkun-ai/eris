@@ -223,12 +223,15 @@ class UserControlRuntimeMixin:
         return self.repeated_user_count
 
     def _handle_force_speak_request(self) -> None:
-        """Route force-speak qua cùng autonomous orchestrator, không có pipeline phụ."""
-        orchestrator = getattr(self, "ai_autonomous_orchestrator", None)
-        if not bool(getattr(self, "ai_runtime_enabled", False)) or orchestrator is None:
+        """Route force-speak qua autonomous orchestrator bằng cờ force, kích hoạt lượt bình thường ngay lập tức."""
+        if not bool(getattr(self, "ai_runtime_enabled", False)):
             self.logger.error("[architecture C] force_speak unavailable: runtime bootstrap failed")
             return
-        orchestrator.run_force_speak()
+        setattr(self, "_autonomous_force_speak_pending", True)
+        setattr(self, "autonomous_presence_blocked_until", 0.0)
+        wake = getattr(self, "_wake_autonomous_loop", None)
+        if callable(wake):
+            wake(reason="force_speak_command")
 
     def _handle_stage_inbound_event(self, msg: dict) -> None:
         """Nhận event ngược từ frontend/sân khấu.

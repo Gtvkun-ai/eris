@@ -235,7 +235,7 @@ if os.path.exists(ds2api_src):
             try:
                 shutil.copy2(src_file, os.path.join(ds2api_dst, fn))
                 print("  [OK] whale2api " + fn)
-            except PermissionError:
+            except (PermissionError, OSError):
                 print("  [SKIP] whale2api " + fn + "  (file dang bi lock boi process dang chay -- skip)")
 
 

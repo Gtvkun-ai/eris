@@ -646,13 +646,14 @@ class SourceGroundingEngine:
                     )
                 )
 
-        if structured_evidence["present"]:
-            confidence = 0.98 if (has_relevant_chess or refers_to_screen) else 0.65
+        if structured_evidence["present"] and has_relevant_chess:
+            # Structured chess chỉ tranh quyền primary khi lượt hiện tại thật sự
+            # nói về cờ. Nếu không, state vẫn được giữ làm ambient continuity.
             candidates.append(
                 SourceCandidate(
                     kind="chess_bridge",
-                    confidence=confidence,
-                    reason="Active chess engagement có snapshot FEN trực tiếp từ extension.",
+                    confidence=0.98,
+                    reason="Active chess engagement có snapshot FEN trực tiếp từ extension và liên quan lượt hiện tại.",
                     evidence_ids=structured_evidence["ids"],
                     evidence_preview=structured_evidence["preview"],
                 )
@@ -1321,9 +1322,12 @@ class SourceGroundingEngine:
             lines.append("chess_typed_state: " + json.dumps(structured_state, ensure_ascii=False, separators=(",", ":")))
             lines.append("chess_surface_rules:")
             lines.append("- This typed state is authoritative for the board, side to move, last move and suggestion.")
-            lines.append("- Answer a direct move question with the move first, then one concrete positional reason.")
+            lines.append("- Answer a direct move question with exactly suggested_move_san/uci, then one concrete positional reason; never invent an alternative move from general chess knowledge.")
+            lines.append("- Phrase moves for a Vietnamese beginner as piece + destination, for example 'mã lên e4'; do not expose raw UCI such as e2e4 unless the user asks for notation.")
+            lines.append("- If user_followed_previous_suggestion=true, explicitly remember that the user just played ERIS's delivered suggestion and treat the current position as the result of that shared choice. Never deny having recommended it.")
             lines.append("- Discuss the position naturally; light dry teasing is allowed when grounded in the move/position.")
             lines.append("- Never narrate telemetry such as 'bàn cờ đã được nhận' or 'nước gợi ý hiện tại'.")
+            lines.append("- If the user asks a general question unrelated to chess, answer it normally and maintain your persona.")
         lines.append("[/SOURCE_GROUNDING]")
         return "\n".join(lines)
 

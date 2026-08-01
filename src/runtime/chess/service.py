@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
+from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Mapping
 
@@ -17,7 +19,7 @@ from .analyzer import ChessAnalyzer, HybridChessAnalyzer, LocalChessAnalyzer
 from .engine import Position, move_san
 from .stockfish_adapter import StockfishConfig, StockfishUCIAnalyzer
 from .tracker import ChessGameTracker
-from .surface import ChessSurfaceState, chess_turn_relevant
+from .surface import ChessSurfaceState, chess_move_question, chess_turn_relevant, describe_chess_move_vi
 from .companion_policy import build_companion_signal
 
 
@@ -99,6 +101,11 @@ class ChessCompanionService:
         self._lock = threading.RLock()
         self._last_snapshot_summary: dict[str, Any] = {}
         self._last_wakeup_reason = ""
+        # Candidate được analyzer chuẩn bị cho đúng lượt user hỏi. Chỉ khi câu
+        # public thật sự chứa nước này nó mới trở thành suggestion đã giao.
+        self._suggestion_candidate: dict[str, Any] = {}
+        self._delivered_suggestion: dict[str, Any] = {}
+        self._last_suggestion_outcome: dict[str, Any] = {}
 
     @property
     def running(self) -> bool:
@@ -207,7 +214,14 @@ class ChessCompanionService:
 
     def handle_snapshot(self, payload: Mapping[str, Any]) -> ChessObservation:
         snapshot = BoardSnapshot.from_mapping(payload)
+        with self._lock:
+            previous_game_id = str(self._last_snapshot_summary.get("game_id", "") or "")
+            if previous_game_id and previous_game_id != snapshot.game_id:
+                self._suggestion_candidate = {}
+                self._delivered_suggestion = {}
+                self._last_suggestion_outcome = {}
         observation = self.tracker.observe(snapshot)
+        observation = self._annotate_suggestion_followthrough(observation)
         received_at = float(self.clock())
         now = snapshot.captured_at or received_at
         phase = getattr(getattr(observation, "phase", ""), "value", getattr(observation, "phase", ""))
@@ -223,6 +237,10 @@ class ChessCompanionService:
                 "ply": snapshot.ply,
                 "last_move_uci": observation.last_move_uci,
                 "last_move_san": str(getattr(observation, "last_move_san", "") or ""),
+                "previous_suggested_move_uci": str(getattr(observation, "previous_suggested_move_uci", "") or ""),
+                "previous_suggested_move_san": str(getattr(observation, "previous_suggested_move_san", "") or ""),
+                "user_followed_previous_suggestion": bool(getattr(observation, "user_followed_previous_suggestion", False)),
+                "suggestion_outcome": str(getattr(observation, "suggestion_outcome", "") or ""),
                 "suggested_move_uci": (
                     observation.suggestion.uci if observation.suggestion is not None else ""
                 ),
@@ -426,6 +444,105 @@ class ChessCompanionService:
         )
 
 
+    def wants_move_suggestion(self, user_text: str) -> bool:
+        return chess_move_question(user_text)
+
+    def _remember_suggestion_candidate(self, typed: ChessSurfaceState) -> None:
+        if not typed.suggested_move_uci and not typed.suggested_move_san:
+            return
+        now = float(self.clock())
+        candidate = {
+            "game_id": typed.game_id,
+            "uci": typed.suggested_move_uci.lower(),
+            "san": typed.suggested_move_san,
+            "natural": describe_chess_move_vi(
+                san=typed.suggested_move_san,
+                uci=typed.suggested_move_uci,
+            ),
+            "created_at": now,
+            "move_number": typed.move_number,
+        }
+        with self._lock:
+            self._suggestion_candidate = candidate
+
+    def record_public_suggestion(self, public_text: str, *, authoritative: bool = False) -> bool:
+        """Ghi suggestion chỉ sau khi nó thật sự xuất hiện ở public output."""
+
+        text = str(public_text or "").strip()
+        if not text:
+            return False
+        now = float(self.clock())
+        with self._lock:
+            candidate = dict(self._suggestion_candidate)
+        if not candidate or now - float(candidate.get("created_at", 0.0) or 0.0) > 120.0:
+            return False
+
+        folded = " ".join(text.lower().split())
+        uci = str(candidate.get("uci", "") or "").lower()
+        san = str(candidate.get("san", "") or "").lower()
+        natural = str(candidate.get("natural", "") or "").lower()
+        destination = uci[2:4] if len(uci) >= 4 else ""
+        piece_words = {"N": "mã", "B": "tượng", "R": "xe", "Q": "hậu", "K": "vua"}
+        san_piece = piece_words.get(str(candidate.get("san", "") or "")[:1], "tốt")
+        mentioned = bool(
+            authoritative
+            or (uci and uci in folded)
+            or (san and re.search(rf"(?<![a-z0-9]){re.escape(san)}(?![a-z0-9])", folded, re.IGNORECASE))
+            or (natural and natural in folded)
+            or (destination and destination in folded and san_piece in folded)
+        )
+        if not mentioned:
+            return False
+        candidate["delivered_at"] = now
+        with self._lock:
+            self._delivered_suggestion = candidate
+            self._suggestion_candidate = {}
+        return True
+
+    def _annotate_suggestion_followthrough(self, observation: ChessObservation) -> ChessObservation:
+        """Giữ dấu vết user đã làm theo suggestion, không suy diễn từ engine.
+
+        Kết quả được lưu qua các snapshot kế tiếp trong cùng ván. Nhờ vậy nếu
+        bot đáp lại rồi user mới than "ngu rồi", Surface vẫn biết vị trí hiện
+        tại bắt nguồn từ nước ERIS đã thật sự khuyên và user đã chọn làm theo.
+        """
+
+        last_uci = str(observation.last_move_uci or "").lower()
+        with self._lock:
+            delivered = dict(self._delivered_suggestion)
+            remembered = dict(self._last_suggestion_outcome)
+
+        if (
+            delivered
+            and str(delivered.get("game_id", "") or "") == observation.game_id
+            and last_uci
+            and observation.actor_is_user
+        ):
+            suggested_uci = str(delivered.get("uci", "") or "").lower()
+            followed = bool(suggested_uci and last_uci == suggested_uci)
+            remembered = {
+                "game_id": observation.game_id,
+                "uci": suggested_uci,
+                "san": str(delivered.get("san", "") or ""),
+                "followed": followed,
+                "outcome": "followed" if followed else "declined",
+                "resolved_at": float(self.clock()),
+                "resolved_ply": int(getattr(observation, "ply", 0) or 0),
+            }
+            with self._lock:
+                self._delivered_suggestion = {}
+                self._last_suggestion_outcome = dict(remembered)
+
+        if not remembered or str(remembered.get("game_id", "") or "") != observation.game_id:
+            return observation
+        return replace(
+            observation,
+            previous_suggested_move_uci=str(remembered.get("uci", "") or ""),
+            previous_suggested_move_san=str(remembered.get("san", "") or ""),
+            user_followed_previous_suggestion=bool(remembered.get("followed", False)),
+            suggestion_outcome=str(remembered.get("outcome", "") or ""),
+        )
+
     def active_engagement_id(self) -> str:
         """Trả engagement id đang active, độc lập với độ tươi của FEN."""
 
@@ -490,6 +607,7 @@ class ChessCompanionService:
         *,
         max_age_seconds: float = 30.0,
         relevant_to_turn: bool = False,
+        request_move_suggestion: bool = False,
     ) -> tuple[dict[str, object], ...]:
         """Xuất snapshot cờ tươi thành provenance chính thức cho chat grounding.
 
@@ -504,7 +622,11 @@ class ChessCompanionService:
         board_fen = str(item.get("board_fen", "") or "").strip()
         received_at = float(item.get("received_at", 0.0) or 0.0)
         age = max(0.0, float(self.clock()) - received_at) if received_at else float("inf")
-        if not board_fen or age > max(0.5, float(max_age_seconds)):
+        event_snapshot_still_current = bool(relevant_to_turn and self.is_engagement_active())
+        if not board_fen or (
+            age > max(0.5, float(max_age_seconds))
+            and not event_snapshot_still_current
+        ):
             return ()
 
         typed = ChessSurfaceState.from_mapping(item)
@@ -514,7 +636,7 @@ class ChessCompanionService:
         side_to_move = typed.side_to_move or "unknown"
         last_move = typed.last_move_uci or "-"
         suggestion = typed.suggested_move_uci or "-"
-        if relevant_to_turn and suggestion == "-":
+        if relevant_to_turn and request_move_suggestion and suggestion == "-":
             # Tỷ lệ direct_move_rate chỉ điều khiển việc ERIS tự buột miệng gợi ý
             # trong autonomous. Khi user hỏi thẳng “nên đánh gì”, phải phân tích
             # ngay từ FEN hiện tại, không trả lời khai cuộc chung chung như sách
@@ -543,6 +665,9 @@ class ChessCompanionService:
                         self.logger.debug("[chess-bridge] on-demand suggestion failed: %s", exc)
                     except Exception:
                         pass
+        if relevant_to_turn and request_move_suggestion and typed.suggested_move:
+            self._remember_suggestion_candidate(typed)
+
         perspective = (
             f"evaluation_cp_white={typed.evaluation_cp_white}; advantage_side={typed.advantage_side}; "
             f"user_side={typed.user_side or 'unknown'}; evaluation_cp_user={typed.evaluation_cp_user}; "
@@ -560,6 +685,8 @@ class ChessCompanionService:
             "engagement_kind": self.engagement_kind,
             "engagement_active": self.is_engagement_active(),
             "state_fresh": True,
+            "snapshot_age_seconds": round(age, 3),
+            "event_snapshot_still_current": event_snapshot_still_current,
             "claim": claim,
             # State typed là nguồn chính; claim text chỉ giữ để log/plugin cũ.
             "state": typed.to_dict(),

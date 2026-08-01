@@ -18,6 +18,11 @@ from runtime.cognition.normalization import normalize_vi
 
 
 _COORD_RE = re.compile(r"\b[a-h][1-8][a-h][1-8][qrbn]?\b", re.IGNORECASE)
+_SAN_DEST_RE = re.compile(r"([a-h][1-8])(?:=[QRBN])?[+#]?$", re.IGNORECASE)
+_NATURAL_MOVE_DEST_RE = re.compile(
+    r"\b(?:ma|tuong|xe|hau|vua|tot|day\s+tot)\b.{0,24}?\b([a-h][1-8])\b",
+    re.IGNORECASE,
+)
 
 
 def _text(value: Any) -> str:
@@ -61,6 +66,10 @@ class ChessSurfaceState:
     ply: int = 0
     last_move_uci: str = ""
     last_move_san: str = ""
+    previous_suggested_move_uci: str = ""
+    previous_suggested_move_san: str = ""
+    user_followed_previous_suggestion: bool = False
+    suggestion_outcome: str = ""
     suggested_move_uci: str = ""
     suggested_move_san: str = ""
     # Legacy evaluation_* là góc nhìn Trắng; public wording dùng *_user.
@@ -113,6 +122,10 @@ class ChessSurfaceState:
             ply=ply,
             last_move_uci=_text(data.get("last_move_uci") or data.get("last_move")),
             last_move_san=_text(data.get("last_move_san")),
+            previous_suggested_move_uci=_text(data.get("previous_suggested_move_uci")),
+            previous_suggested_move_san=_text(data.get("previous_suggested_move_san")),
+            user_followed_previous_suggestion=bool(data.get("user_followed_previous_suggestion", False)),
+            suggestion_outcome=_text(data.get("suggestion_outcome")).lower(),
             suggested_move_uci=_text(data.get("suggested_move_uci") or data.get("suggested_move")),
             suggested_move_san=_text(data.get("suggested_move_san")),
             evaluation_cp=_optional_integer(data.get("evaluation_cp")),
@@ -218,6 +231,9 @@ def chess_turn_relevant(user_text: str, *, engagement_active: bool = False) -> b
         "an xe", "an hau", "an tot", "chieu tuong", "chieu het", "nhap thanh",
         "phong hau", "con ma", "quan ma", "con tuong", "quan tuong",
         "con xe", "quan xe", "quan hau", "quan tot", "quan vua", "vo con ma",
+        "gio lam gi", "gio nen lam gi", "choi sao", "tiep theo", "bi chieu", 
+        "thua roi", "thang roi", "het co", "chieu bi", "doi quan", "loi the", 
+        "yeu o dau", "phong thu", "tan cong", "chieu mat"
     )
     if any(marker in normalized for marker in explicit):
         return True
@@ -226,7 +242,9 @@ def chess_turn_relevant(user_text: str, *, engagement_active: bool = False) -> b
     if not engagement_active:
         return False
     tokens = set(normalized.split())
-    return bool(tokens & {"nuoc", "quan", "trang", "den"})
+    # "ăn" đứng một mình quá mơ hồ ("hôm nay ăn gì"). Các cụm bắt quân cụ thể
+    # đã nằm ở nhánh explicit phía trên, nên không dùng token này để chiếm route.
+    return bool(tokens & {"nuoc", "quan", "trang", "den", "co", "di", "danh", "bat", "chieu", "chay", "lui", "tien", "thua", "thang", "hoa", "doi"})
 
 
 
@@ -243,12 +261,95 @@ def chess_move_question(user_text: str) -> bool:
     markers = (
         "nuoc nao", "danh gi", "di gi", "nen danh", "nen di", "di sao",
         "danh nuoc", "toi danh", "tui danh", "hay sao", "dung hong",
-        "dung khong", "co nen", "an quan nao", "bat quan nao",
+        "dung khong", "co nen", "an quan nao", "bat quan nao", "gio lam gi", 
+        "gio nen lam gi", "buoc tiep", "tiep theo la", "huong nao", 
+        "cach nao", "xu ly sao", "do sao", "chay sao", "di dau"
     )
     return any(marker in normalized for marker in markers) or bool(
         _COORD_RE.search(str(user_text or ""))
     )
 
+
+
+def describe_chess_move_vi(*, san: str = "", uci: str = "") -> str:
+    """Đổi ký hiệu máy thành câu Việt ngắn, đủ rõ để người mới làm theo.
+
+    Ưu tiên SAN vì nó mang loại quân/bắt quân/chiếu. UCI chỉ dùng để lấy ô đích
+    khi provider cũ chưa có SAN. Không bao giờ trả chuỗi kiểu ``e2e4`` ra mặt.
+    """
+
+    san_text = _text(san)
+    uci_text = _text(uci).lower()
+    compact_san = san_text.replace("0", "O")
+    if compact_san in {"O-O", "O-O+", "O-O#"}:
+        return "Nhập thành cánh vua" + (", chiếu vua" if "+" in compact_san else ", chiếu hết" if "#" in compact_san else "")
+    if compact_san in {"O-O-O", "O-O-O+", "O-O-O#"}:
+        return "Nhập thành cánh hậu" + (", chiếu vua" if "+" in compact_san else ", chiếu hết" if "#" in compact_san else "")
+
+    match = _SAN_DEST_RE.search(compact_san)
+    destination = match.group(1).lower() if match else (uci_text[2:4] if len(uci_text) >= 4 else "")
+    if not destination:
+        return san_text or uci_text
+
+    piece_names = {"K": "Vua", "Q": "Hậu", "R": "Xe", "B": "Tượng", "N": "Mã"}
+    first = compact_san[:1]
+    capture = "x" in compact_san
+    if first in piece_names:
+        phrase = f"{piece_names[first]} {'ăn quân ở' if capture else 'lên'} {destination}"
+    elif capture:
+        source_file = compact_san[:1].lower() if compact_san[:1].lower() in "abcdefgh" else ""
+        phrase = f"Tốt cột {source_file} ăn quân ở {destination}" if source_file else f"Tốt ăn quân ở {destination}"
+    else:
+        phrase = f"Đẩy tốt lên {destination}"
+
+    promotion = re.search(r"=([QRBN])", compact_san)
+    if promotion:
+        promoted = {"Q": "hậu", "R": "xe", "B": "tượng", "N": "mã"}[promotion.group(1)]
+        phrase += f", phong {promoted}"
+    if "#" in compact_san:
+        phrase += ", chiếu hết"
+    elif "+" in compact_san:
+        phrase += ", chiếu vua"
+    return phrase
+
+
+def chess_surface_text_grounded(
+    text: str,
+    state: ChessSurfaceState | Mapping[str, Any] | None,
+    *,
+    suggestion_only: bool = False,
+) -> bool:
+    """Chặn tọa độ UCI cụ thể không có trong state typed.
+
+    Đây là hàng rào quyết định, không phải lời nhắc cho model. Nếu model tự bịa
+    ``d2d4`` trong khi state chỉ cho phép một nước khác, câu đó không được phát.
+    """
+
+    typed = state if isinstance(state, ChessSurfaceState) else ChessSurfaceState.from_mapping(state)
+    mentioned = {item.lower() for item in _COORD_RE.findall(str(text or ""))}
+    allowed_moves = (
+        (typed.suggested_move_uci,)
+        if suggestion_only
+        else (typed.last_move_uci, typed.suggested_move_uci, typed.previous_suggested_move_uci)
+    )
+    allowed = {
+        item.lower()
+        for item in allowed_moves
+        if item
+    }
+    if mentioned and not mentioned.issubset(allowed):
+        return False
+
+    # UCI không phải cách duy nhất model có thể bịa nước. Bắt cả câu tự nhiên
+    # kiểu "mã lên e4" và chỉ cho phép ô đích đã có trong state typed.
+    folded = normalize_vi(text)
+    natural_destinations = {item.lower() for item in _NATURAL_MOVE_DEST_RE.findall(folded)}
+    allowed_destinations = {
+        item[2:4].lower()
+        for item in allowed_moves
+        if len(item) >= 4
+    }
+    return natural_destinations.issubset(allowed_destinations)
 
 def authoritative_chess_answer_text(
     state: ChessSurfaceState | Mapping[str, Any] | None,
@@ -270,6 +371,10 @@ def authoritative_chess_answer_text(
     move = typed.suggested_move
     if not move:
         return ""
+    natural_move = describe_chess_move_vi(
+        san=typed.suggested_move_san,
+        uci=typed.suggested_move_uci,
+    )
 
     reason = {
         "forcing_check": "Đây là nước chiếu cưỡng bức.",
@@ -279,12 +384,14 @@ def authoritative_chess_answer_text(
         "king_safety": "Nước này ưu tiên an toàn cho vua.",
         "improve_piece_activity": "Nước này cải thiện vị trí quân mà không tạo thêm điểm yếu.",
     }.get(typed.hint_focus, "")
-    return f"{move}. {reason}".strip() if reason else f"{move}."
+    return f"{natural_move}. {reason}".strip() if reason else f"{natural_move}."
 
 
 __all__ = [
     "ChessSurfaceState",
     "chess_turn_relevant",
     "chess_move_question",
+    "describe_chess_move_vi",
+    "chess_surface_text_grounded",
     "authoritative_chess_answer_text",
 ]

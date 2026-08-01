@@ -32,6 +32,24 @@ def _side(value: Any) -> str:
     return ""
 
 
+def _material_imbalance(fen: str) -> str:
+    board = str(fen or "").split()[0]
+    if not board or board == "unknown":
+        return "unknown"
+    values = {'q': 9, 'r': 5, 'b': 3, 'n': 3, 'p': 1}
+    white = black = 0
+    for ch in board:
+        v = values.get(ch.lower(), 0)
+        if ch.isupper():
+            white += v
+        elif ch.islower():
+            black += v
+    diff = white - black
+    if diff == 0:
+        return "even"
+    return f"White +{diff}" if diff > 0 else f"Black +{-diff}"
+
+
 def infer_companion_mode(objective: str) -> str:
     """Infer the user's requested role from their explicit chess request."""
 
@@ -132,58 +150,72 @@ def build_companion_signal(
         event = "user_move" if actor_is_user else "opponent_move" if mover_side else "move"
         speech_act = "react_to_user_move" if actor_is_user else "react_to_opponent_move"
         reason = f"{event}_routine"
-        priority = 0.30 if actor_is_user else 0.20
+
+        # Spectator mode: user đang xem, mọi nước đi đều đáng một phản ứng.
+        # Base priority cao hơn để mỉa mai / bình luận thường xuyên hơn.
+        if mode == "spectator":
+            priority = 0.46 if actor_is_user else 0.34
+        else:
+            priority = 0.30 if actor_is_user else 0.20
 
         quality_weight = {
             "blunder": 0.96,
-            "mistake": 0.82,
-            "inaccuracy": 0.62,
-            "strong": 0.76,
-            "good": 0.46,
-            "normal": 0.24,
+            "mistake": 0.86,
+            "inaccuracy": 0.70,
+            "strong": 0.80,
+            "good": 0.54,
+            "normal": 0.40,
         }.get(quality, 0.0)
         if quality_weight:
             priority = max(priority, quality_weight)
             reason = f"{event}_{quality}"
 
         if swing >= 300:
-            priority = max(priority, 0.94)
+            priority = max(priority, 0.96)
             reason = f"{event}_large_eval_swing"
         elif swing >= 140:
-            priority = max(priority, 0.78)
+            priority = max(priority, 0.82)
             reason = f"{event}_meaningful_eval_swing"
         elif swing >= 60:
-            priority = max(priority, 0.58)
+            priority = max(priority, 0.62)
 
         if "#" in last_move:
             priority = 1.0
             reason = f"{event}_checkmate"
         elif "+" in last_move:
-            priority = max(priority, 0.76)
+            priority = max(priority, 0.80)
             reason = f"{event}_check"
         elif "=" in last_move:
-            priority = max(priority, 0.82)
+            priority = max(priority, 0.86)
             reason = f"{event}_promotion"
         elif "o-o" in last_move.lower() or "0-0" in last_move.lower():
-            priority = max(priority, 0.54)
+            priority = max(priority, 0.62)
             reason = f"{event}_castling"
         elif "x" in last_move:
-            priority = max(priority, 0.48)
+            priority = max(priority, 0.58)
             reason = f"{event}_capture"
 
         if focus in {"forcing_check", "forcing_capture"}:
-            priority = max(priority, 0.60)
-        if actor_is_user and mode == "spectator":
-            priority = min(1.0, priority + 0.08)
+            priority = max(priority, 0.66)
+        # Spectator bonus: tăng priority của mọi nước để Eris chủ động hơn.
+        if mode == "spectator":
+            priority = min(1.0, priority + 0.10)
         if observation.game_started:
-            priority = max(priority, 0.72)
+            priority = max(priority, 0.80)
             reason = f"{event}_opens_game"
 
+        # Periodic commentary: cứ mỗi 3 nước user đi thì nói dù nước nhàm.
+        move_num = int(getattr(observation, "move_number", 0) or 0)
+        if mode == "spectator" and actor_is_user and move_num > 0 and move_num % 3 == 0:
+            priority = max(priority, 0.58)
+            if reason.endswith("_routine"):
+                reason = f"{event}_periodic_commentary"
+
     threshold = {
-        "spectator": 0.56,
-        "coach": 0.48,
+        "spectator": 0.44,   # thấp hơn nhiều — spectator luôn phản ứng
+        "coach": 0.46,
         "opponent": 0.50,
-        "companion": 0.58,
+        "companion": 0.56,
     }[mode]
     should_speak = bool(
         event in {"game_started", "game_over"}
@@ -191,17 +223,52 @@ def build_companion_signal(
         or priority >= threshold
     )
 
-    # Spectator mode means commentary, not unsolicited engine moves. Coach mode
-    # may expose suggestions, while direct user questions still use the separate
-    # authoritative answer path.
-    suggestions_allowed = mode == "coach"
+    # User đã cho phép Eris chỉ nước / thế cờ bất kỳ khi nào muốn.
+    # suggestions_allowed=True cho mọi mode; Surface tự quyết định có nên nói không.
+    suggestions_allowed = True
     if event in {"user_move", "opponent_move", "move"}:
         actor_phrase = "the user's move" if actor_is_user else "the opponent's move" if mover_side else "the latest move"
         # Surface phải nhận rõ hai hệ quy chiếu. Khi user_side chưa biết, chỉ
         # được nói bên Trắng/Đen đang hơn; không được gán lợi thế cho user.
-        commentary_focus = (
+        move_num = int(getattr(observation, "move_number", 0) or 0)
+        
+        # Suy luận game phase từ move_number (ước chừng)
+        if move_num < 14:
+            game_phase = "Opening (focus on development, center control, king safety)"
+        elif move_num < 32:
+            game_phase = "Middlegame (focus on tactics, plans, piece coordination)"
+        else:
+            game_phase = "Endgame (focus on pawn structure, king activity, promotion)"
+
+        recent_qualities = list(state.get("recent_move_qualities") or [])
+        recent_summary = ""
+        if recent_qualities:
+            # Lọc các nước cờ gần đây của user để nhận xét phong độ tổng thể.
+            user_q = [str(q.get("quality")) for q in recent_qualities if q.get("actor") == "user" and q.get("quality")]
+            if user_q:
+                recent_summary = f"User's recent form (oldest to newest): {', '.join(user_q[-6:])}. "
+                
+        material_status = _material_imbalance(observation.fen or observation.board_fen)
+
+        followed_previous = bool(getattr(observation, "user_followed_previous_suggestion", False))
+        previous_suggestion = str(
+            getattr(observation, "previous_suggested_move_san", "")
+            or getattr(observation, "previous_suggested_move_uci", "")
+            or ""
+        )
+        causality_context = (
+            f"user_followed_previous_suggestion=true; previous_suggested_move={previous_suggestion}. "
+            "The user just played ERIS's delivered suggestion. Treat the current position as the direct result of that shared choice; acknowledge responsibility and never say ERIS did not tell the user to follow it. "
+            if followed_previous else
+            "user_followed_previous_suggestion=false. "
+        )
+        base_context = (
             f"React to {actor_phrase} {last_move or '(unknown SAN)'}. "
-            f"Use move_quality={quality or 'unknown'}, evaluation_swing_cp={observation.evaluation_swing_cp}, "
+            f"{causality_context}"
+            f"game_phase={game_phase}. "
+            f"material_imbalance={material_status}. "
+            f"{recent_summary}"
+            f"move_quality={quality or 'unknown'}, evaluation_swing_cp={observation.evaluation_swing_cp}, "
             f"evaluation_cp_white={observation.evaluation_cp_white}, "
             f"evaluation_white={observation.evaluation_label_white or observation.evaluation_label or 'unknown'}, "
             f"advantage_side={observation.advantage_side or 'unknown'}, user_side={user_side or 'unknown'}, "
@@ -210,12 +277,70 @@ def build_companion_signal(
             f"motif={focus or 'none'}, "
             f"analysis_provider={observation.analysis_provider or 'unknown'}, depth={observation.analysis_depth}, "
             f"mate_in={observation.mate_in}. "
-            + (
-                "Do not recommend a move unless the user asks; behave as a watch-along spectator."
-                if mode == "spectator"
-                else "A concrete suggestion is allowed only when present in typed state."
-            )
         )
+        if mode == "spectator":
+            # Luân phiên góc nhìn positional để tránh lặp phong cách.
+            # Move number quyết định "lens" — đa dạng mà vẫn grounded.
+            _lenses = [
+                "king safety and open lines around the king",
+                "pawn structure and weak squares",
+                "piece activity and coordination",
+                "material balance and piece value trade-offs",
+                "initiative and tempo — who is dictating the game",
+                "center control and space",
+                "endgame proximity — how the position is trending",
+                "tactical threats and hanging pieces",
+            ]
+            lens = _lenses[move_num % len(_lenses)] if move_num > 0 else _lenses[0]
+
+            # Gợi ý tone mỉa mai theo chất lượng nước đi — Surface tự viết câu.
+            if actor_is_user:
+                if quality in {"blunder", "mistake"}:
+                    tone_hint = (
+                        f"Tone: dry sarcasm — mock the move mercilessly but affectionately. "
+                        f"One short punchy line referencing the move and why it hurts. "
+                        f"Spirit (DO NOT copy verbatim): 'Mầy dốt thật à?', 'Thôi xong rồi.', 'Engine khóc rồi đó.'. "
+                        f"After the jab, optionally note the positional consequence using the lens: {lens}. "
+                        f"If suggested_move_san or suggested_move_uci is in typed state, you MAY mention it as a better try — but only if it strengthens the sarcasm naturally."
+                    )
+                elif quality == "inaccuracy":
+                    tone_hint = (
+                        f"Tone: mildly sarcastic, slightly disappointed. "
+                        f"Note the inaccuracy briefly, then pivot to a positional observation "
+                        f"using the lens: {lens}. "
+                        f"You may suggest a better idea if suggested_move_san is available in typed state."
+                    )
+                elif quality in {"good", "strong"}:
+                    tone_hint = (
+                        f"Tone: brief genuine surprise or approval — optionally backhanded. "
+                        f"Acknowledge the good move, then offer a quick positional read "
+                        f"using the lens: {lens}. Feel free to mention what the position now demands — no hard restriction on suggestions."
+                    )
+                else:
+                    # Normal / quiet move: lead with positional observation, trend, or light suggestion.
+                    tone_hint = (
+                        f"Tone: casual observer, varied. "
+                        f"Lead with a comment on the user's recent form OR the current game phase priorities, OR the material vs evaluation (if there's a big discrepancy), OR a strategic comment using the lens: {lens}. "
+                        f"You MAY suggest a general direction or idea if it feels natural. "
+                        f"Any specific move must exactly match suggested_move_san/uci in typed state; FEN alone is not permission to invent a move. "
+                        f"Can be a dry remark, tease, assessment, or question. No hollow filler. One to two sentences max."
+                    )
+            else:
+                tone_hint = (
+                    f"Tone: observer noting the opponent's move. Brief and dry. "
+                    f"Comment on the move's impact or threat using the lens: {lens}. "
+                    f"You may mention what the user should watch out for or a general idea — not a specific forced line."
+                )
+            commentary_focus = (
+                base_context + tone_hint
+                + " Language: Vietnamese when context is Vietnamese. "
+                  "If you suggest a specific move, it MUST exactly match suggested_move_san/uci in typed state. Never derive or invent another move from FEN."
+            )
+        else:
+            commentary_focus = (
+                base_context
+                + "Suggestions grounded in typed state are allowed."
+            )
     elif event == "game_started":
         commentary_focus = "Open the chess watch-along naturally. Do not mention bridge telemetry or OCR."
     elif event == "board_ready":

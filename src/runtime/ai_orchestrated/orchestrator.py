@@ -22,7 +22,12 @@ from runtime.social_stance_policy import guard_subjective_stance_payload
 from runtime.companion_model_routing import route_companion_turn
 from runtime.public_reply_context import compile_public_reply_context
 from runtime.reply_obligation import enforce_reply_obligation
-from runtime.chess.surface import authoritative_chess_answer_text, chess_turn_relevant
+from runtime.chess.surface import (
+    authoritative_chess_answer_text,
+    chess_move_question,
+    chess_surface_text_grounded,
+    chess_turn_relevant,
+)
 from runtime.discourse_state import assistant_proposition_link
 from runtime.discourse_surface import DiscourseSurface, DiscourseSurfaceRenderer
 from runtime.json_boundary import public_payload
@@ -818,6 +823,27 @@ class AIChatOrchestrator:
                 assistant_discourse_meta["assistant_act"] = assistant_act.to_dict()
 
             draft_text = str(payload.get("text", "") or "")
+            if (
+                str(getattr(grounding_report, "structured_kind", "") or "") == "chess"
+                and draft_text
+                and not chess_surface_text_grounded(
+                    draft_text,
+                    getattr(grounding_report, "structured_state", None) or {},
+                    suggestion_only=chess_move_question(user_text),
+                )
+            ):
+                authoritative_text = _authoritative_chess_result_text(grounding_report, user_text)
+                if authoritative_text:
+                    payload["text"] = authoritative_text
+                    payload["should_speak"] = True
+                    payload["source"] = "authoritative_chess_guard"
+                    draft_text = authoritative_text
+                    host.logger.warning("[chat chess] replaced invented coordinate move with authoritative suggestion")
+                else:
+                    payload["text"] = ""
+                    payload["should_speak"] = False
+                    draft_text = ""
+                    host.logger.warning("[chat chess] suppressed invented coordinate move without authoritative suggestion")
             grounding_engine = getattr(host, "source_grounding_engine", None)
             grounding_verdict = evaluate_grounded_surface(
                 grounding_engine, draft_text, report=grounding_report
@@ -883,7 +909,7 @@ class AIChatOrchestrator:
                 )
                 decision.parse_mode = "authoritative_chess_result"
                 host.logger.info("[chat chess] emitted authoritative analyzer result; surface unavailable")
-            elif str(getattr(grounding_report, "structured_kind", "") or "") == "chess":
+            elif str(getattr(grounding_report, "structured_kind", "") or "") == "chess" and chess_turn_relevant(user_text, engagement_active=True):
                 # Có chess state nhưng không có suggestion đủ thẩm quyền: im.
                 # Không dựng câu local, không đọc telemetry, không giả banter.
                 payload = {
@@ -1063,6 +1089,19 @@ class AIChatOrchestrator:
             memory_text = public_text
         decision.text = public_text
         if public_text:
+            chess_bridge = getattr(host, "chess_bridge_service", None)
+            record_suggestion = getattr(chess_bridge, "record_public_suggestion", None)
+            if callable(record_suggestion):
+                try:
+                    record_suggestion(
+                        public_text,
+                        authoritative=str(getattr(decision, "parse_mode", "") or "") in {
+                            "authoritative_chess_result",
+                            "authoritative_chess_guard",
+                        },
+                    )
+                except Exception as exc:
+                    host.logger.debug("[chess] public suggestion record failed: %s", exc)
             engagement_runtime = getattr(host, "ai_engagement_runtime", None)
             if engagement_runtime is not None:
                 try:
@@ -1224,6 +1263,13 @@ class AIAutonomousOrchestrator:
             memory_text = public_text
         decision.text = public_text
         if public_text:
+            chess_bridge = getattr(host, "chess_bridge_service", None)
+            record_suggestion = getattr(chess_bridge, "record_public_suggestion", None)
+            if callable(record_suggestion):
+                try:
+                    record_suggestion(public_text, authoritative=False)
+                except Exception as exc:
+                    host.logger.debug("[chess] autonomous suggestion record failed: %s", exc)
             engagement_runtime = getattr(host, "ai_engagement_runtime", None)
             if engagement_runtime is not None:
                 try:

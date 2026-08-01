@@ -407,12 +407,12 @@ class ChatCycleMixin:
 
         bridge = getattr(self, "chess_bridge_service", None)
         matches = getattr(bridge, "matches_turn", None)
-        fresh = getattr(bridge, "is_state_fresh", None)
         if not callable(matches):
             return False
         try:
-            if callable(fresh) and not bool(fresh(max_age_seconds=30.0)):
-                return False
+            # Extension gửi snapshot theo biến động bàn cờ. Tuổi của event không
+            # đồng nghĩa FEN sai: nếu engagement vẫn active và chưa có snapshot
+            # mới thì đó vẫn là vị trí hiện tại, kể cả user suy nghĩ vài phút.
             return bool(matches(user_text))
         except Exception:
             return False
@@ -423,10 +423,28 @@ class ChatCycleMixin:
         if not callable(evidence_fn):
             return ()
         relevant = self._looks_like_chess_context_request(user_text)
+        move_request = False
+        wants_move = getattr(bridge, "wants_move_suggestion", None)
+        if relevant and callable(wants_move):
+            try:
+                move_request = bool(wants_move(user_text))
+            except Exception:
+                move_request = False
+        max_age = 300.0 if relevant else 30.0
         try:
-            return tuple(
-                evidence_fn(max_age_seconds=30.0, relevant_to_turn=relevant) or ()
-            )
+            try:
+                return tuple(
+                    evidence_fn(
+                        max_age_seconds=max_age,
+                        relevant_to_turn=relevant,
+                        request_move_suggestion=move_request,
+                    ) or ()
+                )
+            except TypeError:
+                # Structured provider cũ chưa có cờ request_move_suggestion.
+                return tuple(
+                    evidence_fn(max_age_seconds=max_age, relevant_to_turn=relevant) or ()
+                )
         except Exception as exc:
             self.logger.debug("[chess grounding] evidence unavailable: %s", exc)
             return ()

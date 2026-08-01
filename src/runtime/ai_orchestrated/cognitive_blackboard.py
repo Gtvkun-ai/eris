@@ -259,6 +259,7 @@ class TypedCognitiveBlackboard:
     critic_reviewed: bool = False
     repair_pending: bool = False
     memory_available: bool = False
+    force_speak_pending: bool = False
     anchors: tuple[CognitiveAnchor, ...] = ()
 
     @classmethod
@@ -729,6 +730,7 @@ class TypedCognitiveBlackboard:
             critic_reviewed=critic_reviewed,
             repair_pending=repair_pending,
             memory_available=bool(memory_context or snapshot.get("open_loops")),
+            force_speak_pending=bool(snapshot.get("force_speak_pending", False)),
             anchors=tuple(anchors[:8]),
         )
 
