@@ -29,6 +29,8 @@ from .stage_planner import StagePlanner
 from .state_reducer import StateReducer
 from .surface_intent import SurfaceIntentEngine
 from .social_initiative import SocialInitiativeEngine
+from .social_continuation import SocialContinuationRuntime
+from .social_agenda import SocialAgendaStore
 
 
 def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
@@ -74,16 +76,19 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
             return RuntimeMindState.from_mapping(metadata.get("ai_orchestrated_state", {}))
         return RuntimeMindState()
 
-    def load_conversation_arc_state() -> Mapping[str, Any]:
+    def load_aux_state(key: str) -> Mapping[str, Any]:
         memory_state = getattr(host, "memory_state", None)
         if isinstance(memory_state, dict):
-            value = memory_state.get("conversation_arc_state", {})
+            value = memory_state.get(key, {})
             return value if isinstance(value, Mapping) else {}
         metadata = getattr(memory_state, "metadata", None)
         if isinstance(metadata, Mapping):
-            value = metadata.get("conversation_arc_state", {})
+            value = metadata.get(key, {})
             return value if isinstance(value, Mapping) else {}
         return {}
+
+    def load_conversation_arc_state() -> Mapping[str, Any]:
+        return load_aux_state("conversation_arc_state")
 
     persist_lock = getattr(host, "_state_lock", None) or threading.RLock()
 
@@ -143,11 +148,11 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
                         details={"forced": bool(force)},
                     )
 
-    def persist_conversation_arc(payload: Mapping[str, Any]) -> None:
+    def persist_aux_state(key: str, health_name: str, payload: Mapping[str, Any]) -> None:
         memory_state = getattr(host, "memory_state", None)
         with persist_lock:
             if isinstance(memory_state, dict):
-                memory_state["conversation_arc_state"] = dict(payload)
+                memory_state[key] = dict(payload)
             elif memory_state is not None:
                 metadata = getattr(memory_state, "metadata", None)
                 if not isinstance(metadata, dict):
@@ -157,22 +162,31 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
                     except Exception:
                         metadata = None
                 if isinstance(metadata, dict):
-                    metadata["conversation_arc_state"] = dict(payload)
-            # Arc state thay đổi ít nhưng có timer và có thể sống qua autonomous
-            # tick; ghi ngay để restart không làm mất mục tiêu đang dang dở.
+                    metadata[key] = dict(payload)
+            # Timed and leased state is written immediately so restart recovery
+            # cannot replay the same continuation twice.
             saver = getattr(host, "_save_memory_state", None)
             if callable(saver):
                 try:
                     saver()
                 except Exception as exc:
                     health.record_failure(
-                        "conversation_arc.persistence",
+                        health_name,
                         exc,
                         kind=FailureKind.PERSISTENCE_FAILURE,
                         degraded=True,
                     )
                 else:
-                    health.record_success("conversation_arc.persistence")
+                    health.record_success(health_name)
+
+    def persist_conversation_arc(payload: Mapping[str, Any]) -> None:
+        persist_aux_state("conversation_arc_state", "conversation_arc.persistence", payload)
+
+    def persist_social_continuation(payload: Mapping[str, Any]) -> None:
+        persist_aux_state("social_continuation_state", "social_continuation.persistence", payload)
+
+    def persist_social_agenda(payload: Mapping[str, Any]) -> None:
+        persist_aux_state("social_agenda_state", "social_agenda.persistence", payload)
 
     # Engagement runtime is a separate semantic kernel: it persists durable
     # interaction commitments without polluting the single-writer mind state.
@@ -264,6 +278,31 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
         "ai_orchestrated.conversation_arc",
         details={"pending": conversation_arc.has_pending(now=runtime_clock())},
     )
+    social_agenda = SocialAgendaStore(
+        initial_state=load_aux_state("social_agenda_state"),
+        persist=persist_social_agenda,
+        logger=getattr(host, "logger", None),
+        clock=runtime_clock,
+        allow_cross_session_memory=str(
+            os.getenv("ERIS_SOCIAL_AGENDA_CROSS_SESSION", "0") or "0"
+        ).strip().lower() in {"1", "true", "yes", "on"},
+    )
+    health.record_success(
+        "ai_orchestrated.social_agenda",
+        details={"active_goals": social_agenda.snapshot(now=runtime_clock()).get("active_goal_count", 0)},
+    )
+    social_continuation = SocialContinuationRuntime(
+        initial_state=load_aux_state("social_continuation_state"),
+        persist=persist_social_continuation,
+        wake_callback=getattr(host, "_wake_autonomous_loop", None),
+        outcome_callback=social_agenda.observe_exposure_outcome,
+        logger=getattr(host, "logger", None),
+        clock=runtime_clock,
+    )
+    health.record_success(
+        "ai_orchestrated.social_continuation",
+        details={"pending": social_continuation.has_pending(now=runtime_clock())},
+    )
     discovery = DiscoveryRuntime(host, router, logger=getattr(host, "logger", None))
     initiative = InitiativeController(logger=getattr(host, "logger", None))
     grounding_validator = AutonomousGroundingValidator(logger=getattr(host, "logger", None))
@@ -282,6 +321,8 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     host.ai_social_initiative_engine = social_initiative
     host.ai_surface_intent_engine = surface_intent
     host.ai_conversation_arc_runtime = conversation_arc
+    host.ai_social_continuation_runtime = social_continuation
+    host.ai_social_agenda_store = social_agenda
     host.ai_discovery_runtime = discovery
     host.ai_initiative_controller = initiative
     host.ai_autonomous_grounding_validator = grounding_validator
@@ -502,10 +543,16 @@ def shutdown_ai_orchestrated_runtime(host: Any) -> None:
         else:
             if isinstance(health, SubsystemHealthRegistry):
                 health.record_success("engagement.persistence", details={"shutdown_flush": True})
-    for name in ("ai_post_turn_observer", "ai_discovery_runtime", "ai_conversation_arc_runtime", "ai_state_reducer"):
+    for name in (
+        "ai_post_turn_observer",
+        "ai_discovery_runtime",
+        "ai_social_continuation_runtime",
+        "ai_conversation_arc_runtime",
+        "ai_state_reducer",
+    ):
         obj = getattr(host, name, None)
         method_name = "shutdown" if name in {
-            "ai_post_turn_observer", "ai_discovery_runtime", "ai_conversation_arc_runtime"
+            "ai_post_turn_observer", "ai_discovery_runtime", "ai_social_continuation_runtime", "ai_conversation_arc_runtime"
         } else "close"
         method = getattr(obj, method_name, None)
         if callable(method):

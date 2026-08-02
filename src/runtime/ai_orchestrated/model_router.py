@@ -22,6 +22,7 @@ from .contracts import CognitiveObservation, IntentionPlan
 from .discovery import DiscoveryPlan
 from .identity import CONFLICT_TEMPLATES, DEFAULT_DEFENSES, DEFAULT_EMERGENT_VALUES, DEFAULT_MOTIVES, DEFAULT_RELATIONSHIP, DEFAULT_VALUES
 from .personality import DEFAULT_CORE, DEFAULT_MOOD, DEFAULT_TEMPERAMENT
+from .social_plan import normalize_social_plan
 
 
 def _deepseek_web_authority_mode() -> bool:
@@ -576,6 +577,107 @@ UTTERANCE_SCHEMA: dict[str, Any] = {
 }
 
 
+AFTERBEAT_PROPOSAL_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["decision", "role", "objective", "pause_class", "tone", "confidence"],
+    "properties": {
+        "decision": {"type": "string", "enum": ["none", "reserve"]},
+        "role": {"type": "string", "enum": ["punchline", "reveal", "soften", "reconsider", "afterthought"]},
+        "objective": {"type": "string", "maxLength": 320},
+        "pause_class": {"type": "string", "enum": ["micro", "short", "held"]},
+        "tone": PERFORMANCE_PRESET_SCHEMA,
+        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+    },
+}
+
+SOCIAL_EXPOSURE_PROPOSAL_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "decision", "kind", "level", "expects_reaction", "reaction_window_class",
+        "expected_responses", "silence_hypotheses", "recovery_style", "confidence",
+    ],
+    "properties": {
+        "decision": {"type": "string", "enum": ["none", "open"]},
+        "kind": {"type": "string", "enum": [
+            "none", "playful_vulnerability", "flirt_risk", "tease_risk",
+            "self_disclosure", "social_invitation", "face_risk",
+        ]},
+        "level": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "expects_reaction": {"type": "boolean"},
+        "reaction_window_class": {"type": "string", "enum": ["micro", "short", "held"]},
+        "expected_responses": {"type": "array", "items": {"type": "string", "maxLength": 96}, "maxItems": 6},
+        "silence_hypotheses": {"type": "array", "items": {"type": "string", "maxLength": 120}, "maxItems": 4},
+        "recovery_style": {"type": "string", "maxLength": 64},
+        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+    },
+}
+
+SOCIAL_AGENDA_UPDATE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "decision", "goal_type", "objective", "desired_user_state", "strategy", "horizon",
+        "success_signals", "stop_signals", "salience", "evidence_refs",
+    ],
+    "properties": {
+        "decision": {"type": "string", "enum": ["none", "open", "update", "advance", "pause", "close"]},
+        "goal_type": {"type": "string", "enum": [
+            "none", "build_shared_bit", "deepen_topic", "invite_story", "story_continuation",
+            "warm_presence", "callback", "repair", "change_mood", "comfortable_silence", "learn_preference",
+        ]},
+        "objective": {"type": "string", "maxLength": 420},
+        "desired_user_state": {"type": "string", "maxLength": 160},
+        "strategy": {"type": "string", "maxLength": 220},
+        "horizon": {"type": "string", "enum": ["turn", "session", "cross_session"]},
+        "success_signals": {"type": "array", "items": {"type": "string", "maxLength": 120}, "maxItems": 8},
+        "stop_signals": {"type": "array", "items": {"type": "string", "maxLength": 120}, "maxItems": 8},
+        "salience": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "evidence_refs": {"type": "array", "items": {"type": "string", "maxLength": 140}, "maxItems": 6},
+    },
+}
+
+SOCIAL_CONVERSATION_ARC_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["decision", "goal", "beats", "confidence"],
+    "properties": {
+        "decision": {"type": "string", "enum": ["none", "schedule"]},
+        "goal": {"type": "string", "maxLength": 420},
+        "beats": {
+            "type": "array", "maxItems": 3,
+            "items": {
+                "type": "object", "additionalProperties": False,
+                "required": ["role", "objective", "condition", "tone"],
+                "properties": {
+                    "role": {"type": "string", "enum": [
+                        "callback", "reveal", "punchline", "escalate", "soften",
+                        "reconsider", "return_to_goal", "afterthought",
+                    ]},
+                    "objective": {"type": "string", "maxLength": 360},
+                    "condition": {"type": "string", "maxLength": 220},
+                    "tone": PERFORMANCE_PRESET_SCHEMA,
+                },
+            },
+        },
+        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+    },
+}
+
+SOCIAL_PLAN_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["afterbeat", "exposure", "agenda_update", "conversation_arc"],
+    "properties": {
+        "afterbeat": AFTERBEAT_PROPOSAL_SCHEMA,
+        "exposure": SOCIAL_EXPOSURE_PROPOSAL_SCHEMA,
+        "agenda_update": SOCIAL_AGENDA_UPDATE_SCHEMA,
+        "conversation_arc": SOCIAL_CONVERSATION_ARC_SCHEMA,
+    },
+}
+
+
 CONVERSATION_ARC_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -606,7 +708,7 @@ CONVERSATION_ARC_SCHEMA: dict[str, Any] = {
                         ],
                     },
                     "objective": {"type": "string"},
-                    "delay_seconds": {"type": "number", "minimum": 1.2, "maximum": 45.0},
+                    "delay_seconds": {"type": "number", "minimum": 0.25, "maximum": 8.0},
                     "tone": PERFORMANCE_PRESET_SCHEMA,
                     "max_sentences": {"type": "integer", "minimum": 1, "maximum": 2},
                 },
@@ -632,12 +734,13 @@ PUBLIC_REPLY_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
     # Meaning, both language surfaces and performance are committed by one
     # semantic authority in the same DeepSeek Web turn.
-    "required": ["semantic_frame", "assistant_act", "should_speak", "utterance"],
+    "required": ["semantic_frame", "assistant_act", "should_speak", "utterance", "social_plan"],
     "properties": {
         "semantic_frame": SEMANTIC_FRAME_SCHEMA,
         "assistant_act": ASSISTANT_ACT_SCHEMA,
         "should_speak": {"type": "boolean"},
         "utterance": UTTERANCE_SCHEMA,
+        "social_plan": SOCIAL_PLAN_SCHEMA,
         # Optional for backward compatibility with older providers.  When present,
         # this stores semantic objectives for later autonomous beats, never canned text.
         "conversation_arc": CONVERSATION_ARC_SCHEMA,
@@ -1160,12 +1263,13 @@ class AIRuntimeModelRouter:
             "Memory chỉ là continuity, không chứng minh hiện tại. Grounding là nguồn thật cho màn hình/file/tool. "
             "Planner đã sở hữu tool intent; bạn không chọn, đổi hay claim tool đã thành công. "
             "utterance.performance.preset chỉ là một preset sân khấu ngắn; intensity nằm trong 0..1 và nonverbal là cue ngắn, không viết stage direction vào text. "
-            "Ngoài câu hiện tại, bạn có thể tạo conversation_arc để giữ một mục tiêu diễn xuất qua nhiều public turn. "
-            "Chỉ decision=schedule khi một nhịp thứ hai sau khoảng lặng thật sự làm câu nói có duyên hơn: callback, reconsider, reveal, soften hoặc punchline. "
-            "conversation_arc.goal và beats[].objective là MỤC TIÊU NGỮ NGHĨA, tuyệt đối không viết sẵn câu thoại thứ hai. Câu hiện tại phải tự đủ nghĩa. "
-            "Dùng 1-3 beat, thường chỉ 1; delay 1.2-8 giây cho timing hội thoại, dài hơn chỉ khi có lý do. user_reply_policy=replan để nhường user và thích nghi nếu họ chen vào. "
-            "Không schedule sau câu hỏi, repair/xin lỗi, tool/action, hướng dẫn nghiêm túc, nội dung nhạy cảm hoặc câu trả lời thông thường không cần nhịp nối. "
-            "Khi không cần, trả conversation_arc.decision=none với beats rỗng và các field chuỗi rỗng. "
+            "Mỗi lượt BẮT BUỘC appraise social_plan, nhưng appraisal không có nghĩa là luôn nói thêm. "
+            "social_plan.afterbeat chỉ reserve một câu hai chắc chắn thuộc cùng màn diễn; objective là ý nghĩa mới, không phải câu thoại viết sẵn. "
+            "Dùng pause_class=micro/short/held thay vì tự bịa timestamp. Không reserve sau câu hỏi, repair/xin lỗi, tool/action, hướng dẫn nghiêm túc hoặc nội dung nhạy cảm. "
+            "social_plan.exposure chỉ open khi câu hiện tại tạo rủi ro xã hội và thật sự chờ phản ứng. Nó mô tả expected_responses, silence_hypotheses khiêm tốn và recovery_style; không viết recovery sẵn. "
+            "social_plan.agenda_update biểu diễn lý do xã hội dài hơn: objective, desired_user_state, strategy, success_signals và stop_signals. Chỉ mở goal khi grounded trong history/evidence; boundary, khó chịu hoặc hai phản hồi cụt phải là stop signal. "
+            "social_plan.conversation_arc dành cho callback/câu chuyện qua nhiều public turn, không kiêm pause dưới vài giây. Beats chỉ có semantic objective và condition. "
+            "Tất cả ID, timestamp, lease, retry, expiry và idempotency do runtime sinh. Với mọi nhánh không dùng, trả decision=none cùng object hợp lệ và mảng rỗng. "
             "Trong CÙNG JSON, sinh semantic_frame.v1, assistant_act, should_speak và utterance. semantic_frame chỉ mô tả lượt USER hiện tại; "
             "assistant_act chỉ mô tả câu ERIS sắp nói, tuyệt đối không chép user_act sang assistant turn. Dùng toàn bộ chat history và "
             "Discourse state: history_turn_map ánh xạ message theo vị trí sang turn_index nhưng không lặp text. "
@@ -1417,6 +1521,12 @@ class AIRuntimeModelRouter:
             # dùng chúng để không parse lại cùng contract lần thứ hai.
             "_typed_semantic_frame": validation.frame,
             "_typed_assistant_act": assistant_validation.act,
+            "social_plan": normalize_social_plan(
+                data.get("social_plan") if isinstance(data.get("social_plan"), Mapping) else None,
+                legacy_conversation_arc=(
+                    data.get("conversation_arc") if isinstance(data.get("conversation_arc"), Mapping) else None
+                ),
+            ),
             "conversation_arc": (
                 dict(data.get("conversation_arc", {}))
                 if isinstance(data.get("conversation_arc"), Mapping)
@@ -2539,6 +2649,10 @@ __all__ = [
     "OBJECTIVE_OBSERVATION_SCHEMA",
     "PERSONALITY_REFLECTION_SCHEMA",
     "INTENTION_PLAN_SCHEMA",
+    "AFTERBEAT_PROPOSAL_SCHEMA",
+    "SOCIAL_EXPOSURE_PROPOSAL_SCHEMA",
+    "SOCIAL_AGENDA_UPDATE_SCHEMA",
+    "SOCIAL_PLAN_SCHEMA",
     "CONVERSATION_ARC_SCHEMA",
     "PUBLIC_REPLY_SCHEMA",
     "SOCIAL_INITIATIVE_SCHEMA", "SURFACE_INTENT_SCHEMA", "SURFACE_REALIZATION_SCHEMA",

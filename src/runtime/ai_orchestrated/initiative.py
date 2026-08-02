@@ -70,8 +70,11 @@ class InitiativeProfile:
 _PROFILES: dict[str, InitiativeProfile] = {
     "continuation": InitiativeProfile("continuation", 20.0, 8.0, 20, 180.0),
     # A planned beat is part of one already-approved public arc, not a fresh
-    # attempt to seize the microphone. It still has a finite budget.
-    "arc_continuation": InitiativeProfile("arc_continuation", 1.0, 0.8, 60, 12.0),
+    # attempt to seize the microphone. Ordinary autonomous gates do not apply.
+    "arc_continuation": InitiativeProfile("arc_continuation", 0.0, 0.0, 120, 0.0),
+    "afterbeat": InitiativeProfile("afterbeat", 0.0, 0.0, 120, 0.0),
+    "social_exposure": InitiativeProfile("social_exposure", 0.0, 0.0, 80, 0.0),
+    "social_agenda": InitiativeProfile("social_agenda", 45.0, 18.0, 12, 180.0),
     "environment": InitiativeProfile("environment", 32.0, 12.0, 24, 180.0),
     "activity_event": InitiativeProfile("activity_event", 12.0, 6.0, 24, 120.0),
     "discovery": InitiativeProfile("discovery", 1800.0, 90.0, 2, 7200.0),
@@ -254,19 +257,19 @@ class InitiativeController:
             and candidate is not None
             and getattr(candidate, "kind", "") == "followup_reminder"
         )
-        arc_override = bool(
-            candidate is not None
-            and getattr(candidate, "kind", "") == "conversation_arc"
-        )
+        candidate_kind = str(getattr(candidate, "kind", "") or "") if candidate is not None else ""
+        reserved_override = candidate_kind in {"conversation_arc", "afterbeat"}
+        reaction_override = candidate_kind == "social_exposure_recovery"
         if (
             blackboard.reply_expected
             and not chess_event_override
             and not reminder_override
-            and not arc_override
+            and not reserved_override
+            and not reaction_override
         ):
             action = InitiativeAction.BODY_ONLY if has_delta and not blackboard.privacy_blocked else InitiativeAction.NO_OP
             return InitiativeDecision(action, "waiting_for_user_reply", silence, body_motion="quiet_presence")
-        if blackboard.user_busy:
+        if blackboard.user_busy and not reserved_override:
             action = InitiativeAction.BODY_ONLY if has_delta and not blackboard.privacy_blocked else InitiativeAction.NO_OP
             return InitiativeDecision(action, "user_busy", silence, body_motion="small_acknowledge")
         if candidate is None or not candidate.available:
@@ -301,7 +304,7 @@ class InitiativeController:
             anchor_type=anchor_type,
             anchor_id=anchor_id,
             evidence_refs=refs,
-            max_sentences=1 if getattr(candidate, "kind", "") == "conversation_arc" else 2,
+            max_sentences=1 if getattr(candidate, "kind", "") in {"conversation_arc", "afterbeat", "social_exposure_recovery", "social_agenda"} else 2,
         )
         return InitiativeDecision(
             InitiativeAction.SPEECH,
@@ -361,6 +364,9 @@ class InitiativeController:
         mode_map = {
             "continuation": ("continuation", "soft", "continuation", "conversation"),
             "conversation_arc": ("continuation", "playful", "arc_continuation", "conversation"),
+            "afterbeat": ("continuation", "playful", "afterbeat", "conversation"),
+            "social_exposure_recovery": ("continuation", "soft", "social_exposure", "conversation"),
+            "social_agenda": ("random_chat", "soft", "social_agenda", "conversation"),
             "followup_reminder": ("continuation", "gentle_reminder", "continuation", "conversation"),
             "task_followup": ("task_followup", "focused", "activity_event", "task"),
             "discovery_share": ("discovery_share", "curious", "discovery", "discovery"),
@@ -385,12 +391,18 @@ class InitiativeController:
             "task_followup": "engagement_runtime",
             "continuation": "conversation",
             "conversation_arc": "conversation_arc",
+            "afterbeat": "social_continuation",
+            "social_exposure_recovery": "social_continuation",
+            "social_agenda": "social_agenda",
             "followup_reminder": "conversation",
             "inner_thought": "self_context",
         }.get(kind, "social_context")
         strategy = {
             "continuation": "continue_public_thread",
             "conversation_arc": "continue_conversation_arc",
+            "afterbeat": "deliver_reserved_afterbeat",
+            "social_exposure_recovery": "recover_social_exposure",
+            "social_agenda": "advance_social_goal",
             "followup_reminder": "gentle_followup_reminder",
             "task_followup": "preserve_active_engagement",
             "discovery_share": "share_discovery",
@@ -427,6 +439,7 @@ class InitiativeController:
                 "evidence_refs": list(refs),
             }
         mapping = {
+            "plan_id": candidate.idempotency_key or f"plan-{int(blackboard.now * 1000)}",
             "speak": True,
             "motive": kind,
             "strategy": strategy,
@@ -456,6 +469,10 @@ class InitiativeController:
                 ),
             },
             "notes": f"social_candidate source={candidate.source} reason={candidate.reason}",
+            "continuation_lane": candidate.continuation_lane,
+            "continuation_ticket_id": candidate.anchor_id if candidate.continuation_lane in {"afterbeat", "social_exposure", "conversation_arc", "social_agenda"} else "",
+            "continuation_claim_token": candidate.claim_token,
+            "continuation_idempotency_key": candidate.idempotency_key,
         }
         return (
             IntentionPlan.from_mapping(mapping, channel="autonomous"),
@@ -482,6 +499,12 @@ class InitiativeController:
             return self._remember(False, "initiative_disabled", plan, now, profile=profile)
 
         importance = max(0.0, min(1.0, _as_float(getattr(plan, "importance", 0.0), 0.0)))
+        # Reserved short-horizon continuations are part of an already-approved
+        # social performance. They still lose to active user speech and safety,
+        # but they bypass ordinary silence, cooldown, duplicate and hourly gates.
+        if profile.kind in {"arc_continuation", "afterbeat", "social_exposure"}:
+            reason = {"arc_continuation": "reserved_arc_continuation", "afterbeat": "reserved_afterbeat", "social_exposure": "exposure_recovery"}[profile.kind]
+            return self._remember(True, reason, plan, now, profile=profile)
         if user_busy and importance < 0.90:
             return self._remember(False, "user_busy", plan, now, profile=profile)
         if seconds_since_user > 0.0 and seconds_since_user < profile.minimum_user_silence_seconds and importance < 0.84:

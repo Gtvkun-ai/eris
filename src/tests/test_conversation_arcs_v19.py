@@ -34,7 +34,7 @@ class _Plan:
     semantics: _Semantics = field(default_factory=_Semantics)
 
 
-def _proposal(*, delay: float = 3.0):
+def _proposal(*, delay: float = 0.65):
     return {
         "decision": "schedule",
         "arc_id": "arc:tease:1",
@@ -54,11 +54,11 @@ def _proposal(*, delay: float = 3.0):
     }
 
 
-def _board(*, reply_expected: bool = True):
+def _board(*, reply_expected: bool = True, user_busy: bool = False, seconds_since_user: float = 4.0):
     return TypedCognitiveBlackboard.from_snapshot(
         {
             "time": 1004.0,
-            "telemetry": {},
+            "telemetry": {"user_busy": user_busy},
             "screen_context": {"fresh": True, "privacy_blocked": False},
             "vision_grounding": {"recommendation": "silence", "claims": []},
             "conversation_baton": {
@@ -74,7 +74,7 @@ def _board(*, reply_expected: bool = True):
             "engagement_context": {"active": False},
             "engagement_interaction": {},
             "latest_observation": {},
-            "seconds_since_user": 4.0,
+            "seconds_since_user": seconds_since_user,
             "seconds_since_assistant": 4.0,
             "open_loops": [],
             "recent_public_history": [
@@ -252,3 +252,59 @@ def test_public_reply_contract_and_compat_envelope_preserve_arc():
         }
     )
     assert payload["conversation_arc"]["decision"] == "schedule"
+
+
+def test_reserved_arc_handoff_wakes_immediately_after_short_pause():
+    now = [1000.0]
+    timers = []
+    wakes = []
+
+    def timer_factory(delay, callback):
+        timer = _FakeTimer(delay, callback)
+        timers.append(timer)
+        return timer
+
+    runtime = ConversationArcRuntime(
+        clock=lambda: now[0],
+        timer_factory=timer_factory,
+        wake_callback=wakes.append,
+    )
+    assert runtime.schedule_from_model(
+        _proposal(delay=0.4),
+        source_turn_id="turn:1",
+        source_text="Ừ, nghe cũng vô tội đấy.",
+        source_turn_seq=1,
+        semantic_frame={},
+        assistant_act={"kind": "answer"},
+        now=1000.0,
+    )
+    now[0] = 1002.0
+    runtime.notify_audio_finished(1002.0)
+    assert abs(timers[-1].delay - 0.4) < 1e-9
+    timers[-1].callback()
+    assert wakes == ["conversation_arc_due:arc:tease:1"]
+    assert runtime.snapshot(now=1002.4)["reserved_continuation"] is True
+
+
+def test_reserved_arc_bypasses_normal_autonomous_waiting_gates(tmp_path: Path):
+    runtime = ConversationArcRuntime(clock=lambda: 1000.0, timer_factory=_FakeTimer)
+    assert runtime.schedule_from_model(
+        _proposal(delay=0.25),
+        source_turn_id="turn:1",
+        source_text="Ừ, nghe cũng vô tội đấy.",
+        source_turn_seq=1,
+        semantic_frame={},
+        assistant_act={"kind": "answer"},
+        now=1000.0,
+    )
+    candidate = runtime.due_candidate(now=1000.25)
+    assert candidate is not None
+
+    controller = InitiativeController(state_path=tmp_path / "initiative.json")
+    decision = controller.decide(
+        _board(reply_expected=True, user_busy=True, seconds_since_user=0.05),
+        candidate,
+    )
+    assert decision.action is InitiativeAction.SPEECH
+    assert decision.reason == "allowed"
+    assert controller.panel_view(now=1000.25)["last_decision"]["reason"] == "reserved_arc_continuation"

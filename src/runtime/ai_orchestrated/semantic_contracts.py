@@ -88,7 +88,7 @@ class TurnSemantics:
         data = payload or {}
         kind = semantic_key(data.get("turn_kind", "other"), fallback="other", limit=40)
         if kind not in {
-            "chat_response", "continuation", "arc_continuation", "environment", "activity_event",
+            "chat_response", "continuation", "arc_continuation", "afterbeat", "social_exposure", "social_agenda", "environment", "activity_event",
             "discovery", "internal", "presence", "startup", "force_speak", "other",
         }:
             kind = "other"

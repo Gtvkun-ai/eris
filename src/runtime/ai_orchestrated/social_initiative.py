@@ -69,6 +69,9 @@ def _autonomous_surface_policy() -> dict[str, Any]:
 _ALLOWED_KINDS = {
     "continuation",
     "conversation_arc",
+    "afterbeat",
+    "social_exposure_recovery",
+    "social_agenda",
     "followup_reminder",
     "task_followup",
     "discovery_share",
@@ -107,6 +110,9 @@ class SocialSpeechCandidate:
     tone: str = "casual_warm"
     reason: str = ""
     source: str = "surface_initiative_worker"
+    continuation_lane: str = ""
+    claim_token: str = ""
+    idempotency_key: str = ""
 
     @property
     def available(self) -> bool:
@@ -152,6 +158,9 @@ class SocialSpeechCandidate:
             tone=_compact(data.get("tone", "casual_warm"), 48).lower() or "casual_warm",
             reason=_compact(data.get("reason", ""), 240),
             source=source,
+            continuation_lane=_compact(data.get("continuation_lane", ""), 48).lower(),
+            claim_token=_compact(data.get("claim_token", ""), 180),
+            idempotency_key=_compact(data.get("idempotency_key", ""), 180),
         )
 
 

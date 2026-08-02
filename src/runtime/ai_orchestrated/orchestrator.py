@@ -393,6 +393,25 @@ class AIChatOrchestrator:
         turn_id = str(getattr(user_turn, "turn_id", "") or f"session_turn:{turn_seq}")
         user_meta["ai_turn_seq"] = turn_seq
 
+        # User taking the floor invalidates reserved short beats immediately and
+        # updates long-horizon social outcomes before the next plan is written.
+        social_continuation_runtime = getattr(host, "ai_social_continuation_runtime", None)
+        if social_continuation_runtime is not None:
+            try:
+                social_continuation_runtime.observe_user_signal(
+                    signal="text_response",
+                    text=user_text,
+                    now=cycle_start,
+                )
+            except Exception as exc:
+                host.logger.debug("[social continuation] user signal failed: %s", exc)
+        social_agenda_store = getattr(host, "ai_social_agenda_store", None)
+        if social_agenda_store is not None:
+            try:
+                social_agenda_store.observe_user_turn(user_text=user_text, now=cycle_start)
+            except Exception as exc:
+                host.logger.debug("[social agenda] user outcome failed: %s", exc)
+
         # Một public arc phải nhường lời ngay khi user chen vào. Runtime trả lại
         # mục tiêu/beat còn dang dở cho main writer để nó thích nghi theo câu mới,
         # thay vì autonomous cố đọc punchline cũ lên đầu người dùng.
@@ -536,6 +555,16 @@ class AIChatOrchestrator:
 
         personality_context = mind_state.personality_prompt_context()
         relationship_context = mind_state.relationship.prompt_summary()
+        if social_agenda_store is not None:
+            try:
+                agenda_prompt_context = social_agenda_store.prompt_context(now=cycle_start)
+            except Exception as exc:
+                agenda_prompt_context = ""
+                host.logger.debug("[social agenda] prompt context failed: %s", exc)
+            if agenda_prompt_context:
+                relationship_context = "\n\n".join(
+                    part for part in (relationship_context, agenda_prompt_context) if str(part).strip()
+                )
         grounding_context = str(getattr(grounding_report, "prompt_context", "") or "")
         if semantic_prompt_context:
             grounding_context = "\n\n".join(
@@ -1022,47 +1051,90 @@ class AIChatOrchestrator:
             assistant_meta_extra=assistant_discourse_meta,
             idempotency_key=f"chat:{turn_id}:assistant",
         )
-        # Chỉ schedule sau khi câu thứ nhất thật sự commit thành công. Model giữ
-        # mục tiêu semantic; autonomous Surface Worker sẽ viết câu thứ hai ở thời
-        # điểm phát, vì queue một câu soạn sẵn chỉ là notification đội tóc giả.
-        arc_payload = payload.get("conversation_arc") if isinstance(payload, Mapping) else None
-        if (
+        # Commit semantic social plans only after the first public line succeeds.
+        # The model appraises; runtime owns IDs, deadlines, leases and cancellation.
+        social_plan = payload.get("social_plan") if isinstance(payload, Mapping) else None
+        social_plan = social_plan if isinstance(social_plan, Mapping) else {}
+        valid_social_commit = bool(
             public_text
             and assistant_meta is not None
-            and isinstance(arc_payload, Mapping)
-            and conversation_arc_runtime is not None
             and str(getattr(decision, "parse_mode", "") or "") not in {
                 "typed_discourse_fallback",
                 "authoritative_chess_result",
                 "chess_surface_unavailable",
             }
             and not bool(getattr(decision, "failure_meta", None))
-        ):
-            try:
-                scheduled = conversation_arc_runtime.schedule_from_model(
-                    arc_payload,
-                    source_turn_id=turn_id,
-                    source_text=public_text,
-                    source_turn_seq=turn_seq,
-                    semantic_frame=typed_frame.to_dict() if typed_frame is not None else {},
-                    assistant_act=assistant_act.to_dict(),
-                    now=time.time(),
+        )
+        if valid_social_commit:
+            semantic_payload = typed_frame.to_dict() if typed_frame is not None else {}
+            assistant_act_payload = assistant_act.to_dict() if callable(getattr(assistant_act, "to_dict", None)) else dict(assistant_act or {})
+            commit_now = time.time()
+            if social_continuation_runtime is not None:
+                try:
+                    social_continuation_runtime.schedule_from_social_plan(
+                        social_plan,
+                        source_turn_id=turn_id,
+                        source_text=public_text,
+                        source_turn_seq=turn_seq,
+                        semantic_frame=semantic_payload,
+                        assistant_act=assistant_act_payload,
+                        now=commit_now,
+                    )
+                except Exception as exc:
+                    host.logger.debug("[social continuation] schedule failed: %s", exc)
+            if social_agenda_store is not None:
+                try:
+                    agenda_update = social_plan.get("agenda_update", {})
+                    social_agenda_store.apply_update(
+                        agenda_update if isinstance(agenda_update, Mapping) else {},
+                        source_turn_id=turn_id,
+                        now=commit_now,
+                    )
+                except Exception as exc:
+                    host.logger.debug("[social agenda] update failed: %s", exc)
+            arc_payload = social_plan.get("conversation_arc")
+            if not isinstance(arc_payload, Mapping):
+                arc_payload = payload.get("conversation_arc") if isinstance(payload, Mapping) else None
+            scheduled_arc = False
+            if isinstance(arc_payload, Mapping) and conversation_arc_runtime is not None:
+                try:
+                    scheduled_arc = conversation_arc_runtime.schedule_from_model(
+                        arc_payload,
+                        source_turn_id=turn_id,
+                        source_text=public_text,
+                        source_turn_seq=turn_seq,
+                        semantic_frame=semantic_payload,
+                        assistant_act=assistant_act_payload,
+                        now=commit_now,
+                    )
+                except Exception as exc:
+                    host.logger.debug("[conversation arc] schedule failed: %s", exc)
+
+            # If very short audio completed before commit returned, catch both
+            # short and long continuation runtimes up to the real playback clock.
+            clock = getattr(host, "interaction_clock", None)
+            if clock is not None:
+                audio_finished_at = float(getattr(clock, "audio_finished_at", 0.0) or 0.0)
+                assistant_text_at = float(getattr(clock, "assistant_text_at", 0.0) or 0.0)
+                playback_already_done = bool(
+                    audio_finished_at > 0.0
+                    and audio_finished_at >= assistant_text_at
+                    and not bool(getattr(clock, "audio_active", False))
                 )
-                # Frontend playback thường chậm hơn việc schedule vài mili-giây,
-                # nhưng nếu audio cực ngắn đã báo done trước khi _commit trả về,
-                # khôi phục đúng mốc pause từ InteractionClock.
-                clock = getattr(host, "interaction_clock", None)
-                if scheduled and clock is not None:
-                    audio_finished_at = float(getattr(clock, "audio_finished_at", 0.0) or 0.0)
-                    assistant_text_at = float(getattr(clock, "assistant_text_at", 0.0) or 0.0)
-                    if (
-                        audio_finished_at > 0.0
-                        and audio_finished_at >= assistant_text_at
-                        and not bool(getattr(clock, "audio_active", False))
-                    ):
-                        conversation_arc_runtime.notify_audio_finished(audio_finished_at)
-            except Exception as exc:
-                host.logger.debug("[conversation arc] schedule failed: %s", exc)
+                if playback_already_done:
+                    if social_continuation_runtime is not None:
+                        try:
+                            social_continuation_runtime.notify_audio_finished(
+                                audio_finished_at,
+                                source_turn_id=turn_id,
+                            )
+                        except Exception as exc:
+                            host.logger.debug("[social continuation] audio catch-up failed: %s", exc)
+                    if scheduled_arc and conversation_arc_runtime is not None:
+                        try:
+                            conversation_arc_runtime.notify_audio_finished(audio_finished_at)
+                        except Exception as exc:
+                            host.logger.debug("[conversation arc] audio catch-up failed: %s", exc)
         if public_text and discovery_id and discovery_runtime is not None:
             discovery_runtime.mark_spoken(discovery_id, public_text)
         host.last_user_text_for_semantics = user_text
@@ -1299,7 +1371,8 @@ class AIAutonomousOrchestrator:
         """
         from runtime.public_turn_transaction import registry_for
 
-        idempotency_key = f"{str(channel or 'autonomous')}:{int(turn_seq)}:assistant"
+        explicit_idempotency = str(getattr(decision, "director_trace_id", "") or "").strip()
+        idempotency_key = explicit_idempotency or f"{str(channel or 'autonomous')}:{int(turn_seq)}:assistant"
         return registry_for(self.host).run_once(
             idempotency_key,
             lambda: self._commit_public_once(

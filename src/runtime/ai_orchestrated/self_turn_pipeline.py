@@ -113,9 +113,18 @@ class SelfTurnPipeline:
             return True
 
         now = time.time()
+        social_continuation_runtime = getattr(host, "ai_social_continuation_runtime", None)
         conversation_arc_runtime = getattr(host, "ai_conversation_arc_runtime", None)
         clock = getattr(host, "interaction_clock", None)
         interaction_busy = bool(getattr(clock, "busy", False)) if clock is not None else False
+        short_continuation_due = False
+        if social_continuation_runtime is not None:
+            try:
+                short_continuation_due = bool(
+                    social_continuation_runtime.is_due(now=now, interaction_busy=interaction_busy)
+                )
+            except Exception as exc:
+                host.logger.debug("[social continuation] due check failed: %s", exc)
         arc_due = False
         if conversation_arc_runtime is not None:
             try:
@@ -128,7 +137,7 @@ class SelfTurnPipeline:
             except Exception as exc:
                 host.logger.debug("[conversation arc] due check failed: %s", exc)
         blocked_until = float(getattr(host, "autonomous_presence_blocked_until", 0.0) or 0.0)
-        if now < blocked_until and not arc_due:
+        if now < blocked_until and not (short_continuation_due or arc_due):
             host._sleep_interruptible(min(4.0, max(0.2, blocked_until - now)))
             return True
 
@@ -163,17 +172,38 @@ class SelfTurnPipeline:
         blackboard = TypedCognitiveBlackboard.from_snapshot(planner_snapshot, now=now)
         candidate_started = time.monotonic()
         candidate = None
-        # Beat đã được main writer schedule có quyền đề xuất trước Social
-        # Initiative thông thường. Nó vẫn phải qua governor, grounding và Surface,
-        # nên đây không phải một timer lén phát audio từ thread phụ.
-        if conversation_arc_runtime is not None:
+        worker_id = f"self_turn:{threading.get_ident()}"
+        # Priority lanes: reserved afterbeat, exposure recovery, conversation arc,
+        # social agenda, then ordinary initiative. Every continuation lane is
+        # claimed atomically before a model call.
+        if social_continuation_runtime is not None:
             try:
-                candidate = conversation_arc_runtime.due_candidate(
+                candidate = social_continuation_runtime.claim_due(
+                    worker_id=worker_id,
+                    now=now,
+                    interaction_busy=interaction_busy,
+                )
+            except Exception as exc:
+                host.logger.debug("[social continuation] candidate failed: %s", exc)
+        if candidate is None and conversation_arc_runtime is not None:
+            try:
+                candidate = conversation_arc_runtime.claim_due(
+                    worker_id=worker_id,
                     now=now,
                     interaction_busy=interaction_busy,
                 )
             except Exception as exc:
                 host.logger.debug("[conversation arc] candidate failed: %s", exc)
+        social_agenda_store = getattr(host, "ai_social_agenda_store", None)
+        if candidate is None and social_agenda_store is not None:
+            try:
+                candidate = social_agenda_store.claim_due(
+                    blackboard,
+                    worker_id=worker_id,
+                    now=now,
+                )
+            except Exception as exc:
+                host.logger.debug("[social agenda] candidate failed: %s", exc)
         social_engine = getattr(host, "ai_social_initiative_engine", None)
         if candidate is None and social_engine is not None:
             candidate = social_engine.propose(blackboard, snapshot=planner_snapshot)
@@ -236,21 +266,21 @@ class SelfTurnPipeline:
         )
 
         if decision.action is InitiativeAction.NO_OP:
-            self._defer_conversation_arc(
+            self._defer_claimed_continuation(
                 plan,
                 candidate=candidate,
                 reason=decision.reason,
-                seconds=1.5,
+                seconds=0.25 if getattr(candidate, "kind", "") == "conversation_arc" else 1.5,
             )
             return self._finish_silence(
                 plan=plan, context=context, activity=activity, gate_reason=decision.reason,
             )
         if decision.action is InitiativeAction.BODY_ONLY:
-            self._defer_conversation_arc(
+            self._defer_claimed_continuation(
                 plan,
                 candidate=candidate,
                 reason=decision.reason,
-                seconds=1.5,
+                seconds=0.25 if getattr(candidate, "kind", "") == "conversation_arc" else 1.5,
             )
             return self._finish_silence(
                 plan=plan, context=context, activity=activity, gate_reason=decision.reason,
@@ -269,7 +299,7 @@ class SelfTurnPipeline:
         if validator is not None:
             preflight = validator.validate_intent(speech_intent, blackboard)
             if not preflight.allowed:
-                self._defer_conversation_arc(plan, reason=preflight.reason, seconds=2.0)
+                self._defer_claimed_continuation(plan, reason=preflight.reason, seconds=0.5)
                 return self._finish_silence(
                     plan=plan, context=context, activity=activity, gate_reason=preflight.reason,
                     force_body_only=bool(context.perception.mechanical_delta or activity.has_new_event),
@@ -309,8 +339,16 @@ class SelfTurnPipeline:
                 "[surface worker] unavailable mode=%s; local text fallback disabled",
                 speech_intent.mode,
             )
+        if (
+            surface_payload
+            and self._is_claimed_continuation(plan, candidate)
+            and host._process_pending_user_input()
+        ):
+            # User input wins even if it arrived while Surface was composing the
+            # reserved beat. Never dump a now-stale punchline over a real reply.
+            return host.running
         if not surface_payload:
-            self._defer_conversation_arc(plan, reason="surface_unavailable", seconds=3.0)
+            self._defer_claimed_continuation(plan, reason="surface_unavailable", seconds=0.75)
             public_lifecycle.transition(
                 "DEGRADED",
                 turn_id=lifecycle_turn_id,
@@ -671,10 +709,20 @@ class SelfTurnPipeline:
             "commentary_expectation": context.commentary.to_dict(),
             "engagement_context": dict(context.engagement_context),
             "engagement_interaction": context.engagement_interaction.to_dict(),
+            "social_continuation": (
+                self.host.ai_social_continuation_runtime.snapshot(now=perception.now)
+                if getattr(self.host, "ai_social_continuation_runtime", None) is not None
+                else {"pending": 0, "due": False}
+            ),
             "conversation_arc": (
                 self.host.ai_conversation_arc_runtime.snapshot(now=perception.now)
                 if getattr(self.host, "ai_conversation_arc_runtime", None) is not None
                 else {"pending": False, "due": False}
+            ),
+            "social_agenda": (
+                self.host.ai_social_agenda_store.snapshot(now=perception.now)
+                if getattr(self.host, "ai_social_agenda_store", None) is not None
+                else {"active_goal_count": 0}
             ),
             "instruction": (
                 "This snapshot feeds a typed Social Initiative candidate generator. "
@@ -731,12 +779,23 @@ class SelfTurnPipeline:
             probe_interval = min(180.0, max(45.0, soft_silence / 2.0))
         quiet_opportunity = context.seconds_since_assistant >= soft_silence
         presence_probe_due = quiet_opportunity and now - self._last_probe_at >= probe_interval
+        social_continuation = snapshot.get("social_continuation")
+        social_continuation_due = bool(
+            isinstance(social_continuation, Mapping) and social_continuation.get("due")
+        )
         conversation_arc = snapshot.get("conversation_arc")
         conversation_arc_due = bool(
             isinstance(conversation_arc, Mapping) and conversation_arc.get("due")
         )
+        social_agenda = snapshot.get("social_agenda")
+        social_agenda_active = bool(
+            isinstance(social_agenda, Mapping) and social_agenda.get("active_goal_count")
+            and context.seconds_since_assistant >= 45.0
+        )
         checks = (
+            (social_continuation_due, "social_continuation_due"),
             (conversation_arc_due, "conversation_arc_due"),
+            (social_agenda_active, "social_agenda_active"),
             # Hai trạng thái này phải đánh thức pipeline ngay, nếu không lớp mới
             # sẽ tính đúng mà chẳng bao giờ có cơ hội phát candidate. Phần mềm,
             # như thường lệ, rất giỏi hiểu chuyện trong im lặng tuyệt đối.
@@ -920,13 +979,21 @@ class SelfTurnPipeline:
                 language_hint=self._runtime_language(),
                 speech_language_hint=self._runtime_speech_language(),
             )
+        if (
+            payload
+            and self._is_claimed_continuation(plan)
+            and host._process_pending_user_input()
+        ):
+            # The model call may take longer than the intended pause. Re-check
+            # input immediately before commit so interruption remains real.
+            return host.running
         if not payload:
             host.logger.warning(
                 "[ai autonomous] public generation failed kind=%s subject=%s",
                 plan.semantics.turn_kind,
                 plan.semantics.subject_key,
             )
-            self._defer_conversation_arc(plan, reason="public_generation_failed", seconds=3.0)
+            self._defer_claimed_continuation(plan, reason="public_generation_failed", seconds=0.75)
             self._record_result(plan, result="generation_failed", gate_reason="public_generation_failed")
             host._sleep_interruptible(10)
             return True
@@ -979,6 +1046,8 @@ class SelfTurnPipeline:
                 turn_id=plan.plan_id,
                 base_version=host.ai_state_reducer.snapshot().version,
             ))
+        if plan.continuation_idempotency_key:
+            decision.director_trace_id = plan.continuation_idempotency_key
         text, assistant_meta = self.commit_public(
             decision,
             channel="autonomous",
@@ -987,7 +1056,7 @@ class SelfTurnPipeline:
         if text and discovery_id and discovery_runtime is not None:
             discovery_runtime.mark_spoken(discovery_id, text)
         if not text:
-            self._defer_conversation_arc(plan, reason="no_public_text", seconds=3.0)
+            self._defer_claimed_continuation(plan, reason="no_public_text", seconds=0.75)
             self._record_result(plan, result="stage_silence", gate_reason="no_public_text")
             host._sleep_interruptible(10)
             return True
@@ -997,6 +1066,16 @@ class SelfTurnPipeline:
         # Chỉ ghi nhận sau public commit thành công. Nếu Surface/TTS pipeline không
         # tạo được text, reminder vẫn còn due để thử lại thay vì bị mất oan.
         self.followup_appraisal.note_spoken(plan, now=host.last_autonomous_spoken_at)
+        social_continuation_runtime = getattr(host, "ai_social_continuation_runtime", None)
+        if social_continuation_runtime is not None:
+            try:
+                social_continuation_runtime.note_spoken(
+                    plan,
+                    text,
+                    now=host.last_autonomous_spoken_at,
+                )
+            except Exception as exc:
+                host.logger.debug("[social continuation] completion note failed: %s", exc)
         conversation_arc_runtime = getattr(host, "ai_conversation_arc_runtime", None)
         if conversation_arc_runtime is not None:
             try:
@@ -1007,6 +1086,12 @@ class SelfTurnPipeline:
                 )
             except Exception as exc:
                 host.logger.debug("[conversation arc] completion note failed: %s", exc)
+        social_agenda_store = getattr(host, "ai_social_agenda_store", None)
+        if social_agenda_store is not None:
+            try:
+                social_agenda_store.note_spoken(plan, now=host.last_autonomous_spoken_at)
+            except Exception as exc:
+                host.logger.debug("[social agenda] completion note failed: %s", exc)
         initiative = getattr(host, "ai_initiative_controller", None)
         if initiative is not None:
             initiative.record_spoken(plan, now=host.last_autonomous_spoken_at, channel="autonomous")
@@ -1062,7 +1147,14 @@ class SelfTurnPipeline:
         return True
 
 
-    def _defer_conversation_arc(
+    @staticmethod
+    def _is_claimed_continuation(plan: IntentionPlan, candidate: Any | None = None) -> bool:
+        lane = str(getattr(plan, "continuation_lane", "") or "").strip().lower()
+        if not lane and candidate is not None:
+            lane = str(getattr(candidate, "continuation_lane", "") or "").strip().lower()
+        return lane in {"afterbeat", "social_exposure", "conversation_arc", "social_agenda"}
+
+    def _defer_claimed_continuation(
         self,
         plan: IntentionPlan,
         *,
@@ -1070,14 +1162,65 @@ class SelfTurnPipeline:
         reason: str,
         seconds: float = 3.0,
     ) -> None:
+        lane = str(getattr(plan, "continuation_lane", "") or "").strip().lower()
+        if not lane and candidate is not None:
+            lane = str(getattr(candidate, "continuation_lane", "") or "").strip().lower()
+        if lane in {"afterbeat", "social_exposure"}:
+            runtime = getattr(self.host, "ai_social_continuation_runtime", None)
+            if runtime is None:
+                return
+            ticket_id = str(
+                getattr(plan, "continuation_ticket_id", "")
+                or getattr(candidate, "anchor_id", "")
+                or ""
+            ).strip()
+            claim_token = str(
+                getattr(plan, "continuation_claim_token", "")
+                or getattr(candidate, "claim_token", "")
+                or ""
+            ).strip()
+            if ticket_id:
+                try:
+                    runtime.release_claim(
+                        ticket_id=ticket_id,
+                        claim_token=claim_token,
+                        reason=reason,
+                        delay_seconds=min(float(seconds), 0.75 if lane == "afterbeat" else 1.5),
+                    )
+                except Exception as exc:
+                    self.host.logger.debug("[social continuation] defer failed: %s", exc)
+            return
+
+        if lane == "social_agenda":
+            store = getattr(self.host, "ai_social_agenda_store", None)
+            if store is None:
+                return
+            goal_id = str(
+                getattr(plan, "continuation_ticket_id", "")
+                or getattr(candidate, "anchor_id", "")
+                or ""
+            ).strip()
+            claim_token = str(
+                getattr(plan, "continuation_claim_token", "")
+                or getattr(candidate, "claim_token", "")
+                or ""
+            ).strip()
+            if goal_id:
+                try:
+                    store.release_claim(
+                        goal_id=goal_id,
+                        claim_token=claim_token,
+                        reason=reason,
+                        delay_seconds=min(float(seconds), 5.0),
+                    )
+                except Exception as exc:
+                    self.host.logger.debug("[social agenda] defer failed: %s", exc)
+            return
+
         semantics = getattr(plan, "semantics", None)
-        is_arc_plan = str(
-            getattr(semantics, "turn_kind", "") or ""
-        ).strip().lower() == "arc_continuation"
-        is_arc_candidate = str(
-            getattr(candidate, "kind", "") or ""
-        ).strip().lower() == "conversation_arc"
-        if not (is_arc_plan or is_arc_candidate):
+        is_arc_plan = str(getattr(semantics, "turn_kind", "") or "").strip().lower() == "arc_continuation"
+        is_arc_candidate = str(getattr(candidate, "kind", "") or "").strip().lower() == "conversation_arc"
+        if not (lane == "conversation_arc" or is_arc_plan or is_arc_candidate):
             return
         runtime = getattr(self.host, "ai_conversation_arc_runtime", None)
         if runtime is None:

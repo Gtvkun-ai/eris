@@ -268,6 +268,17 @@ class UserControlRuntimeMixin:
                     clock.mark_audio_started(timestamp)
                 else:
                     clock.mark_audio_finished(timestamp)
+                    social_continuation_runtime = getattr(self, "ai_social_continuation_runtime", None)
+                    if social_continuation_runtime is not None:
+                        try:
+                            social_continuation_runtime.notify_audio_finished(
+                                timestamp,
+                                source_turn_id=str(getattr(event, "turn_id", "") or ""),
+                            )
+                        except Exception as exc:
+                            logger = getattr(self, "logger", None)
+                            if logger is not None:
+                                logger.debug("[social continuation] audio anchor failed: %s", exc)
                     conversation_arc_runtime = getattr(self, "ai_conversation_arc_runtime", None)
                     if conversation_arc_runtime is not None:
                         try:
@@ -287,6 +298,17 @@ class UserControlRuntimeMixin:
         if clock is not None:
             clock.mark_interrupt(float(getattr(event, "timestamp", time.time()) or time.time()))
         text = str(getattr(event, "message", "") or "").strip()
+        interrupt_at = float(getattr(event, "timestamp", time.time()) or time.time())
+        social_continuation_runtime = getattr(self, "ai_social_continuation_runtime", None)
+        if social_continuation_runtime is not None:
+            try:
+                social_continuation_runtime.observe_user_signal(
+                    signal="interrupt" if text else "vad_start",
+                    text=text,
+                    now=interrupt_at,
+                )
+            except Exception as exc:
+                self.logger.debug("[social continuation] interrupt cancel failed: %s", exc)
         if text:
             self._capture_speech_interrupt_for_user(text, timestamp=float(getattr(event, "timestamp", time.time()) or time.time()))
         else:

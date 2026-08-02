@@ -88,9 +88,10 @@ def _enabled() -> bool:
 class ConversationBeat:
     objective: str
     role: str = "afterthought"
-    delay_seconds: float = 3.0
+    delay_seconds: float = 0.65
     tone: str = "neutral"
     max_sentences: int = 1
+    condition: str = ""
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any] | None) -> "ConversationBeat | None":
@@ -104,12 +105,14 @@ class ConversationBeat:
         tone = _compact(data.get("tone", "neutral"), 48).lower() or "neutral"
         if tone not in _ALLOWED_TONES:
             tone = "neutral"
+        default_delay = 8.0 if "condition" in data and "delay_seconds" not in data else 0.65
         return cls(
             objective=objective,
             role=role,
-            delay_seconds=_float(data.get("delay_seconds", 3.0), 3.0, minimum=1.2, maximum=45.0),
+            delay_seconds=_float(data.get("delay_seconds", default_delay), default_delay, minimum=0.25, maximum=30.0),
             tone=tone,
             max_sentences=_int(data.get("max_sentences", 1), 1, minimum=1, maximum=2),
+            condition=_compact(data.get("condition", ""), 220),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -134,6 +137,10 @@ class ConversationArc:
     last_spoken_text: str = ""
     last_spoken_at: float = 0.0
     interrupted_reason: str = ""
+    version: int = 1
+    claim_owner: str = ""
+    claim_until: float = 0.0
+    claim_token: str = ""
 
     @property
     def active(self) -> bool:
@@ -190,6 +197,10 @@ class ConversationArc:
             last_spoken_text=_compact(data.get("last_spoken_text", ""), 420),
             last_spoken_at=_float(data.get("last_spoken_at", 0.0), 0.0, minimum=0.0, maximum=10**12),
             interrupted_reason=_compact(data.get("interrupted_reason", ""), 120),
+            version=max(1, _int(data.get("version", 1), 1, minimum=1, maximum=10**9)),
+            claim_owner=_compact(data.get("claim_owner", ""), 120),
+            claim_until=_float(data.get("claim_until", 0.0), 0.0, minimum=0.0, maximum=10**12),
+            claim_token=_compact(data.get("claim_token", ""), 180),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -250,8 +261,11 @@ class ConversationArcRuntime:
         self._state = ConversationArcState.from_mapping(initial_state)
         self._timer_factory = timer_factory or threading.Timer
         self._timer: Any | None = None
-        self._expire_if_needed(self._clock())
-        self._arm_timer_locked()
+        with self._lock:
+            now = self._clock()
+            self._expire_if_needed(now)
+            self._repair_claim_after_restart_locked(now)
+            self._arm_timer_locked()
 
     def schedule_from_model(
         self,
@@ -434,27 +448,67 @@ class ConversationArcRuntime:
                 self._persist_locked()
             self._arm_timer_locked()
 
-    def due_candidate(
+    def claim_due(
         self,
         *,
+        worker_id: str,
         now: float | None = None,
         interaction_busy: bool = False,
+        lease_ms: int = 12000,
     ) -> SocialSpeechCandidate | None:
+        """Atomically reserve the current beat for one autonomous worker."""
+
         current = float(now if now is not None else self._clock())
+        owner = _compact(worker_id or "anonymous", 100) or "anonymous"
         with self._lock:
             self._expire_if_needed(current)
             arc = self._state.active_arc
             if arc is None or not arc.active or interaction_busy:
                 return None
+            if arc.claim_owner and arc.claim_until > current:
+                self._arm_timer_locked()
+                return None
+            if arc.claim_owner and arc.claim_until <= current:
+                arc = replace(
+                    arc,
+                    claim_owner="",
+                    claim_until=0.0,
+                    claim_token="",
+                    version=arc.version + 1,
+                    interrupted_reason="claim_lease_expired",
+                )
+                self._state = replace(
+                    self._state,
+                    version=self._state.version + 1,
+                    active_arc=arc,
+                    updated_at=current,
+                )
             beat = arc.current_beat
             if beat is None or current < arc.due_at():
                 self._arm_timer_locked()
                 return None
-            # IntentionPlan compacts topic aggressively. Put the beat objective
-            # first; recent public history already contains the actual first line.
+            next_version = arc.version + 1
+            token = f"{arc.arc_id}:beat:{arc.next_beat_index}:v{next_version}:{owner}"
+            claimed = replace(
+                arc,
+                version=next_version,
+                claim_owner=owner,
+                claim_until=current + max(0.5, min(45.0, int(lease_ms) / 1000.0)),
+                claim_token=token,
+            )
+            self._state = replace(
+                self._state,
+                version=self._state.version + 1,
+                active_arc=claimed,
+                updated_at=current,
+            )
+            self._persist_locked()
+            self._arm_timer_locked()
+
+            condition = f" Condition: {beat.condition}." if beat.condition else ""
             topic = (
-                f"Arc beat {beat.role}: {beat.objective}. "
-                f"Long-horizon goal: {arc.goal}. "
+                f"Arc beat {beat.role}: {beat.objective}.{condition} "
+                f"Long-horizon goal: {claimed.goal}. "
                 "Deliver one new self-contained callback after a real pause; do not repeat, "
                 "explain timing, mention the arc, or ask the user to wait."
             )
@@ -464,25 +518,48 @@ class ConversationArcRuntime:
                 topic=_compact(topic, 900),
                 speech_act=f"arc_{beat.role}",
                 anchor_type="conversation",
-                anchor_id=arc.arc_id,
+                anchor_id=claimed.arc_id,
                 evidence_refs=(),
                 requires_grounding=False,
                 confidence=0.94,
                 relevance=0.96,
-                urgency=0.84,
+                urgency=1.0,
                 tone=beat.tone,
-                reason=f"scheduled_arc_beat:{arc.next_beat_index + 1}/{len(arc.beats)}",
+                reason=f"reserved_arc_beat:{claimed.next_beat_index + 1}/{len(claimed.beats)}",
                 source="conversation_arc_runtime",
+                continuation_lane="conversation_arc",
+                claim_token=token,
+                idempotency_key=f"{claimed.arc_id}:beat:{claimed.next_beat_index}",
             )
+
+    def due_candidate(
+        self,
+        *,
+        now: float | None = None,
+        interaction_busy: bool = False,
+    ) -> SocialSpeechCandidate | None:
+        """Compatibility wrapper. New callers should supply a real worker ID."""
+
+        return self.claim_due(
+            worker_id="legacy_due_candidate",
+            now=now,
+            interaction_busy=interaction_busy,
+        )
 
     def note_spoken(self, plan: Any, text: str, *, now: float | None = None) -> bool:
         semantics = getattr(plan, "semantics", None)
         if str(getattr(semantics, "turn_kind", "") or "").strip().lower() != "arc_continuation":
             return False
         current = float(now if now is not None else self._clock())
+        claim_token = str(getattr(plan, "continuation_claim_token", "") or "").strip()
+        ticket_id = str(getattr(plan, "continuation_ticket_id", "") or getattr(semantics, "subject_key", "") or "").strip()
         with self._lock:
             arc = self._state.active_arc
             if arc is None or not arc.active:
+                return False
+            if ticket_id and ticket_id != arc.arc_id:
+                return False
+            if claim_token and claim_token != arc.claim_token:
                 return False
             next_index = arc.next_beat_index + 1
             done = next_index >= len(arc.beats)
@@ -493,6 +570,10 @@ class ConversationArcRuntime:
                 last_spoken_text=_compact(text, 420),
                 last_spoken_at=current,
                 status="completed" if done else "active",
+                version=arc.version + 1,
+                claim_owner="",
+                claim_until=0.0,
+                claim_token="",
             )
             self._state = replace(
                 self._state,
@@ -531,6 +612,10 @@ class ConversationArcRuntime:
                 arc,
                 anchor_at=max(arc.anchor_at, retry_at - beat_delay),
                 interrupted_reason=_compact(reason, 120),
+                version=arc.version + 1,
+                claim_owner="",
+                claim_until=0.0,
+                claim_token="",
             )
             self._state = replace(
                 self._state,
@@ -552,7 +637,8 @@ class ConversationArcRuntime:
         with self._lock:
             self._expire_if_needed(current)
             arc = self._state.active_arc
-            return bool(arc and arc.active and not interaction_busy and current >= arc.due_at())
+            claim_free = bool(arc and (not arc.claim_owner or arc.claim_until <= current))
+            return bool(arc and arc.active and claim_free and not interaction_busy and current >= arc.due_at())
 
     def snapshot(self, *, now: float | None = None) -> dict[str, Any]:
         current = float(now if now is not None else self._clock())
@@ -561,13 +647,39 @@ class ConversationArcRuntime:
             payload = self._state.to_dict()
             arc = self._state.active_arc
             payload["pending"] = bool(arc and arc.active)
-            payload["due"] = bool(arc and arc.active and current >= arc.due_at())
+            payload["reserved_continuation"] = bool(arc and arc.active)
+            payload["claimed"] = bool(arc and arc.claim_owner and arc.claim_until > current)
+            payload["due"] = bool(
+                arc and arc.active and current >= arc.due_at()
+                and (not arc.claim_owner or arc.claim_until <= current)
+            )
             payload["seconds_until_due"] = max(0.0, arc.due_at() - current) if arc and arc.active else 0.0
             return payload
 
     def shutdown(self) -> None:
         with self._lock:
             self._cancel_timer_locked()
+
+    def _repair_claim_after_restart_locked(self, now: float) -> None:
+        arc = self._state.active_arc
+        if arc is None or not arc.active or not arc.claim_owner:
+            return
+        repaired = replace(
+            arc,
+            claim_owner="",
+            claim_until=0.0,
+            claim_token="",
+            version=arc.version + 1,
+            anchor_at=max(arc.anchor_at, now - (arc.current_beat.delay_seconds if arc.current_beat else 0.0)),
+            interrupted_reason="claim_recovered_after_restart",
+        )
+        self._state = replace(
+            self._state,
+            version=self._state.version + 1,
+            active_arc=repaired,
+            updated_at=now,
+        )
+        self._persist_locked()
 
     def _expire_if_needed(self, now: float) -> None:
         arc = self._state.active_arc
@@ -590,7 +702,9 @@ class ConversationArcRuntime:
         arc = self._state.active_arc
         if arc is None or not arc.active or self._wake_callback is None:
             return
-        delay = max(0.05, arc.due_at() - self._clock())
+        now = self._clock()
+        target = arc.claim_until if arc.claim_owner and arc.claim_until > now else arc.due_at()
+        delay = max(0.05, target - now)
 
         def wake() -> None:
             try:

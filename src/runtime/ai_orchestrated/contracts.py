@@ -348,6 +348,10 @@ class IntentionPlan:
     semantics: TurnSemantics = field(default_factory=TurnSemantics)
     activity: ActivitySemantics = field(default_factory=ActivitySemantics)
     notes: str = ""
+    continuation_lane: str = ""
+    continuation_ticket_id: str = ""
+    continuation_claim_token: str = ""
+    continuation_idempotency_key: str = ""
 
     @classmethod
     def silence(cls, *, channel: str, reason: str = "no_valuable_intention") -> "IntentionPlan":
@@ -400,6 +404,10 @@ class IntentionPlan:
                 data.get("activity") if isinstance(data.get("activity"), Mapping) else {}
             ),
             notes=compact(data.get("notes", ""), 220),
+            continuation_lane=compact(data.get("continuation_lane", ""), 48).lower(),
+            continuation_ticket_id=compact(data.get("continuation_ticket_id", ""), 120),
+            continuation_claim_token=compact(data.get("continuation_claim_token", ""), 180),
+            continuation_idempotency_key=compact(data.get("continuation_idempotency_key", ""), 180),
         )
 
     @property

@@ -426,6 +426,16 @@ def _elevenlabs_float(name: str, default: float, low: float, high: float) -> flo
         return default
 
 
+def _effective_elevenlabs_speed(segment_speed: float, configured_speed: float) -> float:
+    """Provider-specific clamp documented by ElevenLabs: 0.7-1.2."""
+
+    try:
+        raw = float(segment_speed) * float(configured_speed) * 1.05
+    except (TypeError, ValueError):
+        raw = 1.0
+    return max(0.70, min(1.20, raw))
+
+
 # ── Emotion → Audio Tag mapping ───────────────────────────────────────────────
 # valence: [-1, 1]  arousal: [0, 1]  stance: string từ appraisal
 # Gemini audio tags: inline trong text, phải là tiếng Anh cho best results
@@ -824,7 +834,14 @@ def _synthesize_elevenlabs_wav(
         segment_speed = float(segment.get("speed", 1.0) or 1.0)
     except (TypeError, ValueError):
         segment_speed = 1.0
-    speed = max(0.90, min(1.25, segment_speed * _speech_speed() * 1.05))
+    configured_speed = _speech_speed()
+    speed = _effective_elevenlabs_speed(segment_speed, configured_speed)
+    logger.debug(
+        "[TTS ElevenLabs] configured_speed=%.3f segment_speed=%.3f effective_speed=%.3f",
+        configured_speed,
+        segment_speed,
+        speed,
+    )
 
     stability_base = _elevenlabs_float("ERIS_ELEVENLABS_STABILITY", 0.45, 0.0, 1.0)
     stability = max(0.30, min(0.65, stability_base))

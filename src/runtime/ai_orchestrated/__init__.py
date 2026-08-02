@@ -43,6 +43,24 @@ from .initiative import (
 )
 from .stage_planner import StagePlan, StagePlanner
 from .social_initiative import SocialInitiativeEngine, SocialSpeechCandidate
+from .conversation_arc import (
+    ConversationArc,
+    ConversationArcRuntime,
+    ConversationArcState,
+    ConversationBeat,
+)
+from .social_agenda import (
+    ScenePartnerState,
+    SocialAgendaState,
+    SocialAgendaStore,
+    SocialGoal,
+)
+from .social_continuation import (
+    ContinuationTicket,
+    SocialContinuationRuntime,
+    SocialContinuationState,
+)
+from .social_plan import empty_social_plan, normalize_social_plan
 from .panel_adapter import build_ai_panel_payload
 from .views import build_cognitive_views
 from .state_reducer import StateReducer
@@ -70,6 +88,19 @@ __all__ = [
     "SpeechIntent",
     "SocialInitiativeEngine",
     "SocialSpeechCandidate",
+    "ConversationArc",
+    "ConversationArcRuntime",
+    "ConversationArcState",
+    "ConversationBeat",
+    "ContinuationTicket",
+    "ScenePartnerState",
+    "SocialAgendaState",
+    "SocialAgendaStore",
+    "SocialContinuationRuntime",
+    "SocialContinuationState",
+    "SocialGoal",
+    "empty_social_plan",
+    "normalize_social_plan",
     "AppraisalState",
     "CognitiveObservation",
     "ConsequenceAssessment",
