@@ -113,8 +113,22 @@ class SelfTurnPipeline:
             return True
 
         now = time.time()
+        conversation_arc_runtime = getattr(host, "ai_conversation_arc_runtime", None)
+        clock = getattr(host, "interaction_clock", None)
+        interaction_busy = bool(getattr(clock, "busy", False)) if clock is not None else False
+        arc_due = False
+        if conversation_arc_runtime is not None:
+            try:
+                arc_due = bool(
+                    conversation_arc_runtime.is_due(
+                        now=now,
+                        interaction_busy=interaction_busy,
+                    )
+                )
+            except Exception as exc:
+                host.logger.debug("[conversation arc] due check failed: %s", exc)
         blocked_until = float(getattr(host, "autonomous_presence_blocked_until", 0.0) or 0.0)
-        if now < blocked_until:
+        if now < blocked_until and not arc_due:
             host._sleep_interruptible(min(4.0, max(0.2, blocked_until - now)))
             return True
 
@@ -149,8 +163,19 @@ class SelfTurnPipeline:
         blackboard = TypedCognitiveBlackboard.from_snapshot(planner_snapshot, now=now)
         candidate_started = time.monotonic()
         candidate = None
+        # Beat đã được main writer schedule có quyền đề xuất trước Social
+        # Initiative thông thường. Nó vẫn phải qua governor, grounding và Surface,
+        # nên đây không phải một timer lén phát audio từ thread phụ.
+        if conversation_arc_runtime is not None:
+            try:
+                candidate = conversation_arc_runtime.due_candidate(
+                    now=now,
+                    interaction_busy=interaction_busy,
+                )
+            except Exception as exc:
+                host.logger.debug("[conversation arc] candidate failed: %s", exc)
         social_engine = getattr(host, "ai_social_initiative_engine", None)
-        if social_engine is not None:
+        if candidate is None and social_engine is not None:
             candidate = social_engine.propose(blackboard, snapshot=planner_snapshot)
         candidate_ms = (time.monotonic() - candidate_started) * 1000.0
         initiative = getattr(host, "ai_initiative_controller", None)
@@ -211,10 +236,22 @@ class SelfTurnPipeline:
         )
 
         if decision.action is InitiativeAction.NO_OP:
+            self._defer_conversation_arc(
+                plan,
+                candidate=candidate,
+                reason=decision.reason,
+                seconds=1.5,
+            )
             return self._finish_silence(
                 plan=plan, context=context, activity=activity, gate_reason=decision.reason,
             )
         if decision.action is InitiativeAction.BODY_ONLY:
+            self._defer_conversation_arc(
+                plan,
+                candidate=candidate,
+                reason=decision.reason,
+                seconds=1.5,
+            )
             return self._finish_silence(
                 plan=plan, context=context, activity=activity, gate_reason=decision.reason,
                 force_body_only=True, body_motion=decision.body_motion,
@@ -232,6 +269,7 @@ class SelfTurnPipeline:
         if validator is not None:
             preflight = validator.validate_intent(speech_intent, blackboard)
             if not preflight.allowed:
+                self._defer_conversation_arc(plan, reason=preflight.reason, seconds=2.0)
                 return self._finish_silence(
                     plan=plan, context=context, activity=activity, gate_reason=preflight.reason,
                     force_body_only=bool(context.perception.mechanical_delta or activity.has_new_event),
@@ -272,6 +310,7 @@ class SelfTurnPipeline:
                 speech_intent.mode,
             )
         if not surface_payload:
+            self._defer_conversation_arc(plan, reason="surface_unavailable", seconds=3.0)
             public_lifecycle.transition(
                 "DEGRADED",
                 turn_id=lifecycle_turn_id,
@@ -324,6 +363,16 @@ class SelfTurnPipeline:
         if clock is not None and bool(getattr(clock, "busy", False)):
             time.sleep(0.2)
             return False
+        conversation_arc_runtime = getattr(host, "ai_conversation_arc_runtime", None)
+        if conversation_arc_runtime is not None:
+            try:
+                if conversation_arc_runtime.is_due(now=time.time(), interaction_busy=False):
+                    # Đây là câu kế tiếp của cùng một public arc, không phải một
+                    # chủ đề autonomous mới. Nó được phép dùng baton khi chat vẫn
+                    # fresh, miễn chat worker và playback đều đã rảnh.
+                    return True
+            except Exception as exc:
+                host.logger.debug("[conversation arc] baton check failed: %s", exc)
         stale_check = getattr(host, "_conversation_went_stale", None)
         if callable(stale_check) and stale_check():
             end_chat_cycle = getattr(host, "_end_chat_cycle", None)
@@ -622,6 +671,11 @@ class SelfTurnPipeline:
             "commentary_expectation": context.commentary.to_dict(),
             "engagement_context": dict(context.engagement_context),
             "engagement_interaction": context.engagement_interaction.to_dict(),
+            "conversation_arc": (
+                self.host.ai_conversation_arc_runtime.snapshot(now=perception.now)
+                if getattr(self.host, "ai_conversation_arc_runtime", None) is not None
+                else {"pending": False, "due": False}
+            ),
             "instruction": (
                 "This snapshot feeds a typed Social Initiative candidate generator. "
                 "Observer/inner/critic/memory contribute public-safe signals; they do not own public speech. "
@@ -677,7 +731,12 @@ class SelfTurnPipeline:
             probe_interval = min(180.0, max(45.0, soft_silence / 2.0))
         quiet_opportunity = context.seconds_since_assistant >= soft_silence
         presence_probe_due = quiet_opportunity and now - self._last_probe_at >= probe_interval
+        conversation_arc = snapshot.get("conversation_arc")
+        conversation_arc_due = bool(
+            isinstance(conversation_arc, Mapping) and conversation_arc.get("due")
+        )
         checks = (
+            (conversation_arc_due, "conversation_arc_due"),
             # Hai trạng thái này phải đánh thức pipeline ngay, nếu không lớp mới
             # sẽ tính đúng mà chẳng bao giờ có cơ hội phát candidate. Phần mềm,
             # như thường lệ, rất giỏi hiểu chuyện trong im lặng tuyệt đối.
@@ -867,6 +926,7 @@ class SelfTurnPipeline:
                 plan.semantics.turn_kind,
                 plan.semantics.subject_key,
             )
+            self._defer_conversation_arc(plan, reason="public_generation_failed", seconds=3.0)
             self._record_result(plan, result="generation_failed", gate_reason="public_generation_failed")
             host._sleep_interruptible(10)
             return True
@@ -927,6 +987,7 @@ class SelfTurnPipeline:
         if text and discovery_id and discovery_runtime is not None:
             discovery_runtime.mark_spoken(discovery_id, text)
         if not text:
+            self._defer_conversation_arc(plan, reason="no_public_text", seconds=3.0)
             self._record_result(plan, result="stage_silence", gate_reason="no_public_text")
             host._sleep_interruptible(10)
             return True
@@ -936,6 +997,16 @@ class SelfTurnPipeline:
         # Chỉ ghi nhận sau public commit thành công. Nếu Surface/TTS pipeline không
         # tạo được text, reminder vẫn còn due để thử lại thay vì bị mất oan.
         self.followup_appraisal.note_spoken(plan, now=host.last_autonomous_spoken_at)
+        conversation_arc_runtime = getattr(host, "ai_conversation_arc_runtime", None)
+        if conversation_arc_runtime is not None:
+            try:
+                conversation_arc_runtime.note_spoken(
+                    plan,
+                    text,
+                    now=host.last_autonomous_spoken_at,
+                )
+            except Exception as exc:
+                host.logger.debug("[conversation arc] completion note failed: %s", exc)
         initiative = getattr(host, "ai_initiative_controller", None)
         if initiative is not None:
             initiative.record_spoken(plan, now=host.last_autonomous_spoken_at, channel="autonomous")
@@ -990,6 +1061,31 @@ class SelfTurnPipeline:
         )))
         return True
 
+
+    def _defer_conversation_arc(
+        self,
+        plan: IntentionPlan,
+        *,
+        candidate: Any | None = None,
+        reason: str,
+        seconds: float = 3.0,
+    ) -> None:
+        semantics = getattr(plan, "semantics", None)
+        is_arc_plan = str(
+            getattr(semantics, "turn_kind", "") or ""
+        ).strip().lower() == "arc_continuation"
+        is_arc_candidate = str(
+            getattr(candidate, "kind", "") or ""
+        ).strip().lower() == "conversation_arc"
+        if not (is_arc_plan or is_arc_candidate):
+            return
+        runtime = getattr(self.host, "ai_conversation_arc_runtime", None)
+        if runtime is None:
+            return
+        try:
+            runtime.defer_current_beat(seconds=seconds, reason=reason)
+        except Exception as exc:
+            self.host.logger.debug("[conversation arc] defer failed: %s", exc)
 
     def _record_result(self, plan: IntentionPlan, *, result: str, gate_reason: str) -> None:
         """Đẩy metric typed; lỗi quan sát không được làm gãy public turn."""

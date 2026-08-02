@@ -268,6 +268,14 @@ class UserControlRuntimeMixin:
                     clock.mark_audio_started(timestamp)
                 else:
                     clock.mark_audio_finished(timestamp)
+                    conversation_arc_runtime = getattr(self, "ai_conversation_arc_runtime", None)
+                    if conversation_arc_runtime is not None:
+                        try:
+                            conversation_arc_runtime.notify_audio_finished(timestamp)
+                        except Exception as exc:
+                            logger = getattr(self, "logger", None)
+                            if logger is not None:
+                                logger.debug("[conversation arc] audio anchor failed: %s", exc)
             self._emit_stage_protocol_state(f"{event.type}_ack", data=event.to_meta())
             return
 
@@ -283,7 +291,17 @@ class UserControlRuntimeMixin:
             self._capture_speech_interrupt_for_user(text, timestamp=float(getattr(event, "timestamp", time.time()) or time.time()))
         else:
             # Voice-start interrupt: chưa có STT text, nhưng sân khấu phải dừng
-            # ngay để Eris không đọc đè lên người dùng.
+            # ngay để Eris không đọc đè lên người dùng. Setup chưa phát trọn thì
+            # callback sau đó cũng mất nghĩa, nên hủy arc thay vì để punchline mồ côi.
+            conversation_arc_runtime = getattr(self, "ai_conversation_arc_runtime", None)
+            if conversation_arc_runtime is not None:
+                try:
+                    conversation_arc_runtime.cancel_active(
+                        reason="setup_audio_interrupted",
+                        now=float(getattr(event, "timestamp", time.time()) or time.time()),
+                    )
+                except Exception as exc:
+                    self.logger.debug("[conversation arc] interrupt cancel failed: %s", exc)
             try:
                 self._ensure_voice_manager().interrupt_signal(
                     reason=str(getattr(event, "reason", "") or "frontend_interrupt")

@@ -68,6 +68,7 @@ def _autonomous_surface_policy() -> dict[str, Any]:
 
 _ALLOWED_KINDS = {
     "continuation",
+    "conversation_arc",
     "followup_reminder",
     "task_followup",
     "discovery_share",
@@ -574,6 +575,7 @@ class SocialInitiativeEngine:
             # contracts. Keep the mapping explicit rather than guessing by text.
             expected = {
                 "continuation": "conversation",
+                "conversation_arc": "conversation",
                 "task_followup": "task",
                 "discovery_share": "discovery",
                 "screen_comment": "screen",

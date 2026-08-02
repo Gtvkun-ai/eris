@@ -575,6 +575,46 @@ UTTERANCE_SCHEMA: dict[str, Any] = {
     },
 }
 
+
+CONVERSATION_ARC_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "decision", "arc_id", "thread_key", "goal",
+        "user_reply_policy", "expires_after_seconds", "beats",
+    ],
+    "properties": {
+        "decision": {"type": "string", "enum": ["none", "schedule"]},
+        "arc_id": {"type": "string"},
+        "thread_key": {"type": "string"},
+        "goal": {"type": "string"},
+        "user_reply_policy": {"type": "string", "enum": ["cancel", "replan"]},
+        "expires_after_seconds": {"type": "number", "minimum": 15.0, "maximum": 600.0},
+        "beats": {
+            "type": "array",
+            "maxItems": 3,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["role", "objective", "delay_seconds", "tone", "max_sentences"],
+                "properties": {
+                    "role": {
+                        "type": "string",
+                        "enum": [
+                            "callback", "reveal", "punchline", "escalate",
+                            "soften", "reconsider", "return_to_goal", "afterthought"
+                        ],
+                    },
+                    "objective": {"type": "string"},
+                    "delay_seconds": {"type": "number", "minimum": 1.2, "maximum": 45.0},
+                    "tone": PERFORMANCE_PRESET_SCHEMA,
+                    "max_sentences": {"type": "integer", "minimum": 1, "maximum": 2},
+                },
+            },
+        },
+    },
+}
+
 SURFACE_REALIZATION_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -598,6 +638,9 @@ PUBLIC_REPLY_SCHEMA: dict[str, Any] = {
         "assistant_act": ASSISTANT_ACT_SCHEMA,
         "should_speak": {"type": "boolean"},
         "utterance": UTTERANCE_SCHEMA,
+        # Optional for backward compatibility with older providers.  When present,
+        # this stores semantic objectives for later autonomous beats, never canned text.
+        "conversation_arc": CONVERSATION_ARC_SCHEMA,
     },
 }
 
@@ -657,7 +700,7 @@ INTENTION_PLAN_SCHEMA: dict[str, Any] = {
                 "turn_kind": {
                     "type": "string",
                     "enum": [
-                        "chat_response", "continuation", "environment", "activity_event",
+                        "chat_response", "continuation", "arc_continuation", "environment", "activity_event",
                         "discovery", "internal", "presence", "startup", "force_speak", "other"
                     ],
                 },
@@ -1117,6 +1160,12 @@ class AIRuntimeModelRouter:
             "Memory chỉ là continuity, không chứng minh hiện tại. Grounding là nguồn thật cho màn hình/file/tool. "
             "Planner đã sở hữu tool intent; bạn không chọn, đổi hay claim tool đã thành công. "
             "utterance.performance.preset chỉ là một preset sân khấu ngắn; intensity nằm trong 0..1 và nonverbal là cue ngắn, không viết stage direction vào text. "
+            "Ngoài câu hiện tại, bạn có thể tạo conversation_arc để giữ một mục tiêu diễn xuất qua nhiều public turn. "
+            "Chỉ decision=schedule khi một nhịp thứ hai sau khoảng lặng thật sự làm câu nói có duyên hơn: callback, reconsider, reveal, soften hoặc punchline. "
+            "conversation_arc.goal và beats[].objective là MỤC TIÊU NGỮ NGHĨA, tuyệt đối không viết sẵn câu thoại thứ hai. Câu hiện tại phải tự đủ nghĩa. "
+            "Dùng 1-3 beat, thường chỉ 1; delay 1.2-8 giây cho timing hội thoại, dài hơn chỉ khi có lý do. user_reply_policy=replan để nhường user và thích nghi nếu họ chen vào. "
+            "Không schedule sau câu hỏi, repair/xin lỗi, tool/action, hướng dẫn nghiêm túc, nội dung nhạy cảm hoặc câu trả lời thông thường không cần nhịp nối. "
+            "Khi không cần, trả conversation_arc.decision=none với beats rỗng và các field chuỗi rỗng. "
             "Trong CÙNG JSON, sinh semantic_frame.v1, assistant_act, should_speak và utterance. semantic_frame chỉ mô tả lượt USER hiện tại; "
             "assistant_act chỉ mô tả câu ERIS sắp nói, tuyệt đối không chép user_act sang assistant turn. Dùng toàn bộ chat history và "
             "Discourse state: history_turn_map ánh xạ message theo vị trí sang turn_index nhưng không lặp text. "
@@ -1368,6 +1417,11 @@ class AIRuntimeModelRouter:
             # dùng chúng để không parse lại cùng contract lần thứ hai.
             "_typed_semantic_frame": validation.frame,
             "_typed_assistant_act": assistant_validation.act,
+            "conversation_arc": (
+                dict(data.get("conversation_arc", {}))
+                if isinstance(data.get("conversation_arc"), Mapping)
+                else {}
+            ),
             **flattened,
             "should_speak": bool(data.get("should_speak", True)),
             "system_action": str(tool_intent or ""),
@@ -2299,6 +2353,8 @@ class AIRuntimeModelRouter:
             "Nếu anchor là screen, chỉ dùng literal app/window/evidence được đưa; không đoán user đang thắng, thua, buồn hay định làm gì. "
             "Nếu anchor là semantic_scene, dùng shared_semantic_context làm baseline: fact được nói thẳng, inference phải dè dặt, "
             "unknown tuyệt đối không tự lấp; không đọc lại raw OCR và không nhắc contract nội bộ. "
+            "Nếu speech_intent.plan.semantics.turn_kind=arc_continuation, đây là beat kế tiếp của một conversation arc: "
+            "giữ đúng long-horizon goal và beat objective trong topic, tạo một câu mới sau khoảng lặng, không lặp câu trước, không giải thích setup hay nhắc hệ thống. "
             "Nếu anchor là self, chỉ surface seed đã được duyệt, không lộ raw thought. Nếu speech_act=followup_reminder, "
             "nhắc lại đúng một lần bằng một câu ngắn, giả định user chưa để ý, không nhắc chuyện bị lờ và không thêm câu hỏi mới. "
             "Nếu speech_act=independent_topic_shift, bỏ hẳn chủ đề cũ, nói một ý khác tự đủ nghĩa với giọng hơi dè lại; không dỗi, "
@@ -2483,6 +2539,7 @@ __all__ = [
     "OBJECTIVE_OBSERVATION_SCHEMA",
     "PERSONALITY_REFLECTION_SCHEMA",
     "INTENTION_PLAN_SCHEMA",
+    "CONVERSATION_ARC_SCHEMA",
     "PUBLIC_REPLY_SCHEMA",
     "SOCIAL_INITIATIVE_SCHEMA", "SURFACE_INTENT_SCHEMA", "SURFACE_REALIZATION_SCHEMA",
     "SEMANTIC_FRAME_SCHEMA",

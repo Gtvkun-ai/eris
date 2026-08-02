@@ -69,6 +69,9 @@ class InitiativeProfile:
 
 _PROFILES: dict[str, InitiativeProfile] = {
     "continuation": InitiativeProfile("continuation", 20.0, 8.0, 20, 180.0),
+    # A planned beat is part of one already-approved public arc, not a fresh
+    # attempt to seize the microphone. It still has a finite budget.
+    "arc_continuation": InitiativeProfile("arc_continuation", 1.0, 0.8, 60, 12.0),
     "environment": InitiativeProfile("environment", 32.0, 12.0, 24, 180.0),
     "activity_event": InitiativeProfile("activity_event", 12.0, 6.0, 24, 120.0),
     "discovery": InitiativeProfile("discovery", 1800.0, 90.0, 2, 7200.0),
@@ -251,7 +254,16 @@ class InitiativeController:
             and candidate is not None
             and getattr(candidate, "kind", "") == "followup_reminder"
         )
-        if blackboard.reply_expected and not chess_event_override and not reminder_override:
+        arc_override = bool(
+            candidate is not None
+            and getattr(candidate, "kind", "") == "conversation_arc"
+        )
+        if (
+            blackboard.reply_expected
+            and not chess_event_override
+            and not reminder_override
+            and not arc_override
+        ):
             action = InitiativeAction.BODY_ONLY if has_delta and not blackboard.privacy_blocked else InitiativeAction.NO_OP
             return InitiativeDecision(action, "waiting_for_user_reply", silence, body_motion="quiet_presence")
         if blackboard.user_busy:
@@ -289,7 +301,7 @@ class InitiativeController:
             anchor_type=anchor_type,
             anchor_id=anchor_id,
             evidence_refs=refs,
-            max_sentences=2,
+            max_sentences=1 if getattr(candidate, "kind", "") == "conversation_arc" else 2,
         )
         return InitiativeDecision(
             InitiativeAction.SPEECH,
@@ -348,6 +360,7 @@ class InitiativeController:
         refs = tuple(candidate.evidence_refs[:5])
         mode_map = {
             "continuation": ("continuation", "soft", "continuation", "conversation"),
+            "conversation_arc": ("continuation", "playful", "arc_continuation", "conversation"),
             "followup_reminder": ("continuation", "gentle_reminder", "continuation", "conversation"),
             "task_followup": ("task_followup", "focused", "activity_event", "task"),
             "discovery_share": ("discovery_share", "curious", "discovery", "discovery"),
@@ -371,11 +384,13 @@ class InitiativeController:
             "discovery_share": "discovery_artifact",
             "task_followup": "engagement_runtime",
             "continuation": "conversation",
+            "conversation_arc": "conversation_arc",
             "followup_reminder": "conversation",
             "inner_thought": "self_context",
         }.get(kind, "social_context")
         strategy = {
             "continuation": "continue_public_thread",
+            "conversation_arc": "continue_conversation_arc",
             "followup_reminder": "gentle_followup_reminder",
             "task_followup": "preserve_active_engagement",
             "discovery_share": "share_discovery",
@@ -432,7 +447,13 @@ class InitiativeController:
                 "speech_act": candidate.speech_act or kind,
                 "subject_key": subject_key,
                 "evidence_scope": evidence_scope,
-                "continuation_key": blackboard.thread_key if kind in {"continuation", "followup_reminder"} else "none",
+                "continuation_key": (
+                    candidate.anchor_id
+                    if kind == "conversation_arc"
+                    else blackboard.thread_key
+                    if kind in {"continuation", "followup_reminder"}
+                    else "none"
+                ),
             },
             "notes": f"social_candidate source={candidate.source} reason={candidate.reason}",
         }

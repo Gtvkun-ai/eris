@@ -393,6 +393,24 @@ class AIChatOrchestrator:
         turn_id = str(getattr(user_turn, "turn_id", "") or f"session_turn:{turn_seq}")
         user_meta["ai_turn_seq"] = turn_seq
 
+        # Một public arc phải nhường lời ngay khi user chen vào. Runtime trả lại
+        # mục tiêu/beat còn dang dở cho main writer để nó thích nghi theo câu mới,
+        # thay vì autonomous cố đọc punchline cũ lên đầu người dùng.
+        arc_interruption_context: dict[str, Any] = {}
+        conversation_arc_runtime = getattr(host, "ai_conversation_arc_runtime", None)
+        if conversation_arc_runtime is not None:
+            try:
+                arc_interruption_context = dict(
+                    conversation_arc_runtime.observe_user_turn(
+                        user_text=user_text,
+                        user_turn_seq=turn_seq,
+                        now=cycle_start,
+                    )
+                    or {}
+                )
+            except Exception as exc:
+                host.logger.debug("[conversation arc] user-turn yield failed: %s", exc)
+
         # Grounding quyết định nguồn sự thật, không quyết định cảm xúc hay wording.
         pre_grounding = host._build_chat_source_grounding_report(
             user_text=user_text,
@@ -507,6 +525,14 @@ class AIChatOrchestrator:
                 )
             except Exception as exc:
                 host.logger.debug("[typed discourse] prompt context failed: %s", exc)
+        if arc_interruption_context:
+            arc_prompt = (
+                "CONVERSATION_ARC_INTERRUPTION:\n"
+                + json.dumps(arc_interruption_context, ensure_ascii=False, separators=(",", ":"))
+            )
+            discourse_context = "\n\n".join(
+                part for part in (discourse_context, arc_prompt) if str(part).strip()
+            )
 
         personality_context = mind_state.personality_prompt_context()
         relationship_context = mind_state.relationship.prompt_summary()
@@ -561,6 +587,7 @@ class AIChatOrchestrator:
             "discovery": discovery_context,
             "engagement_context": engagement_context,
             "discourse_context": discourse_context,
+            "conversation_arc_interruption": arc_interruption_context,
             "user_addressing": (
                 host._user_addressing_snapshot()
                 if callable(getattr(host, "_user_addressing_snapshot", None))
@@ -995,6 +1022,47 @@ class AIChatOrchestrator:
             assistant_meta_extra=assistant_discourse_meta,
             idempotency_key=f"chat:{turn_id}:assistant",
         )
+        # Chỉ schedule sau khi câu thứ nhất thật sự commit thành công. Model giữ
+        # mục tiêu semantic; autonomous Surface Worker sẽ viết câu thứ hai ở thời
+        # điểm phát, vì queue một câu soạn sẵn chỉ là notification đội tóc giả.
+        arc_payload = payload.get("conversation_arc") if isinstance(payload, Mapping) else None
+        if (
+            public_text
+            and assistant_meta is not None
+            and isinstance(arc_payload, Mapping)
+            and conversation_arc_runtime is not None
+            and str(getattr(decision, "parse_mode", "") or "") not in {
+                "typed_discourse_fallback",
+                "authoritative_chess_result",
+                "chess_surface_unavailable",
+            }
+            and not bool(getattr(decision, "failure_meta", None))
+        ):
+            try:
+                scheduled = conversation_arc_runtime.schedule_from_model(
+                    arc_payload,
+                    source_turn_id=turn_id,
+                    source_text=public_text,
+                    source_turn_seq=turn_seq,
+                    semantic_frame=typed_frame.to_dict() if typed_frame is not None else {},
+                    assistant_act=assistant_act.to_dict(),
+                    now=time.time(),
+                )
+                # Frontend playback thường chậm hơn việc schedule vài mili-giây,
+                # nhưng nếu audio cực ngắn đã báo done trước khi _commit trả về,
+                # khôi phục đúng mốc pause từ InteractionClock.
+                clock = getattr(host, "interaction_clock", None)
+                if scheduled and clock is not None:
+                    audio_finished_at = float(getattr(clock, "audio_finished_at", 0.0) or 0.0)
+                    assistant_text_at = float(getattr(clock, "assistant_text_at", 0.0) or 0.0)
+                    if (
+                        audio_finished_at > 0.0
+                        and audio_finished_at >= assistant_text_at
+                        and not bool(getattr(clock, "audio_active", False))
+                    ):
+                        conversation_arc_runtime.notify_audio_finished(audio_finished_at)
+            except Exception as exc:
+                host.logger.debug("[conversation arc] schedule failed: %s", exc)
         if public_text and discovery_id and discovery_runtime is not None:
             discovery_runtime.mark_spoken(discovery_id, public_text)
         host.last_user_text_for_semantics = user_text

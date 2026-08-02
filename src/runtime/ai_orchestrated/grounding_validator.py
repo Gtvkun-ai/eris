@@ -73,7 +73,10 @@ class AutonomousGroundingValidator:
                 and blackboard.followup_reminder_count <= 0
                 and str(intent.plan.semantics.speech_act or "").strip().lower() == "followup_reminder"
             )
-            if not is_single_reminder:
+            is_planned_arc_beat = str(
+                intent.plan.semantics.turn_kind or ""
+            ).strip().lower() == "arc_continuation"
+            if not (is_single_reminder or is_planned_arc_beat):
                 return GroundingDecision(False, "waiting_for_user_reply", "conversation_baton_owned_by_user")
         if intent.anchor_type == "self" and not blackboard.public_seed_ready:
             return GroundingDecision(False, "private_seed_not_public", "private_cognition_boundary")
