@@ -2,7 +2,10 @@ from pathlib import Path
 
 
 def test_memory_panel_uses_compact_responsive_empty_state():
-    source = (Path(__file__).parents[2] / "body" / "UdpListener.MemoryPanel.cs").read_text(encoding="utf-8")
+    body_source = Path(__file__).parents[2] / "body" / "UdpListener.MemoryPanel.cs"
+    if not body_source.exists():
+        body_source = Path(__file__).parents[1] / "integration" / "body_contracts" / "UdpListener.MemoryPanel.cs"
+    source = body_source.read_text(encoding="utf-8")
     assert "MemoryPanelPreferredSize = new(1040f, 680f)" in source
     assert "MemoryPanelAbsoluteMinSize = new(900f, 600f)" in source
     assert "_memoryDetailEmpty" in source

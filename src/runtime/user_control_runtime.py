@@ -254,9 +254,17 @@ class UserControlRuntimeMixin:
             self._handle_stage_interrupt_event(event)
             return
 
+        if event.type in {"vad_start", "partial_asr", "final_asr", "laugh", "backchannel"}:
+            self._handle_voice_observation_event(event)
+            return
+
         if event.type == "avatar_ready":
             self.avatar_ready = True
             self._emit_stage_protocol_state("avatar_ready_ack", data=event.to_meta())
+            return
+
+        if event.type == "audio_playback_aborted":
+            self._handle_audio_playback_aborted(event)
             return
 
         if event.type in {"audio_playback_started", "audio_playback_done"}:
@@ -292,6 +300,80 @@ class UserControlRuntimeMixin:
 
         if event.type == "stage_ack":
             self._emit_stage_protocol_state("stage_ack_received", data=event.to_meta())
+
+    def _handle_voice_observation_event(self, event) -> None:
+        """Route VAD/ASR/laughter/backchannel into continuation invalidation.
+
+        These signals arrive before a normal chat turn exists. They therefore do
+        not synthesize user messages; they only settle floor ownership and the
+        reaction window. Final ASR continues through the ordinary inbound chat
+        path, while this early edge prevents a stale afterbeat from escaping.
+        """
+
+        signal = str(getattr(event, "type", "") or "").strip().lower()
+        text = str(getattr(event, "message", "") or "").strip()
+        observed_at = float(getattr(event, "timestamp", time.time()) or time.time())
+        speech_signal = signal in {"vad_start", "partial_asr", "final_asr"}
+        if speech_signal:
+            clock = getattr(self, "interaction_clock", None)
+            if clock is not None:
+                try:
+                    clock.mark_interrupt(observed_at)
+                except Exception:
+                    pass
+            try:
+                self._ensure_voice_manager().interrupt_signal(reason=signal)
+            except Exception as exc:
+                self.logger.debug("[voice-event] playback interrupt failed: %s", exc)
+
+        continuation = getattr(self, "ai_social_continuation_runtime", None)
+        if continuation is not None:
+            try:
+                continuation.observe_user_signal(signal=signal, text=text, now=observed_at)
+            except Exception as exc:
+                self.logger.debug("[social continuation] voice signal failed: %s", exc)
+
+        if speech_signal:
+            arc = getattr(self, "ai_conversation_arc_runtime", None)
+            if arc is not None:
+                try:
+                    arc.cancel_active(reason=f"user_{signal}", now=observed_at)
+                except Exception as exc:
+                    self.logger.debug("[conversation arc] voice signal cancel failed: %s", exc)
+
+        try:
+            from runtime.observability import GLOBAL_OBSERVABILITY
+            GLOBAL_OBSERVABILITY.increment(
+                "eris_voice_floor_signals_total",
+                tags={"signal": signal},
+                fields={"has_text": bool(text), "turn_id": str(getattr(event, "turn_id", "") or "")},
+            )
+        except Exception:
+            pass
+        self._emit_stage_protocol_state(f"{signal}_ack", data=event.to_meta())
+
+    def _handle_audio_playback_aborted(self, event) -> None:
+        aborted_at = float(getattr(event, "timestamp", time.time()) or time.time())
+        reason = str(getattr(event, "reason", "") or "frontend_playback_aborted")
+        clock = getattr(self, "interaction_clock", None)
+        if clock is not None:
+            try:
+                clock.mark_interrupt(aborted_at)
+            except Exception:
+                pass
+        continuation = getattr(self, "ai_social_continuation_runtime", None)
+        if continuation is not None:
+            try:
+                continuation.cancel_all(reason=reason, now=aborted_at)
+            except Exception as exc:
+                self.logger.debug("[social continuation] playback abort cancel failed: %s", exc)
+        arc = getattr(self, "ai_conversation_arc_runtime", None)
+        if arc is not None:
+            try:
+                arc.cancel_active(reason=reason, now=aborted_at)
+            except Exception as exc:
+                self.logger.debug("[conversation arc] playback abort cancel failed: %s", exc)
+        self._emit_stage_protocol_state("audio_playback_aborted_ack", reason=reason, data=event.to_meta())
 
     def _handle_stage_interrupt_event(self, event) -> None:
         clock = getattr(self, "interaction_clock", None)

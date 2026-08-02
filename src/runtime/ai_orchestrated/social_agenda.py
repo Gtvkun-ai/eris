@@ -8,6 +8,7 @@ initiative governor still owns the microphone.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import re
 import threading
 import time
@@ -15,6 +16,7 @@ import uuid
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Callable, Mapping, Sequence
 
+from .atomic_state import SQLiteAtomicStateStore, SQLiteStateTransaction
 from .social_initiative import SocialSpeechCandidate
 from .social_plan import normalize_agenda_update
 
@@ -220,14 +222,23 @@ class SocialAgendaStore:
         logger: Any | None = None,
         clock: Callable[[], float] | None = None,
         allow_cross_session_memory: bool = False,
+        atomic_store: SQLiteAtomicStateStore | None = None,
+        atomic_key: str = "eris.social_agenda",
     ) -> None:
         self._clock = clock or time.time
         self._persist = persist
+        self._atomic_store = atomic_store
+        self._atomic_key = str(atomic_key or "eris.social_agenda")
+        self._atomic_tx: SQLiteStateTransaction | None = None
         self._logger = logger
         self._allow_cross_session_memory = bool(allow_cross_session_memory)
         self._lock = threading.RLock()
         self._state = SocialAgendaState.from_mapping(initial_state)
-        self._expire_stale(self._clock())
+        if self._atomic_store is not None:
+            record = self._atomic_store.ensure(self._atomic_key, self._state.to_dict())
+            self._state = SocialAgendaState.from_mapping(record.payload)
+        with self._lock, self._state_transaction_locked():
+            self._expire_stale(self._clock())
 
     def apply_update(
         self,
@@ -242,7 +253,7 @@ class SocialAgendaStore:
         if decision == "none":
             return False
         current = float(now if now is not None else self._clock())
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             goals = list(self._state.goals)
             target_index = self._find_goal_index(goals, proposal["goal_type"])
             if decision == "open":
@@ -350,7 +361,7 @@ class SocialAgendaStore:
         boundary = bool(_BOUNDARY_RE.search(text))
         low = normalized in _LOW_ENGAGEMENT or (0 < len(normalized) <= 3 and "?" not in normalized)
         result = {"boundary": boundary, "low_engagement": low, "closed": 0}
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             goals = list(self._state.goals)
             for index, goal in enumerate(goals):
                 if not goal.active:
@@ -437,7 +448,7 @@ class SocialAgendaStore:
         current = float(now if now is not None else self._clock())
         response = _norm(outcome.get("actual_response", ""))
         positive = any(token in response for token in ("laugh", "cười", "haha", "counter", "笑"))
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             partner = self._state.scene_partner
             estimate = partner.tease_tolerance_estimate + (0.06 if positive else -0.03)
             confidence = partner.tease_tolerance_confidence + 0.04
@@ -479,7 +490,7 @@ class SocialAgendaStore:
         seconds_since_user = float(getattr(blackboard, "seconds_since_user", 0.0) or 0.0)
         if user_busy or reply_expected or seconds_since_user < 18.0:
             return None
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             self._expire_stale(current)
             goals = list(self._state.goals)
             changed = False
@@ -574,7 +585,7 @@ class SocialAgendaStore:
         now: float | None = None,
     ) -> bool:
         current = float(now if now is not None else self._clock())
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             goals = list(self._state.goals)
             for index, goal in enumerate(goals):
                 if goal.goal_id != goal_id or not goal.claim_token:
@@ -618,7 +629,7 @@ class SocialAgendaStore:
         ).strip()
         claim_token = str(getattr(plan, "continuation_claim_token", "") or "").strip()
         current = float(now if now is not None else self._clock())
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             goals = list(self._state.goals)
             for index, goal in enumerate(goals):
                 if goal.goal_id != goal_id or not goal.active or not goal.claim_token:
@@ -681,7 +692,7 @@ class SocialAgendaStore:
 
     def snapshot(self, *, now: float | None = None) -> dict[str, Any]:
         current = float(now if now is not None else self._clock())
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             self._expire_stale(current)
             payload = self._state.to_dict()
             payload["active_goal_count"] = sum(1 for goal in self._state.goals if goal.active)
@@ -702,7 +713,7 @@ class SocialAgendaStore:
         )
 
     def _expire_stale(self, now: float) -> None:
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             goals = list(self._state.goals)
             changed = False
             for index, goal in enumerate(goals):
@@ -784,11 +795,33 @@ class SocialAgendaStore:
         events.append({"kind": kind, "timestamp": now, **fields})
         return tuple(events[-60:])
 
+    @contextmanager
+    def _state_transaction_locked(self):
+        """Reload and mutate one durable snapshot under a process-safe DB lock."""
+        if self._atomic_store is None or self._atomic_tx is not None:
+            yield
+            return
+        with self._atomic_store.transaction(self._atomic_key, self._state.to_dict()) as tx:
+            self._state = SocialAgendaState.from_mapping(tx.payload)
+            self._atomic_tx = tx
+            try:
+                yield
+            finally:
+                self._atomic_tx = None
+
     def _persist_locked(self) -> None:
+        payload = self._state.to_dict()
+        if self._atomic_tx is not None:
+            self._atomic_tx.stage(payload)
+        elif self._atomic_store is not None:
+            try:
+                self._atomic_store.replace(self._atomic_key, payload)
+            except Exception as exc:
+                self._log("debug", "[atomic state] persistence failed: %s", exc)
         if self._persist is None:
             return
         try:
-            self._persist(self._state.to_dict())
+            self._persist(payload)
         except Exception as exc:
             self._log("debug", "[social agenda] persistence failed: %s", exc)
 
@@ -796,11 +829,19 @@ class SocialAgendaStore:
         self._log("info", "[social agenda] %s %s", event, fields)
         try:
             from runtime.observability import GLOBAL_OBSERVABILITY
+            tags = {"goal_type": str(fields.get("goal_type", "")), "event": str(event)}
             GLOBAL_OBSERVABILITY.log(
                 f"social_agenda.{event}",
-                tags={"goal_type": str(fields.get("goal_type", ""))},
+                tags=tags,
                 fields=dict(fields),
                 status="ok",
+            )
+            GLOBAL_OBSERVABILITY.increment(
+                "eris_social_agenda_events_total", tags=tags, fields=dict(fields)
+            )
+            GLOBAL_OBSERVABILITY.gauge(
+                "eris_social_agenda_active_goals",
+                float(sum(1 for goal in self._state.goals if goal.active)),
             )
         except Exception:
             pass

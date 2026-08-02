@@ -13,12 +13,14 @@ objectives, keeping operational state out of model proposals.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Callable, Mapping, Sequence
 
+from .atomic_state import SQLiteAtomicStateStore, SQLiteStateTransaction
 from .social_initiative import SocialSpeechCandidate
 from .social_plan import normalize_afterbeat, normalize_exposure
 
@@ -213,17 +215,25 @@ class SocialContinuationRuntime:
         logger: Any | None = None,
         clock: Callable[[], float] | None = None,
         timer_factory: Callable[..., Any] | None = None,
+        atomic_store: SQLiteAtomicStateStore | None = None,
+        atomic_key: str = "eris.social_continuation",
     ) -> None:
         self._clock = clock or time.time
         self._persist = persist
+        self._atomic_store = atomic_store
+        self._atomic_key = str(atomic_key or "eris.social_continuation")
+        self._atomic_tx: SQLiteStateTransaction | None = None
         self._wake_callback = wake_callback
         self._outcome_callback = outcome_callback
         self._logger = logger
         self._lock = threading.RLock()
         self._state = SocialContinuationState.from_mapping(initial_state)
+        if self._atomic_store is not None:
+            record = self._atomic_store.ensure(self._atomic_key, self._state.to_dict())
+            self._state = SocialContinuationState.from_mapping(record.payload)
         self._timer_factory = timer_factory or threading.Timer
         self._timer: Any | None = None
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             self._repair_after_restart_locked(self._clock())
             self._arm_timer_locked()
 
@@ -246,7 +256,7 @@ class SocialContinuationRuntime:
         afterbeat = normalize_afterbeat(data.get("afterbeat") if isinstance(data.get("afterbeat"), Mapping) else None)
         exposure = normalize_exposure(data.get("exposure") if isinstance(data.get("exposure"), Mapping) else None)
         result = {"afterbeat": False, "exposure": False}
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             # A newly committed public line invalidates old short-horizon tickets.
             self._cancel_active_locked("superseded_by_new_public_turn", current)
             tickets = list(self._state.tickets)
@@ -274,7 +284,7 @@ class SocialContinuationRuntime:
     def notify_audio_finished(self, timestamp: float | None = None, *, source_turn_id: str = "") -> int:
         current = float(timestamp if timestamp is not None else self._clock())
         changed = 0
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             tickets = list(self._state.tickets)
             for index, ticket in enumerate(tickets):
                 if ticket.status != "WAITING_AUDIO_END":
@@ -335,7 +345,7 @@ class SocialContinuationRuntime:
     ) -> SocialSpeechCandidate | None:
         current = float(now if now is not None else self._clock())
         owner = _compact(worker_id or "anonymous", 100) or "anonymous"
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             self._expire_and_reap_claims_locked(current)
             if interaction_busy:
                 self._arm_timer_locked()
@@ -390,7 +400,7 @@ class SocialContinuationRuntime:
         now: float | None = None,
     ) -> bool:
         current = float(now if now is not None else self._clock())
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             tickets = list(self._state.tickets)
             for index, ticket in enumerate(tickets):
                 if ticket.ticket_id != ticket_id or ticket.status != "CLAIMED":
@@ -431,7 +441,7 @@ class SocialContinuationRuntime:
         lane = str(getattr(plan, "continuation_lane", "") or "").strip().lower()
         if not ticket_id:
             return False
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             tickets = list(self._state.tickets)
             for index, ticket in enumerate(tickets):
                 if ticket.ticket_id != ticket_id or ticket.status != "CLAIMED":
@@ -478,7 +488,7 @@ class SocialContinuationRuntime:
         current = float(now if now is not None else self._clock())
         summary = {"cancelled_afterbeats": 0, "resolved_exposures": 0}
         response = _compact(text or signal, 240)
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             tickets = list(self._state.tickets)
             for index, ticket in enumerate(tickets):
                 if not ticket.active:
@@ -525,7 +535,7 @@ class SocialContinuationRuntime:
 
     def cancel_all(self, *, reason: str, now: float | None = None) -> int:
         current = float(now if now is not None else self._clock())
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             count = self._cancel_active_locked(reason, current)
             if count:
                 self._persist_locked()
@@ -536,7 +546,7 @@ class SocialContinuationRuntime:
 
     def is_due(self, *, now: float | None = None, interaction_busy: bool = False) -> bool:
         current = float(now if now is not None else self._clock())
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             self._expire_and_reap_claims_locked(current)
             return bool(
                 not interaction_busy
@@ -551,13 +561,13 @@ class SocialContinuationRuntime:
 
     def has_pending(self, *, now: float | None = None) -> bool:
         current = float(now if now is not None else self._clock())
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             self._expire_and_reap_claims_locked(current)
             return any(ticket.active for ticket in self._state.tickets)
 
     def snapshot(self, *, now: float | None = None) -> dict[str, Any]:
         current = float(now if now is not None else self._clock())
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             self._expire_and_reap_claims_locked(current)
             payload = self._state.to_dict()
             payload["pending"] = sum(1 for ticket in self._state.tickets if ticket.active)
@@ -571,7 +581,7 @@ class SocialContinuationRuntime:
             return payload
 
     def shutdown(self) -> None:
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             self._cancel_timer_locked()
 
     @staticmethod
@@ -689,6 +699,11 @@ class SocialContinuationRuntime:
                 self._append_outcome_locked(tickets[index], now)
                 changed = True
             elif ticket.status == "CLAIMED":
+                # In the durable multi-worker backend another live process may
+                # own this lease. Only reclaim an expired lease; construction of
+                # a second worker is not, by itself, proof of a crash.
+                if self._atomic_store is not None and ticket.claim_until > now:
+                    continue
                 waiting = "WAITING_PAUSE" if ticket.lane == "afterbeat" else "WAITING_REACTION"
                 tickets[index] = replace(
                     ticket,
@@ -856,11 +871,33 @@ class SocialContinuationRuntime:
             except Exception:
                 pass
 
+    @contextmanager
+    def _state_transaction_locked(self):
+        """Reload and mutate one durable snapshot under a process-safe DB lock."""
+        if self._atomic_store is None or self._atomic_tx is not None:
+            yield
+            return
+        with self._atomic_store.transaction(self._atomic_key, self._state.to_dict()) as tx:
+            self._state = SocialContinuationState.from_mapping(tx.payload)
+            self._atomic_tx = tx
+            try:
+                yield
+            finally:
+                self._atomic_tx = None
+
     def _persist_locked(self) -> None:
+        payload = self._state.to_dict()
+        if self._atomic_tx is not None:
+            self._atomic_tx.stage(payload)
+        elif self._atomic_store is not None:
+            try:
+                self._atomic_store.replace(self._atomic_key, payload)
+            except Exception as exc:
+                self._log("debug", "[atomic state] persistence failed: %s", exc)
         if self._persist is None:
             return
         try:
-            self._persist(self._state.to_dict())
+            self._persist(payload)
         except Exception as exc:
             self._log("debug", "[social continuation] persistence failed: %s", exc)
 
@@ -868,11 +905,20 @@ class SocialContinuationRuntime:
         self._log("info", "[social continuation] %s %s", event, fields)
         try:
             from runtime.observability import GLOBAL_OBSERVABILITY
+            tags = {"lane": str(fields.get("lane", "")), "event": str(event)}
             GLOBAL_OBSERVABILITY.log(
                 f"social_continuation.{event}",
-                tags={"lane": str(fields.get("lane", ""))},
+                tags=tags,
                 fields=dict(fields),
                 status="ok",
+            )
+            GLOBAL_OBSERVABILITY.increment(
+                "eris_social_continuation_events_total", tags=tags, fields=dict(fields)
+            )
+            GLOBAL_OBSERVABILITY.gauge(
+                "eris_social_continuation_pending",
+                float(sum(1 for ticket in self._state.tickets if ticket.active)),
+                tags={"lane": str(fields.get("lane", "all"))},
             )
         except Exception:
             pass

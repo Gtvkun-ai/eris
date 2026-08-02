@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 
-STAGE_PROTOCOL_VERSION = 2
+STAGE_PROTOCOL_VERSION = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +105,8 @@ class StageInboundEvent:
             type=str(payload.get("type", "") or ""),
             turn_id=str(payload.get("turn_id", "") or ""),
             seq=seq,
+            event_id=str(payload.get("event_id", "") or ""),
+            trace_id=str(payload.get("trace_id", "") or ""),
             event_seq=event_seq,
             session_id=str(payload.get("session_id", "") or ""),
             reason=str(payload.get("reason", "") or ""),
@@ -118,6 +120,8 @@ class StageInboundEvent:
             "type": self.type,
             "turn_id": self.turn_id,
             "seq": self.seq,
+            "event_id": self.event_id,
+            "trace_id": self.trace_id,
             "event_seq": self.event_seq,
             "session_id": self.session_id,
             "reason": self.reason,
@@ -132,9 +136,15 @@ class StageInboundEvent:
 def is_stage_inbound_type(event_type: str) -> bool:
     return str(event_type or "") in {
         "interrupt",
+        "vad_start",
+        "partial_asr",
+        "final_asr",
+        "laugh",
+        "backchannel",
         "avatar_ready",
         "audio_playback_started",
         "audio_playback_done",
+        "audio_playback_aborted",
         "stage_ack",
     }
 

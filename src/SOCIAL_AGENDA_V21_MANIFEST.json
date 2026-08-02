@@ -1,0 +1,68 @@
+{
+  "schema": "eris.social_agenda.production_manifest.v21",
+  "runtime_version": "ai_orchestrated.v21.production_hardening",
+  "project_version": "0.41.1",
+  "source_basis": "Nghiên cứu và thiết kế năng lực hội thoại xã hội voice-first kiểu Bunpo cho Eris",
+  "extends": "eris.social_agenda_patch_manifest.v20",
+  "production_hardening": [
+    "sqlite_compare_and_swap_social_state",
+    "lease_and_revision_recovery_across_workers",
+    "durable_public_turn_idempotency_receipts",
+    "deterministic_shadow_canary_rollout",
+    "voice_floor_signal_protocol_v3",
+    "activation_replay_without_forced_schedule",
+    "multi_turn_ab_summary",
+    "static_social_runtime_dashboard",
+    "portable_body_contract_fixtures",
+    "source_archive_ci_checks"
+  ],
+  "durable_state_domains": [
+    "social_continuation",
+    "conversation_arc",
+    "social_agenda",
+    "public_turn_commit_receipts"
+  ],
+  "voice_events": [
+    "vad_start",
+    "partial_asr",
+    "final_asr",
+    "laugh",
+    "backchannel",
+    "audio_playback_aborted"
+  ],
+  "rollout_modes": [
+    "off",
+    "shadow",
+    "active"
+  ],
+  "rollout_variants": [
+    "control",
+    "afterbeat",
+    "exposure",
+    "full"
+  ],
+  "safe_defaults": {
+    "rollout_mode": "shadow",
+    "durable_state": "sqlite",
+    "durable_public_turns": true,
+    "cross_session_social_agenda": false
+  },
+  "verification": {
+    "focused_social_tests": 52,
+    "full_repository_tests": 660,
+    "source_archive_self_contained": true,
+    "compileall": true,
+    "architecture_budget": true,
+    "exception_budget": true,
+    "release_manifest_check": true,
+    "synthetic_harness_fixture_cases": 12,
+    "synthetic_harness_fixture_macro_f1": 1.0,
+    "synthetic_harness_fixture_is_model_evaluation": false
+  },
+  "external_validation_not_claimed": [
+    "live_elevenlabs_audition",
+    "real_frontend_vad_asr_device_session",
+    "real_model_activation_precision_recall",
+    "human_blinded_ab_result"
+  ]
+}

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Create a clean, reproducible ERIS source archive."""
+"""Create deterministic source ZIP archives."""
 from __future__ import annotations
 
 import argparse
@@ -7,85 +7,54 @@ import hashlib
 import os
 import zipfile
 from pathlib import Path
+from typing import Iterable, Sequence
+
+_FIXED_TIME = (1980, 1, 1, 0, 0, 0)
+_DEFAULT_EXCLUDES = {"__pycache__", ".pytest_cache", ".git", ".mypy_cache", ".ruff_cache"}
 
 
-EXCLUDED_DIRS = {
-    ".git", ".idea", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".venv",
-    "__pycache__", "build", "cache", "dist", "htmlcov", "logs", "runtime_state",
-    "secret_versions", "state", "venv",
-}
-EXCLUDED_NAMES = {
-    ".coverage", ".env", "coverage.xml", "secrets.json", "secrets_manifest.json",
-}
-EXCLUDED_SUFFIXES = {".log", ".pyc", ".pyo", ".tmp"}
-FIXED_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
-
-
-def should_include(relative: Path) -> bool:
-    if any(part in EXCLUDED_DIRS for part in relative.parts[:-1]):
-        return False
-    if relative.name in EXCLUDED_NAMES:
-        return False
-    if relative.suffix.lower() in EXCLUDED_SUFFIXES:
-        return False
-    return True
-
-
-def _zip_info(archive_name: str, *, executable: bool) -> zipfile.ZipInfo:
-    info = zipfile.ZipInfo(archive_name, date_time=FIXED_ZIP_TIME)
-    info.compress_type = zipfile.ZIP_DEFLATED
-    info.create_system = 3
-    mode = 0o755 if executable else 0o644
-    info.external_attr = (mode & 0xFFFF) << 16
-    info.flag_bits |= 0x800  # UTF-8 names.
-    return info
-
-
-def sha256(path: Path) -> str:
+def sha256(path: str | os.PathLike[str]) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as handle:
+    with Path(path).open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
 
 
-def package(root: Path, output: Path) -> tuple[int, int]:
-    root = root.resolve()
-    output = output.resolve()
+def _files(root: Path) -> Iterable[Path]:
+    for path in sorted(root.rglob("*"), key=lambda item: item.as_posix()):
+        if any(part in _DEFAULT_EXCLUDES for part in path.parts):
+            continue
+        if path.is_file() and not path.is_symlink():
+            yield path
+
+
+def package(source_root: str | os.PathLike[str], destination: str | os.PathLike[str]) -> Path:
+    root = Path(source_root).resolve()
+    if not root.is_dir():
+        raise FileNotFoundError(root)
+    output = Path(destination)
     output.parent.mkdir(parents=True, exist_ok=True)
-    files = 0
-    bytes_written = 0
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-        for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
-            if path.is_symlink() or not path.is_file() or path.resolve() == output:
-                continue
-            relative = path.relative_to(root)
-            if not should_include(relative):
-                continue
-            data = path.read_bytes()
-            archive_name = (Path(root.name) / relative).as_posix()
-            executable = bool(path.stat().st_mode & 0o111)
-            archive.writestr(
-                _zip_info(archive_name, executable=executable),
-                data,
-                compress_type=zipfile.ZIP_DEFLATED,
-                compresslevel=9,
-            )
-            files += 1
-            bytes_written += len(data)
-    return files, bytes_written
+    prefix = root.name
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as bundle:
+        for path in _files(root):
+            relative = path.relative_to(root).as_posix()
+            info = zipfile.ZipInfo(f"{prefix}/{relative}", date_time=_FIXED_TIME)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.create_system = 3
+            info.external_attr = (0o100644 & 0xFFFF) << 16
+            info.flag_bits |= 0x800
+            bundle.writestr(info, path.read_bytes(), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+    return output
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("output", type=Path, help="Destination .zip file")
-    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
-    args = parser.parse_args()
-    files, size = package(args.root, args.output)
-    print(
-        f"packaged_files={files} source_bytes={size} output={args.output.resolve()} "
-        f"sha256={sha256(args.output)}"
-    )
+    parser.add_argument("source")
+    parser.add_argument("destination")
+    args = parser.parse_args(argv)
+    output = package(args.source, args.destination)
+    print(f"{output}\t{sha256(output)}")
     return 0
 
 

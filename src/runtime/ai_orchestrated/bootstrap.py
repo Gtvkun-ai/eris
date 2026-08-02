@@ -14,6 +14,7 @@ from runtime.diagnostic_logging import safe_log
 from runtime.policy_settings import AIRuntimeSettings, ChessBridgeSettings, EngagementSettings, HealthSettings
 from runtime.subsystem_health import FailureKind, SubsystemHealthRegistry
 
+from .atomic_state import atomic_store_from_env
 from .contracts import AI_RUNTIME_VERSION, RuntimeMindState
 from .conversation_arc import ConversationArcRuntime
 from .discovery import DiscoveryRuntime
@@ -31,6 +32,7 @@ from .surface_intent import SurfaceIntentEngine
 from .social_initiative import SocialInitiativeEngine
 from .social_continuation import SocialContinuationRuntime
 from .social_agenda import SocialAgendaStore
+from .social_rollout import SocialRolloutPolicy
 
 
 def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
@@ -56,6 +58,24 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     runtime_clock = getattr(host, "_runtime_clock", None)
     if not callable(runtime_clock):
         runtime_clock = time.time
+    social_atomic_store = atomic_store_from_env(
+        logger=getattr(host, "logger", None),
+        clock=runtime_clock,
+    )
+    host.ai_social_atomic_store = social_atomic_store
+    health.record_success(
+        "ai_orchestrated.social_atomic_state",
+        details=(social_atomic_store.snapshot() if social_atomic_store is not None else {"backend": "memory"}),
+    )
+    social_rollout = SocialRolloutPolicy.from_env(
+        subject_id=str(
+            getattr(host, "runtime_session_id", "")
+            or os.getenv("ERIS_RUNTIME_SESSION_ID", "")
+            or f"runtime:{os.getpid()}"
+        )
+    )
+    host.ai_social_rollout_policy = social_rollout
+    health.record_success("ai_orchestrated.social_rollout", details=social_rollout.to_dict())
     state_persistence_gate = PersistenceGate(
         ai_settings.state_persistence_interval_seconds,
         clock=runtime_clock,
@@ -273,6 +293,8 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
         wake_callback=getattr(host, "_wake_autonomous_loop", None),
         logger=getattr(host, "logger", None),
         clock=runtime_clock,
+        atomic_store=social_atomic_store,
+        atomic_key="eris.conversation_arc",
     )
     health.record_success(
         "ai_orchestrated.conversation_arc",
@@ -286,6 +308,8 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
         allow_cross_session_memory=str(
             os.getenv("ERIS_SOCIAL_AGENDA_CROSS_SESSION", "0") or "0"
         ).strip().lower() in {"1", "true", "yes", "on"},
+        atomic_store=social_atomic_store,
+        atomic_key="eris.social_agenda",
     )
     health.record_success(
         "ai_orchestrated.social_agenda",
@@ -298,6 +322,8 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
         outcome_callback=social_agenda.observe_exposure_outcome,
         logger=getattr(host, "logger", None),
         clock=runtime_clock,
+        atomic_store=social_atomic_store,
+        atomic_key="eris.social_continuation",
     )
     health.record_success(
         "ai_orchestrated.social_continuation",

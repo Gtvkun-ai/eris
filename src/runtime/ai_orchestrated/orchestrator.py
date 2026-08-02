@@ -1055,6 +1055,12 @@ class AIChatOrchestrator:
         # The model appraises; runtime owns IDs, deadlines, leases and cancellation.
         social_plan = payload.get("social_plan") if isinstance(payload, Mapping) else None
         social_plan = social_plan if isinstance(social_plan, Mapping) else {}
+        social_rollout_policy = getattr(host, "ai_social_rollout_policy", None)
+        if social_rollout_policy is not None:
+            try:
+                social_plan = social_rollout_policy.filter_social_plan(social_plan)
+            except Exception as exc:
+                host.logger.debug("[social rollout] appraisal/filter failed: %s", exc)
         valid_social_commit = bool(
             public_text
             and assistant_meta is not None
@@ -1093,7 +1099,7 @@ class AIChatOrchestrator:
                 except Exception as exc:
                     host.logger.debug("[social agenda] update failed: %s", exc)
             arc_payload = social_plan.get("conversation_arc")
-            if not isinstance(arc_payload, Mapping):
+            if not isinstance(arc_payload, Mapping) and social_rollout_policy is None:
                 arc_payload = payload.get("conversation_arc") if isinstance(payload, Mapping) else None
             scheduled_arc = False
             if isinstance(arc_payload, Mapping) and conversation_arc_runtime is not None:

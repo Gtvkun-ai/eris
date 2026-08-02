@@ -13,12 +13,14 @@ separate autonomous turns.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import os
 import threading
 import time
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Callable, Mapping, Sequence
 
+from .atomic_state import SQLiteAtomicStateStore, SQLiteStateTransaction
 from .social_initiative import SocialSpeechCandidate
 
 
@@ -252,16 +254,24 @@ class ConversationArcRuntime:
         logger: Any | None = None,
         clock: Callable[[], float] | None = None,
         timer_factory: Callable[..., Any] | None = None,
+        atomic_store: SQLiteAtomicStateStore | None = None,
+        atomic_key: str = "eris.conversation_arc",
     ) -> None:
         self._clock = clock or time.time
         self._persist = persist
+        self._atomic_store = atomic_store
+        self._atomic_key = str(atomic_key or "eris.conversation_arc")
+        self._atomic_tx: SQLiteStateTransaction | None = None
         self._wake_callback = wake_callback
         self._logger = logger
         self._lock = threading.RLock()
         self._state = ConversationArcState.from_mapping(initial_state)
+        if self._atomic_store is not None:
+            record = self._atomic_store.ensure(self._atomic_key, self._state.to_dict())
+            self._state = ConversationArcState.from_mapping(record.payload)
         self._timer_factory = timer_factory or threading.Timer
         self._timer: Any | None = None
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             now = self._clock()
             self._expire_if_needed(now)
             self._repair_claim_after_restart_locked(now)
@@ -327,7 +337,7 @@ class ConversationArcRuntime:
             beats=beats,
             user_reply_policy=policy,
         )
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             self._state = replace(
                 self._state,
                 version=self._state.version + 1,
@@ -343,6 +353,7 @@ class ConversationArcRuntime:
             len(arc.beats),
             arc.goal,
         )
+        self._emit("scheduled", arc_id=arc.arc_id, beats=len(arc.beats))
         return True
 
     def observe_user_turn(
@@ -355,7 +366,7 @@ class ConversationArcRuntime:
         """Yield the microphone and return context so the main writer can adapt."""
 
         current = float(now if now is not None else self._clock())
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             self._expire_if_needed(current)
             arc = self._state.active_arc
             if arc is None or not arc.active:
@@ -398,13 +409,14 @@ class ConversationArcRuntime:
             self._cancel_timer_locked()
             self._persist_locked()
         self._log("info", "[conversation arc] yielded id=%s reason=user_turn", arc.arc_id)
+        self._emit("yielded", arc_id=arc.arc_id, reason="user_turn")
         return context
 
     def cancel_active(self, *, reason: str = "cancelled", now: float | None = None) -> bool:
         """Cancel a pending arc when its setup was interrupted or invalidated."""
 
         current = float(now if now is not None else self._clock())
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             self._expire_if_needed(current)
             arc = self._state.active_arc
             if arc is None or not arc.active:
@@ -424,13 +436,14 @@ class ConversationArcRuntime:
             self._cancel_timer_locked()
             self._persist_locked()
         self._log("info", "[conversation arc] cancelled id=%s reason=%s", arc.arc_id, reason)
+        self._emit("cancelled", arc_id=arc.arc_id, reason=reason)
         return True
 
     def notify_audio_finished(self, timestamp: float | None = None) -> None:
         """Start the rhetorical pause after audio, not after text commit."""
 
         current = float(timestamp if timestamp is not None else self._clock())
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             self._expire_if_needed(current)
             arc = self._state.active_arc
             if arc is None or not arc.active:
@@ -460,7 +473,7 @@ class ConversationArcRuntime:
 
         current = float(now if now is not None else self._clock())
         owner = _compact(worker_id or "anonymous", 100) or "anonymous"
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             self._expire_if_needed(current)
             arc = self._state.active_arc
             if arc is None or not arc.active or interaction_busy:
@@ -512,6 +525,12 @@ class ConversationArcRuntime:
                 "Deliver one new self-contained callback after a real pause; do not repeat, "
                 "explain timing, mention the arc, or ask the user to wait."
             )
+            self._emit(
+                "claimed",
+                arc_id=claimed.arc_id,
+                beat_index=claimed.next_beat_index,
+                worker_id=owner,
+            )
             return SocialSpeechCandidate(
                 decision="candidate",
                 kind="conversation_arc",
@@ -553,7 +572,7 @@ class ConversationArcRuntime:
         current = float(now if now is not None else self._clock())
         claim_token = str(getattr(plan, "continuation_claim_token", "") or "").strip()
         ticket_id = str(getattr(plan, "continuation_ticket_id", "") or getattr(semantics, "subject_key", "") or "").strip()
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             arc = self._state.active_arc
             if arc is None or not arc.active:
                 return False
@@ -594,11 +613,12 @@ class ConversationArcRuntime:
             len(arc.beats),
             int(done),
         )
+        self._emit("spoken", arc_id=arc.arc_id, beat_index=next_index, complete=done)
         return True
 
     def defer_current_beat(self, *, seconds: float = 4.0, reason: str = "surface_deferred") -> None:
         current = self._clock()
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             arc = self._state.active_arc
             if arc is None or not arc.active:
                 return
@@ -628,13 +648,13 @@ class ConversationArcRuntime:
 
     def has_pending(self, *, now: float | None = None) -> bool:
         current = float(now if now is not None else self._clock())
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             self._expire_if_needed(current)
             return bool(self._state.active_arc and self._state.active_arc.active)
 
     def is_due(self, *, now: float | None = None, interaction_busy: bool = False) -> bool:
         current = float(now if now is not None else self._clock())
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             self._expire_if_needed(current)
             arc = self._state.active_arc
             claim_free = bool(arc and (not arc.claim_owner or arc.claim_until <= current))
@@ -642,7 +662,7 @@ class ConversationArcRuntime:
 
     def snapshot(self, *, now: float | None = None) -> dict[str, Any]:
         current = float(now if now is not None else self._clock())
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             self._expire_if_needed(current)
             payload = self._state.to_dict()
             arc = self._state.active_arc
@@ -657,12 +677,14 @@ class ConversationArcRuntime:
             return payload
 
     def shutdown(self) -> None:
-        with self._lock:
+        with self._lock, self._state_transaction_locked():
             self._cancel_timer_locked()
 
     def _repair_claim_after_restart_locked(self, now: float) -> None:
         arc = self._state.active_arc
         if arc is None or not arc.active or not arc.claim_owner:
+            return
+        if self._atomic_store is not None and arc.claim_until > now:
             return
         repaired = replace(
             arc,
@@ -731,13 +753,52 @@ class ConversationArcRuntime:
             except Exception:
                 pass
 
+    @contextmanager
+    def _state_transaction_locked(self):
+        """Reload and mutate one durable snapshot under a process-safe DB lock."""
+        if self._atomic_store is None or self._atomic_tx is not None:
+            yield
+            return
+        with self._atomic_store.transaction(self._atomic_key, self._state.to_dict()) as tx:
+            self._state = ConversationArcState.from_mapping(tx.payload)
+            self._atomic_tx = tx
+            try:
+                yield
+            finally:
+                self._atomic_tx = None
+
     def _persist_locked(self) -> None:
+        payload = self._state.to_dict()
+        if self._atomic_tx is not None:
+            self._atomic_tx.stage(payload)
+        elif self._atomic_store is not None:
+            try:
+                self._atomic_store.replace(self._atomic_key, payload)
+            except Exception as exc:
+                self._log("debug", "[atomic state] persistence failed: %s", exc)
         if self._persist is None:
             return
         try:
-            self._persist(self._state.to_dict())
+            self._persist(payload)
         except Exception as exc:
             self._log("debug", "[conversation arc] persistence failed: %s", exc)
+
+    def _emit(self, event: str, **fields: Any) -> None:
+        try:
+            from runtime.observability import GLOBAL_OBSERVABILITY
+            tags = {"event": str(event)}
+            GLOBAL_OBSERVABILITY.log(
+                f"conversation_arc.{event}", tags=tags, fields=dict(fields), status="ok"
+            )
+            GLOBAL_OBSERVABILITY.increment(
+                "eris_conversation_arc_events_total", tags=tags, fields=dict(fields)
+            )
+            GLOBAL_OBSERVABILITY.gauge(
+                "eris_conversation_arc_pending",
+                1.0 if self._state.active_arc is not None and self._state.active_arc.active else 0.0,
+            )
+        except Exception:
+            pass
 
     def _log(self, level: str, message: str, *args: Any) -> None:
         if self._logger is None:
