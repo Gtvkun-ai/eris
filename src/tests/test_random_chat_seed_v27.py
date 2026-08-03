@@ -124,6 +124,23 @@ def test_negative_feedback_does_not_erase_eris_interest() -> None:
     assert after == before
 
 
+def test_affinity_snapshot_accepts_injected_now_without_mutating_state() -> None:
+    persisted: list[dict] = []
+    store = RandomChatSeedAffinityStore(
+        clock=lambda: 9999.0,
+        persist=lambda payload: persisted.append(dict(payload)),
+    )
+    seed = RandomChatSeed.from_mapping(_seed_payload())
+    store.note_spoken(seed, assistant_turn_id="a1", text="Một câu chia sẻ.", now=1000.0)
+    writes_before_snapshot = len(persisted)
+
+    state = store.snapshot(now=1901.0)
+
+    assert state["pending"]["seed_id"] == "rseed_arch"
+    assert state["eris_interests"]["tag:eris_architecture"]["shares"] == 1
+    assert len(persisted) == writes_before_snapshot
+
+
 def test_three_positive_outcomes_promote_user_preference() -> None:
     promotions: list[dict] = []
 

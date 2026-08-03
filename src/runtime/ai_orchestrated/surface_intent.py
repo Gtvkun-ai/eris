@@ -107,6 +107,7 @@ class SurfaceIntentEngine:
         self.router = router
         self.reducer = reducer
         self.logger = logger
+        self.last_failure_reason = ""
 
     @property
     def enabled(self) -> bool:
@@ -129,8 +130,9 @@ class SurfaceIntentEngine:
         text fallback giả làm bình luận viên.
         """
 
+        self.last_failure_reason = ""
         if not self.enabled:
-            return None
+            return self._unavailable(intent, "surface_disabled")
         from runtime.architecture_flags import is_public_intent_owner
         intent_owner = str(getattr(intent, "owner", "") or "")
         plan_owner = str(getattr(intent.plan, "owner", "") or intent_owner)
@@ -139,7 +141,7 @@ class SurfaceIntentEngine:
                 "warning", "[surface worker] rejected public intent owner=%s plan_owner=%s",
                 intent_owner, plan_owner,
             )
-            return None
+            return self._unavailable(intent, "invalid_public_intent_owner")
         display_language, speech_language = _surface_languages()
         request = {
             "speech_intent": intent.to_dict(),
@@ -208,10 +210,19 @@ class SurfaceIntentEngine:
 
         writer = getattr(self.router, "realize_surface_speech", None)
         if not callable(writer):
-            return None
-        raw = writer(request)
+            return self._unavailable(intent, "surface_writer_missing")
+        try:
+            raw = writer(request)
+        except Exception as exc:
+            return self._unavailable(intent, f"surface_writer_exception:{type(exc).__name__}")
         if not isinstance(raw, Mapping) or not raw:
-            return None
+            return self._unavailable(intent, "surface_worker_empty_payload")
+        unavailable_reason = compact(
+            raw.get("_surface_unavailable_reason", raw.get("surface_unavailable_reason", "")),
+            160,
+        )
+        if unavailable_reason:
+            return self._unavailable(intent, unavailable_reason)
         utterance = UtteranceSpec.from_mapping(
             raw,
             default_display_language=display_language,
@@ -221,8 +232,12 @@ class SurfaceIntentEngine:
         )
         text = compact(utterance.display.text, 520)
         confidence = _clamp01(raw.get("confidence", 0.0))
-        if not text or not utterance.speech.text or confidence < 0.25:
-            return None
+        if not text:
+            return self._unavailable(intent, "surface_missing_display_text")
+        if not utterance.speech.text:
+            return self._unavailable(intent, "surface_missing_speech_text")
+        if confidence < 0.25:
+            return self._unavailable(intent, f"surface_low_confidence:{confidence:.2f}")
         returned_refs = tuple(
             ref for ref in (compact(value, 120) for value in _sequence(raw.get("evidence_refs"))[:6]) if ref
         )
@@ -276,6 +291,24 @@ class SurfaceIntentEngine:
             reason=reason,
             source="surface_worker",
         )
+
+    def _unavailable(self, intent: SpeechIntent | None, reason: str) -> None:
+        reason = compact(reason, 160) or "surface_unavailable"
+        self.last_failure_reason = reason
+        mode = str(getattr(intent, "mode", "") or "unknown")
+        trace_id = str(
+            getattr(intent, "trace_id", "")
+            or getattr(getattr(intent, "plan", None), "plan_id", "")
+            or ""
+        )
+        self._log(
+            "info",
+            "[surface worker] unavailable reason=%s mode=%s trace=%s",
+            reason,
+            mode,
+            trace_id,
+        )
+        return None
 
     def fallback_payload(
         self,

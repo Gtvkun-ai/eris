@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from runtime.ai_orchestrated.bootstrap import _safe_health_snapshot
 from runtime.coordinator_bootstrap import CoordinatorBootstrapMixin
 from runtime.subsystem_health import HealthStatus, SubsystemHealthRegistry
 
@@ -46,3 +47,23 @@ def test_bootstrap_phase_records_fatal_failure_and_cleans_services() -> None:
     assert health.status == HealthStatus.FAILED
     assert health.last_error_type == "RuntimeError"
     assert owner.subsystem_supervisor.shutdowns == 1
+
+
+def test_health_snapshot_failure_does_not_escape_bootstrap_boundary() -> None:
+    class BrokenSnapshot:
+        def snapshot(self, *, now=None):
+            raise TypeError("contract mismatch")
+
+    details = _safe_health_snapshot(BrokenSnapshot(), now=10.0)
+
+    assert details["snapshot_available"] is False
+    assert details["snapshot_error_type"] == "TypeError"
+    assert "contract mismatch" in details["snapshot_error"]
+
+
+def test_health_snapshot_forwards_injected_runtime_clock() -> None:
+    class ClockAwareSnapshot:
+        def snapshot(self, *, now=None):
+            return {"seen_now": now}
+
+    assert _safe_health_snapshot(ClockAwareSnapshot(), now=42.5) == {"seen_now": 42.5}

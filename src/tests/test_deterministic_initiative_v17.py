@@ -195,6 +195,24 @@ class _SurfaceRouter:
         return {"text": text, "should_speak": True, "performance_hint": plan.performance_hint, "mode": mode}
 
 
+class _EmptySurfaceRouter(_SurfaceRouter):
+    def realize_surface_speech(self, request):
+        self.requests.append(request)
+        return {}
+
+
+class _SentinelSurfaceRouter(_SurfaceRouter):
+    def realize_surface_speech(self, request):
+        self.requests.append(request)
+        return {"_surface_unavailable_reason": "surface_primary_empty_or_invalid"}
+
+
+class _ThrowingSurfaceRouter(_SurfaceRouter):
+    def realize_surface_speech(self, request):
+        self.requests.append(request)
+        raise RuntimeError("surface transport broke")
+
+
 def test_surface_worker_only_realizes_approved_speech(tmp_path: Path):
     controller = InitiativeController(state_path=tmp_path / "initiative.json")
     board = TypedCognitiveBlackboard.from_snapshot(
@@ -213,6 +231,54 @@ def test_surface_worker_only_realizes_approved_speech(tmp_path: Path):
     assert request["surface_contract"]["authority"] == "wording_only"
     assert request["surface_contract"]["fixed_mode"] == "random_chat"
     assert "decision" not in request["surface_contract"]
+
+
+def test_surface_worker_records_empty_payload_reason(tmp_path: Path):
+    controller = InitiativeController(state_path=tmp_path / "initiative.json")
+    board = TypedCognitiveBlackboard.from_snapshot(
+        _snapshot(commentary_expectation={"due": True, "required": True, "reason": "maximum_quiet_reached", "anchor_kind": "persona_presence"}),
+        now=1000.0,
+    )
+    decision = controller.decide(board, _social_agenda_candidate())
+    router = _EmptySurfaceRouter()
+    engine = SurfaceIntentEngine(router, _Reducer())
+
+    turn = engine.realize(decision.speech_intent, board, snapshot=_snapshot())
+
+    assert turn is None
+    assert engine.last_failure_reason == "surface_worker_empty_payload"
+
+
+def test_surface_worker_preserves_router_unavailable_reason(tmp_path: Path):
+    controller = InitiativeController(state_path=tmp_path / "initiative.json")
+    board = TypedCognitiveBlackboard.from_snapshot(
+        _snapshot(commentary_expectation={"due": True, "required": True, "reason": "maximum_quiet_reached", "anchor_kind": "persona_presence"}),
+        now=1000.0,
+    )
+    decision = controller.decide(board, _social_agenda_candidate())
+    router = _SentinelSurfaceRouter()
+    engine = SurfaceIntentEngine(router, _Reducer())
+
+    turn = engine.realize(decision.speech_intent, board, snapshot=_snapshot())
+
+    assert turn is None
+    assert engine.last_failure_reason == "surface_primary_empty_or_invalid"
+
+
+def test_surface_worker_records_writer_exception_reason(tmp_path: Path):
+    controller = InitiativeController(state_path=tmp_path / "initiative.json")
+    board = TypedCognitiveBlackboard.from_snapshot(
+        _snapshot(commentary_expectation={"due": True, "required": True, "reason": "maximum_quiet_reached", "anchor_kind": "persona_presence"}),
+        now=1000.0,
+    )
+    decision = controller.decide(board, _social_agenda_candidate())
+    router = _ThrowingSurfaceRouter()
+    engine = SurfaceIntentEngine(router, _Reducer())
+
+    turn = engine.realize(decision.speech_intent, board, snapshot=_snapshot())
+
+    assert turn is None
+    assert engine.last_failure_reason == "surface_writer_exception:RuntimeError"
 
 
 def test_grounding_preflight_blocks_private_or_unready_anchor(tmp_path: Path):

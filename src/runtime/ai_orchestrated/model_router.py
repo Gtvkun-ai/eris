@@ -2615,6 +2615,7 @@ class AIRuntimeModelRouter:
     @staticmethod
     def _surface_realizer_prompt() -> str:
         return (
+            "If surface_contract.speech_language is ja, write utterance.speech in natural Japanese kana/kanji, never romaji. "
             "Bạn là SURFACE WORKER duy nhất của ERIS. InitiativeController đã quyết định SPEECH và đã khóa mode, "
             "anchor, topic, evidence scope. Trong MỘT JSON, render cùng semantic intent thành utterance.display theo "
             "surface_contract.display_language và utterance.speech theo surface_contract.speech_language. "
@@ -2648,6 +2649,9 @@ class AIRuntimeModelRouter:
 
         from runtime.architecture_flags import surface_cross_worker_fallback_enabled
 
+        def unavailable(reason: str) -> dict[str, Any]:
+            return {"_surface_unavailable_reason": str(reason or "surface_unavailable")[:160]}
+
         client = self.surface_client
         _fallback_enabled = surface_cross_worker_fallback_enabled()
 
@@ -2658,7 +2662,7 @@ class AIRuntimeModelRouter:
                 or self.observer_client
             )
             if fallback_client is None:
-                return {}
+                return unavailable("surface_client_missing_no_fallback_client")
             safe_log(
                 getattr(self, "logger", None), "info",
                 "[surface realizer] surface_client=None; fallback sang companion/main client",
@@ -2682,7 +2686,7 @@ class AIRuntimeModelRouter:
                 timeout_seconds=fb_timeout,
             )
         if client is None:
-            return {}
+            return unavailable("surface_client_missing")
         try:
             timeout = max(2.0, min(180.0, float(os.getenv("ERIS_SURFACE_REALIZER_TIMEOUT_SEC", "90") or 90.0)))
         except (TypeError, ValueError):
@@ -2702,6 +2706,10 @@ class AIRuntimeModelRouter:
             )
             if result:
                 return result
+            safe_log(
+                getattr(self, "logger", None), "info",
+                "[surface realizer] primary returned empty payload",
+            )
         except Exception as _surface_exc:
             safe_log(
                 getattr(self, "logger", None), "debug",
@@ -2709,19 +2717,19 @@ class AIRuntimeModelRouter:
             )
         # Primary surface thất bại (busy/circuit-open/schema). Thử fallback.
         if not _fallback_enabled:
-            return {}
+            return unavailable("surface_primary_empty_or_invalid")
         fallback_client_2 = (
             getattr(getattr(self, "llm_service", None), "client", None)
             or self.deep_client
             or self.observer_client
         )
         if fallback_client_2 is None:
-            return {}
+            return unavailable("surface_primary_failed_no_fallback_client")
         # Bỏ qua fallback nếu cùng endpoint/provider-circuit với surface (sẽ cũng bị open).
         _surface_base = getattr(getattr(client, "_client", client), "base_url", None) or getattr(client, "base_url", None)
         _fb_base = getattr(getattr(fallback_client_2, "_client", fallback_client_2), "base_url", None) or getattr(fallback_client_2, "base_url", None)
         if fallback_client_2 is client or (_surface_base and _fb_base and str(_surface_base) == str(_fb_base)):
-            return {}
+            return unavailable("surface_primary_failed_same_fallback_endpoint")
         safe_log(
             getattr(self, "logger", None), "info",
             "[surface realizer] primary failed; fallback sang companion/main client",

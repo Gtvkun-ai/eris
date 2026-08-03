@@ -519,7 +519,14 @@ class RandomChatSeedAffinityStore:
                 promoted_paths=tuple(promoted_paths),
             )
 
-    def snapshot(self) -> dict[str, Any]:
+    def snapshot(self, *, now: float | None = None) -> dict[str, Any]:
+        """Trả state hiện tại và giữ contract ``snapshot(now=...)`` của runtime.
+
+        ``now`` được nhận để bootstrap/diagnostics có thể dùng chung một clock
+        injected với các subsystem khác. Snapshot là thao tác chỉ đọc, vì vậy
+        nó không tự expire hoặc persist state chỉ vì health monitor hỏi dữ liệu.
+        """
+        _ = now
         with self._lock:
             return self._state.to_dict()
 

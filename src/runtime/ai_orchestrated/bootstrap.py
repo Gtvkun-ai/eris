@@ -37,6 +37,39 @@ from .random_chat_seed import RandomChatSeedAffinityStore
 from .random_chat_seed_service import RandomChatSeedGenerator, RandomChatSeedReservoir
 
 
+def _safe_health_snapshot(
+    component: Any,
+    *,
+    now: float | None = None,
+    logger: Any | None = None,
+) -> dict[str, Any]:
+    """Đọc health snapshot theo best-effort, không cho telemetry giết runtime."""
+
+    snapshotter = getattr(component, "snapshot", None)
+    if not callable(snapshotter):
+        return {"snapshot_available": False, "snapshot_error": "snapshot_missing"}
+    try:
+        payload = snapshotter(now=now) if now is not None else snapshotter()
+    except Exception as exc:
+        # Snapshot chỉ phục vụ observability. Component đã dựng thành công không
+        # được bị hạ cả Architecture C chỉ vì phần telemetry có contract lệch.
+        safe_log(
+            logger,
+            "warning",
+            "[architecture C] health snapshot failed component=%s: %s",
+            type(component).__name__,
+            exc,
+        )
+        return {
+            "snapshot_available": False,
+            "snapshot_error_type": type(exc).__name__,
+            "snapshot_error": str(exc)[:240],
+        }
+    if isinstance(payload, Mapping):
+        return dict(payload)
+    return {"snapshot_available": True, "snapshot_value": payload}
+
+
 def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     if not architecture_c_enabled():
         host.ai_runtime_enabled = False
@@ -326,7 +359,11 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     )
     health.record_success(
         "ai_orchestrated.random_chat_seed",
-        details=random_chat_seed_store.snapshot(now=runtime_clock()),
+        details=_safe_health_snapshot(
+            random_chat_seed_store,
+            now=runtime_clock(),
+            logger=getattr(host, "logger", None),
+        ),
     )
     # Seed generation has a dedicated worker/client and a background reservoir.
     # The producer can think while autonomous is idle; the public turn only leases
@@ -346,7 +383,11 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     random_chat_seed_reservoir.start()
     health.record_success(
         "ai_orchestrated.random_chat_seed_reservoir",
-        details=random_chat_seed_reservoir.snapshot(now=runtime_clock()),
+        details=_safe_health_snapshot(
+            random_chat_seed_reservoir,
+            now=runtime_clock(),
+            logger=getattr(host, "logger", None),
+        ),
     )
     # Selector handles structured opportunities; idle random chat comes only from
     # the reservoir. Governor owns permission and Surface owns public wording.
@@ -390,7 +431,13 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     )
     health.record_success(
         "ai_orchestrated.social_agenda",
-        details={"active_goals": social_agenda.snapshot(now=runtime_clock()).get("active_goal_count", 0)},
+        details={
+            "active_goals": _safe_health_snapshot(
+                social_agenda,
+                now=runtime_clock(),
+                logger=getattr(host, "logger", None),
+            ).get("active_goal_count", 0)
+        },
     )
     social_continuation = SocialContinuationRuntime(
         initial_state=load_aux_state("social_continuation_state"),

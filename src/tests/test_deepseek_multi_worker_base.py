@@ -356,6 +356,25 @@ def test_surface_worker_drops_when_actor_is_busy_by_default(monkeypatch):
     assert len(raw.calls) == 1
 
 
+def test_surface_worker_repairs_jsonl_once_by_default(monkeypatch):
+    monkeypatch.setenv("ERIS_DS_SURFACE_API_KEY", "surface-gateway-key")
+    monkeypatch.delenv("ERIS_DS_SURFACE_JSONL_REPAIR_ATTEMPTS", raising=False)
+    monkeypatch.delenv("ERIS_DS_JSONL_REPAIR_ATTEMPTS", raising=False)
+
+    spec = load_worker_spec("surface")
+
+    assert spec.jsonl_repair_attempts == 1
+
+
+def test_surface_worker_repair_attempts_still_allow_role_override(monkeypatch):
+    monkeypatch.setenv("ERIS_DS_SURFACE_API_KEY", "surface-gateway-key")
+    monkeypatch.setenv("ERIS_DS_SURFACE_JSONL_REPAIR_ATTEMPTS", "0")
+
+    spec = load_worker_spec("surface")
+
+    assert spec.jsonl_repair_attempts == 0
+
+
 def test_settings_health_exposes_deepseek_worker_wiring_without_raw_keys(monkeypatch):
     monkeypatch.setenv("ERIS_DS_SEED_API_KEY", "seed-gateway-key")
     monkeypatch.setenv("ERIS_DS_SEED_BASE_URL", "http://127.0.0.1:6015/v1")

@@ -161,7 +161,7 @@ def load_worker_spec(role: object) -> DeepSeekWorkerSpec:
                 int(
                     os.environ.get(
                         f"{role_prefix}_JSONL_REPAIR_ATTEMPTS",
-                        os.environ.get("ERIS_DS_JSONL_REPAIR_ATTEMPTS", "0" if normalized == "surface" else "1"),
+                        os.environ.get("ERIS_DS_JSONL_REPAIR_ATTEMPTS", "1"),
                     )
                     or (0 if normalized == "surface" else 1)
                 ),

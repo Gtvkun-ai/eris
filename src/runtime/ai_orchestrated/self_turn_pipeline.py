@@ -415,9 +415,13 @@ class SelfTurnPipeline:
             # Surface là writer duy nhất cho autonomous speech. Provider lỗi thì
             # giữ event/cadence cho nhịp sau và chuyển body-only; không có câu
             # small-talk mẫu hay domain template giả làm DeepSeek.
+            surface_reason = str(
+                getattr(surface_engine, "last_failure_reason", "") or "surface_unavailable"
+            )[:160]
             host.logger.info(
-                "[surface worker] unavailable mode=%s; local text fallback disabled",
+                "[surface worker] unavailable mode=%s reason=%s; local text fallback disabled",
                 speech_intent.mode,
+                surface_reason,
             )
         if surface_payload and host._process_pending_user_input():
             # User input wins even if it arrived while Surface was composing.
@@ -432,15 +436,23 @@ class SelfTurnPipeline:
             })
             return host.running
         if not surface_payload:
-            self._release_seed_lease(candidate, reason="surface_unavailable")
-            self._defer_claimed_continuation(plan, reason="surface_unavailable", seconds=0.75)
+            surface_reason = str(
+                getattr(surface_engine, "last_failure_reason", "") or "surface_unavailable"
+            )[:160]
+            gate_reason = (
+                surface_reason
+                if surface_reason.startswith("surface_")
+                else f"surface_unavailable:{surface_reason}"
+            )
+            self._release_seed_lease(candidate, reason=gate_reason)
+            self._defer_claimed_continuation(plan, reason=gate_reason, seconds=12.0)
             public_lifecycle.transition(
                 "DEGRADED",
                 turn_id=lifecycle_turn_id,
-                reason="surface_unavailable",
+                reason=gate_reason,
             )
             return self._finish_silence(
-                plan=plan, context=context, activity=activity, gate_reason="surface_unavailable",
+                plan=plan, context=context, activity=activity, gate_reason=gate_reason,
                 force_body_only=True, body_motion=decision.body_motion,
             )
 

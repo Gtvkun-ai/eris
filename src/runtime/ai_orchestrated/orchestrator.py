@@ -170,6 +170,30 @@ def _next_ai_turn_seq(host: Any, *, fallback: int = 1) -> int:
         return int(host._ai_turn_seq)
 
 
+def _chat_commit_idempotency_key(host: Any, turn_id: str) -> str:
+    """Tạo khóa commit duy nhất cho đúng một lượt chat trong đúng một phiên chạy.
+
+    ``SessionTurnLedger`` đánh số lại từ 1 sau mỗi lần khởi động, trong khi receipt
+    durable của public-turn sống qua nhiều phiên. Chỉ dùng ``session_turn:<n>`` sẽ
+    làm lượt mới đụng receipt cũ và bỏ qua toàn bộ side effect UI/TTS. Khóa vì thế
+    phải mang cả runtime session và lifecycle turn nhận từ transport.
+    """
+
+    runtime_session_id = str(getattr(host, "runtime_session_id", "") or "").strip()
+    lifecycle_turn_id = str(
+        getattr(host, "_active_public_lifecycle_turn_id", "") or ""
+    ).strip()
+    logical_turn_id = str(turn_id or "session_turn:unknown").strip()
+
+    parts = ["chat"]
+    if runtime_session_id:
+        parts.append(runtime_session_id)
+    if lifecycle_turn_id:
+        parts.append(lifecycle_turn_id)
+    parts.extend((logical_turn_id, "assistant"))
+    return ":".join(parts)
+
+
 def _typed_startup_persona_plan(*, reason: str = "typed_persona_startup") -> IntentionPlan:
     return IntentionPlan.from_mapping(
         {
@@ -917,7 +941,7 @@ class AIChatOrchestrator:
                 public_text, assistant_meta = self._commit(
                     deterministic_decision,
                     assistant_meta_extra=assistant_discourse_meta,
-                    idempotency_key=f"chat:{turn_id}:assistant",
+                    idempotency_key=_chat_commit_idempotency_key(host, turn_id),
                 )
                 host.last_user_text_for_semantics = user_text
                 recent_history = tuple(host._chat_history_for_llm(limit=8))
@@ -1131,7 +1155,7 @@ class AIChatOrchestrator:
         public_text, assistant_meta = self._commit(
             decision,
             assistant_meta_extra=assistant_discourse_meta,
-            idempotency_key=f"chat:{turn_id}:assistant",
+            idempotency_key=_chat_commit_idempotency_key(host, turn_id),
         )
         # Commit semantic social plans only after the first public line succeeds.
         # The model appraises; runtime owns IDs, deadlines, leases and cancellation.
