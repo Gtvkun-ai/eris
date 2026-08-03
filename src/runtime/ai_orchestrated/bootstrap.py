@@ -29,10 +29,12 @@ from .planner import IntentionPlanner
 from .stage_planner import StagePlanner
 from .state_reducer import StateReducer
 from .surface_intent import SurfaceIntentEngine
-from .social_initiative import SocialInitiativeEngine
 from .social_continuation import SocialContinuationRuntime
 from .social_agenda import SocialAgendaStore
-from .social_rollout import SocialRolloutPolicy
+from .social_execution import status as social_execution_status
+from .social_initiative import SocialInitiativeEngine
+from .random_chat_seed import RandomChatSeedAffinityStore
+from .random_chat_seed_service import RandomChatSeedGenerator, RandomChatSeedReservoir
 
 
 def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
@@ -67,15 +69,10 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
         "ai_orchestrated.social_atomic_state",
         details=(social_atomic_store.snapshot() if social_atomic_store is not None else {"backend": "memory"}),
     )
-    social_rollout = SocialRolloutPolicy.from_env(
-        subject_id=str(
-            getattr(host, "runtime_session_id", "")
-            or os.getenv("ERIS_RUNTIME_SESSION_ID", "")
-            or f"runtime:{os.getpid()}"
-        )
-    )
-    host.ai_social_rollout_policy = social_rollout
-    health.record_success("ai_orchestrated.social_rollout", details=social_rollout.to_dict())
+    # V22 hard cutover: no shadow/control/canary branch. All typed social-plan
+    # lanes are live; floor ownership and safety remain enforced downstream.
+    host.ai_social_execution = social_execution_status()
+    health.record_success("ai_orchestrated.social_execution", details=host.ai_social_execution)
     state_persistence_gate = PersistenceGate(
         ai_settings.state_persistence_interval_seconds,
         clock=runtime_clock,
@@ -208,6 +205,47 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     def persist_social_agenda(payload: Mapping[str, Any]) -> None:
         persist_aux_state("social_agenda_state", "social_agenda.persistence", payload)
 
+    def persist_random_chat_seed(payload: Mapping[str, Any]) -> None:
+        persist_aux_state(
+            "random_chat_seed_state",
+            "random_chat_seed.persistence",
+            payload,
+        )
+
+    def promote_random_chat_preference(
+        *,
+        path: str,
+        value: Any,
+        explicitness: str,
+        confidence: float,
+        evidence_ids: tuple[str, ...],
+        metadata: Mapping[str, Any] | None = None,
+    ) -> str:
+        kernel = getattr(host, "memory_kernel", None)
+        living_user = getattr(kernel, "living_user", None)
+        recorder = getattr(living_user, "record_interaction_preference", None)
+        if not callable(recorder):
+            return ""
+        result = recorder(
+            path,
+            value,
+            explicitness=explicitness,
+            confidence=confidence,
+            evidence_ids=evidence_ids,
+            metadata=metadata,
+        )
+        rejected = tuple(getattr(result, "rejected", ()) or ())
+        if rejected:
+            safe_log(
+                getattr(host, "logger", None),
+                "debug",
+                "[random chat seed] preference not promoted path=%s rejected=%s",
+                path,
+                ",".join(str(item) for item in rejected[:4]),
+            )
+            return ""
+        return path
+
     # Engagement runtime is a separate semantic kernel: it persists durable
     # interaction commitments without polluting the single-writer mind state.
     def load_engagement_state() -> Mapping[str, Any]:
@@ -277,10 +315,49 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     health.record_success("ai_orchestrated.observer")
     planner = IntentionPlanner(router, reducer, logger=getattr(host, "logger", None))
     health.record_success("ai_orchestrated.planner")
-    social_initiative = SocialInitiativeEngine(router, logger=getattr(host, "logger", None))
+    # Random-chat seeds give autonomous speech a concrete premise, ERIS-owned
+    # motive and bounded exploration budget before Surface writes public wording.
+    random_chat_seed_store = RandomChatSeedAffinityStore(
+        initial_state=load_aux_state("random_chat_seed_state"),
+        persist=persist_random_chat_seed,
+        preference_callback=promote_random_chat_preference,
+        logger=getattr(host, "logger", None),
+        clock=runtime_clock,
+    )
     health.record_success(
-        "ai_orchestrated.social_initiative",
-        details={"enabled": bool(social_initiative.enabled), "worker_role": "surface"},
+        "ai_orchestrated.random_chat_seed",
+        details=random_chat_seed_store.snapshot(now=runtime_clock()),
+    )
+    # Seed generation has a dedicated worker/client and a background reservoir.
+    # The producer can think while autonomous is idle; the public turn only leases
+    # an already-validated premise and therefore never waits for this model call.
+    random_chat_seed_generator = RandomChatSeedGenerator(
+        getattr(llm_service, "seed_client", None),
+        invoke_structured=router.invoke_structured_worker,
+        logger=getattr(host, "logger", None),
+    )
+    random_chat_seed_reservoir = RandomChatSeedReservoir(
+        random_chat_seed_generator,
+        seed_store=random_chat_seed_store,
+        wake_callback=getattr(host, "_wake_autonomous_loop", None),
+        logger=getattr(host, "logger", None),
+        clock=runtime_clock,
+    )
+    random_chat_seed_reservoir.start()
+    health.record_success(
+        "ai_orchestrated.random_chat_seed_reservoir",
+        details=random_chat_seed_reservoir.snapshot(now=runtime_clock()),
+    )
+    # Selector handles structured opportunities; idle random chat comes only from
+    # the reservoir. Governor owns permission and Surface owns public wording.
+    social_agenda_selector = SocialInitiativeEngine(
+        router,
+        seed_reservoir=random_chat_seed_reservoir,
+        logger=getattr(host, "logger", None),
+    )
+    health.record_success(
+        "ai_orchestrated.social_agenda_selector",
+        details={"enabled": bool(social_agenda_selector.enabled)},
     )
     surface_intent = SurfaceIntentEngine(router, reducer, logger=getattr(host, "logger", None))
     health.record_success(
@@ -344,11 +421,14 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     host.ai_model_router = router
     host.ai_post_turn_observer = observer
     host.ai_intention_planner = planner
-    host.ai_social_initiative_engine = social_initiative
     host.ai_surface_intent_engine = surface_intent
     host.ai_conversation_arc_runtime = conversation_arc
     host.ai_social_continuation_runtime = social_continuation
     host.ai_social_agenda_store = social_agenda
+    host.ai_random_chat_seed_store = random_chat_seed_store
+    host.ai_random_chat_seed_generator = random_chat_seed_generator
+    host.ai_random_chat_seed_reservoir = random_chat_seed_reservoir
+    host.ai_social_agenda_selector = social_agenda_selector
     host.ai_discovery_runtime = discovery
     host.ai_initiative_controller = initiative
     host.ai_autonomous_grounding_validator = grounding_validator
@@ -571,6 +651,7 @@ def shutdown_ai_orchestrated_runtime(host: Any) -> None:
                 health.record_success("engagement.persistence", details={"shutdown_flush": True})
     for name in (
         "ai_post_turn_observer",
+        "ai_random_chat_seed_reservoir",
         "ai_discovery_runtime",
         "ai_social_continuation_runtime",
         "ai_conversation_arc_runtime",
@@ -578,7 +659,8 @@ def shutdown_ai_orchestrated_runtime(host: Any) -> None:
     ):
         obj = getattr(host, name, None)
         method_name = "shutdown" if name in {
-            "ai_post_turn_observer", "ai_discovery_runtime", "ai_social_continuation_runtime", "ai_conversation_arc_runtime"
+            "ai_post_turn_observer", "ai_random_chat_seed_reservoir", "ai_discovery_runtime",
+            "ai_social_continuation_runtime", "ai_conversation_arc_runtime"
         } else "close"
         method = getattr(obj, method_name, None)
         if callable(method):

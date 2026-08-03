@@ -200,33 +200,8 @@ def normalize_conversation_arc(payload: Mapping[str, Any] | None) -> dict[str, A
     return result
 
 
-def _legacy_arc_to_social(payload: Mapping[str, Any] | None) -> dict[str, Any]:
-    """Map the V19 operational proposal into the semantic social-plan slot."""
-    data = payload or {}
-    if _compact(data.get("decision", "none"), 24).lower() != "schedule":
-        return empty_conversation_arc()
-    beats = []
-    for raw in _sequence(data.get("beats"))[:3]:
-        if not isinstance(raw, Mapping):
-            continue
-        beats.append({
-            "role": raw.get("role", "callback"),
-            "objective": raw.get("objective", ""),
-            "condition": "after_reserved_pause" if float(raw.get("delay_seconds", 9.0) or 9.0) <= 3.0 else "when_context_still_supports_it",
-            "tone": raw.get("tone", "neutral"),
-        })
-    return normalize_conversation_arc({
-        "decision": "schedule",
-        "goal": data.get("goal", ""),
-        "beats": beats,
-        "confidence": data.get("confidence", 0.75),
-    })
-
-
 def normalize_social_plan(
     payload: Mapping[str, Any] | None,
-    *,
-    legacy_conversation_arc: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     data = payload or {}
     result = empty_social_plan()
@@ -235,8 +210,6 @@ def normalize_social_plan(
     result["agenda_update"] = normalize_agenda_update(data.get("agenda_update") if isinstance(data.get("agenda_update"), Mapping) else None)
     arc_payload = data.get("conversation_arc") if isinstance(data.get("conversation_arc"), Mapping) else None
     result["conversation_arc"] = normalize_conversation_arc(arc_payload)
-    if result["conversation_arc"]["decision"] == "none" and legacy_conversation_arc:
-        result["conversation_arc"] = _legacy_arc_to_social(legacy_conversation_arc)
     return deepcopy(result)
 
 

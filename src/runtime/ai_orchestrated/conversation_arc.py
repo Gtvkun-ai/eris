@@ -21,7 +21,7 @@ from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Callable, Mapping, Sequence
 
 from .atomic_state import SQLiteAtomicStateStore, SQLiteStateTransaction
-from .social_initiative import SocialSpeechCandidate
+from .social_candidate import SocialSpeechCandidate
 
 
 ARC_SCHEMA = "eris.conversation_arc.v1"

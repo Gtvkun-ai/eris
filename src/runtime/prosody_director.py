@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Any, Mapping
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +80,44 @@ class ProsodyDirector:
             pause_level=base.pause_level,
             emphasis_mode=base.emphasis_mode,
             localizer_style=base.localizer_style,
+        )
+
+    def plan_beat(
+        self,
+        text: str,
+        beat: Mapping[str, Any] | None = None,
+        *,
+        emotion: str = "",
+    ) -> ProsodyPlan:
+        """Map một OpeningBeat typed sang chỉ dẫn TTS, không sửa câu chữ.
+
+        Pause vẫn do scheduler thực thi. Director prosody chỉ mô tả cách đặt
+        nhịp và emphasis, tránh nhét stage direction vào transcript rồi cầu may
+        provider không đọc thành tiếng.
+        """
+
+        data = beat if isinstance(beat, Mapping) else {}
+        delivery = str(data.get("delivery", "") or "").strip().lower()
+        aliases = {
+            "deadpan_soft": "deadpan",
+            "warm_restrained": "warm_soft",
+            "quiet_warm": "warm_soft",
+            "curious_restrained": "curious_soft",
+            "dry_warm": "dry_tease",
+        }
+        style_hint = aliases.get(delivery, delivery)
+        emphasis = [str(item).strip() for item in (data.get("emphasis") or ()) if str(item).strip()][:3]
+        pause_after = max(0, min(1200, int(data.get("pause_after_ms", 0) or 0)))
+        notes: list[str] = []
+        if emphasis:
+            notes.append(f"Lightly emphasize: {', '.join(emphasis)}.")
+        if pause_after:
+            notes.append(f"Land the beat cleanly before a scheduler pause of {pause_after}ms.")
+        return self.plan(
+            text,
+            emotion=emotion,
+            style_hint=style_hint,
+            notes_hint=" ".join(notes),
         )
 
     def _style(

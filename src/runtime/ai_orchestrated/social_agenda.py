@@ -4,7 +4,7 @@
 This store represents why Eris might continue a social thread.  It is not a
 psychological profile and it does not grant itself permission to speak.  Goals
 carry evidence, success signals, stop signals, confidence and cooldown; the
-initiative governor still owns the microphone.
+floor governor still owns the microphone.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Callable, Mapping, Sequence
 
 from .atomic_state import SQLiteAtomicStateStore, SQLiteStateTransaction
-from .social_initiative import SocialSpeechCandidate
+from .social_candidate import SocialSpeechCandidate
 from .social_plan import normalize_agenda_update
 
 
@@ -566,14 +566,6 @@ class SocialAgendaStore:
             self._persist_locked()
         self._emit("agenda_move_claimed", goal_id=claimed.goal_id, worker_id=owner)
         return self._candidate_for_goal(claimed)
-
-    def due_candidate(self, blackboard: Any, *, now: float | None = None) -> SocialSpeechCandidate | None:
-        """Compatibility wrapper that still performs an atomic claim."""
-        return self.claim_due(
-            blackboard,
-            worker_id=f"legacy:{threading.get_ident()}",
-            now=now,
-        )
 
     def release_claim(
         self,

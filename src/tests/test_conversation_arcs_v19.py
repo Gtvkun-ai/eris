@@ -234,8 +234,8 @@ def test_arc_candidate_can_retake_reply_baton_but_still_uses_governor(tmp_path: 
     assert decision.speech_intent.max_sentences == 1
 
 
-def test_public_reply_contract_and_compat_envelope_preserve_arc():
-    assert "conversation_arc" in PUBLIC_REPLY_SCHEMA["properties"]
+def test_public_reply_contract_rejects_legacy_top_level_arc_path():
+    assert "conversation_arc" not in PUBLIC_REPLY_SCHEMA["properties"]
     router = object.__new__(AIRuntimeModelRouter)
     router.logger = None
     payload = router._compat_public_envelope(
@@ -251,7 +251,8 @@ def test_public_reply_contract_and_compat_envelope_preserve_arc():
             "conversation_arc": _proposal(),
         }
     )
-    assert payload["conversation_arc"]["decision"] == "schedule"
+    assert "conversation_arc" not in payload
+    assert payload["social_plan"]["conversation_arc"]["decision"] == "none"
 
 
 def test_reserved_arc_handoff_wakes_immediately_after_short_pause():

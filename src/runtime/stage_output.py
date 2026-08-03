@@ -275,24 +275,32 @@ class StageOutputPipeline:
         if directed:
             return directed
 
-        from runtime.tts_engine import _tts_provider
-        if _tts_provider() == "elevenlabs":
-            return (frame,)
-
-        # Autonomous act đã có speech beat do Stage Director đặt. Ưu tiên beat
-        # này hơn sentence splitter tổng quát để điểm rơi không bị chia lại lần hai.
+        # Autonomous/opening act đã có speech beat do Stage Director đặt. Ưu
+        # tiên beat này hơn sentence splitter tổng quát để điểm rơi không bị chia
+        # lại lần hai. Riêng ElevenLabs, chỉ opening typed mới tách segment; các
+        # turn thường giữ một request để không làm tăng latency vô cớ.
         act = frame.stage_act if isinstance(getattr(frame, "stage_act", None), dict) else {}
         beats = act.get("beats") if isinstance(act, dict) else None
         speech_beats = [
             beat for beat in (beats or [])
             if isinstance(beat, dict) and str(beat.get("kind", "")) == "speech" and str(beat.get("text", "")).strip()
         ]
+        from runtime.tts_engine import _tts_provider
+        explicit_opening = bool(
+            speech_beats
+            and str(act.get("opportunity_kind", "")).strip().lower() == "startup"
+            and str(act.get("cadence", "")).strip().lower() == "opening_directed"
+        )
+        if _tts_provider() == "elevenlabs" and not explicit_opening:
+            return (frame,)
         if speech_beats:
             frames: list[StageFrame] = []
             segment_index = 0
             for beat in speech_beats:
                 beat_text = str(beat.get("text", "") or "").strip()
+                beat_display = str(beat.get("display_text", "") or "").strip()
                 beat_parts = self.segmenter.split(beat_text) or ((beat_text,) if beat_text else ())
+                display_parts = self.segmenter.split(beat_display) if beat_display else ()
                 for part_index, text in enumerate(beat_parts):
                     delivery = dict(frame.delivery) if isinstance(frame.delivery, dict) else {}
                     active_beat = dict(beat)
@@ -314,13 +322,21 @@ class StageOutputPipeline:
                         style_hint=str(beat.get("tts_style", frame.prosody_style) or frame.prosody_style),
                         notes_hint=notes,
                     )
+                    # Khi số mảnh display và speech không khớp (dịch Nhật có
+                    # thể đổi nhịp), dùng nguyên bubble Việt cho mảnh đầu và để
+                    # các mảnh sau không ghi đè UI/memory bằng transcript Nhật.
+                    display_text = (
+                        display_parts[part_index]
+                        if part_index < len(display_parts)
+                        else beat_display if part_index == 0 else ""
+                    )
                     frames.append(
                         replace(
                             frame,
                             segment_id=segment_index,
-                            display_text=text,
+                            display_text=display_text,
                             tts_text=text,
-                            memory_text=text,
+                            memory_text=display_text,
                             emotion=str(beat.get("emotion", frame.emotion) or frame.emotion),
                             motion=str(beat.get("motion_intent", frame.motion) or frame.motion),
                             prosody_style=plan.style,

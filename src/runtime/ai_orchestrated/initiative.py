@@ -22,7 +22,7 @@ from runtime.chess.surface import ChessSurfaceState
 from .contracts import IntentionPlan
 from .cognitive_blackboard import TypedCognitiveBlackboard
 from .semantic_contracts import TurnSemantics
-from .social_initiative import SocialSpeechCandidate
+from .social_candidate import SocialSpeechCandidate
 
 
 def _setting(name: str, default: Any) -> Any:
@@ -114,6 +114,7 @@ class SpeechIntent:
     anchor_id: str
     evidence_refs: tuple[str, ...] = ()
     max_sentences: int = 2
+    random_chat_seed: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -123,6 +124,7 @@ class SpeechIntent:
             "anchor_id": self.anchor_id,
             "evidence_refs": list(self.evidence_refs),
             "max_sentences": self.max_sentences,
+            "random_chat_seed": dict(self.random_chat_seed),
             "plan": self.plan.to_dict(),
         }
 
@@ -208,8 +210,6 @@ class InitiativeState:
         }
 
 
-_CANDIDATE_UNSET = object()
-
 
 class InitiativeController:
     def __init__(self, *, state_path: Path | None = None, logger: Any | None = None) -> None:
@@ -224,52 +224,32 @@ class InitiativeController:
     def decide(
         self,
         blackboard: TypedCognitiveBlackboard,
-        candidate: SocialSpeechCandidate | None | object = _CANDIDATE_UNSET,
+        candidate: SocialSpeechCandidate | None = None,
     ) -> InitiativeDecision:
         """Governor thuần timing/quyền phát cho một model-owned candidate.
 
-        V18 không còn bắt runtime tự nghĩ topic. Social Initiative Worker sở hữu
-        ``candidate.topic`` và ``candidate.speech_act``; governor chỉ kiểm hard
-        boundaries, cooldown, budget, duplicate và provenance. Nếu không có
-        candidate, kết quả là NO_OP hoặc BODY_ONLY chứ không tự bịa small talk.
+        V23 chấp nhận cả candidate đã claim từ social-plan runtime và impulse
+        typed do agenda selector model-owned đề xuất. Governor vẫn chỉ kiểm hard
+        boundaries, cooldown, budget, duplicate và provenance; nó không nghĩ topic
+        và không viết lời public.
         """
 
         silence = IntentionPlan.silence(channel="autonomous", reason="initiative_no_op")
         has_delta = bool(blackboard.mechanical_delta or blackboard.activity_event)
-        # Compatibility cho test/caller cũ gọi decide(board) trực tiếp. Production
-        # luôn truyền candidate (kể cả None), nên nhánh này không trao lại quyền
-        # nghĩ topic cho runtime self-turn.
-        compatibility_call = candidate is _CANDIDATE_UNSET
-        if compatibility_call:
-            candidate = self._compat_candidate_from_blackboard(blackboard)
-
         if not _as_bool(_setting("enabled", True), True):
             return InitiativeDecision(InitiativeAction.NO_OP, "initiative_disabled", silence)
-        chess_event_override = bool(
-            blackboard.engagement_active
-            and (blackboard.engagement_due or blackboard.engagement_required)
-            and str(blackboard.engagement_kind or "").lower() == "chess"
-            and any(anchor.kind == "task" for anchor in blackboard.anchors)
-        )
-        reminder_override = bool(
-            blackboard.followup_reminder_due
-            and blackboard.followup_reminder_count <= 0
-            and candidate is not None
-            and getattr(candidate, "kind", "") == "followup_reminder"
-        )
         candidate_kind = str(getattr(candidate, "kind", "") or "") if candidate is not None else ""
         reserved_override = candidate_kind in {"conversation_arc", "afterbeat"}
         reaction_override = candidate_kind == "social_exposure_recovery"
-        if (
-            blackboard.reply_expected
-            and not chess_event_override
-            and not reminder_override
-            and not reserved_override
-            and not reaction_override
-        ):
+        reply_baton_override = candidate_kind in {
+            "followup_reminder",
+            "force_speak",
+            "task_followup",
+        }
+        if blackboard.reply_expected and not reserved_override and not reaction_override and not reply_baton_override:
             action = InitiativeAction.BODY_ONLY if has_delta and not blackboard.privacy_blocked else InitiativeAction.NO_OP
             return InitiativeDecision(action, "waiting_for_user_reply", silence, body_motion="quiet_presence")
-        if blackboard.user_busy and not reserved_override:
+        if blackboard.user_busy and not reserved_override and candidate_kind != "force_speak":
             action = InitiativeAction.BODY_ONLY if has_delta and not blackboard.privacy_blocked else InitiativeAction.NO_OP
             return InitiativeDecision(action, "user_busy", silence, body_motion="small_acknowledge")
         if candidate is None or not candidate.available:
@@ -282,7 +262,7 @@ class InitiativeController:
                 )
             return InitiativeDecision(
                 InitiativeAction.NO_OP,
-                "no_public_anchor" if compatibility_call else "no_speech_candidate",
+                "no_speech_candidate",
                 silence,
             )
 
@@ -298,13 +278,17 @@ class InitiativeController:
                 return InitiativeDecision(InitiativeAction.BODY_ONLY, reason, plan, body_motion=motion)
             return InitiativeDecision(InitiativeAction.NO_OP, reason, plan)
 
+        seed_context = getattr(candidate, "random_chat_seed", {})
+        if not isinstance(seed_context, Mapping):
+            seed_context = {}
         speech_intent = SpeechIntent(
             plan=plan,
             mode=mode,
             anchor_type=anchor_type,
             anchor_id=anchor_id,
             evidence_refs=refs,
-            max_sentences=1 if getattr(candidate, "kind", "") in {"conversation_arc", "afterbeat", "social_exposure_recovery", "social_agenda"} else 2,
+            max_sentences=1,
+            random_chat_seed=dict(seed_context),
         )
         return InitiativeDecision(
             InitiativeAction.SPEECH,
@@ -312,44 +296,6 @@ class InitiativeController:
             plan,
             speech_intent=speech_intent,
             body_motion=motion,
-        )
-
-    @staticmethod
-    def _compat_candidate_from_blackboard(
-        blackboard: TypedCognitiveBlackboard,
-    ) -> SocialSpeechCandidate | None:
-        """Adapter rollout-only cho API V17; không dùng trong production V18."""
-
-        anchor = blackboard.strongest_anchor()
-        if anchor is None:
-            return None
-        mapping = {
-            "conversation": ("continuation", "carry_open_thread", False),
-            "task": ("task_followup", "task_followup", False),
-            "discovery": ("discovery_share", "share_discovery", bool(anchor.evidence_refs)),
-            "screen": ("screen_comment", "comment_current_surface", True),
-            "activity": ("screen_comment", "comment_current_surface", True),
-            "semantic_scene": ("semantic_scene", "develop_semantic_context", False),
-            "memory": ("memory_callback", "memory_callback", True),
-            "self": ("inner_thought", "share_public_safe_thought", False),
-            "presence": ("social_check_in", "warm_companion_presence", False),
-        }
-        kind, act, needs_grounding = mapping.get(anchor.kind, ("random_chat", "social_check_in", False))
-        return SocialSpeechCandidate(
-            decision="candidate",
-            kind=kind,
-            topic=anchor.topic_seed,
-            speech_act=act,
-            anchor_type="idle" if anchor.kind == "presence" else anchor.kind,
-            anchor_id=anchor.anchor_id,
-            evidence_refs=anchor.evidence_refs,
-            requires_grounding=needs_grounding,
-            confidence=anchor.confidence,
-            relevance=anchor.priority,
-            urgency=0.15,
-            tone="soft",
-            reason="v17_direct_call_compatibility",
-            source="compatibility_adapter",
         )
 
     @staticmethod
@@ -361,89 +307,73 @@ class InitiativeController:
 
         kind = candidate.kind
         refs = tuple(candidate.evidence_refs[:5])
-        mode_map = {
-            "continuation": ("continuation", "soft", "continuation", "conversation"),
-            "conversation_arc": ("continuation", "playful", "arc_continuation", "conversation"),
-            "afterbeat": ("continuation", "playful", "afterbeat", "conversation"),
-            "social_exposure_recovery": ("continuation", "soft", "social_exposure", "conversation"),
-            "social_agenda": ("random_chat", "soft", "social_agenda", "conversation"),
-            "followup_reminder": ("continuation", "gentle_reminder", "continuation", "conversation"),
-            "task_followup": ("task_followup", "focused", "activity_event", "task"),
-            "discovery_share": ("discovery_share", "curious", "discovery", "discovery"),
-            "screen_comment": ("screen_comment", "curious", "environment", "screen"),
-            "semantic_scene": ("semantic_scene", "curious", "semantic_context", "semantic_scene"),
-            "memory_callback": ("memory_callback", "soft", "internal", "memory"),
-            "inner_thought": ("inner_thought", "quiet_presence", "internal", "self"),
-            "social_check_in": ("small_talk", "soft", "presence", "idle"),
-            "casual_curiosity": ("random_chat", "curious", "presence", "idle"),
-            "playful_prompt": ("soft_tease", "playful", "presence", "idle"),
-            "random_chat": ("random_chat", "soft", "presence", "idle"),
-            "force_speak": ("random_chat", "focused", "force_speak", "presence"),
+        route_map = {
+            "conversation_arc": ("continuation", "playful", "arc_continuation", "conversation", "conversation_arc", "continue_conversation_arc"),
+            "afterbeat": ("continuation", "playful", "afterbeat", "conversation", "social_continuation", "deliver_reserved_afterbeat"),
+            "social_exposure_recovery": ("continuation", "soft", "social_exposure", "conversation", "social_continuation", "recover_social_exposure"),
+            "social_agenda": ("random_chat", "soft", "social_agenda", "conversation", "social_agenda", "advance_social_goal"),
+            "continuation": ("continuation", "soft", "continuation", "conversation", "conversation", "continue_open_thread"),
+            "followup_reminder": ("continuation", "soft", "presence", "conversation", "conversation", "remind_once_without_pressure"),
+            "task_followup": ("continuation", "focused", "activity_event", "task", "engagement", "continue_structured_engagement"),
+            "discovery_share": ("discovery", "curious", "discovery", "discovery", "discovery", "share_grounded_discovery"),
+            "screen_comment": ("screen", "curious", "environment", "screen", "screen", "comment_on_grounded_screen"),
+            "semantic_scene": ("screen", "curious", "environment", "semantic_scene", "semantic_scene", "respond_to_semantic_scene"),
+            "memory_callback": ("memory_callback", "soft", "internal", "memory", "memory", "offer_memory_callback"),
+            "inner_thought": ("random_chat", "soft", "internal", "self", "self_context", "surface_public_safe_thought"),
+            "social_check_in": ("random_chat", "soft", "presence", "idle", "public_context", "social_check_in"),
+            "casual_curiosity": ("random_chat", "curious", "presence", "idle", "public_context", "casual_curiosity"),
+            "playful_prompt": ("random_chat", "playful", "presence", "idle", "public_context", "playful_prompt"),
+            "random_chat": ("random_chat", "soft", "presence", "idle", "public_context", "companion_commentary"),
+            "force_speak": ("random_chat", "soft", "force_speak", "presence", "explicit_user_pull", "respond_to_force_speak"),
         }
-        mode, motion, turn_kind, default_anchor = mode_map.get(
-            kind, ("random_chat", "soft", "presence", "idle")
+        mode, motion, turn_kind, default_anchor, evidence_scope, strategy = route_map.get(
+            kind,
+            ("random_chat", "soft", "other", "idle", "public_context", "companion_commentary"),
         )
-        evidence_scope = {
-            "screen_comment": "screen_grounded_claim",
-            "semantic_scene": "shared_semantic_context",
-            "memory_callback": "memory",
-            "discovery_share": "discovery_artifact",
-            "task_followup": "engagement_runtime",
-            "continuation": "conversation",
-            "conversation_arc": "conversation_arc",
-            "afterbeat": "social_continuation",
-            "social_exposure_recovery": "social_continuation",
-            "social_agenda": "social_agenda",
-            "followup_reminder": "conversation",
-            "inner_thought": "self_context",
-        }.get(kind, "social_context")
-        strategy = {
-            "continuation": "continue_public_thread",
-            "conversation_arc": "continue_conversation_arc",
-            "afterbeat": "deliver_reserved_afterbeat",
-            "social_exposure_recovery": "recover_social_exposure",
-            "social_agenda": "advance_social_goal",
-            "followup_reminder": "gentle_followup_reminder",
-            "task_followup": "preserve_active_engagement",
-            "discovery_share": "share_discovery",
-            "screen_comment": "grounded_curiosity",
-            "semantic_scene": "develop_shared_semantic_context",
-            "memory_callback": "share_grounded_memory_callback",
-            "inner_thought": "share_public_safe_thought",
-            "social_check_in": "social_check_in",
-            "casual_curiosity": "casual_curiosity",
-            "playful_prompt": "playful_prompt",
-            "random_chat": "companion_presence",
-        }.get(kind, "companion_presence")
-        importance = max(0.42, min(0.94, 0.48 + 0.30 * candidate.relevance + 0.16 * candidate.urgency))
-        intrusion = max(0.05, min(0.60, 0.24 - 0.12 * candidate.relevance + 0.10 * candidate.urgency))
+        seed_context = getattr(candidate, "random_chat_seed", {})
+        if not isinstance(seed_context, Mapping):
+            seed_context = {}
+        seed_mode = str(seed_context.get("mode", "") or "").strip().lower()
+        seed_motive = seed_context.get("eris_motive") if isinstance(seed_context.get("eris_motive"), Mapping) else {}
+        seed_risk = seed_context.get("risk") if isinstance(seed_context.get("risk"), Mapping) else {}
+        personal_stake = max(0.0, min(1.0, _as_float(seed_motive.get("personal_stake"), 0.0)))
+        authenticity = max(0.0, min(1.0, _as_float(seed_motive.get("authenticity"), 0.0)))
+        daring = max(0.0, min(1.0, _as_float(seed_risk.get("daring"), 0.0)))
+        seed_intrusion = max(0.0, min(1.0, _as_float(seed_risk.get("intrusion_risk"), 0.0)))
+        face_risk = max(0.0, min(1.0, _as_float(seed_risk.get("face_risk"), 0.0)))
+        importance = max(0.42, min(
+            0.96,
+            0.46 + 0.27 * candidate.relevance + 0.13 * candidate.urgency
+            + (0.09 * personal_stake + 0.05 * authenticity if seed_context else 0.0),
+        ))
+        intrusion = max(
+            seed_intrusion,
+            max(0.05, min(0.68, 0.22 - 0.10 * candidate.relevance + 0.09 * candidate.urgency + 0.08 * daring + 0.05 * face_risk)),
+        )
         anchor_type = candidate.anchor_type or default_anchor
-        anchor_id = candidate.anchor_id or "shared_quiet"
-        subject_key = anchor_id
+        anchor_id = candidate.anchor_id
+        subject_key = str(seed_context.get("seed_id", "") or anchor_id)
         activity_payload = {
             "activity_kind": "unknown", "phase": "unknown", "event": "",
             "event_key": "none", "confidence": 0.0, "evidence_refs": list(refs),
         }
-        if kind == "task_followup" and blackboard.engagement_kind == "chess":
-            # Dedupe theo position/event thật. Hai nước khác nhau không được coi
-            # là lặp chỉ vì cùng mang nhãn task_followup.
-            state = ChessSurfaceState.from_mapping(blackboard.engagement_state)
-            event_key = state.event_fingerprint(blackboard.engagement_last_event_kind)
-            subject_key = f"{anchor_id}:{event_key}"
-            activity_payload = {
-                "activity_kind": "chess",
-                "phase": state.phase or "unknown",
-                "event": blackboard.engagement_last_event_kind,
-                "event_key": event_key,
-                "confidence": 1.0 if state.meaningful else 0.0,
-                "evidence_refs": list(refs),
-            }
+        motive = kind
+        value_focus = "continuity"
+        if seed_context:
+            motive = str(seed_motive.get("kind", "want_to_share") or "want_to_share")
+            value_focus = {
+                "eris_led": "self_expression",
+                "shared": "mutual_discovery",
+                "user_led": "mutual_discovery",
+                "experimental": "exploration",
+            }.get(seed_mode, "self_expression")
+            strategy = str(seed_context.get("opening_move", strategy) or strategy)
         mapping = {
             "plan_id": candidate.idempotency_key or f"plan-{int(blackboard.now * 1000)}",
             "speak": True,
-            "motive": kind,
+            "motive": motive,
             "strategy": strategy,
-            "value_focus": "relational_presence" if turn_kind == "presence" else "continuity",
+            "value_focus": value_focus,
             # Candidate topic is model-owned. Runtime only carries it; it does
             # not decorate it with a new hidden agenda.
             "topic": candidate.topic,
@@ -460,15 +390,16 @@ class InitiativeController:
                 "speech_act": candidate.speech_act or kind,
                 "subject_key": subject_key,
                 "evidence_scope": evidence_scope,
-                "continuation_key": (
-                    candidate.anchor_id
-                    if kind == "conversation_arc"
-                    else blackboard.thread_key
-                    if kind in {"continuation", "followup_reminder"}
-                    else "none"
-                ),
+                "continuation_key": candidate.anchor_id if kind == "conversation_arc" else "none",
             },
-            "notes": f"social_candidate source={candidate.source} reason={candidate.reason}",
+            "notes": (
+                f"social_candidate source={candidate.source} reason={candidate.reason}"
+                + (
+                    f" seed_id={seed_context.get('seed_id', '')} mode={seed_mode}"
+                    f" daring={daring:.2f} personal_stake={personal_stake:.2f} authenticity={authenticity:.2f}"
+                    if seed_context else ""
+                )
+            ),
             "continuation_lane": candidate.continuation_lane,
             "continuation_ticket_id": candidate.anchor_id if candidate.continuation_lane in {"afterbeat", "social_exposure", "conversation_arc", "social_agenda"} else "",
             "continuation_claim_token": candidate.claim_token,

@@ -28,6 +28,9 @@ class PerformanceBeat:
     beat_index: int
     kind: str
     text: str = ""
+    # Bubble và TTS có thể khác ngôn ngữ. Giữ display riêng để segment Nhật
+    # không vô tình thay luôn UI Việt, một lỗi khá sáng tạo nhưng không hữu ích.
+    display_text: str = ""
     start_after_ms: int = 0
     duration_ms: int = 0
     pause_after_ms: int = 0
@@ -96,6 +99,7 @@ class AutonomousPerformancePlanner:
         *,
         autonomous_plan: Mapping[str, Any] | None = None,
         performance_context: Mapping[str, Any] | None = None,
+        opening_plan: Mapping[str, Any] | None = None,
         emotion: str = "neutral",
         motion: str = "none",
         tts_style: str = "neutral",
@@ -116,22 +120,62 @@ class AutonomousPerformancePlanner:
         intrusion = max(0.0, min(1.0, float(plan.get("intrusion_risk", 0.0) or 0.0)))
 
         cadence, opening_hold, closing_hold, density = self._timing(kind, hint, intrusion)
-        parts = self._split(line)[:2]
+        opening = _mapping(opening_plan)
+        explicit_beats = tuple(
+            item for item in (perf.get("opening_beats") or ())
+            if isinstance(item, Mapping)
+        )
+        if opening:
+            prosody = _mapping(opening.get("prosody_plan"))
+            opening_hold = max(0, min(1000, int(prosody.get("opening_hold_ms", perf.get("opening_hold_ms", opening_hold)) or opening_hold)))
+            closing_hold = max(0, min(1600, int(prosody.get("closing_settle_ms", perf.get("closing_settle_ms", closing_hold)) or closing_hold)))
+            cadence = "opening_directed"
+
         speech_beats: list[PerformanceBeat] = []
-        for index, part in enumerate(parts):
-            speech_beats.append(PerformanceBeat(
-                beat_index=index + 1,
-                kind="speech",
-                text=part,
-                duration_ms=self._duration(part),
-                pause_after_ms=170 if index < len(parts) - 1 else 0,
-                tts_style=style,
-                emotion=stage_emotion,
-                motion_intent=stage_motion if index == 0 else "hold_pose",
-                gaze_intent="user_attention" if kind == "continuation" else "scene_focus",
-                head_intent="neutral_small" if stage_motion in {"", "none"} else stage_motion,
-                gesture_intent="small_mark" if density == "low" and index == 0 else "none",
-            ))
+        if explicit_beats:
+            # Opening Director đã quyết định beat intent và pause. Stage chỉ map
+            # sang contract cơ học, không chia lại theo dấu câu như thời đồ đá.
+            for index, raw in enumerate(explicit_beats[:3]):
+                part = _clean(raw.get("speech_text") or raw.get("display_text") or raw.get("text"))
+                if not part:
+                    continue
+                beat_style = str(raw.get("delivery", style) or style)
+                beat_motion = str(raw.get("motion", stage_motion if index == 0 else "hold_pose") or "none")
+                beat_gaze = str(raw.get("gaze", "user_attention") or "user_attention")
+                pause = max(0, min(1200, int(raw.get("pause_after_ms", 0) or 0)))
+                emphasis = tuple(str(item) for item in (raw.get("emphasis") or ())[:4] if str(item).strip())
+                speech_beats.append(PerformanceBeat(
+                    beat_index=index + 1,
+                    kind="speech",
+                    text=part,
+                    display_text=_clean(raw.get("display_text") or raw.get("text")),
+                    duration_ms=self._duration(part),
+                    pause_after_ms=pause,
+                    tts_style=beat_style,
+                    emotion=stage_emotion,
+                    motion_intent=beat_motion,
+                    gaze_intent=beat_gaze,
+                    head_intent="neutral_small" if beat_motion in {"", "none"} else beat_motion,
+                    gesture_intent="small_mark" if density == "low" and index == 0 else "none",
+                    actions=tuple(f"emphasize:{item}" for item in emphasis),
+                ))
+        else:
+            parts = self._split(line)[:2]
+            for index, part in enumerate(parts):
+                speech_beats.append(PerformanceBeat(
+                    beat_index=index + 1,
+                    kind="speech",
+                    text=part,
+                    display_text=part,
+                    duration_ms=self._duration(part),
+                    pause_after_ms=170 if index < len(parts) - 1 else 0,
+                    tts_style=style,
+                    emotion=stage_emotion,
+                    motion_intent=stage_motion if index == 0 else "hold_pose",
+                    gaze_intent="user_attention" if kind == "continuation" else "scene_focus",
+                    head_intent="neutral_small" if stage_motion in {"", "none"} else stage_motion,
+                    gesture_intent="small_mark" if density == "low" and index == 0 else "none",
+                ))
         beats = (
             PerformanceBeat(
                 beat_index=0,
@@ -181,7 +225,7 @@ class AutonomousPerformancePlanner:
             show_format_family="presence",
             show_format_variant=1,
             stage_energy=max(0.20, min(0.72, 0.58 - intrusion * 0.28)),
-            line_shape="two_beat" if len(speech_beats) > 1 else "single_strike",
+            line_shape=("multi_beat" if len(speech_beats) > 2 else "two_beat" if len(speech_beats) > 1 else "single_strike"),
             opening_mode="typed_hold",
             closing_mode="soft_return",
             beats=tuple(beats),

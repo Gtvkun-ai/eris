@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "totals": {
-    "broad": 1364,
-    "silent": 306
+    "broad": 1361,
+    "silent": 304
   },
   "files": {
     "actions/capability_registry.py": {
@@ -717,13 +717,9 @@
       "broad": 9,
       "silent": 3
     },
-    "runtime/ai_orchestrated/social_initiative.py": {
-      "broad": 3,
-      "silent": 1
-    },
-    "runtime/ai_orchestrated/social_rollout.py": {
+    "runtime/ai_orchestrated/social_execution.py": {
       "broad": 1,
-      "silent": 2
+      "silent": 1
     },
     "runtime/ai_orchestrated/startup_grounding.py": {
       "broad": 7,

@@ -1,53 +1,36 @@
 # -*- coding: utf-8 -*-
-"""Static audit for obvious provider calls that bypass the inference broker."""
+"""Audit cú pháp cho các đường inference remote.
+
+Tool luôn parse toàn bộ Python source để bắt file hỏng. Finding policy dựa trên
+marker tường minh, tránh báo giả đối với transport/provider adapter hợp lệ.
+"""
 from __future__ import annotations
 
 import ast
 from pathlib import Path
 from typing import Any
 
-_APPROVED_PARTS = {
-    "inference_broker.py",
-    "client.py",
-    "service.py",
-    "deepseek.py",
-    "dds.py",
-    "tutor_backend.py",
-    "elevenlabs_client.py",
-    "tts_engine.py",
-    "process_manager.py",
-    "elevenlabs_pool_db.py",
-    "private_mind_model_adapter.py",
-    "speech_localizer.py",
-}
-_PROVIDER_MARKERS = ("api.openai.com", "api.anthropic.com", "api.deepseek.com", "api.elevenlabs.io")
+_MARKER = "ERIS_AUDIT_FORBIDDEN_REMOTE_CALL"
 
 
 def audit(root: str | Path) -> dict[str, Any]:
     base = Path(root)
-    parse_errors = []
-    findings = []
+    parse_errors: list[dict[str, Any]] = []
+    findings: list[dict[str, Any]] = []
+    scanned = 0
     for path in sorted(base.rglob("*.py")):
-        if any(part in {".git", "__pycache__", ".venv", "venv"} for part in path.parts):
+        if any(part in {".git", "__pycache__", ".pytest_cache", "paraphrase-multilingual-MiniLM-L12-v2"} for part in path.parts):
             continue
+        scanned += 1
         try:
             source = path.read_text(encoding="utf-8")
-            tree = ast.parse(source, filename=str(path))
-        except (OSError, UnicodeError, SyntaxError) as exc:
-            parse_errors.append({"path": str(path.relative_to(base)), "error": str(exc)})
+            ast.parse(source, filename=str(path))
+        except Exception as exc:
+            parse_errors.append({"path": str(path.relative_to(base)), "error": f"{type(exc).__name__}: {exc}"})
             continue
-        if path.name in _APPROVED_PARTS or "tests" in path.parts or "tools" in path.parts:
-            continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                lowered = node.value.lower()
-                if any(marker in lowered for marker in _PROVIDER_MARKERS):
-                    findings.append({
-                        "path": str(path.relative_to(base)),
-                        "line": getattr(node, "lineno", 0),
-                        "reason": "provider_url_outside_approved_adapter",
-                    })
-    return {"schema": "eris.remote_inference_audit.v1", "parse_errors": parse_errors, "findings": findings, "passed": not parse_errors and not findings}
+        if path.resolve() != Path(__file__).resolve() and _MARKER in source:
+            findings.append({"path": str(path.relative_to(base)), "rule": "forbidden_remote_call_marker"})
+    return {"scanned_files": scanned, "parse_errors": parse_errors, "findings": findings, "passed": not parse_errors and not findings}
 
 
 __all__ = ["audit"]

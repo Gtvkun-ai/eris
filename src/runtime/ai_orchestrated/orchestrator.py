@@ -22,6 +22,7 @@ from runtime.social_stance_policy import guard_subjective_stance_payload
 from runtime.companion_model_routing import route_companion_turn
 from runtime.public_reply_context import compile_public_reply_context
 from runtime.reply_obligation import enforce_reply_obligation
+from runtime.observability import ensure_observability
 from runtime.chess.surface import (
     authoritative_chess_answer_text,
     chess_move_question,
@@ -48,8 +49,13 @@ from .startup_grounding import (
     choose_startup_text,
     collect_startup_grounding,
     ensure_grounded_startup_plan,
+    ensure_startup_greeting_payload,
     select_startup_persona_preset,
 )
+from .opening_director import OpeningDirector
+from .opening_input_assembler import build_opening_input
+from .opening_history import OpeningHistoryStore
+from .opening_safety import validate_opening_surface
 from .self_context import build_autonomous_self_context
 
 
@@ -67,6 +73,38 @@ def _orchestrator_boundary_note(host: Any, operation: str, exc: Exception) -> No
             _LOG.debug("AI orchestrator logger failed: %s", log_exc, exc_info=log_exc)
     _LOG.debug("[ai orchestrator] %s degraded: %s", operation, exc, exc_info=exc)
 
+
+
+def _opening_telemetry(
+    host: Any,
+    name: str,
+    *,
+    tags: Mapping[str, Any] | None = None,
+    fields: Mapping[str, Any] | None = None,
+    status: str = "ok",
+) -> None:
+    """Phát event nhỏ đã redaction; telemetry không được làm hỏng startup."""
+
+    try:
+        ensure_observability(host).log(name, tags=tags or {}, fields=fields or {}, status=status)
+    except Exception as exc:
+        _orchestrator_boundary_note(host, f"telemetry.{name}", exc)
+
+
+def _opening_hook_subject_class(source: str, subject: str) -> str:
+    """Lưu loại hook, không lưu raw OCR/URL vào history."""
+
+    source_key = str(source or "none").strip().lower()
+    text = str(subject or "").strip().lower()
+    if source_key == "continuity":
+        return "continuity_loop"
+    if source_key == "runtime":
+        return "runtime_status"
+    if any(token in text for token in ("facebook", "instagram", "twitter", "x.com", "tiktok", "zalo")):
+        return "social_media"
+    if any(token in text for token in ("code", "python", "visual studio", "github", "terminal", "repo")):
+        return "development_tool"
+    return "screen_application" if source_key == "screen" else "none"
 
 
 def architecture_c_enabled() -> bool:
@@ -189,6 +227,25 @@ def _serializable_public_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Chuẩn hóa payload public trước JSON và bỏ cache object typed nội bộ."""
 
     return public_payload(payload)
+
+
+def _activate_social_plan_after_public_commit(
+    host: Any,
+    payload: Mapping[str, Any] | None,
+    *,
+    source_turn_id: str,
+    source_text: str,
+    source_turn_seq: int,
+) -> dict[str, Any]:
+    from .social_plan_commit import activate_social_plan_after_public_commit
+
+    return activate_social_plan_after_public_commit(
+        host,
+        payload,
+        source_turn_id=source_turn_id,
+        source_text=source_text,
+        source_turn_seq=source_turn_seq,
+    )
 
 
 def _authoritative_chess_result_text(report: Any, user_text: str) -> str:
@@ -411,6 +468,31 @@ class AIChatOrchestrator:
                 social_agenda_store.observe_user_turn(user_text=user_text, now=cycle_start)
             except Exception as exc:
                 host.logger.debug("[social agenda] user outcome failed: %s", exc)
+        random_chat_seed_reservoir = getattr(host, "ai_random_chat_seed_reservoir", None)
+        if random_chat_seed_reservoir is not None:
+            try:
+                random_chat_seed_reservoir.observe_user_turn(now=cycle_start)
+            except Exception as exc:
+                host.logger.debug("[random chat seed] reservoir invalidation failed: %s", exc)
+        random_chat_seed_store = getattr(host, "ai_random_chat_seed_store", None)
+        if random_chat_seed_store is not None:
+            try:
+                seed_outcome = random_chat_seed_store.observe_user_turn(
+                    user_text,
+                    user_turn_id=turn_id,
+                    now=cycle_start,
+                )
+                if seed_outcome is not None:
+                    host.logger.info(
+                        "[random chat seed] outcome seed=%s class=%s score=%.2f explicit=%s promoted=%s",
+                        seed_outcome.seed_id,
+                        seed_outcome.classification,
+                        seed_outcome.score,
+                        int(seed_outcome.explicit),
+                        len(seed_outcome.promoted_paths),
+                    )
+            except Exception as exc:
+                host.logger.debug("[random chat seed] user outcome failed: %s", exc)
 
         # Một public arc phải nhường lời ngay khi user chen vào. Runtime trả lại
         # mục tiêu/beat còn dang dở cho main writer để nó thích nghi theo câu mới,
@@ -1054,13 +1136,19 @@ class AIChatOrchestrator:
         # Commit semantic social plans only after the first public line succeeds.
         # The model appraises; runtime owns IDs, deadlines, leases and cancellation.
         social_plan = payload.get("social_plan") if isinstance(payload, Mapping) else None
-        social_plan = social_plan if isinstance(social_plan, Mapping) else {}
-        social_rollout_policy = getattr(host, "ai_social_rollout_policy", None)
-        if social_rollout_policy is not None:
-            try:
-                social_plan = social_rollout_policy.filter_social_plan(social_plan)
-            except Exception as exc:
-                host.logger.debug("[social rollout] appraisal/filter failed: %s", exc)
+        try:
+            from .social_execution import accept_full_social_plan
+
+            social_plan = accept_full_social_plan(
+                social_plan if isinstance(social_plan, Mapping) else None
+            )
+        except Exception as exc:
+            # Normalization failure must fail closed to an all-none plan. It must
+            # not revive the retired top-level conversation_arc field.
+            from .social_plan import empty_social_plan
+
+            social_plan = empty_social_plan()
+            host.logger.debug("[social execution] normalization failed: %s", exc)
         valid_social_commit = bool(
             public_text
             and assistant_meta is not None
@@ -1099,8 +1187,6 @@ class AIChatOrchestrator:
                 except Exception as exc:
                     host.logger.debug("[social agenda] update failed: %s", exc)
             arc_payload = social_plan.get("conversation_arc")
-            if not isinstance(arc_payload, Mapping) and social_rollout_policy is None:
-                arc_payload = payload.get("conversation_arc") if isinstance(payload, Mapping) else None
             scheduled_arc = False
             if isinstance(arc_payload, Mapping) and conversation_arc_runtime is not None:
                 try:
@@ -1560,100 +1646,284 @@ class AIAutonomousOrchestrator:
             force_startup_speech = str(os.getenv("ERIS_AI_STARTUP_FORCE_SPEAK", "1") or "1").strip().lower() in {
                 "1", "true", "yes", "on",
             }
-        snapshot = {
-            "event_kind": "startup",
-            "startup_opening_required": bool(force_startup_speech),
-            "personality": state.personality.panel_view(),
-            "personality_summary": state.personality_prompt_context(),
-            "identity": state.identity.panel_view(),
-            "identity_summary": state.identity_prompt_context(),
-            "relationship": state.relationship.to_dict(),
-            "open_loops": list(state.open_loops),
-            "latest_observation": latest_observation,
-            "recent_public_history": recent_history,
-            "startup_screen_evidence": startup_grounding.planner_context(),
-            "instruction": (
-                "Choose one short opening through this cascade: current OCR/UIA evidence, meaningful runtime signal, "
-                "real continuity/memory, then personality-led presence. Startup does not require external evidence to speak. "
-                "A low-risk inference is allowed only as a hypothesis with an explicit basis and room for correction. "
-                "The opening must be self-contained: every phrase such as 'the real part', 'the rest', 'that thing', or 'what matters' "
-                "must name its referent inside the same sentence. "
-                "Never invent that the user plans to start, change, fix, or feel something. Do not report restore state "
-                "or memory machinery."
-            ),
-        }
-        startup_planner = getattr(host, "ai_intention_planner", None)
-        skip_empty_startup_planner = bool(
-            force_startup_speech
-            and not startup_grounding.has_direct_screen_evidence
-            and not startup_grounding.has_runtime_opening_anchor
-            and not continuity_anchor
-        )
-        if skip_empty_startup_planner:
-            host.logger.info("[architecture C startup] planner skipped; using typed persona plan reason=no_opening_anchor")
-            local_plan = _typed_startup_persona_plan(reason="empty_startup_skipped_planner")
-            _submit_local_startup_plan(host, local_plan, turn_seq=turn_seq)
-            startup_planner = _StaticIntentionPlanner(local_plan)
+        opening_director_active = False
+        opening_input = None
+        opening_plan = None
+        opening_surface = None
         try:
-            plan = startup_planner.plan_autonomous(
-                snapshot,
-                turn_seq=turn_seq,
+            from runtime.runtime_settings_store import runtime_bool, runtime_float, runtime_text
+            opening_director_active = runtime_bool("opening_director", "enabled", default=True)
+            opening_mode = runtime_text("opening_director", "mode", default="hybrid")
+            duplicate_threshold = runtime_float(
+                "opening_director", "semantic_duplicate_threshold", default=0.86
             )
-        except Exception as exc:
-            # Startup presence không được chết chỉ vì planner/provider vừa thức
-            # dậy chậm hơn phần còn lại của runtime.
-            host.logger.warning("[architecture C startup] planner failed; using typed persona plan: %s", exc)
+        except Exception:
+            opening_director_active = True
+            opening_mode = "hybrid"
+            duplicate_threshold = 0.86
+
+        if opening_director_active:
+            opening_input = build_opening_input(
+                host,
+                state=state,
+                grounding=startup_grounding,
+                recent_history=recent_history,
+                force_startup_speech=force_startup_speech,
+            )
+            _opening_telemetry(
+                host,
+                "eris.opening.input_assembled",
+                tags={
+                    "age_band": opening_input.policy.age_band,
+                    "continuity_scope": opening_input.continuity.consent_scope,
+                },
+                fields={
+                    "session_id": opening_input.event.session_id,
+                    "evidence_count": len(opening_input.screen_evidence),
+                    "open_loop_count": len(opening_input.continuity.open_loops),
+                },
+            )
+            history_store = getattr(host, "ai_opening_history_store", None)
+            if not isinstance(history_store, OpeningHistoryStore):
+                history_store = OpeningHistoryStore()
+                host.ai_opening_history_store = history_store
+            director = getattr(host, "ai_opening_director", None)
+            if not isinstance(director, OpeningDirector):
+                director = OpeningDirector(
+                    history=history_store,
+                    mode=opening_mode,
+                    semantic_duplicate_threshold=duplicate_threshold,
+                )
+                host.ai_opening_director = director
+            model_router = getattr(host, "ai_model_router", None)
+            opening_planner_fn = getattr(model_router, "generate_opening_plan", None)
+            surface_writer_fn = getattr(model_router, "generate_opening_surface", None)
+
+            def _opening_planner(input_payload, candidates):
+                if not callable(opening_planner_fn):
+                    return {}
+                started = time.perf_counter()
+                _opening_telemetry(
+                    host,
+                    "eris.opening.model_requested",
+                    tags={"model_role": "opening_planner"},
+                    fields={"candidate_count": len(candidates)},
+                )
+                try:
+                    result = opening_planner_fn(opening_input=input_payload, candidates=candidates)
+                except Exception:
+                    _opening_telemetry(
+                        host,
+                        "eris.opening.model_completed",
+                        tags={"model_role": "opening_planner", "parse_status": "error"},
+                        fields={"latency_ms": round((time.perf_counter() - started) * 1000.0, 2)},
+                        status="error",
+                    )
+                    raise
+                _opening_telemetry(
+                    host,
+                    "eris.opening.model_completed",
+                    tags={"model_role": "opening_planner", "parse_status": "ok" if result else "empty"},
+                    fields={"latency_ms": round((time.perf_counter() - started) * 1000.0, 2)},
+                )
+                return result
+
+            def _opening_surface_writer(plan_payload, evidence_payload):
+                if not callable(surface_writer_fn):
+                    return {}
+                started = time.perf_counter()
+                _opening_telemetry(
+                    host,
+                    "eris.opening.model_requested",
+                    tags={"model_role": "surface_writer"},
+                    fields={"evidence_count": len(evidence_payload)},
+                )
+                try:
+                    result = surface_writer_fn(
+                        opening_plan=plan_payload,
+                        allowed_evidence=evidence_payload,
+                    )
+                except Exception:
+                    _opening_telemetry(
+                        host,
+                        "eris.opening.model_completed",
+                        tags={"model_role": "surface_writer", "parse_status": "error"},
+                        fields={"latency_ms": round((time.perf_counter() - started) * 1000.0, 2)},
+                        status="error",
+                    )
+                    raise
+                _opening_telemetry(
+                    host,
+                    "eris.opening.model_completed",
+                    tags={"model_role": "surface_writer", "parse_status": "ok" if result else "empty"},
+                    fields={"latency_ms": round((time.perf_counter() - started) * 1000.0, 2)},
+                )
+                return result
+
+            opening_plan = director.plan(
+                opening_input,
+                planner=_opening_planner if callable(opening_planner_fn) else None,
+            )
+            if opening_plan.decision != "speak" or not opening_plan.safety.allowed:
+                _opening_telemetry(
+                    host,
+                    "eris.opening.eligibility_evaluated",
+                    tags={"decision": "silence", "block_reason": (opening_plan.safety.reasons or ("unknown",))[0]},
+                    fields={"chat_preempted": False, "boundary_present": bool(opening_input.scene_partner.boundary_flags)},
+                    status="blocked",
+                )
+                host.logger.info(
+                    "[opening director] silence reasons=%s",
+                    ",".join(opening_plan.safety.reasons) or "none",
+                )
+                return False
+            _opening_telemetry(
+                host,
+                "eris.opening.eligibility_evaluated",
+                tags={"decision": "speak", "block_reason": "none"},
+                fields={"chat_preempted": False, "boundary_present": bool(opening_input.scene_partner.boundary_flags)},
+            )
+            opening_surface = director.realize(
+                opening_input,
+                opening_plan,
+                surface_writer=_opening_surface_writer if callable(surface_writer_fn) else None,
+            )
+            surface_ok, surface_errors = validate_opening_surface(opening_input, opening_plan, opening_surface)
+            _opening_telemetry(
+                host,
+                "eris.opening.surface_validated",
+                tags={
+                    "rewrite_or_fallback": "none" if callable(surface_writer_fn) else "deterministic_fallback",
+                    "status": "pass" if surface_ok else "fail",
+                },
+                fields={
+                    "unsupported_claim_count": len(opening_surface.unsupported_claims),
+                    "question_count": opening_surface.question_count,
+                    "validation_errors": list(surface_errors),
+                },
+                status="ok" if surface_ok else "error",
+            )
             plan = IntentionPlan.from_mapping(
                 {
+                    "plan_id": opening_plan.plan_id,
                     "speak": True,
                     "motive": "startup_opening",
-                    "strategy": "persona_opening",
-                    "value_focus": "warm_relational_presence",
-                    "topic": "Offer one ordinary, warm-guarded opening with a small dry edge; no manifesto.",
-                    "importance": 0.72,
-                    "intrusion_risk": 0.05,
-                    "confidence": 0.74,
-                    "performance_hint": "soft",
-                    "evidence_refs": [],
+                    "strategy": "opening_director",
+                    "value_focus": "encounter_and_grounded_presence",
+                    "topic": "Realize the approved typed opening plan without changing its semantic scope.",
+                    "importance": 0.78,
+                    "intrusion_risk": max(0.02, min(0.72, opening_plan.comedic_move.risk)),
+                    "confidence": max(0.62, min(0.96, 0.72 + opening_plan.score * 0.20)),
+                    "performance_hint": (
+                        opening_plan.beats[0].delivery if opening_plan.beats else "warm_soft"
+                    ),
+                    "evidence_refs": list(opening_plan.evidence_refs),
                     "semantics": {
                         "turn_kind": "startup",
-                        "speech_act": "warm_session_opening",
-                        "subject_key": "session_arrival",
-                        "evidence_scope": "persona",
-                        "continuation_key": "none",
+                        "speech_act": "typed_opening_scene",
+                        "subject_key": opening_plan.hook.subject or "session_arrival",
+                        "evidence_scope": (
+                            opening_plan.hook.source if opening_plan.hook.decision == "use" else "persona"
+                        ),
+                        "continuation_key": (
+                            opening_plan.plan_id if opening_plan.reply_bearing else "none"
+                        ),
                     },
+                    "notes": "opening_plan.v1 authority",
                 },
                 channel="startup",
             )
-        try:
-            from runtime.runtime_settings_store import runtime_bool
-            force_screen_opening = runtime_bool("architecture", "startup_screen_opening", default=True)
-        except Exception:
-            force_screen_opening = str(os.getenv("ERIS_AI_STARTUP_SCREEN_OPENING", "1") or "1").strip().lower() in {
-                "1", "true", "yes", "on",
-            }
-        plan = ensure_grounded_startup_plan(
-            plan,
-            startup_grounding,
-            force_screen_opening=force_screen_opening,
-            force_startup_speech=force_startup_speech,
-            has_continuity_anchor=continuity_anchor,
-        )
-        host.logger.info(
-            "[architecture C startup route] strategy=%s source=%s continuity=%s forced=%s",
-            plan.strategy or "none",
-            startup_grounding.opening_source,
-            int(continuity_anchor),
-            int(force_startup_speech),
-        )
-        if not (plan.speak and plan.confidence >= 0.56 and plan.importance >= 0.42):
+            # Giữ state contract cũ của V22/V25: local typed plan cũng phải
+            # được submit nguyên tử để panel, observer và cancellation cùng thấy
+            # một intention. Đổi đạo diễn không có nghĩa là vứt sổ cái đi.
+            _submit_local_startup_plan(host, plan, turn_seq=turn_seq)
             host.logger.info(
-                "[architecture C startup] silence motive=%s conf=%.2f importance=%.2f",
-                plan.motive,
-                plan.confidence,
-                plan.importance,
+                "[opening director] selected plan=%s move=%s hook=%s beats=%s score=%.3f",
+                opening_plan.plan_id,
+                opening_plan.comedic_move.family,
+                opening_plan.hook.source,
+                opening_plan.beat_shape,
+                opening_plan.score,
             )
-            return False
+            _opening_telemetry(
+                host,
+                "eris.opening.candidate_selected",
+                tags={
+                    "encounter": opening_plan.encounter.kind,
+                    "move": opening_plan.comedic_move.family,
+                    "hook_source": opening_plan.hook.source,
+                    "beat_shape": opening_plan.beat_shape,
+                },
+                fields={
+                    "plan_id": opening_plan.plan_id,
+                    "score": opening_plan.score,
+                    "score_breakdown": dict(opening_plan.score_breakdown),
+                },
+            )
+        else:
+            snapshot = {
+                "event_kind": "startup",
+                "startup_opening_required": bool(force_startup_speech),
+                "personality": state.personality.panel_view(),
+                "personality_summary": state.personality_prompt_context(),
+                "identity": state.identity.panel_view(),
+                "identity_summary": state.identity_prompt_context(),
+                "relationship": state.relationship.to_dict(),
+                "open_loops": list(state.open_loops),
+                "latest_observation": latest_observation,
+                "recent_public_history": recent_history,
+                "startup_screen_evidence": startup_grounding.planner_context(),
+                "instruction": (
+                    "Choose one short opening through this cascade: current OCR/UIA evidence, meaningful runtime signal, "
+                    "real continuity/memory, then personality-led presence. Startup does not require external evidence to speak. "
+                    "A low-risk inference is allowed only as a hypothesis with an explicit basis and room for correction. "
+                    "The opening must be self-contained and must not invent user intention or emotion."
+                ),
+            }
+            startup_planner = getattr(host, "ai_intention_planner", None)
+            skip_empty_startup_planner = bool(
+                force_startup_speech
+                and not startup_grounding.has_direct_screen_evidence
+                and not startup_grounding.has_runtime_opening_anchor
+                and not continuity_anchor
+            )
+            if skip_empty_startup_planner:
+                host.logger.info("[architecture C startup] planner skipped; using typed persona plan reason=no_opening_anchor")
+                local_plan = _typed_startup_persona_plan(reason="empty_startup_skipped_planner")
+                _submit_local_startup_plan(host, local_plan, turn_seq=turn_seq)
+                startup_planner = _StaticIntentionPlanner(local_plan)
+            try:
+                plan = startup_planner.plan_autonomous(snapshot, turn_seq=turn_seq)
+            except Exception as exc:
+                host.logger.warning("[architecture C startup] planner failed; using typed persona plan: %s", exc)
+                plan = _typed_startup_persona_plan(reason="startup_planner_failed")
+            try:
+                from runtime.runtime_settings_store import runtime_bool
+                force_screen_opening = runtime_bool("architecture", "startup_screen_opening", default=True)
+            except Exception:
+                force_screen_opening = True
+            plan = ensure_grounded_startup_plan(
+                plan,
+                startup_grounding,
+                force_screen_opening=force_screen_opening,
+                force_startup_speech=force_startup_speech,
+                has_continuity_anchor=continuity_anchor,
+            )
+            host.logger.info(
+                "[architecture C startup route] strategy=%s source=%s continuity=%s forced=%s",
+                plan.strategy or "none",
+                startup_grounding.opening_source,
+                int(continuity_anchor),
+                int(force_startup_speech),
+            )
+            if not (plan.speak and plan.confidence >= 0.56 and plan.importance >= 0.42):
+                host.logger.info(
+                    "[architecture C startup] silence motive=%s conf=%.2f importance=%.2f",
+                    plan.motive,
+                    plan.confidence,
+                    plan.importance,
+                )
+                return False
 
         from runtime.public_lifecycle import lifecycle_for
         startup_turn_id = str(plan.plan_id or f"startup:{turn_seq}")
@@ -1673,33 +1943,131 @@ class AIAutonomousOrchestrator:
                 "Use only a real continuity item. Do not mention memory systems, restored state, or infer a fresh user action."
             ),
         }
+        addressing_snapshot: Mapping[str, Any] = {}
+        addressing_context = ""
+        addressing_snapshot_fn = getattr(host, "_user_addressing_snapshot", None)
+        if callable(addressing_snapshot_fn):
+            try:
+                addressing_snapshot = dict(addressing_snapshot_fn() or {})
+            except Exception:
+                addressing_snapshot = {}
+        addressing_context_fn = getattr(host, "_user_addressing_prompt_context", None)
+        if callable(addressing_context_fn):
+            try:
+                addressing_context = str(addressing_context_fn() or "").strip()
+            except Exception:
+                addressing_context = ""
         language = _runtime_language()
         avoid_text = str(getattr(host, "last_text", "") or "")
-        # Online startup follows the same single semantic-authority path as chat.
-        # Preset prose is reserved for degraded mode; it must not silently bypass
-        # the bilingual UtteranceSpec contract when DeepSeek Web is available.
+        # Online startup vẫn đi qua một public commit duy nhất. Khi Opening
+        # Director hoạt động, Surface Writer đã trả hai bề mặt theo beat; runtime
+        # chỉ bọc chúng vào UtteranceSpec và giữ metadata typed.
         model_router = getattr(host, "ai_model_router", None)
-        generate_autonomous = getattr(model_router, "generate_autonomous_reply", None)
-        payload = generate_autonomous(
-            plan=plan,
-            personality_context=(
-                f"{state.personality_prompt_context()}\n\n"
-                f"{greeting_frame.to_prompt_block()}"
-            ),
-            memory_context=json.dumps(continuity_context, ensure_ascii=False),
-            grounding_context=(
-                f"{startup_grounding.prompt_context()}\n\n"
-                "STARTUP_WORDING_CONTRACT:\n"
-                "- GreetingFrame is the encounter model, not public text.\n"
-                "- Prefer ordinary spoken Vietnamese over slogans or philosophical declarations.\n"
-                "- Do not explain your role, availability, standards, principles, or abstract worldview."
-            ),
-            recent_history=recent_history,
-            avoid_text=avoid_text,
-            allow_fallback=not no_fallback_mode_enabled(),
-            language_hint=language,
-            speech_language_hint=_runtime_speech_language(),
-        ) if callable(generate_autonomous) else {}
+        if opening_director_active and opening_plan is not None and opening_surface is not None:
+            from runtime.utterance_spec import degrade_surface_payload
+            from .social_plan import empty_social_plan
+
+            payload = degrade_surface_payload(
+                {"performance_hint": opening_plan.prosody_plan.global_preset},
+                text=opening_surface.display_text,
+                language=opening_surface.display_language,
+                reason="opening_director_surface",
+                performance_preset=opening_plan.prosody_plan.global_preset,
+                should_speak=True,
+            )
+            payload["speech_text"] = opening_surface.speech_text
+            payload["speech_language"] = opening_surface.speech_language
+            utterance = dict(payload.get("utterance") or {})
+            utterance["display"] = {
+                "language": opening_surface.display_language,
+                "text": opening_surface.display_text,
+            }
+            utterance["speech"] = {
+                "language": opening_surface.speech_language,
+                "text": opening_surface.speech_text,
+            }
+            delivery = dict(utterance.get("delivery") or {})
+            delivery["interruptible"] = bool(opening_plan.prosody_plan.interruptible)
+            utterance["delivery"] = delivery
+            payload["utterance"] = utterance
+            payload["opening_plan"] = opening_plan.to_dict()
+            payload["opening_surface"] = opening_surface.to_dict()
+            payload["autonomous_plan"] = plan.to_dict()
+            payload["performance_context"] = {
+                "stage_emotion": "warm",
+                "stage_motion": opening_plan.beats[0].motion if opening_plan.beats else "none",
+                "tts_style": opening_plan.prosody_plan.global_preset,
+                "opening_hold_ms": opening_plan.prosody_plan.opening_hold_ms,
+                "closing_settle_ms": opening_plan.prosody_plan.closing_settle_ms,
+                "opening_beats": [
+                    {
+                        **beat.to_dict(),
+                        "display_text": next(
+                            (item.text for item in opening_surface.display_beats if item.beat_id == beat.beat_id),
+                            "",
+                        ),
+                        "speech_text": next(
+                            (item.text for item in opening_surface.speech_beats if item.beat_id == beat.beat_id),
+                            "",
+                        ),
+                    }
+                    for beat in opening_plan.beats
+                ],
+            }
+            social_plan = empty_social_plan()
+            if opening_plan.reply_bearing:
+                social_plan["exposure"] = {
+                    "decision": "open",
+                    "kind": "social_invitation",
+                    "level": min(0.45, 0.12 + opening_plan.comedic_move.risk),
+                    "expects_reaction": True,
+                    "reaction_window_class": "held",
+                    "expected_responses": ["user_replies", "user_changes_topic", "user_starts_task"],
+                    "silence_hypotheses": ["user may be busy", "question may not need an answer"],
+                    "recovery_style": "yield_without_blame",
+                    "confidence": 0.78,
+                }
+                social_plan["agenda_update"] = {
+                    "decision": "open",
+                    "goal_type": "invite_story",
+                    "objective": "Keep the contextual invitation available without pressuring the user.",
+                    "desired_user_state": "free_to_reply_or_ignore",
+                    "strategy": "one soft reminder at most, then pivot or close",
+                    "horizon": "turn",
+                    "success_signals": ["user_replies", "user_continues_task"],
+                    "stop_signals": ["user_activity", "scene_change", "explicit_boundary"],
+                    "salience": 0.58,
+                    "evidence_refs": list(opening_plan.evidence_refs),
+                }
+            payload["social_plan"] = social_plan
+            payload["startup_greeting_nonbinding"] = True
+            payload["startup_context_may_expect_reply"] = opening_plan.reply_bearing
+        else:
+            generate_autonomous = getattr(model_router, "generate_autonomous_reply", None)
+            payload = generate_autonomous(
+                plan=plan,
+                personality_context=(
+                    f"{state.personality_prompt_context()}\n\n"
+                    f"{greeting_frame.to_prompt_block()}"
+                    + (f"\n\n{addressing_context}" if addressing_context else "")
+                ),
+                memory_context=json.dumps(continuity_context, ensure_ascii=False),
+                grounding_context=(
+                    f"{startup_grounding.prompt_context()}\n\n"
+                    "STARTUP_WORDING_CONTRACT:\n"
+                    "- GreetingFrame is the encounter model, not public text.\n"
+                    "- Every startup public turn has two parts in this order: first acknowledge the encounter with a real short greeting; "
+                    "then, when evidence or continuity exists, continue into one contextual observation or question.\n"
+                    "- Do not replace the greeting with the observation. The greeting itself is non-binding; a contextual question may expect a reply.\n"
+                    "- Prefer ordinary spoken Vietnamese over slogans or philosophical declarations.\n"
+                    "- Do not explain your role, availability, standards, principles, or abstract worldview."
+                ),
+                recent_history=recent_history,
+                avoid_text=avoid_text,
+                allow_fallback=not no_fallback_mode_enabled(),
+                language_hint=language,
+                speech_language_hint=_runtime_speech_language(),
+            ) if callable(generate_autonomous) else {}
         if payload and plan.strategy in {"persona_opening", "continuity_opening"}:
             _selected_text, quality = choose_startup_text(
                 str(payload.get("text", "") or ""),
@@ -1765,9 +2133,29 @@ class AIAutonomousOrchestrator:
                 "[architecture C startup] main reply unavailable; used personality fallback strategy=%s",
                 plan.strategy,
             )
+        payload = ensure_startup_greeting_payload(
+            payload,
+            frame=greeting_frame,
+            display_language=language,
+            speech_language=_runtime_speech_language(),
+            user_vocative=str(addressing_snapshot.get("user_vocative", "") or ""),
+        )
+        if bool(payload.get("startup_greeting_inserted", False)):
+            host.logger.info(
+                "[architecture C startup greeting] invariant_inserted=1 vocative=%s strategy=%s",
+                str(addressing_snapshot.get("user_vocative", "") or "neutral"),
+                plan.strategy or "none",
+            )
         raw = json.dumps(_serializable_public_payload(payload), ensure_ascii=False)
         host._log_raw_llm_output("startup_ai", raw)
         decision = host.parser.parse(raw)
+        if opening_director_active and opening_plan is not None:
+            # Parser chỉ hiểu envelope public cũ. Gắn contract typed sau parse để
+            # Decision.to_payload chuyển nó sang StageFrameBuilder.
+            decision.opening_plan = opening_plan.to_dict()
+            decision.autonomous_plan = plan.to_dict()
+            decision.performance_context = dict(payload.get("performance_context") or {})
+            decision.interruptible = bool(opening_plan.prosody_plan.interruptible)
         if not str(getattr(decision, "utterance_turn_id", "") or "").strip():
             decision.utterance_turn_id = str(plan.plan_id or f"startup:{turn_seq}")
         if not bool(getattr(decision, "should_speak", False)) or not str(getattr(decision, "text", "") or "").strip():
@@ -1833,6 +2221,82 @@ class AIAutonomousOrchestrator:
                 "DEGRADED", turn_id=startup_turn_id, reason="empty_public_commit"
             )
             return False
+        if opening_director_active and opening_plan is not None and opening_input is not None:
+            history_store = getattr(host, "ai_opening_history_store", None)
+            if isinstance(history_store, OpeningHistoryStore):
+                try:
+                    history_store.append_plan(
+                        opening_plan,
+                        session_id=opening_input.event.session_id,
+                        display_text=text,
+                        hook_subject_class=_opening_hook_subject_class(
+                            opening_plan.hook.source, opening_plan.hook.subject
+                        ),
+                    )
+                    _opening_telemetry(
+                        host,
+                        "eris.opening.history_updated",
+                        tags={
+                            "move_family": opening_plan.comedic_move.family,
+                            "hook_source": opening_plan.hook.source,
+                        },
+                        fields={"plan_id": opening_plan.plan_id},
+                    )
+                except Exception as exc:
+                    _orchestrator_boundary_note(host, "opening_history.append_plan", exc)
+            _opening_telemetry(
+                host,
+                "eris.opening.committed",
+                tags={
+                    "reply_bearing": str(bool(opening_plan.reply_bearing)).lower(),
+                    "hook_source": opening_plan.hook.source,
+                },
+                fields={
+                    "plan_id": opening_plan.plan_id,
+                    "text_length": len(text),
+                    "beat_count": len(opening_plan.beats),
+                },
+            )
+
+        social_plan = _activate_social_plan_after_public_commit(
+            host,
+            payload,
+            source_turn_id=startup_turn_id,
+            source_text=text,
+            source_turn_seq=turn_seq,
+        )
+        observer = getattr(host, "ai_post_turn_observer", None)
+        if observer is not None:
+            try:
+                state_summary = state.to_dict() if callable(getattr(state, "to_dict", None)) else {}
+                observer.submit(
+                    turn_id=startup_turn_id,
+                    turn_seq=turn_seq,
+                    user_text="",
+                    assistant_text=text,
+                    recent_history=tuple(host._chat_history_for_llm(limit=8)),
+                    mechanical_outcomes=(),
+                    state_summary=state_summary,
+                    user_meta={"semantic_frame": {}},
+                    assistant_meta={
+                        **dict(_assistant_meta or {}),
+                        "social_plan": social_plan,
+                        "startup_greeting_nonbinding": True,
+                        "startup_context_may_expect_reply": (
+                            opening_plan.reply_bearing
+                            if opening_director_active and opening_plan is not None
+                            else True
+                        ),
+                        "opening_plan": (
+                            opening_plan.to_dict()
+                            if opening_director_active and opening_plan is not None
+                            else {}
+                        ),
+                    },
+                    event_kind="startup",
+                )
+            except Exception as exc:
+                host.logger.debug("[architecture C startup] observer submit failed: %s", exc)
         spoken_at = time.time()
         host.last_autonomous_spoken_at = spoken_at
         host._note_autonomous_spoken(now=spoken_at)

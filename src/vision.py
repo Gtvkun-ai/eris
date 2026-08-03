@@ -4,6 +4,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import urllib.parse
 import msvcrt
 import traceback
 
@@ -112,6 +113,7 @@ class AttentionOverseer:
         social_fallback_client = self.process_manager.build_social_fallback_client() if social_models_enabled else None
         inner_client = self.process_manager.build_inner_client()
         diary_client = self.process_manager.build_diary_client()
+        seed_client = self.process_manager.build_seed_client()
         surface_client = self.process_manager.build_surface_client()
         research_client = self.process_manager.build_research_client()
         tutor_client = self.process_manager.build_tutor_client()
@@ -131,6 +133,7 @@ class AttentionOverseer:
             critic_client=social_critic_client,
             inner_client=inner_client,
             diary_client=diary_client,
+            seed_client=seed_client,
             surface_client=surface_client,
             research_client=research_client,
             tutor_client=tutor_client,
@@ -144,6 +147,7 @@ class AttentionOverseer:
                 ("critic", getattr(self.llm_service, "critic_client", None)),
                 ("inner", getattr(self.llm_service, "inner_client", None)),
                 ("diary", getattr(self.llm_service, "diary_client", None)),
+                ("seed", getattr(self.llm_service, "seed_client", None)),
                 ("surface", getattr(self.llm_service, "surface_client", None)),
                 ("style", getattr(self.llm_service, "style_client", None)),
                 ("research", getattr(self.llm_service, "research_client", None)),
@@ -228,7 +232,7 @@ class AttentionOverseer:
         """Start một hoặc nhiều Whale2API instance, mỗi cái trên một port riêng.
 
         Cấu hình qua env:
-            ERIS_DS2API_PORTS=6011,6012,6013,6014   (mặc định: 6011)
+            ERIS_DS2API_PORTS=6011,6012,6013,6014,6015   (seed mặc định: 6015)
 
         Mỗi instance nhận PORT override qua environment, dùng chung binary và
         database (.db) từ ds2api_dir. Circuit breaker của mỗi worker role đã
@@ -259,6 +263,27 @@ class AttentionOverseer:
         if not ports:
             ports = [6011]
         ports = list(dict.fromkeys(ports))  # dedup, giữ thứ tự
+
+        # Random-chat seed có DS2API instance riêng. Dù config cũ chỉ liệt kê
+        # 6011-6014, runtime vẫn bổ sung cổng local của role seed khi reservoir
+        # được bật. Đây là fault isolation thật, không phải alias role trên giấy.
+        seed_reservoir_enabled = str(
+            os.environ.get("ERIS_RANDOM_CHAT_SEED_RESERVOIR_ENABLED", "1") or "1"
+        ).strip().lower() not in {"0", "false", "no", "off", "disabled", "none"}
+        if seed_reservoir_enabled:
+            seed_base = str(
+                os.environ.get("ERIS_DS_SEED_BASE_URL", "http://127.0.0.1:6015/v1")
+                or "http://127.0.0.1:6015/v1"
+            ).strip()
+            try:
+                parsed_seed = urllib.parse.urlparse(seed_base)
+                seed_host = str(parsed_seed.hostname or "").lower()
+                seed_port = int(parsed_seed.port or 6015)
+            except (TypeError, ValueError):
+                seed_host, seed_port = "127.0.0.1", 6015
+            if seed_host in {"127.0.0.1", "localhost", "::1"} and seed_port not in ports:
+                ports.append(seed_port)
+                self.logger.info("DS2API seed port %d appended for background reservoir.", seed_port)
 
         procs: list = []
         creationflags = 0x08000000 if os.name == "nt" else 0

@@ -1,17 +1,19 @@
 # -*- coding: utf-8 -*-
-"""Pipeline self-initiated turn của Architecture C V18.
+"""Pipeline self-initiated turn của Architecture C V22 full social cutover.
 
 Mỗi bước có đúng một trách nhiệm:
 1. Perception + Context gom signal cơ học và public-safe cognition.
 2. ``TypedCognitiveBlackboard`` chuẩn hóa observer/inner/critic/memory outputs.
-3. ``Social Initiative Worker`` đề xuất desire/topic bằng typed candidate.
-4. ``InitiativeController`` chỉ làm governor timing/quyền phát.
-5. ``Surface Worker`` chỉ viết wording cho SpeechIntent đã duyệt.
-6. ``AutonomousGroundingValidator`` khóa provenance trước và sau model call.
-7. PublicTurnCommitter đưa câu qua TTS + Live2D cùng ledger với chat.
+3. Runtime claim một candidate từ afterbeat, exposure, conversation arc hoặc social agenda.
+4. Nếu không có lane đang chờ, agenda selector model-owned được phép đề xuất một
+   impulse typed mới từ public-safe context. Nó không có quyền viết hay phát câu.
+5. ``InitiativeController`` chỉ làm governor timing/quyền phát.
+6. ``Surface Worker`` chỉ viết wording cho SpeechIntent đã duyệt.
+7. ``AutonomousGroundingValidator`` khóa provenance trước và sau model call.
+8. PublicTurnCommitter đưa câu qua TTS + Live2D cùng ledger với chat.
 
-Không còn model call để quyết định có nên nói, rồi controller mới từ chối sau
-88 giây. Loài người đã thử cách đó; log cho thấy kết quả khá nghệ thuật.
+Không còn legacy execution path hay local public wording fallback. Agenda selector
+chỉ nêu mong muốn/chủ đề; governor và Surface vẫn là đường production duy nhất.
 """
 from __future__ import annotations
 
@@ -149,6 +151,12 @@ class SelfTurnPipeline:
         context_ms = (time.monotonic() - phase_started) * 1000.0
         phase_started = time.monotonic()
         planner_snapshot, discovery_runtime = self._planner_snapshot(context)
+        seed_reservoir = getattr(host, "ai_random_chat_seed_reservoir", None)
+        if seed_reservoir is not None:
+            try:
+                seed_reservoir.update_context(planner_snapshot, now=now)
+            except Exception as exc:
+                host.logger.debug("[random chat seed] context publish failed: %s", exc)
         snapshot_ms = (time.monotonic() - phase_started) * 1000.0
         should_deliberate, trigger_reason = self._should_deliberate(context, planner_snapshot)
         if not should_deliberate:
@@ -166,16 +174,16 @@ class SelfTurnPipeline:
 
         self._last_deliberation_at = now
 
-        # V18: model sở hữu *mong muốn và topic*, runtime chỉ làm governor.
-        # Candidate worker dùng cùng role=surface nhưng contract riêng; nó chưa có
-        # quyền phát ngôn và không viết câu cuối.
+        # V23: ưu tiên candidate từ social-plan state đã commit. Nếu không có lane
+        # đang chờ, agenda selector được phép đề xuất một impulse typed mới. Nó
+        # không có quyền phát; governor và Surface vẫn giữ toàn bộ quyền public.
         blackboard = TypedCognitiveBlackboard.from_snapshot(planner_snapshot, now=now)
         candidate_started = time.monotonic()
         candidate = None
         worker_id = f"self_turn:{threading.get_ident()}"
         # Priority lanes: reserved afterbeat, exposure recovery, conversation arc,
-        # social agenda, then ordinary initiative. Every continuation lane is
-        # claimed atomically before a model call.
+        # then social agenda. The retired ordinary/random initiative path is gone.
+        # Every lane is claimed atomically before a model call.
         if social_continuation_runtime is not None:
             try:
                 candidate = social_continuation_runtime.claim_due(
@@ -204,9 +212,15 @@ class SelfTurnPipeline:
                 )
             except Exception as exc:
                 host.logger.debug("[social agenda] candidate failed: %s", exc)
-        social_engine = getattr(host, "ai_social_initiative_engine", None)
-        if candidate is None and social_engine is not None:
-            candidate = social_engine.propose(blackboard, snapshot=planner_snapshot)
+        agenda_selector = getattr(host, "ai_social_agenda_selector", None)
+        if candidate is None and agenda_selector is not None:
+            try:
+                candidate = agenda_selector.propose(
+                    blackboard,
+                    snapshot=planner_snapshot,
+                )
+            except Exception as exc:
+                host.logger.debug("[social agenda selector] candidate failed: %s", exc)
         candidate_ms = (time.monotonic() - candidate_started) * 1000.0
         initiative = getattr(host, "ai_initiative_controller", None)
         if initiative is None:
@@ -224,7 +238,7 @@ class SelfTurnPipeline:
         )
         if candidate is not None:
             host.logger.info(
-                "[social initiative] source=%s kind=%s anchor=%s confidence=%.2f relevance=%.2f reason=%s",
+                "[social candidate] source=%s kind=%s anchor=%s confidence=%.2f relevance=%.2f reason=%s",
                 candidate.source, candidate.kind, candidate.anchor_type, candidate.confidence, candidate.relevance, candidate.reason,
             )
 
@@ -266,6 +280,7 @@ class SelfTurnPipeline:
         )
 
         if decision.action is InitiativeAction.NO_OP:
+            self._release_seed_lease(candidate, reason=decision.reason)
             self._defer_claimed_continuation(
                 plan,
                 candidate=candidate,
@@ -276,6 +291,7 @@ class SelfTurnPipeline:
                 plan=plan, context=context, activity=activity, gate_reason=decision.reason,
             )
         if decision.action is InitiativeAction.BODY_ONLY:
+            self._release_seed_lease(candidate, reason=decision.reason)
             self._defer_claimed_continuation(
                 plan,
                 candidate=candidate,
@@ -287,10 +303,12 @@ class SelfTurnPipeline:
                 force_body_only=True, body_motion=decision.body_motion,
             )
         if host._process_pending_user_input():
+            self._release_seed_lease(candidate, reason="user_input_preempted")
             return host.running
 
         speech_intent = decision.speech_intent
         if speech_intent is None:
+            self._release_seed_lease(candidate, reason="missing_speech_intent")
             return self._finish_silence(
                 plan=plan, context=context, activity=activity, gate_reason="missing_speech_intent",
             )
@@ -299,6 +317,7 @@ class SelfTurnPipeline:
         if validator is not None:
             preflight = validator.validate_intent(speech_intent, blackboard)
             if not preflight.allowed:
+                self._release_seed_lease(candidate, reason=preflight.reason)
                 self._defer_claimed_continuation(plan, reason=preflight.reason, seconds=0.5)
                 return self._finish_silence(
                     plan=plan, context=context, activity=activity, gate_reason=preflight.reason,
@@ -339,15 +358,12 @@ class SelfTurnPipeline:
                 "[surface worker] unavailable mode=%s; local text fallback disabled",
                 speech_intent.mode,
             )
-        if (
-            surface_payload
-            and self._is_claimed_continuation(plan, candidate)
-            and host._process_pending_user_input()
-        ):
-            # User input wins even if it arrived while Surface was composing the
-            # reserved beat. Never dump a now-stale punchline over a real reply.
+        if surface_payload and host._process_pending_user_input():
+            # User input wins even if it arrived while Surface was composing.
+            self._release_seed_lease(candidate, reason="user_input_during_surface")
             return host.running
         if not surface_payload:
+            self._release_seed_lease(candidate, reason="surface_unavailable")
             self._defer_claimed_continuation(plan, reason="surface_unavailable", seconds=0.75)
             public_lifecycle.transition(
                 "DEGRADED",
@@ -368,6 +384,7 @@ class SelfTurnPipeline:
             discovery_runtime=discovery_runtime,
             prebuilt_payload=surface_payload,
             allow_model_generation=False,
+            candidate=candidate,
         )
 
     def _submit_intention(self, plan: IntentionPlan, *, turn_seq: int) -> None:
@@ -821,6 +838,30 @@ class SelfTurnPipeline:
     # V18 không còn planner model-owned tự quyết speak/silence trong Surface.
     # Candidate model -> governor -> realizer đã thay đường đó ở run().
 
+    def _release_seed_lease(self, candidate: Any | None, *, reason: str) -> None:
+        token = str(getattr(candidate, "seed_lease_token", "") or "") if candidate is not None else ""
+        if not token:
+            return
+        reservoir = getattr(self.host, "ai_random_chat_seed_reservoir", None)
+        if reservoir is None:
+            return
+        try:
+            reservoir.release(token, reason=reason, now=time.time())
+        except Exception as exc:
+            self.host.logger.debug("[random chat seed] lease release failed: %s", exc)
+
+    def _commit_seed_lease(self, candidate: Any | None) -> None:
+        token = str(getattr(candidate, "seed_lease_token", "") or "") if candidate is not None else ""
+        if not token:
+            return
+        reservoir = getattr(self.host, "ai_random_chat_seed_reservoir", None)
+        if reservoir is None:
+            return
+        try:
+            reservoir.commit(token)
+        except Exception as exc:
+            self.host.logger.debug("[random chat seed] lease commit failed: %s", exc)
+
     def _finish_silence(
         self,
         *,
@@ -941,6 +982,7 @@ class SelfTurnPipeline:
         discovery_runtime: Any,
         prebuilt_payload: Mapping[str, Any] | None = None,
         allow_model_generation: bool = True,
+        candidate: Any | None = None,
     ) -> bool:
         host = self.host
         payload = dict(prebuilt_payload or {})
@@ -979,15 +1021,12 @@ class SelfTurnPipeline:
                 language_hint=self._runtime_language(),
                 speech_language_hint=self._runtime_speech_language(),
             )
-        if (
-            payload
-            and self._is_claimed_continuation(plan)
-            and host._process_pending_user_input()
-        ):
-            # The model call may take longer than the intended pause. Re-check
-            # input immediately before commit so interruption remains real.
+        if payload and host._process_pending_user_input():
+            # Re-check input immediately before commit so interruption remains real.
+            self._release_seed_lease(candidate, reason="user_input_before_commit")
             return host.running
         if not payload:
+            self._release_seed_lease(candidate, reason="public_generation_failed")
             host.logger.warning(
                 "[ai autonomous] public generation failed kind=%s subject=%s",
                 plan.semantics.turn_kind,
@@ -1056,6 +1095,7 @@ class SelfTurnPipeline:
         if text and discovery_id and discovery_runtime is not None:
             discovery_runtime.mark_spoken(discovery_id, text)
         if not text:
+            self._release_seed_lease(candidate, reason="no_public_text")
             self._defer_claimed_continuation(plan, reason="no_public_text", seconds=0.75)
             self._record_result(plan, result="stage_silence", gate_reason="no_public_text")
             host._sleep_interruptible(10)
@@ -1063,6 +1103,19 @@ class SelfTurnPipeline:
 
         host.last_autonomous_spoken_at = time.time()
         host._note_autonomous_spoken()
+        self._commit_seed_lease(candidate)
+        seed_store = getattr(host, "ai_random_chat_seed_store", None)
+        seed_payload = getattr(candidate, "random_chat_seed", {}) if candidate is not None else {}
+        if seed_store is not None and isinstance(seed_payload, Mapping) and seed_payload:
+            try:
+                seed_store.note_spoken(
+                    seed_payload,
+                    assistant_turn_id=f"autonomous:{context.turn_seq}",
+                    text=text,
+                    now=host.last_autonomous_spoken_at,
+                )
+            except Exception as exc:
+                host.logger.debug("[random chat seed] spoken receipt failed: %s", exc)
         # Chỉ ghi nhận sau public commit thành công. Nếu Surface/TTS pipeline không
         # tạo được text, reminder vẫn còn due để thử lại thay vì bị mất oan.
         self.followup_appraisal.note_spoken(plan, now=host.last_autonomous_spoken_at)
@@ -1092,10 +1145,23 @@ class SelfTurnPipeline:
                 social_agenda_store.note_spoken(plan, now=host.last_autonomous_spoken_at)
             except Exception as exc:
                 host.logger.debug("[social agenda] completion note failed: %s", exc)
+        autonomous_turn_id = f"autonomous:{context.turn_seq}"
+        try:
+            from .social_plan_commit import activate_social_plan_after_public_commit
+
+            committed_social_plan = activate_social_plan_after_public_commit(
+                host,
+                payload,
+                source_turn_id=autonomous_turn_id,
+                source_text=text,
+                source_turn_seq=context.turn_seq,
+            )
+        except Exception as exc:
+            committed_social_plan = {}
+            host.logger.debug("[social plan commit] autonomous activation failed: %s", exc)
         initiative = getattr(host, "ai_initiative_controller", None)
         if initiative is not None:
             initiative.record_spoken(plan, now=host.last_autonomous_spoken_at, channel="autonomous")
-        autonomous_turn_id = f"autonomous:{context.turn_seq}"
         if plan.strategy:
             host.ai_state_reducer.submit(StateEvent.from_pending_strategy(
                 PendingStrategyUse(
@@ -1108,6 +1174,9 @@ class SelfTurnPipeline:
                 ),
                 base_version=host.ai_state_reducer.snapshot().version,
             ))
+        observer_meta = dict(assistant_meta or {})
+        if committed_social_plan:
+            observer_meta["social_plan"] = committed_social_plan
         host.ai_post_turn_observer.submit(
             turn_id=autonomous_turn_id,
             turn_seq=context.turn_seq,
@@ -1118,7 +1187,7 @@ class SelfTurnPipeline:
                 if isinstance(getattr(decision, "action_result_meta", None), Mapping)
                 else (),
             state_summary=context.state.to_dict(),
-            assistant_meta=assistant_meta,
+            assistant_meta=observer_meta,
             event_kind="autonomous",
         )
         self.trace_store.append("deliberation_result", {

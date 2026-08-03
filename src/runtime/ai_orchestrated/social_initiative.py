@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """Social Initiative Worker cho autonomous speech của ERIS.
 
-V18 tách hai quyền vốn hay bị trộn lẫn:
+Quyền được tách theo ownership thật:
 
-- model ``surface`` đề xuất *mong muốn/chủ đề* dưới dạng ``SocialSpeechCandidate``;
-- runtime governor chỉ kiểm timing, cooldown, privacy, duplicate và user-busy;
-- Surface Realizer viết câu cuối sau khi candidate đã được governor cho phép.
+- worker ``seed`` chạy nền trên DS2API port riêng và tích lũy premise typed;
+- agenda selector chỉ xử lý các lane có cấu trúc khác;
+- runtime governor kiểm timing, cooldown, privacy, duplicate và user-busy;
+- worker ``surface`` chỉ viết câu cuối sau khi candidate đã được duyệt.
 
-Cùng một DeepSeek worker role ``surface`` có thể phục vụ hai contract typed
-(``candidate`` và ``wording``), nên không cần sinh thêm worker thứ tám chỉ để sơ
-đồ trông có vẻ bận rộn. Raw chain-of-thought và raw Inner Diary không đi qua đây.
+Random chat không gọi model trên critical path. Kho seed trống thì ERIS im và
+producer tiếp tục nạp nền, thay vì giật một worker khác sang phát câu điểm danh.
 """
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Mapping, Sequence
 
 from .cognitive_blackboard import CognitiveAnchor, TypedCognitiveBlackboard
+from .random_chat_seed_service import RandomChatSeedReservoir
 
 
 CANDIDATE_SCHEMA = "eris.social_speech_candidate.v1"
@@ -113,6 +114,58 @@ class SocialSpeechCandidate:
     continuation_lane: str = ""
     claim_token: str = ""
     idempotency_key: str = ""
+    seed_id: str = ""
+    seed_mode: str = ""
+    source_kind: str = ""
+    topic_tags: tuple[str, ...] = ()
+    desired_response: tuple[str, ...] = ()
+    eris_motive_kind: str = ""
+    eris_motive_why_now: str = ""
+    personal_stake: float = 0.0
+    authenticity: float = 0.0
+    daring: float = 0.0
+    uncertainty: float = 0.0
+    seed_intrusion_risk: float = 0.0
+    face_risk: float = 0.0
+    recovery_available: bool = False
+    seed_lease_token: str = ""
+    seed_generated_at: float = 0.0
+    seed_expires_at: float = 0.0
+    seed_ttl_seconds: float = 600.0
+
+    @property
+    def random_chat_seed(self) -> dict[str, Any]:
+        if not self.seed_id:
+            return {}
+        return {
+            "schema": "eris.random_chat_seed.v1",
+            "decision": "seed",
+            "seed_id": self.seed_id,
+            "mode": self.seed_mode,
+            "premise": self.topic,
+            "source_kind": self.source_kind,
+            "source_refs": list(self.evidence_refs),
+            "topic_tags": list(self.topic_tags),
+            "opening_move": self.speech_act,
+            "desired_response": list(self.desired_response),
+            "eris_motive": {
+                "kind": self.eris_motive_kind,
+                "why_now": self.eris_motive_why_now,
+                "personal_stake": self.personal_stake,
+                "authenticity": self.authenticity,
+            },
+            "risk": {
+                "daring": self.daring,
+                "uncertainty": self.uncertainty,
+                "intrusion_risk": self.seed_intrusion_risk,
+                "face_risk": self.face_risk,
+                "recovery_available": self.recovery_available,
+            },
+            "estimated_fit": self.relevance,
+            "confidence": self.confidence,
+            "tone": self.tone,
+            "ttl_seconds": self.seed_ttl_seconds,
+        }
 
     @property
     def available(self) -> bool:
@@ -161,14 +214,43 @@ class SocialSpeechCandidate:
             continuation_lane=_compact(data.get("continuation_lane", ""), 48).lower(),
             claim_token=_compact(data.get("claim_token", ""), 180),
             idempotency_key=_compact(data.get("idempotency_key", ""), 180),
+            seed_id=_compact(data.get("seed_id", ""), 80),
+            seed_mode=_compact(data.get("seed_mode", ""), 24).lower(),
+            source_kind=_compact(data.get("source_kind", ""), 40).lower(),
+            topic_tags=tuple(
+                item for item in (_compact(value, 48).lower() for value in _sequence(data.get("topic_tags"))[:8]) if item
+            ),
+            desired_response=tuple(
+                item for item in (_compact(value, 64).lower() for value in _sequence(data.get("desired_response"))[:6]) if item
+            ),
+            eris_motive_kind=_compact(data.get("eris_motive_kind", ""), 40).lower(),
+            eris_motive_why_now=_compact(data.get("eris_motive_why_now", ""), 220),
+            personal_stake=_clamp01(data.get("personal_stake", 0.0)),
+            authenticity=_clamp01(data.get("authenticity", 0.0)),
+            daring=_clamp01(data.get("daring", 0.0)),
+            uncertainty=_clamp01(data.get("uncertainty", 0.0)),
+            seed_intrusion_risk=_clamp01(data.get("seed_intrusion_risk", 0.0)),
+            face_risk=_clamp01(data.get("face_risk", 0.0)),
+            recovery_available=bool(data.get("recovery_available", False)),
+            seed_lease_token=_compact(data.get("seed_lease_token", ""), 120),
+            seed_generated_at=float(data.get("seed_generated_at", 0.0) or 0.0),
+            seed_expires_at=float(data.get("seed_expires_at", 0.0) or 0.0),
+            seed_ttl_seconds=max(60.0, min(1800.0, float(data.get("seed_ttl_seconds", 600.0) or 600.0))),
         )
 
 
 class SocialInitiativeEngine:
     """Cho DeepSeek quyền đề xuất chủ đề; không cho nó quyền tự phát ngôn."""
 
-    def __init__(self, router: Any, *, logger: Any | None = None) -> None:
+    def __init__(
+        self,
+        router: Any,
+        *,
+        seed_reservoir: RandomChatSeedReservoir | None = None,
+        logger: Any | None = None,
+    ) -> None:
         self.router = router
+        self.seed_reservoir = seed_reservoir
         self.logger = logger
 
     @property
@@ -252,6 +334,19 @@ class SocialInitiativeEngine:
         if not callable(writer):
             return self.fallback_candidate(blackboard, reason="initiative_method_unavailable")
         source_snapshot = snapshot or {}
+
+        # Open-topic autonomous speech now has a dedicated seed contract. It is
+        # intentionally called instead of asking the generic selector to invent a
+        # vague random_chat topic. Structured conversation/task/screen lanes keep
+        # their selector path; idle/memory/self material is food for the seed API.
+        if social_opportunity_due and not self._has_structured_opportunity(blackboard):
+            seed_candidate = self._random_chat_seed_candidate(blackboard)
+            if seed_candidate is not None:
+                return seed_candidate
+            # No concrete seed means intentional silence. Do not fall through to
+            # the old generic selector and resurrect a presence/check-in sentence.
+            return None
+
         request = {
             "blackboard": blackboard.public_view(),
             "recent_public_history": list(source_snapshot.get("recent_public_history", ()))[-6:],
@@ -263,6 +358,8 @@ class SocialInitiativeEngine:
                 "identity_summary": _compact(source_snapshot.get("identity_summary", ""), 900),
                 "relationship": source_snapshot.get("relationship", {}),
                 "recent_self_turn_semantics": list(source_snapshot.get("recent_self_turn_semantics", ()))[-6:],
+                "memory_context": _compact(source_snapshot.get("memory_context", ""), 1800),
+                "self_context": source_snapshot.get("self_context", {}),
             },
             "autonomous_surface_preference": surface_policy,
             "candidate_contract": {
@@ -316,6 +413,67 @@ class SocialInitiativeEngine:
             )
             return self.fallback_candidate(blackboard, reason="candidate_not_grounded")
         return candidate
+
+
+    @staticmethod
+    def _has_structured_opportunity(blackboard: TypedCognitiveBlackboard) -> bool:
+        return any(
+            anchor.kind in {"conversation", "task", "screen", "semantic_scene", "discovery"}
+            for anchor in blackboard.anchors
+        )
+
+    def _random_chat_seed_candidate(
+        self,
+        blackboard: TypedCognitiveBlackboard,
+    ) -> SocialSpeechCandidate | None:
+        reservoir = self.seed_reservoir
+        if reservoir is None or not reservoir.enabled:
+            self._log("debug", "[random chat seed] reservoir unavailable")
+            return None
+        lease = reservoir.claim(now=blackboard.now)
+        if lease is None:
+            self._log("debug", "[random chat seed] reservoir empty; producer continues in background")
+            return None
+        seed = lease.seed
+        confidence = max(seed.confidence, 0.34 + 0.40 * seed.authenticity)
+        relevance = max(seed.estimated_fit, 0.36 + 0.34 * seed.personal_stake)
+        return SocialSpeechCandidate(
+            decision="candidate",
+            kind="random_chat",
+            topic=seed.premise,
+            speech_act=seed.opening_move,
+            anchor_type="idle",
+            anchor_id=seed.seed_id,
+            evidence_refs=seed.source_refs,
+            requires_grounding=False,
+            confidence=min(0.96, confidence),
+            relevance=min(0.96, relevance),
+            urgency=min(0.72, 0.12 + 0.38 * seed.personal_stake + 0.18 * seed.daring),
+            tone=seed.tone,
+            reason=(
+                f"random_chat_seed_reservoir:{seed.mode}:{seed.eris_motive_kind}:"
+                f"stake={seed.personal_stake:.2f}:daring={seed.daring:.2f}"
+            ),
+            source="random_chat_seed_reservoir",
+            seed_id=seed.seed_id,
+            seed_mode=seed.mode,
+            source_kind=seed.source_kind,
+            topic_tags=seed.topic_tags,
+            desired_response=seed.desired_response,
+            eris_motive_kind=seed.eris_motive_kind,
+            eris_motive_why_now=seed.eris_motive_why_now,
+            personal_stake=seed.personal_stake,
+            authenticity=seed.authenticity,
+            daring=seed.daring,
+            uncertainty=seed.uncertainty,
+            seed_intrusion_risk=seed.intrusion_risk,
+            face_risk=seed.face_risk,
+            recovery_available=seed.recovery_available,
+            seed_lease_token=lease.token,
+            seed_generated_at=lease.generated_at,
+            seed_expires_at=lease.expires_at,
+            seed_ttl_seconds=seed.ttl_seconds,
+        )
 
 
     @staticmethod
@@ -402,12 +560,14 @@ class SocialInitiativeEngine:
         thử lại nhịp sau; không có loa phường hard-code chen vào.
         """
 
-        # Tôn trọng quyết định im lặng của INFJ model (worker_no_candidate)
-        # Chỉ ép task_followup nếu worker bị lỗi (worker_error) hoặc low_confidence
-        if reason != "worker_no_candidate":
-            task_candidate = self._task_followup_candidate(blackboard, reason=reason)
-            if task_candidate is not None:
-                return task_candidate
+        # Model/seed worker trả none là một quyết định im lặng thật. Generic
+        # random-chat fallback chính là nguồn của các câu kiểu "mình vẫn ở đây".
+        # Structured task/semantic lanes vẫn có fallback riêng vì chúng có provenance.
+        if reason == "worker_no_candidate":
+            return None
+        task_candidate = self._task_followup_candidate(blackboard, reason=reason)
+        if task_candidate is not None:
+            return task_candidate
         if blackboard.engagement_exclusive_focus and blackboard.engagement_active:
             return None
 
@@ -428,9 +588,12 @@ class SocialInitiativeEngine:
         required = bool(blackboard.commentary_required or blackboard.seconds_since_assistant >= maximum)
         if not required and blackboard.seconds_since_user < desired:
             return None
-        route_kind = "random_chat" if user_enabled else (
-            "casual_curiosity" if blackboard.seconds_since_user >= maximum else "social_check_in"
-        )
+        # User-enabled open-topic speech is exclusively owned by the seed API.
+        # If that API is unavailable or cannot produce a concrete premise, silence
+        # is safer and more honest than a canned liveness sentence.
+        if user_enabled:
+            return None
+        route_kind = "casual_curiosity" if blackboard.seconds_since_user >= maximum else "social_check_in"
         return SocialSpeechCandidate(
             decision="candidate",
             kind=route_kind,

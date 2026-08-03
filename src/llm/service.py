@@ -149,6 +149,7 @@ class LlmService:
         diary_client=None,
         research_client=None,
         tutor_client=None,
+        seed_client=None,
         surface_client=None,
         logger=None,
     ):
@@ -166,9 +167,11 @@ class LlmService:
         # diary chưa cấu hình, renderer dùng dữ kiện thô thay vì để một lane khác
         # âm thầm viết nhật ký hộ rồi ownership lại hóa thành truyện trinh thám.
         self.diary_client = diary_client
-        # Worker chuyên chọn cách ERIS tự biểu hiện rồi viết luôn micro-line.
-        # Không fallback ngầm sang companion tại đây: pipeline cần biết rõ khi
-        # lane surface chưa được cấu hình để dùng planner cũ một cách minh bạch.
+        # Worker seed chỉ tạo premise semantic chạy nền trên port riêng. Không
+        # fallback sang companion/surface: thiếu lane này thì reservoir tắt.
+        self.seed_client = seed_client
+        # Surface chỉ viết public wording cho intent đã được governor duyệt.
+        # Không fallback ngầm sang companion tại đây.
         self.surface_client = surface_client
         self.research_client = research_client or fallback_client or client
         # Worker tutor chỉ phân rã scene thành shared semantic context; không có

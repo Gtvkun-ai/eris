@@ -5,7 +5,9 @@ from pathlib import Path
 
 from runtime.ai_orchestrated.cognitive_blackboard import TypedCognitiveBlackboard
 from runtime.ai_orchestrated.grounding_validator import AutonomousGroundingValidator
-from runtime.ai_orchestrated.initiative import InitiativeAction, InitiativeController
+from runtime.ai_orchestrated.contracts import IntentionPlan
+from runtime.ai_orchestrated.initiative import InitiativeAction, InitiativeController, SpeechIntent
+from runtime.ai_orchestrated.social_candidate import SocialSpeechCandidate
 from runtime.ai_orchestrated.surface_intent import SurfaceIntentEngine
 
 
@@ -55,6 +57,26 @@ def _snapshot(**overrides):
     return data
 
 
+
+def _social_agenda_candidate() -> SocialSpeechCandidate:
+    return SocialSpeechCandidate(
+        decision="candidate",
+        kind="social_agenda",
+        topic="Advance one grounded shared bit without opening a new topic.",
+        speech_act="advance_social_goal",
+        anchor_type="conversation",
+        anchor_id="goal:test",
+        confidence=0.9,
+        relevance=0.85,
+        urgency=0.2,
+        tone="soft_warm",
+        reason="test_claimed_goal",
+        source="social_agenda_store",
+        continuation_lane="social_agenda",
+        claim_token="goal:test:v2:worker",
+        idempotency_key="goal:test:move:1",
+    )
+
 def test_blackboard_only_surfaces_public_safe_inner_seed():
     snapshot = _snapshot(
         self_context={
@@ -91,7 +113,7 @@ def test_controller_returns_no_op_without_anchor(tmp_path: Path):
     decision = controller.decide(board)
 
     assert decision.action is InitiativeAction.NO_OP
-    assert decision.reason == "no_public_anchor"
+    assert decision.reason == "no_speech_candidate"
 
 
 def test_controller_uses_body_only_when_user_busy_and_screen_changes(tmp_path: Path):
@@ -133,12 +155,12 @@ def test_controller_approves_speech_before_surface_worker(tmp_path: Path):
         now=1000.0,
     )
 
-    decision = controller.decide(board)
+    decision = controller.decide(board, _social_agenda_candidate())
 
     assert decision.action is InitiativeAction.SPEECH
     assert decision.speech_intent is not None
-    assert decision.speech_intent.mode == "small_talk"
-    assert decision.plan.semantics.turn_kind == "presence"
+    assert decision.speech_intent.mode == "random_chat"
+    assert decision.plan.semantics.turn_kind == "social_agenda"
 
 
 @dataclass
@@ -179,7 +201,7 @@ def test_surface_worker_only_realizes_approved_speech(tmp_path: Path):
         _snapshot(commentary_expectation={"due": True, "required": True, "reason": "maximum_quiet_reached", "anchor_kind": "persona_presence"}),
         now=1000.0,
     )
-    decision = controller.decide(board)
+    decision = controller.decide(board, _social_agenda_candidate())
     router = _SurfaceRouter()
     engine = SurfaceIntentEngine(router, _Reducer())
 
@@ -189,33 +211,48 @@ def test_surface_worker_only_realizes_approved_speech(tmp_path: Path):
     assert turn.public_payload["text"].startswith("Im lâu")
     request = router.requests[0]
     assert request["surface_contract"]["authority"] == "wording_only"
-    assert request["surface_contract"]["fixed_mode"] == "small_talk"
+    assert request["surface_contract"]["fixed_mode"] == "random_chat"
     assert "decision" not in request["surface_contract"]
 
 
 def test_grounding_preflight_blocks_private_or_unready_anchor(tmp_path: Path):
-    controller = InitiativeController(state_path=tmp_path / "initiative.json")
-    board = TypedCognitiveBlackboard.from_snapshot(
-        _snapshot(
-            self_context={
-                "has_public_seed": True,
-                "strongest_seed_score": 0.8,
-                "attention": {},
-                "agenda": [],
-                "private_mind_surface": [{"id": "pm:1", "topic_seed": "public seed", "confidence": 0.8, "score": 0.8}],
-                "private_life_surface": [],
-            }
-        ),
-        now=1000.0,
-    )
-    decision = controller.decide(board)
     forged_board = TypedCognitiveBlackboard.from_snapshot(_snapshot(), now=1000.0)
+    plan = IntentionPlan.from_mapping(
+        {
+            "plan_id": "forged:self",
+            "speak": True,
+            "motive": "inner_thought",
+            "strategy": "share_public_safe_thought",
+            "value_focus": "continuity",
+            "topic": "private seed",
+            "importance": 0.7,
+            "intrusion_risk": 0.1,
+            "confidence": 0.8,
+            "performance_hint": "soft",
+            "evidence_refs": [],
+            "semantics": {
+                "turn_kind": "internal",
+                "speech_act": "share_public_safe_thought",
+                "subject_key": "self:test",
+                "evidence_scope": "self_context",
+                "continuation_key": "none",
+            },
+        },
+        channel="autonomous",
+    )
+    intent = SpeechIntent(
+        plan=plan,
+        mode="inner_thought",
+        anchor_type="self",
+        anchor_id="self:test",
+        evidence_refs=(),
+        max_sentences=1,
+    )
 
-    verdict = AutonomousGroundingValidator().validate_intent(decision.speech_intent, forged_board)
+    verdict = AutonomousGroundingValidator().validate_intent(intent, forged_board)
 
     assert verdict.allowed is False
     assert verdict.violation_code == "private_cognition_boundary"
-
 
 def test_blackboard_reads_real_discovery_ready_to_share_contract():
     board = TypedCognitiveBlackboard.from_snapshot(
@@ -278,11 +315,10 @@ def test_memory_worker_signal_becomes_grounded_memory_anchor(tmp_path: Path):
     assert anchor.kind == "memory"
     assert anchor.evidence_refs == ("memory:episode-42",)
 
-    decision = InitiativeController(state_path=tmp_path / "initiative.json").decide(board)
-    assert decision.action is InitiativeAction.SPEECH
-    assert decision.speech_intent is not None
-    assert decision.speech_intent.mode == "memory_callback"
-    assert AutonomousGroundingValidator().validate_intent(decision.speech_intent, board).allowed is True
+    decision = InitiativeController(state_path=tmp_path / "initiative.json").decide(board, None)
+    assert decision.action is InitiativeAction.NO_OP
+    assert decision.speech_intent is None
+    assert decision.reason == "no_speech_candidate"
 
 
 def test_memory_named_seed_without_provenance_stays_generic_self_anchor():

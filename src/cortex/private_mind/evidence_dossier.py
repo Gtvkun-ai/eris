@@ -139,7 +139,7 @@ class EvidenceDossierBuilder:
                 raw_turns = value
                 break
         if not raw_turns:
-            raw_turns = _call(ledger, "recent_turns", self.max_user_turns, default=[]) or _call(ledger, "last_turns", self.max_user_turns, default=[]) or []
+            raw_turns = _call(ledger, "recent_turns", limit=self.max_user_turns, default=[]) or _call(ledger, "last_turns", limit=self.max_user_turns, default=[]) or []
         for idx, raw in enumerate(list(raw_turns)[-self.max_user_turns:]):
             role = str(_get(raw, "role", _get(raw, "speaker", "")) or "").lower()
             if role and role not in {"user", "human", "bạn"}:

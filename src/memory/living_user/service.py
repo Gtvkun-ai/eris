@@ -242,6 +242,69 @@ class LivingUserMemoryService:
             diagnostics=rejected,
         )
 
+    def record_interaction_preference(
+        self,
+        path: str,
+        value: Any,
+        *,
+        explicitness: str = "observed",
+        confidence: float = 0.72,
+        evidence_ids: Iterable[str] = (),
+        metadata: Mapping[str, Any] | None = None,
+    ) -> ApplyResult:
+        """Persist a public-safe interaction preference learned from repeated outcomes.
+
+        This is intentionally narrower than ``observe_turn``: callers provide one
+        already-evaluated preference and its evidence. The authority ledger still
+        gets final say, because even a friendly autonomous companion should not
+        quietly promote its guesses to divine revelation.
+        """
+        if not self.config.enabled:
+            return ApplyResult(False, rejected=("living_user_disabled",), version=self.profile_store.version)
+        clean_path = str(path or "").strip()
+        evidence = tuple(dict.fromkeys(str(item) for item in evidence_ids if str(item).strip()))[:32]
+        if not clean_path:
+            return ApplyResult(False, rejected=("empty_path",), version=self.profile_store.version)
+        if not evidence:
+            return ApplyResult(False, rejected=("missing_evidence",), version=self.profile_store.version)
+        level = str(explicitness or "observed").strip().lower()
+        if level not in {"explicit", "observed"}:
+            level = "observed"
+        try:
+            score = float(confidence)
+        except (TypeError, ValueError):
+            score = 0.72
+        operation = ProfileOperation(
+            op="add",
+            path=clean_path,
+            value=value,
+            confidence=max(0.0, min(1.0, score)),
+            explicitness=level,  # type: ignore[arg-type]
+            sensitivity="normal",
+            scope=UserMemoryScope(),
+            cardinality="single",
+            evidence_ids=evidence,
+            reason="Pattern learned from autonomous random-chat outcomes.",
+            source="random_chat_seed_outcome",
+            metadata={"learned_by": "random_chat_seed", **dict(metadata or {})},
+        )
+        guarded, authority_rejected = self.authority_ledger.guard_operations((operation,))
+        result = self.profile_store.apply(guarded, checkpoint_reason="random_chat_seed_preference")
+        self._reapply_authority_projection()
+        rejected = tuple((*result.rejected, *authority_rejected))
+        self.trace_journal.append("random_chat_seed_preference", {
+            "path": operation.path,
+            "explicitness": operation.explicitness,
+            "confidence": operation.confidence,
+            "evidence_ids": list(evidence),
+            "record_ids": list(result.record_ids),
+            "rejected": list(rejected),
+            "metadata": dict(metadata or {}),
+        })
+        if rejected:
+            return ApplyResult(result.changed, result.record_ids, rejected, self.profile_store.version)
+        return result
+
     def sync_semantic_memory(self, *, scope: UserMemoryScope | None = None) -> ApplyResult:
         if not self.config.enabled or not self.config.auto_sync_semantic:
             return ApplyResult(False, version=self.profile_store.version)

@@ -964,6 +964,148 @@ def build_startup_fallback_text(
     return "Tôi lên rồi. Đừng trông chờ một lời chào ngoan ngoãn."
 
 
+def _startup_greeting_prefix(*, language: str, user_vocative: str = "", frame: Any = None) -> str:
+    """Return a tiny encounter greeting, not the contextual opener itself.
+
+    Startup is a two-part social act: acknowledge the encounter first, then use
+    screen/continuity evidence.  The prefix is deterministic only as a final
+    invariant when the model forgot the first part.  It deliberately stays
+    short so the dynamic observation still owns the turn.
+    """
+
+    lang = str(language or "vi").strip().lower()
+    situation = str(getattr(frame, "situation", "") or "").strip().lower()
+    if lang.startswith("ja") or lang in {"jp", "japanese"}:
+        if situation == "after_long_absence":
+            return "久しぶり。"
+        if situation == "after_crash_or_restart":
+            return "戻ったよ。"
+        return "こんにちは。"
+    if lang.startswith("en"):
+        if situation == "after_long_absence":
+            return "Been a while."
+        if situation == "after_crash_or_restart":
+            return "I'm back."
+        return "Hi."
+
+    vocative = str(user_vocative or "").strip().lower()
+    if situation == "after_long_absence":
+        return "Lâu rồi mới gặp."
+    if situation == "after_crash_or_restart":
+        return "Em trở lại rồi." if vocative in {"anh", "chị"} else "Tôi trở lại rồi."
+    if vocative in {"anh", "chị"}:
+        return f"Chào {vocative}."
+    return "Chào."
+
+
+def startup_text_has_greeting(text: str, *, language: str = "vi") -> bool:
+    """Whether the opening already acknowledges the encounter.
+
+    This is intentionally broader than the literal word ``chào``.  Natural
+    greetings such as ``Bạn đến rồi`` or ``Lâu rồi mới gặp`` count too.
+    """
+
+    raw = _compact(text, 180)
+    if not raw:
+        return False
+    lang = str(language or "vi").strip().lower()
+    head = raw[:96].strip().lower()
+    if lang.startswith("ja") or lang in {"jp", "japanese"}:
+        return any(marker in head for marker in (
+            "こんにちは", "おはよう", "こんばんは", "久しぶり", "来た", "戻った", "戻って", "起きた", "ただいま",
+        ))
+    if lang.startswith("en"):
+        return any(head.startswith(marker) for marker in (
+            "hi", "hello", "hey", "good morning", "good afternoon", "good evening",
+            "welcome back", "you're here", "you’re here", "i'm back", "i’m back", "been a while",
+        ))
+
+    folded = _norm(head)
+    markers = (
+        "chao", "xin chao", "ban den roi", "anh den roi", "chi den roi",
+        "ban day roi", "anh vao roi", "chi vao roi", "lai gap", "lau roi",
+        "quay lai", "ban quay lai", "anh quay lai", "chi quay lai",
+        "tro lai", "toi tro lai", "em tro lai", "ban tro lai",
+        "toi day", "em day", "toi len roi", "em len roi",
+        "toi tinh roi", "em tinh roi", "vua tinh",
+    )
+    return any(folded.startswith(marker) for marker in markers)
+
+
+def ensure_startup_greeting_text(
+    text: str,
+    *,
+    language: str = "vi",
+    user_vocative: str = "",
+    frame: Any = None,
+) -> tuple[str, bool]:
+    """Guarantee greeting + contextual opener without erasing the opener."""
+
+    clean = _compact(text, 1200)
+    if not clean or startup_text_has_greeting(clean, language=language):
+        return clean, False
+    prefix = _startup_greeting_prefix(language=language, user_vocative=user_vocative, frame=frame)
+    return f"{prefix} {clean}".strip(), True
+
+
+def ensure_startup_greeting_payload(
+    payload: Mapping[str, Any] | Any,
+    *,
+    frame: Any = None,
+    display_language: str = "vi",
+    speech_language: str = "ja",
+    user_vocative: str = "",
+) -> dict[str, Any]:
+    """Enforce the startup encounter beat on display and TTS surfaces.
+
+    The social plan is left untouched.  A contextual question may therefore
+    remain reply-bearing and legitimately produce one later reminder; only the
+    greeting clause itself is non-binding.
+    """
+
+    data = dict(payload) if isinstance(payload, Mapping) else {}
+    utterance = dict(data.get("utterance") or {}) if isinstance(data.get("utterance"), Mapping) else {}
+    display = dict(utterance.get("display") or {}) if isinstance(utterance.get("display"), Mapping) else {}
+    speech = dict(utterance.get("speech") or {}) if isinstance(utterance.get("speech"), Mapping) else {}
+
+    display_text = str(
+        display.get("text", "")
+        or data.get("display_text", "")
+        or data.get("text", "")
+        or ""
+    ).strip()
+    display_lang = str(display.get("language", "") or data.get("display_language", "") or display_language or "vi").strip().lower()
+    ensured_display, display_inserted = ensure_startup_greeting_text(
+        display_text, language=display_lang, user_vocative=user_vocative, frame=frame
+    )
+    if ensured_display:
+        data["text"] = ensured_display
+        data["display_text"] = ensured_display
+        data["display_language"] = display_lang
+        display.update({"language": display_lang, "text": ensured_display})
+        utterance["display"] = display
+
+    speech_text = str(speech.get("text", "") or data.get("speech_text", "") or "").strip()
+    speech_lang = str(speech.get("language", "") or data.get("speech_language", "") or speech_language or display_lang).strip().lower()
+    speech_inserted = False
+    if speech_text:
+        ensured_speech, speech_inserted = ensure_startup_greeting_text(
+            speech_text, language=speech_lang, user_vocative=user_vocative, frame=frame
+        )
+        data["speech_text"] = ensured_speech
+        data["speech_language"] = speech_lang
+        speech.update({"language": speech_lang, "text": ensured_speech})
+        utterance["speech"] = speech
+
+    if utterance:
+        data["utterance"] = utterance
+    data["startup_greeting_present"] = bool(ensured_display)
+    data["startup_greeting_inserted"] = bool(display_inserted or speech_inserted)
+    data["startup_greeting_nonbinding"] = True
+    data["startup_context_may_expect_reply"] = True
+    return data
+
+
 __all__ = [
     "StartupGroundingBundle",
     "build_startup_fallback_text",
@@ -971,5 +1113,8 @@ __all__ = [
     "choose_startup_text",
     "collect_startup_grounding",
     "ensure_grounded_startup_plan",
+    "ensure_startup_greeting_payload",
+    "ensure_startup_greeting_text",
     "select_startup_persona_preset",
+    "startup_text_has_greeting",
 ]

@@ -380,22 +380,35 @@ class RemoteModelProcessManager:
             self.logger.info("Inner Diary owner: DeepSeek worker role=%s", normalized)
         return client
 
-    def build_surface_client(self):
-        """Dựng một worker ``surface`` cho candidate + public wording.
+    def build_seed_client(self):
+        """Dựng worker ``seed`` riêng cho premise chạy nền.
 
-        Mặc định worker dùng chung DS2API gateway/account pool đã cấu hình. Có thể
-        ép key riêng bằng ERIS_DS_SURFACE_ALLOW_SHARED_KEY=0. Hai contract typed
-        tách trách nhiệm trong code, không cần thêm một worker chỉ để đặt tên.
+        Role này mặc định trỏ DS2API port 6015 và không fallback sang companion
+        hay surface. Thiếu worker thì reservoir tắt, autonomous chỉ im khi không
+        có topic cụ thể thay vì kéo một lane khác đi làm hộ.
         """
+
+        client = self.build_deepseek_worker_client("seed")
+        if client is None:
+            self.logger.warning(
+                "Seed worker chua cau hinh; random-chat reservoir se tat. "
+                "Kiem tra ERIS_DS_SEED_BASE_URL/API_KEY va DS2API port 6015."
+            )
+        else:
+            self.logger.info("Seed worker owner: background random-chat premise reservoir")
+        return client
+
+    def build_surface_client(self):
+        """Dựng worker ``surface`` chỉ để viết public wording đã được duyệt."""
 
         client = self.build_deepseek_worker_client("surface")
         if client is None:
             self.logger.warning(
-                "Surface worker chua cau hinh; social initiative se dung liveness fallback "
-                "va wording se dung local fallback/body-only. Kiem tra DS2API key/base/model."
+                "Surface worker chua cau hinh; autonomous wording se body-only. "
+                "Kiem tra DS2API key/base/model."
             )
         else:
-            self.logger.info("Surface worker owner: social candidate + public wording")
+            self.logger.info("Surface worker owner: public wording only")
         return client
 
     def build_research_client(self):

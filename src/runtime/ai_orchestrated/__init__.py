@@ -42,7 +42,20 @@ from .initiative import (
     InitiativeState, SpeechIntent,
 )
 from .stage_planner import StagePlan, StagePlanner
-from .social_initiative import SocialInitiativeEngine, SocialSpeechCandidate
+from .social_candidate import SocialSpeechCandidate
+from .random_chat_seed import (
+    RANDOM_CHAT_SEED_SCHEMA,
+    RandomChatSeed,
+    RandomChatSeedAffinityStore,
+    RandomChatSeedState,
+    SeedOutcome,
+)
+from .random_chat_seed_service import (
+    RANDOM_CHAT_SEED_OUTPUT_SCHEMA,
+    RandomChatSeedGenerator,
+    RandomChatSeedReservoir,
+    SeedReservoirLease,
+)
 from .conversation_arc import (
     ConversationArc,
     ConversationArcRuntime,
@@ -62,10 +75,15 @@ from .social_continuation import (
 )
 from .social_plan import empty_social_plan, normalize_social_plan
 from .atomic_state import AtomicStateConflict, SQLiteAtomicStateStore, atomic_store_from_env
-from .social_rollout import SocialRolloutPolicy
+from .social_execution import FULL_SOCIAL_LANES, accept_full_social_plan
 from .panel_adapter import build_ai_panel_payload
 from .views import build_cognitive_views
 from .state_reducer import StateReducer
+from .opening_contracts import OpeningInput, OpeningPlan, OpeningSurface
+from .opening_director import OpeningCandidate, OpeningDirector, deterministic_render_opening
+from .opening_history import OpeningHistoryRecord, OpeningHistoryStore
+from .opening_input_assembler import build_opening_input
+from .opening_move_catalog import OpeningMoveDefinition, get_opening_move, opening_move_catalog
 
 __all__ = [
     "AI_RUNTIME_VERSION",
@@ -88,8 +106,16 @@ __all__ = [
     "InitiativeEvent",
     "InitiativeState",
     "SpeechIntent",
-    "SocialInitiativeEngine",
     "SocialSpeechCandidate",
+    "RANDOM_CHAT_SEED_SCHEMA",
+    "RandomChatSeed",
+    "RandomChatSeedAffinityStore",
+    "RandomChatSeedState",
+    "SeedOutcome",
+    "RANDOM_CHAT_SEED_OUTPUT_SCHEMA",
+    "RandomChatSeedGenerator",
+    "RandomChatSeedReservoir",
+    "SeedReservoirLease",
     "ConversationArc",
     "ConversationArcRuntime",
     "ConversationArcState",
@@ -104,7 +130,8 @@ __all__ = [
     "AtomicStateConflict",
     "SQLiteAtomicStateStore",
     "atomic_store_from_env",
-    "SocialRolloutPolicy",
+    "FULL_SOCIAL_LANES",
+    "accept_full_social_plan",
     "empty_social_plan",
     "normalize_social_plan",
     "AppraisalState",
@@ -136,4 +163,16 @@ __all__ = [
     "should_consolidate",
     "StateEvent",
     "StateReducer",
+    "OpeningInput",
+    "OpeningPlan",
+    "OpeningSurface",
+    "OpeningCandidate",
+    "OpeningDirector",
+    "deterministic_render_opening",
+    "OpeningHistoryRecord",
+    "OpeningHistoryStore",
+    "build_opening_input",
+    "OpeningMoveDefinition",
+    "get_opening_move",
+    "opening_move_catalog",
 ]

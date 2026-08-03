@@ -156,7 +156,7 @@ def test_public_reply_schema_requires_all_social_plan_appraisals():
     jsonschema.validate(_empty_social_plan(), SOCIAL_PLAN_SCHEMA)
 
 
-def test_compat_envelope_fills_none_social_plan_and_maps_legacy_arc():
+def test_compat_envelope_fills_none_social_plan_and_ignores_legacy_arc():
     router = object.__new__(AIRuntimeModelRouter)
     router.logger = None
     payload = router._compat_public_envelope(
@@ -187,7 +187,8 @@ def test_compat_envelope_fills_none_social_plan_and_maps_legacy_arc():
         }
     )
     assert set(payload["social_plan"]) == set(_empty_social_plan())
-    assert payload["social_plan"]["conversation_arc"]["decision"] == "schedule"
+    assert payload["social_plan"]["conversation_arc"]["decision"] == "none"
+    assert "conversation_arc" not in payload
 
 
 def test_afterbeat_claim_is_atomic_under_concurrency():
@@ -315,7 +316,7 @@ def test_exposure_outcome_updates_scene_partner_state():
 def test_social_agenda_opens_advances_and_closes_after_two_low_engagement_turns():
     store = SocialAgendaStore(clock=lambda: 1000.0)
     assert store.apply_update(_agenda_update(), source_turn_id="turn:1", now=1000.0)
-    candidate = store.due_candidate(_board(seconds_since_user=90.0), now=1001.0)
+    candidate = store.claim_due(_board(seconds_since_user=90.0), worker_id="test-worker", now=1001.0)
     assert candidate is not None
     assert candidate.kind == "social_agenda"
 
@@ -380,7 +381,7 @@ def test_explicit_boundary_closes_agenda_and_blocks_future_move():
     assert result["closed"] == 1
     snapshot = store.snapshot(now=1001.0)
     assert "explicit_social_boundary" in snapshot["scene_partner"]["boundary_flags"]
-    assert store.due_candidate(_board(seconds_since_user=90.0), now=1100.0) is None
+    assert store.claim_due(_board(seconds_since_user=90.0), worker_id="test-worker", now=1100.0) is None
 
 
 def test_afterbeat_governor_preserves_claim_and_idempotency(tmp_path):

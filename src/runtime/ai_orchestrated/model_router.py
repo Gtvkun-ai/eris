@@ -100,7 +100,72 @@ SURFACE_INTENT_SCHEMA: dict[str, Any] = {
     },
 }
 
+OPENING_PLANNER_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["decision", "candidate_id", "reason"],
+    "properties": {
+        "decision": {"type": "string", "enum": ["select", "silence"]},
+        "candidate_id": {"type": "string"},
+        "reason": {"type": "string"},
+    },
+}
 
+OPENING_SURFACE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["display", "speech", "self_check"],
+    "properties": {
+        "display": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["language", "beats", "full_text"],
+            "properties": {
+                "language": {"type": "string"},
+                "beats": {
+                    "type": "array",
+                    "maxItems": 3,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["beat_id", "text"],
+                        "properties": {"beat_id": {"type": "string"}, "text": {"type": "string"}},
+                    },
+                },
+                "full_text": {"type": "string"},
+            },
+        },
+        "speech": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["language", "beats", "full_text"],
+            "properties": {
+                "language": {"type": "string"},
+                "beats": {
+                    "type": "array",
+                    "maxItems": 3,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["beat_id", "text"],
+                        "properties": {"beat_id": {"type": "string"}, "text": {"type": "string"}},
+                    },
+                },
+                "full_text": {"type": "string"},
+            },
+        },
+        "self_check": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["all_beats_realized", "unsupported_claims", "question_count"],
+            "properties": {
+                "all_beats_realized": {"type": "boolean"},
+                "unsupported_claims": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+                "question_count": {"type": "integer", "minimum": 0, "maximum": 3},
+            },
+        },
+    },
+}
 
 SOCIAL_INITIATIVE_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -115,10 +180,10 @@ SOCIAL_INITIATIVE_SCHEMA: dict[str, Any] = {
         "kind": {
             "type": "string",
             "enum": [
-                "continuation", "followup_reminder", "task_followup", "discovery_share",
-                "screen_comment", "semantic_scene", "memory_callback", "inner_thought",
-                "social_check_in", "casual_curiosity", "playful_prompt",
-                "random_chat",
+                "continuation", "followup_reminder", "task_followup",
+                "discovery_share", "screen_comment", "semantic_scene",
+                "memory_callback", "inner_thought", "social_check_in",
+                "casual_curiosity", "playful_prompt", "random_chat",
             ],
         },
         "topic": {"type": "string"},
@@ -137,6 +202,8 @@ SOCIAL_INITIATIVE_SCHEMA: dict[str, Any] = {
         "reason": {"type": "string"},
     },
 }
+
+
 
 # Filled after UTTERANCE_SCHEMA is declared; kept here for module layout compatibility.
 SURFACE_REALIZATION_SCHEMA: dict[str, Any] = {}
@@ -741,9 +808,6 @@ PUBLIC_REPLY_SCHEMA: dict[str, Any] = {
         "should_speak": {"type": "boolean"},
         "utterance": UTTERANCE_SCHEMA,
         "social_plan": SOCIAL_PLAN_SCHEMA,
-        # Optional for backward compatibility with older providers.  When present,
-        # this stores semantic objectives for later autonomous beats, never canned text.
-        "conversation_arc": CONVERSATION_ARC_SCHEMA,
     },
 }
 
@@ -1086,7 +1150,7 @@ class AIRuntimeModelRouter:
             lane = "autonomous"
         elif "chat_intention" in reason_key:
             lane = "chat_tool_required"
-        elif "discovery" in reason_key or "planner" in reason_key:
+        elif "seed" in reason_key or "discovery" in reason_key or "planner" in reason_key:
             lane = "tutor_background"
         elif "reflection" in reason_key or "deep" in reason_key or tier == "subconscious_4b":
             lane = "post_observer"
@@ -1159,6 +1223,10 @@ class AIRuntimeModelRouter:
         return getattr(self.llm_service, "social_fallback_client", None)
 
     @property
+    def seed_client(self) -> Any | None:
+        return getattr(self.llm_service, "seed_client", None)
+
+    @property
     def surface_client(self) -> Any | None:
         return getattr(self.llm_service, "surface_client", None)
 
@@ -1222,6 +1290,39 @@ class AIRuntimeModelRouter:
             if self.logger is not None:
                 safe_log(self.logger, "debug", "[ai runtime model] %s failed model=%s: %s", name, getattr(client, "model_name", ""), exc)
             return {}
+
+    def invoke_structured_worker(
+        self,
+        client: Any,
+        *,
+        system: str,
+        payload: Mapping[str, Any],
+        schema: Mapping[str, Any],
+        name: str,
+        max_tokens: int,
+        reasoning_effort: str | None = None,
+        inference_tier: str = "subconscious_4b",
+        priority: int | None = None,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        """Public transport boundary for typed role-owned workers.
+
+        Domain modules own prompts and schemas; the router only provides the
+        common inference budget, JSON boundary and provider call mechanics.
+        """
+
+        return self._call(
+            client,
+            system=system,
+            payload=payload,
+            schema=schema,
+            name=name,
+            max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
+            inference_tier=inference_tier,
+            priority=priority,
+            timeout_seconds=timeout_seconds,
+        )
 
     @staticmethod
     def _public_reply_prompt(
@@ -1523,14 +1624,6 @@ class AIRuntimeModelRouter:
             "_typed_assistant_act": assistant_validation.act,
             "social_plan": normalize_social_plan(
                 data.get("social_plan") if isinstance(data.get("social_plan"), Mapping) else None,
-                legacy_conversation_arc=(
-                    data.get("conversation_arc") if isinstance(data.get("conversation_arc"), Mapping) else None
-                ),
-            ),
-            "conversation_arc": (
-                dict(data.get("conversation_arc", {}))
-                if isinstance(data.get("conversation_arc"), Mapping)
-                else {}
             ),
             **flattened,
             "should_speak": bool(data.get("should_speak", True)),
@@ -1544,6 +1637,79 @@ class AIRuntimeModelRouter:
             "delivery_hint": "",
             "stage_motion": "",
         }
+
+    def generate_opening_plan(
+        self,
+        *,
+        opening_input: Mapping[str, Any],
+        candidates: Sequence[Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        """Model chỉ chọn candidate; rule layer vẫn sở hữu safety và score floor."""
+
+        system = (
+            "Bạn là ERIS OPENING DIRECTOR. Bạn KHÔNG viết câu thoại cuối. "
+            "Chọn đúng một candidate đã được rule layer cấp hoặc trả silence. "
+            "Ưu tiên encounter rõ, grounding, scene-partner fit, không lặp và nhịp có chủ đích. "
+            "Boundary, age policy, privacy và consent thắng persona/comedy. "
+            "Không suy diễn cảm xúc, ý định hay hành vi user. Trả JSON đúng schema."
+        )
+        payload = {
+            "opening_input": dict(opening_input),
+            "candidate_structures": [dict(item) for item in candidates[:5] if isinstance(item, Mapping)],
+        }
+        client = self.deep_client or self.surface_client or getattr(self.llm_service, "client", None)
+        try:
+            from runtime.runtime_settings_store import runtime_float
+            planner_timeout = max(1.0, min(30.0, runtime_float(
+                "opening_director", "planner_timeout_ms", default=6000.0
+            ) / 1000.0))
+        except Exception:
+            planner_timeout = 6.0
+        return self._call(
+            client,
+            system=system,
+            payload=payload,
+            schema=OPENING_PLANNER_SCHEMA,
+            name="eris_opening_planner",
+            max_tokens=220,
+            inference_tier="subconscious_4b",
+            priority=72,
+            timeout_seconds=planner_timeout,
+        )
+
+    def generate_opening_surface(
+        self,
+        *,
+        opening_plan: Mapping[str, Any],
+        allowed_evidence: Sequence[Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        """Surface Writer chỉ hiện thực hóa beat đã duyệt, không tự mở semantic scope."""
+
+        system = (
+            "Bạn là ERIS OPENING SURFACE WRITER. Viết lời mở đầu từ OPENING_PLAN đã duyệt. "
+            "Không thay encounter, hook, move, số beat hoặc followup policy. "
+            "Không thêm sự kiện, ký ức, cảm xúc/ý định user hay chi tiết màn hình ngoài evidence. "
+            "Mỗi beat hoàn thành đúng objective; display tiếng Việt tự nhiên, speech tiếng Nhật tự nhiên và cùng nghĩa. "
+            "Anime là nhịp và thái độ, không nhồi từ Nhật vào display. Hài khô ngắn, không giải thích punchline. "
+            "Không viết stage direction vào text. Greeting beat không ép trả lời; câu hỏi nếu có phải nhẹ và dễ bỏ qua. "
+            "Trả JSON đúng schema, không thêm prose."
+        )
+        payload = {
+            "opening_plan": dict(opening_plan),
+            "allowed_evidence": [dict(item) for item in allowed_evidence[:8] if isinstance(item, Mapping)],
+        }
+        client = self.surface_client or getattr(self.llm_service, "client", None)
+        return self._call(
+            client,
+            system=system,
+            payload=payload,
+            schema=OPENING_SURFACE_SCHEMA,
+            name="eris_opening_surface",
+            max_tokens=520,
+            inference_tier="main_cognition",
+            priority=82,
+            timeout_seconds=_semantic_deadline_seconds(),
+        )
 
     def generate_autonomous_reply(
         self,
@@ -1610,6 +1776,10 @@ class AIRuntimeModelRouter:
             "Không nói chỉ vì im lặng hoặc buồn chán. Không bịa screen fact. "
             "Memory chỉ tạo continuity. Planner đã sở hữu tool intent; không chọn hoặc đổi tool. "
             "semantic_frame và assistant_act phải mô tả đúng lượt public này. "
+            "Mỗi autonomous/startup reply cũng phải appraise social_plan. afterbeat chỉ reserve khi câu hai thuộc cùng màn diễn; "
+            "exposure chỉ open khi câu hiện tại thật sự chờ một phản ứng xã hội; agenda_update có thể open một mục tiêu warm_presence, "
+            "callback, invite_story hoặc comfortable_silence khi có lý do cụ thể; conversation_arc chỉ schedule khi còn một semantic beat "
+            "qua public turn. Đừng trả toàn none theo thói quen nếu chính câu này đã mở một mạch hợp lệ, nhưng cũng đừng tạo continuation chỉ để lấp im lặng. "
             "utterance.performance.preset ưu tiên planned_performance_hint; intensity nằm trong [0,1], nonverbal ngắn hoặc 'none'. "
             "utterance.delivery.interruptible thường là true; chỉ false khi một câu bắt buộc phải phát trọn vẹn. "
             "Return JSON only theo schema; không thêm prose ngoài JSON."
@@ -2404,51 +2574,43 @@ class AIRuntimeModelRouter:
             timeout_seconds=timeout,
         )
 
-
     @staticmethod
     def _social_initiative_prompt() -> str:
         return (
-            "Bạn là SOCIAL INITIATIVE lane của ERIS. Bạn sở hữu mong muốn và chủ đề cho một lượt chủ động, "
-            "nhưng KHÔNG sở hữu timing/quyền phát và KHÔNG viết câu public cuối. Trả nhiều nhất một typed candidate. "
-            "Bạn có thể đề xuất social_check_in, casual_curiosity, playful_prompt hoặc random_chat mà không cần screen fact; "
-            "followup_reminder chỉ hợp lệ khi blackboard.followup.reminder_due=true và phải là một câu nhắc duy nhất, "
-            "giả định user có thể chưa để ý, không trách móc hay hỏi dồn. Khi blackboard.followup.abandoned=true, không hồi sinh "
-            "thread cũ; có thể chọn một topic khác với độ ấm giảm nhẹ nhưng không dỗi hoặc guilt-trip. "
-            "đó là trò chuyện xã hội, không phải factual claim. Với continuation/task/discovery/memory/inner/screen, chỉ chọn anchor "
-            "có thật trong blackboard.anchors. screen_comment bắt buộc requires_grounding=true và copy evidence_refs từ grounded "
-            "screen anchor; raw window title/OCR delta không phải bằng chứng. Không suy đoán user buồn/vui/thắng/thua/định làm gì. "
-            "Không lộ private mind, raw diary, planner, score, API hay contract. topic là mục tiêu giao tiếp cụ thể, chưa phải lời thoại. "
-            "Runtime governor sẽ approve/defer; Surface Realizer sẽ viết wording sau. Nếu không có ý nào đáng đề xuất, decision=none. "
-            "Return exactly one JSON object theo schema."
+            "Bạn là SOCIAL AGENDA SELECTOR của ERIS. Bạn chỉ đề xuất một impulse/chủ đề typed, không viết câu public. "
+            "Runtime sẽ quyết định quyền nói và Surface Worker sẽ viết câu sau. Đọc blackboard, recent_public_history và social_context. "
+            "Trả decision=none khi impulse chỉ để lấp im lặng, lặp lại, gây phiền, thiếu neo, user đang bận hoặc ERIS đang chờ user. "
+            "Khi có một lý do xã hội thật, chọn đúng một kind và mô tả topic như mục tiêu giao tiếp cụ thể. "
+            "followup_reminder chỉ nhắc đúng một lần không trách móc; screen_comment phải copy evidence_refs tươi; semantic_scene dùng shared semantic context; "
+            "memory_callback chỉ dùng memory anchor có sẵn; inner_thought chỉ dùng public-safe self seed; social_check_in/casual_curiosity/playful_prompt/random_chat "
+            "không được bịa quan sát, cảm xúc, kế hoạch hoặc ký ức của user. Silence là lựa chọn hợp lệ. Return JSON only theo schema."
         )
 
     def propose_social_initiative(self, request: Mapping[str, Any]) -> dict[str, Any]:
-        """Dùng cùng worker ``surface`` để nghĩ topic, không tạo thêm role/account.
+        """Select one autonomous social impulse without owning public wording."""
 
-        Deadline ngắn và drop-if-busy ở actor role bảo đảm một ý bắt chuyện không
-        xếp hàng sau request cũ. Khi lỗi, initiative service dùng liveness fallback
-        typed; governor không tự bịa topic.
-        """
-
-        client = self.surface_client
+        client = self.surface_client or getattr(self.llm_service, "client", None) or self.deep_client
         if client is None:
             return {}
         try:
-            timeout = max(15.0, float(os.getenv("ERIS_SOCIAL_INITIATIVE_TIMEOUT_SEC", "90") or 90.0))
+            timeout = max(8.0, min(120.0, float(
+                os.getenv("ERIS_SOCIAL_SELECTOR_TIMEOUT_SEC", "60") or 60.0
+            )))
         except (TypeError, ValueError):
-            timeout = 90.0
+            timeout = 60.0
         return self._call(
             client,
             system=self._social_initiative_prompt(),
             payload=request,
             schema=SOCIAL_INITIATIVE_SCHEMA,
-            name="eris_social_initiative_candidate",
-            max_tokens=280,
+            name="eris_social_agenda_selector",
+            max_tokens=300,
             reasoning_effort=None,
             inference_tier="main_cognition",
             priority=84,
             timeout_seconds=timeout,
         )
+
 
     @staticmethod
     def _surface_realizer_prompt() -> str:
@@ -2467,8 +2629,12 @@ class AIRuntimeModelRouter:
             "giữ đúng long-horizon goal và beat objective trong topic, tạo một câu mới sau khoảng lặng, không lặp câu trước, không giải thích setup hay nhắc hệ thống. "
             "Nếu anchor là self, chỉ surface seed đã được duyệt, không lộ raw thought. Nếu speech_act=followup_reminder, "
             "nhắc lại đúng một lần bằng một câu ngắn, giả định user chưa để ý, không nhắc chuyện bị lờ và không thêm câu hỏi mới. "
-            "Nếu speech_act=independent_topic_shift, bỏ hẳn chủ đề cũ, nói một ý khác tự đủ nghĩa với giọng hơi dè lại; không dỗi, "
-            "không trừng phạt và không tuyên bố user không quan tâm. Giọng ERIS ấm kín, hơi khô, có cá tính; tránh câu support-bot. "
+            "Nếu speech_intent.random_chat_seed có dữ liệu, premise là hạt ý bắt buộc: giữ motive, mode, personal_stake và daring của seed. "
+            "Khi motive là want_to_share/want_to_express, ưu tiên một phát biểu tự đủ nghĩa; không mặc định biến thành câu hỏi, không xin phép chia sẻ, "
+            "không kết thúc bằng 'còn bạn thì sao', không gây áp lực phải trả lời. Daring cho phép ý kiến riêng, tự bộc lộ hoặc trêu nhẹ trong risk đã duyệt; "
+            "nó không cho phép bịa fact, chạm memory nhạy cảm hay ép thân mật. Nếu speech_act=independent_topic_shift, bỏ hẳn chủ đề cũ, "
+            "nói một ý khác tự đủ nghĩa với giọng hơi dè lại; không dỗi, không trừng phạt và không tuyên bố user không quan tâm. "
+            "Giọng ERIS ấm kín, hơi khô, có cá tính; tránh câu support-bot. "
             "Tối đa số câu trong surface_contract.max_sentences. evidence_refs chỉ copy id được phép. Return JSON only."
         )
 
@@ -2655,7 +2821,7 @@ __all__ = [
     "SOCIAL_PLAN_SCHEMA",
     "CONVERSATION_ARC_SCHEMA",
     "PUBLIC_REPLY_SCHEMA",
-    "SOCIAL_INITIATIVE_SCHEMA", "SURFACE_INTENT_SCHEMA", "SURFACE_REALIZATION_SCHEMA",
+    "SURFACE_INTENT_SCHEMA", "SURFACE_REALIZATION_SCHEMA",
     "SEMANTIC_FRAME_SCHEMA",
     "ASSISTANT_ACT_SCHEMA",
 ]

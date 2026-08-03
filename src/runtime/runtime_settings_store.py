@@ -26,7 +26,7 @@ from runtime.workspace_manager import default_eris_home
 
 
 _DEFAULT_SETTINGS: dict[str, Any] = {
-    "version": 14,
+    "version": 15,
     "architecture": {
         "mode": "ai_orchestrated",
         "startup_greeting": True,
@@ -36,6 +36,29 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         # OCR/runtime/memory là nguồn neo ưu tiên, không phải điều kiện để ERIS
         # được phép chào. Bật mặc định để startup không hóa câm khi worker chậm.
         "startup_force_speak": True,
+    },
+    "opening_director": {
+        # Hybrid mặc định: rule giữ grounding/safety, model chỉ chọn cấu trúc và
+        # hiện thực hóa wording trong schema đã khóa. Con người lại phát minh ra
+        # một model biết viết, rồi vẫn cần rule để nó đừng tự viết thêm sự thật.
+        "enabled": True,
+        "mode": "hybrid",
+        "max_beats": 3,
+        "max_questions": 1,
+        "planner_timeout_ms": 6000,
+        "allow_screen_hook": True,
+        "allow_continuity_hook": True,
+        "allow_anime_moves": True,
+        "allow_romantic_flirt": True,
+        "allow_sexual_content": True,
+        "require_adult_flirt_opt_in": True,
+        "romantic_flirt_opt_in": True,
+        "age_band": "confirmed_adult",
+        "cross_session_personalization": False,
+        "followup_max_count": 1,
+        "semantic_duplicate_threshold": 0.86,
+        "exact_surface_cooldown_sessions": 30,
+        "move_family_cooldown_sessions": 4,
     },
     "chat": {
         # Ngôn ngữ câu public là contract cognition riêng, không mượn cấu hình TTS.
@@ -316,6 +339,7 @@ _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
     ("architecture", "startup_greeting"): ("ERIS_AI_STARTUP_GREETING_ENABLED", "bool"),
     ("architecture", "startup_screen_opening"): ("ERIS_AI_STARTUP_SCREEN_OPENING", "bool"),
     ("architecture", "startup_force_speak"): ("ERIS_AI_STARTUP_FORCE_SPEAK", "bool"),
+    ("opening_director", "allow_sexual_content"): ("ERIS_OPENING_ALLOW_SEXUAL_CONTENT", "bool"),
     ("chat", "language"): ("ERIS_CHAT_LANGUAGE", "str"),
     ("chat", "semantic_authority_mode"): ("ERIS_SEMANTIC_AUTHORITY", "str"),
     ("chat", "reasoning_effort"): ("ERIS_REASONING_EFFORT", "str"),
@@ -898,6 +922,15 @@ class RuntimeSettingsStore:
             chess_bridge.setdefault("stockfish_analysis_timeout_seconds", 2.5)
             chess_bridge.setdefault("max_body_bytes", 65536)
             out["chess_bridge"] = chess_bridge
+            migrated = True
+
+
+        if version < 15:
+            opening = dict(out.get("opening_director") or {}) if isinstance(out.get("opening_director"), Mapping) else {}
+            defaults = _DEFAULT_SETTINGS["opening_director"]
+            for key, value in defaults.items():
+                opening.setdefault(key, copy.deepcopy(value))
+            out["opening_director"] = opening
             migrated = True
 
         out["version"] = target_version

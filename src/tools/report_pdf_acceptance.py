@@ -1,55 +1,76 @@
 # -*- coding: utf-8 -*-
-"""Aggregate inference-broker acceptance metrics from structured events."""
+"""Tổng hợp metric acceptance của refactor inference từ event đã redaction."""
 from __future__ import annotations
 
 import math
-from collections import defaultdict
-from typing import Any, Iterable, Mapping, Sequence
-
-_OPTIONAL_LANES = {"vision_ambient", "post_observer", "background", "discovery", "memory_background", "social_agenda"}
+from typing import Any, Mapping, Sequence
 
 
-def _values(events: Iterable[Mapping[str, Any]], name: str) -> list[float]:
-    result = []
+def _values(events: Sequence[Mapping[str, Any]], name: str) -> list[float]:
+    result: list[float] = []
     for event in events:
-        if str(event.get("name", "")) != name:
+        if str(event.get("name", "") or "") != name:
             continue
-        value = event.get("value", 0)
-        if isinstance(value, (int, float)):
-            result.append(float(value))
+        try:
+            result.append(float(event.get("value", 0.0) or 0.0))
+        except (TypeError, ValueError):
+            continue
     return result
 
 
-def _percentile(values: Sequence[float], p: float) -> float | None:
-    if not values:
-        return None
-    ordered = sorted(values)
-    index = min(len(ordered) - 1, max(0, int(round((len(ordered) - 1) * p))))
-    return round(float(ordered[index]), 4)
+def _percentile(values: Sequence[float], q: float) -> float:
+    ordered = sorted(float(value) for value in values)
+    if not ordered:
+        return 0.0
+    if len(ordered) == 1:
+        return round(ordered[0], 4)
+    position = (len(ordered) - 1) * q
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return round(ordered[lower], 4)
+    weight = position - lower
+    return round(ordered[lower] * (1.0 - weight) + ordered[upper] * weight, 4)
 
 
-def _distribution(values: Sequence[float]) -> dict[str, Any]:
+def _metric_summary(events: Sequence[Mapping[str, Any]], name: str) -> dict[str, float]:
+    values = _values(events, name)
     return {
         "count": len(values),
         "p50": _percentile(values, 0.50),
         "p95": _percentile(values, 0.95),
-        "p99": _percentile(values, 0.99),
-        "max": round(max(values), 4) if values else None,
+        "max": round(max(values), 4) if values else 0.0,
     }
 
 
-def _rate_limits(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    optional = 0.0
-    total = 0.0
+def _sum_by_lane(events: Sequence[Mapping[str, Any]], name: str) -> dict[str, float]:
+    totals: dict[str, float] = {}
     for event in events:
-        if str(event.get("name", "")) != "rate_limit_429_total":
+        if str(event.get("name", "") or "") != name:
             continue
-        value = float(event.get("value", 0) or 0)
-        total += value
         tags = event.get("tags", {}) if isinstance(event.get("tags"), Mapping) else {}
-        if str(tags.get("lane", "")) in _OPTIONAL_LANES:
-            optional += value
-    return {"total_429": int(total) if total.is_integer() else total, "optional_lane_429": int(optional) if optional.is_integer() else optional}
+        lane = str(tags.get("lane", "unknown") or "unknown")
+        try:
+            value = float(event.get("value", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            continue
+        totals[lane] = totals.get(lane, 0.0) + value
+    return totals
+
+
+def _optional_429(events: Sequence[Mapping[str, Any]]) -> int:
+    count = 0
+    for event in events:
+        if str(event.get("name", "") or "") != "rate_limit_429_total":
+            continue
+        tags = event.get("tags", {}) if isinstance(event.get("tags"), Mapping) else {}
+        lane = str(tags.get("lane", "") or "").lower()
+        if lane and lane not in {"chat_main", "user_chat", "required"}:
+            try:
+                count += int(float(event.get("value", 1) or 1))
+            except (TypeError, ValueError):
+                count += 1
+    return count
 
 
 def build_report(
@@ -58,76 +79,54 @@ def build_report(
     baseline_events: Sequence[Mapping[str, Any]] | None = None,
     semantic_evaluation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    current = [dict(event) for event in events if isinstance(event, Mapping)]
-    baseline = [dict(event) for event in (baseline_events or ()) if isinstance(event, Mapping)]
-    current_limits = _rate_limits(current)
-    baseline_limits = _rate_limits(baseline)
-    before = float(baseline_limits["optional_lane_429"] or 0)
-    after = float(current_limits["optional_lane_429"] or 0)
-    reduction = None
-    if before > 0:
-        reduction = round(max(-100.0, min(100.0, (before - after) / before * 100.0)), 4)
+    current = tuple(event for event in events if isinstance(event, Mapping))
+    baseline = tuple(event for event in (baseline_events or ()) if isinstance(event, Mapping))
+    input_by_lane = _sum_by_lane(current, "input_tokens_by_lane")
+    output_by_lane = _sum_by_lane(current, "output_tokens_by_lane")
+    chat_tokens = input_by_lane.get("chat_main", 0.0) + output_by_lane.get("chat_main", 0.0)
+    background_tokens = sum(value for lane, value in input_by_lane.items() if lane != "chat_main")
+    background_tokens += sum(value for lane, value in output_by_lane.items() if lane != "chat_main")
+    ratio = background_tokens / chat_tokens if chat_tokens else 0.0
 
-    input_tokens = defaultdict(float)
-    output_tokens = defaultdict(float)
-    for event in current:
-        tags = event.get("tags", {}) if isinstance(event.get("tags"), Mapping) else {}
-        lane = str(tags.get("lane", "unknown"))
-        value = float(event.get("value", 0) or 0)
-        if event.get("name") == "input_tokens_by_lane":
-            input_tokens[lane] += value
-        elif event.get("name") == "output_tokens_by_lane":
-            output_tokens[lane] += value
-    chat_tokens = input_tokens.get("chat_main", 0.0) + output_tokens.get("chat_main", 0.0)
-    background_tokens = sum(value for lane, value in input_tokens.items() if lane != "chat_main") + sum(value for lane, value in output_tokens.items() if lane != "chat_main")
-    ratio = round(background_tokens / chat_tokens, 4) if chat_tokens else 0.0
+    current_429 = _optional_429(current)
+    baseline_429 = _optional_429(baseline)
+    reduction = ((baseline_429 - current_429) / baseline_429 * 100.0) if baseline_429 else 0.0
+    semantic_accuracy = float((semantic_evaluation or {}).get("accuracy", 0.0) or 0.0)
+    critical_path_optional = sum(_values(current, "optional_background_critical_path_total"))
 
-    coalesced = sum(_values(current, "broker_coalesced_total"))
-    cancel_before = sum(_values(current, "broker_cancel_before_start_total"))
-    observer_before = sum(
-        float(event.get("value", 0) or 0)
-        for event in current
-        if event.get("name") == "observer_discard_total"
-        and isinstance(event.get("tags"), Mapping)
-        and str(event["tags"].get("stage", "")) == "before_start"
-    )
-    critical_optional = sum(
-        float(event.get("value", 0) or 0)
-        for event in current
-        if event.get("name") in {"optional_background_on_critical_path", "optional_lane_critical_path_total"}
-    )
-    semantic = dict(semantic_evaluation or {})
-    semantic_accuracy = float(semantic.get("accuracy", 0.0) or 0.0)
-    semantic_samples = int(semantic.get("sample_count", 0) or 0)
-
-    report = {
+    cancellation = {
+        "coalesced_jobs": int(sum(_values(current, "broker_coalesced_total"))),
+        "cancelled_before_start": int(sum(_values(current, "broker_cancel_before_start_total"))),
+        "observer_discarded_before_start": int(sum(
+            float(event.get("value", 0.0) or 0.0)
+            for event in current
+            if str(event.get("name", "") or "") == "observer_discard_total"
+            and str((event.get("tags", {}) or {}).get("stage", "") or "") == "before_start"
+        )),
+    }
+    acceptance = {
+        "optional_429_reduction_ge_80_percent": baseline_429 > 0 and reduction >= 80.0,
+        "discourse_paraphrase_accuracy_ge_95_percent": semantic_accuracy >= 0.95,
+        "optional_background_on_critical_path_zero": critical_path_optional == 0,
+    }
+    return {
         "schema": "eris.pdf_acceptance.v3",
-        "user_turn_latency_ms": _distribution(_values(current, "user_turn_latency_ms")),
-        "ttft_ms": _distribution(_values(current, "ttft_ms")),
-        "remote_calls_per_user_turn": _distribution(_values(current, "remote_calls_per_user_turn")),
+        "user_turn_latency_ms": _metric_summary(current, "user_turn_latency_ms"),
+        "ttft_ms": _metric_summary(current, "ttft_ms"),
+        "remote_calls_per_user_turn": _metric_summary(current, "remote_calls_per_user_turn"),
         "tokens": {
-            "input_by_lane": dict(input_tokens),
-            "output_by_lane": dict(output_tokens),
-            "background_to_chat_ratio": ratio,
+            "input_by_lane": input_by_lane,
+            "output_by_lane": output_by_lane,
+            "background_to_chat_ratio": round(ratio, 4),
         },
-        "queue": {"depth": _distribution(_values(current, "broker_queue_depth"))},
-        "cancellation": {
-            "coalesced_jobs": int(coalesced) if float(coalesced).is_integer() else coalesced,
-            "cancelled_before_start": int(cancel_before) if float(cancel_before).is_integer() else cancel_before,
-            "observer_discarded_before_start": int(observer_before) if float(observer_before).is_integer() else observer_before,
-        },
-        "rate_limits": current_limits,
-        "baseline": {"rate_limits": baseline_limits},
-        "comparison": {"optional_429_reduction_percent": reduction},
-        "semantic_evaluation": semantic,
-        "prompt_hard_cap": max(_values(current, "prompt_hard_cap"), default=None),
+        "queue_depth": _metric_summary(current, "broker_queue_depth"),
+        "cancellation": cancellation,
+        "rate_limits": {"optional_lane_429": current_429},
+        "baseline": {"rate_limits": {"optional_lane_429": baseline_429}},
+        "comparison": {"optional_429_reduction_percent": round(reduction, 1)},
+        "semantic_evaluation": dict(semantic_evaluation or {}),
+        "acceptance": acceptance,
     }
-    report["acceptance"] = {
-        "optional_429_reduction_ge_80_percent": reduction is not None and reduction >= 80.0,
-        "discourse_paraphrase_accuracy_ge_95_percent": semantic_samples > 0 and semantic_accuracy >= 0.95,
-        "optional_background_on_critical_path_zero": critical_optional == 0,
-    }
-    return report
 
 
 __all__ = ["build_report"]

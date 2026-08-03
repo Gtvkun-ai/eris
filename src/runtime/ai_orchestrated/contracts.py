@@ -4,7 +4,9 @@
 Triết lý rất thẳng:
 - Main model sở hữu lời public.
 - Observer model diễn giải điều vừa xảy ra.
-- Chat planner đề xuất ý định trong lane chat; autonomous dùng Social Initiative Worker -> runtime governor -> Surface Realizer.
+- Chat/startup appraise social_plan. Autonomous ưu tiên candidate đã atomic-claim
+  từ social state, rồi mới dùng agenda selector model-owned để đề xuất một impulse
+  mới. Mọi candidate vẫn đi qua floor governor -> Surface Realizer.
 - Reducer là nơi duy nhất được ghi state.
 - Runtime chỉ thực thi sự thật cơ học.
 
@@ -38,7 +40,7 @@ from .personality import (
 )
 
 
-AI_RUNTIME_VERSION = "ai_orchestrated.v18.social_initiative_governor"
+AI_RUNTIME_VERSION = "ai_orchestrated.v28.background_seed_reservoir"
 
 
 def clamp01(value: Any, default: float = 0.0) -> float:

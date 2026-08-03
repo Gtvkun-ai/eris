@@ -67,6 +67,11 @@ class Decision:
     # Tín hiệu quan sát hậu quả hành vi. Không phải guard và không có quyền sửa text.
     # Runtime dùng block này cho audit + context mềm ở lượt kế tiếp.
     behavior_observation_meta: dict[str, Any] | None = None
+    # Metadata typed của Opening Director. Đây là contract stage/runtime, không
+    # phải prose để body hay TTS tự diễn giải.
+    opening_plan: dict[str, Any] | None = None
+    autonomous_plan: dict[str, Any] | None = None
+    performance_context: dict[str, Any] | None = None
 
     def resolve_motion_intent(self) -> str:
         intent = (self.motion_intent or "").strip().lower()
@@ -153,6 +158,12 @@ class Decision:
         }
         if self.action_result_meta:
             payload["action_result"] = dict(self.action_result_meta)
+        if isinstance(self.opening_plan, dict):
+            payload["opening_plan"] = dict(self.opening_plan)
+        if isinstance(self.autonomous_plan, dict):
+            payload["autonomous_plan"] = dict(self.autonomous_plan)
+        if isinstance(self.performance_context, dict):
+            payload["performance_context"] = dict(self.performance_context)
         failure_meta = normalize_failure_meta(self.failure_meta)
         if failure_meta is not None:
             payload["failure_meta"] = failure_meta

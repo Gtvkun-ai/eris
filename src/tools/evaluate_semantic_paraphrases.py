@@ -1,56 +1,41 @@
 # -*- coding: utf-8 -*-
-"""Score typed semantic-frame predictions against paraphrase alternatives."""
+"""Chấm dataset paraphrase semantic bằng contract expected-values."""
 from __future__ import annotations
 
-import argparse
-import json
-from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
+
+
+def _matches(actual: Any, expected: Any) -> bool:
+    if isinstance(expected, list):
+        return actual in expected
+    return actual == expected
 
 
 def evaluate(dataset: Mapping[str, Any], predictions: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
-    cases = dataset.get("cases", []) if isinstance(dataset, Mapping) else []
-    correct = 0
-    total = 0
-    case_results = []
+    cases = [item for item in dataset.get("cases", ()) if isinstance(item, Mapping)]
+    details: list[dict[str, Any]] = []
+    passed = 0
     for case in cases:
-        if not isinstance(case, Mapping):
-            continue
         case_id = str(case.get("id", "") or "")
         expected = case.get("expect", {}) if isinstance(case.get("expect"), Mapping) else {}
-        predicted = predictions.get(case_id, {}) if isinstance(predictions, Mapping) else {}
-        fields = {}
-        case_ok = True
-        for field, allowed_raw in expected.items():
-            allowed = allowed_raw if isinstance(allowed_raw, list) else [allowed_raw]
-            actual = predicted.get(field) if isinstance(predicted, Mapping) else None
-            ok = actual in allowed
-            fields[field] = {"actual": actual, "allowed": allowed, "correct": ok}
-            case_ok = case_ok and ok
-        total += 1
-        correct += int(case_ok)
-        case_results.append({"id": case_id, "correct": case_ok, "fields": fields})
-    accuracy = correct / total if total else 0.0
+        predicted = predictions.get(case_id, {})
+        mismatches = [
+            key for key, value in expected.items()
+            if not _matches(predicted.get(key), value)
+        ]
+        ok = not mismatches
+        passed += int(ok)
+        details.append({"id": case_id, "ok": ok, "mismatches": mismatches})
+    count = len(cases)
+    accuracy = passed / count if count else 0.0
     return {
-        "schema": "eris.semantic_paraphrase_eval.v1",
-        "sample_count": total,
-        "correct": correct,
+        "schema": "eris.semantic_paraphrase_evaluation.v1",
+        "sample_count": count,
+        "passed": passed,
         "accuracy": round(accuracy, 6),
         "acceptance_ge_95_percent": accuracy >= 0.95,
-        "cases": case_results,
+        "details": details,
     }
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("dataset")
-    parser.add_argument("predictions")
-    args = parser.parse_args(argv)
-    dataset = json.loads(Path(args.dataset).read_text(encoding="utf-8"))
-    predictions = json.loads(Path(args.predictions).read_text(encoding="utf-8"))
-    print(json.dumps(evaluate(dataset, predictions), ensure_ascii=False, indent=2))
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+__all__ = ["evaluate"]

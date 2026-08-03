@@ -92,6 +92,79 @@ class SettingsControlRuntimeMixin:
         }
 
 
+    def _deepseek_workers_health_snapshot(self) -> dict:
+        """Read-only DeepSeek worker wiring for Settings/diagnostics."""
+
+        service = getattr(self, "llm_service", None)
+        role_attrs = {
+            "companion": "companion_client",
+            "observer": "observer_client",
+            "critic": "critic_client",
+            "inner": "inner_client",
+            "diary": "diary_client",
+            "seed": "seed_client",
+            "surface": "surface_client",
+            "style": "style_client",
+            "research": "research_client",
+            "tutor": "tutor_client",
+        }
+        try:
+            from llm.deepseek_workers import WORKER_ROLES, load_worker_spec
+        except Exception as exc:
+            return {"available": False, "error": f"{type(exc).__name__}: {exc}"[:240], "roles": {}}
+
+        roles: dict[str, dict] = {}
+        configured_count = 0
+        ready_count = 0
+        for role in WORKER_ROLES:
+            try:
+                spec = load_worker_spec(role)
+            except Exception as exc:
+                roles[str(role)] = {
+                    "configured": False,
+                    "ready": False,
+                    "reason": f"spec_error:{type(exc).__name__}",
+                }
+                continue
+
+            configured = bool(getattr(spec, "configured", False))
+            configured_count += 1 if configured else 0
+            client = getattr(service, role_attrs.get(role, ""), None) if service is not None else None
+            if role == "companion" and client is None and service is not None:
+                client = getattr(service, "client", None)
+            worker_role = str(getattr(client, "worker_role", "") or "").strip().lower()
+            ready = client is not None and (worker_role == role or (role == "companion" and not worker_role))
+            ready_count += 1 if ready else 0
+
+            fingerprint = ""
+            api_key = str(getattr(spec, "api_key", "") or "")
+            if api_key:
+                try:
+                    import hashlib
+
+                    fingerprint = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:12]
+                except Exception:
+                    fingerprint = "configured"
+            roles[role] = {
+                "configured": configured,
+                "ready": ready,
+                "role": role,
+                "worker_role": worker_role,
+                "base_url": str(getattr(spec, "base_url", "") or ""),
+                "model": str(getattr(spec, "model", "") or ""),
+                "jsonl": bool(getattr(spec, "jsonl_enabled", False)),
+                "key_fingerprint": fingerprint,
+                "reason": "" if ready else ("not_configured" if not configured else "client_not_built"),
+            }
+
+        return {
+            "available": True,
+            "configured_count": configured_count,
+            "ready_count": ready_count,
+            "roles": roles,
+        }
+
+
     def _handle_settings_connection_test(self, msg: dict) -> None:
         """Chạy request cực ngắn bằng đúng client main đang hiệu lực.
 
@@ -270,6 +343,7 @@ class SettingsControlRuntimeMixin:
                 "settings_health_ack": {
                     "pools": pools,
                     "main_brain": self._main_brain_health_snapshot(),
+                    "deepseek_workers": self._deepseek_workers_health_snapshot(),
                     "tts": tts_health,
                     "capabilities": capability_health,
                     "subsystems": subsystem_health,
@@ -307,6 +381,7 @@ class SettingsControlRuntimeMixin:
                 "settings_health_ack": {
                     "pools": {},
                     "main_brain": self._main_brain_health_snapshot(),
+                    "deepseek_workers": self._deepseek_workers_health_snapshot(),
                     "tts": {"ready": False},
                     "effective": self._advanced_effective_settings_snapshot(),
                     "error": str(exc)[:240],

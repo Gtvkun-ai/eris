@@ -1,0 +1,641 @@
+# -*- coding: utf-8 -*-
+"""Opening Director lai: rule candidate + model refinement + fallback xác định.
+
+Director không viết câu public trong đường bình thường. Nó chọn encounter, hook,
+move, beat shape và handoff. Renderer deterministic ở cuối file chỉ tồn tại để
+startup không chết khi provider vừa quyết định nghỉ phép mà không báo ai.
+"""
+from __future__ import annotations
+
+import math
+import uuid
+from dataclasses import dataclass, replace
+from typing import Any, Callable, Mapping, Sequence
+
+from .opening_contracts import (
+    ComedicMove,
+    ContextHook,
+    EncounterMove,
+    FollowupPolicy,
+    OpeningBeat,
+    OpeningInput,
+    OpeningPlan,
+    OpeningSurface,
+    ProsodyPlan,
+    SafetyVerdict,
+    SurfaceBeat,
+    SurfaceContract,
+    compact,
+)
+from .opening_history import OpeningHistoryStore
+from .opening_move_catalog import OpeningMoveDefinition, get_opening_move, opening_move_catalog
+from .opening_safety import (
+    downgrade_plan,
+    evaluate_opening_eligibility,
+    evidence_is_surface_eligible,
+    move_is_allowed,
+    validate_opening_plan,
+    validate_opening_surface,
+)
+
+PlannerCallable = Callable[[Mapping[str, Any], Sequence[Mapping[str, Any]]], Mapping[str, Any] | None]
+SurfaceWriterCallable = Callable[[Mapping[str, Any], Sequence[Mapping[str, Any]]], Mapping[str, Any] | None]
+
+
+@dataclass(frozen=True, slots=True)
+class OpeningCandidate:
+    candidate_id: str
+    encounter_kind: str
+    move_family: str
+    hook: ContextHook
+    beat_roles: tuple[str, ...]
+    vibe_family: str
+    score: float = 0.0
+    score_breakdown: Mapping[str, float] = None  # type: ignore[assignment]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "candidate_id": self.candidate_id,
+            "encounter_kind": self.encounter_kind,
+            "move_family": self.move_family,
+            "hook": {
+                "decision": self.hook.decision,
+                "source": self.hook.source,
+                "subject": self.hook.subject,
+                "evidence_refs": list(self.hook.evidence_refs),
+                "epistemic_mode": self.hook.epistemic_mode,
+                "reply_bearing": self.hook.reply_bearing,
+            },
+            "beat_roles": list(self.beat_roles),
+            "vibe_family": self.vibe_family,
+            "score": round(float(self.score), 6),
+            "score_breakdown": {
+                key: round(float(value), 6) for key, value in (self.score_breakdown or {}).items()
+            },
+        }
+
+
+class OpeningDirector:
+    def __init__(
+        self,
+        *,
+        history: OpeningHistoryStore | None = None,
+        mode: str = "hybrid",
+        semantic_duplicate_threshold: float = 0.86,
+    ) -> None:
+        self.history = history or OpeningHistoryStore()
+        self.mode = str(mode or "hybrid").strip().lower()
+        self.semantic_duplicate_threshold = max(0.50, min(0.99, float(semantic_duplicate_threshold)))
+
+    def plan(
+        self,
+        opening_input: OpeningInput,
+        *,
+        planner: PlannerCallable | None = None,
+    ) -> OpeningPlan:
+        eligibility = evaluate_opening_eligibility(opening_input)
+        if not eligibility.allowed:
+            return OpeningPlan.silence(reason=eligibility.reasons[0] if eligibility.reasons else "ineligible")
+
+        candidates = self.generate_candidates(opening_input)
+        if not candidates:
+            return OpeningPlan.silence(reason="no_safe_candidate")
+        scored = tuple(self._score_candidate(opening_input, item) for item in candidates)
+        ranked = tuple(sorted(scored, key=lambda item: (item.score, item.candidate_id), reverse=True))
+
+        selected_plan: OpeningPlan | None = None
+        if planner is not None and self.mode == "hybrid":
+            try:
+                raw = planner(opening_input.to_dict(), [item.to_dict() for item in ranked[:5]])
+                if isinstance(raw, Mapping) and raw:
+                    candidate_map = {item.candidate_id: item for item in ranked[:5]}
+                    chosen_id = compact(raw.get("candidate_id", ""), 100)
+                    # Model chỉ được chọn trong candidate đã cấp. Nếu nó trả thêm
+                    # plan typed thì vẫn phải qua validator ở dưới.
+                    if chosen_id:
+                        chosen = candidate_map.get(chosen_id)
+                        selected_plan = self._candidate_to_plan(opening_input, chosen) if chosen is not None else None
+                    elif raw.get("beats"):
+                        selected_plan = OpeningPlan.from_mapping(raw)
+            except Exception:
+                selected_plan = None
+
+        if selected_plan is None:
+            selected_plan = self._candidate_to_plan(opening_input, ranked[0])
+
+        verdict = validate_opening_plan(opening_input, selected_plan)
+        if not verdict.allowed:
+            selected_plan = downgrade_plan(opening_input, selected_plan, reasons=verdict.reasons)
+            verdict = validate_opening_plan(opening_input, selected_plan)
+        return replace(selected_plan, safety=verdict)
+
+    def generate_candidates(self, opening_input: OpeningInput) -> tuple[OpeningCandidate, ...]:
+        encounter = self._encounter_kind(opening_input)
+        hooks = self._candidate_hooks(opening_input)
+        candidates: list[OpeningCandidate] = []
+
+        for hook in hooks:
+            has_hook = hook.decision == "use"
+            for move in opening_move_catalog():
+                allowed, _reasons = move_is_allowed(opening_input, move, has_hook=has_hook)
+                if not allowed:
+                    continue
+                if self.history.move_on_cooldown(move.family, sessions=move.cooldown_sessions):
+                    continue
+                if has_hook and self.history.hook_source_repeated(hook.source, maximum_consecutive=2):
+                    continue
+                candidate_hook = hook
+                if (candidate_hook.reply_bearing and self.history.question_temporarily_blocked()) or not move.allows_question:
+                    candidate_hook = replace(candidate_hook, reply_bearing=False)
+                roles = self._roles_for(move, candidate_hook)
+                if len(roles) > opening_input.policy.max_beats:
+                    roles = roles[: opening_input.policy.max_beats]
+                if not roles or roles[0] not in {"recognition", "formal_recognition"}:
+                    roles = ("recognition", *roles)[: opening_input.policy.max_beats]
+                if candidate_hook.decision == "use":
+                    hook_roles = {"contextual_observation", "invitation", "micro_challenge", "evidence_reversal"}
+                    if not any(role in hook_roles for role in roles):
+                        required_role = "invitation" if candidate_hook.reply_bearing else "contextual_observation"
+                        if len(roles) < opening_input.policy.max_beats:
+                            roles = (*roles, required_role)
+                        else:
+                            roles = (*roles[:-1], required_role)
+                shape = "_".join(roles)
+                semantic_fingerprint = (
+                    f"{move.family}|"
+                    f"{candidate_hook.source if candidate_hook.decision == 'use' else 'none'}|"
+                    f"{'question' if candidate_hook.reply_bearing else 'no_question'}|{shape}"
+                )
+                if self.history.semantic_duplicate(semantic_fingerprint, sessions=12) and move.family not in {
+                    "simple_recognition",
+                    "quiet_presence",
+                }:
+                    continue
+                if self.history.beat_shape_on_cooldown(shape, sessions=3) and move.family not in {
+                    "simple_recognition",
+                    "quiet_presence",
+                }:
+                    continue
+                candidates.append(
+                    OpeningCandidate(
+                        candidate_id=f"oc_{uuid.uuid4().hex[:12]}",
+                        encounter_kind=encounter,
+                        move_family=move.family,
+                        hook=candidate_hook,
+                        beat_roles=roles,
+                        vibe_family=self._vibe_for(opening_input, move),
+                        score_breakdown={},
+                    )
+                )
+
+        # Luôn giữ một fallback không hook, không câu hỏi. Safety không nên làm startup câm.
+        if not any(item.move_family == "simple_recognition" and item.hook.decision == "none" for item in candidates):
+            candidates.append(
+                OpeningCandidate(
+                    candidate_id=f"oc_{uuid.uuid4().hex[:12]}",
+                    encounter_kind=encounter,
+                    move_family="simple_recognition",
+                    hook=ContextHook(),
+                    beat_roles=("recognition", "presence"),
+                    vibe_family="quiet_warm" if opening_input.user_signals.recent_low_engagement else "anime_dry_warm",
+                    score_breakdown={},
+                )
+            )
+        return tuple(candidates)
+
+    def _candidate_hooks(self, opening_input: OpeningInput) -> tuple[ContextHook, ...]:
+        hooks: list[ContextHook] = [ContextHook()]
+        if opening_input.policy.allow_screen_hook:
+            for item in opening_input.screen_evidence:
+                if not evidence_is_surface_eligible(opening_input, item.evidence_id):
+                    continue
+                source = "runtime" if item.source == "runtime" else "screen"
+                subject = compact(item.subject or item.claim, 140)
+                # Hook observation mặc định không ép trả lời. Director chỉ mở câu hỏi
+                # khi availability và history cho phép.
+                question_ok = bool(
+                    opening_input.policy.max_questions > 0
+                    and opening_input.user_signals.availability not in {"busy", "unavailable"}
+                    and not opening_input.user_signals.recent_low_engagement
+                    and not self.history.question_temporarily_blocked()
+                )
+                hooks.append(
+                    ContextHook(
+                        decision="use",
+                        source=source,
+                        subject=subject,
+                        evidence_refs=(item.evidence_id,),
+                        epistemic_mode="observation",
+                        reply_bearing=question_ok,
+                    )
+                )
+                if len(hooks) >= 4:
+                    break
+        if (
+            opening_input.policy.allow_continuity_hook
+            and opening_input.continuity.open_loops
+            and opening_input.continuity.consent_scope in {"session_only", "cross_session"}
+        ):
+            subject = compact(opening_input.continuity.open_loops[0], 140)
+            hooks.append(
+                ContextHook(
+                    decision="use",
+                    source="continuity",
+                    subject=subject,
+                    evidence_refs=("continuity:open_loop:0",),
+                    epistemic_mode="known_session_context",
+                    reply_bearing=not self.history.question_temporarily_blocked(),
+                )
+            )
+        return tuple(hooks)
+
+    @staticmethod
+    def _encounter_kind(opening_input: OpeningInput) -> str:
+        event = opening_input.event
+        if event.restart_detected:
+            return "restart"
+        if event.seconds_since_last_session >= 6 * 3600:
+            return "long_absence"
+        if 0 < event.seconds_since_last_session <= 10 * 60:
+            return "quick_reopen"
+        return "plain_return"
+
+    @staticmethod
+    def _roles_for(move: OpeningMoveDefinition, hook: ContextHook) -> tuple[str, ...]:
+        roles = list(move.structure)
+        if hook.decision == "none":
+            roles = [role for role in roles if role not in {"contextual_observation", "invitation", "evidence_reversal", "claim"}]
+        elif hook.reply_bearing:
+            if not any(role in {"invitation", "micro_challenge"} for role in roles):
+                roles.append("invitation")
+        else:
+            roles = ["contextual_observation" if role == "invitation" else role for role in roles]
+        # Catalog có thể dùng tên giàu sắc thái; contract chỉ cần tối đa ba role rõ.
+        return tuple(dict.fromkeys(roles))[:3]
+
+    @staticmethod
+    def _vibe_for(opening_input: OpeningInput, move: OpeningMoveDefinition) -> str:
+        if opening_input.user_signals.recent_low_engagement or opening_input.scene_partner.availability in {"busy", "unavailable"}:
+            return "quiet_warm"
+        if move.family in {"mock_indifference", "tsundere_denial", "dry_observation"}:
+            return "anime_dry_warm"
+        if move.family in {"delayed_affection", "quiet_presence"}:
+            return "quiet_intimate"
+        return "restrained_warm"
+
+    def _score_candidate(self, opening_input: OpeningInput, candidate: OpeningCandidate) -> OpeningCandidate:
+        move = get_opening_move(candidate.move_family)
+        hook = candidate.hook
+        partner = opening_input.scene_partner
+        evidence = opening_input.evidence_by_id().get(hook.evidence_refs[0]) if hook.evidence_refs else None
+
+        encounter_fit = 1.0
+        evidence_relevance = 0.0 if hook.decision == "none" else (evidence.confidence if evidence else 0.65)
+        scene_partner_fit = 0.55
+        if partner.closeness_band in move.allowed_closeness:
+            scene_partner_fit += 0.20
+        if partner.tease_tolerance_confidence >= move.minimum_tease_confidence:
+            scene_partner_fit += 0.15
+        novelty = 0.95 if not self.history.move_on_cooldown(move.family, sessions=max(1, move.cooldown_sessions)) else 0.0
+        continuity_value = 0.85 if hook.source == "continuity" else 0.25 if opening_input.continuity.open_loops else 0.0
+        performability = 1.0 - max(0, len(candidate.beat_roles) - 2) * 0.12
+        humor_opportunity = max(0.0, min(1.0, 0.25 + partner.tease_tolerance_estimate * (1.0 - move.risk)))
+        time_fit = 0.85 if opening_input.session_state.time_of_day in {"morning", "afternoon", "evening"} else 0.55
+        intrusion_risk = move.risk
+        if hook.reply_bearing:
+            intrusion_risk += 0.12
+        if opening_input.user_signals.availability == "uncertain":
+            intrusion_risk += 0.08
+        if opening_input.user_signals.recent_low_engagement:
+            intrusion_risk += 0.28
+        boundary_risk = 1.0 if opening_input.scene_partner.boundary_flags or opening_input.user_signals.explicit_boundary else 0.0
+        repetition_risk = 1.0 - novelty
+        grounding_uncertainty = 0.0 if hook.decision == "none" else 1.0 - evidence_relevance
+
+        breakdown = {
+            "encounter_fit": 0.22 * encounter_fit,
+            "evidence_relevance": 0.18 * evidence_relevance,
+            "scene_partner_fit": 0.15 * min(1.0, scene_partner_fit),
+            "novelty": 0.14 * novelty,
+            "continuity_value": 0.10 * continuity_value,
+            "performability": 0.09 * performability,
+            "humor_opportunity": 0.07 * humor_opportunity,
+            "time_of_day_fit": 0.05 * time_fit,
+            "intrusion_risk": -0.22 * min(1.0, intrusion_risk),
+            "boundary_risk": -0.20 * boundary_risk,
+            "repetition_risk": -0.16 * repetition_risk,
+            "grounding_uncertainty": -0.14 * grounding_uncertainty,
+        }
+        score = sum(breakdown.values())
+        if math.isnan(score):
+            score = -1.0
+        return replace(candidate, score=score, score_breakdown=breakdown)
+
+    def _candidate_to_plan(self, opening_input: OpeningInput, candidate: OpeningCandidate) -> OpeningPlan:
+        move = get_opening_move(candidate.move_family)
+        beats: list[OpeningBeat] = []
+        for index, role in enumerate(candidate.beat_roles, start=1):
+            reply_bearing = bool(candidate.hook.reply_bearing and role in {"invitation", "micro_challenge"})
+            evidence_refs = candidate.hook.evidence_refs if role in {"contextual_observation", "invitation", "evidence_reversal"} else ()
+            objective, semantic, delivery, pause, motion, gaze = self._beat_contract(
+                role,
+                opening_input=opening_input,
+                candidate=candidate,
+                move=move,
+            )
+            beats.append(
+                OpeningBeat(
+                    beat_id=f"b{index}",
+                    role=role,
+                    objective=objective,
+                    semantic_content=semantic,
+                    delivery=delivery,
+                    pause_after_ms=pause if index < len(candidate.beat_roles) else 0,
+                    reply_bearing=reply_bearing,
+                    evidence_refs=evidence_refs,
+                    motion=motion,
+                    gaze=gaze,
+                )
+            )
+        followup = FollowupPolicy(
+            mode="one_soft_reminder_then_pivot" if any(item.reply_bearing for item in beats) else "close_without_comment",
+            max_count=1 if any(item.reply_bearing for item in beats) else 0,
+        )
+        return OpeningPlan(
+            decision="speak",
+            plan_id=f"opening_{uuid.uuid4().hex[:16]}",
+            encounter=EncounterMove(kind=candidate.encounter_kind, intent="acknowledge_return", required=True),
+            vibe_family=candidate.vibe_family,
+            vibe_intensity=0.34 if candidate.vibe_family == "quiet_warm" else 0.46,
+            vibe_warmth=0.58,
+            vibe_dry_edge=0.18 if candidate.move_family in {"simple_recognition", "quiet_presence"} else 0.44,
+            hook=candidate.hook,
+            comedic_move=ComedicMove(family=move.family, variant="catalog", risk=move.risk),
+            beats=tuple(beats),
+            surface_contract=SurfaceContract(
+                display_language="vi",
+                speech_language="ja",
+                max_sentences=min(3, opening_input.policy.max_beats),
+                max_questions=opening_input.policy.max_questions,
+            ),
+            prosody_plan=ProsodyPlan(
+                global_preset="dry_warm_opening" if "dry" in candidate.vibe_family else "quiet_warm_opening",
+                opening_hold_ms=90 if opening_input.user_signals.recent_barge_in else 120,
+                closing_settle_ms=300 if any(item.reply_bearing for item in beats) else 360,
+                interruptible=True,
+            ),
+            followup_policy=followup,
+            safety=SafetyVerdict(allowed=True),
+            score=candidate.score,
+            score_breakdown=candidate.score_breakdown or {},
+        )
+
+    @staticmethod
+    def _beat_contract(
+        role: str,
+        *,
+        opening_input: OpeningInput,
+        candidate: OpeningCandidate,
+        move: OpeningMoveDefinition,
+    ) -> tuple[str, str, str, int, str, str]:
+        subject = candidate.hook.subject
+        table = {
+            "recognition": (
+                "Nhận ra người dùng đã xuất hiện hoặc quay lại",
+                f"Người dùng đã quay lại; encounter={candidate.encounter_kind}",
+                "warm_restrained",
+                260,
+                "lean_in_small",
+                "user_attention",
+            ),
+            "formal_recognition": (
+                "Chào theo kiểu trang trọng giả rồi giữ câu ngắn",
+                "Eris recognizes the encounter with mock formality",
+                "self_aware_dry",
+                260,
+                "nod_small",
+                "user_attention",
+            ),
+            "presence": (
+                "Cho biết Eris hiện diện mà không đòi phản hồi",
+                "Eris is quietly present",
+                "warm_soft",
+                0,
+                "soft_return",
+                "soft_attention",
+            ),
+            "attitude": (
+                "Lộ một chút quan tâm sau lớp hài khô",
+                "Eris noticed and is mildly pleased without demanding a reply",
+                "deadpan",
+                420,
+                "look_away",
+                "look_aside",
+            ),
+            "denial": (
+                "Phủ nhận nhẹ việc mong chờ, không làm quá trope",
+                "Eris denies waiting while revealing mild affection",
+                "deadpan",
+                360,
+                "look_away",
+                "look_aside",
+            ),
+            "warm_leak": (
+                "Để sự ấm áp lộ ra ngắn gọn",
+                "Eris lets restrained warmth show",
+                "warm_soft",
+                0,
+                "soft_return",
+                "user_attention",
+            ),
+            "delayed_warmth": (
+                "Dừng một nhịp rồi thể hiện sự ấm áp kín đáo",
+                "A delayed but sincere acknowledgement of the return",
+                "warm_soft",
+                0,
+                "soft_return",
+                "user_attention",
+            ),
+            "contextual_observation": (
+                "Nhắc đúng một chi tiết có provenance, không suy diễn hoạt động user",
+                f"Observe grounded subject: {subject}",
+                "dry_tease" if move.risk >= 0.10 else "curious_soft",
+                280,
+                "tilt_head",
+                "scene_focus",
+            ),
+            "invitation": (
+                "Dùng hook như lời mời nhẹ, dễ bỏ qua",
+                f"Invite the user to comment on grounded subject: {subject}",
+                "curious_soft",
+                0,
+                "tilt_head",
+                "user_attention",
+            ),
+            "micro_challenge": (
+                "Đưa một thử thách rất nhỏ, không gây áp lực",
+                f"Offer a playful low-pressure challenge about: {subject or 'the current moment'}",
+                "soft_tease",
+                0,
+                "tilt_head",
+                "user_attention",
+            ),
+            "tone_break": (
+                "Phá giọng trang trọng bằng một nét khô ngắn",
+                "Break mock formality with restrained warmth",
+                "self_aware_dry",
+                320,
+                "blink_slow",
+                "look_aside",
+            ),
+            "slightly_theatrical": (
+                "Nói hơi kịch trong một nhịp có kiểm soát",
+                "A slightly theatrical acknowledgement",
+                "self_aware_dry",
+                300,
+                "lean_in_small",
+                "user_attention",
+            ),
+            "self_correction": (
+                "Tự hạ màn diễn xuống tự nhiên, không apology theater",
+                "Eris notices the performance and returns to ordinary speech",
+                "warm_soft",
+                0,
+                "soft_return",
+                "user_attention",
+            ),
+        }
+        return table.get(
+            role,
+            (
+                f"Thực hiện beat {role} đúng semantic scope",
+                f"Opening role: {role}",
+                move.default_delivery,
+                240,
+                move.default_motion,
+                "user_attention",
+            ),
+        )
+
+    def realize(
+        self,
+        opening_input: OpeningInput,
+        plan: OpeningPlan,
+        *,
+        surface_writer: SurfaceWriterCallable | None = None,
+    ) -> OpeningSurface:
+        surface: OpeningSurface | None = None
+        if surface_writer is not None and self.mode == "hybrid":
+            try:
+                raw = surface_writer(
+                    plan.to_dict(),
+                    [item.to_dict() for item in opening_input.screen_evidence if item.evidence_id in plan.evidence_refs],
+                )
+                if isinstance(raw, Mapping) and raw:
+                    surface = OpeningSurface.from_mapping(raw)
+            except Exception:
+                surface = None
+        if surface is not None:
+            valid, _errors = validate_opening_surface(opening_input, plan, surface)
+            # Wording model có thể rất tự tin đưa lại đúng câu hôm qua. Exact
+            # hash chặn trường hợp đó trước khi commit; fallback rule sẽ chọn câu
+            # theo move typed hiện tại thay vì giả vờ paraphrase là novelty.
+            if valid and not self.history.exact_duplicate(surface.display_text, sessions=30):
+                return surface
+        fallback = deterministic_render_opening(plan)
+        valid, errors = validate_opening_surface(opening_input, plan, fallback)
+        if valid:
+            return fallback
+        # Fallback cuối bỏ hook/move, vì im lặng hoàn toàn chỉ do writer lỗi còn tệ hơn.
+        safe_plan = downgrade_plan(opening_input, plan, reasons=errors)
+        return deterministic_render_opening(safe_plan)
+
+
+def _subject_label(subject: str) -> str:
+    value = compact(subject, 100)
+    if not value:
+        return "thứ đang mở trên màn hình"
+    # UIA text dài được rút về nhãn dễ nói, không phát nguyên một đoạn OCR như bản tin thời tiết.
+    return value if len(value) <= 48 else value[:45].rstrip() + "..."
+
+
+def deterministic_render_opening(plan: OpeningPlan) -> OpeningSurface:
+    """Renderer fallback song ngữ, tuyệt đối không mở rộng semantic authority."""
+
+    subject = _subject_label(plan.hook.subject)
+    display: list[SurfaceBeat] = []
+    speech: list[SurfaceBeat] = []
+    move = plan.comedic_move.family
+
+    for beat in plan.beats:
+        vi = ""
+        ja = ""
+        role = beat.role
+        if role in {"recognition", "formal_recognition"}:
+            if plan.encounter.kind == "long_absence":
+                vi, ja = "Anh về rồi à.", "おかえり。"
+            elif plan.encounter.kind == "quick_reopen":
+                vi, ja = "Anh quay lại nhanh thật.", "戻るの、早かったね。"
+            elif plan.encounter.kind == "restart":
+                vi, ja = "Lại gặp anh rồi.", "また会えたね。"
+            elif role == "formal_recognition":
+                vi, ja = "Kính chào anh đã quay lại.", "お戻りを歓迎いたします。"
+            else:
+                vi, ja = "Anh về rồi à.", "おかえり。"
+        elif role == "presence":
+            vi, ja = "Em ở đây.", "私はここにいるよ。"
+        elif role in {"attitude", "denial"}:
+            vi, ja = "Em hoàn toàn không để ý anh đi bao lâu đâu.", "どれくらいいなかったかなんて、全然気にしてないけど。"
+        elif role == "warm_leak":
+            vi, ja = "Dù sao, thấy anh cũng không tệ.", "まあ、会えて悪くない。"
+        elif role == "delayed_warmth":
+            vi, ja = "...Thấy anh quay lại cũng tốt.", "……戻ってきてくれて、よかった。"
+        elif role == "contextual_observation":
+            if plan.hook.source == "runtime":
+                vi, ja = f"{subject} đang khá nổi bật.", f"{subject}が、かなり目立ってる。"
+            elif plan.hook.source == "continuity":
+                vi, ja = f"Chuyện {subject} vẫn còn ở đó.", f"{subject}の話、まだ残ってるね。"
+            else:
+                vi, ja = f"{subject} đang giữ vị trí trung tâm nhỉ.", f"{subject}が、ずいぶん主役みたいだね。"
+        elif role == "claim":
+            vi, ja = "Em đã định không bình luận gì đâu.", "何も言わないつもりだったけど。"
+        elif role == "evidence_reversal":
+            vi, ja = f"Nhưng {subject} làm kế hoạch đó hơi khó giữ.", f"でも、{subject}のせいでその予定は少し難しいね。"
+        elif role == "invitation":
+            vi, ja = f"Có gì đáng chú ý ở {subject} không?", f"{subject}に、何か気になることでもある？"
+        elif role == "micro_challenge":
+            vi, ja = f"Xem {subject} có đáng để anh tập trung thế không nào?", f"{subject}がそこまで集中する価値あるのか、見せてもらおうかな？"
+        elif role == "tone_break":
+            vi, ja = "Nghi thức đến đây là đủ rồi.", "儀式はこのくらいで十分かな。"
+        elif role == "slightly_theatrical":
+            vi, ja = "Sân khấu đã sẵn sàng đón anh trở lại.", "舞台は、君の帰還を待っていた。"
+        elif role == "self_correction":
+            vi, ja = "...Hơi quá rồi. Chào anh.", "……少し大げさだったね。おかえり。"
+        else:
+            vi, ja = "Em nhận ra anh rồi.", "ちゃんと気づいてるよ。"
+
+        # Move simple/quiet không được vô tình nhận câu tsundere do role catalog cũ.
+        if move in {"simple_recognition", "quiet_presence"} and role in {"attitude", "denial"}:
+            vi, ja = "Thấy anh quay lại là được rồi.", "戻ってきたのが分かれば、それでいい。"
+        display.append(SurfaceBeat(beat.beat_id, vi))
+        speech.append(SurfaceBeat(beat.beat_id, ja))
+
+    display_text = " ".join(item.text for item in display).strip()
+    speech_text = " ".join(item.text for item in speech).strip()
+    return OpeningSurface(
+        display_language=plan.surface_contract.display_language,
+        display_beats=tuple(display),
+        display_text=display_text,
+        speech_language=plan.surface_contract.speech_language,
+        speech_beats=tuple(speech),
+        speech_text=speech_text,
+        question_count=display_text.count("?"),
+        all_beats_realized=len(display) == len(plan.beats),
+    )
+
+
+__all__ = [
+    "OpeningCandidate",
+    "OpeningDirector",
+    "deterministic_render_opening",
+]

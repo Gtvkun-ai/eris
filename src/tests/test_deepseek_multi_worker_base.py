@@ -15,6 +15,7 @@ from llm.deepseek_workers import (
 )
 from llm.process_manager import RemoteModelProcessManager
 from llm.service import LlmService
+from runtime.settings_control_runtime import SettingsControlRuntimeMixin
 
 
 def test_deepseek_role_workers_do_not_share_provider_circuit():
@@ -353,3 +354,29 @@ def test_surface_worker_drops_when_actor_is_busy_by_default(monkeypatch):
     thread.join(2.0)
     assert result and not isinstance(result[0], Exception)
     assert len(raw.calls) == 1
+
+
+def test_settings_health_exposes_deepseek_worker_wiring_without_raw_keys(monkeypatch):
+    monkeypatch.setenv("ERIS_DS_SEED_API_KEY", "seed-gateway-key")
+    monkeypatch.setenv("ERIS_DS_SEED_BASE_URL", "http://127.0.0.1:6015/v1")
+    monkeypatch.setenv("ERIS_DS_MODEL", "deepseek-v4-flash")
+
+    class Harness(SettingsControlRuntimeMixin):
+        pass
+
+    harness = Harness()
+    harness.llm_service = type(
+        "Service",
+        (),
+        {"seed_client": type("SeedWorker", (), {"worker_role": "seed"})()},
+    )()
+
+    snapshot = harness._deepseek_workers_health_snapshot()
+    seed = snapshot["roles"]["seed"]
+
+    assert snapshot["available"] is True
+    assert seed["configured"] is True
+    assert seed["ready"] is True
+    assert seed["base_url"] == "http://127.0.0.1:6015/v1"
+    assert seed["key_fingerprint"]
+    assert seed["key_fingerprint"] != "seed-gateway-key"

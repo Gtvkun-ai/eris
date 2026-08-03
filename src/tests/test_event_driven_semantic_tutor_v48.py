@@ -6,7 +6,6 @@ from types import SimpleNamespace
 
 from llm.deepseek_workers import load_worker_spec, normalize_worker_role
 from runtime.ai_orchestrated.cognitive_blackboard import TypedCognitiveBlackboard
-from runtime.ai_orchestrated.social_initiative import SocialInitiativeEngine
 from runtime.semantic_tutor_runtime import EventDrivenSemanticTutor, SceneChangeDetector, SceneIdentity
 
 
@@ -210,7 +209,7 @@ def test_blackboard_promotes_shared_semantic_packet_over_raw_ocr() -> None:
     assert board.public_view()["shared_semantic_context"]["foreground"].startswith("Áo khoác")
 
 
-def test_semantic_scene_fallback_routes_to_surface_not_generic_small_talk() -> None:
+def test_semantic_scene_does_not_gain_public_speech_without_social_plan_candidate() -> None:
     now = time.time()
     packet = {
         "scene_id": "scene-music",
@@ -227,15 +226,11 @@ def test_semantic_scene_fallback_routes_to_surface_not_generic_small_talk() -> N
         "response_mode_scores": {"screen_related_small_talk": 0.88, "silence": 0.2},
     }
     board = TypedCognitiveBlackboard.from_snapshot(_base_blackboard_snapshot(packet), now=now + 1)
-    engine = SocialInitiativeEngine(SimpleNamespace(surface_client=None), logger=_Logger())
+    from runtime.ai_orchestrated.initiative import InitiativeAction, InitiativeController
 
-    candidate = engine.fallback_candidate(board, reason="test")
-
-    assert candidate is not None
-    assert candidate.kind == "semantic_scene"
-    assert candidate.anchor_type == "semantic_scene"
-    assert candidate.anchor_id == "scene-music"
-
+    decision = InitiativeController().decide(board, None)
+    assert decision.action is InitiativeAction.NO_OP
+    assert decision.reason == "no_speech_candidate"
 
 def test_tutor_is_a_real_dedicated_worker_role(monkeypatch) -> None:
     monkeypatch.setenv("ERIS_DS_TUTOR_API_KEY", "dedicated-tutor-key")

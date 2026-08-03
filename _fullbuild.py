@@ -27,12 +27,7 @@ KEEP_PY = {"vision.py"}
 
 # Thu muc qua nang / khong can ship
 SKIP_HEAVY = {
-    "paraphrase-multilingual-MiniLM-L12-v2",
-    "embedding_model",
-    "tests",
-    "tools",
     ".pytest_cache",
-    ".github",
 }
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -174,6 +169,10 @@ deploy_pairs = [
      os.path.join(OUT,  ".env")),
     (os.path.join(REPO, "config", "secrets.json"),
      os.path.join(OUT,  "config", "secrets.json")),
+    (os.path.join(REPO, "config", "elevenlabs_pool.db"),
+     os.path.join(OUT,  "config", "elevenlabs_pool.db")),
+    (os.path.join(REPO, "run_elevenlabs_pool_ui.bat"),
+     os.path.join(OUT,  "run_elevenlabs_pool_ui.bat")),
     (os.path.join(REPO, "src", "settings", "runtime_settings.json"),
      os.path.join(OUT,  "src", "settings", "runtime_settings.json")),
 ]

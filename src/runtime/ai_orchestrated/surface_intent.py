@@ -151,6 +151,15 @@ class SurfaceIntentEngine:
                 ),
             },
         }
+        if intent.random_chat_seed:
+            request["surface_contract"]["random_chat_seed_rules"] = [
+                "The premise is a semantic seed, not text to copy verbatim.",
+                "Preserve ERIS motive, mode, personal stake, authenticity and approved daring.",
+                "want_to_share/want_to_express may be a complete statement with no question and no demand for a reply.",
+                "Do not append a generic check-in, availability offer, permission request, or 'còn bạn thì sao'.",
+                "Daring may support a fresh opinion, self-disclosure or gentle tease only inside the supplied risk contract.",
+            ]
+
         if intent.anchor_type == "semantic_scene":
             semantic = blackboard.public_view().get("shared_semantic_context", {})
             request["surface_contract"]["domain_rules"] = [

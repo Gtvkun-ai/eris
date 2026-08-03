@@ -135,7 +135,7 @@ def test_runtime_settings_v3_migrates_companion_commentary_defaults() -> None:
         "tts": {"speech_persona_warmth": 0.24},
     })
     assert changed is True
-    assert migrated["version"] == 14
+    assert migrated["version"] == 15
     assert migrated["initiative"]["global_hourly_budget"] == 40
     assert migrated["commentary"]["enabled"] is True
     assert migrated["commentary"]["maximum_quiet_seconds"] == 120

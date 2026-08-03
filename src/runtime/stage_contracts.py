@@ -347,11 +347,14 @@ class StageFrameBuilder:
         # Autonomous không chỉ có text. Nhịp sân khấu lấy từ IntentionPlan typed;
         # InitiativeController đã xử lý gate nên stage không cấp quyền lần hai.
         autonomous_act = None
-        if str(channel or "").strip().lower() == "autonomous":
+        channel_key = str(channel or "").strip().lower()
+        has_opening_plan = isinstance(payload.get("opening_plan"), dict)
+        if channel_key == "autonomous" or (channel_key == "session_ritual" and has_opening_plan):
             autonomous_act = self.autonomous_performance_planner.plan(
                 tts_text,
                 autonomous_plan=payload.get("autonomous_plan") if isinstance(payload.get("autonomous_plan"), dict) else None,
                 performance_context=payload.get("performance_context") if isinstance(payload.get("performance_context"), dict) else None,
+                opening_plan=payload.get("opening_plan") if has_opening_plan else None,
                 emotion=emotion,
                 motion=motion or "none",
                 tts_style=delivery.voice_style,

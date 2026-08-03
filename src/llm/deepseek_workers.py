@@ -24,6 +24,7 @@ from eris_secrets import get_secret
 
 WORKER_ROLES: tuple[str, ...] = (
     "companion",
+    "seed",
     "surface",
     "observer",
     "critic",
@@ -35,7 +36,7 @@ WORKER_ROLES: tuple[str, ...] = (
 
 # Structured workers default to canonical one-line JSON whenever the caller
 # requests json_object/json_schema. Companion/style keep free-text behavior.
-_DEFAULT_JSONL_ROLES = frozenset({"companion", "surface", "observer", "critic", "inner", "research", "tutor"})
+_DEFAULT_JSONL_ROLES = frozenset({"companion", "seed", "surface", "observer", "critic", "inner", "research", "tutor"})
 
 
 class JsonlContractError(RuntimeError):
@@ -69,6 +70,9 @@ def normalize_worker_role(role: object) -> str:
         "self_surface": "surface",
         "autonomous_surface": "surface",
         "small_talk": "surface",
+        "random_chat_seed": "seed",
+        "social_seed": "seed",
+        "seed_worker": "seed",
         "deliberator": "critic",
         "private_mind": "inner",
         "memory": "inner",
@@ -132,11 +136,14 @@ def load_worker_spec(role: object) -> DeepSeekWorkerSpec:
             or get_secret("ERIS_DS2API_API_KEY")
             or get_secret("ERIS_DS_API_KEY")
         )
+    default_base_url = "http://127.0.0.1:6015/v1" if normalized == "seed" else "http://127.0.0.1:6011/v1"
+    shared_base_url = "" if normalized == "seed" else (
+        get_secret("ERIS_DS2API_BASE_URL") or get_secret("ERIS_DS_BASE_URL")
+    )
     base_url = str(
         get_secret(f"{role_prefix}_BASE_URL")
-        or get_secret("ERIS_DS2API_BASE_URL")
-        or get_secret("ERIS_DS_BASE_URL")
-        or "http://127.0.0.1:6011/v1"
+        or shared_base_url
+        or default_base_url
     ).strip()
     model = str(
         get_secret(f"{role_prefix}_MODEL")
@@ -355,7 +362,7 @@ class JsonlWorkerClient:
         )
         self._drop_if_busy = _env_flag(
             f"ERIS_DS_{self.worker_role.upper()}_DROP_IF_BUSY",
-            self.worker_role in {"inner", "surface"},
+            self.worker_role in {"inner", "seed", "surface"},
         )
 
     def __getattr__(self, name: str) -> Any:

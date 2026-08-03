@@ -1,5 +1,5 @@
 {
-  "version": 13,
+  "version": 15,
   "architecture": {
     "mode": "ai_orchestrated",
     "startup_greeting": true,
@@ -236,5 +236,25 @@
     "require_preview_before_execute": true,
     "typed_confirmation": true,
     "allow_destructive_maintenance": false
+  },
+  "opening_director": {
+    "enabled": true,
+    "mode": "hybrid",
+    "max_beats": 3,
+    "max_questions": 1,
+    "planner_timeout_ms": 6000,
+    "allow_screen_hook": true,
+    "allow_continuity_hook": true,
+    "allow_anime_moves": true,
+    "allow_romantic_flirt": true,
+    "allow_sexual_content": true,
+    "require_adult_flirt_opt_in": true,
+    "romantic_flirt_opt_in": true,
+    "age_band": "confirmed_adult",
+    "cross_session_personalization": false,
+    "followup_max_count": 1,
+    "semantic_duplicate_threshold": 0.86,
+    "exact_surface_cooldown_sessions": 30,
+    "move_family_cooldown_sessions": 4
   }
 }
