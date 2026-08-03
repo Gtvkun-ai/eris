@@ -13,6 +13,7 @@ Backend TTS chỉ nên biết cách sinh/phát audio.  Manager này nhận các
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import hashlib
 import inspect
@@ -72,7 +73,7 @@ class TtsTaskManager:
         prefetch_workers: int | None = None,
         max_prefetch_segments: int | None = None,
     ) -> None:
-        self.audio_bus = audio_bus or StageAudioBus()
+        self.audio_bus = resolve_dependency(audio_bus, lambda: StageAudioBus())
         self.prefetch_workers = None if prefetch_workers is None else max(1, min(6, int(prefetch_workers)))
         self.max_prefetch_segments = (
             None if max_prefetch_segments is None else max(1, min(12, int(max_prefetch_segments)))

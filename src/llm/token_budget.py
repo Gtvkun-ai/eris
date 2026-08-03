@@ -17,6 +17,8 @@ làm hỏng hot path (preflight chỉ là hàng rào, không được tự gây 
 
 from __future__ import annotations
 
+from llm.model_catalog import LEGACY_OPEN_MODEL_PREFIX
+
 import logging
 import os
 from dataclasses import dataclass
@@ -65,7 +67,7 @@ def detect_provider(base_url: str | None, model: str | None) -> str:
         return "groq"
     if "deepseek" in url or name.startswith("deepseek-"):
         return "deepseek"
-    if "generativelanguage" in url or name.startswith(("gemma", "gemini")):
+    if "generativelanguage" in url or name.startswith((LEGACY_OPEN_MODEL_PREFIX, "gemini")):
         return "gemini"
     if "openai" in url:
         return "openai"
@@ -391,7 +393,7 @@ def enforce_prompt_cap(messages: Any, cap: int) -> tuple[list[dict], bool]:
         keep[i] = False
 
     trimmed = [msgs[j] for j in range(n) if keep[j]]
-    
+
     # 4. Nếu vẫn vượt cap, thực hiện nén system prompt
     if estimate_tokens(trimmed) > cap:
         for idx, msg in enumerate(trimmed):
@@ -403,11 +405,11 @@ def enforce_prompt_cap(messages: Any, cap: int) -> tuple[list[dict], bool]:
                         new_msg = dict(msg)
                         new_msg["content"] = compressed
                         trimmed[idx] = new_msg
-                        
+
     # 5. Nếu vẫn vượt sau khi nén system prompt, ta cắt nội dung text dài nhất (raw)
     if estimate_tokens(trimmed) > cap:
         trimmed = _truncate_to_cap(trimmed, cap)
-        
+
     return trimmed, True
 
 

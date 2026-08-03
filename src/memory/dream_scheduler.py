@@ -62,43 +62,6 @@ class DreamScheduleDecision:
         }
 
 
-class DreamScheduler:
-    def evaluate(self, frame: Any) -> DreamScheduleDecision:
-        budget = str(_get(frame, "budget_mode", "normal") or "normal")
-        temporal = _get(frame, "temporal", None)
-        affect = _get(frame, "affect", None)
-        outcome = _get(frame, "outcome", None)
-        self_obs = _get(frame, "self_observation", None)
-        correction = bool(_get(outcome, "user_corrected", False)) or bool(_get(self_obs, "overread_detected", False))
-        residue = max(
-            float(_get(affect, "tension", 0.0) or 0.0),
-            float(_get(affect, "irritation", 0.0) or 0.0),
-            float(_get(affect, "continuity_anxiety", 0.0) or 0.0),
-        )
-        repetition = float(_get(temporal, "repetition_fatigue", 0.0) or 0.0)
-        meaning_debt = float(_get(temporal, "meaning_debt", 0.0) or 0.0)
-        closing = str(_get(temporal, "session_arc", "unknown")) == "closing"
-        pressure = min(1.0, (0.55 if correction else 0.0) + residue * 0.25 + repetition * 0.22 + meaning_debt * 0.32 + (0.35 if budget == "reflection" else 0.0) + (0.18 if closing else 0.0))
-        scheduled = budget == "reflection" or correction or pressure >= 0.58
-        tags = []
-        if correction:
-            tags.append("correction")
-        if repetition > 0.45:
-            tags.append("repetition")
-        if residue > 0.62:
-            tags.append("affective_residue")
-        if closing:
-            tags.append("session_closing")
-        delay = 0.0 if budget == "reflection" else (15.0 if correction else 60.0)
-        return DreamScheduleDecision(
-            scheduled=scheduled,
-            reason="Reflection pressure passed threshold." if scheduled else "Ordinary turn; no consolidation run.",
-            pressure=pressure,
-            run_after=time.time() + delay if scheduled else 0.0,
-            tags=tags,
-        )
-
-
 class DreamConsolidationEngine:
     """Builds commit requests. It never writes stores directly."""
 
@@ -170,4 +133,4 @@ class DreamConsolidationEngine:
         return requests
 
 
-__all__ = ["DreamScheduleDecision", "DreamScheduler", "DreamConsolidationEngine"]
+__all__ = ["DreamScheduleDecision", "DreamConsolidationEngine"]

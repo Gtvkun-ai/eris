@@ -351,7 +351,7 @@ def test_japanese_localizer_translate_path_uses_runtime_timeout(monkeypatch) -> 
     assert "Preserve the exact meaning" in _Client.last.models.config["system_instruction"]
 
 
-def test_japanese_localizer_default_timeout_is_gemma_friendly(monkeypatch) -> None:
+def test_japanese_localizer_default_timeout_requires_open_model_hygiene_friendly(monkeypatch) -> None:
     from runtime.speech_localizer import _localizer_timeout_seconds
 
     monkeypatch.delenv("ERIS_TTS_LOCALIZER_TIMEOUT_SEC", raising=False)

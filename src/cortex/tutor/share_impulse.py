@@ -10,6 +10,7 @@ KHÔNG phát thẳng ra kênh nói. Có lọc tri thức tầm thường + rate-
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 from typing import Any, Callable, Optional
 
@@ -34,7 +35,7 @@ class LearningShareImpulse:
         novelty_fn: Optional[NoveltyFn] = None,
         logger: Any = None,
     ) -> None:
-        self.config = (config or TutorConfig()).normalized()
+        self.config = resolve_dependency(config, TutorConfig).normalized()
         self._formulator = formulator
         self._thought_sink = thought_sink
         self._novelty_fn = novelty_fn

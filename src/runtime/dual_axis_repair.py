@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.di import resolve_dependency
 
 """Projection tương thích cho Dual-Axis Repair.
 
@@ -167,7 +168,7 @@ class DualAxisRepairAppraiser:
     """Adapter mỏng sang Unified Social Appraisal Engine."""
 
     def __init__(self, engine: SocialAppraisalEngine | None = None) -> None:
-        self.engine = engine or SocialAppraisalEngine()
+        self.engine = resolve_dependency(engine, lambda: SocialAppraisalEngine())
 
     def appraise(
         self,

@@ -403,11 +403,11 @@ class ElevenPoolDB:
                 err_msg = r.json().get("error", {}).get("message", r.text)
                 self.mark_cooling(account_id, 600)
                 return False, f"Lỗi đổi token từ Firebase [{r.status_code}]: {err_msg}"
-            
+
             bearer_token = str(r.json().get("id_token") or "").strip()
             if not bearer_token:
                 return False, "Firebase không trả về id_token"
-            
+
             self.update_bearer_token(account_id, bearer_token, 3000.0)
         except Exception as exc:
             return False, f"Lỗi kết nối Firebase: {exc}"
@@ -458,7 +458,7 @@ class ElevenPoolDB:
         active_accounts = sum(1 for a in accounts if a.status == "active")
         exhausted_accounts = sum(1 for a in accounts if a.status == "exhausted")
         disabled_accounts = sum(1 for a in accounts if a.status == "disabled")
-        
+
         total_characters_limit = sum(a.character_limit for a in accounts if a.status != "disabled")
         total_characters_used = sum(a.character_count for a in accounts if a.status != "disabled")
         total_characters_remaining = max(0, total_characters_limit - total_characters_used)

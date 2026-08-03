@@ -7,6 +7,7 @@ Qwen tự viết. Nhờ vậy preset giảm độ trễ mà không biến Eris t
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import json
 import os
@@ -196,7 +197,7 @@ class GreetingPresetResolver:
     ) -> None:
         self.presets = tuple(presets)
         self.history_path = Path(history_path) if history_path else self._default_history_path()
-        self.rng = rng or random.SystemRandom()
+        self.rng = resolve_dependency(rng, lambda: random.SystemRandom())
         # Cổng neo chạy trước khi preset được phép vào pool. Nhờ vậy một câu
         # nghe rất "Eris" nhưng bịa ra task/bug/hành vi của user vẫn bị loại.
         self.anchor_gate = StartupAnchorGate()

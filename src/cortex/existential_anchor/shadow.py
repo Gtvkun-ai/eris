@@ -17,6 +17,7 @@ Kill-switch của Tác_Giả (`enabled=False`) ép register="none" tức thì (P
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -65,7 +66,7 @@ class ShadowRegister:
     """State machine micro cho đăng ký bóng tối. Không sửa long-arc."""
 
     def __init__(self, config: ShadowConfig | None = None) -> None:
-        self.config = config or ShadowConfig()
+        self.config = resolve_dependency(config, lambda: ShadowConfig())
 
     def set_enabled(self, enabled: bool) -> None:
         self.config.enabled = bool(enabled)

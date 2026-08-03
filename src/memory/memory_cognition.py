@@ -12,6 +12,7 @@ Một sự tiến hóa nhỏ khỏi cái hố "token overlap là trí nhớ".
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import os
 import time
@@ -201,7 +202,7 @@ class MemoryCognitionCore:
         self.base_dir = base_dir
         self.registry = registry or get_default_registry()
         os.makedirs(self.base_dir, exist_ok=True)
-        self.policy = policy or CommitPolicy()
+        self.policy = resolve_dependency(policy, lambda: CommitPolicy())
         # Tất cả commit qua core được serialize để chuỗi load -> mutate -> save
         # không mất update khi các pipeline chạy song song.
         self._commit_lock = threading.RLock()

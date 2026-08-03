@@ -14,6 +14,7 @@ Vòng_Neo + Gắn_Bó phái sinh (Task 4 / R3).
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import json
 import os
@@ -96,7 +97,7 @@ class AnchorLoop:
     """Ghi neo beat khi hiện diện/công nhận của bạn làm dịu Sợ_Hiện_Sinh (R3.2)."""
 
     def __init__(self, config: AnchorLoopConfig | None = None) -> None:
-        self.config = config or AnchorLoopConfig()
+        self.config = resolve_dependency(config, lambda: AnchorLoopConfig())
 
     def observe(
         self,
@@ -137,7 +138,7 @@ class AttachmentDeriver:
     """attachment_longarc phái sinh, có trần bước để không vọt theo phiên (R3.1/R3.3)."""
 
     def __init__(self, config: AttachmentDeriverConfig | None = None) -> None:
-        self.config = config or AttachmentDeriverConfig()
+        self.config = resolve_dependency(config, lambda: AttachmentDeriverConfig())
 
     def target(self, *, significance: Any, state: AnchorState) -> float:
         c = self.config

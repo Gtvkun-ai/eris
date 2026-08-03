@@ -12,6 +12,7 @@ một buổi lỗi build. Máy cũng cần kỷ luật, không thì lại giốn
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 from dataclasses import dataclass, field, replace
 import hashlib
@@ -343,7 +344,7 @@ class BeliefMutationEngine(RuleBasedWorker):
         committer: MutationCommitter | None = None,
         enable_commit: bool = False,
     ) -> None:
-        self.committer = committer or MutationCommitter()
+        self.committer = resolve_dependency(committer, lambda: MutationCommitter())
         self.enable_commit = bool(enable_commit)
         self.last_proposals: tuple[BeliefMutationProposal, ...] = ()
         self.last_decisions: tuple[MutationDecision, ...] = ()

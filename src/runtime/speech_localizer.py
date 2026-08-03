@@ -70,7 +70,7 @@ def localizer_provider_name() -> str:
 
 
 def localizer_model_name() -> str:
-    """Model Gemini/Gemma dùng riêng cho transcript localization trước TTS."""
+    """Model Gemini/open-model dùng riêng cho transcript localization trước TTS."""
 
     value = os.environ.get("ERIS_TTS_LOCALIZER_MODEL", "").strip()
     if value and not value.startswith("PASTE_"):
@@ -161,7 +161,7 @@ def _localizer_max_attempts() -> int:
 
 
 def _localizer_timeout_seconds() -> float:
-    # Gemma translation can be materially slower than flash models, so the
+    # Open-model translation can be materially slower than flash models, so the
     # JP localization lane needs a longer default runway than the old 6s cap.
     raw = str(os.environ.get("ERIS_TTS_LOCALIZER_TIMEOUT_SEC", "60.0") or "60.0").strip()
     try:

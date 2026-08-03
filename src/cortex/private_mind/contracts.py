@@ -484,7 +484,7 @@ class SurfaceCandidate:
 
 @dataclass(slots=True)
 class InternalJudgment:
-    """Phán quyết nội tâm sau khi Gemma/heuristic synthesize fragments."""
+    """Phán quyết nội tâm sau khi local-model/heuristic synthesize fragments."""
 
     dominant_judgment: str
     ranked_hypotheses: tuple[RankedHypothesis, ...] = ()

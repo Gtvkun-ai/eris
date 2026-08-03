@@ -396,6 +396,26 @@ class OutcomeObserver:
         if attach_to_frame:
             self._safe_setattr(frame, "outcome", report)
 
+        try:
+            from runtime.ai_orchestrated.autonomous_trace import append_autonomous_trace
+            trace_id = str(
+                getattr(frame, "utterance_turn_id", "")
+                or getattr(frame, "turn_id", "")
+                or getattr(frame, "director_trace_id", "")
+                or ""
+            )
+            if trace_id:
+                append_autonomous_trace("behavior_outcome", {
+                    "trace_id": trace_id,
+                    "turn_id": trace_id,
+                    "stage": "outcome",
+                    "owner": "outcome_observer",
+                    "outcome": "observed",
+                    "confidence": report.confidence,
+                })
+        except Exception:
+            pass
+
         return report
 
     def observe_user_feedback_for_previous_frame(

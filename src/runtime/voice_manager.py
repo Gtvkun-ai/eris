@@ -14,6 +14,7 @@ nhiều chỗ, một nghi thức rất dễ tạo ra audio zombie sau interrupt.
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import re
 import threading
@@ -56,7 +57,7 @@ class VoiceManager:
     """State machine turn-taking, dùng được cho text hiện tại và voice sau này."""
 
     def __init__(self, *, ledger: InterruptLedger | None = None, tts_engine: Any = None) -> None:
-        self.ledger = ledger or InterruptLedger()
+        self.ledger = resolve_dependency(ledger, lambda: InterruptLedger())
         self.tts_engine = tts_engine
         self._vad_started_at = 0.0
         self._partial_text = ""

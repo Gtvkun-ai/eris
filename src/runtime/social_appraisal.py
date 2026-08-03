@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.di import resolve_dependency
 
 """Unified Social Appraisal Engine.
 
@@ -404,7 +405,7 @@ class SocialAppraisalEngine:
     _MUNDANE_IRONY = ("tho", "ngoi yen", "dung yen", "ton tai", "uong nuoc", "nhin", "ngu")
 
     def __init__(self, thresholds: SocialPolicyThresholds | None = None) -> None:
-        self.thresholds = thresholds or SocialPolicyThresholds.from_env()
+        self.thresholds = resolve_dependency(thresholds, SocialPolicyThresholds.from_env)
 
     def appraise(
         self,

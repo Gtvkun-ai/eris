@@ -3,7 +3,7 @@
 cortex/private_mind/inner_synthesizer.py
 =======================================
 
-GemmaInnerSynthesizer gom ThoughtFragment thành InternalJudgment.
+LocalModelInnerSynthesizer gom ThoughtFragment thành InternalJudgment.
 
 Vai trò đúng: thẩm phán nội tâm.
 Vai trò sai: thợ viết caption cho đồng hồ biết buồn.
@@ -33,7 +33,7 @@ class InnerSynthesizerModelAdapter(Protocol):
         ...
 
 
-class GemmaInnerSynthesizer:
+class LocalModelInnerSynthesizer:
     """Synthesize fragments thành phán quyết nội tâm."""
 
     def __init__(self, *, model_adapter: Any = None, min_fragments_for_model: int = 3) -> None:
@@ -71,7 +71,7 @@ class GemmaInnerSynthesizer:
             return None
         if not isinstance(raw, Mapping):
             return None
-        judgment = InternalJudgment.from_mapping({"source": "gemma_inner_synthesizer", **dict(raw)})
+        judgment = InternalJudgment.from_mapping({"source": "local_model_inner_synthesizer", **dict(raw)})
         if not judgment.dominant_judgment or judgment.confidence < 0.25:
             return None
         # Model không được viện evidence ngoài dossier. Nếu có, cắt.

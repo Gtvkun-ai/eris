@@ -16,6 +16,7 @@ KHÔNG tạo store mới. KHÔNG phát answer ra kênh nói — module này ch�
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import inspect
 import re
@@ -95,7 +96,7 @@ class ClaimDigest:
         ingest_fn: Optional[IngestFn] = None,
         distill_fn: Optional[DistillFn] = None,
     ) -> None:
-        self.config = (config or TutorConfig()).normalized()
+        self.config = resolve_dependency(config, TutorConfig).normalized()
         self._ingest_fn = ingest_fn
         self._distill_fn = distill_fn
         self._ingest_accepts_confidence = _accepts_confidence(ingest_fn) if ingest_fn is not None else False

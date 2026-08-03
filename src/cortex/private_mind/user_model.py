@@ -21,6 +21,7 @@ Tham chiếu yêu cầu: R1 (nền do agent nhỏ dựng, lưu bền, củng c�
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import json
 import os
@@ -201,7 +202,7 @@ class UserModelStore:
         logger: Any | None = None,
     ) -> None:
         self.path = Path(path) if path else None
-        self.config = config or UserModelConfig()
+        self.config = resolve_dependency(config, lambda: UserModelConfig())
         self.logger = logger
         self._beliefs: dict[str, UserBelief] = {}
         # Lịch sử phiên bản append-only cho undo/reset (R10). Mỗi mục là snapshot

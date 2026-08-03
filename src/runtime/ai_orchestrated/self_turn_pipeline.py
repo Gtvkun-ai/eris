@@ -30,7 +30,7 @@ from runtime.json_boundary import public_payload
 
 from .activity_session import ActivitySession, ActivitySessionTracker
 from .ambient_screen_context import AmbientScreenContext, AmbientScreenTracker
-from .autonomous_trace import AutonomousTraceStore
+from .autonomous_trace import autonomous_trace_store
 from .commentary_cadence import CommentaryCadence, CommentaryExpectation
 from .cognitive_blackboard import TypedCognitiveBlackboard
 from .contracts import AI_RUNTIME_VERSION, IntentionPlan, StateEvent
@@ -97,7 +97,7 @@ class SelfTurnPipeline:
         # Lớp này quản lý chu kỳ hỏi -> nhắc một lần -> bỏ chủ đề. Nó sống cùng
         # pipeline để nhớ được lần nhắc giữa nhiều tick autonomous.
         self.followup_appraisal = FollowUpAppraisalLayer()
-        self.trace_store = AutonomousTraceStore(logger=getattr(host, "logger", None))
+        self.trace_store = autonomous_trace_store(logger=getattr(host, "logger", None))
         self.commentary_cadence = CommentaryCadence()
         self._last_deliberation_at = 0.0
         self._last_probe_at = 0.0
@@ -255,12 +255,44 @@ class SelfTurnPipeline:
                 speech_intent = replace(speech_intent, plan=plan)
                 decision = replace(decision, plan=plan, speech_intent=speech_intent)
 
+        # Generation epoch là turn_seq đã claim. Kết quả Surface/TTS mang epoch
+        # cũ sẽ bị user-input preemption hoặc speech_epoch của TTS loại bỏ.
+        if decision.speech_intent is not None:
+            from dataclasses import replace
+            sealed_intent = replace(
+                decision.speech_intent,
+                trace_id=str(plan.plan_id or decision.speech_intent.trace_id),
+                generation_epoch=int(context.turn_seq),
+                claim_token=str(getattr(candidate, "claim_token", "") or decision.speech_intent.claim_token),
+            )
+            decision = replace(decision, speech_intent=sealed_intent, plan=plan)
+
         activity = self.activity_tracker.annotate(plan.activity, now=now)
         host.last_ai_intention_plan = plan
         self._submit_intention(plan, turn_seq=context.turn_seq)
 
+        if candidate is not None:
+            # Ghi candidate sau khi governor đã đóng plan_id, nhưng đặt event trước
+            # governor trong trace để toàn chuỗi dùng đúng một identity ổn định.
+            self.trace_store.append("candidate", {
+                "trace_id": str(plan.plan_id or ""),
+                "stage": "candidate",
+                "owner": "social_initiative",
+                "candidate_source": str(getattr(candidate, "source", "") or ""),
+                "candidate_kind": str(getattr(candidate, "kind", "") or ""),
+                "claim_token": str(getattr(candidate, "claim_token", "") or ""),
+                "idempotency_key": str(getattr(candidate, "idempotency_key", "") or ""),
+                "generation_epoch": context.turn_seq,
+            }, now=now)
+
         self.trace_store.append("initiative_decision", {
             "turn_seq": context.turn_seq,
+            "trace_id": str(plan.plan_id or ""),
+            "stage": "governor",
+            "owner": "initiative_governor",
+            "governor_action": decision.action.value,
+            "generation_epoch": context.turn_seq,
+            "speech_intent_owner": getattr(decision.speech_intent, "owner", "") if decision.speech_intent else "",
             "action": decision.action.value,
             "reason": decision.reason,
             "anchor": decision.speech_intent.anchor_type if decision.speech_intent else "none",
@@ -304,6 +336,14 @@ class SelfTurnPipeline:
             )
         if host._process_pending_user_input():
             self._release_seed_lease(candidate, reason="user_input_preempted")
+            self.trace_store.append("outcome", {
+                "trace_id": str(plan.plan_id or ""),
+                "turn_id": str(plan.plan_id or ""),
+                "stage": "outcome",
+                "owner": "user_input",
+                "generation_epoch": context.turn_seq,
+                "outcome": "cancelled_before_surface",
+            })
             return host.running
 
         speech_intent = decision.speech_intent
@@ -340,6 +380,13 @@ class SelfTurnPipeline:
         surface_engine = getattr(host, "ai_surface_intent_engine", None)
         surface_turn = None
         if surface_engine is not None:
+            self.trace_store.append("surface_start", {
+                "trace_id": str(speech_intent.trace_id or plan.plan_id),
+                "stage": "surface",
+                "owner": "surface",
+                "generation_epoch": speech_intent.generation_epoch,
+                "surface_status": "started",
+            })
             try:
                 surface_turn = surface_engine.realize(
                     speech_intent, blackboard, snapshot=planner_snapshot,
@@ -347,10 +394,24 @@ class SelfTurnPipeline:
             except Exception as exc:
                 host.logger.warning("[surface worker] realization failed: %s", exc)
         if surface_turn is not None:
+            self.trace_store.append("surface_result", {
+                "trace_id": str(speech_intent.trace_id or plan.plan_id),
+                "stage": "surface",
+                "owner": "surface",
+                "generation_epoch": speech_intent.generation_epoch,
+                "surface_status": "realized",
+            })
             plan = surface_turn.plan
             surface_payload = surface_turn.public_payload
             host.last_ai_intention_plan = plan
         elif surface_engine is not None:
+            self.trace_store.append("surface_result", {
+                "trace_id": str(speech_intent.trace_id or plan.plan_id),
+                "stage": "surface",
+                "owner": "surface",
+                "generation_epoch": speech_intent.generation_epoch,
+                "surface_status": "unavailable",
+            })
             # Surface là writer duy nhất cho autonomous speech. Provider lỗi thì
             # giữ event/cadence cho nhịp sau và chuyển body-only; không có câu
             # small-talk mẫu hay domain template giả làm DeepSeek.
@@ -361,6 +422,14 @@ class SelfTurnPipeline:
         if surface_payload and host._process_pending_user_input():
             # User input wins even if it arrived while Surface was composing.
             self._release_seed_lease(candidate, reason="user_input_during_surface")
+            self.trace_store.append("outcome", {
+                "trace_id": str(speech_intent.trace_id or plan.plan_id),
+                "turn_id": str(plan.plan_id or ""),
+                "stage": "outcome",
+                "owner": "user_input",
+                "generation_epoch": speech_intent.generation_epoch,
+                "outcome": "cancelled_during_surface",
+            })
             return host.running
         if not surface_payload:
             self._release_seed_lease(candidate, reason="surface_unavailable")
@@ -756,7 +825,7 @@ class SelfTurnPipeline:
         }
         if getattr(self.host, "_autonomous_force_speak_pending", False):
             setattr(self.host, "_autonomous_force_speak_pending", False)
-            
+
         discovery_runtime = getattr(self.host, "ai_discovery_runtime", None)
         if discovery_runtime is not None:
             snapshot["discovery"] = discovery_runtime.planner_context(perception.telemetry, now=perception.now)
@@ -1002,7 +1071,7 @@ class SelfTurnPipeline:
                         "- Discuss the position naturally; light dry teasing is allowed when grounded in the move/position.\n"
                         "- Never narrate telemetry such as 'bàn cờ đã được nhận' or 'nước gợi ý hiện tại'."
                     )
-            
+
             payload = host.ai_model_router.generate_autonomous_reply(
                 plan=plan,
                 personality_context=context.state.personality_prompt_context(),
@@ -1024,6 +1093,14 @@ class SelfTurnPipeline:
         if payload and host._process_pending_user_input():
             # Re-check input immediately before commit so interruption remains real.
             self._release_seed_lease(candidate, reason="user_input_before_commit")
+            self.trace_store.append("outcome", {
+                "trace_id": str(payload.get("event_trace_id") or plan.plan_id),
+                "turn_id": str(plan.plan_id or ""),
+                "stage": "outcome",
+                "owner": "user_input",
+                "generation_epoch": context.turn_seq,
+                "outcome": "cancelled_before_commit",
+            })
             return host.running
         if not payload:
             self._release_seed_lease(candidate, reason="public_generation_failed")
@@ -1039,6 +1116,14 @@ class SelfTurnPipeline:
         raw = json.dumps(public_payload(payload), ensure_ascii=False)
         host._log_raw_llm_output("autonomous_ai", raw)
         decision = host.parser.parse(raw)
+        trace_id = str(payload.get("event_trace_id") or plan.plan_id or f"autonomous:{context.turn_seq}")
+        decision.director_trace_id = trace_id
+        decision.performance_context = dict(getattr(decision, "performance_context", {}) or {})
+        decision.performance_context.update({
+            "event_trace_id": trace_id,
+            "generation_epoch": int(payload.get("generation_epoch", context.turn_seq) or context.turn_seq),
+            "public_intent_owner": str(payload.get("public_intent_owner", "social_initiative") or "social_initiative"),
+        })
         if not str(getattr(decision, "utterance_turn_id", "") or "").strip():
             decision.utterance_turn_id = str(plan.plan_id or f"autonomous:{context.turn_seq}")
         grounding_report = self._autonomous_grounding_report(context, plan)
@@ -1086,7 +1171,9 @@ class SelfTurnPipeline:
                 base_version=host.ai_state_reducer.snapshot().version,
             ))
         if plan.continuation_idempotency_key:
-            decision.director_trace_id = plan.continuation_idempotency_key
+            # Idempotency key vẫn nằm trong plan; trace public giữ nguyên plan_id
+            # để candidate -> governor -> Surface -> TTS không bị đổi identity.
+            decision.performance_context["continuation_idempotency_key"] = plan.continuation_idempotency_key
         text, assistant_meta = self.commit_public(
             decision,
             channel="autonomous",

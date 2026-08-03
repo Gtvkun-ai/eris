@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.di import resolve_dependency
 
 from .micro_contracts import (
     MicroLinePolicyResult,
@@ -50,9 +51,9 @@ class MicroLinePolicy:
         surface_lint: MicroSurfaceLint | None = None,
         grounding_guard: MicroGroundingGuard | None = None,
     ):
-        self.repeat_guard = repeat_guard or SemanticRepeatGuard()
-        self.surface_lint = surface_lint or MicroSurfaceLint()
-        self.grounding_guard = grounding_guard or MicroGroundingGuard()
+        self.repeat_guard = resolve_dependency(repeat_guard, lambda: SemanticRepeatGuard())
+        self.surface_lint = resolve_dependency(surface_lint, lambda: MicroSurfaceLint())
+        self.grounding_guard = resolve_dependency(grounding_guard, lambda: MicroGroundingGuard())
 
     def evaluate(
         self,

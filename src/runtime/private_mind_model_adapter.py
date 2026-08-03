@@ -14,6 +14,7 @@ cũng đừng biến HTTP 500 thành thơ.
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import json
 import os
@@ -31,6 +32,7 @@ from eris_secrets import apply_secrets_to_environ, get_secret
 from llm.client import GeminiClient, OpenAICompatibleClient
 from llm.deepseek import DEEPSEEK_BASE_URL, DEEPSEEK_DEFAULT_MODEL, normalize_model as normalize_deepseek_model
 from llm.key_pool import get_key_pool
+from llm.model_catalog import DEFAULT_OPEN_MODEL_ID
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -85,7 +87,7 @@ def _classify_transport_exception(exc: Exception) -> str:
 class PrivateMindModelAdapterConfig:
     enabled: bool = field(default_factory=lambda: _env_flag("ERIS_PRIVATE_MIND_API_ENABLED", False))
     provider: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_PROVIDER", os.getenv("ERIS_DAYDREAM_PROVIDER", "gemini")) or "gemini").strip().lower())
-    model: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_MODEL", os.getenv("ERIS_DAYDREAM_MODEL", "gemma-4-31b-it")) or "gemma-4-31b-it").strip())
+    model: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_MODEL", os.getenv("ERIS_DAYDREAM_MODEL", DEFAULT_OPEN_MODEL_ID)) or DEFAULT_OPEN_MODEL_ID).strip())
     base_url: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_BASE_URL", os.getenv("ERIS_REMOTE_BASE_URL", "")) or "").strip())
     api_key: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_API_KEY", "") or "").strip())
     timeout_seconds: float = field(default_factory=lambda: max(4.0, _as_float(os.getenv("ERIS_PRIVATE_MIND_TIMEOUT", "90"), 90.0)))
@@ -97,7 +99,7 @@ class PrivateMindModelAdapterConfig:
             _as_float(os.getenv("ERIS_PRIVATE_MIND_SYNTHESIS_TIMEOUT", "90"), 90.0),
         )
     )
-    # Nhiệt độ thấp khiến model nhỏ (gemma) dễ lặp từ hoặc dính RECITATION filter,
+    # Nhiệt độ thấp khiến local model nhỏ dễ lặp từ hoặc dính RECITATION filter,
     # rồi trả output cụt/rỗng -> invalid_json. Để mặc định ấm hơn để phá vòng lặp.
     temperature: float = field(default_factory=lambda: _as_float(os.getenv("ERIS_PRIVATE_MIND_TEMPERATURE", "0.5"), 0.5))
     max_tokens_fragment: int = field(default_factory=lambda: max(128, int(os.getenv("ERIS_PRIVATE_MIND_FRAGMENT_TOKENS", "700") or 700)))
@@ -144,7 +146,7 @@ class PrivateMindModelResult:
 
 
 class RuntimePrivateMindModelAdapter:
-    """Adapter chung cho 4 mini-evaluator và GemmaInnerSynthesizer."""
+    """Adapter chung cho 4 mini-evaluator và LocalModelInnerSynthesizer."""
 
     def __init__(
         self,
@@ -155,7 +157,7 @@ class RuntimePrivateMindModelAdapter:
         client_attr: str = "inner_client",
         strict_client_attr: bool = False,
     ) -> None:
-        self.config = config or PrivateMindModelAdapterConfig()
+        self.config = resolve_dependency(config, lambda: PrivateMindModelAdapterConfig())
         self.llm_service = llm_service
         self.logger = logger
         self.client_attr = str(client_attr or "inner_client").strip() or "inner_client"
@@ -226,7 +228,7 @@ class RuntimePrivateMindModelAdapter:
     def diary_fallback_from_env(cls, *, logger: Any = None) -> "RuntimePrivateMindModelAdapter | None":
         """Adapter DỰ PHÒNG riêng cho Inner Diary.
 
-        Dùng khi provider chính (Gemini gemma) chết / lỗi JSON: diary nhảy sang một
+        Dùng khi provider chính (Gemini open-model) chết / lỗi JSON: diary nhảy sang một
         model DeepSeek hoặc OpenAI-compatible riêng để
         không bị câm. Trả None nếu chưa khai đủ (model + base_url + key) → khi đó
         InnerDiaryWriter chạy y như cũ (không regression).
@@ -971,7 +973,7 @@ class RuntimePrivateMindModelAdapter:
                 "facet": {"type": "string"},
             },
             # Bắt model "chốt" các field ngắn/số trước, để free-text (claim) ở cuối.
-            # Gemma nhỏ hay lặp vô hạn ở free-text dài; đặt nó cuối giúp các field
+            # Local model nhỏ hay lặp vô hạn ở free-text dài; đặt nó cuối giúp các field
             # rẻ hoàn tất trước và parser vẫn cứu được dù claim bị cụt.
             # `facet` là optional, chỉ user_model_evaluator dùng; các evaluator khác bỏ trống.
             "propertyOrdering": ["source", "confidence", "pressure", "evidence_ids", "theme", "facet", "suggested_question", "claim"],
@@ -1673,7 +1675,7 @@ class PrivateMindAdapterPool:
         llm_service: Any = None,
         logger: Any = None,
     ) -> None:
-        self._config = config or PrivateMindModelAdapterConfig()
+        self._config = resolve_dependency(config, lambda: PrivateMindModelAdapterConfig())
         self._llm_service = llm_service
         self._logger = logger
         # Fragment có thể chạy trên provider riêng tách khỏi synthesis.

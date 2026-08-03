@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import math
 import re
@@ -8,7 +9,7 @@ from typing import Callable, Iterable, Sequence
 
 '''
 Module này đóng vai trò như một bộ lọc nhận thức.
- Thay vì nhìn vào các log hệ thống thô (như "alt-tab sang vscode"), 
+ Thay vì nhìn vào các log hệ thống thô (như "alt-tab sang vscode"),
  nó cố gắng hiểu ý nghĩa đằng sau chuỗi hành động đó.
 '''
 
@@ -64,7 +65,7 @@ class EventEmbeddingCache:
     def __init__(self):
         self._cache: dict[str, tuple[float, ...]] = {}
 
-    # Lấy embedding đã lưu cho một sự kiện, nếu có. Trả về None nếu không tìm thấy hoặc nếu embedding không hợp lệ. 
+    # Lấy embedding đã lưu cho một sự kiện, nếu có. Trả về None nếu không tìm thấy hoặc nếu embedding không hợp lệ.
     def get(self, event_text: str) -> tuple[float, ...] | None:
         key = _normalize_event_key(event_text)
         return self._cache.get(key)
@@ -85,7 +86,7 @@ class _EventCluster:
     centroid: tuple[float, ...]
     count: int = 1
 
-#EventClusterIndex là một hệ thống phân cụm in-memory siêu nhẹ. 
+#EventClusterIndex là một hệ thống phân cụm in-memory siêu nhẹ.
 # Nó dùng Cosine Similarity (ngưỡng mặc định 0.82) để gom các hành vi có vector tương đồng
 #  vào chung một nhóm (cluster_id). Việc này giúp model nhận ra các mẫu thói quen lặp đi lặp lại.
 class EventClusterIndex:
@@ -157,13 +158,13 @@ class EventSemanticProfiler:
         embedding_provider: Callable[[str], Sequence[float]] | object | None = _UNSET,
         cluster_index: EventClusterIndex | None = None,
     ):
-        self.embedding_cache = embedding_cache or EventEmbeddingCache()
+        self.embedding_cache = resolve_dependency(embedding_cache, lambda: EventEmbeddingCache())
         # Không truyền provider -> dùng EmbeddingIndex singleton dùng chung.
         # Truyền tường minh None -> cố ý không dùng provider nào (giữ tương thích cũ).
         if embedding_provider is _UNSET:
             embedding_provider = _default_shared_provider()
         self.embedding_provider = embedding_provider
-        self.cluster_index = cluster_index or EventClusterIndex()
+        self.cluster_index = resolve_dependency(cluster_index, lambda: EventClusterIndex())
 
     def profile_events(
         self,

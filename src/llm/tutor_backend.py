@@ -17,6 +17,7 @@ không truy cập mạng.
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import random
 import threading
@@ -152,7 +153,7 @@ class GeminiWebBackend:
         *,
         page_session_factory: Optional[Callable[[], Any]] = None,
     ) -> None:
-        self.config = (config or TutorConfig()).normalized()
+        self.config = resolve_dependency(config, TutorConfig).normalized()
         self.logger = logger
         self._factory = page_session_factory
         self._opened = False

@@ -8,6 +8,7 @@ dedupe theo ngữ nghĩa, giới hạn hàng đợi.
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 from typing import Any, Callable, Optional
 
@@ -39,7 +40,7 @@ class GapCollector:
     """Thu thập, dedupe và giới hạn hàng đợi Knowledge_Gap."""
 
     def __init__(self, config: Optional[TutorConfig] = None, *, embed_fn: Optional[EmbedFn] = None) -> None:
-        self.config = (config or TutorConfig()).normalized()
+        self.config = resolve_dependency(config, TutorConfig).normalized()
         self._embed_fn = embed_fn
         self._gaps: list[KnowledgeGap] = []
 

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.di import resolve_dependency
 
 """
 memory_kernel.py
@@ -106,13 +107,13 @@ class MemoryKernel:
             raise ValueError("MemoryKernel cần base_dir hoặc core hiện có")
 
         self.registry = registry or getattr(core, "registry", None) or get_default_registry()
-        self.core = core or MemoryCognitionCore(
+        self.core = resolve_dependency(core, lambda: MemoryCognitionCore(
             str(base_dir),
             policy=commit_policy,
             registry=self.registry,
             embedding_index=embedding_index,
-        )
-        self.config = config or MemoryKernelConfig()
+        ))
+        self.config = resolve_dependency(config, lambda: MemoryKernelConfig())
         self.semantic_parser = semantic_parser
 
         # fast_policy cố tình KHÔNG nhận semantic_parser.
@@ -122,10 +123,10 @@ class MemoryKernel:
         # digest_policy được quyền dùng parser đã nối, thường chạy ở worker nền.
         self.digest_policy = MemoryCommitPolicy(semantic_parser=semantic_parser, registry=self.registry)
 
-        self.query_compiler = query_compiler or MemoryQueryCompiler(registry=self.registry)
-        self.query_executor = query_executor or MemoryQueryExecutor(registry=self.registry)
-        self.surface_policy = surface_policy or MemoryRecallSurfacePolicy(registry=self.registry)
-        self.turn_annotator = turn_annotator or TurnAnnotator()
+        self.query_compiler = resolve_dependency(query_compiler, lambda: MemoryQueryCompiler(registry=self.registry))
+        self.query_executor = resolve_dependency(query_executor, lambda: MemoryQueryExecutor(registry=self.registry))
+        self.surface_policy = resolve_dependency(surface_policy, lambda: MemoryRecallSurfacePolicy(registry=self.registry))
+        self.turn_annotator = resolve_dependency(turn_annotator, lambda: TurnAnnotator())
         # Projection hồ sơ người dùng sống cạnh core, dùng chung semantic/episodic truth.
         self.living_user = getattr(self.core, "living_user", None)
 

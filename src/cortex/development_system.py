@@ -7,6 +7,7 @@ bất biến fail-closed R5.6: không thay đổi nào tồn tại mà thiếu v
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import json
 import os
@@ -129,7 +130,7 @@ class DevelopmentSystem:
     ) -> None:
         self.profile = profile
         self.log = log
-        self.gate = gate or IdentityGate()
+        self.gate = resolve_dependency(gate, lambda: IdentityGate())
 
     def apply(
         self,

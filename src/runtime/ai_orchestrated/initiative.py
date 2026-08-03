@@ -115,6 +115,12 @@ class SpeechIntent:
     evidence_refs: tuple[str, ...] = ()
     max_sentences: int = 2
     random_chat_seed: Mapping[str, Any] = field(default_factory=dict)
+    # Chỉ IntentPlanner (chat) hoặc SocialInitiative (autonomous) được tạo public
+    # intent. Governor chỉ duyệt quyền phát; Surface chỉ viết wording.
+    owner: str = "social_initiative"
+    trace_id: str = ""
+    generation_epoch: int = 0
+    claim_token: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -125,6 +131,10 @@ class SpeechIntent:
             "evidence_refs": list(self.evidence_refs),
             "max_sentences": self.max_sentences,
             "random_chat_seed": dict(self.random_chat_seed),
+            "owner": self.owner,
+            "trace_id": self.trace_id or self.plan.plan_id,
+            "generation_epoch": int(self.generation_epoch),
+            "claim_token": self.claim_token,
             "plan": self.plan.to_dict(),
         }
 
@@ -289,6 +299,10 @@ class InitiativeController:
             evidence_refs=refs,
             max_sentences=1,
             random_chat_seed=dict(seed_context),
+            owner=str(getattr(plan, "owner", "social_initiative") or "social_initiative"),
+            trace_id=str(plan.plan_id or candidate.idempotency_key),
+            generation_epoch=0,  # Pipeline đóng epoch theo turn_seq ngay trước Surface.
+            claim_token=str(getattr(candidate, "claim_token", "") or ""),
         )
         return InitiativeDecision(
             InitiativeAction.SPEECH,

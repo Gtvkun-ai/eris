@@ -1901,7 +1901,7 @@ class LlmService:
                 if not err_msg:
                     err_msg = str(exc).lower()
                 return "safety" in err_msg or "recitation" in err_msg
-                
+
             if allow_local_fallback and recovery_client is not None and recovery_client is not initial_client and _looks_like_prompt_leak():
                  response = _call(messages, stage="local_fallback", override_client=recovery_client)
             elif _looks_like_prompt_leak():

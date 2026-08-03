@@ -6,6 +6,7 @@ coordinator-facing mixins, preserving the public runtime API while preventing
 ``RuntimeCoordinator`` from becoming a 7,000-line switch statement with moods.
 """
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import time
 from collections.abc import Mapping
@@ -33,7 +34,7 @@ class IncomingMessageDispatcher:
         clock: Callable[[], float] | None = None,
     ) -> None:
         self.owner = owner
-        self.settings = settings or ProtocolSettings.load()
+        self.settings = resolve_dependency(settings, ProtocolSettings.load)
         self.clock = clock or time.time
         self._handled = 0
         self._unknown = 0

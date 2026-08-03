@@ -23,7 +23,7 @@ class AutonomousTraceStore:
 
     def append(self, event: str, payload: Mapping[str, Any] | None = None, *, now: float | None = None) -> None:
         record = {
-            "schema": "eris.autonomous.trace.v3",
+            "schema": "eris.autonomous.trace.v4",
             "at": float(time.time() if now is None else now),
             "event": str(event or "unknown")[:80],
             **self._sanitize(payload or {}),
@@ -62,6 +62,11 @@ class AutonomousTraceStore:
             "mechanical_event_keys", "discourse_mode", "reply_expected", "initiative_reason",
             "trigger_reason", "has_public_seed", "result", "body_only", "evidence_count",
             "reason", "activity_kind", "motion_hint",
+            # Chuỗi event công khai. Chỉ ID/enum, không ghi raw prompt/private text.
+            "trace_id", "stage", "owner", "candidate_source", "candidate_kind",
+            "governor_action", "surface_status", "tts_event", "outcome",
+            "turn_id", "generation_epoch", "claim_token", "idempotency_key",
+            "anchor", "action", "candidate", "speech_intent_owner",
         }
         clean: dict[str, Any] = {}
         for key, value in payload.items():
@@ -71,7 +76,40 @@ class AutonomousTraceStore:
                 clean[key] = value
             elif isinstance(value, (list, tuple)):
                 clean[key] = [str(item)[:80] for item in value[:8]]
+            elif isinstance(value, Mapping):
+                # Chỉ giữ metadata phẳng đã allow-list; tuyệt đối không serialize
+                # toàn candidate/blackboard vì trace không phải bãi rác prompt.
+                clean[key] = {
+                    str(k)[:48]: str(v)[:120]
+                    for k, v in list(value.items())[:12]
+                    if isinstance(v, (str, int, float, bool)) or v is None
+                }
         return clean
 
 
-__all__ = ["AutonomousTraceStore"]
+_GLOBAL_TRACE_STORE: AutonomousTraceStore | None = None
+_GLOBAL_TRACE_LOCK = threading.RLock()
+
+
+def autonomous_trace_store(*, logger: Any | None = None) -> AutonomousTraceStore:
+    """Một store dùng chung để mọi stage ghi cùng trace_id."""
+    global _GLOBAL_TRACE_STORE
+    with _GLOBAL_TRACE_LOCK:
+        if _GLOBAL_TRACE_STORE is None:
+            _GLOBAL_TRACE_STORE = AutonomousTraceStore(logger=logger)
+        elif logger is not None and _GLOBAL_TRACE_STORE.logger is None:
+            _GLOBAL_TRACE_STORE.logger = logger
+        return _GLOBAL_TRACE_STORE
+
+
+def append_autonomous_trace(event: str, payload: Mapping[str, Any] | None = None, *, logger: Any | None = None) -> None:
+    try:
+        from runtime.architecture_flags import event_trace_enabled
+        if not event_trace_enabled():
+            return
+    except Exception:
+        pass
+    autonomous_trace_store(logger=logger).append(event, payload)
+
+
+__all__ = ["AutonomousTraceStore", "autonomous_trace_store", "append_autonomous_trace"]

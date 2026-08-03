@@ -3,11 +3,11 @@ from domain import Decision
 from .decision import ParserGroundingMixin
 
 # DecisionParser là một lớp để phân tích và "ground" (định hình)
-#  các quyết định được tạo ra bởi một mô hình ngôn ngữ lớn (LLM) 
+#  các quyết định được tạo ra bởi một mô hình ngôn ngữ lớn (LLM)
 # thành các đối tượng Decision có thể thực thi trong runtime của ứng dụng.
-# Lớp này kế thừa từ ParserGroundingMixin, cung cấp các phương thức để xử lý 
-# văn bản và đảm bảo rằng các quyết định được tạo ra phù hợp với khả năng 
-# của hệ thống, đồng thời cung cấp một quyết định dự phòng (fallback) 
+# Lớp này kế thừa từ ParserGroundingMixin, cung cấp các phương thức để xử lý
+# văn bản và đảm bảo rằng các quyết định được tạo ra phù hợp với khả năng
+# của hệ thống, đồng thời cung cấp một quyết định dự phòng (fallback)
 # để sử dụng khi LLM không thể tạo ra một quyết định hợp lệ.
 class DecisionParser(ParserGroundingMixin):
     def __init__(self, fallback: Decision, logger=None):
@@ -201,7 +201,7 @@ class DecisionParser(ParserGroundingMixin):
                     structured["next_animation"] = "stand"
         return structured
 
-    # _normalize_salvaged_text là một phương thức để làm sạch và 
+    # _normalize_salvaged_text là một phương thức để làm sạch và
     # chuẩn hóa văn bản được trích xuất từ LLM,
     #  loại bỏ các tiền tố không cần thiết như "Eris:", "Assistant:", "AI:", hoặc "Response:"
     #  để đảm bảo rằng chỉ còn lại phần nội dung chính của văn bản.

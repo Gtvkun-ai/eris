@@ -6,6 +6,7 @@ trộn business rule vào chat cycle. Một facade có ích là facade làm gi�
 caller, không phải chỉ đổi tên sáu method rồi thêm logo kiến trúc.
 """
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import json
 import os
@@ -79,7 +80,7 @@ class LivingUserMemoryService:
     ) -> None:
         self.base_dir = Path(base_dir)
         self.base_dir.mkdir(parents=True, exist_ok=True)
-        self.config = config or LivingUserMemoryConfig.from_env()
+        self.config = resolve_dependency(config, LivingUserMemoryConfig.from_env)
         self.semantic_store = semantic_store
         self.episodic_store = episodic_store
         self.event_ledger = event_ledger

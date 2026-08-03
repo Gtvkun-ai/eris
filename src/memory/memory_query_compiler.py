@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.di import resolve_dependency
 
 """
 memory_query_compiler.py
@@ -72,7 +73,7 @@ class MemoryQueryCompiler:
         registry: PredicateRegistry | None = None,
     ) -> None:
         self.registry = registry or get_default_registry()
-        self.slot_parser = slot_parser or MemoryQuerySlotParser(registry=self.registry)
+        self.slot_parser = resolve_dependency(slot_parser, lambda: MemoryQuerySlotParser(registry=self.registry))
         if semantic_engine is None:
             provider = None
             try:
@@ -87,8 +88,8 @@ class MemoryQueryCompiler:
                 registry=self.registry,
             )
         self.semantic_engine = semantic_engine
-        self.llm_parser = llm_parser or MemoryQueryLLMParser()
-        self.repair_store = repair_store or MemoryQueryRepairStore()
+        self.llm_parser = resolve_dependency(llm_parser, lambda: MemoryQueryLLMParser())
+        self.repair_store = resolve_dependency(repair_store, lambda: MemoryQueryRepairStore())
 
     def compile(self, text: str) -> MemoryQueryCompileResult:
         slot_result = self.slot_parser.parse(text)

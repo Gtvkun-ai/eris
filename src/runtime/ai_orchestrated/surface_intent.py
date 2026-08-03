@@ -131,6 +131,15 @@ class SurfaceIntentEngine:
 
         if not self.enabled:
             return None
+        from runtime.architecture_flags import is_public_intent_owner
+        intent_owner = str(getattr(intent, "owner", "") or "")
+        plan_owner = str(getattr(intent.plan, "owner", "") or intent_owner)
+        if not is_public_intent_owner(intent_owner) or plan_owner != intent_owner:
+            self._log(
+                "warning", "[surface worker] rejected public intent owner=%s plan_owner=%s",
+                intent_owner, plan_owner,
+            )
+            return None
         display_language, speech_language = _surface_languages()
         request = {
             "speech_intent": intent.to_dict(),
@@ -246,6 +255,12 @@ class SurfaceIntentEngine:
                 plan=plan,
                 mode=intent.mode,
             )
+        payload = dict(payload)
+        # Trace ID và epoch đi cùng semantic event tới Stage/TTS; không suy lại từ
+        # text, vì parse prose để tìm identity là thú vui không lành mạnh.
+        payload["event_trace_id"] = str(intent.trace_id or intent.plan.plan_id)
+        payload["generation_epoch"] = int(intent.generation_epoch)
+        payload["public_intent_owner"] = str(intent.owner)
         reason = compact(raw.get("reason", "surface_realized"), 180) or "surface_realized"
         self._log(
             "info",

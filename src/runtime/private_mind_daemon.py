@@ -7,7 +7,8 @@ Daemon runtime cho PrivateMind.
 
 Khác với `PrivateMindLoop`, daemon này không chỉ chạy một lượt evaluator. Nó giữ
 vòng đời của private mind trong runtime:
-- sở hữu queue SurfaceImpulse đã được lọc;
+- sở hữu state/concern và outcome feedback;
+- queue SurfaceImpulse legacy chỉ tồn tại khi bật feature flag;
 - nhận outcome feedback sau khi ERIS nói/hành động;
 - bơm outcome đó vào concern lifecycle ở tick kế tiếp;
 - đồng bộ bias/state nhẹ về RuntimeCoordinator để speech/prompt/body đọc được;
@@ -20,6 +21,7 @@ trace hơn.
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import time
 from dataclasses import dataclass, field
@@ -28,6 +30,7 @@ from typing import Any, Iterable, Mapping
 from cortex.private_mind.contracts import to_plain
 from cortex.private_mind.comfort_appraiser import ComfortAppraiser
 from runtime.private_mind_loop import PrivateMindLoop, PrivateMindLoopConfig
+from runtime.architecture_flags import private_cognition_surface_export_enabled
 
 
 @dataclass(slots=True)
@@ -40,6 +43,8 @@ class PrivateMindDaemonConfig:
 
     enabled: bool = True
     max_surface_queue: int = 12
+    # PrivateMind chỉ cung cấp state/memory; speech queue legacy mặc định tắt.
+    surface_export_enabled: bool = False
     max_outcome_reports: int = 24
     max_digested_impulses: int = 8
     last_outcome_ttl_seconds: float = 60.0 * 8.0
@@ -81,7 +86,7 @@ class PrivateMindDaemon:
     1. Không sinh lời thoại public.
     2. Giữ concern/outcome sống qua nhiều tick.
     3. Đưa mutation sang runtime owner bằng StateMutationBus của loop.
-    4. Chỉ đưa surface candidate đã qua SurfaceValve vào SurfaceArbiter.
+    4. Chỉ cung cấp state/memory; surface queue cũ nằm sau feature flag.
     """
 
     def __init__(
@@ -93,7 +98,10 @@ class PrivateMindDaemon:
         logger: Any = None,
     ) -> None:
         self.loop = loop
-        self.config = config or PrivateMindDaemonConfig(enabled=bool(getattr(loop.config, "enabled", True)))
+        self.config = resolve_dependency(config, lambda: PrivateMindDaemonConfig(
+            enabled=bool(getattr(loop.config, "enabled", True)),
+            surface_export_enabled=private_cognition_surface_export_enabled(),
+        ))
         self.runtime_owner = runtime_owner
         self.logger = logger
         self.surface_queue: list[Any] = []
@@ -120,7 +128,10 @@ class PrivateMindDaemon:
         loop = PrivateMindLoop.from_runtime(runtime_owner=runtime_owner, llm_service=llm_service, logger=logger)
         if loop is None:
             return None
-        config = PrivateMindDaemonConfig(enabled=bool(getattr(loop.config, "enabled", True)))
+        config = PrivateMindDaemonConfig(
+            enabled=bool(getattr(loop.config, "enabled", True)),
+            surface_export_enabled=private_cognition_surface_export_enabled(),
+        )
         return cls(loop=loop, config=config, runtime_owner=runtime_owner, logger=logger)
 
     @property
@@ -153,7 +164,13 @@ class PrivateMindDaemon:
         if not self.config.enabled or self.loop is None:
             return None
         owner = runtime_owner if runtime_owner is not None else self.runtime_owner
-        queue = surface_candidate_queue if surface_candidate_queue is not None else self.surface_queue
+        # Không truyền queue speech vào PrivateMindLoop ở cấu hình mặc định.
+        # State, concern, diary local và memory vẫn chạy bình thường.
+        queue = (
+            surface_candidate_queue if surface_candidate_queue is not None else self.surface_queue
+        ) if self.config.surface_export_enabled else None
+        if not self.config.surface_export_enabled:
+            self.surface_queue.clear()
         merged_surface_outcome = self._merged_surface_outcome(surface_outcome)
         before = getattr(self.loop, "last_tick_at", 0.0)
         result = self.loop.tick(
@@ -182,13 +199,14 @@ class PrivateMindDaemon:
         else:
             self.skipped_count += 1
             reason = "loop_rate_limited"
-        self._trim_surface_queue(queue)
+        if queue is not None:
+            self._trim_surface_queue(queue)
         self._sync_runtime_owner()
         daemon_tick = PrivateMindDaemonTick(
             loop_result=result,
             ticked=ticked,
             reason=reason,
-            surface_queue_size=len(queue),
+            surface_queue_size=len(queue or ()),
             outcome_reports=tuple(self.outcome_feedback_reports[-6:]),
         )
         self.last_tick = daemon_tick

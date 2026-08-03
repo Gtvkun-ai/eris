@@ -17,6 +17,7 @@ nhưng rất phổ biến trong các repo thích gọi list[str] là cognition.
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import dataclasses
 import logging
@@ -420,7 +421,7 @@ class StateCommitter:
         if memory_cognition is None:
             raise ValueError("StateCommitter cần MemoryCognitionCore, không phải None.")
         self.memory_cognition = memory_cognition
-        self.config = config or StateCommitterConfig()
+        self.config = resolve_dependency(config, lambda: StateCommitterConfig())
         self.logger = logger or logging.getLogger(__name__)
         self.epistemic_kernel = epistemic_kernel
 

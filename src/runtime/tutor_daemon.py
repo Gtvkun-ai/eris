@@ -10,6 +10,7 @@ CognitivePipeline/autonomous/chat.
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import logging
 import threading
@@ -178,7 +179,7 @@ class TutorDaemon:
         logger: Optional[TutorLogger] = None,
         drive_fn: Optional[Callable[[], float]] = None,
     ) -> None:
-        self.config = (config or TutorConfig()).normalized()
+        self.config = resolve_dependency(config, TutorConfig).normalized()
         self.collector = collector
         self.gate = gate
         self.formulator = formulator
@@ -187,9 +188,9 @@ class TutorDaemon:
         self.share_impulse = share_impulse
         self.classifier = classifier
         self.router = router
-        self.emitter = emitter or TutorStageEmitter()
-        self.risk_guard = risk_guard or TutorRiskGuard(self.config)
-        self.logger = logger or TutorLogger()
+        self.emitter = resolve_dependency(emitter, lambda: TutorStageEmitter())
+        self.risk_guard = resolve_dependency(risk_guard, lambda: TutorRiskGuard(self.config))
+        self.logger = resolve_dependency(logger, lambda: TutorLogger())
         self._drive_fn = drive_fn
         # Serialize episode: KHÔNG mở 2 browser cùng profile cùng lúc (autonomous vs chat).
         self._run_lock = threading.Lock()
@@ -487,10 +488,10 @@ class TutorDaemon:
         now: Optional[float] = None,
         critic_fn: Optional[Callable[[str], str]] = None,
     ) -> Optional[str]:
-        """Tra cứu bằng đúng Tutor web hiện có, rồi chấm lại bằng local/Gemma nếu có.
+        """Tra cứu bằng đúng Tutor web hiện có, rồi chấm lại bằng local/open-model nếu có.
 
-        Flow mới: local/Gemma tạo prompt giao việc cho Tutor Gemini → Tutor trả raw
-        answer → local/Gemma/heuristic relay lọc claim yếu, nguồn, confidence → Eris
+        Flow mới: local/open-model tạo prompt giao việc cho Tutor Gemini → Tutor trả raw
+        answer → local/open-model/heuristic relay lọc claim yếu, nguồn, confidence → Eris
         mới surface. Vẫn KHÔNG dùng Deep Research API, Google grounding API hay
         background agent nhiều tầng. Đỡ biến một câu hỏi thành lễ hiến tế token.
         """

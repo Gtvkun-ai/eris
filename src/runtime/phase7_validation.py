@@ -8,6 +8,7 @@ Module này dùng event thật của runtime; không giả request mạng và kh
 thành giấy chứng nhận production.
 """
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import hashlib
 import json
@@ -142,7 +143,7 @@ class Phase7ValidationManager:
         self.observability = observability
         self.provider_health_fn = provider_health_fn or (lambda: {})
         self.rollout_status_fn = rollout_status_fn or (lambda: {})
-        self.config = config or HardeningConfig.load()
+        self.config = resolve_dependency(config, HardeningConfig.load)
         self.release_id = str(release_id or "").strip()
         self.environment_fn = environment_fn or (lambda: {})
         self.state: Phase7State | None = None

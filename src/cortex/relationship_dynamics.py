@@ -41,6 +41,7 @@ thì một chữ "ổn chưa?" lại biến thành tình bạn đang nở hoa. M
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 from dataclasses import dataclass, field
 from typing import Any, Mapping
@@ -601,7 +602,7 @@ class RelationshipDynamicsEngine:
     """
 
     def __init__(self, *, event_builder: RelationshipEventBuilder | None = None):
-        self.event_builder = event_builder or RelationshipEventBuilder()
+        self.event_builder = resolve_dependency(event_builder, lambda: RelationshipEventBuilder())
 
     def create_state(self) -> RelationshipDynamicsState:
         return RelationshipDynamicsState()
@@ -994,7 +995,7 @@ class RelationshipDynamicsEngine:
             # Nếu user thật sự vừa sửa vừa gần gũi, đừng khóa cảm xúc. Hai trục
             # độc lập tồn tại chính để giữ được trường hợp này.
             intimacy_pressure = max(intimacy_pressure, repair_affectionate)
-        
+
         # FIX #2: Relational probe branch — khi user hỏi về khoảng cách/cảm xúc.
         # Các câu như "em gần hay xa với tôi" hoặc "em có thích tôi không" không
         # tạo intimacy_pressure >= 0.30, nhưng đó là dấu hiệu user muốn kết nối.
@@ -1002,13 +1003,13 @@ class RelationshipDynamicsEngine:
         relational_probe_pressure = clamp01(getattr(affect, "relational_pressure", 0.0))
         attachment_bid = clamp01(getattr(affect, "attachment_bid", 0.0))
         probe_signal = max(relational_probe_pressure, attachment_bid)
-        
+
         if probe_signal >= 0.18 and current.rupture < 0.60:
             # Nhẹ hơn warmth path, nhưng đủ để không để distance đứng yên.
             current.attachment_visibility = _nudge(current.attachment_visibility, 0.008 + probe_signal * 0.015)
             current.preferred_distance = _nudge(current.preferred_distance, -(0.008 + probe_signal * 0.018))
             notes.append(f"relational_probe:probe_signal:{probe_signal:.2f}")
-        
+
         # Anti-teleport guard (req 3.1): the 0.30 floor is the aggregate of the
         # affect classifier's multi-cue intimacy/attachment scoring. A lone
         # low-weight token (e.g. "nho" 0.14, "quan tam" 0.20) stays below 0.30,

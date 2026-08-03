@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Gemma/local critic cho kết quả Tutor research.
+"""local/open-model critic cho kết quả Tutor research.
 
-Đây là lớp P1 rẻ theo PDF: Gemma không đi web, không tự bịa citation, chỉ đọc
+Đây là lớp P1 rẻ theo PDF: Local model không đi web, không tự bịa citation, chỉ đọc
 blob Tutor/Gemini Web đã trả rồi chấm lại. Mục tiêu là biến "Tutor nói vậy" thành
 một critique có cấu trúc: claim nào dùng được, điểm nào yếu, có mâu thuẫn không,
 và nên surface dè dặt tới đâu.
 
-Không bắt buộc phải có Gemma thật. Nếu runtime truyền `critic_fn` thì module này
+Không bắt buộc phải có một local model cụ thể. Nếu runtime truyền `critic_fn` thì module này
 ép nó trả JSON ngắn; nếu model trả bừa, parser rơi về heuristic. Thế là con người
 vẫn có một hàng rào, dù model lại biểu diễn nghệ thuật ngoặc nhọn.
 """
@@ -44,8 +44,8 @@ _SOURCE_HINT_RE = re.compile(r"\b(nguồn|source|tham\s+khảo|link|citation)\b"
 
 
 @dataclass(slots=True)
-class GemmaResearchCritique:
-    """Critique có cấu trúc từ Gemma/local lane hoặc heuristic fallback."""
+class LocalResearchCritique:
+    """Critique có cấu trúc từ local/open-model lane hoặc heuristic fallback."""
 
     usable_summary: str = ""
     supported_points: list[str] = field(default_factory=list)
@@ -69,10 +69,10 @@ class GemmaResearchCritique:
         }
 
 
-def build_gemma_critic_prompt(topic: object, raw_answer: object, *, max_chars: int = 1800) -> str:
-    """Prompt ngắn cho Gemma/local critic.
+def build_local_critic_prompt(topic: object, raw_answer: object, *, max_chars: int = 1800) -> str:
+    """Prompt ngắn cho local/open-model critic.
 
-    Không bảo Gemma search. Nó chỉ kiểm văn bản Tutor trả về. Output JSON để relay
+    Không bảo local model search. Nó chỉ kiểm văn bản Tutor trả về. Output JSON để relay
     parse được và không biến câu trả lời thành một bài tùy bút có dấu ngoặc vuông.
     """
 
@@ -80,7 +80,7 @@ def build_gemma_critic_prompt(topic: object, raw_answer: object, *, max_chars: i
     answer_text = scrub_secrets(raw_answer)
     budget = max(600, int(max_chars or 1800))
     header = (
-        "Bạn là Gemma critic cục bộ cho Eris. KHÔNG search web, KHÔNG thêm fact mới. "
+        "Bạn là local-model critic cục bộ cho Eris. KHÔNG search web, KHÔNG thêm fact mới. "
         "Chỉ đọc câu trả lời Tutor/Gemini bên dưới, tách phần dùng được và phần yếu. "
         "Nếu thiếu nguồn hoặc có mâu thuẫn, nói rõ. Trả JSON hợp lệ, không thêm lời dẫn.\n"
         "Schema: {\"usable_summary\": str, \"supported_points\": [str], \"weak_points\": [str], "
@@ -92,13 +92,13 @@ def build_gemma_critic_prompt(topic: object, raw_answer: object, *, max_chars: i
     return (header + answer_text[:remain] + tail)[:budget]
 
 
-def run_gemma_research_critic(
+def run_local_research_critic(
     topic: object,
     raw_answer: object,
     *,
     critic_fn: Optional[CriticFn] = None,
     max_chars: int = 1800,
-) -> GemmaResearchCritique:
+) -> LocalResearchCritique:
     """Chạy local critic nếu có, rồi merge với heuristic guard.
 
     Hàm luôn trả critique. Nếu model không có hoặc trả rác, heuristic vẫn tách được
@@ -112,9 +112,9 @@ def run_gemma_research_critic(
         return heuristic
 
     try:
-        prompt = build_gemma_critic_prompt(topic, raw, max_chars=max_chars)
+        prompt = build_local_critic_prompt(topic, raw, max_chars=max_chars)
         generated = scrub_secrets(critic_fn(prompt))
-        parsed = parse_gemma_critic_response(generated)
+        parsed = parse_local_critic_response(generated)
         if parsed is None:
             return heuristic
         parsed.used_model = True
@@ -123,7 +123,7 @@ def run_gemma_research_critic(
         return heuristic
 
 
-def parse_gemma_critic_response(text: object) -> GemmaResearchCritique | None:
+def parse_local_critic_response(text: object) -> LocalResearchCritique | None:
     """Parse JSON từ local model, kể cả khi nó bọc trong code fence."""
 
     raw = scrub_secrets(text).strip()
@@ -145,7 +145,7 @@ def parse_gemma_critic_response(text: object) -> GemmaResearchCritique | None:
             continue
         if not isinstance(data, dict):
             continue
-        return GemmaResearchCritique(
+        return LocalResearchCritique(
             usable_summary=_clean_text(data.get("usable_summary", ""), limit=700),
             supported_points=_clean_list(data.get("supported_points", []), limit_each=260, max_items=6),
             weak_points=_clean_list(data.get("weak_points", []), limit_each=260, max_items=5),
@@ -158,7 +158,7 @@ def parse_gemma_critic_response(text: object) -> GemmaResearchCritique | None:
     return None
 
 
-def heuristic_research_critique(topic: object, raw_answer: object) -> GemmaResearchCritique:
+def heuristic_research_critique(topic: object, raw_answer: object) -> LocalResearchCritique:
     """Critique fallback không cần model."""
 
     raw = scrub_secrets(raw_answer)
@@ -192,7 +192,7 @@ def heuristic_research_critique(topic: object, raw_answer: object) -> GemmaResea
     elif weak:
         caution = "Có điểm chưa chắc, không nên chốt mạnh."
 
-    return GemmaResearchCritique(
+    return LocalResearchCritique(
         usable_summary=summary,
         supported_points=_dedupe(supported)[:5],
         weak_points=_dedupe(weak)[:4],
@@ -204,7 +204,7 @@ def heuristic_research_critique(topic: object, raw_answer: object) -> GemmaResea
     )
 
 
-def merge_critiques(primary: GemmaResearchCritique, fallback: GemmaResearchCritique) -> GemmaResearchCritique:
+def merge_critiques(primary: LocalResearchCritique, fallback: LocalResearchCritique) -> LocalResearchCritique:
     """Merge model critique với heuristic, heuristic được quyền kéo confidence xuống."""
 
     summary = primary.usable_summary or fallback.usable_summary
@@ -222,7 +222,7 @@ def merge_critiques(primary: GemmaResearchCritique, fallback: GemmaResearchCriti
         caution = (caution + "; " if caution else "") + "Có dấu hiệu mâu thuẫn/cần đối chiếu."
     if not sources and "nguồn" not in caution.lower():
         caution = (caution + "; " if caution else "") + "Thiếu nguồn rõ."
-    return GemmaResearchCritique(
+    return LocalResearchCritique(
         usable_summary=summary,
         supported_points=supported,
         weak_points=weak,
@@ -330,10 +330,10 @@ def _dedupe(items: Iterable[Any]) -> list[str]:
 
 
 __all__ = [
-    "GemmaResearchCritique",
-    "build_gemma_critic_prompt",
+    "LocalResearchCritique",
+    "build_local_critic_prompt",
     "heuristic_research_critique",
     "merge_critiques",
-    "parse_gemma_critic_response",
-    "run_gemma_research_critic",
+    "parse_local_critic_response",
+    "run_local_research_critic",
 ]

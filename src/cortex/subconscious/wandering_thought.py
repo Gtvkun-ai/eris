@@ -7,6 +7,7 @@ ThoughtFragment để Blackboard/Synthesizer/Rehearsal xử tiếp.
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 from typing import Any
 
@@ -57,10 +58,10 @@ class WanderingThoughtEngine:
         min_idle_seconds: float = 25.0,
         min_resonance_for_fragment: float = 0.30,
     ) -> None:
-        self.seed_pool = seed_pool or TopicSeedPool()
-        self.drift_pool = drift_pool or DriftPool()
-        self.association_engine = association_engine or FreeAssociationEngine()
-        self.topic_memory = topic_memory or WanderingTopicMemory()
+        self.seed_pool = resolve_dependency(seed_pool, lambda: TopicSeedPool())
+        self.drift_pool = resolve_dependency(drift_pool, lambda: DriftPool())
+        self.association_engine = resolve_dependency(association_engine, lambda: FreeAssociationEngine())
+        self.topic_memory = resolve_dependency(topic_memory, lambda: WanderingTopicMemory())
         self.min_idle_seconds = max(0.0, float(min_idle_seconds or 25.0))
         self.min_resonance_for_fragment = clamp01(min_resonance_for_fragment)
         self.last_result = WanderingThoughtResult([], [], [], 0.0, "not_started")

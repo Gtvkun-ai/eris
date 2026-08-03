@@ -239,4 +239,3 @@ class MicroGroundingGuard:
             normalized,
             ("co phai", "ban co", "ban muon", "ban nghi", "tai sao", "vi sao", "do a", "roi a"),
         )
-

@@ -5,6 +5,8 @@ Extracted from RuntimeCoordinator so the composition root stops owning every pol
 """
 from __future__ import annotations
 
+from llm.model_catalog import LEGACY_OPEN_MODEL_MODE
+
 import base64
 import hashlib
 import io
@@ -95,14 +97,14 @@ class ScreenVisionRuntimeMixin:
         Tầng này chỉ nhận caption dạng text, nên có thể dùng DeepSeek main.
         ERIS_VISION_STRUCTURE_REMOTE:
           0/off       → tắt (structuring local nếu có)
-          gemma/style → dùng style_client
+          open_model/style → dùng style_client
           main/deepseek → dùng main client
           1/auto      → fallback_client, rồi style_client, rồi main client
         """
         mode = os.environ.get("ERIS_VISION_STRUCTURE_REMOTE", "auto").strip().lower()
         if mode in {"0", "false", "no", "off"}:
             return None
-        if mode in {"gemma", "style"}:
+        if mode in {LEGACY_OPEN_MODEL_MODE, "style"}:
             remote = getattr(llm_service, "style_client", None)
         elif mode in {"main", "deepseek"}:
             remote = getattr(llm_service, "client", None)
@@ -488,7 +490,7 @@ class ScreenVisionRuntimeMixin:
 
         lines: list[str] = []
         seen: set[str] = set()
-        for block in tuple(getattr(self, "_chat_screen_text_evidence", ()) or ()): 
+        for block in tuple(getattr(self, "_chat_screen_text_evidence", ()) or ()):
             text = " ".join(str(getattr(block, "text", "") or "").split()).strip()
             if not text:
                 continue

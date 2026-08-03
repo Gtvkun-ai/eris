@@ -25,6 +25,7 @@ Module thuần, xác định, không gọi model, không I/O. Wake/surface layer
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 from dataclasses import dataclass
 
@@ -101,7 +102,7 @@ class ConnectionDrive:
     """Tích cô độc theo thời gian, quyết định khi nào ép Eris với ra."""
 
     def __init__(self, config: ConnectionDriveConfig | None = None) -> None:
-        self.config = config or ConnectionDriveConfig()
+        self.config = resolve_dependency(config, lambda: ConnectionDriveConfig())
 
     def update(
         self,

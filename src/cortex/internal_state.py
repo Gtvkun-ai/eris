@@ -1,3 +1,4 @@
+from core.di import resolve_dependency
 import re
 import time
 
@@ -10,7 +11,7 @@ from .goal_persistence import GoalPersistenceEngine, GoalPersistenceState
 from .modes import QUIET_MODES
 from .relationship_dynamics import RelationshipDynamicsState
 
-#File này đang cố xây một “nội tâm giả lập có động lực liên tục theo thời gian”, 
+#File này đang cố xây một “nội tâm giả lập có động lực liên tục theo thời gian”,
 # chứ không phải kiểu chatbot stateless trả lời từng câu riêng lẻ
 def _clamp(value: float, *, minimum: float = 0.0, maximum: float = 1.0) -> float:
     try:
@@ -493,7 +494,7 @@ class MentalProcessSystem:
         social = max(self.social_presence.level, self.social_presence.pressure)
         load = max(self.cognitive_load.level, self.cognitive_load.pressure)
         background = max(self.background_thought.level, self.background_thought.pressure)
-        return { #Processes ảnh hưởng lẫn nhau: 
+        return { #Processes ảnh hưởng lẫn nhau:
             #background thoughts kích curiosity
             #restraint suppress curiosity
             "curiosity": background * 0.12 + tension * 0.06 + reflection * 0.05 - restraint * 0.20 - load * 0.12,
@@ -1381,7 +1382,7 @@ class InternalStateEngine:
     """Maintains a low-gain continuity state across cognitive frames."""
 
     def __init__(self, *, temporal_engine: TemporalCognitionEngine | None = None):
-        self.temporal_engine = temporal_engine or TemporalCognitionEngine()
+        self.temporal_engine = resolve_dependency(temporal_engine, lambda: TemporalCognitionEngine())
         self.goal_persistence_engine = GoalPersistenceEngine()
 
     def commit_session_ritual(

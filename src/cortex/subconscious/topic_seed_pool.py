@@ -2,6 +2,7 @@
 """TopicSeedPool gom seed từ self-anchor/habitat/memory/mood/random weak link."""
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import random
 from typing import Any, Iterable
@@ -63,9 +64,9 @@ class TopicSeedPool:
         habitat_extractor: HabitatSeedExtractor | None = None,
         rng: random.Random | None = None,
     ) -> None:
-        self.self_anchor_core = self_anchor_core or SelfAnchorCore()
-        self.habitat_extractor = habitat_extractor or HabitatSeedExtractor()
-        self.rng = rng or random.Random(1337)
+        self.self_anchor_core = resolve_dependency(self_anchor_core, lambda: SelfAnchorCore())
+        self.habitat_extractor = resolve_dependency(habitat_extractor, lambda: HabitatSeedExtractor())
+        self.rng = resolve_dependency(rng, lambda: random.Random(1337))
         self.last_seeds: tuple[TopicSeed, ...] = ()
 
     def generate(

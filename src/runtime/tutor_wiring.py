@@ -144,7 +144,7 @@ def build_tutor_daemon_from_runtime(runtime_owner: Any) -> Optional[Any]:
     runtime_owner.request_tutor_lookup = request_tutor_lookup
 
     # API "tra rồi TRẢ LỜI ngay". Khi research=True hoặc search=True, dùng relay nhẹ:
-    # local/Gemma đặt câu hỏi cho Tutor Gemini Web, nhận raw answer, rồi local/heuristic
+    # local/open-model đặt câu hỏi cho Tutor Gemini Web, nhận raw answer, rồi local/heuristic
     # chấm lại trước khi trả cho Eris. Không gọi Gemini API/Google grounding fallback.
     def request_tutor_answer(topic, *, context="", research=False, search=False):
         try:

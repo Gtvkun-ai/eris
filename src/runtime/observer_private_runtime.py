@@ -454,8 +454,14 @@ class ObserverPrivateRuntimeMixin:
 
 
     def _drain_private_mind_surface_impulses(self, *, limit: int = 4) -> tuple[object, ...]:
-        """Lấy impulse đã được SurfaceValve lọc để đưa vào SurfaceArbiter."""
+        """PrivateMind chỉ cấp state/memory; queue speech cũ mặc định bị khóa."""
 
+        from runtime.architecture_flags import private_cognition_surface_export_enabled
+        if not private_cognition_surface_export_enabled():
+            queue = getattr(self, "private_mind_surface_queue", None)
+            if isinstance(queue, list):
+                queue.clear()
+            return ()
         daemon = getattr(self, "private_mind_daemon", None)
         drain = getattr(daemon, "drain_surface_impulses", None) if daemon is not None else None
         if callable(drain):
@@ -512,8 +518,14 @@ class ObserverPrivateRuntimeMixin:
 
 
     def _drain_private_life_surface_impulses(self, *, limit: int = 4) -> tuple[object, ...]:
-        """Lấy impulse đã lọc từ PrivateLife để đưa vào SurfaceArbiter."""
+        """PrivateLife chỉ cấp state/memory; queue speech cũ mặc định bị khóa."""
 
+        from runtime.architecture_flags import private_cognition_surface_export_enabled
+        if not private_cognition_surface_export_enabled():
+            queue = getattr(self, "private_life_surface_queue", None)
+            if isinstance(queue, list):
+                queue.clear()
+            return ()
         daemon = getattr(self, "private_life_daemon", None)
         drain = getattr(daemon, "drain_surface_impulses", None) if daemon is not None else None
         if callable(drain):

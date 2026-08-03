@@ -19,6 +19,7 @@ vĩ đại ngang việc đóng cửa tủ lạnh sau khi mở, nhưng repo AI th
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import math
 import os
@@ -231,7 +232,7 @@ class ModelBudgetPolicyConfig:
     # Khi remote API tắt, main_cognition chạy bằng local GGUF — đây là bộ não DUY NHẤT.
     # Chặn nó vì áp lực tài nguyên/cooldown đồng nghĩa ERIS câm hẳn, nên ép chạy giống
     # vision_force_run: vẫn tôn trọng hard veto nhiệt độ GPU, nhưng vượt qua soft guard.
-    force_local_gguf_enabled: bool = field(default_factory=lambda: _env_flag("ERIS_FORCE_LOCAL_GGUF", True))
+    force_local_gguf_enabled: bool = field(default_factory=lambda: _env_flag("ERIS_FORCE_LOCAL_GGUF", False))
     force_local_gguf_priority: int = field(default_factory=lambda: _env_int("ERIS_FORCE_LOCAL_GGUF_PRIORITY", 9000))
     force_local_gguf_queue_timeout_seconds: float = field(default_factory=lambda: _env_float("ERIS_FORCE_LOCAL_GGUF_QUEUE_TIMEOUT", 0.0))
 
@@ -247,7 +248,7 @@ class ModelBudgetPolicy:
     HEAVY_TIERS = {"main_cognition", "subconscious_4b", "vision_compressor"}
 
     def __init__(self, config: ModelBudgetPolicyConfig | None = None, logger: Any = None) -> None:
-        self.config = config or ModelBudgetPolicyConfig()
+        self.config = resolve_dependency(config, lambda: ModelBudgetPolicyConfig())
         self.logger = logger
         self.last_main_started_at = 0.0
         self.last_main_finished_at = 0.0

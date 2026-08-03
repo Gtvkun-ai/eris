@@ -475,15 +475,15 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             try {
                 const res = await fetch('/api/accounts');
                 const data = await res.json();
-                
+
                 // Update stats
                 document.getElementById('stat-remaining').innerText = data.summary.total_characters_remaining.toLocaleString();
                 document.getElementById('stat-active').innerText = data.summary.active_accounts;
                 document.getElementById('stat-exhausted').innerText = data.summary.exhausted_accounts;
                 document.getElementById('stat-total-acc').innerText = `Tổng số ${data.summary.total_accounts} tài khoản`;
-                
-                const percent = data.summary.total_characters_limit > 0 
-                    ? Math.round((data.summary.total_characters_remaining / data.summary.total_characters_limit) * 100) 
+
+                const percent = data.summary.total_characters_limit > 0
+                    ? Math.round((data.summary.total_characters_remaining / data.summary.total_characters_limit) * 100)
                     : 0;
                 document.getElementById('stat-percent').innerText = `${percent}% hạn mức còn lại`;
 
@@ -516,7 +516,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                     }
 
                     const progressClass = acc.usage_percent > 85 ? 'progress-bar-fill danger' : 'progress-bar-fill';
-                    
+
                     let resetDisplay = 'Chưa xác định';
                     if (acc.reset_remaining_s > 0) {
                         const days = Math.floor(acc.reset_remaining_s / 86400);
@@ -765,7 +765,7 @@ if __name__ == "__main__":
     port_arg = 18888
     if len(sys.argv) > 1 and sys.argv[1].isdigit():
         port_arg = int(sys.argv[1])
-    
+
     print(f"=== ERIS ElevenLabs Pool Web UI Server ===")
     print(f"Khởi chạy giao diện tại: http://127.0.0.1:{port_arg}")
     srv = start_elevenlabs_pool_server(port=port_arg)

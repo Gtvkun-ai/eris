@@ -1,7 +1,7 @@
 """DDS — Decompose / Distill / Synthesize (Phase 2 + 3).
 
 Ý tưởng: thay vì nhồi raw history + OCR + cognition vào MỘT prompt khổng lồ (gây
-413), băm ngữ cảnh nặng thành nhiều mẩu nhỏ, cho worker (Gemma/local) rút gọn
+413), băm ngữ cảnh nặng thành nhiều mẩu nhỏ, cho worker (local/open-model) rút gọn
 song song thành vài gạch đầu dòng, rồi mới đưa phần distilled (nhỏ) vào synthesis.
 
 Module này là tầng hạ tầng, KHÔNG phụ thuộc service: nhận sẵn một "client" (bất

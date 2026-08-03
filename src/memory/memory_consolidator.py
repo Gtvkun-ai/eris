@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.di import resolve_dependency
 
 """Consolidator cho unresolved memory candidates.
 
@@ -40,7 +41,7 @@ class ConsolidationResult:
 class MemoryConsolidator:
     def __init__(self, memory_core: Any, *, intake_policy: MemoryCommitPolicy | None = None) -> None:
         self.memory_core = memory_core
-        self.intake_policy = intake_policy or MemoryCommitPolicy()
+        self.intake_policy = resolve_dependency(intake_policy, lambda: MemoryCommitPolicy())
 
     def run_once(self, *, limit: int = 20, max_attempts: int = 5) -> ConsolidationResult:
         store = getattr(self.memory_core, "memory_candidate", None)

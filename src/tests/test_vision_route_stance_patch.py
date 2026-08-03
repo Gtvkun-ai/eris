@@ -86,5 +86,3 @@ def test_screen_router_filters_self_chat_bubbles() -> None:
     assert route.references_screen is True
     # Chat bubble text should be ignored, escalating to vision
     assert route.mode == "vision"
-
-

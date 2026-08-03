@@ -12,12 +12,13 @@ agent thành ổ khóa chết lâm sàng.
 Daemon làm 5 việc:
 1. load/save `memory_core/private_life_state.json`;
 2. tick PrivateLifeCore theo nhịp runtime;
-3. giữ surface queue từ SurfaceSeedCandidate public-safe;
-4. expose digest gọn cho debug/prompt;
+3. cung cấp state/memory cho owner công khai;
+4. giữ surface queue cũ sau feature flag để migration;
 5. không tự sinh lời thoại public.
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import os
 import time
@@ -28,6 +29,7 @@ from typing import Any, Iterable, Mapping
 from cortex.private_life import PrivateLifeCore, PrivateLifeStore, SurfaceSeedCandidate, private_life_state_digest
 from cortex.private_life.contracts import PrivateLifeTickResult, to_plain
 from runtime.diagnostic_logging import safe_log
+from runtime.architecture_flags import private_cognition_surface_export_enabled
 
 
 @dataclass(slots=True)
@@ -35,6 +37,8 @@ class PrivateLifeDaemonConfig:
     enabled: bool = True
     min_interval_seconds: float = 15.0
     max_surface_queue: int = 8
+    # PrivateLife chỉ cung cấp state/memory. Queue speech cũ giữ sau feature flag.
+    surface_export_enabled: bool = False
     autosave: bool = True
     # Khi user vắng lâu, private life nên tick chậm mà đều. Không cần 60Hz cho đời sống nội tâm,
     # loài người đã thử overthinking rồi, kết quả không đẹp.
@@ -46,6 +50,7 @@ class PrivateLifeDaemonConfig:
             enabled=_env_bool("ERIS_PRIVATE_LIFE_ENABLED", True),
             min_interval_seconds=_env_float("ERIS_PRIVATE_LIFE_MIN_INTERVAL_SEC", 15.0, min_value=1.0),
             max_surface_queue=int(_env_float("ERIS_PRIVATE_LIFE_MAX_SURFACE_QUEUE", 8, min_value=1.0)),
+            surface_export_enabled=private_cognition_surface_export_enabled(),
             autosave=_env_bool("ERIS_PRIVATE_LIFE_AUTOSAVE", True),
             solitude_tick_min_idle_seconds=_env_float("ERIS_PRIVATE_LIFE_SOLITUDE_IDLE_SEC", 40.0, min_value=0.0),
         )
@@ -83,7 +88,7 @@ class PrivateLifeDaemon:
     ) -> None:
         self.core = core
         self.store = store
-        self.config = config or PrivateLifeDaemonConfig.from_env()
+        self.config = resolve_dependency(config, PrivateLifeDaemonConfig.from_env)
         self.runtime_owner = runtime_owner
         self.logger = logger
         self.surface_queue: list[Any] = []
@@ -166,8 +171,11 @@ class PrivateLifeDaemon:
             return tick
 
     def drain_surface_impulses(self, *, limit: int = 4) -> tuple[Any, ...]:
-        """Lấy impulse private-life đã chuyển dạng cho SurfaceArbiter."""
+        """Đường migration cũ; mặc định PrivateLife không có quyền cấp speech."""
 
+        if not self.config.surface_export_enabled:
+            self.surface_queue.clear()
+            return ()
         items: list[Any] = []
         while self.surface_queue and len(items) < max(1, int(limit or 4)):
             items.append(self.surface_queue.pop(0))
@@ -202,6 +210,11 @@ class PrivateLifeDaemon:
         return to_plain(digest)
 
     def _maybe_enqueue_surface_seed(self, seed: SurfaceSeedCandidate | None) -> None:
+        # PrivateLife là state/memory provider. Không tự tạo speech queue trừ khi
+        # bật flag migration có chủ đích.
+        if not self.config.surface_export_enabled:
+            self.surface_queue.clear()
+            return
         if seed is None or not seed.should_surface:
             return
         impulse = self._seed_to_surface_impulse(seed)

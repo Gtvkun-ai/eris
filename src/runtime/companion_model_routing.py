@@ -8,6 +8,7 @@ instruction.  Missing facts are not treated as "deep": the model should ask one
 focused question instead of inventing them.
 """
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import os
 import re
@@ -178,7 +179,7 @@ def route_companion_turn(
     materially affects the result.
     """
 
-    policy = policy or CompanionRoutingPolicy.from_runtime()
+    policy = resolve_dependency(policy, CompanionRoutingPolicy.from_runtime)
     text = _plain(user_text)
     history = _history_text(recent_history)
     tokens = re.findall(r"[a-z0-9]+", text)

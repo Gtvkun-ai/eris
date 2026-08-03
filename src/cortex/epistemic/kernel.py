@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import re
 import time
@@ -46,8 +47,8 @@ class EpistemicKernel:
     )
 
     def __init__(self, store: EpistemicStore | None = None, *, config: EpistemicKernelConfig | None = None, logger: Any = None) -> None:
-        self.store = store or EpistemicStore()
-        self.config = config or EpistemicKernelConfig()
+        self.store = resolve_dependency(store, lambda: EpistemicStore())
+        self.config = resolve_dependency(config, lambda: EpistemicKernelConfig())
         self.logger = logger
         self.store.mode = "shadow" if self.config.shadow_mode else "authoritative"
 

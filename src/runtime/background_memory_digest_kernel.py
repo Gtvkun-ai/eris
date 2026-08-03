@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.di import resolve_dependency
 
 """
 runtime.background_memory_digest_kernel
@@ -171,7 +172,7 @@ class BackgroundMemoryDigestKernelService:
         idle_probe: Any = None,
     ) -> None:
         self.memory_kernel = memory_kernel
-        self.config = config or BackgroundMemoryDigestKernelConfig()
+        self.config = resolve_dependency(config, lambda: BackgroundMemoryDigestKernelConfig())
         self.enabled = bool(self.config.enabled and self.memory_kernel is not None)
         self.logger = logger
         self.idle_probe = idle_probe

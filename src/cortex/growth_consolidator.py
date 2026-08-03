@@ -13,6 +13,7 @@ quan sát thụ động (R1.5). Có thể bọc LLM phản tư sau mà không đ
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -51,7 +52,7 @@ class GrowthConsolidatorConfig:
 
 class GrowthConsolidator:
     def __init__(self, config: GrowthConsolidatorConfig | None = None) -> None:
-        self.config = config or GrowthConsolidatorConfig()
+        self.config = resolve_dependency(config, lambda: GrowthConsolidatorConfig())
 
     # --- gating (R6.3, R6.4) -------------------------------------------
     def should_run(

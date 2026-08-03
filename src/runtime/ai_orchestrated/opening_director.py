@@ -6,6 +6,7 @@ move, beat shape và handoff. Renderer deterministic ở cuối file chỉ tồn
 startup không chết khi provider vừa quyết định nghỉ phép mà không báo ai.
 """
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import math
 import uuid
@@ -83,7 +84,7 @@ class OpeningDirector:
         mode: str = "hybrid",
         semantic_duplicate_threshold: float = 0.86,
     ) -> None:
-        self.history = history or OpeningHistoryStore()
+        self.history = resolve_dependency(history, lambda: OpeningHistoryStore())
         self.mode = str(mode or "hybrid").strip().lower()
         self.semantic_duplicate_threshold = max(0.50, min(0.99, float(semantic_duplicate_threshold)))
 

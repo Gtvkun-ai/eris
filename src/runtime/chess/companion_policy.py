@@ -226,7 +226,7 @@ def build_companion_signal(
         # Surface phải nhận rõ hai hệ quy chiếu. Khi user_side chưa biết, chỉ
         # được nói bên Trắng/Đen đang hơn; không được gán lợi thế cho user.
         move_num = int(getattr(observation, "move_number", 0) or 0)
-        
+
         # Suy luận game phase từ move_number (ước chừng)
         if move_num < 14:
             game_phase = "Opening (focus on development, center control, king safety)"
@@ -242,7 +242,7 @@ def build_companion_signal(
             user_q = [str(q.get("quality")) for q in recent_qualities if q.get("actor") == "user" and q.get("quality")]
             if user_q:
                 recent_summary = f"User's recent form (oldest to newest): {', '.join(user_q[-6:])}. "
-                
+
         material_status = _material_imbalance(observation.fen or observation.board_fen)
 
         followed_previous = bool(getattr(observation, "user_followed_previous_suggestion", False))

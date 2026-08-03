@@ -43,7 +43,7 @@ from domain import Decision
 from eris_secrets import get_config
 from failure_meta import is_technical_failure_meta
 from memory.memory_kernel import MemoryKernel
-from runtime.ai_orchestrated.cortex_runtime import CortexAttentionSignal, CortexRuntime
+from runtime.ai_orchestrated.cortex import CortexAttentionSignal, CortexRuntime
 from runtime.body_bias import BodyBiasProjector
 from runtime.chat_cycle import ChatCycleMixin
 from runtime.failure_taxonomy import FailureContext
@@ -267,4 +267,3 @@ class AutonomousLoopRuntimeMixin:
                     self.stop()
                     break
                 time.sleep(delay)
-

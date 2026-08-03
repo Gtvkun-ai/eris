@@ -43,8 +43,9 @@ from domain import Decision
 from eris_secrets import get_config
 from failure_meta import is_technical_failure_meta
 from memory.memory_kernel import MemoryKernel
+from runtime.architecture_flags import background_tutor_enabled, legacy_model_lanes_enabled
 from runtime.diagnostic_logging import safe_log
-from runtime.ai_orchestrated.cortex_runtime import CortexAttentionSignal, CortexRuntime
+from runtime.ai_orchestrated.cortex import CortexAttentionSignal, CortexRuntime
 from runtime.body_bias import BodyBiasProjector
 from runtime.chat_cycle import ChatCycleMixin
 from runtime.failure_taxonomy import FailureContext, classify_failure, failure_details
@@ -505,7 +506,11 @@ class CoordinatorBootstrapMixin:
         self.last_daydream_result = None
         self.daydream_model_adapter = None
         self.daydream_consolidator = DaydreamConsolidator(
-            llm_client=(getattr(llm_service, "inner_client", None) or getattr(llm_service, "style_client", None)),
+            # Không mượn inner/style model ở startup mặc định. Daydream vẫn giữ
+            # state local; model legacy chỉ quay lại khi flag migration được bật.
+            llm_client=(
+                getattr(llm_service, "inner_client", None) or getattr(llm_service, "style_client", None)
+            ) if legacy_model_lanes_enabled() else None,
             logger=self.logger,
         )
         self.cortex_runtime = CortexRuntime(
@@ -546,12 +551,14 @@ class CoordinatorBootstrapMixin:
         def _build_tutor_daemon():
             from runtime.tutor_wiring import build_tutor_daemon_from_runtime
             return build_tutor_daemon_from_runtime(self)
+        # Tutor/research nền có owner riêng và mặc định không tham gia startup.
+        # Không gọi constructor rồi mới "tắt"; như thế vẫn tốn thread/provider.
         self.tutor_daemon = self.subsystem_supervisor.start(
             "runtime.tutor",
             _build_tutor_daemon,
             failure_kind=FailureKind.PROVIDER_TRANSIENT,
             stop_methods=("stop", "shutdown", "close"),
-        )
+        ) if background_tutor_enabled() else None
         # Semantic Tutor khác Curiosity Tutor: lane này dùng DeepSeek tutor key
         # để phân rã scene theo sự kiện và cấp một packet chung cho chat/chess/
         # autonomous. Không phát ngôn public, không chạy theo timer.
@@ -568,7 +575,7 @@ class CoordinatorBootstrapMixin:
             failure_kind=FailureKind.PROVIDER_TRANSIENT,
             stop_methods=("stop", "shutdown", "close"),
             details={"mode": "event_driven_shared_context"},
-        )
+        ) if background_tutor_enabled() else None
         if self.semantic_tutor_runtime is not None:
             self.logger.info(
                 "[semantic-tutor] ready available=%s mode=event-driven",
@@ -814,4 +821,3 @@ class CoordinatorBootstrapMixin:
                 "supervised_subsystems": self.subsystem_supervisor.snapshot(),
             },
         )
-

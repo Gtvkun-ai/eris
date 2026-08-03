@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Relay nghiên cứu nhẹ: local/Gemma đặt câu hỏi cho Tutor Gemini rồi chấm lại.
+"""Relay nghiên cứu nhẹ: local/open-model đặt câu hỏi cho Tutor Gemini rồi chấm lại.
 
 Không dùng Gemini Deep Research API, không Google AI grounding, không background
 agent nhiều bước. Đây chỉ là một lớp contract rẻ:
@@ -29,13 +29,13 @@ except Exception:  # pragma: no cover
     from .research_evidence import EvidenceBundle, build_evidence_bundle  # type: ignore
 
 try:  # pragma: no cover
-    from cortex.tutor.gemma_research_critic import GemmaResearchCritique, run_gemma_research_critic
+    from cortex.tutor.local_research_critic import LocalResearchCritique, run_local_research_critic
 except Exception:  # pragma: no cover
     try:
-        from .gemma_research_critic import GemmaResearchCritique, run_gemma_research_critic  # type: ignore
+        from .local_research_critic import LocalResearchCritique, run_local_research_critic  # type: ignore
     except Exception:  # pragma: no cover
-        GemmaResearchCritique = None  # type: ignore
-        run_gemma_research_critic = None  # type: ignore
+        LocalResearchCritique = None  # type: ignore
+        run_local_research_critic = None  # type: ignore
 
 try:  # pragma: no cover
     from runtime.tutor_research_policy import (
@@ -82,7 +82,7 @@ class TutorResearchRelayResult:
 
 
 def build_gemini_research_prompt(topic: object, *, context: object = "", max_words: int = 250, max_chars: int = 395) -> str:
-    """Prompt mà local/Gemma đưa cho Tutor Gemini.
+    """Prompt mà local/open-model đưa cho Tutor Gemini.
 
     Giữ dưới TutorQuestion 400 ký tự. Dòng chữ "Gemini" là cố ý: nếu backend là
     Gemini web thì prompt giống một lời giao việc trực tiếp; nếu backend khác, nó
@@ -97,7 +97,7 @@ def build_gemini_research_prompt(topic: object, *, context: object = "", max_wor
         max_words=max_words,
         max_chars=max_chars,
     )
-    # Nắn câu để đúng ý chủ dự án: "Gemma/local hỏi Gemini search web" thay vì
+    # Nắn câu để đúng ý chủ dự án: "local/open-model hỏi Gemini search web" thay vì
     # một prompt nghiên cứu chung chung. Vẫn hard-cap để khỏi dài như giấy phạt.
     prefix = "Gemini, "
     if not prompt.lower().startswith("gemini"):
@@ -133,7 +133,7 @@ def analyze_tutor_research_answer(
 ) -> TutorResearchRelayResult:
     """Chấm câu trả lời của Tutor bằng critic cục bộ nếu có, rồi heuristic fallback.
 
-    ``critic_fn`` thường là local/Gemma lane. Vì hàm generate_fn hiện tại của
+    ``critic_fn`` thường là local/open-model lane. Vì hàm generate_fn hiện tại của
     Tutor wiring chỉ bảo đảm trả text ngắn, relay KHÔNG phụ thuộc JSON từ model.
     Model cục bộ chỉ được dùng như bộ rewrite rẻ; verification vẫn do heuristic
     nguồn/URL bảo vệ.
@@ -150,15 +150,15 @@ def analyze_tutor_research_answer(
     confidence = _estimate_confidence(raw, sources=sources, weak_points=weak_points)
 
     critique = None
-    if run_gemma_research_critic is not None:
+    if run_local_research_critic is not None:
         try:
-            critique = run_gemma_research_critic(topic_text, raw, critic_fn=critic_fn)
+            critique = run_local_research_critic(topic_text, raw, critic_fn=critic_fn)
         except Exception:
             critique = None
 
     if critique is not None:
         usable = str(getattr(critique, "usable_summary", "") or "").strip()
-        # Nếu local model không trả JSON hợp lệ, run_gemma_research_critic rơi về
+        # Nếu local model không trả JSON hợp lệ, run_local_research_critic rơi về
         # heuristic. Lúc đó vẫn thử legacy one-paragraph critic để giữ tương thích
         # với generate_fn cũ vốn chỉ biết trả một đoạn text. Không thì test cũ sẽ
         # khóc, còn repo thì thêm một truyền thống đau khổ nữa.

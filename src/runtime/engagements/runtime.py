@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Facade connecting user turns, activity evidence, adapters and policy."""
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import json
 import threading
@@ -44,7 +45,7 @@ class EngagementRuntime:
         self.logger = logger
         self._clock = clock or time.time
         self.health_registry = health_registry
-        self.settings = settings or EngagementSettings()
+        self.settings = resolve_dependency(settings, lambda: EngagementSettings())
         self.adapters = AdapterRegistry()
         self.profiles = EngagementProfileRegistry.defaults()
         self.registry = EngagementRegistry(

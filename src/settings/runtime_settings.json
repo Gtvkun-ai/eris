@@ -4,7 +4,14 @@
     "mode": "ai_orchestrated",
     "startup_greeting": true,
     "startup_screen_opening": true,
-    "startup_force_speak": true
+    "startup_force_speak": true,
+    "private_cognition_surface_export": false,
+    "surface_cross_worker_fallback": false,
+    "legacy_model_lanes_enabled": false,
+    "inner_diary_model_enabled": false,
+    "background_tutor_enabled": false,
+    "legacy_social_fallback_enabled": false,
+    "event_trace_enabled": true
   },
   "chat": {
     "language": "ja",
@@ -84,7 +91,7 @@
     "primary_model": "llama-3.1-8b-instant",
     "deep_enabled": true,
     "deep_model": "llama-3.3-70b-versatile",
-    "fallback_enabled": true,
+    "fallback_enabled": false,
     "fallback_model": "llama-3.1-8b-instant",
     "workers": 2,
     "prompt_context_enabled": true,
@@ -155,9 +162,9 @@
     "minimum_user_silence_seconds": 10
   },
   "tutor": {
-    "enabled": true,
-    "quick_search_enabled": true,
-    "research_enabled": true,
+    "enabled": false,
+    "quick_search_enabled": false,
+    "research_enabled": false,
     "self_search_enabled": false,
     "low_confidence_clarify_threshold": 0.55,
     "stale_result_guard_enabled": true,

@@ -20,7 +20,7 @@ Candidate chưa phải activation. Nó chỉ nói:
 Quyết định cuối thuộc MemoryScorer. Không để store tự làm quan tòa nữa.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 try:
@@ -78,12 +78,6 @@ class MemoryCandidate:
             + self.bigram_score * 0.16
             + self.temporal_score * 0.06
         )
-
-
-@dataclass(slots=True)
-class CandidateBatch:
-    layer: str
-    candidates: list[MemoryCandidate] = field(default_factory=list)
 
 
 class MemoryLayerAdapter:

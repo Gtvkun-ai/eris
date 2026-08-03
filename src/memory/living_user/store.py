@@ -6,6 +6,7 @@ không đoán tâm lý và không tự tạo nội dung. Nhờ vậy mọi thay 
 undo được và có thể giải thích bằng evidence.
 """
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import json
 import os
@@ -63,7 +64,7 @@ class UserProfileStore:
         config: UserProfileStoreConfig | None = None,
     ) -> None:
         self.path = Path(path)
-        self.config = config or UserProfileStoreConfig()
+        self.config = resolve_dependency(config, lambda: UserProfileStoreConfig())
         self._records: dict[str, ProfileRecord] = {}
         self._history: list[dict[str, Any]] = []
         self._audit: list[dict[str, Any]] = []

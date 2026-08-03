@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.di import resolve_dependency
 
 """
 memory_retrieval_engine.py
@@ -56,8 +57,8 @@ class MemoryStores:
 class MemoryRetrievalEngine:
     def __init__(self, stores: MemoryStores, *, scorer: MemoryScorer | None = None, activation_builder: MemoryActivationBuilder | None = None):
         self.stores = stores
-        self.scorer = scorer or MemoryScorer()
-        self.activation_builder = activation_builder or MemoryActivationBuilder()
+        self.scorer = resolve_dependency(scorer, lambda: MemoryScorer())
+        self.activation_builder = resolve_dependency(activation_builder, lambda: MemoryActivationBuilder())
         self.adapters = {
             layer: MemoryLayerAdapter(layer=layer, store=store)
             for layer, store in stores.as_layer_map().items()

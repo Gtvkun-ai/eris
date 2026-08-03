@@ -301,7 +301,7 @@
       "broad": 3,
       "silent": 0
     },
-    "cortex/tutor/gemma_research_critic.py": {
+    "cortex/tutor/local_research_critic.py": {
       "broad": 3,
       "silent": 1
     },

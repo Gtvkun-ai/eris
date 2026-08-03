@@ -142,7 +142,22 @@ class _NoSurfaceRouter:
     surface_client = None
 
 
-def test_liveness_fallback_creates_candidate_not_public_text():
+def test_liveness_fallback_is_silent_by_default():
+    """Seed/worker chết thì random chat im; không dựng liveness candidate ngầm."""
+    board = TypedCognitiveBlackboard.from_snapshot(
+        _snapshot(seconds_since_user=900.0, seconds_since_assistant=900.0),
+        now=1000.0,
+    )
+    candidate = SocialInitiativeEngine(_NoSurfaceRouter()).propose(board, snapshot=_snapshot())
+
+    assert candidate is None
+
+
+def test_legacy_liveness_fallback_remains_behind_flag(monkeypatch):
+    """Đường cũ còn để rollback, nhưng phải bật flag rõ ràng."""
+    import runtime.architecture_flags as architecture_flags
+
+    monkeypatch.setattr(architecture_flags, "legacy_social_fallback_enabled", lambda: True)
     board = TypedCognitiveBlackboard.from_snapshot(
         _snapshot(seconds_since_user=900.0, seconds_since_assistant=900.0),
         now=1000.0,

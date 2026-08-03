@@ -1024,7 +1024,7 @@ def _json(text: str, *, public_reply: bool = True) -> dict[str, Any]:
     raw = str(text or "").strip()
     if not raw:
         return {}
-    
+
     def unwrap(d: dict) -> dict:
         if not d:
             return d
@@ -2641,14 +2641,15 @@ class AIRuntimeModelRouter:
     def realize_surface_speech(self, request: Mapping[str, Any]) -> dict[str, Any]:
         """Surface Worker chỉ viết wording từ SpeechIntent đã được duyệt.
 
-        Fallback: khi surface_client (DS2API) circuit-open hoặc None, thử companion/main
-        brain như writer dự phòng. Bật/tắt bằng ERIS_SURFACE_REALIZER_COMPANION_FALLBACK=0.
+        Surface chết thì trả rỗng để caller im/body-only. Companion, critic hay
+        observer không được giả làm Surface. Đường tương thích cũ vẫn còn sau
+        ``surface_cross_worker_fallback`` và mặc định tắt.
         """
 
+        from runtime.architecture_flags import surface_cross_worker_fallback_enabled
+
         client = self.surface_client
-        _fallback_enabled = str(
-            os.getenv("ERIS_SURFACE_REALIZER_COMPANION_FALLBACK", "1") or "1"
-        ).strip().lower() not in {"0", "false", "no", "off"}
+        _fallback_enabled = surface_cross_worker_fallback_enabled()
 
         if client is None and _fallback_enabled:
             fallback_client = (

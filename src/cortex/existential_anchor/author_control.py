@@ -16,6 +16,7 @@ Các store là tùy chọn (None an toàn) để facade test được độc l�
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 from dataclasses import dataclass
 from typing import Any
@@ -61,7 +62,7 @@ class AuthorControl:
         anchor_store: Any = None,
         deception_ledger: Any = None,
     ) -> None:
-        self.switches = switches or AnchorSwitches()
+        self.switches = resolve_dependency(switches, lambda: AnchorSwitches())
         self.shadow_register = shadow_register
         self.user_model_store = user_model_store
         self.anchor_store = anchor_store

@@ -17,6 +17,7 @@ Nếu để nội áp tự nhảy ra public, ta có một NPC kêu đói giữa 
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import math
 import time
@@ -114,7 +115,7 @@ class EndogenousDriveEngine:
     """Cập nhật nội áp từ user context + internal_state cũ + agenda."""
 
     def __init__(self, config: EndogenousDriveConfig | None = None) -> None:
-        self.config = config or EndogenousDriveConfig()
+        self.config = resolve_dependency(config, lambda: EndogenousDriveConfig())
         self.current = RollingInternalState()
 
     def update(

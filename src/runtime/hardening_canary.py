@@ -6,6 +6,7 @@ Verifier offline của Phase 5 đã biết chấm điểm, nhưng chưa biết m
 20–30 turn, tự đóng khi đủ mẫu, lưu evidence đã redaction và có thể kích rollback.
 """
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import json
 import os
@@ -90,8 +91,8 @@ class HardeningCanaryManager:
         self.observability = observability
         self.rollout_controller = rollout_controller
         self.provider_health_fn = provider_health_fn or (lambda: {})
-        self.config = config or CanaryConfig.from_env()
-        self.verifier = verifier or HardeningVerifier()
+        self.config = resolve_dependency(config, CanaryConfig.from_env)
+        self.verifier = resolve_dependency(verifier, lambda: HardeningVerifier())
         self.state: CanaryState | None = None
         self.last_completion: CanaryCompletion | None = None
 

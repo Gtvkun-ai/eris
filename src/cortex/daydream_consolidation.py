@@ -19,6 +19,7 @@ Không nguồn thì không vào agenda. Đơn giản, lạnh lùng, và đáng t
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import json
 import math
@@ -155,7 +156,7 @@ class DaydreamConsolidator:
 
     def __init__(self, *, llm_client: Any = None, config: DaydreamConsolidationConfig | None = None, logger: Any = None) -> None:
         self.client = llm_client
-        self.config = config or DaydreamConsolidationConfig()
+        self.config = resolve_dependency(config, lambda: DaydreamConsolidationConfig())
         self.logger = logger
         self.last_run_at = 0.0
         self.last_result: DaydreamResult | None = None

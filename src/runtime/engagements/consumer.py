@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Reliable event-consumer pump for the engagement stream."""
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import time
 from dataclasses import asdict, dataclass
@@ -58,7 +59,7 @@ class EngagementEventConsumer:
         self.registry = registry
         self.consumer_id = key
         self.handler = handler
-        self.settings = settings or EngagementSettings()
+        self.settings = resolve_dependency(settings, lambda: EngagementSettings())
         self.health_registry = health_registry
         self._clock = clock or time.time
         self.logger = logger

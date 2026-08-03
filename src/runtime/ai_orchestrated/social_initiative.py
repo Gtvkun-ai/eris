@@ -575,6 +575,12 @@ class SocialInitiativeEngine:
         if semantic_candidate is not None:
             return semantic_candidate
 
+        # Generic social fallback cũ không có owner/model premise rõ. Mặc định
+        # fail-closed: seed chết thì random chat im. Giữ code dưới flag để rollout.
+        from runtime.architecture_flags import legacy_social_fallback_enabled
+        if not legacy_social_fallback_enabled():
+            return None
+
         policy = _autonomous_surface_policy()
         user_enabled = bool(policy.get("enabled", False))
         desired = max(20.0, float(policy.get("desired", 35.0) or 35.0)) if user_enabled else _env_float(

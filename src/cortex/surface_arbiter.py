@@ -8,6 +8,7 @@ một hũ câu mẫu riêng nên được chôn cạnh các file backup tên fin
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 from dataclasses import dataclass, field
 import re
@@ -144,7 +145,7 @@ class SurfaceArbiter:
         llm_micro_gen: Any = None,
         thought_stream: Any = None,
     ) -> None:
-        self.policy = policy or LowLevelSpeechPolicy()
+        self.policy = resolve_dependency(policy, lambda: LowLevelSpeechPolicy())
         self.llm_generator = llm_micro_gen
         self.thought_stream = thought_stream
         self.silent_cycles = 0
@@ -542,7 +543,7 @@ class SurfaceArbiter:
             if owner is None:
                 continue
             for attr in ("surface_impulses", "low_level_impulses", "speech_impulses"):
-                for raw_impulse in tuple(getattr(owner, attr, ()) or ()): 
+                for raw_impulse in tuple(getattr(owner, attr, ()) or ()):
                     converted = self._coerce_impulse(raw_impulse, surface_kind=surface_kind)
                     if converted is not None:
                         impulses.append(converted)
@@ -551,7 +552,7 @@ class SurfaceArbiter:
             getter = getattr(self.thought_stream, "get_surface_candidates", None)
             if callable(getter):
                 try:
-                    for raw_impulse in tuple(getter() or ()): 
+                    for raw_impulse in tuple(getter() or ()):
                         converted = self._coerce_impulse(raw_impulse, surface_kind=surface_kind)
                         if converted is not None:
                             impulses.append(converted)

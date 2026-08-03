@@ -492,7 +492,7 @@ class DebugConsole:
                 self.coord._debug_overrides.clear()
             self.coord._debug_yan_mode = False
             return "đã xóa toàn bộ debug overrides"
-        
+
         cleared = []
         for field in args:
             field = self._resolve_field(field)

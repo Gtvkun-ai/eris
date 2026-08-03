@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Unified diagnostics snapshot for the composed ERIS runtime."""
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import time
 from typing import Any
@@ -15,7 +16,7 @@ class RuntimeDiagnostics:
     def __init__(self, owner: Any, *, clock=None, readiness_evaluator=None) -> None:
         self.owner = owner
         self._clock = clock or time.time
-        self._readiness = readiness_evaluator or RuntimeReadinessEvaluator()
+        self._readiness = resolve_dependency(readiness_evaluator, lambda: RuntimeReadinessEvaluator())
         policy = getattr(getattr(owner, "runtime_policy_settings", None), "observability", None)
         self._slo = RuntimeSLOTracker(settings=policy, clock=self._clock)
 

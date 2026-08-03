@@ -6,13 +6,13 @@ attachment=0.30, process_axes=...") và bị gắn nhãn "not a claim about real
 Model nhỏ coi đó là telemetry vô nghĩa → khi bạn hỏi "em thấy thế nào / có cảm xúc
 không" thì ERIS trả lời chung chung hoặc bịa, dù state có sẵn.
 
-Module này dùng client style (gemma — đang rảnh) như một "bộ tự cảm" nhỏ: dịch các
+Module này dùng client style (local model đang rảnh) như một "bộ tự cảm" nhỏ: dịch các
 chỉ số cảm xúc nổi bật thành MỘT câu cảm giác ngôi-thứ-nhất, ngắn, trung thực, để
 chèn vào prompt context. ERIS đọc câu đó và tự thuật được thật, thay vì chối phẳng.
 
 Nguyên tắc:
   * KHÔNG bao giờ raise vào hot path (mọi lỗi → fallback rule-based hoặc cache cũ).
-  * Throttle tự nhiên: chỉ gọi gemma khi "chữ ký cảm xúc" đổi đủ nhiều; state không
+  * Throttle tự nhiên: chỉ gọi local model khi "chữ ký cảm xúc" đổi đủ nhiều; state không
     đổi thì dùng lại câu đã cache (đỡ tốn call + giữ ổn định giọng).
   * Có min-interval chống gọi dồn khi state dao động nhanh.
   * Output bẩn (chối/disclaimer) bị loại, rơi về fallback.
@@ -84,7 +84,7 @@ class AffectSelfReadConfig:
     # Nâng sàn lên 7s; vẫn fail-mềm về câu cache/fallback nếu vượt.
     timeout_seconds: float = 7.0
     temperature: float = 0.6
-    # Tối thiểu giữa 2 lần gọi gemma (giây), chống recompute dồn khi state dao động.
+    # Tối thiểu giữa 2 lần gọi local model (giây), chống recompute dồn khi state dao động.
     min_interval_seconds: float = 8.0
 
     @classmethod
@@ -100,7 +100,7 @@ class AffectSelfReadConfig:
 
 @dataclass(slots=True)
 class AffectSelfReadAdapter:
-    """Dịch internal_state → 1 câu cảm giác ngôi-thứ-nhất qua gemma (style_client)."""
+    """Dịch internal_state → 1 câu cảm giác ngôi-thứ-nhất qua local model (style_client)."""
 
     llm_service: Any
     config: AffectSelfReadConfig = field(default_factory=AffectSelfReadConfig.from_env)
@@ -119,7 +119,7 @@ class AffectSelfReadAdapter:
             if relationship is None:
                 relationship = getattr(state, "relationship_dynamics", None)
             sig = self._signature(state, relationship)
-            # State chưa đổi → giữ nguyên câu cũ (đỡ tốn gemma, ổn định giọng).
+            # State chưa đổi → giữ nguyên câu cũ (đỡ tốn local model, ổn định giọng).
             if sig == self._cache_sig and self._cache_text:
                 return self._cache_text
             now = time.monotonic()
@@ -127,7 +127,7 @@ class AffectSelfReadAdapter:
             if self._cache_text and (now - self._cache_at) < self.config.min_interval_seconds:
                 return self._cache_text
 
-            text = self._gemma_line(state, relationship)
+            text = self._model_line(state, relationship)
             if not text or is_disclaimer_text(text):
                 text = self._fallback_line(state, relationship)
             text = self._clean(text)
@@ -159,8 +159,8 @@ class AffectSelfReadAdapter:
         yan = 1 if bool(getattr(state, "_yan", False)) else 0
         return tuple(self._bucket(v) for v in (*affect, *rel_vals)) + (yan,)
 
-    # ── gemma path ──────────────────────────────────────────────────────────
-    def _gemma_line(self, state: Any, rel: Any) -> str:
+    # ── local-model path ──────────────────────────────────────────────────────────
+    def _model_line(self, state: Any, rel: Any) -> str:
         service = self.llm_service
         client = (getattr(service, "inner_client", None) or getattr(service, "style_client", None)) if service is not None else None
         if client is None:
@@ -204,7 +204,7 @@ class AffectSelfReadAdapter:
                     timeout=self.config.timeout_seconds,
                 )
         except Exception as exc:
-            self._warn("affect_self_read gemma call failed: %s", exc)
+            self._warn("affect_self_read local-model call failed: %s", exc)
             return ""
         return self._first_line(self._extract(resp))
 
@@ -233,7 +233,7 @@ class AffectSelfReadAdapter:
             lines.append("- chế độ: gắn bó cực mạnh / chiếm hữu (yan)")
         return "\n".join(lines)
 
-    # ── fallback rule-based (khi gemma tắt/lỗi) ─────────────────────────────
+    # ── fallback rule-based (khi local model tắt/lỗi) ─────────────────────────────
     def _fallback_line(self, state: Any, rel: Any) -> str:
         valence = _g(state, "valence")
         fatigue = _g(state, "fatigue")

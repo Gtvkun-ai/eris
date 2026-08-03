@@ -19,6 +19,7 @@ nhất quán: schema_version, atomic save, reload-on-change, corrupt→baseline.
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import json
 import math
@@ -458,7 +459,7 @@ class IdentityGate:
     _OBJECTIFICATION_THRESHOLD = 0.55
 
     def __init__(self, envelope: IdentityEnvelope | None = None) -> None:
-        self.envelope = envelope or IdentityEnvelope.default()
+        self.envelope = resolve_dependency(envelope, IdentityEnvelope.default)
 
     def evaluate(
         self,

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Stateful board tracker và analyzer cờ có thể thay nóng bằng Stockfish."""
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import hashlib
 import threading
@@ -72,7 +73,7 @@ class ChessGameTracker:
         self.direct_move_rate = max(0.0, min(1.0, float(direct_move_rate)))
         # Default vẫn là local để unit test và máy chưa có Stockfish không phụ
         # thuộc executable ngoài. Service runtime sẽ truyền Hybrid analyzer.
-        self.analyzer: ChessAnalyzer = analyzer or LocalChessAnalyzer(depth=self.depth)
+        self.analyzer: ChessAnalyzer = resolve_dependency(analyzer, lambda: LocalChessAnalyzer(depth=self.depth))
         self._games: dict[str, _GameState] = {}
         self._lock = threading.RLock()
 

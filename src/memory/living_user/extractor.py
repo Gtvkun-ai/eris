@@ -10,6 +10,7 @@ Model chỉ đề xuất ``ProfileOperation``. Store mới là nơi quyết đ�
 người dùng như biên kịch phim dài tập.
 """
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import re
 from dataclasses import dataclass
@@ -44,7 +45,7 @@ class ProfileExtractionConfig:
 class UserProfileExtractor:
     def __init__(self, *, model_adapter: UserProfileModelAdapter | None = None, config: ProfileExtractionConfig | None = None) -> None:
         self.model_adapter = model_adapter
-        self.config = config or ProfileExtractionConfig()
+        self.config = resolve_dependency(config, lambda: ProfileExtractionConfig())
 
     def from_semantic_items(
         self,

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Xây episode từ các lượt hội thoại hoặc event ledger."""
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import re
 import time
@@ -24,7 +25,7 @@ class EpisodeBuilderConfig:
 class UserEpisodeBuilder:
     def __init__(self, *, model_adapter: UserProfileModelAdapter | None = None, config: EpisodeBuilderConfig | None = None) -> None:
         self.model_adapter = model_adapter
-        self.config = config or EpisodeBuilderConfig()
+        self.config = resolve_dependency(config, lambda: EpisodeBuilderConfig())
 
     def build(
         self,

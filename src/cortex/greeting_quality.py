@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import re
 import unicodedata
@@ -78,7 +79,7 @@ class GreetingQualityScorer:
     )
 
     def __init__(self, *, cognition: GreetingCognitionEngine | None = None):
-        self.cognition = cognition or GreetingCognitionEngine()
+        self.cognition = resolve_dependency(cognition, lambda: GreetingCognitionEngine())
         self.anchor_gate = StartupAnchorGate()
 
     def score(self, text: str, frame: GreetingFrame) -> GreetingQuality:

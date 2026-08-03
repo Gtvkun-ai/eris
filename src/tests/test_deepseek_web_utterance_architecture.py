@@ -377,4 +377,3 @@ def test_utterance_spec_cleans_japanese_brackets_from_display_text():
     assert "「" not in spec.display.text
     assert spec.display.text.startswith("Vậy thì không cần ép mình")
     assert spec.speech.text.startswith("じゃあ、無理に何かしなくていいよ")
-

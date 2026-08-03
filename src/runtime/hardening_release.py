@@ -6,6 +6,7 @@ Một bản ``stable`` chỉ có ý nghĩa khi nó trỏ tới báo cáo Phase 7
 một cảm xúc tích cực được đặt cạnh file zip.
 """
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import hashlib
 import json
@@ -286,7 +287,7 @@ class HardeningReleaseGuard:
         config: HardeningConfig | None = None,
     ) -> None:
         self.source_root = Path(source_root).resolve()
-        self.config = config or HardeningConfig.load()
+        self.config = resolve_dependency(config, HardeningConfig.load)
         raw = manifest_path or self.config.release_manifest_path
         path = Path(raw)
         self.manifest_path = path if path.is_absolute() else self.source_root / path

@@ -41,7 +41,7 @@ TimeScope = Literal["current", "session", "stable", "past", "future", "habitual"
 class EntityRef:
     """Entity đã link nhẹ từ surface text.
 
-    `kind` là nhãn loại entity: location/person_name/style_rule/topic/...  
+    `kind` là nhãn loại entity: location/person_name/style_rule/topic/...
     `canonical` là dạng ổn định để merge/search. Không được dùng canonical bỏ dấu
     làm surface public nếu user cần tên riêng có dấu.
     """

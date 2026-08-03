@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Biên dịch user profile thành context packet theo đúng query hiện tại."""
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import math
 import re
@@ -48,8 +49,8 @@ class ProfileContextCompiler:
         self.episode_store = episode_store
         self.embedding_index = embedding_index
         self.action_store = action_store
-        self.clarification_policy = clarification_policy or MemoryClarificationPolicy()
-        self.config = config or ProfileContextCompilerConfig()
+        self.clarification_policy = resolve_dependency(clarification_policy, lambda: MemoryClarificationPolicy())
+        self.config = resolve_dependency(config, lambda: ProfileContextCompilerConfig())
 
     def compile(
         self,

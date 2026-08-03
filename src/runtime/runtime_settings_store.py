@@ -36,6 +36,15 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         # OCR/runtime/memory là nguồn neo ưu tiên, không phải điều kiện để ERIS
         # được phép chào. Bật mặc định để startup không hóa câm khi worker chậm.
         "startup_force_speak": True,
+        # Bốn ranh giới hardening. Tất cả lane legacy giữ lại sau flag nhưng
+        # không được tự khởi động hay giành quyền phát ở cấu hình mặc định.
+        "private_cognition_surface_export": False,
+        "surface_cross_worker_fallback": False,
+        "legacy_model_lanes_enabled": False,
+        "inner_diary_model_enabled": False,
+        "background_tutor_enabled": False,
+        "legacy_social_fallback_enabled": False,
+        "event_trace_enabled": True,
     },
     "opening_director": {
         # Hybrid mặc định: rule giữ grounding/safety, model chỉ chọn cấu trúc và
@@ -144,7 +153,7 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "primary_model": "llama-3.1-8b-instant",
         "deep_enabled": True,
         "deep_model": "llama-3.3-70b-versatile",
-        "fallback_enabled": True,
+        "fallback_enabled": False,
         "fallback_model": "llama-3.1-8b-instant",
         "workers": 2,
         "prompt_context_enabled": True,
@@ -229,6 +238,8 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "minimum_user_silence_seconds": 12,
     },
     "tutor": {
+        # Các preference tutor vẫn được giữ để UI/config cũ không vỡ; startup
+        # thực tế bị khóa bởi architecture.background_tutor_enabled=false.
         "enabled": True,
         "quick_search_enabled": True,
         "research_enabled": True,
@@ -335,6 +346,13 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
 
 # Mapping này phục vụ migration, không phải nguồn schema chính.
 _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
+    ("architecture", "private_cognition_surface_export"): ("ERIS_PRIVATE_COGNITION_SURFACE_EXPORT", "bool"),
+    ("architecture", "surface_cross_worker_fallback"): ("ERIS_SURFACE_REALIZER_COMPANION_FALLBACK", "bool"),
+    ("architecture", "legacy_model_lanes_enabled"): ("ERIS_LEGACY_MODEL_LANES_ENABLED", "bool"),
+    ("architecture", "inner_diary_model_enabled"): ("ERIS_INNER_DIARY_MODEL_ENABLED", "bool"),
+    ("architecture", "background_tutor_enabled"): ("ERIS_BACKGROUND_TUTOR_ENABLED", "bool"),
+    ("architecture", "legacy_social_fallback_enabled"): ("ERIS_LEGACY_SOCIAL_FALLBACK_ENABLED", "bool"),
+    ("architecture", "event_trace_enabled"): ("ERIS_PUBLIC_EVENT_TRACE_ENABLED", "bool"),
     ("architecture", "mode"): ("ERIS_RUNTIME_ARCHITECTURE", "str"),
     ("architecture", "startup_greeting"): ("ERIS_AI_STARTUP_GREETING_ENABLED", "bool"),
     ("architecture", "startup_screen_opening"): ("ERIS_AI_STARTUP_SCREEN_OPENING", "bool"),

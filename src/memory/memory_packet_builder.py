@@ -75,7 +75,7 @@ class MemoryPacket:
 
         # Sort activations descending by score
         sorted_activations = sorted(self.activations, key=lambda a: a.score, reverse=True)
-        
+
         # Limit to top 3-5 activations
         limit = max(3, min(5, len(sorted_activations)))
         top_activations = sorted_activations[:limit]

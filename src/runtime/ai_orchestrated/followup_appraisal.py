@@ -12,6 +12,7 @@ không thích ERIS. Im lặng là bằng chứng yếu. Con người còn có th
 nước, một hoạt động ngoại tuyến táo bạo mà runtime thường quên mất.
 """
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import os
 from dataclasses import dataclass, replace
@@ -75,7 +76,7 @@ class FollowUpAppraisalLayer:
     """
 
     def __init__(self, policy: FollowUpPolicy | None = None) -> None:
-        self.policy = policy or FollowUpPolicy.from_environment()
+        self.policy = resolve_dependency(policy, FollowUpPolicy.from_environment)
         self._user_turn_marker = 0.0
         self._thread_key = "unknown"
         self._question_started_at = 0.0

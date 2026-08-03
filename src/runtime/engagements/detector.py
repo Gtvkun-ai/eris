@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Conservative proposal and lifecycle-control detector for engagements."""
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import hashlib
 import re
@@ -74,7 +75,7 @@ class EngagementDetector:
     )
 
     def __init__(self, profiles: EngagementProfileRegistry | None = None) -> None:
-        self.profiles = profiles or EngagementProfileRegistry.defaults()
+        self.profiles = resolve_dependency(profiles, EngagementProfileRegistry.defaults)
 
     def register_profile(self, profile: EngagementProfile, *, replace: bool = False) -> None:
         self.profiles.register(profile, replace=replace)

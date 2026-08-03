@@ -7,6 +7,7 @@ hành động vào text.
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 from dataclasses import dataclass
 from typing import Any
@@ -46,7 +47,7 @@ _STAGE_PRESETS: dict[str, StagePlan] = {
 
 class StagePlanner:
     def __init__(self, *, expression_bridge: IdentityExpressionBridge | None = None) -> None:
-        self.expression_bridge = expression_bridge or IdentityExpressionBridge()
+        self.expression_bridge = resolve_dependency(expression_bridge, lambda: IdentityExpressionBridge())
 
     def plan(
         self,

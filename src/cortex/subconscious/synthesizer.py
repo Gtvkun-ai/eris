@@ -10,6 +10,7 @@ lẫn họp nhóm loài người.
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 from dataclasses import dataclass
 import re
@@ -79,7 +80,7 @@ class ConsciousSynthesizer:
     """
 
     def __init__(self, policy: SynthesisPolicy | None = None) -> None:
-        self.policy = policy or SynthesisPolicy()
+        self.policy = resolve_dependency(policy, lambda: SynthesisPolicy())
         self.last_report = SynthesisReport(
             object=None,
             considered_fragment_ids=(),

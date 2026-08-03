@@ -368,5 +368,3 @@ def test_ds2api_forces_thinking_mode_enabled(monkeypatch) -> None:
     )
 
     assert captured["json"]["thinking"] == {"type": "enabled"}
-
-

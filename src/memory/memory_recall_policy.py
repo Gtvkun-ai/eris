@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.di import resolve_dependency
 
 """
 memory_recall_policy.py
@@ -43,7 +44,7 @@ class MemoryRecallSurfacePolicy:
     """Policy surface kết quả recall thành câu public."""
 
     def __init__(self, config: RecallPolicyConfig | None = None, *, registry: PredicateRegistry | None = None) -> None:
-        self.config = config or RecallPolicyConfig()
+        self.config = resolve_dependency(config, lambda: RecallPolicyConfig())
         self.registry = registry or get_default_registry()
 
     def surface(self, result: RawRecallResult) -> RecallAnswer:

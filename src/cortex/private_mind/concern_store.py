@@ -11,6 +11,7 @@ một log line. Không có store này, ERIS chỉ có trí nhớ cá vàng độ
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import json
 import os
@@ -116,7 +117,7 @@ class ConcernStore:
         logger: Any | None = None,
     ) -> None:
         self.path = Path(path) if path else None
-        self.config = config or ConcernStoreConfig()
+        self.config = resolve_dependency(config, lambda: ConcernStoreConfig())
         self.logger = logger
         self._concerns: dict[str, PrivateConcern] = {}
         self._lock = threading.RLock()

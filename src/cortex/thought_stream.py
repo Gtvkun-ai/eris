@@ -1,3 +1,4 @@
+from core.di import resolve_dependency
 import os
 import re
 import threading
@@ -15,7 +16,7 @@ from .contracts import (
 )
 from .internal_state import PersistentInternalState
 '''
-giữ các ý nghĩ chưa hoàn tất, cho chúng decay, tái kích hoạt, gom thành loop, 
+giữ các ý nghĩ chưa hoàn tất, cho chúng decay, tái kích hoạt, gom thành loop,
 tính momentum, rồi thỉnh thoảng cho một mẩu nổi lên thành ThoughtSurface.'''
 
 def _clamp01(value) -> float:
@@ -129,7 +130,7 @@ class FragmentStore:
                 resolved=thought.resolved, # giữ nguyên trạng thái đã giải quyết, vì nó phản ánh liệu ý nghĩ này đã từng được bộc lộ ra ngoài hay chưa
                 evidence=thought.evidence, # giữ nguyên bằng chứng, vì nó phản ánh lý do tại sao ý nghĩ này tồn tại và có thể vẫn còn quan trọng dù ý nghĩ có thể mờ dần
                 risk_flags=thought.risk_flags, # giữ nguyên cờ rủi ro, vì nó phản ánh các yếu tố có thể khiến ý nghĩ này nguy hiểm hoặc không mong muốn, dù nó có thể mờ dần
-                created_at=thought.created_at, 
+                created_at=thought.created_at,
                 updated_at=thought.updated_at,
                 last_reactivated_at=thought.last_reactivated_at,
             )
@@ -162,7 +163,7 @@ class FragmentStore:
                 last_reactivated_at=now,
             )
         else: # nếu đã có ý nghĩ với cùng key, thì cập nhật nó thay vì tạo mới, để duy trì sự liên tục của ý nghĩ đó qua thời gian
-            stored = ThoughtObject( 
+            stored = ThoughtObject(
                 thought_id=previous.thought_id,
                 mode=thought.mode or previous.mode,
                 topic_seed=thought.topic_seed or previous.topic_seed,
@@ -186,10 +187,10 @@ class FragmentStore:
         self._items[key] = stored
         return stored
 
-    #khi thought đã lộ ra ngoài thì giảm tension/novelty/persistence để phản ánh rằng 
-    # nó đã được bộc lộ và có thể không còn mạnh mẽ như khi nó mới xuất hiện, 
+    #khi thought đã lộ ra ngoài thì giảm tension/novelty/persistence để phản ánh rằng
+    # nó đã được bộc lộ và có thể không còn mạnh mẽ như khi nó mới xuất hiện,
     # đồng thời tăng surfaced_count để theo dõi số lần nó đã lộ ra, điều này có thể
-    #  ảnh hưởng đến cách nó được xử lý trong tương lai (ví dụ: nếu một thought đã 
+    #  ảnh hưởng đến cách nó được xử lý trong tương lai (ví dụ: nếu một thought đã
     # lộ ra nhiều lần nhưng vẫn chưa được giải quyết, có thể cần phải chú ý hơn đến nó)
     def mark_surfaced(self, thought_id: str) -> None: #giảm lực của thought sau khi nó đã lộ ra.
         for key, thought in list(self._items.items()):
@@ -905,7 +906,7 @@ class CognitiveMomentumEngine:
             )
         )
     # điểm momentum được tính dựa trên nhiều yếu tố như tension, persistence, số lần tái kích hoạt, độ liên quan với dự án hiện tại, và độ mới của ý nghĩ đó. Ý nghĩ nào có điểm momentum cao nhất sẽ có khả năng được bộc lộ ra ngoài hơn, tạo thành một "inertia" trong luồng suy nghĩ của người dùng.
-    def _momentum_for( 
+    def _momentum_for(
         self,
         thought: ThoughtObject,
         *,
@@ -1322,7 +1323,7 @@ class SubconsciousLoopReheater:
 
 
 #Đây là cổng quyết định thought có được nổi lên thành ThoughtSurface không.
-''' 
+'''
 Nó chặn nếu:
 
 thought đã closed
@@ -1478,7 +1479,7 @@ AssociationGraph gắn association.
 RecursiveReactivation upsert thought vào store.
 CognitiveTensionEngine cập nhật tension.
 MomentumClosure đóng loop nếu có closure signal.
-Lấy unresolved thoughts. 
+Lấy unresolved thoughts.
 UnresolvedTensionEngine tìm loop/attractor.
 CognitiveMomentumEngine tính momentum.
 SurfaceSelector quyết định có surface không.
@@ -1509,17 +1510,17 @@ class ThoughtStreamEngine:
         model_review_min_trigger: float | None = None,
         logger=None,
     ):
-        self.fragment_store = fragment_store or FragmentStore()
-        self.association_graph = association_graph or AssociationGraph()
-        self.prediction_tracker = prediction_tracker or PredictionTracker()
-        self.tension_engine = tension_engine or CognitiveTensionEngine()
-        self.unresolved_tension_engine = unresolved_tension_engine or UnresolvedTensionEngine()
-        self.momentum_engine = momentum_engine or CognitiveMomentumEngine()
-        self.momentum_closure = momentum_closure or MomentumClosure()
-        self.persistence_decay = persistence_decay or PersistenceDecay()
-        self.recursive_reactivation = recursive_reactivation or RecursiveReactivation()
-        self.loop_reheater = loop_reheater or SubconsciousLoopReheater()
-        self.surface_selector = surface_selector or SurfaceSelector()
+        self.fragment_store = resolve_dependency(fragment_store, lambda: FragmentStore())
+        self.association_graph = resolve_dependency(association_graph, lambda: AssociationGraph())
+        self.prediction_tracker = resolve_dependency(prediction_tracker, lambda: PredictionTracker())
+        self.tension_engine = resolve_dependency(tension_engine, lambda: CognitiveTensionEngine())
+        self.unresolved_tension_engine = resolve_dependency(unresolved_tension_engine, lambda: UnresolvedTensionEngine())
+        self.momentum_engine = resolve_dependency(momentum_engine, lambda: CognitiveMomentumEngine())
+        self.momentum_closure = resolve_dependency(momentum_closure, lambda: MomentumClosure())
+        self.persistence_decay = resolve_dependency(persistence_decay, lambda: PersistenceDecay())
+        self.recursive_reactivation = resolve_dependency(recursive_reactivation, lambda: RecursiveReactivation())
+        self.loop_reheater = resolve_dependency(loop_reheater, lambda: SubconsciousLoopReheater())
+        self.surface_selector = resolve_dependency(surface_selector, lambda: SurfaceSelector())
         self.model_reviewer = model_reviewer
         self.model_review_enabled = bool(model_reviewer) if model_review_enabled is None else bool(model_review_enabled)
         self.model_review_min_interval_seconds = max(1.0, float(
@@ -2104,7 +2105,7 @@ class ThoughtStream:
         if enabled is None:
             enabled = self._load_enabled()
         self.context_provider = context_provider
-        self.engine = engine or ThoughtStreamEngine(model_reviewer=model_reviewer, logger=logger)
+        self.engine = resolve_dependency(engine, lambda: ThoughtStreamEngine(model_reviewer=model_reviewer, logger=logger))
         self.interval_seconds = max(1.0, float(interval_seconds))
         self.enabled = bool(enabled)
         self.logger = logger

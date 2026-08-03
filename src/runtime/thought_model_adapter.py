@@ -14,6 +14,7 @@ và ThoughtStream chạy deterministic như cũ.
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import os
 from dataclasses import dataclass, field
@@ -40,7 +41,7 @@ class ThoughtModelAdapterConfig:
 
 class RuntimeThoughtModelAdapter:
     def __init__(self, *, config: ThoughtModelAdapterConfig | None = None, private_adapter: Any = None, logger: Any = None) -> None:
-        self.config = config or ThoughtModelAdapterConfig()
+        self.config = resolve_dependency(config, lambda: ThoughtModelAdapterConfig())
         self.min_interval_seconds = self.config.min_interval_seconds
         self.log_api_thoughts = self.config.log_api_thoughts
         self.logger = logger

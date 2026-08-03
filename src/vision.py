@@ -13,6 +13,9 @@ from app_logging import configure_logging, get_logger
 from domain import Decision
 from llm import LlmService
 from llm.process_manager import RemoteModelProcessManager
+from runtime.architecture_flags import (
+    background_tutor_enabled, inner_diary_model_enabled, legacy_model_lanes_enabled,
+)
 from memory.memory_cognition import MemoryCognitionCore
 from parser_grounding import DecisionParser
 from runtime.coordinator import RuntimeCoordinator
@@ -77,11 +80,13 @@ class AttentionOverseer:
             n_ctx=n_ctx,
             n_gpu_layers=n_gpu_layers,
         )
+        # local/open-model style lane cũ không còn được khởi động mặc định. Code vẫn
+        # nằm sau feature flag để rollback có kiểm soát, thay vì âm thầm sống lại.
         style_client = self.process_manager.build_style_client(
             model_path=model_path,
             n_ctx=min(n_ctx, 4096),
             n_gpu_layers=n_gpu_layers,
-        )
+        ) if legacy_model_lanes_enabled() else None
         if style_client is not None:
             provider_label = getattr(style_client, "base_url", "") or style_client.__class__.__name__
             self.logger.info("Speech/style client đã sẵn sàng: %s", provider_label)
@@ -110,13 +115,18 @@ class AttentionOverseer:
         ).strip().lower() in {"1", "true", "yes", "on"}
         social_parser_client = self.process_manager.build_social_parser_client() if social_models_enabled else None
         social_critic_client = self.process_manager.build_social_critic_client() if social_models_enabled else None
-        social_fallback_client = self.process_manager.build_social_fallback_client() if social_models_enabled else None
+        # Social fallback cũ là một worker riêng và chỉ được sống khi flag legacy
+        # được bật rõ. Primary/deep observer không được tự biến thành fallback.
+        social_fallback_client = (
+            self.process_manager.build_social_fallback_client()
+            if social_models_enabled and legacy_model_lanes_enabled() else None
+        )
         inner_client = self.process_manager.build_inner_client()
-        diary_client = self.process_manager.build_diary_client()
+        diary_client = self.process_manager.build_diary_client() if inner_diary_model_enabled() else None
         seed_client = self.process_manager.build_seed_client()
         surface_client = self.process_manager.build_surface_client()
-        research_client = self.process_manager.build_research_client()
-        tutor_client = self.process_manager.build_tutor_client()
+        research_client = self.process_manager.build_research_client() if background_tutor_enabled() else None
+        tutor_client = self.process_manager.build_tutor_client() if background_tutor_enabled() else None
         if escalation_client is not None:
             provider_label = getattr(escalation_client, "base_url", "") or escalation_client.__class__.__name__
             self.logger.info("Escalation client (bái sư) đã sẵn sàng: %s", provider_label)

@@ -6,6 +6,7 @@ recording, reply-window linking and the short autonomous presence block.  One
 responsibility removed is still better than drawing another architecture box.
 """
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import time
 from types import SimpleNamespace
@@ -29,7 +30,7 @@ class PublicTurnRuntime:
     ) -> None:
         self.owner = owner
         self._clock = clock or time.time
-        self.settings = settings or PublicTurnSettings()
+        self.settings = resolve_dependency(settings, lambda: PublicTurnSettings())
 
     def ensure_ledger(self) -> PublicTurnLedger:
         ledger = getattr(self.owner, "public_turn_ledger", None)

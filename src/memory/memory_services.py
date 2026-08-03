@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.di import resolve_dependency
 
 """
 memory.memory_services
@@ -47,7 +48,7 @@ class MemoryRuntimeServices:
         semantic_parser: SemanticParser | None = None,
     ) -> "MemoryRuntimeServices":
         registry = PredicateRegistry(persistence_path=registry_path)
-        parser = semantic_parser or FallbackSurfaceSemanticParser()
+        parser = resolve_dependency(semantic_parser, FallbackSurfaceSemanticParser)
         builder = ClaimBuilder(registry=registry)
         return cls(
             registry=registry,

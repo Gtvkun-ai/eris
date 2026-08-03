@@ -19,6 +19,7 @@ from runtime.inference_broker import (
     inference_context,
 )
 from llm.key_pool import get_provider_circuit
+from llm.model_catalog import DEFAULT_OPEN_MODEL_ID, requires_open_model_hygiene
 from llm.deepseek import (
     is_deepseek,
     normalize_model as normalize_deepseek_model,
@@ -807,7 +808,7 @@ class ChainedFallbackClient:
 
     Dùng làm ``fallback_client`` của LlmService: khi main (OpenRouter) chết, service
     gọi client này MỘT lần; bên trong nó thử Groq (pool 8 key) trước, hỏng thì sang
-    Gemini/gemma (pool 7 key). Mỗi sub-client tự xoay key trong pool của nó khi 429,
+    Gemini/open-model (pool 7 key). Mỗi sub-client tự xoay key trong pool của nó khi 429,
     nên đây là tầng "đổi NHÀ CUNG CẤP" sau khi đã vắt cạn pool của nhà trước.
 
     Giao diện trùng OpenAICompatibleClient/GeminiClient (chỉ cần create_chat_completion)
@@ -896,7 +897,7 @@ class GeminiClient:
             lease = key_pool.acquire(allow_cooling=True)
             api_key = lease.key if lease is not None else ""
         self.api_key = self._normalize_api_key(api_key)
-        self.model_name = (model_name or "gemma-4-31b-it").strip()
+        self.model_name = (model_name or DEFAULT_OPEN_MODEL_ID).strip()
         self.timeout = timeout
         self._provider_circuit = get_provider_circuit(self.base_url)
 
@@ -979,21 +980,21 @@ class GeminiClient:
             contents.append({"role": "user", "parts": [self._text_part("")]})
         return "\n\n".join(part for part in system_parts if part), contents
 
-    def _is_gemma(self) -> bool:
-        """Gemma trên Gemini API KHÔNG nhận system_instruction và KHÔNG nhận ảnh
+    def _requires_open_model_hygiene(self) -> bool:
+        """Open model trên Gemini API KHÔNG nhận system_instruction và KHÔNG nhận ảnh
         inline → gửi như vậy là 500. Phát hiện để gập system vào user-turn và
         tước ảnh (xem Phase 1: request hygiene)."""
 
-        return self.model_name.strip().lower().startswith("gemma")
+        return requires_open_model_hygiene(self.model_name)
 
     @staticmethod
     def _is_text_part(part: dict) -> bool:
         return isinstance(part, dict) and "text" in part
 
-    def _apply_gemma_hygiene(
+    def _apply_open_model_hygiene(
         self, system_instruction: str, contents: list[dict]
     ) -> tuple[str, list[dict]]:
-        """Chuẩn hoá payload cho Gemma: bỏ ảnh, gập system vào lượt user đầu tiên.
+        """Chuẩn hoá payload cho open model: bỏ ảnh, gập system vào lượt user đầu tiên.
 
         - Mọi part không phải text (inlineData/fileData) bị loại; nếu một content
           mất hết part thì thay bằng ghi chú text để không gửi parts rỗng.
@@ -1025,7 +1026,7 @@ class GeminiClient:
                 target["parts"] = [prefix, *target["parts"]]
 
         if dropped_images:
-            _LOGGER.debug("[GEMINI HYGIENE] stripped image part(s) for gemma model=%s", self.model_name)
+            _LOGGER.debug("[GEMINI HYGIENE] stripped image part(s) for open-model=%s", self.model_name)
         return "", cleaned
 
     def create_chat_completion(
@@ -1045,9 +1046,9 @@ class GeminiClient:
         messages = _preflight(messages, base_url=self.base_url, model=self.model_name)
         pressure_provider = _pressure_provider(self.base_url, self.model_name)
         system_instruction, contents = self._convert_messages(messages)
-        is_gemma = self._is_gemma()
-        if is_gemma:
-            system_instruction, contents = self._apply_gemma_hygiene(system_instruction, contents)
+        requires_open_model_hygiene = self._requires_open_model_hygiene()
+        if requires_open_model_hygiene:
+            system_instruction, contents = self._apply_open_model_hygiene(system_instruction, contents)
         generation_config = {
             "temperature": temperature,
             "maxOutputTokens": max_tokens,
@@ -1059,10 +1060,10 @@ class GeminiClient:
             else:
                 budget = 2048 if effort == "high" else 1024
                 generation_config["thinkingConfig"] = {"thinkingBudget": budget}
-        # Gemma (open model trên Gemini API) KHÔNG hỗ trợ controlled generation
-        # (responseMimeType/responseSchema) — gửi kèm sẽ 400/500. Bỏ cho gemma;
+        # Open model chạy trên Gemini API KHÔNG hỗ trợ controlled generation
+        # (responseMimeType/responseSchema) — gửi kèm sẽ 400/500. Bỏ cho open model;
         # adapter tự salvage JSON từ text thường.
-        if response_format and response_format.get("type") == "json_object" and not is_gemma:
+        if response_format and response_format.get("type") == "json_object" and not requires_open_model_hygiene:
             generation_config["responseMimeType"] = "application/json"
             schema = response_format.get("responseSchema") or response_format.get("schema")
             if isinstance(schema, dict) and schema:
@@ -1072,9 +1073,9 @@ class GeminiClient:
             "contents": contents,
             "generationConfig": generation_config,
         }
-        # Gemma KHÔNG nhận field safetySettings → kèm vào là 500. Chỉ gửi cho
+        # Open model này KHÔNG nhận field safetySettings → kèm vào là 500. Chỉ gửi cho
         # các model Gemini thật.
-        if not is_gemma:
+        if not requires_open_model_hygiene:
             payload["safetySettings"] = [
                 {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
                 {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},

@@ -335,6 +335,9 @@ class IntentionPlan:
     plan_id: str
     created_at: float
     channel: str
+    # Public intent chỉ có hai owner hợp lệ. Chat do IntentPlanner tạo;
+    # autonomous do SocialInitiative tạo. Các tầng khác chỉ đọc/cung cấp state.
+    owner: str = ""
     speak: bool = False
     motive: str = "silence"
     strategy: str = "direct_response"
@@ -361,6 +364,7 @@ class IntentionPlan:
             plan_id=f"plan-{int(time.time() * 1000)}",
             created_at=time.time(),
             channel=channel,
+            owner="intent_planner" if str(channel).lower() == "chat" else "social_initiative",
             speak=False,
             motive="silence",
             semantics=TurnSemantics(turn_kind="other", speech_act="silence", subject_key="none", evidence_scope="none"),
@@ -381,6 +385,10 @@ class IntentionPlan:
             plan_id=compact(data.get("plan_id", ""), 80) or f"plan-{int(time.time() * 1000)}",
             created_at=time.time(),
             channel=str(channel or "autonomous"),
+            owner=compact(
+                data.get("owner", "intent_planner" if str(channel).lower() == "chat" else "social_initiative"),
+                48,
+            ).lower(),
             speak=bool(data.get("speak", False)),
             motive=compact(data.get("motive", "silence"), 80).lower() or "silence",
             strategy=compact(data.get("strategy", "direct_response"), 100).lower() or "direct_response",

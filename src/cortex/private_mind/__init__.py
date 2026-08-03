@@ -19,7 +19,7 @@ from .contracts import (
 from .concern_store import ConcernStore
 from .comfort_appraiser import ComfortAppraisal, ComfortAppraiser
 from .evidence_dossier import EvidenceDossierBuilder
-from .inner_synthesizer import GemmaInnerSynthesizer
+from .inner_synthesizer import LocalModelInnerSynthesizer
 from .mini_evaluators import (
     USER_MODEL_EVALUATOR_NAME,
     FutureBiasEvaluator,
@@ -46,7 +46,7 @@ __all__ = [
     "EvidenceDossier",
     "EvidenceDossierBuilder",
     "FutureBiasEvaluator",
-    "GemmaInnerSynthesizer",
+    "LocalModelInnerSynthesizer",
     "IntentEvaluator",
     "InternalJudgment",
     "MemoryResonanceEvaluator",

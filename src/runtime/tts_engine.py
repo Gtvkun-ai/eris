@@ -277,7 +277,7 @@ def _get_elevenlabs_token(
     excluded_account_ids: set[int] | None = None,
 ) -> tuple[str, str, int]:
     """Trả về (auth_type, token, account_id).
-    
+
     Tải token ưu tiên từ SQLite Pool (GLOBAL_ELEVEN_POOL) để xoay tài khoản tự động.
     """
     global _CACHED_BEARER_TOKEN, _CACHED_BEARER_EXPIRES_AT

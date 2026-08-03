@@ -16,6 +16,7 @@ Bất biến:
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -77,7 +78,7 @@ class DisclosurePolicy:
     """Quyết tiết lộ dựa trên annotation + quan hệ + đăng ký tối + kìm chế."""
 
     def __init__(self, config: DisclosureConfig | None = None) -> None:
-        self.config = config or DisclosureConfig()
+        self.config = resolve_dependency(config, lambda: DisclosureConfig())
 
     def decide(
         self,
@@ -94,7 +95,7 @@ class DisclosurePolicy:
         attach = _clamp01(attachment_longarc)
         register = str(getattr(shadow, "register", "none") or "none")
         shadow_active = register != "none"
-        restraint = restraint or RestraintState()
+        restraint = resolve_dependency(restraint, RestraintState)
 
         # Điều kiện QUAN HỆ/ĐĂNG KÝ cho phép xét lừa dối.
         relational_open = (attach >= self.config.attach_threshold) or shadow_active

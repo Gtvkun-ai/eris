@@ -352,7 +352,7 @@ class MiniEvaluatorPipeline:
                 ev = futures[future]
                 result = future.result()
                 # Nếu API throttle, ta vẫn có thể muốn giãn cách thay vì spam,
-                # nhưng với drop_if_busy thì ta nên thử lại lượt sau. 
+                # nhưng với drop_if_busy thì ta nên thử lại lượt sau.
                 # Chấp nhận thử lại nếu fail hoàn toàn.
                 if result is not None:
                     successful_evaluators.add(ev.name)

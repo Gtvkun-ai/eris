@@ -7,7 +7,7 @@ Runtime loop cho private mind 5 phase:
 A. contracts + concern store
 B. evidence dossier
 C. 4 mini-evaluator API/rules
-D. Gemma inner synthesizer
+D. local-model inner synthesizer
 E. state mutation + surface valve
 
 Loop này không tự nói với user. Nó chỉ cập nhật state và enqueue surface impulse
@@ -16,6 +16,7 @@ public thì đó không phải chiều sâu, đó là logcat có trang điểm.
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import json
 import logging
@@ -29,7 +30,7 @@ from cortex.private_mind import (
     USER_MODEL_EVALUATOR_NAME,
     ConcernStore,
     EvidenceDossierBuilder,
-    GemmaInnerSynthesizer,
+    LocalModelInnerSynthesizer,
     MiniEvaluatorPipeline,
     PrivateMindTickResult,
     StateMutationBus,
@@ -80,7 +81,7 @@ class PrivateMindLoop:
         concern_store: ConcernStore | None = None,
         dossier_builder: EvidenceDossierBuilder | None = None,
         evaluator_pipeline: MiniEvaluatorPipeline | None = None,
-        synthesizer: GemmaInnerSynthesizer | None = None,
+        synthesizer: LocalModelInnerSynthesizer | None = None,
         mutation_bus: StateMutationBus | None = None,
         surface_valve: SurfaceValve | None = None,
         continuity_store: ThoughtContinuityStore | None = None,
@@ -88,22 +89,22 @@ class PrivateMindLoop:
         model_adapter: Any = None,
         logger: Any = None,
     ) -> None:
-        self.config = config or PrivateMindLoopConfig()
+        self.config = resolve_dependency(config, lambda: PrivateMindLoopConfig())
         self.logger = logger
         self.model_adapter = model_adapter
-        self.concern_store = concern_store or ConcernStore(path=self._resolve_concern_path(), logger=logger)
+        self.concern_store = resolve_dependency(concern_store, lambda: ConcernStore(path=self._resolve_concern_path(), logger=logger))
         # Mô_Hình_bạn: chân dung bền vững về Người_Dùng (spec eris-existential-anchor).
-        self.user_model_store = user_model_store or UserModelStore(path=self._resolve_user_model_path(), logger=logger)
+        self.user_model_store = resolve_dependency(user_model_store, lambda: UserModelStore(path=self._resolve_user_model_path(), logger=logger))
         # Trục neo hiện sinh: gắn-bó/sợ/bóng-tối/lừa-dối. Ship an toàn (công tắc tắt),
         # đọc Mô_Hình_bạn để phái sinh ý nghĩa/gắn bó.
         self.anchor_system = AnchorSystem.from_env(user_model_store=self.user_model_store, logger=logger)
-        self.dossier_builder = dossier_builder or EvidenceDossierBuilder()
-        self.evaluator_pipeline = evaluator_pipeline or MiniEvaluatorPipeline(model_adapter=model_adapter)
-        self.synthesizer = synthesizer or GemmaInnerSynthesizer(model_adapter=model_adapter, min_fragments_for_model=self.config.min_fragments_for_synthesis)
-        self.mutation_bus = mutation_bus or StateMutationBus(logger=logger)
-        self.surface_valve = surface_valve or SurfaceValve()
+        self.dossier_builder = resolve_dependency(dossier_builder, lambda: EvidenceDossierBuilder())
+        self.evaluator_pipeline = resolve_dependency(evaluator_pipeline, lambda: MiniEvaluatorPipeline(model_adapter=model_adapter))
+        self.synthesizer = resolve_dependency(synthesizer, lambda: LocalModelInnerSynthesizer(model_adapter=model_adapter, min_fragments_for_model=self.config.min_fragments_for_synthesis))
+        self.mutation_bus = resolve_dependency(mutation_bus, lambda: StateMutationBus(logger=logger))
+        self.surface_valve = resolve_dependency(surface_valve, lambda: SurfaceValve())
         # Dòng suy nghĩ liên tục: nhớ mạch nghĩ cũ, nối tiếp thay vì nghĩ lại từ đầu.
-        self.continuity = continuity_store or ThoughtContinuityStore.from_env(logger=logger)
+        self.continuity = resolve_dependency(continuity_store, lambda: ThoughtContinuityStore.from_env(logger=logger))
         self.last_tick_at = 0.0
         self.last_result: PrivateMindTickResult | None = None
         self._last_trigger_signature = ""
@@ -115,8 +116,11 @@ class PrivateMindLoop:
         # gọi LlmService.diary_client (một DeepSeek worker role được chọn rõ ràng).
         # Không fallback sang lane khác theo mặc định; thiếu worker thì renderer dùng
         # dữ kiện thô, trung thực hơn việc companion âm thầm giả làm nhật ký.
-        diary_adapter = getattr(model_adapter, "diary_adapter", None)
-        if diary_adapter is None and callable(getattr(model_adapter, "write_inner_diary", None)):
+        from runtime.architecture_flags import inner_diary_model_enabled
+        # Inner diary mặc định chỉ render từ state đã có. Model call riêng là lane
+        # migration, phải bật rõ ràng; không âm thầm mượn PrivateMind/companion.
+        diary_adapter = getattr(model_adapter, "diary_adapter", None) if inner_diary_model_enabled() else None
+        if inner_diary_model_enabled() and diary_adapter is None and callable(getattr(model_adapter, "write_inner_diary", None)):
             diary_adapter = model_adapter
         diary_fallback = (
             RuntimePrivateMindModelAdapter.diary_fallback_from_env(logger=logger)
@@ -631,7 +635,10 @@ class PrivateMindLoop:
         return digest
 
     def _diary_voice(self, digest: Mapping[str, Any]) -> dict[str, Any] | None:
-        """Lấy bản nhật ký giọng Eris (throttled). Lỗi → None để renderer fallback."""
+        """Model diary là lane tùy chọn; mặc định trả None cho renderer local."""
+        from runtime.architecture_flags import inner_diary_model_enabled
+        if not inner_diary_model_enabled():
+            return None
         writer = getattr(self, "diary_writer", None)
         if writer is None:
             return None

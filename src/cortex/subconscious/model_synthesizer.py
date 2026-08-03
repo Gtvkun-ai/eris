@@ -13,6 +13,7 @@ Quan trọng:
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 from dataclasses import dataclass, field
 import json
@@ -112,7 +113,7 @@ class ModelBackedConsciousSynthesizer(ConsciousSynthesizer):
     ) -> None:
         super().__init__(policy=policy)
         self.model_adapter = model_adapter
-        self.model_policy = model_policy or ModelSynthesisPolicy()
+        self.model_policy = resolve_dependency(model_policy, lambda: ModelSynthesisPolicy())
         self.logger = logger
         self.last_inner_court_report = InnerCourtReport(ok=False, verdict="not_started")
 

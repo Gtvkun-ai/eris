@@ -10,6 +10,7 @@ Nhiệm vụ:
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import difflib
 import time
@@ -71,7 +72,7 @@ class SignalBuffer:
     """
 
     def __init__(self, config: Optional[SignalBufferConfig] = None):
-        self.config = config or SignalBufferConfig()
+        self.config = resolve_dependency(config, lambda: SignalBufferConfig())
         self._items: deque[SignalSnapshot] = deque(maxlen=max(1, self.config.max_items))
         self._last_diff: Optional[SignalDiff] = None
 

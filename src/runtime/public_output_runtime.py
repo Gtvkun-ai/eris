@@ -44,7 +44,7 @@ from domain import Decision
 from eris_secrets import get_config
 from failure_meta import is_technical_failure_meta
 from memory.memory_kernel import MemoryKernel
-from runtime.ai_orchestrated.cortex_runtime import CortexAttentionSignal, CortexRuntime
+from runtime.ai_orchestrated.cortex import CortexAttentionSignal, CortexRuntime
 from runtime.body_bias import BodyBiasProjector
 from runtime.chat_cycle import ChatCycleMixin
 from runtime.failure_taxonomy import FailureContext
@@ -109,6 +109,13 @@ class PublicOutputRuntimeMixin:
             )
             return
         payload = decision.to_payload()
+        # event_trace_id là identity xuyên suốt public event, khác debug trace tự do.
+        # Với chat, IntentPlanner là owner; autonomous đã đóng owner từ SocialInitiative.
+        performance_context = getattr(decision, "performance_context", None)
+        if isinstance(performance_context, Mapping):
+            payload.setdefault("event_trace_id", str(performance_context.get("event_trace_id") or ""))
+            payload.setdefault("generation_epoch", int(performance_context.get("generation_epoch", 0) or 0))
+            payload.setdefault("public_intent_owner", str(performance_context.get("public_intent_owner") or ("intent_planner" if channel_name == "chat" else "")))
         if bool(getattr(self, "ai_runtime_enabled", False)) and getattr(self, "ai_state_reducer", None) is not None:
             from runtime.ai_orchestrated.panel_adapter import build_ai_panel_payload
             expression = {}
@@ -520,6 +527,18 @@ class PublicOutputRuntimeMixin:
                     turn_id=stage_frame.turn_id,
                     reason="tts_dispatch",
                 )
+                try:
+                    from runtime.ai_orchestrated.autonomous_trace import append_autonomous_trace
+                    append_autonomous_trace("tts_dispatch", {
+                        "trace_id": str(payload.get("event_trace_id") or stage_frame.turn_id),
+                        "turn_id": str(stage_frame.turn_id),
+                        "stage": "tts",
+                        "owner": "tts",
+                        "generation_epoch": int(payload.get("generation_epoch", 0) or 0),
+                        "tts_event": "dispatch",
+                    }, logger=getattr(self, "logger", None))
+                except Exception:
+                    pass
                 def on_first_audio_start() -> None:
                     # Đây là callback sát thời điểm thiết bị bắt đầu phát nhất.
                     # Gửi một edge ``speaking`` cứu hộ trước; event audio_start
@@ -712,6 +731,34 @@ class PublicOutputRuntimeMixin:
             "prosody_style": str(getattr(stage_frame, "prosody_style", "") or ""),
         }
         self.last_tts_event = record
+        try:
+            from runtime.ai_orchestrated.autonomous_trace import append_autonomous_trace
+            trace_id = str(record["turn_id"] or "")
+            append_autonomous_trace("tts_event", {
+                "trace_id": trace_id,
+                "turn_id": record["turn_id"],
+                "stage": "tts",
+                "owner": "tts",
+                "tts_event": event_type,
+                "outcome": (
+                    "delivered" if event_type == "audio_done" else
+                    "cancelled" if event_type == "audio_cancelled" else
+                    "failed" if event_type == "audio_failed" else "pending"
+                ),
+            }, logger=getattr(self, "logger", None))
+            if event_type in {"audio_done", "audio_cancelled", "audio_failed"}:
+                append_autonomous_trace("outcome", {
+                    "trace_id": trace_id,
+                    "turn_id": record["turn_id"],
+                    "stage": "outcome",
+                    "owner": "public_lifecycle",
+                    "outcome": (
+                        "delivered" if event_type == "audio_done" else
+                        "cancelled" if event_type == "audio_cancelled" else "failed"
+                    ),
+                }, logger=getattr(self, "logger", None))
+        except Exception:
+            pass
         if event_type == "audio_start":
             self.logger.info(
                 "[TTS:event] audio_start turn=%s segment=%s text=%r",
@@ -1122,4 +1169,3 @@ class PublicOutputRuntimeMixin:
             ),
             relationship_stage=stage,
         )
-

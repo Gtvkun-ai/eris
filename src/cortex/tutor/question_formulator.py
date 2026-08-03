@@ -9,6 +9,7 @@ fallback khi model lỗi. Lọc PII/định danh.
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 from typing import Any, Callable, Optional
 
@@ -40,7 +41,7 @@ class QuestionFormulator:
     """Hình thành câu hỏi + tóm tắt điều học. Local LLM với heuristic fallback."""
 
     def __init__(self, config: Optional[TutorConfig] = None, *, generate_fn: Optional[GenerateFn] = None) -> None:
-        self.config = (config or TutorConfig()).normalized()
+        self.config = resolve_dependency(config, TutorConfig).normalized()
         self._generate_fn = generate_fn
 
     # ------------------------------------------------------------------

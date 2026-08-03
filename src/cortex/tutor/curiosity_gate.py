@@ -8,6 +8,7 @@ rate-limit + trần/giờ, ưu tiên theo stake & prediction error, điều ti�
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 from typing import Optional
 
@@ -33,7 +34,7 @@ class CuriosityGate:
     W_PE = 0.45
 
     def __init__(self, config: Optional[TutorConfig] = None) -> None:
-        self.config = (config or TutorConfig()).normalized()
+        self.config = resolve_dependency(config, TutorConfig).normalized()
         self._last_started_ts: float = 0.0
         self._recent_starts: list[float] = []
 

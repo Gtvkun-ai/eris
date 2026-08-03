@@ -12,11 +12,11 @@ from eris_secrets import get_agent_profile, get_secret
 from .contracts import ActionExecutionResult, VALID_SYSTEM_ACTIONS
 from .capability_registry import canonicalize_action_id
 from .observer import DefaultActionObserver, apply_observation
-# ActionExecutor là một lớp để thực thi các hành động hệ thống được định nghĩa 
+# ActionExecutor là một lớp để thực thi các hành động hệ thống được định nghĩa
 # trong VALID_SYSTEM_ACTIONS.
 # Lớp này cung cấp một phương thức execute để thực thi một hành động cụ thể dựa
-#  trên tên hành động và đầu vào được cung cấp. 
-# Mỗi hành động có thể có một phương thức riêng để xử lý logic thực thi của nó, 
+#  trên tên hành động và đầu vào được cung cấp.
+# Mỗi hành động có thể có một phương thức riêng để xử lý logic thực thi của nó,
 # như lấy thông tin bài
 
 class ActionExecutor:
@@ -463,7 +463,7 @@ $props = Await ($session.TryGetMediaPropertiesAsync())
             data={"level": str(level)},
             status="dispatched",
         )
-    
+
 
     def _get_weather(self, action_input: str) -> ActionExecutionResult:
         query = (action_input or "").strip()

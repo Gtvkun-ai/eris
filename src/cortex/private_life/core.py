@@ -21,6 +21,7 @@ Tầng này cố ý không lấy user làm trung tâm. Nó theo dõi:
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import os
 import time
@@ -154,7 +155,7 @@ class PrivateLifeCore:
     )
 
     def __init__(self, state: PrivateLifeState | None = None, *, root_dir: str | os.PathLike[str] | None = None) -> None:
-        self.state = state or PrivateLifeState()
+        self.state = resolve_dependency(state, lambda: PrivateLifeState())
         self.root_dir = Path(root_dir or os.getenv("ERIS_PROJECT_ROOT", ".")).resolve()
         self._ensure_defaults()
 

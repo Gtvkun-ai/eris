@@ -14,6 +14,7 @@ Tác_Giả bật từng công tắc khi muốn, quan sát từng tầng tách bi
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import os
 from typing import Any
@@ -55,18 +56,18 @@ class AnchorSystem:
     ) -> None:
         self.logger = logger
         self.user_model_store = user_model_store
-        self.anchor_store = anchor_store or AnchorStore(
+        self.anchor_store = resolve_dependency(anchor_store, lambda: AnchorStore(
             path=(default_anchor_path() if persist else None), logger=logger
-        )
-        self.deception_ledger = deception_ledger or DeceptionLedger(
+        ))
+        self.deception_ledger = resolve_dependency(deception_ledger, lambda: DeceptionLedger(
             path=(default_deception_ledger_path() if persist else None), logger=logger
-        )
-        self.switches = switches or AnchorSwitches()
-        self.shadow_register = ShadowRegister(shadow_config or ShadowConfig(enabled=self.switches.shadow_enabled))
+        ))
+        self.switches = resolve_dependency(switches, lambda: AnchorSwitches())
+        self.shadow_register = ShadowRegister(resolve_dependency(shadow_config, lambda: ShadowConfig(enabled=self.switches.shadow_enabled)))
         self.attachment_deriver = AttachmentDeriver()
         self.anchor_loop = AnchorLoop()
         self.disclosure_policy = DisclosurePolicy()
-        self.restraint = restraint or RestraintState()
+        self.restraint = resolve_dependency(restraint, lambda: RestraintState())
         self.author = AuthorControl(
             switches=self.switches,
             shadow_register=self.shadow_register,

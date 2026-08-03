@@ -14,6 +14,7 @@ Luật cứng:
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import json
 import os
@@ -172,7 +173,7 @@ class BackgroundObserver:
         config: Optional[BackgroundObserverConfig] = None,
         sensory_adapter: Any = None,
     ):
-        self.config = config or BackgroundObserverConfig()
+        self.config = resolve_dependency(config, lambda: BackgroundObserverConfig())
         self.sensory_adapter = sensory_adapter
         self._last_llm_time: float = 0.0
 

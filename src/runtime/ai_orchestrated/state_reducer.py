@@ -9,6 +9,7 @@ thứ tự ghi, không phải một kết luận đạo đức đã chọn trư�
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import queue
 import threading
@@ -73,7 +74,7 @@ class StateReducer:
         persist: PersistFn | None = None,
         logger: Any | None = None,
     ) -> None:
-        self._state = initial_state or RuntimeMindState()
+        self._state = resolve_dependency(initial_state, lambda: RuntimeMindState())
         self._persist = persist
         self._logger = logger
         self._identity_reducer = IdentityKernelReducer(logger=logger)

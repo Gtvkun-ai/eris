@@ -14,6 +14,7 @@ chỉ nhận kết quả và chuyển tiếp sang grounding, thay vì vừa làm
 TTL, camera và trọng tài domain. Một class có năm nghề thường không kết thúc đẹp.
 """
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import os
 import time
@@ -57,7 +58,7 @@ class ChatPerceptionCoordinator:
         self.screen_evidence_store = screen_evidence_store
         self.screen_text_worker = screen_text_worker
         self.screen_relevance_router = screen_relevance_router
-        self.structured_provider = structured_provider or StructuredEvidenceProvider(logger=logger)
+        self.structured_provider = resolve_dependency(structured_provider, lambda: StructuredEvidenceProvider(logger=logger))
         self.logger = logger
         self.clock = clock or time.time
         self.pending_vision = PendingVisionEscalation()

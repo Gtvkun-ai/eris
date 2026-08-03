@@ -13,6 +13,7 @@ và mất 2 ngày debug, một giao dịch rất loài người.
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
@@ -72,8 +73,8 @@ class SubconsciousLoop:
         wandering_engine: WanderingThoughtEngine | None = None,
         logger: Any = None,
     ) -> None:
-        self.blackboard = blackboard or SubconsciousBlackboard()
-        self.synthesizer = synthesizer or ConsciousSynthesizer()
+        self.blackboard = resolve_dependency(blackboard, lambda: SubconsciousBlackboard())
+        self.synthesizer = resolve_dependency(synthesizer, lambda: ConsciousSynthesizer())
         self.workers = tuple(workers or ())
         self.wandering_engine = wandering_engine
         self.logger = logger

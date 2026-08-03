@@ -5,6 +5,7 @@ Dreamer không chạy sau mọi turn. Nó đọc episode, semantic facts và pro
 có, rồi đề xuất một tập patch nhỏ. Patch vẫn phải qua validator/store.
 """
 from __future__ import annotations
+from core.di import resolve_dependency
 
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
@@ -32,7 +33,7 @@ class UserProfileDreamer:
     ) -> None:
         self.store = store
         self.model_adapter = model_adapter
-        self.config = config or UserProfileDreamConfig()
+        self.config = resolve_dependency(config, lambda: UserProfileDreamConfig())
 
     def consolidate(
         self,

@@ -7,6 +7,7 @@ an interval, how long the current degradation has lasted, and which incident
 keeps reopening like a badly written support ticket.
 """
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import hashlib
 import threading
@@ -82,7 +83,7 @@ class RuntimeSLOTracker:
         settings: RuntimeObservabilitySettings | None = None,
         clock=None,
     ) -> None:
-        self.settings = settings or RuntimeObservabilitySettings()
+        self.settings = resolve_dependency(settings, lambda: RuntimeObservabilitySettings())
         self._clock = clock or time.time
         self._lock = threading.RLock()
         self._samples: list[ReadinessSample] = []

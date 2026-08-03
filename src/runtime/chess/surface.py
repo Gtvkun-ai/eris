@@ -231,8 +231,8 @@ def chess_turn_relevant(user_text: str, *, engagement_active: bool = False) -> b
         "an xe", "an hau", "an tot", "chieu tuong", "chieu het", "nhap thanh",
         "phong hau", "con ma", "quan ma", "con tuong", "quan tuong",
         "con xe", "quan xe", "quan hau", "quan tot", "quan vua", "vo con ma",
-        "gio lam gi", "gio nen lam gi", "choi sao", "tiep theo", "bi chieu", 
-        "thua roi", "thang roi", "het co", "chieu bi", "doi quan", "loi the", 
+        "gio lam gi", "gio nen lam gi", "choi sao", "tiep theo", "bi chieu",
+        "thua roi", "thang roi", "het co", "chieu bi", "doi quan", "loi the",
         "yeu o dau", "phong thu", "tan cong", "chieu mat"
     )
     if any(marker in normalized for marker in explicit):
@@ -261,8 +261,8 @@ def chess_move_question(user_text: str) -> bool:
     markers = (
         "nuoc nao", "danh gi", "di gi", "nen danh", "nen di", "di sao",
         "danh nuoc", "toi danh", "tui danh", "hay sao", "dung hong",
-        "dung khong", "co nen", "an quan nao", "bat quan nao", "gio lam gi", 
-        "gio nen lam gi", "buoc tiep", "tiep theo la", "huong nao", 
+        "dung khong", "co nen", "an quan nao", "bat quan nao", "gio lam gi",
+        "gio nen lam gi", "buoc tiep", "tiep theo la", "huong nao",
         "cach nao", "xu ly sao", "do sao", "chay sao", "di dau"
     )
     return any(marker in normalized for marker in markers) or bool(

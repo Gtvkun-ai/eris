@@ -4,6 +4,7 @@ from eris_secrets import apply_secrets_to_environ, get_provider_profile, get_sec
 from .client import GeminiClient, OpenAICompatibleClient, ChainedFallbackClient
 from .deepseek import DEEPSEEK_BASE_URL, DEEPSEEK_DEFAULT_MODEL, DEEPSEEK_STRONG_MODEL, normalize_model
 from .key_pool import get_key_pool
+from .model_catalog import DEFAULT_OPEN_MODEL_ID
 from .deepseek_workers import JsonlWorkerClient, load_worker_spec, normalize_worker_role
 
 
@@ -81,7 +82,7 @@ class RemoteModelProcessManager:
                 or str(remote_profile.get("model_name") or "").strip()
                 or os.environ.get("ERIS_REMOTE_MODEL", "").strip()
                 or os.environ.get("GEMINI_MODEL", "").strip()
-                or "gemma-4-31b-it"
+                or DEFAULT_OPEN_MODEL_ID
             )
             api_key = (
                 str(remote_profile.get("api_key") or "").strip()
@@ -282,7 +283,7 @@ class RemoteModelProcessManager:
             str(profile.get("model") or "").strip()
             or str(profile.get("model_name") or "").strip()
             or os.environ.get("ERIS_SPEECH_MODEL", "").strip()
-            or os.environ.get("ERIS_REMOTE_MODEL", "gemma-4-31b-it").strip()
+            or os.environ.get("ERIS_REMOTE_MODEL", DEFAULT_OPEN_MODEL_ID).strip()
         )
         if not api_key:
             raise RuntimeError("Speech API dang bat nhung chua co ERIS_SPEECH_API_KEY.")

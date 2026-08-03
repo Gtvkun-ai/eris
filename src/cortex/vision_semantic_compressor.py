@@ -16,6 +16,7 @@ thì repo đã mọc thêm một nhân vật phụ không ai mời.
 """
 
 from __future__ import annotations
+from core.di import resolve_dependency
 
 import json
 import os
@@ -64,9 +65,9 @@ class RemoteStructureClient:
     """Adapter: bọc một remote chat client (có ``create_chat_completion``) để lộ
     interface ``chat_json`` mà VisionSemanticCompressor cần cho TẦNG cấu trúc-hoá.
 
-    Mục đích: đẩy việc ép JSON sang remote (vd Gemma qua Gemini API).
+    Mục đích: đẩy việc ép JSON sang remote (vd open model qua Gemini API).
 
-    Gemma KHÔNG nhận responseSchema nên ta vẫn gửi response_format=json_object và
+    Open model này KHÔNG nhận responseSchema nên ta vẫn gửi response_format=json_object và
     tự salvage JSON từ text trả về. Mọi lỗi ⇒ trả ChatJsonResult(ok=False) để compressor
     degrade về fallback (giữ caption), không bao giờ raise ra hot path.
     """
@@ -396,7 +397,7 @@ class VisionSemanticCompressor:
         structure_client: Any | None = None,
         caption_client: Any | None = None,
     ) -> None:
-        self.config = config or VisionCompressorConfig()
+        self.config = resolve_dependency(config, lambda: VisionCompressorConfig())
         self.client = local_client
         # Client riêng cho TẦNG cấu trúc-hoá (caption → JSON).
         # None ⇒ dùng luôn self.client nếu caller inject client tự do.
@@ -526,7 +527,7 @@ class VisionSemanticCompressor:
             self._log_warning("Vision caption stage failed: %s", caption_error)
 
         # ── Tầng 2: text model cấu trúc caption + OCR thành SemanticSceneNote ──
-        # Có structure_client (remote, vd Gemma) → cấu trúc-hoá chạy remote, máy
+        # Có structure_client (remote, vd open model) → cấu trúc-hoá chạy remote, máy
         # local KHỎI nạp/swap text model. None ⇒ dùng client local như cũ.
         structure_client = self.structure_client or self.client
         structure_backend = "remote" if self.structure_client is not None else "local"
