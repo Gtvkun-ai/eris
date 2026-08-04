@@ -257,6 +257,39 @@ class SocialInitiativeEngine:
     def enabled(self) -> bool:
         return bool(getattr(self.router, "surface_client", None) is not None)
 
+    def propose_options(
+        self,
+        blackboard: TypedCognitiveBlackboard,
+        *,
+        snapshot: Mapping[str, Any] | None = None,
+    ) -> tuple[SocialSpeechCandidate, ...]:
+        """Return a small set of semantically distinct options for Gemma.
+
+        ``propose`` remains the legacy single-candidate API.  The option API does
+        not turn every source into a free-for-all: it only adds a ready random-chat
+        seed beside a follow-up/continuation candidate, which is exactly the
+        ambiguity the executive layer must arbitrate instead of inheriting an
+        early return from a heuristic.
+        """
+
+        primary = self.propose(blackboard, snapshot=snapshot)
+        options: list[SocialSpeechCandidate] = []
+        if primary is not None:
+            options.append(primary)
+
+        if (
+            not blackboard.user_busy
+            and not (blackboard.engagement_exclusive_focus and blackboard.engagement_active)
+            and primary is not None
+            and primary.kind in {"followup_reminder", "continuation", "social_agenda"}
+        ):
+            seed = self._random_chat_seed_candidate(blackboard)
+            if seed is not None and all(
+                str(getattr(item, "seed_id", "") or "") != seed.seed_id for item in options
+            ):
+                options.append(seed)
+        return tuple(options)
+
     def propose(
         self,
         blackboard: TypedCognitiveBlackboard,

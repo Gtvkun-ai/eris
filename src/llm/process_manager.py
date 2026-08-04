@@ -355,6 +355,59 @@ class RemoteModelProcessManager:
         )
         return client
 
+    def build_executive_client(self):
+        """Build the Gemma 4 Executive Cortex on the shared Gemini key pool.
+
+        DeepSeek role workers remain unchanged.  This client is a separate
+        semantic policy layer used only for trajectory/tool-affordance decisions.
+        Missing credentials fail closed and leave the legacy selector active.
+        """
+
+        apply_secrets_to_environ()
+        if not self._env_flag("ERIS_EXECUTIVE_CORTEX_ENABLED", "1"):
+            return None
+        profile = get_provider_profile("gemini", slot="executive")
+        pool = get_key_pool("gemini")
+        api_key = (
+            str(profile.get("api_key") or "").strip()
+            or _bootstrap_pool_key(pool)
+            or get_secret("ERIS_EXECUTIVE_API_KEY", "GEMINI_API_KEY")
+        )
+        if not api_key:
+            self.logger.warning(
+                "Gemma Executive Cortex chua co key; legacy social selector van hoat dong."
+            )
+            return None
+        base_url = (
+            str(profile.get("base_url") or "").strip()
+            or os.environ.get(
+                "ERIS_EXECUTIVE_BASE_URL",
+                "https://generativelanguage.googleapis.com/v1beta",
+            ).strip()
+        )
+        model_name = (
+            str(profile.get("model") or profile.get("model_name") or "").strip()
+            or os.environ.get("ERIS_EXECUTIVE_MODEL", DEFAULT_OPEN_MODEL_ID).strip()
+            or DEFAULT_OPEN_MODEL_ID
+        )
+        try:
+            client = GeminiClient(
+                base_url=base_url,
+                api_key=api_key,
+                model_name=model_name,
+                timeout=max(5, int(float(os.environ.get("ERIS_EXECUTIVE_TIMEOUT_S", "18") or 18))),
+                key_pool=pool,
+            )
+        except Exception as exc:
+            self.logger.warning("Khong dung duoc Gemma Executive Cortex: %s", exc)
+            return None
+        self.logger.info(
+            "Gemma Executive Cortex san sang: model=%s pool_keys=%s",
+            model_name,
+            getattr(pool, "size", 0),
+        )
+        return client
+
     def build_inner_client(self):
         return self.build_deepseek_worker_client("inner")
 

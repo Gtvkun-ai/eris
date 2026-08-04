@@ -1146,7 +1146,12 @@ class AIRuntimeModelRouter:
             lane = "chat_main"
         elif "observer" in reason_key or "observation" in reason_key:
             lane = "post_observer"
-        elif "autonomous" in reason_key or "self_initiated" in reason_key or "surface" in reason_key:
+        elif (
+            "autonomous" in reason_key
+            or "self_initiated" in reason_key
+            or "surface" in reason_key
+            or "executive" in reason_key
+        ):
             lane = "autonomous"
         elif "chat_intention" in reason_key:
             lane = "chat_tool_required"
@@ -1229,6 +1234,10 @@ class AIRuntimeModelRouter:
     @property
     def surface_client(self) -> Any | None:
         return getattr(self.llm_service, "surface_client", None)
+
+    @property
+    def executive_client(self) -> Any | None:
+        return getattr(self.llm_service, "executive_client", None)
 
     @staticmethod
     def _client_source_label(client: Any, fallback: str) -> str:

@@ -122,6 +122,7 @@ class AttentionOverseer:
             if social_models_enabled and legacy_model_lanes_enabled() else None
         )
         inner_client = self.process_manager.build_inner_client()
+        executive_client = self.process_manager.build_executive_client()
         diary_client = self.process_manager.build_diary_client() if inner_diary_model_enabled() else None
         seed_client = self.process_manager.build_seed_client()
         surface_client = self.process_manager.build_surface_client()
@@ -145,6 +146,7 @@ class AttentionOverseer:
             diary_client=diary_client,
             seed_client=seed_client,
             surface_client=surface_client,
+            executive_client=executive_client,
             research_client=research_client,
             tutor_client=tutor_client,
             logger=self.logger,
@@ -159,6 +161,7 @@ class AttentionOverseer:
                 ("diary", getattr(self.llm_service, "diary_client", None)),
                 ("seed", getattr(self.llm_service, "seed_client", None)),
                 ("surface", getattr(self.llm_service, "surface_client", None)),
+                ("executive", getattr(self.llm_service, "executive_client", None)),
                 ("style", getattr(self.llm_service, "style_client", None)),
                 ("research", getattr(self.llm_service, "research_client", None)),
                 ("tutor", getattr(self.llm_service, "tutor_client", None)),

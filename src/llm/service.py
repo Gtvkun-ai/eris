@@ -151,6 +151,7 @@ class LlmService:
         tutor_client=None,
         seed_client=None,
         surface_client=None,
+        executive_client=None,
         logger=None,
     ):
         self.client = client
@@ -173,6 +174,9 @@ class LlmService:
         # Surface chỉ viết public wording cho intent đã được governor duyệt.
         # Không fallback ngầm sang companion tại đây.
         self.surface_client = surface_client
+        # Gemma Executive Cortex sits between DeepSeek cognition and runtime
+        # mechanics. It does not replace any role-owned worker.
+        self.executive_client = executive_client
         self.research_client = research_client or fallback_client or client
         # Worker tutor chỉ phân rã scene thành shared semantic context; không có
         # quyền viết câu public và không fallback ngầm sang companion.

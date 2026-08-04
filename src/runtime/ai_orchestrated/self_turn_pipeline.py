@@ -21,7 +21,7 @@ import json
 import os
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Mapping
 
 from runtime.no_fallback_policy import no_fallback_mode_enabled
@@ -36,6 +36,7 @@ from .cognitive_blackboard import TypedCognitiveBlackboard
 from .contracts import AI_RUNTIME_VERSION, IntentionPlan, StateEvent
 from .discourse_state import DiscourseState, DiscourseStateBuilder
 from .followup_appraisal import FollowUpAppraisalLayer
+from .executive_cortex import may_release_optional_reply_baton
 from .identity import PendingStrategyUse
 from .initiative import InitiativeAction, InitiativeDecision
 from .self_context import AutonomousSelfContext, build_autonomous_self_context
@@ -180,6 +181,7 @@ class SelfTurnPipeline:
         blackboard = TypedCognitiveBlackboard.from_snapshot(planner_snapshot, now=now)
         candidate_started = time.monotonic()
         candidate = None
+        candidate_options: list[Any] = []
         worker_id = f"self_turn:{threading.get_ident()}"
         # Priority lanes: reserved afterbeat, exposure recovery, conversation arc,
         # then social agenda. The retired ordinary/random initiative path is gone.
@@ -212,18 +214,85 @@ class SelfTurnPipeline:
                 )
             except Exception as exc:
                 host.logger.debug("[social agenda] candidate failed: %s", exc)
+        if candidate is not None:
+            candidate_options.append(candidate)
         agenda_selector = getattr(host, "ai_social_agenda_selector", None)
         if candidate is None and agenda_selector is not None:
             try:
-                candidate = agenda_selector.propose(
-                    blackboard,
-                    snapshot=planner_snapshot,
-                )
+                option_writer = getattr(agenda_selector, "propose_options", None)
+                if callable(option_writer):
+                    candidate_options = list(option_writer(
+                        blackboard,
+                        snapshot=planner_snapshot,
+                    ))
+                    candidate = candidate_options[0] if candidate_options else None
+                else:
+                    candidate = agenda_selector.propose(
+                        blackboard,
+                        snapshot=planner_snapshot,
+                    )
+                    if candidate is not None:
+                        candidate_options = [candidate]
             except Exception as exc:
                 host.logger.debug("[social agenda selector] candidate failed: %s", exc)
+        # Gemma Executive Cortex sits between role-owned DeepSeek workers and
+        # the deterministic governor. It may veto a candidate, refine its
+        # semantic target, or inspect one read-only live tool. Runtime still owns
+        # execution and Surface still owns public wording.
+        upstream_candidate = candidate
+        executive_outcome = None
+        executive = getattr(host, "ai_executive_cortex", None)
+        if executive is not None and bool(getattr(executive, "enabled", False)):
+            try:
+                executive_outcome = executive.deliberate(
+                    blackboard,
+                    candidate_options,
+                    snapshot=planner_snapshot,
+                )
+                candidate = executive_outcome.candidate
+            except Exception as exc:
+                host.logger.warning("[executive] deliberation failed; legacy candidate retained: %s", exc)
+                candidate = upstream_candidate
+                executive_outcome = None
+        if executive_outcome is not None and candidate_options:
+            selected_token = str(getattr(candidate, "seed_lease_token", "") or "") if candidate is not None else ""
+            for option in candidate_options:
+                token = str(getattr(option, "seed_lease_token", "") or "")
+                if token and token != selected_token:
+                    self._release_seed_lease(option, reason="executive_not_selected")
+
+        # A post-turn observer may mark every question-shaped ending as a hard
+        # reply baton. Gemma may release only a socially optional baton, and only
+        # for a low-risk social move. Explicit task/engagement questions remain
+        # hard runtime boundaries. This is a one-turn authority adjustment, not a
+        # lexical rewrite of the user's sentence.
+        if (
+            executive_outcome is not None
+            and may_release_optional_reply_baton(
+                blackboard, candidate, executive_outcome.decision
+            )
+        ):
+            blackboard = replace(
+                blackboard,
+                reply_expected=False,
+                assistant_may_continue=True,
+                followup_reminder_due=False,
+            )
+            host.logger.info(
+                "[executive] released optional reply baton for kind=%s reason=%s",
+                getattr(candidate, "kind", ""),
+                executive_outcome.reason,
+            )
         candidate_ms = (time.monotonic() - candidate_started) * 1000.0
         initiative = getattr(host, "ai_initiative_controller", None)
-        if initiative is None:
+        if executive_outcome is not None and executive_outcome.action == "body_only":
+            decision = InitiativeDecision(
+                InitiativeAction.BODY_ONLY,
+                f"gemma_executive:{executive_outcome.reason}",
+                IntentionPlan.silence(channel="autonomous", reason="executive_body_only"),
+                body_motion="quiet_presence",
+            )
+        elif initiative is None:
             decision = InitiativeDecision(
                 InitiativeAction.NO_OP,
                 "initiative_controller_unavailable",
@@ -231,11 +300,22 @@ class SelfTurnPipeline:
             )
         else:
             decision = initiative.decide(blackboard, candidate)
+            if executive_outcome is not None and candidate is None and executive_outcome.action == "silence":
+                decision = replace(decision, reason=f"gemma_executive:{executive_outcome.reason}")
         host.logger.info(
             "[autonomous latency] perception=%.0fms context=%.0fms snapshot=%.0fms candidate=%.0fms total_to_governor=%.0fms",
             perception_ms, context_ms, snapshot_ms, candidate_ms,
             perception_ms + context_ms + snapshot_ms + candidate_ms,
         )
+        if executive_outcome is not None:
+            self.trace_store.append("executive_decision", {
+                "turn_seq": context.turn_seq,
+                "stage": "executive",
+                "owner": "gemma_executive_cortex",
+                "action": executive_outcome.action,
+                "reason": executive_outcome.reason,
+                "decision": executive_outcome.decision.to_dict(),
+            }, now=now)
         if candidate is not None:
             host.logger.info(
                 "[social candidate] source=%s kind=%s anchor=%s confidence=%.2f relevance=%.2f reason=%s",
@@ -312,10 +392,11 @@ class SelfTurnPipeline:
         )
 
         if decision.action is InitiativeAction.NO_OP:
-            self._release_seed_lease(candidate, reason=decision.reason)
+            release_candidate = candidate if candidate is not None else upstream_candidate
+            self._release_seed_lease(release_candidate, reason=decision.reason)
             self._defer_claimed_continuation(
                 plan,
-                candidate=candidate,
+                candidate=release_candidate,
                 reason=decision.reason,
                 seconds=0.25 if getattr(candidate, "kind", "") == "conversation_arc" else 1.5,
             )
@@ -323,10 +404,11 @@ class SelfTurnPipeline:
                 plan=plan, context=context, activity=activity, gate_reason=decision.reason,
             )
         if decision.action is InitiativeAction.BODY_ONLY:
-            self._release_seed_lease(candidate, reason=decision.reason)
+            release_candidate = candidate if candidate is not None else upstream_candidate
+            self._release_seed_lease(release_candidate, reason=decision.reason)
             self._defer_claimed_continuation(
                 plan,
-                candidate=candidate,
+                candidate=release_candidate,
                 reason=decision.reason,
                 seconds=0.25 if getattr(candidate, "kind", "") == "conversation_arc" else 1.5,
             )

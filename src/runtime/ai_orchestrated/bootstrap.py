@@ -18,6 +18,7 @@ from .atomic_state import atomic_store_from_env
 from .contracts import AI_RUNTIME_VERSION, RuntimeMindState
 from .conversation_arc import ConversationArcRuntime
 from .discovery import DiscoveryRuntime
+from .executive_cortex import ExecutiveCortex
 from .expression import IdentityExpressionBridge
 from .grounding_validator import AutonomousGroundingValidator
 from .identity_consolidator import IdentityConsolidator
@@ -400,6 +401,19 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
         "ai_orchestrated.social_agenda_selector",
         details={"enabled": bool(social_agenda_selector.enabled)},
     )
+    executive_cortex = ExecutiveCortex(
+        host,
+        getattr(llm_service, "executive_client", None),
+        invoke_structured=router.invoke_structured_worker,
+        logger=getattr(host, "logger", None),
+    )
+    health.record_success(
+        "ai_orchestrated.executive_cortex",
+        details={
+            "enabled": bool(executive_cortex.enabled),
+            "model": str(getattr(getattr(llm_service, "executive_client", None), "model_name", "") or ""),
+        },
+    )
     surface_intent = SurfaceIntentEngine(router, reducer, logger=getattr(host, "logger", None))
     health.record_success(
         "ai_orchestrated.surface_intent",
@@ -476,6 +490,7 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     host.ai_random_chat_seed_generator = random_chat_seed_generator
     host.ai_random_chat_seed_reservoir = random_chat_seed_reservoir
     host.ai_social_agenda_selector = social_agenda_selector
+    host.ai_executive_cortex = executive_cortex
     host.ai_discovery_runtime = discovery
     host.ai_initiative_controller = initiative
     host.ai_autonomous_grounding_validator = grounding_validator
