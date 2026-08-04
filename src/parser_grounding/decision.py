@@ -22,17 +22,6 @@ _SEMANTIC_ANIMATION_STAGE_ALIASES: dict[str, dict[str, str]] = {
 }
 from runtime.no_fallback_policy import no_fallback_mode_enabled
 
-_SYSTEM_ACTION_ALIASES = {
-    "adjust_volume": "set_volume",
-    "change_volume": "set_volume",
-    "volume": "set_volume",
-    "volume_up": "set_volume",
-    "volume_down": "set_volume",
-    "get_time": "get_local_time",
-    "show_time": "get_local_time",
-    "current_time": "get_local_time",
-    "time_now": "get_local_time",
-}
 # ParserGroundingMixin chỉ chuẩn hóa cấu trúc Decision và metadata sân khấu.
 # Public text thuộc quyền của model chính; parser không còn được phép viết lại
 # câu chỉ vì nó mô tả một hành động ngoài capability runtime. Action executor vẫn
@@ -1079,9 +1068,8 @@ class ParserGroundingMixin:
 
     def _sanitize_system_action(self, value: str):
         raw_action = str(value or "").strip().strip('"').strip("'")
-        action_name = _SYSTEM_ACTION_ALIASES.get(raw_action.lower(), raw_action)
-        if action_name in VALID_SYSTEM_ACTIONS:
-            return action_name
+        if raw_action in VALID_SYSTEM_ACTIONS:
+            return raw_action
         return ""
 
     def _is_strict_direction_value(self, value) -> bool:
@@ -1125,7 +1113,7 @@ class ParserGroundingMixin:
             return True
 
         raw_system_action = str(payload.get("system_action", "") or "").strip().strip('"').strip("'")
-        system_action = _SYSTEM_ACTION_ALIASES.get(raw_system_action.lower(), raw_system_action)
+        system_action = raw_system_action
         if system_action and system_action not in VALID_SYSTEM_ACTIONS:
             return True
 

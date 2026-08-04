@@ -10,7 +10,7 @@ import requests # Thêm import requests để thực hiện các yêu cầu HTTP
 
 from eris_secrets import get_agent_profile, get_secret
 from .contracts import ActionExecutionResult, VALID_SYSTEM_ACTIONS
-from .capability_registry import canonicalize_action_id
+from .capability_registry import canonicalize_action_id, encode_capability_arguments, validate_capability_arguments
 from .observer import DefaultActionObserver, apply_observation
 # ActionExecutor là một lớp để thực thi các hành động hệ thống được định nghĩa
 # trong VALID_SYSTEM_ACTIONS.
@@ -20,17 +20,6 @@ from .observer import DefaultActionObserver, apply_observation
 # như lấy thông tin bài
 
 class ActionExecutor:
-    _ACTION_ALIASES = {
-        "adjust_volume": "set_volume",
-        "change_volume": "set_volume",
-        "volume": "set_volume",
-        "volume_up": "set_volume",
-        "volume_down": "set_volume",
-        "get_time": "get_local_time",
-        "show_time": "get_local_time",
-        "current_time": "get_local_time",
-        "time_now": "get_local_time",
-    }
     _VK_MEDIA_PLAY_PAUSE = 0xB3
     _VK_VOLUME_MUTE = 0xAD
     _VK_VOLUME_DOWN = 0xAE
@@ -75,6 +64,30 @@ class ActionExecutor:
     ↓
     return ActionExecutionResult
     '''
+    def execute_capability(self, capability_id: str, arguments) -> ActionExecutionResult:
+        """Validate typed arguments, then adapt once at the exact handler boundary."""
+        capability_key = canonicalize_action_id(capability_id)
+        valid, reason = validate_capability_arguments(capability_key, arguments)
+        if not valid:
+            return ActionExecutionResult(
+                action_name=capability_key,
+                action_input="",
+                success=False,
+                message="Đối số capability không hợp lệ.",
+                error_kind=f"CapabilityArgumentsInvalid:{reason}",
+            )
+        try:
+            action_input = encode_capability_arguments(capability_key, arguments)
+        except Exception as exc:
+            return ActionExecutionResult(
+                action_name=capability_key,
+                action_input="",
+                success=False,
+                message="Không chuyển được đối số capability sang handler.",
+                error_kind=type(exc).__name__,
+            )
+        return self.execute(capability_key, action_input)
+
     def execute(self, action_name: str, action_input: str = "") -> ActionExecutionResult:
         original_action_name = (action_name or "").strip()
         action_name = canonicalize_action_id(original_action_name)

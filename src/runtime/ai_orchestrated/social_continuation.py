@@ -22,6 +22,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from .atomic_state import SQLiteAtomicStateStore, SQLiteStateTransaction
 from .social_candidate import SocialSpeechCandidate
+from .affordance import ExecutiveAffordance
 from .social_plan import normalize_afterbeat, normalize_exposure
 
 
@@ -335,26 +336,23 @@ class SocialContinuationRuntime:
             self._emit("audio_finished", count=changed, source_turn_id=source_turn_id)
         return changed
 
-    def claim_due(
+    def peek_due(
         self,
         *,
-        worker_id: str,
         now: float | None = None,
         interaction_busy: bool = False,
-        lease_ms: int = 8000,
-    ) -> SocialSpeechCandidate | None:
+    ) -> ExecutiveAffordance | None:
+        """Read the best due continuation without reserving it."""
         current = float(now if now is not None else self._clock())
-        owner = _compact(worker_id or "anonymous", 100) or "anonymous"
         with self._lock, self._state_transaction_locked():
             self._expire_and_reap_claims_locked(current)
             if interaction_busy:
                 self._arm_timer_locked()
                 return None
-            tickets = list(self._state.tickets)
             ranked = sorted(
                 (
                     (0 if ticket.lane == "afterbeat" else 1, ticket.due_at, index, ticket)
-                    for index, ticket in enumerate(tickets)
+                    for index, ticket in enumerate(self._state.tickets)
                     if ticket.status in {"WAITING_PAUSE", "WAITING_REACTION"}
                     and ticket.due_at > 0.0
                     and current >= ticket.due_at
@@ -365,30 +363,79 @@ class SocialContinuationRuntime:
             if not ranked:
                 self._arm_timer_locked()
                 return None
-            _, _, index, ticket = ranked[0]
-            new_version = ticket.version + 1
-            token = f"{ticket.ticket_id}:v{new_version}:{owner}"
-            claimed = replace(
-                ticket,
-                status="CLAIMED",
-                version=new_version,
-                claim_owner=owner,
-                claim_until=current + max(0.5, min(30.0, int(lease_ms) / 1000.0)),
-                claim_token=token,
-                updated_at=current,
+            _, _, _, ticket = ranked[0]
+            candidate = self._candidate_for(ticket)
+            return ExecutiveAffordance(
+                affordance_id=f"social_continuation:{ticket.ticket_id}:v{ticket.version}",
+                owner="social_continuation",
+                revision=ticket.version,
+                candidate=candidate,
+                claim_required=True,
+                expires_at=ticket.expires_at,
+                claim_key=ticket.ticket_id,
+                metadata={"lane": ticket.lane},
             )
-            tickets[index] = claimed
-            self._state = replace(
-                self._state,
-                version=self._state.version + 1,
-                tickets=tuple(tickets),
-                updated_at=current,
-            )
-            self._metric_locked("claims_granted", 1)
-            self._persist_locked()
-            self._arm_timer_locked()
-        self._emit("claim", lane=claimed.lane, ticket_id=claimed.ticket_id, worker_id=owner)
-        return self._candidate_for(claimed)
+
+    def claim_affordance(
+        self,
+        affordance: ExecutiveAffordance,
+        *,
+        worker_id: str,
+        now: float | None = None,
+        lease_ms: int = 8000,
+    ) -> SocialSpeechCandidate | None:
+        """Atomically claim only the affordance selected by the Executive."""
+        current = float(now if now is not None else self._clock())
+        owner = _compact(worker_id or "anonymous", 100) or "anonymous"
+        ticket_id = str(affordance.claim_key or "")
+        with self._lock, self._state_transaction_locked():
+            self._expire_and_reap_claims_locked(current)
+            tickets = list(self._state.tickets)
+            for index, ticket in enumerate(tickets):
+                if ticket.ticket_id != ticket_id or ticket.version != int(affordance.revision):
+                    continue
+                if not (
+                    ticket.status in {"WAITING_PAUSE", "WAITING_REACTION"}
+                    and ticket.due_at > 0.0
+                    and current >= ticket.due_at
+                    and current < ticket.expires_at
+                ):
+                    return None
+                new_version = ticket.version + 1
+                token = f"{ticket.ticket_id}:v{new_version}:{owner}"
+                claimed = replace(
+                    ticket,
+                    status="CLAIMED",
+                    version=new_version,
+                    claim_owner=owner,
+                    claim_until=current + max(0.5, min(30.0, int(lease_ms) / 1000.0)),
+                    claim_token=token,
+                    updated_at=current,
+                )
+                tickets[index] = claimed
+                self._state = replace(
+                    self._state, version=self._state.version + 1, tickets=tuple(tickets), updated_at=current
+                )
+                self._metric_locked("claims_granted", 1)
+                self._persist_locked()
+                self._arm_timer_locked()
+                self._emit("claim", lane=claimed.lane, ticket_id=claimed.ticket_id, worker_id=owner)
+                return self._candidate_for(claimed)
+        return None
+
+    def claim_due(
+        self,
+        *,
+        worker_id: str,
+        now: float | None = None,
+        interaction_busy: bool = False,
+        lease_ms: int = 8000,
+    ) -> SocialSpeechCandidate | None:
+        """Compatibility wrapper over collect-before-claim."""
+        preview = self.peek_due(now=now, interaction_busy=interaction_busy)
+        if preview is None:
+            return None
+        return self.claim_affordance(preview, worker_id=worker_id, now=now, lease_ms=lease_ms)
 
     def release_claim(
         self,

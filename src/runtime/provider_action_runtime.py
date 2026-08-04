@@ -166,7 +166,16 @@ class ProviderActionRuntimeMixin:
         if self.action_executor is None or not decision.system_action:
             return decision
 
-        result = self._execute_action_provider(decision.system_action, decision.action_input)
+        typed_arguments = getattr(decision, "capability_arguments", None)
+        if isinstance(typed_arguments, dict):
+            executor = getattr(self.action_executor, "execute_capability", None)
+            result = (
+                executor(decision.system_action, typed_arguments)
+                if callable(executor)
+                else self._execute_action_provider(decision.system_action, decision.action_input)
+            )
+        else:
+            result = self._execute_action_provider(decision.system_action, decision.action_input)
         decision.action_result_meta = result.to_public_meta()
         if frame is not None:
             try:
@@ -185,26 +194,10 @@ class ProviderActionRuntimeMixin:
         # Tool/action là nguồn sự thật cuối. Không được để model giữ câu "đã làm"
         # khi executor fail hoặc action bị alias/sanitize. Báo thành công giả là cách
         # nhanh nhất để biến assistant thành cái đài phát thanh của niềm tin mù quáng.
-        action_owns_text = {
-            "get_local_time",
-            "get_now_playing",
-            "get_weather",
-            "open_url",
-            "focus_window",
-            "set_volume",
-            "play_pause_media",
-            "copy_text",
-            "launch_app",
-            "review_discourse_claim",
-            "inspect_unresolved_questions",
-            "inspect_memory_candidates",
-            "compare_recent_turns",
-            "inspect_social_state",
-            "detect_internal_contradictions",
-            "summarize_open_loops",
-            "inspect_capability_health",
-        }
-        if (not result.success) or (result.action_name in action_owns_text) or (not decision.text.strip()):
+        # Once a capability actually ran, its verified result owns the factual
+        # public text. The language model may frame intent beforehand, but it may
+        # not preserve a contradictory success/denial sentence afterwards.
+        if str(result_text or "").strip():
             decision.text = result_text
             decision.should_speak = bool(str(result_text or "").strip())
             if not result.success:

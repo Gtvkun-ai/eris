@@ -776,7 +776,12 @@ class StateCommitServiceMixin:
         if self.action_executor is None or not decision.system_action:
             return decision
 
-        result = self.action_executor.execute(decision.system_action, decision.action_input)
+        typed_arguments = getattr(decision, "capability_arguments", None)
+        execute_typed = getattr(self.action_executor, "execute_capability", None)
+        if isinstance(typed_arguments, dict) and callable(execute_typed):
+            result = execute_typed(decision.system_action, typed_arguments)
+        else:
+            result = self.action_executor.execute(decision.system_action, decision.action_input)
         recorder = getattr(self, "_record_tool_grounding", None)
         if callable(recorder):
             recorder(result, action_name=decision.system_action)
@@ -786,18 +791,8 @@ class StateCommitServiceMixin:
         else:
             decision.debug_trace = action_trace
         result_text = self._action_result_to_text(result)
-        action_owns_text = {
-            "get_local_time",
-            "get_now_playing",
-            "get_weather",
-            "open_url",
-            "focus_window",
-            "set_volume",
-            "play_pause_media",
-            "copy_text",
-            "launch_app",
-        }
-        if (not result.success) or (decision.system_action in action_owns_text) or (not decision.text.strip()):
+        # The executed capability is the final factual authority for this turn.
+        if str(result_text or "").strip():
             decision.text = result_text
             decision.should_speak = bool(str(result_text or "").strip())
             if not result.success:

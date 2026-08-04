@@ -119,7 +119,6 @@ class RuntimeCoordinator(
         memory_core,
         body_running_fn,
         action_executor=None,
-        action_router=None,
         memory_semantic_parser=None,
     ):
         super().__init__(
@@ -131,6 +130,5 @@ class RuntimeCoordinator(
             memory_core=memory_core,
             body_running_fn=body_running_fn,
             action_executor=action_executor,
-            action_router=action_router,
             memory_semantic_parser=memory_semantic_parser,
         )

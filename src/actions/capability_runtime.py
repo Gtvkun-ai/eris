@@ -3,7 +3,7 @@
 
 Registry public không được đoán tool đang sống chỉ từ việc một id tồn tại trong
 ``VALID_SYSTEM_ACTION_LIST``. Module này chụp trạng thái thật từ Coordinator,
-ActionRouter/ActionExecutor, settings và credential presence. Snapshot chỉ giữ
+ActionExecutor, live capability runtimes, settings và credential presence. Snapshot chỉ giữ
 bool/reason, tuyệt đối không giữ raw API key.
 """
 
@@ -93,7 +93,6 @@ def refresh_runtime_capabilities(
     caps_settings = dict(settings.get("capabilities", {})) if isinstance(settings, Mapping) else {}
     respect_runtime = bool(caps_settings.get("respect_runtime_availability", True))
 
-    router = getattr(owner, "action_router", None) if owner is not None else None
     executor = getattr(owner, "action_executor", None) if owner is not None else None
     statuses: dict[str, CapabilityRuntimeStatus] = {}
 
@@ -157,11 +156,6 @@ def refresh_runtime_capabilities(
                 capability_id, False, "runtime_owner_not_bound", "runtime"
             )
             continue
-        if router is None:
-            statuses[capability_id] = CapabilityRuntimeStatus(
-                capability_id, False, "action_router_unavailable", "runtime"
-            )
-            continue
         if executor is None:
             statuses[capability_id] = CapabilityRuntimeStatus(
                 capability_id, False, "action_executor_unavailable", "runtime"
@@ -185,7 +179,7 @@ def refresh_runtime_capabilities(
             continue
 
         statuses[capability_id] = CapabilityRuntimeStatus(
-            capability_id, True, "router_and_executor_ready", "runtime"
+            capability_id, True, "executor_handler_ready", "runtime"
         )
 
     statuses.update(_observational_statuses(owner))

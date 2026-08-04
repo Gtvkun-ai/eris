@@ -94,7 +94,6 @@ class CoordinatorBootstrapMixin:
         memory_core,
         body_running_fn,
         action_executor=None,
-        action_router=None,
         memory_semantic_parser=None,
     ):
         self.bootstrap_completed_phases: list[str] = []
@@ -111,7 +110,6 @@ class CoordinatorBootstrapMixin:
             llm_service=llm_service,
             body_running_fn=body_running_fn,
             action_executor=action_executor,
-            action_router=action_router,
         )
         self._run_bootstrap_phase("hardening_and_state", self._bootstrap_hardening_and_state, memory_core=memory_core)
         self._run_bootstrap_phase("cognition_services", self._bootstrap_cognition_services, llm_service=llm_service)
@@ -223,7 +221,7 @@ class CoordinatorBootstrapMixin:
         self.avatar_ready = False
         self.last_stage_inbound_event = None
 
-    def _bootstrap_memory_and_capabilities(self, *, memory_core, memory_semantic_parser, llm_service, body_running_fn, action_executor, action_router) -> None:
+    def _bootstrap_memory_and_capabilities(self, *, memory_core, memory_semantic_parser, llm_service, body_running_fn, action_executor) -> None:
         self.memory_core = memory_core
         if memory_semantic_parser is None:
             try:
@@ -276,7 +274,6 @@ class CoordinatorBootstrapMixin:
                     self.logger.warning("Không nối được living user model adapter: %s", exc)
         self.body_running_fn = body_running_fn
         self.action_executor = action_executor
-        self.action_router = action_router
         self.memory_semantic_parser = memory_semantic_parser
         def _build_internal_cognitive_capabilities():
             from runtime.internal_cognitive_capabilities import (

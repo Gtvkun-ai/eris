@@ -211,6 +211,13 @@ class RandomChatSeedGenerator:
 
 
 @dataclass(frozen=True, slots=True)
+class SeedReservoirPreview:
+    seed: RandomChatSeed
+    generated_at: float
+    expires_at: float
+    context_revision: int
+
+@dataclass(frozen=True, slots=True)
 class SeedReservoirLease:
     token: str
     seed: RandomChatSeed
@@ -364,9 +371,8 @@ class RandomChatSeedReservoir:
             ]
             self._condition.notify_all()
 
-    def claim(self, *, now: float | None = None) -> SeedReservoirLease | None:
-        """Lease one ready seed atomically; never performs network I/O."""
-
+    def peek(self, *, now: float | None = None) -> SeedReservoirPreview | None:
+        """Return the best ready seed without leasing or removing it."""
         if not self.enabled:
             return None
         current = float(now if now is not None else self.clock())
@@ -377,22 +383,48 @@ class RandomChatSeedReservoir:
                 self._condition.notify_all()
                 return None
             chosen = max(candidates, key=lambda entry: self._score_entry(entry, current))
+            return SeedReservoirPreview(
+                seed=chosen.seed, generated_at=chosen.generated_at, expires_at=chosen.expires_at,
+                context_revision=chosen.context_revision,
+            )
+
+    def claim_seed(
+        self, seed_id: str, *, context_revision: int, now: float | None = None
+    ) -> SeedReservoirLease | None:
+        """Lease exactly the seed selected by the Executive."""
+        if not self.enabled or not seed_id:
+            return None
+        current = float(now if now is not None else self.clock())
+        with self._condition:
+            self._prune_locked(current)
+            chosen = next((
+                entry for entry in self._entries
+                if entry.seed.seed_id == str(seed_id)
+                and entry.context_revision == int(context_revision)
+                and self._entry_compatible_locked(entry)
+            ), None)
+            if chosen is None:
+                return None
             self._entries.remove(chosen)
             token = "seedlease_" + secrets.token_hex(10)
             self._leases[token] = _LeaseEntry(
-                entry=chosen,
-                leased_at=current,
-                lease_expires_at=current + self.lease_ttl,
+                entry=chosen, leased_at=current, lease_expires_at=current + self.lease_ttl
             )
             self._last_claimed_mode = chosen.seed.mode
             self._condition.notify_all()
             return SeedReservoirLease(
-                token=token,
-                seed=chosen.seed,
-                generated_at=chosen.generated_at,
-                expires_at=chosen.expires_at,
-                context_revision=chosen.context_revision,
+                token=token, seed=chosen.seed, generated_at=chosen.generated_at,
+                expires_at=chosen.expires_at, context_revision=chosen.context_revision,
             )
+
+    def claim(self, *, now: float | None = None) -> SeedReservoirLease | None:
+        """Compatibility wrapper over peek + exact claim."""
+        preview = self.peek(now=now)
+        if preview is None:
+            return None
+        return self.claim_seed(
+            preview.seed.seed_id, context_revision=preview.context_revision, now=now
+        )
 
     def release(self, token: str, *, reason: str = "deferred", now: float | None = None) -> bool:
         """Return a leased seed when the governor or Surface did not publish it."""
@@ -780,5 +812,6 @@ __all__ = [
     "RANDOM_CHAT_SEED_OUTPUT_SCHEMA",
     "RandomChatSeedGenerator",
     "RandomChatSeedReservoir",
+    "SeedReservoirPreview",
     "SeedReservoirLease",
 ]

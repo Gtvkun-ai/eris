@@ -6,7 +6,7 @@ from memory.living_user.service import LivingUserMemoryConfig, LivingUserMemoryS
 from runtime.ai_orchestrated.cognitive_blackboard import TypedCognitiveBlackboard
 from runtime.ai_orchestrated.initiative import InitiativeAction, InitiativeController
 from runtime.ai_orchestrated.random_chat_seed import RandomChatSeed, RandomChatSeedAffinityStore
-from runtime.ai_orchestrated.random_chat_seed_service import SeedReservoirLease
+from runtime.ai_orchestrated.random_chat_seed_service import SeedReservoirLease, SeedReservoirPreview
 from runtime.ai_orchestrated.social_initiative import SocialInitiativeEngine
 
 
@@ -189,9 +189,16 @@ class _ReadyReservoir:
         self.released: list[tuple[str, str]] = []
         self.committed: list[str] = []
 
-    def claim(self, *, now=None):
-        self.claims += 1
+    def peek(self, *, now=None):
         if not self.seed.available:
+            return None
+        return SeedReservoirPreview(
+            seed=self.seed, generated_at=900.0, expires_at=1500.0, context_revision=3
+        )
+
+    def claim_seed(self, seed_id, *, context_revision, now=None):
+        self.claims += 1
+        if not self.seed.available or self.seed.seed_id != seed_id or context_revision != 3:
             return None
         seed = self.seed
         self.seed = RandomChatSeed()
@@ -212,7 +219,7 @@ class _ReadyReservoir:
         return True
 
 
-def test_idle_random_chat_leases_precomputed_seed_without_model_call() -> None:
+def test_idle_random_chat_previews_seed_without_claiming_before_executive() -> None:
     router = _SeedRouter()
     reservoir = _ReadyReservoir(_seed_payload())
     snapshot = _snapshot()
@@ -223,10 +230,10 @@ def test_idle_random_chat_leases_precomputed_seed_without_model_call() -> None:
 
     assert candidate is not None and candidate.kind == "random_chat"
     assert candidate.seed_id == "rseed_arch"
-    assert candidate.seed_lease_token == "lease_arch"
+    assert candidate.seed_lease_token == ""
     assert candidate.eris_motive_kind == "want_to_share"
     assert candidate.daring == 0.49
-    assert reservoir.claims == 1
+    assert reservoir.claims == 0
     assert router.generic_calls == 0
 
 
@@ -260,7 +267,7 @@ def test_empty_reservoir_is_real_silence_not_generic_fallback() -> None:
     candidate = SocialInitiativeEngine(router, seed_reservoir=reservoir).propose(board, snapshot=snapshot)
 
     assert candidate is None
-    assert reservoir.claims == 1
+    assert reservoir.claims == 0
     assert router.generic_calls == 0
 
 

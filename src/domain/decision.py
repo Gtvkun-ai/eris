@@ -25,6 +25,7 @@ class Decision:
     parse_mode: str = "json"
     system_action: str = ""
     action_input: str = ""
+    capability_arguments: dict[str, Any] | None = None
     motion_intent: str = ""
     motion_target_x: float = -1.0
     motion_facing: int = 0

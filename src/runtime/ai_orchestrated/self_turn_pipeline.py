@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
-"""Pipeline self-initiated turn của Architecture C V22 full social cutover.
+"""Autonomous public-turn pipeline with one semantic executive authority.
 
-Mỗi bước có đúng một trách nhiệm:
-1. Perception + Context gom signal cơ học và public-safe cognition.
-2. ``TypedCognitiveBlackboard`` chuẩn hóa observer/inner/critic/memory outputs.
-3. Runtime claim một candidate từ afterbeat, exposure, conversation arc hoặc social agenda.
-4. Nếu không có lane đang chờ, agenda selector model-owned được phép đề xuất một
-   impulse typed mới từ public-safe context. Nó không có quyền viết hay phát câu.
-5. ``InitiativeController`` chỉ làm governor timing/quyền phát.
-6. ``Surface Worker`` chỉ viết wording cho SpeechIntent đã duyệt.
-7. ``AutonomousGroundingValidator`` khóa provenance trước và sau model call.
-8. PublicTurnCommitter đưa câu qua TTS + Live2D cùng ledger với chat.
+Production order:
+1. Perception and public-safe cognition assemble a typed blackboard.
+2. DeepSeek-owned sources *peek* typed affordances without reserving the lane.
+3. Gemma Executive chooses silence, body presence, one exact affordance ID, or
+   one exact live capability discovered through typed retrieval.
+4. Runtime atomically claims only the selected affordance and fails closed when
+   its revision is stale. It never picks a replacement by Python source order.
+5. InitiativeController owns timing, concurrency, reply obligations and safety.
+6. DeepSeek Surface owns public wording for the approved semantic target.
+7. Grounding, public lifecycle, TTS and Live2D commit remain runtime-owned.
 
-Không còn legacy execution path hay local public wording fallback. Agenda selector
-chỉ nêu mong muốn/chủ đề; governor và Surface vẫn là đường production duy nhất.
+There is no legacy semantic selector, marker router, local social wording, or
+upstream candidate fallback in this path.
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ from .cognitive_blackboard import TypedCognitiveBlackboard
 from .contracts import AI_RUNTIME_VERSION, IntentionPlan, StateEvent
 from .discourse_state import DiscourseState, DiscourseStateBuilder
 from .followup_appraisal import FollowUpAppraisalLayer
-from .executive_cortex import may_release_optional_reply_baton
+from .executive_cortex import ExecutiveEvent, may_release_optional_reply_baton
 from .identity import PendingStrategyUse
 from .initiative import InitiativeAction, InitiativeDecision
 from .self_context import AutonomousSelfContext, build_autonomous_self_context
@@ -175,102 +175,122 @@ class SelfTurnPipeline:
 
         self._last_deliberation_at = now
 
-        # V23: ưu tiên candidate từ social-plan state đã commit. Nếu không có lane
-        # đang chờ, agenda selector được phép đề xuất một impulse typed mới. Nó
-        # không có quyền phát; governor và Surface vẫn giữ toàn bộ quyền public.
+        # Collect-before-claim: every source exposes a typed affordance, Gemma
+        # chooses one exact ID, and only then may runtime reserve it.  No Python
+        # source order is allowed to become conversational priority.
         blackboard = TypedCognitiveBlackboard.from_snapshot(planner_snapshot, now=now)
         candidate_started = time.monotonic()
         candidate = None
-        candidate_options: list[Any] = []
+        affordances: list[Any] = []
         worker_id = f"self_turn:{threading.get_ident()}"
-        # Priority lanes: reserved afterbeat, exposure recovery, conversation arc,
-        # then social agenda. The retired ordinary/random initiative path is gone.
-        # Every lane is claimed atomically before a model call.
+
         if social_continuation_runtime is not None:
             try:
-                candidate = social_continuation_runtime.claim_due(
-                    worker_id=worker_id,
-                    now=now,
-                    interaction_busy=interaction_busy,
+                preview = social_continuation_runtime.peek_due(
+                    now=now, interaction_busy=interaction_busy
                 )
+                if preview is not None:
+                    affordances.append(preview)
             except Exception as exc:
-                host.logger.debug("[social continuation] candidate failed: %s", exc)
-        if candidate is None and conversation_arc_runtime is not None:
+                host.logger.debug("[social continuation] affordance peek failed: %s", exc)
+
+        if conversation_arc_runtime is not None:
             try:
-                candidate = conversation_arc_runtime.claim_due(
-                    worker_id=worker_id,
-                    now=now,
-                    interaction_busy=interaction_busy,
+                preview = conversation_arc_runtime.peek_due(
+                    now=now, interaction_busy=interaction_busy
                 )
+                if preview is not None:
+                    affordances.append(preview)
             except Exception as exc:
-                host.logger.debug("[conversation arc] candidate failed: %s", exc)
+                host.logger.debug("[conversation arc] affordance peek failed: %s", exc)
+
         social_agenda_store = getattr(host, "ai_social_agenda_store", None)
-        if candidate is None and social_agenda_store is not None:
+        if social_agenda_store is not None:
             try:
-                candidate = social_agenda_store.claim_due(
-                    blackboard,
-                    worker_id=worker_id,
-                    now=now,
-                )
+                preview = social_agenda_store.peek_due(blackboard, now=now)
+                if preview is not None:
+                    affordances.append(preview)
             except Exception as exc:
-                host.logger.debug("[social agenda] candidate failed: %s", exc)
-        if candidate is not None:
-            candidate_options.append(candidate)
+                host.logger.debug("[social agenda] affordance peek failed: %s", exc)
+
         agenda_selector = getattr(host, "ai_social_agenda_selector", None)
-        if candidate is None and agenda_selector is not None:
+        if agenda_selector is not None:
             try:
-                option_writer = getattr(agenda_selector, "propose_options", None)
-                if callable(option_writer):
-                    candidate_options = list(option_writer(
-                        blackboard,
-                        snapshot=planner_snapshot,
-                    ))
-                    candidate = candidate_options[0] if candidate_options else None
-                else:
-                    candidate = agenda_selector.propose(
-                        blackboard,
-                        snapshot=planner_snapshot,
-                    )
-                    if candidate is not None:
-                        candidate_options = [candidate]
+                collector = getattr(agenda_selector, "collect_affordances", None)
+                if callable(collector):
+                    affordances.extend(collector(blackboard, snapshot=planner_snapshot))
             except Exception as exc:
-                host.logger.debug("[social agenda selector] candidate failed: %s", exc)
-        # Gemma Executive Cortex sits between role-owned DeepSeek workers and
-        # the deterministic governor. It may veto a candidate, refine its
-        # semantic target, or inspect one read-only live tool. Runtime still owns
-        # execution and Surface still owns public wording.
-        upstream_candidate = candidate
+                host.logger.debug("[social initiative] affordance collection failed: %s", exc)
+
+        # Deduplicate only by stable ID.  Similar meanings from different owners
+        # remain visible because deciding between them is Gemma's job, not a set().
+        unique_affordances: list[Any] = []
+        seen_affordance_ids: set[str] = set()
+        for affordance in affordances:
+            affordance_id = str(getattr(affordance, "affordance_id", "") or "")
+            if not affordance_id or affordance_id in seen_affordance_ids:
+                continue
+            seen_affordance_ids.add(affordance_id)
+            unique_affordances.append(affordance)
+        affordances = unique_affordances
+
         executive_outcome = None
         executive = getattr(host, "ai_executive_cortex", None)
         if executive is not None and bool(getattr(executive, "enabled", False)):
             try:
                 executive_outcome = executive.deliberate(
-                    blackboard,
-                    candidate_options,
-                    snapshot=planner_snapshot,
+                    blackboard, affordances, snapshot=planner_snapshot
                 )
-                candidate = executive_outcome.candidate
             except Exception as exc:
-                host.logger.warning("[executive] deliberation failed; legacy candidate retained: %s", exc)
-                candidate = upstream_candidate
-                executive_outcome = None
-        if executive_outcome is not None and candidate_options:
-            selected_token = str(getattr(candidate, "seed_lease_token", "") or "") if candidate is not None else ""
-            for option in candidate_options:
-                token = str(getattr(option, "seed_lease_token", "") or "")
-                if token and token != selected_token:
-                    self._release_seed_lease(option, reason="executive_not_selected")
+                host.logger.warning("[executive] deliberation failed closed: %s", exc)
+        else:
+            host.logger.warning("[executive] unavailable; autonomous semantic path fails closed")
 
-        # A post-turn observer may mark every question-shaped ending as a hard
-        # reply baton. Gemma may release only a socially optional baton, and only
-        # for a low-risk social move. Explicit task/engagement questions remain
-        # hard runtime boundaries. This is a one-turn authority adjustment, not a
-        # lexical rewrite of the user's sentence.
+        if executive_outcome is not None:
+            candidate = executive_outcome.candidate
+            selected_id = str(getattr(executive_outcome, "selected_affordance_id", "") or "")
+            if selected_id:
+                selected = next(
+                    (item for item in affordances if item.affordance_id == selected_id),
+                    None,
+                )
+                if selected is None:
+                    candidate = None
+                elif bool(getattr(selected, "claim_required", False)):
+                    claimed = self._claim_selected_affordance(
+                        selected,
+                        worker_id=worker_id,
+                        now=now,
+                        social_continuation_runtime=social_continuation_runtime,
+                        conversation_arc_runtime=conversation_arc_runtime,
+                        social_agenda_store=social_agenda_store,
+                        agenda_selector=agenda_selector,
+                    )
+                    if claimed is None:
+                        host.logger.info(
+                            "[executive] selected affordance became stale id=%s; failing closed",
+                            selected_id,
+                        )
+                        candidate = None
+                        executive_outcome = replace(
+                            executive_outcome,
+                            action="silence",
+                            reason="selected_affordance_stale",
+                        )
+                    else:
+                        materialize = getattr(executive, "materialize_candidate", None)
+                        candidate = (
+                            materialize(claimed, executive_outcome.decision)
+                            if callable(materialize)
+                            else claimed
+                        )
+
+        # Gemma may release an optional public invitation using typed discourse
+        # state. Required task/safety/engagement obligations remain hard runtime
+        # boundaries. The selected new candidate is deliberately irrelevant here.
         if (
             executive_outcome is not None
-            and may_release_optional_reply_baton(
-                blackboard, candidate, executive_outcome.decision
-            )
+            and may_release_optional_reply_baton(blackboard, executive_outcome.decision)
         ):
             blackboard = replace(
                 blackboard,
@@ -279,8 +299,7 @@ class SelfTurnPipeline:
                 followup_reminder_due=False,
             )
             host.logger.info(
-                "[executive] released optional reply baton for kind=%s reason=%s",
-                getattr(candidate, "kind", ""),
+                "[executive] released optional reply baton reason=%s",
                 executive_outcome.reason,
             )
         candidate_ms = (time.monotonic() - candidate_started) * 1000.0
@@ -392,7 +411,7 @@ class SelfTurnPipeline:
         )
 
         if decision.action is InitiativeAction.NO_OP:
-            release_candidate = candidate if candidate is not None else upstream_candidate
+            release_candidate = candidate
             self._release_seed_lease(release_candidate, reason=decision.reason)
             self._defer_claimed_continuation(
                 plan,
@@ -404,7 +423,7 @@ class SelfTurnPipeline:
                 plan=plan, context=context, activity=activity, gate_reason=decision.reason,
             )
         if decision.action is InitiativeAction.BODY_ONLY:
-            release_candidate = candidate if candidate is not None else upstream_candidate
+            release_candidate = candidate
             self._release_seed_lease(release_candidate, reason=decision.reason)
             self._defer_claimed_continuation(
                 plan,
@@ -928,7 +947,11 @@ class SelfTurnPipeline:
         return snapshot, discovery_runtime
 
     def _should_deliberate(self, context: SelfTurnBundle, snapshot: Mapping[str, Any]) -> tuple[bool, str]:
-        """Attention trigger rẻ; không kết luận có nên nói hay nói gì."""
+        """Emit scored runtime facts and let Gemma policy decide reconsideration.
+
+        Runtime reports what changed, how strongly, and where the signal came
+        from. It does not rename a mechanical delta into a social conclusion.
+        """
         discovery = snapshot.get("discovery")
         discovery_ready = bool(isinstance(discovery, Mapping) and (
             discovery.get("ready_to_share") or discovery.get("artifact") or discovery.get("artifact_ready")
@@ -938,27 +961,6 @@ class SelfTurnPipeline:
             float(attention.get("external_pressure", 0.0) or 0.0),
             float(attention.get("internal_drive", 0.0) or 0.0),
         )
-        now = context.perception.now
-        # Liveness wake-up chỉ mời Social Initiative Worker đề xuất topic; nó
-        # không ép nói. Dùng cùng soft-silence contract thay vì một hằng số 300s
-        # nằm lạc trong scheduler, vì hằng số bí mật là cách runtime nuôi ma.
-        try:
-            soft_silence = max(45.0, min(3600.0, float(
-                os.getenv("ERIS_SOCIAL_INITIATIVE_SOFT_SILENCE_SEC", "180") or 180.0
-            )))
-        except (TypeError, ValueError):
-            soft_silence = 180.0
-        try:
-            probe_interval = max(30.0, min(600.0, float(
-                os.getenv(
-                    "ERIS_SOCIAL_INITIATIVE_PROBE_INTERVAL_SEC",
-                    str(min(180.0, max(45.0, soft_silence / 2.0))),
-                ) or 90.0
-            )))
-        except (TypeError, ValueError):
-            probe_interval = min(180.0, max(45.0, soft_silence / 2.0))
-        quiet_opportunity = context.seconds_since_assistant >= soft_silence
-        presence_probe_due = quiet_opportunity and now - self._last_probe_at >= probe_interval
         social_continuation = snapshot.get("social_continuation")
         social_continuation_due = bool(
             isinstance(social_continuation, Mapping) and social_continuation.get("due")
@@ -969,37 +971,142 @@ class SelfTurnPipeline:
         )
         social_agenda = snapshot.get("social_agenda")
         social_agenda_active = bool(
-            isinstance(social_agenda, Mapping) and social_agenda.get("active_goal_count")
+            isinstance(social_agenda, Mapping)
+            and social_agenda.get("active_goal_count")
             and context.seconds_since_assistant >= 45.0
         )
-        checks = (
-            (social_continuation_due, "social_continuation_due"),
-            (conversation_arc_due, "conversation_arc_due"),
-            (social_agenda_active, "social_agenda_active"),
-            # Hai trạng thái này phải đánh thức pipeline ngay, nếu không lớp mới
-            # sẽ tính đúng mà chẳng bao giờ có cơ hội phát candidate. Phần mềm,
-            # như thường lệ, rất giỏi hiểu chuyện trong im lặng tuyệt đối.
-            (bool(snapshot.get("force_speak_pending")), "force_speak_pending"),
-            (context.discourse.followup_reminder_due, "followup_reminder_due"),
-            (context.discourse.followup_abandoned and context.discourse.may_start_new_topic, "abandoned_topic_shift"),
-            (context.discourse.assistant_may_continue and context.discourse.thread_fresh, "open_discourse"),
-            (context.perception.mechanical_delta, "perception_delta"),
-            (context.activity.has_new_event, "activity_delta"),
-            (context.self_context.has_public_seed, "public_self_seed"),
-            (discovery_ready, "discovery_ready"),
-            (pressure >= 0.58, "cortex_attention"),
-            (context.commentary.due, context.commentary.reason),
-            (presence_probe_due, "presence_probe"),
+
+        events: list[ExecutiveEvent] = []
+
+        def emit(kind: str, strength: float, source: str, *, revision: int = 0, **metadata: Any) -> None:
+            events.append(ExecutiveEvent(
+                kind=kind,
+                strength=max(0.0, min(1.0, float(strength))),
+                source=source,
+                revision=max(0, int(revision or 0)),
+                metadata=metadata,
+            ))
+
+        if bool(snapshot.get("force_speak_pending")):
+            emit("force", 1.0, "runtime_force_speak")
+
+        structured_strength = max(
+            1.0 if social_continuation_due else 0.0,
+            1.0 if conversation_arc_due else 0.0,
+            0.75 if social_agenda_active else 0.0,
+            0.70 if context.commentary.due else 0.0,
         )
-        for allowed, reason in checks:
-            if allowed:
-                if reason == "presence_probe":
-                    self._last_probe_at = now
-                return True, reason
-        return False, "no_new_attention_signal"
+        if structured_strength:
+            emit(
+                "structured_due",
+                structured_strength,
+                "typed_affordance_sources",
+                continuation_due=social_continuation_due,
+                arc_due=conversation_arc_due,
+                social_agenda_active=social_agenda_active,
+                commentary_due=bool(context.commentary.due),
+            )
+        if context.discourse.followup_reminder_due:
+            emit("followup_due", 0.85, "followup_appraisal")
+        if (
+            context.discourse.followup_abandoned and context.discourse.may_start_new_topic
+        ) or (context.discourse.assistant_may_continue and context.discourse.thread_fresh):
+            emit("open_discourse", 0.72, "typed_discourse_state")
+
+        screen = context.perception.screen
+        if context.perception.mechanical_delta:
+            scene_strength = max(
+                0.65 if bool(screen.window_changed) else 0.0,
+                0.55 if bool(screen.content_changed) else 0.0,
+                min(1.0, float(screen.changed_ratio or 0.0) * 4.0),
+            )
+            emit(
+                "scene_delta",
+                scene_strength,
+                "ambient_screen_tracker",
+                revision=screen.revision,
+                window_changed=bool(screen.window_changed),
+                content_changed=bool(screen.content_changed),
+                changed_ratio=float(screen.changed_ratio or 0.0),
+            )
+        if context.activity.has_new_event:
+            new_keys = set(context.activity.new_event_keys)
+            new_events = [item for item in context.activity.recent_events if item.event_key in new_keys]
+            activity_strength = max((float(item.confidence or 0.0) for item in new_events), default=0.60)
+            emit(
+                "activity_event",
+                activity_strength,
+                "activity_session_tracker",
+                revision=context.activity.revision,
+                event_keys=list(context.activity.new_event_keys),
+            )
+        seed_strength = float(context.self_context.strongest_seed_score or 0.0)
+        if context.self_context.has_public_seed:
+            emit("seed_available", seed_strength, "public_safe_self_context")
+        if discovery_ready:
+            emit("discovery_ready", 0.90, "discovery_runtime")
+        if pressure > 0.0:
+            emit("attention_pressure", pressure, "cortex_attention")
+
+        affordance_strength = max(
+            structured_strength,
+            0.85 if context.discourse.followup_reminder_due else 0.0,
+            0.72 if context.discourse.assistant_may_continue else 0.0,
+            seed_strength,
+            0.90 if discovery_ready else 0.0,
+        )
+        if affordance_strength:
+            emit("affordance_changed", affordance_strength, "affordance_collector_inputs")
+
+        executive = getattr(self.host, "ai_executive_cortex", None)
+        if executive is None or not bool(getattr(executive, "enabled", False)):
+            return False, "executive_policy_unavailable"
+        reviewer = getattr(executive, "should_reconsider", None)
+        if not callable(reviewer):
+            return False, "executive_policy_missing"
+        allowed, reason = reviewer(tuple(events), now=context.perception.now)
+        return bool(allowed), str(reason or "executive_policy_waiting")
 
     # V18 không còn planner model-owned tự quyết speak/silence trong Surface.
     # Candidate model -> governor -> realizer đã thay đường đó ở run().
+
+    def _claim_selected_affordance(
+        self,
+        affordance: Any,
+        *,
+        worker_id: str,
+        now: float,
+        social_continuation_runtime: Any | None,
+        conversation_arc_runtime: Any | None,
+        social_agenda_store: Any | None,
+        agenda_selector: Any | None,
+    ) -> Any | None:
+        """Claim exactly one Executive-selected affordance by owner and revision."""
+
+        owner = str(getattr(affordance, "owner", "") or "")
+        try:
+            if owner == "social_continuation" and social_continuation_runtime is not None:
+                return social_continuation_runtime.claim_affordance(
+                    affordance, worker_id=worker_id, now=now
+                )
+            if owner == "conversation_arc" and conversation_arc_runtime is not None:
+                return conversation_arc_runtime.claim_affordance(
+                    affordance, worker_id=worker_id, now=now
+                )
+            if owner == "social_agenda" and social_agenda_store is not None:
+                return social_agenda_store.claim_affordance(
+                    affordance, worker_id=worker_id, now=now
+                )
+            if owner == "random_chat_seed" and agenda_selector is not None:
+                return agenda_selector.claim_affordance(affordance, now=now)
+        except Exception as exc:
+            self.host.logger.debug(
+                "[executive] affordance claim failed owner=%s id=%s: %s",
+                owner,
+                getattr(affordance, "affordance_id", ""),
+                exc,
+            )
+        return None
 
     def _release_seed_lease(self, candidate: Any | None, *, reason: str) -> None:
         token = str(getattr(candidate, "seed_lease_token", "") or "") if candidate is not None else ""

@@ -16,7 +16,6 @@ from runtime.cognition.normalization import normalize_vi
 from runtime.social_stance_policy import STANCE_PUBLIC_RULES_VI
 from llm.deepseek import is_deepseek
 
-from actions.contracts import VALID_SYSTEM_ACTIONS
 
 from .contracts import CognitiveObservation, IntentionPlan
 from .discovery import DiscoveryPlan
@@ -796,18 +795,34 @@ SURFACE_REALIZATION_SCHEMA = {
     },
 }
 
+SELF_CAPABILITY_CLAIM_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["capability_id", "state", "basis"],
+    "properties": {
+        "capability_id": {"type": "string"},
+        "state": {"type": "string", "enum": ["available", "unavailable", "uncertain"]},
+        "basis": {"type": "string"},
+    },
+}
+
 PUBLIC_REPLY_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     # Meaning, both language surfaces and performance are committed by one
     # semantic authority in the same DeepSeek Web turn.
-    "required": ["semantic_frame", "assistant_act", "should_speak", "utterance", "social_plan"],
+    "required": ["semantic_frame", "assistant_act", "should_speak", "utterance", "social_plan", "self_capability_claims"],
     "properties": {
         "semantic_frame": SEMANTIC_FRAME_SCHEMA,
         "assistant_act": ASSISTANT_ACT_SCHEMA,
         "should_speak": {"type": "boolean"},
         "utterance": UTTERANCE_SCHEMA,
         "social_plan": SOCIAL_PLAN_SCHEMA,
+        "self_capability_claims": {
+            "type": "array",
+            "items": SELF_CAPABILITY_CLAIM_SCHEMA,
+            "maxItems": 8,
+        },
     },
 }
 
@@ -1371,7 +1386,8 @@ class AIRuntimeModelRouter:
             "Chỉ xin lỗi khi có lỗi rõ, gây tổn thương, vượt boundary, bịa fact như thật, hoặc không làm đúng yêu cầu. Tránh các câu máy móc "
             "'sai nhịp', 'lệch nhịp', 'tôi hiểu sai', 'tôi rút lại' trong bất đồng xã hội thông thường; thừa nhận khác biệt rồi giữ hoặc điều chỉnh lập trường tự nhiên. "
             "Memory chỉ là continuity, không chứng minh hiện tại. Grounding là nguồn thật cho màn hình/file/tool. "
-            "Planner đã sở hữu tool intent; bạn không chọn, đổi hay claim tool đã thành công. "
+            "Gemma Executive đã sở hữu capability intent; bạn không chọn, đổi, phủ định hay claim capability đã thành công. "
+            "Mọi câu tự mô tả ERIS có hay không có một capability đã đăng ký phải được khai trong self_capability_claims bằng exact capability_id và state available/unavailable/uncertain; nếu không có claim thì trả mảng rỗng. "
             "utterance.performance.preset chỉ là một preset sân khấu ngắn; intensity nằm trong 0..1 và nonverbal là cue ngắn, không viết stage direction vào text. "
             "Mỗi lượt BẮT BUỘC appraise social_plan, nhưng appraisal không có nghĩa là luôn nói thêm. "
             "social_plan.afterbeat chỉ reserve một câu hai chắc chắn thuộc cùng màn diễn; objective là ý nghĩa mới, không phải câu thoại viết sẵn. "
@@ -1615,6 +1631,7 @@ class AIRuntimeModelRouter:
             except Exception as exc:
                 safe_log(self.logger, "debug", "Semantic validation metric failed: %s", exc)
         from runtime.utterance_spec import UtteranceSpec
+        from runtime.capability_claim_guard import normalize_self_capability_claims
 
         utterance = UtteranceSpec.from_mapping(
             data,
@@ -1633,6 +1650,9 @@ class AIRuntimeModelRouter:
             "_typed_assistant_act": assistant_validation.act,
             "social_plan": normalize_social_plan(
                 data.get("social_plan") if isinstance(data.get("social_plan"), Mapping) else None,
+            ),
+            "self_capability_claims": normalize_self_capability_claims(
+                data.get("self_capability_claims", ())
             ),
             **flattened,
             "should_speak": bool(data.get("should_speak", True)),
@@ -2409,25 +2429,23 @@ class AIRuntimeModelRouter:
 
     @staticmethod
     def _chat_planner_prompt() -> str:
-        allowed = ", ".join(sorted(VALID_SYSTEM_ACTIONS))
         return (
-            "Bạn là planner cấp cao của ERIS, không viết câu public. "
-            "Đọc user text, history, grounding, relationship summary và identity/personality summary hiện tại; tạo mục tiêu trả lời ngắn trong topic. "
-            "Chọn một strategy mô tả cách tiếp cận thực tế (ví dụ direct_answer, dry_correction, quiet_counter_tease, direct_repair, shared_curiosity). "
-            "value_focus là giá trị đang được ưu tiên trong lựa chọn này, hoặc rỗng nếu không có xung đột đáng kể. "
-            "Personality summary là quán tính hành vi hiện tại, không phải vai diễn hay đích phát triển được định sẵn. "
-            "Nếu user hỏi ERIS có gì mới/đang làm gì/thấy gì hay và snapshot.discovery có artifact/activity thật, "
-            "ưu tiên strategy=share_discovery hoặc update_own_activity; không bịa nếu archive rỗng. "
-            "Chỉ chọn tool_intent khi user thật sự yêu cầu hành động hoặc cần runtime lấy dữ kiện. "
-            "Không dùng tool để xử lý tình cảm, ẩn dụ, banter hay câu hỏi có thể trả lời trực tiếp. "
-            "tool_intent phải rỗng hoặc thuộc danh sách: " + allowed + ". "
-            "Không claim tool thành công. speak thường true cho chat; intrusion_risk gần 0. "
-            "Luôn điền semantics: turn_kind=chat_response, speech_act mô tả hành vi giao tiếp, subject_key là chủ đề ổn định, "
-            "evidence_scope là nguồn căn cứ và continuation_key là thread_key đang nối hoặc none. "
-            "activity để unknown/none nếu lượt chat không cập nhật phiên app/game. "
-            "Nếu mơ hồ, để tool rỗng và ghi điều cần thận trọng trong notes. "
-            "Main semantic authority owns discourse meaning. Planner must only select a tool for an explicit action request; "
-            "it must not infer relational meaning or rewrite the public response."
+            "Bạn là DeepSeek reply planner của ERIS, không viết câu public và không sở hữu capability. "
+            "Đọc user text, history, grounding, relationship summary, identity/personality summary và "
+            "EXECUTIVE CAPABILITY DIRECTIVE đã được runtime đóng dấu; tạo mục tiêu trả lời ngắn trong topic. "
+            "Chọn một strategy mô tả cách tiếp cận thực tế (ví dụ direct_answer, dry_correction, "
+            "quiet_counter_tease, direct_repair, shared_curiosity). value_focus là giá trị đang được ưu tiên, "
+            "hoặc rỗng nếu không có xung đột đáng kể. Personality summary là quán tính hành vi hiện tại, "
+            "không phải vai diễn hay đích phát triển được định sẵn. Nếu snapshot.discovery có artifact/activity "
+            "thật, có thể chọn share_discovery hoặc update_own_activity; không bịa nếu archive rỗng. "
+            "Luôn để tool_intent và tool_input rỗng. Gemma Executive là authority duy nhất chọn exact "
+            "capability_id; runtime sẽ gắn nó sau khi planner hoàn tất. Không phủ định capability khi directive "
+            "nói selected, và khi directive unavailable chỉ được diễn đạt bất định chứ không bịa 'không thể'. "
+            "Không claim capability thành công. speak thường true cho chat; intrusion_risk gần 0. Luôn điền "
+            "semantics: turn_kind=chat_response, speech_act mô tả hành vi giao tiếp, subject_key là chủ đề ổn định, "
+            "evidence_scope là nguồn căn cứ và continuation_key là thread_key đang nối hoặc none. activity để "
+            "unknown/none nếu lượt chat không cập nhật phiên app/game. Main semantic authority owns discourse "
+            "meaning; planner chỉ chuẩn bị response strategy và không được dựng một tool authority thứ hai."
         )
 
     def plan_chat(self, snapshot: Mapping[str, Any]) -> IntentionPlan:
@@ -2472,13 +2490,14 @@ class AIRuntimeModelRouter:
                 channel="chat",
             )
         plan = IntentionPlan.from_mapping(payload, channel="chat")
-        if plan.tool_intent and plan.tool_intent not in VALID_SYSTEM_ACTIONS:
-            data = plan.to_dict()
-            data["tool_intent"] = ""
-            data["tool_input"] = ""
-            data["notes"] = (plan.notes + " invalid tool intent removed").strip()
-            plan = IntentionPlan.from_mapping(data, channel="chat")
-        return plan
+        # DeepSeek never owns capability selection. Clear the fields even when a
+        # provider ignored the prompt; orchestrator later injects the exact ID
+        # selected by Gemma Executive. There is no second semantic authority.
+        data = plan.to_dict()
+        data["tool_intent"] = ""
+        data["tool_input"] = ""
+        data["notes"] = (plan.notes + "; capability authority reserved for Gemma Executive").strip("; ")
+        return IntentionPlan.from_mapping(data, channel="chat")
 
     @staticmethod
     def _planner_prompt() -> str:
@@ -2521,7 +2540,8 @@ class AIRuntimeModelRouter:
             "intrusion_risk cao nếu user đang họp, đang nhập liệu dồn dập, vừa phát biểu hoặc screen delta chỉ là animation lặp. "
             "Tên process/PID/backend đơn lẻ không đủ để dựng premise sâu, nhưng app/window thật có thể làm nền cho một câu hỏi rất chung. "
             "Nếu có suy đoán về mood/intent, đó chỉ là low-risk hypothesis có căn cứ và cho phép user sửa. "
-            "tool_intent để trống trừ khi snapshot có tác vụ runtime rõ ràng."
+            "Luôn để tool_intent và tool_input rỗng. Gemma Executive sở hữu mọi capability selection; "
+            "self-turn planner chỉ tạo semantic affordance, không được gọi hay ám chỉ một tool cụ thể."
         )
 
     def plan_autonomous(self, snapshot: Mapping[str, Any]) -> IntentionPlan:
@@ -2540,7 +2560,14 @@ class AIRuntimeModelRouter:
             inference_tier="main_cognition",
             priority=90,
         )
-        return IntentionPlan.from_mapping(payload, channel="autonomous") if payload else IntentionPlan.silence(channel="autonomous", reason="planner_unavailable_or_uncertain")
+        if not payload:
+            return IntentionPlan.silence(channel="autonomous", reason="planner_unavailable_or_uncertain")
+        plan = IntentionPlan.from_mapping(payload, channel="autonomous")
+        data = plan.to_dict()
+        data["tool_intent"] = ""
+        data["tool_input"] = ""
+        data["notes"] = (plan.notes + "; capability authority reserved for Gemma Executive").strip("; ")
+        return IntentionPlan.from_mapping(data, channel="autonomous")
 
     @staticmethod
     def _surface_intent_prompt() -> str:

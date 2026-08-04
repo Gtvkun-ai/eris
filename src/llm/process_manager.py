@@ -360,7 +360,7 @@ class RemoteModelProcessManager:
 
         DeepSeek role workers remain unchanged.  This client is a separate
         semantic policy layer used only for trajectory/tool-affordance decisions.
-        Missing credentials fail closed and leave the legacy selector active.
+        Missing credentials fail closed; no legacy semantic selector is revived.
         """
 
         apply_secrets_to_environ()
@@ -375,7 +375,7 @@ class RemoteModelProcessManager:
         )
         if not api_key:
             self.logger.warning(
-                "Gemma Executive Cortex chua co key; legacy social selector van hoat dong."
+                "Gemma Executive Cortex chua co key; semantic path se fail closed."
             )
             return None
         base_url = (

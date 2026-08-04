@@ -47,11 +47,6 @@ def background_tutor_enabled() -> bool:
     return _flag("background_tutor_enabled", "ERIS_BACKGROUND_TUTOR_ENABLED", False)
 
 
-def legacy_social_fallback_enabled() -> bool:
-    """Bật generic social liveness fallback cũ (mặc định tắt)."""
-    return _flag("legacy_social_fallback_enabled", "ERIS_LEGACY_SOCIAL_FALLBACK_ENABLED", False)
-
-
 def event_trace_enabled() -> bool:
     """Ghi trace xuyên candidate -> governor -> Surface -> TTS -> outcome."""
     return _flag("event_trace_enabled", "ERIS_PUBLIC_EVENT_TRACE_ENABLED", True)
@@ -68,5 +63,5 @@ __all__ = [
     "PUBLIC_INTENT_OWNERS", "is_public_intent_owner",
     "private_cognition_surface_export_enabled", "surface_cross_worker_fallback_enabled",
     "legacy_model_lanes_enabled", "inner_diary_model_enabled", "background_tutor_enabled",
-    "legacy_social_fallback_enabled", "event_trace_enabled",
+    "event_trace_enabled",
 ]

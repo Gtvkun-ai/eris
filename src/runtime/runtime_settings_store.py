@@ -43,7 +43,6 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "legacy_model_lanes_enabled": False,
         "inner_diary_model_enabled": False,
         "background_tutor_enabled": False,
-        "legacy_social_fallback_enabled": False,
         "event_trace_enabled": True,
     },
     "opening_director": {
@@ -351,7 +350,6 @@ _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
     ("architecture", "legacy_model_lanes_enabled"): ("ERIS_LEGACY_MODEL_LANES_ENABLED", "bool"),
     ("architecture", "inner_diary_model_enabled"): ("ERIS_INNER_DIARY_MODEL_ENABLED", "bool"),
     ("architecture", "background_tutor_enabled"): ("ERIS_BACKGROUND_TUTOR_ENABLED", "bool"),
-    ("architecture", "legacy_social_fallback_enabled"): ("ERIS_LEGACY_SOCIAL_FALLBACK_ENABLED", "bool"),
     ("architecture", "event_trace_enabled"): ("ERIS_PUBLIC_EVENT_TRACE_ENABLED", "bool"),
     ("architecture", "mode"): ("ERIS_RUNTIME_ARCHITECTURE", "str"),
     ("architecture", "startup_greeting"): ("ERIS_AI_STARTUP_GREETING_ENABLED", "bool"),

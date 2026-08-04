@@ -10,7 +10,6 @@
     "legacy_model_lanes_enabled": false,
     "inner_diary_model_enabled": false,
     "background_tutor_enabled": false,
-    "legacy_social_fallback_enabled": false,
     "event_trace_enabled": true
   },
   "chat": {

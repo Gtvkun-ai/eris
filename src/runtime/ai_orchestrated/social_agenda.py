@@ -18,6 +18,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from .atomic_state import SQLiteAtomicStateStore, SQLiteStateTransaction
 from .social_candidate import SocialSpeechCandidate
+from .affordance import ExecutiveAffordance
 from .social_plan import normalize_agenda_update
 
 
@@ -474,98 +475,83 @@ class SocialAgendaStore:
             )
             self._persist_locked()
 
-    def claim_due(
-        self,
-        blackboard: Any,
-        *,
-        worker_id: str,
-        now: float | None = None,
-        lease_ms: int = 12000,
+    def _eligible_goal_locked(self, blackboard: Any, current: float) -> tuple[int, SocialGoal] | None:
+        if bool(getattr(blackboard, "user_busy", False)):
+            return None
+        if float(getattr(blackboard, "seconds_since_user", 0.0) or 0.0) < 18.0:
+            return None
+        goals = list(self._state.goals)
+        partner = self._state.scene_partner
+        if partner.boundary_flags or partner.risk_context:
+            return None
+        eligible = [
+            (index, goal) for index, goal in enumerate(goals)
+            if goal.active and not goal.claim_token and current >= goal.cooldown_until
+            and goal.salience >= 0.52 and goal.confidence >= 0.48
+        ]
+        if not eligible:
+            return None
+        return max(eligible, key=lambda item: (item[1].salience, item[1].progress, item[1].updated_at))
+
+    def peek_due(
+        self, blackboard: Any, *, now: float | None = None
+    ) -> ExecutiveAffordance | None:
+        """Expose an agenda move without letting the store pre-empt Gemma."""
+        current = float(now if now is not None else self._clock())
+        with self._lock, self._state_transaction_locked():
+            self._expire_stale(current)
+            selected = self._eligible_goal_locked(blackboard, current)
+            if selected is None:
+                return None
+            _, goal = selected
+            return ExecutiveAffordance(
+                affordance_id=f"social_agenda:{goal.goal_id}:v{goal.version}",
+                owner="social_agenda", revision=goal.version,
+                candidate=self._candidate_for_goal(goal), claim_required=True,
+                expires_at=0.0, claim_key=goal.goal_id,
+                metadata={"goal_type": goal.goal_type},
+            )
+
+    def claim_affordance(
+        self, affordance: ExecutiveAffordance, *, worker_id: str,
+        now: float | None = None, lease_ms: int = 12000
     ) -> SocialSpeechCandidate | None:
-        """Atomically lease one eligible social-agenda move."""
         current = float(now if now is not None else self._clock())
         owner = _compact(worker_id or "anonymous", 100) or "anonymous"
-        user_busy = bool(getattr(blackboard, "user_busy", False))
-        reply_expected = bool(getattr(blackboard, "reply_expected", False))
-        seconds_since_user = float(getattr(blackboard, "seconds_since_user", 0.0) or 0.0)
-        if user_busy or reply_expected or seconds_since_user < 18.0:
-            return None
+        goal_id = str(affordance.claim_key or "")
         with self._lock, self._state_transaction_locked():
             self._expire_stale(current)
             goals = list(self._state.goals)
-            changed = False
             for index, goal in enumerate(goals):
-                if goal.claim_token and (not goal.active or goal.claim_until <= 0.0 or current >= goal.claim_until):
-                    goals[index] = replace(
-                        goal,
-                        version=goal.version + 1,
-                        claim_owner="",
-                        claim_until=0.0,
-                        claim_token="",
-                        updated_at=current,
-                    )
-                    changed = True
-            partner = self._state.scene_partner
-            if partner.boundary_flags or partner.risk_context:
-                if changed:
-                    self._state = replace(
-                        self._state,
-                        version=self._state.version + 1,
-                        goals=tuple(goals),
-                        updated_at=current,
-                    )
-                    self._persist_locked()
-                return None
-            eligible = [
-                (index, goal)
-                for index, goal in enumerate(goals)
-                if goal.active
-                and not goal.claim_token
-                and current >= goal.cooldown_until
-                and goal.salience >= 0.52
-                and goal.confidence >= 0.48
-            ]
-            if not eligible:
-                if changed:
-                    self._state = replace(
-                        self._state,
-                        version=self._state.version + 1,
-                        goals=tuple(goals),
-                        updated_at=current,
-                    )
-                    self._persist_locked()
-                return None
-            index, goal = max(
-                eligible,
-                key=lambda item: (item[1].salience, item[1].progress, item[1].updated_at),
-            )
-            new_version = goal.version + 1
-            token = f"{goal.goal_id}:v{new_version}:{owner}"
-            claimed = replace(
-                goal,
-                version=new_version,
-                claim_owner=owner,
-                claim_until=current + max(1.0, min(30.0, int(lease_ms) / 1000.0)),
-                claim_token=token,
-                updated_at=current,
-            )
-            goals[index] = claimed
-            self._state = replace(
-                self._state,
-                version=self._state.version + 1,
-                goals=tuple(goals),
-                events=self._append_event(
-                    "agenda_move_claimed",
-                    current,
-                    goal_id=claimed.goal_id,
-                    worker_id=owner,
-                    version=claimed.version,
-                ),
-                updated_at=current,
-            )
-            self._persist_locked()
-        self._emit("agenda_move_claimed", goal_id=claimed.goal_id, worker_id=owner)
-        return self._candidate_for_goal(claimed)
+                if goal.goal_id != goal_id or goal.version != int(affordance.revision):
+                    continue
+                if not (goal.active and not goal.claim_token and current >= goal.cooldown_until):
+                    return None
+                new_version = goal.version + 1
+                token = f"{goal.goal_id}:v{new_version}:{owner}"
+                claimed = replace(
+                    goal, version=new_version, claim_owner=owner,
+                    claim_until=current + max(1.0, min(30.0, int(lease_ms) / 1000.0)),
+                    claim_token=token, updated_at=current,
+                )
+                goals[index] = claimed
+                self._state = replace(
+                    self._state, version=self._state.version + 1, goals=tuple(goals),
+                    events=self._append_event("agenda_move_claimed", current, goal_id=claimed.goal_id, worker_id=owner, version=claimed.version),
+                    updated_at=current,
+                )
+                self._persist_locked()
+                self._emit("agenda_move_claimed", goal_id=claimed.goal_id, worker_id=owner)
+                return self._candidate_for_goal(claimed)
+        return None
+
+    def claim_due(
+        self, blackboard: Any, *, worker_id: str, now: float | None = None, lease_ms: int = 12000
+    ) -> SocialSpeechCandidate | None:
+        preview = self.peek_due(blackboard, now=now)
+        if preview is None:
+            return None
+        return self.claim_affordance(preview, worker_id=worker_id, now=now, lease_ms=lease_ms)
 
     def release_claim(
         self,

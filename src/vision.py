@@ -8,7 +8,7 @@ import urllib.parse
 import msvcrt
 import traceback
 
-from actions import ActionExecutor, ActionRouter
+from actions import ActionExecutor
 from app_logging import configure_logging, get_logger
 from domain import Decision
 from llm import LlmService
@@ -203,7 +203,6 @@ class AttentionOverseer:
         self.decision_parser = DecisionParser(fallback_decision, logger=self.parse_logger)
         self.telemetry_service = TelemetryService()
         self.action_executor = ActionExecutor(logger=self.action_logger)
-        self.action_router = ActionRouter()
         self.coordinator = RuntimeCoordinator(
             logger=self.loop_logger,
             transport=self.transport,
@@ -213,7 +212,6 @@ class AttentionOverseer:
             memory_core=self.memory_core,
             body_running_fn=self._is_body_running,
             action_executor=self.action_executor,
-            action_router=self.action_router,
             memory_semantic_parser=self.memory_semantic_parser,
         )
         if memory_state is not None:

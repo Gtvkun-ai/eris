@@ -15,17 +15,6 @@ from llm.token_budget import estimate_tokens
 
 from actions.contracts import VALID_SYSTEM_ACTIONS
 
-_SYSTEM_ACTION_ALIASES = {
-    "adjust_volume": "set_volume",
-    "change_volume": "set_volume",
-    "volume": "set_volume",
-    "volume_up": "set_volume",
-    "volume_down": "set_volume",
-    "get_time": "get_local_time",
-    "show_time": "get_local_time",
-    "current_time": "get_local_time",
-    "time_now": "get_local_time",
-}
 from cortex.banned_filler import HOLLOW_PRESENCE_LINES, STALE_MICRO_TEMPLATES, quoted_fragment
 from failure_meta import build_failure_meta, normalize_failure_meta
 from runtime.no_fallback_policy import build_no_fallback_payload, no_fallback_mode_enabled
@@ -1119,8 +1108,7 @@ class LlmService:
             return False
         if not value:
             return True
-        action_name = _SYSTEM_ACTION_ALIASES.get(value.strip().lower(), value.strip())
-        return action_name in VALID_SYSTEM_ACTIONS
+        return value.strip() in VALID_SYSTEM_ACTIONS
 
     def _is_valid_choice_number(self, value, choices: set[int]) -> bool:
         if isinstance(value, bool):
@@ -1192,9 +1180,8 @@ class LlmService:
 
     def _coerce_system_action_value(self, value) -> str:
         raw_action = str(value or "").strip()
-        action_name = _SYSTEM_ACTION_ALIASES.get(raw_action.lower(), raw_action)
-        if action_name in VALID_SYSTEM_ACTIONS:
-            return action_name
+        if raw_action in VALID_SYSTEM_ACTIONS:
+            return raw_action
         return ""
 
     def _coerce_decision_like_payload(self, payload: dict | None) -> str:

@@ -17,6 +17,7 @@ import os
 from dataclasses import asdict, dataclass
 from typing import Any, Mapping, Sequence
 
+from .affordance import ExecutiveAffordance
 from .cognitive_blackboard import CognitiveAnchor, TypedCognitiveBlackboard
 from .random_chat_seed_service import RandomChatSeedReservoir
 
@@ -84,6 +85,8 @@ _ALLOWED_KINDS = {
     "casual_curiosity",
     "playful_prompt",
     "random_chat",
+    "capability_statement",
+    "grounded_tool_finding",
 }
 
 _SOCIAL_KINDS = {"social_check_in", "casual_curiosity", "playful_prompt", "random_chat"}
@@ -263,32 +266,18 @@ class SocialInitiativeEngine:
         *,
         snapshot: Mapping[str, Any] | None = None,
     ) -> tuple[SocialSpeechCandidate, ...]:
-        """Return a small set of semantically distinct options for Gemma.
+        """Compatibility view over the collect-before-claim API.
 
-        ``propose`` remains the legacy single-candidate API.  The option API does
-        not turn every source into a free-for-all: it only adds a ready random-chat
-        seed beside a follow-up/continuation candidate, which is exactly the
-        ambiguity the executive layer must arbitrate instead of inheriting an
-        early return from a heuristic.
+        No source is leased here.  Production code must pass the corresponding
+        :class:`ExecutiveAffordance` objects to the Executive and claim exactly
+        the selected ID afterwards.
         """
 
-        primary = self.propose(blackboard, snapshot=snapshot)
-        options: list[SocialSpeechCandidate] = []
-        if primary is not None:
-            options.append(primary)
-
-        if (
-            not blackboard.user_busy
-            and not (blackboard.engagement_exclusive_focus and blackboard.engagement_active)
-            and primary is not None
-            and primary.kind in {"followup_reminder", "continuation", "social_agenda"}
-        ):
-            seed = self._random_chat_seed_candidate(blackboard)
-            if seed is not None and all(
-                str(getattr(item, "seed_id", "") or "") != seed.seed_id for item in options
-            ):
-                options.append(seed)
-        return tuple(options)
+        return tuple(
+            affordance.candidate
+            for affordance in self.collect_affordances(blackboard, snapshot=snapshot)
+            if affordance.available
+        )
 
     def propose(
         self,
@@ -296,147 +285,195 @@ class SocialInitiativeEngine:
         *,
         snapshot: Mapping[str, Any] | None = None,
     ) -> SocialSpeechCandidate | None:
-        """Đề xuất một candidate typed bằng đúng một model call ngắn.
+        """Compatibility single-candidate view with no reservation authority."""
 
-        Worker chỉ nhìn ``public_view`` và history public rút gọn. Nếu model trả
-        screen candidate, evidence phải trùng grounded screen anchor đã có; title
-        OCR thô không đủ tư cách làm bằng chứng, dù nó viết hoa rất thuyết phục.
+        affordances = self.collect_affordances(blackboard, snapshot=snapshot)
+        return affordances[0].candidate if affordances else None
+
+    def collect_affordances(
+        self,
+        blackboard: TypedCognitiveBlackboard,
+        *,
+        snapshot: Mapping[str, Any] | None = None,
+    ) -> tuple[ExecutiveAffordance, ...]:
+        """Collect every currently meaningful social move without claiming it.
+
+        ``reply_expected`` is evidence for the Executive, not an early-return
+        switch.  The deterministic governor still owns hard concurrency and an
+        unreleased required reply obligation still blocks public speech later.
         """
 
-        # Hard timing boundaries có thể chặn trước model call. Đây là governor
-        # preflight, không phải runtime nghĩ topic. Một event cờ mới từ bridge
-        # được phép thắng reply baton cũ vì structured runtime đã cung cấp câu
-        # trả lời thực tế; tiếp tục chờ user xác nhận lúc này chỉ làm Eris đứng im.
-        if getattr(blackboard, "force_speak_pending", False):
-            return SocialSpeechCandidate(
-                decision="speak",
-                kind="force_speak",
-                topic="Respond to the explicit request for presence with one short grounded line.",
-                speech_act="presence_response",
-                anchor_type="presence",
-                anchor_id="force_speak",
-                confidence=1.0,
-                relevance=1.0,
-                urgency=1.0,
-                reason="explicit_user_pull",
+        if blackboard.user_busy:
+            return ()
+
+        revision = max(1, int(float(blackboard.now or 0.0) * 1000.0))
+        found: list[ExecutiveAffordance] = []
+        seen: set[tuple[str, str, str]] = set()
+
+        def add(candidate: SocialSpeechCandidate | None, *, owner: str) -> None:
+            if candidate is None or not candidate.available:
+                return
+            key = (candidate.kind, candidate.anchor_id, candidate.topic)
+            if key in seen:
+                return
+            seen.add(key)
+            found.append(
+                ExecutiveAffordance(
+                    affordance_id=(
+                        f"social:{owner}:{candidate.kind}:{candidate.anchor_id}:{revision}"
+                    ),
+                    owner=owner,
+                    revision=revision,
+                    candidate=candidate,
+                    claim_required=False,
+                    metadata={
+                        "reply_expected": bool(blackboard.reply_expected),
+                        "engagement_active": bool(blackboard.engagement_active),
+                    },
+                )
             )
 
-        if blackboard.user_busy:
-            return None
+        if getattr(blackboard, "force_speak_pending", False):
+            add(
+                SocialSpeechCandidate(
+                    decision="speak",
+                    kind="force_speak",
+                    topic="Respond to the explicit request for presence with one short grounded line.",
+                    speech_act="presence_response",
+                    anchor_type="presence",
+                    anchor_id="force_speak",
+                    confidence=1.0,
+                    relevance=1.0,
+                    urgency=1.0,
+                    reason="explicit_user_pull",
+                    source="runtime_presence_request",
+                ),
+                owner="runtime_presence_request",
+            )
 
-        # Appraisal được phép mở đúng một khe nhỏ qua reply baton: một câu nhắc
-        # nhẹ, giả định user chưa để ý. Sau đó baton lại thuộc user tuyệt đối.
-        reminder_candidate = self._followup_reminder_candidate(blackboard)
-        if reminder_candidate is not None:
-            return reminder_candidate
-
-        if blackboard.reply_expected and not self._chess_event_overrides_reply_baton(blackboard):
-            return None
-
-        # A foreground structured engagement owns topic selection. While watching
-        # chess, no OCR, private seed, abandoned-thread shift, or generic silence
-        # timer may invent a different subject. Only a due chess event can open the
-        # public lane.
-        if (
-            blackboard.engagement_exclusive_focus
-            and blackboard.engagement_active
-            and not (blackboard.engagement_due or blackboard.engagement_required)
-        ):
-            return None
-
-        # Nếu câu hỏi cũ đã bị bỏ sau một lần nhắc, chuyển sang một chủ đề khác.
-        # Candidate chỉ mô tả stance/mục tiêu; Surface vẫn tự viết câu cuối.
-        topic_shift_candidate = self._abandoned_topic_shift_candidate(blackboard)
-        if topic_shift_candidate is not None:
-            return topic_shift_candidate
+        # These are independent affordances.  None receives priority merely by
+        # appearing first in a Python function.
+        add(self._followup_reminder_candidate(blackboard), owner="followup_appraisal")
+        add(self._abandoned_topic_shift_candidate(blackboard), owner="followup_appraisal")
+        add(self._task_followup_candidate(blackboard, reason="typed_task_event"), owner="engagement_runtime")
+        add(self._semantic_scene_candidate(blackboard, reason="typed_semantic_scene"), owner="semantic_context")
 
         surface_policy = _autonomous_surface_policy()
         soft_default = float(surface_policy.get("desired", 35.0)) if surface_policy.get("enabled") else 180.0
-        soft = _env_float("ERIS_SOCIAL_INITIATIVE_SOFT_SILENCE_SEC", soft_default, minimum=20.0, maximum=3600.0)
-        has_typed_opportunity = any(anchor.kind != "presence" for anchor in blackboard.anchors)
+        soft = _env_float(
+            "ERIS_SOCIAL_INITIATIVE_SOFT_SILENCE_SEC",
+            soft_default,
+            minimum=20.0,
+            maximum=3600.0,
+        )
         social_opportunity_due = bool(
             blackboard.commentary_due
             or blackboard.seconds_since_assistant >= soft
             or blackboard.seconds_since_user >= soft
         )
-        if not has_typed_opportunity and not social_opportunity_due:
+
+        if self._has_structured_opportunity(blackboard):
+            add(
+                self._structured_model_candidate(
+                    blackboard,
+                    snapshot=snapshot or {},
+                    surface_policy=surface_policy,
+                ),
+                owner="deepseek_social_initiative",
+            )
+
+        if social_opportunity_due:
+            seed_affordance = self._random_chat_seed_affordance(blackboard)
+            if seed_affordance is not None:
+                seed_key = (
+                    seed_affordance.candidate.kind,
+                    seed_affordance.candidate.anchor_id,
+                    seed_affordance.candidate.topic,
+                )
+                if seed_key not in seen:
+                    seen.add(seed_key)
+                    found.append(seed_affordance)
+
+        return tuple(found)
+
+    def claim_affordance(
+        self,
+        affordance: ExecutiveAffordance,
+        *,
+        now: float | None = None,
+    ) -> SocialSpeechCandidate | None:
+        """Claim exactly the affordance selected by the Executive."""
+
+        if not affordance.available:
             return None
+        if affordance.owner != "random_chat_seed":
+            return affordance.candidate
+        reservoir = self.seed_reservoir
+        if reservoir is None:
+            return None
+        lease = reservoir.claim_seed(
+            affordance.claim_key,
+            context_revision=affordance.revision,
+            now=now,
+        )
+        if lease is None:
+            return None
+        return self._candidate_from_seed(
+            lease.seed,
+            generated_at=lease.generated_at,
+            expires_at=lease.expires_at,
+            lease_token=lease.token,
+        )
+
+    def _structured_model_candidate(
+        self,
+        blackboard: TypedCognitiveBlackboard,
+        *,
+        snapshot: Mapping[str, Any],
+        surface_policy: Mapping[str, Any],
+    ) -> SocialSpeechCandidate | None:
+        """Ask the existing DeepSeek lane for one structured affordance only."""
+
         if not self.enabled:
-            return self.fallback_candidate(blackboard, reason="surface_worker_unavailable")
+            return None
         writer = getattr(self.router, "propose_social_initiative", None)
         if not callable(writer):
-            return self.fallback_candidate(blackboard, reason="initiative_method_unavailable")
-        source_snapshot = snapshot or {}
-
-        # Open-topic autonomous speech now has a dedicated seed contract. It is
-        # intentionally called instead of asking the generic selector to invent a
-        # vague random_chat topic. Structured conversation/task/screen lanes keep
-        # their selector path; idle/memory/self material is food for the seed API.
-        if social_opportunity_due and not self._has_structured_opportunity(blackboard):
-            seed_candidate = self._random_chat_seed_candidate(blackboard)
-            if seed_candidate is not None:
-                return seed_candidate
-            # No concrete seed means intentional silence. Do not fall through to
-            # the old generic selector and resurrect a presence/check-in sentence.
             return None
-
         request = {
             "blackboard": blackboard.public_view(),
-            "recent_public_history": list(source_snapshot.get("recent_public_history", ()))[-6:],
-            # Đây là public/persona context đã được reducer chuẩn hóa, không phải
-            # raw diary hay chain-of-thought. Nó cho random chat có chất Eris thay
-            # vì một máy tạo câu hỏi xã giao tổng quát.
+            "recent_public_history": list(snapshot.get("recent_public_history", ()))[-6:],
             "social_context": {
-                "personality_summary": _compact(source_snapshot.get("personality_summary", ""), 900),
-                "identity_summary": _compact(source_snapshot.get("identity_summary", ""), 900),
-                "relationship": source_snapshot.get("relationship", {}),
-                "recent_self_turn_semantics": list(source_snapshot.get("recent_self_turn_semantics", ()))[-6:],
-                "memory_context": _compact(source_snapshot.get("memory_context", ""), 1800),
-                "self_context": source_snapshot.get("self_context", {}),
+                "personality_summary": _compact(snapshot.get("personality_summary", ""), 900),
+                "identity_summary": _compact(snapshot.get("identity_summary", ""), 900),
+                "relationship": snapshot.get("relationship", {}),
+                "recent_self_turn_semantics": list(snapshot.get("recent_self_turn_semantics", ()))[-6:],
+                "memory_context": _compact(snapshot.get("memory_context", ""), 1800),
+                "self_context": snapshot.get("self_context", {}),
             },
-            "autonomous_surface_preference": surface_policy,
+            "autonomous_surface_preference": dict(surface_policy),
             "candidate_contract": {
-                "authority": "desire_and_topic_only",
+                "authority": "affordance_only",
                 "allowed_kinds": sorted(_ALLOWED_KINDS),
                 "social_kinds_do_not_require_grounding": sorted(_SOCIAL_KINDS),
                 "rule": (
-                    "Propose at most one public-safe topic. Runtime owns permission/timing; "
-                    "Surface Realizer owns final wording. Eris may initiate freely without "
-                    "waiting for an important event, including a brief observation, gentle tease, "
-                    "or topic opener when it is personally relevant to the user, the current scene, "
-                    "or the relationship. Do not comment on everything, narrate routine actions, "
-                    "fill silence, or manufacture engagement. Prefer one thoughtful and specific "
-                    "remark over frequent generic small talk. Silence is a valid intentional choice. "
-                    "Prefer semantic_scene over unrelated small talk when a ready shared semantic "
-                    "context exists. Return none when the impulse is generic, repetitive, distracting, "
-                    "or merely intended to avoid silence."
+                    "Propose at most one public-safe semantic affordance. Do not choose whether it will be used, "
+                    "do not reserve the public lane, and do not write final wording. Silence is handled by the "
+                    "Executive. Prefer a specific grounded shared-context move over generic presence language."
                 ),
             },
         }
         if blackboard.engagement_kind == "chess":
             request["candidate_contract"]["rule"] += (
-                " However, since chess engagement is active, actively act as an entertaining commentator. "
-                "Do not stay completely silent during the game; occasionally mock poor moves with dry sarcasm, "
-                "offer playful praise for good ones, or tease the user about their strategy. A playful prompt "
-                "or soft tease is better than returning none."
+                " For a due chess event, propose an entertaining grounded commentary affordance."
             )
         try:
             raw = writer(request)
         except Exception as exc:  # noqa: BLE001
             self._log("warning", "[social initiative] worker failed: %s", exc)
-            return self.fallback_candidate(blackboard, reason="worker_error")
+            return None
         candidate = SocialSpeechCandidate.from_mapping(raw, source="surface_initiative_worker")
-        if not candidate.available:
-            return self.fallback_candidate(blackboard, reason="worker_no_candidate")
-        if candidate.confidence < 0.32 or candidate.relevance < 0.24:
-            return self.fallback_candidate(blackboard, reason="worker_low_confidence")
-
-        # Task event đang due không được bị một candidate xã giao hợp lệ nhưng
-        # lạc đề chiếm micro. Model vẫn được đề xuất wording direction; runtime
-        # chỉ ép đúng lane task khi engagement đã phát ra một event cụ thể.
-        task_fallback = self._task_followup_candidate(blackboard, reason="worker_missed_due_task")
-        if task_fallback is not None and candidate.kind != "task_followup":
-            return task_fallback
+        if not candidate.available or candidate.confidence < 0.32 or candidate.relevance < 0.24:
+            return None
         if not self._candidate_matches_blackboard(candidate, blackboard):
             self._log(
                 "warning",
@@ -444,9 +481,8 @@ class SocialInitiativeEngine:
                 candidate.kind,
                 candidate.anchor_type,
             )
-            return self.fallback_candidate(blackboard, reason="candidate_not_grounded")
+            return None
         return candidate
-
 
     @staticmethod
     def _has_structured_opportunity(blackboard: TypedCognitiveBlackboard) -> bool:
@@ -455,19 +491,51 @@ class SocialInitiativeEngine:
             for anchor in blackboard.anchors
         )
 
+    def _random_chat_seed_affordance(
+        self,
+        blackboard: TypedCognitiveBlackboard,
+    ) -> ExecutiveAffordance | None:
+        reservoir = self.seed_reservoir
+        if reservoir is None or not reservoir.enabled:
+            return None
+        preview = reservoir.peek(now=blackboard.now)
+        if preview is None:
+            return None
+        candidate = self._candidate_from_seed(
+            preview.seed,
+            generated_at=preview.generated_at,
+            expires_at=preview.expires_at,
+        )
+        return ExecutiveAffordance(
+            affordance_id=f"seed:{preview.seed.seed_id}:{preview.context_revision}",
+            owner="random_chat_seed",
+            revision=preview.context_revision,
+            candidate=candidate,
+            claim_required=True,
+            expires_at=preview.expires_at,
+            claim_key=preview.seed.seed_id,
+            metadata={"mode": preview.seed.mode},
+        )
+
     def _random_chat_seed_candidate(
         self,
         blackboard: TypedCognitiveBlackboard,
     ) -> SocialSpeechCandidate | None:
-        reservoir = self.seed_reservoir
-        if reservoir is None or not reservoir.enabled:
-            self._log("debug", "[random chat seed] reservoir unavailable")
+        """Compatibility API: claim the currently previewed seed exactly."""
+
+        affordance = self._random_chat_seed_affordance(blackboard)
+        if affordance is None:
             return None
-        lease = reservoir.claim(now=blackboard.now)
-        if lease is None:
-            self._log("debug", "[random chat seed] reservoir empty; producer continues in background")
-            return None
-        seed = lease.seed
+        return self.claim_affordance(affordance, now=blackboard.now)
+
+    @staticmethod
+    def _candidate_from_seed(
+        seed: Any,
+        *,
+        generated_at: float,
+        expires_at: float,
+        lease_token: str = "",
+    ) -> SocialSpeechCandidate:
         confidence = max(seed.confidence, 0.34 + 0.40 * seed.authenticity)
         relevance = max(seed.estimated_fit, 0.36 + 0.34 * seed.personal_stake)
         return SocialSpeechCandidate(
@@ -502,9 +570,9 @@ class SocialInitiativeEngine:
             seed_intrusion_risk=seed.intrusion_risk,
             face_risk=seed.face_risk,
             recovery_available=seed.recovery_available,
-            seed_lease_token=lease.token,
-            seed_generated_at=lease.generated_at,
-            seed_expires_at=lease.expires_at,
+            seed_lease_token=lease_token,
+            seed_generated_at=generated_at,
+            seed_expires_at=expires_at,
             seed_ttl_seconds=seed.ttl_seconds,
         )
 
@@ -530,9 +598,9 @@ class SocialInitiativeEngine:
             decision="candidate",
             kind="followup_reminder",
             topic=(
-                "Briefly bring back the pending question exactly once. Assume the user may simply not have noticed. "
-                "Paraphrase rather than repeat verbatim, preserve the user's face, add no accusation or guilt, and do "
-                "not append a second new question. Keep it to one short sentence."
+                f"Pending public thread: {anchor.topic_seed}. If this thread is still worth reopening, make exactly "
+                "one short face-saving reminder. Preserve the semantic target, paraphrase rather than repeat verbatim, "
+                "add no accusation or guilt, and do not append a second new question."
             ),
             speech_act="followup_reminder",
             anchor_type="conversation",
@@ -608,53 +676,11 @@ class SocialInitiativeEngine:
         if semantic_candidate is not None:
             return semantic_candidate
 
-        # Generic social fallback cũ không có owner/model premise rõ. Mặc định
-        # fail-closed: seed chết thì random chat im. Giữ code dưới flag để rollout.
-        from runtime.architecture_flags import legacy_social_fallback_enabled
-        if not legacy_social_fallback_enabled():
-            return None
-
-        policy = _autonomous_surface_policy()
-        user_enabled = bool(policy.get("enabled", False))
-        desired = max(20.0, float(policy.get("desired", 35.0) or 35.0)) if user_enabled else _env_float(
-            "ERIS_SOCIAL_INITIATIVE_SOFT_SILENCE_SEC", 180.0, minimum=45.0, maximum=3600.0
-        )
-        maximum = max(desired + 15.0, float(policy.get("maximum", 70.0) or 70.0)) if user_enabled else _env_float(
-            "ERIS_SOCIAL_INITIATIVE_HARD_SILENCE_SEC", 600.0, minimum=120.0, maximum=7200.0
-        )
-        if blackboard.seconds_since_assistant < desired and not blackboard.commentary_due:
-            return None
-        required = bool(blackboard.commentary_required or blackboard.seconds_since_assistant >= maximum)
-        if not required and blackboard.seconds_since_user < desired:
-            return None
-        # User-enabled open-topic speech is exclusively owned by the seed API.
-        # If that API is unavailable or cannot produce a concrete premise, silence
-        # is safer and more honest than a canned liveness sentence.
-        if user_enabled:
-            return None
-        route_kind = "casual_curiosity" if blackboard.seconds_since_user >= maximum else "social_check_in"
-        return SocialSpeechCandidate(
-            decision="candidate",
-            kind=route_kind,
-            topic=(
-                "Create one brief, original companion utterance. "
-                + ("The user explicitly enabled automatic speech. " if user_enabled else "The shared silence reached the configured ceiling. ")
-                + "Choose the content yourself from public-safe context or harmless "
-                "imagination. Do not ask the user to supply a topic, do not claim observations, time, "
-                "weather, actions, or memories without evidence, and do not repeat a canned check-in."
-            ),
-            speech_act=route_kind,
-            anchor_type="idle",
-            anchor_id="user_requested_autonomous_surface",
-            evidence_refs=(),
-            requires_grounding=False,
-            confidence=0.78 if user_enabled else 0.66,
-            relevance=0.86 if user_enabled else 0.64,
-            urgency=0.35 if required else 0.18,
-            tone="casual_warm",
-            reason=f"surface_route:{'user_preference' if user_enabled else 'quiet_ceiling'}:{reason}",
-            source="runtime_surface_route" if user_enabled else "initiative_local_liveness",
-        )
+        # Generic liveness fallback was removed, not shadowed.  A dead Seed or
+        # unavailable social worker produces no semantic affordance.  Runtime may
+        # still emit body presence through the governor, but it may not manufacture
+        # a public topic merely because a timer expired.
+        return None
 
     @staticmethod
     def _semantic_scene_candidate(

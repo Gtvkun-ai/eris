@@ -22,6 +22,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from .atomic_state import SQLiteAtomicStateStore, SQLiteStateTransaction
 from .social_candidate import SocialSpeechCandidate
+from .affordance import ExecutiveAffordance
 
 
 ARC_SCHEMA = "eris.conversation_arc.v1"
@@ -461,18 +462,30 @@ class ConversationArcRuntime:
                 self._persist_locked()
             self._arm_timer_locked()
 
-    def claim_due(
-        self,
-        *,
-        worker_id: str,
-        now: float | None = None,
-        interaction_busy: bool = False,
-        lease_ms: int = 12000,
-    ) -> SocialSpeechCandidate | None:
-        """Atomically reserve the current beat for one autonomous worker."""
+    def _candidate_for_arc(self, arc: ConversationArc) -> SocialSpeechCandidate | None:
+        beat = arc.current_beat
+        if beat is None:
+            return None
+        condition = f" Condition: {beat.condition}." if beat.condition else ""
+        topic = (
+            f"Arc beat {beat.role}: {beat.objective}.{condition} "
+            f"Long-horizon goal: {arc.goal}. "
+            "Deliver one new self-contained callback after a real pause; do not repeat, "
+            "explain timing, mention the arc, or ask the user to wait."
+        )
+        return SocialSpeechCandidate(
+            decision="candidate", kind="conversation_arc", topic=_compact(topic, 900),
+            speech_act=f"arc_{beat.role}", anchor_type="conversation", anchor_id=arc.arc_id,
+            evidence_refs=(), requires_grounding=False, confidence=0.94, relevance=0.96, urgency=1.0,
+            tone=beat.tone, reason=f"reserved_arc_beat:{arc.next_beat_index + 1}/{len(arc.beats)}",
+            source="conversation_arc_runtime", continuation_lane="conversation_arc",
+            claim_token=arc.claim_token, idempotency_key=f"{arc.arc_id}:beat:{arc.next_beat_index}",
+        )
 
+    def peek_due(
+        self, *, now: float | None = None, interaction_busy: bool = False
+    ) -> ExecutiveAffordance | None:
         current = float(now if now is not None else self._clock())
-        owner = _compact(worker_id or "anonymous", 100) or "anonymous"
         with self._lock, self._state_transaction_locked():
             self._expire_if_needed(current)
             arc = self._state.active_arc
@@ -481,75 +494,57 @@ class ConversationArcRuntime:
             if arc.claim_owner and arc.claim_until > current:
                 self._arm_timer_locked()
                 return None
-            if arc.claim_owner and arc.claim_until <= current:
-                arc = replace(
-                    arc,
-                    claim_owner="",
-                    claim_until=0.0,
-                    claim_token="",
-                    version=arc.version + 1,
-                    interrupted_reason="claim_lease_expired",
-                )
-                self._state = replace(
-                    self._state,
-                    version=self._state.version + 1,
-                    active_arc=arc,
-                    updated_at=current,
-                )
-            beat = arc.current_beat
-            if beat is None or current < arc.due_at():
+            if arc.current_beat is None or current < arc.due_at():
                 self._arm_timer_locked()
+                return None
+            candidate = self._candidate_for_arc(arc)
+            if candidate is None:
+                return None
+            return ExecutiveAffordance(
+                affordance_id=f"conversation_arc:{arc.arc_id}:beat:{arc.next_beat_index}:v{arc.version}",
+                owner="conversation_arc", revision=arc.version, candidate=candidate,
+                claim_required=True, expires_at=arc.expires_at, claim_key=arc.arc_id,
+                metadata={"beat_index": arc.next_beat_index},
+            )
+
+    def claim_affordance(
+        self, affordance: ExecutiveAffordance, *, worker_id: str,
+        now: float | None = None, lease_ms: int = 12000
+    ) -> SocialSpeechCandidate | None:
+        current = float(now if now is not None else self._clock())
+        owner = _compact(worker_id or "anonymous", 100) or "anonymous"
+        with self._lock, self._state_transaction_locked():
+            self._expire_if_needed(current)
+            arc = self._state.active_arc
+            if arc is None or not arc.active or arc.arc_id != str(affordance.claim_key or ""):
+                return None
+            if arc.version != int(affordance.revision) or (arc.claim_owner and arc.claim_until > current):
+                return None
+            if arc.current_beat is None or current < arc.due_at():
                 return None
             next_version = arc.version + 1
             token = f"{arc.arc_id}:beat:{arc.next_beat_index}:v{next_version}:{owner}"
             claimed = replace(
-                arc,
-                version=next_version,
-                claim_owner=owner,
+                arc, version=next_version, claim_owner=owner,
                 claim_until=current + max(0.5, min(45.0, int(lease_ms) / 1000.0)),
                 claim_token=token,
             )
             self._state = replace(
-                self._state,
-                version=self._state.version + 1,
-                active_arc=claimed,
-                updated_at=current,
+                self._state, version=self._state.version + 1, active_arc=claimed, updated_at=current
             )
             self._persist_locked()
             self._arm_timer_locked()
+            self._emit("claimed", arc_id=claimed.arc_id, beat_index=claimed.next_beat_index, worker_id=owner)
+            return self._candidate_for_arc(claimed)
 
-            condition = f" Condition: {beat.condition}." if beat.condition else ""
-            topic = (
-                f"Arc beat {beat.role}: {beat.objective}.{condition} "
-                f"Long-horizon goal: {claimed.goal}. "
-                "Deliver one new self-contained callback after a real pause; do not repeat, "
-                "explain timing, mention the arc, or ask the user to wait."
-            )
-            self._emit(
-                "claimed",
-                arc_id=claimed.arc_id,
-                beat_index=claimed.next_beat_index,
-                worker_id=owner,
-            )
-            return SocialSpeechCandidate(
-                decision="candidate",
-                kind="conversation_arc",
-                topic=_compact(topic, 900),
-                speech_act=f"arc_{beat.role}",
-                anchor_type="conversation",
-                anchor_id=claimed.arc_id,
-                evidence_refs=(),
-                requires_grounding=False,
-                confidence=0.94,
-                relevance=0.96,
-                urgency=1.0,
-                tone=beat.tone,
-                reason=f"reserved_arc_beat:{claimed.next_beat_index + 1}/{len(claimed.beats)}",
-                source="conversation_arc_runtime",
-                continuation_lane="conversation_arc",
-                claim_token=token,
-                idempotency_key=f"{claimed.arc_id}:beat:{claimed.next_beat_index}",
-            )
+    def claim_due(
+        self, *, worker_id: str, now: float | None = None,
+        interaction_busy: bool = False, lease_ms: int = 12000
+    ) -> SocialSpeechCandidate | None:
+        preview = self.peek_due(now=now, interaction_busy=interaction_busy)
+        if preview is None:
+            return None
+        return self.claim_affordance(preview, worker_id=worker_id, now=now, lease_ms=lease_ms)
 
     def due_candidate(
         self,

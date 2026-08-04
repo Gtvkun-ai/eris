@@ -1,0 +1,37 @@
+{
+  "version": "v53-clean",
+  "base": "eris_src50_gemma_executive_v52",
+  "executive_model_default": "gemma-4-31b-it",
+  "authority": {
+    "trajectory_and_capability_selection": "gemma_executive",
+    "specialist_lanes": "deepseek",
+    "public_wording": "deepseek_surface",
+    "permission_concurrency_execution": "runtime"
+  },
+  "invariants": [
+    "collect_before_claim",
+    "exact_affordance_id",
+    "exact_offered_capability_id",
+    "no_semantic_marker_router",
+    "no_legacy_semantic_fallback",
+    "read_only_autonomous_tool_calls_only",
+    "verified_tool_result_owns_public_truth",
+    "fail_closed_on_stale_or_invalid_executive_decision"
+  ],
+  "deleted": [
+    "actions/router.py",
+    "ActionRouter bootstrap plumbing",
+    "capability phrase markers",
+    "capability action aliases",
+    "text intention resolvers",
+    "legacy social fallback flag",
+    "DeepSeek capability selection authority"
+  ],
+  "tests": {
+    "targeted_passed": 38,
+    "regression_passed": 725,
+    "known_failures": 5,
+    "known_failure_reason": "source archive lacks four tools.* modules used only by test_pdf_inference_refactor.py"
+  },
+  "live_gemini_tested": false
+}

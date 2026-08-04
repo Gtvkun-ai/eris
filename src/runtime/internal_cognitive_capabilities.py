@@ -334,27 +334,6 @@ class InternalCognitiveCapabilityRuntime:
             )
         return self._finish(result)
 
-    def resolve_intention(self, text: str) -> tuple[str, str] | None:
-        """Map lời tự thuật hành động sang capability thật, không map banter."""
-        norm = _norm(text)
-        if not norm or not any(token in norm for token in ("kiem", "ra", "xem lai", "doi chieu", "tong ket", "tim")):
-            return None
-        if any(token in norm for token in ("cho vua hieu sai", "cau vua roi", "claim", "loi vua roi")):
-            return "review_discourse_claim", "latest_challenged"
-        if any(token in norm for token in ("ky uc", "manh nho", "memory candidate", "dau vet con sot")):
-            return "inspect_memory_candidates", "summary_only"
-        if any(token in norm for token in ("mau thuan", "tu mau thuan")):
-            return "detect_internal_contradictions", "recent"
-        if any(token in norm for token in ("dang do", "bo ngo", "open loop", "con sot")):
-            return "summarize_open_loops", "summary_only"
-        return None
-
-    def execute_intention(self, text: str) -> ActionExecutionResult | None:
-        route = self.resolve_intention(text)
-        if route is None:
-            return None
-        cap, action_input = route
-        return self.execute(cap, action_input).to_action_result(action_input=action_input)
 
     def audit_snapshot(self, limit: int = 20) -> tuple[dict[str, Any], ...]:
         with self._lock:

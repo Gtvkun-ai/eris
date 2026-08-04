@@ -15,6 +15,7 @@ import time
 from typing import Any, Mapping
 
 from failure_meta import build_failure_meta
+
 from runtime.no_fallback_policy import no_fallback_mode_enabled
 from runtime.grounding_surface_gate import evaluate_grounded_surface
 from runtime.cognition.turn_anchor import anchor_from_semantic_frame
@@ -734,10 +735,64 @@ class AIChatOrchestrator:
                 else {}
             ),
         }
+        # Gemma is the sole semantic authority for direct-chat capability
+        # selection. DeepSeek still plans the reply and writes it, but its legacy
+        # tool_intent is overwritten below rather than allowed to compete.
+        executive_directive = None
+        executive = getattr(host, "ai_executive_cortex", None)
+        if executive is not None and bool(getattr(executive, "enabled", False)):
+            try:
+                executive_directive = executive.plan_interactive(
+                    user_text, snapshot=planning_snapshot
+                )
+            except Exception as exc:
+                host.logger.warning("[executive] interactive planning failed closed: %s", exc)
+        directive_payload = (
+            executive_directive.to_dict()
+            if executive_directive is not None
+            and callable(getattr(executive_directive, "to_dict", None))
+            else {
+                "schema": "eris.interactive_executive_directive.v2",
+                "status": "unavailable",
+                "capability_id": "",
+                "capability_arguments": {},
+                "semantic_goal": "",
+                "reason": "executive_unavailable",
+                "confidence": 0.0,
+            }
+        )
+        planning_snapshot["executive_directive"] = directive_payload
+        directive_context = (
+            "EXECUTIVE CAPABILITY DIRECTIVE (runtime authority): "
+            + json.dumps(directive_payload, ensure_ascii=False)
+            + ". Do not invent, rename, or deny a capability beyond this directive. "
+              "When status=unavailable, state uncertainty rather than claiming ERIS cannot perform it."
+        )
+        grounding_context = "\n\n".join(
+            part for part in (grounding_context, directive_context) if str(part).strip()
+        )
+        planning_snapshot["grounding_context"] = grounding_context
+
         chat_plan = host.ai_intention_planner.plan_chat(
             planning_snapshot,
             turn_seq=turn_seq,
         )
+        plan_data = chat_plan.to_dict()
+        if str(directive_payload.get("status", "") or "") == "selected":
+            plan_data["tool_intent"] = str(directive_payload.get("capability_id", "") or "")
+            # Typed arguments stay typed until ActionExecutor.execute_capability.
+            # Public wording models never receive authority to reinterpret them.
+            plan_data["tool_input"] = ""
+        else:
+            # No second semantic authority: legacy planner tool guesses are removed.
+            plan_data["tool_intent"] = ""
+            plan_data["tool_input"] = ""
+        plan_data["notes"] = (
+            str(plan_data.get("notes", "") or "")
+            + f"; executive_capability={directive_payload.get('status', 'unavailable')}:"
+              f"{directive_payload.get('reason', '')}"
+        ).strip("; ")
+        chat_plan = IntentionPlan.from_mapping(plan_data, channel="chat")
         discovery_id = ""
         if discovery_runtime is not None:
             chat_plan, discovery_grounding, discovery_id = discovery_runtime.bind_plan(chat_plan)
@@ -1037,6 +1092,31 @@ class AIChatOrchestrator:
                 )
 
 
+        if payload:
+            try:
+                from runtime.capability_claim_guard import guard_public_capability_claims
+
+                claim_guard = guard_public_capability_claims(
+                    payload,
+                    owner=host,
+                    executive_directive=directive_payload,
+                )
+                payload = dict(claim_guard.payload)
+                user_meta["capability_claim_guard"] = {
+                    "allowed": bool(claim_guard.allowed),
+                    "violations": list(claim_guard.violations),
+                }
+                if not claim_guard.allowed:
+                    host.logger.warning(
+                        "[capability claim guard] failed closed violations=%s",
+                        ",".join(claim_guard.violations),
+                    )
+            except Exception as exc:
+                host.logger.warning("[capability claim guard] unavailable; failing closed: %s", exc)
+                payload = dict(payload)
+                payload["should_speak"] = False
+                payload["text"] = ""
+                payload["speech_text"] = ""
 
         if not payload:
             authoritative_text = _authoritative_chess_result_text(grounding_report, user_text)
@@ -1127,6 +1207,15 @@ class AIChatOrchestrator:
             raw = json.dumps(public_payload, ensure_ascii=False)
             host._log_raw_llm_output("chat_ai", raw)
             decision = host.parser.parse(raw, user_hint=user_text)
+
+        if str(directive_payload.get("status", "") or "") == "selected":
+            decision.system_action = str(directive_payload.get("capability_id", "") or "")
+            decision.action_input = ""
+            decision.capability_arguments = dict(
+                directive_payload.get("capability_arguments", {}) or {}
+            )
+        else:
+            decision.capability_arguments = None
 
         if not str(getattr(decision, "utterance_turn_id", "") or "").strip():
             decision.utterance_turn_id = str(

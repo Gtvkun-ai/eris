@@ -197,15 +197,8 @@ class UserControlRuntimeMixin:
         if not normalized:
             return ""
 
-        if self.action_router is not None:
-            routed = self.action_router.route_chat(user_text, last_action=self.last_system_action)
-            if routed:
-                action_name, action_input = routed
-                normalized_input = self._normalize_user_message(action_input)
-                if action_name == "get_now_playing":
-                    return "action:get_now_playing"
-                return f"action:{action_name}:{normalized_input}"
-
+        # Repetition identity is textual only. A regex action router must not
+        # reinterpret the user's meaning before the model-owned semantic planner.
         return normalized
 
     def _track_repeated_user_message(self, user_text: str) -> int:

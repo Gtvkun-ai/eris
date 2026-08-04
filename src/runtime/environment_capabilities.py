@@ -386,31 +386,6 @@ class EnvironmentCapabilityRuntime:
                 error_message=_clean(exc, 240),
             ))
 
-    def resolve_intention(self, text: str) -> tuple[str, str] | None:
-        """Map lời tự thuật autonomous sang handler thật, chỉ bắt câu đủ rõ."""
-        norm = _norm(text)
-        if not norm or not re.search(r"\b(?:toi|minh|em)\s+(?:se|muon|dang|can|thu)|\bde\s+(?:toi|minh|em)\b", norm):
-            return None
-        if any(token in norm for token in ("app dang active", "ung dung dang mo", "cua so dang focus")):
-            return "get_active_application", "current"
-        if any(token in norm for token in ("doc chu tren man hinh", "doc text ui", "xem uia", "doc giao dien")):
-            return "read_visible_ui_text", "current"
-        if any(token in norm for token in ("doc log", "kiem log", "xem log runtime")):
-            return "inspect_runtime_log", "latest"
-        if any(token in norm for token in ("doc loi", "xem loi", "kiem traceback", "loi hien tai")):
-            return "read_current_error", "current"
-        if any(token in norm for token in ("file dang chon", "file dang mo", "file hien tai")):
-            return "inspect_selected_file", "metadata"
-        if any(token in norm for token in ("git status", "project status", "trang thai project", "trang thai repo")):
-            return "get_project_status", "current"
-        return None
-
-    def execute_intention(self, text: str) -> ActionExecutionResult | None:
-        route = self.resolve_intention(text)
-        if route is None:
-            return None
-        capability_id, action_input = route
-        return self.execute(capability_id, action_input).to_action_result(action_input=action_input)
 
     def audit_snapshot(self, limit: int = 20) -> tuple[dict[str, Any], ...]:
         with self._lock:
