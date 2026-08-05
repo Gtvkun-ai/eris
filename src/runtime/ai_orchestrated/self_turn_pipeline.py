@@ -1362,6 +1362,34 @@ class SelfTurnPipeline:
                 })
             except Exception:
                 pass
+        utterance_allowed, utterance_reason = self._autonomous_utterance_gate(
+            str(getattr(decision, "text", "") or ""),
+            context=context,
+            grounding_report=grounding_report,
+        )
+        if not utterance_allowed:
+            gate_reason = f"utterance_gate:{utterance_reason}"[:160]
+            self._release_seed_lease(candidate, reason=gate_reason)
+            self._defer_claimed_continuation(plan, reason=gate_reason, seconds=12.0)
+            host.logger.warning(
+                "[utterance gate] autonomous surface blocked subject=%s reason=%s text=%s",
+                plan.semantics.subject_key,
+                utterance_reason,
+                str(getattr(decision, "text", "") or "")[:220],
+            )
+            try:
+                from runtime.public_lifecycle import lifecycle_for
+
+                lifecycle_for(host).transition(
+                    "DEGRADED",
+                    turn_id=str(plan.plan_id or f"autonomous:{context.turn_seq}"),
+                    reason=gate_reason,
+                )
+            except Exception:
+                pass
+            self._record_result(plan, result="utterance_blocked", gate_reason=gate_reason)
+            host._sleep_interruptible(10)
+            return True
         host.ai_stage_planner.apply(decision, plan.performance_hint, state=context.state, channel="autonomous")
         decision = host._execute_system_action(decision, snapshot=context.perception.snapshot, frame=None)
         if isinstance(getattr(decision, "action_result_meta", None), Mapping):
@@ -1502,6 +1530,34 @@ class SelfTurnPipeline:
             suppressed=False, ti_mode="ai_intention",
         )))
         return True
+
+
+    def _autonomous_utterance_gate(
+        self,
+        text: str,
+        *,
+        context: SelfTurnBundle,
+        grounding_report: Any,
+    ) -> tuple[bool, str]:
+        try:
+            from runtime.utterance_evaluator import UtteranceEvaluator
+
+            evaluation = UtteranceEvaluator().evaluate(
+                text,
+                channel="autonomous",
+                snapshot=context.perception.snapshot,
+                grounding=grounding_report,
+            )
+        except Exception as exc:
+            self.host.logger.debug("[utterance gate] autonomous evaluator unavailable: %s", exc)
+            return True, "evaluator_unavailable"
+        issues = tuple(str(item) for item in getattr(evaluation, "issues", ()) or ())
+        reason = str(getattr(evaluation, "reason", "") or getattr(evaluation, "verdict", "") or "blocked")
+        if str(getattr(evaluation, "verdict", "") or "") == "drop":
+            return False, reason
+        if "generic_presence_filler" in issues:
+            return False, reason
+        return True, reason or "ok"
 
 
     @staticmethod

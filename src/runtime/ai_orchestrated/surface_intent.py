@@ -61,6 +61,22 @@ def _clamp01(value: Any, default: float = 0.0) -> float:
     return max(0.0, min(1.0, number))
 
 
+def _bad_surface_utterance_reason(text: str, *, channel: str = "autonomous") -> str:
+    try:
+        from runtime.utterance_evaluator import UtteranceEvaluator
+
+        evaluation = UtteranceEvaluator().evaluate(text, channel=channel)
+    except Exception:
+        return ""
+    issues = tuple(str(item) for item in getattr(evaluation, "issues", ()) or ())
+    reason = compact(getattr(evaluation, "reason", "") or getattr(evaluation, "verdict", ""), 160)
+    if str(getattr(evaluation, "verdict", "") or "") == "drop":
+        return reason or "drop"
+    if "generic_presence_filler" in issues:
+        return reason or "generic_presence_filler"
+    return ""
+
+
 def _anchor_topic(blackboard: TypedCognitiveBlackboard, kind: str) -> str:
     for anchor in blackboard.anchors:
         if str(anchor.kind or "") == kind and str(anchor.topic_seed or "").strip():
@@ -238,6 +254,9 @@ class SurfaceIntentEngine:
             return self._unavailable(intent, "surface_missing_speech_text")
         if confidence < 0.25:
             return self._unavailable(intent, f"surface_low_confidence:{confidence:.2f}")
+        bad_utterance_reason = _bad_surface_utterance_reason(text)
+        if bad_utterance_reason:
+            return self._unavailable(intent, f"surface_bad_utterance:{bad_utterance_reason}")
         returned_refs = tuple(
             ref for ref in (compact(value, 120) for value in _sequence(raw.get("evidence_refs"))[:6]) if ref
         )
@@ -378,6 +397,9 @@ class SurfaceIntentEngine:
         confidence = _clamp01(raw.get("confidence", 0.0))
         if not text or not topic or confidence < 0.35:
             return self._silence(turn_seq=turn_seq, reason="surface_incomplete_or_low_confidence")
+        bad_utterance_reason = _bad_surface_utterance_reason(text)
+        if bad_utterance_reason:
+            return self._silence(turn_seq=turn_seq, reason=f"surface_bad_utterance:{bad_utterance_reason}")
 
         available_refs = self._available_evidence_refs(snapshot)
         evidence_refs = tuple(

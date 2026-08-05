@@ -588,7 +588,7 @@ class CoordinatorBootstrapMixin:
             failure_kind=FailureKind.PROGRAMMER_ERROR,
             stop_methods=("shutdown", "close", "stop"),
         )
-        # Memory GC daemon — dọn rác định kỳ mỗi 20 phút khi idle
+        # Memory GC daemon — dọn semantic + living-user mỗi 10 phút khi idle
         self.memory_gc_service = None
         try:
             from runtime.memory_gc_service import build_memory_gc_service

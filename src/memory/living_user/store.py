@@ -52,6 +52,9 @@ class ApplyResult:
     record_ids: tuple[str, ...] = ()
     rejected: tuple[str, ...] = ()
     version: int = 0
+    # Thống kê tùy chọn cho batch curator. Giữ ở cuối để không phá caller cũ
+    # đang khởi tạo ApplyResult bằng positional arguments.
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 class UserProfileStore:
@@ -424,6 +427,168 @@ class UserProfileStore:
             self._version += 1
             self.save()
             return True
+
+
+    def apply_curator_operations(
+        self,
+        operations: Iterable[Mapping[str, Any]],
+        *,
+        protected_record_ids: Iterable[str] = (),
+        checkpoint_reason: str = "living_user_curator",
+    ) -> ApplyResult:
+        """Áp dụng batch dọn memory theo record ID một cách atomic.
+
+        DeepSeek chỉ được đề xuất operation. Method này mới là cổng ghi thật và
+        chỉ hỗ trợ archive/weaken/merge. Không có thao tác tạo claim mới, đổi path
+        hay sửa value, vì cô lao công không nên tiện tay viết lại tiểu sử chủ nhà.
+        """
+        rows = tuple(dict(row) for row in operations if isinstance(row, Mapping))
+        if not rows:
+            return ApplyResult(False, version=self._version, details={"applied": 0})
+
+        protected = {str(record_id) for record_id in protected_record_ids if str(record_id).strip()}
+        changed_ids: list[str] = []
+        rejected: list[str] = []
+        details = {"applied": 0, "archived": 0, "weakened": 0, "merged": 0}
+
+        with self._lock:
+            before = [r.to_dict() for r in self.all(include_inactive=True)]
+            for row in rows:
+                action = str(row.get("action") or "").strip().lower()
+                record_ids = [str(x) for x in row.get("record_ids", ()) if str(x).strip()]
+                record_ids = list(dict.fromkeys(record_ids))
+                reason = " ".join(str(row.get("reason") or "").split())[:420]
+                if action not in {"archive", "weaken", "merge"} or not record_ids:
+                    rejected.append(f"unsupported_curator_operation:{action or 'empty'}")
+                    continue
+                if any(record_id in protected for record_id in record_ids):
+                    rejected.append(f"protected_record:{','.join(record_ids)}")
+                    continue
+                records = [self._records.get(record_id) for record_id in record_ids]
+                if any(record is None for record in records):
+                    rejected.append(f"record_not_found:{','.join(record_ids)}")
+                    continue
+                selected = [record for record in records if record is not None]
+                if any(record.status not in {"active", "disputed"} for record in selected):
+                    rejected.append(f"record_not_current:{','.join(record_ids)}")
+                    continue
+
+                now = now_ts()
+                if action == "archive":
+                    if len(selected) != 1:
+                        rejected.append("archive_requires_one_record")
+                        continue
+                    record = selected[0]
+                    record.status = "archived"
+                    record.updated_at = now
+                    record.valid_until = now
+                    record.metadata["curator_reason"] = reason
+                    record.metadata["curated_by"] = "deepseek_critic_or_rule"
+                    changed_ids.append(record.id)
+                    details["archived"] += 1
+
+                elif action == "weaken":
+                    if len(selected) != 1:
+                        rejected.append("weaken_requires_one_record")
+                        continue
+                    try:
+                        amount = float(row.get("amount") or 0.12)
+                    except Exception:
+                        amount = 0.12
+                    amount = max(0.05, min(0.30, amount))
+                    record = selected[0]
+                    record.confidence = clamp01(record.confidence - amount)
+                    record.updated_at = now
+                    record.metadata["curator_reason"] = reason
+                    record.metadata["curator_weaken_amount"] = amount
+                    if record.confidence < self.config.drop_below_confidence:
+                        record.status = "archived"
+                        record.valid_until = now
+                        details["archived"] += 1
+                    changed_ids.append(record.id)
+                    details["weakened"] += 1
+
+                elif action == "merge":
+                    if len(selected) < 2:
+                        rejected.append("merge_requires_multiple_records")
+                        continue
+                    if len({record.path for record in selected}) != 1:
+                        rejected.append("merge_path_mismatch")
+                        continue
+                    if len({record.scope.identity for record in selected}) != 1:
+                        rejected.append("merge_scope_mismatch")
+                        continue
+                    primary = max(selected, key=lambda r: (r.trust_weight, r.recurrence, r.updated_at))
+                    evidence = list(primary.evidence_ids)
+                    recurrence = primary.recurrence
+                    for record in selected:
+                        if record.id == primary.id:
+                            continue
+                        evidence.extend(record.evidence_ids)
+                        recurrence += record.recurrence
+                        record.status = "superseded"
+                        record.valid_until = now
+                        record.updated_at = now
+                        record.metadata["merged_into"] = primary.id
+                        record.metadata["curator_reason"] = reason
+                    primary.evidence_ids = tuple(dict.fromkeys(evidence))[:96]
+                    primary.recurrence = max(primary.recurrence, recurrence)
+                    primary.confidence = clamp01(max(record.confidence for record in selected) + 0.02)
+                    primary.updated_at = now
+                    primary.last_confirmed_at = max(record.last_confirmed_at for record in selected)
+                    primary.metadata["curator_reason"] = reason
+                    primary.metadata["curated_merge_ids"] = [r.id for r in selected if r.id != primary.id][-40:]
+                    changed_ids.extend(record.id for record in selected)
+                    details["merged"] += 1
+
+                details["applied"] += 1
+                self._audit.append({
+                    "at": now,
+                    "operation": {
+                        "op": f"curator_{action}",
+                        "record_ids": record_ids,
+                        "reason": reason,
+                    },
+                    "record_ids": record_ids,
+                })
+
+            if changed_ids:
+                self._version += 1
+                self._history.append({
+                    "version": self._version,
+                    "at": now_ts(),
+                    "reason": checkpoint_reason,
+                    "records_before": before,
+                })
+                self._history = self._history[-self.config.max_history :]
+                self._trim()
+                if self.config.autosave:
+                    self.save()
+
+        return ApplyResult(
+            bool(changed_ids),
+            tuple(dict.fromkeys(changed_ids)),
+            tuple(rejected),
+            self._version,
+            details,
+        )
+
+    def compact_history(self, *, max_snapshots: int = 8) -> int:
+        """Giữ một undo window ngắn thay vì photocopy cả profile 40 lần.
+
+        History là rollback window, không phải kho lưu trữ lạnh. Evidence thật vẫn
+        nằm trong event/semantic store và authority ledger. Với JSON vài chục record,
+        giữ 6-8 snapshot là đủ cứu một thao tác lỗi mà không biến file thành vali.
+        """
+        keep = max(2, int(max_snapshots))
+        with self._lock:
+            removed = max(0, len(self._history) - keep)
+            if removed <= 0:
+                return 0
+            self._history = self._history[-keep:]
+            if self.config.autosave:
+                self.save()
+            return removed
 
     def _trim(self) -> None:
         if len(self._records) <= self.config.max_records:

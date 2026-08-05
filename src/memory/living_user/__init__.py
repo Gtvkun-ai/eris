@@ -6,6 +6,7 @@ from .benchmark import BenchmarkMetrics, LivingUserMemoryBenchmark
 from .authority import AuthorityDecision, UserMemoryAuthorityEvent, UserMemoryAuthorityLedger
 from .clarification import MemoryClarificationPolicy, MemoryUseDecision
 from .context_compiler import ProfileContextCompiler, ProfileContextCompilerConfig, infer_domain
+from .curator import LivingUserCuratorConfig, LivingUserCuratorResult, LivingUserMemoryCurator
 from .dreamer import UserProfileDreamConfig, UserProfileDreamer
 from .episode_builder import EpisodeBuilderConfig, UserEpisodeBuilder
 from .episode_store import UserEpisodeStore
@@ -38,6 +39,9 @@ __all__ = [
     "CommitmentRecord",
     "GoalRecord",
     "LivingUserMemoryBenchmark",
+    "LivingUserCuratorConfig",
+    "LivingUserCuratorResult",
+    "LivingUserMemoryCurator",
     "MemoryClarificationPolicy",
     "MemoryReplayDebugger",
     "MemoryTraceJournal",

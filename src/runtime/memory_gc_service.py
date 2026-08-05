@@ -1,27 +1,19 @@
 # -*- coding: utf-8 -*-
-"""
-runtime.memory_gc_service
-=========================
+"""Daemon dọn memory định kỳ khi runtime rảnh.
 
-Daemon dọn dẹp memory định kỳ mỗi 20 phút khi runtime rảnh tay.
+Luồng mới:
+1. Chạy maintenance deterministic/canonical hiện có.
+2. Dùng DeepSeek worker ``critic`` để rà semantic memory.
+3. Dọn Living User Memory:
+   - rule deterministic xử lý null/open-loop đã xong;
+   - Qwen embedding gom duplicate/near-duplicate;
+   - DeepSeek critic đề xuất archive/weaken/merge;
+   - validator trong UserProfileStore mới được áp dụng thật.
+4. Thu gọn undo history và anchor journal.
 
-Làm 3 việc mỗi lượt:
-1. MemoryMaintenanceRunner.run(budget="normal", destructive=True)
-   - Prune thật các item hết hạn / rác (session/transient/noise)
-   - Access decay (half-life 7 ngày)
-   - Consolidate memory candidate
-   - AI curator: distill episodic cluster → semantic fact,
-     bridge concern chín → long-term memory
-2. Gọi DeepSeek (worker "inner") để AI đánh giá thêm:
-   - Quét semantic_memory.json và epistemic_v2.json
-   - Chấm điểm từng entry, trả về danh sách ID nên xóa/giữ
-   - Drop các entry confidence thấp không có fact_key
-3. Compact anchor_journal.jsonl nếu quá lớn (> 50MB)
-
-Không chạy nếu:
-- Đang có chat đang xử lý (idle_probe trả False)
-- Interval chưa đủ 20 phút kể từ lần chạy trước
-- LLM service hoặc memory_core chưa sẵn sàng
+Mặc định chạy mỗi 10 phút. Không chạy khi chat bận. Critic không có quyền sửa value,
+tạo fact mới hoặc đụng vào memory do người dùng xác nhận trực tiếp. Một chút giới hạn
+quyền lực chưa từng làm hại hệ thống lưu dữ liệu cá nhân nào cả.
 """
 from __future__ import annotations
 
@@ -37,9 +29,9 @@ logger = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-_DEFAULT_INTERVAL_SEC = 20 * 60  # 20 phút
+_DEFAULT_INTERVAL_SEC = 10 * 60  # 10 phút theo yêu cầu vận hành
 _DEFAULT_ANCHOR_JOURNAL_MAX_MB = 50
-_DEFAULT_DS_REVIEW_LIMIT = 80  # số entry tối đa gửi DeepSeek đánh giá mỗi lượt
+_DEFAULT_DS_REVIEW_LIMIT = 80
 
 
 def _env_float(name: str, default: float) -> float:
@@ -53,7 +45,7 @@ def _env_int(name: str, default: int) -> int:
     try:
         return int(os.getenv(name, "") or default)
     except Exception:
-        return default
+        return int(default)
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -63,32 +55,30 @@ def _env_flag(name: str, default: bool) -> bool:
     return str(raw).strip().lower() not in {"0", "false", "no", "off"}
 
 
-# ── Prompt ────────────────────────────────────────────────────────────────────
+# ── Prompt semantic memory ────────────────────────────────────────────────────
 
-_GC_SYSTEM = """You are a memory garbage collector for ERIS, an AI companion.
-You receive a batch of memory entries and must classify each one.
+_SEMANTIC_GC_SYSTEM = """You are the semantic-memory critic for ERIS.
+Classify only the supplied entries. Output ONLY JSON.
 
-Rules:
-- Output ONLY a JSON object, no prose.
-- For each entry, decide: "keep" or "drop".
-- DROP if: confidence < 0.40, OR the claim is a transient social phrase
-  (greetings, slang observations, questions about ERIS's name, one-time events
-  with no lasting significance).
-- KEEP if: the entry has a fact_key, OR confidence >= 0.65, OR the claim
-  describes a stable user trait / preference / relationship pattern.
-- When uncertain, KEEP.
+Evidence rules:
+- Model confidence is not evidence.
+- KEEP facts with a canonical fact_key or direct durable evidence.
+- DROP null/empty claims, transient greetings, one-off scene details, resolved tasks,
+  unsupported emotional inference, and paraphrases that add no durable fact.
+- When uncertain and evidence exists, KEEP. Do not invent replacements.
 
-Output schema:
+Schema:
 {
   "decisions": [
-    {"id": "<entry_id>", "action": "keep"|"drop", "reason": "<short reason>"}
+    {"id": "<entry_id>", "action": "keep" | "drop", "reason": "short reason"}
   ]
-}"""
+}
+"""
 
-_GC_USER = """Memory entries to review ({count} items):
+_SEMANTIC_GC_USER = """Semantic memory entries to review ({count} items):
 {entries}
 
-Return decisions for all {count} entries."""
+Return a decision for every supplied entry."""
 
 
 # ── Result ────────────────────────────────────────────────────────────────────
@@ -98,6 +88,12 @@ class MemoryGCResult:
     maintenance_ran: bool = False
     ds_reviewed: int = 0
     ds_dropped: int = 0
+    living_reviewed: int = 0
+    living_applied: int = 0
+    living_archived: int = 0
+    living_weakened: int = 0
+    living_merged: int = 0
+    living_history_removed: int = 0
     pruned_total: int = 0
     journal_compacted: bool = False
     duration_sec: float = 0.0
@@ -109,11 +105,17 @@ class MemoryGCResult:
             "maintenance_ran": self.maintenance_ran,
             "ds_reviewed": self.ds_reviewed,
             "ds_dropped": self.ds_dropped,
+            "living_reviewed": self.living_reviewed,
+            "living_applied": self.living_applied,
+            "living_archived": self.living_archived,
+            "living_weakened": self.living_weakened,
+            "living_merged": self.living_merged,
+            "living_history_removed": self.living_history_removed,
             "pruned_total": self.pruned_total,
             "journal_compacted": self.journal_compacted,
             "duration_sec": round(self.duration_sec, 2),
-            "warnings": self.warnings[:12],
-            "notes": self.notes[:16],
+            "warnings": self.warnings[:16],
+            "notes": self.notes[:24],
         }
 
 
@@ -154,6 +156,8 @@ class MemoryGCService:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._last_run_at = 0.0
+        self._last_living_user_review_version = -1
+        self._last_living_user_review_at = 0.0
         self.last_result: dict[str, Any] = {}
         self.run_count = 0
 
@@ -166,13 +170,9 @@ class MemoryGCService:
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
-        self._thread = threading.Thread(
-            target=self._loop,
-            name="ERIS-MemoryGC",
-            daemon=True,
-        )
+        self._thread = threading.Thread(target=self._loop, name="ERIS-MemoryGC", daemon=True)
         self._thread.start()
-        logger.info("[memory_gc] started; interval=%.0fs", self.interval_seconds)
+        logger.info("[memory_gc] started; interval=%.0fs role=critic", self.interval_seconds)
 
     def stop(self, timeout: float = 2.0) -> None:
         self._stop.set()
@@ -180,13 +180,13 @@ class MemoryGCService:
             self._thread.join(timeout=timeout)
 
     def run_once(self) -> MemoryGCResult:
-        """Chạy một lượt GC đồng bộ (dùng để test hoặc trigger thủ công)."""
+        """Chạy một lượt GC đồng bộ, tiện cho test và nút trigger thủ công."""
         return self._run_gc()
 
     # ── Loop ───────────────────────────────────────────────────────────────────
 
     def _loop(self) -> None:
-        # Delay khởi động để không tranh tài nguyên với bootstrap
+        # Delay để không tranh VRAM/CPU với bootstrap model.
         startup_delay = _env_float("ERIS_MEMORY_GC_STARTUP_DELAY_SEC", 120.0)
         self._stop.wait(timeout=startup_delay)
         while not self._stop.is_set():
@@ -198,12 +198,16 @@ class MemoryGCService:
                     self.last_result = result.to_dict()
                     self.run_count += 1
                     logger.info(
-                        "[memory_gc] run #%d done: maintenance=%s ds_dropped=%d pruned=%d journal_compact=%s (%.1fs)",
+                        "[memory_gc] run #%d maintenance=%s semantic_drop=%d "
+                        "living(applied=%d archive=%d weaken=%d merge=%d) pruned=%d (%.1fs)",
                         self.run_count,
                         result.maintenance_ran,
                         result.ds_dropped,
+                        result.living_applied,
+                        result.living_archived,
+                        result.living_weakened,
+                        result.living_merged,
                         result.pruned_total,
-                        result.journal_compacted,
                         result.duration_sec,
                     )
             except Exception as exc:
@@ -231,9 +235,10 @@ class MemoryGCService:
         result = MemoryGCResult()
         t0 = time.time()
 
-        # 1. MemoryMaintenanceRunner (prune thật, AI curator)
+        # 1. Maintenance canonical hiện có: decay, prune, consolidate.
         try:
             from memory.memory_maintenance import MemoryMaintenanceRunner
+
             runner = MemoryMaintenanceRunner(
                 self.memory_core,
                 destructive=True,
@@ -243,22 +248,29 @@ class MemoryGCService:
             result.maintenance_ran = True
             pruned = report.pruned if isinstance(report.pruned, dict) else {}
             result.pruned_total = int(pruned.get("dropped_total", 0))
-            notes = getattr(report, "notes", [])
-            warnings = getattr(report, "warnings", [])
-            result.notes.extend(notes[:8])
-            result.warnings.extend(warnings[:4])
+            result.notes.extend(list(getattr(report, "notes", []) or [])[:8])
+            result.warnings.extend(list(getattr(report, "warnings", []) or [])[:4])
         except Exception as exc:
             result.warnings.append(f"maintenance_failed:{type(exc).__name__}:{exc}")
             logger.warning("[memory_gc] maintenance runner failed: %s", exc)
 
-        # 2. DeepSeek AI review — quét semantic_memory entries
-        try:
-            self._run_deepseek_review(result)
-        except Exception as exc:
-            result.warnings.append(f"ds_review_failed:{type(exc).__name__}:{exc}")
-            logger.warning("[memory_gc] DeepSeek review failed: %s", exc)
+        critic = self._get_critic_client()
 
-        # 3. Compact anchor_journal.jsonl nếu quá lớn
+        # 2. Semantic memory critic.
+        try:
+            self._run_semantic_review(result, critic)
+        except Exception as exc:
+            result.warnings.append(f"semantic_review_failed:{type(exc).__name__}:{exc}")
+            logger.warning("[memory_gc] semantic review failed: %s", exc)
+
+        # 3. Living-user curator: Qwen gom cụm, DeepSeek critic phán, rule áp dụng.
+        try:
+            self._run_living_user_review(result, critic)
+        except Exception as exc:
+            result.warnings.append(f"living_review_failed:{type(exc).__name__}:{exc}")
+            logger.warning("[memory_gc] living-user review failed: %s", exc)
+
+        # 4. Compact anchor journal nếu quá lớn.
         try:
             self._compact_anchor_journal(result)
         except Exception as exc:
@@ -267,74 +279,103 @@ class MemoryGCService:
         result.duration_sec = time.time() - t0
         return result
 
-    def _run_deepseek_review(self, result: MemoryGCResult) -> None:
-        """Gọi DeepSeek worker 'inner' để đánh giá và xóa semantic memory rác."""
-        client = self._get_ds_client()
-        if client is None:
-            result.notes.append("ds_review_skipped:no_inner_worker")
+    def _run_semantic_review(self, result: MemoryGCResult, critic: Any | None) -> None:
+        if critic is None:
+            result.notes.append("semantic_review_skipped:no_critic_worker")
             return
 
         semantic_store = getattr(self.memory_core, "semantic", None)
         if semantic_store is None or not hasattr(semantic_store, "load"):
-            result.notes.append("ds_review_skipped:no_semantic_store")
+            result.notes.append("semantic_review_skipped:no_semantic_store")
             return
 
         items = list(semantic_store.load())
-        if not items:
-            result.notes.append("ds_review_skipped:empty_store")
-            return
-
-        # Chỉ xem xét entry không có fact_key hoặc confidence thấp
-        candidates = [
-            item for item in items
-            if self._is_gc_candidate(item)
-        ][:self.ds_review_limit]
-
+        candidates = [item for item in items if self._is_semantic_gc_candidate(item)][: self.ds_review_limit]
         if not candidates:
-            result.notes.append("ds_review_skipped:no_candidates")
+            result.notes.append("semantic_review_skipped:no_candidates")
             return
 
-        entries_text = self._format_entries_for_review(candidates)
-        user_prompt = _GC_USER.format(
-            count=len(candidates),
-            entries=entries_text,
+        raw = self._call_model(
+            critic,
+            _SEMANTIC_GC_SYSTEM,
+            _SEMANTIC_GC_USER.format(
+                count=len(candidates),
+                entries=self._format_semantic_entries(candidates),
+            ),
+            max_tokens=1600,
         )
-
-        raw = self._call_ds(client, _GC_SYSTEM, user_prompt)
         if not raw:
-            result.warnings.append("ds_review_no_response")
+            result.warnings.append("semantic_review_no_response")
             return
 
         decisions = self._parse_decisions(raw)
         if not decisions:
-            result.warnings.append("ds_review_parse_failed")
+            result.warnings.append("semantic_review_parse_failed")
             return
 
-        # Áp dụng quyết định drop
         drop_ids = {
-            d["id"] for d in decisions
-            if str(d.get("action", "")).strip().lower() == "drop"
+            str(row.get("id"))
+            for row in decisions
+            if str(row.get("action", "")).strip().lower() == "drop"
         }
-        if not drop_ids:
-            result.ds_reviewed = len(candidates)
-            result.notes.append("ds_review_no_drops")
-            return
-
-        # Lọc ra items cần giữ
+        # Chỉ drop ID trong candidate batch. Critic không được lén ghi tên hàng xóm.
+        allowed_ids = {self._item_id(item) for item in candidates}
+        drop_ids &= allowed_ids
         kept = [item for item in items if self._item_id(item) not in drop_ids]
         actually_dropped = len(items) - len(kept)
-
         if actually_dropped > 0 and hasattr(semantic_store, "save"):
             semantic_store.save(kept)
             result.ds_dropped = actually_dropped
-            result.notes.append(
-                f"ds_dropped:{actually_dropped}_items_from_semantic_store"
-            )
-
+            result.notes.append(f"semantic_dropped:{actually_dropped}")
         result.ds_reviewed = len(candidates)
 
+    def _run_living_user_review(self, result: MemoryGCResult, critic: Any | None) -> None:
+        living_user = getattr(self.memory_core, "living_user", None)
+        if living_user is None:
+            result.notes.append("living_review_skipped:no_living_user")
+            return
+        store = getattr(living_user, "profile_store", None)
+        version = int(getattr(store, "version", -1))
+        now = time.time()
+        max_age = _env_float("ERIS_MEMORY_GC_LIVING_REVIEW_MAX_AGE_SEC", 24 * 3600.0)
+        if (
+            version == self._last_living_user_review_version
+            and now - self._last_living_user_review_at < max_age
+        ):
+            result.notes.append("living_review_skipped:profile_unchanged")
+            return
+
+        from memory.living_user.curator import LivingUserMemoryCurator
+
+        reviewer = None
+        if critic is not None:
+            reviewer = lambda system, user, max_tokens: self._call_model(
+                critic, system, user, max_tokens=max_tokens
+            )
+        curator = LivingUserMemoryCurator(
+            living_user,
+            reviewer=reviewer,
+            embedding_index=getattr(living_user, "embedding_index", None),
+        )
+        report = curator.run()
+        result.living_reviewed = report.reviewed
+        result.living_applied = report.applied
+        result.living_archived = report.archived
+        result.living_weakened = report.weakened
+        result.living_merged = report.merged
+        result.living_history_removed = report.history_removed
+        result.warnings.extend(report.warnings[:6])
+        result.notes.extend(report.notes[:8])
+        if report.skipped_reason:
+            result.notes.append(f"living_review:{report.skipped_reason}")
+
+        # Nếu critic tạm chết thì thử lại ở chu kỳ kế tiếp, không khóa 24 giờ chỉ
+        # vì một process worker vừa hắt hơi.
+        if report.skipped_reason != "no_critic_reviewer":
+            self._last_living_user_review_version = int(getattr(store, "version", version))
+            self._last_living_user_review_at = now
+
     def _compact_anchor_journal(self, result: MemoryGCResult) -> None:
-        """Cắt bỏ phần đầu anchor_journal.jsonl nếu quá lớn."""
         core_dir = str(os.getenv("ERIS_MEMORY_CORE_DIR", "memory_core"))
         journal_path = os.path.join(core_dir, "anchor_journal.jsonl")
         if not os.path.isfile(journal_path):
@@ -343,44 +384,53 @@ class MemoryGCService:
         if size_mb <= self.anchor_journal_max_mb:
             return
 
-        try:
-            with open(journal_path, "r", encoding="utf-8", errors="replace") as f:
-                lines = f.readlines()
-            # Giữ 60% dòng gần nhất
-            keep_from = max(0, len(lines) - int(len(lines) * 0.6))
-            kept_lines = lines[keep_from:]
-            tmp = journal_path + ".gc_tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                f.writelines(kept_lines)
-            os.replace(tmp, journal_path)
-            result.journal_compacted = True
-            result.notes.append(
-                f"journal_compacted:{size_mb:.1f}MB→{len(kept_lines)}_lines_kept"
-            )
-        except Exception as exc:
-            result.warnings.append(f"journal_compact_io_error:{exc}")
+        with open(journal_path, "r", encoding="utf-8", errors="replace") as handle:
+            lines = handle.readlines()
+        # Giữ 60% dòng gần nhất; event ledger canonical không nằm ở file này.
+        keep_from = max(0, len(lines) - int(len(lines) * 0.6))
+        kept_lines = lines[keep_from:]
+        tmp = journal_path + ".gc_tmp"
+        with open(tmp, "w", encoding="utf-8") as handle:
+            handle.writelines(kept_lines)
+        os.replace(tmp, journal_path)
+        result.journal_compacted = True
+        result.notes.append(f"journal_compacted:{size_mb:.1f}MB->{len(kept_lines)}_lines")
 
-    # ── Helpers ────────────────────────────────────────────────────────────────
+    # ── Client/model helpers ───────────────────────────────────────────────────
 
-    def _get_ds_client(self) -> Any | None:
-        """Lấy DeepSeek inner worker client nếu có."""
+    def _get_critic_client(self) -> Any | None:
+        """Lấy đúng DeepSeek critic worker, không mặc định gọi Gemma/main model."""
         try:
             from llm.process_manager import RemoteModelProcessManager
+
             pm = getattr(self.llm_service, "_process_manager", None)
             if pm is None:
                 pm = getattr(self.llm_service, "process_manager", None)
             if pm is None and isinstance(self.llm_service, RemoteModelProcessManager):
                 pm = self.llm_service
             if pm is not None:
-                client = pm.build_deepseek_worker_client("inner", required=False)
-                return client
+                client = pm.build_deepseek_worker_client("critic", required=False)
+                if client is not None:
+                    return client
         except Exception:
             pass
-        # Fallback: dùng main inner_client nếu không có DS worker
-        client = getattr(self.llm_service, "inner_client", None) or getattr(self.llm_service, "client", None)
-        return client
 
-    def _call_ds(self, client: Any, system: str, user: str, *, max_tokens: int = 1024) -> str | None:
+        client = (
+            getattr(self.llm_service, "critic_client", None)
+            or getattr(self.llm_service, "social_critic_client", None)
+        )
+        if client is not None:
+            return client
+
+        # Fallback bị tắt mặc định để không dựng Gemma lên chỉ để làm sổ sách.
+        if _env_flag("ERIS_MEMORY_GC_ALLOW_MODEL_FALLBACK", False):
+            return (
+                getattr(self.llm_service, "inner_client", None)
+                or getattr(self.llm_service, "client", None)
+            )
+        return None
+
+    def _call_model(self, client: Any, system: str, user: str, *, max_tokens: int) -> str | None:
         try:
             response = client.create_chat_completion(
                 messages=[
@@ -390,22 +440,24 @@ class MemoryGCService:
                 temperature=0.0,
                 max_tokens=max_tokens,
                 response_format={"type": "json_object"},
-                timeout=30.0,
+                timeout=_env_float("ERIS_MEMORY_GC_CRITIC_TIMEOUT_SEC", 45.0),
             )
-            # Extract content
             extract = getattr(self.llm_service, "_extract_content", None)
             if callable(extract):
                 return str(extract(response) or "")
             choices = response.get("choices") if isinstance(response, dict) else None
             if choices and isinstance(choices, list):
-                msg = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
-                return str(msg.get("content", "") or "")
+                message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
+                return str(message.get("content", "") or "")
             return None
         except Exception as exc:
-            logger.warning("[memory_gc] DS call failed: %s", exc)
+            logger.warning("[memory_gc] critic call failed: %s", exc)
             return None
 
-    def _parse_decisions(self, raw: str) -> list[dict[str, Any]]:
+    # ── Semantic helpers ───────────────────────────────────────────────────────
+
+    @staticmethod
+    def _parse_decisions(raw: str) -> list[dict[str, Any]]:
         text = str(raw or "").strip()
         start = text.find("{")
         end = text.rfind("}") + 1
@@ -413,36 +465,63 @@ class MemoryGCService:
             return []
         try:
             data = json.loads(text[start:end])
-            decisions = data.get("decisions", [])
-            if not isinstance(decisions, list):
-                return []
-            return [d for d in decisions if isinstance(d, dict) and d.get("id")]
         except Exception:
             return []
+        rows = data.get("decisions", []) if isinstance(data, dict) else []
+        return [dict(row) for row in rows if isinstance(row, dict) and row.get("id")]
 
-    def _is_gc_candidate(self, item: Any) -> bool:
-        """True nếu entry đáng để AI review (không có fact_key hoặc confidence thấp)."""
+    def _is_semantic_gc_candidate(self, item: Any) -> bool:
         metadata = self._metadata(item)
-        fact_key = str(metadata.get("fact_key") or "").strip()
-        if fact_key:
-            return False  # Đã có fact_key quan trọng, không cần AI review
-        confidence = float(getattr(item, "confidence", metadata.get("confidence", 0.5)) or 0.5)
-        return confidence < 0.80  # Chỉ review entry chưa đủ chắc
+        getter = item.get if isinstance(item, dict) else lambda key, default=None: getattr(item, key, default)
+        fact_key = str(
+            getter("fact_key", "")
+            or metadata.get("fact_key")
+            or ""
+        ).strip()
+        claim = str(
+            getter("claim", "")
+            or getter("summary", "")
+            or getter("semantic_value", "")
+            or ""
+        ).strip()
+        if not claim:
+            return True
+        # Canonical fact_key có evidence được bảo vệ khỏi batch critic thông thường.
+        evidence = tuple(getter("evidence_ids", ()) or metadata.get("evidence_ids", ()) or ())
+        if fact_key and evidence:
+            return False
+        confidence = float(getter("confidence", metadata.get("confidence", 0.5)) or 0.5)
+        source = str(getter("source", "") or metadata.get("source", "") or "")
+        return confidence < 0.82 or source in {"profile_model", "dream_model", "model_inference"}
 
-    def _format_entries_for_review(self, items: list[Any]) -> str:
-        lines = []
+    def _format_semantic_entries(self, items: list[Any]) -> str:
+        lines: list[str] = []
         for item in items:
-            item_id = self._item_id(item)
-            claim = str(getattr(item, "claim", "") or getattr(item, "summary", "") or "")[:200]
-            confidence = float(getattr(item, "confidence", 0.5) or 0.5)
-            source = str(getattr(item, "source", "") or "")[:40]
-            lines.append(f'- id={item_id} conf={confidence:.2f} src={source}: "{claim}"')
+            metadata = self._metadata(item)
+            payload = {
+                "id": self._item_id(item),
+                "fact_key": str(getattr(item, "fact_key", "") or metadata.get("fact_key") or ""),
+                "claim": str(
+                    getattr(item, "claim", "")
+                    or getattr(item, "summary", "")
+                    or getattr(item, "semantic_value", "")
+                    or ""
+                )[:420],
+                "confidence": float(getattr(item, "confidence", metadata.get("confidence", 0.5)) or 0.5),
+                "source": str(getattr(item, "source", "") or metadata.get("source", ""))[:60],
+                "evidence_ids": list(getattr(item, "evidence_ids", ()) or metadata.get("evidence_ids", ()) or ())[:12],
+            }
+            lines.append(json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str))
         return "\n".join(lines)
 
-    def _item_id(self, item: Any) -> str:
+    @staticmethod
+    def _item_id(item: Any) -> str:
+        if isinstance(item, dict):
+            return str(item.get("id") or item.get("claim_id") or id(item))
         return str(getattr(item, "id", "") or getattr(item, "claim_id", "") or id(item))
 
-    def _metadata(self, item: Any) -> dict[str, Any]:
+    @staticmethod
+    def _metadata(item: Any) -> dict[str, Any]:
         if isinstance(item, dict):
             return dict(item.get("metadata") or {})
         return dict(getattr(item, "metadata", {}) or {})
@@ -457,9 +536,7 @@ def build_memory_gc_service(
     idle_probe: Any | None = None,
 ) -> MemoryGCService | None:
     """Builder trả MemoryGCService đã start(), hoặc None nếu bị tắt."""
-    if not _env_flag("ERIS_MEMORY_GC_ENABLED", True):
-        return None
-    if memory_core is None:
+    if not _env_flag("ERIS_MEMORY_GC_ENABLED", True) or memory_core is None:
         return None
     try:
         service = MemoryGCService(
@@ -474,8 +551,4 @@ def build_memory_gc_service(
         return None
 
 
-__all__ = [
-    "MemoryGCResult",
-    "MemoryGCService",
-    "build_memory_gc_service",
-]
+__all__ = ["MemoryGCResult", "MemoryGCService", "build_memory_gc_service"]

@@ -1733,6 +1733,43 @@ def test_autonomous_grounding_report_requires_grounded_claim_not_raw_window_titl
     assert "screen:raw-title" not in report.evidence_ids
 
 
+def test_autonomous_utterance_gate_blocks_thin_presence_filler() -> None:
+    from types import SimpleNamespace
+
+    from runtime.ai_orchestrated.self_turn_pipeline import SelfTurnPipeline
+    from runtime.source_grounding import SourceGroundingReport
+
+    pipeline = object.__new__(SelfTurnPipeline)
+    pipeline.host = SimpleNamespace(logger=SimpleNamespace(debug=lambda *_args, **_kwargs: None))
+    context = SimpleNamespace(perception=SimpleNamespace(snapshot=None))
+    report = SourceGroundingReport(user_text="", primary_source="runtime_state", confidence_cap=0.58)
+
+    allowed, reason = pipeline._autonomous_utterance_gate(
+        "Toi day.",
+        context=context,
+        grounding_report=report,
+    )
+    assert allowed is False
+    assert "generic_presence_filler" in reason or "too_thin_to_speak" in reason
+
+    allowed, _reason = pipeline._autonomous_utterance_gate(
+        "Toi van nho mach luc nay con mot cho chua ro.",
+        context=context,
+        grounding_report=report,
+    )
+    assert allowed is True
+
+
+def test_force_speak_presence_line_is_allowed() -> None:
+    from runtime.utterance_evaluator import UtteranceEvaluator
+
+    evaluation = UtteranceEvaluator().evaluate("Toi day.", channel="force_speak")
+
+    assert evaluation.verdict == "allow"
+    assert "generic_presence_filler" not in evaluation.issues
+    assert "too_thin_to_speak" not in evaluation.issues
+
+
 def test_post_observer_skips_llm_for_plain_greeting() -> None:
     from runtime.ai_orchestrated.model_router import AIRuntimeModelRouter
 

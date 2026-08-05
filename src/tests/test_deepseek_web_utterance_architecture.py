@@ -348,6 +348,46 @@ def test_web_semantic_turn_uses_one_deadlined_remote_attempt(monkeypatch):
     assert fallback.calls == []
 
 
+def test_surface_realizer_default_timeout_allows_slow_surface(monkeypatch):
+    from runtime.ai_orchestrated.model_router import AIRuntimeModelRouter
+
+    class Client:
+        def __init__(self):
+            self.calls: list[dict] = []
+
+        def create_chat_completion(self, **kwargs):
+            self.calls.append(kwargs)
+            return {
+                "choices": [{
+                    "message": {
+                        "content": json.dumps({
+                            "utterance": {
+                                "display": {"language": "vi", "text": "Cau nay du dai de khong bi xem la filler."},
+                                "speech": {"language": "vi", "text": "Cau nay du dai de khong bi xem la filler."},
+                                "performance": {"preset": "soft_warm", "intensity": 0.4, "nonverbal": ""},
+                                "delivery": {"priority": "normal", "interruptible": True},
+                            },
+                            "confidence": 0.82,
+                            "evidence_refs": [],
+                            "reason": "test",
+                        })
+                    }
+                }]
+            }
+
+    monkeypatch.delenv("ERIS_SURFACE_REALIZER_TIMEOUT_SEC", raising=False)
+    client = Client()
+    router = AIRuntimeModelRouter(SimpleNamespace(surface_client=client))
+
+    payload = router.realize_surface_speech({
+        "speech_intent": {},
+        "surface_contract": {"display_language": "vi", "speech_language": "vi"},
+    })
+
+    assert payload["confidence"] == 0.82
+    assert client.calls[0]["timeout"] == 90.0
+
+
 def test_casual_memory_does_not_trigger_personality_reflection():
     from runtime.ai_orchestrated.model_router import AIRuntimeModelRouter
 

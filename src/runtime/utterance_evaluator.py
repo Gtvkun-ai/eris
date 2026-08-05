@@ -200,7 +200,10 @@ class UtteranceEvaluator:
             quality = min(quality, 0.10)
             verdict = "rewrite"
 
-        if len(normalized.split()) <= 2 and str(channel or "") in {"autonomous", "force_speak", "surface"}:
+        channel_name = str(channel or "").strip().lower()
+        explicit_presence_pull = channel_name == "force_speak"
+
+        if len(normalized.split()) <= 2 and channel_name in {"autonomous", "surface"}:
             issues.append("too_thin_to_speak")
             quality = min(quality, 0.38)
             verdict = "drop"
@@ -210,7 +213,7 @@ class UtteranceEvaluator:
         # chào rồi tầng repair mới phun ra câu “chưa đủ căn cứ”. Chỉ miễn đúng
         # lượt chào ngắn; toàn bộ guard còn lại vẫn chạy như cũ.
         if any(pattern in normalized for pattern in self._GENERIC_FILLER) and not (
-            str(channel or "").strip().lower() == "chat" and greeting_turn
+            (channel_name == "chat" and greeting_turn) or explicit_presence_pull
         ):
             issues.append("generic_presence_filler")
             quality = min(quality, 0.34)

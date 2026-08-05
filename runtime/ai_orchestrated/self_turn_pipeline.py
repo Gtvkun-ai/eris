@@ -777,6 +777,22 @@ class SelfTurnPipeline:
             self._record_result(plan, result="grounding_blocked", gate_reason=grounding_verdict.violation_code)
             host._sleep_interruptible(10)
             return True
+        utterance_allowed, utterance_reason = self._autonomous_utterance_gate(
+            str(getattr(decision, "text", "") or ""),
+            context=context,
+            grounding_report=grounding_report,
+        )
+        if not utterance_allowed:
+            gate_reason = f"utterance_gate:{utterance_reason}"[:160]
+            host.logger.warning(
+                "[utterance gate] autonomous surface blocked subject=%s reason=%s text=%s",
+                plan.semantics.subject_key,
+                utterance_reason,
+                str(getattr(decision, "text", "") or "")[:220],
+            )
+            self._record_result(plan, result="utterance_blocked", gate_reason=gate_reason)
+            host._sleep_interruptible(10)
+            return True
         host.ai_stage_planner.apply(decision, plan.performance_hint, state=context.state, channel="autonomous")
         decision = host._execute_system_action(decision, snapshot=context.perception.snapshot, frame=None)
         if isinstance(getattr(decision, "action_result_meta", None), Mapping):
@@ -853,6 +869,34 @@ class SelfTurnPipeline:
             suppressed=False, ti_mode="ai_intention",
         )))
         return True
+
+
+    def _autonomous_utterance_gate(
+        self,
+        text: str,
+        *,
+        context: SelfTurnBundle,
+        grounding_report: Any,
+    ) -> tuple[bool, str]:
+        try:
+            from runtime.utterance_evaluator import UtteranceEvaluator
+
+            evaluation = UtteranceEvaluator().evaluate(
+                text,
+                channel="autonomous",
+                snapshot=context.perception.snapshot,
+                grounding=grounding_report,
+            )
+        except Exception as exc:
+            self.host.logger.debug("[utterance gate] autonomous evaluator unavailable: %s", exc)
+            return True, "evaluator_unavailable"
+        issues = tuple(str(item) for item in getattr(evaluation, "issues", ()) or ())
+        reason = str(getattr(evaluation, "reason", "") or getattr(evaluation, "verdict", "") or "blocked")
+        if str(getattr(evaluation, "verdict", "") or "") == "drop":
+            return False, reason
+        if "generic_presence_filler" in issues:
+            return False, reason
+        return True, reason or "ok"
 
 
     def _record_result(self, plan: IntentionPlan, *, result: str, gate_reason: str) -> None:

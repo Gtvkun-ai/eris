@@ -213,6 +213,18 @@ class _ThrowingSurfaceRouter(_SurfaceRouter):
         raise RuntimeError("surface transport broke")
 
 
+class _ThinPresenceSurfaceRouter(_SurfaceRouter):
+    def realize_surface_speech(self, request):
+        self.requests.append(request)
+        return {
+            "text": "Toi day.",
+            "confidence": 0.88,
+            "performance_hint": "soft",
+            "evidence_refs": [],
+            "reason": "wording_complete",
+        }
+
+
 def test_surface_worker_only_realizes_approved_speech(tmp_path: Path):
     controller = InitiativeController(state_path=tmp_path / "initiative.json")
     board = TypedCognitiveBlackboard.from_snapshot(
@@ -279,6 +291,22 @@ def test_surface_worker_records_writer_exception_reason(tmp_path: Path):
 
     assert turn is None
     assert engine.last_failure_reason == "surface_writer_exception:RuntimeError"
+
+
+def test_surface_worker_rejects_thin_presence_filler(tmp_path: Path):
+    controller = InitiativeController(state_path=tmp_path / "initiative.json")
+    board = TypedCognitiveBlackboard.from_snapshot(
+        _snapshot(commentary_expectation={"due": True, "required": True, "reason": "maximum_quiet_reached", "anchor_kind": "persona_presence"}),
+        now=1000.0,
+    )
+    decision = controller.decide(board, _social_agenda_candidate())
+    router = _ThinPresenceSurfaceRouter()
+    engine = SurfaceIntentEngine(router, _Reducer())
+
+    turn = engine.realize(decision.speech_intent, board, snapshot=_snapshot())
+
+    assert turn is None
+    assert engine.last_failure_reason.startswith("surface_bad_utterance:")
 
 
 def test_grounding_preflight_blocks_private_or_unready_anchor(tmp_path: Path):
