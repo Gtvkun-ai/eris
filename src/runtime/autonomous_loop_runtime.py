@@ -25,7 +25,7 @@ from actions.confirmation import public_action_text
 from cortex.background_observer import BackgroundObserver, BackgroundObserverConfig
 from cortex.daydream_consolidation import DaydreamConsolidator, DaydreamPacket
 from cortex.endogenous_drive import EndogenousDriveEngine, RollingInternalState
-from cortex.epistemic import EpistemicAgentMindProjection, EpistemicKernel, EpistemicKernelConfig, EpistemicStore, archive_v1_cognition, set_default_kernel
+from cortex.epistemic import EpistemicAgentMindProjection, EpistemicKernel, EpistemicKernelConfig, EpistemicStore, set_default_kernel
 from cortex.internal_agenda import InternalAgendaStack
 from cortex.observer_contracts import ObserverFrame, SemanticSceneNote, SignalSnapshot, stable_hash
 from cortex.appetite_system import AppetiteSystem, build_evidence_buffet

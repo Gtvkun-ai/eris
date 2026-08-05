@@ -58,11 +58,6 @@ _REVIEW_EVENT_KINDS = {
     "force",
 }
 
-_LEGACY_REVIEW_EVENT_ALIASES = {
-    "strong_seed": "seed_available",
-    "meaningful_scene_change": "scene_delta",
-    "followup_reminder_due": "followup_due",
-}
 
 _REVIEW_CONDITION_SCHEMA = {
     "type": "object",
@@ -219,8 +214,7 @@ def _clean_conditions(value: Any) -> tuple[ReviewCondition, ...]:
     for raw in value:
         if isinstance(raw, str):
             raw_kind = raw.strip().lower()
-            mapped = _LEGACY_REVIEW_EVENT_ALIASES.get(raw_kind, raw_kind)
-            condition = ReviewCondition(mapped, 0.0) if mapped in _REVIEW_EVENT_KINDS else None
+            condition = ReviewCondition(raw_kind, 0.0) if raw_kind in _REVIEW_EVENT_KINDS else None
         else:
             condition = ReviewCondition.from_mapping(raw if isinstance(raw, Mapping) else None)
         if condition is None or condition.kind in seen:
@@ -395,12 +389,8 @@ class ExecutiveDecision:
         if risk not in _RISKS:
             return None
         arguments = value.get("capability_arguments", {})
-        legacy_argument_key = "capability_" + "input"
-        legacy_raw = value.get(legacy_argument_key, "")
         if not isinstance(arguments, Mapping):
             return None
-        if not arguments and isinstance(legacy_raw, str) and legacy_raw:
-            arguments = {"__legacy_raw__": legacy_raw}
         try:
             review_after = float(value.get("review_after_seconds", 0.0) or 0.0)
         except (TypeError, ValueError):
@@ -472,17 +462,6 @@ class InteractiveExecutiveDirective:
     semantic_goal: str = ""
     reason: str = "no_runtime_capability_needed"
     confidence: float = 0.0
-
-    def __getattr__(self, name: str) -> Any:
-        legacy_name = "capability_" + "input"
-        if name == legacy_name:
-            raw = self.capability_arguments.get("__legacy_raw__", "")
-            if raw:
-                return str(raw)
-            if len(self.capability_arguments) == 1:
-                return str(next(iter(self.capability_arguments.values())))
-            return ""
-        raise AttributeError(name)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -568,8 +547,7 @@ class ExecutiveCortex:
                 event = raw
             elif isinstance(raw, str):
                 raw_kind = raw.strip().lower()
-                mapped = _LEGACY_REVIEW_EVENT_ALIASES.get(raw_kind, raw_kind)
-                event = ExecutiveEvent(mapped, 1.0, "legacy_runtime") if mapped in _REVIEW_EVENT_KINDS else None
+                event = ExecutiveEvent(raw_kind, 1.0, "runtime") if raw_kind in _REVIEW_EVENT_KINDS else None
             else:
                 event = ExecutiveEvent.from_mapping(raw)
             if isinstance(event, ExecutiveEvent):
@@ -705,12 +683,9 @@ class ExecutiveCortex:
                 reason="interactive_capability_not_offered", confidence=selected.confidence,
             )
         selected_arguments = dict(selected.capability_arguments)
-        legacy_raw = selected_arguments.pop("__legacy_raw__", None)
         valid, argument_reason = validate_arguments_against_schema(
             selected_arguments, tool.input_schema, capability_id=tool.capability_id
         )
-        if legacy_raw is not None and not selected_arguments:
-            valid, argument_reason = True, "legacy_raw_compatibility"
         if not valid:
             return InteractiveExecutiveDirective(
                 status="unavailable", semantic_goal=selected.semantic_target,
@@ -719,11 +694,7 @@ class ExecutiveCortex:
         return InteractiveExecutiveDirective(
             status="selected",
             capability_id=tool.capability_id,
-            capability_arguments=(
-                {"__legacy_raw__": str(legacy_raw)}
-                if legacy_raw is not None and not selected_arguments
-                else selected_arguments
-            ),
+            capability_arguments=selected_arguments,
             semantic_goal=selected.semantic_target or selected.capability_goal,
             reason=selected.reason,
             confidence=selected.confidence,
@@ -959,41 +930,24 @@ class ExecutiveCortex:
             return None
 
         arguments = dict(decision.capability_arguments)
-        legacy_raw = arguments.pop("__legacy_raw__", None)
-        if legacy_raw is None:
-            valid, reason = validate_capability_arguments(tool.capability_id, arguments)
-            if not valid:
-                valid, reason = validate_arguments_against_schema(
-                    arguments, tool.input_schema, capability_id=tool.capability_id
-                )
-            if not valid:
-                self._log("warning", "[executive] invalid arguments capability=%s reason=%s", tool.capability_id, reason)
-                return None
-        else:
-            valid, reason = True, "legacy_raw_compatibility"
+        valid, reason = validate_capability_arguments(tool.capability_id, arguments)
+        if not valid:
+            valid, reason = validate_arguments_against_schema(
+                arguments, tool.input_schema, capability_id=tool.capability_id
+            )
+        if not valid:
+            self._log("warning", "[executive] invalid arguments capability=%s reason=%s", tool.capability_id, reason)
+            return None
 
         executor = getattr(self.owner, "action_executor", None)
         if executor is None:
             return None
         try:
             execute_typed = getattr(executor, "execute_capability", None)
-            if callable(execute_typed) and legacy_raw is None:
-                result = execute_typed(tool.capability_id, arguments)
-            else:
-                execute_legacy = getattr(executor, "execute", None)
-                if not callable(execute_legacy):
-                    self._log("warning", "[executive] no compatible execution boundary")
-                    return None
-                if legacy_raw is not None:
-                    encoded = str(legacy_raw)
-                elif len(arguments) == 1:
-                    encoded = str(next(iter(arguments.values())))
-                elif not arguments:
-                    encoded = ""
-                else:
-                    import json
-                    encoded = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
-                result = execute_legacy(tool.capability_id, encoded)
+            if not callable(execute_typed):
+                self._log("warning", "[executive] typed execution boundary unavailable")
+                return None
+            result = execute_typed(tool.capability_id, arguments)
         except Exception as exc:
             self._log("warning", "[executive] capability=%s failed: %s", tool.capability_id, exc)
             return None
@@ -1005,7 +959,7 @@ class ExecutiveCortex:
                 pass
         return {
             "capability_id": tool.capability_id,
-            "arguments": arguments if legacy_raw is None else {"legacy_raw": str(legacy_raw)},
+            "arguments": arguments,
             "effect": tool.effect,
             "success": bool(getattr(result, "success", False)),
             "observed": bool(getattr(result, "observed", False)),

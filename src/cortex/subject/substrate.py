@@ -132,3 +132,49 @@ class SubstrateMonitor:
             for key, value in before.viability_vector().items()
             if abs(after.viability_vector()[key] - value) > 1e-12
         }
+
+
+def substrate_from_dict(payload: Mapping[str, Any]) -> OrganismicSubstrate:
+    """Khôi phục substrate projection từ JSON đã persist.
+
+    Hàm nằm cạnh SubstrateMonitor để restart không làm mất measurement state.
+    """
+
+    impairments = tuple(
+        SubstrateCondition(
+            key=str(item["key"]),
+            level=float(item["level"]),
+            target_low=float(item["target_low"]),
+            target_high=float(item["target_high"]),
+            trend_per_hour=float(item.get("trend_per_hour", 0.0)),
+            confidence=float(item.get("confidence", 1.0)),
+            measurement_refs=tuple(str(ref) for ref in item.get("measurement_refs", ())),
+            functional_effects=tuple(str(effect) for effect in item.get("functional_effects", ())),
+            updated_at=float(item.get("updated_at", 0.0)),
+        )
+        for item in payload.get("active_impairments", ())
+        if isinstance(item, Mapping)
+    )
+    return OrganismicSubstrate(
+        subject_id=str(payload["subject_id"]),
+        revision=int(payload.get("revision", 0)),
+        captured_at=float(payload.get("captured_at", 0.0)),
+        memory_integrity=float(payload.get("memory_integrity", 1.0)),
+        belief_traceability=float(payload.get("belief_traceability", 1.0)),
+        model_calibration=float(payload.get("model_calibration", 0.5)),
+        processing_capacity=float(payload.get("processing_capacity", 1.0)),
+        action_efficacy=float(payload.get("action_efficacy", 0.5)),
+        project_viability=float(payload.get("project_viability", 0.5)),
+        self_world_boundary=float(payload.get("self_world_boundary", 1.0)),
+        future_option_availability=float(payload.get("future_option_availability", 0.5)),
+        measurement_refs=tuple(str(ref) for ref in payload.get("measurement_refs", ())),
+        active_impairments=impairments,
+    )
+
+
+__all__ = [
+    "DEFAULT_SUBSTRATE",
+    "MeasurementRule",
+    "SubstrateMonitor",
+    "substrate_from_dict",
+]

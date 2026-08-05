@@ -34,7 +34,6 @@ class EpistemicKernelConfig:
     correction_penalty: float = 0.38
     acceptance_reward: float = 0.10
     high_uncertainty_threshold: float = 0.62
-    shadow_mode: bool = False
 
 
 class EpistemicKernel:
@@ -50,11 +49,11 @@ class EpistemicKernel:
         self.store = resolve_dependency(store, lambda: EpistemicStore())
         self.config = resolve_dependency(config, lambda: EpistemicKernelConfig())
         self.logger = logger
-        self.store.mode = "shadow" if self.config.shadow_mode else "authoritative"
+        self.store.mode = "authoritative"
 
     @property
     def authoritative(self) -> bool:
-        return not self.config.shadow_mode
+        return True
 
     # ------------------------------------------------------------------
     # Observation and inference
@@ -388,8 +387,6 @@ class EpistemicKernel:
         đoán vẫn nguyên vẹn.
         """
 
-        if not self.authoritative:
-            return ()
         stored: list[Belief] = []
         for hypothesis in getattr(hypothesis_set, "hypotheses", ()) or ():
             if not getattr(hypothesis, "direct_assertion", False):

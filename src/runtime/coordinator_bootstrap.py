@@ -25,7 +25,7 @@ from actions.confirmation import public_action_text
 from cortex.background_observer import BackgroundObserver, BackgroundObserverConfig
 from cortex.daydream_consolidation import DaydreamConsolidator, DaydreamPacket
 from cortex.endogenous_drive import EndogenousDriveEngine, RollingInternalState
-from cortex.epistemic import EpistemicAgentMindProjection, EpistemicKernel, EpistemicKernelConfig, EpistemicStore, archive_v1_cognition, set_default_kernel
+from cortex.epistemic import EpistemicAgentMindProjection, EpistemicKernel, EpistemicKernelConfig, EpistemicStore, set_default_kernel
 from cortex.internal_agenda import InternalAgendaStack
 from cortex.observer_contracts import ObserverFrame, SemanticSceneNote, SignalSnapshot, stable_hash
 from cortex.appetite_system import AppetiteSystem, build_evidence_buffet
@@ -434,28 +434,17 @@ class CoordinatorBootstrapMixin:
                 self.hardening_canary.start(session_id=f"{self.runtime_session_id}-canary")
         except Exception as exc:
             self.logger.warning("Hardening canary init skipped: %s", exc)
-        epistemic_enabled = str(os.getenv("ERIS_EPISTEMIC_V2_ENABLED", "1")).strip().lower() not in {"0", "false", "no", "off"}
-        if epistemic_enabled:
-            epistemic_mode = str(os.getenv("ERIS_EPISTEMIC_V2_MODE", "authoritative") or "authoritative").strip().lower()
-            shadow_mode = epistemic_mode == "shadow"
-            if not os.getenv("PYTEST_CURRENT_TEST"):
-                try:
-                    archive_v1_cognition("memory_core")
-                except Exception as exc:
-                    self.logger.warning("Could not archive V1 cognition state: %s", exc)
-            epistemic_path = ":memory:" if os.getenv("PYTEST_CURRENT_TEST") else None
-            self.epistemic_kernel = EpistemicKernel(
-                EpistemicStore(path=epistemic_path, mode=epistemic_mode),
-                config=EpistemicKernelConfig(shadow_mode=shadow_mode),
-                logger=self.logger,
-            )
-            set_default_kernel(self.epistemic_kernel)
-            self.epistemic_agent_mind = EpistemicAgentMindProjection(self.epistemic_kernel)
-            self.logger.info("Epistemic V2 ready in %s mode; cognitive state writes use V2.", self.epistemic_kernel.store.mode)
-        else:
-            self.epistemic_kernel = None
-            self.epistemic_agent_mind = None
-            set_default_kernel(None)
+        # V6 hard cutover: epistemic storage is always authoritative.  There is
+        # no shadow/control branch and no archive-on-startup compatibility path.
+        epistemic_path = ":memory:" if os.getenv("PYTEST_CURRENT_TEST") else None
+        self.epistemic_kernel = EpistemicKernel(
+            EpistemicStore(path=epistemic_path, mode="authoritative"),
+            config=EpistemicKernelConfig(),
+            logger=self.logger,
+        )
+        set_default_kernel(self.epistemic_kernel)
+        self.epistemic_agent_mind = EpistemicAgentMindProjection(self.epistemic_kernel)
+        self.logger.info("Epistemic V2 ready in authoritative mode.")
         self.state_committer = None
         if memory_core is not None:
             try:
@@ -467,24 +456,24 @@ class CoordinatorBootstrapMixin:
                 )
             except Exception as exc:
                 self.logger.warning("Không khởi tạo được StateCommitter: %s", exc)
-        self.subject_core_components = None
-        self.subject_service = None
-        self.subject_sandbox_world = None
-        try:
-            from runtime.subject_bootstrap import build_subject_core_components, subject_core_enabled
-            if subject_core_enabled():
-                self.subject_core_components = build_subject_core_components(
-                    action_executor=getattr(self, "action_executor", None),
-                )
-                self.subject_service = self.subject_core_components.subject_service
-                self.subject_sandbox_world = self.subject_core_components.sandbox_world
-                self.logger.info(
-                    "[subject-core] ready subject=%s data=%s",
-                    self.subject_service.config.subject_id,
-                    self.subject_core_components.repository.database_path,
-                )
-        except Exception as exc:
-            self.logger.warning("Subject Core bootstrap skipped: %s", exc)
+        # Subject Core is mandatory in V6.  Startup failure is fatal because a
+        # silent fallback would create two incompatible sources of self-state.
+        from runtime.subject_bootstrap import build_subject_core_components
+        from runtime.subject_ingress import SubjectIngress
+
+        self.subject_core_components = build_subject_core_components(
+            action_executor=getattr(self, "action_executor", None),
+        )
+        self.subject_service = self.subject_core_components.subject_service
+        self.subject_sandbox_world = self.subject_core_components.sandbox_world
+        self.subject_actuator = self.subject_core_components.actuator
+        self.subject_runtime = self.subject_core_components.runtime
+        self.subject_ingress = SubjectIngress(self.subject_service)
+        self.logger.info(
+            "[subject-core] authoritative subject=%s data=%s",
+            self.subject_service.config.subject_id,
+            self.subject_core_components.repository.database_path,
+        )
 
     def _bootstrap_cognition_services(self, *, llm_service) -> None:
         self.self_observer = SelfObservationEngine()

@@ -105,9 +105,11 @@ ACTION_SPECS: dict[str, MaintenanceActionSpec] = {
     ),
     "reset_user_model": MaintenanceActionSpec(
         "reset_user_model", "Quên mô hình về bạn",
-        "Xóa user model, epistemic beliefs và lịch sử ToM về người dùng.",
+        "Xóa user model, epistemic beliefs, lịch sử ToM và living user profile về người dùng.",
         "danger", True, True,
-        ("user_model.json", "epistemic_v2.json", "tom_history.json"),
+        ("user_model.json", "epistemic_v2.json", "tom_history.json",
+         "living_user_profile.json", "living_user_authority.json", "living_user_episodes.json",
+         "living_user_actions.json", "living_user_trace.jsonl", "living_user_turn_buffer.json"),
         destructive=True, confirmation_mode="typed", confirm_label="Quên mô hình",
     ),
     "reset_long_term_relationship": MaintenanceActionSpec(
@@ -919,6 +921,74 @@ class MaintenanceService:
             self._replace_or_clear(self.owner, name)
         self.owner.last_user_signature = ""
         self.owner.last_user_intent = ""
+
+        # Reset LivingUserMemoryService in RAM if present
+        core = getattr(self.owner, "memory_core", None)
+        living_user = getattr(core, "living_user", None) if core is not None else getattr(self.owner, "living_user", None)
+        if living_user is not None:
+            try:
+                if hasattr(living_user, "profile_store"):
+                    living_user.profile_store._records.clear()
+                    living_user.profile_store._history.clear()
+                    living_user.profile_store._audit.clear()
+                    living_user.profile_store._version = 0
+                    living_user.profile_store.save()
+                if hasattr(living_user, "authority_ledger"):
+                    living_user.authority_ledger._events.clear()
+                    living_user.authority_ledger.save()
+                if hasattr(living_user, "episode_store"):
+                    living_user.episode_store._episodes.clear()
+                    living_user.episode_store.save()
+                if hasattr(living_user, "action_store"):
+                    living_user.action_store._goals.clear()
+                    living_user.action_store._commitments.clear()
+                    living_user.action_store._workflows.clear()
+                    living_user.action_store.save()
+                if hasattr(living_user, "_turn_buffer"):
+                    with getattr(living_user, "_turn_buffer_lock", threading.RLock()):
+                        living_user._turn_buffer.clear()
+                        if hasattr(living_user, "_save_turn_buffer_locked"):
+                            living_user._save_turn_buffer_locked()
+                result.changed.append("living_user_memory_service")
+            except Exception as exc:
+                result.warnings.append(f"living_user_clear: {exc}")
+
+        # Delete physical living user files from memory_root
+        for fname in (
+            "living_user_profile.json", "living_user_authority.json",
+            "living_user_episodes.json", "living_user_actions.json",
+            "living_user_trace.jsonl", "living_user_turn_buffer.json"
+        ):
+            fpath = self.memory_root / fname
+            if fpath.exists():
+                try:
+                    fpath.unlink()
+                    result.changed.append(fname)
+                except Exception as exc:
+                    result.warnings.append(f"unlink_{fname}: {exc}")
+
+        # Reset Godot's UI panel cache file living_user_panel_cache.json if present
+        appdata = os.getenv("APPDATA")
+        if appdata:
+            godot_cache = Path(appdata) / "Godot" / "app_userdata" / "Eris" / "living_user_panel_cache.json"
+            if godot_cache.exists():
+                try:
+                    empty_payload = {
+                        "schema_version": 2,
+                        "authority_mode": "canonical_ledger",
+                        "summary_text": "ERIS chưa có đủ thông tin bền vững để tổng hợp về bạn.",
+                        "counts": {
+                            "total": 0, "confirmed": 0, "observed": 0, "inferred": 0,
+                            "uncertain": 0, "goals": 0, "commitments": 0, "workflows": 0
+                        },
+                        "records": [], "goals": [], "commitments": [], "workflows": [],
+                        "project_id": "", "generated_at": time.time()
+                    }
+                    self._atomic_json(godot_cache, empty_payload)
+                    result.changed.append("living_user_panel_cache.json")
+                except Exception as exc:
+                    result.warnings.append(f"living_user_panel_cache_reset: {exc}")
+
         result.changed.append("runtime_user_context")
 
     @staticmethod

@@ -95,7 +95,7 @@ class CoalitionArbiter:
         substrate_ref: str = "",
         temperature: float = 0.20,
     ) -> MindDecision:
-        del beliefs, values, commitments, substrate  # Inputs are explicit for future scorers; proposals already carry projections.
+        del commitments, substrate  # Các ràng buộc đã được projection vào proposal; refs vẫn được giữ dưới đây.
         if not proposals:
             raise ValueError("at least one proposal is required")
         scores = tuple(self._score(coalition) for coalition in self.build_compatible_coalitions(proposals))
@@ -117,6 +117,27 @@ class CoalitionArbiter:
             for need in proposal.supporting_need_ids
             if need not in supporting
         ))
+
+        # Không dump toàn bộ belief/value. Chỉ giữ refs đã thực sự liên quan tới
+        # lựa chọn thắng, để decision có causal trace mà không trở thành dashboard toàn tri.
+        value_refs: list[str] = []
+        for proposal in winner.proposals:
+            trace = proposal.arguments.get("inner_trace")
+            if isinstance(trace, Mapping):
+                value_refs.extend(str(item) for item in trace.get("value_refs", ()))
+        if not value_refs and primary.arguments.get("principle"):
+            principle = str(primary.arguments.get("principle")).casefold()
+            value_refs.extend(
+                value.value_id
+                for value in values
+                if principle in value.statement.casefold() or value.statement.casefold() in principle
+            )
+        belief_refs = tuple(
+            belief.belief_id
+            for belief in beliefs
+            if belief.status == "active" and belief.confidence >= 0.55
+        )[:8]
+
         return MindDecision(
             decision_id=self._id_factory(),
             coalition_id=winner.coalition_id,
@@ -127,8 +148,8 @@ class CoalitionArbiter:
             uncertainty=winner.uncertainty,
             supporting_need_ids=supporting,
             dissenting_need_ids=dissenting,
-            belief_refs=(),
-            value_refs=(),
+            belief_refs=belief_refs,
+            value_refs=tuple(dict.fromkeys(value_refs))[:8],
             observation_ref=observation_ref,
             appraisal_refs=appraisal_refs,
             substrate_ref=substrate_ref,

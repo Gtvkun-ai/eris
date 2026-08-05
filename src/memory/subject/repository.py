@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """SQLite source of truth for Subject Core events and projections.
 
-V3 adds migration/checksum inspection, durable idempotency verification,
+V6 provides migration/checksum inspection, fenced cross-process idempotency claims,
 consistent backup and a machine-readable integrity report.  Databases, much
 like humans, benefit from being checked before they confidently insist that
 nothing happened.
@@ -41,6 +41,17 @@ def sha256_text(value: str) -> str:
 
 def _sql_quote(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
+
+@dataclass(frozen=True, slots=True)
+class IdempotencyClaim:
+    status: str
+    generation: int
+    lease_expires_at: float
+
+    @property
+    def acquired(self) -> bool:
+        return self.status == "acquired"
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,6 +336,132 @@ class SubjectRepository:
             return None
         return int(row["revision"]), dict(json.loads(row["payload_json"]))
 
+
+    def claim_idempotency(
+        self,
+        *,
+        scope: str,
+        idempotency_key: str,
+        request_hash: str,
+        owner_id: str,
+        lease_seconds: float,
+    ) -> IdempotencyClaim:
+        """Claim a side effect with a monotonically increasing fencing generation."""
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        now = float(self._clock())
+        with self.unit_of_work():
+            completed = self.connection.execute(
+                "SELECT request_hash FROM idempotency_keys WHERE scope = ? AND idempotency_key = ?",
+                (scope, idempotency_key),
+            ).fetchone()
+            if completed is not None:
+                stored_hash = str(completed["request_hash"] or "")
+                if stored_hash and stored_hash != request_hash:
+                    raise EventIntegrityError(
+                        f"idempotency key {scope}/{idempotency_key} reused for a different request"
+                    )
+                return IdempotencyClaim("completed", 0, 0.0)
+
+            row = self.connection.execute(
+                "SELECT request_hash, owner_id, status, lease_expires_at, lease_generation "
+                "FROM sandbox_command_claims WHERE scope = ? AND idempotency_key = ?",
+                (scope, idempotency_key),
+            ).fetchone()
+            if row is None:
+                generation = 1
+                lease_expires_at = now + lease_seconds
+                self.connection.execute(
+                    "INSERT INTO sandbox_command_claims("
+                    "scope, idempotency_key, request_hash, owner_id, status, lease_expires_at, "
+                    "created_at, updated_at, lease_generation, heartbeat_at"
+                    ") VALUES (?, ?, ?, ?, 'processing', ?, ?, ?, ?, ?)",
+                    (
+                        scope, idempotency_key, request_hash, owner_id, lease_expires_at,
+                        now, now, generation, now,
+                    ),
+                )
+                return IdempotencyClaim("acquired", generation, lease_expires_at)
+
+            if str(row["request_hash"]) != request_hash:
+                raise EventIntegrityError(
+                    f"idempotency claim {scope}/{idempotency_key} reused for a different request"
+                )
+            generation = int(row["lease_generation"])
+            if str(row["status"]) == "completed":
+                return IdempotencyClaim("completed", generation, 0.0)
+            if str(row["owner_id"]) == owner_id:
+                lease_expires_at = now + lease_seconds
+                self.connection.execute(
+                    "UPDATE sandbox_command_claims SET status = 'processing', lease_expires_at = ?, "
+                    "heartbeat_at = ?, updated_at = ? WHERE scope = ? AND idempotency_key = ? "
+                    "AND owner_id = ? AND lease_generation = ?",
+                    (lease_expires_at, now, now, scope, idempotency_key, owner_id, generation),
+                )
+                return IdempotencyClaim("acquired", generation, lease_expires_at)
+            if float(row["lease_expires_at"]) <= now:
+                generation += 1
+                lease_expires_at = now + lease_seconds
+                cursor = self.connection.execute(
+                    "UPDATE sandbox_command_claims SET owner_id = ?, status = 'processing', "
+                    "lease_expires_at = ?, heartbeat_at = ?, updated_at = ?, lease_generation = ? "
+                    "WHERE scope = ? AND idempotency_key = ? AND lease_generation = ?",
+                    (
+                        owner_id, lease_expires_at, now, now, generation,
+                        scope, idempotency_key, generation - 1,
+                    ),
+                )
+                if cursor.rowcount == 1:
+                    return IdempotencyClaim("acquired", generation, lease_expires_at)
+            return IdempotencyClaim("busy", generation, float(row["lease_expires_at"]))
+
+    def renew_idempotency_claim(
+        self,
+        *,
+        scope: str,
+        idempotency_key: str,
+        request_hash: str,
+        owner_id: str,
+        generation: int,
+        lease_seconds: float,
+    ) -> bool:
+        if lease_seconds <= 0 or generation <= 0:
+            raise ValueError("lease_seconds and generation must be positive")
+        now = float(self._clock())
+        with self.unit_of_work():
+            cursor = self.connection.execute(
+                "UPDATE sandbox_command_claims SET lease_expires_at = ?, heartbeat_at = ?, updated_at = ? "
+                "WHERE scope = ? AND idempotency_key = ? AND request_hash = ? AND owner_id = ? "
+                "AND lease_generation = ? AND status = 'processing'",
+                (
+                    now + lease_seconds, now, now, scope, idempotency_key, request_hash,
+                    owner_id, generation,
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def release_idempotency_claim(
+        self,
+        *,
+        scope: str,
+        idempotency_key: str,
+        owner_id: str,
+        generation: int,
+        failed: bool = True,
+    ) -> bool:
+        now = float(self._clock())
+        with self.unit_of_work():
+            cursor = self.connection.execute(
+                "UPDATE sandbox_command_claims SET status = ?, lease_expires_at = 0, heartbeat_at = ?, updated_at = ? "
+                "WHERE scope = ? AND idempotency_key = ? AND owner_id = ? AND lease_generation = ? "
+                "AND status = 'processing'",
+                (
+                    "failed" if failed else "processing", now, now,
+                    scope, idempotency_key, owner_id, generation,
+                ),
+            )
+            return cursor.rowcount == 1
+
     def get_idempotent(
         self,
         *,
@@ -422,11 +559,29 @@ class SubjectRepository:
         decision_id: str,
         status: str,
         payload: Mapping[str, Any],
+        claim_owner_id: str = "",
+        claim_generation: int = 0,
     ) -> tuple[dict[str, Any], bool]:
         """Persist idempotency result and world outcome atomically."""
         payload_json = canonical_json(payload)
         payload_hash = sha256_text(payload_json)
         with self.unit_of_work():
+            if claim_owner_id:
+                claim = self.connection.execute(
+                    "SELECT request_hash, owner_id, status, lease_generation FROM sandbox_command_claims "
+                    "WHERE scope = 'sandbox' AND idempotency_key = ?",
+                    (idempotency_key,),
+                ).fetchone()
+                if claim is None:
+                    raise EventIntegrityError(f"missing sandbox claim for {idempotency_key}")
+                if str(claim["request_hash"]) != request_hash:
+                    raise EventIntegrityError(f"sandbox claim hash mismatch for {idempotency_key}")
+                if (
+                    str(claim["owner_id"]) != claim_owner_id
+                    or str(claim["status"]) != "processing"
+                    or int(claim["lease_generation"]) != int(claim_generation)
+                ):
+                    raise EventIntegrityError(f"sandbox claim fencing token rejected for {idempotency_key}")
             existing = self.connection.execute(
                 "SELECT result_json, result_hash, request_hash FROM idempotency_keys WHERE scope = 'sandbox' AND idempotency_key = ?",
                 (idempotency_key,),
@@ -447,6 +602,13 @@ class SubjectRepository:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (outcome_id, action_id, decision_id, status, payload_json, payload_hash, self._clock()),
             )
+            if claim_owner_id:
+                self.connection.execute(
+                    "UPDATE sandbox_command_claims SET status = 'completed', lease_expires_at = 0, "
+                    "heartbeat_at = ?, updated_at = ? WHERE scope = 'sandbox' AND idempotency_key = ? "
+                    "AND owner_id = ? AND lease_generation = ?",
+                    (self._clock(), self._clock(), idempotency_key, claim_owner_id, claim_generation),
+                )
         return dict(payload), True
 
     def projection_hash(self, *, subject_id: str) -> str:
@@ -466,6 +628,14 @@ class SubjectRepository:
         subjects = tuple(subject_ids) if subject_ids is not None else self.subjects()
         migration_status = self.migration_status()
         chains = {subject_id: self.verify_event_chain(subject_id) for subject_id in subjects}
+        with self._lock:
+            claim_rows = self.connection.execute(
+                "SELECT status, COUNT(*) AS count FROM sandbox_command_claims GROUP BY status"
+            ).fetchall()
+            expired_processing = int(self.connection.execute(
+                "SELECT COUNT(*) FROM sandbox_command_claims WHERE status = 'processing' AND lease_expires_at <= ?",
+                (float(self._clock()),),
+            ).fetchone()[0])
         report: dict[str, Any] = {
             "database_path": str(Path(self.database_path).resolve()),
             "quick_check": [str(row[0]) for row in quick_rows],
@@ -474,6 +644,8 @@ class SubjectRepository:
             "migrations": list(migration_status),
             "event_chains": chains,
             "projection_hashes": {subject_id: self.projection_hash(subject_id=subject_id) for subject_id in subjects},
+            "sandbox_claims": {str(row["status"]): int(row["count"]) for row in claim_rows},
+            "expired_processing_claims": expired_processing,
         }
         report["ok"] = (
             report["quick_check"] == ["ok"]
@@ -481,6 +653,7 @@ class SubjectRepository:
             and not report["foreign_key_violations"]
             and all(item.get("present") and item.get("checksum_valid") for item in migration_status)
             and all(chains.values())
+            and expired_processing == 0
         )
         if persist:
             payload_json = canonical_json(report)
@@ -510,7 +683,81 @@ class SubjectRepository:
                 raise EventIntegrityError(f"backup integrity check failed: {check}")
         finally:
             target.close()
+
+        # A backup is not useful merely because bytes were written.  Open it as
+        # a fresh repository and verify the same migrations, event chains and
+        # projection hashes before returning it to the caller.
+        restored = SubjectRepository(
+            destination_path,
+            clock=self._clock,
+            id_factory=self._id_factory,
+            migration_dir=self._migration_dir,
+        )
+        try:
+            source_subjects = self.subjects()
+            restored_report = restored.integrity_report(subject_ids=source_subjects)
+            if not restored_report.get("ok"):
+                raise EventIntegrityError("restored backup failed integrity report")
+            for subject_id in source_subjects:
+                if restored.projection_hash(subject_id=subject_id) != self.projection_hash(subject_id=subject_id):
+                    raise EventIntegrityError(f"restored backup projection mismatch: {subject_id}")
+                if len(restored.events(subject_id=subject_id)) != len(self.events(subject_id=subject_id)):
+                    raise EventIntegrityError(f"restored backup event count mismatch: {subject_id}")
+        finally:
+            restored.close()
         return destination_path
+
+
+    def save_experiment_report(self, report: Any, *, run_id: str | None = None) -> str:
+        """Lưu report JSON để audit, không cho report tham gia chọn hành vi."""
+
+        payload = report.to_dict() if hasattr(report, "to_dict") else dict(report)
+        identifier = run_id or self._id_factory()
+        with self.unit_of_work():
+            self.connection.execute(
+                "INSERT INTO experiment_runs("
+                "run_id, scenario_id, split, algorithm_version, code_revision, "
+                "scenario_fingerprint, passed, run_count, report_json, created_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    identifier,
+                    str(payload.get("scenario_id", "unknown")),
+                    str(payload.get("split", "development")),
+                    str(payload.get("algorithm_version", "unknown")),
+                    str(payload.get("code_revision", "unknown")),
+                    str(payload.get("scenario_fingerprint", "")),
+                    1 if bool(payload.get("passed")) else 0,
+                    int(payload.get("run_count", 0)),
+                    canonical_json(payload),
+                    float(self._clock()),
+                ),
+            )
+        return identifier
+
+    def experiment_reports(
+        self,
+        *,
+        scenario_id: str | None = None,
+        split: str | None = None,
+    ) -> tuple[dict[str, Any], ...]:
+        """Đọc report theo scenario/split cho dashboard nghiên cứu."""
+
+        clauses: list[str] = []
+        params: list[Any] = []
+        if scenario_id is not None:
+            clauses.append("scenario_id = ?")
+            params.append(scenario_id)
+        if split is not None:
+            clauses.append("split = ?")
+            params.append(split)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT report_json FROM experiment_runs" + where + " ORDER BY created_at",
+                tuple(params),
+            ).fetchall()
+        return tuple(dict(json.loads(row["report_json"])) for row in rows)
+
 
 
 class AsyncPersistenceActor:

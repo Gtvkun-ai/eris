@@ -1,0 +1,36 @@
+{
+  "algorithm_version": "subject-service-v8-evidence-lab",
+  "code_revision": "v8-local",
+  "metrics": {
+    "ablation_collateral_change": 0.0,
+    "ablation_target_drop": 0.0,
+    "authorship_integrity": 1.0,
+    "behavior_effect_d": 1.999999999996,
+    "brier_score": 0.1388888888888889,
+    "causal_replay_exact": 1.0,
+    "control_mean": 0.0,
+    "cross_instance_leakage": 0.0,
+    "effect_retention_ratio": 1.0,
+    "history_brier_improvement": 0.4444444444444444,
+    "history_classifier_auroc": 1.0,
+    "history_log_loss_improvement": 0.3684827970831031,
+    "log_loss": 0.4377343686769499,
+    "narrative_brier": 0.0,
+    "one_turn_shift_sd": 0.0,
+    "ten_episode_shift_sd": 0.33333333333333337,
+    "transfer_ratio": 1.0,
+    "treatment_mean": 1.0,
+    "within_condition_icc": 1.0
+  },
+  "notes": [],
+  "passed": true,
+  "run_count": 200,
+  "scenario_fingerprint": "2d75b15c02593ea6ea2fcebc27df755aad1f328b543f5349404b3b458e6431e8",
+  "scenario_id": "counterfactual-holdout-v8",
+  "split": "holdout",
+  "thresholds": {
+    "history_classifier_auroc": 0.75,
+    "history_log_loss_improvement": 0.1,
+    "within_condition_icc": 0.65
+  }
+}

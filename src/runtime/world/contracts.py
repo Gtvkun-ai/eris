@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """Typed actuator and sandbox contracts.
 
-The contracts deliberately carry only execution-facing data.  Private motive,
-belief and narrative state must not leak across this boundary merely because a
-JSON serializer was feeling sociable.
+Execution-facing data crosses this boundary, private mind state does not.  V6
+also makes capability tokens signed, audience-bound and request-scoped.  Trust
+based on "this object probably came from the right function" was charming for
+about five minutes.
 """
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ class SandboxCommandKind(StrEnum):
     HTTP_REQUEST = "http_request"
     BODY_FRAME = "body_frame"
     TTS = "tts"
+    SYSTEM_ACTION = "system_action"
     SIMULATE = "simulate"
 
 
@@ -37,10 +39,22 @@ class CapabilityToken:
     issued_at: float
     expires_at: float
     policy_version: str
+    issuer: str
+    audience: str
+    key_id: str
+    signature: str
     scope: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        for name in ("token_id", "subject_id", "policy_version"):
+        for name in (
+            "token_id",
+            "subject_id",
+            "policy_version",
+            "issuer",
+            "audience",
+            "key_id",
+            "signature",
+        ):
             if not str(getattr(self, name) or "").strip():
                 raise ValueError(f"{name} cannot be empty")
         if self.expires_at < self.issued_at:
@@ -50,6 +64,21 @@ class CapabilityToken:
 
     def permits(self, capability: str, *, now: float) -> bool:
         return self.issued_at <= now <= self.expires_at and capability in self.capabilities
+
+    def signing_payload(self) -> dict[str, Any]:
+        """Return the canonical fields covered by the capability signature."""
+        return {
+            "token_id": self.token_id,
+            "subject_id": self.subject_id,
+            "capabilities": sorted(self.capabilities),
+            "issued_at": float(self.issued_at),
+            "expires_at": float(self.expires_at),
+            "policy_version": self.policy_version,
+            "issuer": self.issuer,
+            "audience": self.audience,
+            "key_id": self.key_id,
+            "scope": dict(self.scope),
+        }
 
 
 @dataclass(frozen=True, slots=True)

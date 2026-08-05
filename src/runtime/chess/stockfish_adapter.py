@@ -109,7 +109,7 @@ class StockfishUCIAnalyzer:
             multipv=max(1, min(8, int(config.multipv))),
             movetime_ms=max(25, min(10000, int(config.movetime_ms))),
             on_demand_movetime_ms=max(50, min(30000, int(config.on_demand_movetime_ms))),
-            startup_timeout_seconds=max(0.5, min(30.0, float(config.startup_timeout_seconds))),
+            startup_timeout_seconds=max(2.0, min(30.0, float(config.startup_timeout_seconds))),
             analysis_timeout_seconds=max(0.5, min(60.0, float(config.analysis_timeout_seconds))),
         )
         self.logger = logger

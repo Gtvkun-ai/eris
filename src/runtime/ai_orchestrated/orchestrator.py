@@ -735,9 +735,52 @@ class AIChatOrchestrator:
                 else {}
             ),
         }
-        # Gemma is the sole semantic authority for direct-chat capability
-        # selection. DeepSeek still plans the reply and writes it, but its legacy
-        # tool_intent is overwritten below rather than allowed to compete.
+        # Subject Core is the authoritative internal decision record for every
+        # public turn.  Existing planners may realize the decision, but they do
+        # not get a separate mutable self-state or a bypass around authorship.
+        subject_ingress = getattr(host, "subject_ingress", None)
+        if subject_ingress is None:
+            raise RuntimeError("Subject Core ingress is required in V7")
+        subject_decision = subject_ingress.observe_user_turn(
+            user_text,
+            created_at=cycle_start,
+            turn_id=turn_id,
+            planning_context=planning_snapshot,
+        )
+        subject_payload = subject_decision.to_dict()
+        planning_snapshot["subject_decision"] = subject_payload
+        subject_service = getattr(host, "subject_service", None)
+        subject_inner_view = {}
+        inner_view_fn = getattr(subject_service, "inner_view", None)
+        if callable(inner_view_fn):
+            try:
+                candidate = inner_view_fn()
+                if isinstance(candidate, Mapping):
+                    subject_inner_view = dict(candidate)
+            except Exception:
+                subject_inner_view = {}
+        planning_snapshot["subject_inner_state"] = subject_inner_view
+        action_executor = getattr(host, "action_executor", None)
+        set_parent_decision = getattr(action_executor, "set_subject_parent_decision", None)
+        if callable(set_parent_decision):
+            set_parent_decision(subject_decision)
+        subject_context = (
+            "SUBJECT CORE DECISION (authoritative internal record): "
+            + json.dumps(subject_payload, ensure_ascii=False, separators=(",", ":"))
+            + ". BOUNDED INNER STATE: "
+            + json.dumps(subject_inner_view, ensure_ascii=False, separators=(",", ":"))
+            + ". Preserve semantic commitments, value/need pressure and action authorship. "
+              "Do not invent a different motive merely to improve wording. "
+              "The inner state is a projection, not a factual claim about the user."
+        )
+        grounding_context = "\n\n".join(
+            part for part in (grounding_context, subject_context) if str(part).strip()
+        )
+        planning_snapshot["grounding_context"] = grounding_context
+
+        # The capability selector is execution-facing only. Subject Core owns
+        # the internal decision; the selector may choose an exact live tool that
+        # realizes it, never a second motive or personality trajectory.
         executive_directive = None
         executive = getattr(host, "ai_executive_cortex", None)
         if executive is not None and bool(getattr(executive, "enabled", False)):

@@ -315,7 +315,7 @@ class InferenceBroker:
         self._user_turn_started_at: dict[str, float] = {}
         self._user_turn_category: dict[str, str] = {}
         # PDF annotation, page 6: ``idempotency_key`` is part of the proposed
-        # request contract.  V5 gives it actual admission semantics instead of
+        # request contract.  V6 keeps actual admission semantics instead of
         # leaving a distinguished-looking field to gather dust.
         self._idempotency_active: dict[str, str] = {}
         self._idempotency_tombstones: dict[str, float] = {}

@@ -10,8 +10,8 @@ from memory.subject import SubjectRepository
 from runtime.audit import ForensicStore
 from runtime.subject_runtime import SubjectRuntime
 from runtime.world import (
+    CapabilityAuthority,
     CapabilityPolicy,
-    CapabilityToken,
     CommandPolicy,
     SandboxActuator,
     SandboxWorld,
@@ -44,15 +44,39 @@ async def test_observation_to_decision_sandbox_outcome_learning_and_audit(tmp_pa
         clock=d.clock,
         id_factory=d.id,
     )
+    authority = CapabilityAuthority(
+        secret=b"subject-runtime-test-secret-32-bytes",
+        issuer="test-suite",
+        audience="sandbox",
+        clock=d.clock,
+        id_factory=d.id,
+    )
     sandbox = SandboxWorld(
-        policy=CapabilityPolicy(CommandPolicy(frozenset(), str(tmp_path))),
+        policy=CapabilityPolicy(
+            CommandPolicy(frozenset(), str(tmp_path)),
+            token_verifier=authority.verify,
+        ),
         repository=repository,
         audit=audit,
         clock=d.clock,
         id_factory=d.id,
     )
-    token = CapabilityToken("token", "eris", frozenset({"practice"}), 0.0, 9999.0, "v1")
-    actuator = SandboxActuator(sandbox=sandbox, token_provider=lambda _request: token, clock=d.clock, id_factory=d.id)
+
+    def token_provider(request, command_id):
+        return authority.issue(
+            subject_id="eris",
+            capabilities=frozenset(request.requested_capabilities),
+            policy_version="v1",
+            scope={
+                "command_ids": (command_id,),
+                "action_ids": (request.action_id,),
+                "decision_ids": (request.decision_id,),
+                "idempotency_keys": (request.idempotency_key,),
+            },
+            ttl_seconds=60.0,
+        )
+
+    actuator = SandboxActuator(sandbox=sandbox, token_provider=token_provider, clock=d.clock, id_factory=d.id)
     runtime = SubjectRuntime(mind=mind, actuator=actuator, dialogue=None, audit=audit, clock=d.clock, id_factory=d.id)
 
     result = await runtime.handle(WorldObservation(

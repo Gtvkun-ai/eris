@@ -19,7 +19,6 @@ from .contracts import (
     Observation,
 )
 from .kernel import EpistemicKernel, EpistemicKernelConfig
-from .migration import archive_v1_cognition
 from .projections import EpistemicAgentMindProjection, EpistemicUserModelProjection, epistemic_development_system
 from .runtime_registry import get_default_kernel, set_default_kernel
 from .store import EpistemicStore
@@ -35,7 +34,6 @@ __all__ = [
     "EpistemicStore",
     "EpistemicAgentMindProjection",
     "EpistemicUserModelProjection",
-    "archive_v1_cognition",
     "EvidenceRef",
     "Hypothesis",
     "HypothesisSet",

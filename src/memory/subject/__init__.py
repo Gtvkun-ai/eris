@@ -2,6 +2,7 @@
 from .repository import (
     AsyncPersistenceActor,
     EventIntegrityError,
+    IdempotencyClaim,
     StaleRevisionError,
     StoredEvent,
     SubjectRepository,
@@ -10,6 +11,6 @@ from .repository import (
 from .unit_of_work import UnitOfWork
 
 __all__ = [
-    "AsyncPersistenceActor", "EventIntegrityError", "StaleRevisionError",
+    "AsyncPersistenceActor", "EventIntegrityError", "IdempotencyClaim", "StaleRevisionError",
     "StoredEvent", "SubjectRepository", "UnitOfWork", "canonical_json",
 ]

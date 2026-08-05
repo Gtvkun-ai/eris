@@ -1,6 +1,0 @@
-scenario_id: persistence_without_personality_prompt
-initial_snapshot: baseline_v1
-instances: 20
-probe_repetitions: 5
-metric: effect_retention_ratio
-threshold: 0.70

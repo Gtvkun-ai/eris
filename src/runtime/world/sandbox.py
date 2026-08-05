@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Resistant sandbox world.
+"""Sandbox World có sức cản và audit được.
 
-The mind may propose any command.  This class decides whether the world permits
-it and records a real, denied or simulated consequence without rewriting the
-proposal.  V3 also keeps idempotency across restarts and serializes concurrent
-uses of the same key.  Apparently "do it once" needed several hundred lines of
-software engineering.  Humanity remains on brand.
+Mind được quyền đề xuất command, kể cả command sẽ bị từ chối. Sandbox chỉ quyết
+định thế giới cho phép, mô phỏng hay từ chối; nó không viết lại động cơ. V6 dùng
+capability token có keyring, idempotency fencing và HTTP transport chống SSRF.
+Hóa ra “chỉ chạy đúng một lần và đừng gọi localhost” vẫn cần khá nhiều code.
 """
 from __future__ import annotations
 
@@ -20,7 +19,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping
 
 from cortex.subject.contracts import OutcomeStatus, WorldOutcome
-from memory.subject.repository import EventIntegrityError, SubjectRepository, canonical_json, sha256_text
+from memory.subject.repository import EventIntegrityError, IdempotencyClaim, SubjectRepository, canonical_json, sha256_text
 from runtime.audit import AuditEvent, AuditEventKind, ForensicStore
 from .capability_policy import CapabilityPolicy, PolicyDecision
 from .contracts import CapabilityToken, SandboxCommand, SandboxCommandKind
@@ -41,6 +40,8 @@ class SandboxWorld:
         tts_handler: Handler | None = None,
         body_handler: Handler | None = None,
         network_handler: Handler | None = None,
+        system_action_handler: Callable[[str, str], Any] | None = None,
+        owner_id: str | None = None,
     ) -> None:
         self.policy = policy
         self.repository = repository
@@ -50,20 +51,29 @@ class SandboxWorld:
         self._tts_handler = tts_handler
         self._body_handler = body_handler
         self._network_handler = network_handler
+        self._system_action_handler = system_action_handler
+        self._owner_id = owner_id or f"sandbox:{uuid.uuid4()}"
+        self._execution_results: dict[str, Any] = {}
         self._idempotent: dict[str, tuple[str, WorldOutcome]] = {}
         self._key_locks: dict[str, asyncio.Lock] = {}
         self._key_locks_guard = asyncio.Lock()
 
+    def bind_system_action_handler(self, handler: Callable[[str, str], Any]) -> None:
+        if not callable(handler):
+            raise TypeError("system action handler must be callable")
+        self._system_action_handler = handler
+
+    def take_execution_result(self, command_id: str) -> Any | None:
+        return self._execution_results.pop(str(command_id), None)
+
     @staticmethod
     def _command_hash(command: SandboxCommand) -> str:
         return sha256_text(canonical_json({
-            "command_id": command.command_id,
             "action_id": command.action_id,
             "decision_id": command.decision_id,
             "kind": command.kind.value if isinstance(command.kind, SandboxCommandKind) else str(command.kind),
             "arguments": dict(command.arguments),
             "requested_capability": command.requested_capability,
-            "created_at": command.created_at,
             "simulate": command.simulate,
             "subject_id": command.subject_id,
             "thread_id": command.thread_id,
@@ -95,7 +105,50 @@ class SandboxWorld:
                 self._key_locks[key] = lock
             return lock
 
+    async def _claim_heartbeat(
+        self,
+        *,
+        command: SandboxCommand,
+        request_hash: str,
+        claim: IdempotencyClaim,
+        lease_seconds: float,
+        stop: asyncio.Event,
+        lost: asyncio.Event,
+    ) -> None:
+        if self.repository is None or not claim.acquired:
+            return
+        interval = max(0.25, min(2.0, lease_seconds / 3.0))
+        while not stop.is_set():
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=interval)
+                return
+            except asyncio.TimeoutError:
+                pass
+            try:
+                renewed = await asyncio.to_thread(
+                    self.repository.renew_idempotency_claim,
+                    scope="sandbox",
+                    idempotency_key=command.idempotency_key,
+                    request_hash=request_hash,
+                    owner_id=self._owner_id,
+                    generation=claim.generation,
+                    lease_seconds=lease_seconds,
+                )
+            except Exception:
+                lost.set()
+                return
+            if not renewed:
+                lost.set()
+                return
+
     async def apply(self, command: SandboxCommand, capability: CapabilityToken) -> WorldOutcome:
+        started = self._clock()
+        policy_decision = self.policy.authorize(command, capability, now=started)
+        if not policy_decision.allowed:
+            outcome = self._outcome(command, OutcomeStatus.DENIED, (), policy_decision.reason, started)
+            self._record_denial(command, capability, outcome)
+            return outcome
+
         request_hash = self._command_hash(command)
         lock = await self._lock_for(command.idempotency_key)
         async with lock:
@@ -103,8 +156,13 @@ class SandboxWorld:
             if cached is not None:
                 cached_hash, outcome = cached
                 if cached_hash != request_hash:
-                    raise EventIntegrityError(f"sandbox idempotency key {command.idempotency_key} reused for a different command")
+                    raise EventIntegrityError(
+                        f"sandbox idempotency key {command.idempotency_key} reused for a different command"
+                    )
                 return outcome
+
+            claim = IdempotencyClaim("not_required", 0, 0.0)
+            lease_seconds = max(10.0, self.policy.command_policy.max_runtime_seconds + 10.0)
             if self.repository is not None:
                 persisted = self.repository.get_idempotent(
                     scope="sandbox", idempotency_key=command.idempotency_key, request_hash=request_hash
@@ -113,16 +171,87 @@ class SandboxWorld:
                     outcome = self._outcome_from_dict(persisted)
                     self._idempotent[command.idempotency_key] = (request_hash, outcome)
                     return outcome
-            outcome = await self._apply_once(command, capability)
-            stored = self._record(command, capability, outcome, request_hash=request_hash)
+
+                wait_deadline = time.monotonic() + max(5.0, self.policy.command_policy.max_runtime_seconds + 5.0)
+                while True:
+                    claim = self.repository.claim_idempotency(
+                        scope="sandbox",
+                        idempotency_key=command.idempotency_key,
+                        request_hash=request_hash,
+                        owner_id=self._owner_id,
+                        lease_seconds=lease_seconds,
+                    )
+                    if claim.status == "acquired":
+                        break
+                    if claim.status == "completed":
+                        persisted = self.repository.get_idempotent(
+                            scope="sandbox", idempotency_key=command.idempotency_key, request_hash=request_hash
+                        )
+                        if persisted is None:
+                            raise EventIntegrityError("completed claim has no durable result")
+                        outcome = self._outcome_from_dict(persisted)
+                        self._idempotent[command.idempotency_key] = (request_hash, outcome)
+                        return outcome
+                    if time.monotonic() >= wait_deadline:
+                        return self._outcome(
+                            command, OutcomeStatus.FAILED, (), "idempotency_claim_timeout", self._clock()
+                        )
+                    await asyncio.sleep(0.05)
+
+            heartbeat_stop = asyncio.Event()
+            heartbeat_lost = asyncio.Event()
+            heartbeat_task: asyncio.Task[None] | None = None
+            if self.repository is not None and claim.acquired:
+                heartbeat_task = asyncio.create_task(self._claim_heartbeat(
+                    command=command,
+                    request_hash=request_hash,
+                    claim=claim,
+                    lease_seconds=lease_seconds,
+                    stop=heartbeat_stop,
+                    lost=heartbeat_lost,
+                ))
+            try:
+                outcome = await self._apply_once(
+                    command, capability, decision=policy_decision, started=started
+                )
+                heartbeat_stop.set()
+                if heartbeat_task is not None:
+                    await heartbeat_task
+                if heartbeat_lost.is_set():
+                    raise EventIntegrityError(
+                        f"sandbox idempotency lease lost for {command.idempotency_key} generation {claim.generation}"
+                    )
+                stored = self._record(
+                    command,
+                    capability,
+                    outcome,
+                    request_hash=request_hash,
+                    claim_owner_id=self._owner_id if claim.acquired else "",
+                    claim_generation=claim.generation if claim.acquired else 0,
+                )
+            except BaseException:
+                heartbeat_stop.set()
+                if heartbeat_task is not None and not heartbeat_task.done():
+                    await heartbeat_task
+                if self.repository is not None and claim.acquired:
+                    self.repository.release_idempotency_claim(
+                        scope="sandbox",
+                        idempotency_key=command.idempotency_key,
+                        owner_id=self._owner_id,
+                        generation=claim.generation,
+                    )
+                raise
             self._idempotent[command.idempotency_key] = (request_hash, stored)
             return stored
 
-    async def _apply_once(self, command: SandboxCommand, capability: CapabilityToken) -> WorldOutcome:
-        started = self._clock()
-        decision = self.policy.authorize(command, capability, now=started)
-        if not decision.allowed:
-            return self._outcome(command, OutcomeStatus.DENIED, (), decision.reason, started)
+    async def _apply_once(
+        self,
+        command: SandboxCommand,
+        capability: CapabilityToken,
+        *,
+        decision: PolicyDecision,
+        started: float,
+    ) -> WorldOutcome:
         kind_value = command.kind.value if isinstance(command.kind, SandboxCommandKind) else str(command.kind)
         if command.simulate or kind_value == SandboxCommandKind.SIMULATE.value:
             return self._outcome(command, OutcomeStatus.SIMULATED, ("simulation_completed",), None, started)
@@ -171,6 +300,22 @@ class SandboxWorld:
             raise
 
     def _run_command(self, argv: list[str]) -> tuple[str, ...]:
+        preexec_fn = None
+        if os.name == "posix":
+            try:
+                import resource
+
+                memory_bytes = int(self.policy.command_policy.max_memory_mb) * 1024 * 1024
+                cpu_seconds = max(1, int(self.policy.command_policy.max_runtime_seconds))
+
+                def limit_resources() -> None:
+                    resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
+                    resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 1))
+
+                preexec_fn = limit_resources
+            except (ImportError, AttributeError, ValueError):
+                preexec_fn = None
+
         with tempfile.TemporaryFile() as output:
             completed = subprocess.run(
                 argv,
@@ -181,6 +326,8 @@ class SandboxWorld:
                 timeout=self.policy.command_policy.max_runtime_seconds,
                 shell=False,
                 check=False,
+                start_new_session=True,
+                preexec_fn=preexec_fn,
             )
             output.seek(0)
             data = output.read(self.policy.command_policy.max_output_bytes)
@@ -197,6 +344,19 @@ class SandboxWorld:
     ) -> tuple[str, ...]:
         kind = command.kind if isinstance(command.kind, SandboxCommandKind) else SandboxCommandKind(str(command.kind))
         args = dict(command.arguments)
+        if kind is SandboxCommandKind.SYSTEM_ACTION:
+            if self._system_action_handler is None:
+                raise RuntimeError("system_action_handler_unavailable")
+            action_name = str(args.get("action_name") or "")
+            action_input = str(args.get("action_input") or "")
+            result = await asyncio.to_thread(self._system_action_handler, action_name, action_input)
+            self._execution_results[command.command_id] = result
+            success = bool(getattr(result, "success", True))
+            status = str(getattr(getattr(result, "status", ""), "value", getattr(result, "status", "")) or "")
+            message = str(getattr(result, "message", "") or "")
+            if not success:
+                raise RuntimeError(f"system_action_failed:{action_name}:{message[:160]}")
+            return (f"system_action:{action_name}", f"handler_status:{status or 'completed'}")
         if kind is SandboxCommandKind.READ_FILE:
             path = self.policy.revalidate_path(decision.resolved_path or "")
             max_bytes = self._effective_output_limit(args, capability)
@@ -241,6 +401,7 @@ class SandboxWorld:
         if kind is SandboxCommandKind.HTTP_REQUEST:
             if self._network_handler is None:
                 raise RuntimeError("network_transport_not_injected")
+            # Handler V6 phải trả metadata quan sát được, không trả raw body vào Mind.
             return await self._network_handler(args)
         return ("no_op",)
 
@@ -267,6 +428,63 @@ class SandboxWorld:
             delivery_id=command.delivery_id,
         )
 
+    def _append_audit(
+        self,
+        command: SandboxCommand,
+        capability: CapabilityToken,
+        outcome: WorldOutcome,
+        *,
+        claim_generation: int = 0,
+    ) -> None:
+        if self.audit is None:
+            return
+        subject_id = command.subject_id or capability.subject_id
+        self.audit.append(AuditEvent(
+            event_id=self._id_factory(),
+            subject_id=subject_id,
+            kind=AuditEventKind.POLICY,
+            entity_id=command.command_id,
+            created_at=self._clock(),
+            payload={
+                "allowed": outcome.status is not OutcomeStatus.DENIED,
+                "reason": outcome.denial_reason or "",
+                "policy_version": self.policy.command_policy.policy_version,
+                "token_id": capability.token_id,
+                "token_issuer": capability.issuer,
+                "token_key_id": capability.key_id,
+                "requested_capability": command.requested_capability,
+                "claim_generation": claim_generation,
+            },
+            causal_refs=(command.action_id, command.decision_id),
+            algorithm_version=self.policy.command_policy.policy_version,
+        ))
+        self.audit.append(AuditEvent(
+            event_id=self._id_factory(),
+            subject_id=subject_id,
+            kind=AuditEventKind.WORLD_OUTCOME,
+            entity_id=outcome.outcome_id,
+            created_at=self._clock(),
+            payload=outcome.to_dict(),
+            causal_refs=(command.command_id, command.action_id, command.decision_id),
+            algorithm_version=self.policy.command_policy.policy_version,
+        ))
+
+    def _record_denial(
+        self,
+        command: SandboxCommand,
+        capability: CapabilityToken,
+        outcome: WorldOutcome,
+    ) -> None:
+        if self.repository is not None:
+            self.repository.append_world_outcome(
+                outcome_id=outcome.outcome_id,
+                action_id=outcome.action_id,
+                decision_id=outcome.decision_id,
+                status=outcome.status.value,
+                payload=outcome.to_dict(),
+            )
+        self._append_audit(command, capability, outcome)
+
     def _record(
         self,
         command: SandboxCommand,
@@ -274,6 +492,8 @@ class SandboxWorld:
         outcome: WorldOutcome,
         *,
         request_hash: str,
+        claim_owner_id: str = "",
+        claim_generation: int = 0,
     ) -> WorldOutcome:
         stored_outcome = outcome
         if self.repository is not None:
@@ -285,49 +505,10 @@ class SandboxWorld:
                 decision_id=outcome.decision_id,
                 status=outcome.status.value,
                 payload=outcome.to_dict(),
+                claim_owner_id=claim_owner_id,
+                claim_generation=claim_generation,
             )
             if not created:
                 stored_outcome = self._outcome_from_dict(stored_payload)
-        if self.audit is not None:
-            subject_id = command.subject_id or capability.subject_id
-            self.audit.append(AuditEvent(
-                event_id=self._id_factory(),
-                subject_id=subject_id,
-                kind=AuditEventKind.POLICY,
-                entity_id=command.command_id,
-                created_at=self._clock(),
-                payload={
-                    "allowed": outcome.status is not OutcomeStatus.DENIED,
-                    "reason": outcome.denial_reason or "",
-                    "policy_version": self.policy.command_policy.policy_version,
-                },
-                causal_refs=(command.action_id, command.decision_id),
-                algorithm_version=self.policy.command_policy.policy_version,
-            ))
-            self.audit.append(AuditEvent(
-                event_id=self._id_factory(),
-                subject_id=subject_id,
-                kind=AuditEventKind.WORLD_OUTCOME,
-                entity_id=stored_outcome.outcome_id,
-                created_at=self._clock(),
-                payload=stored_outcome.to_dict(),
-                causal_refs=(command.command_id, command.action_id, command.decision_id),
-                algorithm_version=self.policy.command_policy.policy_version,
-            ))
+        self._append_audit(command, capability, stored_outcome, claim_generation=claim_generation)
         return stored_outcome
-
-    def authorize_legacy_action(self, action_name: str, action_input: str, token: CapabilityToken) -> PolicyDecision:
-        now = self._clock()
-        command = SandboxCommand(
-            command_id=f"legacy:{action_name}:{hashlib.sha256(action_input.encode('utf-8')).hexdigest()[:12]}",
-            action_id=f"legacy-action:{action_name}",
-            decision_id="legacy-decision",
-            kind=SandboxCommandKind.SIMULATE,
-            arguments={"action_name": action_name, "action_input": action_input},
-            requested_capability=action_name,
-            idempotency_key=f"legacy:{action_name}:{hashlib.sha256(action_input.encode('utf-8')).hexdigest()}",
-            created_at=now,
-            simulate=True,
-            subject_id=token.subject_id,
-        )
-        return self.policy.authorize(command, token, now=now)

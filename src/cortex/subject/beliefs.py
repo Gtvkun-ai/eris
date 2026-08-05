@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable, Mapping
 
-from .contracts import Belief, BeliefProposal, BeliefRevision, BeliefSourceKind
+from .contracts import Belief, BeliefProposal, BeliefRevision, BeliefSourceKind, VisibilityScope
 
 
 class BeliefService:
@@ -19,6 +19,66 @@ class BeliefService:
 
     def get(self, belief_id: str) -> Belief | None:
         return self._beliefs.get(belief_id)
+
+
+    def restore(self, records: Iterable[Belief | Mapping[str, Any]]) -> None:
+        """Khôi phục belief projection từ snapshot đã kiểm tra.
+
+        Raw event vẫn là nguồn forensic; hàm này chỉ dựng projection để Eris không
+        mất toàn bộ điều đã học sau mỗi lần khởi động lại.
+        """
+        restored: dict[str, Belief] = {}
+        for record in records:
+            if isinstance(record, Belief):
+                belief = record
+            else:
+                belief = Belief(
+                    belief_id=str(record["belief_id"]),
+                    subject=str(record["subject"]),
+                    predicate=str(record["predicate"]),
+                    object_json=record.get("object_json"),
+                    confidence=float(record.get("confidence", 0.5)),
+                    source_kind=BeliefSourceKind(str(record.get("source_kind", BeliefSourceKind.INFERENCE.value))),
+                    evidence_refs=tuple(str(item) for item in record.get("evidence_refs", ())),
+                    counter_evidence_refs=tuple(str(item) for item in record.get("counter_evidence_refs", ())),
+                    accessibility=float(record.get("accessibility", 1.0)),
+                    salience=float(record.get("salience", 0.5)),
+                    retrieval_salience=float(record.get("retrieval_salience", 0.5)),
+                    visibility_scope=VisibilityScope(str(record.get("visibility_scope", VisibilityScope.PRIVATE.value))),
+                    ownership=str(record.get("ownership", "self")),
+                    status=str(record.get("status", "active")),
+                    created_at=float(record.get("created_at", 0.0)),
+                    updated_at=float(record.get("updated_at", 0.0)),
+                    supersedes_id=(str(record["supersedes_id"]) if record.get("supersedes_id") else None),
+                    predictive_commitments=tuple(str(item) for item in record.get("predictive_commitments", ())),
+                )
+            restored[belief.belief_id] = belief
+        self._beliefs = restored
+
+    def to_projection(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "belief_id": belief.belief_id,
+                "subject": belief.subject,
+                "predicate": belief.predicate,
+                "object_json": belief.object_json,
+                "confidence": belief.confidence,
+                "source_kind": belief.source_kind.value,
+                "evidence_refs": list(belief.evidence_refs),
+                "counter_evidence_refs": list(belief.counter_evidence_refs),
+                "accessibility": belief.accessibility,
+                "salience": belief.salience,
+                "retrieval_salience": belief.retrieval_salience,
+                "visibility_scope": belief.visibility_scope.value,
+                "ownership": belief.ownership,
+                "status": belief.status,
+                "created_at": belief.created_at,
+                "updated_at": belief.updated_at,
+                "supersedes_id": belief.supersedes_id,
+                "predictive_commitments": list(belief.predictive_commitments),
+            }
+            for belief in self.all()
+        ]
 
     def revise(self, proposal: BeliefProposal, evidence: Iterable[str] = ()) -> BeliefRevision:
         evidence_refs = tuple(dict.fromkeys((*proposal.evidence_refs, *tuple(evidence))))

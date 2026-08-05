@@ -7,18 +7,43 @@ import pytest
 
 from cortex.subject.contracts import OutcomeStatus
 from memory.subject.repository import EventIntegrityError, SubjectRepository
-from runtime.world import CapabilityPolicy, CapabilityToken, CommandPolicy, SandboxCommand, SandboxCommandKind, SandboxWorld
+from runtime.world import (
+    CapabilityAuthority,
+    CapabilityPolicy,
+    CommandPolicy,
+    SandboxCommand,
+    SandboxCommandKind,
+    SandboxWorld,
+)
 
 
-def make_token(*capabilities: str, policy_version: str = "v1", subject_id: str = "eris", scope=None) -> CapabilityToken:
-    return CapabilityToken(
-        token_id="token",
+AUTHORITY = CapabilityAuthority(
+    secret=b"sandbox-hardening-test-secret-32b!",
+    issuer="test-suite",
+    audience="sandbox",
+    clock=lambda: 0.0,
+    id_factory=lambda: "token",
+)
+
+
+def make_policy(command_policy: CommandPolicy) -> CapabilityPolicy:
+    return CapabilityPolicy(command_policy, token_verifier=AUTHORITY.verify)
+
+
+def make_token(*capabilities: str, policy_version: str = "v1", subject_id: str = "eris", scope=None):
+    base_scope = {
+        "command_ids": ("cmd",),
+        "action_ids": ("action",),
+        "decision_ids": ("decision",),
+        "idempotency_keys": ("idem", "empty", "exe", "a", "b"),
+    }
+    base_scope.update(scope or {})
+    return AUTHORITY.issue(
         subject_id=subject_id,
         capabilities=frozenset(capabilities),
-        issued_at=0.0,
-        expires_at=1000.0,
         policy_version=policy_version,
-        scope=scope or {},
+        scope=base_scope,
+        ttl_seconds=300.0,
     )
 
 
@@ -49,7 +74,7 @@ def make_command(
 
 @pytest.mark.asyncio
 async def test_policy_version_and_subject_are_bound_to_token(tmp_path: Path) -> None:
-    policy = CapabilityPolicy(CommandPolicy(frozenset(), str(tmp_path), policy_version="v3"))
+    policy = make_policy(CommandPolicy(frozenset(), str(tmp_path), policy_version="v3"))
     sandbox = SandboxWorld(policy=policy, clock=lambda: 10.0, id_factory=lambda: "out")
     mismatch = await sandbox.apply(
         make_command(SandboxCommandKind.SIMULATE, "simulate", simulate=True),
@@ -67,7 +92,7 @@ async def test_policy_version_and_subject_are_bound_to_token(tmp_path: Path) -> 
 
 @pytest.mark.asyncio
 async def test_empty_path_and_explicit_executable_path_are_denied(tmp_path: Path) -> None:
-    policy = CapabilityPolicy(CommandPolicy(frozenset({"python"}), str(tmp_path)))
+    policy = make_policy(CommandPolicy(frozenset({"python"}), str(tmp_path)))
     sandbox = SandboxWorld(policy=policy, clock=lambda: 10.0, id_factory=lambda: "out")
     empty = await sandbox.apply(
         make_command(SandboxCommandKind.READ_FILE, "read_file", {"path": ""}, key="empty"),
@@ -87,13 +112,13 @@ async def test_token_workspace_prefix_limits_file_access(tmp_path: Path) -> None
     (tmp_path / "other").mkdir()
     (tmp_path / "allowed" / "a.txt").write_text("ok", encoding="utf-8")
     (tmp_path / "other" / "b.txt").write_text("no", encoding="utf-8")
-    policy = CapabilityPolicy(CommandPolicy(frozenset(), str(tmp_path)))
-    token = make_token("read_file", scope={"workspace_prefixes": ["allowed"]})
+    policy = make_policy(CommandPolicy(frozenset(), str(tmp_path)))
+    scoped = make_token("read_file", scope={"workspace_prefixes": ["allowed"]})
     allowed = await SandboxWorld(policy=policy, clock=lambda: 10.0, id_factory=lambda: "a").apply(
-        make_command(SandboxCommandKind.READ_FILE, "read_file", {"path": "allowed/a.txt"}, key="a"), token
+        make_command(SandboxCommandKind.READ_FILE, "read_file", {"path": "allowed/a.txt"}, key="a"), scoped
     )
     denied = await SandboxWorld(policy=policy, clock=lambda: 10.0, id_factory=lambda: "b").apply(
-        make_command(SandboxCommandKind.READ_FILE, "read_file", {"path": "other/b.txt"}, key="b"), token
+        make_command(SandboxCommandKind.READ_FILE, "read_file", {"path": "other/b.txt"}, key="b"), scoped
     )
     assert allowed.status is OutcomeStatus.SUCCEEDED
     assert denied.denial_reason == "path_outside_token_scope"
@@ -110,7 +135,7 @@ async def test_concurrent_same_key_executes_handler_once(tmp_path: Path) -> None
         return (f"body:{arguments['frame']}",)
 
     sandbox = SandboxWorld(
-        policy=CapabilityPolicy(CommandPolicy(frozenset(), str(tmp_path))),
+        policy=make_policy(CommandPolicy(frozenset(), str(tmp_path))),
         clock=lambda: 10.0,
         id_factory=iter(("out", "unused")).__next__,
         body_handler=body_handler,
@@ -129,7 +154,7 @@ async def test_idempotency_survives_restart_and_rejects_key_reuse(tmp_path: Path
     repo1 = SubjectRepository(database)
     cmd = make_command(SandboxCommandKind.SIMULATE, "simulate", simulate=True)
     first = await SandboxWorld(
-        policy=CapabilityPolicy(CommandPolicy(frozenset(), str(tmp_path))),
+        policy=make_policy(CommandPolicy(frozenset(), str(tmp_path))),
         repository=repo1,
         clock=lambda: 10.0,
         id_factory=lambda: "out-1",
@@ -138,7 +163,7 @@ async def test_idempotency_survives_restart_and_rejects_key_reuse(tmp_path: Path
 
     repo2 = SubjectRepository(database)
     second = await SandboxWorld(
-        policy=CapabilityPolicy(CommandPolicy(frozenset(), str(tmp_path))),
+        policy=make_policy(CommandPolicy(frozenset(), str(tmp_path))),
         repository=repo2,
         clock=lambda: 10.0,
         id_factory=lambda: "should-not-be-used",
@@ -148,7 +173,7 @@ async def test_idempotency_survives_restart_and_rejects_key_reuse(tmp_path: Path
     changed = make_command(SandboxCommandKind.SIMULATE, "simulate", {"different": True}, simulate=True)
     with pytest.raises(EventIntegrityError, match="different request"):
         await SandboxWorld(
-            policy=CapabilityPolicy(CommandPolicy(frozenset(), str(tmp_path))),
+            policy=make_policy(CommandPolicy(frozenset(), str(tmp_path))),
             repository=repo2,
             clock=lambda: 10.0,
         ).apply(changed, make_token("simulate"))
@@ -165,7 +190,7 @@ async def test_symlink_path_is_denied_when_supported(tmp_path: Path) -> None:
     except (OSError, NotImplementedError):
         pytest.skip("symlink creation unavailable")
     sandbox = SandboxWorld(
-        policy=CapabilityPolicy(CommandPolicy(frozenset(), str(tmp_path))),
+        policy=make_policy(CommandPolicy(frozenset(), str(tmp_path))),
         clock=lambda: 10.0,
         id_factory=lambda: "out",
     )

@@ -1,18 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Public-safe self context cho autonomous của Architecture C.
+"""Projection nội tâm an toàn cho planner production.
 
-Architecture C là đường production duy nhất, nhưng trước đây planner của nó chỉ
-nhìn telemetry/screen/history. Trong khi đó Cortex V2 vẫn âm thầm duy trì drive,
-agenda, private mind và private life. Kết quả khá buồn cười: Eris có nội tâm ở
-panel, còn lúc mở miệng thì cư xử như chưa từng gặp chính mình.
-
-Module này chỉ đưa sang planner những tín hiệu đã qua ranh giới công khai:
-- rolling internal state dạng số, không phải chain-of-thought;
-- agenda có evidence;
-- surface candidate đã qua SurfaceValve/PrivateLife policy;
-- attention/resource signal của Cortex V2 (không có quyền phát ngôn).
-
-Không đọc raw diary, raw concern hay hidden reasoning.
+V7 ưu tiên ``SubjectService.inner_view()``: active needs, belief có nguồn, value
+đã hình thành, competence calibration, tendency residue và continuity. Module
+không chuyển raw chain-of-thought, diary hay evidence bị che sang model nói công
+khai. Các trường runtime phụ chỉ còn là telemetry, không phải nguồn nội tâm chính.
 """
 
 from __future__ import annotations
@@ -179,6 +171,21 @@ def build_autonomous_self_context(host: Any) -> AutonomousSelfContext:
         )
     }
     internal_state["internal_drive"] = round(_clamp01(getattr(rolling, "internal_drive", 0.0)), 3)
+
+    # Subject Core là nguồn nội tâm duy nhất. Planner chỉ nhận bounded projection,
+    # không nhận raw event ledger hay private reasoning.
+    subject_service = getattr(host, "subject_service", None)
+    inner_view = {}
+    inner_view_fn = getattr(subject_service, "inner_view", None)
+    if callable(inner_view_fn):
+        try:
+            candidate = inner_view_fn()
+            if isinstance(candidate, Mapping):
+                inner_view = dict(candidate)
+        except Exception:
+            inner_view = {}
+    if inner_view:
+        internal_state["subject_core"] = inner_view
 
     attention_obj = getattr(host, "last_cortex_attention", None)
     attention = {

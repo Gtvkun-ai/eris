@@ -1,9 +1,12 @@
+import asyncio
 import ctypes
 import json
 import re
 import shlex
 import subprocess
 import time
+import threading
+import uuid
 import webbrowser
 import os # Thêm import os để sử dụng os.startfile trên Windows
 import requests # Thêm import requests để thực hiện các yêu cầu HTTP khi cần thiết
@@ -33,7 +36,9 @@ class ActionExecutor:
         self.environment_runtime = None
         self.project_runtime = None
         self.sandbox_world = None
-        self.sandbox_capability_token = None
+        self.sandbox_capability_provider = None
+        self.subject_service = None
+        self.subject_parent_decision_id = ""
 
     def bind_cognitive_runtime(self, runtime) -> None:
         """Nối executor với runtime nhận thức sau khi Coordinator đã dựng xong.
@@ -52,16 +57,53 @@ class ActionExecutor:
         """Nối executor với runtime thao tác project autonomous."""
         self.project_runtime = runtime
 
-    def bind_sandbox_world(self, sandbox_world, capability_token) -> None:
-        """Bind the independent world-authority boundary.
+    def bind_subject_service(self, subject_service) -> None:
+        if subject_service is None or not callable(getattr(subject_service, "deliberate", None)):
+            raise TypeError("subject_service must expose deliberate")
+        self.subject_service = subject_service
 
-        Legacy handlers remain available for compatibility, but once this
-        boundary is bound every dispatch must first receive an operational
-        capability decision.  The policy denies power; it never rewrites the
-        cognitive proposal.
+    def set_subject_parent_decision(self, decision) -> None:
+        self.subject_parent_decision_id = str(getattr(decision, "decision_id", "") or "")
+
+    def bind_sandbox_world(self, sandbox_world, capability_provider) -> None:
+        """Bind the only execution authority used by V6.
+
+        The executor no longer performs a policy preview and then executes on
+        the side.  Its unchecked handlers are registered inside SandboxWorld,
+        so the actual side effect happens after the typed policy decision.
         """
+        if sandbox_world is None:
+            raise ValueError("sandbox_world is required")
+        if not callable(capability_provider):
+            raise TypeError("capability_provider must be callable")
         self.sandbox_world = sandbox_world
-        self.sandbox_capability_token = capability_token
+        self.sandbox_capability_provider = capability_provider
+        bind_handler = getattr(sandbox_world, "bind_system_action_handler", None)
+        if not callable(bind_handler):
+            raise TypeError("sandbox_world must support system action handlers")
+        bind_handler(self._execute_unchecked)
+
+    @staticmethod
+    def _run_async(coro):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coro)
+        result = []
+        error = []
+
+        def worker():
+            try:
+                result.append(asyncio.run(coro))
+            except BaseException as exc:
+                error.append(exc)
+
+        thread = threading.Thread(target=worker, name="eris-action-sandbox", daemon=True)
+        thread.start()
+        thread.join()
+        if error:
+            raise error[0]
+        return result[0]
 
     #execute() là trung tâm điều phối
     '''
@@ -112,27 +154,113 @@ class ActionExecutor:
                 success=False,
                 message="Action không hợp lệ hoặc chưa được cấp quyền.",
             )
-
-        if self.sandbox_world is not None:
-            if self.sandbox_capability_token is None:
-                return ActionExecutionResult(
-                    action_name=action_name,
-                    action_input=action_input,
-                    success=False,
-                    message="Sandbox từ chối action vì thiếu capability token.",
-                    error_kind="CapabilityMissing",
-                )
-            policy_decision = self.sandbox_world.authorize_legacy_action(
-                action_name, action_input, self.sandbox_capability_token
+        if self.sandbox_world is None or self.sandbox_capability_provider is None:
+            return ActionExecutionResult(
+                action_name=action_name,
+                action_input=action_input,
+                success=False,
+                message="Subject Core chưa khởi tạo; V6 không có đường thực thi dự phòng.",
+                error_kind="SubjectCoreUnavailable",
             )
-            if not policy_decision.allowed:
-                return ActionExecutionResult(
-                    action_name=action_name,
-                    action_input=action_input,
-                    success=False,
-                    message="Sandbox từ chối action; proposal nhận thức được giữ nguyên.",
-                    error_kind=f"SandboxDenied:{policy_decision.reason}",
-                )
+
+        from cortex.subject.contracts import WorldObservation
+        from runtime.world.contracts import SandboxCommand, SandboxCommandKind
+
+        try:
+            if self.subject_service is None:
+                raise RuntimeError("SubjectServiceUnavailable")
+            observation_id = f"capability-observation:{uuid.uuid4()}"
+            causal_refs = (self.subject_parent_decision_id,) if self.subject_parent_decision_id else ()
+            observation = WorldObservation(
+                observation_id=observation_id,
+                subject_id=self.subject_service.config.subject_id,
+                kind="capability_request",
+                created_at=time.time(),
+                context={
+                    "context_key": "runtime_capability",
+                    "affected_need_ids": ("competence", "coherence", "sovereignty"),
+                    "goal_relevance": 0.95,
+                    "controllability": 0.85,
+                    "uncertainty": 0.25,
+                    "primary_interpretation": f"runtime capability requested: {action_name}",
+                    "action_proposals": ({
+                        "action_kind": action_name,
+                        "arguments": {"action_name": action_name, "action_input": action_input},
+                        "supporting_need_ids": ("competence", "coherence"),
+                        "expected_need_relief": 0.70,
+                        "expected_action_efficacy": 0.80,
+                        "expected_epistemic_value": 0.35,
+                        "value_congruence": 0.70,
+                        "substrate_cost": 0.12,
+                        "uncertainty": 0.25,
+                        "historical_success": 0.65,
+                        "evidence_refs": (observation_id,),
+                    },),
+                },
+                evidence_refs=(observation_id,),
+                causal_refs=causal_refs,
+                correlation_id=self.subject_parent_decision_id or observation_id,
+            )
+            decision = self._run_async(self.subject_service.deliberate(observation))
+            request = self.subject_service.to_action_request(
+                decision,
+                requested_capabilities=(action_name,),
+                expected_outcomes=("runtime_observation",),
+                idempotency_key=f"system-action:{uuid.uuid4()}",
+            )
+            command_id = f"system-command:{uuid.uuid4()}"
+            token = self.sandbox_capability_provider(request, command_id)
+            command = SandboxCommand(
+                command_id=command_id,
+                action_id=request.action_id,
+                decision_id=request.decision_id,
+                kind=SandboxCommandKind.SYSTEM_ACTION,
+                arguments={"action_name": action_name, "action_input": action_input},
+                requested_capability=action_name,
+                idempotency_key=request.idempotency_key,
+                created_at=request.created_at,
+                subject_id=str(getattr(token, "subject_id", "") or self.subject_service.config.subject_id),
+                thread_id=request.thread_id,
+                delivery_id=request.delivery_id,
+            )
+            outcome = self._run_async(self.sandbox_world.apply(command, token))
+            self._run_async(self.subject_service.observe_outcome(outcome))
+            actual = self.sandbox_world.take_execution_result(command_id)
+            if actual is not None:
+                return actual
+            status = str(getattr(getattr(outcome, "status", ""), "value", getattr(outcome, "status", "")) or "")
+            return ActionExecutionResult(
+                action_name=action_name,
+                action_input=action_input,
+                success=status == "succeeded",
+                message=(
+                    "Action đã được Sandbox thực thi."
+                    if status == "succeeded"
+                    else "Sandbox từ chối hoặc không hoàn tất action."
+                ),
+                error_kind="" if status == "succeeded" else f"SandboxOutcome:{status}:{getattr(outcome, 'denial_reason', '') or ''}",
+            )
+        except Exception as exc:
+            self._log("warning", "Sandbox action %s thất bại: %s", action_name, exc)
+            return ActionExecutionResult(
+                action_name=action_name,
+                action_input=action_input,
+                success=False,
+                message=f"Sandbox không thực thi được action {action_name}.",
+                error_kind=type(exc).__name__,
+            )
+
+    def _execute_unchecked(self, action_name: str, action_input: str = "") -> ActionExecutionResult:
+        original_action_name = (action_name or "").strip()
+        action_name = canonicalize_action_id(original_action_name)
+        action_input = (action_input or "").strip()
+        if action_name not in VALID_SYSTEM_ACTIONS:
+            return ActionExecutionResult(
+                action_name=action_name,
+                action_input=action_input,
+                success=False,
+                message="Action không hợp lệ hoặc chưa được cấp quyền.",
+            )
 
         #Dynamic dispatch.
         handler = getattr(self, f"_{action_name}", None)
@@ -158,23 +286,12 @@ class ActionExecutor:
 
         # Executor mới chỉ có dispatch evidence. Observer đọc hậu điều kiện và
         # chỉ nâng lên observed khi thật sự nhìn thấy trạng thái đích.
-        confirmation_enabled = True
-        try:
-            from runtime.rollout_control import feature_enabled
-            confirmation_enabled = feature_enabled("action_confirmation")
-        except Exception:
-            confirmation_enabled = str(os.getenv("ERIS_ACTION_CONFIRMATION_MODE", "strict") or "strict").strip().lower() not in {
-                "0", "false", "off", "no", "disabled",
-            }
-        if confirmation_enabled and result.success and result.dispatched and not result.observed and self.observer is not None:
+        if result.success and result.dispatched and not result.observed and self.observer is not None:
             try:
                 observation = self.observer.observe(result)
                 result = apply_observation(result, observation)
             except Exception as exc:
                 result.observer_reason = f"observer_error:{type(exc).__name__}"
-        elif not confirmation_enabled and result.dispatched and not result.observed:
-            result.observer_reason = "confirmation_feature_disabled"
-
         try:
             from runtime.hardening_metrics import record_action_confirmation
             record_action_confirmation(result)

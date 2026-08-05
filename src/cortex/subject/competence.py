@@ -2,7 +2,7 @@
 """Competence calibration and practice planning."""
 from __future__ import annotations
 
-from typing import Callable
+from typing import Any, Callable, Iterable, Mapping
 
 from .contracts import (
     CompetenceEstimate,
@@ -19,6 +19,52 @@ class CompetenceService:
         self._id_factory = id_factory
         self._clock = clock
         self._estimates: dict[tuple[str, str], CompetenceEstimate] = {}
+
+
+    def restore(self, records: Iterable[CompetenceEstimate | Mapping[str, Any]]) -> None:
+        """Khôi phục calibration theo skill/context từ projection bền."""
+        restored: dict[tuple[str, str], CompetenceEstimate] = {}
+        for record in records:
+            if isinstance(record, CompetenceEstimate):
+                estimate = record
+            else:
+                estimate = CompetenceEstimate(
+                    estimate_id=str(record["estimate_id"]),
+                    skill_id=str(record["skill_id"]),
+                    context_key=str(record.get("context_key", "general")),
+                    posterior_mean=float(record.get("posterior_mean", 0.5)),
+                    posterior_variance=float(record.get("posterior_variance", 0.0833)),
+                    trial_count=max(0, int(record.get("trial_count", 0))),
+                    success_count=max(0, int(record.get("success_count", 0))),
+                    calibration_error=float(record.get("calibration_error", 0.0)),
+                    brier_score=float(record.get("brier_score", 0.0)),
+                    last_prediction=float(record.get("last_prediction", 0.5)),
+                    last_result_ref=str(record.get("last_result_ref", "restored")),
+                    evidence_refs=tuple(str(item) for item in record.get("evidence_refs", ())) or ("restored",),
+                    estimated_at=float(record.get("estimated_at", 0.0)),
+                )
+            restored[(estimate.skill_id, estimate.context_key)] = estimate
+        self._estimates = restored
+
+    def to_projection(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "estimate_id": item.estimate_id,
+                "skill_id": item.skill_id,
+                "context_key": item.context_key,
+                "posterior_mean": item.posterior_mean,
+                "posterior_variance": item.posterior_variance,
+                "trial_count": item.trial_count,
+                "success_count": item.success_count,
+                "calibration_error": item.calibration_error,
+                "brier_score": item.brier_score,
+                "last_prediction": item.last_prediction,
+                "last_result_ref": item.last_result_ref,
+                "evidence_refs": list(item.evidence_refs),
+                "estimated_at": item.estimated_at,
+            }
+            for item in self.all()
+        ]
 
     def predict(self, skill_id: str, context_key: str = "general") -> float:
         estimate = self._estimates.get((skill_id, context_key))

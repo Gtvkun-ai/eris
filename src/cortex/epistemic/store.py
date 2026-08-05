@@ -25,7 +25,9 @@ class EpistemicStore:
         self._memory_only = str(path or "") == ":memory:"
         self.path = Path("epistemic_v2.memory") if self._memory_only else (Path(path) if path else default_epistemic_path())
         self.max_episodes = max(20, int(max_episodes))
-        self.mode = "shadow" if str(mode).strip().lower() == "shadow" else "authoritative"
+        if str(mode).strip().lower() != "authoritative":
+            raise ValueError("V6 supports authoritative epistemic storage only")
+        self.mode = "authoritative"
         self.beliefs: dict[str, Belief] = {}
         self.episodes: list[CognitiveEpisode] = []
         self.projections: dict[str, dict[str, Any]] = {}
@@ -57,7 +59,7 @@ class EpistemicStore:
                 for belief in (Belief.from_mapping(item),)
             }
             self.episodes = [CognitiveEpisode.from_mapping(item) for item in raw.get("episodes", ()) if isinstance(item, Mapping)]
-            self.mode = "shadow" if str(raw.get("mode", self.mode)).strip().lower() in {"shadow", "v2_shadow"} else "authoritative"
+            self.mode = "authoritative"
             self.projections = {
                 str(key): dict(value)
                 for key, value in dict(raw.get("projections") or {}).items()
@@ -80,7 +82,6 @@ class EpistemicStore:
                 "mode": self.mode,
                 "created_at": self.created_at,
                 "updated_at": self.updated_at,
-                "legacy_imported": False,
                 "beliefs": [item.to_dict() for item in self.beliefs.values()],
                 "episodes": [item.to_dict() for item in self.episodes[-self.max_episodes :]],
                 "projections": self.projections,

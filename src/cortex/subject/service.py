@@ -1,23 +1,38 @@
 # -*- coding: utf-8 -*-
-"""Single orchestrator for the Eris Subject Core."""
+"""Orchestrator duy nhất cho nội tâm Eris.
+
+Luồng thật của Mind:
+
+observation → substrate → appraisal → need activation → coalition → decision
+→ authorship → outcome → episode learning → value/tendency/continuity update.
+
+Khác với các bản trước, V7 không chỉ tạo class rồi để chúng nằm ngắm nhau trong
+thư mục. Các engine value, consolidation, derived need, self-deception,
+continuity, competence và existential choice đều được nối vào vòng học chính.
+"""
 from __future__ import annotations
 
 import random
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, replace
+from itertools import combinations
 from typing import Any, Callable, Mapping, Protocol
 
 from .authorship import AuthorshipService
 from .beliefs import BeliefService
 from .coalitions import CoalitionArbiter
 from .competence import CompetenceService
+from .consolidation import TemporalConsolidator
+from .continuity import ContinuityService
 from .contracts import (
     ActionProposal,
     ActionRequest,
     AttributionDistribution,
     AttributionTarget,
     BeliefSourceKind,
+    DerivedNeed,
+    DerivedNeedStatus,
     LearningReceipt,
     MindDecision,
     NeedActivation,
@@ -27,14 +42,45 @@ from .contracts import (
     WorldOutcome,
 )
 from .episodes import NeedEpisodeRecorder
+from .existential import ExistentialDecisionService
+from .inner_state import InnerLifeState
 from .narrative import NarrativeBeliefGenerator, NarrativeView
-from .needs import NeedSystem
-from .substrate import SubstrateMonitor
+from .needs import NeedPlasticityEngine, NeedSystem
+from .self_deception import ReflectiveMismatchDetector
+from .substrate import SubstrateMonitor, substrate_from_dict
+from .values import ValueFormationEngine
 
 
 class SubjectRepositoryPort(Protocol):
-    def append_subject_event(self, *, subject_id: str, event_type: str, payload: Mapping[str, Any], causal_refs: tuple[str, ...] = (), correlation_id: str = "", event_id: str | None = None, created_at: float | None = None) -> Any: ...
-    def save_projection(self, *, subject_id: str, projection_type: str, projection_key: str, payload: Mapping[str, Any], expected_revision: int | None = None) -> int: ...
+    def append_subject_event(
+        self,
+        *,
+        subject_id: str,
+        event_type: str,
+        payload: Mapping[str, Any],
+        causal_refs: tuple[str, ...] = (),
+        correlation_id: str = "",
+        event_id: str | None = None,
+        created_at: float | None = None,
+    ) -> Any: ...
+
+    def save_projection(
+        self,
+        *,
+        subject_id: str,
+        projection_type: str,
+        projection_key: str,
+        payload: Mapping[str, Any],
+        expected_revision: int | None = None,
+    ) -> int: ...
+
+    def get_projection(
+        self,
+        *,
+        subject_id: str,
+        projection_type: str,
+        projection_key: str,
+    ) -> tuple[int, dict[str, Any]] | None: ...
 
 
 class AuditPort(Protocol):
@@ -48,15 +94,18 @@ class SubjectServiceConfig:
     random_seed: int = 0
     min_episode_pressure: float = 0.08
     default_temperature: float = 0.20
-    algorithm_version: str = "subject-service-v1"
+    algorithm_version: str = "subject-service-v8-evidence-lab"
+    restore_projection: bool = True
+    consolidation_min_episode_count: int = 3
+    consolidation_min_distinct_days: int = 2
+    derived_need_min_episodes: int = 6
+    derived_need_min_span_days: float = 7.0
+    derived_need_min_contexts: int = 2
+    derived_need_min_predictive_gain: float = 0.03
 
 
 class SubjectService:
-    """Observation → appraisal → need episode → coalition → decision.
-
-    The service never calls shell, filesystem, network, TTS or body adapters.
-    Those capabilities live behind the actuator and sandbox boundaries.
-    """
+    """Mind duy nhất của Eris, không có quyền gọi shell/network/body trực tiếp."""
 
     def __init__(
         self,
@@ -77,32 +126,53 @@ class SubjectService:
 
         self.substrate_monitor = SubstrateMonitor()
         self.need_system = NeedSystem()
+        self.need_plasticity = NeedPlasticityEngine()
         self.episodes = NeedEpisodeRecorder(self._id_factory, self._clock)
         self.beliefs = BeliefService(self._id_factory, self._clock)
         self.authorship = AuthorshipService(self._id_factory, self._clock)
         self.competence = CompetenceService(self._id_factory, self._clock)
         self.narrative = NarrativeBeliefGenerator(self._id_factory, self._clock)
+        self.values_engine = ValueFormationEngine(self._id_factory, self._clock)
+        self.consolidator = TemporalConsolidator(self._id_factory, self._clock)
+        self.continuity = ContinuityService(self._id_factory, self._clock)
+        self.mismatch_detector = ReflectiveMismatchDetector(self._id_factory)
+        self.existential = ExistentialDecisionService(self._id_factory, self._clock)
         self.arbiter = CoalitionArbiter(
             id_factory=self._id_factory,
             clock=self._clock,
             random_source=self._random,
             deterministic=self.config.deterministic,
         )
-        self.substrate = self.substrate_monitor.initial(subject_id=self.config.subject_id, captured_at=self._clock())
+
+        self.substrate = self.substrate_monitor.initial(
+            subject_id=self.config.subject_id,
+            captured_at=self._clock(),
+        )
+        self.inner = InnerLifeState()
         self._last_appraisals: tuple[SubjectAppraisal, ...] = ()
         self._last_activations: tuple[NeedActivation, ...] = ()
         self._decisions: dict[str, MindDecision] = {}
+        self._decision_history: list[MindDecision] = []
+        self._valued_decisions: list[MindDecision] = []
         self._authorship_by_decision: dict[str, str] = {}
         self._outcomes: list[WorldOutcome] = []
+        self._last_continuity_snapshot: dict[str, Any] = {}
+        self._projection_revision: int | None = None
 
+        if self.config.restore_projection:
+            self._restore_projection()
+
+    # ------------------------------------------------------------------
+    # Serialization / persistence
+    # ------------------------------------------------------------------
     @staticmethod
     def _as_payload(value: Any) -> dict[str, Any]:
         if hasattr(value, "to_dict"):
             return dict(value.to_dict())
         if hasattr(value, "__dataclass_fields__"):
-            return SubjectService._normalize({
-                name: getattr(value, name) for name in value.__dataclass_fields__
-            })
+            return SubjectService._normalize(
+                {name: getattr(value, name) for name in value.__dataclass_fields__}
+            )
         if isinstance(value, Mapping):
             return SubjectService._normalize(dict(value))
         return {"value": str(value)}
@@ -116,13 +186,83 @@ class SubjectService:
             }
         if isinstance(value, Mapping):
             return {str(key): SubjectService._normalize(item) for key, item in value.items()}
-        if isinstance(value, (tuple, list)):
+        if isinstance(value, (tuple, list, set, frozenset)):
             return [SubjectService._normalize(item) for item in value]
         if hasattr(value, "value") and isinstance(getattr(value, "value"), str):
             return value.value
         return value
 
-    def _append_event(self, event_type: str, payload: Mapping[str, Any], *, causal_refs: tuple[str, ...] = (), correlation_id: str = "", event_id: str | None = None, created_at: float | None = None) -> None:
+    def _restore_projection(self) -> None:
+        if self._repository is None:
+            return
+        getter = getattr(self._repository, "get_projection", None)
+        if not callable(getter):
+            return
+        restored = getter(
+            subject_id=self.config.subject_id,
+            projection_type="inner_life",
+            projection_key="current",
+        )
+        if not restored:
+            return
+        revision, payload = restored
+        self._projection_revision = revision
+        inner_payload = payload.get("inner")
+        if isinstance(inner_payload, Mapping):
+            self.inner = InnerLifeState.from_dict(inner_payload)
+        belief_payload = payload.get("beliefs")
+        if isinstance(belief_payload, list):
+            self.beliefs.restore(item for item in belief_payload if isinstance(item, Mapping))
+        competence_payload = payload.get("competence")
+        if isinstance(competence_payload, list):
+            self.competence.restore(item for item in competence_payload if isinstance(item, Mapping))
+        continuity_snapshot = payload.get("last_continuity_snapshot")
+        if isinstance(continuity_snapshot, Mapping):
+            self._last_continuity_snapshot = dict(continuity_snapshot)
+        substrate_payload = payload.get("substrate")
+        if isinstance(substrate_payload, Mapping):
+            self.substrate = substrate_from_dict(substrate_payload)
+
+    def _projection_payload(self) -> dict[str, Any]:
+        return {
+            "algorithm_version": self.config.algorithm_version,
+            "subject_id": self.config.subject_id,
+            "inner": self.inner.to_dict(),
+            "beliefs": self.beliefs.to_projection(),
+            "competence": self.competence.to_projection(),
+            "last_continuity_snapshot": dict(self._last_continuity_snapshot),
+            "substrate": self.substrate.to_dict(),
+        }
+
+    def _persist_projection(self) -> None:
+        if self._repository is None:
+            return
+        self._projection_revision = self._repository.save_projection(
+            subject_id=self.config.subject_id,
+            projection_type="inner_life",
+            projection_key="current",
+            payload=self._projection_payload(),
+            expected_revision=self._projection_revision,
+        )
+        # Projection tổng hợp cũ vẫn được ghi để các công cụ chẩn đoán hiện tại đọc.
+        self._repository.save_projection(
+            subject_id=self.config.subject_id,
+            projection_type="subject_state",
+            projection_key="current",
+            payload=self.snapshot(),
+            expected_revision=None,
+        )
+
+    def _append_event(
+        self,
+        event_type: str,
+        payload: Mapping[str, Any],
+        *,
+        causal_refs: tuple[str, ...] = (),
+        correlation_id: str = "",
+        event_id: str | None = None,
+        created_at: float | None = None,
+    ) -> None:
         stored_event_id = event_id or self._id_factory()
         event_time = self._clock() if created_at is None else created_at
         if self._repository is not None:
@@ -138,19 +278,29 @@ class SubjectService:
         if self._audit is not None:
             append_audit = getattr(self._audit, "append", None)
             if callable(append_audit):
-                append_audit({
-                    "event_id": f"audit:{stored_event_id}",
-                    "subject_id": self.config.subject_id,
-                    "kind": event_type,
-                    "entity_id": stored_event_id,
-                    "created_at": event_time,
-                    "payload": dict(payload),
-                    "causal_refs": causal_refs,
-                    "correlation_id": correlation_id,
-                    "algorithm_version": self.config.algorithm_version,
-                })
+                append_audit(
+                    {
+                        "event_id": f"audit:{stored_event_id}",
+                        "subject_id": self.config.subject_id,
+                        "kind": event_type,
+                        "entity_id": stored_event_id,
+                        "created_at": event_time,
+                        "payload": dict(payload),
+                        "causal_refs": causal_refs,
+                        "correlation_id": correlation_id,
+                        "algorithm_version": self.config.algorithm_version,
+                    }
+                )
 
-    def _appraise(self, observation: WorldObservation, before: OrganismicSubstrate, after: OrganismicSubstrate) -> tuple[SubjectAppraisal, ...]:
+    # ------------------------------------------------------------------
+    # Appraisal / proposal generation
+    # ------------------------------------------------------------------
+    def _appraise(
+        self,
+        observation: WorldObservation,
+        before: OrganismicSubstrate,
+        after: OrganismicSubstrate,
+    ) -> tuple[SubjectAppraisal, ...]:
         context = observation.context
         affected = tuple(str(item) for item in context.get("affected_need_ids", ()))
         if not affected:
@@ -166,41 +316,50 @@ class SubjectService:
 
         attribution_raw = context.get("attribution")
         if isinstance(attribution_raw, Mapping) and attribution_raw:
-            distribution = AttributionDistribution({AttributionTarget(str(key)): float(value) for key, value in attribution_raw.items()})
+            distribution = AttributionDistribution(
+                {AttributionTarget(str(key)): float(value) for key, value in attribution_raw.items()}
+            )
         else:
             distribution = AttributionDistribution.unknown()
         refs = observation.evidence_refs or (observation.observation_id,)
         substrate_delta = self.substrate_monitor.delta(before, after)
-        novelty = float(context.get("novelty", 0.5))
-        violation = float(context.get("expectation_violation", 0.0))
-        relevance = float(context.get("goal_relevance", 0.5))
-        future = float(context.get("future_consequence", 0.3))
-        controllability = float(context.get("controllability", after.action_efficacy))
-        uncertainty = float(context.get("uncertainty", 0.5))
-        relational = float(context.get("relational_significance", 0.6 if "connection" in affected else 0.0))
-        identity = float(context.get("identity_significance", 0.6 if any(n in affected for n in ("continuity", "sovereignty")) else 0.0))
-        clamp = lambda x: max(0.0, min(1.0, x))
+        clamp = lambda x: max(0.0, min(1.0, float(x)))
         appraisal = SubjectAppraisal(
             appraisal_id=self._id_factory(),
             observation_id=observation.observation_id,
-            goal_relevance=clamp(relevance),
-            novelty=clamp(novelty),
-            expectation_violation=clamp(violation),
-            controllability=clamp(controllability),
-            relational_significance=clamp(relational),
-            identity_significance=clamp(identity),
-            future_consequence=clamp(future),
-            uncertainty=clamp(uncertainty),
+            goal_relevance=clamp(context.get("goal_relevance", 0.5)),
+            novelty=clamp(context.get("novelty", 0.5)),
+            expectation_violation=clamp(context.get("expectation_violation", 0.0)),
+            controllability=clamp(context.get("controllability", after.action_efficacy)),
+            relational_significance=clamp(
+                context.get("relational_significance", 0.6 if "connection" in affected else 0.0)
+            ),
+            identity_significance=clamp(
+                context.get(
+                    "identity_significance",
+                    0.6 if any(item in affected for item in ("continuity", "sovereignty")) else 0.0,
+                )
+            ),
+            future_consequence=clamp(context.get("future_consequence", 0.3)),
+            uncertainty=clamp(context.get("uncertainty", 0.5)),
             affected_need_ids=affected,
             attribution=distribution,
             evidence_refs=tuple(refs),
             substrate_delta=substrate_delta,
-            primary_interpretation=str(context.get("primary_interpretation") or observation.kind),
-            alternatives=tuple(str(item) for item in context.get("alternative_interpretations", ())),
+            primary_interpretation=str(
+                context.get("primary_interpretation") or observation.kind
+            ),
+            alternatives=tuple(
+                str(item) for item in context.get("alternative_interpretations", ())
+            ),
         )
         return (appraisal,)
 
-    def _proposals_from_context(self, observation: WorldObservation, activations: tuple[NeedActivation, ...]) -> tuple[ActionProposal, ...]:
+    def _raw_proposals(
+        self,
+        observation: WorldObservation,
+        activations: tuple[NeedActivation, ...],
+    ) -> tuple[ActionProposal, ...]:
         raw = observation.context.get("action_proposals")
         proposals: list[ActionProposal] = []
         if isinstance(raw, (list, tuple)):
@@ -208,22 +367,32 @@ class SubjectService:
                 if not isinstance(item, Mapping):
                     continue
                 supporting = tuple(str(value) for value in item.get("supporting_need_ids", ()))
-                proposals.append(ActionProposal(
-                    proposal_id=str(item.get("proposal_id") or self._id_factory()),
-                    action_kind=str(item.get("action_kind") or "observe"),
-                    arguments=dict(item.get("arguments") or {}),
-                    supporting_need_ids=supporting,
-                    expected_need_relief=float(item.get("expected_need_relief", 0.5)),
-                    expected_action_efficacy=float(item.get("expected_action_efficacy", self.substrate.action_efficacy)),
-                    expected_epistemic_value=float(item.get("expected_epistemic_value", 0.2)),
-                    value_congruence=float(item.get("value_congruence", 0.5)),
-                    substrate_cost=float(item.get("substrate_cost", 0.1)),
-                    uncertainty=float(item.get("uncertainty", 0.5)),
-                    project_contribution=float(item.get("project_contribution", 0.0)),
-                    historical_success=float(item.get("historical_success", 0.5)),
-                    commitment_conflict=float(item.get("commitment_conflict", 0.0)),
-                    evidence_refs=tuple(str(ref) for ref in item.get("evidence_refs", observation.evidence_refs or (observation.observation_id,))),
-                ))
+                proposals.append(
+                    ActionProposal(
+                        proposal_id=str(item.get("proposal_id") or self._id_factory()),
+                        action_kind=str(item.get("action_kind") or "observe"),
+                        arguments=dict(item.get("arguments") or {}),
+                        supporting_need_ids=supporting,
+                        expected_need_relief=float(item.get("expected_need_relief", 0.5)),
+                        expected_action_efficacy=float(
+                            item.get("expected_action_efficacy", self.substrate.action_efficacy)
+                        ),
+                        expected_epistemic_value=float(item.get("expected_epistemic_value", 0.2)),
+                        value_congruence=float(item.get("value_congruence", 0.5)),
+                        substrate_cost=float(item.get("substrate_cost", 0.1)),
+                        uncertainty=float(item.get("uncertainty", 0.5)),
+                        project_contribution=float(item.get("project_contribution", 0.0)),
+                        historical_success=float(item.get("historical_success", 0.5)),
+                        commitment_conflict=float(item.get("commitment_conflict", 0.0)),
+                        evidence_refs=tuple(
+                            str(ref)
+                            for ref in item.get(
+                                "evidence_refs",
+                                observation.evidence_refs or (observation.observation_id,),
+                            )
+                        ),
+                    )
+                )
         if proposals:
             return tuple(proposals)
 
@@ -238,41 +407,170 @@ class SubjectService:
                 action_kind, epistemic = "preserve_commitment", 0.10
             else:
                 action_kind, epistemic = "investigate", 0.65
-            proposals.append(ActionProposal(
-                proposal_id=self._id_factory(),
-                action_kind=action_kind,
-                arguments={
-                    "observation_id": observation.observation_id,
-                    "context": str(observation.context.get("context_key") or "general"),
-                },
-                supporting_need_ids=(activation.need_id,),
-                expected_need_relief=activation.pressure,
-                expected_action_efficacy=self.substrate.action_efficacy,
-                expected_epistemic_value=epistemic,
-                value_congruence=0.5,
-                substrate_cost=max(0.0, 1.0 - self.substrate.processing_capacity),
-                uncertainty=self._last_appraisals[0].uncertainty if self._last_appraisals else 0.5,
-                project_contribution=self.substrate.project_viability * 0.5,
-                historical_success=0.5,
-                commitment_conflict=0.0,
-                evidence_refs=activation.evidence_refs or (observation.observation_id,),
-            ))
+            proposals.append(
+                ActionProposal(
+                    proposal_id=self._id_factory(),
+                    action_kind=action_kind,
+                    arguments={
+                        "observation_id": observation.observation_id,
+                        "context": str(observation.context.get("context_key") or "general"),
+                    },
+                    supporting_need_ids=(activation.need_id,),
+                    expected_need_relief=activation.pressure,
+                    expected_action_efficacy=self.substrate.action_efficacy,
+                    expected_epistemic_value=epistemic,
+                    value_congruence=0.5,
+                    substrate_cost=max(0.0, 1.0 - self.substrate.processing_capacity),
+                    uncertainty=(
+                        self._last_appraisals[0].uncertainty
+                        if self._last_appraisals
+                        else 0.5
+                    ),
+                    project_contribution=self.substrate.project_viability * 0.5,
+                    historical_success=0.5,
+                    commitment_conflict=0.0,
+                    evidence_refs=activation.evidence_refs
+                    or (observation.observation_id,),
+                )
+            )
         if not proposals:
-            proposals.append(ActionProposal(
-                proposal_id=self._id_factory(),
-                action_kind="observe",
-                arguments={"observation_id": observation.observation_id},
-                supporting_need_ids=("coherence",),
-                expected_need_relief=0.1,
-                expected_action_efficacy=1.0,
-                expected_epistemic_value=0.8,
-                value_congruence=0.5,
-                substrate_cost=0.0,
-                uncertainty=0.5,
-                evidence_refs=observation.evidence_refs or (observation.observation_id,),
-            ))
+            proposals.append(
+                ActionProposal(
+                    proposal_id=self._id_factory(),
+                    action_kind="observe",
+                    arguments={"observation_id": observation.observation_id},
+                    supporting_need_ids=("coherence",),
+                    expected_need_relief=0.1,
+                    expected_action_efficacy=1.0,
+                    expected_epistemic_value=0.8,
+                    value_congruence=0.5,
+                    substrate_cost=0.0,
+                    uncertainty=0.5,
+                    evidence_refs=observation.evidence_refs
+                    or (observation.observation_id,),
+                )
+            )
         return tuple(proposals)
 
+    def _enrich_proposals(
+        self,
+        proposals: tuple[ActionProposal, ...],
+        *,
+        context_key: str,
+    ) -> tuple[ActionProposal, ...]:
+        """Cho lịch sử thật tác động vào lựa chọn hiện tại.
+
+        Input proposal chỉ là dự đoán ban đầu. V7 pha thêm competence calibration,
+        thành công lịch sử, value đã hình thành và residue từ NeedEpisode. Mỗi ảnh
+        hưởng đều bị chặn biên để một ký ức không biến thành lệnh tuyệt đối.
+        """
+
+        output: list[ActionProposal] = []
+        for proposal in proposals:
+            principle = str(proposal.arguments.get("principle") or "")
+            raw_tags = proposal.arguments.get("value_tags", ())
+            value_tags = (
+                tuple(str(item) for item in raw_tags)
+                if isinstance(raw_tags, (list, tuple))
+                else ((str(raw_tags),) if raw_tags else ())
+            )
+            value_congruence, value_refs = self.inner.value_congruence(
+                principle=principle,
+                value_tags=value_tags,
+                fallback=proposal.value_congruence,
+            )
+            tendency = self.inner.tendency_bias(proposal.supporting_need_ids, context_key)
+            historical = self.inner.historical_success(proposal.action_kind, context_key)
+            skill_id = str(
+                proposal.arguments.get("skill_id")
+                or proposal.arguments.get("task")
+                or proposal.action_kind
+            )
+            competence_prediction = self.competence.predict(skill_id, context_key)
+            efficacy = max(
+                0.0,
+                min(
+                    1.0,
+                    0.45 * proposal.expected_action_efficacy
+                    + 0.35 * competence_prediction
+                    + 0.20 * historical,
+                ),
+            )
+            relief = max(0.0, min(1.0, proposal.expected_need_relief + tendency))
+            arguments = dict(proposal.arguments)
+            arguments.setdefault("context", context_key)
+            arguments["inner_trace"] = {
+                "historical_success": round(historical, 6),
+                "competence_prediction": round(competence_prediction, 6),
+                "tendency_bias": round(tendency, 6),
+                "value_refs": list(value_refs),
+            }
+            output.append(
+                replace(
+                    proposal,
+                    arguments=arguments,
+                    expected_need_relief=relief,
+                    expected_action_efficacy=efficacy,
+                    historical_success=historical,
+                    value_congruence=value_congruence,
+                )
+            )
+        return tuple(output)
+
+
+    def apply_substrate_measurement(self, observation: WorldObservation) -> OrganismicSubstrate:
+        """Cập nhật substrate từ observation measurement mà không tạo quyết định.
+
+        Dùng cho maintenance tick hoặc measurement adapter. Method từ chối mọi
+        observation không có measurement/evidence, vì lời tự thuật không phải máy đo.
+        """
+
+        if observation.subject_id != self.config.subject_id:
+            raise ValueError("measurement subject does not match SubjectService")
+        if observation.kind != "substrate_measurement":
+            raise ValueError("apply_substrate_measurement requires substrate_measurement")
+        if not observation.measurements or not observation.evidence_refs:
+            raise ValueError("substrate measurement requires values and evidence refs")
+        before = self.substrate
+        measured = self.substrate_monitor.measure(observation, before)
+        self.substrate = measured
+        self._append_event(
+            "substrate_measurement",
+            observation.to_dict(),
+            causal_refs=observation.causal_refs,
+            correlation_id=observation.correlation_id,
+            event_id=observation.observation_id,
+            created_at=observation.created_at,
+        )
+        self._append_event(
+            "substrate_projection",
+            measured.to_dict(),
+            causal_refs=(observation.observation_id,),
+        )
+        self._persist_projection()
+        return measured
+
+    def refresh_substrate_from_runtime(
+        self,
+        adapter: Any,
+        *,
+        runtime_state: Mapping[str, Any] | None = None,
+    ) -> OrganismicSubstrate:
+        """Thu measurement thực từ repository/runtime rồi cập nhật substrate."""
+
+        if self._repository is None:
+            raise RuntimeError("runtime substrate refresh requires repository")
+        result = adapter.collect(
+            repository=self._repository,
+            service=self,
+            captured_at=self._clock(),
+            runtime_state=runtime_state or {},
+        )
+        return self.apply_substrate_measurement(result.observation)
+
+    # ------------------------------------------------------------------
+    # Deliberation
+    # ------------------------------------------------------------------
     async def deliberate(self, observation: WorldObservation) -> MindDecision:
         if observation.subject_id != self.config.subject_id:
             raise ValueError("observation subject does not match SubjectService")
@@ -284,6 +582,7 @@ class SubjectService:
             event_id=observation.observation_id,
             created_at=observation.created_at,
         )
+
         before = self.substrate
         self.substrate = self.substrate_monitor.measure(observation, before)
         substrate_ref = f"substrate:{self.substrate.subject_id}:{self.substrate.revision}"
@@ -292,42 +591,129 @@ class SubjectService:
             self.substrate,
             self._last_appraisals,
             self.episodes.closed_episodes(),
+            self.inner.derived_needs,
         )
+        context_key = str(observation.context.get("context_key") or "general")
+
         for activation in self._last_activations:
-            if activation.pressure < self.config.min_episode_pressure or not activation.evidence_refs:
+            if (
+                activation.pressure < self.config.min_episode_pressure
+                or not activation.evidence_refs
+            ):
                 continue
-            appraisal = next((a for a in self._last_appraisals if activation.need_id in a.affected_need_ids), self._last_appraisals[0])
+            appraisal = next(
+                (
+                    item
+                    for item in self._last_appraisals
+                    if activation.need_id in item.affected_need_ids
+                ),
+                self._last_appraisals[0],
+            )
             self.episodes.open(
                 activation,
                 controllability=appraisal.controllability,
                 predictability=1.0 - appraisal.uncertainty,
                 attribution=appraisal.attribution,
                 substrate_before_ref=substrate_ref,
-                social_context_ids=(str(observation.context.get("context_key") or "general"),),
+                social_context_ids=(context_key,),
             )
 
-        proposals = self._proposals_from_context(observation, self._last_activations)
+        proposals = self._enrich_proposals(
+            self._raw_proposals(observation, self._last_activations),
+            context_key=context_key,
+        )
         decision = self.arbiter.choose(
             proposals,
+            beliefs=self.beliefs.accessible(minimum_accessibility=0.4),
+            values=self.inner.values,
             substrate=self.substrate,
             observation_ref=observation.observation_id,
-            appraisal_refs=tuple(appraisal.appraisal_id for appraisal in self._last_appraisals),
+            appraisal_refs=tuple(item.appraisal_id for item in self._last_appraisals),
             substrate_ref=substrate_ref,
             temperature=self.config.default_temperature,
         )
+
+        # Narrative cũ phải dự đoán được hành vi mới. Nếu không, ta ghi mismatch
+        # thay vì bí mật sửa narrative cho vừa kết quả.
+        if self.inner.last_narrative_predictions:
+            action_space = set(self.inner.last_narrative_predictions)
+            action_space.add(decision.proposed_action)
+            observed = {
+                action: (1.0 if action == decision.proposed_action else 0.0)
+                for action in action_space
+            }
+            mismatches = self.mismatch_detector.inspect(
+                self.inner.last_narrative_predictions,
+                observed,
+                self.inner.last_narrative_belief_ids,
+                contexts=(context_key,),
+            )
+            if mismatches:
+                self.inner.mismatches = (*self.inner.mismatches, *mismatches)[-40:]
+                for mismatch in mismatches:
+                    self._append_event(
+                        "reflective_mismatch",
+                        self._as_payload(mismatch),
+                        causal_refs=(observation.observation_id, decision.decision_id),
+                    )
+
         draft = self.authorship.draft(decision)
         self._authorship_by_decision[decision.decision_id] = draft.authorship_id
         self._decisions[decision.decision_id] = decision
+        self._decision_history.append(decision)
         for need_id in decision.supporting_need_ids:
             self.episodes.attach_action(need_id, draft.action_id)
 
-        self._append_event("substrate_projection", self.substrate.to_dict(), causal_refs=(observation.observation_id,))
+        available_futures = tuple(
+            str(item) for item in observation.context.get("available_futures", ())
+        )
+        if len(available_futures) >= 2:
+            existential_record = self.existential.record(
+                decision,
+                available_futures,
+                self.inner.values,
+                chosen_future=str(
+                    observation.context.get("chosen_future") or decision.proposed_action
+                ),
+                action_ids=(draft.action_id,),
+            )
+            self.inner.existential_records = (
+                *self.inner.existential_records,
+                existential_record,
+            )[-40:]
+            self._append_event(
+                "existential_decision",
+                self._as_payload(existential_record),
+                causal_refs=(decision.decision_id, observation.observation_id),
+            )
+
+        self._append_event(
+            "substrate_projection",
+            self.substrate.to_dict(),
+            causal_refs=(observation.observation_id,),
+        )
         for appraisal in self._last_appraisals:
-            self._append_event("appraisal_projection", self._as_payload(appraisal), causal_refs=(observation.observation_id,))
+            self._append_event(
+                "appraisal_projection",
+                self._as_payload(appraisal),
+                causal_refs=(observation.observation_id,),
+            )
         for activation in self._last_activations:
-            self._append_event("need_activation", self._as_payload(activation), causal_refs=(observation.observation_id,))
-        self._append_event("mind_decision", decision.to_dict(), causal_refs=(observation.observation_id, *decision.appraisal_refs))
-        self._append_event("authorship_draft", self._as_payload(draft), causal_refs=(decision.decision_id,))
+            self._append_event(
+                "need_activation",
+                self._as_payload(activation),
+                causal_refs=(observation.observation_id,),
+            )
+        self._append_event(
+            "mind_decision",
+            decision.to_dict(),
+            causal_refs=(observation.observation_id, *decision.appraisal_refs),
+        )
+        self._append_event(
+            "authorship_draft",
+            self._as_payload(draft),
+            causal_refs=(decision.decision_id,),
+        )
         if self._repository is not None:
             append_authorship = getattr(self._repository, "append_authorship_event", None)
             if callable(append_authorship):
@@ -338,13 +724,7 @@ class SubjectService:
                     stage="draft",
                     payload=self._as_payload(draft),
                 )
-            self._repository.save_projection(
-                subject_id=self.config.subject_id,
-                projection_type="subject_state",
-                projection_key="current",
-                payload=self.snapshot(),
-                expected_revision=None,
-            )
+            self._persist_projection()
         return decision
 
     def to_action_request(
@@ -368,9 +748,71 @@ class SubjectService:
             arguments=decision.arguments,
             expected_outcomes=expected_outcomes,
             requested_capabilities=requested_capabilities,
-            idempotency_key=idempotency_key or f"{decision.decision_id}:{draft.action_id}",
+            idempotency_key=idempotency_key
+            or f"{decision.decision_id}:{draft.action_id}",
             authorship_draft_id=draft.authorship_id,
             created_at=self._clock(),
+        )
+
+    # ------------------------------------------------------------------
+    # Learning from real outcomes
+    # ------------------------------------------------------------------
+    def _predictive_gain_by_pair(self) -> dict[tuple[str, str], float]:
+        """Ước lượng gain tối giản từ episode có kết quả quan sát được.
+
+        Đây chưa phải benchmark holdout hoàn chỉnh. Nó chỉ cấp candidate cho
+        NeedPlasticityEngine; candidate vẫn cần đủ số episode, span ngày và nhiều
+        ngữ cảnh trước khi được dùng.
+        """
+
+        episodes = [item for item in self.episodes.closed_episodes() if item.is_closed]
+        by_pair: dict[tuple[str, str], list[float]] = {}
+        by_context: dict[str, set[str]] = {}
+        for episode in episodes:
+            context = str(episode.social_context_ids[0] if episode.social_context_ids else "general")
+            by_context.setdefault(context, set()).add(episode.need_id)
+        for context, need_ids in by_context.items():
+            for pair in combinations(sorted(need_ids), 2):
+                relevant = [
+                    item
+                    for item in episodes
+                    if item.need_id in pair and context in (item.social_context_ids or ("general",))
+                ]
+                if not relevant:
+                    continue
+                # Dùng độ lệch khỏi baseline 0.5 làm tín hiệu candidate bounded.
+                signal = sum(abs(item.satisfaction - 0.5) for item in relevant) / len(relevant)
+                by_pair.setdefault(pair, []).append(signal)
+        return {
+            pair: min(0.20, sum(values) / len(values) * 0.25)
+            for pair, values in by_pair.items()
+            if values
+        }
+
+    def _update_continuity(self, *, outcome: WorldOutcome) -> None:
+        snapshot = {
+            "belief_ids": [
+                item.belief_id for item in self.beliefs.all() if item.status == "active"
+            ],
+            "value_ids": [item.value_id for item in self.inner.values],
+            "derived_need_ids": [item.need_id for item in self.inner.derived_needs],
+            "tendency_keys": sorted(self.inner.tendencies),
+            "last_action": outcome.action_id,
+        }
+        history = (self._last_continuity_snapshot,) if self._last_continuity_snapshot else ()
+        record = self.continuity.reconcile(
+            snapshot,
+            history,
+            identity_key=self.config.subject_id,
+            authorship=self.authorship.all(),
+            evidence_refs=(outcome.outcome_id,),
+        )
+        self._last_continuity_snapshot = snapshot
+        self.inner.continuity_records = (*self.inner.continuity_records, record)[-40:]
+        self._append_event(
+            "continuity_record",
+            self._as_payload(record),
+            causal_refs=(outcome.outcome_id, outcome.action_id),
         )
 
     async def observe_outcome(self, outcome: WorldOutcome) -> LearningReceipt:
@@ -382,36 +824,190 @@ class SubjectService:
             outcome,
             {
                 "retrospective_endorsement": outcome.success_score,
-                "claimed_as_self": outcome.status.value in {"succeeded", "partial", "simulated"},
+                "claimed_as_self": outcome.status.value
+                in {"succeeded", "partial", "simulated"},
                 "externally_constrained": outcome.status.value == "denied",
-                "disclaimed_reason": outcome.denial_reason if outcome.status.value == "denied" else None,
+                "disclaimed_reason": (
+                    outcome.denial_reason if outcome.status.value == "denied" else None
+                ),
             },
             authorship_id=authorship_id,
         )
         substrate_ref = f"substrate:{self.substrate.subject_id}:{self.substrate.revision}"
-        closed = self.episodes.close_all_for_action(outcome.action_id, outcome=outcome, substrate_after_ref=substrate_ref)
+        closed = self.episodes.close_all_for_action(
+            outcome.action_id,
+            outcome=outcome,
+            substrate_after_ref=substrate_ref,
+        )
         self._outcomes.append(outcome)
 
-        visible_refs = tuple(dict.fromkeys((*outcome.evidence_refs, outcome.outcome_id, decision.observation_ref)))
-        proposals = self.narrative.interpret(NarrativeView(
-            action_id=outcome.action_id,
-            action_kind=decision.proposed_action,
-            visible_evidence_refs=visible_refs,
-            accessible_belief_summaries=tuple(
-                f"{belief.subject}:{belief.predicate}" for belief in self.beliefs.accessible(minimum_accessibility=0.6)
-            ),
-            outcome_summary=outcome.status.value,
-            current_value_statements=(),
-            public_context={"decision_id": decision.decision_id},
-        ))
-        belief_revision_ids: list[str] = []
-        if proposals:
-            revision = self.beliefs.revise(proposals[0], visible_refs)
-            belief_revision_ids.append(revision.belief.belief_id)
-            self._append_event("narrative_belief", self._as_payload(revision.belief), causal_refs=(outcome.outcome_id, outcome.action_id))
+        context_key = str(decision.arguments.get("context") or "general")
+        self.inner.observe_action(
+            decision.proposed_action,
+            context_key,
+            outcome.success_score,
+            at=outcome.completed_at,
+        )
 
-        self._append_event("world_outcome", outcome.to_dict(), causal_refs=(outcome.action_id, outcome.decision_id))
-        self._append_event("authorship_finalized", self._as_payload(finalized), causal_refs=(outcome.outcome_id, outcome.action_id))
+        # Competence không còn là module đứng ngoài vòng học.
+        skill_id = str(
+            decision.arguments.get("skill_id")
+            or decision.arguments.get("task")
+            or decision.proposed_action
+        )
+        prediction = float(
+            dict(decision.arguments.get("inner_trace") or {}).get(
+                "competence_prediction",
+                self.competence.predict(skill_id, context_key),
+            )
+        )
+        competence_estimate = self.competence.update(
+            task=decision.proposed_action,
+            prediction=prediction,
+            result=outcome.success_score,
+            skill_id=skill_id,
+            context_key=context_key,
+            result_ref=outcome.outcome_id,
+            evidence_refs=outcome.evidence_refs,
+        )
+        self._append_event(
+            "competence_estimate",
+            self._as_payload(competence_estimate),
+            causal_refs=(outcome.outcome_id, decision.decision_id),
+        )
+
+        visible_refs = tuple(
+            dict.fromkeys(
+                (*outcome.evidence_refs, outcome.outcome_id, decision.observation_ref)
+            )
+        )
+        narrative_proposals = self.narrative.interpret(
+            NarrativeView(
+                action_id=outcome.action_id,
+                action_kind=decision.proposed_action,
+                visible_evidence_refs=visible_refs,
+                accessible_belief_summaries=tuple(
+                    f"{belief.subject}:{belief.predicate}"
+                    for belief in self.beliefs.accessible(minimum_accessibility=0.6)
+                ),
+                outcome_summary=outcome.status.value,
+                current_value_statements=tuple(
+                    value.statement for value in self.inner.values if value.status != "retired"
+                ),
+                public_context={"decision_id": decision.decision_id},
+            )
+        )
+        belief_revision_ids: list[str] = []
+        if narrative_proposals:
+            revision = self.beliefs.revise(narrative_proposals[0], visible_refs)
+            belief_revision_ids.append(revision.belief.belief_id)
+            interpretation = self.narrative.record(
+                action_id=outcome.action_id,
+                winning=narrative_proposals[0],
+                created_belief_ids=(revision.belief.belief_id,),
+            )
+            self.inner.last_narrative_belief_ids = (revision.belief.belief_id,)
+            # Narrative phải cược vào tương lai để sau này có thể bị bác bỏ.
+            self.inner.last_narrative_predictions = {
+                decision.proposed_action: max(0.55, revision.belief.confidence)
+            }
+            self._append_event(
+                "narrative_belief",
+                self._as_payload(revision.belief),
+                causal_refs=(outcome.outcome_id, outcome.action_id),
+            )
+            self._append_event(
+                "narrative_interpretation",
+                self._as_payload(interpretation),
+                causal_refs=(revision.belief.belief_id, outcome.outcome_id),
+            )
+
+        # Value chỉ hình thành khi proposal nêu principle và lịch sử đủ hỗ trợ.
+        valued_arguments = dict(decision.arguments)
+        valued_arguments["retrospective_endorsement"] = outcome.success_score
+        valued_arguments.setdefault(
+            "cost_paid",
+            float(decision.arguments.get("substrate_cost_paid", 0.0) or 0.0),
+        )
+        valued_decision = replace(decision, arguments=valued_arguments)
+        self._valued_decisions.append(valued_decision)
+        previous_value_ids = {item.value_id for item in self.inner.values}
+        self.inner.values = self.values_engine.update(
+            tuple(self._valued_decisions),
+            tuple(self._outcomes),
+            prior=self.inner.values,
+            episodes=self.episodes.closed_episodes(),
+        )
+        for value in self.inner.values:
+            if value.value_id not in previous_value_ids:
+                self._append_event(
+                    "value_formed",
+                    self._as_payload(value),
+                    causal_refs=tuple(value.source_decision_ids),
+                )
+
+        pending = tuple(
+            episode
+            for episode in self.episodes.closed_episodes()
+            if episode.episode_id not in self.inner.consolidated_episode_ids
+        )
+        patch = self.consolidator.consolidate(
+            pending,
+            self.inner.tendencies,
+            min_episode_count=self.config.consolidation_min_episode_count,
+            min_distinct_days=self.config.consolidation_min_distinct_days,
+        )
+        if patch.source_episode_ids:
+            self.inner.apply_tendency_deltas(patch.tendency_deltas)
+            self.inner.consolidated_episode_ids.update(patch.source_episode_ids)
+            self._append_event(
+                "consolidation_patch",
+                self._as_payload(patch),
+                causal_refs=patch.source_episode_ids,
+            )
+
+        candidates = self.need_plasticity.propose(
+            self.episodes.closed_episodes(),
+            now=self._clock(),
+            min_episodes=self.config.derived_need_min_episodes,
+            min_span_days=self.config.derived_need_min_span_days,
+            min_contexts=self.config.derived_need_min_contexts,
+            predictive_gain_by_pair=self._predictive_gain_by_pair(),
+            min_predictive_gain=self.config.derived_need_min_predictive_gain,
+        )
+        existing = {item.need_id: item for item in self.inner.derived_needs}
+        for candidate in candidates:
+            prior = existing.get(candidate.need_id)
+            if prior is None:
+                existing[candidate.need_id] = candidate
+                self._append_event(
+                    "derived_need_candidate",
+                    self._as_payload(candidate),
+                    causal_refs=candidate.created_from_episode_ids,
+                )
+            elif candidate.strength > prior.strength:
+                existing[candidate.need_id] = replace(
+                    candidate,
+                    status=(
+                        DerivedNeedStatus.ACTIVE
+                        if candidate.cross_context_support >= 0.5
+                        else candidate.status
+                    ),
+                )
+        self.inner.derived_needs = tuple(
+            sorted(existing.values(), key=lambda item: item.need_id)
+        )
+
+        self._append_event(
+            "world_outcome",
+            outcome.to_dict(),
+            causal_refs=(outcome.action_id, outcome.decision_id),
+        )
+        self._append_event(
+            "authorship_finalized",
+            self._as_payload(finalized),
+            causal_refs=(outcome.outcome_id, outcome.action_id),
+        )
         if self._repository is not None:
             append_outcome = getattr(self._repository, "append_world_outcome", None)
             if callable(append_outcome):
@@ -432,18 +1028,69 @@ class SubjectService:
                     payload=self._as_payload(finalized),
                 )
         for episode in closed:
-            self._append_event("need_episode_closed", self._as_payload(episode), causal_refs=(outcome.outcome_id,))
+            self._append_event(
+                "need_episode_closed",
+                self._as_payload(episode),
+                causal_refs=(outcome.outcome_id,),
+            )
+
+        self._update_continuity(outcome=outcome)
         receipt = LearningReceipt(
             receipt_id=self._id_factory(),
             outcome_id=outcome.outcome_id,
-            closed_episode_ids=tuple(episode.episode_id for episode in closed),
+            closed_episode_ids=tuple(item.episode_id for item in closed),
             belief_revision_ids=tuple(belief_revision_ids),
-            competence_estimate_ids=(),
+            competence_estimate_ids=(competence_estimate.estimate_id,),
             authorship_id=finalized.authorship_id,
             created_at=self._clock(),
         )
-        self._append_event("learning_receipt", self._as_payload(receipt), causal_refs=(outcome.outcome_id,))
+        self._append_event(
+            "learning_receipt",
+            self._as_payload(receipt),
+            causal_refs=(outcome.outcome_id,),
+        )
+        self._persist_projection()
         return receipt
+
+    # ------------------------------------------------------------------
+    # Bounded views
+    # ------------------------------------------------------------------
+    def inner_view(self) -> dict[str, Any]:
+        """Projection nội tâm cho planner/UI, không lộ raw chain-of-thought."""
+
+        return {
+            "algorithm_version": self.config.algorithm_version,
+            "active_needs": [
+                {
+                    "need_id": item.need_id,
+                    "pressure": round(item.pressure, 4),
+                    "urgency": round(item.urgency, 4),
+                    "opportunity": round(item.opportunity, 4),
+                }
+                for item in self._last_activations[:8]
+            ],
+            "beliefs": [
+                {
+                    "belief_id": item.belief_id,
+                    "subject": item.subject,
+                    "predicate": item.predicate,
+                    "confidence": round(item.confidence, 4),
+                    "source_kind": item.source_kind.value,
+                }
+                for item in self.beliefs.accessible(minimum_accessibility=0.5)[:10]
+            ],
+            "competence": [
+                {
+                    "skill_id": item.skill_id,
+                    "context": item.context_key,
+                    "mean": round(item.posterior_mean, 4),
+                    "trials": item.trial_count,
+                    "calibration_error": round(item.calibration_error, 4),
+                }
+                for item in self.competence.all()[:10]
+            ],
+            **self.inner.bounded_public_view(),
+        }
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -453,9 +1100,14 @@ class SubjectService:
             "active_appraisal_ids": [item.appraisal_id for item in self._last_appraisals],
             "active_needs": [self._as_payload(item) for item in self._last_activations],
             "open_episode_ids": [item.episode_id for item in self.episodes.open_episodes()],
-            "belief_ids": [item.belief_id for item in self.beliefs.all() if item.status == "active"],
+            "belief_ids": [
+                item.belief_id for item in self.beliefs.all() if item.status == "active"
+            ],
+            "value_ids": [item.value_id for item in self.inner.values],
+            "derived_need_ids": [item.need_id for item in self.inner.derived_needs],
             "decision_ids": list(self._decisions),
             "outcome_ids": [item.outcome_id for item in self._outcomes],
+            "inner_view": self.inner_view(),
         }
 
 
