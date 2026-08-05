@@ -1,36 +1,60 @@
-# -*- coding: utf-8 -*-
-"""Audit cú pháp cho các đường inference remote.
-
-Tool luôn parse toàn bộ Python source để bắt file hỏng. Finding policy dựa trên
-marker tường minh, tránh báo giả đối với transport/provider adapter hợp lệ.
-"""
+"""AST audit for accidental remote-model calls outside the inference boundary."""
 from __future__ import annotations
 
 import ast
 from pathlib import Path
 from typing import Any
 
-_MARKER = "ERIS_AUDIT_FORBIDDEN_REMOTE_CALL"
+_APPROVED_PATH_PARTS = {
+    ("llm", "client.py"),
+    ("runtime", "inference_broker.py"),
+    ("runtime", "ai_orchestrated", "model_router.py"),
+}
+_REMOTE_METHODS = {"chat", "complete", "completions", "generate_content", "responses", "invoke_model"}
 
 
-def audit(root: str | Path) -> dict[str, Any]:
-    base = Path(root)
+def _approved(relative: Path) -> bool:
+    parts = relative.parts
+    return any(len(parts) >= len(suffix) and tuple(parts[-len(suffix):]) == suffix for suffix in _APPROVED_PATH_PARTS)
+
+
+def audit(root: Path) -> dict[str, Any]:
+    root = Path(root).resolve()
     parse_errors: list[dict[str, Any]] = []
     findings: list[dict[str, Any]] = []
-    scanned = 0
-    for path in sorted(base.rglob("*.py")):
-        if any(part in {".git", "__pycache__", ".pytest_cache", "paraphrase-multilingual-MiniLM-L12-v2"} for part in path.parts):
+    for path in sorted(root.rglob("*.py")):
+        relative = path.relative_to(root)
+        if any(part in {".git", ".venv", "venv", "tests", "tools", "__pycache__"} for part in relative.parts):
             continue
-        scanned += 1
         try:
             source = path.read_text(encoding="utf-8")
-            ast.parse(source, filename=str(path))
-        except Exception as exc:
-            parse_errors.append({"path": str(path.relative_to(base)), "error": f"{type(exc).__name__}: {exc}"})
+            tree = ast.parse(source, filename=str(relative))
+        except (OSError, SyntaxError, UnicodeError) as exc:
+            parse_errors.append({"path": str(relative), "error": str(exc)})
             continue
-        if path.resolve() != Path(__file__).resolve() and _MARKER in source:
-            findings.append({"path": str(path.relative_to(base)), "rule": "forbidden_remote_call_marker"})
-    return {"scanned_files": scanned, "parse_errors": parse_errors, "findings": findings, "passed": not parse_errors and not findings}
+        if _approved(relative):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                continue
+            if node.func.attr not in _REMOTE_METHODS:
+                continue
+            chain = []
+            cursor: ast.AST = node.func
+            while isinstance(cursor, ast.Attribute):
+                chain.append(cursor.attr)
+                cursor = cursor.value
+            if isinstance(cursor, ast.Name):
+                chain.append(cursor.id)
+            rendered = ".".join(reversed(chain))
+            if any(token in rendered.lower() for token in ("openai", "anthropic", "gemini", "client.chat", "client.responses")):
+                findings.append({
+                    "path": str(relative),
+                    "line": int(getattr(node, "lineno", 0)),
+                    "call": rendered,
+                    "rule": "remote_call_outside_inference_boundary",
+                })
+    return {"parse_errors": parse_errors, "findings": findings, "passed": not parse_errors and not findings}
 
 
 __all__ = ["audit"]

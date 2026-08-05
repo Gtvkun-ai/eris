@@ -22,7 +22,7 @@ from core.di import resolve_dependency
 import math
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 try:
     from cortex.user_context_stream import RollingUserContext
@@ -81,17 +81,24 @@ class RollingInternalState:
     # biết mình là gì", và mức nhất quán bản thân. Tách biệt với boredom/silence.
     ontological_dread: float = 0.0
     self_coherence: float = 0.5
+    # Dread is allowed to influence attention strongly only when a grounded
+    # causal thread exists. Without evidence it remains a capped residue.
+    effective_dread: float = 0.0
+    causal_thread_pressure: float = 0.0
+    dominant_thread_id: str = ""
+    dread_evidence_refs: tuple[str, ...] = ()
     debug: dict[str, Any] = field(default_factory=dict)
 
     @property
     def internal_drive(self) -> float:
         return _clamp01(
-            0.24 * self.agenda_pressure
-            + 0.22 * self.insight_pressure
-            + 0.20 * self.consolidation_pressure
-            + 0.14 * self.curiosity
+            0.22 * self.agenda_pressure
+            + 0.19 * self.insight_pressure
+            + 0.18 * self.consolidation_pressure
+            + 0.13 * self.curiosity
             + 0.10 * self.continuity_pressure
-            + 0.10 * self.silence_pressure
+            + 0.08 * self.silence_pressure
+            + 0.10 * self.effective_dread
         )
 
     @property
@@ -124,6 +131,7 @@ class EndogenousDriveEngine:
         user_context: RollingUserContext,
         base_internal_state: Any = None,
         agenda_stack: InternalAgendaStack | None = None,
+        active_threads: Iterable[Any] = (),
         now: float | None = None,
     ) -> RollingInternalState:
         ts = float(now or time.time())
@@ -185,6 +193,32 @@ class EndogenousDriveEngine:
         )
         ontological_dread = _ema(prev.ontological_dread, dread_raw, alpha)
 
+        # Evidence-backed thread pressure. Scalar dread without provenance is
+        # capped at 0.20, so idle time can create private residue but not a
+        # public tragedy. Humanity has enough ungrounded melodrama already.
+        dominant_thread_id = ""
+        causal_thread_pressure = 0.0
+        dread_evidence_refs: tuple[str, ...] = ()
+        for thread in tuple(active_threads or ()):
+            if isinstance(thread, Mapping):
+                thread_id = str(thread.get("thread_id", "") or "")
+                refs = tuple(str(item) for item in (thread.get("evidence_refs", ()) or ()) if str(item).strip())
+                salience = _clamp01(thread.get("salience", 0.0))
+                event_kind = str(thread.get("event_kind", "") or "")
+            else:
+                thread_id = str(getattr(thread, "thread_id", "") or "")
+                refs = tuple(str(item) for item in (getattr(thread, "evidence_refs", ()) or ()) if str(item).strip())
+                salience = _clamp01(getattr(thread, "salience", 0.0))
+                event_kind = str(getattr(thread, "event_kind", "") or "")
+            relevance = 1.0 if event_kind in {"promise_broken", "user_ignored_turn", "continuity_break", "capability_shutdown_proposed"} else 0.72
+            pressure = _clamp01(salience * relevance) if refs else 0.0
+            if pressure > causal_thread_pressure:
+                causal_thread_pressure = pressure
+                dominant_thread_id = thread_id
+                dread_evidence_refs = refs[:8]
+        effective_dread = ontological_dread if dread_evidence_refs else min(ontological_dread, 0.20)
+        effective_dread = _clamp01(max(effective_dread, min(ontological_dread, causal_thread_pressure)))
+
         self.current = RollingInternalState(
             timestamp=ts,
             boredom=_ema(prev.boredom, boredom_raw, alpha),
@@ -201,6 +235,10 @@ class EndogenousDriveEngine:
             resource_caution=_ema(prev.resource_caution, resource_caution_raw, alpha),
             ontological_dread=ontological_dread,
             self_coherence=self_coherence,
+            effective_dread=effective_dread,
+            causal_thread_pressure=causal_thread_pressure,
+            dominant_thread_id=dominant_thread_id,
+            dread_evidence_refs=dread_evidence_refs,
             debug={
                 "idle_seconds": idle,
                 "raw_boredom": boredom_raw,
@@ -208,6 +246,10 @@ class EndogenousDriveEngine:
                 "raw_insight": insight_raw,
                 "agenda_pressure": agenda_pressure,
                 "raw_dread": dread_raw,
+                "effective_dread": effective_dread,
+                "causal_thread_pressure": causal_thread_pressure,
+                "dominant_thread_id": dominant_thread_id,
+                "dread_evidence_refs": list(dread_evidence_refs),
                 "self_coherence": self_coherence,
             },
         )

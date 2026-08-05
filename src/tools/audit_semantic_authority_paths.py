@@ -1,32 +1,47 @@
-# -*- coding: utf-8 -*-
-"""Audit cú pháp/marker cho single semantic authority."""
+"""Static audit for retired phrase-routing authority in production modules."""
 from __future__ import annotations
 
 import ast
 from pathlib import Path
 from typing import Any
 
-_MARKER = "ERIS_AUDIT_FORBIDDEN_SEMANTIC_AUTHORITY"
+_RETIRED_SYMBOLS = {
+    "ActionRouter",
+    "render_capability_registry_prompt",
+    "capability_surface_keywords",
+    "semantic_shadow",
+}
+_PRODUCTION_ROOTS = {"actions", "runtime", "llm", "cortex"}
 
 
-def audit(root: str | Path) -> dict[str, Any]:
-    base = Path(root)
+def audit(root: Path) -> dict[str, Any]:
+    root = Path(root).resolve()
     parse_errors: list[dict[str, Any]] = []
     findings: list[dict[str, Any]] = []
-    scanned = 0
-    for path in sorted(base.rglob("*.py")):
-        if any(part in {".git", "__pycache__", ".pytest_cache", "paraphrase-multilingual-MiniLM-L12-v2"} for part in path.parts):
+    for path in sorted(root.rglob("*.py")):
+        relative = path.relative_to(root)
+        if not relative.parts or relative.parts[0] not in _PRODUCTION_ROOTS:
             continue
-        scanned += 1
+        if any(part in {"tests", "__pycache__"} for part in relative.parts):
+            continue
         try:
             source = path.read_text(encoding="utf-8")
-            ast.parse(source, filename=str(path))
-        except Exception as exc:
-            parse_errors.append({"path": str(path.relative_to(base)), "error": f"{type(exc).__name__}: {exc}"})
+            tree = ast.parse(source, filename=str(relative))
+        except (OSError, SyntaxError, UnicodeError) as exc:
+            parse_errors.append({"path": str(relative), "error": str(exc)})
             continue
-        if path.resolve() != Path(__file__).resolve() and _MARKER in source:
-            findings.append({"path": str(path.relative_to(base)), "rule": "forbidden_semantic_authority_marker"})
-    return {"scanned_files": scanned, "parse_errors": parse_errors, "findings": findings, "passed": not parse_errors and not findings}
+        for node in ast.walk(tree):
+            symbol = ""
+            if isinstance(node, (ast.Name, ast.Attribute)):
+                symbol = node.id if isinstance(node, ast.Name) else node.attr
+            if symbol in _RETIRED_SYMBOLS:
+                findings.append({
+                    "path": str(relative),
+                    "line": int(getattr(node, "lineno", 0)),
+                    "symbol": symbol,
+                    "rule": "retired_semantic_authority_symbol",
+                })
+    return {"parse_errors": parse_errors, "findings": findings, "passed": not parse_errors and not findings}
 
 
 __all__ = ["audit"]

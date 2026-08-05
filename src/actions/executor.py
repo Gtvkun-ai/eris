@@ -32,6 +32,8 @@ class ActionExecutor:
         self.cognitive_runtime = None
         self.environment_runtime = None
         self.project_runtime = None
+        self.sandbox_world = None
+        self.sandbox_capability_token = None
 
     def bind_cognitive_runtime(self, runtime) -> None:
         """Nối executor với runtime nhận thức sau khi Coordinator đã dựng xong.
@@ -49,6 +51,17 @@ class ActionExecutor:
     def bind_project_runtime(self, runtime) -> None:
         """Nối executor với runtime thao tác project autonomous."""
         self.project_runtime = runtime
+
+    def bind_sandbox_world(self, sandbox_world, capability_token) -> None:
+        """Bind the independent world-authority boundary.
+
+        Legacy handlers remain available for compatibility, but once this
+        boundary is bound every dispatch must first receive an operational
+        capability decision.  The policy denies power; it never rewrites the
+        cognitive proposal.
+        """
+        self.sandbox_world = sandbox_world
+        self.sandbox_capability_token = capability_token
 
     #execute() là trung tâm điều phối
     '''
@@ -99,6 +112,27 @@ class ActionExecutor:
                 success=False,
                 message="Action không hợp lệ hoặc chưa được cấp quyền.",
             )
+
+        if self.sandbox_world is not None:
+            if self.sandbox_capability_token is None:
+                return ActionExecutionResult(
+                    action_name=action_name,
+                    action_input=action_input,
+                    success=False,
+                    message="Sandbox từ chối action vì thiếu capability token.",
+                    error_kind="CapabilityMissing",
+                )
+            policy_decision = self.sandbox_world.authorize_legacy_action(
+                action_name, action_input, self.sandbox_capability_token
+            )
+            if not policy_decision.allowed:
+                return ActionExecutionResult(
+                    action_name=action_name,
+                    action_input=action_input,
+                    success=False,
+                    message="Sandbox từ chối action; proposal nhận thức được giữ nguyên.",
+                    error_kind=f"SandboxDenied:{policy_decision.reason}",
+                )
 
         #Dynamic dispatch.
         handler = getattr(self, f"_{action_name}", None)

@@ -34,6 +34,8 @@ class CortexAttentionSignal:
     level: str = "quiet"
     external_pressure: float = 0.0
     internal_drive: float = 0.0
+    causal_thread_pressure: float = 0.0
+    dominant_thread_id: str = ""
     interrupt_cost: float = 0.0
     resource_caution: float = 0.0
     vision_refresh_recommended: bool = False

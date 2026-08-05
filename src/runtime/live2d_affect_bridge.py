@@ -24,6 +24,13 @@ _AFFECT_KEYS = (
     "fatigue",
     "tenderness",
     "cognitive_tension",
+    "ontological_dread",
+    "self_coherence",
+    "vulnerability",
+    "restraint",
+    "withdrawal",
+    "conflict_tension",
+    "shadow_intensity",
 )
 
 
@@ -88,6 +95,7 @@ def emit_runtime_affect(
     thought_pressure: float = 0.0,
     confidence: float = 0.0,
     diary_updated: bool = False,
+    performance_intent: Any = None,
     force: bool = False,
 ) -> bool:
     """Gửi affect nếu state đổi đủ hoặc đến heartbeat.
@@ -104,6 +112,34 @@ def emit_runtime_affect(
         return False
 
     clean = _clean_affect(affect) if affect is not None else _extract_affect(runtime_owner)
+    intent_id = ""
+    thread_id = ""
+    if performance_intent is not None:
+        if isinstance(performance_intent, Mapping):
+            raw_intent = performance_intent
+        else:
+            to_dict = getattr(performance_intent, "to_dict", None)
+            try:
+                raw_intent = to_dict() if callable(to_dict) else {}
+            except Exception:
+                raw_intent = {}
+        if isinstance(raw_intent, Mapping):
+            intent_id = str(raw_intent.get("intent_id", "") or "")
+            thread_id = str(raw_intent.get("thread_id", "") or "")
+            for key in ("vulnerability", "restraint"):
+                if key in raw_intent:
+                    try:
+                        clean[key] = max(0.0, min(1.0, float(raw_intent[key])))
+                    except (TypeError, ValueError):
+                        pass
+            # A body bridge may receive the internal tendency, but not prose or
+            # hidden reasoning. Keep it to numeric pressure.
+            prohibited = tuple(raw_intent.get("prohibited_moves", ()) or ())
+            if prohibited:
+                clean["conflict_tension"] = max(
+                    clean.get("conflict_tension", 0.0),
+                    min(1.0, 0.35 + 0.04 * len(prohibited)),
+                )
     if not clean:
         return False
 
@@ -127,6 +163,8 @@ def emit_runtime_affect(
         thought_pressure=thought_pressure,
         confidence=confidence,
         diary_updated=diary_updated,
+        intent_id=intent_id,
+        thread_id=thread_id,
     )
     try:
         sent = bool(emit(event))

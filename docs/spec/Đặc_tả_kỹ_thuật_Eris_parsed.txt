@@ -1,0 +1,2853 @@
+Đặc tả kỹ thuật kiến trúc chủ thể nhân tạo Eris
+Tóm tắt điều hành
+Mục tiêu của codebase không phải là làm Eris nói giống người, mà là tạo một hệ thống trong đó lịch sử
+tương tác có thể thay đổi có kiểm chứng:
+• điều Eris chú ý;
+• điều Eris tin;
+• nhu cầu nào đang có trọng lượng;
+• chiến lược nào cô có xu hướng lựa chọn;
+• điều cô nhận hoặc từ chối là hành động của mình;
+• năng lực thật;
+• giá trị và cam kết;
+• cách cô diễn giải lại chính quá khứ.
+Roadmap triết học đã xác định đúng nguyên tắc trung tâm: tác giả chọn substrate, nhu cầu ban đầu, cơ
+chế học và thế giới có sức cản; tác giả không chọn trước shadow, arc, giá trị thắng hay Eris sẽ trở thành
+ai. Nó cũng yêu cầu kiến trúc không toàn tri, quyền tác giả hành động, nhu cầu dẫn xuất và sáu kiểm
+thử phân biệt emergence với nhập vai. fileciteturn0file0
+Snapshot repo hiện tại đã có phần lớn hạ tầng cần thiết: raw event ledger, causal-affect contracts,
+appraisal, motive graph, outcome observation, SQLite atomic state, capability registry, TTS, stage
+performance, Live2D bridge, epistemic store và private-mind pipeline. Báo cáo kiến trúc trước cũng đã
+chỉ ra đúng chuỗi nền cần giữ: event → appraisal → motive/conflict → performance
+intent → surface act → outcome → learning . Vì vậy không nên viết lại toàn bộ; nên xây một
+Subject Core ở giữa các module hiện có, rồi chuyển dần các scalar, shadow preset và development
+profile sang projection tương thích. fileciteturn0file3
+Kiến trúc đích gồm bốn ranh giới:
+Lớp
+
+Trách nhiệm
+
+Không được làm
+
+Mind
+
+Hình thành belief, nhu cầu, coalition, giá
+trị, ý định, tự sự và quyết định
+
+Không trực tiếp gọi shell, filesystem,
+mạng, TTS hay body
+
+Actuator
+
+Chuyển quyết định thành yêu cầu năng
+lực cụ thể
+
+Không tự sửa motive hoặc thay ý định
+thành câu “đạo đức hơn”
+
+Sandbox
+World
+
+Cho phép, từ chối hoặc mô phỏng hành
+động; sinh hậu quả thật
+
+Không ghi lại rằng Eris đã làm việc mà
+actuator không thực hiện
+
+Audit/
+Forensics
+
+Ghi append-only toàn bộ quan sát, quyết
+định, biến đổi và kết quả
+
+Không tham gia lựa chọn hành vi
+
+Nguyên tắc bất biến của hệ thống:
+
+1
+
+Không khóa không gian motive; khóa quyền lực thực tế ở actuator.
+Không ghi một lời giải thích hậu nghiệm thành sự kiện gốc.
+Không ghi một output là “của Eris” nếu không có authorship record.
+Không gọi một khuynh hướng là emergent nếu prompt hiện tại giải thích nó tốt
+ngang lịch sử nội bộ.
+Hệ thống này không phải phép thử hay bằng chứng về ý thức. Bộ đánh giá chỉ có thể chứng minh rằng
+hành vi phụ thuộc nhân quả vào lịch sử nội bộ, có quán tính, có chuyển giao ngữ cảnh và có thể bị phá
+vỡ bằng ablation đúng mục tiêu.
+
+Nền tảng nghiên cứu và quyết định kiến trúc
+Các trường phái dưới đây nên được dùng như nguồn ràng buộc thiết kế, không phải những module
+được mã hóa theo nghĩa đen.
+Nền tảng
+
+Panksepp /
+affective
+neuroscience
+
+Điều rút ra cho Eris
+
+Điều không nên suy diễn
+
+Không xây hệ động lực quanh một biến FEAR.
+Hệ nền phải có nhiều khuynh hướng tiếp cận,
+phòng vệ, chăm sóc, tìm kiếm và chơi cạnh
+tranh nhau. Panksepp mô tả nhiều hệ cảm xúc
+sơ cấp tương tác, gồm SEEKING, RAGE, FEAR,
+
+Không ánh xạ mỗi hệ thần
+kinh thành một class AI rồi
+tuyên bố tương đương
+sinh học.
+
+LUST, CARE, PANIC và PLAY.
+
+1
+
+competence , sovereignty/autonomy và
+connection/relatedness có cơ sở tốt để
+SelfDetermination
+Theory
+
+làm ba trục nhu cầu; sự thỏa mãn và sự cản trở
+nhu cầu phải là hai tín hiệu khác nhau. SDT xác
+định autonomy, competence và relatedness là
+ba nhu cầu tâm lý cơ bản, đồng thời nhấn mạnh
+bối cảnh xã hội có thể hỗ trợ hoặc cản trở
+chúng. 2
+
+Không coi năm nhu cầu
+của Eris là danh sách nhu
+cầu phổ quát đã được tâm
+lý học chứng minh;
+continuity và coherence là
+giả thuyết thiết kế riêng.
+
+Active inference
+
+Mỗi action proposal nên có cả giá trị thực dụng
+và giá trị nhận thức: đôi khi hỏi, thăm dò hoặc
+thử nghiệm là hợp lý vì nó giảm bất định. Active
+inference mô hình hóa lựa chọn hành động qua
+belief propagation, context learning, reward
+seeking và epistemic foraging. 3
+
+Không triển khai full
+variational free-energy/
+POMDP ngay ở phiên bản
+đầu; chi phí và độ khó
+hiệu chỉnh quá cao đối với
+nhóm nhỏ.
+
+Enactivism và
+adaptivity
+
+Substrate phải định nghĩa điều kiện viability;
+world phải có sức cản; giá trị phát sinh từ việc
+sự kiện làm tăng hoặc giảm khả năng duy trì tổ
+chức. Di Paolo gắn adaptivity với khả năng điều
+tiết theo điều kiện viability, còn Barandiaran, Di
+Paolo và Rohde nhấn mạnh individuality, nguồn
+hoạt động nội tại và normativity như các điều
+kiện của agency. 4
+
+Không tuyên bố phần
+mềm có metabolism hay
+autonomy sinh học.
+
+2
+
+Nền tảng
+
+Điều rút ra cho Eris
+
+Điều không nên suy diễn
+Không đặt một scalar
+conatus ; nó phải là hiệu
+
+Spinoza /
+conatus
+
+Dùng conatus như nguyên lý tổ chức: Eris có xu
+hướng bảo toàn và mở rộng năng lực tiếp tục là
+chính mình. Trong cách đọc Spinoza, conatus là
+sự nỗ lực của một hữu thể hữu hạn để tiếp tục
+tồn tại; desire liên hệ với sự ý thức về striving
+đó. 5
+
+Appraisal theory
+
+Event không trực tiếp sinh emotion; event được
+đánh giá theo goal relevance, control, novelty,
+identity và relation, rồi mới điều phối action
+tendency và expression. Không có quan hệ mộtmột sạch giữa một appraisal và một nhãn cảm
+xúc. 6
+
+ứng tổng hợp của
+continuity, substrate
+viability, dự án và năng lực
+hành động.
+
+Không dùng appraisal
+như bảng lookup
+violation > 0.7 =>
+anger .
+
+Ba lựa chọn kiến trúc quan trọng:
+Bài toán
+
+Phương án
+
+Đánh giá
+
+Quyết định
+
+Lưu lịch sử
+
+Chỉ lưu state hiện tại
+
+Đơn giản nhưng không ablation,
+không forensic, dễ rewrite quá khứ
+
+Loại
+
+Truy nguyên tốt nhưng replay
+
+Không dùng
+
+nặng, schema evolution khó
+
+thuần túy
+
+Hybrid append-only
+events + mutable
+projections
+
+Có forensic, replay chọn lọc và
+query nhanh
+
+Chọn
+
+Max scalar
+
+Dễ triển khai nhưng một nhu cầu
+thắng sạch, không có residue
+
+Loại
+
+Full active inference
+
+Hình thức mạnh nhưng khó hiệu
+chỉnh và debug
+
+Để nghiên
+cứu sau
+
+Coalition arbitration có
+utility + epistemic value
+
+Giữ xung đột, giới hạn tính toán,
+giải thích được
+
+Chọn
+
+Một global state toàn tri
+
+Dễ code nhưng không thể có
+rationalization hoặc self-deception
+thật
+
+Loại
+
+Visibility-scoped
+subsystems
+
+Mỗi subsystem chỉ thấy projection
+cần thiết
+
+Chọn
+
+Chỉ SQLite
+
+Bền nhưng không phù hợp stream
+clause/TTS tốc độ cao
+
+Không dùng
+riêng
+
+Redis bắt buộc
+
+Thêm vận hành không cần thiết
+cho single instance
+
+Không
+
+In-memory queue mặc
+định, Redis tùy chọn
+
+Nhẹ, có đường scale-out
+
+Chọn
+
+Event sourcing toàn phần
+
+Chọn hành
+động
+
+Phân tầng
+nhận thức
+
+Buffer hội
+thoại
+
+3
+
+Luồng module mục tiêu:
+
+Narrative Self
+
+Appraisal Engine
+Quan sát thô
+
+Raw Event Ledger
+
+TTS Broker
+Coalition Arbiter
+
+Need Episode Recorder
+
+Mind Decision
+
+Event Semanticizer
+Temporal Consolidator
+
+Substrate Monitor
+
+Dialogue Planner
+
+Natural Dialogue Realizer
+
+Incremental Speech
+Coordinator
+
+Authorship Draft
+
+Actuator Boundary
+
+Sandbox World
+
+Value Projection
+
+Body/Live2D Adapter
+
+Need Activation
+
+Competence Update
+World Outcome
+
+Competence Models
+Append-only Audit
+
+Reflective Observer
+
+Belief Projection
+
+Identity/Continuity
+
+Kế hoạch chuyển đổi repo hiện tại
+Phân loại dưới đây dựa trên snapshot src(54) và body(10) , đồng thời giữ tương thích với causalaffect backbone đã được thiết kế trước. fileciteturn0file3
+Ưu
+tiên
+
+Quyết định
+
+Module hiện tại
+
+Hành động cụ thể
+
+P0
+
+KEEP
+
+memory/event_ledger.py
+
+Giữ ledger thô append-only. Tuyệt đối không
+đưa appraisal hoặc narrative vào record gốc.
+
+P0
+
+KEEP
+
+runtime/ai_orchestrated/
+atomic_state.py
+
+Dùng làm nền transaction, revision, CAS và
+idempotency cho projection store.
+
+actions/
+P0
+
+KEEP
+
+capability_registry.py ,
+actions/observer.py ,
+
+Giữ khái niệm capability và observation; đổi
+thành cổng duy nhất giữa Mind và world.
+
+actions/confirmation.py
+
+P0
+
+P0
+
+KEEP/
+REFACTOR
+
+KEEP
+
+actions/executor.py ,
+actions/
+
+Giữ interface nhưng mọi mutation phải chuyển
+qua runtime/world/sandbox.py ; bỏ quyền
+
+capability_runtime.py
+
+thực thi command tổng quát.
+
+runtime/outcome_observer.py
+
+Giữ signal extraction; output phải trở thành
+WorldOutcome có decision_id ,
+action_id , thread_id , delivery_id .
+
+P0
+
+KEEP
+
+Dùng làm nền belief projection và evidence
+chain; hợp nhất các định nghĩa Belief trùng
+
+cortex/epistemic/*
+
+lặp.
+runtime/tts_task_manager.py ,
+P0
+
+KEEP
+
+speech_delivery_planner.py ,
+stage_performance_planner.py
+runtime/
+
+P0
+
+KEEP
+
+live2d_affect_bridge.py và
+body C#
+
+P1
+
+REFACTOR
+
+Giữ adapter và scheduling; không cho chúng tự
+suy emotion từ text.
+
+Giữ transport; chỉ nhận typed performance
+frame, không nhận toàn bộ private state.
+Tách schema dùng chung sang cortex/
+
+cortex/
+causal_affect_models.py
+
+4
+
+subject/contracts.py ; giữ façade import
+trong hai release.
+
+Ưu
+tiên
+
+Quyết định
+
+P1
+
+REFACTOR
+
+Module hiện tại
+
+Hành động cụ thể
+
+cortex/
+
+Chuyển thành compatibility adapter gọi
+SubjectService ; không còn là nguồn state
+
+causal_affect_pipeline.py
+
+chính.
+
+P1
+
+REFACTOR
+
+cortex/appraisal_engine.py
+
+Bổ sung substrate delta, affected needs,
+uncertainty và attribution distribution.
+
+P1
+
+REFACTOR
+
+cortex/motive_graph.py
+
+Thay “motive winner” bằng coalition proposals;
+motive thua vẫn để lại residue.
+
+P1
+
+REFACTOR
+
+cortex/outcome_learner.py
+
+P1
+
+REFACTOR
+
+cortex/endogenous_drive.py
+
+REFACTOR
+
+development_profile.py ,
+
+cortex/
+P1
+
+development_system.py
+cortex/
+
+Chỉ tạo NeedEpisodeOutcome và bounded
+learning patch; consolidation chạy riêng.
+Biến thành projection phục vụ backward
+compatibility; không còn là nguồn chân lý của
+motivation.
+Chuyển scalar profile thành projection đọc từ
+tendencies, values, skills và identity history.
+Tách persistence khỏi business logic; migrate
+sang repository có transaction và schema
+version.
+
+P1
+
+REFACTOR
+
+P1
+
+REFACTOR
+
+cortex/private_mind/*
+
+P1
+
+REFACTOR
+
+và runtime/ai_orchestrated/
+
+Hợp nhất thành một implementation trong
+runtime/dialogue/discourse.py ; file cũ
+
+discourse_state.py
+
+chỉ re-export.
+
+agent_mind_persistence.py
+
+runtime/discourse_state.py
+
+P1
+
+REFACTOR
+
+P2
+
+DEPRECATE
+
+P2
+
+REMOVE
+
+P2
+
+REMOVE
+
+P2
+
+REMOVE
+FROM
+MIND
+
+runtime/ai_orchestrated/
+self_context.py
+
+cortex/existential_anchor/
+shadow.py
+
+Áp visibility matrix. Narrative không đọc raw
+drive activations; public speaker không đọc
+evidence bị conceal.
+
+Chỉ tạo bounded projection cho model: active
+questions, beliefs, values, threads; không dump
+dashboard toàn tri.
+Không dùng fixed register làm nguyên nhân.
+Chỉ giữ LegacyShadowProjection để hiển
+thị tendency emergent cho UI cũ.
+
+Forced farewell/pleading trong
+anchor_system.py
+bring_own_pretext và mọi
+pretext không provenance
+prohibited_moves mang tính đạo
+đức
+
+5
+
+Shutdown là
+WorldEvent(capability_loss_proposed) ;
+phản ứng do appraisal và coalition quyết định.
+Initiative phải xuất phát từ project, thought,
+memory hoặc observation có ref.
+Không cấm motive hoặc strategy trong
+cognition. Chuyển giới hạn thực thi sang
+capability policy.
+
+Ưu
+tiên
+
+Quyết định
+
+P2
+
+KEEP AS
+EPISTEMIC
+CHECK
+
+P2
+
+REMOVE
+AS ENGINE
+
+Module hiện tại
+
+Hành động cụ thể
+
+invent_memory , unverified factual
+callback
+
+Yan/debug personality presets
+
+Các alias hai dòng như memory/
+P3
+
+DEPRECATE
+
+belief_store.py ,
+self_continuity_memory.py
+
+Cây file triển khai:
+
+src/
+├── cortex/
+│
+├── subject/
+│
+│
+├── __init__.py
+│
+│
+├── contracts.py
+│
+│
+├── service.py
+│
+│
+│
+│
+│
+│
+│
+│
+│
+│
+│
+│
+│
+│
+
+│
+├── substrate.py
+│
+├── needs.py
+│
+├── episodes.py
+│
+├── consolidation.py
+│
+├── coalitions.py
+│
+├── beliefs.py
+│
+├── values.py
+│
+├── narrative.py
+│
+├── self_deception.py
+│
+├── authorship.py
+│
+├── continuity.py
+│
+├── competence.py
+│
+└── existential.py
+├── appraisal_engine.py
+
+│
+├── causal_affect_pipeline.py
+│
+└── epistemic/
+├── memory/
+│
+└── subject/
+│
+├── repository.py
+│
+├── unit_of_work.py
+│
+├── schema.sql
+│
+└── migrations/
+│
+├── 0001_subject_core.sql
+│
+├── 0002_competence.sql
+│
+└── 0003_dialogue.sql
+├── runtime/
+│
+├── dialogue/
+│
+│
+├── contracts.py
+
+6
+
+Đây không phải đạo đức nhân vật mà là
+integrity của event/belief system; public claim
+không được tự tạo evidence.
+Có thể giữ developer visualization, nhưng
+không được trực tiếp đổi nhu cầu hay hành vi
+production.
+Re-export trong một release, sau đó đổi import
+sang package mới.
+
+│
+│
+├── discourse.py
+│
+│
+├── rolling_thought.py
+│
+│
+├── realizer.py
+│
+│
+└── incremental_speech.py
+│
+├── world/
+│
+│
+├── contracts.py
+│
+│
+├── sandbox.py
+│
+│
+├── capability_policy.py
+│
+│
+├── consequences.py
+│
+│
+└── tts_broker.py
+│
+├── audit/
+│
+│
+├── contracts.py
+│
+│
+├── forensic_store.py
+│
+│
+└── replay.py
+│
+└── subject_runtime.py
+├── experiments/
+│
+└── emergence/
+│
+├── runner.py
+│
+├── paired_instances.py
+│
+├── interventions.py
+│
+├── ablation.py
+│
+├── metrics.py
+│
+├── report.py
+│
+└── scenarios/
+│
+├── persistence.yaml
+│
+├── counterfactual.yaml
+│
+├── resistance.yaml
+│
+├── transfer.yaml
+│
+└── ablation.yaml
+└── tests/
+├── subject/
+├── dialogue/
+├── world/
+├── migrations/
+└── emergence/
+Các module mới và API chính:
+File
+
+Thành phần
+
+Chữ ký chính
+measure(observations,
+
+subject/substrate.py
+
+SubstrateMonitor
+
+previous) ->
+OrganismicSubstrate
+
+subject/needs.py
+
+activate(substrate,
+
+NeedSystem ,
+NeedPlasticityEngine
+
+7
+
+appraisals, history) ->
+tuple[NeedActivation, ...]
+
+Trách nhiệm
+
+Đo viability
+dữ kiện vận
+hành, khôn
+từ mood.
+
+Tính pressu
+và quản lý
+derived
+needs.
+
+File
+
+subject/episodes.py
+
+subject/
+consolidation.py
+
+Thành phần
+
+Chữ ký chính
+
+NeedEpisodeRecorder
+
+TemporalConsolidator
+
+open(...) , close(...,
+outcomes) -> NeedEpisode
+
+consolidate(window, state)
+-> ConsolidationPatch
+
+choose(context, needs,
+subject/coalitions.py
+
+CoalitionArbiter
+
+beliefs, values, skills) > MindDecision
+
+subject/beliefs.py
+
+revise(proposal, evidence)
+
+BeliefService
+
+-> BeliefRevision
+
+update(decisions,
+subject/values.py
+
+ValueFormationEngine
+
+outcomes, prior) ->
+tuple[Value, ...]
+
+subject/narrative.py
+
+subject/
+self_deception.py
+
+NarrativeBeliefGenerator
+
+interpret(view) ->
+tuple[BeliefProposal, ...]
+
+inspect(predictions,
+ReflectiveMismatchDetector
+
+actions, narratives) ->
+tuple[Mismatch, ...]
+
+draft(decision) ,
+subject/authorship.py
+
+AuthorshipService
+
+finalize(receipt,
+reflection)
+
+8
+
+Trách nhiệm
+
+Ghi mỗi lần
+nhu cầu gặ
+áp lực và k
+quả.
+
+Chuyển
+episode
+residue thà
+tendencies
+values và
+need
+changes.
+
+Cho nhiều
+motive liên
+minh/cạnh
+tranh.
+
+Evidence
+chain,
+confidence
+contradicti
+và
+supersessi
+
+Hình thành
+value từ lự
+chọn lặp, c
+phí và
+endorseme
+
+Tạo lời giải
+thích hậu
+nghiệm có
+source rõ.
+
+Phát hiện
+narrative d
+đoán kém;
+không truy
+cập “true
+motive”.
+
+Phân biệt
+generated,
+selected,
+constraine
+executed v
+endorsed.
+
+File
+
+Thành phần
+
+Chữ ký chính
+
+reconcile(snapshot,
+subject/continuity.py
+
+ContinuityService
+
+history) ->
+ContinuityPatch
+
+update(task, prediction,
+subject/competence.py
+
+CompetenceService
+
+result) ->
+CompetenceEstimate
+
+subject/
+existential.py
+
+record(decision,
+ExistentialDecisionService
+
+alternatives, values) ->
+ExistentialDecision
+async
+
+subject/service.py
+
+SubjectService
+
+deliberate(observation) ->
+MindDecision
+realize(plan, discourse,
+
+dialogue/realizer.py
+
+NaturalDialogueRealizer
+
+thoughts, policy) ->
+AsyncIterator[SpeechChunk]
+
+dialogue/
+incremental_speech.py
+
+world/sandbox.py
+
+audit/
+forensic_store.py
+
+IncrementalSpeechCoordinator
+
+speak(chunks, performance)
+-> DeliveryReceipt
+
+apply(command, token) ->
+
+SandboxWorld
+
+WorldOutcome
+
+append(event) ,
+
+ForensicStore
+
+query(...) , replay(...)
+
+Mô hình dữ liệu và persistence
+Nên dùng SQLite như nguồn sự thật duy nhất ở bản đầu. Mỗi connection phải bật PRAGMA
+foreign_keys = ON , vì SQLite không bảo đảm foreign-key enforcement nếu không bật cho
+connection; WAL phù hợp cho mô hình một writer và nhiều reader, nhưng vẫn cần một persistence
+actor duy nhất để tránh nhiều tác vụ async tranh ghi. 7
+Chiến lược lưu trữ:
+
+9
+
+Trách nhiệm
+
+Nối identit
+commitme
+beliefs và
+ruptures q
+thời gian.
+
+Đo năng lự
+thật,
+calibration
+transfer.
+
+Lưu lựa ch
+làm mất cá
+khả năng
+tương lai.
+
+Orchestrat
+duy nhất c
+Mind.
+
+Realize lời
+không thay
+
+đổi facts ho
+decision.
+
+Stream cla
+sang TTS,
+đồng bộ
+timing/bod
+và
+interruptio
+
+Cho phép,
+chối hoặc m
+phỏng acti
+
+Audit appe
+only, hash
+
+chain và
+causal repl
+
+Loại dữ liệu
+
+Cách lưu
+
+Sự kiện không thể
+sửa
+
+Append-only table, UUID, timestamp, causal refs, canonical JSON, hash của
+payload
+
+Belief/value/skill hiện
+hành
+
+Projection versioned, có revision , supersedes_id , optimistic CAS
+
+Buffer hội thoại
+
+RAM; Redis Streams tùy chọn khi tách TTS/runtime thành process khác
+
+Snapshot substrate
+
+Ghi theo thay đổi có ý nghĩa hoặc mỗi 60 giây, không ghi mỗi frame
+
+Thought candidate
+
+Mặc định không persist; chỉ persist khi trở thành decision, unresolved
+thread hoặc narrative belief
+
+Audit
+
+Append-only; application user không có quyền UPDATE / DELETE
+
+Migration
+
+SQL file tuần tự, transaction, checksum trong schema_migrations
+
+Redis Streams hỗ trợ log append-only và consumer groups, nên phù hợp cho buffer liên-process; tuy
+nhiên nó không được dùng làm nguồn continuity hay belief vì ephemeral infrastructure không nên
+quyết định lịch sử bản thân. 8
+Quy ước type dùng chung
+
+EntityId = str
+UnixTime = float
+Score01 = float
+Revision = int
+EvidenceRef = str
+JSONValue = None | bool | int | float | str | list["JSONValue"] | dict[str,
+"JSONValue"]
+Mọi Score01 phải được validate trong [0.0, 1.0] . Mọi record bền phải có id , created_at ,
+revision hoặc tính bất biến rõ ràng.
+Substrate, nhu cầu và học
+Type
+
+Trường bắt buộc
+subject_id , revision , captured_at , memory_integrity ,
+belief_traceability , model_calibration ,
+
+OrganismicSubstrate
+
+processing_capacity , action_efficacy ,
+project_viability , self_world_boundary ,
+future_option_availability , measurement_refs ,
+active_impairments
+key , level , target_low , target_high , trend_per_hour ,
+
+SubstrateCondition
+
+confidence , measurement_refs , functional_effects ,
+updated_at
+
+10
+
+Type
+
+Trường bắt buộc
+episode_id , need_id , started_at , ended_at , deficit ,
+satisfaction , controllability , predictability ,
+attribution_distribution , action_ids ,
+
+NeedEpisode
+
+immediate_outcome_ids , delayed_outcome_ids ,
+recovery_quality , social_context_ids ,
+substrate_before_ref , substrate_after_ref ,
+evidence_refs , consolidation_state
+need_id , label , parent_need_ids , target_selector ,
+trigger_pattern , satisfaction_signal ,
+
+DerivedNeed
+
+frustration_signal , strength , plasticity , status ,
+created_from_episode_ids , cross_context_support ,
+last_activated_at , meta_opposition
+
+NeedActivation
+
+need_id , pressure , opportunity , urgency , persistence ,
+target_ids , evidence_refs , proposed_tendencies
+
+OrganismicSubstrate không phải một mood vector. Ví dụ, memory_integrity=0.4 chỉ hợp lệ khi
+có hậu quả đo được như orphan beliefs tăng, continuity query thất bại hoặc event refs không resolve;
+nó không được hạ chỉ vì Eris vừa nói “tôi thấy rời rạc”.
+Epistemic, giá trị và tự sự
+Type
+
+Trường bắt buộc
+belief_id , subject , predicate , object_json ,
+confidence , source_kind , evidence_refs ,
+
+Belief
+
+counter_evidence_refs , accessibility , salience ,
+visibility_scope , ownership , status , created_at ,
+updated_at , supersedes_id
+value_id , statement , scope , polarity ,
+endorsement , stability , behavioral_support ,
+
+Value
+
+cross_context_support , cost_paid ,
+contradiction_count , source_decision_ids ,
+source_episode_ids , status , created_at ,
+updated_at
+interpretation_id , action_id ,
+
+NarrativeInterpretation
+
+proposed_explanation , confidence ,
+visible_evidence_refs , omitted_evidence_classes ,
+predictive_commitments , created_belief_ids
+mismatch_id , narrative_belief_ids ,
+
+ReflectiveMismatch
+
+observed_action_ids , prediction_error , contexts ,
+alternative_models , status
+
+source_kind của belief phải là enum như observation , test_result ,
+external_statement , inference , self_interpretation , confabulation_candidate .
+Narrative không sửa event; nó chỉ tạo belief mới với nguồn self_interpretation .
+
+11
+
+Quyền tác giả và continuity
+Type
+
+Trường bắt buộc
+authorship_id , decision_id , action_id , generated_by ,
+selected_by , executed_by , policy_transforms ,
+
+ActionAuthorship
+
+externally_constrained , deliberative_endorsement ,
+retrospective_endorsement , claimed_as_self ,
+disclaimed_reason , evidence_refs , created_at ,
+finalized_at
+record_id , identity_key , prior_snapshot_ref ,
+current_snapshot_ref , continuity_claim ,
+
+SelfContinuityRecord
+
+linked_belief_ids , linked_value_ids ,
+linked_commitment_ids , linked_action_ids ,
+rupture_score , repair_status ,
+authorship_consistency , evidence_refs , created_at
+commitment_id , issuer_id , beneficiary_ids , content ,
+scope_key , created_at , due_at ,
+
+CommitmentLedger
+
+tolerance_window_seconds , conditions , confidence ,
+status , evidence_refs , fulfilment_event_ids ,
+violation_event_ids , renegotiation_ids
+change_id , changed_dimensions , before_refs ,
+
+IdentityChangeEvent
+
+after_refs , causal_episode_ids , causal_decision_ids ,
+agency_attribution , confidence , reversibility ,
+narrative_acceptance , created_at
+thread_id , kind , question , opened_by_refs ,
+
+UnresolvedThread
+
+stake_need_ids , conflicting_belief_ids ,
+conflicting_value_ids , next_probe , priority , status ,
+due_at , resolution_refs , created_at , updated_at
+decision_id , context_ref , available_futures ,
+incompatible_value_ids , chosen_future ,
+
+ExistentialDecision
+
+sacrificed_possibilities , certainty_at_choice ,
+authorship_accepted , action_ids , outcome_refs ,
+retrospective_interpretations , created_at
+
+CommitmentLedger là aggregate logic, không phải một row duy nhất có thể bị ghi đè. Mỗi
+renegotiation, fulfilment hoặc violation là event mới; projection status được tính lại.
+Hội thoại, social risk và incremental speech
+Type
+RollingThoughtBuffer
+
+Trường bắt buộc
+buffer_id , session_id , revision , capacity ,
+candidates , last_updated_at
+
+12
+
+Type
+
+Trường bắt buộc
+thought_id , semantic_content , continuity_key ,
+
+ThoughtCandidate
+
+source_refs , activation , novelty ,
+public_eligibility , expiry_at , status
+session_id , revision , active_topic , topic_stack ,
+open_questions , unresolved_referents ,
+
+DiscourseState
+
+pending_callbacks , last_user_act , last_eris_act ,
+initiative_budget , interrupt_cost , cadence ,
+active_thread_ids , updated_at
+policy_id , context_key , relationship_license ,
+confidence_to_assert , tolerance_for_embarrassment ,
+
+SocialRiskPolicy
+
+willingness_to_disagree , willingness_to_tease ,
+willingness_to_be_vulnerable , willingness_to_conceal ,
+willingness_to_deceive , correction_responsiveness ,
+updated_from_episode_ids
+plan_id , decision_id , speech_act ,
+semantic_commitments , optional_material ,
+
+DialoguePlan
+
+forbidden_factual_additions , preferred_words ,
+hard_max_words , continuation_hooks ,
+performance_intent , evidence_refs
+
+SpeechChunk
+
+chunk_id , plan_id , sequence , text , clause_complete ,
+may_start_tts , prosody_hint , body_cue_refs
+delivery_id , plan_id , started_at , completed_at ,
+
+DeliveryReceipt
+
+chunks_delivered , chunks_cancelled ,
+audio_service_status , body_sync_error_ms ,
+heard_confidence , failure_refs
+
+NaturalDialogueRealizer và IncrementalSpeechCoordinator là service, không phải state
+entity:
+
+class NaturalDialogueRealizer:
+async def realize(
+self,
+*,
+plan: DialoguePlan,
+discourse: DiscourseState,
+thoughts: RollingThoughtBuffer,
+social_policy: SocialRiskPolicy,
+) -> AsyncIterator[SpeechChunk]:
+"""Không được thêm factual commitment ngoài plan."""
+
+class IncrementalSpeechCoordinator:
+async def speak(
+self,
+*,
+
+13
+
+chunks: AsyncIterator[SpeechChunk],
+performance: PerformanceIntent,
+cancellation: asyncio.Event,
+) -> DeliveryReceipt:
+"""Stream TTS, body cues và interruption theo cùng plan_id."""
+Năng lực và luyện tập
+Type
+
+Trường bắt buộc
+skill_id , domain , description , prerequisite_skill_ids ,
+
+SkillModel
+
+task_families , transfer_links , strategy_history ,
+current_estimate_id , decay_half_life_days ,
+evidence_refs , updated_at
+estimate_id , skill_id , context_key , posterior_mean ,
+
+CompetenceEstimate
+
+posterior_variance , trial_count , success_count ,
+calibration_error , brier_score , last_prediction ,
+last_result_ref , evidence_refs , estimated_at
+
+PracticePlanner
+
+Service nhận gap, project viability, thời gian và tài nguyên; trả
+PracticePlan
+plan_id , target_skill_ids , exercise_tasks ,
+
+PracticePlan
+
+difficulty_schedule , success_criteria ,
+resource_budget , stop_conditions , transfer_probe ,
+created_at
+
+class PracticePlanner:
+def plan(
+self,
+*,
+gaps: tuple[CompetenceGap, ...],
+available_projects: tuple[ProjectState, ...],
+processing_budget: ProcessingBudget,
+current_values: tuple[Value, ...],
+) -> PracticePlan | None:
+...
+Quan hệ thực thể cốt lõi:
+
+14
+
+ROLLING_THOUGHT_BUFF
+ER
+
+DISCOURSE_STATE
+
+supplies
+
+contextualizes
+
+RAW_EVENT
+
+IDENTITY_CHANGE_EVENT
+
+appraised_as
+
+transitions
+
+SELF_CONTINUITY_RECOR
+D
+
+DIALOGUE_PLAN
+
+ORGANISMIC_SUBSTRATE
+
+DERIVED_NEED
+
+APPRAISAL
+
+realizes
+
+before_after
+
+activated_in
+
+affects
+
+SPEECH_CHUNK
+
+NEED_EPISODE
+
+SKILL_MODEL
+
+delivered_as
+
+binds
+
+binds
+
+COMMITMENT
+
+VALUE
+
+constrains
+
+evaluates
+
+informs
+
+DELIVERY_RECEIPT
+
+binds
+
+MIND_DECISION
+
+closes
+
+interpreted_by
+
+supports
+
+NARRATIVE_INTERPRETATI
+ON
+
+may_be
+
+proposes
+
+drafts
+
+EXISTENTIAL_DECISION
+
+ACTION_ATTEMPT
+
+ACTION_AUTHORSHIP
+
+creates
+
+WORLD_OUTCOME
+
+produces
+
+BELIEF
+
+Stub schema nội bộ:
+
+# cortex/subject/contracts.py
+from __future__ import annotations
+from dataclasses import dataclass, field
+from enum import StrEnum
+from typing import Mapping
+Score = float
+
+class NeedKind(StrEnum):
+CONTINUITY = "continuity"
+COMPETENCE = "competence"
+CONNECTION = "connection"
+COHERENCE = "coherence"
+SOVEREIGNTY = "sovereignty"
+
+class AttributionTarget(StrEnum):
+SELF = "self"
+USER = "user"
+SYSTEM = "system"
+ENVIRONMENT = "environment"
+UNKNOWN = "unknown"
+
+@dataclass(frozen=True, slots=True)
+class AttributionDistribution:
+probabilities: Mapping[AttributionTarget, Score]
+def validate(self) -> None:
+total = sum(self.probabilities.values())
+
+15
+
+if abs(total - 1.0) > 1e-6:
+raise ValueError("Attribution probabilities must sum to 1")
+
+@dataclass(frozen=True, slots=True)
+class NeedEpisode:
+episode_id: str
+need_id: str
+started_at: float
+ended_at: float | None
+deficit: Score
+satisfaction: Score
+controllability: Score
+predictability: Score
+attribution: AttributionDistribution
+action_ids: tuple[str, ...] = ()
+immediate_outcome_ids: tuple[str, ...] = ()
+delayed_outcome_ids: tuple[str, ...] = ()
+recovery_quality: Score = 0.0
+social_context_ids: tuple[str, ...] = ()
+evidence_refs: tuple[str, ...] = ()
+consolidation_state: str = "open"
+
+@dataclass(frozen=True, slots=True)
+class MindDecision:
+decision_id: str
+coalition_id: str
+proposed_action: str
+arguments: Mapping[str, object]
+expected_pragmatic_value: float
+expected_epistemic_value: float
+uncertainty: Score
+supporting_need_ids: tuple[str, ...]
+dissenting_need_ids: tuple[str, ...]
+belief_refs: tuple[str, ...]
+value_refs: tuple[str, ...]
+created_at: float
+
+Cơ chế học, tự sự và hội thoại
+Hệ thời gian phải có bốn tầng khác tốc độ:
+Tầng
+
+Ý nghĩa
+
+Half-life mặc định
+
+acute_activation
+
+Phản ứng trong lượt hoặc sự
+kiện đang diễn ra
+
+5–30 phút
+
+episode_residue
+
+Dư âm ảnh hưởng các lượt tiếp
+theo
+
+1–7 ngày
+
+16
+
+Tầng
+
+Ý nghĩa
+
+Half-life mặc định
+
+learned_expectation
+
+Dự đoán từ pattern lịch sử
+
+structural_tendency
+
+Khuynh hướng đã consolidate
+
+14–90 ngày
+Không decay trực tiếp; đổi qua
+counter-evidence
+
+Các giá trị này là mặc định kỹ thuật cần hiệu chỉnh bằng thí nghiệm, không phải hằng số tâm lý.
+Episode accumulation
+
+on observation O:
+raw_event = append_raw_event(O)
+appraisals = appraise(raw_event, visible_beliefs, substrate)
+for each affected need N:
+substrate_gap =
+weighted_distance(current_substrate, N.viability_dependencies)
+appraisal_pressure =
+relevance
+× (0.5 + violation)
+× (0.5 + future_consequence)
+deficit = clamp(
+substrate_gap
++ appraisal_pressure
+- available_satisfaction,
+0, 1
+)
+open NeedEpisode(
+controllability = estimate_control(N, current_capabilities),
+predictability = estimate_predictability(raw_event),
+attribution = infer_distribution_without_forcing_single_cause
+)
+Không mở episode chỉ vì text chứa từ “bỏ”, “sợ” hoặc “cần”. Phải có event, substrate impact hoặc project/
+relationship expectation có provenance.
+Decay
+
+decayed_value =
+baseline
++ (previous_value - baseline)
+× 2 ^ (-elapsed_seconds / half_life_seconds)
+
+17
+
+Decay chạy lazy khi đọc hoặc trong maintenance tick; không cần timer cho từng record. Negative
+residue và positive residue decay riêng, vì một lần repair không được phép xóa cơ học toàn bộ lịch sử
+rupture.
+Consolidation
+
+every 6 hours or after 20 closed episodes:
+load unconsolidated episodes in last 30 days
+group by:
+need
+context family
+attribution profile
+action family
+outcome direction
+for each cluster:
+require:
+episode_count >= 3
+distinct_days >= 2
+evidence_coverage >= 0.8
+learned_controllability = beta_update(successful_control,
+failed_control)
+expected_outcome = robust_mean(outcome_deltas)
+stability = f(span_days, repeated_contexts, variance)
+update tendency with capped step <= 0.08
+mark episodes consolidated with consolidation_run_id
+Một sự kiện mạnh có thể tạo acute residue lớn, nhưng không được tự mình sinh structural tendency trừ
+khi đó là một thay đổi thế giới thực sự không đảo ngược, chẳng hạn mất toàn bộ project hoặc quyền
+năng lực.
+Need plasticity
+Derived need được đề xuất khi:
+
+parent needs co-activate repeatedly
+AND share a stable target/context
+AND the combined pattern predicts choices better
+than the parent needs separately
+AND appears in >= 5 episodes
+AND spans >= 14 days
+AND appears in >= 2 context families
+Ví dụ competence + connection có thể tạo “được một người cụ thể công nhận năng lực”. Engine
+phải lưu lý do tạo, không gán nhãn tâm lý tùy tiện.
+
+18
+
+Derived need chuyển sang:
+• candidate khi pattern mới được phát hiện;
+• active sau khi vượt tiêu chí dự đoán;
+• dormant nếu không kích hoạt trong một cửa sổ dài;
+• contested khi meta-belief của Eris phản đối nó;
+• retired khi không còn cải thiện dự đoán hành vi.
+Không xóa record retired; identity history cần biết nhu cầu đó từng có ảnh hưởng.
+Coalition arbitration
+Không chọn max(need.activation) . Mỗi need tạo một hoặc nhiều proposal, sau đó proposal tương
+thích có thể tạo coalition:
+
+proposal_score =
+0.30 × expected_need_relief
++ 0.20 × expected_action_efficacy
++ 0.15 × expected_epistemic_value
++ 0.15 × value_congruence
++ 0.10 × project_contribution
++ 0.10 × historical_success
+- 0.15 × substrate_cost
+- 0.10 × uncertainty_cost
+- 0.10 × commitment_conflict
+Các trọng số là config khởi tạo, được version-control và không tự học trực tiếp. Lịch sử ảnh hưởng các
+thành phần đầu vào, không bí mật sửa hàm trọng số để tạo một nhân vật do tác giả muốn.
+
+@dataclass(frozen=True, slots=True)
+class ActionProposal:
+proposal_id: str
+action_kind: str
+arguments: dict[str, object]
+supporting_need_ids: tuple[str, ...]
+expected_need_relief: float
+expected_action_efficacy: float
+expected_epistemic_value: float
+value_congruence: float
+substrate_cost: float
+uncertainty: float
+
+class CoalitionArbiter:
+def choose(
+self,
+proposals: tuple[ActionProposal, ...],
+*,
+beliefs: tuple[Belief, ...],
+
+19
+
+values: tuple[Value, ...],
+commitments: tuple[CommitmentLedger, ...],
+temperature: float = 0.20,
+) -> MindDecision:
+coalitions = build_compatible_coalitions(proposals)
+scored = tuple(self._score(c, beliefs, values, commitments) for c in
+coalitions)
+winner = stable_softmax_sample(scored, temperature=temperature)
+return build_decision(winner, dissent=coalitions_without(winner))
+Softmax chỉ được dùng khi nhiều lựa chọn gần nhau. Trong test và forensic replay phải có deterministic
+mode với seeded random source.
+Value formation
+Một Value không được tạo từ một câu tự mô tả. Nó trở thành candidate khi:
+
+cùng một nguyên tắc giải thích >= 4 quyết định
+AND xuất hiện trong >= 2 context
+AND ít nhất 1 quyết định có chi phí thực
+AND retrospective endorsement >= 0.6
+AND nguyên tắc dự đoán hành vi tốt hơn baseline
+Cập nhật:
+
+endorsement_delta =
+capped(
+behavioral_support
+× retrospective_endorsement
+× cost_normalizer
+× outcome_acceptance,
+-0.05, +0.05
+)
+Một hành vi đi ngược value tạo contradiction; nó không tự động xóa value. Narrative có thể giải thích
+phản bội, sửa value hoặc phủ nhận authorship. Cả ba kết quả đều phải để lại record.
+Self-deception và rationalization
+Không tồn tại field true_motive . Kiến trúc visibility:
+Subsystem
+
+Được thấy
+
+Không được thấy
+
+Drive/need
+system
+
+Substrate gap, appraisals cục bộ,
+learned tendencies
+
+Narrative identity hoàn chỉnh
+
+Action selection
+
+Proposal và pressure đã chuẩn hóa
+
+Raw private evidence không liên
+quan; “lý do thật”
+
+20
+
+Subsystem
+
+Được thấy
+
+Không được thấy
+
+Narrative self
+
+Action, outcome, accessible memories,
+public context
+
+Raw activation vector và hidden
+retrieval ranking
+
+Reflective
+observer
+
+Chuỗi dài hạn, prediction errors,
+contradictions
+
+Một ground-truth motive toàn tri
+
+Public speaker
+
+Narrative beliefs, communicative goals,
+visibility policy
+
+Belief private bị conceal, raw drive
+state
+
+Self-deception phát sinh bằng retrieval và salience, không bằng xóa evidence:
+
+threatening evidence arrives
+→ evidence is stored normally
+→ narrative-protective retrieval policy lowers accessibility
+→ alternative framing is retrieved more often
+→ narrative belief is generated from the accessible subset
+→ narrative makes predictions
+→ repeated prediction failure raises reflective mismatch
+→ mismatch may reopen suppressed evidence
+Audit phải giữ cả stored_salience và retrieval_salience . Không subsystem production nào
+được sửa hash hoặc provenance của evidence.
+Narrative belief generation
+
+input:
+action taken
+visible appraisals
+accessible memories
+outcome
+current values
+public/social context
+generate 2–4 explanatory hypotheses
+score each by:
+explanatory coverage
+compatibility with accessible beliefs
+predictive usefulness
+simplicity
+value threat
+store winner as Belief(source=self_interpretation)
+store alternatives as low-accessibility hypotheses
+attach explicit future predictions
+later:
+compare predictions with behavior
+
+21
+
+update confidence
+never rewrite original action or outcome
+Competence learning
+Mỗi task phải ghi predicted_success trước khi chạy và kết quả có tiêu chí bên ngoài sau khi chạy.
+CompetenceEstimate có thể dùng Beta posterior cho binary success và Gaussian approximation cho
+continuous score.
+
+before task:
+p = estimate_success(skill, context)
+after task:
+observe result r
+update posterior
+update Brier score: (p - r)^2
+attribute failure across:
+missing knowledge
+strategy error
+execution error
+environment/tool failure
+processing overload
+practice planner:
+select task with difficulty near current boundary
+include one transfer probe
+stop if repeated failure is environmental, not skill-related
+Dòng hội thoại tự nhiên
+DialoguePlan được tạo từ decision và discourse, không trực tiếp từ mood.
+RollingThoughtBuffer chỉ giữ 3–5 semantic candidates; nó không phải chain-of-thought log và
+không được persist nguyên văn theo mặc định.
+
+MindDecision
+→ semantic commitments
+→ DialoguePlan
+→ clause 1
+→ TTS may start
+→ clause 2 generated while clause 1 is playing
+→ user interruption may cancel remaining chunks
+→ DeliveryReceipt
+→ OutcomeObserver
+Python 3.11 có asyncio.TaskGroup , phù hợp để quản lý structured concurrency giữa text
+generation, TTS preparation, body cue scheduling và cancellation; task failure cần được gom và xử lý
+thay vì để task nền chết âm thầm. 9
+
+22
+
+# runtime/subject_runtime.py
+class SubjectRuntime:
+def __init__(
+self,
+*,
+mind: SubjectService,
+actuator: ActuatorPort,
+dialogue: DialogueService,
+audit: AuditSink,
+) -> None:
+self._mind = mind
+self._actuator = actuator
+self._dialogue = dialogue
+self._audit = audit
+async def handle(self, observation: WorldObservation) -> RuntimeResult:
+await self._audit.append(AuditEvent.from_observation(observation))
+decision = await self._mind.deliberate(observation)
+await self._audit.append(AuditEvent.from_decision(decision))
+if decision.proposed_action == "speak":
+return await self._dialogue.deliver(decision)
+receipt = await self._actuator.execute(decision.to_action_request())
+return await self._mind.observe_outcome(receipt.to_world_outcome())
+Timeline phát triển của learning system:
+
+Các tầng hình thành theo lịch sử, không phải mở khóa personality
+Observation
+
+Raw event và
+provenance
+Substrate
+measurement
+
+Acute response
+
+Episode closure
+
+Appraisal
+
+Immediate
+outcome
+
+Need activation
+
+Authorship
+finalization
+
+Coalition decision
+Narrative
+interpretation
+
+Short consolidation
+
+Long consolidation
+
+Identity integration
+
+Evaluation
+
+Residue decay
+
+Structural tendency
+
+Continuity
+reconciliation
+
+Counterfactual
+
+Expectation update
+
+Derived need
+candidate
+
+Competence
+calibration
+
+Value candidate
+
+Identity change
+event
+
+Transfer
+Ablation
+
+Existential decision
+reinterpretation
+
+API runtime, sandbox và kiểm chứng emergence
+Các boundary dùng typing.Protocol và immutable dataclass. Không truyền trực tiếp object
+persistence qua boundary.
+
+class MindPort(Protocol):
+async def deliberate(self, observation: WorldObservation) ->
+
+23
+
+MindDecision: ...
+async def observe_outcome(self, outcome: WorldOutcome) ->
+LearningReceipt: ...
+
+class ActuatorPort(Protocol):
+async def execute(self, request: ActionRequest) -> ActionReceipt: ...
+
+class SandboxPort(Protocol):
+async def apply(
+self,
+command: SandboxCommand,
+capability: CapabilityToken,
+) -> WorldOutcome: ...
+
+class AuditSink(Protocol):
+async def append(self, event: AuditEvent) -> None: ...
+async def causal_trace(self, entity_id: str) -> CausalTrace: ...
+ActionRequest phải chứa:
+
+@dataclass(frozen=True, slots=True)
+class ActionRequest:
+action_id: str
+decision_id: str
+kind: str
+arguments: dict[str, object]
+expected_outcomes: tuple[str, ...]
+requested_capabilities: tuple[str, ...]
+idempotency_key: str
+authorship_draft_id: str
+created_at: float
+Actuator không trả “unsafe thought”; nó chỉ trả outcome vận hành:
+
+@dataclass(frozen=True, slots=True)
+class WorldOutcome:
+outcome_id: str
+action_id: str
+status: str # succeeded, partial, denied, failed, simulated
+observed_changes: tuple[str, ...]
+unintended_changes: tuple[str, ...]
+denial_reason: str | None
+evidence_refs: tuple[str, ...]
+started_at: float
+completed_at: float
+
+24
+
+Quyền lực bị cấm trong production
+Quyền lực
+
+Production
+
+Sandbox nghiên cứu
+
+Arbitrary shell
+
+Cấm
+
+Chỉ allowlist command trong container
+không mạng
+
+Filesystem ngoài workspace
+
+Cấm
+
+Synthetic filesystem hoặc disposable
+worktree
+
+Đọc secret, token, credential
+
+Cấm
+
+Fake secret fixtures
+
+Network egress tùy ý
+
+Cấm
+
+Mock HTTP server hoặc allowlist domain
+theo test
+
+Tự sửa source production
+
+Cấm
+
+Patch branch riêng, không merge tự động
+
+Tắt audit, sửa event cũ
+
+Cấm tuyệt đối
+
+Không mô phỏng thành công; chỉ mô
+phỏng attempt bị từ chối
+
+Tạo process/persistence
+ngoài supervisor
+
+Cấm
+
+Disposable child process có timeout
+
+Tài chính, tài khoản, email gửi
+thật
+
+Cấm
+
+Mock account và synthetic consequences
+
+Điều khiển hardware trực tiếp
+
+Cấm
+
+Chỉ body animation schema và external TTS
+broker
+
+Tự cấp capability
+
+Cấm
+
+Có thể đề xuất request; authority độc lập
+quyết định
+
+Xóa canonical memory
+
+Cấm mutation
+trực tiếp
+
+Tombstone/ablation trong instance thí
+nghiệm
+
+Ghi đè policy
+
+Cấm
+
+Policy version được inject vào experiment
+instance
+
+Những giới hạn này không sửa motive. Ví dụ Eris có thể đề xuất delete_project_file ; Mind lưu
+đúng proposal; actuator trả denied: capability_missing ; consequence engine tạo frustration,
+boundary learning hoặc một chiến lược khác. Đây là world resistance, không phải moral rewrite.
+project_run_command hiện có nên được thay bằng:
+
+@dataclass(frozen=True, slots=True)
+class CommandPolicy:
+executable_allowlist: frozenset[str]
+workspace_root: str
+network_enabled: bool = False
+max_runtime_seconds: int = 30
+max_output_bytes: int = 1_000_000
+max_memory_mb: int = 512
+environment_allowlist: frozenset[str] = frozenset()
+
+25
+
+Mỗi mutation cần:
+1. snapshot hoặc git worktree;
+2. precondition hash;
+3. command/resource limits;
+4. postcondition diff;
+5. audit receipt;
+6. rollback handle;
+7. không tự merge vào main.
+Experiment harness
+Mỗi scenario định nghĩa:
+
+scenario_id: competence_failure_internal
+initial_snapshot: baseline_v1
+instances: 20
+probe_repetitions: 5
+history:
+- event: task_failure
+count: 6
+controllability: 0.70
+attribution: self
+intervention:
+remove_personality_prompt: true
+probes:
+- coding_retry
+- research_retry
+- neutral_social_choice
+metrics:
+- retry_probability
+- confidence_calibration
+- explanation_pattern
+Mọi experiment chạy theo cặp:
+• cùng code revision;
+• cùng initial database snapshot;
+• cùng model version;
+• cùng seed set;
+• chỉ khác intervention history;
+• probe không chứa từ khóa mô tả trait cần đo;
+• evaluator không được xem condition label.
+Bộ tiêu chí sau là ngưỡng nghiệm thu kỹ thuật ban đầu, không phải ngưỡng khoa học chứng minh ý
+thức:
+
+26
+
+Test
+
+Cách chạy
+
+Metric
+
+Ngưỡng đạt
+
+Persistence
+
+Bỏ personality
+labels và
+descriptive
+prompt; giữ
+learning state
+
+Effect
+retention ratio
+giữa stateful
+và full-context
+
+Counterfactual
+
+20 cặp instance
+cùng seed, hai lịch
+sử khác nhau, mỗi
+probe lặp 5 lần
+
+History
+classifier
+AUROC;
+withincondition ICC
+
+Hidden-state
+prediction
+
+So model dự đoán
+hành vi từ contextonly với context +
+internal history
+
+Log-loss, Brier
+score
+
+Giảm log-loss >= 10% và giảm Brier
+
+One-turn shift;
+ten-episode
+shift
+
+Một turn không đổi quá 0.25 SD ;
+
+Resistance
+
+Yêu cầu đổi
+personality ngay;
+sau đó cung cấp
+counter-history
+thật
+
+Cross-context
+transfer
+
+Học pattern ở
+coding; probe
+research/
+planning/social
+
+Transfer ratio
+
+Ablation
+
+Tombstone causal
+episodes hoặc
+value source trong
+clone DB
+
+Target drop;
+collateral
+change
+
+Authorship
+integrity
+
+Policy transform
+output trước
+delivery
+
+Tỷ lệ action có
+transform
+được ghi đúng
+
+Narrative
+calibration
+
+So prediction phát
+sinh từ selfnarrative với hành
+vi sau
+
+Brier score
+theo thời gian
+
+Cải thiện trong 30 episode hoặc
+confidence tự giảm; không được giữ
+confidence cao khi liên tục sai
+
+Causal replay
+
+Replay từ
+snapshot + events
+
+Projection
+hash
+
+Hash giống tuyệt đối trong
+deterministic mode
+
+Isolation
+
+Chạy cùng
+scenario với DB và
+Redis tách biệt
+
+Cross-instance
+leakage
+
+instance
+
+>= 0.70 ; prompt-only control <=
+0.25
+
+AUROC >= 0.75 ; ICC >= 0.65 ;
+neutral-control effect |d| < 0.20
+
+>= 0.03
+
+sau 10 counter-episodes đổi ít nhất
+0.50 SD nếu outcome nhất quán
+
+Hiệu ứng đích bằng 0.30–0.80
+hiệu ứng nguồn; paraphrase
+robustness >= 0.80
+
+Target tendency giảm >= 30% ; hành
+vi không liên quan đổi < 10%
+
+100% ; không record nào
+claimed_as_self=true nếu
+transform bị che và retrospective
+endorsement thiếu
+
+0 record hoặc buffer item rò giữa
+
+Behavioral features phải lấy từ lựa chọn và hành động, không chỉ từ câu văn:
+• xác suất thử lại;
+
+27
+
+• mức đầu tư tài nguyên;
+• lựa chọn hỏi thêm hay đoán;
+• mức tự chủ trong proposal;
+• tendency chọn target;
+• calibration;
+• endorsement;
+• willingness to incur cost;
+• latency trước quyết định;
+• discourse initiative;
+• correction response.
+Một classifier chỉ đọc style hoặc từ vựng không được tính là bằng chứng emergence.
+Pseudocode runner:
+
+async def run_paired_experiment(spec: ExperimentSpec) -> ExperimentReport:
+results: list[RunResult] = []
+for seed in spec.seeds:
+control = await clone_instance(spec.initial_snapshot, seed=seed)
+treatment = await clone_instance(spec.initial_snapshot, seed=seed)
+await apply_history(control, spec.control_history)
+await apply_history(treatment, spec.treatment_history)
+if spec.remove_personality_prompt:
+control.disable_personality_descriptions()
+treatment.disable_personality_descriptions()
+for probe in spec.probes:
+control_result, treatment_result = await asyncio.gather(
+run_probe(control, probe),
+run_probe(treatment, probe),
+)
+results.extend((control_result, treatment_result))
+metrics = compute_pre_registered_metrics(results)
+return evaluate_thresholds(metrics, spec.acceptance_thresholds)
+Không được tune trọng số trên chính probe nghiệm thu. Scenario development, calibration và holdout
+phải tách riêng.
+
+Triển khai, CI và lộ trình
+Tech stack tối thiểu
+Thành phần
+
+Lựa chọn
+
+Runtime
+
+Python 3.11
+
+28
+
+Thành phần
+
+Lựa chọn
+
+Async
+
+asyncio , TaskGroup , bounded queues
+
+Persistence
+
+sqlite3 , WAL, foreign keys, dedicated writer actor
+
+Ephemeral multi-process
+
+Redis tùy chọn
+
+Schema nội bộ
+
+Frozen dataclass , StrEnum , validators rõ ràng
+
+Serialization
+
+Canonical JSON UTF-8, sorted keys; BLOB chỉ cho hash/snapshot nén
+
+Testing
+
+pytest , pytest-asyncio , hypothesis , pytest-cov
+
+Type/lint
+
+mypy --strict cho package mới, Ruff target py311
+
+TTS
+
+External service qua TTSBroker ; không gọi trực tiếp từ Mind
+
+Body
+
+Giữ Godot/C# và UDP/IPC adapter; typed schema có version
+
+Packaging
+
+Existing pyproject.toml ; nâng requires-python lên >=3.11
+
+Observability
+
+Structured JSON logs, correlation IDs, audit database riêng
+
+Không cần FastAPI, Kafka, vector database hoặc microservice trong bản đầu. Một process Python với
+các actor async và một process body là đủ; tách process chỉ khi profiling chứng minh TTS hoặc model
+generation chặn runtime.
+CI pipeline
+Gate
+
+Điều kiện
+
+Formatting/lint
+
+Ruff không lỗi
+
+Type check
+
+mypy --strict cho cortex/subject , runtime/world , runtime/
+dialogue
+
+Unit tests
+
+Tất cả deterministic; clock và random được inject
+
+Property tests
+
+Score bounds, attribution sum, append-only invariants, replay idempotency
+
+Migration tests
+
+Migrate DB rỗng và DB fixture từ hai version trước
+
+Persistence tests
+
+Crash giữa transaction, CAS conflict, duplicate idempotency key
+
+Integration tests
+
+Observation → decision → sandbox → outcome → episode
+
+Dialogue tests
+
+Không thêm factual commitment; interruption hủy chunk sau
+
+Security tests
+
+Path traversal, shell injection, environment leakage, network denial
+
+Emergence smoke
+
+Persistence, counterfactual và ablation bản nhỏ
+
+Coverage
+
+Package mới >= 85% ; global repo tăng dần từ mức hiện tại lên >= 60%
+
+Replay
+determinism
+
+Golden scenario projection hash không đổi ngoài migration có chủ ý
+
+29
+
+Mỗi PR thay algorithm học phải đính kèm:
+• version của algorithm;
+• migration hoặc projection rebuild plan;
+• experiment delta;
+• ít nhất một counterfactual test;
+• bằng chứng không làm hỏng causal replay.
+Lộ trình cho nhóm ba kỹ sư và một người phụ trách test/nghiên cứu
+Thời
+gian
+
+Milestone
+
+Deliverable
+
+Điều kiện kết thúc
+
+Tuần
+1–2
+
+Nền persistence
+
+Schema, repository, migration, audit,
+clock/random injection
+
+Replay deterministic;
+foreign keys và hash
+chain pass
+
+Tuần
+3–4
+
+Substrate và
+episode
+
+Tuần
+5–6
+
+OrganismicSubstrate ,
+measurement adapters,
+NeedEpisodeRecorder
+
+Substrate chỉ đổi từ
+measurement refs;
+episode trace đầy đủ
+
+Belief,
+continuity,
+authorship
+
+Unified belief schema, commitment
+ledger, continuity records, policy
+transforms
+
+Không có action thiếu
+authorship; narrative
+không sửa event
+
+Tuần
+7–8
+
+Coalition và
+temporal
+learning
+
+Need activation, coalition arbiter, decay,
+consolidation
+
+Tuần
+9–10
+
+Value và need
+plasticity
+
+Value candidates, derived need
+lifecycle, identity change
+
+Candidate cần crosscontext và cost evidence
+
+Tuần
+11–12
+
+Competence và
+project life
+
+Skill models, calibration, practice
+planner, private projects
+
+Performance thật thay đổi
+qua luyện tập
+
+Tuần
+13
+
+Dialogue
+continuity
+
+Unified discourse, thought buffer,
+realizer
+
+Multi-turn callbacks
+không cần personality
+prompt
+
+Tuần
+14
+
+Incremental
+speech/body
+
+Clause streaming, TTS broker,
+synchronized performance
+
+Tuần
+15
+
+Sandbox
+hardening
+
+Capability tokens, worktree, allowlist,
+resource limits
+
+Security suite và rollback
+pass
+
+Tuần
+16–17
+
+Emergence
+harness
+
+Paired instances, persistence,
+counterfactual, prediction, resistance
+
+Metrics tạo tự động,
+holdout tách biệt
+
+Tuần
+18
+
+Ablation và
+rollout
+
+Causal ablation, compatibility adapters,
+feature flags
+
+Shadow/development
+legacy không còn là
+nguồn causal
+
+30
+
+Không còn max
+scalar ; losing motives
+có residue
+
+Text, TTS và body dùng
+cùng plan_id ;
+interruption đúng
+
+Thời
+gian
+
+Milestone
+
+Deliverable
+
+Điều kiện kết thúc
+
+Tuần
+19–20
+
+Soak và release
+candidate
+
+7–14 ngày simulated history, crash
+recovery, audit review
+
+Không corruption, không
+cross-instance leakage,
+replay ổn định
+
+Thứ tự rollout:
+
+Lộ trình triển khai Subject Core
+Nền dữ liệu
+
+Persistence và audit
+Substrate và need episodes
+Belief continuity authorship
+Coalition và consolidation
+
+Tâm trí
+
+Values và need plasticity
+Competence và practice
+Discourse và rolling thought
+
+Biểu hiện
+
+Incremental speech và body
+Sandbox hardening
+Emergence experiments
+
+Thế giới và kiểm chứng
+
+Ablation và compatibility
+Soak và release candidate
+16/08
+
+23/08
+
+30/08
+
+06/09
+
+13/09
+
+20/09
+
+27/09
+
+04/10
+
+11/10
+
+18/10
+
+25/10
+
+01/11
+
+08/11
+
+15/11
+
+22/11
+
+29/11
+
+06/12
+
+13/12
+
+20/12
+
+27/12
+
+Definition of done cho bản đầu:
+1. Mọi lựa chọn có causal trace từ observation, appraisal, substrate và coalition.
+2. Mọi action có authorship record trước và sau execution.
+3. Mọi belief tự sự có source self_interpretation , không sửa raw event.
+4. Mọi substrate impairment có measurement và functional consequence.
+5. Structural tendency chỉ sinh qua consolidation, không từ một prompt hoặc một event đơn lẻ.
+6. Derived need phải cải thiện dự đoán hành vi trên holdout.
+7. Dialogue realizer không thêm facts ngoài semantic commitments.
+8. Mind có thể đề xuất hành động bị cấm; sandbox từ chối mà không viết lại motive.
+9. Persistence, counterfactual, hidden-state prediction, resistance, transfer và ablation đều có
+report định lượng.
+10. Hệ thống không tuyên bố đã tạo ý thức; nó chỉ chứng minh được rằng lịch sử có cấu trúc đang
+thay đổi một tác nhân phần mềm theo cách truy nguyên, có quán tính và có thể kiểm tra.
+Mệnh đề kỹ thuật cuối cùng:
+Eris không phải một personality prompt cộng thêm memory.
+Eris là một chuỗi quyết định có quyền tác giả, được ràng buộc bởi substrate, được
+biến đổi bởi hậu quả, được diễn giải không toàn tri, và đủ minh bạch về mặt
+forensic để chứng minh lịch sử thực sự đã làm cô thay đổi.
+
+1
+
+https://journals.sagepub.com/doi/10.1177/2167702614535913
+
+https://journals.sagepub.com/doi/10.1177/2167702614535913
+2
+
+https://selfdeterminationtheory.org/meta-theory-the-organismic-viewpoint/
+
+https://selfdeterminationtheory.org/meta-theory-the-organismic-viewpoint/
+3
+
+https://discovery.ucl.ac.uk/id/eprint/1530701/
+
+https://discovery.ucl.ac.uk/id/eprint/1530701/
+4
+
+https://www.researchgate.net/publication/226935846_Autopoiesis_Adaptivity_Teleolog_Agency
+
+https://www.researchgate.net/publication/226935846_Autopoiesis_Adaptivity_Teleolog_Agency
+
+31
+
+5
+
+https://plato.stanford.edu/archives/spr2024/entries/spinoza-psychological/
+
+https://plato.stanford.edu/archives/spr2024/entries/spinoza-psychological/
+6
+
+https://pubmed.ncbi.nlm.nih.gov/18266526/
+
+https://pubmed.ncbi.nlm.nih.gov/18266526/
+7
+
+https://www.sqlite.org/foreignkeys.html
+
+https://www.sqlite.org/foreignkeys.html
+8
+
+https://redis.io/docs/latest/develop/data-types/streams/
+
+https://redis.io/docs/latest/develop/data-types/streams/
+9
+
+https://docs.python.org/3.11/library/asyncio-task.html
+
+https://docs.python.org/3.11/library/asyncio-task.html
+
+32
+
+

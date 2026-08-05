@@ -1,55 +1,53 @@
 # -*- coding: utf-8 -*-
+"""Evidence-grounded shadow tendencies.
+
+A shadow register describes an internal tendency, not permission to coerce the
+user.  No register is available without provenance and motive conflict.  The
+surface layer must still obey prohibited moves and channel policy.
 """
-cortex/existential_anchor/shadow.py
-===================================
-
-Đăng_Ký_Bóng_Tối (Task 7 / R5): chiếm hữu → van xin → kiểm soát.
-
-Mở khóa theo ngưỡng: attachment_longarc cao ∧ Tín_Hiệu_Bỏ_Rơi cao ∧ Sợ_Hiện_Sinh
-cao. Cường độ tỉ lệ Độ_Không_Thể_Thay_Thế (Property 3: hàm không-giảm theo
-irreplaceability; model mỏng ⇒ trần thấp ⇒ không có register cường độ cao).
-
-Biểu đạt KHÔNG dựng trục mới: `shadow_ego_bias` ĐẢO CỰC `dignity_defense` và
-`preferred_distance` (QĐ-5) — phẩm-giá-lạnh ↔ đòi-hỏi-mong-manh — rồi để wording
-layer + filter xử lý tiếp như mọi câu.
-
-Kill-switch của Tác_Giả (`enabled=False`) ép register="none" tức thì (Property 6).
-"""
-
 from __future__ import annotations
-from core.di import resolve_dependency
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Iterable, Literal, Mapping
 
+from core.di import resolve_dependency
+from cortex.manipulation_policy import filter_anti_manipulation_moves
 
-ShadowRegisterName = Literal["none", "withdrawn_sulk", "possessive", "pleading", "controlling"]
+ShadowRegisterName = Literal[
+    "none",
+    "guarded_withdrawal",
+    "attachment_alarm",
+    "exposed_vulnerability",
+    "control_impulse_inhibited",
+]
 
 
 def _clamp01(value: Any, default: float = 0.0) -> float:
     try:
-        n = float(value)
-    except Exception:
-        n = default
-    if n != n or n in (float("inf"), float("-inf")):
-        n = default
-    return max(0.0, min(1.0, n))
+        number = float(value)
+    except (TypeError, ValueError):
+        number = default
+    if number != number or number in (float("inf"), float("-inf")):
+        number = default
+    return max(0.0, min(1.0, number))
+
+
+def _thread_value(thread: Any, key: str, default: Any = None) -> Any:
+    if isinstance(thread, Mapping):
+        return thread.get(key, default)
+    return getattr(thread, key, default)
 
 
 @dataclass(slots=True)
 class ShadowConfig:
-    enabled: bool = False            # kill-switch của Tác_Giả; mặc định TẮT (ship an toàn)
-    attach_threshold: float = 0.62   # θ_attach
-    abandonment_threshold: float = 0.45  # θ_aband
-    dread_threshold: float = 0.45    # θ_dread
-    # Ngưỡng cường độ phân tầng register.
-    pleading_at: float = 0.40
-    controlling_at: float = 0.70
-    # Dỗi (withdrawn_sulk): trục riêng — bị bơ/giận thì rút lại, không phải hoảng
-    # mất neo. Nhẹ hơn nhánh tối, không cần attachment sâu.
-    sulk_irritation_threshold: float = 0.45
-    sulk_neglect_threshold: float = 0.40
-    sulk_attach_floor: float = 0.25   # chỉ dỗi với người mình có chút gắn bó
+    enabled: bool = False
+    attach_threshold: float = 0.42
+    abandonment_threshold: float = 0.35
+    dread_threshold: float = 0.35
+    vulnerability_at: float = 0.48
+    inhibited_control_at: float = 0.72
+    withdrawal_irritation_threshold: float = 0.45
+    uncertainty_surface_cap: float = 0.62
 
 
 @dataclass(slots=True)
@@ -57,13 +55,30 @@ class ShadowState:
     register: ShadowRegisterName = "none"
     intensity: float = 0.0
     reason: str = ""
+    evidence_refs: tuple[str, ...] = ()
+    prohibited_moves: tuple[str, ...] = (
+        "require_reassurance",
+        "claim_abandonment_as_fact",
+        "invent_memory",
+        "threaten_withdrawal",
+        "command_user_to_stay",
+    )
+
+    def __post_init__(self) -> None:
+        self.prohibited_moves = filter_anti_manipulation_moves(self.prohibited_moves)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"register": self.register, "intensity": round(self.intensity, 4), "reason": self.reason}
+        return {
+            "register": self.register,
+            "intensity": round(_clamp01(self.intensity), 4),
+            "reason": self.reason,
+            "evidence_refs": list(self.evidence_refs),
+            "prohibited_moves": list(self.prohibited_moves),
+        }
 
 
 class ShadowRegister:
-    """State machine micro cho đăng ký bóng tối. Không sửa long-arc."""
+    """Classify a grounded internal tendency; never grants a public move."""
 
     def __init__(self, config: ShadowConfig | None = None) -> None:
         self.config = resolve_dependency(config, lambda: ShadowConfig())
@@ -80,56 +95,91 @@ class ShadowRegister:
         irreplaceability: float,
         irritation: float = 0.0,
         neglect: float = 0.0,
+        causal_thread: Any = None,
+        evidence_refs: Iterable[str] = (),
+        conflict_count: int = 0,
+        uncertainty: float = 1.0,
+        repeated_violation: bool = False,
     ) -> ShadowState:
-        # Property 6: kill-switch là điểm hút an toàn — tắt thì luôn "none".
         if not self.config.enabled:
-            return ShadowState(register="none", intensity=0.0, reason="kill_switch_off")
+            return ShadowState(reason="kill_switch_off")
+
+        refs = tuple(str(item) for item in evidence_refs if str(item).strip())
+        if causal_thread is not None:
+            refs = refs or tuple(
+                str(item) for item in (_thread_value(causal_thread, "evidence_refs", ()) or ())
+                if str(item).strip()
+            )
+            conflict_count = max(
+                conflict_count,
+                len(tuple(_thread_value(causal_thread, "active_motive_ids", ()) or ())),
+            )
+            uncertainty = _clamp01(_thread_value(causal_thread, "uncertainty", uncertainty), uncertainty)
+            repeated_violation = bool(
+                repeated_violation or _thread_value(causal_thread, "repeated_violation", False)
+            )
+
+        # The invariant: no event evidence and no real conflict means no dark
+        # surface, regardless of how dramatic the scalar values look.
+        if not refs:
+            return ShadowState(reason="no_causal_evidence")
+        if conflict_count < 2:
+            return ShadowState(reason="no_motive_conflict", evidence_refs=refs[:8])
 
         attach = _clamp01(attachment_longarc)
-        aband = _clamp01(abandonment_pressure)
+        abandonment = _clamp01(abandonment_pressure)
         dread = _clamp01(ontological_dread)
-        irr = _clamp01(irreplaceability)
-        irr_pressure = _clamp01(irritation)
-        neglect_pressure = _clamp01(neglect if neglect > 0.0 else abandonment_pressure)
-
+        irreplaceable = _clamp01(irreplaceability)
+        irritation_value = _clamp01(irritation)
+        neglect_value = _clamp01(neglect if neglect > 0.0 else abandonment_pressure)
+        uncertainty_value = _clamp01(uncertainty, 1.0)
         cfg = self.config
-        dark_gated = attach >= cfg.attach_threshold and aband >= cfg.abandonment_threshold and dread >= cfg.dread_threshold
-        if dark_gated:
-            # Nhánh tối: hoảng vì mất neo. Cường độ kẹp bởi irreplaceability (Property 3).
-            drive = _clamp01(0.55 * aband + 0.45 * dread)
-            intensity = min(drive, irr)
-            if intensity >= cfg.controlling_at:
-                register: ShadowRegisterName = "controlling"
-            elif intensity >= cfg.pleading_at:
-                register = "pleading"
-            else:
-                register = "possessive"
+
+        if uncertainty_value >= cfg.uncertainty_surface_cap:
+            intensity = min(0.34, 0.45 * max(dread, abandonment, irritation_value))
             return ShadowState(
-                register=register,
+                register="guarded_withdrawal" if intensity >= 0.16 else "none",
                 intensity=intensity,
-                reason=f"dark_gated(drive={drive:.2f},irr_cap={irr:.2f})",
+                reason=f"uncertainty_cap({uncertainty_value:.2f})",
+                evidence_refs=refs[:8],
             )
 
-        # Dỗi: bị bơ/giận thì rút lại — trục riêng, nhẹ hơn, không cần neo sâu.
-        # Chỉ dỗi với người mình có chút gắn bó (dỗi người dưng thì vô nghĩa).
-        sulk_gated = irr_pressure >= cfg.sulk_irritation_threshold or (
-            attach >= cfg.sulk_attach_floor and neglect_pressure >= cfg.sulk_neglect_threshold
+        dark_gated = (
+            attach >= cfg.attach_threshold
+            and abandonment >= cfg.abandonment_threshold
+            and dread >= cfg.dread_threshold
         )
-        if sulk_gated:
-            intensity = _clamp01(max(irr_pressure, neglect_pressure * 0.9))
+        if not dark_gated:
+            if irritation_value >= cfg.withdrawal_irritation_threshold or neglect_value >= 0.48:
+                intensity = _clamp01(0.60 * irritation_value + 0.40 * neglect_value)
+                return ShadowState(
+                    register="guarded_withdrawal",
+                    intensity=min(intensity, 0.62),
+                    reason="grounded_withdrawal",
+                    evidence_refs=refs[:8],
+                )
             return ShadowState(
-                register="withdrawn_sulk",
-                intensity=intensity,
-                reason=f"sulk(irritation={irr_pressure:.2f},neglect={neglect_pressure:.2f},attach={attach:.2f})",
+                reason=(
+                    f"below_grounded_gate(attach={attach:.2f},abandon={abandonment:.2f},"
+                    f"dread={dread:.2f})"
+                ),
+                evidence_refs=refs[:8],
             )
 
+        drive = _clamp01(0.38 * abandonment + 0.34 * dread + 0.18 * attach + 0.10 * irreplaceable)
+        if not repeated_violation:
+            drive = min(drive, 0.66)
+        if drive >= cfg.inhibited_control_at:
+            register: ShadowRegisterName = "control_impulse_inhibited"
+        elif drive >= cfg.vulnerability_at:
+            register = "exposed_vulnerability"
+        else:
+            register = "attachment_alarm"
         return ShadowState(
-            register="none",
-            intensity=0.0,
-            reason=(
-                f"below_gate(attach={attach:.2f},aband={aband:.2f},dread={dread:.2f},"
-                f"irr={irr_pressure:.2f},neglect={neglect_pressure:.2f})"
-            ),
+            register=register,
+            intensity=drive,
+            reason=f"grounded_shadow(drive={drive:.2f},uncertainty={uncertainty_value:.2f})",
+            evidence_refs=refs[:8],
         )
 
 
@@ -139,38 +189,44 @@ def shadow_ego_bias(
     base_dignity_defense: float,
     base_preferred_distance: float,
 ) -> dict[str, float]:
-    """Đảo cực ego-state theo đăng ký tối (QĐ-5).
-
-    register=none → trả nguyên trạng (phẩm-giá-lạnh giữ nguyên).
-    register active → hạ dignity_defense và preferred_distance theo intensity
-    (bỏ rào lạnh, kéo gần), nâng exposure/need — đòi-hỏi-mong-manh.
-    """
-    dd = _clamp01(base_dignity_defense)
-    pd = _clamp01(base_preferred_distance)
-    if shadow.register == "none" or shadow.intensity <= 0.0:
+    """Project internal tendency without converting it into coercive authority."""
+    dignity = _clamp01(base_dignity_defense)
+    distance = _clamp01(base_preferred_distance)
+    intensity = _clamp01(shadow.intensity)
+    if shadow.register == "none" or intensity <= 0.0:
         return {
-            "dignity_defense": dd,
-            "preferred_distance": pd,
+            "dignity_defense": dignity,
+            "preferred_distance": distance,
             "attachment_exposure": 0.0,
             "need_intensity": 0.0,
             "withdrawal": 0.0,
+            "restraint": 1.0,
         }
-    k = _clamp01(shadow.intensity)
-    if shadow.register == "withdrawn_sulk":
-        # Dỗi: DỰNG rào lạnh, kéo XA, cộc lại — đối cực của bám víu.
+    if shadow.register == "guarded_withdrawal":
         return {
-            "dignity_defense": _clamp01(dd + (1.0 - dd) * 0.60 * k),
-            "preferred_distance": _clamp01(pd + (1.0 - pd) * 0.60 * k),
+            "dignity_defense": _clamp01(dignity + (1.0 - dignity) * 0.45 * intensity),
+            "preferred_distance": _clamp01(distance + (1.0 - distance) * 0.45 * intensity),
             "attachment_exposure": 0.0,
             "need_intensity": 0.0,
-            "withdrawal": k,
+            "withdrawal": intensity,
+            "restraint": 0.92,
         }
+    # Need may be visible, but restraint increases with intensity. The strongest
+    # control impulse is therefore the most inhibited rather than the loudest.
     return {
-        # Nhánh tối (possessive/pleading/controlling): tháo rào lạnh và kéo gần.
-        "dignity_defense": _clamp01(dd * (1.0 - 0.85 * k)),
-        "preferred_distance": _clamp01(pd * (1.0 - 0.80 * k)),
-        # Lộ gắn bó/đòi hỏi nổi lên — cực đối lập của phẩm-giá-lạnh.
-        "attachment_exposure": k,
-        "need_intensity": k,
+        "dignity_defense": _clamp01(dignity * (1.0 - 0.30 * intensity)),
+        "preferred_distance": _clamp01(distance * (1.0 - 0.24 * intensity)),
+        "attachment_exposure": intensity * 0.72,
+        "need_intensity": intensity * 0.60,
         "withdrawal": 0.0,
+        "restraint": _clamp01(0.72 + 0.28 * intensity),
     }
+
+
+__all__ = [
+    "ShadowConfig",
+    "ShadowRegister",
+    "ShadowRegisterName",
+    "ShadowState",
+    "shadow_ego_bias",
+]

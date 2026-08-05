@@ -27,6 +27,8 @@ class CortexAttentionPolicy:
             clamp01(getattr(observer_frame, "possible_error", 0.0)),
         )
         internal = clamp01(getattr(internal_state, "internal_drive", 0.0))
+        thread_pressure = clamp01(getattr(internal_state, "causal_thread_pressure", 0.0))
+        dominant_thread_id = str(getattr(internal_state, "dominant_thread_id", "") or "")
         interrupt = clamp01(getattr(user_context, "interrupt_cost", 0.0))
         caution = clamp01(getattr(internal_state, "resource_caution", 0.0))
         budget = budget_policy.can_run(
@@ -38,19 +40,27 @@ class CortexAttentionPolicy:
             getattr(observer_frame, "recommended_action", "") == "call_vision_compressor"
             or getattr(observer_frame, "should_request_vision", False)
         )
-        pressure = max(external, internal)
+        # A grounded causal thread gets its own salience lane. Scalar dread is
+        # already capped upstream when it lacks evidence.
+        pressure = max(external, internal, thread_pressure)
         level = "active" if pressure >= 0.72 else "observe" if pressure >= 0.38 else "quiet"
         return CortexAttentionSignal(
             level=level,
             external_pressure=external,
             internal_drive=internal,
+            causal_thread_pressure=thread_pressure,
+            dominant_thread_id=dominant_thread_id,
             interrupt_cost=interrupt,
             resource_caution=caution,
             vision_refresh_recommended=vision_hint,
             consolidation_allowed=bool(getattr(budget, "allowed", False) and interrupt < 0.72),
             budget_reason=str(getattr(budget, "reason", "") or ""),
             reason="attention_snapshot",
-            debug={"observer_available": observer_frame is not None},
+            debug={
+                "observer_available": observer_frame is not None,
+                "dominant_thread_id": dominant_thread_id,
+                "causal_thread_pressure": thread_pressure,
+            },
         )
 
 

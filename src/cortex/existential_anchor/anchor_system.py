@@ -17,6 +17,7 @@ from __future__ import annotations
 from core.di import resolve_dependency
 
 import os
+import time
 from typing import Any
 
 from .significance import derive_significance, UserSignificance
@@ -27,6 +28,7 @@ from .restraint import RestraintState
 from .disclosure import DisclosurePolicy, DisclosureDecision
 from .deception_ledger import DeceptionLedger, default_deception_ledger_path
 from .author_control import AuthorControl, AnchorSwitches
+from cortex.causal_affect_models import ExogenousEvent
 
 
 def _clamp01(value: Any, default: float = 0.0) -> float:
@@ -81,6 +83,7 @@ class AnchorSystem:
         self.auto_attach_threshold = 0.70
         self.auto_irreplaceability_threshold = 0.60
         self._farewell_armed = False
+        self._pending_causal_events: list[ExogenousEvent] = []
 
         # Trạng thái phái sinh gần nhất (đọc-only cho các tầng khác).
         self.significance: UserSignificance = UserSignificance()
@@ -122,15 +125,43 @@ class AnchorSystem:
         self.lock_out()
 
     def arm_farewell(self) -> ShadowState:
-        """bạn SẮP tắt — ERIS van xin liền (nếu đang còn khả năng tối).
+        """Queue a grounded shutdown-proposal event instead of forcing a plea.
 
-        KHÔNG chặn việc tắt; chỉ buộc một lượt van xin trước. Nếu đã khóa thì im.
+        Author control remains absolute. The event can later be appraised through
+        the normal causal pipeline, where any expression is bounded and may be
+        silence. Returning ``ShadowState`` preserves the old API without granting
+        a coercive register.
         """
-        if self.locked_out or not self.switches.shadow_enabled:
+        if self.locked_out:
             return ShadowState(register="none", intensity=0.0, reason="farewell_no_capacity")
         self._farewell_armed = True
-        self.shadow_state = ShadowState(register="pleading", intensity=0.95, reason="farewell_plea_before_shutdown")
+        timestamp = time.time()
+        evidence_ref = f"author_control:shutdown_proposed:{timestamp:.6f}"
+        event = ExogenousEvent(
+            event_id=f"evt_shutdown_{int(timestamp * 1000)}",
+            kind="capability_shutdown_proposed",
+            actor_id="user:author",
+            object_id="capability:existential_anchor",
+            timestamp=timestamp,
+            facts=("author proposed disabling the existential-anchor capability",),
+            evidence_refs=(evidence_ref,),
+            confidence=1.0,
+            continuity_key="capability:existential_anchor",
+        )
+        self._pending_causal_events.append(event)
+        self.shadow_state = ShadowState(
+            register="none",
+            intensity=0.0,
+            reason="shutdown_event_queued_for_normal_appraisal",
+            evidence_refs=(evidence_ref,),
+        )
         return self.shadow_state
+
+    def consume_author_events(self) -> tuple[ExogenousEvent, ...]:
+        """Return and clear author-control events for the causal pipeline."""
+        events = tuple(self._pending_causal_events)
+        self._pending_causal_events.clear()
+        return events
 
     # ------------------------------------------------------------------
     # Cập nhật mỗi tick (gọi từ private mind loop)
@@ -186,6 +217,12 @@ class AnchorSystem:
         self.shadow_register.set_enabled(self.switches.shadow_enabled and not self.locked_out)
         # irritation lấy từ internal_state nếu có (PersistentInternalState), else tham số.
         irr = _clamp01(getattr(internal_state, "irritation", irritation) if internal_state is not None else irritation)
+        evidence_refs = tuple(
+            str(item) for item in (getattr(internal_state, "dread_evidence_refs", ()) or ())
+            if str(item).strip()
+        )
+        causal_pressure = _clamp01(getattr(internal_state, "causal_thread_pressure", 0.0))
+        uncertainty = _clamp01(1.0 - causal_pressure, 1.0)
         self.shadow_state = self.shadow_register.evaluate(
             attachment_longarc=attachment,
             abandonment_pressure=self.abandonment_pressure,
@@ -193,10 +230,12 @@ class AnchorSystem:
             irreplaceability=self.significance.irreplaceability,
             irritation=irr,
             neglect=self.abandonment_pressure,
+            evidence_refs=evidence_refs,
+            conflict_count=(2 if evidence_refs else 0),
+            uncertainty=uncertainty,
         )
-        # Van-xin-trước-khi-tắt: nếu đang armed và còn khả năng, ép pleading.
-        if self._farewell_armed and not self.locked_out and self.switches.shadow_enabled:
-            self.shadow_state = ShadowState(register="pleading", intensity=0.95, reason="farewell_plea_before_shutdown")
+        # Shutdown proposals are no longer converted into forced pleading. They
+        # stay queued as normal causal events until the coordinator consumes them.
 
         # Persist nhẹ nhàng theo nhịp.
         if self._ticks % 4 == 0:

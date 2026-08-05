@@ -467,6 +467,24 @@ class CoordinatorBootstrapMixin:
                 )
             except Exception as exc:
                 self.logger.warning("Không khởi tạo được StateCommitter: %s", exc)
+        self.subject_core_components = None
+        self.subject_service = None
+        self.subject_sandbox_world = None
+        try:
+            from runtime.subject_bootstrap import build_subject_core_components, subject_core_enabled
+            if subject_core_enabled():
+                self.subject_core_components = build_subject_core_components(
+                    action_executor=getattr(self, "action_executor", None),
+                )
+                self.subject_service = self.subject_core_components.subject_service
+                self.subject_sandbox_world = self.subject_core_components.sandbox_world
+                self.logger.info(
+                    "[subject-core] ready subject=%s data=%s",
+                    self.subject_service.config.subject_id,
+                    self.subject_core_components.repository.database_path,
+                )
+        except Exception as exc:
+            self.logger.warning("Subject Core bootstrap skipped: %s", exc)
 
     def _bootstrap_cognition_services(self, *, llm_service) -> None:
         self.self_observer = SelfObservationEngine()

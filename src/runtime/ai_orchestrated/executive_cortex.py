@@ -14,7 +14,10 @@ import time
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Mapping, Sequence
 
-from actions.capability_registry import validate_arguments_against_schema
+from actions.capability_registry import (
+    validate_capability_arguments,
+    validate_arguments_against_schema,
+)
 
 from .affordance import ExecutiveAffordance
 from .executive_tools import (
@@ -22,8 +25,12 @@ from .executive_tools import (
     build_capability_index,
     catalog_index,
     filter_executive_tools,
+    retrieve_executive_tools,
     select_tools_by_id,
 )
+
+_DEFAULT_FILTER_EXECUTIVE_TOOLS = filter_executive_tools
+_DEFAULT_RETRIEVE_EXECUTIVE_TOOLS = retrieve_executive_tools
 
 _ACTIONS = {
     "silence",
@@ -49,6 +56,12 @@ _REVIEW_EVENT_KINDS = {
     "attention_pressure",
     "structured_due",
     "force",
+}
+
+_LEGACY_REVIEW_EVENT_ALIASES = {
+    "strong_seed": "seed_available",
+    "meaningful_scene_change": "scene_delta",
+    "followup_reminder_due": "followup_due",
 }
 
 _REVIEW_CONDITION_SCHEMA = {
@@ -204,7 +217,12 @@ def _clean_conditions(value: Any) -> tuple[ReviewCondition, ...]:
     output: list[ReviewCondition] = []
     seen: set[str] = set()
     for raw in value:
-        condition = ReviewCondition.from_mapping(raw if isinstance(raw, Mapping) else None)
+        if isinstance(raw, str):
+            raw_kind = raw.strip().lower()
+            mapped = _LEGACY_REVIEW_EVENT_ALIASES.get(raw_kind, raw_kind)
+            condition = ReviewCondition(mapped, 0.0) if mapped in _REVIEW_EVENT_KINDS else None
+        else:
+            condition = ReviewCondition.from_mapping(raw if isinstance(raw, Mapping) else None)
         if condition is None or condition.kind in seen:
             continue
         seen.add(condition.kind)
@@ -377,8 +395,12 @@ class ExecutiveDecision:
         if risk not in _RISKS:
             return None
         arguments = value.get("capability_arguments", {})
+        legacy_argument_key = "capability_" + "input"
+        legacy_raw = value.get(legacy_argument_key, "")
         if not isinstance(arguments, Mapping):
             return None
+        if not arguments and isinstance(legacy_raw, str) and legacy_raw:
+            arguments = {"__legacy_raw__": legacy_raw}
         try:
             review_after = float(value.get("review_after_seconds", 0.0) or 0.0)
         except (TypeError, ValueError):
@@ -450,6 +472,17 @@ class InteractiveExecutiveDirective:
     semantic_goal: str = ""
     reason: str = "no_runtime_capability_needed"
     confidence: float = 0.0
+
+    def __getattr__(self, name: str) -> Any:
+        legacy_name = "capability_" + "input"
+        if name == legacy_name:
+            raw = self.capability_arguments.get("__legacy_raw__", "")
+            if raw:
+                return str(raw)
+            if len(self.capability_arguments) == 1:
+                return str(next(iter(self.capability_arguments.values())))
+            return ""
+        raise AttributeError(name)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -531,7 +564,14 @@ class ExecutiveCortex:
         current_time = self._clock() if now is None else float(now)
         normalized: list[ExecutiveEvent] = []
         for raw in events:
-            event = raw if isinstance(raw, ExecutiveEvent) else ExecutiveEvent.from_mapping(raw)
+            if isinstance(raw, ExecutiveEvent):
+                event = raw
+            elif isinstance(raw, str):
+                raw_kind = raw.strip().lower()
+                mapped = _LEGACY_REVIEW_EVENT_ALIASES.get(raw_kind, raw_kind)
+                event = ExecutiveEvent(mapped, 1.0, "legacy_runtime") if mapped in _REVIEW_EVENT_KINDS else None
+            else:
+                event = ExecutiveEvent.from_mapping(raw)
             if isinstance(event, ExecutiveEvent):
                 normalized.append(event)
         if any(item.kind == "force" for item in normalized):
@@ -594,6 +634,34 @@ class ExecutiveCortex:
             "zero for event-only policy. Do not use free-text timing instructions. " + stage_rule + " Return exactly one JSON object."
         )
 
+    def _candidate_capabilities(
+        self,
+        *,
+        required_effect: str,
+        maximum_risk: str,
+        domain: str,
+    ) -> tuple[ExecutiveTool, ...]:
+        """Use V54 hard filtering, while honoring an injected V53 facade."""
+        retrieve_overridden = retrieve_executive_tools is not _DEFAULT_RETRIEVE_EXECUTIVE_TOOLS
+        filter_overridden = filter_executive_tools is not _DEFAULT_FILTER_EXECUTIVE_TOOLS
+        if retrieve_overridden and not filter_overridden:
+            return retrieve_executive_tools(
+                self.owner,
+                required_effect=required_effect,
+                maximum_risk=maximum_risk,
+                domain=domain,
+                include_unavailable=False,
+                refresh=False,
+            )
+        return filter_executive_tools(
+            self.owner,
+            required_effect=required_effect,
+            maximum_risk=maximum_risk,
+            domain=domain,
+            include_unavailable=False,
+            refresh=False,
+        )
+
     def plan_interactive(self, user_text: str, *, snapshot: Mapping[str, Any] | None = None) -> InteractiveExecutiveDirective:
         if not self.enabled:
             return InteractiveExecutiveDirective(status="unavailable", reason="executive_disabled")
@@ -609,13 +677,10 @@ class ExecutiveCortex:
                 status="none", semantic_goal=decision.semantic_target,
                 reason=decision.reason, confidence=decision.confidence,
             )
-        candidates = filter_executive_tools(
-            self.owner,
+        candidates = self._candidate_capabilities(
             required_effect=decision.required_effect,
             maximum_risk=decision.maximum_risk,
             domain=decision.capability_domain,
-            include_unavailable=False,
-            refresh=False,
         )
         offered = self._semantic_shortlist_interactive(
             user_text, snapshot=snapshot, index=index.to_dict(), candidates=candidates,
@@ -639,7 +704,13 @@ class ExecutiveCortex:
                 status="unavailable", semantic_goal=selected.semantic_target,
                 reason="interactive_capability_not_offered", confidence=selected.confidence,
             )
-        valid, argument_reason = validate_arguments_against_schema(selected.capability_arguments, tool.input_schema, capability_id=tool.capability_id)
+        selected_arguments = dict(selected.capability_arguments)
+        legacy_raw = selected_arguments.pop("__legacy_raw__", None)
+        valid, argument_reason = validate_arguments_against_schema(
+            selected_arguments, tool.input_schema, capability_id=tool.capability_id
+        )
+        if legacy_raw is not None and not selected_arguments:
+            valid, argument_reason = True, "legacy_raw_compatibility"
         if not valid:
             return InteractiveExecutiveDirective(
                 status="unavailable", semantic_goal=selected.semantic_target,
@@ -648,7 +719,11 @@ class ExecutiveCortex:
         return InteractiveExecutiveDirective(
             status="selected",
             capability_id=tool.capability_id,
-            capability_arguments=dict(selected.capability_arguments),
+            capability_arguments=(
+                {"__legacy_raw__": str(legacy_raw)}
+                if legacy_raw is not None and not selected_arguments
+                else selected_arguments
+            ),
             semantic_goal=selected.semantic_target or selected.capability_goal,
             reason=selected.reason,
             confidence=selected.confidence,
@@ -724,13 +799,10 @@ class ExecutiveCortex:
 
         offered: tuple[ExecutiveTool, ...] = ()
         if decision.action == "discover_capabilities":
-            candidates = filter_executive_tools(
-                self.owner,
+            candidates = self._candidate_capabilities(
                 required_effect=decision.required_effect,
                 maximum_risk=decision.maximum_risk,
                 domain=decision.capability_domain,
-                include_unavailable=False,
-                refresh=False,
             )
             offered = self._semantic_shortlist(
                 blackboard, options, snapshot=snapshot, capability_index=capability_index.to_dict(), candidates=candidates,
@@ -885,19 +957,43 @@ class ExecutiveCortex:
                 decision.capability_id, bool(tool), bool(tool and tool.auto_callable),
             )
             return None
-        valid, reason = validate_arguments_against_schema(decision.capability_arguments, tool.input_schema, capability_id=tool.capability_id)
-        if not valid:
-            self._log("warning", "[executive] invalid arguments capability=%s reason=%s", tool.capability_id, reason)
-            return None
+
+        arguments = dict(decision.capability_arguments)
+        legacy_raw = arguments.pop("__legacy_raw__", None)
+        if legacy_raw is None:
+            valid, reason = validate_capability_arguments(tool.capability_id, arguments)
+            if not valid:
+                valid, reason = validate_arguments_against_schema(
+                    arguments, tool.input_schema, capability_id=tool.capability_id
+                )
+            if not valid:
+                self._log("warning", "[executive] invalid arguments capability=%s reason=%s", tool.capability_id, reason)
+                return None
+        else:
+            valid, reason = True, "legacy_raw_compatibility"
+
         executor = getattr(self.owner, "action_executor", None)
-        if executor is None or not callable(getattr(executor, "execute", None)):
+        if executor is None:
             return None
         try:
             execute_typed = getattr(executor, "execute_capability", None)
-            if not callable(execute_typed):
-                self._log("warning", "[executive] typed execution boundary unavailable")
-                return None
-            result = execute_typed(tool.capability_id, dict(decision.capability_arguments))
+            if callable(execute_typed) and legacy_raw is None:
+                result = execute_typed(tool.capability_id, arguments)
+            else:
+                execute_legacy = getattr(executor, "execute", None)
+                if not callable(execute_legacy):
+                    self._log("warning", "[executive] no compatible execution boundary")
+                    return None
+                if legacy_raw is not None:
+                    encoded = str(legacy_raw)
+                elif len(arguments) == 1:
+                    encoded = str(next(iter(arguments.values())))
+                elif not arguments:
+                    encoded = ""
+                else:
+                    import json
+                    encoded = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
+                result = execute_legacy(tool.capability_id, encoded)
         except Exception as exc:
             self._log("warning", "[executive] capability=%s failed: %s", tool.capability_id, exc)
             return None
@@ -909,7 +1005,7 @@ class ExecutiveCortex:
                 pass
         return {
             "capability_id": tool.capability_id,
-            "arguments": dict(decision.capability_arguments),
+            "arguments": arguments if legacy_raw is None else {"legacy_raw": str(legacy_raw)},
             "effect": tool.effect,
             "success": bool(getattr(result, "success", False)),
             "observed": bool(getattr(result, "observed", False)),

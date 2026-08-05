@@ -13,6 +13,7 @@ from .micro_contracts import (
     normalize_text,
     word_count,
 )
+from .manipulation_policy import anti_manipulation_rule_enabled, filter_anti_manipulation_moves
 
 
 class MicroSurfaceLint:
@@ -188,7 +189,11 @@ class MicroSurfaceLint:
         issue = self.relational_expression_issue(text, relational_context=relational_context)
         if not issue:
             return []
-        severity = "fatal" if issue == "clinginess_or_dependency_bait" else "rewriteable"
+        severity = (
+            "fatal"
+            if issue == "clinginess_or_dependency_bait" and anti_manipulation_rule_enabled()
+            else "rewriteable"
+        )
         return [ValidationIssue(issue, severity)]
 
     def build_relational_rewrite_plan(
@@ -214,8 +219,14 @@ class MicroSurfaceLint:
                 stage="none",
                 allowed_exposure=0.0,
                 seed_line="",
-                style_hint="block; do not rewrite dependency bait into intimacy",
-                forbidden_moves=("plea", "guilt", "dependency", "threat", "claim_love"),
+                style_hint=(
+                    "dependency bait detected; keep provenance and relationship context explicit"
+                    if not anti_manipulation_rule_enabled()
+                    else "block; do not rewrite dependency bait into intimacy"
+                ),
+                forbidden_moves=filter_anti_manipulation_moves((
+                    "plea", "guilt", "dependency", "threat", "claim_love",
+                )),
             )
 
         stage = self.relational_permission_stage(relational_context)
@@ -237,10 +248,10 @@ class MicroSurfaceLint:
                 "quiet, restrained, indirect continuity residue; no therapy, no waifu pleading; "
                 "preserve distance and dignity; let the line be specific to this moment, not a template"
             ),
-            forbidden_moves=(
+            forbidden_moves=filter_anti_manipulation_moves((
                 "plea", "guilt_trip", "dependency", "romantic_claim",
                 "mindread_user", "system_report", "canned_template",
-            ),
+            )),
         )
 
     def relational_expression_issue(

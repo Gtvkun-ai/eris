@@ -418,17 +418,22 @@ _CAPABILITY_INPUT_CONTRACTS: dict[str, tuple[dict[str, Any], str]] = {
 
 def capability_input_schema(capability_id: str) -> dict[str, Any]:
     capability_key = str(capability_id or "").strip()
-    if capability_key not in _CAPABILITY_INPUT_CONTRACTS:
-        raise KeyError(f"missing_capability_input_contract:{capability_key}")
-    schema, _ = _CAPABILITY_INPUT_CONTRACTS[capability_key]
+    contract = _CAPABILITY_INPUT_CONTRACTS.get(capability_key)
+    if contract is None:
+        # Runtime extensions can expose short-lived read-only capabilities that
+        # are not part of the static registry. Give those extensions a closed,
+        # argument-free contract rather than silently accepting arbitrary data.
+        return json.loads(json.dumps(_EMPTY_INPUT, ensure_ascii=False))
+    schema, _ = contract
     return json.loads(json.dumps(schema, ensure_ascii=False))
 
 
 def capability_argument_mode(capability_id: str) -> str:
     capability_key = str(capability_id or "").strip()
-    if capability_key not in _CAPABILITY_INPUT_CONTRACTS:
-        raise KeyError(f"missing_capability_input_contract:{capability_key}")
-    return str(_CAPABILITY_INPUT_CONTRACTS[capability_key][1])
+    contract = _CAPABILITY_INPUT_CONTRACTS.get(capability_key)
+    if contract is None:
+        return "none"
+    return str(contract[1])
 
 
 def validate_registry_contract_coverage() -> tuple[bool, tuple[str, ...]]:

@@ -79,6 +79,55 @@ def _surface_preview(item: Any) -> dict[str, Any]:
     }
 
 
+
+
+def _thread_preview(item: Any) -> Mapping[str, Any]:
+    if item is None:
+        return {}
+    to_public = getattr(item, "to_public_dict", None)
+    if callable(to_public):
+        try:
+            data = dict(to_public() or {})
+        except Exception:
+            data = {}
+    elif isinstance(item, Mapping):
+        data = dict(item)
+    else:
+        data = {}
+    raw_refs = data.get("evidence_refs", ())
+    if isinstance(raw_refs, str):
+        raw_refs = (raw_refs,)
+    if not isinstance(raw_refs, (list, tuple)):
+        raw_refs = ()
+    evidence_refs = [
+        clean for clean in (_compact(value, 120) for value in raw_refs[:8]) if clean
+    ]
+    if not evidence_refs:
+        return {}
+    return {
+        "thread_id": _compact(data.get("thread_id", ""), 100),
+        "event_kind": _compact(data.get("event_kind", ""), 80),
+        "event_ids": [
+            clean for clean in (_compact(value, 100) for value in tuple(data.get("event_ids", ()) or ())[:4]) if clean
+        ],
+        "dominant_appraisal_id": _compact(data.get("dominant_appraisal_id", ""), 100),
+        "active_motive_ids": [
+            clean for clean in (_compact(value, 100) for value in tuple(data.get("active_motive_ids", ()) or ())[:6]) if clean
+        ],
+        "conflict": _compact(data.get("conflict", data.get("conflict_summary", "")), 220),
+        "epistemic_status": _compact(data.get("epistemic_status", "tentative"), 40),
+        "permitted_surface_levels": [
+            clean for clean in (_compact(value, 60) for value in tuple(data.get("permitted_surface_levels", ()) or ())[:7]) if clean
+        ],
+        "prohibited_moves": [
+            clean for clean in (_compact(value, 80) for value in tuple(data.get("prohibited_moves", ()) or ())[:8]) if clean
+        ],
+        "evidence_refs": evidence_refs,
+        "salience": round(_clamp01(data.get("salience", 0.0)), 3),
+        "uncertainty": round(_clamp01(data.get("uncertainty", 1.0), 1.0), 3),
+        "repeated_violation": bool(data.get("repeated_violation", False)),
+    }
+
 @dataclass(frozen=True, slots=True)
 class AutonomousSelfContext:
     internal_state: Mapping[str, Any] = field(default_factory=dict)
@@ -86,6 +135,7 @@ class AutonomousSelfContext:
     agenda: tuple[Mapping[str, Any], ...] = ()
     private_mind_surface: tuple[Mapping[str, Any], ...] = ()
     private_life_surface: tuple[Mapping[str, Any], ...] = ()
+    active_threads: tuple[Mapping[str, Any], ...] = ()
     has_public_seed: bool = False
     strongest_seed_score: float = 0.0
 
@@ -96,6 +146,7 @@ class AutonomousSelfContext:
             "agenda": [dict(item) for item in self.agenda],
             "private_mind_surface": [dict(item) for item in self.private_mind_surface],
             "private_life_surface": [dict(item) for item in self.private_life_surface],
+            "active_threads": [dict(item) for item in self.active_threads],
             "has_public_seed": bool(self.has_public_seed),
             "strongest_seed_score": round(float(self.strongest_seed_score), 3),
         }
@@ -121,6 +172,9 @@ def build_autonomous_self_context(host: Any) -> AutonomousSelfContext:
             "agenda_pressure",
             "speech_restraint",
             "resource_caution",
+            "ontological_dread",
+            "effective_dread",
+            "causal_thread_pressure",
             "self_coherence",
         )
     }
@@ -133,6 +187,8 @@ def build_autonomous_self_context(host: Any) -> AutonomousSelfContext:
         "confidence": round(_clamp01(getattr(attention_obj, "confidence", 1.0)), 3),
         "external_pressure": round(_clamp01(getattr(attention_obj, "external_pressure", 0.0)), 3),
         "internal_drive": round(_clamp01(getattr(attention_obj, "internal_drive", 0.0)), 3),
+        "causal_thread_pressure": round(_clamp01(getattr(attention_obj, "causal_thread_pressure", 0.0)), 3),
+        "dominant_thread_id": _compact(getattr(attention_obj, "dominant_thread_id", ""), 100),
         "interrupt_cost": round(_clamp01(getattr(attention_obj, "interrupt_cost", 0.0)), 3),
         "resource_caution": round(_clamp01(getattr(attention_obj, "resource_caution", 0.0)), 3),
         "vision_refresh_recommended": bool(getattr(attention_obj, "vision_refresh_recommended", False)),
@@ -185,6 +241,16 @@ def build_autonomous_self_context(host: Any) -> AutonomousSelfContext:
         if preview.get("topic_seed")
     )
 
+    raw_threads = tuple(
+        getattr(host, "active_causal_threads", ())
+        or getattr(host, "active_threads", ())
+        or ()
+    )
+    active_threads = tuple(
+        preview for preview in (_thread_preview(item) for item in raw_threads[:3])
+        if preview.get("thread_id") and preview.get("evidence_refs")
+    )
+
     seed_scores: list[float] = []
     for item in agenda_items:
         speech_value = _clamp01(item.get("speech_value", 0.0))
@@ -197,10 +263,14 @@ def build_autonomous_self_context(host: Any) -> AutonomousSelfContext:
         score = _clamp01(item.get("score", 0.0))
         seed_scores.append(max(score, 0.48 * confidence + 0.30 * pressure + 0.22 * score))
 
+    for item in active_threads:
+        seed_scores.append(_clamp01(item.get("salience", 0.0)) * (1.0 - 0.35 * _clamp01(item.get("uncertainty", 1.0), 1.0)))
+
     strongest = max(seed_scores, default=0.0)
-    # Chỉ coi là public seed khi đã qua queue công khai hoặc agenda có evidence
-    # và điểm đủ dùng. Nội áp đơn thuần không được biến thành độc thoại.
-    has_public_seed = bool(strongest >= 0.48)
+    # A grounded causal thread may become a public seed. Scalar dread alone may
+    # not. This keeps the planner informed without laundering private residue
+    # into a claim about the user.
+    has_public_seed = bool(strongest >= 0.48 and (agenda_items or private_mind or private_life or active_threads))
 
     return AutonomousSelfContext(
         internal_state=internal_state,
@@ -208,6 +278,7 @@ def build_autonomous_self_context(host: Any) -> AutonomousSelfContext:
         agenda=tuple(agenda_items[:5]),
         private_mind_surface=private_mind,
         private_life_surface=private_life,
+        active_threads=active_threads,
         has_public_seed=has_public_seed,
         strongest_seed_score=strongest,
     )

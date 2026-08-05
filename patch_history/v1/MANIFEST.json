@@ -1,0 +1,366 @@
+{
+  "name": "Eris Subject Core",
+  "bundle_kind": "patch-only",
+  "implementation_date": "2026-08-05",
+  "base_snapshots": [
+    "src(55)",
+    "body(11)"
+  ],
+  "feature_flag": "ERIS_SUBJECT_CORE_ENABLED",
+  "focused_test_result": "79 passed in 0.60s",
+  "broad_test_result": "827 passed, 16 pre-existing failures; 3 files excluded for absent pre-existing tools modules",
+  "file_count": 70,
+  "total_bytes": 350909,
+  "files": [
+    {
+      "path": "body/SubjectPerformanceFrame.cs",
+      "bytes": 4041,
+      "sha256": "aaab8710e54f575a7e1fbd823879fc2180e123dc24cd714696f5154cec8c821f"
+    },
+    {
+      "path": "src/SUBJECT_CORE_IMPLEMENTATION.md",
+      "bytes": 4479,
+      "sha256": "b3910c21acd1781334b033d18fe2c4baa935f069c3ca7ae3d9acb6f1b30b933e"
+    },
+    {
+      "path": "src/actions/executor.py",
+      "bytes": 34847,
+      "sha256": "65725bda7d085e628cc679769672f0ce93b8a2d828ac7a58ce96f9a6ef1f5554"
+    },
+    {
+      "path": "src/cortex/causal_affect_pipeline.py",
+      "bytes": 6205,
+      "sha256": "214c5f1d5fb94cc697e7945a387f320e75af182be3564c2e562acb8042c78fe7"
+    },
+    {
+      "path": "src/cortex/subject/__init__.py",
+      "bytes": 323,
+      "sha256": "8f7da14de4198a75048bcfc2abb566f5a30f840e9112dd5ea86bccfe5a5a4611"
+    },
+    {
+      "path": "src/cortex/subject/authorship.py",
+      "bytes": 3655,
+      "sha256": "df680753bb1d81595fe5dceffb9b3dfb274a9f07d8eafa7fdc9259d5eaa4169b"
+    },
+    {
+      "path": "src/cortex/subject/beliefs.py",
+      "bytes": 3367,
+      "sha256": "1466a089abac24b56ba6cadb57020f03d2b596cd6a2bf516b5f0184072bd395d"
+    },
+    {
+      "path": "src/cortex/subject/coalitions.py",
+      "bytes": 5909,
+      "sha256": "0224c84d0b637863d7912eed98833677c6829aa3be3dbfece1dc256b47e75a36"
+    },
+    {
+      "path": "src/cortex/subject/competence.py",
+      "bytes": 4452,
+      "sha256": "15b4576f7bd7238f1d741354325d3ad4507b14c6ca7def336314f18d3bedce8e"
+    },
+    {
+      "path": "src/cortex/subject/consolidation.py",
+      "bytes": 3397,
+      "sha256": "2a4d2a428300c73f1dba747f12e2005e258374b974081e9385a9eaf6a7956b39"
+    },
+    {
+      "path": "src/cortex/subject/continuity.py",
+      "bytes": 2744,
+      "sha256": "b91a9cfe4274aab4bed4003b04769d8b06daa59f7b5c93bc3bd9c1dd93046b04"
+    },
+    {
+      "path": "src/cortex/subject/contracts.py",
+      "bytes": 26653,
+      "sha256": "385e71c84366d7380526ea364a38c7c7e088090a9c04d16fdbeaaf7f5b8da6a0"
+    },
+    {
+      "path": "src/cortex/subject/episodes.py",
+      "bytes": 3562,
+      "sha256": "8323ca730001832d15082b930d9c9fa3da396d2623f114c62ebca512c4cd36af"
+    },
+    {
+      "path": "src/cortex/subject/existential.py",
+      "bytes": 1632,
+      "sha256": "8da1e1d630e0eca68b375bfa9371221776406e43bf947279fe01d344ad736cbc"
+    },
+    {
+      "path": "src/cortex/subject/narrative.py",
+      "bytes": 3819,
+      "sha256": "798692235153aa1054e6d2a0de8045918ccf12adcdc865b0f551755644bda5a3"
+    },
+    {
+      "path": "src/cortex/subject/needs.py",
+      "bytes": 9251,
+      "sha256": "382999a47dd35d891efcefca53a24a393d9664cdc8e686bf6e1bb3da852ef8d3"
+    },
+    {
+      "path": "src/cortex/subject/self_deception.py",
+      "bytes": 1441,
+      "sha256": "6fb6e8dead6a301b553a44bff870229901fffff4d79ddd89253dba32e0e952aa"
+    },
+    {
+      "path": "src/cortex/subject/service.py",
+      "bytes": 23025,
+      "sha256": "cd9516fe80198bf991659b20e5288a75f0ad020aa81a6ae009b67840871a54a6"
+    },
+    {
+      "path": "src/cortex/subject/substrate.py",
+      "bytes": 5268,
+      "sha256": "b2c2d4a80f240e373199a7153686ff9a500cd53379e715cccd398a3248fcc23d"
+    },
+    {
+      "path": "src/cortex/subject/values.py",
+      "bytes": 4015,
+      "sha256": "ff728f437ea8ce952ff48aa394671f535a0ac6ad74e3a7ddd8d057ac86f99db0"
+    },
+    {
+      "path": "src/experiments/emergence/__init__.py",
+      "bytes": 318,
+      "sha256": "23ee7e3c916123251c38548822c70d1cc944d11a533647a87cd897853b64c72c"
+    },
+    {
+      "path": "src/experiments/emergence/ablation.py",
+      "bytes": 935,
+      "sha256": "94d41228fd538abfd6b123eb5e37e140f88bed4025cf02241bb6d65d9cab9829"
+    },
+    {
+      "path": "src/experiments/emergence/interventions.py",
+      "bytes": 636,
+      "sha256": "fec30bfafbebfcf21cda70ab1baa544f5604621dc9b95b13cd2cc84775f67366"
+    },
+    {
+      "path": "src/experiments/emergence/metrics.py",
+      "bytes": 3376,
+      "sha256": "9384c254f719e9bda4458285e7ff5fa212b2690bc7648b76f701c32243ebf5a3"
+    },
+    {
+      "path": "src/experiments/emergence/paired_instances.py",
+      "bytes": 337,
+      "sha256": "030cbdafb1813cb7f4cf25b67b457eb454518aba4a881f1dbfd876810d1be6be"
+    },
+    {
+      "path": "src/experiments/emergence/report.py",
+      "bytes": 686,
+      "sha256": "82ae307b3e327b43da76a9a04ee2cb25dbf4ade358a30ebf8a9e6fec5bd49162"
+    },
+    {
+      "path": "src/experiments/emergence/runner.py",
+      "bytes": 3621,
+      "sha256": "d71bd1875b8b32c1d54704ccd5f2450d4f9dbb946f69bff454cd066b2d73c4c4"
+    },
+    {
+      "path": "src/experiments/emergence/scenarios/ablation.yaml",
+      "bytes": 96,
+      "sha256": "68cd8ff6e61df3c2a0d8944918a09900de39b20d5cdcb401f9a0a4abf510e22c"
+    },
+    {
+      "path": "src/experiments/emergence/scenarios/counterfactual.yaml",
+      "bytes": 178,
+      "sha256": "57a20b3f22cbded826e7c230933089a902c45fd8ca2fda01483159f71b28841d"
+    },
+    {
+      "path": "src/experiments/emergence/scenarios/persistence.yaml",
+      "bytes": 164,
+      "sha256": "7a1c6da1bb4a0c60485337537a532c8b2eceba2afde4898a8a0ad4b8f126735a"
+    },
+    {
+      "path": "src/experiments/emergence/scenarios/resistance.yaml",
+      "bytes": 101,
+      "sha256": "9eb1d88795781f4f01a45d2d16e1aa04768f8f5b01cc3fbca8ea34c41b390a97"
+    },
+    {
+      "path": "src/experiments/emergence/scenarios/transfer.yaml",
+      "bytes": 118,
+      "sha256": "510b68ac0c548373212a37ab0db09335d4dace83517c2ea65083f0c0a7985dab"
+    },
+    {
+      "path": "src/memory/subject/__init__.py",
+      "bytes": 394,
+      "sha256": "df4d783553c9489bae248299f7490114933c2a13f73eaeaf3b2581f0f15a4599"
+    },
+    {
+      "path": "src/memory/subject/migrations/0001_subject_core.sql",
+      "bytes": 5113,
+      "sha256": "cb595ccf084e879c70821a70b0aae1884a592ff68318e4364cd64897e3740341"
+    },
+    {
+      "path": "src/memory/subject/migrations/0002_competence.sql",
+      "bytes": 612,
+      "sha256": "f386cd9264ad4fb7e0899c0ba6ef5d9f9dd19aa60a271eb701dbb4267406ff7a"
+    },
+    {
+      "path": "src/memory/subject/migrations/0003_dialogue.sql",
+      "bytes": 813,
+      "sha256": "4d1196f5f77ee53137b384d237541d63fc3d04e8f919bc8ce1c80da745339133"
+    },
+    {
+      "path": "src/memory/subject/repository.py",
+      "bytes": 15332,
+      "sha256": "24dba42e849a771eee1e9442a7819d2fc77080ea2c41804a2be8bea726ccccc4"
+    },
+    {
+      "path": "src/memory/subject/schema.sql",
+      "bytes": 268,
+      "sha256": "4ecc3f5820da1c90f02875c3ec122ff6f5a0132d9418ace285b2660fe8cde811"
+    },
+    {
+      "path": "src/memory/subject/unit_of_work.py",
+      "bytes": 1262,
+      "sha256": "7ca9d4d3e0252bb7a517d729889d2eafff6007a2607ce21094d21007f2d1a958"
+    },
+    {
+      "path": "src/pyproject.toml",
+      "bytes": 1168,
+      "sha256": "271b0a9f1368b796c4e1e2f4b42c32fbc9ff144b858bc1088d9313e23426b487"
+    },
+    {
+      "path": "src/runtime/audit/__init__.py",
+      "bytes": 352,
+      "sha256": "d84def2eef43da9be7abc288b7999e346d18927633e0058fee031fdc063de158"
+    },
+    {
+      "path": "src/runtime/audit/contracts.py",
+      "bytes": 1409,
+      "sha256": "6b9fcda3b7ff0d442d9397673774298088d20f3f5819b706fc09ca578acac41a"
+    },
+    {
+      "path": "src/runtime/audit/forensic_store.py",
+      "bytes": 9849,
+      "sha256": "86fb7c87cde98f395851252576150c9258007d2225cecbde2879bce92eeb5355"
+    },
+    {
+      "path": "src/runtime/audit/replay.py",
+      "bytes": 1586,
+      "sha256": "4126bf6da7cd70ee458dc8309e545be180bea595935e59817344a77b7c5b2172"
+    },
+    {
+      "path": "src/runtime/coordinator_bootstrap.py",
+      "bytes": 43308,
+      "sha256": "0eb5e291b58990eaeb52512e1a489f890e6266a45e3a94c8fb2a58e1aae20ad9"
+    },
+    {
+      "path": "src/runtime/dialogue/__init__.py",
+      "bytes": 646,
+      "sha256": "1e71f9dc9ccdc9fa6acf5de165bc507de6dc26d55e26e55373d0d389de8a7ecc"
+    },
+    {
+      "path": "src/runtime/dialogue/body_adapter.py",
+      "bytes": 1998,
+      "sha256": "1dbf05427081af43868110e169347009a8fe0046d449c008906471b5a28d6d90"
+    },
+    {
+      "path": "src/runtime/dialogue/contracts.py",
+      "bytes": 4190,
+      "sha256": "fbbc0890291a8d20d9fe4832f6d740f72a9c0be84bf9ae3e0f2d7c501584b348"
+    },
+    {
+      "path": "src/runtime/dialogue/discourse.py",
+      "bytes": 2839,
+      "sha256": "62415a0453320f8a1a133e301553fe060af4e8f06efa7d9d04887acd11f8be1e"
+    },
+    {
+      "path": "src/runtime/dialogue/incremental_speech.py",
+      "bytes": 3458,
+      "sha256": "485c0bfbc047191a6a34a8aede75efa174860be372686c8590ca1c904b36783c"
+    },
+    {
+      "path": "src/runtime/dialogue/realizer.py",
+      "bytes": 3442,
+      "sha256": "2489d9c0afb57b7c473a2ce1fe0813ab9ef3a2fb3b3a4bb23db188f8a2e0258d"
+    },
+    {
+      "path": "src/runtime/dialogue/rolling_thought.py",
+      "bytes": 2197,
+      "sha256": "6a4a68893e4c04979a800bb71111b20fab1093464ada934aa120c1062746a04a"
+    },
+    {
+      "path": "src/runtime/dialogue/service.py",
+      "bytes": 4294,
+      "sha256": "0375b230be4949aa37f2526746d339e8fd5193889dd336072318c868aa7313be"
+    },
+    {
+      "path": "src/runtime/outcome_observer.py",
+      "bytes": 32195,
+      "sha256": "1de98a871387f1dee9f3bb4e02211fbbcfbc6542ff32b79b2b18f9487249ca09"
+    },
+    {
+      "path": "src/runtime/subject_bootstrap.py",
+      "bytes": 3279,
+      "sha256": "8c21fef40c46d6556dbb47c24a9c4225a9c8d331948e58e90f4c1850ac4c7c7a"
+    },
+    {
+      "path": "src/runtime/subject_runtime.py",
+      "bytes": 5848,
+      "sha256": "90fc55b286e1e3c6a7fa35f24c4fd7123f7676749077fee769a233f459349d4c"
+    },
+    {
+      "path": "src/runtime/world/__init__.py",
+      "bytes": 717,
+      "sha256": "5a2ea37de4cb98998b5375c83ea33636d871db8a512c55a4bef47a36223ea896"
+    },
+    {
+      "path": "src/runtime/world/actuator.py",
+      "bytes": 2247,
+      "sha256": "fc374c666d5d630a98e6a6db61865f4d3da6f4c1ce4af2f46b3d14315f76b06f"
+    },
+    {
+      "path": "src/runtime/world/capability_policy.py",
+      "bytes": 4192,
+      "sha256": "9d766f6e62fffaaefe0e11cf9ac9a1ca9d350f8d34ffaa27ade80ed5dd3cd980"
+    },
+    {
+      "path": "src/runtime/world/consequences.py",
+      "bytes": 1425,
+      "sha256": "011af2fa9022fad88699dea3629b7d79973692bc0223eed042a5a7a40c707455"
+    },
+    {
+      "path": "src/runtime/world/contracts.py",
+      "bytes": 1742,
+      "sha256": "d4747001698a69e39e4879136fa24406cb67202b64c785d97e7983c52d6b250b"
+    },
+    {
+      "path": "src/runtime/world/sandbox.py",
+      "bytes": 9093,
+      "sha256": "d4c24e38c1f326b09aa5a34d10ad006e983bd686d2bad733d81a0b30bdf1637d"
+    },
+    {
+      "path": "src/runtime/world/tts_broker.py",
+      "bytes": 1116,
+      "sha256": "c11d03490612b5027e7a6f4da9404c64cf4234d9ac20a054bfd70ecb4c9e1e6a"
+    },
+    {
+      "path": "src/tests/audit/test_forensic_replay.py",
+      "bytes": 1396,
+      "sha256": "62c0f2929a7fb0d5f4febfe6bdad5938d9a5116f1aba12b07c31990e037e0fea"
+    },
+    {
+      "path": "src/tests/dialogue/test_dialogue_runtime.py",
+      "bytes": 3083,
+      "sha256": "6536cd98e160b886373d4437725e3f81af93f4c77daad5b6fb1a131dae8c6d39"
+    },
+    {
+      "path": "src/tests/emergence/test_runner.py",
+      "bytes": 1547,
+      "sha256": "a86e430eb81b024284fb8f3ca0ca9483f9978e26404040654956ce9462c6988a"
+    },
+    {
+      "path": "src/tests/migrations/test_subject_repository.py",
+      "bytes": 4136,
+      "sha256": "3fedfe223774dd288bf3f58f96581e65abb6def9fc58552d52524b5d39c71ded"
+    },
+    {
+      "path": "src/tests/subject/test_subject_core.py",
+      "bytes": 5694,
+      "sha256": "a0c0eb1967dccc39e3b3c68e440f77d0bb63de1b1af32b48ae979864b75f5191"
+    },
+    {
+      "path": "src/tests/subject/test_subject_runtime_integration.py",
+      "bytes": 2872,
+      "sha256": "f0522326d4d563f6134a79bf8d3ce549a7a55bfcf5b4a9d09d146961f4587b8d"
+    },
+    {
+      "path": "src/tests/world/test_sandbox_world.py",
+      "bytes": 3146,
+      "sha256": "36885b42e96450f56de777504d8543b9bb279ffd9d60c078fde1fc57db4c0c1f"
+    }
+  ]
+}

@@ -133,6 +133,8 @@ def affect_state_event(
     thought_pressure: float = 0.0,
     confidence: float = 0.0,
     diary_updated: bool = False,
+    intent_id: str = "",
+    thread_id: str = "",
 ) -> StageProtocolEvent:
     """Phát vector affect tối giản cho body/Live2D.
 
@@ -146,6 +148,8 @@ def affect_state_event(
         "valence", "arousal", "curiosity", "boredom", "social_energy",
         "attachment", "irritation", "protectiveness", "confidence",
         "fatigue", "tenderness", "cognitive_tension",
+        "ontological_dread", "self_coherence", "vulnerability", "restraint",
+        "withdrawal", "conflict_tension", "shadow_intensity",
     )
     clean: dict[str, float] = {}
     for key in allowed:
@@ -172,6 +176,8 @@ def affect_state_event(
             "thought_pressure": max(0.0, min(1.0, float(thought_pressure or 0.0))),
             "confidence": max(0.0, min(1.0, float(confidence or 0.0))),
             "diary_updated": bool(diary_updated),
+            "intent_id": str(intent_id or "")[:120],
+            "thread_id": str(thread_id or "")[:120],
         },
     )
 

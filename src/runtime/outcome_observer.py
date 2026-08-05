@@ -77,9 +77,47 @@ class OutcomeReport:
     accepted_reason: str = ""
     rupture_reason: str = ""
     tags: list[str] = field(default_factory=list)
+    decision_id: str = ""
+    action_id: str = ""
+    thread_id: str = ""
+    intent_id: str = ""
+    delivery_id: str = ""
+    delivery_success: float = 1.0
+    reply_expected: bool = False
+    delayed_reply: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    def to_world_outcome(
+        self,
+        *,
+        outcome_id: str,
+        started_at: float,
+        completed_at: float,
+        decision_id: str | None = None,
+        action_id: str | None = None,
+        delivery_id: str | None = None,
+    ):
+        """Adapt the operational report to the Subject Core world contract."""
+        from cortex.subject.contracts import OutcomeStatus, WorldOutcome
+
+        success = min(float(self.action_success), float(self.delivery_success), float(self.body_match_success))
+        status = OutcomeStatus.SUCCEEDED if success >= 0.99 else OutcomeStatus.PARTIAL if success > 0.0 else OutcomeStatus.FAILED
+        return WorldOutcome(
+            outcome_id=outcome_id,
+            action_id=str(action_id or self.action_id or self.intent_id or outcome_id),
+            decision_id=str(decision_id or self.decision_id or "legacy-decision"),
+            status=status,
+            observed_changes=tuple(self.tags),
+            unintended_changes=tuple(tag for tag in self.tags if tag.startswith("unexpected:")),
+            denial_reason=None,
+            evidence_refs=tuple(self.evidence),
+            started_at=started_at,
+            completed_at=completed_at,
+            thread_id=self.thread_id,
+            delivery_id=str(delivery_id or self.delivery_id),
+        )
 
     @classmethod
     def from_any(cls, value: Any) -> "OutcomeReport":
@@ -180,6 +218,9 @@ class OutcomeObserver:
         idle_seconds_after_turn: float | None = None,
         attach_to_frame: bool = True,
         social_appraisal: Any = None,
+        performance_intent: Any = None,
+        delivery_result: Any = None,
+        user_activity: Any = None,
     ) -> OutcomeReport:
         """
         Tạo OutcomeReport từ frame và các tín hiệu hậu quả.
@@ -202,6 +243,34 @@ class OutcomeObserver:
 
         evidence: list[str] = []
         tags: list[str] = []
+
+        if isinstance(performance_intent, Mapping):
+            intent_data = dict(performance_intent)
+        else:
+            to_dict = getattr(performance_intent, "to_dict", None)
+            try:
+                intent_data = dict(to_dict() or {}) if callable(to_dict) else {}
+            except Exception:
+                intent_data = {}
+        thread_id = str(intent_data.get("thread_id", getattr(frame, "thread_id", "")) or "")
+        intent_id = str(intent_data.get("intent_id", getattr(frame, "intent_id", "")) or "")
+        reply_expected = bool(
+            intent_data.get("require_reply", False)
+            or getattr(frame, "require_reply", False)
+            or getattr(frame, "reply_expected", False)
+        )
+        delivery_success = 1.0
+        if delivery_result is not None:
+            delivery_flag = self._read_bool(delivery_result, "success")
+            delivery_score = self._read_float(delivery_result, "success_score")
+            if delivery_flag is not None:
+                delivery_success = 1.0 if delivery_flag else 0.0
+            elif delivery_score is not None:
+                delivery_success = self._clamp01(delivery_score)
+        if intent_id:
+            evidence.append(f"intent_id={intent_id}")
+        if thread_id:
+            evidence.append(f"thread_id={thread_id}")
 
         final_text = self._extract_final_text(frame)
         system_action = self._extract_system_action(frame)
@@ -347,12 +416,32 @@ class OutcomeObserver:
                 idle_value = float(idle_seconds_after_turn)
             except Exception:
                 idle_value = 0.0
-            # Không nên kết luận bị ignore quá sớm. Chỉ bật nếu im lâu và turn thật sự có nói/hành động.
+            if isinstance(user_activity, Mapping):
+                busy = bool(user_activity.get("busy") or user_activity.get("compiling") or user_activity.get("foreground_active"))
+                speech_not_heard = bool(user_activity.get("speech_not_heard") or user_activity.get("audio_delivery_failed"))
+                conversation_closed = bool(user_activity.get("conversation_closed"))
+            else:
+                busy = bool(getattr(user_activity, "busy", False) or getattr(user_activity, "compiling", False))
+                speech_not_heard = bool(getattr(user_activity, "speech_not_heard", False) or getattr(user_activity, "audio_delivery_failed", False))
+                conversation_closed = bool(getattr(user_activity, "conversation_closed", False))
             if idle_value >= 90.0 and (final_text or system_action):
-                user_ignored = True
-                ignored_reason = f"idle_after_turn={idle_value:.1f}s"
+                if not reply_expected:
+                    ignored_reason = "question_did_not_require_reply"
+                    tags.append("reply_not_expected")
+                elif delivery_success < 0.50 or speech_not_heard:
+                    ignored_reason = "speech_not_heard_or_delivery_failed"
+                    tags.append("delivery_failure")
+                elif busy:
+                    ignored_reason = "user_busy"
+                    tags.append("user_busy")
+                elif conversation_closed:
+                    ignored_reason = "conversation_closed"
+                    tags.append("conversation_closed")
+                else:
+                    user_ignored = True
+                    ignored_reason = f"idle_after_required_reply={idle_value:.1f}s"
+                    tags.append("user_ignored")
                 evidence.append(ignored_reason)
-                tags.append("user_ignored")
 
         confidence = self._estimate_confidence(
             has_feedback=bool(feedback),
@@ -391,6 +480,11 @@ class OutcomeObserver:
             accepted_reason=accepted_reason,
             rupture_reason=rupture_reason,
             tags=tags[:12],
+            thread_id=thread_id,
+            intent_id=intent_id,
+            delivery_success=self._clamp01(delivery_success),
+            reply_expected=reply_expected,
+            delayed_reply=False,
         )
 
         if attach_to_frame:

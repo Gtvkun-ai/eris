@@ -219,6 +219,39 @@ def filter_executive_tools(
     return tuple(selected)
 
 
+
+def retrieve_executive_tools(
+    owner: Any | None,
+    *,
+    required_effect: str,
+    maximum_risk: str = "low",
+    domain: str = "",
+    include_unavailable: bool = False,
+    refresh: bool = False,
+    max_items: int | None = None,
+) -> tuple[ExecutiveTool, ...]:
+    """Compatibility facade for the V53 bounded retrieval contract.
+
+    V54 removed runtime semantic ranking. This facade therefore delegates to
+    the hard filter and only applies an explicit caller-provided safety bound.
+    The default returns the complete filtered set.
+    """
+    selected = filter_executive_tools(
+        owner,
+        required_effect=required_effect,
+        maximum_risk=maximum_risk,
+        domain=domain,
+        include_unavailable=include_unavailable,
+        refresh=refresh,
+    )
+    if max_items is None:
+        return selected
+    try:
+        limit = max(1, min(64, int(max_items)))
+    except (TypeError, ValueError):
+        return selected
+    return tuple(item for index, item in enumerate(selected) if index < limit)
+
 def select_tools_by_id(
     candidates: Sequence[ExecutiveTool],
     capability_ids: Sequence[str],
@@ -254,5 +287,6 @@ __all__ = [
     "build_capability_index",
     "catalog_index",
     "filter_executive_tools",
+    "retrieve_executive_tools",
     "select_tools_by_id",
 ]

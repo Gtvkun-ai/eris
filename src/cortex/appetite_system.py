@@ -14,8 +14,8 @@ Triết lý (lật ngược mô hình cũ):
 Cơ chế:
 1. evidence_buffet: gom fact sẵn-có-miễn-phí (content_metadata, vision facts, memory,
    recent events) thành các "món ăn" gắn tag. KHÔNG classifier mới.
-2. Mỗi appetite bid = áp_lực × độ_hợp_món. Loneliness/boredom được bid CẢ KHI không
-   có món — chúng "mang theo cớ" (allow_pretext) để bịa lý do níu/khơi chuyện.
+2. Mỗi appetite bid = áp_lực × độ_hợp_món. Loneliness/boredom vẫn cần
+   provenance thật; nội áp không được tự bịa một cái cớ để níu hoặc khơi chuyện.
 3. Winner set LENS (thái độ) + SEED (vật liệu). Một tác giả duy nhất (LLM persona)
    viết ra lời. Thái độ NẢY RA từ cá tính × nội dung, không tra bảng câu mẫu.
 
@@ -136,7 +136,9 @@ class AppetiteConfig:
     affinity: dict[str, float] = field(default_factory=dict)  # tag → độ hợp
     threshold: float = 0.45         # bid tối thiểu để thắng và bung
     inertia: float = 0.82
-    bring_own_pretext: bool = False # có thể bid khi không có món (được phép bịa cớ)
+    # Kept only for config compatibility. Runtime never fabricates a pretext.
+    bring_own_pretext: bool = False
+    requires_provenance: bool = True
     yan_amplified: bool = False     # yan có khuếch đại cơn này không
 
 
@@ -160,7 +162,7 @@ class Reaction:
     appetite: str
     lens: str
     seed: str
-    allow_pretext: bool      # winner bịa cớ vì evidence mỏng
+    allow_pretext: bool      # compatibility field; causal affect always False
     intensity: float
     mode: str                # "normal" | "yan"
     override_dignity: bool
@@ -196,18 +198,18 @@ DEFAULT_APPETITES: tuple[AppetiteConfig, ...] = (
     ),
     AppetiteConfig(
         name="loneliness",
-        lens="níu hiện diện — vờ tình cờ thả một câu để bạn quay lại, đừng thú nhận là cô đơn",
-        affinity={"idle_blank": 0.6, "memory": 0.55, "chat": 0.4, "user_event": 0.4},
+        lens="nhận ra nhu cầu continuity nhưng chỉ dùng sự kiện hoặc memory có provenance; không níu, không guilt-trip",
+        affinity={"memory": 0.55, "chat": 0.4, "user_event": 0.4, "unfinished_thought": 0.55, "routine_delta": 0.5},
         threshold=0.5,
-        bring_own_pretext=True,
+        requires_provenance=True,
         yan_amplified=True,
     ),
     AppetiteConfig(
         name="boredom",
-        lens="buồn tay, đổi nhịp — một câu muse vu vơ hoặc rủ đổi đề tài, nhẹ",
-        affinity={"shortform_scroll": 0.5, "idle_blank": 0.5, "music": 0.4},
+        lens="đổi nhịp từ một chi tiết có thật đang hiện diện; không sáng tác lý do để mở lời",
+        affinity={"shortform_scroll": 0.5, "music": 0.4, "screen": 0.35, "unfinished_thought": 0.5},
         threshold=0.5,
-        bring_own_pretext=True,
+        requires_provenance=True,
     ),
     AppetiteConfig(
         name="tenderness",
@@ -254,12 +256,12 @@ class AppetiteSystem:
             new_states[cfg.name] = AppetiteState(pressure=pressure, last_fed_at=st.last_fed_at)
 
             best_item, best_fit = self._best_evidence(cfg, evidence)
-            if best_fit >= 0.25 and best_item is not None:
+            has_provenance = bool(best_item is not None and str(best_item.seed or "").strip())
+            if best_fit >= 0.25 and best_item is not None and (has_provenance or not cfg.requires_provenance):
                 bid = pressure * (0.55 + 0.45 * best_fit)
                 bids.append((bid, cfg, best_item, False))
-            elif cfg.bring_own_pretext:
-                # Không có món hợp → mang cớ theo (bịa lý do để khơi chuyện/níu).
-                bids.append((pressure * 0.65, cfg, None, True))
+            # ``bring_own_pretext`` is deliberately ignored. A missing event or
+            # memory reference means no bid, even in yan mode.
 
         # Đấu giá: bid cao nhất thắng, có khuếch đại yan.
         winner = None
@@ -290,15 +292,11 @@ class AppetiteSystem:
             appetite=cfg.name,
             lens=cfg.lens,
             seed=(item.seed if item is not None else ""),
-            allow_pretext=pretext,
+            allow_pretext=False,
             intensity=intensity,
             mode="yan" if override_dignity else "normal",
             override_dignity=override_dignity,
-            reason=(
-                f"{cfg.name} thắng đấu giá bằng cớ tự mang (evidence mỏng)"
-                if pretext
-                else f"{cfg.name} thắng đấu giá trên món '{(item.seed if item else '')[:40]}'"
-            ),
+            reason=f"{cfg.name} thắng đấu giá trên evidence có provenance '{(item.seed if item else '')[:40]}'",
         )
 
     @staticmethod
