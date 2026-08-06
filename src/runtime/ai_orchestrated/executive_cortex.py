@@ -73,11 +73,7 @@ EXECUTIVE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "required": [
-        "action", "affordance_id", "semantic_target", "speech_act", "tone",
-        "capability_goal", "required_effect", "maximum_risk", "capability_domain",
-        "capability_ids", "capability_id", "capability_arguments", "reply_baton",
-        "phase", "trajectory", "reconsider_on", "review_after_seconds", "reason",
-        "confidence", "intrusion_risk",
+        "action", "reason", "confidence"
     ],
     "properties": {
         "action": {"type": "string", "enum": sorted(_ACTIONS)},
@@ -574,7 +570,11 @@ class ExecutiveCortex:
         stage_rule = {
             "initial": (
                 "No capability schemas are supplied. If runtime capability may help, choose discover_capabilities "
-                "with a semantic capability_goal, one required_effect, optional domain, and risk ceiling."
+                "with a semantic capability_goal, one required_effect, optional domain, and risk ceiling. "
+                "If blackboard.force_speak_pending is true and a low-risk affordance is offered, prefer select_affordance; "
+                "do not describe the turn as no active engagement merely because there is no new user text. "
+                "A random_chat_seed affordance is an already public-safe premise reservoir item; if its intrusion_risk is low "
+                "and it fits the blackboard, it is a valid autonomous speech opportunity."
             ),
             "capability_shortlist": (
                 "Compact live capability cards are supplied without input schemas. Semantically shortlist up to six "
@@ -897,7 +897,7 @@ class ExecutiveCortex:
                 reasoning_effort="medium",
                 inference_tier="main_cognition",
                 priority=priority,
-                timeout_seconds=float(os.getenv("ERIS_EXECUTIVE_TIMEOUT_S", "18") or 18),
+                timeout_seconds=float(os.getenv("ERIS_EXECUTIVE_TIMEOUT_S", "45") or 45),
             )
         except Exception as exc:
             self._log("warning", "[executive] model call failed stage=%s: %s", stage, exc)
@@ -905,7 +905,7 @@ class ExecutiveCortex:
             return None
         decision = ExecutiveDecision.parse(raw)
         if decision is None:
-            self._log("warning", "[executive] invalid response stage=%s", stage)
+            self._log("warning", "[executive] invalid response stage=%s raw=%r", stage, raw)
             self._set_failure_backoff()
             return None
         self._log(

@@ -32,11 +32,12 @@ WORKER_ROLES: tuple[str, ...] = (
     "style",
     "research",
     "tutor",
+    "executive",
 )
 
 # Structured workers default to canonical one-line JSON whenever the caller
 # requests json_object/json_schema. Companion/style keep free-text behavior.
-_DEFAULT_JSONL_ROLES = frozenset({"companion", "seed", "surface", "observer", "critic", "inner", "research", "tutor"})
+_DEFAULT_JSONL_ROLES = frozenset({"companion", "seed", "surface", "observer", "critic", "inner", "research", "tutor", "executive"})
 
 
 class JsonlContractError(RuntimeError):
@@ -228,12 +229,14 @@ def _append_schema_instruction(messages: Any, *, role: str, response_format: Any
     required = [str(name) for name in (schema.get("required") or ())]
     if not required:
         return copied
+    schema_dump = json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
     copied.append({
         "role": "user",
         "content": (
             f"ERIS {role} structured-output contract: return the OUTPUT object only; "
             "do not echo the input envelope and do not invent a wrapper object. "
-            f"Required top-level keys: {', '.join(required)}. JSON only."
+            f"Required top-level keys: {', '.join(required)}. JSON only.\n"
+            f"EXPECTED SCHEMA: {schema_dump}"
         ),
     })
     return copied
@@ -314,6 +317,7 @@ def _append_jsonl_repair_instruction(
     required = [str(name) for name in (schema.get("required") or ())]
     required_clause = f" Required top-level keys: {', '.join(required)}." if required else ""
     error_clause = f" Validation failure: {error}." if error is not None else ""
+    schema_dump = f"\nEXPECTED SCHEMA: {json.dumps(schema, ensure_ascii=False, separators=(',', ':'))}" if schema else ""
     copied.append(
         {
             "role": "user",
@@ -322,7 +326,7 @@ def _append_jsonl_repair_instruction(
                 f"You are the ERIS {role} worker. Return exactly ONE valid JSON value "
                 "on ONE physical line. No markdown, no code fence, no explanation, "
                 "and no text before or after the JSON. Do not echo the input envelope. "
-                f"Preserve the requested schema.{required_clause}{error_clause}"
+                f"Preserve the requested schema.{required_clause}{error_clause}{schema_dump}"
             ),
         }
     )

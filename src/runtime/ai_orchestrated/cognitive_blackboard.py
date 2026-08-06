@@ -781,6 +781,7 @@ class TypedCognitiveBlackboard:
             },
             "commentary_due": self.commentary_due,
             "commentary_required": self.commentary_required,
+            "force_speak_pending": self.force_speak_pending,
             "engagement_active": self.engagement_active,
             "engagement_preempts_reply_baton": self.engagement_preempts_reply_baton,
             "engagement_exclusive_focus": self.engagement_exclusive_focus,

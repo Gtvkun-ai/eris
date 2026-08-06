@@ -350,14 +350,12 @@ class SelfTurnPipeline:
             # plan cuối cùng, nhưng không được đổi action mà controller đã chọn.
             speech_intent = decision.speech_intent
             if speech_intent is not None and plan is not speech_intent.plan:
-                from dataclasses import replace
                 speech_intent = replace(speech_intent, plan=plan)
                 decision = replace(decision, plan=plan, speech_intent=speech_intent)
 
         # Generation epoch là turn_seq đã claim. Kết quả Surface/TTS mang epoch
         # cũ sẽ bị user-input preemption hoặc speech_epoch của TTS loại bỏ.
         if decision.speech_intent is not None:
-            from dataclasses import replace
             sealed_intent = replace(
                 decision.speech_intent,
                 trace_id=str(plan.plan_id or decision.speech_intent.trace_id),

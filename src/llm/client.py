@@ -30,6 +30,22 @@ from llm.deepseek import (
 _LOGGER = logging.getLogger("LLM")
 
 
+def _gemini_auth_headers(api_key: str) -> dict:
+    """Chọn đúng auth header theo loại credential Gemini.
+
+    Google AI API chấp nhận hai loại credential:
+    - API key (bắt đầu ``AIzaSy``): gửi qua ``x-goog-api-key``.
+    - OAuth access token (bắt đầu ``AQ.``): gửi qua ``Authorization: Bearer``.
+    Dùng sai header → 401 dù key/token hoàn toàn hợp lệ.
+    """
+    key = (api_key or "").strip()
+    if key.startswith("ya29."):
+        return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    return {"x-goog-api-key": key, "Content-Type": "application/json"}
+
+
+
+
 _PERSISTENT_WEB_SESSION_LANES = frozenset({
     "chat_main",
     "chat",
@@ -1110,10 +1126,7 @@ class GeminiClient:
                     max_tokens=max_tokens,
                     timeout_seconds=actual_timeout,
                     url=f"{self.base_url}/models/{self.model_name}:generateContent",
-                    headers={
-                        "x-goog-api-key": self.api_key,
-                        "Content-Type": "application/json",
-                    },
+                    headers=_gemini_auth_headers(self.api_key),
                     json=payload,
                 )
             except (requests.Timeout, requests.ConnectionError):

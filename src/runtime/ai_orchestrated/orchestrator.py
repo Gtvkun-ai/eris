@@ -1780,6 +1780,7 @@ class AIAutonomousOrchestrator:
         # bắt đầu trong lúc prime UIA/OCR, nhường lượt này và để chat sở hữu loa.
         if bool(getattr(host, "chat_mode", False)) or bool(getattr(host, "_chat_processing", False)):
             host.logger.info("[architecture C startup] preempted_by_chat")
+            host._ai_startup_ran = False
             return False
 
         state = host.ai_state_reducer.snapshot()
@@ -1932,6 +1933,7 @@ class AIAutonomousOrchestrator:
                     "[opening director] silence reasons=%s",
                     ",".join(opening_plan.safety.reasons) or "none",
                 )
+                host._ai_startup_ran = False
                 return False
             _opening_telemetry(
                 host,
@@ -2079,6 +2081,7 @@ class AIAutonomousOrchestrator:
                     plan.confidence,
                     plan.importance,
                 )
+                host._ai_startup_ran = False
                 return False
 
         from runtime.public_lifecycle import lifecycle_for
@@ -2376,6 +2379,7 @@ class AIAutonomousOrchestrator:
             lifecycle_for(host).transition(
                 "DEGRADED", turn_id=startup_turn_id, reason="empty_public_commit"
             )
+            host._ai_startup_ran = False
             return False
         if opening_director_active and opening_plan is not None and opening_input is not None:
             history_store = getattr(host, "ai_opening_history_store", None)

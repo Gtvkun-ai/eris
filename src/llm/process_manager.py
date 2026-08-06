@@ -6,7 +6,7 @@ from .deepseek import DEEPSEEK_BASE_URL, DEEPSEEK_DEFAULT_MODEL, DEEPSEEK_STRONG
 from .key_pool import get_key_pool
 from .model_catalog import DEFAULT_OPEN_MODEL_ID
 from .deepseek_workers import JsonlWorkerClient, load_worker_spec, normalize_worker_role
-
+from runtime.ai_orchestrated.executive_cortex import ExecutiveCortex
 
 def _normalize_remote_provider(provider: str) -> str:
     value = str(provider or "").strip().lower()
@@ -356,16 +356,51 @@ class RemoteModelProcessManager:
         return client
 
     def build_executive_client(self):
-        """Build the Gemma 4 Executive Cortex on the shared Gemini key pool.
+        """Build the Executive Cortex. Now dynamically uses DeepSeek if requested.
 
-        DeepSeek role workers remain unchanged.  This client is a separate
-        semantic policy layer used only for trajectory/tool-affordance decisions.
-        Missing credentials fail closed; no legacy semantic selector is revived.
+        This client is a separate semantic policy layer used only for trajectory/tool-affordance decisions.
         """
 
         apply_secrets_to_environ()
         if not self._env_flag("ERIS_EXECUTIVE_CORTEX_ENABLED", "1"):
             return None
+
+        # Route to DS2API if deepseek_web or ds2api is enabled
+        provider = _normalize_remote_provider(os.environ.get("ERIS_REMOTE_PROVIDER", "deepseek"))
+        ds2api_flag = self._explicit_env_flag("ERIS_DS2API_ENABLED")
+        if provider == "deepseek_web" or ds2api_flag:
+            # Reuse the executive worker for trajectory decisions
+            worker = self.build_deepseek_worker_client("executive")
+            if worker is not None:
+                self.logger.info("Executive Cortex san sang: routed to DS2API executive worker")
+                return worker
+
+        # Route to plain DeepSeek API if enabled
+        if provider == "deepseek":
+            model_name = os.environ.get("ERIS_EXECUTIVE_MODEL", DEEPSEEK_STRONG_MODEL).strip()
+            api_key = get_secret("DEEPSEEK_API_KEY", "ERIS_REMOTE_API_KEY")
+            base_url = os.environ.get("ERIS_REMOTE_BASE_URL", DEEPSEEK_BASE_URL).strip()
+            if api_key:
+                try:
+                    raw_client = OpenAICompatibleClient(
+                        base_url=base_url,
+                        api_key=api_key,
+                        model_name=model_name,
+                        key_pool=None,
+                        timeout=max(5, int(float(os.environ.get("ERIS_EXECUTIVE_TIMEOUT_S", "45") or 45))),
+                    )
+                    client = JsonlWorkerClient(
+                        raw_client,
+                        role="executive",
+                        jsonl_enabled=True,
+                        repair_attempts=1,
+                    )
+                    self.logger.info("Executive Cortex san sang: DeepSeek model=%s", model_name)
+                    return client
+                except ValueError as exc:
+                    self.logger.warning("Khong dung duoc DeepSeek cho Executive Cortex: %s", exc)
+
+        # Legacy fallback to Gemini
         profile = get_provider_profile("gemini", slot="executive")
         pool = get_key_pool("gemini")
         api_key = (
@@ -375,7 +410,7 @@ class RemoteModelProcessManager:
         )
         if not api_key:
             self.logger.warning(
-                "Gemma Executive Cortex chua co key; semantic path se fail closed."
+                "Executive Cortex chua co key; semantic path se fail closed."
             )
             return None
         base_url = (
@@ -395,14 +430,14 @@ class RemoteModelProcessManager:
                 base_url=base_url,
                 api_key=api_key,
                 model_name=model_name,
-                timeout=max(5, int(float(os.environ.get("ERIS_EXECUTIVE_TIMEOUT_S", "18") or 18))),
+                timeout=max(5, int(float(os.environ.get("ERIS_EXECUTIVE_TIMEOUT_S", "45") or 45))),
                 key_pool=pool,
             )
         except Exception as exc:
-            self.logger.warning("Khong dung duoc Gemma Executive Cortex: %s", exc)
+            self.logger.warning("Khong dung duoc Gemini Executive Cortex: %s", exc)
             return None
         self.logger.info(
-            "Gemma Executive Cortex san sang: model=%s pool_keys=%s",
+            "Gemini Executive Cortex san sang: model=%s pool_keys=%s",
             model_name,
             getattr(pool, "size", 0),
         )
