@@ -735,17 +735,19 @@ class AIChatOrchestrator:
                 else {}
             ),
         }
-        # Subject Core is the authoritative internal decision record for every
-        # public turn.  Existing planners may realize the decision, but they do
-        # not get a separate mutable self-state or a bypass around authorship.
+        # Subject Core chuẩn bị nền; Executive cam kết coalition; Subject Core
+        # mới materialize MindDecision và authorship. Planner phía sau chỉ realize,
+        # không được dựng một động cơ thứ hai vì con người đã có đủ hội đồng rồi.
         subject_ingress = getattr(host, "subject_ingress", None)
         if subject_ingress is None:
             raise RuntimeError("Subject Core ingress is required in V7")
+        executive = getattr(host, "ai_executive_cortex", None)
         subject_decision = subject_ingress.observe_user_turn(
             user_text,
             created_at=cycle_start,
             turn_id=turn_id,
             planning_context=planning_snapshot,
+            executive=executive,
         )
         subject_payload = subject_decision.to_dict()
         planning_snapshot["subject_decision"] = subject_payload
@@ -765,7 +767,7 @@ class AIChatOrchestrator:
         if callable(set_parent_decision):
             set_parent_decision(subject_decision)
         subject_context = (
-            "SUBJECT CORE DECISION (authoritative internal record): "
+            "SUBJECT/EXECUTIVE COMMIT (authoritative internal record): "
             + json.dumps(subject_payload, ensure_ascii=False, separators=(",", ":"))
             + ". BOUNDED INNER STATE: "
             + json.dumps(subject_inner_view, ensure_ascii=False, separators=(",", ":"))
@@ -782,7 +784,6 @@ class AIChatOrchestrator:
         # the internal decision; the selector may choose an exact live tool that
         # realizes it, never a second motive or personality trajectory.
         executive_directive = None
-        executive = getattr(host, "ai_executive_cortex", None)
         if executive is not None and bool(getattr(executive, "enabled", False)):
             try:
                 executive_directive = executive.plan_interactive(
@@ -1780,7 +1781,6 @@ class AIAutonomousOrchestrator:
         # bắt đầu trong lúc prime UIA/OCR, nhường lượt này và để chat sở hữu loa.
         if bool(getattr(host, "chat_mode", False)) or bool(getattr(host, "_chat_processing", False)):
             host.logger.info("[architecture C startup] preempted_by_chat")
-            host._ai_startup_ran = False
             return False
 
         state = host.ai_state_reducer.snapshot()
@@ -1917,9 +1917,26 @@ class AIAutonomousOrchestrator:
                 )
                 return result
 
+            continuity_fastpath = bool(
+                opening_input.policy.prefer_continuity_hook
+                and (
+                    opening_input.continuity.open_loops
+                    or opening_input.continuity.last_session_summary
+                )
+            )
+            if continuity_fastpath:
+                host.logger.info(
+                    "[opening director] continuity fastpath; planner model skipped anchors=%d summary=%s",
+                    len(opening_input.continuity.open_loops),
+                    int(bool(opening_input.continuity.last_session_summary)),
+                )
             opening_plan = director.plan(
                 opening_input,
-                planner=_opening_planner if callable(opening_planner_fn) else None,
+                planner=(
+                    _opening_planner
+                    if callable(opening_planner_fn) and not continuity_fastpath
+                    else None
+                ),
             )
             if opening_plan.decision != "speak" or not opening_plan.safety.allowed:
                 _opening_telemetry(
@@ -1933,7 +1950,6 @@ class AIAutonomousOrchestrator:
                     "[opening director] silence reasons=%s",
                     ",".join(opening_plan.safety.reasons) or "none",
                 )
-                host._ai_startup_ran = False
                 return False
             _opening_telemetry(
                 host,
@@ -2081,7 +2097,6 @@ class AIAutonomousOrchestrator:
                     plan.confidence,
                     plan.importance,
                 )
-                host._ai_startup_ran = False
                 return False
 
         from runtime.public_lifecycle import lifecycle_for
@@ -2379,7 +2394,6 @@ class AIAutonomousOrchestrator:
             lifecycle_for(host).transition(
                 "DEGRADED", turn_id=startup_turn_id, reason="empty_public_commit"
             )
-            host._ai_startup_ran = False
             return False
         if opening_director_active and opening_plan is not None and opening_input is not None:
             history_store = getattr(host, "ai_opening_history_store", None)

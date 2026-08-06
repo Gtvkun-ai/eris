@@ -490,6 +490,151 @@ class ActionProposal:
 
 
 @dataclass(frozen=True, slots=True)
+class CoalitionCandidate:
+    """Một liên minh đã được Subject Core dựng và chấm, chưa phải quyết định.
+
+    Executive chỉ được chọn trong tập này hoặc yêu cầu Mind chuẩn bị lại. Nhờ đó
+    model trung tâm có quyền cam kết, nhưng không thể tự bịa một động cơ không có
+    nguồn từ substrate, nhu cầu, belief, value hay lịch sử.
+    """
+
+    coalition_id: EntityId
+    proposal_refs: tuple[EntityId, ...]
+    primary_proposal_ref: EntityId
+    action_kind: str
+    arguments: Mapping[str, Any]
+    supporting_need_ids: tuple[str, ...]
+    score: float
+    expected_pragmatic_value: Score01
+    expected_epistemic_value: Score01
+    uncertainty: Score01
+    evidence_refs: tuple[EvidenceRef, ...] = ()
+
+    def __post_init__(self) -> None:
+        ensure_non_empty(self.coalition_id, field_name="coalition_id")
+        ensure_non_empty(self.primary_proposal_ref, field_name="primary_proposal_ref")
+        ensure_non_empty(self.action_kind, field_name="action_kind")
+        clamp01(self.expected_pragmatic_value, field_name="expected_pragmatic_value")
+        clamp01(self.expected_epistemic_value, field_name="expected_epistemic_value")
+        clamp01(self.uncertainty, field_name="uncertainty")
+        object.__setattr__(self, "arguments", freeze_mapping(self.arguments))
+
+    def to_dict(self) -> dict[str, Any]:
+        return _jsonable(self)
+
+
+@dataclass(frozen=True, slots=True)
+class SubjectDeliberationFrame:
+    """Nền quyết định bất biến do Subject Core chuẩn bị cho Executive.
+
+    Frame giữ dữ liệu nội bộ để SubjectService có thể finalize có kiểm chứng.
+    ``public_view`` chỉ lộ projection bounded, tránh biến Executive thành một
+    dashboard toàn tri rồi gọi đó là tâm trí, trò ảo thuật kiến trúc khá phổ biến.
+    """
+
+    frame_id: EntityId
+    observation: WorldObservation
+    substrate: OrganismicSubstrate
+    appraisals: tuple[SubjectAppraisal, ...]
+    activations: tuple[NeedActivation, ...]
+    proposals: tuple[ActionProposal, ...]
+    coalitions: tuple[CoalitionCandidate, ...]
+    context_key: str
+    belief_refs: tuple[EntityId, ...]
+    value_refs: tuple[EntityId, ...]
+    created_at: UnixTime
+
+    def __post_init__(self) -> None:
+        ensure_non_empty(self.frame_id, field_name="frame_id")
+        ensure_non_empty(self.context_key, field_name="context_key")
+        if not self.proposals:
+            raise ValueError("deliberation frame requires proposals")
+        if not self.coalitions:
+            raise ValueError("deliberation frame requires coalitions")
+
+    @property
+    def substrate_ref(self) -> str:
+        return f"substrate:{self.substrate.subject_id}:{self.substrate.revision}"
+
+    def public_view(self) -> dict[str, Any]:
+        """Projection đủ để Executive chọn, không lộ raw private evidence."""
+        return {
+            "schema": "eris.subject_deliberation_frame.v1",
+            "frame_id": self.frame_id,
+            "observation_ref": self.observation.observation_id,
+            "observation_kind": self.observation.kind,
+            "context_key": self.context_key,
+            "substrate_ref": self.substrate_ref,
+            "substrate": {
+                "processing_capacity": self.substrate.processing_capacity,
+                "action_efficacy": self.substrate.action_efficacy,
+                "project_viability": self.substrate.project_viability,
+                "future_option_availability": self.substrate.future_option_availability,
+                "active_impairments": [item.key for item in self.substrate.active_impairments],
+            },
+            "appraisals": [
+                {
+                    "appraisal_id": item.appraisal_id,
+                    "goal_relevance": item.goal_relevance,
+                    "controllability": item.controllability,
+                    "relational_significance": item.relational_significance,
+                    "identity_significance": item.identity_significance,
+                    "future_consequence": item.future_consequence,
+                    "uncertainty": item.uncertainty,
+                    "affected_need_ids": list(item.affected_need_ids),
+                    "primary_interpretation": item.primary_interpretation,
+                }
+                for item in self.appraisals
+            ],
+            "need_activations": [
+                {
+                    "need_id": item.need_id,
+                    "pressure": item.pressure,
+                    "opportunity": item.opportunity,
+                    "urgency": item.urgency,
+                    "persistence": item.persistence,
+                    "proposed_tendencies": list(item.proposed_tendencies),
+                }
+                for item in self.activations
+            ],
+            "coalitions": [item.to_dict() for item in self.coalitions],
+            "belief_refs": list(self.belief_refs),
+            "value_refs": list(self.value_refs),
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.public_view()
+
+
+@dataclass(frozen=True, slots=True)
+class SubjectExecutiveCommit:
+    """Cam kết có chữ ký logic của Executive đối với một deliberation frame."""
+
+    commit_id: EntityId
+    frame_id: EntityId
+    selected_coalition_id: EntityId
+    selected_proposal_ref: EntityId
+    semantic_commitments: tuple[str, ...]
+    cognitive_requests: tuple[str, ...]
+    reason: str
+    confidence: Score01
+    review_conditions: tuple[str, ...]
+    created_at: UnixTime
+    source: str = "executive_cortex"
+
+    def __post_init__(self) -> None:
+        ensure_non_empty(self.commit_id, field_name="commit_id")
+        ensure_non_empty(self.frame_id, field_name="frame_id")
+        ensure_non_empty(self.selected_coalition_id, field_name="selected_coalition_id")
+        ensure_non_empty(self.selected_proposal_ref, field_name="selected_proposal_ref")
+        ensure_non_empty(self.reason, field_name="reason")
+        clamp01(self.confidence, field_name="confidence")
+
+    def to_dict(self) -> dict[str, Any]:
+        return _jsonable(self)
+
+
+@dataclass(frozen=True, slots=True)
 class MindDecision:
     decision_id: EntityId
     coalition_id: EntityId

@@ -17,7 +17,7 @@ def test_v11_settings_migrate_snapshot_journal_defaults():
         {"version": 11, "engagement": {"max_events": 200}}
     )
     assert changed is True
-    assert migrated["version"] == 15
+    assert migrated["version"] == 16
     assert migrated["engagement"]["snapshot_journal_enabled"] is True
     assert migrated["engagement"]["snapshot_journal_auto_repair"] is True
 

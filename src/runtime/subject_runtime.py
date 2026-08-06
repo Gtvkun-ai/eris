@@ -8,7 +8,14 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Protocol
 
-from cortex.subject.contracts import LearningReceipt, MindDecision, WorldObservation, WorldOutcome
+from cortex.subject.contracts import (
+    LearningReceipt,
+    MindDecision,
+    SubjectDeliberationFrame,
+    SubjectExecutiveCommit,
+    WorldObservation,
+    WorldOutcome,
+)
 from cortex.subject.service import SubjectService
 from runtime.audit import AuditEvent, AuditEventKind
 from runtime.world.contracts import ActionReceipt, ActuatorPort
@@ -20,6 +27,20 @@ class DialoguePort(Protocol):
 
 class AuditSink(Protocol):
     def append(self, event: AuditEvent) -> Any: ...
+
+
+class SubjectExecutivePort(Protocol):
+    @property
+    def enabled(self) -> bool: ...
+
+    def commit_subject_frame(
+        self,
+        frame: SubjectDeliberationFrame,
+        *,
+        user_text: str = "",
+        snapshot: dict[str, Any] | None = None,
+        mode: str = "runtime",
+    ) -> SubjectExecutiveCommit | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +61,7 @@ class SubjectRuntime:
         audit: AuditSink | None,
         clock: Callable[[], float] = time.time,
         id_factory: Callable[[], str] | None = None,
+        executive: SubjectExecutivePort | None = None,
     ) -> None:
         self._mind = mind
         self._actuator = actuator
@@ -47,6 +69,11 @@ class SubjectRuntime:
         self._audit = audit
         self._clock = clock
         self._id_factory = id_factory or (lambda: str(uuid.uuid4()))
+        self._executive = executive
+
+    def bind_executive(self, executive: SubjectExecutivePort) -> None:
+        """Gắn Executive sau bootstrap mà không tạo dependency vòng composition root."""
+        self._executive = executive
 
     async def _audit_append(self, event: AuditEvent) -> None:
         if self._audit is None:
@@ -67,7 +94,29 @@ class SubjectRuntime:
             correlation_id=observation.correlation_id,
             algorithm_version=self._mind.config.algorithm_version,
         ))
-        decision = await self._mind.deliberate(observation)
+        # Subject Core chuẩn bị nền; Executive cam kết; Mind mới ghi decision.
+        # Khi runtime độc lập chưa bind Executive (chủ yếu unit test), fallback cũ
+        # vẫn tồn tại và được authorship đánh dấu rõ, không giả làm executive commit.
+        frame = await self._mind.prepare_deliberation(observation)
+        commit = None
+        if self._executive is not None:
+            commit = self._executive.commit_subject_frame(
+                frame,
+                user_text=str(observation.context.get("user_text") or ""),
+                snapshot=dict(observation.context),
+                mode="runtime",
+            )
+            if commit is not None and commit.cognitive_requests:
+                revised = await self._mind.review_deliberation(frame, commit.cognitive_requests)
+                if revised.frame_id != frame.frame_id:
+                    frame = revised
+                    commit = self._executive.commit_subject_frame(
+                        frame,
+                        user_text=str(observation.context.get("user_text") or ""),
+                        snapshot=dict(observation.context),
+                        mode="runtime_review",
+                    )
+        decision = await self._mind.finalize_deliberation(frame, commit)
         await self._audit_append(AuditEvent(
             event_id=self._id_factory(),
             subject_id=observation.subject_id,

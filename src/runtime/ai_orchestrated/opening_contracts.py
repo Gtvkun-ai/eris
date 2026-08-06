@@ -255,6 +255,7 @@ class PolicyContext:
     speech_allowed: bool = True
     allow_screen_hook: bool = True
     allow_continuity_hook: bool = True
+    prefer_continuity_hook: bool = True
     allow_anime_moves: bool = True
     require_adult_flirt_opt_in: bool = True
     max_beats: int = 3
@@ -273,6 +274,7 @@ class PolicyContext:
             speech_allowed=bool(data.get("speech_allowed", True)),
             allow_screen_hook=bool(data.get("allow_screen_hook", True)),
             allow_continuity_hook=bool(data.get("allow_continuity_hook", True)),
+            prefer_continuity_hook=bool(data.get("prefer_continuity_hook", True)),
             allow_anime_moves=bool(data.get("allow_anime_moves", True)),
             require_adult_flirt_opt_in=bool(data.get("require_adult_flirt_opt_in", True)),
             max_beats=_bounded_int(data.get("max_beats", 3), 3, 1, 3),

@@ -106,16 +106,6 @@ def test_blackboard_only_surfaces_public_safe_inner_seed():
     assert "không được lọt qua" not in payload
 
 
-def test_blackboard_public_view_exposes_force_speak_signal():
-    board = TypedCognitiveBlackboard.from_snapshot(
-        _snapshot(force_speak_pending=True),
-        now=1000.0,
-    )
-
-    assert board.force_speak_pending is True
-    assert board.public_view()["force_speak_pending"] is True
-
-
 def test_controller_returns_no_op_without_anchor(tmp_path: Path):
     controller = InitiativeController(state_path=tmp_path / "initiative.json")
     board = TypedCognitiveBlackboard.from_snapshot(_snapshot(), now=1000.0)

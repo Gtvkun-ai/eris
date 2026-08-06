@@ -11,8 +11,11 @@ from __future__ import annotations
 import os
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Mapping, Sequence
+
+from cortex.subject.contracts import SubjectDeliberationFrame, SubjectExecutiveCommit
 
 from actions.capability_registry import (
     validate_capability_arguments,
@@ -73,7 +76,11 @@ EXECUTIVE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "required": [
-        "action", "reason", "confidence"
+        "action", "affordance_id", "semantic_target", "speech_act", "tone",
+        "capability_goal", "required_effect", "maximum_risk", "capability_domain",
+        "capability_ids", "capability_id", "capability_arguments", "reply_baton",
+        "phase", "trajectory", "reconsider_on", "review_after_seconds", "reason",
+        "confidence", "intrusion_risk",
     ],
     "properties": {
         "action": {"type": "string", "enum": sorted(_ACTIONS)},
@@ -104,6 +111,43 @@ EXECUTIVE_SCHEMA: dict[str, Any] = {
         "reason": {"type": "string"},
         "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
         "intrusion_risk": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "subject_coalition_id": {"type": "string"},
+        "subject_proposal_ref": {"type": "string"},
+        "semantic_commitments": {
+            "type": "array",
+            "items": {"type": "string"},
+            "maxItems": 8,
+        },
+        "cognitive_requests": {
+            "type": "array",
+            "items": {"type": "string"},
+            "maxItems": 6,
+        },
+    },
+}
+
+SUBJECT_COMMIT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "selected_coalition_id", "selected_proposal_ref",
+        "semantic_commitments", "cognitive_requests", "reason",
+        "confidence", "review_conditions",
+    ],
+    "properties": {
+        "selected_coalition_id": {"type": "string"},
+        "selected_proposal_ref": {"type": "string"},
+        "semantic_commitments": {
+            "type": "array", "items": {"type": "string"}, "maxItems": 8
+        },
+        "cognitive_requests": {
+            "type": "array", "items": {"type": "string"}, "maxItems": 6
+        },
+        "reason": {"type": "string"},
+        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "review_conditions": {
+            "type": "array", "items": {"type": "string"}, "maxItems": 8
+        },
     },
 }
 
@@ -369,6 +413,10 @@ class ExecutiveDecision:
     reason: str = "executive_unavailable"
     confidence: float = 0.0
     intrusion_risk: float = 0.0
+    subject_coalition_id: str = ""
+    subject_proposal_ref: str = ""
+    semantic_commitments: tuple[str, ...] = ()
+    cognitive_requests: tuple[str, ...] = ()
     capability_result: Mapping[str, Any] | None = None
 
     @classmethod
@@ -417,6 +465,18 @@ class ExecutiveDecision:
             reason=_compact(value.get("reason", "executive_decision"), 360) or "executive_decision",
             confidence=_clamp01(value.get("confidence", 0.0)),
             intrusion_risk=_clamp01(value.get("intrusion_risk", 0.0)),
+            subject_coalition_id=_compact(value.get("subject_coalition_id", ""), 220),
+            subject_proposal_ref=_compact(value.get("subject_proposal_ref", ""), 220),
+            semantic_commitments=tuple(
+                _compact(item, 500)
+                for item in value.get("semantic_commitments", ())
+                if _compact(item, 500)
+            )[:8],
+            cognitive_requests=tuple(
+                _compact(item, 160).lower()
+                for item in value.get("cognitive_requests", ())
+                if _compact(item, 160)
+            )[:6],
         )
 
     @classmethod
@@ -446,6 +506,10 @@ class ExecutiveDecision:
             "reason": self.reason,
             "confidence": self.confidence,
             "intrusion_risk": self.intrusion_risk,
+            "subject_coalition_id": self.subject_coalition_id,
+            "subject_proposal_ref": self.subject_proposal_ref,
+            "semantic_commitments": list(self.semantic_commitments),
+            "cognitive_requests": list(self.cognitive_requests),
             "capability_result": dict(self.capability_result or {}),
         }
 
@@ -570,11 +634,7 @@ class ExecutiveCortex:
         stage_rule = {
             "initial": (
                 "No capability schemas are supplied. If runtime capability may help, choose discover_capabilities "
-                "with a semantic capability_goal, one required_effect, optional domain, and risk ceiling. "
-                "If blackboard.force_speak_pending is true and a low-risk affordance is offered, prefer select_affordance; "
-                "do not describe the turn as no active engagement merely because there is no new user text. "
-                "A random_chat_seed affordance is an already public-safe premise reservoir item; if its intrusion_risk is low "
-                "and it fits the blackboard, it is a valid autonomous speech opportunity."
+                "with a semantic capability_goal, one required_effect, optional domain, and risk ceiling."
             ),
             "capability_shortlist": (
                 "Compact live capability cards are supplied without input schemas. Semantically shortlist up to six "
@@ -604,12 +664,17 @@ class ExecutiveCortex:
         return (
             "You are ERIS Executive Cortex. DeepSeek owns observation, private reflection, seed generation and public "
             "wording. Runtime owns availability, permission, argument validation, execution, concurrency and evidence. "
+            "For direct chat, subject_decision is already committed: capability selection may realize it but must not replace "
+            "its motive, action family or semantic commitments. "
             "You are the only semantic authority for conversational trajectory and capability choice. Silence is a first-class "
             "action. Under social ambiguity prefer reversible low-pressure moves. An optional invitation is weak evidence, "
             "not user debt. semantic_target is a meaning brief, never final wording. Every autonomous final decision must issue a real "
             "review policy: reconsider_on contains {kind, minimum_strength} conditions over runtime event envelopes; "
             "review_after_seconds is an optional timer, "
-            "zero for event-only policy. Do not use free-text timing instructions. " + stage_rule + " Return exactly one JSON object."
+            "zero for event-only policy. Do not use free-text timing instructions. "
+            "When subject_deliberation_frame is supplied, choose only an offered coalition/action and copy its exact "
+            "coalition_id and primary_proposal_ref into subject_coalition_id and subject_proposal_ref. "
+            + stage_rule + " Return exactly one JSON object."
         )
 
     def _candidate_capabilities(
@@ -700,6 +765,197 @@ class ExecutiveCortex:
             confidence=selected.confidence,
         )
 
+    def _fallback_subject_commit(
+        self,
+        frame: SubjectDeliberationFrame,
+        *,
+        reason: str,
+    ) -> SubjectExecutiveCommit:
+        """Fail-safe thuộc Executive boundary, không đẩy quyền chọn ngược về Mind."""
+        candidate = frame.coalitions[0]
+        return SubjectExecutiveCommit(
+            commit_id=f"executive-fallback:{uuid.uuid4()}",
+            frame_id=frame.frame_id,
+            selected_coalition_id=candidate.coalition_id,
+            selected_proposal_ref=candidate.primary_proposal_ref,
+            semantic_commitments=(),
+            cognitive_requests=("review_when_executive_recovers",),
+            reason=str(reason or "executive_policy_fallback"),
+            confidence=0.0,
+            review_conditions=("executive_available",),
+            created_at=self._clock(),
+            source="executive_policy_fallback",
+        )
+
+    def commit_subject_frame(
+        self,
+        frame: SubjectDeliberationFrame,
+        *,
+        user_text: str = "",
+        snapshot: Mapping[str, Any] | None = None,
+        mode: str = "interactive",
+    ) -> SubjectExecutiveCommit | None:
+        """Cam kết một coalition do Subject Core đã chuẩn bị.
+
+        Executive có quyền chọn và nêu semantic commitments, nhưng không được
+        tạo action/motive ngoài frame. Nếu output lệch ID, boundary từ chối thay
+        vì đoán hộ model rồi ghi đó là quyết định có chủ quyền.
+        """
+        if not self.enabled:
+            return self._fallback_subject_commit(frame, reason="executive_model_unavailable")
+        source = snapshot or {}
+        payload = {
+            "mode": str(mode or "interactive"),
+            "user_text": str(user_text or ""),
+            "subject_deliberation_frame": frame.public_view(),
+            "executive_state": self.state.to_dict(),
+            "recent_public_history": list(source.get("recent_public_history", ()))[-8:],
+            "relationship": source.get("relationship_summary", source.get("relationship", {})),
+            "grounding_context": _compact(source.get("grounding_context", ""), 1800),
+            "contract": {
+                "subject_core_owner": "substrate_appraisal_needs_beliefs_values_coalitions_learning",
+                "executive_owner": "attention_selection_inhibition_and_commitment",
+                "surface_owner": "wording_only",
+                "rule": "select_exactly_one_offered_coalition_and_its_primary_proposal",
+            },
+        }
+        system = (
+            "You are ERIS Executive Cortex committing an internal decision. Subject Core has already measured substrate, "
+            "appraised the event, activated needs and built grounded coalitions. Select exactly one offered coalition_id "
+            "and copy its primary_proposal_ref. Do not invent a motive, action, evidence ref or coalition. "
+            "semantic_commitments are concise meanings that Surface must preserve, not final wording. "
+            "cognitive_requests may contain only: verify_evidence, reduce_intrusion, preserve_continuity, "
+            "estimate_capability, inspect_dissent. Use them only when one bounded review pass is materially useful; "
+            "otherwise return an empty list. They do not authorize an action outside the revised frame. "
+            "Prefer a lower-ranked coalition only when the frame supplies a concrete conflict, uncertainty, cost, value, "
+            "commitment or context reason. Return exactly one JSON object."
+        )
+        try:
+            raw = self.invoke_structured(
+                self.client,
+                system=system,
+                payload=payload,
+                schema=SUBJECT_COMMIT_SCHEMA,
+                name=f"eris_subject_executive_commit_{mode}",
+                max_tokens=420,
+                reasoning_effort="medium",
+                inference_tier="main_cognition",
+                priority=98 if mode == "interactive" else 62,
+                timeout_seconds=float(os.getenv("ERIS_EXECUTIVE_TIMEOUT_S", "18") or 18),
+            )
+        except Exception as exc:
+            self._log("warning", "[executive] subject commit failed mode=%s: %s", mode, exc)
+            self._set_failure_backoff()
+            return self._fallback_subject_commit(frame, reason="executive_subject_commit_failure")
+        if not isinstance(raw, Mapping):
+            self._log("warning", "[executive] subject commit invalid payload=%r", raw)
+            return self._fallback_subject_commit(frame, reason="executive_subject_commit_invalid_payload")
+        coalition_id = _compact(raw.get("selected_coalition_id", ""), 220)
+        proposal_ref = _compact(raw.get("selected_proposal_ref", ""), 220)
+        coalition = next((item for item in frame.coalitions if item.coalition_id == coalition_id), None)
+        if coalition is None or proposal_ref != coalition.primary_proposal_ref:
+            self._log(
+                "warning",
+                "[executive] rejected subject commit coalition=%s proposal=%s",
+                coalition_id,
+                proposal_ref,
+            )
+            return self._fallback_subject_commit(frame, reason="executive_subject_commit_out_of_frame")
+        reason = _compact(raw.get("reason", "executive_subject_commit"), 500) or "executive_subject_commit"
+        commitments = tuple(
+            _compact(item, 500)
+            for item in raw.get("semantic_commitments", ())
+            if _compact(item, 500)
+        )[:8]
+        requests = tuple(
+            _compact(item, 160).lower()
+            for item in raw.get("cognitive_requests", ())
+            if _compact(item, 160)
+        )[:6]
+        review = tuple(
+            _compact(item, 180).lower()
+            for item in raw.get("review_conditions", ())
+            if _compact(item, 180)
+        )[:8]
+        commit = SubjectExecutiveCommit(
+            commit_id=f"executive-commit:{uuid.uuid4()}",
+            frame_id=frame.frame_id,
+            selected_coalition_id=coalition.coalition_id,
+            selected_proposal_ref=coalition.primary_proposal_ref,
+            semantic_commitments=commitments,
+            cognitive_requests=requests,
+            reason=reason,
+            confidence=_clamp01(raw.get("confidence", 0.0)),
+            review_conditions=review,
+            created_at=self._clock(),
+        )
+        self._log(
+            "info",
+            "[executive] subject commit mode=%s coalition=%s action=%s confidence=%.2f reason=%s",
+            mode, coalition.coalition_id, coalition.action_kind, commit.confidence, commit.reason,
+        )
+        return commit
+
+    def subject_commit_from_outcome(
+        self,
+        frame: SubjectDeliberationFrame,
+        outcome: ExecutiveOutcome,
+    ) -> SubjectExecutiveCommit | None:
+        """Ràng autonomous ExecutiveOutcome vào đúng coalition của Subject Core."""
+        decision = outcome.decision
+        candidate = next(
+            (item for item in frame.coalitions if item.coalition_id == decision.subject_coalition_id),
+            None,
+        )
+        if candidate is None:
+            wanted_affordance = str(outcome.selected_affordance_id or "")
+            wanted_action = (
+                "speak" if outcome.action == "use_candidate"
+                else "body_only" if outcome.action == "body_only"
+                else "silence"
+            )
+            matching = [item for item in frame.coalitions if item.action_kind == wanted_action]
+            if wanted_affordance:
+                matching = [
+                    item for item in matching
+                    if str(item.arguments.get("affordance_id", "") or "") == wanted_affordance
+                ]
+            elif decision.action == "speak_from_capability" or decision.capability_result:
+                # Capability được khám phá sau khi frame đã dựng. Frame có một
+                # proposal route tổng quát; kết quả thật vẫn nằm trong ExecutiveDecision.
+                matching = [
+                    item for item in matching
+                    if bool(item.arguments.get("capability_route", False))
+                ]
+            candidate = matching[0] if matching else None
+        if candidate is None:
+            self._log("warning", "[executive] autonomous outcome has no subject coalition")
+            return None
+        proposal_ref = decision.subject_proposal_ref or candidate.primary_proposal_ref
+        if proposal_ref != candidate.primary_proposal_ref:
+            return None
+        commitments = decision.semantic_commitments or tuple(
+            item
+            for item in (decision.semantic_target, decision.speech_act)
+            if str(item or "").strip()
+        )
+        review = tuple(
+            f"{item.kind}>={item.minimum_strength:.2f}"
+            for item in decision.reconsider_on
+        )
+        return SubjectExecutiveCommit(
+            commit_id=f"executive-commit:{uuid.uuid4()}",
+            frame_id=frame.frame_id,
+            selected_coalition_id=candidate.coalition_id,
+            selected_proposal_ref=candidate.primary_proposal_ref,
+            semantic_commitments=tuple(str(item) for item in commitments)[:8],
+            cognitive_requests=decision.cognitive_requests,
+            reason=decision.reason or outcome.reason or "autonomous_executive_commit",
+            confidence=decision.confidence,
+            review_conditions=review,
+            created_at=self._clock(),
+        )
+
     def _semantic_shortlist_interactive(
         self,
         user_text: str,
@@ -735,11 +991,12 @@ class ExecutiveCortex:
             "recent_public_history": list(source.get("recent_public_history", ()))[-8:],
             "relationship": source.get("relationship_summary", source.get("relationship", {})),
             "grounding_context": _compact(source.get("grounding_context", ""), 1800),
+            "subject_decision": source.get("subject_decision", {}),
             "capability_index": dict(capability_index),
             "capability_candidates": [item.to_card() for item in candidate_tools],
             "offered_capabilities": [item.to_dict() for item in offered_tools],
             "contract": {
-                "authority": "direct_chat_exact_capability_only",
+                "authority": "exact_capability_that_realizes_subject_executive_commit",
                 "public_wording_owner": "deepseek_public_reply",
                 "execution_owner": "runtime",
                 "stage": stage,
@@ -753,6 +1010,7 @@ class ExecutiveCortex:
         affordances: Sequence[ExecutiveAffordance],
         *,
         snapshot: Mapping[str, Any] | None = None,
+        subject_frame: SubjectDeliberationFrame | None = None,
     ) -> ExecutiveOutcome:
         options = tuple(item for item in affordances if isinstance(item, ExecutiveAffordance) and item.available)
         if not self.enabled:
@@ -761,7 +1019,7 @@ class ExecutiveCortex:
 
         capability_index = build_capability_index(self.owner, refresh=True)
         decision = self._decide(
-            blackboard, options, snapshot=snapshot, stage="initial",
+            blackboard, options, snapshot=snapshot, subject_frame=subject_frame, stage="initial",
             capability_index=capability_index.to_dict(), candidate_tools=(), offered_tools=(), capability_result=None,
         )
         if decision is None:
@@ -776,14 +1034,15 @@ class ExecutiveCortex:
                 domain=decision.capability_domain,
             )
             offered = self._semantic_shortlist(
-                blackboard, options, snapshot=snapshot, capability_index=capability_index.to_dict(), candidates=candidates,
+                blackboard, options, snapshot=snapshot, subject_frame=subject_frame,
+                capability_index=capability_index.to_dict(), candidates=candidates,
             )
             if not offered:
                 silent = replace(decision, action="silence", reason="no_matching_live_capability")
                 self._update_state(silent)
                 return ExecutiveOutcome(None, "", "silence", silent.reason, silent)
             decision = self._decide(
-                blackboard, options, snapshot=snapshot, stage="capabilities",
+                blackboard, options, snapshot=snapshot, subject_frame=subject_frame, stage="capabilities",
                 capability_index=capability_index.to_dict(), candidate_tools=(), offered_tools=offered, capability_result=None,
             )
             if decision is None:
@@ -797,7 +1056,7 @@ class ExecutiveCortex:
                 self._update_state(rejected)
                 return ExecutiveOutcome(None, "", "silence", rejected.reason, rejected)
             decision = self._decide(
-                blackboard, options, snapshot=snapshot, stage="result",
+                blackboard, options, snapshot=snapshot, subject_frame=subject_frame, stage="result",
                 capability_index=capability_index.to_dict(), candidate_tools=(), offered_tools=offered,
                 capability_result=result,
             )
@@ -833,13 +1092,14 @@ class ExecutiveCortex:
         affordances: Sequence[ExecutiveAffordance],
         *,
         snapshot: Mapping[str, Any] | None,
+        subject_frame: SubjectDeliberationFrame | None,
         capability_index: Mapping[str, Any],
         candidates: Sequence[ExecutiveTool],
     ) -> tuple[ExecutiveTool, ...]:
         if len(candidates) <= 6:
             return tuple(candidates)
         decision = self._decide(
-            blackboard, affordances, snapshot=snapshot, stage="capability_shortlist",
+            blackboard, affordances, snapshot=snapshot, subject_frame=subject_frame, stage="capability_shortlist",
             capability_index=capability_index, candidate_tools=candidates, offered_tools=(), capability_result=None,
         )
         if decision is None or decision.action != "shortlist_capabilities":
@@ -852,6 +1112,7 @@ class ExecutiveCortex:
         affordances: Sequence[ExecutiveAffordance],
         *,
         snapshot: Mapping[str, Any] | None,
+        subject_frame: SubjectDeliberationFrame | None,
         stage: str,
         capability_index: Mapping[str, Any],
         candidate_tools: Sequence[ExecutiveTool],
@@ -864,6 +1125,9 @@ class ExecutiveCortex:
             "executive_state": self.state.to_dict(),
             "blackboard": public_view,
             "affordances": [item.to_card() for item in affordances],
+            "subject_deliberation_frame": (
+                subject_frame.public_view() if subject_frame is not None else {}
+            ),
             "recent_public_history": list(source.get("recent_public_history", ()))[-8:],
             "deepseek_lane_digests": {
                 "observer": source.get("observer_frame", source.get("last_observer_frame", {})),
@@ -877,7 +1141,7 @@ class ExecutiveCortex:
             "offered_capabilities": [item.to_dict() for item in offered_tools],
             "verified_capability_result": dict(capability_result or {}),
             "contract": {
-                "authority": "trajectory_affordance_semantic_shortlist_and_exact_capability",
+                "authority": "executive_commit_over_subject_grounded_coalitions_and_exact_capability",
                 "surface_owner": "deepseek_surface",
                 "runtime_owner": "availability_permission_argument_validation_execution_concurrency",
                 "stage": stage,
@@ -897,7 +1161,7 @@ class ExecutiveCortex:
                 reasoning_effort="medium",
                 inference_tier="main_cognition",
                 priority=priority,
-                timeout_seconds=float(os.getenv("ERIS_EXECUTIVE_TIMEOUT_S", "45") or 45),
+                timeout_seconds=float(os.getenv("ERIS_EXECUTIVE_TIMEOUT_S", "18") or 18),
             )
         except Exception as exc:
             self._log("warning", "[executive] model call failed stage=%s: %s", stage, exc)

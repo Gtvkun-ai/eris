@@ -114,6 +114,13 @@ def evidence_is_surface_eligible(opening_input: OpeningInput, evidence_id: str) 
             and 0 <= index < len(opening_input.continuity.open_loops)
             and str(opening_input.continuity.open_loops[index]).strip()
         )
+    if ref == "continuity:last_session_summary":
+        return bool(
+            opening_input.policy.allow_continuity_hook
+            and opening_input.policy.cross_session_personalization_allowed
+            and opening_input.continuity.consent_scope == "cross_session"
+            and str(opening_input.continuity.last_session_summary).strip()
+        )
     item = opening_input.evidence_by_id().get(ref)
     if item is None:
         return False

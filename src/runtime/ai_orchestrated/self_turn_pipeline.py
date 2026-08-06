@@ -234,17 +234,67 @@ class SelfTurnPipeline:
             unique_affordances.append(affordance)
         affordances = unique_affordances
 
+        # Mọi affordance autonomous phải đi qua cùng nền Subject Core như chat.
+        # Executive vẫn chọn cuối cùng, nhưng chọn trên coalition có substrate,
+        # need pressure và evidence thay vì một danh sách ý tưởng trôi nổi.
+        subject_ingress = getattr(host, "subject_ingress", None)
+        subject_frame = None
+        if subject_ingress is not None:
+            try:
+                subject_frame = subject_ingress.prepare_autonomous_turn(
+                    blackboard,
+                    affordances,
+                    created_at=now,
+                    turn_id=f"autonomous:{context.turn_seq}",
+                    planning_context=planner_snapshot,
+                )
+            except Exception as exc:
+                host.logger.warning("[subject-core] autonomous prepare failed closed: %s", exc)
+
         executive_outcome = None
         executive = getattr(host, "ai_executive_cortex", None)
         if executive is not None and bool(getattr(executive, "enabled", False)):
             try:
                 executive_outcome = executive.deliberate(
-                    blackboard, affordances, snapshot=planner_snapshot
+                    blackboard,
+                    affordances,
+                    snapshot=planner_snapshot,
+                    subject_frame=subject_frame,
                 )
             except Exception as exc:
                 host.logger.warning("[executive] deliberation failed closed: %s", exc)
         else:
             host.logger.warning("[executive] unavailable; autonomous semantic path fails closed")
+
+        subject_decision = None
+        if subject_frame is not None and subject_ingress is not None:
+            if executive_outcome is None:
+                subject_ingress.abandon(subject_frame, reason="executive_outcome_unavailable")
+            else:
+                commit_builder = getattr(executive, "subject_commit_from_outcome", None)
+                commit = (
+                    commit_builder(subject_frame, executive_outcome)
+                    if callable(commit_builder)
+                    else None
+                )
+                if commit is None:
+                    subject_ingress.abandon(
+                        subject_frame,
+                        reason="executive_outcome_not_bound_to_subject_coalition",
+                    )
+                    executive_outcome = None
+                else:
+                    try:
+                        subject_decision = subject_ingress.finalize(subject_frame, commit)
+                        planner_snapshot["subject_decision"] = subject_decision.to_dict()
+                        action_executor = getattr(host, "action_executor", None)
+                        set_parent = getattr(action_executor, "set_subject_parent_decision", None)
+                        if callable(set_parent):
+                            set_parent(subject_decision)
+                    except Exception as exc:
+                        host.logger.warning("[subject-core] autonomous finalize failed closed: %s", exc)
+                        subject_ingress.abandon(subject_frame, reason="subject_finalize_failed")
+                        executive_outcome = None
 
         if executive_outcome is not None:
             candidate = executive_outcome.candidate
@@ -334,6 +384,7 @@ class SelfTurnPipeline:
                 "action": executive_outcome.action,
                 "reason": executive_outcome.reason,
                 "decision": executive_outcome.decision.to_dict(),
+                "subject_decision": (subject_decision.to_dict() if subject_decision is not None else {}),
             }, now=now)
         if candidate is not None:
             host.logger.info(

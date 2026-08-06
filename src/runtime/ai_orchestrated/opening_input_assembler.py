@@ -65,6 +65,68 @@ def _scene_partner(host: Any) -> Mapping[str, Any]:
     return {}
 
 
+def _compact_text(value: Any, limit: int) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _cross_session_continuity(host: Any, *, current_session_id: str) -> tuple[tuple[str, ...], str]:
+    """Lấy một anchor công khai, gần nhất mà không gọi model ở startup.
+
+    Living-user episode đã là recap được hợp nhất từ public conversation. Ta chỉ
+    đọc episode không-private, bỏ đúng session hiện tại và lấy tối đa ba open
+    loop cùng một summary ngắn. Startup vì thế có ký ức thật mà không phải chờ
+    seed reservoir/model dựng lại cùng dữ liệu sau khi lời chào đã phát xong.
+    """
+
+    memory = getattr(host, "memory_kernel", None) or getattr(host, "memory_core", None)
+    summary_fn = getattr(memory, "user_memory_summary", None)
+    if not callable(summary_fn):
+        return (), ""
+    try:
+        payload = summary_fn(include_sensitive=False)
+    except TypeError:
+        try:
+            payload = summary_fn()
+        except Exception:
+            return (), ""
+    except Exception:
+        return (), ""
+    if not isinstance(payload, Mapping):
+        return (), ""
+
+    rows = payload.get("recent_episodes")
+    if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes, bytearray)):
+        return (), ""
+    for raw in rows:
+        if not isinstance(raw, Mapping):
+            continue
+        episode_session = str(raw.get("session_id", "") or "").strip()
+        if current_session_id and episode_session and episode_session == current_session_id:
+            continue
+        scope = raw.get("scope") if isinstance(raw.get("scope"), Mapping) else {}
+        if str(scope.get("kind", "") or "").strip().lower() in {"private", "temporary"}:
+            continue
+
+        loops = tuple(
+            _compact_text(item, 220)
+            for item in (raw.get("open_loops") or ())
+            if _compact_text(item, 220)
+        )[:3]
+        title = _compact_text(raw.get("title", ""), 120)
+        summary = _compact_text(raw.get("summary", ""), 420)
+        if not loops and not title and not summary:
+            continue
+        if title and summary and title.casefold() != summary.casefold():
+            recap = f"{title} — {summary}"
+        else:
+            recap = title or summary
+        return loops, _compact_text(recap, 600)
+    return (), ""
+
+
 def _evidence_payloads(grounding: Any, *, now: float) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for raw in tuple(getattr(grounding, "evidence", ()) or ())[:8]:
@@ -130,11 +192,15 @@ def build_opening_input(
         except Exception:
             user_vocative = ""
 
-    open_loops = tuple(str(item) for item in tuple(getattr(state, "open_loops", ()) or ())[:6] if str(item).strip())
     session_id = str(
         getattr(host, "session_id", "")
         or getattr(host, "_session_id", "")
         or f"runtime-{int(current)}"
+    )
+    state_open_loops = tuple(
+        _compact_text(item, 240)
+        for item in tuple(getattr(state, "open_loops", ()) or ())[:6]
+        if _compact_text(item, 240)
     )
     last_session_at = float(getattr(host, "last_session_at", 0.0) or 0.0)
     seconds_since = max(0.0, current - last_session_at) if last_session_at > 0 else 0.0
@@ -148,7 +214,21 @@ def build_opening_input(
             except Exception:
                 runtime_health = "normal"
 
-    allow_cross_session = bool(_runtime_value("opening_director", "cross_session_personalization", False))
+    allow_profile_personalization = bool(
+        _runtime_value("opening_director", "cross_session_personalization", False)
+    )
+    startup_memory_callback = bool(
+        _runtime_value("opening_director", "startup_memory_callback", True)
+    )
+    allow_cross_session = bool(allow_profile_personalization or startup_memory_callback)
+    memory_open_loops: tuple[str, ...] = ()
+    last_session_summary = ""
+    if allow_cross_session:
+        memory_open_loops, last_session_summary = _cross_session_continuity(
+            host,
+            current_session_id=session_id,
+        )
+    open_loops = tuple(dict.fromkeys((*state_open_loops, *memory_open_loops)))[:6]
     age_band = str(_runtime_value("opening_director", "age_band", "unknown") or "unknown")
     payload = {
         "schema": "opening_input.v1",
@@ -166,7 +246,7 @@ def build_opening_input(
             "active_goal": open_loops[0] if open_loops else "",
             "open_loops": list(open_loops),
             "recent_public_history": [dict(item) for item in recent_history[-8:] if isinstance(item, Mapping)],
-            "last_session_summary": "",
+            "last_session_summary": last_session_summary,
         },
         "session_state": {
             "time_of_day": _time_of_day(current),
@@ -196,6 +276,9 @@ def build_opening_input(
             "speech_allowed": True,
             "allow_screen_hook": bool(_runtime_value("opening_director", "allow_screen_hook", True)),
             "allow_continuity_hook": bool(_runtime_value("opening_director", "allow_continuity_hook", True)),
+            "prefer_continuity_hook": bool(
+                _runtime_value("opening_director", "prefer_continuity_hook", True)
+            ),
             "allow_anime_moves": bool(_runtime_value("opening_director", "allow_anime_moves", True)),
             "require_adult_flirt_opt_in": bool(
                 _runtime_value("opening_director", "require_adult_flirt_opt_in", True)

@@ -9,7 +9,7 @@ def test_v9_settings_migrate_gap_and_pressure_defaults() -> None:
         {"version": 9, "engagement": {"delivery_max_attempts": 7}}
     )
     assert changed is True
-    assert migrated["version"] == 15
+    assert migrated["version"] == 16
     assert migrated["engagement"]["delivery_max_attempts"] == 7
     assert migrated["engagement"]["delivery_stop_on_gap"] is True
     assert migrated["engagement"]["consumer_lag_warning_events"] == 128

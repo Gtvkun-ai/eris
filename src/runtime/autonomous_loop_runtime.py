@@ -201,7 +201,7 @@ class AutonomousLoopRuntimeMixin:
 
         startup_failed = False
         try:
-            startup_failed = not bool(orchestrator.run_startup())
+            orchestrator.run_startup()
         except Exception as exc:
             startup_failed = True
             self._ai_startup_ran = False
@@ -227,7 +227,7 @@ class AutonomousLoopRuntimeMixin:
         # lần đầu vấp do worker/client vừa bootstrap, thử lại đúng một lần sau khi
         # sensory worker đã lên. Không loop vô hạn, con người đã có đủ startup
         # ritual tự sinh rồi.
-        if startup_failed and self.running and not bool(getattr(self, "_ai_startup_ran", False)):
+        if startup_failed and self.running:
             try:
                 time.sleep(self.runtime_policy_settings.run_loop.startup_retry_delay_seconds)
                 orchestrator.run_startup()

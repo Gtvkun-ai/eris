@@ -6,7 +6,7 @@ from .deepseek import DEEPSEEK_BASE_URL, DEEPSEEK_DEFAULT_MODEL, DEEPSEEK_STRONG
 from .key_pool import get_key_pool
 from .model_catalog import DEFAULT_OPEN_MODEL_ID
 from .deepseek_workers import JsonlWorkerClient, load_worker_spec, normalize_worker_role
-from runtime.ai_orchestrated.executive_cortex import ExecutiveCortex
+
 
 def _normalize_remote_provider(provider: str) -> str:
     value = str(provider or "").strip().lower()
@@ -365,11 +365,10 @@ class RemoteModelProcessManager:
         if not self._env_flag("ERIS_EXECUTIVE_CORTEX_ENABLED", "1"):
             return None
 
-        # Route to DS2API if deepseek_web or ds2api is enabled
+        # Route to DS2API if deepseek_web is enabled
         provider = _normalize_remote_provider(os.environ.get("ERIS_REMOTE_PROVIDER", "deepseek"))
-        ds2api_flag = self._explicit_env_flag("ERIS_DS2API_ENABLED")
-        if provider == "deepseek_web" or ds2api_flag:
-            # Reuse the executive worker for trajectory decisions
+        if provider == "deepseek_web":
+            # Reuse the critic worker for executive trajectory decisions
             worker = self.build_deepseek_worker_client("executive")
             if worker is not None:
                 self.logger.info("Executive Cortex san sang: routed to DS2API executive worker")
@@ -387,7 +386,7 @@ class RemoteModelProcessManager:
                         api_key=api_key,
                         model_name=model_name,
                         key_pool=None,
-                        timeout=max(5, int(float(os.environ.get("ERIS_EXECUTIVE_TIMEOUT_S", "45") or 45))),
+                        timeout=max(5, int(float(os.environ.get("ERIS_EXECUTIVE_TIMEOUT_S", "18") or 18))),
                     )
                     client = JsonlWorkerClient(
                         raw_client,
@@ -430,7 +429,7 @@ class RemoteModelProcessManager:
                 base_url=base_url,
                 api_key=api_key,
                 model_name=model_name,
-                timeout=max(5, int(float(os.environ.get("ERIS_EXECUTIVE_TIMEOUT_S", "45") or 45))),
+                timeout=max(5, int(float(os.environ.get("ERIS_EXECUTIVE_TIMEOUT_S", "18") or 18))),
                 key_pool=pool,
             )
         except Exception as exc:

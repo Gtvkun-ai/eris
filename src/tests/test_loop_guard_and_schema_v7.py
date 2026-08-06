@@ -36,7 +36,7 @@ def test_loop_guard_backoff_caps_recovers_and_can_open_circuit() -> None:
 def test_schema_v7_migrates_protocol_and_loop_defaults() -> None:
     migrated, changed = RuntimeSettingsStore._migrate_payload({"version": 6})
     assert changed is True
-    assert migrated["version"] == 15
+    assert migrated["version"] == 16
     assert migrated["protocol"] == {
         "max_message_type_chars": 96,
         "reject_non_mapping": True,

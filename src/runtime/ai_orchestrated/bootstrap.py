@@ -502,6 +502,12 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     host.ai_random_chat_seed_reservoir = random_chat_seed_reservoir
     host.ai_social_agenda_selector = social_agenda_selector
     host.ai_executive_cortex = executive_cortex
+    subject_runtime = getattr(host, "subject_runtime", None)
+    bind_subject_executive = getattr(subject_runtime, "bind_executive", None)
+    if callable(bind_subject_executive):
+        # Composition root dựng Subject Core trước và Executive sau. Bind ở đây
+        # giữ một trung tâm quyết định mà không tạo import vòng giữa hai package.
+        bind_subject_executive(executive_cortex)
     host.ai_discovery_runtime = discovery
     host.ai_initiative_controller = initiative
     host.ai_autonomous_grounding_validator = grounding_validator

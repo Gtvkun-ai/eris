@@ -103,6 +103,14 @@ class OpeningDirector:
             return OpeningPlan.silence(reason="no_safe_candidate")
         scored = tuple(self._score_candidate(opening_input, item) for item in candidates)
         ranked = tuple(sorted(scored, key=lambda item: (item.score, item.candidate_id), reverse=True))
+        preferred_continuity = next(
+            (
+                item
+                for item in ranked
+                if item.hook.decision == "use" and item.hook.source == "continuity"
+            ),
+            None,
+        )
 
         selected_plan: OpeningPlan | None = None
         if planner is not None and self.mode == "hybrid":
@@ -124,6 +132,20 @@ class OpeningDirector:
         if selected_plan is None:
             selected_plan = self._candidate_to_plan(opening_input, ranked[0])
 
+        # Startup callback là một contract sản phẩm, không chỉ là một feature
+        # score. Khi memory đã cấp anchor hợp lệ và user không bận/đặt boundary,
+        # model không được lùi về câu chào trống chỉ vì candidate đó an toàn hơn.
+        if (
+            opening_input.policy.prefer_continuity_hook
+            and preferred_continuity is not None
+            and selected_plan.hook.source != "continuity"
+            and opening_input.user_signals.availability not in {"busy", "unavailable"}
+            and not opening_input.user_signals.recent_low_engagement
+            and not opening_input.user_signals.explicit_boundary
+            and not opening_input.scene_partner.boundary_flags
+        ):
+            selected_plan = self._candidate_to_plan(opening_input, preferred_continuity)
+
         verdict = validate_opening_plan(opening_input, selected_plan)
         if not verdict.allowed:
             selected_plan = downgrade_plan(opening_input, selected_plan, reasons=verdict.reasons)
@@ -143,12 +165,27 @@ class OpeningDirector:
                     continue
                 if self.history.move_on_cooldown(move.family, sessions=move.cooldown_sessions):
                     continue
-                if has_hook and self.history.hook_source_repeated(hook.source, maximum_consecutive=2):
+                if (
+                    has_hook
+                    and self.history.hook_source_repeated(hook.source, maximum_consecutive=2)
+                    and not (
+                        hook.source == "continuity"
+                        and opening_input.policy.prefer_continuity_hook
+                    )
+                ):
                     continue
                 candidate_hook = hook
                 if (candidate_hook.reply_bearing and self.history.question_temporarily_blocked()) or not move.allows_question:
                     candidate_hook = replace(candidate_hook, reply_bearing=False)
                 roles = self._roles_for(move, candidate_hook)
+                if (
+                    candidate_hook.source == "continuity"
+                    and move.family in {"simple_recognition", "quiet_presence"}
+                ):
+                    # Với memory callback, recognition + callback đã đủ một câu
+                    # mở đầu hoàn chỉnh. Giữ thêm presence chỉ làm câu quan trọng
+                    # nhất của phiên nghe như ba widget xếp cạnh nhau.
+                    roles = tuple(role for role in roles if role != "presence")
                 if len(roles) > opening_input.policy.max_beats:
                     roles = roles[: opening_input.policy.max_beats]
                 if not roles or roles[0] not in {"recognition", "formal_recognition"}:
@@ -248,6 +285,26 @@ class OpeningDirector:
                     reply_bearing=not self.history.question_temporarily_blocked(),
                 )
             )
+        if (
+            opening_input.policy.allow_continuity_hook
+            and opening_input.continuity.consent_scope == "cross_session"
+            and opening_input.continuity.last_session_summary
+        ):
+            subject = compact(opening_input.continuity.last_session_summary, 140)
+            if subject and not any(
+                item.source == "continuity" and item.subject.casefold() == subject.casefold()
+                for item in hooks
+            ):
+                hooks.append(
+                    ContextHook(
+                        decision="use",
+                        source="continuity",
+                        subject=subject,
+                        evidence_refs=("continuity:last_session_summary",),
+                        epistemic_mode="known_cross_session_context",
+                        reply_bearing=False,
+                    )
+                )
         return tuple(hooks)
 
     @staticmethod
@@ -291,14 +348,19 @@ class OpeningDirector:
         evidence = opening_input.evidence_by_id().get(hook.evidence_refs[0]) if hook.evidence_refs else None
 
         encounter_fit = 1.0
-        evidence_relevance = 0.0 if hook.decision == "none" else (evidence.confidence if evidence else 0.65)
+        if hook.decision == "none":
+            evidence_relevance = 0.0
+        elif hook.source == "continuity":
+            evidence_relevance = 0.90
+        else:
+            evidence_relevance = evidence.confidence if evidence else 0.65
         scene_partner_fit = 0.55
         if partner.closeness_band in move.allowed_closeness:
             scene_partner_fit += 0.20
         if partner.tease_tolerance_confidence >= move.minimum_tease_confidence:
             scene_partner_fit += 0.15
         novelty = 0.95 if not self.history.move_on_cooldown(move.family, sessions=max(1, move.cooldown_sessions)) else 0.0
-        continuity_value = 0.85 if hook.source == "continuity" else 0.25 if opening_input.continuity.open_loops else 0.0
+        continuity_value = 1.0 if hook.source == "continuity" else 0.25 if opening_input.continuity.open_loops else 0.0
         performability = 1.0 - max(0, len(candidate.beat_roles) - 2) * 0.12
         humor_opportunity = max(0.0, min(1.0, 0.25 + partner.tease_tolerance_estimate * (1.0 - move.risk)))
         time_fit = 0.85 if opening_input.session_state.time_of_day in {"morning", "afternoon", "evening"} else 0.55
@@ -319,6 +381,11 @@ class OpeningDirector:
             "scene_partner_fit": 0.15 * min(1.0, scene_partner_fit),
             "novelty": 0.14 * novelty,
             "continuity_value": 0.10 * continuity_value,
+            "continuity_preference": (
+                0.12
+                if hook.source == "continuity" and opening_input.policy.prefer_continuity_hook
+                else 0.0
+            ),
             "performability": 0.09 * performability,
             "humor_opportunity": 0.07 * humor_opportunity,
             "time_of_day_fit": 0.05 * time_fit,
@@ -530,7 +597,7 @@ class OpeningDirector:
             try:
                 raw = surface_writer(
                     plan.to_dict(),
-                    [item.to_dict() for item in opening_input.screen_evidence if item.evidence_id in plan.evidence_refs],
+                    self._allowed_surface_evidence(opening_input, plan),
                 )
                 if isinstance(raw, Mapping) and raw:
                     surface = OpeningSurface.from_mapping(raw)
@@ -550,6 +617,54 @@ class OpeningDirector:
         # Fallback cuối bỏ hook/move, vì im lặng hoàn toàn chỉ do writer lỗi còn tệ hơn.
         safe_plan = downgrade_plan(opening_input, plan, reasons=errors)
         return deterministic_render_opening(safe_plan)
+
+    @staticmethod
+    def _allowed_surface_evidence(
+        opening_input: OpeningInput,
+        plan: OpeningPlan,
+    ) -> list[dict[str, Any]]:
+        allowed = [
+            item.to_dict()
+            for item in opening_input.screen_evidence
+            if item.evidence_id in plan.evidence_refs
+        ]
+        for ref in plan.evidence_refs:
+            if ref.startswith("continuity:open_loop:"):
+                try:
+                    index = int(ref.rsplit(":", 1)[-1])
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= index < len(opening_input.continuity.open_loops):
+                    subject = compact(opening_input.continuity.open_loops[index], 260)
+                    if subject:
+                        allowed.append(
+                            {
+                                "evidence_id": ref,
+                                "source": "continuity",
+                                "kind": "open_loop",
+                                "subject": subject,
+                                "claim": subject,
+                                "confidence": 0.90,
+                                "privacy_class": "public_conversation_memory",
+                                "allowed_for_surface": True,
+                            }
+                        )
+            elif ref == "continuity:last_session_summary":
+                subject = compact(opening_input.continuity.last_session_summary, 600)
+                if subject:
+                    allowed.append(
+                        {
+                            "evidence_id": ref,
+                            "source": "continuity",
+                            "kind": "last_session_summary",
+                            "subject": subject,
+                            "claim": subject,
+                            "confidence": 0.88,
+                            "privacy_class": "public_conversation_memory",
+                            "allowed_for_surface": True,
+                        }
+                    )
+        return allowed
 
 
 def _subject_label(subject: str) -> str:
@@ -595,7 +710,7 @@ def deterministic_render_opening(plan: OpeningPlan) -> OpeningSurface:
             if plan.hook.source == "runtime":
                 vi, ja = f"{subject} đang khá nổi bật.", f"{subject}が、かなり目立ってる。"
             elif plan.hook.source == "continuity":
-                vi, ja = f"Chuyện {subject} vẫn còn ở đó.", f"{subject}の話、まだ残ってるね。"
+                vi, ja = f"Lần trước mình còn dở chuyện {subject}.", "前に話していたこと、まだ途中だったね。"
             else:
                 vi, ja = f"{subject} đang giữ vị trí trung tâm nhỉ.", f"{subject}が、ずいぶん主役みたいだね。"
         elif role == "claim":

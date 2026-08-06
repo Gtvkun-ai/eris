@@ -14,14 +14,26 @@ class AuthorshipService:
         self._clock = clock
         self._records: dict[str, ActionAuthorship] = {}
 
-    def draft(self, decision: MindDecision, *, action_id: str | None = None) -> ActionAuthorship:
+    def draft(
+        self,
+        decision: MindDecision,
+        *,
+        action_id: str | None = None,
+        selected_by: str | None = None,
+    ) -> ActionAuthorship:
+        """Mở authorship record trước execution.
+
+        ``selected_by`` được truyền từ boundary điều hành để forensic phân biệt
+        Executive commit với fallback arbiter; không suy đoán nguồn quyền lực từ
+        tên coalition sau khi việc đã xảy ra.
+        """
         action_id = action_id or self._id_factory()
         record = ActionAuthorship(
             authorship_id=self._id_factory(),
             decision_id=decision.decision_id,
             action_id=action_id,
             generated_by="subject_service",
-            selected_by=decision.coalition_id,
+            selected_by=str(selected_by or decision.coalition_id),
             executed_by=None,
             policy_transforms=(),
             externally_constrained=False,
