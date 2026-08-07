@@ -356,50 +356,110 @@ class RemoteModelProcessManager:
         return client
 
     def build_executive_client(self):
-        """Build the Executive Cortex. Now dynamically uses DeepSeek if requested.
+        """Dựng Executive theo cùng authority route với main brain.
 
-        This client is a separate semantic policy layer used only for trajectory/tool-affordance decisions.
+        Khi remote provider là DeepSeek và ``ERIS_DS2API_ENABLED`` bật, Executive
+        ưu tiên worker ``executive`` trên DS2API/Whale2API. Official DeepSeek là
+        fallback transport nếu có key. Điều này tránh tình trạng cả hệ đang chạy
+        qua DS2API nhưng Executive lạc sang một provider/model riêng chỉ vì nó đọc
+        mỗi ``ERIS_REMOTE_PROVIDER``.
         """
 
         apply_secrets_to_environ()
         if not self._env_flag("ERIS_EXECUTIVE_CORTEX_ENABLED", "1"):
             return None
 
-        # Route to DS2API if deepseek_web is enabled
         provider = _normalize_remote_provider(os.environ.get("ERIS_REMOTE_PROVIDER", "deepseek"))
-        if provider == "deepseek_web":
-            # Reuse the critic worker for executive trajectory decisions
-            worker = self.build_deepseek_worker_client("executive")
-            if worker is not None:
-                self.logger.info("Executive Cortex san sang: routed to DS2API executive worker")
-                return worker
+        executive_spec = load_worker_spec("executive")
+        ds2api_flag = self._explicit_env_flag("ERIS_DS2API_ENABLED")
+        ds2api_enabled = bool(
+            provider == "deepseek_web"
+            or (
+                provider == "deepseek"
+                and (executive_spec.configured if ds2api_flag is None else ds2api_flag)
+            )
+        )
 
-        # Route to plain DeepSeek API if enabled
-        if provider == "deepseek":
+        ds2api_client = None
+        if ds2api_enabled:
+            try:
+                ds2api_client = self.build_deepseek_worker_client(
+                    "executive",
+                    required=(provider == "deepseek_web"),
+                )
+            except RuntimeError as exc:
+                self.logger.warning(
+                    "Executive DS2API worker khong san sang: %s; se thu official fallback neu co",
+                    exc,
+                )
+            if ds2api_client is not None:
+                self.logger.info(
+                    "Executive Cortex san sang: DS2API primary role=executive model=%s base=%s",
+                    getattr(ds2api_client, "model_name", executive_spec.model),
+                    getattr(ds2api_client, "base_url", executive_spec.base_url),
+                )
+
+        # Official DeepSeek fallback. Không dùng một ERIS_REMOTE_BASE_URL local làm
+        # "official fallback" vì như thế fallback chỉ quay lại đúng daemon vừa chết.
+        official_client = None
+        if provider in {"deepseek", "deepseek_web"}:
             model_name = os.environ.get("ERIS_EXECUTIVE_MODEL", DEEPSEEK_STRONG_MODEL).strip()
             api_key = get_secret("DEEPSEEK_API_KEY", "ERIS_REMOTE_API_KEY")
-            base_url = os.environ.get("ERIS_REMOTE_BASE_URL", DEEPSEEK_BASE_URL).strip()
+            executive_base = str(os.environ.get("ERIS_EXECUTIVE_BASE_URL", "") or "").strip()
+            remote_base = str(os.environ.get("ERIS_REMOTE_BASE_URL", "") or "").strip()
+            remote_lower = remote_base.lower()
+            remote_is_local_ds2api = bool(
+                remote_base
+                and (
+                    "localhost" in remote_lower
+                    or "127.0.0.1" in remote_lower
+                    or ":6011" in remote_lower
+                    or ":6012" in remote_lower
+                    or ":6013" in remote_lower
+                    or ":6014" in remote_lower
+                    or ":6015" in remote_lower
+                    or ":6016" in remote_lower
+                )
+            )
+            base_url = executive_base or (remote_base if remote_base and not remote_is_local_ds2api else DEEPSEEK_BASE_URL)
             if api_key:
                 try:
-                    raw_client = OpenAICompatibleClient(
+                    raw_official = OpenAICompatibleClient(
                         base_url=base_url,
                         api_key=api_key,
                         model_name=model_name,
                         key_pool=None,
-                        timeout=max(5, int(float(os.environ.get("ERIS_EXECUTIVE_TIMEOUT_S", "45") or 45))),
+                        timeout=max(5, int(float(os.environ.get("ERIS_EXECUTIVE_TIMEOUT_S", "18") or 18))),
                     )
-                    client = JsonlWorkerClient(
-                        raw_client,
+                    official_client = JsonlWorkerClient(
+                        raw_official,
                         role="executive",
                         jsonl_enabled=True,
                         repair_attempts=1,
                     )
-                    self.logger.info("Executive Cortex san sang: DeepSeek model=%s", model_name)
-                    return client
                 except ValueError as exc:
-                    self.logger.warning("Khong dung duoc DeepSeek cho Executive Cortex: %s", exc)
+                    self.logger.warning("Khong dung duoc DeepSeek official cho Executive Cortex: %s", exc)
 
-        # Legacy fallback to Gemini
+        if ds2api_client is not None and official_client is not None:
+            self.logger.info(
+                "Executive Cortex route: DS2API primary -> Official DeepSeek fallback model=%s",
+                getattr(official_client, "model_name", ""),
+            )
+            return ChainedFallbackClient([ds2api_client, official_client], logger=self.logger)
+        if ds2api_client is not None:
+            self.logger.info("Executive Cortex route: DS2API primary; official fallback chua cau hinh")
+            return ds2api_client
+        if official_client is not None:
+            self.logger.info(
+                "Executive Cortex san sang: Official DeepSeek model=%s",
+                getattr(official_client, "model_name", ""),
+            )
+            return official_client
+        if provider == "deepseek_web":
+            self.logger.warning("Executive Cortex deepseek_web khong co worker kha dung; semantic path se degrade qua Subject Core.")
+            return None
+
+        # Legacy fallback to Gemini cho provider không phải DeepSeek.
         profile = get_provider_profile("gemini", slot="executive")
         pool = get_key_pool("gemini")
         api_key = (
@@ -409,7 +469,7 @@ class RemoteModelProcessManager:
         )
         if not api_key:
             self.logger.warning(
-                "Executive Cortex chua co key; semantic path se fail closed."
+                "Executive Cortex chua co transport; autonomous se degrade qua Subject Core."
             )
             return None
         base_url = (
@@ -429,7 +489,7 @@ class RemoteModelProcessManager:
                 base_url=base_url,
                 api_key=api_key,
                 model_name=model_name,
-                timeout=max(5, int(float(os.environ.get("ERIS_EXECUTIVE_TIMEOUT_S", "45") or 45))),
+                timeout=max(5, int(float(os.environ.get("ERIS_EXECUTIVE_TIMEOUT_S", "18") or 18))),
                 key_pool=pool,
             )
         except Exception as exc:

@@ -22,7 +22,8 @@ from typing import Any, Callable, Mapping, Protocol
 from .authorship import AuthorshipService
 from .beliefs import BeliefService
 from .coalitions import CoalitionArbiter
-from .competence import CompetenceService
+from .competence import CompetenceService, PracticePlanner
+from .agency import LearnedAgencyPlanner
 from .consolidation import TemporalConsolidator
 from .continuity import ContinuityService
 from .contracts import (
@@ -50,6 +51,7 @@ from .inner_state import InnerLifeState
 from .narrative import NarrativeBeliefGenerator, NarrativeView
 from .needs import NeedPlasticityEngine, NeedSystem
 from .self_deception import ReflectiveMismatchDetector
+from .reflection import ReflectiveSelfRegulator
 from .self_model import SubjectSelfProjector
 from .substrate import SubstrateMonitor, substrate_from_dict
 from .values import ValueFormationEngine
@@ -98,7 +100,7 @@ class SubjectServiceConfig:
     random_seed: int = 0
     min_episode_pressure: float = 0.08
     default_temperature: float = 0.20
-    algorithm_version: str = "subject-service-v11-self-owned-life"
+    algorithm_version: str = "subject-service-v12-validated-agency-reflection"
     restore_projection: bool = True
     consolidation_min_episode_count: int = 3
     consolidation_min_distinct_days: int = 2
@@ -135,11 +137,13 @@ class SubjectService:
         self.beliefs = BeliefService(self._id_factory, self._clock)
         self.authorship = AuthorshipService(self._id_factory, self._clock)
         self.competence = CompetenceService(self._id_factory, self._clock)
+        self.agency = LearnedAgencyPlanner(self.competence, PracticePlanner(self._id_factory, self._clock))
         self.narrative = NarrativeBeliefGenerator(self._id_factory, self._clock)
         self.values_engine = ValueFormationEngine(self._id_factory, self._clock)
         self.consolidator = TemporalConsolidator(self._id_factory, self._clock)
         self.continuity = ContinuityService(self._id_factory, self._clock)
         self.mismatch_detector = ReflectiveMismatchDetector(self._id_factory)
+        self.reflective_regulator = ReflectiveSelfRegulator()
         # Self-model là projection dẫn xuất từ lịch sử causal, không phải personality prompt.
         self.self_projector = SubjectSelfProjector()
         self.existential = ExistentialDecisionService(self._id_factory, self._clock)
@@ -527,6 +531,11 @@ class SubjectService:
                 or proposal.action_kind
             )
             competence_prediction = self.competence.predict(skill_id, context_key)
+            agency_project_bonus, agency_epistemic_bonus = self.agency.proposal_bias(
+                action_kind=proposal.action_kind,
+                skill_id=skill_id,
+                context_key=context_key,
+            )
             efficacy = max(
                 0.0,
                 min(
@@ -544,6 +553,8 @@ class SubjectService:
                 "competence_prediction": round(competence_prediction, 6),
                 "tendency_bias": round(tendency, 6),
                 "value_refs": list(value_refs),
+                "agency_project_bonus": round(agency_project_bonus, 6),
+                "agency_epistemic_bonus": round(agency_epistemic_bonus, 6),
             }
             output.append(
                 replace(
@@ -551,6 +562,8 @@ class SubjectService:
                     arguments=arguments,
                     expected_need_relief=relief,
                     expected_action_efficacy=efficacy,
+                    expected_epistemic_value=min(1.0, proposal.expected_epistemic_value + agency_epistemic_bonus),
+                    project_contribution=min(1.0, proposal.project_contribution + agency_project_bonus),
                     historical_success=historical,
                     value_congruence=value_congruence,
                 )
@@ -826,6 +839,13 @@ class SubjectService:
                         "reflective_mismatch",
                         self._as_payload(mismatch),
                         causal_refs=(frame.observation.observation_id, decision.decision_id),
+                    )
+                reflective_receipt = self.reflective_regulator.apply(self.beliefs, mismatches)
+                if reflective_receipt.mismatch_ids:
+                    self._append_event(
+                        "reflective_revision",
+                        reflective_receipt.to_dict(),
+                        causal_refs=tuple((*reflective_receipt.mismatch_ids, *reflective_receipt.weakened_belief_ids)),
                     )
 
         # Chỉ mở NeedEpisode sau commit. Frame bị abandon không được để lại
@@ -1126,12 +1146,13 @@ class SubjectService:
             )
         )
         belief_revision_ids: list[str] = []
-        if narrative_proposals:
-            revision = self.beliefs.revise(narrative_proposals[0], visible_refs)
+        narrative_winner = self.narrative.choose(narrative_proposals)
+        if narrative_winner is not None:
+            revision = self.beliefs.revise(narrative_winner, visible_refs)
             belief_revision_ids.append(revision.belief.belief_id)
             interpretation = self.narrative.record(
                 action_id=outcome.action_id,
-                winning=narrative_proposals[0],
+                winning=narrative_winner,
                 created_belief_ids=(revision.belief.belief_id,),
             )
             self.inner.last_narrative_belief_ids = (revision.belief.belief_id,)
@@ -1303,7 +1324,13 @@ class SubjectService:
             tendencies=self.inner.tendencies,
             generated_at=self._clock(),
         )
-        return projection.to_dict()
+        payload = projection.to_dict()
+        payload["learned_agency"] = self.agency.project(
+            current_values=self.inner.values,
+            max_tasks=2,
+            max_seconds=90,
+        ).to_dict()
+        return payload
 
     def inner_view(self) -> dict[str, Any]:
         """Projection nội tâm cho planner/UI, không lộ raw chain-of-thought."""

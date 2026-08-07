@@ -15,3 +15,5 @@ __all__ = [
     "SafeHttpConfig", "SafeHttpTransport", "SandboxActuator", "SandboxCommand",
     "SandboxCommandKind", "SandboxPort", "SandboxWorld", "TTSBroker", "TTSReceipt",
 ]
+
+from .mutation_journal import MutationJournal, MutationReceipt

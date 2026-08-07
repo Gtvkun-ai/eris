@@ -103,7 +103,7 @@ def build_subject_core_components(
             subject_id=str(os.getenv("ERIS_SUBJECT_ID", "eris") or "eris"),
             deterministic=_bool_env("ERIS_SUBJECT_DETERMINISTIC"),
             random_seed=int(os.getenv("ERIS_SUBJECT_RANDOM_SEED", "0") or 0),
-            algorithm_version="subject-service-v11-self-owned-life",
+            algorithm_version="subject-service-v12-validated-agency-reflection",
         ),
         repository=repository,
         audit=forensic,

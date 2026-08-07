@@ -851,20 +851,32 @@ class ChainedFallbackClient:
             )
             call_kwargs = dict(kwargs)
             if is_ds2api:
+                worker_role = str(getattr(client, "worker_role", "") or "").strip().lower()
+                executive_lane = worker_role == "executive"
+                timeout_env = (
+                    "ERIS_EXECUTIVE_DS2API_FAILFAST_TIMEOUT_S"
+                    if executive_lane else "ERIS_DS2API_FAILFAST_TIMEOUT_S"
+                )
+                default_failfast = 12.0 if executive_lane else 90.0
                 try:
-                    failfast = float(os.environ.get("ERIS_DS2API_FAILFAST_TIMEOUT_S", "90") or 90)
+                    failfast = float(os.environ.get(timeout_env, str(default_failfast)) or default_failfast)
                 except (TypeError, ValueError):
-                    failfast = 90.0
+                    failfast = default_failfast
                 failfast = max(1.0, min(300.0, failfast))
                 requested = call_kwargs.get("timeout")
                 if requested is None:
                     call_kwargs["timeout"] = failfast
                 else:
                     try:
-                        if os.environ.get("ERIS_DS2API_STRICT_TIMEOUT", "0") in {"1", "true"}:
-                            call_kwargs["timeout"] = min(float(requested), failfast)
+                        requested_value = float(requested)
+                        if executive_lane:
+                            # Executive phải fail sang official nhanh; kéo timeout lên
+                            # 90s ở đây biến fallback thành đồ trang trí.
+                            call_kwargs["timeout"] = min(requested_value, failfast)
+                        elif os.environ.get("ERIS_DS2API_STRICT_TIMEOUT", "0") in {"1", "true"}:
+                            call_kwargs["timeout"] = min(requested_value, failfast)
                         else:
-                            call_kwargs["timeout"] = max(float(requested), failfast)
+                            call_kwargs["timeout"] = max(requested_value, failfast)
                     except (TypeError, ValueError):
                         call_kwargs["timeout"] = failfast
             try:

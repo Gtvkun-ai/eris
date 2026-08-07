@@ -31,7 +31,7 @@ def test_subject_core_is_authoritative_without_feature_flag(tmp_path: Path, monk
         assert executor.subject_service is components.subject_service
         assert components.runtime is not None
         assert components.actuator is not None
-        assert components.subject_service.config.algorithm_version == "subject-service-v11-self-owned-life"
+        assert components.subject_service.config.algorithm_version == "subject-service-v12-validated-agency-reflection"
         assert components.repository.migration_status()[-1]["version"] == "0007_evidence_lab.sql"
     finally:
         components.close()

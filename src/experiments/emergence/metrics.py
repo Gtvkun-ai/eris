@@ -139,6 +139,10 @@ def compute_metrics(results: Iterable[Mapping[str, object]]) -> dict[str, float]
             _relative_improvement(mean(context_brier), mean(history_brier))
             if context_brier and history_brier else 0.0
         ),
+        "history_brier_delta": (
+            mean(context_brier) - mean(history_brier)
+            if context_brier and history_brier else 0.0
+        ),
         "effect_retention_ratio": (
             stateful_effect / max(abs(full_context_effect), 1e-9)
             if full_context_effect else 0.0

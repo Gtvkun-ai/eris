@@ -23,6 +23,7 @@ from memory.subject.repository import EventIntegrityError, IdempotencyClaim, Sub
 from runtime.audit import AuditEvent, AuditEventKind, ForensicStore
 from .capability_policy import CapabilityPolicy, PolicyDecision
 from .contracts import CapabilityToken, SandboxCommand, SandboxCommandKind
+from .mutation_journal import MutationJournal
 
 
 Handler = Callable[[Mapping[str, Any]], Awaitable[tuple[str, ...]]]
@@ -42,6 +43,7 @@ class SandboxWorld:
         network_handler: Handler | None = None,
         system_action_handler: Callable[[str, str], Any] | None = None,
         owner_id: str | None = None,
+        mutation_journal: MutationJournal | None = None,
     ) -> None:
         self.policy = policy
         self.repository = repository
@@ -53,6 +55,7 @@ class SandboxWorld:
         self._network_handler = network_handler
         self._system_action_handler = system_action_handler
         self._owner_id = owner_id or f"sandbox:{uuid.uuid4()}"
+        self.mutation_journal = mutation_journal or MutationJournal(clock=self._clock)
         self._execution_results: dict[str, Any] = {}
         self._idempotent: dict[str, tuple[str, WorldOutcome]] = {}
         self._key_locks: dict[str, asyncio.Lock] = {}
@@ -65,6 +68,13 @@ class SandboxWorld:
 
     def take_execution_result(self, command_id: str) -> Any | None:
         return self._execution_results.pop(str(command_id), None)
+
+    def rollback_mutation(self, receipt_id: str) -> bool:
+        """Rollback có fencing bằng postcondition hash.
+
+        Nếu target đã bị sửa sau mutation, rollback trả False thay vì ghi đè thay đổi mới.
+        """
+        return self.mutation_journal.rollback(receipt_id)
 
     @staticmethod
     def _command_hash(command: SandboxCommand) -> str:
@@ -379,13 +389,22 @@ class SandboxWorld:
             if len(data) > max_bytes:
                 raise ValueError("write exceeds allowed output limit")
             pre_hash = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else "missing"
+            receipt_id, backup_path, existed_before = await asyncio.to_thread(self.mutation_journal.prepare, path)
             await asyncio.to_thread(self._atomic_write, path, data)
-            post_hash = hashlib.sha256(data).hexdigest()
+            receipt = await asyncio.to_thread(
+                self.mutation_journal.finalize,
+                receipt_id=receipt_id,
+                target=path,
+                backup_path=backup_path,
+                existed_before=existed_before,
+                pre_hash=pre_hash,
+            )
             return (
                 f"file_written:{path.name}",
                 f"bytes:{len(data)}",
-                f"precondition_hash:{pre_hash}",
-                f"postcondition_hash:{post_hash}",
+                f"precondition_hash:{receipt.precondition_hash}",
+                f"postcondition_hash:{receipt.postcondition_hash}",
+                f"rollback_handle:{receipt.receipt_id}",
             )
         if kind is SandboxCommandKind.RUN_COMMAND:
             argv = [str(item) for item in args["argv"]]

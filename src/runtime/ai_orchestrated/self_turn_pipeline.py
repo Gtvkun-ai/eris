@@ -269,8 +269,11 @@ class SelfTurnPipeline:
 
         executive_outcome = None
         executive = getattr(host, "ai_executive_cortex", None)
-        if executive is not None and bool(getattr(executive, "enabled", False)):
+        if executive is not None:
             try:
+                # Gọi boundary kể cả khi transport model đang unavailable.
+                # ExecutiveCortex.deliberate() sẽ dùng Subject Core degraded path
+                # khi feature vẫn bật nhưng client/provider chết.
                 executive_outcome = executive.deliberate(
                     blackboard,
                     affordances,
@@ -280,7 +283,7 @@ class SelfTurnPipeline:
             except Exception as exc:
                 host.logger.warning("[executive] deliberation failed closed: %s", exc)
         else:
-            host.logger.warning("[executive] unavailable; autonomous semantic path fails closed")
+            host.logger.warning("[executive] boundary unavailable; autonomous semantic path fails closed")
 
         subject_decision = None
         if subject_session is not None and subject_ingress is not None:

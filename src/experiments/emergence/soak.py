@@ -20,6 +20,7 @@ class SoakSpec:
     restart_every_turns: int = 25
     subject_ids: tuple[str, ...] = ("eris-a", "eris-b")
     seed: int = 0
+    max_projection_bytes: int = 2_000_000
 
     def __post_init__(self) -> None:
         if self.simulated_days < 1 or self.turns_per_day < 1:
@@ -28,6 +29,8 @@ class SoakSpec:
             raise ValueError("restart cadence must be positive")
         if len(set(self.subject_ids)) != len(self.subject_ids):
             raise ValueError("subject ids must be unique")
+        if self.max_projection_bytes < 1:
+            raise ValueError("max_projection_bytes must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +42,8 @@ class SoakReport:
     replay_stable: bool
     cross_instance_leakage: int
     projection_hashes: Mapping[str, str]
+    max_projection_bytes_observed: int
+    non_finite_values: int
     passed: bool
     notes: tuple[str, ...] = ()
 
@@ -69,6 +74,27 @@ def _hash_snapshot(snapshot: Mapping[str, Any]) -> str:
         allow_nan=False,
     )
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+def _snapshot_health(snapshot: Mapping[str, Any]) -> tuple[int, int]:
+    """Trả (serialized bytes, non-finite count) cho projection.
+
+    allow_nan=False bắt NaN ở serialization; walker vẫn đếm để report forensic rõ hơn.
+    """
+    import math
+    bad = 0
+    def walk(value: Any) -> None:
+        nonlocal bad
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            bad += 1
+        elif isinstance(value, Mapping):
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, (list, tuple)):
+            for child in value:
+                walk(child)
+    walk(snapshot)
+    encoded = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return len(encoded.encode("utf-8")), bad
 
 
 async def _maybe_await(value: Any) -> Any:
@@ -113,6 +139,9 @@ async def run_simulated_soak(
         subject_id: _hash_snapshot(dict(instance.snapshot()))
         for subject_id, instance in instances.items()
     }
+    health = [_snapshot_health(dict(instance.snapshot())) for instance in instances.values()]
+    max_projection_bytes_observed = max((item[0] for item in health), default=0)
+    non_finite_values = sum(item[1] for item in health)
     event_chain_ok = all(bool(instance.verify_event_chain()) for instance in instances.values())
     replay_stable = all(bool(instance.verify_replay()) for instance in instances.values())
 
@@ -131,6 +160,12 @@ async def run_simulated_soak(
         notes.append("deterministic replay verification failed")
     if leakage:
         notes.append(f"cross-instance leakage={leakage}")
+    if non_finite_values:
+        notes.append(f"non_finite_values={non_finite_values}")
+    if max_projection_bytes_observed > spec.max_projection_bytes:
+        notes.append(
+            f"projection_size={max_projection_bytes_observed} > {spec.max_projection_bytes}"
+        )
 
     for instance in instances.values():
         close = getattr(instance, "close", None)
@@ -145,6 +180,8 @@ async def run_simulated_soak(
         replay_stable=replay_stable,
         cross_instance_leakage=leakage,
         projection_hashes=projection_hashes,
+        max_projection_bytes_observed=max_projection_bytes_observed,
+        non_finite_values=non_finite_values,
         passed=not notes,
         notes=tuple(notes),
     )

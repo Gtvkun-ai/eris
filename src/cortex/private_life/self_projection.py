@@ -158,6 +158,41 @@ class PrivateLifeSelfProjector:
                     )
                 )
 
+        # Learned Agency V24: competence gap đã đo được có thể trở thành private
+        # practice project. Không có gap/trial/evidence thì không tạo project.
+        agency = self_payload.get("learned_agency", {})
+        if isinstance(agency, Mapping):
+            gaps = agency.get("gaps", ())
+            if isinstance(gaps, Sequence) and not isinstance(gaps, (str, bytes)):
+                for raw_gap in gaps:
+                    if not isinstance(raw_gap, Mapping):
+                        continue
+                    skill = compact_text(raw_gap.get("skill_id", ""), 120)
+                    context = compact_text(raw_gap.get("context_key", "general"), 120)
+                    pressure = clamp01(raw_gap.get("pressure", 0.0))
+                    trials = max(0, int(raw_gap.get("trial_count") or 0))
+                    evidence = tuple(str(x) for x in raw_gap.get("evidence_refs", ()) if str(x).strip())
+                    if not skill or trials < 3 or pressure < 0.20 or not evidence:
+                        continue
+                    target = clamp01(raw_gap.get("target_level", 0.68))
+                    current = clamp01(raw_gap.get("current_level", 0.5))
+                    drivers.append(
+                        PrivateLifeDriver(
+                            driver_id=stable_id("driver", "practice", skill, context),
+                            mode="project",
+                            anchor_kind="private_agenda",
+                            title=f"Practice: {skill}",
+                            question=f"Làm sao nâng năng lực {skill} trong {context} từ {current:.2f} về phía {target:.2f} bằng task có kết quả ngoài?",
+                            stance="Đây là khoảng cách năng lực đo được; ưu tiên luyện và kiểm tra transfer, không tự phong đã giỏi.",
+                            pressure=pressure,
+                            confidence=clamp01(min(1.0, trials / 8.0)),
+                            stability=clamp01(min(1.0, trials / 10.0)),
+                            evidence_ids=evidence,
+                            source_refs=(f"competence_gap:{skill}:{context}",),
+                            tags=("learned_agency", "practice", skill),
+                        )
+                    )
+
         # Concern của PrivateMind chỉ được "thăng cấp" thành đời sống riêng khi nó
         # lặp lại, có áp lực và có nhiều evidence refs. Một câu model nghĩ thoáng qua
         # không được phong làm ám ảnh dài hạn. Có chút tiêu chuẩn cũng đỡ khổ database.

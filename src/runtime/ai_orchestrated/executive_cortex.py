@@ -1007,6 +1007,147 @@ class ExecutiveCortex:
         }
         return self._invoke(stage=stage, payload=payload, priority=96, max_tokens=420)
 
+    def degraded_outcome(
+        self,
+        affordances: Sequence[ExecutiveAffordance],
+        *,
+        subject_frame: SubjectDeliberationFrame | None,
+        reason: str,
+    ) -> ExecutiveOutcome | None:
+        """Materialize một quyết định degraded từ ranking của Subject Core.
+
+        Đây không phải một Executive thứ hai. Khi transport/schema của model
+        Executive không dùng được, boundary chỉ được phép lấy coalition đã được
+        Subject Core chuẩn bị và xếp hạng. Không invent motive, không chọn một
+        affordance ngoài proposal. Coalition đầu bảng luôn được thử trước; chỉ
+        bỏ qua nó khi action không thể materialize ở runtime hiện tại.
+        """
+        if not _flag("ERIS_EXECUTIVE_CORTEX_ENABLED", True):
+            return None
+        if subject_frame is None or not subject_frame.coalitions:
+            return None
+
+        options = tuple(
+            item for item in affordances
+            if isinstance(item, ExecutiveAffordance) and item.available
+        )
+        by_id = {item.affordance_id: item for item in options}
+        selected_coalition = None
+        selected_affordance = None
+        selected_rank = -1
+
+        for rank, coalition in enumerate(subject_frame.coalitions):
+            action_kind = str(getattr(coalition, "action_kind", "") or "").strip().lower()
+            arguments = dict(getattr(coalition, "arguments", {}) or {})
+            if action_kind in {"silence", "body_only"}:
+                selected_coalition = coalition
+                selected_rank = rank
+                break
+            if action_kind == "speak":
+                affordance_id = str(arguments.get("affordance_id", "") or "").strip()
+                offered = by_id.get(affordance_id)
+                if offered is not None:
+                    selected_coalition = coalition
+                    selected_affordance = offered
+                    selected_rank = rank
+                    break
+
+        if selected_coalition is None:
+            self._log(
+                "warning",
+                "[executive] Subject Core degraded path had no realizable coalition reason=%s",
+                reason,
+            )
+            return None
+
+        coalition = selected_coalition
+        arguments = dict(getattr(coalition, "arguments", {}) or {})
+        action_kind = str(getattr(coalition, "action_kind", "silence") or "silence").strip().lower()
+        degraded_reason = _compact(
+            f"subject_core_degraded:{reason}:rank={selected_rank}",
+            360,
+        )
+        confidence = _clamp01(
+            0.20
+            + 0.45 * float(getattr(coalition, "expected_pragmatic_value", 0.0) or 0.0)
+            + 0.20 * (1.0 - float(getattr(coalition, "uncertainty", 1.0) or 1.0))
+        )
+        decision_action = (
+            "select_affordance" if action_kind == "speak" and selected_affordance is not None
+            else action_kind if action_kind in {"silence", "body_only"}
+            else "silence"
+        )
+        decision = ExecutiveDecision(
+            action=decision_action,
+            affordance_id=(selected_affordance.affordance_id if selected_affordance is not None else ""),
+            semantic_target=_compact(arguments.get("semantic_target", ""), 1600),
+            speech_act=_compact(arguments.get("speech_act", ""), 100).lower(),
+            tone=_compact(arguments.get("tone", ""), 100).lower(),
+            reply_baton="preserve",
+            phase="degraded_subject_commit",
+            trajectory="follow_subject_core_rank",
+            reconsider_on=(
+                ReviewCondition("user_turn", 0.0),
+                ReviewCondition("force", 0.0),
+                ReviewCondition("seed_available", 0.75),
+            ),
+            review_after_seconds=0.0,
+            reason=degraded_reason,
+            confidence=confidence,
+            intrusion_risk=_clamp01(
+                getattr(getattr(selected_affordance, "candidate", None), "seed_intrusion_risk", 0.0)
+                if selected_affordance is not None else 0.0
+            ),
+            subject_coalition_id=str(getattr(coalition, "coalition_id", "") or ""),
+            subject_proposal_ref=str(getattr(coalition, "primary_proposal_ref", "") or ""),
+            semantic_commitments=tuple(
+                item for item in (
+                    _compact(arguments.get("semantic_target", ""), 500),
+                    _compact(arguments.get("speech_act", ""), 160),
+                ) if item
+            ),
+            cognitive_requests=(),
+        )
+        self._log(
+            "warning",
+            "[executive] degraded via Subject Core rank=%s coalition=%s action=%s reason=%s",
+            selected_rank,
+            decision.subject_coalition_id,
+            action_kind,
+            reason,
+        )
+
+        if action_kind == "body_only":
+            return ExecutiveOutcome(None, "", "body_only", degraded_reason, decision)
+        if action_kind == "silence":
+            return ExecutiveOutcome(None, "", "silence", degraded_reason, decision)
+        if selected_affordance is None:
+            return None
+
+        candidate = self._rewrite_degraded_candidate(selected_affordance.candidate, degraded_reason)
+        return ExecutiveOutcome(
+            candidate,
+            selected_affordance.affordance_id,
+            "use_candidate",
+            degraded_reason,
+            decision,
+        )
+
+    @staticmethod
+    def _rewrite_degraded_candidate(candidate: Any, reason: str) -> Any:
+        """Đánh dấu provenance degraded mà không bịa semantic target mới."""
+        changes = {
+            "reason": _compact(
+                f"{reason}; upstream={getattr(candidate, 'reason', '')}",
+                300,
+            ),
+            "source": f"subject_core_degraded:{getattr(candidate, 'source', 'affordance')}",
+        }
+        try:
+            return replace(candidate, **changes)
+        except Exception:
+            return candidate
+
     def deliberate(
         self,
         blackboard: Any,
@@ -1017,6 +1158,11 @@ class ExecutiveCortex:
     ) -> ExecutiveOutcome:
         options = tuple(item for item in affordances if isinstance(item, ExecutiveAffordance) and item.available)
         if not self.enabled:
+            degraded = self.degraded_outcome(
+                options, subject_frame=subject_frame, reason="executive_transport_unavailable"
+            )
+            if degraded is not None:
+                return degraded
             decision = ExecutiveDecision.unavailable("executive_disabled")
             return ExecutiveOutcome(None, "", "silence", decision.reason, decision)
 
@@ -1026,6 +1172,11 @@ class ExecutiveCortex:
             capability_index=capability_index.to_dict(), candidate_tools=(), offered_tools=(), capability_result=None,
         )
         if decision is None:
+            degraded = self.degraded_outcome(
+                options, subject_frame=subject_frame, reason="executive_model_or_schema_failure"
+            )
+            if degraded is not None:
+                return degraded
             unavailable = ExecutiveDecision.unavailable("executive_model_or_schema_failure")
             return ExecutiveOutcome(None, "", "silence", unavailable.reason, unavailable)
 
@@ -1049,6 +1200,11 @@ class ExecutiveCortex:
                 capability_index=capability_index.to_dict(), candidate_tools=(), offered_tools=offered, capability_result=None,
             )
             if decision is None:
+                degraded = self.degraded_outcome(
+                    options, subject_frame=subject_frame, reason="executive_capability_selection_failure"
+                )
+                if degraded is not None:
+                    return degraded
                 unavailable = ExecutiveDecision.unavailable("executive_capability_selection_failure")
                 return ExecutiveOutcome(None, "", "silence", unavailable.reason, unavailable)
 
@@ -1064,6 +1220,11 @@ class ExecutiveCortex:
                 capability_result=result,
             )
             if decision is None:
+                degraded = self.degraded_outcome(
+                    options, subject_frame=subject_frame, reason="executive_result_deliberation_failure"
+                )
+                if degraded is not None:
+                    return degraded
                 unavailable = ExecutiveDecision.unavailable("executive_result_deliberation_failure")
                 return ExecutiveOutcome(None, "", "silence", unavailable.reason, unavailable)
             decision = replace(decision, capability_result=result)

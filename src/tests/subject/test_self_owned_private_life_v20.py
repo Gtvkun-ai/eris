@@ -230,3 +230,27 @@ def test_private_life_v2_roundtrip_keeps_causal_origin(tmp_path) -> None:
     assert all(item.source_refs for item in restored.anchors.values())
     assert all(item.origin == "derived" for item in restored.projects.values())
     assert all(item.source_refs for item in restored.projects.values())
+
+
+def test_private_life_can_form_practice_project_from_learned_agency(tmp_path) -> None:
+    core = PrivateLifeCore(root_dir=tmp_path)
+    subject_self = {
+        "facets": [],
+        "learned_agency": {
+            "gaps": [
+                {
+                    "skill_id": "debug_async",
+                    "context_key": "repo",
+                    "current_level": 0.34,
+                    "target_level": 0.68,
+                    "calibration_error": 0.42,
+                    "trial_count": 5,
+                    "pressure": 0.62,
+                    "evidence_refs": ["outcome.1", "outcome.2"],
+                }
+            ]
+        },
+    }
+    result = core.tick(subject_self=subject_self, private_mind_digest={}, recent_events=(), idle_seconds=0)
+    assert any(update.title == "Practice: debug_async" for update in result.project_updates)
+    assert any(project.title == "Practice: debug_async" for project in core.state.projects.values())

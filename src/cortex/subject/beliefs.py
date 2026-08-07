@@ -122,6 +122,68 @@ class BeliefService:
             contradiction_detected=contradiction,
         )
 
+
+    def weaken_narrative(
+        self,
+        belief_ids: Iterable[str],
+        *,
+        confidence_drop: float,
+        retrieval_drop: float,
+    ) -> tuple[str, ...]:
+        """Hạ confidence/retrieval của self-narrative dự đoán sai.
+
+        Raw evidence không đổi; đây chỉ là projection update có thể rebuild.
+        """
+        changed: list[str] = []
+        for belief_id in tuple(dict.fromkeys(str(x) for x in belief_ids)):
+            belief = self._beliefs.get(belief_id)
+            if belief is None or belief.status != "active":
+                continue
+            if belief.source_kind is not BeliefSourceKind.SELF_INTERPRETATION:
+                continue
+            self._beliefs[belief_id] = replace(
+                belief,
+                confidence=max(0.05, belief.confidence - max(0.0, confidence_drop)),
+                retrieval_salience=max(0.05, belief.retrieval_salience - max(0.0, retrieval_drop)),
+                updated_at=self._clock(),
+            )
+            changed.append(belief_id)
+        return tuple(changed)
+
+    def reopen_by_evidence(
+        self,
+        evidence_refs: Iterable[str],
+        *,
+        accessibility_boost: float,
+        retrieval_boost: float,
+        exclude_ids: Iterable[str] = (),
+    ) -> tuple[str, ...]:
+        """Mở lại belief có chung evidence khi narrative hiện tại thất bại.
+
+        Không tạo evidence mới và không thay source_kind. Cơ chế này mô phỏng việc
+        một phần ký ức trước đây ít accessible trở lại đáng chú ý sau prediction error.
+        """
+        refs = set(str(x) for x in evidence_refs if str(x).strip())
+        excluded = set(str(x) for x in exclude_ids)
+        if not refs:
+            return ()
+        changed: list[str] = []
+        for belief_id, belief in tuple(self._beliefs.items()):
+            if belief_id in excluded or belief.status != "active":
+                continue
+            if not refs.intersection((*belief.evidence_refs, *belief.counter_evidence_refs)):
+                continue
+            updated = replace(
+                belief,
+                accessibility=min(1.0, belief.accessibility + max(0.0, accessibility_boost)),
+                retrieval_salience=min(1.0, belief.retrieval_salience + max(0.0, retrieval_boost)),
+                updated_at=self._clock(),
+            )
+            if updated != belief:
+                self._beliefs[belief_id] = updated
+                changed.append(belief_id)
+        return tuple(changed)
+
     def accessible(self, *, minimum_accessibility: float = 0.5, public_only: bool = False) -> tuple[Belief, ...]:
         output = []
         for belief in self._beliefs.values():

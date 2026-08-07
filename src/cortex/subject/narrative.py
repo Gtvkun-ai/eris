@@ -63,6 +63,20 @@ class NarrativeBeliefGenerator:
             ))
         return tuple(proposals)
 
+    def choose(self, proposals: tuple[BeliefProposal, ...]) -> BeliefProposal | None:
+        """Chọn hypothesis có score cao nhất mà không giả có true motive.
+
+        Score chỉ dùng confidence + evidence coverage + predictive commitment.
+        Ties giữ thứ tự deterministic từ generator để replay ổn định.
+        """
+        if not proposals:
+            return None
+        def score(item: BeliefProposal) -> tuple[float, float, int]:
+            coverage = min(1.0, len(item.evidence_refs) / 4.0)
+            predictive = min(1.0, len(item.predictive_commitments) / 2.0)
+            return (0.65 * item.confidence + 0.25 * coverage + 0.10 * predictive, item.confidence, len(item.evidence_refs))
+        return max(enumerate(proposals), key=lambda pair: (*score(pair[1]), -pair[0]))[1]
+
     def record(
         self,
         *,
