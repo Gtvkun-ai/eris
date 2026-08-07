@@ -4,12 +4,26 @@ Import package không tự mở thread, database hay actuator. Nội tâm đư�
 ``SubjectService`` tại composition root.
 """
 from .contracts import *  # noqa: F401,F403
+from .deliberation import (
+    CognitiveRequestKind,
+    CognitiveReviewResult,
+    DeliberationReviewIntegrator,
+    ProposalAdjustment,
+)
 from .inner_state import ActionMemory, InnerLifeState
+from .self_model import SelfFacet, SubjectSelfProjection, SubjectSelfProjector
 from .service import SubjectService, SubjectServiceConfig
 
 __all__ = [
     "ActionMemory",
+    "CognitiveRequestKind",
+    "CognitiveReviewResult",
+    "DeliberationReviewIntegrator",
     "InnerLifeState",
+    "ProposalAdjustment",
+    "SelfFacet",
+    "SubjectSelfProjection",
+    "SubjectSelfProjector",
     "SubjectService",
     "SubjectServiceConfig",
 ]

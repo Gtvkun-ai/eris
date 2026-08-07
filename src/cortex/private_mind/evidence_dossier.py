@@ -244,7 +244,21 @@ class EvidenceDossierBuilder:
     def _private_runtime_state(self, runtime_owner: Any) -> dict[str, Any]:
         if runtime_owner is None:
             return {}
+        # PrivateMind được thấy bounded self-model của Subject Core, không được
+        # thấy raw drive vector hay event ledger toàn tri. Nhờ vậy nó có thể nghĩ
+        # "về chính mình" trên cùng causal substrate thay vì dựng một Eris thứ hai.
+        subject_self: dict[str, Any] = {}
+        subject_service = _get(runtime_owner, "subject_service", None)
+        self_view = getattr(subject_service, "self_view", None)
+        if callable(self_view):
+            try:
+                candidate = self_view()
+                if isinstance(candidate, Mapping):
+                    subject_self = to_plain(candidate)
+            except Exception:
+                subject_self = {}
         return {
+            "subject_self": subject_self,
             "speech_bias": to_plain(_get(runtime_owner, "private_mind_speech_bias", {})),
             "inquiry_plan": to_plain(list(_get(runtime_owner, "private_mind_inquiry_plan", []) or [])[-8:]),
             "active_state": to_plain(_get(runtime_owner, "private_mind_active_state", {})),

@@ -463,12 +463,19 @@ class CoordinatorBootstrapMixin:
 
         self.subject_core_components = build_subject_core_components(
             action_executor=getattr(self, "action_executor", None),
+            # Provider đóng trên host nên MindLoop được inject một dependency ổn
+            # định ngay từ đầu; Executive có thể xuất hiện sau mà không cần bind.
+            executive_provider=lambda: getattr(self, "ai_executive_cortex", None),
         )
         self.subject_service = self.subject_core_components.subject_service
         self.subject_sandbox_world = self.subject_core_components.sandbox_world
         self.subject_actuator = self.subject_core_components.actuator
+        self.subject_mind_loop = self.subject_core_components.mind_loop
         self.subject_runtime = self.subject_core_components.runtime
-        self.subject_ingress = SubjectIngress(self.subject_service)
+        self.subject_ingress = SubjectIngress(
+            self.subject_service,
+            mind_loop=self.subject_mind_loop,
+        )
         self.logger.info(
             "[subject-core] authoritative subject=%s data=%s",
             self.subject_service.config.subject_id,

@@ -808,6 +808,9 @@ class ExecutiveCortex:
             "mode": str(mode or "interactive"),
             "user_text": str(user_text or ""),
             "subject_deliberation_frame": frame.public_view(),
+            # Self-model chỉ là bounded projection của chính Subject Core. Nó cho
+            # Executive continuity về "mình là ai" nhưng không cấp quyền invent action.
+            "subject_self": source.get("subject_self", {}),
             "executive_state": self.state.to_dict(),
             "recent_public_history": list(source.get("recent_public_history", ()))[-8:],
             "relationship": source.get("relationship_summary", source.get("relationship", {})),

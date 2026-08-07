@@ -1,23 +1,17 @@
 # -*- coding: utf-8 -*-
-"""Top-level orchestration across Mind, actuator, dialogue and audit boundaries."""
+"""Top-level execution across MindLoop, actuator, dialogue and audit boundaries."""
 from __future__ import annotations
 
 import inspect
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Protocol
+from typing import Any, Callable, Protocol
 
-from cortex.subject.contracts import (
-    LearningReceipt,
-    MindDecision,
-    SubjectDeliberationFrame,
-    SubjectExecutiveCommit,
-    WorldObservation,
-    WorldOutcome,
-)
+from cortex.subject.contracts import LearningReceipt, MindDecision, WorldObservation
 from cortex.subject.service import SubjectService
 from runtime.audit import AuditEvent, AuditEventKind
+from runtime.mind_loop import MindLoop
 from runtime.world.contracts import ActionReceipt, ActuatorPort
 
 
@@ -29,20 +23,6 @@ class AuditSink(Protocol):
     def append(self, event: AuditEvent) -> Any: ...
 
 
-class SubjectExecutivePort(Protocol):
-    @property
-    def enabled(self) -> bool: ...
-
-    def commit_subject_frame(
-        self,
-        frame: SubjectDeliberationFrame,
-        *,
-        user_text: str = "",
-        snapshot: dict[str, Any] | None = None,
-        mode: str = "runtime",
-    ) -> SubjectExecutiveCommit | None: ...
-
-
 @dataclass(frozen=True, slots=True)
 class RuntimeResult:
     decision: MindDecision
@@ -52,6 +32,12 @@ class RuntimeResult:
 
 
 class SubjectRuntime:
+    """Thực thi một observation sau khi MindLoop đã tạo quyết định có authorship.
+
+    Runtime không giữ hay bind Executive. Executive dependency đã được inject vào
+    MindLoop tại composition root, nên không còn mutable wiring sau bootstrap.
+    """
+
     def __init__(
         self,
         *,
@@ -59,21 +45,17 @@ class SubjectRuntime:
         actuator: ActuatorPort,
         dialogue: DialoguePort | None,
         audit: AuditSink | None,
+        mind_loop: MindLoop | None = None,
         clock: Callable[[], float] = time.time,
         id_factory: Callable[[], str] | None = None,
-        executive: SubjectExecutivePort | None = None,
     ) -> None:
         self._mind = mind
+        self._mind_loop = mind_loop or MindLoop(subject=mind)
         self._actuator = actuator
         self._dialogue = dialogue
         self._audit = audit
         self._clock = clock
         self._id_factory = id_factory or (lambda: str(uuid.uuid4()))
-        self._executive = executive
-
-    def bind_executive(self, executive: SubjectExecutivePort) -> None:
-        """Gắn Executive sau bootstrap mà không tạo dependency vòng composition root."""
-        self._executive = executive
 
     async def _audit_append(self, event: AuditEvent) -> None:
         if self._audit is None:
@@ -94,29 +76,12 @@ class SubjectRuntime:
             correlation_id=observation.correlation_id,
             algorithm_version=self._mind.config.algorithm_version,
         ))
-        # Subject Core chuẩn bị nền; Executive cam kết; Mind mới ghi decision.
-        # Khi runtime độc lập chưa bind Executive (chủ yếu unit test), fallback cũ
-        # vẫn tồn tại và được authorship đánh dấu rõ, không giả làm executive commit.
-        frame = await self._mind.prepare_deliberation(observation)
-        commit = None
-        if self._executive is not None:
-            commit = self._executive.commit_subject_frame(
-                frame,
-                user_text=str(observation.context.get("user_text") or ""),
-                snapshot=dict(observation.context),
-                mode="runtime",
-            )
-            if commit is not None and commit.cognitive_requests:
-                revised = await self._mind.review_deliberation(frame, commit.cognitive_requests)
-                if revised.frame_id != frame.frame_id:
-                    frame = revised
-                    commit = self._executive.commit_subject_frame(
-                        frame,
-                        user_text=str(observation.context.get("user_text") or ""),
-                        snapshot=dict(observation.context),
-                        mode="runtime_review",
-                    )
-        decision = await self._mind.finalize_deliberation(frame, commit)
+        decision = await self._mind_loop.deliberate(
+            observation,
+            mode="runtime",
+            user_text=str(observation.context.get("user_text") or ""),
+            snapshot=dict(observation.context),
+        )
         await self._audit_append(AuditEvent(
             event_id=self._id_factory(),
             subject_id=observation.subject_id,
@@ -131,12 +96,21 @@ class SubjectRuntime:
 
         if decision.proposed_action == "speak" and self._dialogue is not None:
             dialogue_receipt = await self._dialogue.deliver(decision)
-            return RuntimeResult(decision=decision, action_receipt=None, learning_receipt=None, dialogue_receipt=dialogue_receipt)
+            return RuntimeResult(
+                decision=decision,
+                action_receipt=None,
+                learning_receipt=None,
+                dialogue_receipt=dialogue_receipt,
+            )
 
         request = self._mind.to_action_request(
             decision,
-            requested_capabilities=tuple(str(item) for item in decision.arguments.get("requested_capabilities", ())) or (decision.proposed_action,),
-            expected_outcomes=tuple(str(item) for item in decision.arguments.get("expected_outcomes", ())),
+            requested_capabilities=tuple(
+                str(item) for item in decision.arguments.get("requested_capabilities", ())
+            ) or (decision.proposed_action,),
+            expected_outcomes=tuple(
+                str(item) for item in decision.arguments.get("expected_outcomes", ())
+            ),
         )
         await self._audit_append(AuditEvent(
             event_id=self._id_factory(),

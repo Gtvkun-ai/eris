@@ -47,6 +47,7 @@ PrivateLifeEventType = Literal[
 
 PrivateAnchorKind = Literal["identity", "aesthetic", "obsession", "world", "private_agenda"]
 ProjectStatus = Literal["dormant", "active", "simmering", "blocked", "resolved"]
+PrivateLifeOrigin = Literal["derived", "observed", "legacy_authored", "legacy_unknown"]
 ErrandStatus = Literal["open", "waiting", "blocked", "done", "dropped"]
 ObjectType = Literal["file", "module", "memory", "place", "model", "ritual", "folder", "service"]
 DailyPhase = Literal["startup", "first_observation", "deep_work", "idle_wandering", "late_consolidation", "shutdown", "unknown"]
@@ -305,6 +306,11 @@ class PrivateProject:
     notes: tuple[str, ...] = ()
     last_advanced_at: float = 0.0
     surface_permission: float = 0.0
+    origin: PrivateLifeOrigin = "derived"
+    source_refs: tuple[str, ...] = ()
+    support_count: int = 0
+    last_supported_at: float = 0.0
+    retired_reason: str = ""
     created_at: float = field(default_factory=now_ts)
 
     def __post_init__(self) -> None:
@@ -314,6 +320,11 @@ class PrivateProject:
         self.interest = clamp01(self.interest)
         self.frustration = clamp01(self.frustration)
         self.surface_permission = clamp01(self.surface_permission)
+        if self.origin not in {"derived", "observed", "legacy_authored", "legacy_unknown"}:
+            self.origin = "legacy_unknown"
+        self.source_refs = tuple(str(x) for x in self.source_refs if str(x or "").strip())[:24]
+        self.support_count = max(0, int(self.support_count or 0))
+        self.retired_reason = compact_text(self.retired_reason, 320)
         self.evidence_ids = tuple(str(x) for x in self.evidence_ids if str(x or "").strip())[:24]
         self.notes = tuple(compact_text(x, 360) for x in self.notes if str(x or "").strip())[-16:]
 
@@ -333,6 +344,11 @@ class PrivateProject:
             notes=tuple(str(x) for x in data.get("notes") or () if str(x).strip()),
             last_advanced_at=float(data.get("last_advanced_at") or 0.0),
             surface_permission=clamp01(data.get("surface_permission", 0.0)),
+            origin=str(data.get("origin") or "legacy_unknown"),  # type: ignore[arg-type]
+            source_refs=tuple(str(x) for x in data.get("source_refs") or () if str(x).strip()),
+            support_count=int(data.get("support_count") or 0),
+            last_supported_at=float(data.get("last_supported_at") or 0.0),
+            retired_reason=str(data.get("retired_reason") or ""),
             created_at=float(data.get("created_at") or now_ts()),
         )
 
@@ -390,6 +406,11 @@ class PrivateAnchor:
     evidence_ids: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
     tags: tuple[str, ...] = ()
+    origin: PrivateLifeOrigin = "derived"
+    source_refs: tuple[str, ...] = ()
+    support_count: int = 0
+    last_supported_at: float = 0.0
+    retired_reason: str = ""
     created_at: float = field(default_factory=now_ts)
     last_touched_at: float = 0.0
 
@@ -407,6 +428,11 @@ class PrivateAnchor:
         self.evidence_ids = tuple(str(x) for x in self.evidence_ids if str(x or "").strip())[:24]
         self.notes = tuple(compact_text(x, 420) for x in self.notes if str(x or "").strip())[-24:]
         self.tags = tuple(compact_text(x, 80) for x in self.tags if str(x or "").strip())[:16]
+        if self.origin not in {"derived", "observed", "legacy_authored", "legacy_unknown"}:
+            self.origin = "legacy_unknown"
+        self.source_refs = tuple(str(x) for x in self.source_refs if str(x or "").strip())[:24]
+        self.support_count = max(0, int(self.support_count or 0))
+        self.retired_reason = compact_text(self.retired_reason, 320)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -425,6 +451,11 @@ class PrivateAnchor:
             evidence_ids=tuple(str(x) for x in data.get("evidence_ids") or () if str(x).strip()),
             notes=tuple(str(x) for x in data.get("notes") or () if str(x).strip()),
             tags=tuple(str(x) for x in data.get("tags") or () if str(x).strip()),
+            origin=str(data.get("origin") or "legacy_unknown"),  # type: ignore[arg-type]
+            source_refs=tuple(str(x) for x in data.get("source_refs") or () if str(x).strip()),
+            support_count=int(data.get("support_count") or 0),
+            last_supported_at=float(data.get("last_supported_at") or 0.0),
+            retired_reason=str(data.get("retired_reason") or ""),
             created_at=float(data.get("created_at") or now_ts()),
             last_touched_at=float(data.get("last_touched_at") or 0.0),
         )
@@ -798,7 +829,7 @@ class PrivateLifeState:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "version": 1,
+            "version": 2,
             "updated_at": self.updated_at,
             "habitat": self.habitat.to_dict(),
             "attachments": {k: v.to_dict() for k, v in self.attachments.items()},
@@ -884,12 +915,25 @@ def private_life_state_digest(state: PrivateLifeState | None) -> dict[str, Any]:
 
     if state is None:
         return {}
-    active_projects = sorted(state.projects.values(), key=lambda p: (p.status == "active", p.interest, p.last_advanced_at), reverse=True)[:5]
-    active_anchors = sorted(state.anchors.values(), key=lambda a: (a.pressure + a.continuity + a.surface_permission, a.last_touched_at), reverse=True)[:6]
+    active_projects = sorted(
+        (p for p in state.projects.values() if p.origin != "legacy_authored" and p.status != "resolved"),
+        key=lambda p: (p.status == "active", p.interest, p.last_advanced_at),
+        reverse=True,
+    )[:5]
+    active_anchors = sorted(
+        (a for a in state.anchors.values() if a.origin != "legacy_authored"),
+        key=lambda a: (a.pressure + a.continuity + a.surface_permission, a.last_touched_at),
+        reverse=True,
+    )[:6]
     hot_objects = sorted(state.attachments.values(), key=lambda o: (o.irritation + o.attachment + min(1.0, o.neglect_count / 12.0)), reverse=True)[:6]
     open_errands = sorted((e for e in state.errands.values() if e.status in {"open", "waiting", "blocked"}), key=lambda e: e.priority, reverse=True)[:6]
     return {
         "updated_at": state.updated_at,
+        "state_version": 2,
+        "legacy_retired": {
+            "anchors": sum(1 for item in state.anchors.values() if item.origin == "legacy_authored"),
+            "projects": sum(1 for item in state.projects.values() if item.origin == "legacy_authored"),
+        },
         "daily_phase": state.daily.phase,
         "habitat": {
             "active_place_id": state.habitat.active_place_id,
@@ -909,6 +953,9 @@ def private_life_state_digest(state: PrivateLifeState | None) -> dict[str, Any]:
                 "interest": round(p.interest, 3),
                 "frustration": round(p.frustration, 3),
                 "surface_permission": round(p.surface_permission, 3),
+                "origin": p.origin,
+                "support_count": p.support_count,
+                "source_refs": list(p.source_refs[:5]),
                 "last_note": p.notes[-1] if p.notes else "",
             }
             for p in active_projects
@@ -921,6 +968,9 @@ def private_life_state_digest(state: PrivateLifeState | None) -> dict[str, Any]:
                 "pressure": round(a.pressure, 3),
                 "continuity": round(a.continuity, 3),
                 "surface_permission": round(a.surface_permission, 3),
+                "origin": a.origin,
+                "support_count": a.support_count,
+                "source_refs": list(a.source_refs[:5]),
                 "last_note": a.notes[-1] if a.notes else a.stance,
             }
             for a in active_anchors

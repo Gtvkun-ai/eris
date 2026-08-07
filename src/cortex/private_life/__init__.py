@@ -22,8 +22,9 @@ from .contracts import (
     TasteShift,
     private_life_state_digest,
 )
-from .core import PrivateLifeCore
+from .core import PRIVATE_LIFE_VERSION, PrivateLifeCore
 from .persistence import PrivateLifeStore
+from .self_projection import PrivateLifeDriver, PrivateLifeSelfProjector
 
 __all__ = [
     "DailyRhythm",
@@ -35,8 +36,11 @@ __all__ = [
     "ObjectResidue",
     "PrivateAnchor",
     "PrivateAnchorUpdate",
+    "PRIVATE_LIFE_VERSION",
     "PrivateLifeCore",
     "PrivateLifeState",
+    "PrivateLifeDriver",
+    "PrivateLifeSelfProjector",
     "PrivateLifeStore",
     "PrivateLifeTickResult",
     "PrivateProject",

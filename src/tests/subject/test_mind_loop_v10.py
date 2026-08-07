@@ -1,0 +1,163 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+from cortex.subject.contracts import SubjectExecutiveCommit
+from cortex.subject.deliberation import CognitiveRequestKind, CognitiveReviewResult
+from cortex.subject.service import SubjectService, SubjectServiceConfig
+from runtime.mind_loop import MindLoop
+from runtime.subject_cognition import BoundedSubjectCognition
+from runtime.subject_ingress import SubjectIngress
+
+
+class Determinism:
+    def __init__(self) -> None:
+        self.index = 0
+        self.now = 1000.0
+
+    def id(self) -> str:
+        self.index += 1
+        return f"id-{self.index}"
+
+    def clock(self) -> float:
+        self.now += 1.0
+        return self.now
+
+
+def _service(d: Determinism) -> SubjectService:
+    return SubjectService(
+        config=SubjectServiceConfig(subject_id="eris", deterministic=True),
+        clock=d.clock,
+        id_factory=d.id,
+    )
+
+
+def test_subject_runtime_no_longer_exposes_mutable_executive_binding() -> None:
+    from runtime.subject_runtime import SubjectRuntime
+
+    assert not hasattr(SubjectRuntime, "bind_executive")
+
+
+def test_cognitive_adapter_returns_typed_findings_and_domain_integrates_them() -> None:
+    d = Determinism()
+    service = _service(d)
+    ingress = SubjectIngress(service)
+    session = ingress.prepare_user_session(
+        "Việc này có chắc không?",
+        created_at=d.clock(),
+        turn_id="typed-review",
+    )
+    cognition = BoundedSubjectCognition(clock=d.clock, id_factory=d.id)
+    results = cognition.execute(session.frame, (CognitiveRequestKind.VERIFY_EVIDENCE,))
+
+    assert results
+    assert all(isinstance(item, CognitiveReviewResult) for item in results)
+    revised = MindLoop.run_sync(service.integrate_cognitive_results(session.frame, results))
+    assert revised.frame_id != session.frame.frame_id
+    assert any("executive_review" in proposal.arguments for proposal in revised.proposals)
+    assert not hasattr(service, "review_deliberation")
+    MindLoop.run_sync(service.abandon_deliberation(revised, reason="test_cleanup"))
+
+
+def test_late_executive_provider_is_injected_without_bind() -> None:
+    d = Determinism()
+    service = _service(d)
+    holder: dict[str, object] = {}
+    loop = MindLoop(
+        subject=service,
+        executive_provider=lambda: holder.get("executive"),  # type: ignore[return-value]
+        id_factory=d.id,
+    )
+    ingress = SubjectIngress(service, mind_loop=loop)
+
+    class Executive:
+        enabled = True
+
+        def commit_subject_frame(self, frame, **_kwargs):
+            selected = next(item for item in frame.coalitions if item.action_kind == "investigate")
+            return SubjectExecutiveCommit(
+                commit_id="late-executive",
+                frame_id=frame.frame_id,
+                selected_coalition_id=selected.coalition_id,
+                selected_proposal_ref=selected.primary_proposal_ref,
+                semantic_commitments=("kiểm chứng trước khi nói",),
+                cognitive_requests=(),
+                reason="late provider resolved at decision time",
+                confidence=0.9,
+                review_conditions=(),
+                created_at=d.clock(),
+            )
+
+    holder["executive"] = Executive()
+    decision = ingress.observe_user_turn(
+        "Kiểm tra giúp tôi.",
+        created_at=d.clock(),
+        turn_id="late-provider",
+    )
+    assert decision.proposed_action == "investigate"
+    assert decision.arguments["executive_commit"]["commit_id"] == "late-executive"
+
+
+def test_autonomous_review_rebinds_commit_to_revised_frame() -> None:
+    d = Determinism()
+    service = _service(d)
+    loop = MindLoop(subject=service, id_factory=d.id, max_reviews=1)
+    ingress = SubjectIngress(service, mind_loop=loop)
+    candidate = SimpleNamespace(
+        kind="random_chat",
+        topic="nhắc lại việc còn dở",
+        speech_act="callback",
+        tone="warm",
+        source="seed_worker",
+        confidence=0.8,
+        relevance=0.8,
+        urgency=0.2,
+        evidence_refs=("memory:1",),
+        requires_grounding=False,
+    )
+    affordance = SimpleNamespace(affordance_id="seed:1", owner="random_chat_seed", candidate=candidate)
+    blackboard = SimpleNamespace(
+        reply_expected=False,
+        engagement_active=False,
+        public_view=lambda: {"reply_expected": False, "engagement_active": False},
+    )
+    session = ingress.prepare_autonomous_session(
+        blackboard,
+        [affordance],
+        created_at=d.clock(),
+        turn_id="auto-review",
+    )
+
+    class Executive:
+        enabled = True
+
+        def __init__(self) -> None:
+            self.frames: list[str] = []
+
+        def subject_commit_from_outcome(self, frame, _outcome):
+            self.frames.append(frame.frame_id)
+            selected = next(
+                item for item in frame.coalitions if item.arguments.get("affordance_id") == "seed:1"
+            )
+            return SubjectExecutiveCommit(
+                commit_id=f"auto:{len(self.frames)}",
+                frame_id=frame.frame_id,
+                selected_coalition_id=selected.coalition_id,
+                selected_proposal_ref=selected.primary_proposal_ref,
+                semantic_commitments=("giữ continuity",),
+                cognitive_requests=("preserve_continuity",) if len(self.frames) == 1 else (),
+                reason="rebind after bounded review",
+                confidence=0.8,
+                review_conditions=(),
+                created_at=d.clock(),
+            )
+
+        def commit_subject_frame(self, frame, **_kwargs):  # pragma: no cover - không dùng ở đường này
+            raise AssertionError("autonomous outcome phải dùng commit adapter riêng")
+
+    executive = Executive()
+    decision = ingress.complete_autonomous_turn(session, object(), executive=executive)
+    assert decision is not None
+    assert len(executive.frames) == 2
+    assert executive.frames[0] != executive.frames[1]
+    assert decision.arguments["executive_commit"]["commit_id"] == "auto:2"

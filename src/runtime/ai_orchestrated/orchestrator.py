@@ -735,19 +735,31 @@ class AIChatOrchestrator:
                 else {}
             ),
         }
+        temporal = getattr(host, "temporal_mind", None)
+        temporal_prompt = ""
+        render_temporal = getattr(temporal, "prompt_context", None)
+        if callable(render_temporal):
+            try:
+                temporal_prompt = str(render_temporal(now=cycle_start) or "")
+            except Exception as exc:
+                host.logger.debug("[temporal mind] prompt projection failed: %s", exc)
+        if temporal_prompt:
+            # Giữ timing projection ở field riêng. Không nhét nó vào grounding_context
+            # vì nhịp không phải evidence và không được giả dạng nguồn sự thật.
+            planning_snapshot["temporal_mind"] = temporal_prompt
+            planning_snapshot["timing_context"] = temporal_prompt
+
         # Subject Core chuẩn bị nền; Executive cam kết coalition; Subject Core
         # mới materialize MindDecision và authorship. Planner phía sau chỉ realize,
         # không được dựng một động cơ thứ hai vì con người đã có đủ hội đồng rồi.
         subject_ingress = getattr(host, "subject_ingress", None)
         if subject_ingress is None:
-            raise RuntimeError("Subject Core ingress is required in V7")
-        executive = getattr(host, "ai_executive_cortex", None)
+            raise RuntimeError("Subject Core ingress is required")
         subject_decision = subject_ingress.observe_user_turn(
             user_text,
             created_at=cycle_start,
             turn_id=turn_id,
             planning_context=planning_snapshot,
-            executive=executive,
         )
         subject_payload = subject_decision.to_dict()
         planning_snapshot["subject_decision"] = subject_payload
@@ -784,6 +796,10 @@ class AIChatOrchestrator:
         # the internal decision; the selector may choose an exact live tool that
         # realizes it, never a second motive or personality trajectory.
         executive_directive = None
+        # HOTFIX V20.1/V24.1: resolve Executive tại đúng scope của chat cycle.
+        # Dòng binding này từng tồn tại ở V16 nhưng bị rơi mất trong refactor V17,
+        # khiến nhánh interactive capability selector đọc một local chưa được gán.
+        executive = getattr(host, "ai_executive_cortex", None)
         if executive is not None and bool(getattr(executive, "enabled", False)):
             try:
                 executive_directive = executive.plan_interactive(
@@ -1505,6 +1521,17 @@ class AIChatOrchestrator:
 
         host.last_chat_answer = public_text
         host.last_system_action = str(getattr(decision, "system_action", "") or "")
+        if public_text:
+            temporal = getattr(host, "temporal_mind", None)
+            note_public = getattr(temporal, "note_public_act", None)
+            if callable(note_public):
+                try:
+                    note_public(
+                        now=time.time(),
+                        focus_key=str(getattr(host, "active_conversational_topic", "") or "direct_chat"),
+                    )
+                except Exception as exc:
+                    host.logger.debug("[temporal mind] chat public-act update failed: %s", exc)
         clock = getattr(host, "interaction_clock", None)
         if clock is not None and public_text:
             clock.mark_assistant_text()
@@ -1678,6 +1705,13 @@ class AIAutonomousOrchestrator:
         # trang trí. Giữ cùng con trỏ gần nhất với chat để câu user kế tiếp có
         # thể hỏi "ý câu vừa rồi là gì" mà không bị Eris giả mất trí nhớ.
         host.last_chat_answer = public_text
+        temporal = getattr(host, "temporal_mind", None)
+        note_public = getattr(temporal, "note_public_act", None)
+        if callable(note_public):
+            try:
+                note_public(now=time.time(), focus_key=str(channel or "autonomous"))
+            except Exception as exc:
+                host.logger.debug("[temporal mind] autonomous public-act update failed: %s", exc)
         clock = getattr(host, "interaction_clock", None)
         if clock is not None:
             try:

@@ -6,7 +6,7 @@ Luồng thật của Mind:
 observation → substrate → appraisal → need activation → coalition → decision
 → authorship → outcome → episode learning → value/tendency/continuity update.
 
-Khác với các bản trước, V7 không chỉ tạo class rồi để chúng nằm ngắm nhau trong
+Khác với các bản trước, V10 không chỉ tạo class rồi để chúng nằm ngắm nhau trong
 thư mục. Các engine value, consolidation, derived need, self-deception,
 continuity, competence và existential choice đều được nối vào vòng học chính.
 """
@@ -43,12 +43,14 @@ from .contracts import (
     WorldObservation,
     WorldOutcome,
 )
+from .deliberation import CognitiveReviewResult, DeliberationReviewIntegrator
 from .episodes import NeedEpisodeRecorder
 from .existential import ExistentialDecisionService
 from .inner_state import InnerLifeState
 from .narrative import NarrativeBeliefGenerator, NarrativeView
 from .needs import NeedPlasticityEngine, NeedSystem
 from .self_deception import ReflectiveMismatchDetector
+from .self_model import SubjectSelfProjector
 from .substrate import SubstrateMonitor, substrate_from_dict
 from .values import ValueFormationEngine
 
@@ -96,7 +98,7 @@ class SubjectServiceConfig:
     random_seed: int = 0
     min_episode_pressure: float = 0.08
     default_temperature: float = 0.20
-    algorithm_version: str = "subject-service-v9-executive-center"
+    algorithm_version: str = "subject-service-v11-self-owned-life"
     restore_projection: bool = True
     consolidation_min_episode_count: int = 3
     consolidation_min_distinct_days: int = 2
@@ -138,6 +140,8 @@ class SubjectService:
         self.consolidator = TemporalConsolidator(self._id_factory, self._clock)
         self.continuity = ContinuityService(self._id_factory, self._clock)
         self.mismatch_detector = ReflectiveMismatchDetector(self._id_factory)
+        # Self-model là projection dẫn xuất từ lịch sử causal, không phải personality prompt.
+        self.self_projector = SubjectSelfProjector()
         self.existential = ExistentialDecisionService(self._id_factory, self._clock)
         self.arbiter = CoalitionArbiter(
             id_factory=self._id_factory,
@@ -145,6 +149,7 @@ class SubjectService:
             random_source=self._random,
             deterministic=self.config.deterministic,
         )
+        self.review_integrator = DeliberationReviewIntegrator(self.arbiter)
 
         self.substrate = self.substrate_monitor.initial(
             subject_id=self.config.subject_id,
@@ -691,118 +696,27 @@ class SubjectService:
         )
         return frame
 
-    async def review_deliberation(
+    async def integrate_cognitive_results(
         self,
         frame: SubjectDeliberationFrame,
-        cognitive_requests: tuple[str, ...],
+        results: tuple[CognitiveReviewResult, ...],
     ) -> SubjectDeliberationFrame:
-        """Thực hiện một vòng điều khiển nhận thức bounded do Executive yêu cầu.
+        """Tích hợp finding có kiểu do cognitive layer trả về.
 
-        Đây không phải prompt tự do. Mỗi request là một phép biến đổi có tên,
-        biên số học và audit rõ ràng. Executive có thể yêu cầu xem lại, nhưng
-        không được lén sửa substrate, evidence hay lịch sử bằng một câu văn đẹp.
+        SubjectService không còn hiểu các chuỗi request như ``verify_evidence``.
+        Nó chỉ kiểm tra provenance, áp adjustment bounded qua domain integrator và
+        ghi causal trace. Việc thực sự "nghĩ lại bằng cách nào" thuộc cognitive
+        capability, không thuộc persistence/domain service.
         """
         if frame.frame_id not in self._pending_frames:
             raise KeyError("deliberation frame is not pending")
-        allowed = {
-            "verify_evidence",
-            "reduce_intrusion",
-            "preserve_continuity",
-            "estimate_capability",
-            "inspect_dissent",
-        }
-        requests = tuple(
-            dict.fromkeys(
-                str(item or "").strip().lower()
-                for item in cognitive_requests
-                if str(item or "").strip().lower() in allowed
-            )
-        )
-        if not requests:
+        normalized = tuple(results)
+        if not normalized:
             return frame
-
-        revised_proposals: list[ActionProposal] = []
-        dissent_need_ids = tuple(
-            dict.fromkeys(
-                need
-                for coalition in frame.coalitions[1:]
-                for need in coalition.supporting_need_ids
-            )
-        )
-        for proposal in frame.proposals:
-            relief = proposal.expected_need_relief
-            efficacy = proposal.expected_action_efficacy
-            epistemic = proposal.expected_epistemic_value
-            value_congruence = proposal.value_congruence
-            substrate_cost = proposal.substrate_cost
-            uncertainty = proposal.uncertainty
-            commitment_conflict = proposal.commitment_conflict
-            arguments = dict(proposal.arguments)
-            review_trace: dict[str, Any] = {}
-
-            if "verify_evidence" in requests:
-                if proposal.action_kind in {"investigate", "request_capability"} or bool(
-                    arguments.get("capability_route", False)
-                ):
-                    epistemic = min(1.0, epistemic + 0.18)
-                    efficacy = min(1.0, efficacy + 0.06)
-                    review_trace["verify_evidence"] = "epistemic_path_strengthened"
-                elif proposal.action_kind == "speak":
-                    uncertainty = min(1.0, uncertainty + 0.08)
-                    review_trace["verify_evidence"] = "ungrounded_speech_penalized"
-
-            if "reduce_intrusion" in requests:
-                if proposal.action_kind == "speak":
-                    substrate_cost = min(1.0, substrate_cost + 0.12)
-                    commitment_conflict = min(1.0, commitment_conflict + 0.10)
-                    review_trace["reduce_intrusion"] = "public_move_cost_increased"
-                elif proposal.action_kind in {"silence", "body_only"}:
-                    relief = min(1.0, relief + 0.12)
-                    review_trace["reduce_intrusion"] = "reversible_move_strengthened"
-
-            if "preserve_continuity" in requests and "continuity" in proposal.supporting_need_ids:
-                relief = min(1.0, relief + 0.18)
-                value_congruence = min(1.0, value_congruence + 0.10)
-                review_trace["preserve_continuity"] = "continuity_support_strengthened"
-
-            if "estimate_capability" in requests and (
-                proposal.action_kind in {"request_capability", "investigate"}
-                or bool(arguments.get("capability_route", False))
-            ):
-                efficacy = min(1.0, efficacy + 0.10)
-                epistemic = min(1.0, epistemic + 0.10)
-                review_trace["estimate_capability"] = "capability_path_recalibrated"
-
-            if "inspect_dissent" in requests:
-                review_trace["inspect_dissent"] = list(dissent_need_ids)
-
-            if review_trace:
-                arguments["executive_review"] = review_trace
-            revised_proposals.append(
-                replace(
-                    proposal,
-                    arguments=arguments,
-                    expected_need_relief=relief,
-                    expected_action_efficacy=efficacy,
-                    expected_epistemic_value=epistemic,
-                    value_congruence=value_congruence,
-                    substrate_cost=substrate_cost,
-                    uncertainty=uncertainty,
-                    commitment_conflict=commitment_conflict,
-                )
-            )
-
-        revised = SubjectDeliberationFrame(
+        revised = self.review_integrator.integrate(
+            frame,
+            normalized,
             frame_id=f"deliberation-review:{self._id_factory()}",
-            observation=frame.observation,
-            substrate=frame.substrate,
-            appraisals=frame.appraisals,
-            activations=frame.activations,
-            proposals=tuple(revised_proposals),
-            coalitions=self.arbiter.rank(tuple(revised_proposals)),
-            context_key=frame.context_key,
-            belief_refs=frame.belief_refs,
-            value_refs=frame.value_refs,
             created_at=self._clock(),
         )
         self._pending_frames.pop(frame.frame_id, None)
@@ -812,9 +726,22 @@ class SubjectService:
             {
                 "prior_frame_id": frame.frame_id,
                 "revised_frame": revised.public_view(),
-                "cognitive_requests": list(requests),
+                "cognitive_results": [
+                    {
+                        "result_id": result.result_id,
+                        "request_kind": result.request_kind.value,
+                        "summary": result.summary,
+                        "confidence": result.confidence,
+                        "evidence_refs": list(result.evidence_refs),
+                    }
+                    for result in normalized
+                ],
             },
-            causal_refs=(frame.frame_id, frame.observation.observation_id),
+            causal_refs=(
+                frame.frame_id,
+                frame.observation.observation_id,
+                *tuple(result.result_id for result in normalized),
+            ),
             correlation_id=frame.observation.correlation_id,
         )
         return revised
@@ -822,14 +749,13 @@ class SubjectService:
     async def finalize_deliberation(
         self,
         frame: SubjectDeliberationFrame,
-        commit: SubjectExecutiveCommit | None = None,
+        commit: SubjectExecutiveCommit,
     ) -> MindDecision:
-        """Materialize quyết định chỉ sau khi Executive đã cam kết coalition.
+        """Materialize quyết định chỉ sau một Executive commit hợp lệ.
 
-        Nếu caller cũ không truyền commit, arbiter deterministic được dùng làm
-        fallback tương thích. Đường production mới luôn truyền commit từ
-        ``ExecutiveCortex``; fallback được ghi rõ trong authorship thay vì giả vờ
-        cùng một nguồn quyền lực.
+        Fallback, khi thật sự cần cho test hoặc caller độc lập, là một implementation
+        của ExecutivePort ở runtime. Subject Core không còn một cửa ngầm tự chọn rồi
+        tự cấp authorship cho chính nó.
         """
         pending = self._pending_frames.get(frame.frame_id)
         if pending is None:
@@ -838,45 +764,33 @@ class SubjectService:
             raise ValueError("deliberation frame identity mismatch")
 
         candidate_index = {item.coalition_id: item for item in frame.coalitions}
-        if commit is None:
-            candidate = self.arbiter.select_default(
-                frame.coalitions,
-                temperature=self.config.default_temperature,
-            )
-            executive_trace: dict[str, Any] = {
-                "source": "coalition_arbiter_fallback",
-                "reason": "executive_commit_not_supplied",
-                "confidence": 0.0,
-            }
-            selected_by = f"coalition_arbiter:{candidate.coalition_id}"
-        else:
-            if commit.frame_id != frame.frame_id:
-                raise ValueError("executive commit targets another deliberation frame")
-            candidate = candidate_index.get(commit.selected_coalition_id)
-            if candidate is None:
-                raise ValueError("executive selected a coalition that was not offered")
-            if commit.selected_proposal_ref not in candidate.proposal_refs:
-                raise ValueError("executive selected proposal outside the chosen coalition")
-            if commit.selected_proposal_ref != candidate.primary_proposal_ref:
-                # Một coalition hiện chỉ có một action/arguments compatibility key.
-                # Chọn supporter phụ làm primary sẽ âm thầm đổi semantic contract.
-                raise ValueError("executive must select the coalition primary proposal")
-            executive_trace = {
-                "commit_id": commit.commit_id,
-                "source": commit.source,
-                "reason": commit.reason,
-                "confidence": commit.confidence,
-                "semantic_commitments": list(commit.semantic_commitments),
-                "cognitive_requests": list(commit.cognitive_requests),
-                "review_conditions": list(commit.review_conditions),
-            }
-            selected_by = f"executive_cortex:{commit.commit_id}"
-            self._append_event(
-                "executive_commit",
-                commit.to_dict(),
-                causal_refs=(frame.frame_id, candidate.coalition_id, commit.selected_proposal_ref),
-                correlation_id=frame.observation.correlation_id,
-            )
+        if commit.frame_id != frame.frame_id:
+            raise ValueError("executive commit targets another deliberation frame")
+        candidate = candidate_index.get(commit.selected_coalition_id)
+        if candidate is None:
+            raise ValueError("executive selected a coalition that was not offered")
+        if commit.selected_proposal_ref not in candidate.proposal_refs:
+            raise ValueError("executive selected proposal outside the chosen coalition")
+        if commit.selected_proposal_ref != candidate.primary_proposal_ref:
+            # Một coalition hiện chỉ có một action/arguments compatibility key.
+            # Chọn supporter phụ làm primary sẽ âm thầm đổi semantic contract.
+            raise ValueError("executive must select the coalition primary proposal")
+        executive_trace: dict[str, Any] = {
+            "commit_id": commit.commit_id,
+            "source": commit.source,
+            "reason": commit.reason,
+            "confidence": commit.confidence,
+            "semantic_commitments": list(commit.semantic_commitments),
+            "cognitive_requests": list(commit.cognitive_requests),
+            "review_conditions": list(commit.review_conditions),
+        }
+        selected_by = f"{commit.source}:{commit.commit_id}"
+        self._append_event(
+            "executive_commit",
+            commit.to_dict(),
+            causal_refs=(frame.frame_id, candidate.coalition_id, commit.selected_proposal_ref),
+            correlation_id=frame.observation.correlation_id,
+        )
 
         decision = self.arbiter.build_decision(
             candidate,
@@ -994,9 +908,30 @@ class SubjectService:
         return decision
 
     async def deliberate(self, observation: WorldObservation) -> MindDecision:
-        """API tương thích cho caller cũ: prepare rồi chọn fallback có audit."""
+        """API tương thích cho caller cũ, luôn tạo commit explicit.
+
+        Production đi qua ``runtime.mind_loop.MindLoop``. Phương thức này chỉ giữ
+        test và adapter cũ chạy được trong giai đoạn migration.
+        """
         frame = await self.prepare_deliberation(observation)
-        return await self.finalize_deliberation(frame)
+        selected = self.arbiter.select_default(
+            frame.coalitions,
+            temperature=self.config.default_temperature,
+        )
+        commit = SubjectExecutiveCommit(
+            commit_id=f"compatibility-commit:{self._id_factory()}",
+            frame_id=frame.frame_id,
+            selected_coalition_id=selected.coalition_id,
+            selected_proposal_ref=selected.primary_proposal_ref,
+            semantic_commitments=("compatibility caller accepted deterministic coalition",),
+            cognitive_requests=(),
+            reason="legacy SubjectService.deliberate compatibility path",
+            confidence=0.0,
+            review_conditions=(),
+            created_at=self._clock(),
+            source="compatibility_subject_executive",
+        )
+        return await self.finalize_deliberation(frame, commit)
 
     async def abandon_deliberation(
         self,
@@ -1348,10 +1283,33 @@ class SubjectService:
     # ------------------------------------------------------------------
     # Bounded views
     # ------------------------------------------------------------------
+    def self_view(self) -> dict[str, Any]:
+        """Projection "tự bản thân" có provenance cho Executive/PrivateMind.
+
+        Không có field nào được model tự ghi thẳng vào đây. Mỗi facet phải dẫn
+        xuất được từ value, competence, continuity, narrative belief, mismatch
+        hoặc pattern hành vi đã tồn tại trong Subject Core.
+        """
+
+        projection = self.self_projector.project(
+            subject_id=self.config.subject_id,
+            values=self.inner.values,
+            derived_needs=self.inner.derived_needs,
+            continuity_records=self.inner.continuity_records,
+            mismatches=self.inner.mismatches,
+            competence=self.competence.all(),
+            beliefs=self.beliefs.all(),
+            action_memory=self.inner.action_memory,
+            tendencies=self.inner.tendencies,
+            generated_at=self._clock(),
+        )
+        return projection.to_dict()
+
     def inner_view(self) -> dict[str, Any]:
         """Projection nội tâm cho planner/UI, không lộ raw chain-of-thought."""
 
         return {
+            "self_model": self.self_view(),
             "algorithm_version": self.config.algorithm_version,
             "active_needs": [
                 {

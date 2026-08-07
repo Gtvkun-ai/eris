@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Composition root duy nhất của Subject Core V7.
+"""Composition root duy nhất của Subject Core V11.
 
 Không feature flag, không fallback cognition cũ. Nếu Subject Core hoặc Sandbox
 không khởi tạo được thì runtime phải dừng, thay vì lén đổi sang một hợp đồng hành
@@ -19,6 +19,7 @@ from cortex.subject import SubjectService, SubjectServiceConfig
 from cortex.subject.contracts import ActionRequest
 from memory.subject import SubjectRepository
 from runtime.audit import ForensicStore
+from runtime.mind_loop import MindLoop, SubjectExecutivePort
 from runtime.subject_runtime import SubjectRuntime
 from runtime.world import (
     CapabilityAuthority,
@@ -41,6 +42,7 @@ class SubjectCoreComponents:
     subject_service: SubjectService
     sandbox_world: SandboxWorld
     actuator: SandboxActuator
+    mind_loop: MindLoop
     runtime: SubjectRuntime
     capability_authority: CapabilityAuthority
     token_provider: Callable[[ActionRequest, str], CapabilityToken]
@@ -82,6 +84,7 @@ def build_subject_core_components(
     tts_handler: Any = None,
     body_handler: Any = None,
     network_handler: Any = None,
+    executive_provider: Callable[[], SubjectExecutivePort | None] | None = None,
 ) -> SubjectCoreComponents:
     """Dựng đường duy nhất Mind → Actuator → Sandbox → Audit."""
 
@@ -100,7 +103,7 @@ def build_subject_core_components(
             subject_id=str(os.getenv("ERIS_SUBJECT_ID", "eris") or "eris"),
             deterministic=_bool_env("ERIS_SUBJECT_DETERMINISTIC"),
             random_seed=int(os.getenv("ERIS_SUBJECT_RANDOM_SEED", "0") or 0),
-            algorithm_version="subject-service-v9-executive-center",
+            algorithm_version="subject-service-v11-self-owned-life",
         ),
         repository=repository,
         audit=forensic,
@@ -203,7 +206,18 @@ def build_subject_core_components(
         )
 
     actuator = SandboxActuator(sandbox=sandbox, token_provider=token_provider)
-    runtime = SubjectRuntime(mind=service, actuator=actuator, dialogue=None, audit=forensic)
+    mind_loop = MindLoop(
+        subject=service,
+        executive_provider=executive_provider,
+        max_reviews=1,
+    )
+    runtime = SubjectRuntime(
+        mind=service,
+        mind_loop=mind_loop,
+        actuator=actuator,
+        dialogue=None,
+        audit=forensic,
+    )
 
     if action_executor is not None:
         bind = getattr(action_executor, "bind_sandbox_world", None)
@@ -221,6 +235,7 @@ def build_subject_core_components(
         subject_service=service,
         sandbox_world=sandbox,
         actuator=actuator,
+        mind_loop=mind_loop,
         runtime=runtime,
         capability_authority=authority,
         token_provider=token_provider,

@@ -386,7 +386,7 @@ class RemoteModelProcessManager:
                         api_key=api_key,
                         model_name=model_name,
                         key_pool=None,
-                        timeout=max(5, int(float(os.environ.get("ERIS_EXECUTIVE_TIMEOUT_S", "18") or 18))),
+                        timeout=max(5, int(float(os.environ.get("ERIS_EXECUTIVE_TIMEOUT_S", "45") or 45))),
                     )
                     client = JsonlWorkerClient(
                         raw_client,
@@ -429,7 +429,7 @@ class RemoteModelProcessManager:
                 base_url=base_url,
                 api_key=api_key,
                 model_name=model_name,
-                timeout=max(5, int(float(os.environ.get("ERIS_EXECUTIVE_TIMEOUT_S", "18") or 18))),
+                timeout=max(5, int(float(os.environ.get("ERIS_EXECUTIVE_TIMEOUT_S", "45") or 45))),
                 key_pool=pool,
             )
         except Exception as exc:

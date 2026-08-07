@@ -138,6 +138,20 @@ class PrivateLifeDaemon:
                 self.last_tick = tick
                 return tick
         try:
+            subject_self: dict[str, Any] = {}
+            subject_service = getattr(owner, "subject_service", None) if owner is not None else None
+            self_view = getattr(subject_service, "self_view", None)
+            if callable(self_view):
+                try:
+                    candidate = self_view()
+                    if isinstance(candidate, Mapping):
+                        subject_self = dict(candidate)
+                except Exception as exc:
+                    self._record_failure("subject_self_projection", exc)
+            private_mind_digest = getattr(owner, "private_mind_digest", {}) if owner is not None else {}
+            if not isinstance(private_mind_digest, Mapping):
+                private_mind_digest = {}
+
             result = self.core.tick(
                 snapshot=snapshot,
                 runtime_owner=owner,
@@ -145,6 +159,8 @@ class PrivateLifeDaemon:
                 channel=channel,
                 idle_seconds=inferred_idle,
                 recent_events=recent_events,
+                subject_self=subject_self,
+                private_mind_digest=private_mind_digest,
                 force=force,
             )
             self.last_tick_at = now

@@ -41,6 +41,7 @@ from .identity import PendingStrategyUse
 from .initiative import InitiativeAction, InitiativeDecision
 from .self_context import AutonomousSelfContext, build_autonomous_self_context
 from runtime.engagements import InteractionDecision
+from runtime.temporal_mind import TemporalMind, TemporalSignal
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +106,17 @@ class SelfTurnPipeline:
         self._observer_thread: threading.Thread | None = None
         self._observer_thread_lock = threading.Lock()
 
+        # V19: TemporalMind là state timing rẻ dùng chung cả chat/autonomous.
+        # Nó không chọn nội dung; nó chỉ quyết định đã đáng đánh thức cognition
+        # nặng chưa. Gắn lên host để user turn và public commit cùng cập nhật một
+        # dòng thời gian, thay vì mỗi pipeline giữ một chiếc đồng hồ riêng.
+        temporal = getattr(host, "temporal_mind", None)
+        if temporal is None:
+            temporal = TemporalMind()
+            setattr(host, "temporal_mind", temporal)
+        self.temporal_mind = temporal
+        self._last_temporal_gate = None
+
     def run(self) -> bool:
         host = self.host
         if not host.body_running_fn():
@@ -161,19 +173,23 @@ class SelfTurnPipeline:
         snapshot_ms = (time.monotonic() - phase_started) * 1000.0
         should_deliberate, trigger_reason = self._should_deliberate(context, planner_snapshot)
         if not should_deliberate:
+            gate = self._last_temporal_gate
             self.trace_store.append("attention_skip", {
                 "turn_seq": context.turn_seq,
                 "trigger_reason": trigger_reason,
                 "screen_delta": perception.mechanical_delta,
                 "discourse_mode": context.discourse.mode,
                 "has_public_seed": context.self_context.has_public_seed,
+                "temporal": gate.to_dict() if gate is not None else {},
             }, now=now)
-            host._sleep_interruptible(max(8, min(24, host._choose_autonomous_sleep_duration(
-                suppressed=True, ti_mode="attention_quiet",
-            ))))
+            # Quiet path phải rẻ nhưng vẫn có nhịp. Không ngủ 8–24 giây rồi mới
+            # nhìn lại thế giới; tick 1.5–5.5 giây chỉ cập nhật state, chưa gọi LLM.
+            delay = float(getattr(gate, "next_check_seconds", 5.0) or 5.0)
+            host._sleep_interruptible(max(0.8, min(6.0, delay)))
             return True
 
         self._last_deliberation_at = now
+        self.temporal_mind.mark_heavy_deliberation(now=now)
 
         # Collect-before-claim: every source exposes a typed affordance, Gemma
         # chooses one exact ID, and only then may runtime reserve it.  No Python
@@ -238,10 +254,10 @@ class SelfTurnPipeline:
         # Executive vẫn chọn cuối cùng, nhưng chọn trên coalition có substrate,
         # need pressure và evidence thay vì một danh sách ý tưởng trôi nổi.
         subject_ingress = getattr(host, "subject_ingress", None)
-        subject_frame = None
+        subject_session = None
         if subject_ingress is not None:
             try:
-                subject_frame = subject_ingress.prepare_autonomous_turn(
+                subject_session = subject_ingress.prepare_autonomous_session(
                     blackboard,
                     affordances,
                     created_at=now,
@@ -259,7 +275,7 @@ class SelfTurnPipeline:
                     blackboard,
                     affordances,
                     snapshot=planner_snapshot,
-                    subject_frame=subject_frame,
+                    subject_frame=(subject_session.frame if subject_session is not None else None),
                 )
             except Exception as exc:
                 host.logger.warning("[executive] deliberation failed closed: %s", exc)
@@ -267,34 +283,34 @@ class SelfTurnPipeline:
             host.logger.warning("[executive] unavailable; autonomous semantic path fails closed")
 
         subject_decision = None
-        if subject_frame is not None and subject_ingress is not None:
+        if subject_session is not None and subject_ingress is not None:
             if executive_outcome is None:
-                subject_ingress.abandon(subject_frame, reason="executive_outcome_unavailable")
-            else:
-                commit_builder = getattr(executive, "subject_commit_from_outcome", None)
-                commit = (
-                    commit_builder(subject_frame, executive_outcome)
-                    if callable(commit_builder)
-                    else None
+                subject_ingress.mind_loop.abandon_sync(
+                    subject_session,
+                    reason="executive_outcome_unavailable",
                 )
-                if commit is None:
-                    subject_ingress.abandon(
-                        subject_frame,
-                        reason="executive_outcome_not_bound_to_subject_coalition",
+            else:
+                try:
+                    subject_decision = subject_ingress.complete_autonomous_turn(
+                        subject_session,
+                        executive_outcome,
+                        executive=executive,
                     )
-                    executive_outcome = None
-                else:
-                    try:
-                        subject_decision = subject_ingress.finalize(subject_frame, commit)
+                    if subject_decision is None:
+                        executive_outcome = None
+                    else:
                         planner_snapshot["subject_decision"] = subject_decision.to_dict()
                         action_executor = getattr(host, "action_executor", None)
                         set_parent = getattr(action_executor, "set_subject_parent_decision", None)
                         if callable(set_parent):
                             set_parent(subject_decision)
-                    except Exception as exc:
-                        host.logger.warning("[subject-core] autonomous finalize failed closed: %s", exc)
-                        subject_ingress.abandon(subject_frame, reason="subject_finalize_failed")
-                        executive_outcome = None
+                except Exception as exc:
+                    host.logger.warning("[subject-core] autonomous finalize failed closed: %s", exc)
+                    subject_ingress.mind_loop.abandon_sync(
+                        subject_session,
+                        reason="subject_finalize_failed",
+                    )
+                    executive_outcome = None
 
         if executive_outcome is not None:
             candidate = executive_outcome.candidate
@@ -1107,6 +1123,37 @@ class SelfTurnPipeline:
         if affordance_strength:
             emit("affordance_changed", affordance_strength, "affordance_collector_inputs")
 
+        # TemporalMind đứng *trước* Executive model. Weak/repeated runtime facts
+        # chỉ làm tăng áp lực rẻ; silence là default nên không cần Executive
+        # mất hàng chục giây để kết luận rằng không có gì đáng nói.
+        temporal_signals = tuple(
+            TemporalSignal(
+                kind=item.kind,
+                strength=item.strength,
+                source=item.source,
+                revision=item.revision,
+                metadata=item.metadata,
+            )
+            for item in events
+        )
+        focus_key = str(
+            getattr(context.discourse, "active_topic", "")
+            or getattr(context.discourse, "mode", "")
+            or "autonomous"
+        )
+        gate = self.temporal_mind.observe(
+            temporal_signals,
+            now=context.perception.now,
+            focus_key=focus_key,
+        )
+        self._last_temporal_gate = gate
+        self.trace_store.append("temporal_gate", {
+            "turn_seq": context.turn_seq,
+            **gate.to_dict(),
+        }, now=context.perception.now)
+        if not gate.wake:
+            return False, gate.reason
+
         executive = getattr(self.host, "ai_executive_cortex", None)
         if executive is None or not bool(getattr(executive, "enabled", False)):
             return False, "executive_policy_unavailable"
@@ -1240,9 +1287,10 @@ class SelfTurnPipeline:
             gate_reason,
             int(body_only),
         )
-        self.host._sleep_interruptible(max(8, min(24, self.host._choose_autonomous_sleep_duration(
-            suppressed=True, ti_mode="ai_silence",
-        ))))
+        self.temporal_mind.mark_silence(now=context.perception.now)
+        # Sau silence quay về cheap tick; cooldown của TemporalMind ngăn gọi
+        # Executive lại ngay, nên không cần đóng băng toàn loop 8–24 giây.
+        self.host._sleep_interruptible(2.5)
         return True
 
 
@@ -1575,9 +1623,13 @@ class SelfTurnPipeline:
             plan.semantics.subject_key,
             text,
         )
-        host._sleep_interruptible(max(10, host._choose_autonomous_sleep_duration(
-            suppressed=False, ti_mode="ai_intention",
-        )))
+        self.temporal_mind.note_public_act(
+            now=host.last_autonomous_spoken_at,
+            focus_key=str(plan.semantics.subject_key or plan.topic or "autonomous"),
+        )
+        # Public act đã tự tạo cooldown. Loop trở lại cheap sensing sớm thay vì
+        # ngủ nguyên một "turn" rồi thức dậy như process cron.
+        host._sleep_interruptible(3.5)
         return True
 
 

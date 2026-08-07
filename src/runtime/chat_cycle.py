@@ -84,6 +84,23 @@ class ChatCycleMixin:
         user_text = str(user_text or "").strip()
         if not user_text:
             return
+
+        # User turn không "khởi động lại" tâm trí. Nó đẩy cùng TemporalMind
+        # đang chạy nền sang trạng thái foreground và xóa quiet cooldown.
+        temporal = getattr(self, "temporal_mind", None)
+        if temporal is None:
+            try:
+                from runtime.temporal_mind import TemporalMind
+                temporal = TemporalMind()
+                self.temporal_mind = temporal
+            except Exception:
+                temporal = None
+        note_user = getattr(temporal, "note_user_turn", None)
+        if callable(note_user):
+            try:
+                note_user(now=cycle_start, focus_key="direct_chat")
+            except Exception as exc:
+                self.logger.debug("[temporal mind] user turn update failed: %s", exc)
         if getattr(self, "_chat_processing", False):
             self._queue_chat_burst_event(user_text, cycle_start)
             return
