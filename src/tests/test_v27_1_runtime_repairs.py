@@ -240,11 +240,12 @@ def test_runtime_consumes_intention_only_after_successful_public_text() -> None:
     assert no_text_pos < hook_pos < relational_pos
 
 
-def test_typed_opening_surface_is_not_sent_through_legacy_greeting_invariant() -> None:
-    """Guard wiring cho regression `invariant_inserted=1` từ log thực tế."""
+def test_startup_greeting_invariant_runs_after_main_cognition_without_erasing_context() -> None:
+    """Greeting phải sống, nhưng writer chính vẫn là main cognition có vision/context."""
     root = Path(__file__).resolve().parents[1]
     source = (root / "runtime" / "ai_orchestrated" / "orchestrator.py").read_text(encoding="utf-8")
-    typed_guard = source.index("typed_surface_preserved=1")
-    legacy_call = source.index("payload = ensure_startup_greeting_payload(", typed_guard)
-    else_pos = source.rfind("else:", 0, legacy_call)
-    assert typed_guard < else_pos < legacy_call
+    cognition_call = source.index("payload = generate_autonomous(")
+    invariant_call = source.index("payload = ensure_startup_greeting_payload(", cognition_call)
+    assert cognition_call < invariant_call
+    assert "typed_surface_preserved=1" not in source
+    assert "STARTUP_WORDING_CONTRACT" in source[cognition_call:invariant_call]

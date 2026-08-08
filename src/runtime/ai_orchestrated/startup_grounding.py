@@ -647,20 +647,21 @@ def choose_startup_text(text: str, frame: Any, *, avoid_text: str = "") -> tuple
 
 
 def collect_startup_grounding(host: Any, *, timeout_seconds: float | None = None) -> StartupGroundingBundle:
-    """Prime UIA/OCR và thu evidence hiện tại mà không gọi VLM.
+    """Prime UIA/OCR *và* một frame vision trước câu mở đầu.
 
-    Timeout ngắn và có giới hạn cứng. UIA thường publish ngay ở vòng đầu; nếu
-    Windows/OCR đang bận thì startup vẫn tiếp tục thay vì biến câu chào thành một
-    nghi lễ chờ đợi đầy tính hành chính.
+    Startup không nên chào trong lúc mắt còn nhắm. UIA/OCR được cho một khoảng
+    chờ rất ngắn, sau đó vision ambient được ép đọc đúng một frame hiện tại nếu
+    runtime có capability đó. Mọi thứ vẫn fail-open: vision/OCR hỏng thì greeting
+    tiếp tục bằng continuity/personality thay vì đứng treo ở cửa.
     """
 
     timeout = (
-        _env_float("ERIS_STARTUP_SCREEN_PRIME_SEC", 0.0, low=0.0, high=3.0)
+        _env_float("ERIS_STARTUP_SCREEN_PRIME_SEC", 0.8, low=0.0, high=3.0)
         if timeout_seconds is None
         else max(0.0, min(3.0, float(timeout_seconds)))
     )
-    # Production startup mặc định không đánh thức OCR. Truyền timeout_seconds rõ
-    # ràng (test/tool) hoặc đặt ERIS_STARTUP_SCREEN_PRIME_SEC > 0 để opt-in.
+    # Production startup mặc định prime OCR ngắn. Có thể đặt env về 0 nếu muốn
+    # boot cực nhanh; greeting invariant ở tầng sau vẫn bảo đảm Eris chào.
     prime_requested = timeout_seconds is not None or timeout > 0.0
     started_at = time.time()
     notes: list[str] = []
@@ -732,6 +733,46 @@ def collect_startup_grounding(host: Any, *, timeout_seconds: float | None = None
             active_window = telemetry_window
         focus_summary = _compact(getattr(telemetry_snapshot, "focus_summary", ""), 280)
 
+    # Vision startup: đọc đúng một frame hiện tại trước khi tạo câu mở đầu. Hàm
+    # _maybe_update_screen_facts đã tự đi qua compressor + grounding policy nên
+    # tuple trả về chỉ gồm claim đủ điều kiện surface, không phải caption thô.
+    vision_facts: tuple[str, ...] = ()
+    vision_enabled = str(os.getenv("ERIS_STARTUP_VISION_ENABLED", "1") or "1").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    vision_refresh = getattr(host, "_maybe_update_screen_facts", None)
+    if (
+        vision_enabled
+        and callable(vision_refresh)
+        and not privacy_blocked
+        and not bool(getattr(host, "chat_mode", False))
+        and not bool(getattr(host, "_chat_processing", False))
+    ):
+        try:
+            refreshed = vision_refresh(
+                snapshot=telemetry_snapshot,
+                channel="startup",
+                user_text="",
+                force_refresh=True,
+                started_at=started_at,
+            )
+            last_capture = float(getattr(host, "vision_last_capture_at", 0.0) or 0.0)
+            stale = bool(getattr(host, "vision_facts_are_stale", False))
+            if last_capture >= started_at - 0.10 and not stale:
+                vision_facts = tuple(
+                    _compact(item, 360) for item in tuple(refreshed or ())
+                    if _compact(item, 360)
+                )[:6]
+            notes.append(f"vision_prime_ok:{len(vision_facts)}" if vision_facts else "vision_prime_empty")
+        except Exception as exc:  # pragma: no cover - provider/capture phụ thuộc runtime thật
+            notes.append(f"vision_prime_failed:{type(exc).__name__}")
+    elif not vision_enabled:
+        notes.append("vision_prime_disabled")
+    elif privacy_blocked:
+        notes.append("vision_prime_privacy_blocked")
+    elif not callable(vision_refresh):
+        notes.append("vision_prime_unavailable")
+
     now = time.time()
     runtime_signal_enabled = (
         timeout_seconds is not None
@@ -743,6 +784,26 @@ def collect_startup_grounding(host: Any, *, timeout_seconds: float | None = None
         notes.append("runtime_signals_lazy")
     candidates: list[Mapping[str, Any]] = []
     seen: set[str] = set()
+
+    # Vision facts được ưu tiên như screen evidence có provenance riêng. OCR/UIA
+    # vẫn bổ sung chữ cụ thể phía dưới. Nhờ vậy câu chào có thể nhận ra cảnh thật
+    # thay vì chỉ thấy tên process/window rồi tưởng đó là cả thế giới.
+    for index, fact in enumerate(vision_facts, start=1):
+        key = _norm(fact)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        candidates.append(
+            {
+                "id": f"vision:start:{index}",
+                "source": "vision",
+                "text": fact,
+                "confidence": 0.82,
+                "window_title": active_window,
+                "captured_at": now,
+            }
+        )
+
     for block in raw_blocks:
         captured_at = float(getattr(block, "captured_at", 0.0) or 0.0)
         age = max(0.0, now - captured_at)

@@ -10,6 +10,7 @@ relational state + độ bất định user-model; preview chỉ là candidate v
 """
 from __future__ import annotations
 
+import time
 from typing import Any, Mapping
 
 from runtime.ai_orchestrated.affordance import ExecutiveAffordance
@@ -65,6 +66,22 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
         uncertainty = _clamp01(1.0 - (0.72 * thickness + 0.28 * coverage))
         refs = (f"user-model:beliefs:{belief_count}", f"user-model:thickness:{thickness:.3f}")
 
+    # Sau lời chào startup, đừng lập tức sinh thêm một contact/check-in chỉ vì
+    # relational pressure cao. Lời chào vừa rồi đã là contact. Cooldown này chỉ
+    # chặn social probe/contact vô căn cứ; thought/task/scene có nội dung thật vẫn
+    # đi qua các affordance khác bình thường.
+    current = time.time()
+    greeting_at = float(getattr(host, "_startup_greeting_spoken_at", 0.0) or 0.0)
+    if greeting_at <= 0.0:
+        getter = getattr(host, "_get_internal_state", None)
+        if callable(getter):
+            try:
+                greeting_at = float(getattr(getter(), "last_session_greeting_at", 0.0) or 0.0)
+            except Exception:
+                greeting_at = 0.0
+    seconds_since_greeting = max(0.0, current - greeting_at) if greeting_at > 0.0 else 10_000.0
+    startup_social_cooldown_seconds = 150.0
+
     # Các tín hiệu dưới đây chỉ lấy từ projection đã có. Không có projection thì
     # để 0, tuyệt đối không bịa "user hiểu sai Eris" chỉ để kiếm chủ đề nói.
     return {
@@ -74,6 +91,9 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
         "self_misunderstanding_signal": 0.0,
         "demonstration_signal": 0.0,
         "contribution_signal": 0.0,
+        "seconds_since_startup_greeting": seconds_since_greeting,
+        "startup_social_cooldown_seconds": startup_social_cooldown_seconds,
+        "startup_social_cooldown_active": bool(seconds_since_greeting < startup_social_cooldown_seconds),
     }
 
 
@@ -186,15 +206,21 @@ def build_subject_initiative_affordances(
     relational = relational if isinstance(relational, Mapping) else {}
     revision = max(0, int(initiative.get("revision", 0) or 0))
 
+    startup_cooldown = bool(runtime_context.get("startup_social_cooldown_active", False))
     output: list[ExecutiveAffordance] = []
     for item in initiative.get("pending_intentions", ()):
         if not isinstance(item, Mapping) or str(item.get("status") or "pending") != "pending":
             continue
         candidate = _candidate_from_intention(item, revision=revision, now=now)
         if candidate is not None:
+            speech_act = str(getattr(candidate.candidate, "speech_act", "") or "").strip().lower()
+            if startup_cooldown and speech_act in {"contact_bid", "user_probe", "curiosity_bid"}:
+                continue
             output.append(candidate)
     if output:
         return tuple(output[:4])
+    if startup_cooldown:
+        return ()
 
     # Tick đầu chưa có PendingIntention: preview duy nhất được phép là motive
     # hiểu user, vì uncertainty của user-model tự nó đã là epistemic gap thật.

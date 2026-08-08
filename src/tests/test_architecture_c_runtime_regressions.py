@@ -1794,12 +1794,13 @@ def test_post_observer_skips_llm_for_greeting_variant() -> None:
     assert "deterministic_anchor" in source
 
 
-def test_startup_grounding_default_is_lazy(monkeypatch) -> None:
+def test_startup_grounding_default_primes_screen_before_greeting(monkeypatch) -> None:
     from runtime.ai_orchestrated.startup_grounding import collect_startup_grounding
     from types import SimpleNamespace
 
-    monkeypatch.delenv("ERIS_STARTUP_SCREEN_PRIME_SEC", raising=False)
+    monkeypatch.setenv("ERIS_STARTUP_SCREEN_PRIME_SEC", "0.01")
     monkeypatch.delenv("ERIS_STARTUP_RUNTIME_SIGNALS_ENABLED", raising=False)
+    monkeypatch.setenv("ERIS_STARTUP_VISION_ENABLED", "0")
 
     class Worker:
         def __init__(self):
@@ -1821,10 +1822,49 @@ def test_startup_grounding_default_is_lazy(monkeypatch) -> None:
         mood_score=0, inferred_pos_x=0.5, chat_mode=False, _chat_processing=False,
     )
     bundle = collect_startup_grounding(host)
-    assert worker.started is False
+    assert worker.started is True
     assert bundle.waited_seconds < 0.25
     assert bundle.runtime_opening_evidence == ()
-    assert "screen_prime_lazy" in bundle.notes
+    assert "screen_prime_timeout" in bundle.notes
+    assert "vision_prime_disabled" in bundle.notes
+
+
+def test_startup_grounding_adds_fresh_grounded_vision_fact(monkeypatch) -> None:
+    from runtime.ai_orchestrated.startup_grounding import collect_startup_grounding
+    from types import SimpleNamespace
+    import time
+
+    monkeypatch.setenv("ERIS_STARTUP_VISION_ENABLED", "1")
+
+    class Store:
+        def snapshot(self):
+            return SimpleNamespace(revision=0, blocks=(), backend="", privacy_blocked=False, window=None)
+
+    class Telemetry:
+        def capture_snapshot(self, **_kwargs):
+            return SimpleNamespace(cpu_percent=0.0, ram_percent=0.0, active_window="Editor", active_app="Editor", focus_summary="")
+
+    host = SimpleNamespace(
+        screen_text_worker=None,
+        screen_evidence_store=Store(),
+        telemetry_service=Telemetry(),
+        mood_score=0,
+        inferred_pos_x=0.5,
+        chat_mode=False,
+        _chat_processing=False,
+        vision_last_capture_at=0.0,
+        vision_facts_are_stale=False,
+    )
+
+    def refresh(**_kwargs):
+        host.vision_last_capture_at = time.time()
+        return ("Một trình soạn thảo đang mở với mã nguồn ở giữa màn hình",)
+
+    host._maybe_update_screen_facts = refresh
+    bundle = collect_startup_grounding(host, timeout_seconds=0.0)
+    assert any(item.get("source") == "vision" for item in bundle.evidence)
+    assert any("mã nguồn" in str(item.get("text", "")) for item in bundle.evidence)
+    assert "vision_prime_ok:1" in bundle.notes
 
 
 def test_screen_anaphora_rescue_inherits_media_reference_from_previous_turn() -> None:

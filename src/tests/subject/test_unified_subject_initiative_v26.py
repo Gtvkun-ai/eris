@@ -9,7 +9,10 @@ from cortex.subject.relational import RelationalState
 from cortex.subject.service import SubjectService, SubjectServiceConfig
 from runtime.ai_orchestrated.executive_cortex import ExecutiveCortex
 from runtime.subject_ingress import SubjectIngress
-from runtime.subject_initiative_runtime import build_subject_initiative_affordances
+from runtime.subject_initiative_runtime import (
+    build_initiative_runtime_context,
+    build_subject_initiative_affordances,
+)
 
 
 class Determinism:
@@ -157,6 +160,40 @@ def test_subject_initiative_builds_user_probe_affordance_without_seed() -> None:
     assert probe.owner == "subject_initiative"
     assert probe.candidate.requires_grounding is False
     assert "assume" in probe.candidate.topic.lower()
+
+
+
+
+def test_startup_social_cooldown_blocks_immediate_check_in() -> None:
+    import time
+
+    host = SimpleNamespace(
+        _startup_greeting_spoken_at=time.time() - 20.0,
+        private_mind_daemon=None,
+        private_mind_system=None,
+        private_mind_loop=None,
+    )
+    runtime_context = build_initiative_runtime_context(host)
+    assert runtime_context["startup_social_cooldown_active"] is True
+
+    d = Determinism()
+    service = _service(d)
+    frame = asyncio.run(service.prepare_deliberation(_internal_observation(d)))
+    asyncio.run(service.abandon_deliberation(frame, reason="test_cleanup"))
+
+    affordances = build_subject_initiative_affordances(
+        service,
+        runtime_context={
+            **runtime_context,
+            "user_model_uncertainty": 0.92,
+            "user_model_evidence_refs": ("user-model:thin",),
+        },
+        now=d.now + 1.0,
+    )
+    assert not any(
+        item.candidate.speech_act in {"contact_bid", "user_probe", "curiosity_bid"}
+        for item in affordances
+    )
 
 
 def test_chat_and_self_turn_commit_through_same_mindloop_port() -> None:

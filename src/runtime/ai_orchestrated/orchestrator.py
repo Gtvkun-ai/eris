@@ -1844,14 +1844,14 @@ class AIAutonomousOrchestrator:
             host,
             activity="startup",
             phase="grounding",
-            label="Đang khởi động…",
+            label="Đang nhìn…",
             active=True,
             tone="info",
             priority=90,
         )
 
-        # UIA/OCR phải chạy trước câu mở đầu. Bản cũ chào xong mới start worker,
-        # tức là Eris bị buộc phải "có chất riêng" trong khi mắt còn nhắm.
+        # UIA/OCR + vision phải có cơ hội chạy trước câu mở đầu. Bản cũ chào
+        # trước rồi mới mở mắt, nên câu có model vẫn nghe như fallback.
         startup_grounding = collect_startup_grounding(host)
         emit_runtime_status(
             host,
@@ -1961,7 +1961,6 @@ class AIAutonomousOrchestrator:
                 host.ai_opening_director = director
             model_router = getattr(host, "ai_model_router", None)
             opening_planner_fn = getattr(model_router, "generate_opening_plan", None)
-            surface_writer_fn = getattr(model_router, "generate_opening_surface", None)
 
             def _opening_planner(input_payload, candidates):
                 if not callable(opening_planner_fn):
@@ -1997,47 +1996,6 @@ class AIAutonomousOrchestrator:
                     host,
                     "eris.opening.model_completed",
                     tags={"model_role": "opening_planner", "parse_status": "ok" if result else "empty"},
-                    fields={"latency_ms": round((time.perf_counter() - started) * 1000.0, 2)},
-                )
-                return result
-
-            def _opening_surface_writer(plan_payload, evidence_payload):
-                if not callable(surface_writer_fn):
-                    return {}
-                started = time.perf_counter()
-                _opening_telemetry(
-                    host,
-                    "eris.opening.model_requested",
-                    tags={"model_role": "surface_writer"},
-                    fields={"evidence_count": len(evidence_payload)},
-                )
-                try:
-                    emit_runtime_status(
-                        host,
-                        activity="startup",
-                        phase="surface",
-                        label="Đang chuẩn bị nói…",
-                        active=True,
-                        tone="active",
-                        priority=90,
-                    )
-                    result = surface_writer_fn(
-                        opening_plan=plan_payload,
-                        allowed_evidence=evidence_payload,
-                    )
-                except Exception:
-                    _opening_telemetry(
-                        host,
-                        "eris.opening.model_completed",
-                        tags={"model_role": "surface_writer", "parse_status": "error"},
-                        fields={"latency_ms": round((time.perf_counter() - started) * 1000.0, 2)},
-                        status="error",
-                    )
-                    raise
-                _opening_telemetry(
-                    host,
-                    "eris.opening.model_completed",
-                    tags={"model_role": "surface_writer", "parse_status": "ok" if result else "empty"},
                     fields={"latency_ms": round((time.perf_counter() - started) * 1000.0, 2)},
                 )
                 return result
@@ -2093,17 +2051,21 @@ class AIAutonomousOrchestrator:
                 tags={"decision": "speak", "block_reason": "none"},
                 fields={"chat_preempted": False, "boundary_present": bool(opening_input.scene_partner.boundary_flags)},
             )
+            # Surface Writer riêng không còn sở hữu câu chào production. Ta chỉ
+            # chuẩn bị một surface deterministic để dùng khi main cognition thật
+            # sự không trả được gì. Câu public chính sẽ được viết sau, với đầy đủ
+            # personality + continuity + startup grounding/vision.
             opening_surface = director.realize(
                 opening_input,
                 opening_plan,
-                surface_writer=_opening_surface_writer if callable(surface_writer_fn) else None,
+                surface_writer=None,
             )
             surface_ok, surface_errors = validate_opening_surface(opening_input, opening_plan, opening_surface)
             _opening_telemetry(
                 host,
                 "eris.opening.surface_validated",
                 tags={
-                    "rewrite_or_fallback": "none" if callable(surface_writer_fn) else "deterministic_fallback",
+                    "rewrite_or_fallback": "deterministic_fallback_ready",
                     "status": "pass" if surface_ok else "fail",
                 },
                 fields={
@@ -2118,9 +2080,21 @@ class AIAutonomousOrchestrator:
                     "plan_id": opening_plan.plan_id,
                     "speak": True,
                     "motive": f"session_reentry:{opening_plan.encounter.intent}",
-                    "strategy": "opening_director",
-                    "value_focus": "session_reentry_and_subject_initiative",
-                    "topic": "Realize the approved typed opening plan without changing its semantic scope.",
+                    "strategy": (
+                        "grounded_environment_opening"
+                        if opening_plan.hook.source == "screen"
+                        else "grounded_runtime_opening"
+                        if opening_plan.hook.source == "runtime"
+                        else "continuity_opening"
+                        if opening_plan.hook.source == "continuity"
+                        else "persona_opening"
+                    ),
+                    "value_focus": "session_reentry_with_full_cognition",
+                    "topic": (
+                        "Start with a natural greeting/arrival acknowledgement, then say the most natural useful thing "
+                        "from current personality, continuity and grounded startup perception. The typed opening plan is "
+                        "an advisory motive/evidence boundary, not a sentence template."
+                    ),
                     "importance": 0.78,
                     "intrusion_risk": max(0.02, min(0.72, opening_plan.comedic_move.risk)),
                     "confidence": max(0.62, min(0.96, 0.72 + opening_plan.score * 0.20)),
@@ -2140,7 +2114,7 @@ class AIAutonomousOrchestrator:
                             opening_plan.plan_id if opening_plan.reply_bearing else "none"
                         ),
                     },
-                    "notes": "opening_plan.v1 authority",
+                    "notes": "opening_plan.v1 advisory; main cognition owns wording; greeting invariant",
                 },
                 channel="startup",
             )
@@ -2294,115 +2268,62 @@ class AIAutonomousOrchestrator:
                 addressing_context = ""
         language = _runtime_language()
         avoid_text = str(getattr(host, "last_text", "") or "")
-        # Online startup vẫn đi qua một public commit duy nhất. Khi Opening
-        # Director hoạt động, Surface Writer đã trả hai bề mặt theo beat; runtime
-        # chỉ bọc chúng vào UtteranceSpec và giữ metadata typed.
+        # Startup chỉ có một writer public thật: main cognition. Opening Director
+        # vẫn chọn motive/evidence/risk, nhưng không còn nhốt câu chào trong một
+        # Surface Writer chỉ nhìn thấy plan nghèo context. Main cognition được đọc
+        # personality + continuity + OCR/UIA/vision rồi tự nói; greeting invariant
+        # ở dưới chỉ đảm bảo lời chào không bị observation nuốt mất.
         model_router = getattr(host, "ai_model_router", None)
-        if opening_director_active and opening_plan is not None and opening_surface is not None:
-            from runtime.utterance_spec import degrade_surface_payload
-            from .social_plan import empty_social_plan
-
-            payload = degrade_surface_payload(
-                {"performance_hint": opening_plan.prosody_plan.global_preset},
-                text=opening_surface.display_text,
-                language=opening_surface.display_language,
-                reason="opening_director_surface",
-                performance_preset=opening_plan.prosody_plan.global_preset,
-                should_speak=True,
-            )
-            payload["speech_text"] = opening_surface.speech_text
-            payload["speech_language"] = opening_surface.speech_language
-            utterance = dict(payload.get("utterance") or {})
-            utterance["display"] = {
-                "language": opening_surface.display_language,
-                "text": opening_surface.display_text,
-            }
-            utterance["speech"] = {
-                "language": opening_surface.speech_language,
-                "text": opening_surface.speech_text,
-            }
-            delivery = dict(utterance.get("delivery") or {})
-            delivery["interruptible"] = bool(opening_plan.prosody_plan.interruptible)
-            utterance["delivery"] = delivery
-            payload["utterance"] = utterance
-            payload["opening_plan"] = opening_plan.to_dict()
-            payload["opening_surface"] = opening_surface.to_dict()
-            payload["autonomous_plan"] = plan.to_dict()
-            payload["performance_context"] = {
-                "stage_emotion": "warm",
-                "stage_motion": opening_plan.beats[0].motion if opening_plan.beats else "none",
-                "tts_style": opening_plan.prosody_plan.global_preset,
-                "opening_hold_ms": opening_plan.prosody_plan.opening_hold_ms,
-                "closing_settle_ms": opening_plan.prosody_plan.closing_settle_ms,
-                "opening_beats": [
-                    {
-                        **beat.to_dict(),
-                        "display_text": next(
-                            (item.text for item in opening_surface.display_beats if item.beat_id == beat.beat_id),
-                            "",
-                        ),
-                        "speech_text": next(
-                            (item.text for item in opening_surface.speech_beats if item.beat_id == beat.beat_id),
-                            "",
-                        ),
-                    }
-                    for beat in opening_plan.beats
-                ],
-            }
-            social_plan = empty_social_plan()
-            if opening_plan.reply_bearing:
-                social_plan["exposure"] = {
-                    "decision": "open",
-                    "kind": "social_invitation",
-                    "level": min(0.45, 0.12 + opening_plan.comedic_move.risk),
-                    "expects_reaction": True,
-                    "reaction_window_class": "held",
-                    "expected_responses": ["user_replies", "user_changes_topic", "user_starts_task"],
-                    "silence_hypotheses": ["user may be busy", "question may not need an answer"],
-                    "recovery_style": "yield_without_blame",
-                    "confidence": 0.78,
-                }
-                social_plan["agenda_update"] = {
-                    "decision": "open",
-                    "goal_type": "invite_story",
-                    "objective": "Keep the contextual invitation available without pressuring the user.",
-                    "desired_user_state": "free_to_reply_or_ignore",
-                    "strategy": "one soft reminder at most, then pivot or close",
-                    "horizon": "turn",
-                    "success_signals": ["user_replies", "user_continues_task"],
-                    "stop_signals": ["user_activity", "scene_change", "explicit_boundary"],
-                    "salience": 0.58,
+        generate_autonomous = getattr(model_router, "generate_autonomous_reply", None)
+        opening_guidance = ""
+        if opening_director_active and opening_plan is not None:
+            opening_guidance = json.dumps(
+                {
+                    "motive": opening_plan.encounter.intent,
+                    "encounter": opening_plan.encounter.kind,
+                    "hook_source": opening_plan.hook.source,
+                    "hook_subject": opening_plan.hook.subject,
                     "evidence_refs": list(opening_plan.evidence_refs),
-                }
-            payload["social_plan"] = social_plan
-            payload["startup_greeting_nonbinding"] = True
-            payload["startup_context_may_expect_reply"] = opening_plan.reply_bearing
-        else:
-            generate_autonomous = getattr(model_router, "generate_autonomous_reply", None)
-            payload = generate_autonomous(
-                plan=plan,
-                personality_context=(
-                    f"{state.personality_prompt_context()}\n\n"
-                    f"{greeting_frame.to_prompt_block()}"
-                    + (f"\n\n{addressing_context}" if addressing_context else "")
-                ),
-                memory_context=json.dumps(continuity_context, ensure_ascii=False),
-                grounding_context=(
-                    f"{startup_grounding.prompt_context()}\n\n"
-                    "STARTUP_WORDING_CONTRACT:\n"
-                    "- GreetingFrame is the encounter model, not public text.\n"
-                    "- Every startup public turn has two parts in this order: first acknowledge the encounter with a real short greeting; "
-                    "then, when evidence or continuity exists, continue into one contextual observation or question.\n"
-                    "- Do not replace the greeting with the observation. The greeting itself is non-binding; a contextual question may expect a reply.\n"
-                    "- Prefer ordinary spoken Vietnamese over slogans or philosophical declarations.\n"
-                    "- Do not explain your role, availability, standards, principles, or abstract worldview."
-                ),
-                recent_history=recent_history,
-                avoid_text=avoid_text,
-                allow_fallback=not no_fallback_mode_enabled(),
-                language_hint=language,
-                speech_language_hint=_runtime_speech_language(),
-            ) if callable(generate_autonomous) else {}
+                    "reply_bearing": bool(opening_plan.reply_bearing),
+                    "comedic_move": opening_plan.comedic_move.family,
+                },
+                ensure_ascii=False,
+            )
+        emit_runtime_status(
+            host,
+            activity="startup",
+            phase="surface",
+            label="Đang chuẩn bị nói…",
+            active=True,
+            tone="active",
+            priority=90,
+        )
+        payload = generate_autonomous(
+            plan=plan,
+            personality_context=(
+                f"{state.personality_prompt_context()}\n\n"
+                f"{greeting_frame.to_prompt_block()}"
+                + (f"\n\n{addressing_context}" if addressing_context else "")
+            ),
+            memory_context=json.dumps(continuity_context, ensure_ascii=False),
+            grounding_context=(
+                f"{startup_grounding.prompt_context()}\n\n"
+                "STARTUP_WORDING_CONTRACT:\n"
+                "- GreetingFrame is context, not a sentence template.\n"
+                "- Begin with one natural greeting/arrival acknowledgement. This beat must survive even when vision, screen evidence or continuity is interesting.\n"
+                "- After greeting, choose freely what is most natural from current personality + real continuity + grounded perception. It may be an observation, question, tease, callback, or nothing more than the greeting.\n"
+                "- Do not force 'I am here', 'let us begin', a service offer, or a made-up social check-in.\n"
+                "- Vision/OCR claims are usable only through the grounded evidence above; do not invent user intent or emotion.\n"
+                "- Prefer ordinary spoken Vietnamese over slogans or philosophical declarations.\n"
+                "- Do not explain your role, availability, standards, principles, or abstract worldview."
+                + (f"\nOPENING_PLAN_ADVISORY: {opening_guidance}" if opening_guidance else "")
+            ),
+            recent_history=recent_history,
+            avoid_text=avoid_text,
+            allow_fallback=not no_fallback_mode_enabled(),
+            language_hint=language,
+            speech_language_hint=_runtime_speech_language(),
+        ) if callable(generate_autonomous) else {}
         if payload and plan.strategy in {"persona_opening", "continuity_opening"}:
             _selected_text, quality = choose_startup_text(
                 str(payload.get("text", "") or ""),
@@ -2418,6 +2339,35 @@ class AIAutonomousOrchestrator:
                 ",".join(str(item) for item in (quality.get("reasons", ()) or ())) or "none",
                 str(getattr(greeting_frame, "situation", "unknown") or "unknown"),
             )
+        if not payload and opening_director_active and opening_plan is not None and opening_surface is not None:
+            from runtime.utterance_spec import degrade_surface_payload
+
+            payload = degrade_surface_payload(
+                {"performance_hint": opening_plan.prosody_plan.global_preset},
+                text=opening_surface.display_text,
+                language=opening_surface.display_language,
+                reason="startup_main_cognition_unavailable_typed_fallback",
+                performance_preset=opening_plan.prosody_plan.global_preset,
+                should_speak=True,
+            )
+            payload["speech_text"] = opening_surface.speech_text
+            payload["speech_language"] = opening_surface.speech_language
+            utterance = dict(payload.get("utterance") or {})
+            utterance["display"] = {
+                "language": opening_surface.display_language,
+                "text": opening_surface.display_text,
+            }
+            utterance["speech"] = {
+                "language": opening_surface.speech_language,
+                "text": opening_surface.speech_text,
+            }
+            payload["utterance"] = utterance
+            host.logger.warning(
+                "[architecture C startup greeting] source=deterministic_opening_fallback motive=%s strategy=%s",
+                opening_plan.encounter.intent,
+                plan.strategy or "none",
+            )
+
         if not payload:
             preset_payload = select_startup_persona_preset(greeting_frame, avoid_text=avoid_text)
             if preset_payload:
@@ -2468,34 +2418,26 @@ class AIAutonomousOrchestrator:
                 "[architecture C startup] main reply unavailable; used personality fallback strategy=%s",
                 plan.strategy,
             )
-        if opening_director_active and opening_plan is not None and opening_surface is not None:
-            # V27.1: OpeningPlan + OpeningSurface đã là semantic commit của startup.
-            # Legacy greeting invariant không được phép chèn thêm "Chào/Em ở đây"
-            # rồi biến continue_thread/scene_comment thành một câu generic khác.
-            payload["startup_greeting_present"] = True
-            payload["startup_greeting_inserted"] = False
-            payload["startup_greeting_nonbinding"] = not bool(opening_plan.reply_bearing)
-            payload["startup_context_may_expect_reply"] = bool(opening_plan.reply_bearing)
-            host.logger.info(
-                "[architecture C startup greeting] typed_surface_preserved=1 motive=%s strategy=%s",
-                opening_plan.encounter.intent,
-                plan.strategy or "none",
-            )
-        else:
-            # Adapter legacy: chỉ đường chưa có typed OpeningSurface mới cần invariant.
-            payload = ensure_startup_greeting_payload(
-                payload,
-                frame=greeting_frame,
-                display_language=language,
-                speech_language=_runtime_speech_language(),
-                user_vocative=str(addressing_snapshot.get("user_vocative", "") or ""),
-            )
-            if bool(payload.get("startup_greeting_inserted", False)):
-                host.logger.info(
-                    "[architecture C startup greeting] invariant_inserted=1 vocative=%s strategy=%s",
-                    str(addressing_snapshot.get("user_vocative", "") or "neutral"),
-                    plan.strategy or "none",
-                )
+        # Greeting invariant chạy SAU main cognition cho mọi startup path. Nó chỉ
+        # prepend khi model thật sự quên chào, tuyệt đối không thay/xóa phần model
+        # đã nói về vision, continuity hay bất kỳ nội dung hợp lệ nào phía sau.
+        payload = ensure_startup_greeting_payload(
+            payload,
+            frame=greeting_frame,
+            display_language=language,
+            speech_language=_runtime_speech_language(),
+            user_vocative=str(addressing_snapshot.get("user_vocative", "") or ""),
+        )
+        if opening_director_active and opening_plan is not None:
+            payload["opening_plan"] = opening_plan.to_dict()
+            payload["autonomous_plan"] = plan.to_dict()
+        host.logger.info(
+            "[architecture C startup greeting] invariant_present=1 inserted=%s source=%s motive=%s strategy=%s",
+            int(bool(payload.get("startup_greeting_inserted", False))),
+            "main_cognition" if str(payload.get("reason", "") or "") != "startup_main_cognition_unavailable_typed_fallback" else "deterministic_fallback",
+            opening_plan.encounter.intent if opening_plan is not None else plan.motive,
+            plan.strategy or "none",
+        )
         raw = json.dumps(_serializable_public_payload(payload), ensure_ascii=False)
         host._log_raw_llm_output("startup_ai", raw)
         decision = host.parser.parse(raw)
@@ -2649,6 +2591,9 @@ class AIAutonomousOrchestrator:
             except Exception as exc:
                 host.logger.debug("[architecture C startup] observer submit failed: %s", exc)
         spoken_at = time.time()
+        # Dùng timestamp public commit thật làm mốc chống "vừa chào xong đã hỏi
+        # thăm lần nữa". Đây chỉ là cooldown social-contact, không khóa scene/task.
+        host._startup_greeting_spoken_at = spoken_at
         host.last_autonomous_spoken_at = spoken_at
         host._note_autonomous_spoken(now=spoken_at)
         block = getattr(host, "_block_autonomous_presence_after_public_turn", None)

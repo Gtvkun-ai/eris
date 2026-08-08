@@ -266,22 +266,28 @@ class SelfTurnPipeline:
             try:
                 relational_view = relational_view_fn(now=now)
                 planner_snapshot["relational_state"] = dict(relational_view)
-                relational_affordance = build_relational_affordance(
-                    relational_view,
-                    now=now,
-                    reply_expected=bool(getattr(blackboard, "reply_expected", False)),
-                    user_busy=bool(getattr(blackboard, "user_busy", False)),
-                    interaction_busy=interaction_busy,
-                )
-                if relational_affordance is not None:
-                    affordances.append(relational_affordance)
-                    host.logger.info(
-                        "[relational] contact affordance pressure=%.2f opportunity=%.2f drive=%.2f revision=%s",
-                        float(relational_view.get("connection_pressure", 0.0) or 0.0),
-                        float(relational_view.get("opportunity", 0.0) or 0.0),
-                        float(relational_view.get("outreach_drive", 0.0) or 0.0),
-                        relational_view.get("revision", 0),
+                if bool(initiative_runtime_context.get("startup_social_cooldown_active", False)):
+                    host.logger.debug(
+                        "[relational] contact affordance suppressed after startup greeting age=%.1fs",
+                        float(initiative_runtime_context.get("seconds_since_startup_greeting", 0.0) or 0.0),
                     )
+                else:
+                    relational_affordance = build_relational_affordance(
+                        relational_view,
+                        now=now,
+                        reply_expected=bool(getattr(blackboard, "reply_expected", False)),
+                        user_busy=bool(getattr(blackboard, "user_busy", False)),
+                        interaction_busy=interaction_busy,
+                    )
+                    if relational_affordance is not None:
+                        affordances.append(relational_affordance)
+                        host.logger.info(
+                            "[relational] contact affordance pressure=%.2f opportunity=%.2f drive=%.2f revision=%s",
+                            float(relational_view.get("connection_pressure", 0.0) or 0.0),
+                            float(relational_view.get("opportunity", 0.0) or 0.0),
+                            float(relational_view.get("outreach_drive", 0.0) or 0.0),
+                            relational_view.get("revision", 0),
+                        )
             except Exception as exc:
                 host.logger.debug("[relational] affordance build failed: %s", exc)
 
