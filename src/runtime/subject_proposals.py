@@ -42,6 +42,10 @@ class AutonomousProposalSource:
         urgency = clamp01(getattr(candidate, "urgency", 0.2), 0.2)
         requires_grounding = bool(getattr(candidate, "requires_grounding", False))
         intrusion = clamp01(getattr(candidate, "intrusion_risk", 1.0 - relevance), 1.0 - relevance)
+        metadata = getattr(affordance, "metadata", {})
+        metadata = metadata if isinstance(metadata, dict) else dict(metadata) if hasattr(metadata, "items") else {}
+        intention_id = str(metadata.get("intention_id") or "").strip()
+        motive_kind = str(metadata.get("motive_kind") or "").strip().lower()
 
         need_ids: list[str] = []
         lowered = f"{owner} {kind}".casefold()
@@ -73,6 +77,11 @@ class AutonomousProposalSource:
                 "tone": str(getattr(candidate, "tone", "") or ""),
                 "source_owner": owner,
                 "candidate_kind": kind,
+                # Giữ binding của Subject intention xuyên qua adapter runtime.
+                # V26 từng làm rơi hai field này, khiến public act không thể đóng
+                # đúng lifecycle và frame sau dễ quay lại proposal seed cũ.
+                **({"intention_id": intention_id} if intention_id else {}),
+                **({"initiative_motive": motive_kind} if motive_kind else {}),
                 "context": "autonomous",
                 "skill_id": "dialogue",
             },

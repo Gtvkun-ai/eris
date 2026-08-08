@@ -476,6 +476,29 @@ class AIChatOrchestrator:
         turn_id = str(getattr(user_turn, "turn_id", "") or f"session_turn:{turn_seq}")
         user_meta["ai_turn_seq"] = turn_seq
 
+        # V27.1: user turn là outcome thật của một Subject intention đã được nói.
+        # Chỉ đóng/revise lifecycle; không suy đoán cảm xúc hay ý định của user.
+        subject_service = getattr(host, "subject_service", None)
+        note_initiative_outcome = getattr(subject_service, "note_initiative_user_outcome", None)
+        if callable(note_initiative_outcome):
+            try:
+                initiative_receipt = note_initiative_outcome(
+                    user_text, now=cycle_start, evidence_ref=turn_id, persist=True,
+                )
+                waiting = [
+                    item for item in initiative_receipt.get("pending_intentions", ())
+                    if isinstance(item, Mapping) and str(item.get("status") or "") in {"satisfied", "revised"}
+                    and float(item.get("last_outcome_at", 0.0) or 0.0) == float(cycle_start)
+                ] if isinstance(initiative_receipt, Mapping) else []
+                if waiting:
+                    host.logger.info(
+                        "[subject initiative] user outcome resolved=%s statuses=%s",
+                        len(waiting),
+                        ",".join(str(item.get("status") or "") for item in waiting),
+                    )
+            except Exception as exc:
+                host.logger.debug("[subject initiative] user outcome update failed: %s", exc)
+
         # User taking the floor invalidates reserved short beats immediately and
         # updates long-horizon social outcomes before the next plan is written.
         social_continuation_runtime = getattr(host, "ai_social_continuation_runtime", None)
@@ -2366,19 +2389,34 @@ class AIAutonomousOrchestrator:
                 "[architecture C startup] main reply unavailable; used personality fallback strategy=%s",
                 plan.strategy,
             )
-        payload = ensure_startup_greeting_payload(
-            payload,
-            frame=greeting_frame,
-            display_language=language,
-            speech_language=_runtime_speech_language(),
-            user_vocative=str(addressing_snapshot.get("user_vocative", "") or ""),
-        )
-        if bool(payload.get("startup_greeting_inserted", False)):
+        if opening_director_active and opening_plan is not None and opening_surface is not None:
+            # V27.1: OpeningPlan + OpeningSurface đã là semantic commit của startup.
+            # Legacy greeting invariant không được phép chèn thêm "Chào/Em ở đây"
+            # rồi biến continue_thread/scene_comment thành một câu generic khác.
+            payload["startup_greeting_present"] = True
+            payload["startup_greeting_inserted"] = False
+            payload["startup_greeting_nonbinding"] = not bool(opening_plan.reply_bearing)
+            payload["startup_context_may_expect_reply"] = bool(opening_plan.reply_bearing)
             host.logger.info(
-                "[architecture C startup greeting] invariant_inserted=1 vocative=%s strategy=%s",
-                str(addressing_snapshot.get("user_vocative", "") or "neutral"),
+                "[architecture C startup greeting] typed_surface_preserved=1 motive=%s strategy=%s",
+                opening_plan.encounter.intent,
                 plan.strategy or "none",
             )
+        else:
+            # Adapter legacy: chỉ đường chưa có typed OpeningSurface mới cần invariant.
+            payload = ensure_startup_greeting_payload(
+                payload,
+                frame=greeting_frame,
+                display_language=language,
+                speech_language=_runtime_speech_language(),
+                user_vocative=str(addressing_snapshot.get("user_vocative", "") or ""),
+            )
+            if bool(payload.get("startup_greeting_inserted", False)):
+                host.logger.info(
+                    "[architecture C startup greeting] invariant_inserted=1 vocative=%s strategy=%s",
+                    str(addressing_snapshot.get("user_vocative", "") or "neutral"),
+                    plan.strategy or "none",
+                )
         raw = json.dumps(_serializable_public_payload(payload), ensure_ascii=False)
         host._log_raw_llm_output("startup_ai", raw)
         decision = host.parser.parse(raw)

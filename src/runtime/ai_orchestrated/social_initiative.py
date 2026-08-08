@@ -813,6 +813,7 @@ class SocialInitiativeEngine:
             expected = {
                 "continuation": "conversation",
                 "conversation_arc": "conversation",
+                "followup_reminder": "conversation",
                 "task_followup": "task",
                 "discovery_share": "discovery",
                 "screen_comment": "screen",

@@ -347,7 +347,6 @@ def test_japanese_localizer_translate_path_uses_runtime_timeout(monkeypatch) -> 
     assert captured_context["kwargs"]["optional"] is False
     assert _localizer_timeout_seconds() == 1.5
     assert _Client.last is not None
-    assert _Client.last.models.config["thinking_config"]["thinking_level"] == "minimal"
     assert "Preserve the exact meaning" in _Client.last.models.config["system_instruction"]
 
 
@@ -510,6 +509,11 @@ def test_tts_worker_uses_style_key_rescue_when_primary_returns_non_japanese(monk
         lambda _source, translated, **_kwargs: translated == "こんにちは",
     )
     monkeypatch.setattr(speech_localizer, "_apply_signature_surface", lambda text, _policy: text)
+    monkeypatch.setattr(
+        speech_localizer,
+        "_get_api_key_lease",
+        lambda **_kwargs: ("primary-key", None, None),
+    )
 
     calls: list[str] = []
 

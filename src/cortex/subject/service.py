@@ -102,7 +102,7 @@ class SubjectServiceConfig:
     random_seed: int = 0
     min_episode_pressure: float = 0.08
     default_temperature: float = 0.20
-    algorithm_version: str = "subject-service-v14-unified-initiative"
+    algorithm_version: str = "subject-service-v14.1-unified-initiative"
     restore_projection: bool = True
     consolidation_min_episode_count: int = 3
     consolidation_min_distinct_days: int = 2
@@ -410,6 +410,81 @@ class SubjectService:
         return self.relational_state.to_dict()
 
     # ------------------------------------------------------------------
+    # Initiative lifecycle receipts
+    # ------------------------------------------------------------------
+    def note_initiative_public_act(
+        self,
+        intention_id: str,
+        *,
+        now: float | None = None,
+        evidence_ref: str = "",
+        persist: bool = True,
+    ) -> dict[str, Any]:
+        """Chuyển intention đã nói: PENDING -> EXPRESSED -> AWAITING_OUTCOME.
+
+        Runtime chỉ gọi sau khi public commit thật sự có text. Nhờ vậy Surface lỗi,
+        utterance gate chặn hoặc user preempt không làm mất intention oan. Hai event
+        tách riêng để forensic nhìn được hành vi đã phát trước khi chờ phản ứng.
+        """
+        current = self._clock() if now is None else float(now)
+        before = self.initiative_state
+        expressed = self.initiative.mark_expressed(
+            before, intention_id=str(intention_id or ""), now=current, evidence_ref=evidence_ref,
+        )
+        if expressed is before:
+            return before.to_dict()
+        self.initiative_state = expressed
+        self._append_event(
+            "initiative_intention_expressed",
+            {"intention_id": str(intention_id or ""), "initiative": expressed.to_dict()},
+            causal_refs=((evidence_ref,) if evidence_ref else ()),
+        )
+        awaiting = self.initiative.mark_awaiting_outcome(
+            expressed, intention_id=str(intention_id or ""), now=current,
+        )
+        self.initiative_state = awaiting
+        self._append_event(
+            "initiative_intention_awaiting_outcome",
+            {"intention_id": str(intention_id or ""), "initiative": awaiting.to_dict()},
+            causal_refs=((evidence_ref,) if evidence_ref else ()),
+        )
+        if persist:
+            self._persist_projection()
+        return awaiting.to_dict()
+
+    def note_initiative_user_outcome(
+        self,
+        user_text: str,
+        *,
+        now: float | None = None,
+        evidence_ref: str = "",
+        persist: bool = True,
+    ) -> dict[str, Any]:
+        """Đóng/revise intention đang chờ bằng user turn thật, không đoán cảm xúc."""
+        current = self._clock() if now is None else float(now)
+        before = self.initiative_state
+        after = self.initiative.observe_user_outcome(before, user_text=user_text, now=current)
+        if after is before:
+            return before.to_dict()
+        self.initiative_state = after
+        changed = [
+            item.to_dict() for item in after.pending_intentions
+            if item.status.value in {"satisfied", "revised"} and item.last_outcome_at == current
+        ]
+        self._append_event(
+            "initiative_user_outcome",
+            {
+                "user_text_present": bool(str(user_text or "").strip()),
+                "resolved": changed,
+                "initiative": after.to_dict(),
+            },
+            causal_refs=((evidence_ref,) if evidence_ref else ()),
+        )
+        if persist:
+            self._persist_projection()
+        return after.to_dict()
+
+    # ------------------------------------------------------------------
     # Appraisal / proposal generation
     # ------------------------------------------------------------------
     def _appraise(
@@ -514,19 +589,34 @@ class SubjectService:
                         },
                     )
                 )
-        # Nếu runtime đã cung cấp affordance typed thì đó là tập lựa chọn của
-        # observation hiện tại. V26 KHÔNG âm thầm chèn thêm proposal khác ở đây:
-        # initiative nội sinh đã được runtime materialize thành affordance trước
-        # khi observation đi vào Subject Core. Giữ ranh giới này tránh việc một
-        # task/test có proposal cưỡng bức bị một lời rủ nói chuyện chen ngang.
-        # Với observation không có affordance (chat/internal caller trực tiếp),
-        # Subject Core mới tự dựng proposal từ pending intention bên dưới.
         had_explicit_proposals = bool(proposals)
-        if had_explicit_proposals:
+        # V27.1: explicit runtime affordance và Subject initiative phải nằm trong
+        # *cùng frame hiện tại*. V26 từng return sớm khi có seed/agenda proposal;
+        # pending intention mới được cập nhật ở chính tick này vì thế có thể đứng
+        # ngoài frame rồi Executive lại cầm proposal cũ. Ta merge, nhưng dedup theo
+        # affordance_id/speech_act để không nhân đôi cùng một semantic option.
+        explicit_affordance_ids: set[str] = {
+            str(item.arguments.get("affordance_id", "") or "").strip()
+            for item in proposals
+            if str(item.arguments.get("affordance_id", "") or "").strip()
+        }
+        explicit_speech_acts: set[str] = {
+            str(item.arguments.get("speech_act", "") or "").strip().lower()
+            for item in proposals
+            if str(item.arguments.get("speech_act", "") or "").strip()
+        }
+        context_key = str(observation.context.get("context_key") or "general").strip().lower()
+        autonomous_frame = bool(
+            observation.kind == "autonomous_opportunity"
+            or context_key in {"autonomous", "self_initiated"}
+        )
+        # Explicit task/world proposal có authority riêng và không được social
+        # initiative chen vào. Merge chỉ áp dụng cho autonomous frame, đúng lỗi
+        # runtime mà V27.1 đang sửa. Chat không có explicit proposal vẫn sinh motive
+        # bình thường ở nhánh bên dưới.
+        if had_explicit_proposals and not autonomous_frame:
             return tuple(proposals)
 
-        explicit_affordance_ids: set[str] = set()
-        explicit_speech_acts: set[str] = set()
         for intention in self.initiative_state.pending_intentions:
             if str(getattr(intention, "status", "pending")) not in {"pending", "IntentionStatus.PENDING"}:
                 continue
@@ -595,6 +685,12 @@ class SubjectService:
                 evidence_refs=intention.evidence_refs or (observation.observation_id,),
                 need_effects=need_effects,
             ))
+
+        # Khi runtime đã cấp affordance typed (seed, relational, agenda...), frame
+        # chỉ merge thêm Subject initiative hiện tại rồi dừng. Generic activation
+        # proposals không được chen lên trên một affordance đã có execution binding.
+        if had_explicit_proposals:
+            return tuple(proposals)
 
         is_user_turn = observation.origin.value == "user"
         user_text = str(observation.context.get("user_text") or "").strip()

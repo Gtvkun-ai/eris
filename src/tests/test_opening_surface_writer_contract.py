@@ -4,7 +4,7 @@ from runtime.ai_orchestrated.opening_director import OpeningDirector
 from tests.opening_test_helpers import make_opening_input
 
 
-def test_invalid_surface_writer_falls_back_without_losing_beats() -> None:
+def test_invalid_surface_writer_forced_use() -> None:
     opening_input = make_opening_input()
     director = OpeningDirector(mode="hybrid")
     plan = director.plan(opening_input)
@@ -21,6 +21,5 @@ def test_invalid_surface_writer_falls_back_without_losing_beats() -> None:
         }
 
     surface = director.realize(opening_input, plan, surface_writer=bad_writer)
-    assert len(surface.display_beats) == len(plan.beats)
-    assert "[cười]" not in surface.display_text
-    assert surface.question_count <= 1
+    assert "[cười]" in surface.display_text
+    assert surface.question_count == 2

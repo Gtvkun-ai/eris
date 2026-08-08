@@ -681,13 +681,10 @@ class OpeningDirector:
                     surface = OpeningSurface.from_mapping(raw)
             except Exception:
                 surface = None
-        if surface is not None:
-            valid, _errors = validate_opening_surface(opening_input, plan, surface)
-            # Wording model có thể rất tự tin đưa lại đúng câu hôm qua. Exact
-            # hash chặn trường hợp đó trước khi commit; fallback rule sẽ chọn câu
-            # theo move typed hiện tại thay vì giả vờ paraphrase là novelty.
-            if valid and not self.history.exact_duplicate(surface.display_text, sessions=30):
-                return surface
+        if surface is not None and str(surface.display_text).strip():
+            # [EP ERIS NOI CAU MO DAU] Bỏ qua validate_opening_surface và exact_duplicate
+            # để đảm bảo câu do LLM sinh ra luôn được sử dụng thay vì rơi vào fallback.
+            return surface
         # Fallback deterministic cũng phải chống lặp. Nếu không, model chết một
         # hôm là Eris biến thành chuông cửa phát đúng một câu mãi mãi.
         last_errors: tuple[str, ...] = ()

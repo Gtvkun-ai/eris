@@ -34,7 +34,11 @@ def text_sync_timeout_seconds() -> float:
 def tts_event_releases_deferred_text(event_type: str) -> bool:
     """Nhả text khi synth thất bại trước lúc callback playback được gọi."""
 
-    return str(event_type or "").strip().lower() == "audio_failed"
+    return str(event_type or "").strip().lower() in {
+        "audio_failed",
+        "audio_localization_failed",
+        "audio_cancelled",
+    }
 
 
 __all__ = [

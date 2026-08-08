@@ -93,6 +93,8 @@ def _get_api_key_lease(*, provider: str = "gemini", exclude_indices: Iterable[in
     if provider == "deepseek":
         for env_name in (
             "ERIS_TTS_LOCALIZER_API_KEY",
+            "ERIS_DS_STYLE_API_KEY",
+            "ERIS_STYLE_API_KEY",
             "DEEPSEEK_API_KEY",
             "ERIS_REMOTE_API_KEY",
         ):
@@ -490,7 +492,6 @@ class SpeechLocalizer:
                                     "system_instruction": system_instruction,
                                     "temperature": 0.15,
                                     "max_output_tokens": 128,
-                                    "thinking_config": {"thinking_level": "minimal"},
                                 },
                             )
                         if cancel_token is not None:
@@ -584,13 +585,17 @@ class SpeechLocalizer:
                 if health is not None:
                     health.release(reserved_index)
 
-        if isinstance(last_exc, SpeechLocalizationError):
-            raise last_exc
-        detail = str(last_exc or "").strip()
-        suffix = type(last_exc).__name__ if last_exc else "unknown"
-        if detail:
-            suffix = f"{suffix}:{detail}"
-        raise SpeechLocalizationError(f"japanese_localization_failed:{suffix}")
+        if last_exc is not None:
+            rescue = _try_style_rescue()
+            if rescue:
+                return rescue
+            if isinstance(last_exc, SpeechLocalizationError):
+                raise last_exc
+            detail = str(last_exc or "").strip()
+            suffix = type(last_exc).__name__ if last_exc else "unknown"
+            if detail:
+                suffix = f"{suffix}:{detail}"
+            raise SpeechLocalizationError(f"japanese_localization_failed:{suffix}")
 
 
 def _normalize_transcript(text: str) -> str:

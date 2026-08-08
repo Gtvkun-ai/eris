@@ -861,14 +861,58 @@ class ExecutiveCortex:
         coalition_id = _compact(raw.get("selected_coalition_id", ""), 220)
         proposal_ref = _compact(raw.get("selected_proposal_ref", ""), 220)
         coalition = next((item for item in frame.coalitions if item.coalition_id == coalition_id), None)
-        if coalition is None or proposal_ref != coalition.primary_proposal_ref:
+        if coalition is None:
+            # V28: Model đôi khi echo coalition_id của frame trước (stale ID).
+            # Tương tự pattern rebound của proposal_ref (L872+): không cho lỗi
+            # copy-string này đổi motive sang fallback. Thử tìm coalition cùng
+            # action_kind trong frame hiện tại rồi rebound, tuyệt đối không invent
+            # action mới. Chỉ fallback nếu không tìm được coalition tương đương.
+            stale_action = ""
+            # Cố suy action_kind từ proposal_ref (format: "proposal:<action>:...")
+            if ":" in proposal_ref:
+                stale_action = proposal_ref.split(":")[1].strip().lower() if len(proposal_ref.split(":")) > 1 else ""
+            rebound_coalition = None
+            if stale_action and frame.coalitions:
+                rebound_coalition = next(
+                    (item for item in frame.coalitions if str(getattr(item, "action_kind", "") or "").lower() == stale_action),
+                    None,
+                )
+            if rebound_coalition is None and frame.coalitions:
+                # Không suy được action_kind → lấy top coalition (đã được Subject Core xếp hạng)
+                rebound_coalition = frame.coalitions[0]
+            if rebound_coalition is not None:
+                self._log(
+                    "warning",
+                    "[executive] rebound stale coalition_id=%s -> rebound=%s action=%s",
+                    coalition_id,
+                    rebound_coalition.coalition_id,
+                    getattr(rebound_coalition, "action_kind", "?"),
+                )
+                coalition = rebound_coalition
+                coalition_id = coalition.coalition_id
+                proposal_ref = coalition.primary_proposal_ref
+            else:
+                self._log(
+                    "warning",
+                    "[executive] rejected subject commit coalition=%s proposal=%s (no rebound candidate)",
+                    coalition_id,
+                    proposal_ref,
+                )
+                return self._fallback_subject_commit(frame, reason="executive_subject_commit_out_of_frame")
+        if proposal_ref != coalition.primary_proposal_ref:
+            # V27.1: proposal_ref là dữ liệu dư thừa vì coalition đã đóng đúng
+            # primary proposal trong typed frame. Model đôi khi echo proposal của
+            # frame trước dù coalition_id hiện tại hoàn toàn hợp lệ. Không cho lỗi
+            # copy-string này đổi motive sang fallback: bind lại bằng authority của
+            # frame, nhưng tuyệt đối không sửa/đoán coalition_id.
             self._log(
                 "warning",
-                "[executive] rejected subject commit coalition=%s proposal=%s",
+                "[executive] rebound stale proposal ref coalition=%s provided=%s bound=%s",
                 coalition_id,
                 proposal_ref,
+                coalition.primary_proposal_ref,
             )
-            return self._fallback_subject_commit(frame, reason="executive_subject_commit_out_of_frame")
+            proposal_ref = coalition.primary_proposal_ref
         reason = _compact(raw.get("reason", "executive_subject_commit"), 500) or "executive_subject_commit"
         commitments = tuple(
             _compact(item, 500)

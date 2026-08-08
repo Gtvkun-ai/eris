@@ -1734,10 +1734,10 @@ class AIRuntimeModelRouter:
             payload=payload,
             schema=OPENING_SURFACE_SCHEMA,
             name="eris_opening_surface",
-            max_tokens=520,
+            max_tokens=2000,
             inference_tier="main_cognition",
             priority=82,
-            timeout_seconds=_semantic_deadline_seconds(),
+            timeout_seconds=90.0,
         )
 
     def generate_autonomous_reply(

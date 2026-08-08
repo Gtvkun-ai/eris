@@ -1,0 +1,250 @@
+# -*- coding: utf-8 -*-
+"""Scenario regression từ log runtime 2026-08-08.
+
+Không test từng helper rời rạc rồi tuyên bố chiến thắng. Các case dưới đây tái
+hiện đúng ba failure đã thấy ngoài đời: startup surface bị legacy invariant chen
+vào, Subject initiative đứng ngoài frame có seed, và intention đã nói bị phát lại.
+"""
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+from types import SimpleNamespace
+
+from cortex.subject.initiative import IntentionStatus, MotiveKind
+from cortex.subject.relational import RelationalState
+from cortex.subject.service import SubjectService, SubjectServiceConfig
+from runtime.ai_orchestrated.executive_cortex import ExecutiveCortex
+from runtime.subject_ingress import SubjectIngress
+from runtime.subject_initiative_runtime import build_subject_initiative_affordances
+
+
+class Determinism:
+    def __init__(self) -> None:
+        self.i = 0
+        self.now = 10_000.0
+
+    def id(self) -> str:
+        self.i += 1
+        return f"v27r-{self.i}"
+
+    def clock(self) -> float:
+        return self.now
+
+
+def _service(d: Determinism) -> SubjectService:
+    service = SubjectService(
+        config=SubjectServiceConfig(restore_projection=False),
+        clock=d.clock,
+        id_factory=d.id,
+    )
+    service.relational_state = RelationalState(
+        revision=4,
+        updated_at=d.now,
+        last_meaningful_exchange_at=d.now - 2400.0,
+        affiliation_deficit=0.84,
+        interaction_satiety=0.06,
+        social_curiosity=0.72,
+        partner_availability=0.92,
+        interruption_cost=0.05,
+        outreach_confidence=0.76,
+        reciprocity_expectation=0.70,
+        evidence_refs=("relational:runtime-repair",),
+    )
+    return service
+
+
+def _blackboard():
+    return SimpleNamespace(
+        reply_expected=False,
+        engagement_active=False,
+        user_busy=False,
+        public_view=lambda: {
+            "reply_expected": False,
+            "engagement_active": False,
+            "novelty": 0.18,
+        },
+    )
+
+
+def _seed_affordance():
+    candidate = SimpleNamespace(
+        kind="random_chat",
+        topic="một seed cũ từ reservoir",
+        speech_act="random_chat",
+        tone="casual",
+        source="random_chat_seed_reservoir",
+        confidence=0.72,
+        relevance=0.70,
+        urgency=0.30,
+        evidence_refs=("seed:old",),
+        requires_grounding=False,
+        intrusion_risk=0.12,
+    )
+    return SimpleNamespace(
+        affordance_id="random-chat-seed:old",
+        owner="random_chat_seed_reservoir",
+        candidate=candidate,
+        metadata={},
+    )
+
+
+def test_current_subject_initiative_is_merged_into_same_frame_even_when_seed_exists() -> None:
+    """Tái hiện lỗi log: có seed không được làm current intention đứng ngoài frame."""
+    d = Determinism()
+    service = _service(d)
+    ingress = SubjectIngress(service)
+
+    session = ingress.prepare_autonomous_session(
+        _blackboard(),
+        (_seed_affordance(),),
+        created_at=d.now,
+        turn_id="runtime-frame-merge",
+        planning_context={
+            "relational_state": service.relational_view(),
+            "initiative_runtime_context": {
+                "user_model_uncertainty": 0.96,
+                "user_model_evidence_refs": ("user-model:thin",),
+            },
+        },
+    )
+    acts = {str(item.arguments.get("speech_act") or "") for item in session.frame.proposals}
+    assert "random_chat" in acts
+    assert "user_probe" in acts
+    probe = next(item for item in session.frame.proposals if item.arguments.get("speech_act") == "user_probe")
+    assert probe.arguments.get("intention_id")
+    asyncio.run(service.abandon_deliberation(session.frame, reason="test_cleanup"))
+
+
+def test_valid_coalition_rebinds_redundant_stale_proposal_ref_to_current_frame() -> None:
+    """Model được chọn coalition, nhưng proposal_ref dư thừa không được kéo frame cũ trở lại."""
+    d = Determinism()
+    service = _service(d)
+    ingress = SubjectIngress(service)
+    session = ingress.prepare_autonomous_session(
+        _blackboard(),
+        (_seed_affordance(),),
+        created_at=d.now,
+        turn_id="runtime-stale-proposal",
+        planning_context={
+            "relational_state": service.relational_view(),
+            "initiative_runtime_context": {"user_model_uncertainty": 0.96},
+        },
+    )
+    chosen = next(item for item in session.frame.coalitions if item.arguments.get("speech_act") == "user_probe")
+
+    def fake_structured(*_args, **_kwargs):
+        return {
+            "selected_coalition_id": chosen.coalition_id,
+            "selected_proposal_ref": "proposal:seed:seed_eris_led_001:3",  # đúng lỗi runtime đã thấy
+            "semantic_commitments": ["ask one low-pressure probe"],
+            "cognitive_requests": [],
+            "reason": "current coalition is the intended choice",
+            "confidence": 0.82,
+            "review_conditions": [],
+        }
+
+    executive = ExecutiveCortex(
+        SimpleNamespace(action_executor=None),
+        object(),
+        invoke_structured=fake_structured,
+        clock=d.clock,
+        wall_clock=d.clock,
+    )
+    commit = executive.commit_subject_frame(session.frame, mode="autonomous")
+    assert commit is not None
+    assert commit.selected_coalition_id == chosen.coalition_id
+    assert commit.selected_proposal_ref == chosen.primary_proposal_ref
+    assert commit.source != "executive_policy_fallback"
+    asyncio.run(service.abandon_deliberation(session.frame, reason="test_cleanup"))
+
+
+def test_spoken_probe_enters_awaiting_outcome_and_cannot_repeat_on_next_ticks() -> None:
+    """Một intention đã public không được phát lại trước khi có outcome/cooldown."""
+    d = Determinism()
+    service = _service(d)
+
+    # Tick đầu tạo user_probe nội sinh, không seed.
+    from cortex.subject.contracts import ObservationOrigin, WorldObservation
+    obs = WorldObservation(
+        observation_id="initiative:first",
+        subject_id="eris",
+        kind="subject_initiative_tick",
+        created_at=d.now,
+        origin=ObservationOrigin.INTERNAL,
+        context={
+            "context_key": "self_initiated",
+            "affected_need_ids": ("connection", "coherence"),
+            "goal_relevance": 0.72,
+            "novelty": 0.08,
+            "controllability": 0.90,
+            "relational_significance": 0.84,
+            "future_consequence": 0.35,
+            "uncertainty": 0.88,
+            "runtime_context": {
+                "partner_available": 0.92,
+                "interruption_cost": 0.05,
+                "social_curiosity": 0.72,
+                "user_model_uncertainty": 0.96,
+                "user_model_evidence_refs": ("user-model:thin",),
+            },
+        },
+        evidence_refs=("user-model:thin",),
+    )
+    frame = asyncio.run(service.prepare_deliberation(obs))
+    intention = next(
+        item for item in service.initiative_state.pending_intentions
+        if item.motive_kind is MotiveKind.UNDERSTAND_USER and item.status is IntentionStatus.PENDING
+    )
+    asyncio.run(service.abandon_deliberation(frame, reason="prime"))
+
+    service.note_initiative_public_act(
+        intention.intention_id,
+        now=d.now + 1.0,
+        evidence_ref="public:probe:1",
+        persist=False,
+    )
+    waiting = next(item for item in service.initiative_state.pending_intentions if item.intention_id == intention.intention_id)
+    assert waiting.status is IntentionStatus.AWAITING_OUTCOME
+    assert waiting.expression_count == 1
+
+    affordances = build_subject_initiative_affordances(
+        service,
+        runtime_context={"user_model_uncertainty": 0.96},
+        now=d.now + 5.0,
+    )
+    assert not any(item.candidate.speech_act == "user_probe" for item in affordances)
+
+    # "ok" là outcome thật nhưng không cung cấp thông tin cho epistemic probe.
+    service.note_initiative_user_outcome("ok", now=d.now + 8.0, evidence_ref="user:ok", persist=False)
+    revised = next(item for item in service.initiative_state.pending_intentions if item.intention_id == intention.intention_id)
+    assert revised.status is IntentionStatus.REVISED
+    assert revised.outcome_count == 1
+
+    d.now += 60.0
+    frame2 = asyncio.run(service.prepare_deliberation(obs.__class__(
+        **{**obs.to_dict(), "observation_id": "initiative:cooldown", "created_at": d.now,
+           "origin": ObservationOrigin.INTERNAL}
+    )))
+    assert not any(item.arguments.get("speech_act") == "user_probe" for item in frame2.proposals)
+    asyncio.run(service.abandon_deliberation(frame2, reason="cooldown"))
+
+
+def test_runtime_consumes_intention_only_after_successful_public_text() -> None:
+    """Guard wiring: lifecycle hook nằm sau `if not text` và trước tick kế tiếp."""
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "runtime" / "ai_orchestrated" / "self_turn_pipeline.py").read_text(encoding="utf-8")
+    no_text_pos = source.index("if not text:")
+    hook_pos = source.index("note_initiative_public_act")
+    relational_pos = source.index("note_relational_public_act", hook_pos)
+    assert no_text_pos < hook_pos < relational_pos
+
+
+def test_typed_opening_surface_is_not_sent_through_legacy_greeting_invariant() -> None:
+    """Guard wiring cho regression `invariant_inserted=1` từ log thực tế."""
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "runtime" / "ai_orchestrated" / "orchestrator.py").read_text(encoding="utf-8")
+    typed_guard = source.index("typed_surface_preserved=1")
+    legacy_call = source.index("payload = ensure_startup_greeting_payload(", typed_guard)
+    else_pos = source.rfind("else:", 0, legacy_call)
+    assert typed_guard < else_pos < legacy_call

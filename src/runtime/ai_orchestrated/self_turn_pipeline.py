@@ -720,6 +720,7 @@ class SelfTurnPipeline:
             prebuilt_payload=surface_payload,
             allow_model_generation=False,
             candidate=candidate,
+            subject_decision=subject_decision,
         )
 
     def _submit_intention(self, plan: IntentionPlan, *, turn_seq: int) -> None:
@@ -1529,6 +1530,7 @@ class SelfTurnPipeline:
         prebuilt_payload: Mapping[str, Any] | None = None,
         allow_model_generation: bool = True,
         candidate: Any | None = None,
+        subject_decision: Any | None = None,
     ) -> bool:
         host = self.host
         payload = dict(prebuilt_payload or {})
@@ -1695,6 +1697,33 @@ class SelfTurnPipeline:
 
         host.last_autonomous_spoken_at = time.time()
         host._note_autonomous_spoken()
+
+        # V27.1: public text là điểm duy nhất được quyền consume một Subject
+        # intention. Trước điểm này Surface/gate/preemption đều có thể fail, nên
+        # tuyệt đối không chuyển lifecycle sớm hơn.
+        if subject_decision is not None:
+            intention_id = str(subject_decision.arguments.get("intention_id", "") or "").strip()
+            if not intention_id and candidate is not None and str(getattr(candidate, "source", "") or "").startswith("subject_initiative"):
+                intention_id = str(getattr(candidate, "anchor_id", "") or "").strip()
+            note_initiative_public = getattr(
+                getattr(host, "subject_service", None), "note_initiative_public_act", None
+            )
+            if intention_id and callable(note_initiative_public):
+                try:
+                    receipt = note_initiative_public(
+                        intention_id,
+                        now=host.last_autonomous_spoken_at,
+                        evidence_ref=str(plan.plan_id or f"autonomous:{context.turn_seq}"),
+                        persist=True,
+                    )
+                    host.logger.info(
+                        "[subject initiative] public act intention=%s status=awaiting_outcome revision=%s",
+                        intention_id,
+                        receipt.get("revision", 0) if isinstance(receipt, Mapping) else 0,
+                    )
+                except Exception as exc:
+                    host.logger.debug("[subject initiative] public-act lifecycle failed: %s", exc)
+
         self._commit_seed_lease(candidate)
         seed_store = getattr(host, "ai_random_chat_seed_store", None)
         seed_payload = getattr(candidate, "random_chat_seed", {}) if candidate is not None else {}

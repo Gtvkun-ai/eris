@@ -244,28 +244,54 @@ class RemoteCaptionClient:
                 ],
             }
         ]
-        try:
-            from runtime.inference_broker import inference_context
-            with inference_context(
-                "vision_ambient",
-                optional=True,
-                timeout_seconds=18.0,
-                cancel_scope="background:vision_caption",
-                coalesce_key="vision_caption:latest",
-                metadata={"operation": "vision_caption"},
-            ):
-                response = self._client.create_chat_completion(
-                    messages=messages,
-                    temperature=float(temperature),
-                    frequency_penalty=0.0,
-                    presence_penalty=0.0,
-                    max_tokens=int(max_tokens or self._max_tokens),
-                )
-        except Exception as exc:  # pragma: no cover - lỗi mạng/remote
-            if self._logger is not None and callable(getattr(self._logger, "warning", None)):
-                safe_log(self._logger, "warning", "[vision caption remote] lỗi: %s", exc)
-            return ""
-        return self._extract_text(response).strip()
+
+        def _do_call() -> str:
+            """Gọi caption một lần. Trả text hoặc chuỗi rỗng nếu lỗi/empty."""
+            call_kwargs: dict[str, Any] = {
+                "messages": messages,
+                "temperature": float(temperature),
+                "frequency_penalty": 0.0,
+                "presence_penalty": 0.0,
+                "max_tokens": int(max_tokens or self._max_tokens),
+            }
+            try:
+                from runtime.inference_broker import inference_context
+                with inference_context(
+                    "vision_ambient",
+                    optional=True,
+                    timeout_seconds=18.0,
+                    cancel_scope="background:vision_caption",
+                    coalesce_key="vision_caption:latest",
+                    metadata={"operation": "vision_caption"},
+                ):
+                    response = self._client.create_chat_completion(**call_kwargs)
+            except Exception as exc:  # pragma: no cover - lỗi mạng/remote
+                if self._logger is not None and callable(getattr(self._logger, "warning", None)):
+                    safe_log(self._logger, "warning", "[vision caption remote] lỗi: %s", exc)
+                return ""
+            return self._extract_text(response).strip()
+
+        result = _do_call()
+        if result:
+            return result
+
+        # Lần đầu trả rỗng (Groq/Qwen empty output bug) → thử lại một lần.
+        if self._logger is not None:
+            safe_log(
+                self._logger,
+                "warning",
+                "[vision caption remote] empty output, retrying once (model=%s)",
+                self.model_name,
+            )
+        result = _do_call()
+        if not result and self._logger is not None:
+            safe_log(
+                self._logger,
+                "warning",
+                "[vision caption remote] retry cũng trả rỗng, bỏ qua caption turn này (model=%s)",
+                self.model_name,
+            )
+        return result
 
 
 _ERROR_MARKERS = (

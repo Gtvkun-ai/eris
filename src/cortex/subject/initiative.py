@@ -51,8 +51,19 @@ class MotiveKind(StrEnum):
 
 
 class IntentionStatus(StrEnum):
+    """Vòng đời của một ý định, không chỉ cờ pending/đã xong.
+
+    ``EXPRESSED`` và ``AWAITING_OUTCOME`` cố ý tách nhau để causal trace có thể
+    chứng minh Eris đã thực sự phát ý định ra ngoài trước khi chờ phản ứng. Một
+    intention đang chờ outcome tuyệt đối không được materialize lại thành speech.
+    """
+
     PENDING = "pending"
+    EXPRESSED = "expressed"
+    AWAITING_OUTCOME = "awaiting_outcome"
     SATISFIED = "satisfied"
+    REVISED = "revised"
+    RETIRED = "retired"
     ABANDONED = "abandoned"
 
 
@@ -118,6 +129,12 @@ class PendingIntention:
     evidence_refs: tuple[str, ...]
     source_origin: ObservationOrigin
     status: IntentionStatus = IntentionStatus.PENDING
+    last_expressed_at: float = 0.0
+    last_outcome_at: float = 0.0
+    expression_count: int = 0
+    outcome_count: int = 0
+    cooldown_until: float = 0.0
+    last_public_evidence_ref: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "pressure", _clamp01(self.pressure))
@@ -137,6 +154,12 @@ class PendingIntention:
             "evidence_refs": list(self.evidence_refs),
             "source_origin": self.source_origin.value,
             "status": self.status.value,
+            "last_expressed_at": self.last_expressed_at,
+            "last_outcome_at": self.last_outcome_at,
+            "expression_count": self.expression_count,
+            "outcome_count": self.outcome_count,
+            "cooldown_until": self.cooldown_until,
+            "last_public_evidence_ref": self.last_public_evidence_ref,
         }
 
     @classmethod
@@ -153,6 +176,12 @@ class PendingIntention:
             evidence_refs=tuple(str(item) for item in payload.get("evidence_refs", ())),
             source_origin=ObservationOrigin(str(payload.get("source_origin") or ObservationOrigin.INTERNAL.value)),
             status=IntentionStatus(str(payload.get("status") or IntentionStatus.PENDING.value)),
+            last_expressed_at=float(payload.get("last_expressed_at", 0.0) or 0.0),
+            last_outcome_at=float(payload.get("last_outcome_at", 0.0) or 0.0),
+            expression_count=max(0, int(payload.get("expression_count", 0) or 0)),
+            outcome_count=max(0, int(payload.get("outcome_count", 0) or 0)),
+            cooldown_until=float(payload.get("cooldown_until", 0.0) or 0.0),
+            last_public_evidence_ref=str(payload.get("last_public_evidence_ref") or ""),
         )
 
 
@@ -206,6 +235,10 @@ class InitiativeConfig:
     motive_threshold: float = 0.24
     intention_threshold: float = 0.34
     intention_ttl_seconds: float = 1800.0
+    outcome_wait_seconds: float = 240.0
+    post_expression_cooldown_seconds: float = 180.0
+    low_engagement_cooldown_seconds: float = 420.0
+    satisfied_cooldown_seconds: float = 900.0
     max_motives: int = 8
     max_intentions: int = 8
 
@@ -386,26 +419,70 @@ class InitiativeEngine:
         motives = motives[: self.config.max_motives]
 
         satisfied = {str(item) for item in runtime.get("satisfied_intention_ids", ()) if str(item or "").strip()}
-        previous: list[PendingIntention] = []
-        for item in state.pending_intentions:
-            if item.intention_id in satisfied:
-                continue
-            if item.status != IntentionStatus.PENDING:
-                continue
-            if now - item.updated_at > self.config.intention_ttl_seconds:
-                continue
-            # Intention không biến mất chỉ vì origin đổi từ internal sang user.
-            # Đây là điểm giúp chat không reset thứ Eris đang định làm.
-            previous.append(replace(
-                item,
-                pressure=_clamp01(item.pressure * 0.94),
-                commitment_strength=_clamp01(item.commitment_strength * 0.985),
-                updated_at=now,
-            ))
 
-        by_key = {(item.motive_kind, item.target): item for item in previous}
+        # V27.1: lifecycle thật. Ý định đã nói không được quay lại PENDING chỉ vì
+        # Need vẫn còn cao ở tick sau. Ta giữ một tombstone ngắn theo (motive,target)
+        # để chặn đúng semantic family, thay vì dùng cooldown toàn bộ hội thoại.
+        previous_pending: list[PendingIntention] = []
+        lifecycle_records: list[PendingIntention] = []
+        blocked_keys: set[tuple[MotiveKind, str]] = set()
+        for item in state.pending_intentions:
+            key = (item.motive_kind, item.target)
+            if item.intention_id in satisfied:
+                item = replace(
+                    item,
+                    status=IntentionStatus.SATISFIED,
+                    last_outcome_at=now,
+                    outcome_count=item.outcome_count + 1,
+                    cooldown_until=max(item.cooldown_until, now + self.config.satisfied_cooldown_seconds),
+                    updated_at=now,
+                )
+
+            if item.status == IntentionStatus.PENDING:
+                if now - item.updated_at > self.config.intention_ttl_seconds:
+                    lifecycle_records.append(replace(
+                        item, status=IntentionStatus.RETIRED, updated_at=now,
+                        cooldown_until=max(item.cooldown_until, now + 60.0),
+                    ))
+                    blocked_keys.add(key)
+                    continue
+                # Intention không biến mất chỉ vì origin đổi từ internal sang user.
+                # Đây là điểm giúp chat không reset thứ Eris đang định làm.
+                previous_pending.append(replace(
+                    item,
+                    pressure=_clamp01(item.pressure * 0.94),
+                    commitment_strength=_clamp01(item.commitment_strength * 0.985),
+                    updated_at=now,
+                ))
+                continue
+
+            if item.status in {IntentionStatus.EXPRESSED, IntentionStatus.AWAITING_OUTCOME}:
+                expressed_at = item.last_expressed_at or item.updated_at
+                if now - expressed_at > self.config.outcome_wait_seconds:
+                    item = replace(
+                        item,
+                        status=IntentionStatus.REVISED,
+                        updated_at=now,
+                        cooldown_until=max(
+                            item.cooldown_until,
+                            now + self.config.low_engagement_cooldown_seconds,
+                        ),
+                    )
+                lifecycle_records.append(item)
+                blocked_keys.add(key)
+                continue
+
+            # SATISFIED/REVISED/RETIRED/ABANDONED là tombstone có hạn. Khi hết
+            # cooldown, motive tương lai được phép tạo intention mới với ID mới.
+            if now < item.cooldown_until:
+                lifecycle_records.append(item)
+                blocked_keys.add(key)
+
+        by_key = {(item.motive_kind, item.target): item for item in previous_pending}
         for motive in motives:
             key = (motive.kind, motive.target)
+            if key in blocked_keys:
+                continue
             existing = by_key.get(key)
             if motive.pressure < self.config.intention_threshold:
                 continue
@@ -432,16 +509,127 @@ class InitiativeEngine:
                     evidence_refs=_uniq((*existing.evidence_refs, *motive.evidence_refs), limit=12),
                 )
 
-        pending = sorted(
+        # Motive đang chờ outcome/cooldown không được tiếp tục tạo wake pressure.
+        # Need vẫn còn nguyên; chỉ semantic action family này đang tạm dừng.
+        visible_motives = tuple(
+            motive for motive in motives if (motive.kind, motive.target) not in blocked_keys
+        )
+        active_pending = sorted(
             by_key.values(),
             key=lambda item: item.pressure * (0.65 + 0.35 * item.commitment_strength),
             reverse=True,
-        )[: self.config.max_intentions]
+        )
+        lifecycle_records.sort(key=lambda item: item.updated_at, reverse=True)
+        combined = tuple((active_pending + lifecycle_records)[: self.config.max_intentions])
         return InitiativeState(
             revision=state.revision + 1,
             updated_at=now,
-            active_motives=tuple(motives),
-            pending_intentions=tuple(pending),
+            active_motives=visible_motives,
+            pending_intentions=combined,
+        )
+
+    def mark_expressed(
+        self,
+        state: InitiativeState,
+        *,
+        intention_id: str,
+        now: float,
+        evidence_ref: str = "",
+    ) -> InitiativeState:
+        """Đánh dấu semantic intention đã thật sự đi ra public surface."""
+        wanted = str(intention_id or "").strip()
+        if not wanted:
+            return state
+        changed = False
+        updated: list[PendingIntention] = []
+        for item in state.pending_intentions:
+            if item.intention_id != wanted or item.status != IntentionStatus.PENDING:
+                updated.append(item)
+                continue
+            changed = True
+            updated.append(replace(
+                item,
+                status=IntentionStatus.EXPRESSED,
+                last_expressed_at=float(now),
+                expression_count=item.expression_count + 1,
+                cooldown_until=max(item.cooldown_until, float(now) + self.config.post_expression_cooldown_seconds),
+                last_public_evidence_ref=str(evidence_ref or item.last_public_evidence_ref),
+                updated_at=float(now),
+            ))
+        if not changed:
+            return state
+        return InitiativeState(
+            revision=state.revision + 1, updated_at=float(now),
+            active_motives=state.active_motives, pending_intentions=tuple(updated),
+        )
+
+    def mark_awaiting_outcome(
+        self,
+        state: InitiativeState,
+        *,
+        intention_id: str,
+        now: float,
+    ) -> InitiativeState:
+        """Sau public commit, khóa intention khỏi materialization cho tới outcome."""
+        wanted = str(intention_id or "").strip()
+        changed = False
+        updated: list[PendingIntention] = []
+        for item in state.pending_intentions:
+            if item.intention_id == wanted and item.status == IntentionStatus.EXPRESSED:
+                changed = True
+                updated.append(replace(item, status=IntentionStatus.AWAITING_OUTCOME, updated_at=float(now)))
+            else:
+                updated.append(item)
+        if not changed:
+            return state
+        return InitiativeState(
+            revision=state.revision + 1, updated_at=float(now),
+            active_motives=state.active_motives, pending_intentions=tuple(updated),
+        )
+
+    def observe_user_outcome(
+        self,
+        state: InitiativeState,
+        *,
+        user_text: str,
+        now: float,
+    ) -> InitiativeState:
+        """Giải quyết intention đang chờ phản ứng bằng outcome tối thiểu có thật.
+
+        Không suy đoán cảm xúc user. Ta chỉ phân biệt phản hồi có nội dung với
+        acknowledgement rất ngắn. Probe gặp ``ok/ừ/...`` được REVISED rồi cooldown,
+        không được hỏi lại đúng chuyện đó sau vài giây.
+        """
+        raw = str(user_text or "").strip()
+        folded = raw.casefold().strip(" .!?…")
+        low_tokens = {"", "ok", "oki", "okay", "ừ", "uh", "ờ", "uhm", "ừm", "hmm", "hm", "ehm", "alo", "rồi"}
+        informative = len(folded) >= 4 and folded not in low_tokens
+        changed = False
+        updated: list[PendingIntention] = []
+        for item in state.pending_intentions:
+            if item.status not in {IntentionStatus.EXPRESSED, IntentionStatus.AWAITING_OUTCOME}:
+                updated.append(item)
+                continue
+            changed = True
+            if item.motive_kind == MotiveKind.UNDERSTAND_USER and not informative:
+                status = IntentionStatus.REVISED
+                cooldown = self.config.low_engagement_cooldown_seconds
+            else:
+                status = IntentionStatus.SATISFIED
+                cooldown = self.config.satisfied_cooldown_seconds
+            updated.append(replace(
+                item,
+                status=status,
+                last_outcome_at=float(now),
+                outcome_count=item.outcome_count + 1,
+                cooldown_until=max(item.cooldown_until, float(now) + cooldown),
+                updated_at=float(now),
+            ))
+        if not changed:
+            return state
+        return InitiativeState(
+            revision=state.revision + 1, updated_at=float(now),
+            active_motives=state.active_motives, pending_intentions=tuple(updated),
         )
 
 

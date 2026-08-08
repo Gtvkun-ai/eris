@@ -91,6 +91,11 @@ _ASSISTANT_ACT_KIND_ALIASES: dict[str, AssistantActKind] = {
     "accept_and_clarify_condition": AssistantActKind.ANSWER,
     "accept_invitation_with_condition": AssistantActKind.ANSWER,
     "acknowledge_and_question": AssistantActKind.QUESTION,
+    # Model đôi khi sinh "clarify" / "clarification" không có trong enum.
+    # Semantic gần nhất là QUESTION (đang hỏi lại để làm rõ).
+    "clarify": AssistantActKind.QUESTION,
+    "clarification": AssistantActKind.QUESTION,
+    "request_clarification": AssistantActKind.QUESTION,
 }
 
 

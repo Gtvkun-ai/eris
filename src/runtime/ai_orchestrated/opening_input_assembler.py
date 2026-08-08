@@ -243,6 +243,7 @@ def build_opening_input(
         restart_detected=bool(getattr(host, "restart_detected", False)),
         greeted_recently=bool(getattr(host, "greeted_recently", False)),
         open_loops=open_loops,
+        last_session_summary=last_session_summary,
         evidence_payloads=evidence_payloads,
         scene_partner=scene_partner,
         time_of_day=_time_of_day(current),

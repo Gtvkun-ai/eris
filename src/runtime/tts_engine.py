@@ -2221,7 +2221,6 @@ def _translate_to_japanese(text: str, api_key: str) -> str:
                 ),
                 "temperature": 0.15,
                 "max_output_tokens": 128,
-                "thinking_config": {"thinking_level": "minimal"},
             },
         )
         translated = (response.text or "").strip()

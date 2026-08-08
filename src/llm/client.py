@@ -861,7 +861,7 @@ class ChainedFallbackClient:
                     "ERIS_EXECUTIVE_DS2API_FAILFAST_TIMEOUT_S"
                     if executive_lane else "ERIS_DS2API_FAILFAST_TIMEOUT_S"
                 )
-                default_failfast = 12.0 if executive_lane else 90.0
+                default_failfast = 90.0
                 try:
                     failfast = float(os.environ.get(timeout_env, str(default_failfast)) or default_failfast)
                 except (TypeError, ValueError):
@@ -874,8 +874,6 @@ class ChainedFallbackClient:
                     try:
                         requested_value = float(requested)
                         if executive_lane:
-                            # Executive phải fail sang official nhanh; kéo timeout lên
-                            # 90s ở đây biến fallback thành đồ trang trí.
                             call_kwargs["timeout"] = min(requested_value, failfast)
                         elif os.environ.get("ERIS_DS2API_STRICT_TIMEOUT", "0") in {"1", "true"}:
                             call_kwargs["timeout"] = min(requested_value, failfast)

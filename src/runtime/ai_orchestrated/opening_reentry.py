@@ -105,6 +105,7 @@ def build_session_reentry_context(
     restart_detected: bool,
     greeted_recently: bool,
     open_loops: Sequence[str],
+    last_session_summary: str = "",
     evidence_payloads: Sequence[Mapping[str, Any]],
     scene_partner: Mapping[str, Any],
     time_of_day: str,
@@ -146,7 +147,11 @@ def build_session_reentry_context(
             strongest_scene_score = score
             strongest_scene = item
 
-    continuity = 0.78 if open_loops else 0.0
+    # last_session_summary là fallback yếu: Eris biết có chuyện từ session cũ
+    # nhưng không còn open_loop cụ thể. Boost 0.48 đủ để beat quiet_acknowledgement
+    # (0.42-0.58) nhưng vẫn thua open_loop thật (0.78).
+    has_summary = bool(str(last_session_summary or "").strip())
+    continuity = 0.78 if open_loops else (0.48 if has_summary else 0.0)
     scene = _clamp01(strongest_scene_score * (1.08 if time_of_day == "morning" else 1.0))
     familiar = str(scene_partner.get("closeness_band") or "new").lower() in {"familiar", "close"}
     tease_est = _clamp01(scene_partner.get("tease_tolerance_estimate", 0.35), 0.35)
@@ -188,6 +193,8 @@ def build_session_reentry_context(
     subjects: dict[str, str] = {}
     if open_loops:
         subjects["continue_thread"] = _compact(open_loops[0], 220)
+    elif has_summary:
+        subjects["continue_thread"] = _compact(last_session_summary, 220)
     if strongest_scene is not None:
         subjects["scene_comment"] = _compact(strongest_scene.get("subject") or strongest_scene.get("claim"), 220)
     for source_kind, motive in (
