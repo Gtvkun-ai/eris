@@ -257,12 +257,14 @@ class RandomChatSeedReservoir:
         *,
         seed_store: RandomChatSeedAffinityStore | None = None,
         wake_callback: Callable[[], Any] | None = None,
+        status_callback: Callable[..., Any] | None = None,
         logger: Any | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.generator = generator
         self.seed_store = seed_store
         self.wake_callback = wake_callback
+        self.status_callback = status_callback
         self.logger = logger
         self.clock = clock
         self.enabled = bool(
@@ -489,6 +491,15 @@ class RandomChatSeedReservoir:
                 ],
             }
 
+    def _status(self, **payload: Any) -> None:
+        callback = self.status_callback
+        if not callable(callback):
+            return
+        try:
+            callback(**payload)
+        except Exception as exc:
+            self._log("debug", "[random chat seed] status callback failed: %s", exc)
+
     def _run(self) -> None:
         while True:
             with self._condition:
@@ -508,6 +519,14 @@ class RandomChatSeedReservoir:
                 self._last_generate_at = current
                 self._next_generate_at = current + self.min_generate_interval
 
+            self._status(
+                activity="random_chat_seed",
+                phase="generating",
+                label="Đang chuẩn bị chuyện để nói…",
+                active=True,
+                tone="info",
+                priority=20,
+            )
             try:
                 seed = self.generator.generate(request)
             except Exception as exc:  # last-resort containment
@@ -519,6 +538,9 @@ class RandomChatSeedReservoir:
 
             current = float(self.clock())
             wake = False
+            allowed = False
+            reason = ""
+            ready_count = 0
             with self._condition:
                 if failed:
                     self._next_generate_at = max(self._next_generate_at, current + self.error_backoff)
@@ -554,7 +576,50 @@ class RandomChatSeedReservoir:
                         )
                     else:
                         self._log("debug", "[random chat seed] generated seed rejected reason=%s", reason)
+                ready_count = len(self._entries)
                 self._condition.notify_all()
+
+            if failed:
+                self._status(
+                    activity="random_chat_seed",
+                    phase="retry_wait",
+                    label="Có lỗi, sẽ thử lại…",
+                    active=False,
+                    tone="warning",
+                    priority=20,
+                    notice_ms=4500,
+                )
+            elif not seed.available:
+                self._status(
+                    activity="random_chat_seed",
+                    phase="no_candidate",
+                    label="Chưa có gì để nói",
+                    active=False,
+                    tone="muted",
+                    priority=20,
+                    notice_ms=2200,
+                )
+            elif allowed:
+                self._status(
+                    activity="random_chat_seed",
+                    phase="ready",
+                    label="Đã chuẩn bị xong",
+                    active=False,
+                    tone="success",
+                    priority=20,
+                    notice_ms=1800,
+                )
+            else:
+                self._status(
+                    activity="random_chat_seed",
+                    phase="rejected",
+                    label="Đang thử ý khác…",
+                    active=False,
+                    tone="warning",
+                    priority=20,
+                    notice_ms=2600,
+                    detail=reason,
+                )
 
             if wake and callable(self.wake_callback):
                 try:

@@ -61,6 +61,7 @@ from runtime.public_payload_policy import sanitize_body_payload
 from runtime.public_turn_ledger import PublicTurnLedger
 from runtime.public_turn_runtime import PublicTurnRuntime
 from runtime.repair_state import RepairStateController
+from runtime.runtime_status import emit_runtime_status
 from runtime.signal_buffer import SignalBuffer, SignalBufferConfig
 from runtime.source_grounding import SourceGroundingEngine
 from runtime.stage_contracts import StageFrameBuilder
@@ -128,13 +129,40 @@ class CoordinatorBootstrapMixin:
             )
 
     def _run_bootstrap_phase(self, phase: str, callback, /, **kwargs) -> None:
-        name = f"runtime.bootstrap.{str(phase or '').strip().lower()}"
+        normalized_phase = str(phase or "").strip().lower()
+        name = f"runtime.bootstrap.{normalized_phase}"
         registry = getattr(self, "subsystem_health_registry", None)
         if registry is not None:
             registry.mark_starting(name)
+
+        phase_labels = {
+            "memory_and_capabilities": "Đang chuẩn bị…",
+            "hardening_and_state": "Đang chuẩn bị…",
+            "cognition_services": "Đang khởi động…",
+            "session_and_perception": "Đang khởi động…",
+            "thought_and_ai": "Sắp xong…",
+        }
+        emit_runtime_status(
+            self,
+            activity="startup",
+            phase=normalized_phase,
+            label=phase_labels.get(normalized_phase, "Đang khởi động…"),
+            active=True,
+            tone="info",
+            priority=88,
+        )
         try:
             callback(**kwargs)
         except Exception as exc:
+            emit_runtime_status(
+                self,
+                activity="startup",
+                phase=f"{normalized_phase}_failed",
+                label="Khởi động bị lỗi",
+                active=True,
+                tone="error",
+                priority=100,
+            )
             if registry is not None:
                 registry.record_failure(
                     name,

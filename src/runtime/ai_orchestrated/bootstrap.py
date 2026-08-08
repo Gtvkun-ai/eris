@@ -13,6 +13,7 @@ from runtime.engagements.snapshot_journal import EngagementSnapshotJournal
 from runtime.diagnostic_logging import safe_log
 from runtime.policy_settings import AIRuntimeSettings, ChessBridgeSettings, EngagementSettings, HealthSettings
 from runtime.subsystem_health import FailureKind, SubsystemHealthRegistry
+from runtime.runtime_status import emit_runtime_status
 
 from .atomic_state import atomic_store_from_env
 from .contracts import AI_RUNTIME_VERSION, RuntimeMindState
@@ -385,6 +386,7 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
         random_chat_seed_generator,
         seed_store=random_chat_seed_store,
         wake_callback=getattr(host, "_wake_autonomous_loop", None),
+        status_callback=lambda **payload: emit_runtime_status(host, **payload),
         logger=getattr(host, "logger", None),
         clock=runtime_clock,
     )

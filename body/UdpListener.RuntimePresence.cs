@@ -21,6 +21,16 @@ public partial class UdpListener : Node2D
 		public string LastEventType = "";
 		public string LifecycleState = "IDLE";
 		public string StatusLabel = "";
+		public string StatusTone = "active";
+		public string RuntimeActivityKey = "";
+		public string RuntimeActivityLabel = "";
+		public string RuntimeActivityTone = "info";
+		public string RuntimeActivityBaseLabel = "";
+		public int RuntimeActivityPriority;
+		public int RuntimeActivityWarningLevel;
+		public bool RuntimeActivityActive;
+		public ulong RuntimeActivityNoticeUntilMs;
+		public ulong RuntimeActivityUpdatedAtMs;
 		public string SessionId = "";
 		public long EventSeq;
 		public float ThoughtPressure;
@@ -31,6 +41,8 @@ public partial class UdpListener : Node2D
 		public bool ReachedSpeaking;
 		public ulong NoticeUntilMs;
 		public ulong LastPacketAtMs;
+		public ulong LastProgressAtMs;
+		public int ProgressWarningLevel;
 		public ulong LastAffectAtMs;
 	}
 
@@ -38,6 +50,7 @@ public partial class UdpListener : Node2D
 	private ulong _runtimePresenceLastUiRefreshMs;
 	private PanelContainer _runtimePresenceIndicator;
 	private Label _runtimePresenceIndicatorLabel;
+	private StyleBoxFlat _runtimePresenceIndicatorStyle;
 	private string _runtimePresenceAvatarReadySession = "";
 
 	private void TryCaptureRuntimePresence(string raw)
@@ -87,7 +100,7 @@ public partial class UdpListener : Node2D
 			if (!string.IsNullOrWhiteSpace(lifecycleState))
 				_runtimePresence.LifecycleState = lifecycleState;
 			string statusLabel = RuntimePresenceString(data, "label").Trim();
-			if (!string.IsNullOrWhiteSpace(statusLabel))
+			if (eventType != "runtime_status" && !string.IsNullOrWhiteSpace(statusLabel))
 				_runtimePresence.StatusLabel = statusLabel;
 			string topSource = RuntimePresenceString(root, "source");
 			string dataSource = RuntimePresenceString(data, "source");
@@ -123,6 +136,9 @@ public partial class UdpListener : Node2D
 			if (!string.IsNullOrWhiteSpace(explicitMotion))
 				_runtimePresence.Motion = explicitMotion;
 
+			if (eventType == "runtime_status")
+				ApplyRuntimeActivityStatus(data);
+
 			switch (eventType)
 			{
 				case "received":
@@ -150,6 +166,9 @@ public partial class UdpListener : Node2D
 					_runtimePresence.ReachedSpeaking = true;
 					_runtimePresence.NoticeUntilMs = 0;
 					_runtimePresence.StatusLabel = "";
+					_runtimePresence.StatusTone = "success";
+					_runtimePresence.LastProgressAtMs = Time.GetTicksMsec();
+					_runtimePresence.ProgressWarningLevel = 0;
 					_runtimePresence.Stage = "speaking";
 					break;
 				case "degraded":
@@ -198,19 +217,68 @@ public partial class UdpListener : Node2D
 	private void TickRuntimePresencePanel()
 	{
 		ulong now = Time.GetTicksMsec();
+		bool indicatorChanged = false;
 		if (_runtimePresence.NoticeUntilMs > 0 && now >= _runtimePresence.NoticeUntilMs)
 		{
 			_runtimePresence.NoticeUntilMs = 0;
 			_runtimePresence.StatusLabel = "";
-			RefreshRuntimePresenceIndicator();
+			indicatorChanged = true;
 		}
-		if ((_runtimePresence.Thinking || _runtimePresence.Speaking)
-			&& _runtimePresence.LastPacketAtMs > 0
-			&& now - _runtimePresence.LastPacketAtMs > 45000)
+		if (_runtimePresence.RuntimeActivityNoticeUntilMs > 0 && now >= _runtimePresence.RuntimeActivityNoticeUntilMs)
 		{
-			SetRuntimePresenceTerminal("idle");
-			RefreshRuntimePresenceIndicator();
+			_runtimePresence.RuntimeActivityNoticeUntilMs = 0;
+			_runtimePresence.RuntimeActivityLabel = "";
+			_runtimePresence.RuntimeActivityBaseLabel = "";
+			_runtimePresence.RuntimeActivityKey = "";
+			_runtimePresence.RuntimeActivityPriority = 0;
+			_runtimePresence.RuntimeActivityWarningLevel = 0;
+			indicatorChanged = true;
 		}
+
+		// Không tự biến mất sau 45 giây nữa. Nếu lifecycle im quá lâu,
+		// đổi màu để người dùng phân biệt runtime đang chậm với trạng thái mất tiến triển.
+		if (_runtimePresence.Thinking && _runtimePresence.LastProgressAtMs > 0)
+		{
+			ulong progressAge = now - _runtimePresence.LastProgressAtMs;
+			if (progressAge >= 75000 && _runtimePresence.ProgressWarningLevel < 2)
+			{
+				_runtimePresence.ProgressWarningLevel = 2;
+				_runtimePresence.Stage = "stalled";
+				_runtimePresence.StatusLabel = "Có vẻ đang bị kẹt";
+				_runtimePresence.StatusTone = "error";
+				indicatorChanged = true;
+			}
+			else if (progressAge >= 25000 && _runtimePresence.ProgressWarningLevel < 1)
+			{
+				_runtimePresence.ProgressWarningLevel = 1;
+				_runtimePresence.StatusLabel = "Đang chạy hơi lâu…";
+				_runtimePresence.StatusTone = "warning";
+				indicatorChanged = true;
+			}
+		}
+		if (!_runtimePresence.Thinking
+			&& _runtimePresence.RuntimeActivityActive
+			&& _runtimePresence.RuntimeActivityUpdatedAtMs > 0)
+		{
+			ulong activityAge = now - _runtimePresence.RuntimeActivityUpdatedAtMs;
+			if (activityAge >= 90000 && _runtimePresence.RuntimeActivityWarningLevel < 2)
+			{
+				_runtimePresence.RuntimeActivityWarningLevel = 2;
+				_runtimePresence.RuntimeActivityLabel = "Có vẻ đang bị kẹt";
+				_runtimePresence.RuntimeActivityTone = "error";
+				indicatorChanged = true;
+			}
+			else if (activityAge >= 30000 && _runtimePresence.RuntimeActivityWarningLevel < 1)
+			{
+				_runtimePresence.RuntimeActivityWarningLevel = 1;
+				_runtimePresence.RuntimeActivityLabel = "Đang chạy hơi lâu…";
+				_runtimePresence.RuntimeActivityTone = "warning";
+				indicatorChanged = true;
+			}
+		}
+		if (indicatorChanged)
+			RefreshRuntimePresenceIndicator();
+
 		if (_emotionPanel == null || !_emotionPanel.Visible)
 			return;
 		if (now - _runtimePresenceLastUiRefreshMs < 500)
@@ -235,12 +303,21 @@ public partial class UdpListener : Node2D
 		_runtimePresence.Speaking = false;
 		_runtimePresence.NoticeUntilMs = 0;
 		_runtimePresence.Stage = stage;
+		_runtimePresence.LastProgressAtMs = Time.GetTicksMsec();
+		_runtimePresence.ProgressWarningLevel = 0;
 		_runtimePresence.StatusLabel = stage switch
 		{
-			"received" => "Đã nhận yêu cầu…",
+			"received" => "Đã nhận…",
 			"content_committed" => "Đang chuẩn bị trả lời…",
 			"audio_buffering" => "Đang chuẩn bị giọng…",
 			_ => "Đang suy nghĩ…",
+		};
+		_runtimePresence.StatusTone = stage switch
+		{
+			"received" => "info",
+			"content_committed" => "success",
+			"audio_buffering" => "info",
+			_ => "active",
 		};
 	}
 
@@ -248,15 +325,31 @@ public partial class UdpListener : Node2D
 	{
 		_runtimePresence.Speaking = false;
 		_runtimePresence.Thinking = false;
+		_runtimePresence.ProgressWarningLevel = 0;
 		_runtimePresence.Stage = stage;
+		ulong now = Time.GetTicksMsec();
 		if (showSilentNotice)
 		{
-			_runtimePresence.StatusLabel = "Không phát lời";
-			_runtimePresence.NoticeUntilMs = Time.GetTicksMsec() + 1600;
+			_runtimePresence.StatusLabel = "Đã chọn im lặng";
+			_runtimePresence.StatusTone = "warning";
+			_runtimePresence.NoticeUntilMs = now + 5200;
+		}
+		else if (stage == "degraded")
+		{
+			_runtimePresence.StatusLabel = "Có lỗi, nhưng vẫn còn chạy";
+			_runtimePresence.StatusTone = "error";
+			_runtimePresence.NoticeUntilMs = now + 8000;
+		}
+		else if (stage == "interrupted")
+		{
+			_runtimePresence.StatusLabel = "Đã bị ngắt";
+			_runtimePresence.StatusTone = "warning";
+			_runtimePresence.NoticeUntilMs = now + 3600;
 		}
 		else
 		{
 			_runtimePresence.StatusLabel = "";
+			_runtimePresence.StatusTone = "muted";
 			_runtimePresence.NoticeUntilMs = 0;
 		}
 	}
@@ -271,6 +364,9 @@ public partial class UdpListener : Node2D
 				_runtimePresence.ReachedSpeaking = true;
 				_runtimePresence.NoticeUntilMs = 0;
 				_runtimePresence.StatusLabel = "";
+				_runtimePresence.StatusTone = "success";
+				_runtimePresence.LastProgressAtMs = Time.GetTicksMsec();
+				_runtimePresence.ProgressWarningLevel = 0;
 				_runtimePresence.Stage = "speaking";
 				break;
 			case "DEGRADED":
@@ -284,9 +380,73 @@ public partial class UdpListener : Node2D
 				break;
 			default:
 				_runtimePresence.Thinking = false;
+				_runtimePresence.ProgressWarningLevel = 0;
 				_runtimePresence.Stage = "settling";
+				_runtimePresence.StatusLabel = "Đang chờ…";
+				_runtimePresence.StatusTone = "muted";
+				_runtimePresence.NoticeUntilMs = Time.GetTicksMsec() + 2200;
 				break;
 		}
+	}
+
+	private void ApplyRuntimeActivityStatus(JsonElement data)
+	{
+		if (data.ValueKind != JsonValueKind.Object)
+			return;
+		string activity = RuntimePresenceString(data, "activity").Trim().ToLowerInvariant();
+		string label = RuntimePresenceString(data, "label").Trim();
+		string tone = RuntimePresenceString(data, "tone").Trim().ToLowerInvariant();
+		string phase = RuntimePresenceString(data, "phase").Trim().ToLowerInvariant();
+		bool active = RuntimePresenceBool(data, "active", true);
+		int priority = RuntimePresenceInt(data, "priority", 50);
+		int noticeMs = RuntimePresenceInt(data, "notice_ms", 0);
+		ulong now = Time.GetTicksMsec();
+
+		if (string.IsNullOrWhiteSpace(activity))
+			activity = "runtime";
+		if (string.IsNullOrWhiteSpace(tone))
+			tone = active ? "info" : "muted";
+
+		bool sameActivity = string.Equals(_runtimePresence.RuntimeActivityKey, activity, StringComparison.Ordinal);
+		bool currentExpired = !_runtimePresence.RuntimeActivityActive
+			&& _runtimePresence.RuntimeActivityNoticeUntilMs <= now;
+		if (!sameActivity && !currentExpired && priority < _runtimePresence.RuntimeActivityPriority)
+			return;
+
+		_runtimePresence.RuntimeActivityKey = activity;
+		_runtimePresence.RuntimeActivityPriority = Math.Clamp(priority, 0, 100);
+		_runtimePresence.RuntimeActivityTone = NormalizeRuntimePresenceTone(tone);
+		_runtimePresence.RuntimeActivityUpdatedAtMs = now;
+		_runtimePresence.RuntimeActivityWarningLevel = 0;
+		if (!string.IsNullOrWhiteSpace(label))
+		{
+			_runtimePresence.RuntimeActivityLabel = label;
+			_runtimePresence.RuntimeActivityBaseLabel = label;
+		}
+
+		if (active)
+		{
+			_runtimePresence.RuntimeActivityActive = true;
+			_runtimePresence.RuntimeActivityNoticeUntilMs = 0;
+		}
+		else
+		{
+			_runtimePresence.RuntimeActivityActive = false;
+			_runtimePresence.RuntimeActivityNoticeUntilMs = noticeMs > 0
+				? now + (ulong)Math.Clamp(noticeMs, 0, 30000)
+				: 0;
+			if (_runtimePresence.RuntimeActivityNoticeUntilMs == 0)
+			{
+				_runtimePresence.RuntimeActivityLabel = "";
+				_runtimePresence.RuntimeActivityBaseLabel = "";
+				_runtimePresence.RuntimeActivityKey = "";
+				_runtimePresence.RuntimeActivityPriority = 0;
+				_runtimePresence.RuntimeActivityWarningLevel = 0;
+			}
+		}
+
+		if (activity == "startup" && !string.IsNullOrWhiteSpace(phase))
+			_runtimePresence.StageSource = $"startup:{phase}";
 	}
 
 	private void ApplyRuntimePresencePose(string eventType, string lifecycleState)
@@ -316,19 +476,40 @@ public partial class UdpListener : Node2D
 	private void RefreshRuntimePresenceIndicator()
 	{
 		RefreshConversationPresenceFromRuntime();
-		bool visible = (_runtimePresence.Thinking && !_runtimePresence.Speaking)
-			|| (_runtimePresence.NoticeUntilMs > Time.GetTicksMsec());
+		ulong now = Time.GetTicksMsec();
+		bool thinkingVisible = _runtimePresence.Thinking && !_runtimePresence.Speaking;
+		bool noticeVisible = _runtimePresence.NoticeUntilMs > now;
+		bool activityVisible = _runtimePresence.RuntimeActivityActive
+			|| _runtimePresence.RuntimeActivityNoticeUntilMs > now;
+		bool visible = thinkingVisible || noticeVisible || activityVisible;
 		if (!visible && _runtimePresenceIndicator == null)
 			return;
 		EnsureRuntimePresenceIndicator();
 		if (_runtimePresenceIndicator == null || _runtimePresenceIndicatorLabel == null)
 			return;
 
+		string label;
+		string tone;
+		if (thinkingVisible || noticeVisible)
+		{
+			label = string.IsNullOrWhiteSpace(_runtimePresence.StatusLabel)
+				? "Đang suy nghĩ…"
+				: _runtimePresence.StatusLabel;
+			tone = _runtimePresence.StatusTone;
+		}
+		else
+		{
+			label = string.IsNullOrWhiteSpace(_runtimePresence.RuntimeActivityLabel)
+				? "Đang chạy…"
+				: _runtimePresence.RuntimeActivityLabel;
+			tone = _runtimePresence.RuntimeActivityTone;
+		}
+
 		bool wasVisible = _runtimePresenceIndicator.Visible;
 		EnsureControlOnCanvasLayer(_runtimePresenceIndicator, 1000);
-		_runtimePresenceIndicatorLabel.Text = string.IsNullOrWhiteSpace(_runtimePresence.StatusLabel)
-			? "Đang suy nghĩ…"
-			: _runtimePresence.StatusLabel;
+		_runtimePresenceIndicatorLabel.Text = label;
+		ApplyRuntimePresenceIndicatorTone(tone);
+		ApplyRuntimePresenceIndicatorWidth(label);
 		_runtimePresenceIndicator.Visible = visible;
 		if (visible)
 			EnsureControlOnCanvasLayer(_runtimePresenceIndicator, 1000);
@@ -365,7 +546,7 @@ public partial class UdpListener : Node2D
 		panel.OffsetRight = 98f;
 		panel.OffsetTop = 18f;
 		panel.OffsetBottom = 56f;
-		panel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		var indicatorStyle = new StyleBoxFlat
 		{
 			BgColor = new Color(0.035f, 0.10f, 0.065f, 0.92f),
 			BorderColor = new Color(0.21f, 0.79f, 0.47f, 0.82f),
@@ -383,7 +564,8 @@ public partial class UdpListener : Node2D
 			ContentMarginBottom = 7f,
 			ShadowColor = new Color(0f, 0f, 0f, 0.28f),
 			ShadowSize = 3,
-		});
+		};
+		panel.AddThemeStyleboxOverride("panel", indicatorStyle);
 
 		var label = new Label
 		{
@@ -398,6 +580,66 @@ public partial class UdpListener : Node2D
 		root.AddChild(panel);
 		_runtimePresenceIndicator = panel;
 		_runtimePresenceIndicatorLabel = label;
+		_runtimePresenceIndicatorStyle = indicatorStyle;
+	}
+
+	private void ApplyRuntimePresenceIndicatorTone(string tone)
+	{
+		if (_runtimePresenceIndicatorStyle == null || _runtimePresenceIndicatorLabel == null)
+			return;
+		string normalized = NormalizeRuntimePresenceTone(tone);
+		Color background;
+		Color border;
+		Color text;
+		switch (normalized)
+		{
+			case "info":
+				background = new Color(0.035f, 0.085f, 0.12f, 0.94f);
+				border = new Color(0.25f, 0.67f, 0.90f, 0.90f);
+				text = new Color(0.91f, 0.97f, 1f, 1f);
+				break;
+			case "warning":
+				background = new Color(0.14f, 0.085f, 0.025f, 0.95f);
+				border = new Color(0.96f, 0.57f, 0.20f, 0.95f);
+				text = new Color(1f, 0.94f, 0.83f, 1f);
+				break;
+			case "error":
+				background = new Color(0.15f, 0.035f, 0.04f, 0.96f);
+				border = new Color(0.94f, 0.27f, 0.30f, 0.96f);
+				text = new Color(1f, 0.90f, 0.90f, 1f);
+				break;
+			case "muted":
+				background = new Color(0.075f, 0.075f, 0.08f, 0.92f);
+				border = new Color(0.47f, 0.48f, 0.52f, 0.82f);
+				text = new Color(0.91f, 0.91f, 0.93f, 1f);
+				break;
+			default:
+				background = new Color(0.035f, 0.10f, 0.065f, 0.94f);
+				border = new Color(0.21f, 0.79f, 0.47f, 0.90f);
+				text = new Color(0.91f, 0.98f, 0.94f, 1f);
+				break;
+		}
+		_runtimePresenceIndicatorStyle.BgColor = background;
+		_runtimePresenceIndicatorStyle.BorderColor = border;
+		_runtimePresenceIndicatorLabel.AddThemeColorOverride("font_color", text);
+	}
+
+	private void ApplyRuntimePresenceIndicatorWidth(string text)
+	{
+		if (_runtimePresenceIndicator == null)
+			return;
+		float width = Mathf.Clamp(82f + Math.Max(0, (text ?? "").Length) * 7.15f, 196f, 430f);
+		_runtimePresenceIndicator.CustomMinimumSize = new Vector2(width, 38f);
+		_runtimePresenceIndicator.OffsetLeft = -width * 0.5f;
+		_runtimePresenceIndicator.OffsetRight = width * 0.5f;
+	}
+
+	private static string NormalizeRuntimePresenceTone(string tone)
+	{
+		string normalized = (tone ?? "").Trim().ToLowerInvariant();
+		return normalized is "info" or "active" or "success" or "warning" or "error" or "muted"
+			? normalized
+			: "active";
 	}
 
 	private bool AcceptStageEvent(string sessionId, long eventSeq)
@@ -408,6 +650,19 @@ public partial class UdpListener : Node2D
 			_runtimePresence.SessionId = sessionId;
 			_runtimePresence.EventSeq = 0;
 			_runtimePresence.TurnId = "";
+			_runtimePresence.Speaking = false;
+			_runtimePresence.Thinking = false;
+			_runtimePresence.ReachedSpeaking = false;
+			_runtimePresence.NoticeUntilMs = 0;
+			_runtimePresence.StatusLabel = "";
+			_runtimePresence.ProgressWarningLevel = 0;
+			_runtimePresence.RuntimeActivityKey = "";
+			_runtimePresence.RuntimeActivityLabel = "";
+			_runtimePresence.RuntimeActivityBaseLabel = "";
+			_runtimePresence.RuntimeActivityPriority = 0;
+			_runtimePresence.RuntimeActivityWarningLevel = 0;
+			_runtimePresence.RuntimeActivityActive = false;
+			_runtimePresence.RuntimeActivityNoticeUntilMs = 0;
 		}
 		if (eventSeq <= 0)
 			return true;
@@ -599,6 +854,16 @@ public partial class UdpListener : Node2D
 		_runtimePresence.LastEventType = "";
 		_runtimePresence.LifecycleState = "IDLE";
 		_runtimePresence.StatusLabel = "";
+		_runtimePresence.StatusTone = "active";
+		_runtimePresence.RuntimeActivityKey = "";
+		_runtimePresence.RuntimeActivityLabel = "";
+		_runtimePresence.RuntimeActivityTone = "info";
+		_runtimePresence.RuntimeActivityBaseLabel = "";
+		_runtimePresence.RuntimeActivityPriority = 0;
+		_runtimePresence.RuntimeActivityWarningLevel = 0;
+		_runtimePresence.RuntimeActivityActive = false;
+		_runtimePresence.RuntimeActivityNoticeUntilMs = 0;
+		_runtimePresence.RuntimeActivityUpdatedAtMs = 0;
 		_runtimePresence.SessionId = "";
 		_runtimePresence.EventSeq = 0;
 		_runtimePresenceAvatarReadySession = "";
@@ -607,7 +872,10 @@ public partial class UdpListener : Node2D
 		_runtimePresence.DiaryUpdated = false;
 		_runtimePresence.Speaking = false;
 		_runtimePresence.Thinking = false;
+		_runtimePresence.NoticeUntilMs = 0;
 		_runtimePresence.LastPacketAtMs = 0;
+		_runtimePresence.LastProgressAtMs = 0;
+		_runtimePresence.ProgressWarningLevel = 0;
 		_runtimePresence.LastAffectAtMs = 0;
 		_runtimePresenceLastUiRefreshMs = 0;
 		if (_runtimePresenceIndicator != null)
@@ -654,6 +922,7 @@ public partial class UdpListener : Node2D
 		"speaking", "done", "degraded", "interrupted", "continuation_cancelled",
 		"stage_segment_prepare", "stage_segment_queued", "tts_audio_ready",
 		"audio_playback_started", "audio_playback_done", "stage_segment_cancelled", "stage_segment_failed",
+		"runtime_status",
 	};
 
 	private static JsonElement RuntimePresenceObject(JsonElement root, string key)
@@ -677,6 +946,14 @@ public partial class UdpListener : Node2D
 		return value.ValueKind == JsonValueKind.True ? true : value.ValueKind == JsonValueKind.False ? false : fallback;
 	}
 
+	private static int RuntimePresenceInt(JsonElement root, string key, int fallback)
+	{
+		if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty(key, out JsonElement value)
+			|| value.ValueKind != JsonValueKind.Number || !value.TryGetInt32(out int number))
+			return fallback;
+		return number;
+	}
+
 	private static long RuntimePresenceLong(JsonElement root, string key, long fallback)
 	{
 		if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty(key, out JsonElement value)
@@ -693,6 +970,15 @@ public partial class UdpListener : Node2D
 		return signed ? Mathf.Clamp(number, -1f, 1f) : Mathf.Clamp(number, 0f, 1f);
 	}
 
+	private static string RuntimePresenceActivityVi(string activity) => (activity ?? "").Trim().ToLowerInvariant() switch
+	{
+		"startup" => "Khởi động Eris",
+		"random_chat_seed" => "Tạo seed nền",
+		"autonomous_deliberation" => "Cân nhắc tự chủ",
+		"memory_bootstrap" => "Nạp bộ nhớ",
+		_ => "Tác vụ runtime",
+	};
+
 	private static string RuntimePresenceStageVi(string stage) => stage switch
 	{
 		"received" => "đã nhận lượt",
@@ -705,6 +991,7 @@ public partial class UdpListener : Node2D
 		"staged" => "đã xếp câu diễn",
 		"planning" => "đang dựng nhịp",
 		"settling" => "đang hạ nhịp",
+		"stalled" => "chưa thấy tiến triển mới",
 		"afterglow" => "dư âm sau câu nói",
 		_ => "idle sống",
 	};

@@ -58,6 +58,7 @@ from runtime.private_mind_daemon import PrivateMindDaemon
 from runtime.public_payload_policy import sanitize_body_payload
 from runtime.public_turn_ledger import PublicTurnLedger
 from runtime.public_turn_runtime import PublicTurnRuntime
+from runtime.runtime_status import emit_runtime_status
 from runtime.repair_state import RepairStateController
 from runtime.signal_buffer import SignalBuffer, SignalBufferConfig
 from runtime.source_grounding import SourceGroundingEngine
@@ -205,6 +206,17 @@ class AutonomousLoopRuntimeMixin:
         except Exception as exc:
             startup_failed = True
             self._ai_startup_ran = False
+            emit_runtime_status(
+                self,
+                activity="startup",
+                phase="retry_wait",
+                label="Khởi động lỗi, đang thử lại…",
+                active=True,
+                tone="warning",
+                priority=95,
+                notice_ms=0,
+                detail=type(exc).__name__,
+            )
             formatted = " | ".join(
                 line.strip() for line in traceback.format_exc().strip().splitlines() if line.strip()
             )
@@ -233,6 +245,17 @@ class AutonomousLoopRuntimeMixin:
                 orchestrator.run_startup()
             except Exception as exc:
                 self._ai_startup_ran = False
+                emit_runtime_status(
+                    self,
+                    activity="startup",
+                    phase="failed",
+                    label="Không khởi động được",
+                    active=True,
+                    tone="error",
+                    priority=100,
+                    notice_ms=0,
+                    detail=type(exc).__name__,
+                )
                 formatted = " | ".join(
                     line.strip() for line in traceback.format_exc().strip().splitlines() if line.strip()
                 )

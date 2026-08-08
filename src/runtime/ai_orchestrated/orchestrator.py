@@ -25,6 +25,7 @@ from runtime.public_reply_context import compile_public_reply_context
 from runtime.reply_obligation import enforce_reply_obligation
 from runtime.subject_initiative_runtime import build_initiative_runtime_context
 from runtime.observability import ensure_observability
+from runtime.runtime_status import emit_runtime_status
 from runtime.chess.surface import (
     authoritative_chess_answer_text,
     chess_move_question,
@@ -1839,10 +1840,28 @@ class AIAutonomousOrchestrator:
         if not enabled or bool(getattr(host, "_ai_startup_ran", False)):
             return False
         host._ai_startup_ran = True
+        emit_runtime_status(
+            host,
+            activity="startup",
+            phase="grounding",
+            label="Đang khởi động…",
+            active=True,
+            tone="info",
+            priority=90,
+        )
 
         # UIA/OCR phải chạy trước câu mở đầu. Bản cũ chào xong mới start worker,
         # tức là Eris bị buộc phải "có chất riêng" trong khi mắt còn nhắm.
         startup_grounding = collect_startup_grounding(host)
+        emit_runtime_status(
+            host,
+            activity="startup",
+            phase="planning",
+            label="Đang chuẩn bị…",
+            active=True,
+            tone="active",
+            priority=90,
+        )
         host.logger.info(
             "[architecture C startup grounding] direct=%s strong=%s telemetry_tab=%s evidence=%s runtime_opening=%s metadata=%s backend=%s wait=%.2fs notes=%s",
             int(startup_grounding.has_direct_screen_evidence),
@@ -1859,6 +1878,16 @@ class AIAutonomousOrchestrator:
         # bắt đầu trong lúc prime UIA/OCR, nhường lượt này và để chat sở hữu loa.
         if bool(getattr(host, "chat_mode", False)) or bool(getattr(host, "_chat_processing", False)):
             host.logger.info("[architecture C startup] preempted_by_chat")
+            emit_runtime_status(
+                host,
+                activity="startup",
+                phase="preempted",
+                label="Đã nhường lượt",
+                active=False,
+                tone="muted",
+                priority=90,
+                notice_ms=1800,
+            )
             return False
 
         state = host.ai_state_reducer.snapshot()
@@ -1945,6 +1974,15 @@ class AIAutonomousOrchestrator:
                     fields={"candidate_count": len(candidates)},
                 )
                 try:
+                    emit_runtime_status(
+                        host,
+                        activity="startup",
+                        phase="model_planning",
+                        label="Đang suy nghĩ…",
+                        active=True,
+                        tone="active",
+                        priority=90,
+                    )
                     result = opening_planner_fn(opening_input=input_payload, candidates=candidates)
                 except Exception:
                     _opening_telemetry(
@@ -1974,6 +2012,15 @@ class AIAutonomousOrchestrator:
                     fields={"evidence_count": len(evidence_payload)},
                 )
                 try:
+                    emit_runtime_status(
+                        host,
+                        activity="startup",
+                        phase="surface",
+                        label="Đang chuẩn bị nói…",
+                        active=True,
+                        tone="active",
+                        priority=90,
+                    )
                     result = surface_writer_fn(
                         opening_plan=plan_payload,
                         allowed_evidence=evidence_payload,
@@ -2027,6 +2074,17 @@ class AIAutonomousOrchestrator:
                 host.logger.info(
                     "[opening director] silence reasons=%s",
                     ",".join(opening_plan.safety.reasons) or "none",
+                )
+                emit_runtime_status(
+                    host,
+                    activity="startup",
+                    phase="deliberate_silence",
+                    label="Đã chọn im lặng",
+                    active=False,
+                    tone="warning",
+                    priority=90,
+                    notice_ms=5200,
+                    detail=",".join(opening_plan.safety.reasons) or "startup_silence",
                 )
                 return False
             _opening_telemetry(
@@ -2179,8 +2237,29 @@ class AIAutonomousOrchestrator:
                     plan.confidence,
                     plan.importance,
                 )
+                emit_runtime_status(
+                    host,
+                    activity="startup",
+                    phase="deliberate_silence",
+                    label="Đã chọn im lặng",
+                    active=False,
+                    tone="warning",
+                    priority=90,
+                    notice_ms=5200,
+                    detail=str(plan.motive or "startup_silence"),
+                )
                 return False
 
+        emit_runtime_status(
+            host,
+            activity="startup",
+            phase="handoff",
+            label="Sắp nói…",
+            active=False,
+            tone="success",
+            priority=90,
+            notice_ms=0,
+        )
         from runtime.public_lifecycle import lifecycle_for
         startup_turn_id = str(plan.plan_id or f"startup:{turn_seq}")
         host._active_public_lifecycle_turn_id = startup_turn_id

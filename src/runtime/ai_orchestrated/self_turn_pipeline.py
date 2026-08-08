@@ -43,6 +43,7 @@ from .self_context import AutonomousSelfContext, build_autonomous_self_context
 from runtime.engagements import InteractionDecision
 from runtime.temporal_mind import TemporalMind, TemporalSignal
 from runtime.relational_affordance import build_relational_affordance
+from runtime.runtime_status import emit_runtime_status
 from runtime.subject_initiative_runtime import (
     build_initiative_runtime_context,
     build_subject_initiative_affordances,
@@ -200,6 +201,15 @@ class SelfTurnPipeline:
 
         self._last_deliberation_at = now
         self.temporal_mind.mark_heavy_deliberation(now=now)
+        emit_runtime_status(
+            host,
+            activity="autonomous_deliberation",
+            phase="executive",
+            label="Đang nghĩ xem có nên nói…",
+            active=True,
+            tone="active",
+            priority=45,
+        )
 
         # Collect-before-claim: every source exposes a typed affordance, Gemma
         # chooses one exact ID, and only then may runtime reserve it.  No Python
@@ -589,6 +599,16 @@ class SelfTurnPipeline:
                 force_body_only=True, body_motion=decision.body_motion,
             )
         if host._process_pending_user_input():
+            emit_runtime_status(
+                host,
+                activity="autonomous_deliberation",
+                phase="preempted",
+                label="Đã nhường lượt",
+                active=False,
+                tone="muted",
+                priority=45,
+                notice_ms=0,
+            )
             self._release_seed_lease(candidate, reason="user_input_preempted")
             self.trace_store.append("outcome", {
                 "trace_id": str(plan.plan_id or ""),
@@ -619,6 +639,16 @@ class SelfTurnPipeline:
                     body_motion=decision.body_motion,
                 )
 
+        emit_runtime_status(
+            host,
+            activity="autonomous_deliberation",
+            phase="handoff",
+            label="Đang chuẩn bị nói…",
+            active=False,
+            tone="success",
+            priority=45,
+            notice_ms=0,
+        )
         from runtime.public_lifecycle import lifecycle_for
         lifecycle_turn_id = str(plan.plan_id or f"autonomous:{context.turn_seq}")
         host._active_public_lifecycle_turn_id = lifecycle_turn_id
@@ -1468,6 +1498,21 @@ class SelfTurnPipeline:
             int(body_only),
         )
         self.temporal_mind.mark_silence(now=context.perception.now)
+        emit_runtime_status(
+            self.host,
+            activity="autonomous_deliberation",
+            phase="body_only" if body_only else "deliberate_silence",
+            label=(
+                "Đã chọn không nói"
+                if body_only
+                else "Đã chọn im lặng"
+            ),
+            active=False,
+            tone="warning",
+            priority=45,
+            notice_ms=4600,
+            detail=gate_reason,
+        )
         # Sau silence quay về cheap tick; cooldown của TemporalMind ngăn gọi
         # Executive lại ngay, nên không cần đóng băng toàn loop 8–24 giây.
         self.host._sleep_interruptible(2.5)

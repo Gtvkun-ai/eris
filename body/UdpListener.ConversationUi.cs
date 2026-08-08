@@ -1193,7 +1193,9 @@ public partial class UdpListener
             return;
         _conversationLastDotTickMs = now;
         _conversationDotPhase = (_conversationDotPhase + 1) % 4;
-        string baseText = _conversationState == "buffering" ? "Eris đang chuẩn bị giọng nói" : "Eris đang suy nghĩ";
+        string baseText = string.IsNullOrWhiteSpace(_conversationStateLabel)
+            ? (_conversationState == "buffering" ? "Eris đang chuẩn bị giọng nói" : "Eris đang suy nghĩ")
+            : _conversationStateLabel.TrimEnd('.', '…');
         _conversationThinkingLabel.Text = baseText + new string('.', _conversationDotPhase + 1);
     }
 
