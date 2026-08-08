@@ -15,7 +15,7 @@ import uuid
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Mapping, Sequence
 
-from cortex.subject.contracts import SubjectDeliberationFrame, SubjectExecutiveCommit
+from cortex.subject.contracts import MindDecision, SubjectDeliberationFrame, SubjectExecutiveCommit
 
 from actions.capability_registry import (
     validate_capability_arguments,
@@ -59,6 +59,7 @@ _REVIEW_EVENT_KINDS = {
     "attention_pressure",
     "structured_due",
     "relational_pressure",
+    "initiative_pressure",
     "force",
 }
 
@@ -275,6 +276,7 @@ _DEFAULT_REVIEW_CONDITIONS = (
     ReviewCondition("discovery_ready", 0.70),
     ReviewCondition("attention_pressure", 0.58),
     ReviewCondition("relational_pressure", 0.55),
+    ReviewCondition("initiative_pressure", 0.52),
     ReviewCondition("structured_due", 0.70),
     ReviewCondition("force", 0.0),
 )
@@ -1152,6 +1154,132 @@ class ExecutiveCortex:
         except Exception:
             return candidate
 
+    def materialize_subject_decision(
+        self,
+        subject_decision: MindDecision,
+        affordances: Sequence[ExecutiveAffordance],
+        *,
+        subject_frame: SubjectDeliberationFrame | None = None,
+    ) -> ExecutiveOutcome | None:
+        """Đóng một MindDecision đã commit thành outcome runtime, không quyết định lại.
+
+        V26 dùng cùng ``commit_subject_frame`` cho chat và self-turn. Method này
+        chỉ materialize hành động đã được Subject+Executive cam kết thành candidate
+        mà InitiativeGovernor hiểu. Nó không được chọn coalition hay motive khác.
+
+        ``None`` chỉ có nghĩa action cần capability execution riêng; caller có thể
+        chạy execution planner nhưng phải giữ nguyên Subject decision.
+        """
+        action_kind = str(subject_decision.proposed_action or "silence").strip().lower()
+        arguments = dict(subject_decision.arguments or {})
+        coalition = None
+        if subject_frame is not None:
+            coalition = next(
+                (item for item in subject_frame.coalitions if item.coalition_id == subject_decision.coalition_id),
+                None,
+            )
+        proposal_ref = str(getattr(coalition, "primary_proposal_ref", "") or "")
+        commit_trace = arguments.get("executive_commit") if isinstance(arguments.get("executive_commit"), Mapping) else {}
+        reason = _compact(commit_trace.get("reason", "") or "subject_decision_materialized", 360)
+        confidence = _clamp01(commit_trace.get("confidence", 0.55), 0.55)
+        semantic_target = _compact(arguments.get("semantic_target", ""), 1600)
+        speech_act = _compact(arguments.get("speech_act", ""), 100).lower()
+        tone = _compact(arguments.get("tone", ""), 100).lower()
+
+        base = ExecutiveDecision(
+            action="silence",
+            semantic_target=semantic_target,
+            speech_act=speech_act,
+            tone=tone,
+            reply_baton="preserve",
+            phase="subject_committed",
+            trajectory="materialize_subject_decision",
+            reconsider_on=(
+                ReviewCondition("user_turn", 0.0),
+                ReviewCondition("force", 0.0),
+                ReviewCondition("relational_pressure", 0.55),
+                ReviewCondition("initiative_pressure", 0.52),
+            ),
+            reason=reason,
+            confidence=confidence,
+            subject_coalition_id=subject_decision.coalition_id,
+            subject_proposal_ref=proposal_ref,
+            semantic_commitments=tuple(
+                str(item) for item in commit_trace.get("semantic_commitments", ())
+                if str(item or "").strip()
+            )[:8],
+        )
+
+        if action_kind == "silence":
+            decision = replace(base, action="silence")
+            self._update_state(decision)
+            return ExecutiveOutcome(None, "", "silence", reason, decision)
+        if action_kind == "body_only":
+            decision = replace(base, action="body_only")
+            self._update_state(decision)
+            return ExecutiveOutcome(None, "", "body_only", reason, decision)
+        if action_kind != "speak":
+            return None
+        if bool(arguments.get("capability_route", False)):
+            return None
+
+        options = tuple(
+            item for item in affordances
+            if isinstance(item, ExecutiveAffordance) and item.available
+        )
+        wanted = str(arguments.get("affordance_id", "") or "").strip()
+        selected = next((item for item in options if item.affordance_id == wanted), None)
+        if selected is not None:
+            decision = replace(
+                base,
+                action="select_affordance",
+                affordance_id=selected.affordance_id,
+                intrusion_risk=_clamp01(getattr(selected.candidate, "seed_intrusion_risk", 0.0)),
+            )
+            self._update_state(decision)
+            return ExecutiveOutcome(
+                self._rewrite_candidate(selected.candidate, decision),
+                selected.affordance_id,
+                "use_candidate",
+                reason,
+                decision,
+            )
+
+        # Subject-owned initiative có thể được commit từ pending intention ngay cả
+        # khi affordance preview hết TTL giữa prepare và materialize. Tạo candidate
+        # từ đúng semantic target đã commit, không chọn topic mới.
+        if semantic_target and speech_act:
+            from .social_initiative import SocialSpeechCandidate
+            refs = tuple(str(item) for item in subject_decision.proposal_refs if str(item or "").strip())[:5]
+            candidate = SocialSpeechCandidate(
+                decision="candidate",
+                kind="social_check_in",
+                topic=semantic_target,
+                speech_act=speech_act,
+                anchor_type="internal",
+                anchor_id=str(arguments.get("intention_id") or subject_decision.decision_id),
+                evidence_refs=refs or (subject_decision.observation_ref,),
+                requires_grounding=False,
+                confidence=confidence,
+                relevance=max(0.30, _clamp01(subject_decision.expected_pragmatic_value)),
+                urgency=max(0.18, _clamp01(subject_decision.expected_epistemic_value)),
+                tone=tone or "casual_warm",
+                reason=f"subject_committed:{arguments.get('initiative_motive', 'initiative')}",
+                source="subject_initiative_committed",
+                eris_motive_kind=str(arguments.get("initiative_motive") or "initiative"),
+                eris_motive_why_now="Subject Core and Executive committed a persistent intention",
+                personal_stake=_clamp01(subject_decision.expected_pragmatic_value),
+                authenticity=1.0,
+                uncertainty=subject_decision.uncertainty,
+                seed_intrusion_risk=0.12,
+                face_risk=0.12,
+                recovery_available=True,
+            )
+            decision = replace(base, action="select_affordance", affordance_id=wanted)
+            self._update_state(decision)
+            return ExecutiveOutcome(candidate, wanted, "use_candidate", reason, decision)
+        return None
+
     def deliberate(
         self,
         blackboard: Any,
@@ -1419,6 +1547,8 @@ class ExecutiveCortex:
             # vô tình làm Executive mù vĩnh viễn với nhu cầu connection tăng dần.
             if not any(item.kind == "relational_pressure" for item in conditions):
                 conditions = (*conditions, ReviewCondition("relational_pressure", 0.55))
+            if not any(item.kind == "initiative_pressure" for item in conditions):
+                conditions = (*conditions, ReviewCondition("initiative_pressure", 0.52))
             due_at = now + decision.review_after_seconds if decision.review_after_seconds > 0 else 0.0
             self._state = ExecutiveState(
                 revision=current.revision + 1,

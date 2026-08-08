@@ -43,6 +43,10 @@ from .self_context import AutonomousSelfContext, build_autonomous_self_context
 from runtime.engagements import InteractionDecision
 from runtime.temporal_mind import TemporalMind, TemporalSignal
 from runtime.relational_affordance import build_relational_affordance
+from runtime.subject_initiative_runtime import (
+    build_initiative_runtime_context,
+    build_subject_initiative_affordances,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +169,11 @@ class SelfTurnPipeline:
         context_ms = (time.monotonic() - phase_started) * 1000.0
         phase_started = time.monotonic()
         planner_snapshot, discovery_runtime = self._planner_snapshot(context)
+        # V26: cùng một motive context được dùng cho chat và self-turn. Random
+        # seed chỉ còn là một nguồn nội dung tùy chọn, không còn là điều kiện để
+        # Subject có lý do chủ động.
+        initiative_runtime_context = build_initiative_runtime_context(host)
+        planner_snapshot["initiative_runtime_context"] = dict(initiative_runtime_context)
         seed_reservoir = getattr(host, "ai_random_chat_seed_reservoir", None)
         if seed_reservoir is not None:
             try:
@@ -266,6 +275,32 @@ class SelfTurnPipeline:
             except Exception as exc:
                 host.logger.debug("[relational] affordance build failed: %s", exc)
 
+        # V26: pending Subject intentions có thể tự tạo affordance mà không cần
+        # random seed. Ví dụ user-model còn mỏng -> motive understand_user ->
+        # một user_probe candidate. Runtime chỉ materialize, Subject Core vẫn rank.
+        if subject_service is not None:
+            try:
+                initiative_affordances = build_subject_initiative_affordances(
+                    subject_service,
+                    runtime_context=initiative_runtime_context,
+                    now=now,
+                    reply_expected=bool(getattr(blackboard, "reply_expected", False)),
+                    user_busy=bool(getattr(blackboard, "user_busy", False)),
+                    interaction_busy=interaction_busy,
+                )
+                affordances.extend(initiative_affordances)
+                if initiative_affordances:
+                    host.logger.info(
+                        "[subject initiative] affordances=%s kinds=%s",
+                        len(initiative_affordances),
+                        ",".join(
+                            str(getattr(item.candidate, "speech_act", "") or "")
+                            for item in initiative_affordances
+                        ),
+                    )
+            except Exception as exc:
+                host.logger.debug("[subject initiative] affordance build failed: %s", exc)
+
         # Deduplicate only by stable ID.  Similar meanings from different owners
         # remain visible because deciding between them is Gemma's job, not a set().
         unique_affordances: list[Any] = []
@@ -295,53 +330,75 @@ class SelfTurnPipeline:
             except Exception as exc:
                 host.logger.warning("[subject-core] autonomous prepare failed closed: %s", exc)
 
+        # V26: self-turn và chat dùng cùng một authority path:
+        # Observation -> MindLoop -> Subject Core -> Executive.commit_subject_frame
+        # -> MindDecision. Autonomous không còn gọi Executive.deliberate() để chọn
+        # motive trước rồi mới cố bind ngược vào Subject Core.
         executive_outcome = None
         executive = getattr(host, "ai_executive_cortex", None)
-        if executive is not None:
-            try:
-                # Gọi boundary kể cả khi transport model đang unavailable.
-                # ExecutiveCortex.deliberate() sẽ dùng Subject Core degraded path
-                # khi feature vẫn bật nhưng client/provider chết.
-                executive_outcome = executive.deliberate(
-                    blackboard,
-                    affordances,
-                    snapshot=planner_snapshot,
-                    subject_frame=(subject_session.frame if subject_session is not None else None),
-                )
-            except Exception as exc:
-                host.logger.warning("[executive] deliberation failed closed: %s", exc)
-        else:
-            host.logger.warning("[executive] boundary unavailable; autonomous semantic path fails closed")
-
         subject_decision = None
         if subject_session is not None and subject_ingress is not None:
-            if executive_outcome is None:
-                subject_ingress.mind_loop.abandon_sync(
+            try:
+                subject_decision = subject_ingress.complete_session(
                     subject_session,
-                    reason="executive_outcome_unavailable",
+                    executive=executive,
                 )
-            else:
+                planner_snapshot["subject_decision"] = subject_decision.to_dict()
+                action_executor = getattr(host, "action_executor", None)
+                set_parent = getattr(action_executor, "set_subject_parent_decision", None)
+                if callable(set_parent):
+                    set_parent(subject_decision)
+            except Exception as exc:
+                host.logger.warning("[subject-core] unified self-turn finalize failed closed: %s", exc)
                 try:
-                    subject_decision = subject_ingress.complete_autonomous_turn(
-                        subject_session,
-                        executive_outcome,
-                        executive=executive,
-                    )
-                    if subject_decision is None:
-                        executive_outcome = None
-                    else:
-                        planner_snapshot["subject_decision"] = subject_decision.to_dict()
-                        action_executor = getattr(host, "action_executor", None)
-                        set_parent = getattr(action_executor, "set_subject_parent_decision", None)
-                        if callable(set_parent):
-                            set_parent(subject_decision)
-                except Exception as exc:
-                    host.logger.warning("[subject-core] autonomous finalize failed closed: %s", exc)
                     subject_ingress.mind_loop.abandon_sync(
                         subject_session,
-                        reason="subject_finalize_failed",
+                        reason="unified_subject_finalize_failed",
                     )
-                    executive_outcome = None
+                except Exception:
+                    pass
+                subject_decision = None
+
+        if subject_decision is not None and executive is not None:
+            try:
+                materialize = getattr(executive, "materialize_subject_decision", None)
+                if callable(materialize):
+                    executive_outcome = materialize(
+                        subject_decision,
+                        affordances,
+                        subject_frame=subject_session.frame if subject_session is not None else None,
+                    )
+
+                # Capability discovery là execution planning sau commit, tương tự
+                # chat plan_interactive. Nó không được quyền chọn motive khác.
+                if (
+                    executive_outcome is None
+                    and subject_session is not None
+                    and subject_decision.proposed_action == "speak"
+                    and bool(subject_decision.arguments.get("capability_route", False))
+                ):
+                    selected = next(
+                        (item for item in subject_session.frame.coalitions if item.coalition_id == subject_decision.coalition_id),
+                        None,
+                    )
+                    if selected is not None:
+                        refs = set(selected.proposal_refs)
+                        restricted_frame = replace(
+                            subject_session.frame,
+                            coalitions=(selected,),
+                            proposals=tuple(item for item in subject_session.frame.proposals if item.proposal_id in refs),
+                        )
+                        executive_outcome = executive.deliberate(
+                            blackboard,
+                            (),
+                            snapshot=planner_snapshot,
+                            subject_frame=restricted_frame,
+                        )
+            except Exception as exc:
+                host.logger.warning("[executive] committed self-turn materialization failed closed: %s", exc)
+                executive_outcome = None
+        elif subject_decision is not None:
+            host.logger.warning("[executive] materializer unavailable after Subject commit")
 
         if executive_outcome is not None:
             candidate = executive_outcome.candidate
@@ -1199,6 +1256,40 @@ class SelfTurnPipeline:
                 opportunity=float(relational_view.get("opportunity", 0.0) or 0.0),
             )
 
+        # V26: motive tự khởi phát có wake signal riêng. Nếu PendingIntention đã
+        # tồn tại thì dùng pressure của Subject Core; ở tick đầu, user-model gap
+        # + social curiosity có thể tạo preview pressure để không cần seed đánh thức.
+        initiative_drive = 0.0
+        initiative_revision = 0
+        initiative_view_fn = getattr(subject_service, "initiative_view", None)
+        if callable(initiative_view_fn):
+            try:
+                iview = initiative_view_fn()
+                if isinstance(iview, Mapping):
+                    initiative_drive = float(iview.get("initiative_pressure", 0.0) or 0.0)
+                    initiative_revision = int(iview.get("revision", 0) or 0)
+            except Exception:
+                pass
+        initiative_runtime = snapshot.get("initiative_runtime_context")
+        initiative_runtime = initiative_runtime if isinstance(initiative_runtime, Mapping) else {}
+        if relational_view:
+            cp = float(relational_view.get("connection_pressure", 0.0) or 0.0)
+            curiosity = float(relational_view.get("social_curiosity", 0.0) or 0.0)
+            opportunity = float(relational_view.get("opportunity", 0.0) or 0.0)
+            unknown = float(initiative_runtime.get("user_model_uncertainty", 0.72) or 0.72)
+            preview_understand = max(0.0, min(1.0,
+                (0.42 * cp + 0.34 * curiosity + 0.24 * unknown) * (0.58 + 0.42 * opportunity)
+            ))
+            initiative_drive = max(initiative_drive, preview_understand)
+        if initiative_drive >= 0.18:
+            emit(
+                "initiative_pressure",
+                initiative_drive,
+                "subject_initiative",
+                revision=initiative_revision,
+                motive="understand_user_or_pending_intention",
+            )
+
         affordance_strength = max(
             structured_strength,
             0.85 if context.discourse.followup_reminder_due else 0.0,
@@ -1206,6 +1297,7 @@ class SelfTurnPipeline:
             seed_strength,
             0.90 if discovery_ready else 0.0,
             relational_drive,
+            initiative_drive,
         )
         if affordance_strength:
             emit("affordance_changed", affordance_strength, "affordance_collector_inputs")

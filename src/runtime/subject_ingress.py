@@ -11,7 +11,10 @@ from __future__ import annotations
 import uuid
 from typing import Any, Mapping, Sequence
 
-from cortex.subject.contracts import MindDecision, SubjectDeliberationFrame, SubjectExecutiveCommit, WorldObservation
+from cortex.subject.contracts import (
+    MindDecision, ObservationOrigin, SubjectDeliberationFrame,
+    SubjectExecutiveCommit, WorldObservation,
+)
 from cortex.subject.service import SubjectService
 from runtime.mind_loop import DeliberationSession, DeliberationState, MindLoop, SubjectExecutivePort
 from runtime.subject_proposals import AutonomousProposalSource
@@ -43,11 +46,17 @@ class SubjectIngress:
         text = str(user_text or "").strip()
         context = dict(planning_context or {})
         uncertainty = 0.65 if "?" in text else 0.35
+        initiative_runtime = (
+            context.get("initiative_runtime_context")
+            if isinstance(context.get("initiative_runtime_context"), Mapping)
+            else {}
+        )
         return WorldObservation(
             observation_id=f"user-turn:{turn_id}:{uuid.uuid4()}",
             subject_id=self.service.config.subject_id,
             kind="user_turn",
             created_at=float(created_at),
+            origin=ObservationOrigin.USER,
             context={
                 "context_key": "direct_chat",
                 "user_text": text,
@@ -66,12 +75,58 @@ class SubjectIngress:
                     "engagement_active": bool((context.get("engagement_context") or {}).get("active", False))
                     if isinstance(context.get("engagement_context"), Mapping)
                     else False,
+                    **dict(initiative_runtime),
                 },
             },
             evidence_refs=(turn_id,),
             causal_refs=(),
             correlation_id=turn_id,
         )
+
+    def prepare_session(
+        self,
+        observation: WorldObservation,
+        *,
+        mode: str,
+        user_text: str = "",
+        planning_context: Mapping[str, Any] | None = None,
+    ) -> DeliberationSession:
+        """Một cổng deliberation cho mọi origin.
+
+        V26 bỏ ý tưởng chat/autonomous là hai tâm trí. Chúng chỉ là hai nguồn
+        observation khác nhau đi qua cùng MindLoop và cùng Executive commit.
+        """
+        return self.mind_loop.prepare_sync(
+            observation,
+            mode=mode,
+            user_text=user_text,
+            snapshot=planning_context or {},
+        )
+
+    def complete_session(
+        self,
+        session: DeliberationSession,
+        *,
+        executive: SubjectExecutivePort | None = None,
+    ) -> MindDecision:
+        return self.mind_loop.complete_sync(session, executive=executive)
+
+    def observe(
+        self,
+        observation: WorldObservation,
+        *,
+        mode: str,
+        user_text: str = "",
+        planning_context: Mapping[str, Any] | None = None,
+        executive: SubjectExecutivePort | None = None,
+    ) -> MindDecision:
+        session = self.prepare_session(
+            observation,
+            mode=mode,
+            user_text=user_text,
+            planning_context=planning_context,
+        )
+        return self.complete_session(session, executive=executive)
 
     def prepare_user_session(
         self,
@@ -94,11 +149,11 @@ class SubjectIngress:
             turn_id=turn_id,
             planning_context=planning_context,
         )
-        return self.mind_loop.prepare_sync(
+        return self.prepare_session(
             observation,
             mode="interactive",
             user_text=user_text,
-            snapshot=planning_context or {},
+            planning_context=planning_context,
         )
 
     def prepare_user_turn(self, *args: Any, **kwargs: Any) -> SubjectDeliberationFrame:
@@ -123,6 +178,11 @@ class SubjectIngress:
         reply_expected = bool(proposal_context["reply_expected"])
         engagement_active = bool(proposal_context["engagement_active"])
         relational = context.get("relational_state") if isinstance(context.get("relational_state"), Mapping) else {}
+        initiative_runtime = (
+            context.get("initiative_runtime_context")
+            if isinstance(context.get("initiative_runtime_context"), Mapping)
+            else {}
+        )
         relational_pressure = float(relational.get("connection_pressure", 0.0) or 0.0)
         relational_opportunity = float(relational.get("opportunity", 0.0) or 0.0)
 
@@ -134,6 +194,7 @@ class SubjectIngress:
             subject_id=self.service.config.subject_id,
             kind="autonomous_opportunity",
             created_at=float(created_at),
+            origin=ObservationOrigin.INTERNAL,
             context={
                 "context_key": "autonomous",
                 "affected_need_ids": affected,
@@ -158,6 +219,7 @@ class SubjectIngress:
                     "social_curiosity": relational.get("social_curiosity", 0.0),
                     "unresolved_relational": relational.get("affiliation_deficit", 0.0),
                     "relational_evidence_refs": tuple(relational.get("evidence_refs", ())),
+                    **dict(initiative_runtime),
                 },
             },
             evidence_refs=(turn_id,),
@@ -180,10 +242,10 @@ class SubjectIngress:
             turn_id=turn_id,
             planning_context=planning_context,
         )
-        return self.mind_loop.prepare_sync(
+        return self.prepare_session(
             observation,
             mode="autonomous",
-            snapshot=planning_context or {},
+            planning_context=planning_context,
         )
 
     def prepare_autonomous_turn(self, *args: Any, **kwargs: Any) -> SubjectDeliberationFrame:
@@ -212,11 +274,11 @@ class SubjectIngress:
             turn_id=turn_id,
             planning_context=planning_context,
         )
-        return self.mind_loop.deliberate_sync(
+        return self.observe(
             observation,
             mode="interactive",
             user_text=user_text,
-            snapshot=planning_context or {},
+            planning_context=planning_context,
             executive=executive,
         )
 

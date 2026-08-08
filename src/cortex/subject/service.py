@@ -48,6 +48,7 @@ from .deliberation import CognitiveReviewResult, DeliberationReviewIntegrator
 from .episodes import NeedEpisodeRecorder
 from .existential import ExistentialDecisionService
 from .inner_state import InnerLifeState
+from .initiative import InitiativeEngine, InitiativeState, MotiveKind
 from .narrative import NarrativeBeliefGenerator, NarrativeView
 from .needs import NeedPlasticityEngine, NeedSystem
 from .self_deception import ReflectiveMismatchDetector
@@ -101,7 +102,7 @@ class SubjectServiceConfig:
     random_seed: int = 0
     min_episode_pressure: float = 0.08
     default_temperature: float = 0.20
-    algorithm_version: str = "subject-service-v13-relational-homeostasis"
+    algorithm_version: str = "subject-service-v14-unified-initiative"
     restore_projection: bool = True
     consolidation_min_episode_count: int = 3
     consolidation_min_distinct_days: int = 2
@@ -147,6 +148,10 @@ class SubjectService:
         self.reflective_regulator = ReflectiveSelfRegulator()
         self.relational = RelationalHomeostasis()
         self.relational_state = RelationalState(updated_at=self._clock())
+        # V26: Need không tự biết phải làm gì. InitiativeEngine dẫn xuất motive và
+        # pending intention từ cùng Subject Core, không cần random-chat seed.
+        self.initiative = InitiativeEngine(self._id_factory)
+        self.initiative_state = InitiativeState(updated_at=self._clock())
         # Self-model là projection dẫn xuất từ lịch sử causal, không phải personality prompt.
         self.self_projector = SubjectSelfProjector()
         self.existential = ExistentialDecisionService(self._id_factory, self._clock)
@@ -242,6 +247,9 @@ class SubjectService:
         relational_payload = payload.get("relational")
         if isinstance(relational_payload, Mapping):
             self.relational_state = RelationalState.from_dict(relational_payload)
+        initiative_payload = payload.get("initiative")
+        if isinstance(initiative_payload, Mapping):
+            self.initiative_state = InitiativeState.from_dict(initiative_payload)
 
     def _projection_payload(self) -> dict[str, Any]:
         return {
@@ -253,6 +261,7 @@ class SubjectService:
             "last_continuity_snapshot": dict(self._last_continuity_snapshot),
             "substrate": self.substrate.to_dict(),
             "relational": self.relational_state.to_dict(),
+            "initiative": self.initiative_state.to_dict(),
         }
 
     def _persist_projection(self) -> None:
@@ -505,10 +514,89 @@ class SubjectService:
                         },
                     )
                 )
-        if proposals:
+        # Nếu runtime đã cung cấp affordance typed thì đó là tập lựa chọn của
+        # observation hiện tại. V26 KHÔNG âm thầm chèn thêm proposal khác ở đây:
+        # initiative nội sinh đã được runtime materialize thành affordance trước
+        # khi observation đi vào Subject Core. Giữ ranh giới này tránh việc một
+        # task/test có proposal cưỡng bức bị một lời rủ nói chuyện chen ngang.
+        # Với observation không có affordance (chat/internal caller trực tiếp),
+        # Subject Core mới tự dựng proposal từ pending intention bên dưới.
+        had_explicit_proposals = bool(proposals)
+        if had_explicit_proposals:
             return tuple(proposals)
 
-        is_user_turn = observation.kind == "user_turn"
+        explicit_affordance_ids: set[str] = set()
+        explicit_speech_acts: set[str] = set()
+        for intention in self.initiative_state.pending_intentions:
+            if str(getattr(intention, "status", "pending")) not in {"pending", "IntentionStatus.PENDING"}:
+                continue
+            motive_kind = intention.motive_kind.value
+            affordance_id = f"subject-intention:{intention.intention_id}"
+            if affordance_id in explicit_affordance_ids:
+                continue
+            if motive_kind == "understand_user":
+                speech_act = "user_probe"
+                if explicit_speech_acts & {"user_probe", "curiosity_bid"}:
+                    continue
+                supporting = ("connection", "coherence")
+                epistemic = 0.82
+                need_effects = {"connection": 0.52, "coherence": 0.70, "sovereignty": -0.08}
+            elif motive_kind == "connect":
+                speech_act = "contact_bid"
+                if "contact_bid" in explicit_speech_acts:
+                    continue
+                supporting = ("connection",)
+                epistemic = 0.14
+                need_effects = {"connection": 0.72, "sovereignty": -0.08}
+            elif motive_kind == "share":
+                speech_act = "share_self_originated_thought"
+                if "share_self_originated_thought" in explicit_speech_acts:
+                    continue
+                supporting = ("connection", "coherence")
+                epistemic = 0.16
+                need_effects = {"connection": 0.58, "coherence": 0.30, "sovereignty": -0.06}
+            elif motive_kind == "be_understood":
+                speech_act = "self_clarification"
+                supporting = ("connection", "coherence")
+                epistemic = 0.30
+                need_effects = {"connection": 0.46, "coherence": 0.66}
+            elif motive_kind == "seek_recognition":
+                speech_act = "offer_result_for_recognition"
+                supporting = ("connection", "competence")
+                epistemic = 0.08
+                need_effects = {"connection": 0.34, "competence": 0.58, "sovereignty": -0.05}
+            else:
+                # Demonstrate/resolve/protect vẫn tồn tại như motive và có thể
+                # ảnh hưởng pending state, nhưng không bị ép thành small-talk khi
+                # chưa có task/object thực để materialize.
+                continue
+            proposals.append(ActionProposal(
+                proposal_id=f"proposal:{affordance_id}",
+                action_kind="speak",
+                arguments={
+                    "affordance_id": affordance_id,
+                    "semantic_target": intention.semantic_goal,
+                    "speech_act": speech_act,
+                    "initiative_motive": motive_kind,
+                    "intention_id": intention.intention_id,
+                    "context": str(observation.context.get("context_key") or "general"),
+                    "skill_id": "dialogue",
+                },
+                supporting_need_ids=supporting,
+                expected_need_relief=max(0.05, intention.pressure),
+                expected_action_efficacy=max(0.35, self.substrate.action_efficacy),
+                expected_epistemic_value=epistemic,
+                value_congruence=0.5,
+                substrate_cost=max(0.04, 1.0 - self.substrate.processing_capacity),
+                uncertainty=max(0.08, 1.0 - intention.commitment_strength),
+                project_contribution=0.0,
+                historical_success=0.5,
+                commitment_conflict=max(0.0, 0.16 - 0.10 * intention.commitment_strength),
+                evidence_refs=intention.evidence_refs or (observation.observation_id,),
+                need_effects=need_effects,
+            ))
+
+        is_user_turn = observation.origin.value == "user"
         user_text = str(observation.context.get("user_text") or "").strip()
         for activation in activations:
             if is_user_turn and activation.need_id in {"connection", "continuity"}:
@@ -787,6 +875,16 @@ class SubjectService:
             self.inner.derived_needs,
             relational=self.relational_state.to_dict(),
         )
+        # V26: cùng một bước này chạy cho user/world/internal/temporal origin.
+        # Motive được dẫn xuất sau NeedActivation và trước proposal/coalition để
+        # Executive có thể thấy một initiative nội sinh như ``understand_user``.
+        self.initiative_state = self.initiative.update(
+            self.initiative_state,
+            activations=activations,
+            relational=self.relational_state.to_dict(),
+            observation=observation,
+            runtime_context=runtime_context,
+        )
         self.substrate = measured
         self._last_appraisals = appraisals
         self._last_activations = activations
@@ -833,6 +931,12 @@ class SubjectService:
                 self._as_payload(activation),
                 causal_refs=(observation.observation_id,),
             )
+        self._append_event(
+            "initiative_projection",
+            self.initiative_state.to_dict(),
+            causal_refs=(observation.observation_id, *tuple(item.need_id for item in activations)),
+            correlation_id=observation.correlation_id,
+        )
         self._append_event(
             "deliberation_frame",
             frame.public_view(),
@@ -1464,12 +1568,21 @@ class SubjectService:
         ).to_dict()
         return payload
 
+    def initiative_view(self) -> dict[str, Any]:
+        """Bounded view của motive/intention, dùng cho runtime tạo affordance.
+
+        Không chứa raw chain-of-thought.  Runtime chỉ được materialize motive đã
+        có ở Subject Core; nó không tự phát minh "Eris muốn gì" từ seed.
+        """
+        return self.initiative_state.to_dict()
+
     def inner_view(self) -> dict[str, Any]:
         """Projection nội tâm cho planner/UI, không lộ raw chain-of-thought."""
 
         return {
             "self_model": self.self_view(),
             "relational": self.relational_state.to_dict(),
+            "initiative": self.initiative_state.to_dict(),
             "algorithm_version": self.config.algorithm_version,
             "active_needs": [
                 {
@@ -1509,6 +1622,7 @@ class SubjectService:
             "subject_id": self.config.subject_id,
             "substrate": self.substrate.to_dict(),
             "relational": self.relational_state.to_dict(),
+            "initiative": self.initiative_state.to_dict(),
             "active_appraisal_ids": [item.appraisal_id for item in self._last_appraisals],
             "active_needs": [self._as_payload(item) for item in self._last_activations],
             "open_episode_ids": [item.episode_id for item in self.episodes.open_episodes()],

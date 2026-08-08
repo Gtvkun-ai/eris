@@ -52,6 +52,7 @@ class OpeningHistoryRecord:
     hook_subject_class: str
     surface_hash: str
     semantic_fingerprint: str
+    motive_family: str = "reconnect"
     reaction: str = "unknown"
     boundary: bool = False
     question_ignored: bool = False
@@ -74,6 +75,7 @@ class OpeningHistoryRecord:
             hook_subject_class=compact(data.get("hook_subject_class", "none"), 80).lower(),
             surface_hash=compact(data.get("surface_hash", ""), 100),
             semantic_fingerprint=compact(data.get("semantic_fingerprint", ""), 200).lower(),
+            motive_family=compact(data.get("motive_family", data.get("encounter_intent", "reconnect")), 80).lower() or "reconnect",
             reaction=compact(data.get("reaction", "unknown"), 80).lower(),
             boundary=bool(data.get("boundary", False)),
             question_ignored=bool(data.get("question_ignored", False)),
@@ -138,6 +140,7 @@ class OpeningHistoryStore:
             "recent_hook_sources": [item.hook_source for item in records],
             "recent_surface_hashes": [item.surface_hash for item in records if item.surface_hash],
             "recent_beat_shapes": [item.beat_shape for item in records],
+            "opening_motive_families": [item.motive_family for item in records],
         }
 
     def append_plan(
@@ -162,10 +165,12 @@ class OpeningHistoryStore:
             hook_subject_class=compact(hook_subject_class, 80).lower() or "none",
             surface_hash=surface_hash(display_text),
             semantic_fingerprint=(
+                f"{plan.encounter.intent}|"
                 f"{plan.comedic_move.family}|"
                 f"{plan.hook.source if plan.hook.decision == 'use' else 'none'}|"
                 f"{'question' if plan.reply_bearing else 'no_question'}|{plan.beat_shape}"
             ),
+            motive_family=compact(plan.encounter.intent, 80).lower() or "reconnect",
             reaction=compact(reaction, 80).lower() or "unknown",
             boundary=bool(boundary),
             question_ignored=bool(question_ignored),
@@ -217,6 +222,13 @@ class OpeningHistoryStore:
     def beat_shape_on_cooldown(self, shape: str, *, sessions: int = 3) -> bool:
         recent = self.snapshot(limit=sessions)
         return any(item.beat_shape == str(shape or "").strip().lower() for item in recent)
+
+    def motive_on_cooldown(self, family: str, *, sessions: int = 2) -> bool:
+        """Chống lặp theo ý nghĩa, không chỉ theo câu chữ/move hài."""
+        if sessions <= 0:
+            return False
+        target = str(family or "").strip().lower()
+        return any(item.motive_family == target for item in self.snapshot(limit=sessions))
 
     def hook_source_repeated(self, source: str, *, maximum_consecutive: int = 2) -> bool:
         source = str(source or "none").strip().lower()

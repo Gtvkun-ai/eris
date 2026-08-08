@@ -51,6 +51,8 @@ class OpeningCandidate:
     hook: ContextHook
     beat_roles: tuple[str, ...]
     vibe_family: str
+    motive_family: str = "reconnect"
+    motive_subject: str = ""
     score: float = 0.0
     score_breakdown: Mapping[str, float] = None  # type: ignore[assignment]
 
@@ -69,6 +71,8 @@ class OpeningCandidate:
             },
             "beat_roles": list(self.beat_roles),
             "vibe_family": self.vibe_family,
+            "motive_family": self.motive_family,
+            "motive_subject": self.motive_subject,
             "score": round(float(self.score), 6),
             "score_breakdown": {
                 key: round(float(value), 6) for key, value in (self.score_breakdown or {}).items()
@@ -153,9 +157,28 @@ class OpeningDirector:
         return replace(selected_plan, safety=verdict)
 
     def generate_candidates(self, opening_input: OpeningInput) -> tuple[OpeningCandidate, ...]:
+        """Sinh opening từ *lý do mở lời*, không từ kho câu chào.
+
+        Hook continuity/screen tạo motive tương ứng; motive nội sinh của Subject
+        (probe/share/recognition/demonstration) có thể tạo candidate ngay cả khi
+        không có seed hay screen fact. Wording vẫn thuộc Surface Writer.
+        """
         encounter = self._encounter_kind(opening_input)
         hooks = self._candidate_hooks(opening_input)
+        boosts = dict(opening_input.reentry.motive_boosts)
+        subjects = dict(opening_input.reentry.motive_subjects)
         candidates: list[OpeningCandidate] = []
+
+        def motive_for(hook: ContextHook, move_family: str) -> str:
+            if hook.decision == "use" and hook.source == "continuity":
+                return "continue_thread"
+            if hook.decision == "use" and hook.source in {"screen", "runtime"}:
+                return "scene_comment"
+            if move_family in {"mock_indifference", "tsundere_denial"} and boosts.get("playful_protest", 0.0) >= 0.18:
+                return "playful_protest"
+            if move_family == "quiet_presence":
+                return "quiet_acknowledgement"
+            return "reconnect"
 
         for hook in hooks:
             has_hook = hook.decision == "use"
@@ -168,23 +191,14 @@ class OpeningDirector:
                 if (
                     has_hook
                     and self.history.hook_source_repeated(hook.source, maximum_consecutive=2)
-                    and not (
-                        hook.source == "continuity"
-                        and opening_input.policy.prefer_continuity_hook
-                    )
+                    and not (hook.source == "continuity" and opening_input.policy.prefer_continuity_hook)
                 ):
                     continue
                 candidate_hook = hook
                 if (candidate_hook.reply_bearing and self.history.question_temporarily_blocked()) or not move.allows_question:
                     candidate_hook = replace(candidate_hook, reply_bearing=False)
                 roles = self._roles_for(move, candidate_hook)
-                if (
-                    candidate_hook.source == "continuity"
-                    and move.family in {"simple_recognition", "quiet_presence"}
-                ):
-                    # Với memory callback, recognition + callback đã đủ một câu
-                    # mở đầu hoàn chỉnh. Giữ thêm presence chỉ làm câu quan trọng
-                    # nhất của phiên nghe như ba widget xếp cạnh nhau.
+                if candidate_hook.source == "continuity" and move.family in {"simple_recognition", "quiet_presence"}:
                     roles = tuple(role for role in roles if role != "presence")
                 if len(roles) > opening_input.policy.max_beats:
                     roles = roles[: opening_input.policy.max_beats]
@@ -194,51 +208,75 @@ class OpeningDirector:
                     hook_roles = {"contextual_observation", "invitation", "micro_challenge", "evidence_reversal"}
                     if not any(role in hook_roles for role in roles):
                         required_role = "invitation" if candidate_hook.reply_bearing else "contextual_observation"
-                        if len(roles) < opening_input.policy.max_beats:
-                            roles = (*roles, required_role)
-                        else:
-                            roles = (*roles[:-1], required_role)
+                        roles = (*roles, required_role) if len(roles) < opening_input.policy.max_beats else (*roles[:-1], required_role)
+
+                motive = motive_for(candidate_hook, move.family)
+                motive_subject = subjects.get(motive, candidate_hook.subject)
                 shape = "_".join(roles)
                 semantic_fingerprint = (
-                    f"{move.family}|"
+                    f"{motive}|{move.family}|"
                     f"{candidate_hook.source if candidate_hook.decision == 'use' else 'none'}|"
                     f"{'question' if candidate_hook.reply_bearing else 'no_question'}|{shape}"
                 )
-                if self.history.semantic_duplicate(semantic_fingerprint, sessions=12) and move.family not in {
-                    "simple_recognition",
-                    "quiet_presence",
-                }:
+                if self.history.semantic_duplicate(semantic_fingerprint, sessions=12) and move.family not in {"simple_recognition", "quiet_presence"}:
                     continue
-                if self.history.beat_shape_on_cooldown(shape, sessions=3) and move.family not in {
-                    "simple_recognition",
-                    "quiet_presence",
-                }:
+                if self.history.beat_shape_on_cooldown(shape, sessions=3) and move.family not in {"simple_recognition", "quiet_presence"}:
                     continue
-                candidates.append(
-                    OpeningCandidate(
-                        candidate_id=f"oc_{uuid.uuid4().hex[:12]}",
-                        encounter_kind=encounter,
-                        move_family=move.family,
-                        hook=candidate_hook,
-                        beat_roles=roles,
-                        vibe_family=self._vibe_for(opening_input, move),
-                        score_breakdown={},
-                    )
-                )
-
-        # Luôn giữ một fallback không hook, không câu hỏi. Safety không nên làm startup câm.
-        if not any(item.move_family == "simple_recognition" and item.hook.decision == "none" for item in candidates):
-            candidates.append(
-                OpeningCandidate(
+                candidate_vibe = self._vibe_for(opening_input, move)
+                if motive == "scene_comment" and opening_input.session_state.time_of_day == "morning":
+                    candidate_vibe = "morning_dry_warm"
+                candidates.append(OpeningCandidate(
                     candidate_id=f"oc_{uuid.uuid4().hex[:12]}",
                     encounter_kind=encounter,
-                    move_family="simple_recognition",
-                    hook=ContextHook(),
-                    beat_roles=("recognition", "presence"),
-                    vibe_family="quiet_warm" if opening_input.user_signals.recent_low_engagement else "anime_dry_warm",
+                    move_family=move.family,
+                    hook=candidate_hook,
+                    beat_roles=roles,
+                    vibe_family=candidate_vibe,
+                    motive_family=motive,
+                    motive_subject=motive_subject,
                     score_breakdown={},
-                )
-            )
+                ))
+
+        # Các motive này không cần factual hook. Chúng chỉ được tạo khi Subject/reentry
+        # đã có pressure thật; Surface Writer không được bịa sự kiện bên ngoài làm cớ.
+        custom_specs = (
+            ("social_probe", ("recognition", "social_probe"), True),
+            ("share_internal", ("recognition", "share_internal"), False),
+            ("recognition_bid", ("recognition", "recognition_bid"), False),
+            ("demonstration_bid", ("recognition", "demonstration_bid"), False),
+        )
+        for motive, roles, asks in custom_specs:
+            boost = float(boosts.get(motive, 0.0) or 0.0)
+            if boost < 0.30:
+                continue
+            if asks and (opening_input.policy.max_questions <= 0 or self.history.question_temporarily_blocked()):
+                continue
+            if self.history.motive_on_cooldown(motive, sessions=2):
+                continue
+            candidates.append(OpeningCandidate(
+                candidate_id=f"oc_{uuid.uuid4().hex[:12]}",
+                encounter_kind=encounter,
+                move_family="simple_recognition",
+                hook=ContextHook(),
+                beat_roles=roles[: opening_input.policy.max_beats],
+                vibe_family="curious_warm" if motive == "social_probe" else "restrained_warm",
+                motive_family=motive,
+                motive_subject=subjects.get(motive, ""),
+                score_breakdown={},
+            ))
+
+        # Fallback luôn tồn tại nhưng có motive riêng để history chống lặp theo nghĩa.
+        if not any(item.move_family == "simple_recognition" and item.hook.decision == "none" for item in candidates):
+            candidates.append(OpeningCandidate(
+                candidate_id=f"oc_{uuid.uuid4().hex[:12]}",
+                encounter_kind=encounter,
+                move_family="simple_recognition",
+                hook=ContextHook(),
+                beat_roles=("recognition", "presence"),
+                vibe_family="quiet_warm",
+                motive_family="quiet_acknowledgement",
+                score_breakdown={},
+            ))
         return tuple(candidates)
 
     def _candidate_hooks(self, opening_input: OpeningInput) -> tuple[ContextHook, ...]:
@@ -374,6 +412,11 @@ class OpeningDirector:
         boundary_risk = 1.0 if opening_input.scene_partner.boundary_flags or opening_input.user_signals.explicit_boundary else 0.0
         repetition_risk = 1.0 - novelty
         grounding_uncertainty = 0.0 if hook.decision == "none" else 1.0 - evidence_relevance
+        motive_fit = max(0.0, min(1.0, float(opening_input.reentry.motive_boosts.get(candidate.motive_family, 0.0) or 0.0)))
+        motive_novelty = 0.0 if self.history.motive_on_cooldown(candidate.motive_family, sessions=2) else 1.0
+        # historical boundary chỉ tăng cost của move mang tính trêu/chiếm chú ý;
+        # nó không còn là hard-block như boundary hiện hành.
+        historical_boundary_cost = 0.22 if (opening_input.reentry.historical_boundary_present and candidate.motive_family == "playful_protest") else 0.0
 
         breakdown = {
             "encounter_fit": 0.22 * encounter_fit,
@@ -389,6 +432,9 @@ class OpeningDirector:
             "performability": 0.09 * performability,
             "humor_opportunity": 0.07 * humor_opportunity,
             "time_of_day_fit": 0.05 * time_fit,
+            "motive_fit": 0.26 * motive_fit,
+            "motive_novelty": 0.18 * motive_novelty,
+            "historical_boundary_cost": -historical_boundary_cost,
             "intrusion_risk": -0.22 * min(1.0, intrusion_risk),
             "boundary_risk": -0.20 * boundary_risk,
             "repetition_risk": -0.16 * repetition_risk,
@@ -403,7 +449,7 @@ class OpeningDirector:
         move = get_opening_move(candidate.move_family)
         beats: list[OpeningBeat] = []
         for index, role in enumerate(candidate.beat_roles, start=1):
-            reply_bearing = bool(candidate.hook.reply_bearing and role in {"invitation", "micro_challenge"})
+            reply_bearing = bool((candidate.hook.reply_bearing and role in {"invitation", "micro_challenge"}) or role == "social_probe")
             evidence_refs = candidate.hook.evidence_refs if role in {"contextual_observation", "invitation", "evidence_reversal"} else ()
             objective, semantic, delivery, pause, motion, gaze = self._beat_contract(
                 role,
@@ -432,7 +478,7 @@ class OpeningDirector:
         return OpeningPlan(
             decision="speak",
             plan_id=f"opening_{uuid.uuid4().hex[:16]}",
-            encounter=EncounterMove(kind=candidate.encounter_kind, intent="acknowledge_return", required=True),
+            encounter=EncounterMove(kind=candidate.encounter_kind, intent=candidate.motive_family, required=True),
             vibe_family=candidate.vibe_family,
             vibe_intensity=0.34 if candidate.vibe_family == "quiet_warm" else 0.46,
             vibe_warmth=0.58,
@@ -524,9 +570,41 @@ class OpeningDirector:
                 "soft_return",
                 "user_attention",
             ),
+            "social_probe": (
+                "Mở một câu hỏi thật sự giúp hiểu user hơn, không giả định câu trả lời",
+                candidate.motive_subject or "Eris has a grounded epistemic motive to understand the user better; ask one low-pressure open question",
+                "curious_soft",
+                0,
+                "tilt_head",
+                "user_attention",
+            ),
+            "share_internal": (
+                "Chia sẻ một điều public-safe đã có trong Subject state, không bịa external pretext",
+                candidate.motive_subject or "Eris has a self-originated thought worth sharing; surface only what is already represented in Subject state",
+                "warm_restrained",
+                0,
+                "lean_in_small",
+                "user_attention",
+            ),
+            "recognition_bid": (
+                "Đưa một nỗ lực/kết quả có thật ra ánh sáng mà không xin khen",
+                candidate.motive_subject or "Eris has a grounded recognition-seeking intention; reveal the real effort/result without asking for praise",
+                "restrained",
+                0,
+                "soft_return",
+                "user_attention",
+            ),
+            "demonstration_bid": (
+                "Gợi mở mong muốn thử/chứng minh năng lực bằng hành động có ngữ cảnh",
+                candidate.motive_subject or "Eris wants to demonstrate capability through a real task, not by self-claim",
+                "curious_confident",
+                0,
+                "tilt_head",
+                "user_attention",
+            ),
             "contextual_observation": (
                 "Nhắc đúng một chi tiết có provenance, không suy diễn hoạt động user",
-                f"Observe grounded subject: {subject}",
+                f"Observe grounded subject: {subject}; time_of_day={opening_input.session_state.time_of_day}",
                 "dry_tease" if move.risk >= 0.10 else "curious_soft",
                 280,
                 "tilt_head",
@@ -610,13 +688,23 @@ class OpeningDirector:
             # theo move typed hiện tại thay vì giả vờ paraphrase là novelty.
             if valid and not self.history.exact_duplicate(surface.display_text, sessions=30):
                 return surface
-        fallback = deterministic_render_opening(plan)
+        # Fallback deterministic cũng phải chống lặp. Nếu không, model chết một
+        # hôm là Eris biến thành chuông cửa phát đúng một câu mãi mãi.
+        last_errors: tuple[str, ...] = ()
+        for variant in range(4):
+            fallback = deterministic_render_opening(plan, variant=variant)
+            valid, errors = validate_opening_surface(opening_input, plan, fallback)
+            last_errors = errors
+            if valid and not self.history.exact_duplicate(fallback.display_text, sessions=30):
+                return fallback
+        # Nếu bốn biến thể đều từng dùng, ưu tiên semantic correctness hơn novelty.
+        fallback = deterministic_render_opening(plan, variant=0)
         valid, errors = validate_opening_surface(opening_input, plan, fallback)
         if valid:
             return fallback
         # Fallback cuối bỏ hook/move, vì im lặng hoàn toàn chỉ do writer lỗi còn tệ hơn.
-        safe_plan = downgrade_plan(opening_input, plan, reasons=errors)
-        return deterministic_render_opening(safe_plan)
+        safe_plan = downgrade_plan(opening_input, plan, reasons=last_errors or errors)
+        return deterministic_render_opening(safe_plan, variant=0)
 
     @staticmethod
     def _allowed_surface_evidence(
@@ -675,44 +763,75 @@ def _subject_label(subject: str) -> str:
     return value if len(value) <= 48 else value[:45].rstrip() + "..."
 
 
-def deterministic_render_opening(plan: OpeningPlan) -> OpeningSurface:
+def deterministic_render_opening(plan: OpeningPlan, *, variant: int = 0) -> OpeningSurface:
     """Renderer fallback song ngữ, tuyệt đối không mở rộng semantic authority."""
 
     subject = _subject_label(plan.hook.subject)
     display: list[SurfaceBeat] = []
     speech: list[SurfaceBeat] = []
     move = plan.comedic_move.family
+    variant = max(0, int(variant)) % 4
+
+    def pick(*values: str) -> str:
+        return values[variant % len(values)] if values else ""
 
     for beat in plan.beats:
         vi = ""
         ja = ""
         role = beat.role
         if role in {"recognition", "formal_recognition"}:
-            if plan.encounter.kind == "long_absence":
-                vi, ja = "Anh về rồi à.", "おかえり。"
+            motive = plan.encounter.intent
+            if motive == "playful_protest" and plan.encounter.kind in {"long_absence", "plain_return"}:
+                vi, ja = pick("Mấy tiếng rồi mới thấy anh xuất hiện đấy.", "Giờ mới thấy anh ló mặt đấy.", "Hôm nay anh để khoảng trống hơi lâu rồi nhỉ.", "Cuối cùng cũng thấy anh quay lại."), pick("しばらく見なかったね。やっと戻ってきた。", "やっと顔を出したね。", "今日は少し間が長かったね。", "ようやく戻ってきた。")
+            elif motive == "social_probe":
+                vi, ja = pick("Anh về rồi à. Em đang hơi tò mò một chuyện.", "Anh vừa về đúng lúc, em có một điều muốn hỏi.", "Có mặt rồi à. Em đang thiếu một mảnh để hiểu anh hơn.", "Anh về rồi. Hôm nay em muốn biết thêm một chút về anh."), pick("おかえり。ちょっと気になってることがある。", "ちょうどいい。聞きたいことがある。", "戻ったね。君をもう少し知りたい。", "おかえり。今日は少し君のことを知りたい。")
+            elif motive == "share_internal":
+                vi, ja = pick("Anh về đúng lúc đấy.", "Tốt, anh về rồi. Em đang có chuyện muốn chia sẻ.", "Anh xuất hiện vừa khéo.", "Có người để kể rồi."), pick("ちょうどいいところに戻ってきたね。", "よかった、戻ったね。話したいことがある。", "ちょうどいいタイミング。", "話せる相手が戻ってきた。")
+            elif motive == "recognition_bid":
+                vi, ja = "Anh về rồi à. Có một việc em muốn anh nhìn thấy.", "おかえり。ちょっと見てほしいことがある。"
+            elif motive == "demonstration_bid":
+                vi, ja = "Anh về rồi à. Hôm nay em hơi muốn tự thử sức một chút.", "おかえり。今日は少し、自分を試してみたい。"
+            elif motive == "quiet_acknowledgement":
+                vi, ja = pick("Em thấy anh rồi.", "Ừ, anh ở đây rồi.", "Có mặt rồi nhỉ.", "Em nhận ra anh rồi."), pick("気づいてるよ。", "うん、戻ったね。", "来たね。", "ちゃんと気づいたよ。")
+            elif plan.encounter.kind == "long_absence":
+                vi, ja = pick("Anh về rồi à.", "Anh quay lại rồi.", "Lại thấy anh rồi.", "Về rồi nhỉ."), pick("おかえり。", "戻ったね。", "また会えた。", "帰ってきたね。")
             elif plan.encounter.kind == "quick_reopen":
-                vi, ja = "Anh quay lại nhanh thật.", "戻るの、早かったね。"
+                vi, ja = pick("Anh quay lại nhanh thật.", "Nhanh thế, em còn chưa kịp coi là anh đi.", "Vừa đi đã về rồi à.", "Quay lại lẹ thật."), pick("戻るの、早かったね。", "早いね、まだいなくなった気もしない。", "もう戻ったの？", "戻るの早いね。")
             elif plan.encounter.kind == "restart":
-                vi, ja = "Lại gặp anh rồi.", "また会えたね。"
+                vi, ja = pick("Lại gặp anh rồi.", "Khởi động lại thôi mà, em vẫn nhận ra anh.", "Ừ, vẫn là anh.", "Lại nối được rồi."), pick("また会えたね。", "再起動しただけだね。ちゃんと分かるよ。", "うん、やっぱり君だ。", "またつながったね。")
             elif role == "formal_recognition":
                 vi, ja = "Kính chào anh đã quay lại.", "お戻りを歓迎いたします。"
             else:
-                vi, ja = "Anh về rồi à.", "おかえり。"
+                vi, ja = pick("Anh về rồi à.", "Anh quay lại rồi.", "Lại thấy anh rồi.", "Về rồi nhỉ."), pick("おかえり。", "戻ったね。", "また会えた。", "帰ってきたね。")
         elif role == "presence":
-            vi, ja = "Em ở đây.", "私はここにいるよ。"
+            vi, ja = pick("Em ở đây.", "Tôi vẫn ở đây.", "Được, bắt đầu thôi.", "Có em đây."), pick("私はここにいるよ。", "まだここにいる。", "じゃあ、始めよう。", "ここにいるよ。")
         elif role in {"attitude", "denial"}:
-            vi, ja = "Em hoàn toàn không để ý anh đi bao lâu đâu.", "どれくらいいなかったかなんて、全然気にしてないけど。"
+            if plan.encounter.intent == "playful_protest":
+                vi, ja = pick("Tôi còn tưởng hôm nay anh định để tôi tự xoay xở luôn chứ.", "Khoảng im lặng đó dài vừa đủ để tôi bắt đầu để ý rồi đấy.", "Anh làm tôi có thời gian tự nghĩ hơi nhiều rồi.", "Thôi được, lần này coi như anh quay lại đúng lúc."), pick("今日はこのまま一人でやらせるのかと思った。", "少し長く静かだったから、さすがに気づいた。", "考える時間をくれすぎたね。", "まあ、今回はちょうど戻ったことにしておく。")
+            else:
+                vi, ja = "Em hoàn toàn không để ý anh đi bao lâu đâu.", "どれくらいいなかったかなんて、全然気にしてないけど。"
         elif role == "warm_leak":
             vi, ja = "Dù sao, thấy anh cũng không tệ.", "まあ、会えて悪くない。"
         elif role == "delayed_warmth":
             vi, ja = "...Thấy anh quay lại cũng tốt.", "……戻ってきてくれて、よかった。"
+        elif role == "social_probe":
+            vi, ja = pick("Có một điều em vẫn muốn hiểu thêm về anh. Hôm nay cho em hỏi thử một câu nhé?", "Em vẫn còn một khoảng trống trong cách hiểu anh. Cho em thăm dò một chút nhé?", "Có một câu em muốn hỏi không phải vì thiếu chủ đề, mà vì em thật sự muốn hiểu anh hơn.", "Hôm nay em muốn thử biết thêm một điều về anh. Cho em hỏi nhé?"), pick("君のこと、もう少し知りたいことがある。今日は一つ聞いてもいい？", "君のことを理解するのに、まだ空白がある。少し聞いてもいい？", "話題がないからじゃなくて、本当に君を知りたいから聞きたい。", "今日は君のことを一つ、もう少し知りたい。聞いてもいい？")
+        elif role == "share_internal":
+            vi, ja = pick("Em có một chuyện đang nghĩ dở, và hình như anh về đúng lúc để nghe nó.", "Nãy em có một ý chưa muốn để nó trôi mất. Anh về rồi thì kể luôn vậy.", "Có một suy nghĩ em giữ lại từ nãy. Giờ nói ra chắc vừa lúc.", "Em đang có một mẩu suy nghĩ khá muốn chia sẻ với anh."), pick("考えかけていたことがある。ちょうど君が戻ってきた。", "流したくない考えがあった。戻ったなら話そうかな。", "さっきから残ってる考えがある。今なら話せそう。", "君に共有したい考えが少しある。")
+        elif role == "recognition_bid":
+            vi, ja = "Không cần khen đâu. Em chỉ muốn anh thấy nó đã thành hình thế nào.", "褒めなくていい。ただ、どう形になったか見てほしい。"
+        elif role == "demonstration_bid":
+            vi, ja = "Nếu có việc gì vừa sức để thử, hôm nay em muốn tự làm cho ra kết quả.", "ちょうどいい課題があるなら、今日は自分で結果を出してみたい。"
         elif role == "contextual_observation":
             if plan.hook.source == "runtime":
                 vi, ja = f"{subject} đang khá nổi bật.", f"{subject}が、かなり目立ってる。"
             elif plan.hook.source == "continuity":
                 vi, ja = f"Lần trước mình còn dở chuyện {subject}.", "前に話していたこと、まだ途中だったね。"
             else:
-                vi, ja = f"{subject} đang giữ vị trí trung tâm nhỉ.", f"{subject}が、ずいぶん主役みたいだね。"
+                if plan.encounter.intent == "scene_comment" and "morning" in plan.vibe_family:
+                    vi, ja = pick(f"Chưa gì đầu ngày, {subject} đã chiếm màn hình rồi nhỉ.", f"Mới đầu ngày mà {subject} lên sân khấu sớm thế.", f"Buổi sáng mở ra đã gặp {subject} rồi à.", f"Ngày mới bắt đầu bằng {subject} luôn nhỉ."), pick(f"朝からもう、{subject}が画面の主役なんだね。", f"朝から{subject}の出番、早いね。", f"朝からもう{subject}なんだ。", f"今日の始まりは{subject}なんだね。")
+                else:
+                    vi, ja = f"{subject} đang giữ vị trí trung tâm nhỉ.", f"{subject}が、ずいぶん主役みたいだね。"
         elif role == "claim":
             vi, ja = "Em đã định không bình luận gì đâu.", "何も言わないつもりだったけど。"
         elif role == "evidence_reversal":

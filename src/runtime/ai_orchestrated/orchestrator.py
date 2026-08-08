@@ -23,6 +23,7 @@ from runtime.social_stance_policy import guard_subjective_stance_payload
 from runtime.companion_model_routing import route_companion_turn
 from runtime.public_reply_context import compile_public_reply_context
 from runtime.reply_obligation import enforce_reply_obligation
+from runtime.subject_initiative_runtime import build_initiative_runtime_context
 from runtime.observability import ensure_observability
 from runtime.chess.surface import (
     authoritative_chess_answer_text,
@@ -735,6 +736,14 @@ class AIChatOrchestrator:
                 else {}
             ),
         }
+        # V26: chat và self-turn dùng cùng motive context. User turn không reset
+        # pending intention; nó chỉ là một observation origin=user đi vào MindLoop.
+        try:
+            planning_snapshot["initiative_runtime_context"] = build_initiative_runtime_context(host)
+        except Exception as exc:
+            host.logger.debug("[subject initiative] chat context unavailable: %s", exc)
+            planning_snapshot["initiative_runtime_context"] = {}
+
         temporal = getattr(host, "temporal_mind", None)
         temporal_prompt = ""
         render_temporal = getattr(temporal, "prompt_context", None)
@@ -2027,9 +2036,9 @@ class AIAutonomousOrchestrator:
                 {
                     "plan_id": opening_plan.plan_id,
                     "speak": True,
-                    "motive": "startup_opening",
+                    "motive": f"session_reentry:{opening_plan.encounter.intent}",
                     "strategy": "opening_director",
-                    "value_focus": "encounter_and_grounded_presence",
+                    "value_focus": "session_reentry_and_subject_initiative",
                     "topic": "Realize the approved typed opening plan without changing its semantic scope.",
                     "importance": 0.78,
                     "intrusion_risk": max(0.02, min(0.72, opening_plan.comedic_move.risk)),
@@ -2040,7 +2049,8 @@ class AIAutonomousOrchestrator:
                     "evidence_refs": list(opening_plan.evidence_refs),
                     "semantics": {
                         "turn_kind": "startup",
-                        "speech_act": "typed_opening_scene",
+                        "speech_act": "session_reentry_opening",
+                        "opening_motive": opening_plan.encounter.intent,
                         "subject_key": opening_plan.hook.subject or "session_arrival",
                         "evidence_scope": (
                             opening_plan.hook.source if opening_plan.hook.decision == "use" else "persona"
@@ -2058,18 +2068,21 @@ class AIAutonomousOrchestrator:
             # một intention. Đổi đạo diễn không có nghĩa là vứt sổ cái đi.
             _submit_local_startup_plan(host, plan, turn_seq=turn_seq)
             host.logger.info(
-                "[opening director] selected plan=%s move=%s hook=%s beats=%s score=%.3f",
+                "[opening director] selected plan=%s motive=%s move=%s hook=%s beats=%s score=%.3f reentry=%s",
                 opening_plan.plan_id,
+                opening_plan.encounter.intent,
                 opening_plan.comedic_move.family,
                 opening_plan.hook.source,
                 opening_plan.beat_shape,
                 opening_plan.score,
+                opening_input.reentry.absence_band,
             )
             _opening_telemetry(
                 host,
                 "eris.opening.candidate_selected",
                 tags={
                     "encounter": opening_plan.encounter.kind,
+                    "motive": opening_plan.encounter.intent,
                     "move": opening_plan.comedic_move.family,
                     "hook_source": opening_plan.hook.source,
                     "beat_shape": opening_plan.beat_shape,
@@ -2457,6 +2470,7 @@ class AIAutonomousOrchestrator:
                         host,
                         "eris.opening.history_updated",
                         tags={
+                            "motive_family": opening_plan.encounter.intent,
                             "move_family": opening_plan.comedic_move.family,
                             "hook_source": opening_plan.hook.source,
                         },

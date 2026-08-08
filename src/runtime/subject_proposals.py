@@ -47,8 +47,10 @@ class AutonomousProposalSource:
         lowered = f"{owner} {kind}".casefold()
         if any(token in lowered for token in ("followup", "continuation", "arc", "memory")):
             need_ids.append("continuity")
-        if any(token in lowered for token in ("social", "chat", "seed", "conversation", "relationship")):
+        if any(token in lowered for token in ("social", "chat", "seed", "conversation", "relationship", "initiative", "probe", "understand_user")):
             need_ids.append("connection")
+        if any(token in lowered for token in ("probe", "understand_user", "curiosity")):
+            need_ids.append("coherence")
         if any(token in lowered for token in ("project", "task", "practice", "competence")):
             need_ids.append("competence")
         if requires_grounding or any(token in lowered for token in ("observe", "ground", "inspect")):

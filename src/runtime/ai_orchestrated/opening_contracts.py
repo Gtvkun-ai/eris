@@ -175,6 +175,7 @@ class RecentMoves:
     recent_hook_sources: tuple[str, ...] = ()
     recent_surface_hashes: tuple[str, ...] = ()
     recent_beat_shapes: tuple[str, ...] = ()
+    opening_motive_families: tuple[str, ...] = ()
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any] | None) -> "RecentMoves":
@@ -184,6 +185,7 @@ class RecentMoves:
             recent_hook_sources=tuple(compact(v, 32).lower() for v in _sequence(data.get("recent_hook_sources"))[-12:] if compact(v, 32)),
             recent_surface_hashes=tuple(compact(v, 100) for v in _sequence(data.get("recent_surface_hashes"))[-40:] if compact(v, 100)),
             recent_beat_shapes=tuple(compact(v, 100).lower() for v in _sequence(data.get("recent_beat_shapes"))[-12:] if compact(v, 100)),
+            opening_motive_families=tuple(compact(v, 64).lower() for v in _sequence(data.get("opening_motive_families"))[-20:] if compact(v, 64)),
         )
 
 
@@ -220,6 +222,7 @@ class ScenePartnerSnapshot:
     risk_context: tuple[str, ...] = ()
     opening_preferences: Mapping[str, Mapping[str, float]] = field(default_factory=dict)
     recent_reception: Mapping[str, str] = field(default_factory=dict)
+    updated_at: float = 0.0
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any] | None) -> "ScenePartnerSnapshot":
@@ -242,6 +245,7 @@ class ScenePartnerSnapshot:
             risk_context=tuple(compact(v, 96) for v in _sequence(data.get("risk_context"))[-8:] if compact(v, 96)),
             opening_preferences=preferences,
             recent_reception={compact(k, 64): compact(v, 64) for k, v in _mapping(data.get("recent_reception")).items()},
+            updated_at=max(0.0, float(data.get("updated_at", 0.0) or 0.0)),
         )
 
 
@@ -283,6 +287,62 @@ class PolicyContext:
         )
 
 
+
+
+@dataclass(frozen=True, slots=True)
+class SessionReentryContext:
+    """Projection tạm thời cho lượt mở phiên, không phải psychological state bền."""
+
+    absence_band: str = "unknown"
+    return_salience: float = 0.0
+    connection_pressure: float = 0.0
+    social_opportunity: float = 0.0
+    current_boundary_active: bool = False
+    historical_boundary_present: bool = False
+    strongest_motive: str = "quiet_acknowledgement"
+    motive_boosts: Mapping[str, float] = field(default_factory=dict)
+    motive_subjects: Mapping[str, str] = field(default_factory=dict)
+    evidence_refs: tuple[str, ...] = ()
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, Any] | None) -> "SessionReentryContext":
+        data = payload or {}
+        return cls(
+            absence_band=compact(data.get("absence_band", "unknown"), 48).lower() or "unknown",
+            return_salience=clamp01(data.get("return_salience", 0.0)),
+            connection_pressure=clamp01(data.get("connection_pressure", 0.0)),
+            social_opportunity=clamp01(data.get("social_opportunity", 0.0)),
+            current_boundary_active=bool(data.get("current_boundary_active", False)),
+            historical_boundary_present=bool(data.get("historical_boundary_present", False)),
+            strongest_motive=compact(data.get("strongest_motive", "quiet_acknowledgement"), 64).lower() or "quiet_acknowledgement",
+            motive_boosts={
+                compact(key, 64).lower(): clamp01(value)
+                for key, value in _mapping(data.get("motive_boosts")).items()
+                if compact(key, 64)
+            },
+            motive_subjects={
+                compact(key, 64).lower(): compact(value, 300)
+                for key, value in _mapping(data.get("motive_subjects")).items()
+                if compact(key, 64) and compact(value, 300)
+            },
+            evidence_refs=tuple(compact(v, 140) for v in _sequence(data.get("evidence_refs"))[:12] if compact(v, 140)),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "absence_band": self.absence_band,
+            "return_salience": self.return_salience,
+            "connection_pressure": self.connection_pressure,
+            "social_opportunity": self.social_opportunity,
+            "current_boundary_active": self.current_boundary_active,
+            "historical_boundary_present": self.historical_boundary_present,
+            "strongest_motive": self.strongest_motive,
+            "motive_boosts": dict(self.motive_boosts),
+            "motive_subjects": dict(self.motive_subjects),
+            "evidence_refs": list(self.evidence_refs),
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class OpeningInput:
     event: OpeningEvent = field(default_factory=OpeningEvent)
@@ -292,6 +352,7 @@ class OpeningInput:
     recent_moves: RecentMoves = field(default_factory=RecentMoves)
     user_signals: UserSignals = field(default_factory=UserSignals)
     scene_partner: ScenePartnerSnapshot = field(default_factory=ScenePartnerSnapshot)
+    reentry: SessionReentryContext = field(default_factory=SessionReentryContext)
     policy: PolicyContext = field(default_factory=PolicyContext)
     schema: str = OPENING_INPUT_SCHEMA
 
@@ -315,6 +376,7 @@ class OpeningInput:
             recent_moves=RecentMoves.from_mapping(_mapping(data.get("recent_moves"))),
             user_signals=UserSignals.from_mapping(_mapping(data.get("user_signals"))),
             scene_partner=ScenePartnerSnapshot.from_mapping(_mapping(data.get("scene_partner"))),
+            reentry=SessionReentryContext.from_mapping(_mapping(data.get("reentry"))),
             policy=PolicyContext.from_mapping(_mapping(data.get("policy"))),
         )
 
@@ -338,6 +400,7 @@ class OpeningInput:
                 "opening_preferences": {key: dict(value) for key, value in self.scene_partner.opening_preferences.items()},
                 "recent_reception": dict(self.scene_partner.recent_reception),
             },
+            "reentry": self.reentry.to_dict(),
             "policy": {**asdict(self.policy), "blocked_topics": list(self.policy.blocked_topics)},
         }
 
@@ -710,6 +773,7 @@ __all__ = [
     "SafetyVerdict",
     "ScenePartnerSnapshot",
     "SessionState",
+    "SessionReentryContext",
     "SurfaceBeat",
     "SurfaceContract",
     "UserSignals",

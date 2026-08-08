@@ -58,6 +58,15 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
+class ObservationOrigin(StrEnum):
+    """Nguồn làm MindLoop đổi trạng thái; không phải một pipeline tâm trí khác."""
+
+    USER = "user"
+    WORLD = "world"
+    INTERNAL = "internal"
+    TEMPORAL = "temporal"
+
+
 class NeedKind(StrEnum):
     CONTINUITY = "continuity"
     COMPETENCE = "competence"
@@ -154,6 +163,8 @@ class WorldObservation:
     subject_id: EntityId
     kind: str
     created_at: UnixTime
+    # V26: chat/autonomous/internal chỉ khác origin. Tất cả đi cùng MindLoop.
+    origin: ObservationOrigin = ObservationOrigin.WORLD
     facts: tuple[str, ...] = ()
     evidence_refs: tuple[EvidenceRef, ...] = ()
     measurements: Mapping[str, float] = field(default_factory=dict)
@@ -165,6 +176,8 @@ class WorldObservation:
         ensure_non_empty(self.observation_id, field_name="observation_id")
         ensure_non_empty(self.subject_id, field_name="subject_id")
         ensure_non_empty(self.kind, field_name="kind")
+        origin = self.origin if isinstance(self.origin, ObservationOrigin) else ObservationOrigin(str(self.origin))
+        object.__setattr__(self, "origin", origin)
         object.__setattr__(self, "measurements", freeze_mapping(self.measurements))
         object.__setattr__(self, "context", freeze_mapping(self.context))
 

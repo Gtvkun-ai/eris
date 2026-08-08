@@ -114,6 +114,7 @@ _EVENT_WEIGHTS: dict[str, float] = {
     "seed_available": 0.42,
     "attention_pressure": 0.34,
     "relational_pressure": 0.58,
+    "initiative_pressure": 0.64,
 }
 
 _HARD_WAKE = frozenset({"force", "user_turn", "structured_due", "followup_due"})

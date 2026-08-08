@@ -13,6 +13,7 @@ from typing import Any, Mapping, Sequence
 
 from .opening_contracts import OpeningInput
 from .opening_history import OpeningHistoryStore
+from .opening_reentry import build_session_reentry_context
 
 
 def _runtime_value(section: str, key: str, default: Any) -> Any:
@@ -230,6 +231,29 @@ def build_opening_input(
         )
     open_loops = tuple(dict.fromkeys((*state_open_loops, *memory_open_loops)))[:6]
     age_band = str(_runtime_value("opening_director", "age_band", "unknown") or "unknown")
+
+    # V27: opening bắt đầu từ appraisal tái nhập phiên, không từ một template chào.
+    # Cùng state hiện có sẽ tạo boost khác nhau: reconnect, callback, scene comment,
+    # probe user, share nội sinh... mà không cần random seed.
+    evidence_payloads = _evidence_payloads(grounding, now=current)
+    reentry = build_session_reentry_context(
+        host,
+        now=current,
+        seconds_since_last_session=seconds_since,
+        restart_detected=bool(getattr(host, "restart_detected", False)),
+        greeted_recently=bool(getattr(host, "greeted_recently", False)),
+        open_loops=open_loops,
+        evidence_payloads=evidence_payloads,
+        scene_partner=scene_partner,
+        time_of_day=_time_of_day(current),
+    )
+    # boundary_flags trong SocialAgenda là forensic history. Safety chỉ được hard
+    # block bởi boundary còn hiện hành; boundary cũ vẫn nằm trong reentry để tăng
+    # risk/cắt playful_protest, chứ không bắt Eris im đến tận thế.
+    opening_scene_partner = dict(scene_partner)
+    if not bool(reentry.get("current_boundary_active", False)):
+        opening_scene_partner["boundary_flags"] = []
+
     payload = {
         "schema": "opening_input.v1",
         "event": {
@@ -240,7 +264,7 @@ def build_opening_input(
             "restart_detected": bool(getattr(host, "restart_detected", False)),
             "greeted_recently": bool(getattr(host, "greeted_recently", False)),
         },
-        "screen_evidence": _evidence_payloads(grounding, now=current),
+        "screen_evidence": evidence_payloads,
         "continuity": {
             "consent_scope": "cross_session" if allow_cross_session else "session_only",
             "active_goal": open_loops[0] if open_loops else "",
@@ -263,10 +287,11 @@ def build_opening_input(
             "recent_laugh": False,
             "recent_counter_tease": False,
             "recent_low_engagement": bool(scene_partner.get("recent_low_engagement", False)),
-            "explicit_boundary": bool(scene_partner.get("boundary_flags")),
+            "explicit_boundary": bool(reentry.get("current_boundary_active", False)),
             "recent_barge_in": bool(getattr(host, "startup_recent_barge_in", False)),
         },
-        "scene_partner": scene_partner,
+        "scene_partner": opening_scene_partner,
+        "reentry": reentry,
         "policy": {
             "age_band": age_band,
             "romantic_flirt_allowed": bool(_runtime_value("opening_director", "allow_romantic_flirt", False)),
