@@ -42,6 +42,7 @@ from .initiative import InitiativeAction, InitiativeDecision
 from .self_context import AutonomousSelfContext, build_autonomous_self_context
 from runtime.engagements import InteractionDecision
 from runtime.temporal_mind import TemporalMind, TemporalSignal
+from runtime.relational_affordance import build_relational_affordance
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,6 +238,33 @@ class SelfTurnPipeline:
                     affordances.extend(collector(blackboard, snapshot=planner_snapshot))
             except Exception as exc:
                 host.logger.debug("[social initiative] affordance collection failed: %s", exc)
+
+        # V25: Subject Core có thể tự tạo một *cơ hội tiếp xúc* từ relational
+        # pressure. Đây là motivational provenance, không phải fact về user.
+        subject_service = getattr(host, "subject_service", None)
+        relational_view_fn = getattr(subject_service, "relational_view", None)
+        if callable(relational_view_fn):
+            try:
+                relational_view = relational_view_fn(now=now)
+                planner_snapshot["relational_state"] = dict(relational_view)
+                relational_affordance = build_relational_affordance(
+                    relational_view,
+                    now=now,
+                    reply_expected=bool(getattr(blackboard, "reply_expected", False)),
+                    user_busy=bool(getattr(blackboard, "user_busy", False)),
+                    interaction_busy=interaction_busy,
+                )
+                if relational_affordance is not None:
+                    affordances.append(relational_affordance)
+                    host.logger.info(
+                        "[relational] contact affordance pressure=%.2f opportunity=%.2f drive=%.2f revision=%s",
+                        float(relational_view.get("connection_pressure", 0.0) or 0.0),
+                        float(relational_view.get("opportunity", 0.0) or 0.0),
+                        float(relational_view.get("outreach_drive", 0.0) or 0.0),
+                        relational_view.get("revision", 0),
+                    )
+            except Exception as exc:
+                host.logger.debug("[relational] affordance build failed: %s", exc)
 
         # Deduplicate only by stable ID.  Similar meanings from different owners
         # remain visible because deciding between them is Gemma's job, not a set().
@@ -1044,6 +1072,51 @@ class SelfTurnPipeline:
             and context.seconds_since_assistant >= 45.0
         )
 
+        relational_view: Mapping[str, Any] = {}
+        subject_service = getattr(self.host, "subject_service", None)
+        tick_relational = getattr(subject_service, "tick_relational", None)
+        if callable(tick_relational):
+            try:
+                private_pressure = max(
+                    (float(item.get("pressure", item.get("score", 0.0)) or 0.0)
+                     for item in context.self_context.private_mind_surface),
+                    default=0.0,
+                )
+                thread_pressure = max(
+                    (float(item.get("salience", 0.0) or 0.0) for item in context.self_context.active_threads),
+                    default=0.0,
+                )
+                curiosity = float(context.self_context.internal_state.get("curiosity", 0.0) or 0.0)
+                user_busy = bool(snapshot.get("user_busy", False))
+                attention_interrupt = float(context.self_context.attention.get("interrupt_cost", 0.0) or 0.0)
+                relational_state = tick_relational(
+                    now=context.perception.now,
+                    partner_available=0.24 if user_busy else 0.68,
+                    interruption_cost=max(attention_interrupt, 0.78 if user_busy else 0.18),
+                    sharing_signal=private_pressure,
+                    curiosity_signal=curiosity,
+                    unresolved_signal=thread_pressure,
+                    evidence_refs=(f"autonomous-clock:{context.turn_seq}",),
+                    persist=False,
+                )
+                relational_view = relational_state.to_dict()
+                if isinstance(snapshot, dict):
+                    snapshot["relational_state"] = dict(relational_view)
+                self.trace_store.append(
+                    "relational_state",
+                    {
+                        "turn_seq": context.turn_seq,
+                        "connection_pressure": float(relational_view.get("connection_pressure", 0.0) or 0.0),
+                        "opportunity": float(relational_view.get("opportunity", 0.0) or 0.0),
+                        "outreach_drive": float(relational_view.get("outreach_drive", 0.0) or 0.0),
+                        "satiety": float(relational_view.get("interaction_satiety", 0.0) or 0.0),
+                        "interruption_cost": float(relational_view.get("interruption_cost", 0.0) or 0.0),
+                    },
+                    now=context.perception.now,
+                )
+            except Exception as exc:
+                self.host.logger.debug("[relational] cheap tick failed: %s", exc)
+
         events: list[ExecutiveEvent] = []
 
         def emit(kind: str, strength: float, source: str, *, revision: int = 0, **metadata: Any) -> None:
@@ -1115,6 +1188,16 @@ class SelfTurnPipeline:
             emit("discovery_ready", 0.90, "discovery_runtime")
         if pressure > 0.0:
             emit("attention_pressure", pressure, "cortex_attention")
+        relational_drive = float(relational_view.get("outreach_drive", 0.0) or 0.0) if relational_view else 0.0
+        if relational_drive >= 0.18:
+            emit(
+                "relational_pressure",
+                relational_drive,
+                "subject_relational_homeostasis",
+                revision=0,
+                connection_pressure=float(relational_view.get("connection_pressure", 0.0) or 0.0),
+                opportunity=float(relational_view.get("opportunity", 0.0) or 0.0),
+            )
 
         affordance_strength = max(
             structured_strength,
@@ -1122,6 +1205,7 @@ class SelfTurnPipeline:
             0.72 if context.discourse.assistant_may_continue else 0.0,
             seed_strength,
             0.90 if discovery_ready else 0.0,
+            relational_drive,
         )
         if affordance_strength:
             emit("affordance_changed", affordance_strength, "affordance_collector_inputs")
@@ -1630,6 +1714,20 @@ class SelfTurnPipeline:
             now=host.last_autonomous_spoken_at,
             focus_key=str(plan.semantics.subject_key or plan.topic or "autonomous"),
         )
+        note_relational = getattr(getattr(host, "subject_service", None), "note_relational_public_act", None)
+        if callable(note_relational):
+            try:
+                speech_act = str(plan.semantics.speech_act or "").strip().lower()
+                outreach = speech_act in {"contact_bid", "curiosity_bid", "share_self_originated_thought", "social_check_in"}
+                note_relational(
+                    now=host.last_autonomous_spoken_at,
+                    outreach=outreach,
+                    sharing=speech_act == "share_self_originated_thought",
+                    evidence_ref=str(plan.plan_id or f"autonomous:{context.turn_seq}"),
+                    persist=True,
+                )
+            except Exception as exc:
+                host.logger.debug("[relational] autonomous public-act update failed: %s", exc)
         # Public act đã tự tạo cooldown. Loop trở lại cheap sensing sớm thay vì
         # ngủ nguyên một "turn" rồi thức dậy như process cron.
         host._sleep_interruptible(3.5)

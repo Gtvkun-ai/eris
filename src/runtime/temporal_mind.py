@@ -19,7 +19,7 @@ import time
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Iterable, Mapping
 
-TEMPORAL_MIND_VERSION = "temporal-mind-v1"
+TEMPORAL_MIND_VERSION = "temporal-mind-v2-relational"
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +113,7 @@ _EVENT_WEIGHTS: dict[str, float] = {
     "affordance_changed": 0.48,
     "seed_available": 0.42,
     "attention_pressure": 0.34,
+    "relational_pressure": 0.58,
 }
 
 _HARD_WAKE = frozenset({"force", "user_turn", "structured_due", "followup_due"})

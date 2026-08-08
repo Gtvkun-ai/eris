@@ -81,6 +81,13 @@ class SubjectIngress:
         turn_id: str,
         planning_context: Mapping[str, Any] | None = None,
     ) -> DeliberationSession:
+        self.service.note_relational_user_turn(
+            now=created_at,
+            meaningful=bool(str(user_text or "").strip()),
+            engagement=0.82,
+            evidence_ref=turn_id,
+            persist=True,
+        )
         observation = self.user_observation(
             user_text,
             created_at=created_at,
@@ -115,6 +122,9 @@ class SubjectIngress:
         )
         reply_expected = bool(proposal_context["reply_expected"])
         engagement_active = bool(proposal_context["engagement_active"])
+        relational = context.get("relational_state") if isinstance(context.get("relational_state"), Mapping) else {}
+        relational_pressure = float(relational.get("connection_pressure", 0.0) or 0.0)
+        relational_opportunity = float(relational.get("opportunity", 0.0) or 0.0)
 
         affected = tuple(dict.fromkeys(
             need for proposal in proposals for need in proposal.get("supporting_need_ids", ())
@@ -127,13 +137,13 @@ class SubjectIngress:
             context={
                 "context_key": "autonomous",
                 "affected_need_ids": affected,
-                "goal_relevance": 0.48 if proposals else 0.10,
+                "goal_relevance": max(0.48 if proposals else 0.10, min(0.90, relational_pressure)),
                 "novelty": float(proposal_context["novelty"]),
                 "expectation_violation": 0.15,
                 "controllability": 0.90,
-                "relational_significance": 0.54,
+                "relational_significance": max(0.54, min(1.0, relational_pressure)),
                 "identity_significance": 0.28,
-                "future_consequence": 0.22,
+                "future_consequence": max(0.22, min(0.72, relational_pressure * 0.68)),
                 "uncertainty": 0.42,
                 "primary_interpretation": "runtime có các cơ hội hành động tự chủ cần Executive cân nhắc",
                 "action_proposals": tuple(proposals),
@@ -142,6 +152,12 @@ class SubjectIngress:
                     "engagement_active": engagement_active,
                     "affordance_count": len(affordances),
                     "snapshot_revision": context.get("state_revision", 0),
+                    "partner_available": relational.get("partner_availability", relational_opportunity),
+                    "interruption_cost": relational.get("interruption_cost", 0.25),
+                    "sharing_signal": relational.get("sharing_pressure", 0.0),
+                    "social_curiosity": relational.get("social_curiosity", 0.0),
+                    "unresolved_relational": relational.get("affiliation_deficit", 0.0),
+                    "relational_evidence_refs": tuple(relational.get("evidence_refs", ())),
                 },
             },
             evidence_refs=(turn_id,),
@@ -183,6 +199,13 @@ class SubjectIngress:
         planning_context: Mapping[str, Any] | None = None,
         executive: SubjectExecutivePort | None = None,
     ) -> MindDecision:
+        self.service.note_relational_user_turn(
+            now=created_at,
+            meaningful=bool(str(user_text or "").strip()),
+            engagement=0.82,
+            evidence_ref=turn_id,
+            persist=True,
+        )
         observation = self.user_observation(
             user_text,
             created_at=created_at,

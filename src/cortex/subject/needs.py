@@ -56,6 +56,7 @@ class NeedSystem:
         appraisals: tuple[SubjectAppraisal, ...],
         history: tuple[NeedEpisode, ...] = (),
         derived_needs: tuple[DerivedNeed, ...] = (),
+        relational: Mapping[str, object] | None = None,
     ) -> tuple[NeedActivation, ...]:
         vector = substrate.viability_vector()
         appraisals_by_need: dict[str, list[SubjectAppraisal]] = defaultdict(list)
@@ -93,6 +94,20 @@ class NeedSystem:
                 urgency = substrate_gap
                 refs = tuple(substrate.measurement_refs)
             pressure = min(1.0, substrate_gap + appraisal_pressure + history_pressure[need_id])
+            if need_id == NeedKind.CONNECTION.value and isinstance(relational, Mapping):
+                relational_pressure = max(0.0, min(1.0, float(relational.get("connection_pressure", 0.0) or 0.0)))
+                relational_opportunity = max(0.0, min(1.0, float(relational.get("opportunity", 0.0) or 0.0)))
+                outreach_drive = max(0.0, min(1.0, float(relational.get("outreach_drive", 0.0) or 0.0)))
+                # Relational homeostasis là nguồn pressure độc lập. Nó không được
+                # cộng vô hạn với appraisal; probabilistic union giữ biên [0,1].
+                pressure = 1.0 - (1.0 - pressure) * (1.0 - relational_pressure)
+                opportunity = max(opportunity, relational_opportunity)
+                urgency = max(urgency, outreach_drive * 0.72)
+                relational_refs = tuple(
+                    str(item) for item in relational.get("evidence_refs", ())
+                    if str(item or "").strip()
+                )
+                refs = tuple(dict.fromkeys((*refs, *relational_refs, f"relational-state:{int(relational.get('revision', 0) or 0)}")))
             if pressure <= 0.01:
                 continue
             activations.append(NeedActivation(

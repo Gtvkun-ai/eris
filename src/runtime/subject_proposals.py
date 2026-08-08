@@ -85,6 +85,12 @@ class AutonomousProposalSource:
             "historical_success": 0.50,
             "commitment_conflict": max(0.0, intrusion - urgency * 0.25),
             "evidence_refs": evidence_refs,
+            "need_effects": {
+                **({"connection": 0.72, "sovereignty": -min(0.30, intrusion * 0.35)} if "connection" in need_ids else {}),
+                **({"coherence": 0.62} if "coherence" in need_ids else {}),
+                **({"competence": 0.54} if "competence" in need_ids else {}),
+                **({"continuity": 0.58} if "continuity" in need_ids else {}),
+            },
         }
 
     def collect(
@@ -124,6 +130,7 @@ class AutonomousProposalSource:
                 "historical_success": 0.50,
                 "commitment_conflict": 0.08 if not reply_expected else 0.28,
                 "evidence_refs": (turn_id,),
+                "need_effects": {"coherence": 0.70, "competence": 0.48, "connection": -0.08},
             },
             {
                 "proposal_id": f"proposal:silence:{turn_id}",
@@ -139,6 +146,7 @@ class AutonomousProposalSource:
                 "historical_success": 0.50,
                 "commitment_conflict": 0.62 if reply_expected else 0.04,
                 "evidence_refs": (turn_id,),
+                "need_effects": {"sovereignty": 0.42, "coherence": 0.22, "connection": -0.72},
             },
             {
                 "proposal_id": f"proposal:body-only:{turn_id}",
@@ -154,6 +162,7 @@ class AutonomousProposalSource:
                 "historical_success": 0.50,
                 "commitment_conflict": 0.18 if reply_expected else 0.02,
                 "evidence_refs": (turn_id,),
+                "need_effects": {"connection": 0.24, "sovereignty": 0.30},
             },
         ))
         return tuple(proposals), {

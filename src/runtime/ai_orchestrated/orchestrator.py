@@ -1532,6 +1532,18 @@ class AIChatOrchestrator:
                     )
                 except Exception as exc:
                     host.logger.debug("[temporal mind] chat public-act update failed: %s", exc)
+            note_relational = getattr(getattr(host, "subject_service", None), "note_relational_public_act", None)
+            if callable(note_relational):
+                try:
+                    note_relational(
+                        now=time.time(),
+                        outreach=False,
+                        sharing=False,
+                        evidence_ref=str(getattr(decision, "turn_id", "") or getattr(decision, "idempotency_key", "") or "chat_public"),
+                        persist=True,
+                    )
+                except Exception as exc:
+                    host.logger.debug("[relational] chat public-act update failed: %s", exc)
         clock = getattr(host, "interaction_clock", None)
         if clock is not None and public_text:
             clock.mark_assistant_text()

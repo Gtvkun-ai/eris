@@ -12,6 +12,7 @@ from .deliberation import (
 )
 from .inner_state import ActionMemory, InnerLifeState
 from .self_model import SelfFacet, SubjectSelfProjection, SubjectSelfProjector
+from .relational import RelationalConfig, RelationalHomeostasis, RelationalState
 from .service import SubjectService, SubjectServiceConfig
 
 __all__ = [
@@ -26,6 +27,9 @@ __all__ = [
     "SubjectSelfProjector",
     "SubjectService",
     "SubjectServiceConfig",
+    "RelationalConfig",
+    "RelationalHomeostasis",
+    "RelationalState",
 ]
 
 from .agency import AgencyGap, LearnedAgencyPlanner, LearnedAgencyProjection

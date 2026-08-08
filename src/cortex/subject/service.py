@@ -52,6 +52,7 @@ from .narrative import NarrativeBeliefGenerator, NarrativeView
 from .needs import NeedPlasticityEngine, NeedSystem
 from .self_deception import ReflectiveMismatchDetector
 from .reflection import ReflectiveSelfRegulator
+from .relational import RelationalHomeostasis, RelationalState
 from .self_model import SubjectSelfProjector
 from .substrate import SubstrateMonitor, substrate_from_dict
 from .values import ValueFormationEngine
@@ -100,7 +101,7 @@ class SubjectServiceConfig:
     random_seed: int = 0
     min_episode_pressure: float = 0.08
     default_temperature: float = 0.20
-    algorithm_version: str = "subject-service-v12-validated-agency-reflection"
+    algorithm_version: str = "subject-service-v13-relational-homeostasis"
     restore_projection: bool = True
     consolidation_min_episode_count: int = 3
     consolidation_min_distinct_days: int = 2
@@ -144,6 +145,8 @@ class SubjectService:
         self.continuity = ContinuityService(self._id_factory, self._clock)
         self.mismatch_detector = ReflectiveMismatchDetector(self._id_factory)
         self.reflective_regulator = ReflectiveSelfRegulator()
+        self.relational = RelationalHomeostasis()
+        self.relational_state = RelationalState(updated_at=self._clock())
         # Self-model là projection dẫn xuất từ lịch sử causal, không phải personality prompt.
         self.self_projector = SubjectSelfProjector()
         self.existential = ExistentialDecisionService(self._id_factory, self._clock)
@@ -236,6 +239,9 @@ class SubjectService:
         substrate_payload = payload.get("substrate")
         if isinstance(substrate_payload, Mapping):
             self.substrate = substrate_from_dict(substrate_payload)
+        relational_payload = payload.get("relational")
+        if isinstance(relational_payload, Mapping):
+            self.relational_state = RelationalState.from_dict(relational_payload)
 
     def _projection_payload(self) -> dict[str, Any]:
         return {
@@ -246,6 +252,7 @@ class SubjectService:
             "competence": self.competence.to_projection(),
             "last_continuity_snapshot": dict(self._last_continuity_snapshot),
             "substrate": self.substrate.to_dict(),
+            "relational": self.relational_state.to_dict(),
         }
 
     def _persist_projection(self) -> None:
@@ -305,6 +312,93 @@ class SubjectService:
                         "algorithm_version": self.config.algorithm_version,
                     }
                 )
+
+    # ------------------------------------------------------------------
+    # Relational homeostasis
+    # ------------------------------------------------------------------
+    def tick_relational(
+        self,
+        *,
+        now: float | None = None,
+        partner_available: float | None = None,
+        interruption_cost: float | None = None,
+        sharing_signal: float = 0.0,
+        curiosity_signal: float = 0.0,
+        unresolved_signal: float = 0.0,
+        evidence_refs: tuple[str, ...] = (),
+        persist: bool = False,
+    ) -> RelationalState:
+        current = self._clock() if now is None else float(now)
+        self.relational_state = self.relational.tick(
+            self.relational_state,
+            now=current,
+            partner_available=partner_available,
+            interruption_cost=interruption_cost,
+            sharing_signal=sharing_signal,
+            curiosity_signal=curiosity_signal,
+            unresolved_signal=unresolved_signal,
+            evidence_refs=evidence_refs,
+        )
+        if persist:
+            self._persist_projection()
+        return self.relational_state
+
+    def note_relational_user_turn(
+        self,
+        *,
+        now: float | None = None,
+        meaningful: bool = True,
+        engagement: float = 0.75,
+        evidence_ref: str = "",
+        persist: bool = True,
+    ) -> RelationalState:
+        current = self._clock() if now is None else float(now)
+        self.relational_state = self.relational.note_user_turn(
+            self.relational_state,
+            now=current,
+            meaningful=meaningful,
+            engagement=engagement,
+            evidence_ref=evidence_ref,
+        )
+        self._append_event(
+            "relational_user_turn",
+            self.relational_state.to_dict(),
+            causal_refs=((evidence_ref,) if evidence_ref else ()),
+        )
+        if persist:
+            self._persist_projection()
+        return self.relational_state
+
+    def note_relational_public_act(
+        self,
+        *,
+        now: float | None = None,
+        outreach: bool = False,
+        sharing: bool = False,
+        evidence_ref: str = "",
+        persist: bool = True,
+    ) -> RelationalState:
+        current = self._clock() if now is None else float(now)
+        self.relational_state = self.relational.note_public_act(
+            self.relational_state,
+            now=current,
+            outreach=outreach,
+            sharing=sharing,
+            evidence_ref=evidence_ref,
+        )
+        self._append_event(
+            "relational_public_act",
+            self.relational_state.to_dict(),
+            causal_refs=((evidence_ref,) if evidence_ref else ()),
+        )
+        if persist:
+            self._persist_projection()
+        return self.relational_state
+
+    def relational_view(self, *, now: float | None = None) -> dict[str, Any]:
+        if now is not None:
+            self.tick_relational(now=now, persist=False)
+        return self.relational_state.to_dict()
 
     # ------------------------------------------------------------------
     # Appraisal / proposal generation
@@ -405,6 +499,10 @@ class SubjectService:
                                 observation.evidence_refs or (observation.observation_id,),
                             )
                         ),
+                        need_effects={
+                            str(key): float(value)
+                            for key, value in dict(item.get("need_effects") or {}).items()
+                        },
                     )
                 )
         if proposals:
@@ -475,6 +573,10 @@ class SubjectService:
                     commitment_conflict=0.0,
                     evidence_refs=activation.evidence_refs
                     or (observation.observation_id,),
+                    need_effects={
+                        activation.need_id: 0.72,
+                        **({"sovereignty": -0.08} if action_kind == "speak" else {}),
+                    },
                 )
             )
         if not proposals:
@@ -545,7 +647,21 @@ class SubjectService:
                     + 0.20 * historical,
                 ),
             )
-            relief = max(0.0, min(1.0, proposal.expected_need_relief + tendency))
+            activation_pressure = {item.need_id: item.pressure for item in self._last_activations}
+            effect_weight = 0.0
+            effect_mass = 0.0
+            for need_id, effect in proposal.need_effects.items():
+                pressure = float(activation_pressure.get(str(need_id), 0.0) or 0.0)
+                if pressure <= 0.0:
+                    continue
+                effect_weight += pressure * float(effect)
+                effect_mass += pressure
+            weighted_need_effect = effect_weight / effect_mass if effect_mass > 0.0 else 0.0
+            relief = max(
+                0.0,
+                min(1.0, proposal.expected_need_relief + tendency + 0.34 * weighted_need_effect),
+            )
+            need_conflict = max(0.0, -weighted_need_effect)
             arguments = dict(proposal.arguments)
             arguments.setdefault("context", context_key)
             arguments["inner_trace"] = {
@@ -555,6 +671,8 @@ class SubjectService:
                 "value_refs": list(value_refs),
                 "agency_project_bonus": round(agency_project_bonus, 6),
                 "agency_epistemic_bonus": round(agency_epistemic_bonus, 6),
+                "weighted_need_effect": round(weighted_need_effect, 6),
+                "need_effects": dict(proposal.need_effects),
             }
             output.append(
                 replace(
@@ -566,6 +684,7 @@ class SubjectService:
                     project_contribution=min(1.0, proposal.project_contribution + agency_project_bonus),
                     historical_success=historical,
                     value_congruence=value_congruence,
+                    commitment_conflict=min(1.0, proposal.commitment_conflict + 0.32 * need_conflict),
                 )
             )
         return tuple(output)
@@ -649,11 +768,24 @@ class SubjectService:
         before = self.substrate
         measured = self.substrate_monitor.measure(observation, before)
         appraisals = self._appraise(observation, before, measured)
+        runtime_context = observation.context.get("runtime_context")
+        runtime_context = runtime_context if isinstance(runtime_context, Mapping) else {}
+        self.tick_relational(
+            now=observation.created_at,
+            partner_available=runtime_context.get("partner_available"),
+            interruption_cost=runtime_context.get("interruption_cost"),
+            sharing_signal=float(runtime_context.get("sharing_signal", 0.0) or 0.0),
+            curiosity_signal=float(runtime_context.get("social_curiosity", 0.0) or 0.0),
+            unresolved_signal=float(runtime_context.get("unresolved_relational", 0.0) or 0.0),
+            evidence_refs=tuple(str(item) for item in runtime_context.get("relational_evidence_refs", ()) if str(item or "").strip()),
+            persist=False,
+        )
         activations = self.need_system.activate(
             measured,
             appraisals,
             self.episodes.closed_episodes(),
             self.inner.derived_needs,
+            relational=self.relational_state.to_dict(),
         )
         self.substrate = measured
         self._last_appraisals = appraisals
@@ -1337,6 +1469,7 @@ class SubjectService:
 
         return {
             "self_model": self.self_view(),
+            "relational": self.relational_state.to_dict(),
             "algorithm_version": self.config.algorithm_version,
             "active_needs": [
                 {
@@ -1375,6 +1508,7 @@ class SubjectService:
             "algorithm_version": self.config.algorithm_version,
             "subject_id": self.config.subject_id,
             "substrate": self.substrate.to_dict(),
+            "relational": self.relational_state.to_dict(),
             "active_appraisal_ids": [item.appraisal_id for item in self._last_appraisals],
             "active_needs": [self._as_payload(item) for item in self._last_activations],
             "open_episode_ids": [item.episode_id for item in self.episodes.open_episodes()],

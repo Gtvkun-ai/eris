@@ -58,6 +58,7 @@ _REVIEW_EVENT_KINDS = {
     "discovery_ready",
     "attention_pressure",
     "structured_due",
+    "relational_pressure",
     "force",
 }
 
@@ -273,6 +274,7 @@ _DEFAULT_REVIEW_CONDITIONS = (
     ReviewCondition("open_discourse", 0.60),
     ReviewCondition("discovery_ready", 0.70),
     ReviewCondition("attention_pressure", 0.58),
+    ReviewCondition("relational_pressure", 0.55),
     ReviewCondition("structured_due", 0.70),
     ReviewCondition("force", 0.0),
 )
@@ -671,7 +673,8 @@ class ExecutiveCortex:
             "not user debt. semantic_target is a meaning brief, never final wording. Every autonomous final decision must issue a real "
             "review policy: reconsider_on contains {kind, minimum_strength} conditions over runtime event envelopes; "
             "review_after_seconds is an optional timer, "
-            "zero for event-only policy. Do not use free-text timing instructions. "
+            "zero for event-only policy. relational_pressure is a legitimate endogenous review event from Subject Core, "
+            "not an external factual claim. Do not use free-text timing instructions. "
             "When subject_deliberation_frame is supplied, choose only an offered coalition/action and copy its exact "
             "coalition_id and primary_proposal_ref into subject_coalition_id and subject_proposal_ref. "
             + stage_rule + " Return exactly one JSON object."
@@ -1090,6 +1093,7 @@ class ExecutiveCortex:
                 ReviewCondition("user_turn", 0.0),
                 ReviewCondition("force", 0.0),
                 ReviewCondition("seed_available", 0.75),
+                ReviewCondition("relational_pressure", 0.55),
             ),
             review_after_seconds=0.0,
             reason=degraded_reason,
@@ -1410,6 +1414,11 @@ class ExecutiveCortex:
             elif decision.capability_id or decision.capability_ids:
                 preferred = "capability"
             conditions = decision.reconsider_on or current.reconsider_on
+            # Relational homeostasis là một nguồn thay đổi nội tại hợp lệ. Model
+            # được quyền đặt threshold khác cho phần còn lại, nhưng không được
+            # vô tình làm Executive mù vĩnh viễn với nhu cầu connection tăng dần.
+            if not any(item.kind == "relational_pressure" for item in conditions):
+                conditions = (*conditions, ReviewCondition("relational_pressure", 0.55))
             due_at = now + decision.review_after_seconds if decision.review_after_seconds > 0 else 0.0
             self._state = ExecutiveState(
                 revision=current.revision + 1,

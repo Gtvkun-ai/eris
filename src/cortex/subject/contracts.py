@@ -476,6 +476,7 @@ class ActionProposal:
     historical_success: Score01 = 0.5
     commitment_conflict: Score01 = 0.0
     evidence_refs: tuple[EvidenceRef, ...] = ()
+    need_effects: Mapping[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         ensure_non_empty(self.proposal_id, field_name="proposal_id")
@@ -486,7 +487,13 @@ class ActionProposal:
             "historical_success", "commitment_conflict",
         ):
             clamp01(getattr(self, field_name), field_name=field_name)
+        for need_id, effect in self.need_effects.items():
+            ensure_non_empty(str(need_id), field_name="need_effects.need_id")
+            number = float(effect)
+            if number < -1.0 or number > 1.0:
+                raise ValueError("need effect must be in [-1, 1]")
         object.__setattr__(self, "arguments", freeze_mapping(self.arguments))
+        object.__setattr__(self, "need_effects", freeze_mapping(self.need_effects))
 
 
 @dataclass(frozen=True, slots=True)

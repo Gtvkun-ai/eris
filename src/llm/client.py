@@ -652,6 +652,10 @@ class OpenAICompatibleClient:
                 mode = "enabled"
             else:
                 mode = deepseek_thinking_mode(self.configured_model_name, requested=thinking_mode)
+            
+            worker_role = str(getattr(self, "worker_role", "") or "").strip().lower()
+            if worker_role == "executive" and os.environ.get("ERIS_EXECUTIVE_THINKING_DISABLED", "0") in {"1", "true", "yes"}:
+                mode = "disabled"
             payload["thinking"] = {"type": mode}
             payload["max_tokens"] = max_tokens if mode == "disabled" else max(max_tokens, 2048)
             if mode == "enabled":
