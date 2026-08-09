@@ -356,13 +356,15 @@ class RemoteModelProcessManager:
         return client
 
     def build_executive_client(self):
-        """Dựng Executive theo cùng authority route với main brain.
+        """Dựng Executive Cortex luôn dùng DeepSeek, không dùng Gemini.
 
-        Khi remote provider là DeepSeek và ``ERIS_DS2API_ENABLED`` bật, Executive
-        ưu tiên worker ``executive`` trên DS2API/Whale2API. Official DeepSeek là
-        fallback transport nếu có key. Điều này tránh tình trạng cả hệ đang chạy
-        qua DS2API nhưng Executive lạc sang một provider/model riêng chỉ vì nó đọc
-        mỗi ``ERIS_REMOTE_PROVIDER``.
+        Thứ tự ưu tiên:
+        1. DeepSeek worker ``executive`` qua DS2API/Whale2API (nếu ERIS_DS_EXECUTIVE_API_KEY có).
+        2. Official DeepSeek API (nếu ERIS_REMOTE_PROVIDER==deepseek và có DEEPSEEK_API_KEY).
+        3. Degrade qua Subject Core (trả None) — không fallback sang Gemini.
+
+        Để kích hoạt DeepSeek executive: set ERIS_DS_EXECUTIVE_API_KEY, hoặc
+        đảm bảo ERIS_DS2API_ENABLED=1 với ERIS_DS2API_API_KEY đã có.
         """
 
         apply_secrets_to_environ()
@@ -372,11 +374,15 @@ class RemoteModelProcessManager:
         provider = _normalize_remote_provider(os.environ.get("ERIS_REMOTE_PROVIDER", "deepseek"))
         executive_spec = load_worker_spec("executive")
         ds2api_flag = self._explicit_env_flag("ERIS_DS2API_ENABLED")
+        # Luôn thử DeepSeek executive worker nếu nó đã được cấu hình, bất kể
+        # provider chính là gì. Trước đây chỉ thử khi provider==deepseek*, dẫn
+        # đến fall-through sang Gemini dù user đã set ERIS_DS_EXECUTIVE_API_KEY.
         ds2api_enabled = bool(
-            provider == "deepseek_web"
+            executive_spec.configured
+            or provider == "deepseek_web"
             or (
                 provider == "deepseek"
-                and (executive_spec.configured if ds2api_flag is None else ds2api_flag)
+                and (True if ds2api_flag is None else ds2api_flag)
             )
         )
 
@@ -459,48 +465,16 @@ class RemoteModelProcessManager:
             self.logger.warning("Executive Cortex deepseek_web khong co worker kha dung; semantic path se degrade qua Subject Core.")
             return None
 
-        # Legacy fallback to Gemini cho provider không phải DeepSeek.
-        profile = get_provider_profile("gemini", slot="executive")
-        pool = get_key_pool("gemini")
-        api_key = (
-            str(profile.get("api_key") or "").strip()
-            or _bootstrap_pool_key(pool)
-            or get_secret("ERIS_EXECUTIVE_API_KEY", "GEMINI_API_KEY")
+        # Không dùng Gemini làm fallback cho Executive nữa.
+        # Nếu không có DeepSeek executive worker thì degrade qua Subject Core.
+        # Để dùng DeepSeek executive: set ERIS_DS_EXECUTIVE_API_KEY (hoặc để
+        # worker dùng chung key qua ERIS_DS2API_API_KEY với ERIS_DS2API_ENABLED=1).
+        self.logger.warning(
+            "Executive Cortex: khong tim duoc DeepSeek executive worker; "
+            "autonomous se degrade qua Subject Core. "
+            "De bat: set ERIS_DS_EXECUTIVE_API_KEY hoac dam bao ERIS_DS2API_ENABLED=1."
         )
-        if not api_key:
-            self.logger.warning(
-                "Executive Cortex chua co transport; autonomous se degrade qua Subject Core."
-            )
-            return None
-        base_url = (
-            str(profile.get("base_url") or "").strip()
-            or os.environ.get(
-                "ERIS_EXECUTIVE_BASE_URL",
-                "https://generativelanguage.googleapis.com/v1beta",
-            ).strip()
-        )
-        model_name = (
-            str(profile.get("model") or profile.get("model_name") or "").strip()
-            or os.environ.get("ERIS_EXECUTIVE_MODEL", DEFAULT_OPEN_MODEL_ID).strip()
-            or DEFAULT_OPEN_MODEL_ID
-        )
-        try:
-            client = GeminiClient(
-                base_url=base_url,
-                api_key=api_key,
-                model_name=model_name,
-                timeout=max(5, int(float(os.environ.get("ERIS_EXECUTIVE_TIMEOUT_S", "18") or 18))),
-                key_pool=pool,
-            )
-        except Exception as exc:
-            self.logger.warning("Khong dung duoc Gemini Executive Cortex: %s", exc)
-            return None
-        self.logger.info(
-            "Gemini Executive Cortex san sang: model=%s pool_keys=%s",
-            model_name,
-            getattr(pool, "size", 0),
-        )
-        return client
+        return None
 
     def build_inner_client(self):
         return self.build_deepseek_worker_client("inner")

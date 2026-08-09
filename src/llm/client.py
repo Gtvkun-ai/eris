@@ -654,9 +654,13 @@ class OpenAICompatibleClient:
                 mode = deepseek_thinking_mode(self.configured_model_name, requested=thinking_mode)
             
             worker_role = str(getattr(self, "worker_role", "") or "").strip().lower()
+            # Executive có thể tắt thinking độc lập với các worker khác.
+            # Check NÀY phải sau DS2API mode (line trên) để override được cả
+            # trường hợp endpoint là localhost/DS2API (vốn force mode="enabled").
             if worker_role == "executive" and os.environ.get("ERIS_EXECUTIVE_THINKING_DISABLED", "0") in {"1", "true", "yes"}:
                 mode = "disabled"
             payload["thinking"] = {"type": mode}
+
             payload["max_tokens"] = max_tokens if mode == "disabled" else max(max_tokens, 2048)
             if mode == "enabled":
                 payload["reasoning_effort"] = deepseek_reasoning_effort(reasoning_effort)

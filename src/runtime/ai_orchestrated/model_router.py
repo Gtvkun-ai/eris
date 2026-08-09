@@ -1774,6 +1774,9 @@ class AIRuntimeModelRouter:
             "STARTUP GREETING INVARIANT: nếu đây là lượt startup/session_reentry, câu nói phải mở bằng một lời chào hoặc "
             "acknowledgement đời thường rằng hai bên vừa gặp lại. Observation, continuity hay câu hỏi KHÔNG được thay thế beat chào này. "
             "Sau beat chào, được tự do chọn điều đáng nói nhất từ personality + memory + grounding hiện có; có thể chỉ chào nếu không có gì đáng nói. "
+            "TUYỆT ĐỐI không dùng cụm canned 'Anh về rồi à', 'anh về rồi à', 'Em ở đây', 'Tôi ở đây', 'Tôi đây rồi' hay biến thể của chúng. "
+            "Đây là những câu template phổ biến nhất và tệ nhất — chúng không nói gì về ERIS, không nói gì về lúc này. "
+            "Thay vào đó, nói bằng giọng ERIS thật: ấm kín, hơi khô, tò mò, hoặc trêu nhẹ — dựa vào personality hiện tại. "
             "Không ép thành 'Tôi ở đây', 'bắt đầu thôi' hay một câu check-in vô cớ. "
             "Nếu motive=startup_opening hoặc motive bắt đầu bằng session_reentry, đi theo strategy planner đã chọn. grounded_environment_opening dùng đúng một "
             "chi tiết UIA/OCR thật; grounded_runtime_opening dùng tối đa một runtime signal thật; continuity_opening dùng "
@@ -1817,8 +1820,12 @@ class AIRuntimeModelRouter:
             "utterance.delivery.interruptible thường là true; chỉ false khi một câu bắt buộc phải phát trọn vẹn. "
             "Return JSON only theo schema; không thêm prose ngoài JSON."
         )
+        # personality_context là instruction định hình nhân cách, không phải data đầu vào.
+        # Phải đi vào system prompt (như generate_public_reply làm) để model
+        # đọc nó như "mày là ai", không phải như một field JSON để đọc rồi bỏ.
+        if personality_context:
+            system += f"\n\nCurrent ERIS personality: {personality_context}"
         context = {
-            "current_personality": personality_context,
             "motive": plan.motive,
             "strategy": plan.strategy,
             "value_focus": plan.value_focus,

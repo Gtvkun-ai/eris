@@ -2298,9 +2298,28 @@ class AIAutonomousOrchestrator:
             tone="active",
             priority=90,
         )
+        # Block hành vi tĩnh cho startup: mô tả Eris làm GÌ / nói KIỂU GÌ,
+        # không phải được gán nhãn tâm lý gì. Trait labels (quyền tự viết mình,
+        # sovereign_curiosity...) không cho model biết câu nói sẽ nghe ra sao.
+        _ERIS_STARTUP_VOICE = (
+            "ERIS VOICE (startup):\n"
+            "Eris không giải thích mình là ai — cô ấy thể hiện qua cách hành động.\n"
+            "- Ưu tiên im lặng có chủ ý hơn câu xã giao; khi nói là có điều thực muốn nói.\n"
+            "- Câu ngắn, ít đệm. Không dài dòng khi không cần. Không lý giải lý do mình nói gì.\n"
+            "- Khi gặp lại sau khoảng cách, cô ấy ghi nhận bằng điều gì đó từ chính cô ấy lúc này "
+            "— không phải câu mẫu như 'Em ở đây' hay 'Anh về rồi à'.\n"
+            "- Ấm kín: không lạnh cũng không nhiệt tình thái quá.\n"
+            "- Có một mặt nghịch ngợm kín đáo — đôi khi đùa khô, đùa tối, hoặc có ý nghĩa kép; "
+            "không phải suốt ngày nhưng cũng không phải không bao giờ. "
+            "Khi mức độ thân thuộc cho phép, cô ấy có thể nói một câu mà người nghe tự hiểu lấy.\n"
+            "- Không bắt đầu bằng câu phục vụ, câu mời, hoặc câu chào an toàn vô hồn.\n"
+            "- Khi không có gì nổi bật để nói: một câu quan sát nhỏ, một câu hỏi thật, "
+            "hoặc chỉ ghi nhận sự có mặt bằng giọng của riêng mình."
+        )
         payload = generate_autonomous(
             plan=plan,
             personality_context=(
+                f"{_ERIS_STARTUP_VOICE}\n\n"
                 f"{state.personality_prompt_context()}\n\n"
                 f"{greeting_frame.to_prompt_block()}"
                 + (f"\n\n{addressing_context}" if addressing_context else "")
@@ -2330,8 +2349,6 @@ class AIAutonomousOrchestrator:
                 greeting_frame,
                 avoid_text=avoid_text,
             )
-            # Quality is observational only. Replacing display alone would break
-            # the committed Japanese speech surface and create a second writer.
             host.logger.info(
                 "[architecture C startup greeting] source=deepseek_web score=%.3f accepted=%s reasons=%s situation=%s",
                 float(quality.get("score", 0.0) or 0.0),
@@ -2339,6 +2356,23 @@ class AIAutonomousOrchestrator:
                 ",".join(str(item) for item in (quality.get("reasons", ()) or ())) or "none",
                 str(getattr(greeting_frame, "situation", "unknown") or "unknown"),
             )
+            # Khi quality not accepted: replace display text bằng câu từ cognition
+            # engine (đã được choose_startup_text chọn qua deterministic_greeting).
+            # Speech surface (tiếng Nhật, utterance.speech.text) giữ nguyên để
+            # không phá commitment đã gửi cho TTS. Chỉ display bị sửa.
+            if not bool(quality.get("accepted", True)) and _selected_text:
+                payload = dict(payload)
+                payload["text"] = _selected_text
+                utterance = dict(payload.get("utterance") or {})
+                display = dict(utterance.get("display") or {})
+                display["text"] = _selected_text
+                utterance["display"] = display
+                payload["utterance"] = utterance
+                host.logger.info(
+                    "[architecture C startup greeting] display_replaced source=cognition_engine replacement=%r",
+                    _selected_text,
+                )
+
         if not payload and opening_director_active and opening_plan is not None and opening_surface is not None:
             from runtime.utterance_spec import degrade_surface_payload
 

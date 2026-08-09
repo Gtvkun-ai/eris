@@ -111,6 +111,9 @@ class SelfTurnPipeline:
         self._last_probe_at = 0.0
         self._observer_thread: threading.Thread | None = None
         self._observer_thread_lock = threading.Lock()
+        # Track câu autonomous gần nhất riêng biệt với last_text (last_text bị overwrite
+        # bởi chat reply sau mỗi lượt user, nên không đủ để tránh lặp câu autonomous).
+        self._last_autonomous_text: str = ""
 
         # V19: TemporalMind là state timing rẻ dùng chung cả chat/autonomous.
         # Nó không chọn nội dung; nó chỉ quyết định đã đáng đánh thức cognition
@@ -1615,7 +1618,7 @@ class SelfTurnPipeline:
                 ) if part),
                 engagement_context=context.engagement_prompt_context,
                 recent_history=context.recent_history,
-                avoid_text=str(getattr(host, "last_text", "") or ""),
+                avoid_text=self._last_autonomous_text or str(getattr(host, "last_text", "") or ""),
                 allow_fallback=not no_fallback_mode_enabled(),
                 language_hint=self._runtime_language(),
                 speech_language_hint=self._runtime_speech_language(),
@@ -1748,6 +1751,9 @@ class SelfTurnPipeline:
 
         host.last_autonomous_spoken_at = time.time()
         host._note_autonomous_spoken()
+        # Cập nhật sau commit thành công để avoid_text của lượt sau luôn tránh
+        # câu autonomous vừa nói, kể cả khi chat reply đã overwrite host.last_text.
+        self._last_autonomous_text = str(text or "")
 
         # V27.1: public text là điểm duy nhất được quyền consume một Subject
         # intention. Trước điểm này Surface/gate/preemption đều có thể fail, nên

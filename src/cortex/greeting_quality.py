@@ -76,6 +76,10 @@ class GreetingQualityScorer:
         "dieu quan trong", "điều quan trọng", "nguyen tac", "nguyên tắc",
         "tieu chuan cua toi", "tiêu chuẩn của tôi",
         "ghi nhan", "ghi nhận", "du kien", "dữ kiện", "eris online", "runtime",
+        # Presence-announcement: mô phỏng chatbot thông báo "tôi có mặt". Không
+        # phải một câu người đang nói gì, chỉ là echo status. Penalize như bot DNA.
+        "em o day", "em ở đây", "toi o day", "tôi ở đây",
+        "em day roi", "em đây rồi", "toi day roi", "tôi đây rồi",
     )
 
     def __init__(self, *, cognition: GreetingCognitionEngine | None = None):
@@ -93,7 +97,12 @@ class GreetingQualityScorer:
             return GreetingQuality(cleaned, 0.0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, ("empty",))
 
         word_count = len(normalized.split())
-        has_return = any(token in normalized for token in ("quay lai", "mo toi", "lai gap", "tro lai", "ve roi"))
+        # "anh ve roi" là echo input của user/invariant, không phải Eris chủ động nói gì.
+        # Không tính là has_return để tránh thưởng điểm situatedness cho câu canned.
+        has_return = any(token in normalized for token in ("quay lai", "mo toi", "lai gap", "tro lai")) or (
+            "ve roi" in normalized
+            and not any(prefix in normalized for prefix in ("anh ve roi", "chi ve roi", "ban ve roi"))
+        )
         has_anchor = bool(frame.active_anchor) and self._text_touches_anchor(cleaned, frame.active_anchor or "")
         has_low_demand = not cleaned.endswith("?") and word_count <= 22
         has_everyday_shape = 2 <= word_count <= 18 and not re.search(r"[;:]{2,}|\n", cleaned)
