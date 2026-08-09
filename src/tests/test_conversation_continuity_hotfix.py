@@ -237,12 +237,12 @@ def test_semantic_reference_rejects_ambiguous_locator_and_speaker_conflict() -> 
     )
 
     assert result.frame.reference.to_dict() == {
-        "kind": "assistant_proposition",
-        "speaker": "assistant",
-        "operation": "clarify",
-        "turn_index": 12,
+        "kind": "none",
+        "speaker": "none",
+        "operation": "none",
+        "turn_index": 0,
         "turn_offset": 0,
-        "confidence": 0.88,
+        "confidence": 0.0,
     }
     assert "reference.turn_offset_out_of_range:99" in result.violations
     assert "reference.locator_ambiguous:turn_index_and_turn_offset" in result.violations

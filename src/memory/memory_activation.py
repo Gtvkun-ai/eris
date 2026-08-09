@@ -98,6 +98,110 @@ class MemoryRetrievalResult:
     debug_notes: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class WorkingMemoryPolicy:
+    """Capacity policy for the active memory workspace, not long-term storage.
+
+    Retrieval may discover many memories; cognition should not broadcast all of
+    them.  Keeping a small, route-aware active set prevents episodic memory from
+    becoming a second prompt history and mirrors the useful neuroscience motif:
+    large long-term stores, sharply limited working access.
+    """
+
+    low_capacity: int = 3
+    normal_capacity: int = 5
+    high_capacity: int = 7
+    exact_recall_capacity: int = 8
+    background_episodic_quota: int = 1
+    exact_episodic_quota: int = 4
+
+
+class WorkingMemoryGate:
+    """Project retrieval results into a bounded active workspace.
+
+    This is intentionally a *gate*, not another scorer. MemoryScorer determines
+    relevance. The gate only enforces capacity and layer permissions supplied by
+    the current MemoryCue.
+    """
+
+    def __init__(self, policy: WorkingMemoryPolicy | None = None) -> None:
+        self.policy = policy or WorkingMemoryPolicy()
+
+    def _capacity(self, cue: Any, requested: int) -> int:
+        budget = str(getattr(cue, "budget_mode", "normal") or "normal").lower()
+        exact = bool(getattr(cue, "needs_exact_recall", False))
+        if exact:
+            base = self.policy.exact_recall_capacity
+        elif budget in {"low", "tight", "minimal", "degraded"}:
+            base = self.policy.low_capacity
+        elif budget in {"high", "deep", "expanded"}:
+            base = self.policy.high_capacity
+        else:
+            base = self.policy.normal_capacity
+        return max(1, min(int(requested), int(base)))
+
+    def apply(
+        self,
+        result: "MemoryRetrievalResult",
+        *,
+        cue: Any,
+        requested: int,
+    ) -> "MemoryRetrievalResult":
+        capacity = self._capacity(cue, requested)
+        exact = bool(getattr(cue, "needs_exact_recall", False))
+        current_evidence = bool(getattr(cue, "needs_current_evidence", False))
+        query_text = str(getattr(cue, "query_text", "") or "").strip()
+        episodic_quota = (
+            self.policy.exact_episodic_quota if exact
+            else (self.policy.background_episodic_quota if query_text and not current_evidence else 0)
+        )
+        quotas = {
+            "repair": 1,
+            "procedural": 1,
+            "relational": 1,
+            "affective_residue": 1,
+            "semantic": 3 if exact else 2,
+            "episodic": episodic_quota,
+        }
+        selected: list[MemoryActivation] = []
+        counts: dict[str, int] = {}
+        for activation in result.activations:
+            if len(selected) >= capacity:
+                break
+            layer = str(activation.layer or "")
+            quota = quotas.get(layer, 1)
+            if quota <= 0 or counts.get(layer, 0) >= quota:
+                continue
+            # Episodic recollection is expensive and context-heavy. Outside an
+            # explicit recall request it must win on relevance, not mere salience.
+            if layer == "episodic" and not exact and activation.relevance < 0.34:
+                continue
+            selected.append(activation)
+            counts[layer] = counts.get(layer, 0) + 1
+
+        def route_bias(route: str) -> float:
+            values = [item.score for item in selected if route in set(item.bias_routes)]
+            return clamp01(max(values) if values else 0.0)
+
+        dominant = selected[0].layer if selected else ""
+        total = clamp01(
+            sum(item.score for item in selected[:3]) / max(1, min(3, len(selected)))
+            if selected else 0.0
+        )
+        dropped = max(0, len(result.activations) - len(selected))
+        return MemoryRetrievalResult(
+            activations=tuple(selected),
+            scored_candidates=result.scored_candidates,
+            attention_bias=route_bias("attention"),
+            appraisal_bias=route_bias("appraisal"),
+            wording_bias=route_bias("wording"),
+            silence_bias=clamp01(route_bias("silence") * 0.75),
+            dominant_layer=dominant,
+            score=total,
+            debug_notes=tuple((*result.debug_notes, f"working_memory_gate:kept={len(selected)}:dropped={dropped}:capacity={capacity}")),
+        )
+
+
 class MemoryActivationBuilder:
     def __init__(self, profiles: dict[str, LayerProfile] | None = None):
         self.profiles = profiles or DEFAULT_LAYER_PROFILES

@@ -204,7 +204,10 @@ def test_assistant_check_in_frame_is_repaired_by_logic_not_regex() -> None:
 
     assert result.frame["version"] == "semantic_frame.v1"
     assert result.frame["tool_intent"] == "none"
-    assert result.frame["continuation_key"] == "recent_assistant_thread"
+    # V29: missing continuation identity fails closed; parser must not invent
+    # a recent thread and accidentally revive stale conversation state.
+    assert result.frame["continuation_key"] == ""
+    assert result.frame["discourse_relation"] == ""
     assert result.frame["reply_obligation"] == {
         "must_answer": True,
         "must_not_broad_clarify": True,

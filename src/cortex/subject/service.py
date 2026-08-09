@@ -95,6 +95,10 @@ class AuditPort(Protocol):
     def append(self, event: Any) -> Any: ...
 
 
+class StaleDeliberationFrame(RuntimeError):
+    """A model/result belongs to an older cognitive generation."""
+
+
 @dataclass(frozen=True, slots=True)
 class SubjectServiceConfig:
     subject_id: str = "eris"
@@ -180,6 +184,10 @@ class SubjectService:
         # Frame đang chờ Executive cam kết. Không persist raw frame vì nó chứa
         # projection ngắn hạn; audit chỉ ghi public_view có provenance.
         self._pending_frames: dict[str, SubjectDeliberationFrame] = {}
+        # Cognitive generation, intentionally separate from substrate revision.
+        # A second prepare() invalidates every older in-flight decision even when
+        # the measured substrate happened not to change.
+        self._deliberation_revision = 0
 
         if self.config.restore_projection:
             self._restore_projection()
@@ -321,6 +329,12 @@ class SubjectService:
                         "algorithm_version": self.config.algorithm_version,
                     }
                 )
+
+    @property
+    def deliberation_revision(self) -> int:
+        """Monotonic cognitive generation used as a transaction token."""
+
+        return int(self._deliberation_revision)
 
     # ------------------------------------------------------------------
     # Relational homeostasis
@@ -992,6 +1006,8 @@ class SubjectService:
             context_key=context_key,
         )
         coalitions = self.arbiter.rank(proposals)
+        self._deliberation_revision += 1
+        frame_revision = self._deliberation_revision
         accessible_beliefs = self.beliefs.accessible(minimum_accessibility=0.4)
         frame = SubjectDeliberationFrame(
             frame_id=f"deliberation:{self._id_factory()}",
@@ -1005,6 +1021,7 @@ class SubjectService:
             belief_refs=tuple(item.belief_id for item in accessible_beliefs)[:12],
             value_refs=tuple(item.value_id for item in self.inner.values)[:12],
             created_at=self._clock(),
+            revision=frame_revision,
         )
         self._pending_frames[frame.frame_id] = frame
 
@@ -1055,6 +1072,22 @@ class SubjectService:
         """
         if frame.frame_id not in self._pending_frames:
             raise KeyError("deliberation frame is not pending")
+        if int(frame.revision) != int(self._deliberation_revision):
+            self._append_event(
+                "deliberation_stale",
+                {
+                    "frame_id": frame.frame_id,
+                    "frame_revision": int(frame.revision),
+                    "current_revision": int(self._deliberation_revision),
+                    "stage": "cognitive_review",
+                },
+                causal_refs=(frame.frame_id, frame.observation.observation_id),
+                correlation_id=frame.observation.correlation_id,
+            )
+            self._pending_frames.pop(frame.frame_id, None)
+            raise StaleDeliberationFrame(
+                f"stale deliberation revision {frame.revision}; current={self._deliberation_revision}"
+            )
         normalized = tuple(results)
         if not normalized:
             return frame
@@ -1107,6 +1140,25 @@ class SubjectService:
             raise KeyError("deliberation frame is not pending or was already finalized")
         if pending.observation.observation_id != frame.observation.observation_id:
             raise ValueError("deliberation frame identity mismatch")
+        # Neuro transaction invariant: cognition may be slow; the world is not.
+        # Once a newer frame exists, an older result has no authority even if its
+        # coalition ID is still syntactically valid. Discarding stale work is
+        # cheaper and more correct than trying to repair it into the new present.
+        if int(frame.revision) != int(self._deliberation_revision):
+            self._append_event(
+                "deliberation_stale",
+                {
+                    "frame_id": frame.frame_id,
+                    "frame_revision": int(frame.revision),
+                    "current_revision": int(self._deliberation_revision),
+                },
+                causal_refs=(frame.frame_id, frame.observation.observation_id),
+                correlation_id=frame.observation.correlation_id,
+            )
+            self._pending_frames.pop(frame.frame_id, None)
+            raise StaleDeliberationFrame(
+                f"stale deliberation revision {frame.revision}; current={self._deliberation_revision}"
+            )
 
         candidate_index = {item.coalition_id: item for item in frame.coalitions}
         if commit.frame_id != frame.frame_id:
@@ -1450,6 +1502,25 @@ class SubjectService:
             result_ref=outcome.outcome_id,
             evidence_refs=outcome.evidence_refs,
         )
+        # Explicit predictive-learning loop. The existing competence estimator is
+        # the learned action-outcome model; do not add a second mystical "world
+        # model" that learns the same signal under a nicer neuroscience name.
+        # Prediction error is causal evidence used to recalibrate the next prior.
+        prediction_error = abs(float(outcome.success_score) - float(prediction))
+        self._append_event(
+            "prediction_error",
+            {
+                "decision_id": decision.decision_id,
+                "outcome_id": outcome.outcome_id,
+                "action": decision.proposed_action,
+                "skill_id": skill_id,
+                "context_key": context_key,
+                "predicted_success": max(0.0, min(1.0, float(prediction))),
+                "observed_success": max(0.0, min(1.0, float(outcome.success_score))),
+                "absolute_error": max(0.0, min(1.0, prediction_error)),
+            },
+            causal_refs=(outcome.outcome_id, decision.decision_id),
+        )
         self._append_event(
             "competence_estimate",
             self._as_payload(competence_estimate),
@@ -1733,4 +1804,4 @@ class SubjectService:
         }
 
 
-__all__ = ["SubjectService", "SubjectServiceConfig"]
+__all__ = ["StaleDeliberationFrame", "SubjectService", "SubjectServiceConfig"]

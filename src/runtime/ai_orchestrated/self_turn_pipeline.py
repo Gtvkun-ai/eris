@@ -1,19 +1,18 @@
 # -*- coding: utf-8 -*-
 """Autonomous public-turn pipeline with one semantic executive authority.
 
-Production order:
-1. Perception and public-safe cognition assemble a typed blackboard.
-2. DeepSeek-owned sources *peek* typed affordances without reserving the lane.
-3. Gemma Executive chooses silence, body presence, one exact affordance ID, or
-   one exact live capability discovered through typed retrieval.
-4. Runtime atomically claims only the selected affordance and fails closed when
-   its revision is stale. It never picks a replacement by Python source order.
-5. InitiativeController owns timing, concurrency, reply obligations and safety.
-6. DeepSeek Surface owns public wording for the approved semantic target.
-7. Grounding, public lifecycle, TTS and Live2D commit remain runtime-owned.
+Production order (V29 neuro transaction):
+1. Perception/memory/needs assemble a bounded cognitive snapshot.
+2. Subject Core builds grounded proposals; NeuroActionSelector releases a clear
+   winner without an LLM or invites one-shot deliberation only on real conflict.
+3. InitiativeController owns timing, concurrency and public obligations.
+4. DeepSeek Surface owns wording only; it does not own thread/runtime identity.
+5. Before public commit, the SessionTurnLedger revision must still match the
+   generation captured before deliberation. A newer public turn cancels the work.
+6. Grounding, public lifecycle, TTS and Live2D commit remain runtime-owned.
 
-There is no legacy semantic selector, marker router, local social wording, or
-upstream candidate fallback in this path.
+Temporal follow-up state is derived from the public ledger. No hidden reminder
+state machine is allowed beside it.
 """
 from __future__ import annotations
 
@@ -82,6 +81,9 @@ class SelfTurnBundle:
     engagement_prompt_context: str
     engagement_interaction: InteractionDecision
     commentary: CommentaryExpectation
+    # Public ledger revision captured before deliberation. It is an MVCC-style
+    # generation token, not another lifecycle flag.
+    public_revision: int
 
 
 class SelfTurnPipeline:
@@ -320,8 +322,9 @@ class SelfTurnPipeline:
             except Exception as exc:
                 host.logger.debug("[subject initiative] affordance build failed: %s", exc)
 
-        # Deduplicate only by stable ID.  Similar meanings from different owners
-        # remain visible because deciding between them is Gemma's job, not a set().
+        # Deduplicate only by stable ID. Similar meanings from different owners
+        # remain visible because Subject Core/neuro competition, not a set(), owns
+        # the final trade-off.
         unique_affordances: list[Any] = []
         seen_affordance_ids: set[str] = set()
         for affordance in affordances:
@@ -332,11 +335,12 @@ class SelfTurnPipeline:
             unique_affordances.append(affordance)
         affordances = unique_affordances
 
-        # Mọi affordance autonomous phải đi qua cùng nền Subject Core như chat.
-        # Executive vẫn chọn cuối cùng, nhưng chọn trên coalition có substrate,
-        # need pressure và evidence thay vì một danh sách ý tưởng trôi nổi.
+        # Mọi affordance autonomous đi qua cùng nền Subject Core như chat.
+        # Neuro gate chọn trên coalition có substrate, need pressure và evidence;
+        # remote deliberation chỉ xuất hiện khi competition thật sự mơ hồ.
         subject_ingress = getattr(host, "subject_ingress", None)
         subject_session = None
+        subject_generation_revision = 0
         if subject_ingress is not None:
             try:
                 subject_session = subject_ingress.prepare_autonomous_session(
@@ -345,6 +349,9 @@ class SelfTurnPipeline:
                     created_at=now,
                     turn_id=f"autonomous:{context.turn_seq}",
                     planning_context=planner_snapshot,
+                )
+                subject_generation_revision = int(
+                    getattr(getattr(subject_session, "frame", None), "revision", 0) or 0
                 )
             except Exception as exc:
                 host.logger.warning("[subject-core] autonomous prepare failed closed: %s", exc)
@@ -1003,6 +1010,9 @@ class SelfTurnPipeline:
             now=perception.now,
             user_turn_at=float(getattr(host, "_temporal_last_user_turn_at", 0.0) or 0.0),
             assistant_turn_at=float(getattr(host, "_temporal_last_assistant_turn_at", 0.0) or 0.0),
+            # V29: follow-up lifecycle is projected from public events. No hidden
+            # question/reminder flags survive outside the ledger.
+            ledger=host._ensure_session_turn_ledger(),
         )
         activity = self.activity_tracker.observe(
             perception.screen,
@@ -1057,6 +1067,7 @@ class SelfTurnPipeline:
             engagement_prompt_context=engagement_prompt_context,
             engagement_interaction=engagement_interaction,
             commentary=commentary,
+            public_revision=int(getattr(host._ensure_session_turn_ledger(), "revision", 0) or 0),
         )
 
     def _planner_snapshot(self, context: SelfTurnBundle) -> tuple[dict[str, Any], Any]:
@@ -1662,6 +1673,22 @@ class SelfTurnPipeline:
         })
         if not str(getattr(decision, "utterance_turn_id", "") or "").strip():
             decision.utterance_turn_id = str(plan.plan_id or f"autonomous:{context.turn_seq}")
+        # The public ledger, not FollowUpAppraisalLayer, owns temporal truth. Put
+        # the typed autonomous semantics on the committed Decision so the ledger
+        # can later derive reminder/topic-shift lifecycle without reading prose.
+        decision.speech_act = str(plan.semantics.speech_act or decision.speech_act or "")
+        try:
+            decision.autonomous_plan = plan.to_dict()
+        except Exception:
+            decision.autonomous_plan = {
+                "plan_id": str(plan.plan_id or ""),
+                "semantics": {
+                    "turn_kind": str(plan.semantics.turn_kind or ""),
+                    "speech_act": str(plan.semantics.speech_act or ""),
+                    "subject_key": str(plan.semantics.subject_key or ""),
+                },
+            }
+        decision.performance_context["speech_act"] = str(plan.semantics.speech_act or "")
         grounding_report = self._autonomous_grounding_report(context, plan)
         validator = getattr(host, "ai_autonomous_grounding_validator", None)
         if validator is not None:
@@ -1738,6 +1765,48 @@ class SelfTurnPipeline:
             # Idempotency key vẫn nằm trong plan; trace public giữ nguyên plan_id
             # để candidate -> governor -> Surface -> TTS không bị đổi identity.
             decision.performance_context["continuation_idempotency_key"] = plan.continuation_idempotency_key
+        # Cognitive transaction boundary: a surface result is only valid for the
+        # public generation it started from. Existing user-preemption checks catch
+        # the common case; the revision token also covers any other public turn
+        # committed concurrently without inventing semantic repair rules.
+        current_public_revision = int(
+            getattr(host._ensure_session_turn_ledger(), "revision", 0) or 0
+        )
+        current_subject_revision = int(
+            getattr(getattr(host, "subject_service", None), "deliberation_revision", 0) or 0
+        )
+        stale_public = current_public_revision != context.public_revision
+        stale_subject = bool(
+            subject_generation_revision
+            and current_subject_revision
+            and current_subject_revision != subject_generation_revision
+        )
+        if stale_public or stale_subject:
+            gate_reason = (
+                f"stale_generation:public={context.public_revision}->{current_public_revision};"
+                f"subject={subject_generation_revision}->{current_subject_revision}"
+            )
+            self._release_seed_lease(candidate, reason=gate_reason)
+            self._defer_claimed_continuation(plan, reason=gate_reason, seconds=0.25)
+            self.trace_store.append("outcome", {
+                "trace_id": str(plan.plan_id or ""),
+                "turn_id": str(plan.plan_id or ""),
+                "stage": "outcome",
+                "owner": "public_revision",
+                "generation_epoch": context.turn_seq,
+                "outcome": "cancelled_stale_generation",
+                "started_public_revision": context.public_revision,
+                "current_public_revision": current_public_revision,
+                "started_subject_revision": subject_generation_revision,
+                "current_subject_revision": current_subject_revision,
+            })
+            host.logger.info(
+                "[autonomous] discarded stale generation public=%s->%s subject=%s->%s",
+                context.public_revision, current_public_revision,
+                subject_generation_revision, current_subject_revision,
+            )
+            return host.running
+
         text, assistant_meta = self.commit_public(
             decision,
             channel="autonomous",

@@ -4,7 +4,7 @@
 Need trả lời câu hỏi "đang thiếu/cần gì".  Module này trả lời câu hỏi kế tiếp:
 "vì nhu cầu đó, lúc này Eris muốn làm gì?".  Nó không viết câu public, không gọi
 model và không được tự tạo fact về user.  Một motive chỉ có quyền sinh *khả năng*
-hành động; Executive vẫn là nơi cam kết.
+hành động; Subject Core + neuro action gate mới là nơi cam kết.
 
 V26 cố ý giữ motive khác với need.  Ví dụ connection có thể tạo ``connect`` hoặc
 ``understand_user``; competence có thể tạo ``demonstrate``.  Nếu sau này một

@@ -187,6 +187,7 @@ class DeliberationReviewIntegrator:
             belief_refs=frame.belief_refs,
             value_refs=frame.value_refs,
             created_at=created_at,
+            revision=frame.revision,
         )
 
 

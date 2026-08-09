@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from runtime.ai_orchestrated.discourse_state import DiscourseState
 from runtime.ai_orchestrated.followup_appraisal import FollowUpAppraisalLayer, FollowUpPolicy
+from runtime.session_turn_ledger import SessionTurnLedger
 from runtime.ai_orchestrated.surface_intent import _surface_text_is_duplicate
 from cortex.vision_semantic_compressor import RemoteCaptionClient
 import runtime.inference_broker as inference_broker
@@ -30,36 +31,52 @@ def test_first_user_turn_in_new_session_closes_old_followup_cycle():
         reserved_distance=0.2,
     ))
     discourse = _waiting_discourse()
-
-    # ERIS asked before any user turn has been seen in this process.
-    first = layer.evaluate(discourse, now=100.0, user_turn_at=0.0, assistant_turn_at=100.0)
-    assert first.reply_expected is True
-    layer.note_spoken(
-        SimpleNamespace(
-            semantics=SimpleNamespace(speech_act="followup_reminder"),
-            motive="followup_reminder",
-        ),
-        now=131.0,
+    ledger = SessionTurnLedger()
+    ledger.record_assistant(
+        "Bạn muốn xem lại chứ?", timestamp=100.0,
+        meta={"assistant_act": {"kind": "question", "proposition_mode": "new", "confidence": 0.9}},
     )
 
-    # The very first user turn must reset the old cycle even though the previous
-    # marker was zero. A stale observer baton must not restart that old timer.
-    after_user = layer.evaluate(discourse, now=140.0, user_turn_at=140.0, assistant_turn_at=100.0)
+    first = layer.evaluate(discourse, now=131.0, ledger=ledger)
+    assert first.followup_reminder_due is True
+
+    # Public reminder is an event, not a private flag in FollowUpAppraisalLayer.
+    ledger.record_assistant(
+        "Nhắc nhẹ thôi.", timestamp=132.0,
+        meta={"speech_act": "followup_reminder"},
+    )
+    after_reminder = layer.evaluate(discourse, now=140.0, ledger=ledger)
+    assert after_reminder.followup_reminder_count == 1
+
+    # The first user response deterministically closes the old wait.
+    ledger.record_user("Ừ, xem đi.", timestamp=141.0)
+    after_user = layer.evaluate(discourse, now=142.0, ledger=ledger)
+    assert after_user.reply_expected is False
     assert after_user.followup_reminder_due is False
     assert after_user.followup_reminder_count == 0
-    assert layer._question_started_at == 0.0
-    assert layer._reminder_spoken_at == 0.0
+    assert not hasattr(layer, "_question_started_at")
+    assert not hasattr(layer, "_reminder_spoken_at")
 
 
 def test_new_assistant_question_after_user_can_start_new_cycle():
     layer = FollowUpAppraisalLayer()
     discourse = _waiting_discourse()
-    layer.evaluate(discourse, now=100.0, user_turn_at=0.0, assistant_turn_at=100.0)
-    layer.evaluate(discourse, now=140.0, user_turn_at=140.0, assistant_turn_at=100.0)
+    ledger = SessionTurnLedger()
+    ledger.record_assistant(
+        "Câu cũ?", timestamp=100.0,
+        meta={"assistant_act": {"kind": "question", "proposition_mode": "new", "confidence": 0.9}},
+    )
+    ledger.record_user("Trả lời cũ", timestamp=140.0)
+    closed = layer.evaluate(discourse, now=141.0, ledger=ledger)
+    assert closed.reply_expected is False
 
-    newer = layer.evaluate(discourse, now=151.0, user_turn_at=140.0, assistant_turn_at=150.0)
+    ledger.record_assistant(
+        "Câu mới?", timestamp=150.0,
+        meta={"assistant_act": {"kind": "question", "proposition_mode": "new", "confidence": 0.9}},
+    )
+    newer = layer.evaluate(discourse, now=151.0, ledger=ledger)
     assert newer.reply_expected is True
-    assert layer._question_started_at == 150.0
+    assert newer.followup_state == "waiting"
 
 
 def test_surface_duplicate_guard_catches_same_line_with_extra_greeting():

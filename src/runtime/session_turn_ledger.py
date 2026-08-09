@@ -37,6 +37,16 @@ class SessionTurnLedger:
     def __init__(self) -> None:
         self._turns: list[SessionTurn] = []
         self._next_index = 1
+        # Monotonic revision of the *public turn stream*. Metadata enrichment does
+        # not change it. A cognition cycle can therefore pin this cheap token and
+        # discard a result if another public turn arrived while a model was busy.
+        self._revision = 0
+
+    @property
+    def revision(self) -> int:
+        """Current public-conversation generation."""
+
+        return self._revision
 
     def record_user(self, text: str, *, timestamp: Optional[float] = None, meta: Optional[dict[str, Any]] = None) -> SessionTurn:
         return self._record("user", text, timestamp=timestamp, meta=meta)
@@ -56,6 +66,7 @@ class SessionTurnLedger:
         )
         self._next_index += 1
         self._turns.append(turn)
+        self._revision += 1
         return turn
 
     def all_turns(self) -> list[SessionTurn]:

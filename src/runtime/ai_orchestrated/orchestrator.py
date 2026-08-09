@@ -1773,6 +1773,11 @@ class AIAutonomousOrchestrator:
             "ai_turn_seq": int(turn_seq),
             "system_action": str(getattr(decision, "system_action", "") or ""),
             "idempotency_key": str(idempotency_key or ""),
+            # Typed public semantics are ledger data. They are not inferred later
+            # from punctuation or remembered in a parallel follow-up state machine.
+            "speech_act": str(getattr(decision, "speech_act", "") or ""),
+            "autonomous_plan": dict(getattr(decision, "autonomous_plan", {}) or {}),
+            "performance_context": dict(getattr(decision, "performance_context", {}) or {}),
         }
         try:
             host._ensure_session_turn_ledger().record_assistant(public_text, meta=meta)

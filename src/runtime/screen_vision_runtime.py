@@ -615,28 +615,29 @@ class ScreenVisionRuntimeMixin:
         compressor = getattr(self, "vision_semantic_compressor", None)
         can_use_compressor = callable(getattr(compressor, "compress", None))
 
+        signal_snapshot = None
+        if snapshot is not None:
+            try:
+                signal_snapshot = self._build_signal_snapshot_for_observer(
+                    snapshot=snapshot,
+                    channel=channel,
+                    user_text=user_text,
+                    vision_facts=tuple(getattr(snapshot, "vision_facts", ()) or ()),
+                    started_at=started_at,
+                )
+            except Exception as exc:
+                self.logger.warning("[vision_facts] signal snapshot fallback: %s", exc)
+        ocr_text_for_vision = (
+            str(getattr(signal_snapshot, "ocr_text", "") or "")
+            if signal_snapshot is not None
+            else ""
+        )
+        if channel == "chat" and not ocr_text_for_vision:
+            # PATCH: route đã có OCR evidence, compressor cũng phải được đọc nó.
+            ocr_text_for_vision = self._chat_screen_text_as_ocr_text()
+
         if can_use_compressor:
             try:
-                signal_snapshot = None
-                if snapshot is not None:
-                    try:
-                        signal_snapshot = self._build_signal_snapshot_for_observer(
-                            snapshot=snapshot,
-                            channel=channel,
-                            user_text=user_text,
-                            vision_facts=tuple(getattr(snapshot, "vision_facts", ()) or ()),
-                            started_at=started_at,
-                        )
-                    except Exception as exc:
-                        self.logger.warning("[vision_facts] signal snapshot fallback: %s", exc)
-                ocr_text_for_vision = (
-                    str(getattr(signal_snapshot, "ocr_text", "") or "")
-                    if signal_snapshot is not None
-                    else ""
-                )
-                if channel == "chat" and not ocr_text_for_vision:
-                    # PATCH: route đã có OCR evidence, compressor cũng phải được đọc nó.
-                    ocr_text_for_vision = self._chat_screen_text_as_ocr_text()
                 note = self.model_budget_policy.run_queued(
                     "vision_compressor",
                     compressor.compress,
@@ -663,17 +664,50 @@ class ScreenVisionRuntimeMixin:
                 return self.vision_facts
         else:
             self.logger.info(
-                "[vision_facts] source=cached reason=no_compressor channel=%s",
+                "[vision_facts] source=ocr_salvage reason=no_compressor channel=%s",
                 channel,
             )
-            self.vision_stale_facts = tuple(self.vision_facts)
-            self.vision_facts_are_stale = bool(self.vision_facts)
-            self.last_vision_grounding_report = policy.empty_report(
-                requested=requested,
-                stale=True,
-                reason="vision_compressor_unavailable",
-            )
-            return self.vision_facts
+            salvage_note = None
+            if ocr_text_for_vision:
+                lines = [line.strip() for line in ocr_text_for_vision.splitlines() if line.strip()][:8]
+                if lines:
+                    digest = hashlib.sha1(ocr_text_for_vision.encode("utf-8", errors="ignore")).hexdigest()[:12]
+                    salvage_note = SemanticSceneNote(
+                        visible_context=lines[0],
+                        important_text=lines,
+                        activity_intent="reading",
+                        semantic_family="screen_text",
+                        novelty=0.35,
+                        salience=0.55,
+                        possible_error=0.0,
+                        should_interrupt_user=False,
+                        confidence=0.82,
+                        content_summary=lines[0],
+                        content_affect="neutral",
+                        relation_to_user="",
+                        delta="",
+                        source="screen_text_evidence",
+                        evidence=[
+                            "screen_capture:ambient" if channel != "chat" else "screen_capture:chat_current",
+                            f"ocr_text:{digest}",
+                        ],
+                        debug={
+                            "fallback_reason": "vision_disabled_salvaged_from_ocr",
+                        },
+                    )
+
+            if salvage_note is not None:
+                note = salvage_note
+                trace = self._vision_trace_from_scene_note(note)
+            else:
+                self.vision_stale_facts = tuple(self.vision_facts)
+                self.vision_facts_are_stale = bool(self.vision_facts)
+                self.last_vision_grounding_report = policy.empty_report(
+                    requested=requested,
+                    stale=True,
+                    reason="vision_compressor_unavailable_and_no_ocr",
+                )
+                return self.vision_facts
 
         report, cleaned = self._ground_semantic_scene_note(
             note,

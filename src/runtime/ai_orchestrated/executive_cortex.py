@@ -1,10 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Gemma Executive Cortex: one semantic authority between cognition and runtime.
+"""Neuro control boundary between Subject cognition and runtime action.
 
-DeepSeek workers expose typed affordances and own public wording. Runtime owns
-availability, permission, concurrency, validation, and execution evidence.
-Gemma alone chooses conversational trajectory, exact affordance IDs, semantic
-capability shortlists, and exact capability IDs.
+Routine trajectory is owned by Subject Core + ``NeuroActionSelector``. A remote
+model is invited only as a one-shot deliberative specialist when competition is
+genuinely ambiguous. It never owns ephemeral coalition/proposal/thread identity.
+
+This module still contains a bounded symbolic capability planner because stable
+capability names are executable API identities, not cognitive state. Runtime owns
+availability, permission, argument validation, concurrency and execution evidence;
+DeepSeek Surface owns wording only. The legacy Gemma-style selector remains behind
+a rollback flag during migration and is not the production authority.
 """
 from __future__ import annotations
 
@@ -675,15 +680,16 @@ class ExecutiveCortex:
             "wording. Runtime owns availability, permission, argument validation, execution, concurrency and evidence. "
             "For direct chat, subject_decision is already committed: capability selection may realize it but must not replace "
             "its motive, action family or semantic commitments. "
-            "You are the only semantic authority for conversational trajectory and capability choice. Silence is a first-class "
+            "Subject Core plus the neuro action gate already own conversational trajectory. You are a bounded capability "
+            "planner for a committed semantic goal, not a second Executive over motive or dialogue state. Silence is a first-class "
             "action. Under social ambiguity prefer reversible low-pressure moves. An optional invitation is weak evidence, "
             "not user debt. semantic_target is a meaning brief, never final wording. Every autonomous final decision must issue a real "
             "review policy: reconsider_on contains {kind, minimum_strength} conditions over runtime event envelopes; "
             "review_after_seconds is an optional timer, "
             "zero for event-only policy. relational_pressure is a legitimate endogenous review event from Subject Core, "
             "not an external factual claim. Do not use free-text timing instructions. "
-            "When subject_deliberation_frame is supplied, choose only an offered coalition/action and copy its exact "
-            "coalition_id and primary_proposal_ref into subject_coalition_id and subject_proposal_ref. "
+            "When committed_subject_context is supplied, preserve that action family and semantic goal. Never invent or "
+            "request coalition/proposal/thread identities; those are runtime-private. "
             + stage_rule + " Return exactly one JSON object."
         )
 
@@ -1337,7 +1343,7 @@ class ExecutiveCortex:
             "recent_public_history": list(source.get("recent_public_history", ()))[-8:],
             "relationship": source.get("relationship_summary", source.get("relationship", {})),
             "grounding_context": _compact(source.get("grounding_context", ""), 1800),
-            "subject_decision": source.get("subject_decision", {}),
+            "subject_decision": self._interactive_subject_brief(source.get("subject_decision", {})),
             "capability_index": dict(capability_index),
             "capability_candidates": [item.to_card() for item in candidate_tools],
             "offered_capabilities": [item.to_dict() for item in offered_tools],
@@ -1778,6 +1784,49 @@ class ExecutiveCortex:
             return ()
         return select_tools_by_id(candidates, decision.capability_ids, max_items=6)
 
+    @staticmethod
+    def _subject_capability_brief(frame: SubjectDeliberationFrame | None) -> dict[str, Any]:
+        """Project a committed capability motive without cognitive runtime IDs.
+
+        Capability names are stable executable symbols and may cross the model
+        boundary. Coalition/proposal IDs are ephemeral identities and may not.
+        """
+        if frame is None or not frame.coalitions:
+            return {}
+        # The capability path is entered only after Subject Core has committed a
+        # coalition; migration callers pass a frame restricted to that coalition.
+        candidate = frame.coalitions[0]
+        arguments = dict(getattr(candidate, "arguments", {}) or {})
+        safe_keys = {
+            "semantic_target", "speech_act", "tone", "capability_route",
+            "capability_goal", "required_effect", "maximum_risk",
+            "capability_domain", "initiative_motive", "context",
+        }
+        return {
+            "action_kind": str(getattr(candidate, "action_kind", "") or ""),
+            "arguments": {key: arguments[key] for key in safe_keys if key in arguments},
+            "expected_pragmatic_value": float(getattr(candidate, "expected_pragmatic_value", 0.0) or 0.0),
+            "expected_epistemic_value": float(getattr(candidate, "expected_epistemic_value", 0.0) or 0.0),
+            "uncertainty": float(getattr(candidate, "uncertainty", 0.0) or 0.0),
+        }
+
+    @staticmethod
+    def _interactive_subject_brief(value: Any) -> dict[str, Any]:
+        source = dict(value) if isinstance(value, Mapping) else {}
+        arguments = dict(source.get("arguments", {}) or {}) if isinstance(source.get("arguments", {}), Mapping) else {}
+        safe_keys = {
+            "semantic_target", "speech_act", "tone", "capability_route",
+            "capability_goal", "required_effect", "maximum_risk",
+            "capability_domain", "initiative_motive", "context",
+        }
+        return {
+            "proposed_action": str(source.get("proposed_action", "") or ""),
+            "arguments": {key: arguments[key] for key in safe_keys if key in arguments},
+            "expected_pragmatic_value": _clamp01(source.get("expected_pragmatic_value", 0.0)),
+            "expected_epistemic_value": _clamp01(source.get("expected_epistemic_value", 0.0)),
+            "uncertainty": _clamp01(source.get("uncertainty", 0.0)),
+        }
+
     def _decide(
         self,
         blackboard: Any,
@@ -1797,9 +1846,7 @@ class ExecutiveCortex:
             "executive_state": self.state.to_dict(),
             "blackboard": public_view,
             "affordances": [item.to_card() for item in affordances],
-            "subject_deliberation_frame": (
-                subject_frame.public_view() if subject_frame is not None else {}
-            ),
+            "committed_subject_context": self._subject_capability_brief(subject_frame),
             "recent_public_history": list(source.get("recent_public_history", ()))[-8:],
             "deepseek_lane_digests": {
                 "observer": source.get("observer_frame", source.get("last_observer_frame", {})),

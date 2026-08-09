@@ -1169,13 +1169,22 @@ class AIRuntimeModelRouter:
             # keeps it optional *without* giving it the persistent autonomous
             # provider session that caused stale semantic carry-over.
             lane = "neuro_deliberation"
+        elif "executive" in reason_key and "interactive" in reason_key:
+            # Capability planning for a direct user turn is required but one-shot.
+            # Stable capability names are allowed; hidden provider conversation
+            # state is not.
+            lane = "capability_deliberation_required"
+        elif "executive" in reason_key:
+            # Legacy/tool Executive remains only for symbolic capability planning.
+            # Keep it interruptible and sessionless so it cannot become a second
+            # conversational memory authority.
+            lane = "capability_deliberation"
         elif "observer" in reason_key or "observation" in reason_key:
             lane = "post_observer"
         elif (
             "autonomous" in reason_key
             or "self_initiated" in reason_key
             or "surface" in reason_key
-            or "executive" in reason_key
         ):
             lane = "autonomous"
         elif "chat_intention" in reason_key:
@@ -1187,7 +1196,9 @@ class AIRuntimeModelRouter:
         else:
             lane = "transport"
 
-        optional = lane in {"post_observer", "autonomous", "tutor_background"}
+        optional = lane in {
+            "post_observer", "autonomous", "tutor_background", "capability_deliberation"
+        }
         coalesce_key = reason_key if optional else ""
         with inference_context(
             lane,
@@ -1627,13 +1638,13 @@ class AIRuntimeModelRouter:
             safe_log(
                 self.logger,
                 "warning",
-                "[semantic frame] repaired malformed payload violations=%s",
+                "[semantic frame] invalid semantic bindings sanitized violations=%s",
                 ",".join(real_violations),
             )
             try:
                 from runtime.observability import GLOBAL_OBSERVABILITY
                 GLOBAL_OBSERVABILITY.log(
-                    "semantic_frame_invariant_repair",
+                    "semantic_frame_invariant_rejected",
                     tags={"count": str(len(real_violations))},
                     fields={"violations": list(real_violations)},
                     status="degraded",

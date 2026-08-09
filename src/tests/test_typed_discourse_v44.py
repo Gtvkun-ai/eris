@@ -48,11 +48,11 @@ def test_semantic_frame_is_typed_and_still_mapping_compatible() -> None:
     )
 
     assert isinstance(result.frame, SemanticFrame)
-    assert result.frame.reference.kind is ReferenceKind.RECENT_USER_TURN
-    assert result.frame.reference.speaker is ReferenceSpeaker.USER
-    assert result.frame.reference.operation is ReferenceOperation.RECALL
+    assert result.frame.reference.kind is ReferenceKind.NONE
+    assert result.frame.reference.speaker is ReferenceSpeaker.NONE
+    assert result.frame.reference.operation is ReferenceOperation.NONE
     assert result.frame.reference.turn_offset == 0
-    assert dict(result.frame)["reference"]["turn_index"] == 4
+    assert dict(result.frame)["reference"]["turn_index"] == 0
     assert "reference.speaker_incompatible:recent_user_turn:assistant" in result.violations
     assert "reference.operation_incompatible:recent_user_turn:confirm" in result.violations
 

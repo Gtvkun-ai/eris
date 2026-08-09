@@ -483,13 +483,14 @@ def _parse_reference(value: Any, violations: list[str]) -> DiscourseReference:
     turn_offset = _bounded_int(payload.get("turn_offset", 0), field="reference.turn_offset", minimum=0, maximum=16, violations=violations)
     confidence = _bounded_float(payload.get("confidence", 0.0), field="reference.confidence", minimum=0.0, maximum=1.0, violations=violations)
 
-    allowed_speakers, allowed_operations, default_operation = _REFERENCE_RULES[kind]
+    allowed_speakers, allowed_operations, _default_operation = _REFERENCE_RULES[kind]
+    semantic_invalid = False
     if speaker not in allowed_speakers:
         violations.append(f"reference.speaker_incompatible:{kind.value}:{speaker.value}")
-        speaker = _REFERENCE_DEFAULT_SPEAKER[kind]
+        semantic_invalid = True
     if operation not in allowed_operations:
         violations.append(f"reference.operation_incompatible:{kind.value}:{operation.value}")
-        operation = default_operation
+        semantic_invalid = True
 
     if kind not in {
         ReferenceKind.RECENT_USER_TURN,
@@ -499,11 +500,21 @@ def _parse_reference(value: Any, violations: list[str]) -> DiscourseReference:
     }:
         if turn_index or turn_offset:
             violations.append(f"reference.locator_not_allowed:{kind.value}")
+        # A locator attached to a non-session kind is syntactic debris. Dropping
+        # the locator does not invent a new semantic target.
         turn_index = 0
         turn_offset = 0
     elif turn_index and turn_offset:
         violations.append("reference.locator_ambiguous:turn_index_and_turn_offset")
-        turn_offset = 0
+        semantic_invalid = True
+
+    if semantic_invalid:
+        # Fail closed at the semantic boundary. Previous code silently rewrote an
+        # incompatible speaker/operation into a plausible target, which could turn
+        # malformed model JSON into a confident reference to the wrong turn. A bad
+        # reference now becomes *no reference*; downstream may answer the current
+        # message, but cannot hallucinate a conversation identity on the model's behalf.
+        return DiscourseReference()
 
     return DiscourseReference(
         kind=kind,
@@ -582,12 +593,17 @@ def validate_semantic_frame(value: Mapping[str, Any] | SemanticFrame | Any | Non
         obligation = ReplyObligation(obligation.must_answer, True, obligation.must_not_call_tool)
     if discourse_relation.startswith("continuation_") and not continuation_key:
         violations.append("continuation_requires_key")
-        continuation_key = "recent_assistant_thread"
+        # Missing identity is not a formatting defect. Do not invent
+        # ``recent_assistant_thread`` and accidentally revive an old thread.
+        # Neutralizing the relation preserves current-message answering while
+        # denying the malformed frame authority to continue anything.
+        discourse_relation = ""
     if boundary_action and boundary_action != "none" and not obligation.must_answer:
         obligation = ReplyObligation(True, obligation.must_not_broad_clarify, obligation.must_not_call_tool)
     if missing_evidence and not evidence_scope:
         violations.append("missing_evidence_requires_scope")
-        evidence_scope = "user_message_plus_available_grounding"
+        # Keep the absence explicit. Grounding policy, not the parser, owns the
+        # choice of evidence scope.
     if target == "assistant" and user_act == "relational_check_in":
         if tool_intent not in {"", "none"}:
             violations.append("assistant_check_in_must_not_call_tool")
@@ -640,15 +656,19 @@ def validate_assistant_act(value: Mapping[str, Any] | AssistantAct | Any | None)
     confidence = _bounded_float(payload.get("confidence", 0.0), field="assistant_act.confidence", minimum=0.0, maximum=1.0, violations=violations)
 
     if kind not in _PROPOSITIONAL_ASSISTANT_ACTS and mode is not PropositionMode.NONE:
+        # Shape repair is safe here: a non-propositional act cannot own a
+        # proposition trajectory, so the extra mode is simply discarded.
         violations.append(f"assistant_act.non_propositional_mode:{kind.value}:{mode.value}")
         mode = PropositionMode.NONE
     elif kind in _PROPOSITIONAL_ASSISTANT_ACTS and mode is PropositionMode.NONE:
+        # V29 semantic-authority invariant: never invent NEW/CONTINUE on behalf
+        # of a stochastic worker.  That choice changes discourse identity and
+        # therefore belongs to the model output itself.  Degrade to UNKNOWN
+        # semantics instead of silently creating or reviving a proposition root.
         violations.append(f"assistant_act.proposition_mode_required:{kind.value}")
-        mode = (
-            PropositionMode.CONTINUE
-            if kind in {AssistantActKind.CONFIRMATION, AssistantActKind.REPAIR}
-            else PropositionMode.NEW
-        )
+        kind = AssistantActKind.OTHER
+        mode = PropositionMode.NONE
+        confidence = min(confidence, 0.25)
 
     return AssistantActValidation(
         act=AssistantAct(kind=kind, proposition_mode=mode, confidence=confidence),

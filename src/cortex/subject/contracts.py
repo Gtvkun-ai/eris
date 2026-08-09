@@ -563,6 +563,11 @@ class SubjectDeliberationFrame:
     belief_refs: tuple[EntityId, ...]
     value_refs: tuple[EntityId, ...]
     created_at: UnixTime
+    # Monotonic cognitive generation owned by SubjectService. Runtime IDs may
+    # change inside one process, but a result from generation N must never be
+    # committed after generation N+1 has been prepared. This is the minimal
+    # transaction token that makes long-running model calls disposable.
+    revision: int = 0
 
     def __post_init__(self) -> None:
         ensure_non_empty(self.frame_id, field_name="frame_id")
@@ -571,6 +576,8 @@ class SubjectDeliberationFrame:
             raise ValueError("deliberation frame requires proposals")
         if not self.coalitions:
             raise ValueError("deliberation frame requires coalitions")
+        if int(self.revision) < 0:
+            raise ValueError("deliberation frame revision must be non-negative")
 
     @property
     def substrate_ref(self) -> str:
@@ -579,8 +586,9 @@ class SubjectDeliberationFrame:
     def public_view(self) -> dict[str, Any]:
         """Projection đủ để Executive chọn, không lộ raw private evidence."""
         return {
-            "schema": "eris.subject_deliberation_frame.v1",
+            "schema": "eris.subject_deliberation_frame.v2",
             "frame_id": self.frame_id,
+            "revision": int(self.revision),
             "observation_ref": self.observation.observation_id,
             "observation_kind": self.observation.kind,
             "context_key": self.context_key,

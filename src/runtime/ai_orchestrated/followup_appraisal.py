@@ -1,29 +1,34 @@
 # -*- coding: utf-8 -*-
-"""Lớp suy diễn nhắc lại và rút khỏi một câu hỏi bị bỏ lửng.
+"""Event-derived follow-up appraisal.
 
-Mục tiêu của lớp này rất hẹp:
+The old implementation kept a second little state machine beside the public
+turn ledger (question_started_at, reminder_spoken_at, abandoned_at, ...).  That
+made correctness depend on remembering to reset those flags on every ingress.
 
-1. Khi ERIS vừa hỏi và user có thể chỉ chưa để ý, cho phép nhắc lại đúng một lần.
-2. Nếu sau lần nhắc vẫn không có phản hồi, đóng quyền chờ của câu hỏi cũ.
-3. Cho phép ERIS chuyển sang một chủ đề khác với độ thân mật giảm nhẹ.
+V29 treats the public session ledger as the source of truth.  This module is a
+pure projection:
 
-Lớp này không sửa relationship lâu dài, không tăng rupture, không kết luận user
-không thích ERIS. Im lặng là bằng chứng yếu. Con người còn có thể đang đi lấy
-nước, một hoạt động ngoại tuyến táo bạo mà runtime thường quên mất.
+    SessionTurnLedger + observer DiscourseState + now -> DiscourseState
+
+No call to :meth:`evaluate` mutates lifecycle state.  A reminder exists because
+a public assistant turn with ``speech_act=followup_reminder`` exists.  A user
+answered because a later user turn exists.  Boring, deterministic bookkeeping is
+precisely what language models should not be asked to improvise.
 """
 from __future__ import annotations
-from core.di import resolve_dependency
 
 import os
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Mapping, Sequence
+
+from core.di import resolve_dependency
+from runtime.semantic_frame import validate_assistant_act
+from runtime.session_turn_ledger import SessionTurn, SessionTurnLedger
 
 from .discourse_state import DiscourseState
 
 
 def _env_seconds(name: str, default: float, *, minimum: float, maximum: float) -> float:
-    """Đọc timer từ môi trường và kẹp biên để tránh cấu hình phá nhịp."""
-
     try:
         value = float(os.getenv(name, str(default)) or default)
     except (TypeError, ValueError):
@@ -33,8 +38,6 @@ def _env_seconds(name: str, default: float, *, minimum: float, maximum: float) -
 
 @dataclass(frozen=True, slots=True)
 class FollowUpPolicy:
-    """Các mốc thời gian của một chu kỳ hỏi -> nhắc -> bỏ chủ đề."""
-
     remind_after_seconds: float = 30.0
     abandon_after_reminder_seconds: float = 48.0
     abandon_without_reminder_seconds: float = 105.0
@@ -64,179 +67,236 @@ class FollowUpPolicy:
         )
 
 
+def _mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _speech_act(turn: SessionTurn) -> str:
+    """Read typed public semantics without inspecting surface wording."""
+
+    meta = _mapping(turn.meta)
+    direct = str(meta.get("speech_act", "") or "").strip().lower()
+    if direct:
+        return direct
+    plan = _mapping(meta.get("autonomous_plan"))
+    semantics = _mapping(plan.get("semantics"))
+    from_plan = str(semantics.get("speech_act", "") or "").strip().lower()
+    if from_plan:
+        return from_plan
+    performance = _mapping(meta.get("performance_context"))
+    return str(performance.get("speech_act", "") or "").strip().lower()
+
+
+def _opens_question(turn: SessionTurn) -> bool:
+    if turn.role != "assistant":
+        return False
+    act = validate_assistant_act(_mapping(turn.meta).get("assistant_act", {})).act
+    if act.opens_question:
+        return True
+    # Autonomous semantics are typed independently from chat AssistantAct.
+    # A follow-up reminder points back to an already-open question; treating it
+    # as a fresh question would reset the temporal anchor and recursively create
+    # another reminder cycle.
+    return _speech_act(turn) in {
+        "curiosity_bid",
+        "clarifying_question",
+        "social_check_in",
+        "contact_bid",
+        "user_probe",
+    }
+
+
+def _recent_turns(ledger: SessionTurnLedger | None) -> tuple[SessionTurn, ...]:
+    if ledger is None:
+        return ()
+    try:
+        return tuple(ledger.all_turns())
+    except Exception:
+        return ()
+
+
 class FollowUpAppraisalLayer:
-    """Giữ trạng thái tạm thời cho đúng một câu hỏi đang chờ user.
+    """Pure temporal projection over the public event ledger.
 
-    ``DiscourseFrame`` vẫn là semantic authority cho việc ERIS có đang chờ câu
-    trả lời hay không. Lớp này chỉ suy diễn *cách cư xử theo thời gian* từ kết
-    luận đó: chờ, nhắc một lần, rồi thôi.
-
-    Một user turn mới luôn reset chu kỳ. Vì vậy sự xa cách ở đây chỉ là stance
-    ngắn hạn, không bị ghi thành vết nứt quan hệ vĩnh viễn vì một lần user im.
+    ``DiscourseState`` still owns the semantic judgment that a reply is expected.
+    The ledger owns temporal truth: which public turn came after which.  This
+    layer only combines them into wait/remind/abandon behavior.
     """
 
     def __init__(self, policy: FollowUpPolicy | None = None) -> None:
         self.policy = resolve_dependency(policy, FollowUpPolicy.from_environment)
-        self._user_turn_marker = 0.0
-        self._thread_key = "unknown"
-        self._question_started_at = 0.0
-        self._reminder_spoken_at = 0.0
-        self._abandoned_at = 0.0
-        self._topic_shift_spoken = False
-
-    def reset(self) -> None:
-        """Xóa appraisal cũ khi user đã quay lại hoặc thread không còn chờ."""
-
-        self._thread_key = "unknown"
-        self._question_started_at = 0.0
-        self._reminder_spoken_at = 0.0
-        self._abandoned_at = 0.0
-        self._topic_shift_spoken = False
 
     @staticmethod
-    def _marker_changed(previous: float, current: float) -> bool:
-        return bool(previous > 0.0 and current > 0.0 and abs(previous - current) > 0.5)
+    def _none(discourse: DiscourseState) -> DiscourseState:
+        return replace(
+            discourse,
+            followup_state="none",
+            followup_reminder_due=False,
+            followup_reminder_count=0,
+            followup_abandoned=False,
+            suppress_same_topic=False,
+            may_start_new_topic=False,
+            social_distance=0.0,
+        )
 
     def evaluate(
         self,
         discourse: DiscourseState,
         *,
         now: float,
-        user_turn_at: float,
-        assistant_turn_at: float,
+        user_turn_at: float = 0.0,
+        assistant_turn_at: float = 0.0,
+        ledger: SessionTurnLedger | None = None,
     ) -> DiscourseState:
-        """Bổ sung follow-up state vào discourse baton của tick hiện tại."""
-
         now = max(0.0, float(now or 0.0))
+        turns = _recent_turns(ledger)
+
+        # Production path: derive lifecycle entirely from public events.
+        if turns:
+            users = [turn for turn in turns if turn.role == "user"]
+            assistants = [turn for turn in turns if turn.role == "assistant"]
+            latest_user = users[-1] if users else None
+            latest_assistant = assistants[-1] if assistants else None
+
+            # Observer may report waiting_user a little after the user already
+            # replied. Temporal ordering wins over that stale semantic baton.
+            if latest_user is not None and latest_assistant is not None:
+                if latest_user.index > latest_assistant.index:
+                    return self._none(replace(discourse, reply_expected=False, assistant_may_continue=False))
+
+            # Find the public turn that owns the current wait. Prefer an explicit
+            # question; if the observer says waiting but the turn has older/legacy
+            # metadata, the latest assistant turn is still a bounded anchor.
+            question: SessionTurn | None = None
+            for turn in reversed(assistants):
+                if _opens_question(turn):
+                    question = turn
+                    break
+            if question is None and discourse.reply_expected:
+                question = latest_assistant
+
+            if question is None:
+                return self._none(discourse)
+
+            if latest_user is not None and latest_user.index > question.index:
+                return self._none(replace(discourse, reply_expected=False, assistant_may_continue=False))
+
+            later_assistant = [turn for turn in assistants if turn.index > question.index]
+            reminder = next(
+                (turn for turn in later_assistant if _speech_act(turn) == "followup_reminder"),
+                None,
+            )
+            topic_shift = next(
+                (
+                    turn
+                    for turn in later_assistant
+                    if _speech_act(turn) in {"independent_topic_shift", "abandoned_topic_shift"}
+                ),
+                None,
+            )
+            if topic_shift is not None:
+                return replace(
+                    discourse,
+                    reply_expected=False,
+                    assistant_may_continue=False,
+                    followup_state="completed",
+                    followup_reminder_due=False,
+                    followup_reminder_count=1 if reminder is not None else 0,
+                    followup_abandoned=True,
+                    suppress_same_topic=True,
+                    may_start_new_topic=False,
+                    social_distance=self.policy.reserved_distance,
+                )
+
+            question_at = max(0.0, float(question.timestamp or 0.0))
+            reminder_at = max(0.0, float(reminder.timestamp or 0.0)) if reminder is not None else 0.0
+
+            if reminder is not None:
+                if now - reminder_at >= self.policy.abandon_after_reminder_seconds:
+                    return replace(
+                        discourse,
+                        reply_expected=False,
+                        assistant_may_continue=False,
+                        followup_state="abandoned",
+                        followup_reminder_due=False,
+                        followup_reminder_count=1,
+                        followup_abandoned=True,
+                        suppress_same_topic=True,
+                        may_start_new_topic=True,
+                        social_distance=self.policy.reserved_distance,
+                    )
+                return replace(
+                    discourse,
+                    reply_expected=True,
+                    assistant_may_continue=False,
+                    followup_state="waiting_after_reminder",
+                    followup_reminder_due=False,
+                    followup_reminder_count=1,
+                    followup_abandoned=False,
+                    suppress_same_topic=False,
+                    may_start_new_topic=False,
+                    social_distance=0.0,
+                )
+
+            age = max(0.0, now - question_at)
+            if age >= self.policy.abandon_without_reminder_seconds:
+                return replace(
+                    discourse,
+                    reply_expected=False,
+                    assistant_may_continue=False,
+                    followup_state="abandoned",
+                    followup_reminder_due=False,
+                    followup_reminder_count=0,
+                    followup_abandoned=True,
+                    suppress_same_topic=True,
+                    may_start_new_topic=True,
+                    social_distance=self.policy.reserved_distance,
+                )
+            reminder_due = bool(age >= self.policy.remind_after_seconds)
+            return replace(
+                discourse,
+                reply_expected=True,
+                assistant_may_continue=False,
+                followup_state="reminder_due" if reminder_due else "waiting",
+                followup_reminder_due=reminder_due,
+                followup_reminder_count=0,
+                followup_abandoned=False,
+                suppress_same_topic=False,
+                may_start_new_topic=False,
+                social_distance=0.0,
+            )
+
+        # Compatibility for isolated tests/adapters with no ledger. This path is
+        # deliberately memoryless; it can wait/remind based on the current typed
+        # baton, but cannot pretend to know whether an older reminder was spoken.
         user_turn_at = max(0.0, float(user_turn_at or 0.0))
         assistant_turn_at = max(0.0, float(assistant_turn_at or 0.0))
-
-        # Có user turn mới thì mọi suy diễn "có lẽ họ không để ý" lập tức hết hạn.
-        # Quan trọng: ở process/session mới _user_turn_marker bắt đầu bằng 0. Nếu
-        # ERIS đã mở một follow-up trước khi user nói lần đầu trong session, cách
-        # kiểm tra marker cũ sẽ bỏ sót chính lượt trả lời đầu tiên đó. So trực tiếp
-        # timestamp của user với cycle đang active để đóng thread cũ ngay cả khi
-        # previous marker chưa từng được seed.
-        active_cycle_at = max(
-            self._question_started_at,
-            self._reminder_spoken_at,
-            self._abandoned_at,
-        )
-        user_answered_active_cycle = bool(
-            user_turn_at > 0.0
-            and active_cycle_at > 0.0
-            and user_turn_at > active_cycle_at + 0.5
-        )
-        if user_answered_active_cycle or self._marker_changed(self._user_turn_marker, user_turn_at):
-            self.reset()
-        if user_turn_at > 0.0:
-            self._user_turn_marker = user_turn_at
-
-        # Khi topic shift đã được observer nhìn thấy và thread không còn chờ,
-        # appraisal tạm thời hoàn tất. Khoảng cách nhẹ không được dính vĩnh viễn.
-        if not discourse.reply_expected and self._topic_shift_spoken:
-            self.reset()
-            return replace(
-                discourse,
-                followup_state="none",
-                followup_reminder_due=False,
-                followup_reminder_count=0,
-                followup_abandoned=False,
-                suppress_same_topic=False,
-                may_start_new_topic=False,
-                social_distance=0.0,
-            )
-
-        # Nếu observer đóng thread trước khi reminder từng được phát, tôn trọng
-        # semantic authority và reset. Sau khi reminder đã phát, user marker mới
-        # là bằng chứng kết thúc; observer có thể cập nhật chậm hoặc coi câu nhắc
-        # là một autonomous statement, nên vẫn giữ timer chờ lần cuối.
-        active_after_reminder = bool(self._reminder_spoken_at > 0.0 or self._abandoned_at > 0.0)
-        if not discourse.reply_expected and not active_after_reminder:
-            self.reset()
-            return replace(
-                discourse,
-                followup_state="none",
-                followup_reminder_due=False,
-                followup_reminder_count=0,
-                followup_abandoned=False,
-                suppress_same_topic=False,
-                may_start_new_topic=False,
-                social_distance=0.0,
-            )
-
-        assistant_turn_can_own_wait = bool(
-            assistant_turn_at > 0.0
-            and (user_turn_at <= 0.0 or assistant_turn_at > user_turn_at + 0.5)
-        )
-        if discourse.reply_expected and self._question_started_at <= 0.0 and assistant_turn_can_own_wait:
-            # Chỉ mở follow-up cho một assistant turn thực sự mới hơn user turn.
-            # Nếu observer baton còn báo waiting_user nhưng user đã trả lời sau
-            # assistant turn đó, baton đang stale theo thứ tự thời gian; không được
-            # khởi động lại timer nhắc cũ trong lúc chờ observer cập nhật.
-            fallback_started_at = max(0.0, now - discourse.seconds_since_assistant)
-            self._question_started_at = assistant_turn_at or fallback_started_at or now
-            self._thread_key = discourse.thread_key or "unknown"
-
-        # Nếu topic shift đã phát thành công thì không tạo thêm lời nào từ thread
-        # cũ. Observer ở lượt sau sẽ đóng discourse; đây là chốt chống lặp tại chỗ.
-        if self._topic_shift_spoken:
-            return replace(
-                discourse,
-                reply_expected=False,
-                assistant_may_continue=False,
-                followup_state="completed",
-                followup_reminder_due=False,
-                followup_reminder_count=1 if self._reminder_spoken_at > 0.0 else 0,
-                followup_abandoned=True,
-                suppress_same_topic=True,
-                may_start_new_topic=False,
-                social_distance=self.policy.reserved_distance,
-            )
-
-        # Sau khi đã nhắc một lần, chỉ chờ thêm một khoảng ngắn. Không nhắc lần hai.
-        if self._reminder_spoken_at > 0.0 and self._abandoned_at <= 0.0:
-            if now - self._reminder_spoken_at >= self.policy.abandon_after_reminder_seconds:
-                self._abandoned_at = now
-
-        # Nếu Surface liên tục lỗi và câu nhắc không phát được, cuối cùng vẫn phải
-        # buông thread cũ. Không thể giữ cả ERIS làm con tin cho một API đang hấp hối.
-        if (
-            self._reminder_spoken_at <= 0.0
-            and self._question_started_at > 0.0
-            and self._abandoned_at <= 0.0
-            and now - self._question_started_at >= self.policy.abandon_without_reminder_seconds
-        ):
-            self._abandoned_at = now
-
-        if self._abandoned_at > 0.0:
+        if not discourse.reply_expected:
+            return self._none(discourse)
+        if user_turn_at > assistant_turn_at > 0.0:
+            return self._none(replace(discourse, reply_expected=False, assistant_may_continue=False))
+        started_at = assistant_turn_at or max(0.0, now - discourse.seconds_since_assistant)
+        age = max(0.0, now - started_at)
+        if age >= self.policy.abandon_without_reminder_seconds:
             return replace(
                 discourse,
                 reply_expected=False,
                 assistant_may_continue=False,
                 followup_state="abandoned",
                 followup_reminder_due=False,
-                followup_reminder_count=1 if self._reminder_spoken_at > 0.0 else 0,
                 followup_abandoned=True,
                 suppress_same_topic=True,
                 may_start_new_topic=True,
                 social_distance=self.policy.reserved_distance,
             )
-
-        reminder_due = bool(
-            self._reminder_spoken_at <= 0.0
-            and self._question_started_at > 0.0
-            and now - self._question_started_at >= self.policy.remind_after_seconds
-        )
-        state = "reminder_due" if reminder_due else (
-            "waiting_after_reminder" if self._reminder_spoken_at > 0.0 else "waiting"
-        )
+        due = age >= self.policy.remind_after_seconds
         return replace(
             discourse,
             reply_expected=True,
-            followup_state=state,
-            followup_reminder_due=reminder_due,
-            followup_reminder_count=1 if self._reminder_spoken_at > 0.0 else 0,
+            assistant_may_continue=False,
+            followup_state="reminder_due" if due else "waiting",
+            followup_reminder_due=due,
+            followup_reminder_count=0,
             followup_abandoned=False,
             suppress_same_topic=False,
             may_start_new_topic=False,
@@ -244,17 +304,16 @@ class FollowUpAppraisalLayer:
         )
 
     def note_spoken(self, plan: Any, *, now: float) -> None:
-        """Ghi nhận câu nhắc/topic shift chỉ sau khi public commit thành công."""
+        """Compatibility no-op.
 
-        semantics = getattr(plan, "semantics", None)
-        speech_act = str(getattr(semantics, "speech_act", "") or "").strip().lower()
-        motive = str(getattr(plan, "motive", "") or "").strip().lower()
-        if speech_act == "followup_reminder" or motive == "followup_reminder":
-            if self._reminder_spoken_at <= 0.0:
-                self._reminder_spoken_at = max(0.0, float(now or 0.0))
-            return
-        if speech_act == "independent_topic_shift" or motive == "abandoned_topic_shift":
-            self._topic_shift_spoken = True
+        Public commit is already recorded in ``SessionTurnLedger``. Keeping a
+        second mutable receipt here would recreate the bug this refactor removes.
+        """
+
+        _ = (plan, now)
+
+    def reset(self) -> None:
+        """Compatibility no-op: there is no hidden lifecycle state to reset."""
 
 
 __all__ = ["FollowUpAppraisalLayer", "FollowUpPolicy"]

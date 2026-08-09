@@ -26,12 +26,12 @@ try:
     from .memory_cue import MemoryCue
     from .memory_candidate import MemoryLayerAdapter, MemoryCandidate
     from .memory_scoring import MemoryScorer, DEFAULT_LAYER_PROFILES
-    from .memory_activation import MemoryActivationBuilder, MemoryRetrievalResult, ScoredMemoryCandidate
+    from .memory_activation import MemoryActivationBuilder, MemoryRetrievalResult, ScoredMemoryCandidate, WorkingMemoryGate
 except Exception:  # pragma: no cover
     from memory_cue import MemoryCue
     from memory_candidate import MemoryLayerAdapter, MemoryCandidate
     from memory_scoring import MemoryScorer, DEFAULT_LAYER_PROFILES
-    from memory_activation import MemoryActivationBuilder, MemoryRetrievalResult, ScoredMemoryCandidate
+    from memory_activation import MemoryActivationBuilder, MemoryRetrievalResult, ScoredMemoryCandidate, WorkingMemoryGate
 
 
 @dataclass(slots=True)
@@ -55,10 +55,11 @@ class MemoryStores:
 
 
 class MemoryRetrievalEngine:
-    def __init__(self, stores: MemoryStores, *, scorer: MemoryScorer | None = None, activation_builder: MemoryActivationBuilder | None = None):
+    def __init__(self, stores: MemoryStores, *, scorer: MemoryScorer | None = None, activation_builder: MemoryActivationBuilder | None = None, working_memory_gate: WorkingMemoryGate | None = None):
         self.stores = stores
         self.scorer = resolve_dependency(scorer, lambda: MemoryScorer())
         self.activation_builder = resolve_dependency(activation_builder, lambda: MemoryActivationBuilder())
+        self.working_memory_gate = resolve_dependency(working_memory_gate, lambda: WorkingMemoryGate())
         self.adapters = {
             layer: MemoryLayerAdapter(layer=layer, store=store)
             for layer, store in stores.as_layer_map().items()
@@ -87,7 +88,11 @@ class MemoryRetrievalEngine:
                 if score.total > 0.0:
                     scored.append(ScoredMemoryCandidate(candidate=candidate, score=score))
 
+        # Retrieval discovers candidates; working-memory gating decides how many
+        # of them may become active in this cognitive cycle. Long-term stores are
+        # untouched, and exact recall gets a deliberately larger episodic budget.
         result = self.activation_builder.build(scored, max_activations=max_activations)
+        result = self.working_memory_gate.apply(result, cue=cue, requested=max_activations)
         if debug_notes:
             result.debug_notes = tuple((*result.debug_notes, *debug_notes))
         return result

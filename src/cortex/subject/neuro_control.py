@@ -177,6 +177,32 @@ class NeuroActionSelector:
                 )
             )
 
+        # Predictive-processing motif without a duplicate world model: Subject
+        # Core already carries a learned competence prediction and historical
+        # outcome prior inside each proposal's inner_trace. Their disagreement is
+        # useful epistemic surprise. It can win workspace broadcast and lower the
+        # confidence of routine gating, but it never manufactures an action.
+        predictive_disagreement = 0.0
+        for proposal in (getattr(frame, "proposals", ()) or ()):
+            arguments = dict(getattr(proposal, "arguments", {}) or {})
+            trace = dict(arguments.get("inner_trace", {}) or {})
+            if "competence_prediction" not in trace or "historical_success" not in trace:
+                continue
+            learned = _clamp01(trace.get("competence_prediction"), 0.5)
+            historical = _clamp01(trace.get("historical_success"), 0.5)
+            disagreement = abs(learned - historical)
+            predictive_disagreement = max(predictive_disagreement, disagreement)
+            if disagreement >= 0.18:
+                signals.append(WorkspaceSignal(
+                    "prediction_error_prior",
+                    str(getattr(proposal, "action_kind", "action") or "action"),
+                    _clamp01(disagreement),
+                    _clamp01(1.0 - getattr(proposal, "uncertainty", 0.5), 0.5),
+                ))
+
+        surprise = max(surprise, _clamp01(predictive_disagreement))
+        precision = _clamp01(precision * (1.0 - 0.35 * predictive_disagreement))
+
         ordered = tuple(
             sorted(signals, key=lambda item: (-item.salience, -item.confidence, item.kind, item.label))[
                 : max(1, int(self.config.max_broadcast_signals))
@@ -238,6 +264,30 @@ class NeuroActionSelector:
         score += 0.08 * broadcast.precision * pragmatic
         score += 0.10 * (1.0 - broadcast.precision) * epistemic
         score -= 0.08 * (1.0 - broadcast.resource) * uncertainty
+
+        # Outcome-adaptive prior without trainable selector state. Subject Core's
+        # competence/history estimators are already updated by real outcomes; the
+        # gate reads that learned prior from the proposal it is evaluating. This
+        # keeps one learning authority instead of teaching a second policy model
+        # behind the arbiter's back.
+        proposals = {
+            item.proposal_id: item
+            for item in (getattr(frame, "proposals", ()) or ())
+            if getattr(item, "proposal_id", "")
+        }
+        learned_values: list[float] = []
+        for ref in (getattr(candidate, "proposal_refs", ()) or ()):
+            proposal = proposals.get(ref)
+            if proposal is None:
+                continue
+            trace = dict(dict(getattr(proposal, "arguments", {}) or {}).get("inner_trace", {}) or {})
+            if "competence_prediction" in trace:
+                learned_values.append(_clamp01(trace.get("competence_prediction"), 0.5))
+            if "historical_success" in trace:
+                learned_values.append(_clamp01(trace.get("historical_success"), 0.5))
+        if learned_values:
+            learned_prior = sum(learned_values) / len(learned_values)
+            score += 0.06 * (learned_prior - 0.5)
 
         action = str(candidate.action_kind or "").lower()
         if action == "speak":
