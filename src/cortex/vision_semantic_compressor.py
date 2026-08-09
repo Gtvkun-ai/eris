@@ -245,8 +245,8 @@ class RemoteCaptionClient:
             }
         ]
 
-        def _do_call() -> str:
-            """Gọi caption một lần. Trả text hoặc chuỗi rỗng nếu lỗi/empty."""
+        def _do_call() -> tuple[str, bool]:
+            """Gọi caption một lần; bool cho biết lỗi có đáng retry ngay hay không."""
             call_kwargs: dict[str, Any] = {
                 "messages": messages,
                 "temperature": float(temperature),
@@ -255,7 +255,7 @@ class RemoteCaptionClient:
                 "max_tokens": int(max_tokens or self._max_tokens),
             }
             try:
-                from runtime.inference_broker import inference_context
+                from runtime.inference_broker import InferenceRejected, inference_context
                 with inference_context(
                     "vision_ambient",
                     optional=True,
@@ -265,15 +265,26 @@ class RemoteCaptionClient:
                     metadata={"operation": "vision_caption"},
                 ):
                     response = self._client.create_chat_completion(**call_kwargs)
+            except InferenceRejected as exc:
+                if self._logger is not None:
+                    safe_log(
+                        self._logger,
+                        "info",
+                        "[vision caption remote] broker skipped optional caption reason=%s",
+                        getattr(exc, "reason", str(exc)),
+                    )
+                return "", False
             except Exception as exc:  # pragma: no cover - lỗi mạng/remote
                 if self._logger is not None and callable(getattr(self._logger, "warning", None)):
                     safe_log(self._logger, "warning", "[vision caption remote] lỗi: %s", exc)
-                return ""
-            return self._extract_text(response).strip()
+                return "", True
+            return self._extract_text(response).strip(), True
 
-        result = _do_call()
+        result, retryable = _do_call()
         if result:
             return result
+        if not retryable:
+            return ""
 
         # Lần đầu trả rỗng (Groq/Qwen empty output bug) → thử lại một lần.
         if self._logger is not None:
@@ -283,8 +294,8 @@ class RemoteCaptionClient:
                 "[vision caption remote] empty output, retrying once (model=%s)",
                 self.model_name,
             )
-        result = _do_call()
-        if not result and self._logger is not None:
+        result, retryable_after_retry = _do_call()
+        if not result and self._logger is not None and retryable_after_retry:
             safe_log(
                 self._logger,
                 "warning",

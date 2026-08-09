@@ -165,13 +165,17 @@ def test_executive_commit_uses_exact_subject_ids() -> None:
     )
     selected = frame.coalitions[-1]
 
-    def invoke(_client, **_kwargs):
+    selected_index = len(frame.coalitions) - 1
+
+    def invoke(_client, **kwargs):
+        # V28: deliberator only sees ephemeral indices; runtime identity never
+        # crosses the model boundary.
+        assert all("coalition_id" not in item for item in kwargs["payload"]["choices"])
         return {
-            "selected_coalition_id": selected.coalition_id,
-            "selected_proposal_ref": selected.primary_proposal_ref,
+            "choice_index": selected_index,
             "semantic_commitments": ["giữ đúng ý định đã chọn"],
             "cognitive_requests": [],
-            "reason": "selected from grounded frame",
+            "reason": "selected from current semantic choices",
             "confidence": 0.77,
             "review_conditions": ["new_evidence"],
         }

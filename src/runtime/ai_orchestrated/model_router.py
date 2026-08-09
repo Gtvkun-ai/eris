@@ -1159,6 +1159,16 @@ class AIRuntimeModelRouter:
         reason_key = str(reason or "").strip().lower()
         if "public_reply" in reason_key and "autonomous" not in reason_key:
             lane = "chat_main"
+        elif "neuro_deliberation_interactive" in reason_key:
+            # Direct-user conflict resolution is required, but intentionally uses
+            # a non-persistent provider lane. Conversation memory belongs to Eris,
+            # not to a remote decision worker session.
+            lane = "neuro_deliberation_required"
+        elif "neuro_deliberation" in reason_key:
+            # Autonomous deliberation is rare and interruptible. A dedicated lane
+            # keeps it optional *without* giving it the persistent autonomous
+            # provider session that caused stale semantic carry-over.
+            lane = "neuro_deliberation"
         elif "observer" in reason_key or "observation" in reason_key:
             lane = "post_observer"
         elif (

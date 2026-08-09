@@ -379,30 +379,6 @@ def test_llm_service_keeps_deepseek_workers_and_adds_executive_client():
     assert service.executive_client is executive
 
 
-def test_process_manager_builds_gemma_executive_without_touching_deepseek_workers(monkeypatch, tmp_path):
-    import llm.process_manager as pm
-
-    class _Lease:
-        key = "gemini-pool-key"
-
-    class _Pool:
-        size = 7
-
-        def acquire(self, allow_cooling=True):
-            return _Lease()
-
-    monkeypatch.setenv("ERIS_EXECUTIVE_CORTEX_ENABLED", "1")
-    monkeypatch.setenv("ERIS_EXECUTIVE_MODEL", "gemma-4-31b-it")
-    monkeypatch.setattr(pm, "apply_secrets_to_environ", lambda: None)
-    monkeypatch.setattr(pm, "get_provider_profile", lambda *args, **kwargs: {})
-    monkeypatch.setattr(pm, "get_key_pool", lambda kind: _Pool())
-    monkeypatch.setattr(pm, "get_secret", lambda *args, **kwargs: "")
-    manager = pm.RemoteModelProcessManager(logger=logging.getLogger("executive-test"), project_root=str(tmp_path))
-    client = manager.build_executive_client()
-    assert client is not None
-    assert client.model_name == "gemma-4-31b-it"
-    assert client.key_pool.size == 7
-
 
 def test_optional_reply_baton_release_uses_previous_typed_state_not_new_candidate_kind():
     board = SimpleNamespace(

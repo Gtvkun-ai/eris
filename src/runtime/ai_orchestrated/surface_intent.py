@@ -14,6 +14,8 @@ production self-turn không dùng nó để quyết định có nói hay không 
 from __future__ import annotations
 
 import os
+import re
+from difflib import SequenceMatcher
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -59,6 +61,27 @@ def _clamp01(value: Any, default: float = 0.0) -> float:
     except (TypeError, ValueError):
         number = default
     return max(0.0, min(1.0, number))
+
+
+def _normalized_surface_text(text: str) -> str:
+    return " ".join(re.findall(r"\w+", str(text or "").casefold(), flags=re.UNICODE))
+
+
+def _surface_text_is_duplicate(text: str, avoid_text: str) -> bool:
+    """Catch exact/near-verbatim autonomous repetition without semantic guessing."""
+    current = _normalized_surface_text(text)
+    previous = _normalized_surface_text(avoid_text)
+    if not current or not previous:
+        return False
+    if current == previous:
+        return True
+    if min(len(current), len(previous)) < 24:
+        return False
+    # Containment catches the common case where the model adds/removes a short
+    # greeting around the same sentence. Ratio catches punctuation/wording noise.
+    if current in previous or previous in current:
+        return True
+    return SequenceMatcher(None, current, previous, autojunk=False).ratio() >= 0.88
 
 
 def _bad_surface_utterance_reason(text: str, *, channel: str = "autonomous") -> str:
@@ -138,6 +161,7 @@ class SurfaceIntentEngine:
         blackboard: TypedCognitiveBlackboard,
         *,
         snapshot: Mapping[str, Any] | None = None,
+        avoid_text: str = "",
     ) -> SurfaceTurn | None:
         """Gọi Surface Worker đúng một lần để viết câu từ SpeechIntent.
 
@@ -159,6 +183,7 @@ class SurfaceIntentEngine:
             )
             return self._unavailable(intent, "invalid_public_intent_owner")
         display_language, speech_language = _surface_languages()
+        avoid_text = compact(avoid_text, 520)
         request = {
             "speech_intent": intent.to_dict(),
             "blackboard": blackboard.public_view(),
@@ -174,8 +199,10 @@ class SurfaceIntentEngine:
                 "speech_language": speech_language,
                 "rule": (
                     f"Write one concise public line in {display_language} (display) and provide its {speech_language} translation (speech). "
-                    "Do not decide speak/silence, change the topic owner, invent evidence, or mention internal contracts."
+                    "Do not decide speak/silence, change the topic owner, invent evidence, or mention internal contracts. "
+                    "If avoid_repeating is non-empty, do not repeat or closely paraphrase that previous autonomous line."
                 ),
+                "avoid_repeating": avoid_text,
             },
         }
         if intent.random_chat_seed:
@@ -250,6 +277,14 @@ class SurfaceIntentEngine:
         confidence = _clamp01(raw.get("confidence", 0.0))
         if not text:
             return self._unavailable(intent, "surface_missing_display_text")
+        if avoid_text and _surface_text_is_duplicate(text, avoid_text):
+            self._log(
+                "warning",
+                "[surface worker] blocked duplicate recent autonomous wording mode=%s text=%s",
+                intent.mode,
+                text[:180],
+            )
+            return self._unavailable(intent, "surface_duplicate_recent_utterance")
         if not utterance.speech.text:
             return self._unavailable(intent, "surface_missing_speech_text")
         if confidence < 0.25:

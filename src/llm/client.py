@@ -46,6 +46,9 @@ def _gemini_auth_headers(api_key: str) -> dict:
 
 
 
+# Deliberation lanes are intentionally absent. A decision worker must not
+# acquire hidden conversational memory from Whale2API; continuity lives in Eris
+# state and is passed explicitly in the bounded workspace payload.
 _PERSISTENT_WEB_SESSION_LANES = frozenset({
     "chat_main",
     "chat",

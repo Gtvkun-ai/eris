@@ -11,6 +11,13 @@ from .deliberation import (
     ProposalAdjustment,
 )
 from .inner_state import ActionMemory, InnerLifeState
+from .neuro_control import (
+    NeuroActionSelector,
+    NeuroControlConfig,
+    SelectionResult,
+    WorkspaceBroadcast,
+    WorkspaceSignal,
+)
 from .self_model import SelfFacet, SubjectSelfProjection, SubjectSelfProjector
 from .relational import RelationalConfig, RelationalHomeostasis, RelationalState
 from .service import SubjectService, SubjectServiceConfig
@@ -21,6 +28,11 @@ __all__ = [
     "CognitiveReviewResult",
     "DeliberationReviewIntegrator",
     "InnerLifeState",
+    "NeuroActionSelector",
+    "NeuroControlConfig",
+    "SelectionResult",
+    "WorkspaceBroadcast",
+    "WorkspaceSignal",
     "ProposalAdjustment",
     "SelfFacet",
     "SubjectSelfProjection",

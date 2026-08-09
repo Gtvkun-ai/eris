@@ -682,7 +682,10 @@ class SelfTurnPipeline:
             })
             try:
                 surface_turn = surface_engine.realize(
-                    speech_intent, blackboard, snapshot=planner_snapshot,
+                    speech_intent,
+                    blackboard,
+                    snapshot=planner_snapshot,
+                    avoid_text=self._last_autonomous_text,
                 )
             except Exception as exc:
                 host.logger.warning("[surface worker] realization failed: %s", exc)
@@ -1919,6 +1922,15 @@ class SelfTurnPipeline:
         context: SelfTurnBundle,
         grounding_report: Any,
     ) -> tuple[bool, str]:
+        recent_autonomous_text = str(getattr(self, "_last_autonomous_text", "") or "")
+        if recent_autonomous_text:
+            try:
+                from .surface_intent import _surface_text_is_duplicate
+
+                if _surface_text_is_duplicate(text, recent_autonomous_text):
+                    return False, "duplicate_recent_autonomous_utterance"
+            except Exception as exc:
+                self.host.logger.debug("[utterance gate] duplicate guard unavailable: %s", exc)
         try:
             from runtime.utterance_evaluator import UtteranceEvaluator
 

@@ -249,3 +249,50 @@ def test_startup_greeting_invariant_runs_after_main_cognition_without_erasing_co
     assert cognition_call < invariant_call
     assert "typed_surface_preserved=1" not in source
     assert "STARTUP_WORDING_CONTRACT" in source[cognition_call:invariant_call]
+
+
+def test_invalid_deliberator_choice_degrades_without_second_llm_call() -> None:
+    """The LLM no longer owns IDs; an invalid local choice degrades to the fast gate."""
+    d = Determinism()
+    service = _service(d)
+    ingress = SubjectIngress(service)
+    session = ingress.prepare_autonomous_session(
+        _blackboard(),
+        (_seed_affordance(),),
+        created_at=d.now,
+        turn_id="runtime-stale-coalition-fail-closed",
+        planning_context={
+            "relational_state": service.relational_view(),
+            "initiative_runtime_context": {"user_model_uncertainty": 0.96},
+        },
+    )
+    calls = 0
+
+    def fake_structured(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return {
+            "choice_index": 999,
+            "semantic_commitments": [],
+            "cognitive_requests": [],
+            "reason": "invalid local choice",
+            "confidence": 0.86,
+            "review_conditions": [],
+        }
+
+    executive = ExecutiveCortex(
+        SimpleNamespace(action_executor=None),
+        object(),
+        invoke_structured=fake_structured,
+        clock=d.clock,
+        wall_clock=d.clock,
+    )
+    commit = executive.commit_subject_frame(session.frame, mode="autonomous")
+
+    assert commit is not None
+    assert calls == 1
+    assert commit.source == "neuro_fast_gate_degraded"
+    assert commit.reason == "neuro_deliberator_out_of_frame_use_fast_gate"
+    fast = executive._neuro_selector.select(session.frame)
+    assert commit.selected_coalition_id == fast.winner(session.frame).coalition_id
+    asyncio.run(service.abandon_deliberation(session.frame, reason="test_cleanup"))

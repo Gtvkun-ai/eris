@@ -262,3 +262,15 @@ def test_stage_bus_directly_mirrors_events_to_live2d(monkeypatch) -> None:
         assert mirrored["type"] == "audio_playback_started"
         assert mirrored["event_id"]
         assert transport.payloads[0]["event_id"] == mirrored["event_id"]
+
+
+def test_duplicate_stage_event_reports_rejected():
+    state = Live2DStageState()
+    payload = {
+        "protocol": "eris.stage",
+        "type": "audio_playback_started",
+        "event_id": "evt_duplicate_acceptance_contract",
+        "tts_text": "Xin chào.",
+    }
+    assert state.handle_payload(payload) is True
+    assert state.handle_payload(dict(payload)) is False

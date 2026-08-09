@@ -53,12 +53,18 @@ LANE_POLICIES: dict[str, LanePolicy] = {
     "speech_localizer": LanePolicy(35, True, 2, 10.0, 1),
     "tts_localizer": LanePolicy(35, True, 2, 10.0, 1),
     "romaji_localizer": LanePolicy(35, True, 2, 10.0, 1),
+    # Required one-shot conflict resolution for a direct user turn.
+    "neuro_deliberation_required": LanePolicy(25, False, 4, 22.0, 1),
     "post_observer": LanePolicy(60, True, 2, 30.0, 1),
     "memory_digest": LanePolicy(70, True, 2, 25.0, 1),
     "private_mind": LanePolicy(80, True, 1, 20.0, 1),
     "private_mind_optional": LanePolicy(80, True, 1, 20.0, 1),
     "tutor_background": LanePolicy(85, True, 2, 20.0, 1),
     "micro_presence": LanePolicy(90, True, 1, 8.0, 1),
+    # Rare conflict-resolution call from the neuro action gate. It is optional
+    # like autonomous initiative, but deliberately has its own one-shot provider
+    # lane so stale conversational state cannot become decision authority.
+    "neuro_deliberation": LanePolicy(88, True, 1, 18.0, 1),
     "autonomous": LanePolicy(90, True, 1, 18.0, 1),
     "vision_ambient": LanePolicy(95, True, 1, 18.0, 1),
     "vision_compressor": LanePolicy(95, True, 1, 18.0, 1),
@@ -71,7 +77,7 @@ _DEFAULT_POLICY = LanePolicy(50, False, 8, 30.0, 2)
 # lanes are shed instead. A transport must explicitly advertise that it can
 # apply the smaller budget; otherwise the broker never lies about token use.
 _REQUIRED_DEGRADE_LANES = frozenset({
-    "chat_main", "chat", "chat_tool_required", "directive", "transport",
+    "chat_main", "chat", "chat_tool_required", "directive", "neuro_deliberation_required", "transport",
 })
 
 

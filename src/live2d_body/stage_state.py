@@ -284,20 +284,21 @@ class Live2DStageState:
         self._eye_open_left = neutral.eye_open_left
         self._eye_open_right = neutral.eye_open_right
 
-    def handle_payload(self, payload: Mapping[str, Any]) -> None:
+    def handle_payload(self, payload: Mapping[str, Any]) -> bool:
         if not isinstance(payload, Mapping):
-            return
+            return False
         protocol = str(payload.get("protocol", "") or "")
         event_type = str(payload.get("type", "") or "").strip().lower()
         with self._lock:
             if protocol == "eris.stage" and self._is_duplicate_stage_event(payload):
-                return
+                return False
             if protocol == "eris.stage":
                 self._handle_stage_event(payload, event_type)
             else:
                 self._handle_legacy_payload(payload)
             self._last_event_type = event_type
             self._last_event_at = time.monotonic()
+            return True
 
     def _is_duplicate_stage_event(self, payload: Mapping[str, Any]) -> bool:
         event_id = str(payload.get("event_id", "") or "").strip()

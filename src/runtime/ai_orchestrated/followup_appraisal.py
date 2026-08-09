@@ -112,7 +112,22 @@ class FollowUpAppraisalLayer:
         assistant_turn_at = max(0.0, float(assistant_turn_at or 0.0))
 
         # Có user turn mới thì mọi suy diễn "có lẽ họ không để ý" lập tức hết hạn.
-        if self._marker_changed(self._user_turn_marker, user_turn_at):
+        # Quan trọng: ở process/session mới _user_turn_marker bắt đầu bằng 0. Nếu
+        # ERIS đã mở một follow-up trước khi user nói lần đầu trong session, cách
+        # kiểm tra marker cũ sẽ bỏ sót chính lượt trả lời đầu tiên đó. So trực tiếp
+        # timestamp của user với cycle đang active để đóng thread cũ ngay cả khi
+        # previous marker chưa từng được seed.
+        active_cycle_at = max(
+            self._question_started_at,
+            self._reminder_spoken_at,
+            self._abandoned_at,
+        )
+        user_answered_active_cycle = bool(
+            user_turn_at > 0.0
+            and active_cycle_at > 0.0
+            and user_turn_at > active_cycle_at + 0.5
+        )
+        if user_answered_active_cycle or self._marker_changed(self._user_turn_marker, user_turn_at):
             self.reset()
         if user_turn_at > 0.0:
             self._user_turn_marker = user_turn_at
@@ -150,9 +165,15 @@ class FollowUpAppraisalLayer:
                 social_distance=0.0,
             )
 
-        if discourse.reply_expected and self._question_started_at <= 0.0:
-            # Dùng timestamp assistant thật thay vì now để restart app giữa chừng
-            # vẫn giữ tuổi tương đối đúng của câu hỏi đang chờ.
+        assistant_turn_can_own_wait = bool(
+            assistant_turn_at > 0.0
+            and (user_turn_at <= 0.0 or assistant_turn_at > user_turn_at + 0.5)
+        )
+        if discourse.reply_expected and self._question_started_at <= 0.0 and assistant_turn_can_own_wait:
+            # Chỉ mở follow-up cho một assistant turn thực sự mới hơn user turn.
+            # Nếu observer baton còn báo waiting_user nhưng user đã trả lời sau
+            # assistant turn đó, baton đang stale theo thứ tự thời gian; không được
+            # khởi động lại timer nhắc cũ trong lúc chờ observer cập nhật.
             fallback_started_at = max(0.0, now - discourse.seconds_since_assistant)
             self._question_started_at = assistant_turn_at or fallback_started_at or now
             self._thread_key = discourse.thread_key or "unknown"

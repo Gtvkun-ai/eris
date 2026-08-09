@@ -70,10 +70,10 @@ class Live2DStageReceiver:
                     if self._handle_renderer_control(payload):
                         self.packet_count += 1
                         continue
-                    self.state.handle_payload(payload)
+                    accepted = self.state.handle_payload(payload)
                     self.packet_count += 1
                     event_type = str(payload.get("type", "") or "").strip().lower()
-                    if event_type in {
+                    if accepted and event_type in {
                         "speaking", "audio_start", "audio_playback_started",
                         "audio_done", "audio_playback_done", "audio_cancelled",
                         "audio_failed", "interrupted", "degraded",

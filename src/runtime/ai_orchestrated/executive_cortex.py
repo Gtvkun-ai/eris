@@ -16,6 +16,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Mapping, Sequence
 
 from cortex.subject.contracts import MindDecision, SubjectDeliberationFrame, SubjectExecutiveCommit
+from cortex.subject.neuro_control import NeuroActionSelector, SelectionResult
 
 from actions.capability_registry import (
     validate_capability_arguments,
@@ -587,6 +588,10 @@ class ExecutiveCortex:
         self._state = ExecutiveState.from_persisted_mapping(
             initial_state, runtime_now=self._clock(), wall_now=self._wall_clock()
         )
+        # Neuro control is intentionally tiny: Subject Core already owns causal
+        # scoring, this layer only gates clear winners and asks the LLM to
+        # deliberate when the action landscape is genuinely ambiguous.
+        self._neuro_selector = NeuroActionSelector()
 
     @property
     def enabled(self) -> bool:
@@ -770,26 +775,301 @@ class ExecutiveCortex:
             confidence=selected.confidence,
         )
 
+    @property
+    def neuro_control_enabled(self) -> bool:
+        """Whether the neuro-style fast gate owns routine action selection.
+
+        The environment switch exists for rollback during migration, not as a
+        second permanent policy. Default is on.
+        """
+        return _flag("ERIS_NEURO_CONTROL_ENABLED", True)
+
+    def _commit_from_selection(
+        self,
+        frame: SubjectDeliberationFrame,
+        selection: SelectionResult,
+        *,
+        reason: str,
+        source: str,
+        semantic_commitments: Sequence[str] = (),
+        cognitive_requests: Sequence[str] = (),
+        confidence: float | None = None,
+        review_conditions: Sequence[str] = (),
+    ) -> SubjectExecutiveCommit:
+        """Bind an ephemeral selector result back to runtime-owned identities."""
+        candidate = selection.winner(frame)
+        candidate_arguments = dict(candidate.arguments)
+        if not semantic_commitments:
+            # The fast gate does not need an LLM to restate semantics that already
+            # exist in the grounded proposal. Surface receives the original meaning
+            # rather than a freshly paraphrased pseudo-authoritative summary.
+            semantic_commitments = tuple(
+                item for item in (
+                    _compact(candidate_arguments.get("semantic_target", ""), 500),
+                    _compact(candidate_arguments.get("speech_act", ""), 160),
+                ) if item
+            )
+        inferred_confidence = _clamp01(
+            0.45
+            + 0.35 * (1.0 - selection.entropy)
+            + 0.20 * min(1.0, max(0.0, selection.margin) / 0.20)
+        )
+        return SubjectExecutiveCommit(
+            commit_id=f"neuro-commit:{uuid.uuid4()}",
+            frame_id=frame.frame_id,
+            selected_coalition_id=candidate.coalition_id,
+            selected_proposal_ref=candidate.primary_proposal_ref,
+            semantic_commitments=tuple(_compact(item, 500) for item in semantic_commitments if _compact(item, 500))[:8],
+            cognitive_requests=tuple(_compact(item, 160).lower() for item in cognitive_requests if _compact(item, 160))[:6],
+            reason=_compact(reason, 500) or selection.reason,
+            confidence=inferred_confidence if confidence is None else _clamp01(confidence),
+            review_conditions=tuple(_compact(item, 180).lower() for item in review_conditions if _compact(item, 180))[:8],
+            created_at=self._clock(),
+            source=source,
+        )
+
+    @staticmethod
+    def _deliberation_choice_schema(frame: SubjectDeliberationFrame) -> dict[str, Any]:
+        indices = list(range(len(frame.coalitions)))
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "choice_index", "semantic_commitments", "cognitive_requests",
+                "reason", "confidence", "review_conditions",
+            ],
+            "properties": {
+                # Ephemeral indices are local to this frame. Unlike coalition IDs,
+                # they cannot leak meaningfully from a previous provider session.
+                "choice_index": {"type": "integer", "enum": indices},
+                "semantic_commitments": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+                "cognitive_requests": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
+                "reason": {"type": "string"},
+                "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "review_conditions": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+            },
+        }
+
+    def _deliberate_subject_choice(
+        self,
+        frame: SubjectDeliberationFrame,
+        selection: SelectionResult,
+        *,
+        user_text: str,
+        snapshot: Mapping[str, Any] | None,
+        mode: str,
+    ) -> SubjectExecutiveCommit:
+        """Invite the LLM as a deliberative specialist, never as state owner.
+
+        The model sees semantic action channels with *local indices only*. It may
+        compare consequences or request one bounded cognitive review, but runtime
+        alone maps the result back to coalition/proposal identity.
+        """
+        source = snapshot or {}
+        choices = []
+        for index, coalition in enumerate(frame.coalitions):
+            choices.append({
+                "index": index,
+                "action_kind": coalition.action_kind,
+                "arguments": {
+                    key: value
+                    for key, value in dict(coalition.arguments).items()
+                    if key in {"semantic_target", "speech_act", "tone", "capability_route", "initiative_motive"}
+                },
+                "supporting_need_ids": list(getattr(coalition, "supporting_need_ids", ()) or ()),
+                "channel_score": selection.scores[index],
+                "pragmatic_value": getattr(coalition, "expected_pragmatic_value", 0.0),
+                "epistemic_value": getattr(coalition, "expected_epistemic_value", 0.0),
+                "uncertainty": getattr(coalition, "uncertainty", 0.5),
+            })
+        payload = {
+            "mode": str(mode or "runtime"),
+            "user_text": str(user_text or ""),
+            "workspace_broadcast": selection.broadcast.to_dict(),
+            "fast_gate": {
+                "provisional_winner_index": selection.winner_index,
+                "margin": selection.margin,
+                "entropy": selection.entropy,
+                "reason": selection.reason,
+            },
+            "choices": choices,
+            "recent_public_history": list(source.get("recent_public_history", ()))[-6:],
+            "relationship": source.get("relationship_summary", source.get("relationship", {})),
+            "grounding_context": _compact(source.get("grounding_context", ""), 1400),
+        }
+        system = (
+            "You are ERIS's bounded deliberative cortex. Routine action selection has already happened in a fast "
+            "competition layer. You are called only because the choice landscape is ambiguous, surprising or conflicted. "
+            "Compare the offered semantic choices and their likely consequences. Return exactly one current choice_index. "
+            "The indices are ephemeral; do not mention or invent runtime IDs, thread IDs, coalition IDs or proposal IDs. "
+            "semantic_commitments are concise meanings for Surface, never final wording. cognitive_requests may contain "
+            "only verify_evidence, reduce_intrusion, preserve_continuity, estimate_capability, inspect_dissent. "
+            "Prefer reversible/epistemic actions when uncertainty is material. Return one JSON object."
+        )
+        try:
+            raw = self.invoke_structured(
+                self.client,
+                system=system,
+                payload=payload,
+                schema=self._deliberation_choice_schema(frame),
+                name=f"eris_neuro_deliberation_{mode}",
+                max_tokens=360,
+                reasoning_effort="low",
+                inference_tier="main_cognition",
+                priority=98 if mode == "interactive" else 66,
+                timeout_seconds=float(os.getenv("ERIS_EXECUTIVE_TIMEOUT_S", "18") or 18),
+            )
+        except Exception as exc:
+            self._log("warning", "[neuro-control] deliberator failed mode=%s: %s", mode, exc)
+            self._set_failure_backoff()
+            return self._commit_from_selection(
+                frame, selection,
+                reason="neuro_deliberator_failure_use_fast_gate",
+                source="neuro_fast_gate_degraded",
+                review_conditions=("deliberator_available",),
+            )
+        if not isinstance(raw, Mapping):
+            return self._commit_from_selection(
+                frame, selection,
+                reason="neuro_deliberator_invalid_payload_use_fast_gate",
+                source="neuro_fast_gate_degraded",
+            )
+        try:
+            choice_index = int(raw.get("choice_index"))
+        except (TypeError, ValueError):
+            choice_index = -1
+        if choice_index < 0 or choice_index >= len(frame.coalitions):
+            self._log(
+                "warning",
+                "[neuro-control] invalid ephemeral choice_index=%r; using fast gate winner=%s",
+                raw.get("choice_index"), selection.winner_index,
+            )
+            return self._commit_from_selection(
+                frame, selection,
+                reason="neuro_deliberator_out_of_frame_use_fast_gate",
+                source="neuro_fast_gate_degraded",
+            )
+        deliberated = SelectionResult(
+            winner_index=choice_index,
+            scores=selection.scores,
+            probabilities=selection.probabilities,
+            margin=selection.margin,
+            entropy=selection.entropy,
+            requires_deliberation=False,
+            reason="deliberator_resolved_competition",
+            broadcast=selection.broadcast,
+        )
+        return self._commit_from_selection(
+            frame,
+            deliberated,
+            reason=_compact(raw.get("reason", "neuro_deliberator"), 500) or "neuro_deliberator",
+            source="neuro_deliberator",
+            semantic_commitments=raw.get("semantic_commitments", ()),
+            cognitive_requests=raw.get("cognitive_requests", ()),
+            confidence=_clamp01(raw.get("confidence", 0.0)),
+            review_conditions=raw.get("review_conditions", ()),
+        )
+
+    def _outcome_from_subject_commit(
+        self,
+        frame: SubjectDeliberationFrame,
+        commit: SubjectExecutiveCommit,
+        affordances: Sequence[ExecutiveAffordance],
+    ) -> ExecutiveOutcome | None:
+        """Materialize a committed non-tool coalition without another LLM call."""
+        coalition = next(
+            (item for item in frame.coalitions if item.coalition_id == commit.selected_coalition_id),
+            None,
+        )
+        if coalition is None:
+            return None
+        arguments = dict(coalition.arguments)
+        if bool(arguments.get("capability_route", False)):
+            # Tool discovery is a legitimate deliberative case; leave it to the
+            # existing capability path during this migration phase.
+            return None
+        action_kind = str(coalition.action_kind or "silence").strip().lower()
+        offered = {
+            item.affordance_id: item
+            for item in affordances
+            if isinstance(item, ExecutiveAffordance) and item.available
+        }
+        selected_affordance = None
+        decision_action = action_kind
+        affordance_id = ""
+        if action_kind == "speak":
+            affordance_id = str(arguments.get("affordance_id", "") or "").strip()
+            selected_affordance = offered.get(affordance_id)
+            if selected_affordance is None:
+                return None
+            decision_action = "select_affordance"
+        elif action_kind not in {"silence", "body_only"}:
+            return None
+
+        decision = ExecutiveDecision(
+            action=decision_action,
+            affordance_id=affordance_id,
+            semantic_target=_compact(arguments.get("semantic_target", ""), 1600),
+            speech_act=_compact(arguments.get("speech_act", ""), 100).lower(),
+            tone=_compact(arguments.get("tone", ""), 100).lower(),
+            reply_baton="preserve",
+            phase="neuro_action_gate",
+            trajectory="workspace_competition",
+            reconsider_on=(
+                ReviewCondition("user_turn", 0.0),
+                ReviewCondition("force", 0.0),
+                ReviewCondition("relational_pressure", 0.60),
+                ReviewCondition("scene_delta", 0.70),
+            ),
+            review_after_seconds=0.0,
+            reason=commit.reason,
+            confidence=commit.confidence,
+            intrusion_risk=_clamp01(
+                getattr(getattr(selected_affordance, "candidate", None), "seed_intrusion_risk", 0.0)
+                if selected_affordance is not None else 0.0
+            ),
+            subject_coalition_id=coalition.coalition_id,
+            subject_proposal_ref=coalition.primary_proposal_ref,
+            semantic_commitments=commit.semantic_commitments or tuple(
+                item for item in (
+                    _compact(arguments.get("semantic_target", ""), 500),
+                    _compact(arguments.get("speech_act", ""), 160),
+                ) if item
+            ),
+            cognitive_requests=commit.cognitive_requests,
+        )
+        if action_kind == "silence":
+            return ExecutiveOutcome(None, "", "silence", decision.reason, decision)
+        if action_kind == "body_only":
+            return ExecutiveOutcome(None, "", "body_only", decision.reason, decision)
+        assert selected_affordance is not None
+        return ExecutiveOutcome(
+            self._rewrite_candidate(selected_affordance.candidate, decision),
+            selected_affordance.affordance_id,
+            "use_candidate",
+            decision.reason,
+            decision,
+        )
+
     def _fallback_subject_commit(
         self,
         frame: SubjectDeliberationFrame,
         *,
         reason: str,
     ) -> SubjectExecutiveCommit:
-        """Fail-safe thuộc Executive boundary, không đẩy quyền chọn ngược về Mind."""
-        candidate = frame.coalitions[0]
-        return SubjectExecutiveCommit(
-            commit_id=f"executive-fallback:{uuid.uuid4()}",
-            frame_id=frame.frame_id,
-            selected_coalition_id=candidate.coalition_id,
-            selected_proposal_ref=candidate.primary_proposal_ref,
-            semantic_commitments=(),
-            cognitive_requests=("review_when_executive_recovers",),
-            reason=str(reason or "executive_policy_fallback"),
-            confidence=0.0,
-            review_conditions=("executive_available",),
-            created_at=self._clock(),
-            source="executive_policy_fallback",
+        """Degrade to the same fast competition used in the healthy path.
+
+        Old code treated ``coalitions[0]`` as a magical emergency answer.  The
+        neuro path has no separate emergency policy: if the deliberator is gone,
+        the already-grounded action competition simply keeps ownership.
+        """
+        selection = self._neuro_selector.select(frame)
+        return self._commit_from_selection(
+            frame,
+            selection,
+            reason=str(reason or "neuro_fast_gate_fallback"),
+            source="neuro_fast_gate_degraded",
+            review_conditions=("deliberator_available",),
         )
 
     def commit_subject_frame(
@@ -806,6 +1086,44 @@ class ExecutiveCortex:
         tạo action/motive ngoài frame. Nếu output lệch ID, boundary từ chối thay
         vì đoán hộ model rồi ghi đó là quyết định có chủ quyền.
         """
+        # V28 neuro control: routine action selection is a fast competition over
+        # Subject Core coalitions. The LLM is not the default Executive anymore.
+        if self.neuro_control_enabled:
+            selection = self._neuro_selector.select(frame)
+            if not selection.requires_deliberation:
+                commit = self._commit_from_selection(
+                    frame,
+                    selection,
+                    reason=selection.reason,
+                    source="neuro_fast_gate",
+                )
+                self._log(
+                    "info",
+                    "[neuro-control] fast commit mode=%s choice=%s action=%s margin=%.3f entropy=%.3f",
+                    mode,
+                    selection.winner_index,
+                    selection.winner(frame).action_kind,
+                    selection.margin,
+                    selection.entropy,
+                )
+                return commit
+            if not self.enabled:
+                return self._fallback_subject_commit(frame, reason="neuro_deliberator_unavailable")
+            self._log(
+                "info",
+                "[neuro-control] deliberation invited mode=%s reason=%s margin=%.3f entropy=%.3f",
+                mode, selection.reason, selection.margin, selection.entropy,
+            )
+            return self._deliberate_subject_choice(
+                frame,
+                selection,
+                user_text=user_text,
+                snapshot=snapshot,
+                mode=mode,
+            )
+
+        # Rollback path for migration diagnostics only. New deployments should
+        # leave ERIS_NEURO_CONTROL_ENABLED on.
         if not self.enabled:
             return self._fallback_subject_commit(frame, reason="executive_model_unavailable")
         source = snapshot or {}
@@ -862,43 +1180,19 @@ class ExecutiveCortex:
         proposal_ref = _compact(raw.get("selected_proposal_ref", ""), 220)
         coalition = next((item for item in frame.coalitions if item.coalition_id == coalition_id), None)
         if coalition is None:
-            # V28: Model đôi khi echo coalition_id của frame trước (stale ID).
-            # Tương tự pattern rebound của proposal_ref (L872+): không cho lỗi
-            # copy-string này đổi motive sang fallback. Thử tìm coalition cùng
-            # action_kind trong frame hiện tại rồi rebound, tuyệt đối không invent
-            # action mới. Chỉ fallback nếu không tìm được coalition tương đương.
-            stale_action = ""
-            # Cố suy action_kind từ proposal_ref (format: "proposal:<action>:...")
-            if ":" in proposal_ref:
-                stale_action = proposal_ref.split(":")[1].strip().lower() if len(proposal_ref.split(":")) > 1 else ""
-            rebound_coalition = None
-            if stale_action and frame.coalitions:
-                rebound_coalition = next(
-                    (item for item in frame.coalitions if str(getattr(item, "action_kind", "") or "").lower() == stale_action),
-                    None,
-                )
-            if rebound_coalition is None and frame.coalitions:
-                # Không suy được action_kind → lấy top coalition (đã được Subject Core xếp hạng)
-                rebound_coalition = frame.coalitions[0]
-            if rebound_coalition is not None:
-                self._log(
-                    "warning",
-                    "[executive] rebound stale coalition_id=%s -> rebound=%s action=%s",
-                    coalition_id,
-                    rebound_coalition.coalition_id,
-                    getattr(rebound_coalition, "action_kind", "?"),
-                )
-                coalition = rebound_coalition
-                coalition_id = coalition.coalition_id
-                proposal_ref = coalition.primary_proposal_ref
-            else:
-                self._log(
-                    "warning",
-                    "[executive] rejected subject commit coalition=%s proposal=%s (no rebound candidate)",
-                    coalition_id,
-                    proposal_ref,
-                )
-                return self._fallback_subject_commit(frame, reason="executive_subject_commit_out_of_frame")
+            # An out-of-frame coalition is a stale/invalid Executive answer. Do
+            # not guess a replacement and do not spend another LLM round-trip in
+            # the autonomous hot path. Degrade through the explicit fallback so
+            # provenance stays honest and latency remains bounded.
+            self._log(
+                "warning",
+                "[executive] rejected stale coalition_id=%s proposal=%s; using explicit fallback",
+                coalition_id,
+                proposal_ref,
+            )
+            return self._fallback_subject_commit(
+                frame, reason="executive_subject_commit_out_of_frame"
+            )
         if proposal_ref != coalition.primary_proposal_ref:
             # V27.1: proposal_ref là dữ liệu dư thừa vì coalition đã đóng đúng
             # primary proposal trong typed frame. Model đôi khi echo proposal của
@@ -1333,6 +1627,44 @@ class ExecutiveCortex:
         subject_frame: SubjectDeliberationFrame | None = None,
     ) -> ExecutiveOutcome:
         options = tuple(item for item in affordances if isinstance(item, ExecutiveAffordance) and item.available)
+
+        # Neuro control owns the ordinary autonomous hot path. Most ticks now
+        # finish here without waking DeepSeek. A model call is reserved for
+        # genuine competition/conflict, which is closer to a deliberative cortex
+        # than a per-tick semantic monarch.
+        if self.neuro_control_enabled and subject_frame is not None:
+            selection = self._neuro_selector.select(subject_frame)
+            if selection.requires_deliberation and self.enabled:
+                commit = self._deliberate_subject_choice(
+                    subject_frame,
+                    selection,
+                    user_text="",
+                    snapshot=snapshot,
+                    mode="autonomous",
+                )
+            else:
+                commit = self._commit_from_selection(
+                    subject_frame,
+                    selection,
+                    reason=(selection.reason if not selection.requires_deliberation else "neuro_deliberator_unavailable_use_fast_gate"),
+                    source=("neuro_fast_gate" if not selection.requires_deliberation else "neuro_fast_gate_degraded"),
+                )
+            outcome = self._outcome_from_subject_commit(subject_frame, commit, options)
+            if outcome is not None:
+                self._update_state(outcome.decision)
+                self._log(
+                    "info",
+                    "[neuro-control] autonomous action=%s source=%s margin=%.3f entropy=%.3f",
+                    outcome.action,
+                    commit.source,
+                    selection.margin,
+                    selection.entropy,
+                )
+                return outcome
+            # A capability-route coalition intentionally falls through to the
+            # existing tool planner. Tool discovery is one of the few cases where
+            # symbolic deliberation is still justified during migration.
+
         if not self.enabled:
             degraded = self.degraded_outcome(
                 options, subject_frame=subject_frame, reason="executive_transport_unavailable"
@@ -1635,10 +1967,11 @@ class ExecutiveCortex:
             changes["speech_act"] = decision.speech_act
         if decision.tone:
             changes["tone"] = decision.tone
+        authority = "neuro_control" if decision.phase == "neuro_action_gate" else "gemma_executive"
         changes["reason"] = _compact(
-            f"gemma_executive:{decision.reason}; upstream={getattr(candidate, 'reason', '')}", 300
+            f"{authority}:{decision.reason}; upstream={getattr(candidate, 'reason', '')}", 300
         )
-        changes["source"] = f"gemma_executive:{getattr(candidate, 'source', 'affordance')}"
+        changes["source"] = f"{authority}:{getattr(candidate, 'source', 'affordance')}"
         try:
             return replace(candidate, **changes)
         except Exception:
