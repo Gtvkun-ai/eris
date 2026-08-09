@@ -271,9 +271,10 @@ def test_capability_planner_brief_never_exposes_ephemeral_cognitive_ids() -> Non
     assert brief["arguments"]["capability_goal"] == "answer the user"
     assert brief["arguments"]["capability_route"] is True
 
-def test_interactive_executive_lane_is_required_even_when_name_has_middle_tokens() -> None:
-    # Guard the routing rule itself: legacy rollback names such as
-    # eris_subject_executive_commit_interactive must not become optional.
+def test_v30_router_has_no_legacy_executive_request_alias() -> None:
+    # V30 chỉ route tên request theo authority thật. Giữ alias ``executive`` sẽ
+    # âm thầm duy trì một compatibility path mà runtime không còn sở hữu.
     from runtime.ai_orchestrated import model_router as module
     source = __import__("inspect").getsource(module.AIRuntimeModelRouter._run_inference)
-    assert '"executive" in reason_key and "interactive" in reason_key' in source
+    assert '"executive" in reason_key' not in source
+    assert '"capability_planner" in reason_key' in source

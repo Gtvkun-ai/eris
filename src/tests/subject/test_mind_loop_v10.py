@@ -59,13 +59,13 @@ def test_cognitive_adapter_returns_typed_findings_and_domain_integrates_them() -
     MindLoop.run_sync(service.abandon_deliberation(revised, reason="test_cleanup"))
 
 
-def test_late_executive_provider_is_injected_without_bind() -> None:
+def test_late_committer_provider_is_injected_without_bind() -> None:
     d = Determinism()
     service = _service(d)
     holder: dict[str, object] = {}
     loop = MindLoop(
         subject=service,
-        executive_provider=lambda: holder.get("executive"),  # type: ignore[return-value]
+        committer_provider=lambda: holder.get("committer"),  # type: ignore[return-value]
         id_factory=d.id,
     )
     ingress = SubjectIngress(service, mind_loop=loop)
@@ -88,7 +88,7 @@ def test_late_executive_provider_is_injected_without_bind() -> None:
                 created_at=d.clock(),
             )
 
-    holder["executive"] = Executive()
+    holder["committer"] = Executive()
     decision = ingress.observe_user_turn(
         "Kiểm tra giúp tôi.",
         created_at=d.clock(),
@@ -98,7 +98,8 @@ def test_late_executive_provider_is_injected_without_bind() -> None:
     assert decision.arguments["executive_commit"]["commit_id"] == "late-executive"
 
 
-def test_autonomous_review_rebinds_commit_to_revised_frame() -> None:
+def test_autonomous_review_recommits_directly_on_revised_frame() -> None:
+    """Cognitive review tạo frame mới; committer phải commit lại chính frame mới."""
     d = Determinism()
     service = _service(d)
     loop = MindLoop(subject=service, id_factory=d.id, max_reviews=1)
@@ -128,13 +129,13 @@ def test_autonomous_review_rebinds_commit_to_revised_frame() -> None:
         turn_id="auto-review",
     )
 
-    class Executive:
+    class Committer:
         enabled = True
 
         def __init__(self) -> None:
             self.frames: list[str] = []
 
-        def subject_commit_from_outcome(self, frame, _outcome):
+        def commit_subject_frame(self, frame, **_kwargs):
             self.frames.append(frame.frame_id)
             selected = next(
                 item for item in frame.coalitions if item.arguments.get("affordance_id") == "seed:1"
@@ -146,18 +147,16 @@ def test_autonomous_review_rebinds_commit_to_revised_frame() -> None:
                 selected_proposal_ref=selected.primary_proposal_ref,
                 semantic_commitments=("giữ continuity",),
                 cognitive_requests=("preserve_continuity",) if len(self.frames) == 1 else (),
-                reason="rebind after bounded review",
+                reason="commit lại sau bounded review",
                 confidence=0.8,
                 review_conditions=(),
                 created_at=d.clock(),
             )
 
-        def commit_subject_frame(self, frame, **_kwargs):  # pragma: no cover - không dùng ở đường này
-            raise AssertionError("autonomous outcome phải dùng commit adapter riêng")
-
-    executive = Executive()
-    decision = ingress.complete_autonomous_turn(session, object(), executive=executive)
+    committer = Committer()
+    decision = ingress.complete_session(session, committer=committer)
     assert decision is not None
-    assert len(executive.frames) == 2
-    assert executive.frames[0] != executive.frames[1]
+    assert len(committer.frames) == 2
+    assert committer.frames[0] != committer.frames[1]
     assert decision.arguments["executive_commit"]["commit_id"] == "auto:2"
+

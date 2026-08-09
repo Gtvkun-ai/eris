@@ -8,6 +8,7 @@ from cortex.subject.neuro_control import NeuroActionSelector
 from cortex.subject.service import SubjectService, SubjectServiceConfig
 from llm.client import _web_session_header
 from runtime.ai_orchestrated.executive_cortex import ExecutiveCortex
+from runtime.mind_loop import MindLoop
 from runtime.inference_broker import inference_context
 from runtime.subject_ingress import SubjectIngress
 
@@ -33,10 +34,10 @@ def _frame():
         clock=d.clock,
         id_factory=d.id,
     )
-    frame = SubjectIngress(service).prepare_user_turn(
+    session = SubjectIngress(service).prepare_user_session(
         "Kiểm tra giúp tôi.", created_at=d.clock(), turn_id="turn-neuro"
     )
-    return d, service, frame
+    return d, service, session.frame
 
 
 def test_fast_gate_commits_clear_winner_without_llm() -> None:
@@ -51,14 +52,14 @@ def test_fast_gate_commits_clear_winner_without_llm() -> None:
         raise AssertionError("routine action selection must not wake the LLM")
 
     executive = ExecutiveCortex(
-        SimpleNamespace(), object(), invoke_structured=should_not_run, clock=d.clock, wall_clock=d.clock
+        SimpleNamespace(), object(), invoke_structured=should_not_run, clock=d.clock
     )
     commit = executive.commit_subject_frame(frame, mode="interactive")
     assert commit is not None
     assert commit.source == "neuro_fast_gate"
     assert commit.selected_coalition_id == boosted[0].coalition_id
     assert commit.selected_proposal_ref == boosted[0].primary_proposal_ref
-    SubjectIngress(service).abandon(frame, reason="test_cleanup")
+    MindLoop.run_sync(service.abandon_deliberation(frame, reason="test_cleanup"))
 
 
 def test_deliberator_sees_ephemeral_indices_not_runtime_ids() -> None:
@@ -84,14 +85,14 @@ def test_deliberator_sees_ephemeral_indices_not_runtime_ids() -> None:
         }
 
     executive = ExecutiveCortex(
-        SimpleNamespace(), object(), invoke_structured=invoke, clock=d.clock, wall_clock=d.clock
+        SimpleNamespace(), object(), invoke_structured=invoke, clock=d.clock
     )
     commit = executive.commit_subject_frame(frame, mode="interactive")
     assert commit is not None
     assert commit.source == "neuro_deliberator"
     assert commit.selected_coalition_id == frame.coalitions[chosen_index].coalition_id
     assert captured["name"] == "eris_neuro_deliberation_interactive"
-    SubjectIngress(service).abandon(frame, reason="test_cleanup")
+    MindLoop.run_sync(service.abandon_deliberation(frame, reason="test_cleanup"))
 
 
 def test_invalid_deliberator_index_degrades_to_fast_gate_not_guessed_id() -> None:
@@ -109,13 +110,13 @@ def test_invalid_deliberator_index_degrades_to_fast_gate_not_guessed_id() -> Non
         }
 
     executive = ExecutiveCortex(
-        SimpleNamespace(), object(), invoke_structured=invoke, clock=d.clock, wall_clock=d.clock
+        SimpleNamespace(), object(), invoke_structured=invoke, clock=d.clock
     )
     commit = executive.commit_subject_frame(frame, mode="interactive")
     assert commit is not None
     assert commit.source == "neuro_fast_gate_degraded"
     assert commit.selected_coalition_id == fast.winner(frame).coalition_id
-    SubjectIngress(service).abandon(frame, reason="test_cleanup")
+    MindLoop.run_sync(service.abandon_deliberation(frame, reason="test_cleanup"))
 
 
 def test_neuro_deliberation_lanes_are_provider_stateless(monkeypatch) -> None:

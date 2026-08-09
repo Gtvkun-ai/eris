@@ -19,7 +19,7 @@ from cortex.subject import SubjectService, SubjectServiceConfig
 from cortex.subject.contracts import ActionRequest
 from memory.subject import SubjectRepository
 from runtime.audit import ForensicStore
-from runtime.mind_loop import MindLoop, SubjectExecutivePort
+from runtime.mind_loop import MindLoop, SubjectCommitPort
 from runtime.subject_runtime import SubjectRuntime
 from runtime.world import (
     CapabilityAuthority,
@@ -84,7 +84,7 @@ def build_subject_core_components(
     tts_handler: Any = None,
     body_handler: Any = None,
     network_handler: Any = None,
-    executive_provider: Callable[[], SubjectExecutivePort | None] | None = None,
+    committer_provider: Callable[[], SubjectCommitPort | None] | None = None,
 ) -> SubjectCoreComponents:
     """Dựng đường duy nhất Mind → Actuator → Sandbox → Audit."""
 
@@ -208,7 +208,7 @@ def build_subject_core_components(
     actuator = SandboxActuator(sandbox=sandbox, token_provider=token_provider)
     mind_loop = MindLoop(
         subject=service,
-        executive_provider=executive_provider,
+        committer_provider=committer_provider,
         max_reviews=1,
     )
     runtime = SubjectRuntime(

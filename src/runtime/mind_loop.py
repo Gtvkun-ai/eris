@@ -2,9 +2,9 @@
 """Một vòng deliberation duy nhất cho chat, autonomous và runtime action.
 
 MindLoop là coordinator, không phải một bộ não mới. Subject Core giữ state và luật
-nhân quả; Executive chọn/commit; cognitive adapter thực hiện yêu cầu xem lại;
-MindLoop chỉ bảo đảm thứ tự, ngân sách và điều kiện dừng. Nhờ đó không còn ba bản
-sao của cùng một nghi thức nằm rải trong ingress, runtime và self-turn pipeline.
+nhân quả; Subject Commit Port đóng quyết định từ frame hiện tại; cognitive adapter
+thực hiện yêu cầu xem lại. MindLoop chỉ bảo đảm thứ tự, ngân sách và điều kiện dừng.
+Không có một ``Executive state machine`` thứ hai nằm cạnh Subject Core.
 """
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ from cortex.subject.contracts import (
 )
 from cortex.subject.deliberation import CognitiveRequestKind
 from cortex.subject.service import SubjectService
+from cortex.subject.neuro_control import NeuroActionSelector, commit_selection
 from runtime.subject_cognition import BoundedSubjectCognition, SubjectCognitionPort
 
 
@@ -50,7 +51,7 @@ class DeliberationSession:
         return self.state in {DeliberationState.PREPARED, DeliberationState.REVISED} and self.review_count < self.max_reviews
 
 
-class SubjectExecutivePort(Protocol):
+class SubjectCommitPort(Protocol):
     @property
     def enabled(self) -> bool: ...
 
@@ -64,11 +65,11 @@ class SubjectExecutivePort(Protocol):
     ) -> SubjectExecutiveCommit | None: ...
 
 
-class FallbackSubjectExecutive:
-    """Executive adapter deterministic dành cho test/caller độc lập.
+class LocalNeuroCommitter:
+    """Committer local dùng *cùng* NeuroActionSelector với đường có model.
 
-    Fallback vẫn tạo một commit thật và để authorship ghi đúng source. Nó không
-    nằm trong SubjectService, nên production không có cửa finalize thiếu Executive.
+    Provider mất kết nối không được phép đổi policy. Trường hợp đó chỉ mất khả năng
+    deliberation đắt tiền; competition hiện tại vẫn chọn winner bằng cùng một gate.
     """
 
     enabled = True
@@ -78,11 +79,10 @@ class FallbackSubjectExecutive:
         service: SubjectService,
         *,
         clock: Callable[[], float] = time.time,
-        id_factory: Callable[[], str] | None = None,
     ) -> None:
         self._service = service
         self._clock = clock
-        self._id_factory = id_factory or (lambda: str(uuid.uuid4()))
+        self._selector = NeuroActionSelector()
 
     def commit_subject_frame(
         self,
@@ -92,22 +92,14 @@ class FallbackSubjectExecutive:
         snapshot: dict[str, Any] | None = None,
         mode: str = "runtime",
     ) -> SubjectExecutiveCommit:
-        selected = self._service.arbiter.select_default(
-            frame.coalitions,
-            temperature=self._service.config.default_temperature,
-        )
-        return SubjectExecutiveCommit(
-            commit_id=f"fallback-commit:{self._id_factory()}",
-            frame_id=frame.frame_id,
-            selected_coalition_id=selected.coalition_id,
-            selected_proposal_ref=selected.primary_proposal_ref,
-            semantic_commitments=(f"thực hiện coalition đã được chọn cho {mode}",),
-            cognitive_requests=(),
-            reason="no external Executive was available; deterministic fallback adapter committed",
-            confidence=0.0,
-            review_conditions=(),
-            created_at=self._clock(),
-            source="fallback_subject_executive",
+        selection = self._selector.select(frame)
+        return commit_selection(
+            frame,
+            selection,
+            reason=f"local_neuro_without_remote_deliberator:{selection.reason}",
+            source="neuro_fast_gate_local",
+            clock=self._clock,
+            review_conditions=("remote_deliberator_available",) if selection.requires_deliberation else (),
         )
 
 
@@ -118,25 +110,24 @@ class MindLoop:
         self,
         *,
         subject: SubjectService,
-        executive_provider: Callable[[], SubjectExecutivePort | None] | None = None,
+        committer_provider: Callable[[], SubjectCommitPort | None] | None = None,
         cognition: SubjectCognitionPort | None = None,
-        fallback_executive: SubjectExecutivePort | None = None,
+        local_committer: SubjectCommitPort | None = None,
         max_reviews: int = 1,
         id_factory: Callable[[], str] | None = None,
     ) -> None:
         self.subject = subject
-        self._executive_provider = executive_provider or (lambda: None)
+        self._committer_provider = committer_provider or (lambda: None)
         self._cognition = cognition or BoundedSubjectCognition()
-        self._fallback = fallback_executive or FallbackSubjectExecutive(subject)
+        self._local_committer = local_committer or LocalNeuroCommitter(subject)
         self._max_reviews = max(0, int(max_reviews))
         self._id_factory = id_factory or (lambda: str(uuid.uuid4()))
 
-    def _executive_snapshot(self, snapshot: Mapping[str, Any]) -> dict[str, Any]:
-        """Bổ sung self-model dẫn xuất cho Executive mà không sửa frame causal.
+    def _commit_snapshot(self, snapshot: Mapping[str, Any]) -> dict[str, Any]:
+        """Bổ sung self-model dẫn xuất cho commit port mà không sửa frame causal.
 
-        Self-model là một view của cùng Subject Core, không phải evidence mới và
-        không được phép tạo coalition/action ngoài frame. Nó giúp Executive biết
-        lựa chọn hiện tại nằm ở đâu trong continuity/value/competence của chính Eris.
+        Self-model là view của cùng Subject Core, không phải evidence mới và không
+        được phép tạo coalition/action ngoài frame.
         """
         payload = dict(snapshot or {})
         self_view = getattr(self.subject, "self_view", None)
@@ -149,11 +140,11 @@ class MindLoop:
                 pass
         return payload
 
-    def _executive(self, override: SubjectExecutivePort | None = None) -> SubjectExecutivePort:
-        candidate = override or self._executive_provider()
+    def _committer(self, override: SubjectCommitPort | None = None) -> SubjectCommitPort:
+        candidate = override or self._committer_provider()
         if candidate is not None and bool(getattr(candidate, "enabled", True)):
             return candidate
-        return self._fallback
+        return self._local_committer
 
     async def prepare(
         self,
@@ -181,7 +172,7 @@ class MindLoop:
         mode: str,
         user_text: str = "",
         snapshot: Mapping[str, Any] | None = None,
-        executive: SubjectExecutivePort | None = None,
+        committer: SubjectCommitPort | None = None,
     ) -> MindDecision:
         session = await self.prepare(
             observation,
@@ -189,19 +180,19 @@ class MindLoop:
             user_text=user_text,
             snapshot=snapshot,
         )
-        return await self.complete(session, executive=executive)
+        return await self.complete(session, committer=committer)
 
     async def complete(
         self,
         session: DeliberationSession,
         *,
-        executive: SubjectExecutivePort | None = None,
+        committer: SubjectCommitPort | None = None,
         initial_commit: SubjectExecutiveCommit | None = None,
         commit_provider: Callable[[SubjectDeliberationFrame, str], SubjectExecutiveCommit | None] | None = None,
     ) -> MindDecision:
         if session.state not in {DeliberationState.PREPARED, DeliberationState.REVISED}:
             raise ValueError(f"cannot complete deliberation from state {session.state}")
-        controller = self._executive(executive)
+        controller = self._committer(committer)
         current = session
         commit = initial_commit
 
@@ -214,12 +205,12 @@ class MindLoop:
                     commit = controller.commit_subject_frame(
                         current.frame,
                         user_text=current.user_text,
-                        snapshot=self._executive_snapshot(current.snapshot),
+                        snapshot=self._commit_snapshot(current.snapshot),
                         mode=step_mode,
                     )
             if commit is None:
-                await self.abandon(current, reason="executive_returned_no_commit")
-                raise RuntimeError("Executive did not commit a prepared deliberation frame")
+                await self.abandon(current, reason="subject_committer_returned_no_commit")
+                raise RuntimeError("Subject commit port did not commit a prepared deliberation frame")
 
             requests = CognitiveRequestKind.normalize_many(commit.cognitive_requests)
             if requests and current.can_review:
@@ -282,7 +273,7 @@ class MindLoop:
 __all__ = [
     "DeliberationSession",
     "DeliberationState",
-    "FallbackSubjectExecutive",
+    "LocalNeuroCommitter",
     "MindLoop",
-    "SubjectExecutivePort",
+    "SubjectCommitPort",
 ]

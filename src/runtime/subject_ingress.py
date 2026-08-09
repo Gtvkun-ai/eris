@@ -2,9 +2,8 @@
 """Cổng biến sự kiện runtime thành WorldObservation có provenance.
 
 Ingress không điều phối deliberation. Nó chỉ chuẩn hóa input, còn toàn bộ vòng
-prepare → cognitive review → Executive commit → finalize thuộc một MindLoop duy
-nhất. Các method trả frame cũ vẫn được giữ như adapter migration cho test/module
-chưa chuyển, nhưng đường production dùng session.
+prepare → cognitive review → Subject commit → finalize thuộc một MindLoop duy nhất.
+V30 chỉ expose session API; adapter frame/outcome của kiến trúc cũ đã bị xóa.
 """
 from __future__ import annotations
 
@@ -13,10 +12,10 @@ from typing import Any, Mapping, Sequence
 
 from cortex.subject.contracts import (
     MindDecision, ObservationOrigin, SubjectDeliberationFrame,
-    SubjectExecutiveCommit, WorldObservation,
+    WorldObservation,
 )
 from cortex.subject.service import SubjectService
-from runtime.mind_loop import DeliberationSession, DeliberationState, MindLoop, SubjectExecutivePort
+from runtime.mind_loop import DeliberationSession, MindLoop, SubjectCommitPort
 from runtime.subject_proposals import AutonomousProposalSource
 
 
@@ -94,7 +93,7 @@ class SubjectIngress:
         """Một cổng deliberation cho mọi origin.
 
         V26 bỏ ý tưởng chat/autonomous là hai tâm trí. Chúng chỉ là hai nguồn
-        observation khác nhau đi qua cùng MindLoop và cùng Executive commit.
+        observation khác nhau đi qua cùng MindLoop và cùng Subject commit.
         """
         return self.mind_loop.prepare_sync(
             observation,
@@ -107,9 +106,9 @@ class SubjectIngress:
         self,
         session: DeliberationSession,
         *,
-        executive: SubjectExecutivePort | None = None,
+        committer: SubjectCommitPort | None = None,
     ) -> MindDecision:
-        return self.mind_loop.complete_sync(session, executive=executive)
+        return self.mind_loop.complete_sync(session, committer=committer)
 
     def observe(
         self,
@@ -118,7 +117,7 @@ class SubjectIngress:
         mode: str,
         user_text: str = "",
         planning_context: Mapping[str, Any] | None = None,
-        executive: SubjectExecutivePort | None = None,
+        committer: SubjectCommitPort | None = None,
     ) -> MindDecision:
         session = self.prepare_session(
             observation,
@@ -126,7 +125,7 @@ class SubjectIngress:
             user_text=user_text,
             planning_context=planning_context,
         )
-        return self.complete_session(session, executive=executive)
+        return self.complete_session(session, committer=committer)
 
     def prepare_user_session(
         self,
@@ -156,9 +155,6 @@ class SubjectIngress:
             planning_context=planning_context,
         )
 
-    def prepare_user_turn(self, *args: Any, **kwargs: Any) -> SubjectDeliberationFrame:
-        """Adapter V17: caller cũ nhận frame, không tự sở hữu orchestration."""
-        return self.prepare_user_session(*args, **kwargs).frame
 
     def autonomous_observation(
         self,
@@ -206,7 +202,7 @@ class SubjectIngress:
                 "identity_significance": 0.28,
                 "future_consequence": max(0.22, min(0.72, relational_pressure * 0.68)),
                 "uncertainty": 0.42,
-                "primary_interpretation": "runtime có các cơ hội hành động tự chủ cần Executive cân nhắc",
+                "primary_interpretation": "runtime có các cơ hội hành động tự chủ cần Subject+Neuro cân nhắc",
                 "action_proposals": tuple(proposals),
                 "runtime_context": {
                     "reply_expected": reply_expected,
@@ -248,9 +244,6 @@ class SubjectIngress:
             planning_context=planning_context,
         )
 
-    def prepare_autonomous_turn(self, *args: Any, **kwargs: Any) -> SubjectDeliberationFrame:
-        """Adapter V17 trả frame; production dùng prepare_autonomous_session."""
-        return self.prepare_autonomous_session(*args, **kwargs).frame
 
     def observe_user_turn(
         self,
@@ -259,7 +252,7 @@ class SubjectIngress:
         created_at: float,
         turn_id: str,
         planning_context: Mapping[str, Any] | None = None,
-        executive: SubjectExecutivePort | None = None,
+        committer: SubjectCommitPort | None = None,
     ) -> MindDecision:
         self.service.note_relational_user_turn(
             now=created_at,
@@ -279,69 +272,10 @@ class SubjectIngress:
             mode="interactive",
             user_text=user_text,
             planning_context=planning_context,
-            executive=executive,
+            committer=committer,
         )
 
-    def complete_autonomous_turn(
-        self,
-        session: DeliberationSession,
-        executive_outcome: Any,
-        *,
-        executive: Any,
-    ) -> MindDecision | None:
-        commit_builder = getattr(executive, "subject_commit_from_outcome", None)
-        if not callable(commit_builder):
-            self.mind_loop.abandon_sync(
-                session,
-                reason="executive_has_no_subject_commit_adapter",
-            )
-            return None
 
-        def provider(frame: SubjectDeliberationFrame, _mode: str) -> SubjectExecutiveCommit | None:
-            # Sau cognitive review coalition ID có thể đổi. Rebuild commit từ cùng
-            # executive outcome/affordance thay vì tái dùng ID cũ đã hết hạn.
-            return commit_builder(frame, executive_outcome)
-
-        commit = provider(session.frame, session.mode)
-        if commit is None:
-            self.mind_loop.abandon_sync(
-                session,
-                reason="executive_outcome_not_bound_to_subject_coalition",
-            )
-            return None
-        return self.mind_loop.complete_sync(
-            session,
-            executive=executive,
-            initial_commit=commit,
-            commit_provider=provider,
-        )
-
-    # ------------------------------------------------------------------
-    # Adapter migration cho caller V17
-    # ------------------------------------------------------------------
-    def finalize(self, frame: SubjectDeliberationFrame, commit: SubjectExecutiveCommit) -> MindDecision:
-        session = DeliberationSession(
-            session_id=f"legacy-frame:{uuid.uuid4()}",
-            frame=frame,
-            state=DeliberationState.PREPARED,
-            mode="legacy_adapter",
-            user_text=str(frame.observation.context.get("user_text") or ""),
-            snapshot=dict(frame.observation.context),
-            max_reviews=0,
-        )
-        return self.mind_loop.complete_sync(session, initial_commit=commit)
-
-    def abandon(self, frame: SubjectDeliberationFrame, *, reason: str) -> None:
-        session = DeliberationSession(
-            session_id=f"legacy-frame:{uuid.uuid4()}",
-            frame=frame,
-            state=DeliberationState.PREPARED,
-            mode="legacy_adapter",
-            user_text="",
-            snapshot={},
-            max_reviews=0,
-        )
-        self.mind_loop.abandon_sync(session, reason=reason)
 
 
 __all__ = ["SubjectIngress"]

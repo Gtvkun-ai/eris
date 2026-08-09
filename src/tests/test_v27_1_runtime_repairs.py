@@ -116,8 +116,8 @@ def test_current_subject_initiative_is_merged_into_same_frame_even_when_seed_exi
     asyncio.run(service.abandon_deliberation(session.frame, reason="test_cleanup"))
 
 
-def test_valid_coalition_rebinds_redundant_stale_proposal_ref_to_current_frame() -> None:
-    """Model được chọn coalition, nhưng proposal_ref dư thừa không được kéo frame cũ trở lại."""
+def test_legacy_runtime_ids_from_model_cannot_steer_current_frame() -> None:
+    """Payload kiểu V27 có ID runtime phải bị coi là invalid, không rebound."""
     d = Determinism()
     service = _service(d)
     ingress = SubjectIngress(service)
@@ -131,15 +131,18 @@ def test_valid_coalition_rebinds_redundant_stale_proposal_ref_to_current_frame()
             "initiative_runtime_context": {"user_model_uncertainty": 0.96},
         },
     )
-    chosen = next(item for item in session.frame.coalitions if item.arguments.get("speech_act") == "user_probe")
+    calls = 0
 
     def fake_structured(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        # Cố tình giả lập output legacy: V30 không đọc hai ID này nữa.
         return {
-            "selected_coalition_id": chosen.coalition_id,
-            "selected_proposal_ref": "proposal:seed:seed_eris_led_001:3",  # đúng lỗi runtime đã thấy
-            "semantic_commitments": ["ask one low-pressure probe"],
+            "selected_coalition_id": "coalition:stale-from-old-frame",
+            "selected_proposal_ref": "proposal:stale-from-old-frame",
+            "semantic_commitments": [],
             "cognitive_requests": [],
-            "reason": "current coalition is the intended choice",
+            "reason": "legacy shaped output",
             "confidence": 0.82,
             "review_conditions": [],
         }
@@ -149,13 +152,15 @@ def test_valid_coalition_rebinds_redundant_stale_proposal_ref_to_current_frame()
         object(),
         invoke_structured=fake_structured,
         clock=d.clock,
-        wall_clock=d.clock,
     )
     commit = executive.commit_subject_frame(session.frame, mode="autonomous")
     assert commit is not None
-    assert commit.selected_coalition_id == chosen.coalition_id
-    assert commit.selected_proposal_ref == chosen.primary_proposal_ref
-    assert commit.source != "executive_policy_fallback"
+    assert calls == 1
+    assert commit.source == "neuro_fast_gate_degraded"
+    assert commit.reason == "neuro_deliberator_out_of_frame_use_fast_gate"
+    fast = executive._neuro_selector.select(session.frame)
+    assert commit.selected_coalition_id == fast.winner(session.frame).coalition_id
+    assert commit.selected_coalition_id != "coalition:stale-from-old-frame"
     asyncio.run(service.abandon_deliberation(session.frame, reason="test_cleanup"))
 
 
@@ -285,7 +290,6 @@ def test_invalid_deliberator_choice_degrades_without_second_llm_call() -> None:
         object(),
         invoke_structured=fake_structured,
         clock=d.clock,
-        wall_clock=d.clock,
     )
     commit = executive.commit_subject_frame(session.frame, mode="autonomous")
 

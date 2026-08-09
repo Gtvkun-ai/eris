@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Autonomous public-turn pipeline with one semantic executive authority.
+"""Autonomous public-turn pipeline với một authority quyết định semantic.
 
-Production order (V29 neuro transaction):
+Production order (V30 neuro transaction):
 1. Perception/memory/needs assemble a bounded cognitive snapshot.
 2. Subject Core builds grounded proposals; NeuroActionSelector releases a clear
    winner without an LLM or invites one-shot deliberation only on real conflict.
@@ -35,7 +35,6 @@ from .cognitive_blackboard import TypedCognitiveBlackboard
 from .contracts import AI_RUNTIME_VERSION, IntentionPlan, StateEvent
 from .discourse_state import DiscourseState, DiscourseStateBuilder
 from .followup_appraisal import FollowUpAppraisalLayer
-from .executive_cortex import ExecutiveEvent, may_release_optional_reply_baton
 from .identity import PendingStrategyUse
 from .initiative import InitiativeAction, InitiativeDecision
 from .self_context import AutonomousSelfContext, build_autonomous_self_context
@@ -357,8 +356,8 @@ class SelfTurnPipeline:
                 host.logger.warning("[subject-core] autonomous prepare failed closed: %s", exc)
 
         # V26: self-turn và chat dùng cùng một authority path:
-        # Observation -> MindLoop -> Subject Core -> Executive.commit_subject_frame
-        # -> MindDecision. Autonomous không còn gọi Executive.deliberate() để chọn
+        # Observation -> MindLoop -> Subject Core -> SubjectCommitPort
+        # -> MindDecision. Autonomous không gọi capability planner để chọn
         # motive trước rồi mới cố bind ngược vào Subject Core.
         executive_outcome = None
         executive = getattr(host, "ai_executive_cortex", None)
@@ -465,30 +464,16 @@ class SelfTurnPipeline:
                             else claimed
                         )
 
-        # Gemma may release an optional public invitation using typed discourse
-        # state. Required task/safety/engagement obligations remain hard runtime
-        # boundaries. The selected new candidate is deliberately irrelevant here.
-        if (
-            executive_outcome is not None
-            and may_release_optional_reply_baton(blackboard, executive_outcome.decision)
-        ):
-            blackboard = replace(
-                blackboard,
-                reply_expected=False,
-                assistant_may_continue=True,
-                followup_reminder_due=False,
-            )
-            host.logger.info(
-                "[executive] released optional reply baton reason=%s",
-                executive_outcome.reason,
-            )
+        # V30: capability planner không được sửa reply baton/discourse state.
+        # Trạng thái hội thoại được derive ở discourse/follow-up layer; tool planning
+        # chỉ thực thi motive đã commit.
         candidate_ms = (time.monotonic() - candidate_started) * 1000.0
         initiative = getattr(host, "ai_initiative_controller", None)
         if executive_outcome is not None and executive_outcome.action == "body_only":
             decision = InitiativeDecision(
                 InitiativeAction.BODY_ONLY,
-                f"gemma_executive:{executive_outcome.reason}",
-                IntentionPlan.silence(channel="autonomous", reason="executive_body_only"),
+                f"subject_materializer:{executive_outcome.reason}",
+                IntentionPlan.silence(channel="autonomous", reason="subject_body_only"),
                 body_motion="quiet_presence",
             )
         elif initiative is None:
@@ -500,7 +485,7 @@ class SelfTurnPipeline:
         else:
             decision = initiative.decide(blackboard, candidate)
             if executive_outcome is not None and candidate is None and executive_outcome.action == "silence":
-                decision = replace(decision, reason=f"gemma_executive:{executive_outcome.reason}")
+                decision = replace(decision, reason=f"subject_materializer:{executive_outcome.reason}")
         host.logger.info(
             "[autonomous latency] perception=%.0fms context=%.0fms snapshot=%.0fms candidate=%.0fms total_to_governor=%.0fms",
             perception_ms, context_ms, snapshot_ms, candidate_ms,
@@ -510,7 +495,7 @@ class SelfTurnPipeline:
             self.trace_store.append("executive_decision", {
                 "turn_seq": context.turn_seq,
                 "stage": "executive",
-                "owner": "gemma_executive_cortex",
+                "owner": "subject_neuro_or_capability_planner",
                 "action": executive_outcome.action,
                 "reason": executive_outcome.reason,
                 "decision": executive_outcome.decision.to_dict(),
@@ -770,6 +755,7 @@ class SelfTurnPipeline:
             allow_model_generation=False,
             candidate=candidate,
             subject_decision=subject_decision,
+            subject_generation_revision=subject_generation_revision,
         )
 
     def _submit_intention(self, plan: IntentionPlan, *, turn_seq: int) -> None:
@@ -1228,10 +1214,13 @@ class SelfTurnPipeline:
             except Exception as exc:
                 self.host.logger.debug("[relational] cheap tick failed: %s", exc)
 
-        events: list[ExecutiveEvent] = []
+        # V30: wake signal đi thẳng vào TemporalMind. Không tạo một kiểu event
+        # riêng cho capability planner rồi map lại lần hai, vì planner không sở hữu
+        # temporal policy. Một tín hiệu, một gate, một nguồn sự thật.
+        events: list[TemporalSignal] = []
 
         def emit(kind: str, strength: float, source: str, *, revision: int = 0, **metadata: Any) -> None:
-            events.append(ExecutiveEvent(
+            events.append(TemporalSignal(
                 kind=kind,
                 strength=max(0.0, min(1.0, float(strength))),
                 source=source,
@@ -1356,19 +1345,10 @@ class SelfTurnPipeline:
         if affordance_strength:
             emit("affordance_changed", affordance_strength, "affordance_collector_inputs")
 
-        # TemporalMind đứng *trước* Executive model. Weak/repeated runtime facts
-        # chỉ làm tăng áp lực rẻ; silence là default nên không cần Executive
-        # mất hàng chục giây để kết luận rằng không có gì đáng nói.
-        temporal_signals = tuple(
-            TemporalSignal(
-                kind=item.kind,
-                strength=item.strength,
-                source=item.source,
-                revision=item.revision,
-                metadata=item.metadata,
-            )
-            for item in events
-        )
+        # TemporalMind là authority duy nhất cho câu hỏi "có nên đánh thức vòng
+        # cognition lúc này không?". Weak/repeated facts chỉ tích áp lực ở đây;
+        # capability planner không có một cửa veto/allow thứ hai phía sau.
+        temporal_signals = tuple(events)
         focus_key = str(
             getattr(context.discourse, "active_topic", "")
             or getattr(context.discourse, "mode", "")
@@ -1386,15 +1366,7 @@ class SelfTurnPipeline:
         }, now=context.perception.now)
         if not gate.wake:
             return False, gate.reason
-
-        executive = getattr(self.host, "ai_executive_cortex", None)
-        if executive is None or not bool(getattr(executive, "enabled", False)):
-            return False, "executive_policy_unavailable"
-        reviewer = getattr(executive, "should_reconsider", None)
-        if not callable(reviewer):
-            return False, "executive_policy_missing"
-        allowed, reason = reviewer(tuple(events), now=context.perception.now)
-        return bool(allowed), str(reason or "executive_policy_waiting")
+        return True, gate.reason
 
     # V18 không còn planner model-owned tự quyết speak/silence trong Surface.
     # Candidate model -> governor -> realizer đã thay đường đó ở run().
@@ -1410,7 +1382,7 @@ class SelfTurnPipeline:
         social_agenda_store: Any | None,
         agenda_selector: Any | None,
     ) -> Any | None:
-        """Claim exactly one Executive-selected affordance by owner and revision."""
+        """Claim đúng affordance đã được Subject/Neuro commit, theo owner + revision."""
 
         owner = str(getattr(affordance, "owner", "") or "")
         try:
@@ -1537,7 +1509,7 @@ class SelfTurnPipeline:
             detail=gate_reason,
         )
         # Sau silence quay về cheap tick; cooldown của TemporalMind ngăn gọi
-        # Executive lại ngay, nên không cần đóng băng toàn loop 8–24 giây.
+        # deliberator lại ngay, nên không cần đóng băng toàn loop 8–24 giây.
         self.host._sleep_interruptible(2.5)
         return True
 
@@ -1599,6 +1571,7 @@ class SelfTurnPipeline:
         allow_model_generation: bool = True,
         candidate: Any | None = None,
         subject_decision: Any | None = None,
+        subject_generation_revision: int = 0,
     ) -> bool:
         host = self.host
         payload = dict(prebuilt_payload or {})

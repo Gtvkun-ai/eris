@@ -247,13 +247,6 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
             payload,
         )
 
-    def persist_executive_state(payload: Mapping[str, Any]) -> None:
-        persist_aux_state(
-            "executive_cortex_state",
-            "executive_cortex.persistence",
-            payload,
-        )
-
     def promote_random_chat_preference(
         *,
         path: str,
@@ -410,15 +403,14 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
         "ai_orchestrated.social_agenda_selector",
         details={"enabled": bool(social_agenda_selector.enabled)},
     )
+    # V30: object này không còn persistence riêng cho trajectory/review policy.
+    # TemporalMind giữ wake policy; Subject+Neuro giữ action policy; planner chỉ chọn tool.
     executive_cortex = ExecutiveCortex(
         host,
         getattr(llm_service, "executive_client", None),
         invoke_structured=router.invoke_structured_worker,
         logger=getattr(host, "logger", None),
-        initial_state=load_aux_state("executive_cortex_state"),
-        persist=persist_executive_state,
         clock=runtime_clock,
-        wall_clock=time.time,
     )
     health.record_success(
         "ai_orchestrated.executive_cortex",

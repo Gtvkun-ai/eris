@@ -1,204 +1,78 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
+from pathlib import Path
 
 from actions.capability_registry import (
     capability_argument_mode,
     iter_public_capabilities,
     validate_registry_contract_coverage,
 )
-from runtime.ai_orchestrated.executive_cortex import (
-    ExecutiveCortex,
-    ExecutiveEvent,
-    ExecutiveState,
-)
-from runtime.ai_orchestrated.executive_tools import CapabilityIndex, ExecutiveTool
+from runtime.ai_orchestrated.executive_cortex import EXECUTIVE_SCHEMA, ExecutiveCortex
 from runtime.capability_claim_guard import guard_public_capability_claims
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class _Owner:
     pass
 
 
-def _decision(action: str, **changes):
-    value = {
-        "action": action,
-        "affordance_id": "",
-        "semantic_target": "",
-        "speech_act": "",
-        "tone": "",
-        "capability_goal": "",
-        "required_effect": "",
-        "maximum_risk": "low",
-        "capability_domain": "",
-        "capability_ids": [],
-        "capability_id": "",
-        "capability_arguments": {},
-        "reply_baton": "preserve",
-        "phase": "quiet_presence",
-        "trajectory": "leave_topic_at_rest",
-        "reconsider_on": [{"kind": "seed_available", "minimum_strength": 0.75}],
-        "review_after_seconds": 90,
-        "reason": "test",
-        "confidence": 0.85,
-        "intrusion_risk": 0.1,
+def _source(path: str) -> str:
+    return (ROOT / path).read_text(encoding="utf-8")
+
+
+def test_v30_capability_schema_has_no_conversation_policy_or_runtime_identity():
+    """Planner chỉ được chọn capability; state hội thoại không đi qua model boundary."""
+    properties = EXECUTIVE_SCHEMA["properties"]
+    forbidden = {
+        "reconsider_on",
+        "review_after_seconds",
+        "reply_baton",
+        "trajectory",
+        "subject_coalition_id",
+        "subject_proposal_ref",
+        "semantic_commitments",
+        "cognitive_requests",
     }
-    value.update(changes)
-    return value
+    assert forbidden.isdisjoint(properties)
 
 
-def _tool() -> ExecutiveTool:
-    return ExecutiveTool(
-        capability_id="read_visible_ui_text",
-        title="read visible UI text",
-        description="Read visible text from the active window.",
-        effect="observe",
-        domain="environment",
-        available=True,
-        availability_reason="ready",
-        risk="low",
-        permission_mode="read_only_auto",
-        auto_callable=True,
-        input_schema={
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {"query": {"type": "string"}},
-            "required": [],
-        },
-    )
+def test_v30_executive_object_has_no_hidden_temporal_policy_state():
+    cortex = ExecutiveCortex(_Owner(), None, invoke_structured=lambda *_a, **_k: None)
+    assert not hasattr(cortex, "state")
+    assert not hasattr(cortex, "should_reconsider")
+    assert not hasattr(cortex, "_update_state")
 
 
-def test_interactive_capability_planning_does_not_mutate_conversation_policy(monkeypatch):
-    monkeypatch.setattr(
-        "runtime.ai_orchestrated.executive_cortex.build_capability_index",
-        lambda *_a, **_k: CapabilityIndex(1, 1, {"observe": 1}, {"environment": 1}),
-    )
-    monkeypatch.setattr(
-        "runtime.ai_orchestrated.executive_cortex.filter_executive_tools",
-        lambda *_a, **_k: (_tool(),),
-    )
-    calls = iter(
-        [
-            _decision("discover_capabilities", required_effect="observe", capability_domain="environment"),
-            _decision(
-                "select_capability",
-                capability_id="read_visible_ui_text",
-                capability_arguments={"query": "active window"},
-            ),
-        ]
-    )
-    initial = {
-        "revision": 7,
-        "phase": "quiet_presence",
-        "trajectory": "leave_topic_at_rest",
-        "reconsider_on": [{"kind": "seed_available", "minimum_strength": 0.8}],
-        "review_due_at": 1400.0,
-        "preferred_lane": "seed",
-        "updated_at": 1000.0,
-    }
-    persisted = []
-    cortex = ExecutiveCortex(
-        _Owner(),
-        object(),
-        invoke_structured=lambda *_a, **_k: next(calls),
-        initial_state=initial,
-        persist=persisted.append,
-        clock=lambda: 1001.0,
-        wall_clock=lambda: 10_001.0,
-    )
-    before = cortex.state
-    directive = cortex.plan_interactive("Em có đọc được màn hình không?", snapshot={})
-    assert directive.status == "selected"
-    assert cortex.state == before
-    assert persisted == []
+def test_v30_bootstrap_does_not_restore_or_persist_executive_trajectory():
+    source = _source("runtime/ai_orchestrated/bootstrap.py")
+    assert "executive_cortex_state" not in source
+    assert "persist_executive_state" not in source
+    start = source.index("ExecutiveCortex(")
+    end = source.index(")", start) + 1
+    constructor = source[start:end]
+    assert "initial_state=" not in constructor
+    assert "persist=" not in constructor
+    assert "wall_clock=" not in constructor
 
 
-def test_executive_state_persists_policy_but_not_failure_backoff(monkeypatch):
-    monkeypatch.setattr(
-        "runtime.ai_orchestrated.executive_cortex.build_capability_index",
-        lambda *_a, **_k: CapabilityIndex(1, 0, {}, {}),
-    )
-    stored = []
-    now = 2000.0
-    cortex = ExecutiveCortex(
-        _Owner(),
-        object(),
-        invoke_structured=lambda *_a, **_k: _decision("silence"),
-        persist=stored.append,
-        clock=lambda: now,
-        wall_clock=lambda: 20_000.0,
-    )
-    cortex.deliberate(SimpleNamespace(public_view=lambda: {}), [], snapshot={})
-    assert len(stored) == 1
-    payload = stored[0]
-    assert payload["schema"] == "eris.executive_state.v2"
-    assert payload["phase"] == "quiet_presence"
-    assert payload["trajectory"] == "leave_topic_at_rest"
-    assert "retry_not_before" not in payload
-    assert payload["review_due_wallclock"] == 20_090.0
-
-    restored = ExecutiveState.from_persisted_mapping(
-        payload, runtime_now=50.0, wall_now=20_001.0
-    )
-    assert restored.revision == 1
-    assert restored.phase == "quiet_presence"
-    assert restored.reconsider_on[0].kind == "seed_available"
-    assert restored.retry_not_before == 0.0
-    assert restored.review_due_at == 139.0
+def test_v30_temporal_mind_is_the_single_wake_gate():
+    source = _source("runtime/ai_orchestrated/self_turn_pipeline.py")
+    gate = source[source.index("def _should_deliberate"):source.index("# V18 không còn planner")]
+    assert "TemporalMind" in source
+    assert "should_reconsider" not in gate
+    assert "ExecutiveEvent" not in gate
+    assert "return True, gate.reason" in gate
 
 
-def test_stale_persisted_executive_state_resets_to_default():
-    restored = ExecutiveState.from_persisted_mapping(
-        {
-            "schema": "eris.executive_state.v2",
-            "revision": 9,
-            "phase": "quiet_presence",
-            "trajectory": "old_policy",
-            "updated_at_wallclock": 100.0,
-        },
-        runtime_now=50.0,
-        wall_now=22_000.0,
-        maximum_age_seconds=6_000.0,
-    )
-    assert restored.revision == 0
-    assert restored.phase == "unresolved"
-    assert restored.trajectory == "observe_before_acting"
-
-
-
-def test_wallclock_persistence_survives_runtime_clock_reset():
-    state = ExecutiveState(
-        revision=3,
-        phase="quiet_presence",
-        trajectory="wait_for_seed",
-        review_due_at=1_090.0,
-        updated_at=1_000.0,
-    )
-    payload = state.to_persisted_dict(runtime_now=1_010.0, wall_now=50_000.0)
-    restored = ExecutiveState.from_persisted_mapping(
-        payload, runtime_now=5.0, wall_now=50_020.0
-    )
-    assert restored.revision == 3
-    assert restored.review_due_at == 65.0
-    assert restored.updated_at == 0.0
-
-
-def test_scored_event_policy_uses_threshold_and_provenance_without_renaming():
-    initial = {
-        "revision": 4,
-        "phase": "quiet_presence",
-        "trajectory": "wait",
-        "reconsider_on": [{"kind": "scene_delta", "minimum_strength": 0.65}],
-        "review_due_at": 0,
-        "updated_at": 1000.0,
-    }
-    cortex = ExecutiveCortex(_Owner(), object(), invoke_structured=lambda *_a, **_k: {}, initial_state=initial, clock=lambda: 1001.0)
-    assert cortex.should_reconsider([ExecutiveEvent("scene_delta", 0.64, "window_telemetry", revision=11)])[0] is False
-    allowed, reason = cortex.should_reconsider(
-        [ExecutiveEvent("scene_delta", 0.72, "window_telemetry", revision=12, metadata={"window": "Code"})]
-    )
-    assert allowed is True
-    assert reason == "executive_policy:scene_delta:0.72"
+def test_v30_capability_planner_requests_use_explicit_sessionless_lane_names():
+    cortex_source = _source("runtime/ai_orchestrated/executive_cortex.py")
+    router_source = _source("runtime/ai_orchestrated/model_router.py")
+    assert 'name=f"eris_capability_planner_{stage}"' in cortex_source
+    assert '"capability_planner" in reason_key' in router_source
+    assert 'lane = "capability_deliberation_required"' in router_source
+    assert 'lane = "capability_deliberation"' in router_source
 
 
 def test_capability_contract_coverage_is_complete_and_context_sensors_are_not_callable():

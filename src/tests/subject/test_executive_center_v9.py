@@ -139,16 +139,17 @@ def test_user_ingress_no_longer_injects_fixed_action_scores() -> None:
         id_factory=d.id,
     )
     ingress = SubjectIngress(service)
-    frame = ingress.prepare_user_turn(
+    session = ingress.prepare_user_session(
         "Anh còn nhớ chuyện trước không?",
         created_at=d.clock(),
         turn_id="turn-dynamic",
         planning_context={"memory_available": True},
     )
+    frame = session.frame
     assert "action_proposals" not in frame.observation.context
     assert {item.action_kind for item in frame.proposals} >= {"speak", "investigate"}
     assert all("inner_trace" in item.arguments for item in frame.proposals)
-    ingress.abandon(frame, reason="test_cleanup")
+    ingress.mind_loop.abandon_sync(session, reason="test_cleanup")
 
 
 def test_executive_commit_uses_exact_subject_ids() -> None:
@@ -158,11 +159,13 @@ def test_executive_commit_uses_exact_subject_ids() -> None:
         clock=d.clock,
         id_factory=d.id,
     )
-    frame = SubjectIngress(service).prepare_user_turn(
+    ingress = SubjectIngress(service)
+    session = ingress.prepare_user_session(
         "Kiểm tra giúp tôi.",
         created_at=d.clock(),
         turn_id="turn-exact",
     )
+    frame = session.frame
     selected = frame.coalitions[-1]
 
     selected_index = len(frame.coalitions) - 1
@@ -187,7 +190,7 @@ def test_executive_commit_uses_exact_subject_ids() -> None:
     assert commit.selected_proposal_ref == selected.primary_proposal_ref
 
 
-def test_autonomous_outcome_is_bound_back_to_subject_coalition() -> None:
+def test_autonomous_subject_frame_is_committed_directly_without_backward_binding() -> None:
     d = Determinism()
     service = SubjectService(
         config=SubjectServiceConfig(subject_id="eris", deterministic=True),
@@ -217,27 +220,21 @@ def test_autonomous_outcome_is_bound_back_to_subject_coalition() -> None:
         engagement_active=False,
         public_view=lambda: {"reply_expected": False, "engagement_active": False},
     )
-    frame = ingress.prepare_autonomous_turn(
+    session = ingress.prepare_autonomous_session(
         blackboard,
         [affordance],
         created_at=d.clock(),
         turn_id="autonomous:1",
     )
-    decision = ExecutiveDecision(
-        action="select_affordance",
-        affordance_id="seed:1",
-        semantic_target="gợi lại chuyện cũ",
-        speech_act="gentle_callback",
-        reason="continuity is relevant",
-        confidence=0.8,
-    )
-    outcome = ExecutiveOutcome(candidate, "seed:1", "use_candidate", decision.reason, decision)
+    frame = session.frame
     cortex = ExecutiveCortex(SimpleNamespace(), None, invoke_structured=lambda *_a, **_k: {})
-    commit = cortex.subject_commit_from_outcome(frame, outcome)
+    # V30: không còn bind ngược một ExecutiveOutcome vào Subject frame.
+    # Subject/Neuro commit trực tiếp từ chính frame hiện tại.
+    commit = cortex.commit_subject_frame(frame, mode="autonomous")
     assert commit is not None
-    mind_decision = ingress.finalize(frame, commit)
-    assert mind_decision.proposed_action == "speak"
-    assert mind_decision.arguments["affordance_id"] == "seed:1"
+    mind_decision = ingress.mind_loop.complete_sync(session, initial_commit=commit)
+    assert mind_decision.coalition_id == commit.selected_coalition_id
+    assert any(item.coalition_id == mind_decision.coalition_id for item in frame.coalitions)
 
 
 def test_interactive_executive_can_request_one_bounded_review() -> None:
@@ -283,7 +280,7 @@ def test_interactive_executive_can_request_one_bounded_review() -> None:
         "Việc này có chắc không?",
         created_at=d.clock(),
         turn_id="turn-review",
-        executive=executive,
+        committer=executive,
     )
     assert executive.calls == 2
     assert decision.proposed_action == "investigate"

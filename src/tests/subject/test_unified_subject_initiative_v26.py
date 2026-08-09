@@ -225,7 +225,7 @@ def test_chat_and_self_turn_commit_through_same_mindloop_port() -> None:
 
     executive = Executive()
     user_session = ingress.prepare_user_session("chào", created_at=d.now, turn_id="u-v26")
-    ingress.complete_session(user_session, executive=executive)
+    ingress.complete_session(user_session, committer=executive)
 
     candidate = SimpleNamespace(
         kind="social_check_in", topic="ask one open question", speech_act="user_probe",
@@ -246,7 +246,7 @@ def test_chat_and_self_turn_commit_through_same_mindloop_port() -> None:
             "initiative_runtime_context": {"user_model_uncertainty": 0.9},
         },
     )
-    ingress.complete_session(auto_session, executive=executive)
+    ingress.complete_session(auto_session, committer=executive)
 
     assert executive.modes == ["interactive", "autonomous"]
 
@@ -291,7 +291,7 @@ def test_committed_subject_probe_materializes_without_second_executive_decision(
                 reason="understand user", confidence=0.8, review_conditions=(), created_at=d.now,
             )
 
-    decision = ingress.complete_session(session, executive=Committer())
+    decision = ingress.complete_session(session, committer=Committer())
     invoked: list[object] = []
     cortex = ExecutiveCortex(
         SimpleNamespace(action_executor=None),

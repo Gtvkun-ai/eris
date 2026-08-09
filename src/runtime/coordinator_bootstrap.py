@@ -492,8 +492,8 @@ class CoordinatorBootstrapMixin:
         self.subject_core_components = build_subject_core_components(
             action_executor=getattr(self, "action_executor", None),
             # Provider đóng trên host nên MindLoop được inject một dependency ổn
-            # định ngay từ đầu; Executive có thể xuất hiện sau mà không cần bind.
-            executive_provider=lambda: getattr(self, "ai_executive_cortex", None),
+            # định ngay từ đầu; commit port production có thể xuất hiện sau mà không cần bind.
+            committer_provider=lambda: getattr(self, "ai_executive_cortex", None),
         )
         self.subject_service = self.subject_core_components.subject_service
         self.subject_sandbox_world = self.subject_core_components.sandbox_world

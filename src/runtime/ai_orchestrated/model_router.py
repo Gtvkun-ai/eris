@@ -1169,15 +1169,13 @@ class AIRuntimeModelRouter:
             # keeps it optional *without* giving it the persistent autonomous
             # provider session that caused stale semantic carry-over.
             lane = "neuro_deliberation"
-        elif "executive" in reason_key and "interactive" in reason_key:
-            # Capability planning for a direct user turn is required but one-shot.
-            # Stable capability names are allowed; hidden provider conversation
-            # state is not.
+        elif "capability_planner" in reason_key and "interactive" in reason_key:
+            # V30: capability planner là one-shot execution planning cho user turn.
+            # Nó không giữ conversation session và không có quyền chọn motive.
             lane = "capability_deliberation_required"
-        elif "executive" in reason_key:
-            # Legacy/tool Executive remains only for symbolic capability planning.
-            # Keep it interruptible and sessionless so it cannot become a second
-            # conversational memory authority.
+        elif "capability_planner" in reason_key:
+            # Autonomous capability planning vẫn interruptible/sessionless. Tên lane
+            # giữ nguyên để không đổi broker policy, nhưng authority đã được thu hẹp.
             lane = "capability_deliberation"
         elif "observer" in reason_key or "observation" in reason_key:
             lane = "post_observer"
@@ -2528,7 +2526,7 @@ class AIRuntimeModelRouter:
         data = plan.to_dict()
         data["tool_intent"] = ""
         data["tool_input"] = ""
-        data["notes"] = (plan.notes + "; capability authority reserved for Gemma Executive").strip("; ")
+        data["notes"] = (plan.notes + "; capability authority reserved for runtime Capability Planner").strip("; ")
         return IntentionPlan.from_mapping(data, channel="chat")
 
     @staticmethod
@@ -2598,7 +2596,7 @@ class AIRuntimeModelRouter:
         data = plan.to_dict()
         data["tool_intent"] = ""
         data["tool_input"] = ""
-        data["notes"] = (plan.notes + "; capability authority reserved for Gemma Executive").strip("; ")
+        data["notes"] = (plan.notes + "; capability authority reserved for runtime Capability Planner").strip("; ")
         return IntentionPlan.from_mapping(data, channel="autonomous")
 
     @staticmethod

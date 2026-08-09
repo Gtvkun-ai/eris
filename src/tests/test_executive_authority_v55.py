@@ -18,10 +18,12 @@ def test_autonomous_pipeline_collects_before_claim_and_has_no_legacy_fallback():
     assert "selected_affordance_stale" in source
 
 
-def test_runtime_scheduler_obeys_executive_policy_instead_of_soft_silence_probe():
+def test_runtime_scheduler_uses_temporal_mind_as_single_wake_authority():
     source = _source("runtime/ai_orchestrated/self_turn_pipeline.py")
     gate = source[source.index("def _should_deliberate"):source.index("# V18 không còn planner")]
-    assert "should_reconsider" in gate
+    assert "should_reconsider" not in gate
+    assert "ExecutiveEvent" not in gate
+    assert "return True, gate.reason" in gate
     assert "ERIS_SOCIAL_INITIATIVE_SOFT_SILENCE_SEC" not in gate
     assert "ERIS_SOCIAL_INITIATIVE_PROBE_INTERVAL_SEC" not in gate
     assert "presence_probe" not in gate
@@ -52,7 +54,7 @@ def test_capability_contracts_have_typed_effects_and_no_language_markers():
 
 def test_deepseek_planners_cannot_select_capabilities():
     model_router = _source("runtime/ai_orchestrated/model_router.py")
-    assert "capability authority reserved for Gemma Executive" in model_router
+    assert "capability authority reserved for runtime Capability Planner" in model_router
     assert "VALID_SYSTEM_ACTIONS" not in model_router
     assert 'data["tool_intent"] = ""' in model_router
 

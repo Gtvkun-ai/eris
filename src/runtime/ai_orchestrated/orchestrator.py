@@ -882,7 +882,7 @@ class AIChatOrchestrator:
             plan_data["tool_input"] = ""
         plan_data["notes"] = (
             str(plan_data.get("notes", "") or "")
-            + f"; executive_capability={directive_payload.get('status', 'unavailable')}:"
+            + f"; capability_planner={directive_payload.get('status', 'unavailable')}:"
               f"{directive_payload.get('reason', '')}"
         ).strip("; ")
         chat_plan = IntentionPlan.from_mapping(plan_data, channel="chat")

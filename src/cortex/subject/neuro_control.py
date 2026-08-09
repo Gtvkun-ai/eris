@@ -21,10 +21,12 @@ indices local to the current frame.
 from __future__ import annotations
 
 import math
+import time
+import uuid
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
-from .contracts import CoalitionCandidate, SubjectDeliberationFrame
+from .contracts import CoalitionCandidate, SubjectDeliberationFrame, SubjectExecutiveCommit
 
 
 def _clamp01(value: Any, default: float = 0.0) -> float:
@@ -35,6 +37,64 @@ def _clamp01(value: Any, default: float = 0.0) -> float:
     if number != number:
         number = default
     return max(0.0, min(1.0, number))
+
+
+def _compact(value: Any, limit: int = 800) -> str:
+    text = " ".join(str(value or "").split()).strip()
+    return text if len(text) <= limit else text[: max(0, limit - 1)].rstrip() + "…"
+
+
+def commit_selection(
+    frame: SubjectDeliberationFrame,
+    selection: "SelectionResult",
+    *,
+    reason: str,
+    source: str,
+    clock: Any = time.time,
+    semantic_commitments: Sequence[str] = (),
+    cognitive_requests: Sequence[str] = (),
+    confidence: float | None = None,
+    review_conditions: Sequence[str] = (),
+) -> SubjectExecutiveCommit:
+    """Đóng kết quả competition thành commit bằng một mapping duy nhất.
+
+    Đây là chỗ duy nhất biến ``winner_index`` tạm thời thành runtime identity.
+    Cả fast gate local lẫn deliberator đều đi qua cùng hàm này, nên không tồn tại
+    một fallback policy thứ hai chỉ vì provider/model đang mất kết nối.
+    """
+    candidate = selection.winner(frame)
+    arguments = dict(candidate.arguments)
+    if not semantic_commitments:
+        semantic_commitments = tuple(
+            item for item in (
+                _compact(arguments.get("semantic_target", ""), 500),
+                _compact(arguments.get("speech_act", ""), 160),
+            ) if item
+        )
+    inferred_confidence = _clamp01(
+        0.45
+        + 0.35 * (1.0 - selection.entropy)
+        + 0.20 * min(1.0, max(0.0, selection.margin) / 0.20)
+    )
+    return SubjectExecutiveCommit(
+        commit_id=f"neuro-commit:{uuid.uuid4()}",
+        frame_id=frame.frame_id,
+        selected_coalition_id=candidate.coalition_id,
+        selected_proposal_ref=candidate.primary_proposal_ref,
+        semantic_commitments=tuple(
+            _compact(item, 500) for item in semantic_commitments if _compact(item, 500)
+        )[:8],
+        cognitive_requests=tuple(
+            _compact(item, 160).lower() for item in cognitive_requests if _compact(item, 160)
+        )[:6],
+        reason=_compact(reason, 500) or selection.reason,
+        confidence=inferred_confidence if confidence is None else _clamp01(confidence),
+        review_conditions=tuple(
+            _compact(item, 180).lower() for item in review_conditions if _compact(item, 180)
+        )[:8],
+        created_at=float(clock()),
+        source=str(source or "neuro_control"),
+    )
 
 
 @dataclass(frozen=True, slots=True)

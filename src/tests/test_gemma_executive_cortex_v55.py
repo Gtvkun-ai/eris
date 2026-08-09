@@ -12,12 +12,7 @@ from actions.contracts import ActionExecutionResult, ActionExecutionStatus
 from llm.service import LlmService
 from runtime.ai_orchestrated.affordance import ExecutiveAffordance
 from runtime.ai_orchestrated.cognitive_blackboard import CognitiveAnchor, TypedCognitiveBlackboard
-from runtime.ai_orchestrated.executive_cortex import (
-    ExecutiveCortex,
-    ExecutiveDecision,
-    ExecutiveEvent,
-    may_release_optional_reply_baton,
-)
+from runtime.ai_orchestrated.executive_cortex import ExecutiveCortex, ExecutiveDecision
 from runtime.ai_orchestrated.executive_tools import CapabilityIndex, ExecutiveTool
 from runtime.ai_orchestrated.social_initiative import SocialInitiativeEngine, SocialSpeechCandidate
 
@@ -123,76 +118,38 @@ def _decision(action, **changes):
         "capability_ids": [],
         "capability_id": "",
         "capability_arguments": {},
-        "reply_baton": "preserve",
-        "phase": "quiet_presence",
-        "trajectory": "avoid_pressure",
-        "reconsider_on": [
-            {"kind": "user_turn", "minimum_strength": 0.0},
-            {"kind": "seed_available", "minimum_strength": 0.7},
-            {"kind": "scene_delta", "minimum_strength": 0.6},
-        ],
-        "review_after_seconds": 0,
         "reason": "test",
         "confidence": 0.8,
-        "intrusion_risk": 0.1,
     }
     payload.update(changes)
     return payload
 
 
-def test_executive_selects_exact_affordance_and_rewrites_semantic_target(monkeypatch):
-    reminder = ExecutiveAffordance(
-        "followup:1", "followup", 1, _candidate("followup_reminder", "Bring back the old question")
+def _capability_frame():
+    # Deliberate() V30 chỉ được gọi sau khi Subject đã commit capability-route.
+    return SimpleNamespace(
+        coalitions=(SimpleNamespace(
+            coalition_id="coalition:capability",
+            primary_proposal_ref="proposal:capability",
+            action_kind="speak",
+            arguments={
+                "capability_route": True,
+                "semantic_target": "Dùng capability để kiểm tra runtime rồi trả lời.",
+                "speech_act": "grounded_capability_response",
+            },
+            expected_pragmatic_value=0.8,
+            expected_epistemic_value=0.8,
+            uncertainty=0.2,
+        ),),
     )
-    seed = ExecutiveAffordance(
-        "seed:1", "random_chat_seed", 1, _candidate("random_chat", "A new premise", seed_id="seed-1")
-    )
-    monkeypatch.setattr(
-        "runtime.ai_orchestrated.executive_cortex.build_capability_index",
-        lambda *_args, **_kwargs: CapabilityIndex(1, 0, {}, {}),
-    )
-    cortex = ExecutiveCortex(
-        _Owner(),
-        object(),
-        invoke_structured=lambda *_a, **_k: _decision(
-            "select_affordance",
-            affordance_id="seed:1",
-            semantic_target="Open a fresh low-pressure topic without reviving the unanswered question.",
-            speech_act="gentle_topic_opening",
-            tone="dry_warm",
-            reply_baton="release_optional",
-            reason="old thread is socially closed; seed is safer",
-        ),
-    )
-    outcome = cortex.deliberate(_Blackboard(), [reminder, seed], snapshot={})
-    assert outcome.action == "use_candidate"
-    assert outcome.selected_affordance_id == "seed:1"
-    assert outcome.candidate.kind == "random_chat"
-    assert outcome.candidate.topic.startswith("Open a fresh")
-    assert outcome.candidate.source.startswith("gemma_executive:")
-    assert cortex.state.trajectory == "avoid_pressure"
 
 
-def test_executive_policy_reopens_only_on_selected_events_or_timer(monkeypatch):
-    monkeypatch.setattr(
-        "runtime.ai_orchestrated.executive_cortex.build_capability_index",
-        lambda *_args, **_kwargs: CapabilityIndex(1, 0, {}, {}),
-    )
-    cortex = ExecutiveCortex(
-        _Owner(),
-        object(),
-        invoke_structured=lambda *_a, **_k: _decision(
-            "silence",
-            reconsider_on=[{"kind": "seed_available", "minimum_strength": 0.7}],
-            review_after_seconds=30,
-        ),
-    )
-    cortex.deliberate(_Blackboard(), [], snapshot={})
-    state = cortex.state
-    assert cortex.should_reconsider([ExecutiveEvent("scene_delta", 0.9, "test")], now=state.updated_at + 2)[0] is False
-    assert cortex.should_reconsider([ExecutiveEvent("seed_available", 0.69, "test")], now=state.updated_at + 2)[0] is False
-    assert cortex.should_reconsider([ExecutiveEvent("seed_available", 0.8, "test")], now=state.updated_at + 2)[0] is True
-    assert cortex.should_reconsider([], now=state.updated_at + 31)[0] is True
+
+def test_capability_planner_refuses_uncommitted_subject_frame():
+    cortex = ExecutiveCortex(_Owner(), object(), invoke_structured=lambda *_a, **_k: _decision("silence"))
+    outcome = cortex.deliberate(_Blackboard(), [], snapshot={}, subject_frame=None)
+    assert outcome.action == "silence"
+    assert outcome.reason == "capability_planner_requires_one_committed_coalition"
 
 
 def test_executive_discovers_then_invokes_exact_offered_typed_capability(monkeypatch):
@@ -232,7 +189,7 @@ def test_executive_discovers_then_invokes_exact_offered_typed_capability(monkeyp
     ]
     owner = _Owner()
     cortex = ExecutiveCortex(owner, object(), invoke_structured=lambda *_a, **_k: decisions.pop(0))
-    outcome = cortex.deliberate(_Blackboard(), [], snapshot={})
+    outcome = cortex.deliberate(_Blackboard(), [], snapshot={}, subject_frame=_capability_frame())
     assert owner.action_executor.calls == [("read_visible_ui_text", "screen reading")]
     assert owner.grounding == [("read_visible_ui_text", True)]
     assert outcome.candidate is not None
@@ -241,7 +198,7 @@ def test_executive_discovers_then_invokes_exact_offered_typed_capability(monkeyp
     assert outcome.candidate.evidence_refs == ("capability:screen.read:healthy",)
 
 
-def test_gemma_semantically_shortlists_before_full_schemas(monkeypatch):
+def test_capability_planner_semantically_shortlists_before_full_schemas(monkeypatch):
     tools = tuple(
         _tool(capability_id=f"observe_{index}", effect="observe", domain="environment")
         for index in range(8)
@@ -276,7 +233,7 @@ def test_gemma_semantically_shortlists_before_full_schemas(monkeypatch):
     ]
 
 
-def test_executive_rejects_non_auto_callable_capability(monkeypatch):
+def test_capability_planner_rejects_non_auto_callable_capability(monkeypatch):
     tool = _tool(capability_id="project_apply_patch", auto_callable=False, risk="high", effect="write", domain="project")
     monkeypatch.setattr(
         "runtime.ai_orchestrated.executive_cortex.build_capability_index",
@@ -298,7 +255,7 @@ def test_executive_rejects_non_auto_callable_capability(monkeypatch):
     ]
     owner = _Owner()
     cortex = ExecutiveCortex(owner, object(), invoke_structured=lambda *_a, **_k: decisions.pop(0))
-    outcome = cortex.deliberate(_Blackboard(), [], snapshot={})
+    outcome = cortex.deliberate(_Blackboard(), [], snapshot={}, subject_frame=_capability_frame())
     assert outcome.action == "silence"
     assert owner.action_executor.calls == []
 
@@ -323,7 +280,7 @@ def test_invalid_typed_arguments_are_rejected_before_execution(monkeypatch):
     ]
     owner = _Owner()
     outcome = ExecutiveCortex(owner, object(), invoke_structured=lambda *_a, **_k: decisions.pop(0)).deliberate(
-        _Blackboard(), [], snapshot={}
+        _Blackboard(), [], snapshot={}, subject_frame=_capability_frame()
     )
     assert outcome.action == "silence"
     assert owner.action_executor.calls == []
@@ -337,29 +294,15 @@ def test_input_contracts_validate_and_encode_without_semantic_aliases():
     assert encode_capability_arguments("set_volume", {"level": 35}) == "35"
 
 
-def test_executive_failure_sets_mechanical_retry_backoff(monkeypatch):
-    monkeypatch.setenv("ERIS_EXECUTIVE_FAILURE_BACKOFF_S", "30")
-    monkeypatch.setattr(
-        "runtime.ai_orchestrated.executive_cortex.build_capability_index",
-        lambda *_args, **_kwargs: CapabilityIndex(1, 0, {}, {}),
-    )
-    cortex = ExecutiveCortex(_Owner(), object(), invoke_structured=lambda *_a, **_k: {})
-    cortex.deliberate(_Blackboard(), [], snapshot={})
-    state = cortex.state
-    allowed, reason = cortex.should_reconsider(["strong_seed"], now=state.retry_not_before - 1)
-    assert allowed is False
-    assert reason == "executive_policy:failure_backoff"
-
-
 def test_invalid_or_empty_model_response_is_unavailable_not_fake_silence(monkeypatch):
     monkeypatch.setattr(
         "runtime.ai_orchestrated.executive_cortex.build_capability_index",
         lambda *_args, **_kwargs: CapabilityIndex(1, 0, {}, {}),
     )
     cortex = ExecutiveCortex(_Owner(), object(), invoke_structured=lambda *_a, **_k: {})
-    outcome = cortex.deliberate(_Blackboard(), [], snapshot={})
+    outcome = cortex.deliberate(_Blackboard(), [], snapshot={}, subject_frame=_capability_frame())
     assert outcome.decision.action == "unavailable"
-    assert outcome.reason == "executive_model_or_schema_failure"
+    assert outcome.reason == "capability_planner_model_or_schema_failure"
 
 
 def test_llm_service_keeps_deepseek_workers_and_adds_executive_client():
@@ -378,31 +321,6 @@ def test_llm_service_keeps_deepseek_workers_and_adds_executive_client():
     assert service.surface_client is surface
     assert service.executive_client is executive
 
-
-
-def test_optional_reply_baton_release_uses_previous_typed_state_not_new_candidate_kind():
-    board = SimpleNamespace(
-        reply_expected=True,
-        engagement_active=False,
-        engagement_required=False,
-        followup_state="waiting",
-    )
-    decision = ExecutiveDecision(
-        action="select_affordance",
-        reply_baton="release_optional",
-        confidence=0.81,
-        intrusion_risk=0.18,
-    )
-    assert may_release_optional_reply_baton(board, decision) is True
-    assert may_release_optional_reply_baton(
-        board,
-        ExecutiveDecision(
-            action="select_affordance",
-            reply_baton="release_optional",
-            confidence=0.81,
-            intrusion_risk=0.61,
-        ),
-    ) is False
 
 
 def test_social_initiative_collects_reminder_despite_reply_expected_and_preserves_target():
@@ -459,7 +377,7 @@ def test_hard_capability_filter_has_no_semantic_top_n(monkeypatch):
     assert [item.capability_id for item in observed] == sorted(item.id for item in definitions)
 
 
-def test_interactive_executive_selects_exact_offered_capability(monkeypatch):
+def test_interactive_capability_planner_selects_exact_offered_capability(monkeypatch):
     tool = _tool(capability_id="read_visible_ui_text", effect="observe", domain="environment")
     monkeypatch.setattr(
         "runtime.ai_orchestrated.executive_cortex.build_capability_index",
@@ -486,7 +404,7 @@ def test_interactive_executive_selects_exact_offered_capability(monkeypatch):
     assert directive.capability_arguments == {"query": "active window"}
 
 
-def test_interactive_executive_cannot_invent_unoffered_capability(monkeypatch):
+def test_interactive_capability_planner_cannot_invent_unoffered_capability(monkeypatch):
     monkeypatch.setattr(
         "runtime.ai_orchestrated.executive_cortex.build_capability_index",
         lambda *_args, **_kwargs: CapabilityIndex(4, 1, {"observe": 1}, {"environment": 1}),

@@ -215,40 +215,26 @@ def test_relational_affordance_enters_subject_frame_and_beats_silence() -> None:
     affordance = build_relational_affordance(service.relational_view(), now=now)
     assert affordance is not None
     ingress = SubjectIngress(service)
-    frame = ingress.prepare_autonomous_turn(
+    session = ingress.prepare_autonomous_session(
         Blackboard(),
         (affordance,),
         created_at=now,
         turn_id="autonomous:12",
         planning_context={"relational_state": service.relational_view()},
     )
+    frame = session.frame
     assert any(item.action_kind == "speak" for item in frame.coalitions)
     assert frame.coalitions[0].action_kind == "speak"
     assert frame.coalitions[0].arguments.get("affordance_id") == affordance.affordance_id
 
 
-def test_executive_review_policy_cannot_drop_relational_reconsideration() -> None:
-    from types import SimpleNamespace
-
-    from runtime.ai_orchestrated.executive_cortex import (
-        ExecutiveCortex,
-        ExecutiveDecision,
-        ExecutiveEvent,
-        ReviewCondition,
+def test_relational_pressure_is_owned_by_temporal_mind_not_executive_policy() -> None:
+    # V30: relational pressure vẫn đánh thức cognition, nhưng đi qua TemporalMind
+    # trực tiếp thay vì một ExecutiveState/reconsider policy song song.
+    mind = TemporalMind(config=TemporalMindConfig(wake_threshold=0.25), clock=lambda: 100.0)
+    decision = mind.observe(
+        (TemporalSignal("relational_pressure", 0.80, "subject_relational_homeostasis"),),
+        now=100.0,
     )
-
-    cortex = ExecutiveCortex(SimpleNamespace(action_executor=None), None, invoke_structured=lambda *_a, **_k: None, clock=lambda: 100.0)
-    cortex._update_state(  # boundary invariant test
-        ExecutiveDecision(
-            action="silence",
-            reconsider_on=(ReviewCondition("user_turn", 0.0),),
-            reason="test",
-        )
-    )
-    assert any(item.kind == "relational_pressure" for item in cortex.state.reconsider_on)
-    allowed, reason = cortex.should_reconsider(
-        (ExecutiveEvent("relational_pressure", 0.80, "subject_relational_homeostasis"),),
-        now=101.0,
-    )
-    assert allowed is True
-    assert "relational_pressure" in reason
+    assert decision.wake is True
+    assert decision.dominant_kind == "relational_pressure"
