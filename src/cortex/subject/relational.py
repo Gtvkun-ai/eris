@@ -250,6 +250,7 @@ class RelationalHomeostasis:
         now: float,
         outreach: bool,
         sharing: bool = False,
+        expect_response: bool = True,
         evidence_ref: str = "",
     ) -> RelationalState:
         refs = list(state.evidence_refs[-8:])
@@ -261,7 +262,9 @@ class RelationalHomeostasis:
             updated_at=float(now),
             last_public_at=float(now),
             last_outreach_at=float(now) if outreach else state.last_outreach_at,
-            outreach_waiting=bool(outreach),
+            # Startup/reentry greeting can satisfy contact pressure without
+            # becoming a pending bid that is punished as "unanswered" 150s later.
+            outreach_waiting=bool(outreach and expect_response),
             interaction_satiety=_clamp01(max(state.interaction_satiety, 0.28 if outreach else 0.18)),
             sharing_pressure=_clamp01(state.sharing_pressure * (0.34 if sharing else 0.82)),
             affiliation_deficit=_clamp01(state.affiliation_deficit * (0.74 if outreach else 0.92)),

@@ -45,6 +45,7 @@ from runtime.runtime_status import emit_runtime_status
 from runtime.subject_initiative_runtime import (
     build_initiative_runtime_context,
     build_subject_initiative_affordances,
+    coalesce_contact_probe_affordances,
 )
 
 
@@ -321,9 +322,25 @@ class SelfTurnPipeline:
             except Exception as exc:
                 host.logger.debug("[subject initiative] affordance build failed: %s", exc)
 
-        # Deduplicate only by stable ID. Similar meanings from different owners
-        # remain visible because Subject Core/neuro competition, not a set(), owns
-        # the final trade-off.
+        # ``contact_bid`` (relational homeostasis) and ``user_probe`` (initiative)
+        # are alternative realizations of one immediate contact objective. Collapse
+        # them before Subject competition so entropy reflects real alternatives,
+        # not duplicate social phrasing channels.
+        before_social_coalesce = len(affordances)
+        affordances = list(coalesce_contact_probe_affordances(
+            affordances,
+            runtime_context=initiative_runtime_context,
+        ))
+        if len(affordances) != before_social_coalesce:
+            host.logger.info(
+                "[social coalesce] contact/probe collapsed before subject frame before=%s after=%s uncertainty=%.2f",
+                before_social_coalesce,
+                len(affordances),
+                float(initiative_runtime_context.get("user_model_uncertainty", 0.72) or 0.72),
+            )
+
+        # Deduplicate only by stable ID after semantic coalescing. Distinct meanings
+        # from different owners remain visible to Subject Core/neuro competition.
         unique_affordances: list[Any] = []
         seen_affordance_ids: set[str] = set()
         for affordance in affordances:

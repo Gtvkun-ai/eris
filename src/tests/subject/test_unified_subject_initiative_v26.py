@@ -12,6 +12,7 @@ from runtime.subject_ingress import SubjectIngress
 from runtime.subject_initiative_runtime import (
     build_initiative_runtime_context,
     build_subject_initiative_affordances,
+    coalesce_contact_probe_affordances,
 )
 
 
@@ -162,6 +163,39 @@ def test_subject_initiative_builds_user_probe_affordance_without_seed() -> None:
     assert "assume" in probe.candidate.topic.lower()
 
 
+
+
+def test_contact_and_user_probe_are_coalesced_before_competition() -> None:
+    contact = SimpleNamespace(
+        affordance_id="relational:contact:1",
+        candidate=SimpleNamespace(
+            speech_act="contact_bid", relevance=0.90, confidence=0.90, urgency=0.80
+        ),
+    )
+    probe = SimpleNamespace(
+        affordance_id="subject-intention:probe:1",
+        candidate=SimpleNamespace(
+            speech_act="user_probe", relevance=0.70, confidence=0.72, urgency=0.60
+        ),
+    )
+    task = SimpleNamespace(
+        affordance_id="task:1",
+        candidate=SimpleNamespace(
+            speech_act="share_grounded_runtime_finding", relevance=0.80, confidence=0.90, urgency=0.50
+        ),
+    )
+
+    thin_model = coalesce_contact_probe_affordances(
+        (contact, probe, task),
+        runtime_context={"user_model_uncertainty": 0.92},
+    )
+    assert [item.affordance_id for item in thin_model] == ["subject-intention:probe:1", "task:1"]
+
+    thick_model = coalesce_contact_probe_affordances(
+        (contact, probe, task),
+        runtime_context={"user_model_uncertainty": 0.25},
+    )
+    assert [item.affordance_id for item in thick_model] == ["relational:contact:1", "task:1"]
 
 
 def test_startup_social_cooldown_blocks_immediate_check_in() -> None:

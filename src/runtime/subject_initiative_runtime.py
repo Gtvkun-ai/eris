@@ -11,7 +11,7 @@ relational state + độ bất định user-model; preview chỉ là candidate v
 from __future__ import annotations
 
 import time
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from runtime.ai_orchestrated.affordance import ExecutiveAffordance
 from runtime.ai_orchestrated.social_initiative import SocialSpeechCandidate
@@ -187,6 +187,54 @@ def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: fl
     )
 
 
+
+def coalesce_contact_probe_affordances(
+    affordances: Sequence[Any],
+    *,
+    runtime_context: Mapping[str, Any] | None = None,
+) -> tuple[Any, ...]:
+    """Collapse equivalent contact/probe channels before Subject competition.
+
+    ``contact_bid`` and ``user_probe`` are two realizations of the same immediate
+    social-contact objective. Letting both enter one frame as independent action
+    channels inflates entropy without adding a materially distinct choice.
+
+    When the user model is still thin, keep the epistemic ``user_probe``;
+    otherwise keep the plain ``contact_bid``. Other affordances are untouched.
+    """
+    items = tuple(affordances or ())
+    if len(items) < 2:
+        return items
+
+    social_indices: dict[str, list[int]] = {"contact_bid": [], "user_probe": []}
+    for index, affordance in enumerate(items):
+        candidate = getattr(affordance, "candidate", None)
+        speech_act = str(getattr(candidate, "speech_act", "") or "").strip().lower()
+        if speech_act in social_indices:
+            social_indices[speech_act].append(index)
+
+    if not social_indices["contact_bid"] or not social_indices["user_probe"]:
+        return items
+
+    unknown = _clamp01((runtime_context or {}).get("user_model_uncertainty", 0.72), 0.72)
+    preferred_act = "user_probe" if unknown >= 0.60 else "contact_bid"
+    candidate_indices = social_indices[preferred_act]
+
+    def _utility(index: int) -> tuple[float, float, float, int]:
+        candidate = getattr(items[index], "candidate", None)
+        relevance = _clamp01(getattr(candidate, "relevance", 0.0))
+        confidence = _clamp01(getattr(candidate, "confidence", 0.0))
+        urgency = _clamp01(getattr(candidate, "urgency", 0.0))
+        # Deterministic tie-break: earlier affordance keeps stable runtime order.
+        return (relevance, confidence, urgency, -index)
+
+    keep_index = max(candidate_indices, key=_utility)
+    redundant = set(social_indices["contact_bid"] + social_indices["user_probe"])
+    return tuple(
+        item for index, item in enumerate(items)
+        if index == keep_index or index not in redundant
+    )
+
 def build_subject_initiative_affordances(
     subject_service: Any,
     *,
@@ -249,4 +297,5 @@ def build_subject_initiative_affordances(
 __all__ = [
     "build_initiative_runtime_context",
     "build_subject_initiative_affordances",
+    "coalesce_contact_probe_affordances",
 ]

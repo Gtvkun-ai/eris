@@ -2785,6 +2785,25 @@ class AIAutonomousOrchestrator:
         host._startup_greeting_spoken_at = spoken_at
         host.last_autonomous_spoken_at = spoken_at
         host._note_autonomous_spoken(now=spoken_at)
+
+        # Startup greeting is already a real public contact. Feed that success
+        # into relational homeostasis instead of merely hiding the still-high
+        # pressure behind a 150s runtime cooldown. It is intentionally
+        # non-reply-bearing: silence after a gentle reentry greeting must not be
+        # counted as failed/unanswered outreach when the response window expires.
+        note_relational = getattr(getattr(host, "subject_service", None), "note_relational_public_act", None)
+        if callable(note_relational):
+            try:
+                note_relational(
+                    now=spoken_at,
+                    outreach=True,
+                    sharing=False,
+                    expect_response=False,
+                    evidence_ref=f"startup_greeting:{startup_turn_id}",
+                    persist=True,
+                )
+            except Exception as exc:
+                host.logger.debug("[relational] startup greeting public-act update failed: %s", exc)
         block = getattr(host, "_block_autonomous_presence_after_public_turn", None)
         if callable(block):
             block(now=spoken_at)

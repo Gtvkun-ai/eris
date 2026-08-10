@@ -8,6 +8,7 @@ vào, Subject initiative đứng ngoài frame có seed, và intention đã nói 
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -89,6 +90,27 @@ def _seed_affordance():
     )
 
 
+def _force_ambiguous_non_social_frame(frame):
+    coalitions = list(frame.coalitions)
+    if len(coalitions) < 2:
+        return frame
+    coalitions[0] = replace(
+        coalitions[0],
+        score=0.60,
+        uncertainty=0.72,
+        action_kind="speak",
+        arguments={**dict(coalitions[0].arguments), "speech_act": "random_chat"},
+    )
+    coalitions[1] = replace(
+        coalitions[1],
+        score=0.60,
+        uncertainty=0.72,
+        action_kind="speak",
+        arguments={**dict(coalitions[1].arguments), "speech_act": "self_clarification"},
+    )
+    return replace(frame, coalitions=tuple(coalitions))
+
+
 def test_current_subject_initiative_is_merged_into_same_frame_even_when_seed_exists() -> None:
     """Tái hiện lỗi log: có seed không được làm current intention đứng ngoài frame."""
     d = Determinism()
@@ -147,19 +169,20 @@ def test_legacy_runtime_ids_from_model_cannot_steer_current_frame() -> None:
             "review_conditions": [],
         }
 
+    frame = _force_ambiguous_non_social_frame(session.frame)
     executive = ExecutiveCortex(
         SimpleNamespace(action_executor=None),
         object(),
         invoke_structured=fake_structured,
         clock=d.clock,
     )
-    commit = executive.commit_subject_frame(session.frame, mode="autonomous")
+    commit = executive.commit_subject_frame(frame, mode="autonomous")
     assert commit is not None
     assert calls == 1
     assert commit.source == "neuro_fast_gate_degraded"
     assert commit.reason == "neuro_deliberator_out_of_frame_use_fast_gate"
-    fast = executive._neuro_selector.select(session.frame)
-    assert commit.selected_coalition_id == fast.winner(session.frame).coalition_id
+    fast = executive._neuro_selector.select(frame)
+    assert commit.selected_coalition_id == fast.winner(frame).coalition_id
     assert commit.selected_coalition_id != "coalition:stale-from-old-frame"
     asyncio.run(service.abandon_deliberation(session.frame, reason="test_cleanup"))
 
@@ -285,13 +308,14 @@ def test_invalid_deliberator_choice_degrades_without_second_llm_call() -> None:
             "review_conditions": [],
         }
 
+    frame = _force_ambiguous_non_social_frame(session.frame)
     executive = ExecutiveCortex(
         SimpleNamespace(action_executor=None),
         object(),
         invoke_structured=fake_structured,
         clock=d.clock,
     )
-    commit = executive.commit_subject_frame(session.frame, mode="autonomous")
+    commit = executive.commit_subject_frame(frame, mode="autonomous")
 
     assert commit is not None
     assert calls == 1
@@ -300,3 +324,16 @@ def test_invalid_deliberator_choice_degrades_without_second_llm_call() -> None:
     fast = executive._neuro_selector.select(session.frame)
     assert commit.selected_coalition_id == fast.winner(session.frame).coalition_id
     asyncio.run(service.abandon_deliberation(session.frame, reason="test_cleanup"))
+
+
+def test_startup_greeting_updates_relational_homeostasis_as_non_reply_bearing_contact() -> None:
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "runtime" / "ai_orchestrated" / "orchestrator.py").read_text(encoding="utf-8")
+    greeting_commit = source.index("host._startup_greeting_spoken_at = spoken_at")
+    relational_hook = source.index("note_relational_public_act", greeting_commit)
+    return_pos = source.index("return True", relational_hook)
+    block = source[relational_hook:return_pos]
+    assert greeting_commit < relational_hook < return_pos
+    assert "outreach=True" in block
+    assert "expect_response=False" in block
+    assert "startup_greeting:" in block

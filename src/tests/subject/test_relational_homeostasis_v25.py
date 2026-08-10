@@ -51,6 +51,32 @@ def test_user_reciprocity_reduces_deficit_and_learns_outreach_success() -> None:
     assert updated.reciprocity_expectation > state.reciprocity_expectation
 
 
+def test_non_reply_bearing_startup_contact_satisfies_state_without_waiting() -> None:
+    home = RelationalHomeostasis()
+    state = RelationalState(
+        updated_at=100.0,
+        affiliation_deficit=0.90,
+        interaction_satiety=0.02,
+        unanswered_outreach=3,
+    )
+    updated = home.note_public_act(
+        state,
+        now=120.0,
+        outreach=True,
+        expect_response=False,
+        evidence_ref="startup_greeting:test",
+    )
+    assert updated.last_outreach_at == 120.0
+    assert updated.outreach_waiting is False
+    assert updated.affiliation_deficit < state.affiliation_deficit
+    assert updated.interaction_satiety >= 0.28
+
+    # Crossing the ordinary response window must not turn a gentle startup
+    # greeting into a failed outreach merely because the user stayed quiet.
+    later = home.tick(updated, now=300.0)
+    assert later.unanswered_outreach == 3
+
+
 def test_relational_affordance_needs_no_external_factual_pretext() -> None:
     state = RelationalState(
         revision=7,

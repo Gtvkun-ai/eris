@@ -62,6 +62,52 @@ def test_fast_gate_commits_clear_winner_without_llm() -> None:
     MindLoop.run_sync(service.abandon_deliberation(frame, reason="test_cleanup"))
 
 
+def test_homogeneous_social_tie_fast_commits_without_llm() -> None:
+    d, service, frame = _frame()
+    assert len(frame.coalitions) >= 2
+    social = list(frame.coalitions[:2])
+    social[0] = replace(
+        social[0],
+        action_kind="speak",
+        score=1.0,
+        uncertainty=0.78,
+        arguments={
+            **dict(social[0].arguments),
+            "semantic_target": "reopen contact gently",
+            "speech_act": "contact_bid",
+        },
+    )
+    social[1] = replace(
+        social[1],
+        action_kind="speak",
+        score=1.0,
+        uncertainty=0.78,
+        arguments={
+            **dict(social[1].arguments),
+            "semantic_target": "reopen contact with a second equivalent realization",
+            "speech_act": "contact_bid",
+        },
+    )
+    frame = replace(frame, coalitions=tuple(social))
+
+    selection = NeuroActionSelector().select(frame)
+    assert selection.margin < 0.075
+    assert selection.entropy >= 0.82
+    assert selection.requires_deliberation is False
+    assert selection.reason == "fast_gate:homogeneous_social_tie"
+
+    def should_not_run(*_args, **_kwargs):
+        raise AssertionError("homogeneous social tie must not wake the deliberator")
+
+    executive = ExecutiveCortex(
+        SimpleNamespace(), object(), invoke_structured=should_not_run, clock=d.clock
+    )
+    commit = executive.commit_subject_frame(frame, mode="autonomous")
+    assert commit is not None
+    assert commit.source == "neuro_fast_gate"
+    MindLoop.run_sync(service.abandon_deliberation(frame, reason="test_cleanup"))
+
+
 def test_deliberator_sees_ephemeral_indices_not_runtime_ids() -> None:
     d, service, frame = _frame()
     selector = NeuroActionSelector()

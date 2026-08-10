@@ -398,6 +398,7 @@ class SubjectService:
         now: float | None = None,
         outreach: bool = False,
         sharing: bool = False,
+        expect_response: bool = True,
         evidence_ref: str = "",
         persist: bool = True,
     ) -> RelationalState:
@@ -407,6 +408,7 @@ class SubjectService:
             now=current,
             outreach=outreach,
             sharing=sharing,
+            expect_response=expect_response,
             evidence_ref=evidence_ref,
         )
         self._append_event(
@@ -604,6 +606,7 @@ class SubjectService:
                     )
                 )
         had_explicit_proposals = bool(proposals)
+        explicit_proposal_count = len(proposals)
         # V27.1: explicit runtime affordance và Subject initiative phải nằm trong
         # *cùng frame hiện tại*. V26 từng return sớm khi có seed/agenda proposal;
         # pending intention mới được cập nhật ở chính tick này vì thế có thể đứng
@@ -699,6 +702,57 @@ class SubjectService:
                 evidence_refs=intention.evidence_refs or (observation.observation_id,),
                 need_effects=need_effects,
             ))
+
+        # ``contact_bid`` và ``user_probe`` là hai cách thực hiện cùng một mục tiêu
+        # tiếp xúc tức thời. Chúng có thể đi vào đây từ hai owner khác nhau
+        # (relational affordance + Subject initiative) hoặc được merge ở tick này.
+        # Collapse ở ngay Subject boundary để mọi caller, không chỉ self-turn
+        # pipeline, đều nhìn thấy một action channel duy nhất.
+        contact_indices = [
+            index for index, proposal in enumerate(proposals)
+            if str(proposal.arguments.get("speech_act", "") or "").strip().lower() == "contact_bid"
+        ]
+        probe_indices = [
+            index for index, proposal in enumerate(proposals)
+            if str(proposal.arguments.get("speech_act", "") or "").strip().lower() == "user_probe"
+        ]
+        if contact_indices and probe_indices:
+            runtime_context = observation.context.get("runtime_context")
+            runtime_context = runtime_context if isinstance(runtime_context, Mapping) else {}
+            has_user_model_uncertainty = "user_model_uncertainty" in runtime_context
+            try:
+                user_model_uncertainty = float(runtime_context.get("user_model_uncertainty", 0.72) or 0.72)
+            except (TypeError, ValueError):
+                user_model_uncertainty = 0.72
+            user_model_uncertainty = max(0.0, min(1.0, user_model_uncertainty))
+            if has_user_model_uncertainty:
+                preferred_act = "user_probe" if user_model_uncertainty >= 0.60 else "contact_bid"
+                preferred_indices = probe_indices if preferred_act == "user_probe" else contact_indices
+            else:
+                # No epistemic signal was supplied by this caller. Preserve the
+                # already-materialized runtime affordance rather than fabricating
+                # a reason to replace it with a newly merged Subject intention.
+                explicit_social = [
+                    index for index in (contact_indices + probe_indices)
+                    if index < explicit_proposal_count
+                ]
+                preferred_indices = explicit_social or contact_indices or probe_indices
+
+            def _social_proposal_utility(index: int) -> tuple[float, float, float, int]:
+                proposal = proposals[index]
+                return (
+                    float(proposal.expected_need_relief),
+                    float(proposal.expected_action_efficacy),
+                    float(proposal.expected_epistemic_value),
+                    -index,
+                )
+
+            keep_index = max(preferred_indices, key=_social_proposal_utility)
+            redundant = set(contact_indices + probe_indices)
+            proposals = [
+                proposal for index, proposal in enumerate(proposals)
+                if index == keep_index or index not in redundant
+            ]
 
         # Khi runtime đã cấp affordance typed (seed, relational, agenda...), frame
         # chỉ merge thêm Subject initiative hiện tại rồi dừng. Generic activation

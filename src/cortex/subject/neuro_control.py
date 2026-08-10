@@ -277,6 +277,39 @@ class NeuroActionSelector:
         )
 
     @staticmethod
+    def _social_speech_act(candidate: CoalitionCandidate) -> str:
+        if str(getattr(candidate, "action_kind", "") or "").strip().lower() != "speak":
+            return ""
+        arguments = dict(getattr(candidate, "arguments", {}) or {})
+        speech_act = str(arguments.get("speech_act", "") or "").strip().lower()
+        return speech_act if speech_act in {
+            "contact_bid", "user_probe", "curiosity_bid", "social_check_in"
+        } else ""
+
+    @classmethod
+    def _homogeneous_social_tie(
+        cls,
+        frame: SubjectDeliberationFrame,
+        order: Sequence[int],
+    ) -> bool:
+        """True when the leading competition is only between equivalent social bids.
+
+        This is deliberately narrow. It does not suppress deliberation for a
+        social action competing with a task/capability action, nor for commitment
+        conflict. It only prevents an LLM round-trip to choose among reversible,
+        low-stakes contact/check-in realizations.
+        """
+        if len(order) < 2:
+            return False
+        first = cls._social_speech_act(frame.coalitions[order[0]])
+        second = cls._social_speech_act(frame.coalitions[order[1]])
+        # Different social intents can carry genuinely different consequences
+        # (e.g. asking for information vs merely reopening contact). Those should
+        # have been coalesced earlier only when they share one objective. This
+        # final safety net is intentionally limited to duplicate semantic lanes.
+        return bool(first and first == second)
+
+    @staticmethod
     def _commitment_conflict(frame: SubjectDeliberationFrame, candidate: CoalitionCandidate) -> float:
         proposals = {
             item.proposal_id: item
@@ -432,6 +465,19 @@ class NeuroActionSelector:
         if conflict >= self.config.conflict_threshold:
             reasons.append("commitment_conflict")
 
+        homogeneous_social_tie = self._homogeneous_social_tie(frame, order)
+        only_routine_ambiguity = bool(reasons) and set(reasons).issubset({
+            "low_margin", "winner_uncertain", "high_entropy"
+        })
+        if homogeneous_social_tie and only_routine_ambiguity:
+            # Winner is already deterministic from the scored competition. Do not
+            # spend a remote deliberation round choosing between two reversible
+            # variants of the same social-contact move.
+            reasons.clear()
+            decision_reason = "fast_gate:homogeneous_social_tie"
+        else:
+            decision_reason = ""
+
         requires = bool(reasons)
         return SelectionResult(
             winner_index=winner_index,
@@ -440,7 +486,7 @@ class NeuroActionSelector:
             margin=margin,
             entropy=entropy,
             requires_deliberation=requires,
-            reason=("deliberate:" + ",".join(reasons)) if requires else "fast_gate:clear_winner",
+            reason=("deliberate:" + ",".join(reasons)) if requires else (decision_reason or "fast_gate:clear_winner"),
             broadcast=broadcast,
         )
 
