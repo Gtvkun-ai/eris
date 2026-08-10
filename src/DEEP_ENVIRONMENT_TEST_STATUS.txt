@@ -1,8 +1,16 @@
-Deep Environment V3 test status — 2026-08-10
+Deep Environment V4 event-driven status — 2026-08-10
 
-FOCUSED PASS:
-  pytest -q tests/test_architecture_c_runtime_regressions.py tests/test_desktop_semantic_environment_v1.py tests/test_deep_environment_native_v2.py
-  => 106 passed
+MỤC TIÊU PATCH:
+  Tách native event -> DesktopSemanticRuntime/UserSituation khỏi self-turn cadence.
+  Structured semantic worker chạy daemon event-driven; self-turn chỉ đọc snapshot.
+
+FOCUSED PASS TRONG BUILD CONTAINER:
+  python -m pytest -q tests/test_deep_environment_native_v2.py tests/test_desktop_semantic_environment_v1.py tests/test_architecture_c_runtime_regressions.py
+  => 108 passed
+
+COMPILE:
+  compileall/py_compile các file V4 thay đổi
+  => PASS
 
 MECHANICAL ACCEPTANCE:
   python tools/deep_environment_acceptance.py --mechanical-smoke --count 80
@@ -10,23 +18,32 @@ MECHANICAL ACCEPTANCE:
   => sensitive_payload_leaks=0
   => screen_noise_deliberations=0
 
-WINDOWS E2E PROBE IN THIS BUILD ENVIRONMENT:
-  python tools/deep_environment_windows_e2e.py
-  => SKIPPED_NOT_WINDOWS
-  Lý do: build container hiện tại là POSIX. Không bịa IA2/GSMTC/ConPTY/UIAccess benchmark.
+MICRO-BENCHMARK WORKER TRONG BUILD CONTAINER:
+  200 structured/mechanical events enqueue trực tiếp
+  => environment_ingress_to_semantic p95 xấp xỉ 6 ms
+  Lưu ý: đây không phải Windows acceptance; chỉ chứng minh worker không tự tạo backlog nhiều giây.
 
-FULL SUITE ATTEMPT:
-  pytest -q
-  => collection blocked by pre-existing missing archive modules:
-     tools.package_source
-     tools.evaluate_social_plan_activation
+FULL SUITE ATTEMPT TRONG ARCHIVE ĐƯỢC UPLOAD:
+  python -m pytest -q
+  => 981 passed, 6 failed
+  5 failure do archive hiện tại không có một số tools.* mà test_pdf_inference_refactor import.
+  1 failure là test timing InferenceBroker nhạy scheduler trong container.
+  Các failure này không nằm trên Deep Environment V4 path và focused regressions V4 vẫn PASS.
 
-FULL SUITE EXCLUDING THOSE 3 COLLECTION-BLOCKING FILES:
-  => 950 passed, 12 failed
-  Remaining failures are outside this Deep Environment batch, including:
-  - archive root/path expectation for body/SubjectPerformanceFrame.cs
-  - DeepSeek worker role 'research'
-  - executive_cortex local variable 'arguments'
-  - memory GC legacy method mismatch
-  - missing legacy tools.report_pdf_acceptance / semantic audit tools
-  - one grounding_surface_gate Vietnamese current-world regression
+WINDOWS CẦN CHẠY LẠI SAU KHI ÁP V4:
+  - rebuild full pyc/package bằng builder Windows hiện có;
+  - run_eris.bat;
+  - đo logs/eris_observability.jsonl;
+  - target environment_source_to_semantic_ms p95 < 250 ms;
+  - target foreground_to_user_situation_ms p95 < 200 ms;
+  - xác nhận mechanical false wake vẫn 0;
+  - chạy lại IA2 strict, UIA fallback, ConPTY và manual/scripted scenario matrix.
+
+METRIC V4:
+  environment_source_to_ingress_ms
+  environment_bus_publish_duration_ms
+  environment_ingress_to_semantic_ms
+  environment_source_to_semantic_ms
+  environment_event_to_bus_ms       (alias tương thích: source -> ingress)
+  environment_event_to_semantic_ms  (alias tương thích: source -> semantic)
+  foreground_to_user_situation_ms

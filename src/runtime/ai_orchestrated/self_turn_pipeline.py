@@ -38,6 +38,7 @@ from .desktop_semantics import DesktopSemanticRuntime, UserSituation
 from .environment_event_bus import EnvironmentEventBus, NormalizedEnvironmentEvent
 from .task_graph import TaskGraph
 from .region_memory import RegionMemory
+from .semantic_environment_worker import SemanticEnvironmentWorker
 from .followup_appraisal import FollowUpAppraisalLayer
 from .identity import PendingStrategyUse
 from .initiative import InitiativeAction, InitiativeDecision
@@ -160,8 +161,8 @@ class SelfTurnPipeline:
         self._last_temporal_gate = None
 
         # Deep Environment: structured event là đường semantic chính; OCR/screen
-        # chỉ còn fallback và tín hiệu body animation. Khởi tạo Chromium adapter
-        # trước WinEvent broker để callback đầu tiên đã có nơi invalidate cache.
+        # chỉ còn fallback và tín hiệu body animation. Adapter accessibility được
+        # dựng trước worker để event đầu tiên đã có thể enrich mà không chờ self-turn.
         self.environment_event_bus = EnvironmentEventBus()
         self.task_graph = TaskGraph()
         self.region_memory = RegionMemory()
@@ -172,6 +173,7 @@ class SelfTurnPipeline:
         self._native_event_broker = None
         self._chromium_accessibility = None
         self._uia_semantic_adapter = None
+
         if os.getenv("ERIS_UIA_EVENTS_ENABLED", "1").strip().lower() not in {"0", "false", "off", "no"}:
             try:
                 from native.uia_semantic_adapter import UIASemanticAdapter
@@ -179,6 +181,7 @@ class SelfTurnPipeline:
                 setattr(host, "uia_semantic_adapter", self._uia_semantic_adapter)
             except Exception as exc:
                 host.logger.debug("[deep environment] UIA semantic adapter unavailable: %s", exc)
+
         chromium_enabled = os.getenv("ERIS_CHROMIUM_IA2_ENABLED", "1").strip().lower() not in {"0", "false", "off", "no"}
         if chromium_enabled:
             try:
@@ -187,6 +190,19 @@ class SelfTurnPipeline:
                 setattr(host, "chromium_accessibility_adapter", self._chromium_accessibility)
             except Exception as exc:
                 host.logger.debug("[deep environment] Chromium accessibility unavailable: %s", exc)
+
+        # V4: semantic consumer chạy daemon event-driven. Từ đây native callback
+        # chỉ publish + enqueue; TaskGraph/UserSituation không còn đợi self-turn
+        # tick 0.8-6 giây mới được cập nhật.
+        self._semantic_environment_worker = SemanticEnvironmentWorker(
+            host=host,
+            runtime=self.desktop_semantic_runtime,
+            publish_event=self._publish_environment_event,
+            uia_adapter=self._uia_semantic_adapter,
+            chromium_adapter=self._chromium_accessibility,
+        ).start()
+        setattr(host, "semantic_environment_worker", self._semantic_environment_worker)
+
         if os.getenv("ERIS_NATIVE_EVENTS_ENABLED", "1").strip().lower() not in {"0", "false", "off", "no"}:
             try:
                 from native.windows_event_broker import WindowsEventBroker
@@ -195,6 +211,7 @@ class SelfTurnPipeline:
                 setattr(host, "native_environment_event_broker", self._native_event_broker)
             except Exception as exc:
                 host.logger.debug("[deep environment] WinEvent broker unavailable: %s", exc)
+
         self._native_aux_monitors: list[Any] = []
         if os.getenv("ERIS_CLIPBOARD_MONITOR_ENABLED", "1").strip().lower() not in {"0", "false", "off", "no"}:
             try:
@@ -239,41 +256,52 @@ class SelfTurnPipeline:
         setattr(host, "native_environment_monitors", self._native_aux_monitors)
 
     def _publish_environment_event(self, event: NormalizedEnvironmentEvent) -> NormalizedEnvironmentEvent | None:
+        """Publish event vào bus rồi giao ngay cho semantic worker.
+
+        Callback native không làm UIA/TaskGraph tại đây. Ta chỉ đo ingress/publish
+        bằng monotonic clock, publish privacy-safe event và enqueue non-blocking.
+        """
         if os.getenv("ERIS_SEMANTIC_EVENT_BUS_ENABLED", "1").strip().lower() in {"0", "false", "off", "no"}:
             return None
+
+        ingress_monotonic_ns = time.monotonic_ns()
+        ingress_wall_time = time.time()
+        publish_started_ns = time.monotonic_ns()
         accepted = self.environment_event_bus.publish(event)
+        publish_done_ns = time.monotonic_ns()
         if accepted is None:
             return None
+
         observability = getattr(self.host, "observability", None)
         if observability is not None:
             try:
                 provider = str((accepted.metadata or {}).get("provider", "") or accepted.source or "unknown")[:40]
-                event_to_bus_ms = max(0.0, (time.time() - float(accepted.timestamp or 0.0)) * 1000.0)
+                source_to_ingress_ms = max(0.0, (ingress_wall_time - float(accepted.timestamp or ingress_wall_time)) * 1000.0)
+                publish_duration_ms = max(0.0, (publish_done_ns - publish_started_ns) / 1_000_000.0)
+                tags = {
+                    "source": accepted.source or "unknown",
+                    "event_type": accepted.event_type or "unknown",
+                    "provider": provider,
+                }
                 observability.increment(
                     "environment_event_total",
                     tags={
-                        "source": accepted.source or "unknown",
-                        "event_type": accepted.event_type or "unknown",
-                        "provider": provider,
+                        **tags,
                         "semantic": str(bool(accepted.semantic)).lower(),
                         "attention": str(max(0, min(4, int(accepted.attention_level or 0)))),
                         "privacy": str(accepted.privacy_scope or "SEMANTIC").lower(),
                     },
                 )
-                observability.observe(
-                    "environment_event_to_bus_ms",
-                    event_to_bus_ms,
-                    tags={
-                        "source": accepted.source or "unknown",
-                        "event_type": accepted.event_type or "unknown",
-                        "provider": provider,
-                    },
-                )
+                observability.observe("environment_source_to_ingress_ms", source_to_ingress_ms, tags=tags)
+                observability.observe("environment_bus_publish_duration_ms", publish_duration_ms, tags=tags)
+                # Tên cũ được giữ cho dashboard/probe tương thích. Từ V4 nó mang
+                # nghĩa source -> ingress, không còn giả làm thời gian bus.publish().
+                observability.observe("environment_event_to_bus_ms", source_to_ingress_ms, tags=tags)
             except Exception:
                 pass
 
-        # WinEvent chỉ báo "có thay đổi"; Chromium/UIA cache refresh ở consumer
-        # thread, không dereference accessibility object ngay trong callback.
+        # WinEvent chỉ báo "có thay đổi"; Chromium cache invalidate ở callback
+        # vẫn nhẹ, còn poll/accessibility dereference sẽ chạy trong semantic worker.
         if self._chromium_accessibility is not None and accepted.source in {"winevent", "foreground_reconcile"}:
             try:
                 self._chromium_accessibility.notify_native_event(accepted)
@@ -282,20 +310,44 @@ class SelfTurnPipeline:
             except Exception:
                 pass
 
-        worker = getattr(self.host, "screen_text_worker", None)
-        notify = getattr(worker, "notify_environment_event", None)
+        worker = getattr(self, "_semantic_environment_worker", None)
+        if worker is not None:
+            try:
+                worker.submit(
+                    accepted,
+                    ingress_monotonic_ns=ingress_monotonic_ns,
+                    ingress_wall_time=ingress_wall_time,
+                )
+            except Exception as exc:
+                self.host.logger.debug("[deep environment] semantic enqueue failed: %s", exc)
+
+        screen_worker = getattr(self.host, "screen_text_worker", None)
+        notify = getattr(screen_worker, "notify_environment_event", None)
         if callable(notify):
             try:
-                # UIA/WinEvent/Chromium events normally cover the changed semantic
-                # region. Unknown visual sources can explicitly opt out.
+                # UIA/WinEvent/Chromium thường đã cover semantic region; OCR chỉ
+                # được trigger khi structured source nói coverage chưa đủ.
                 notify(accepted.event_type, structured_coverage=accepted.source not in {"screen_pixel", "vision"})
             except Exception:
                 pass
         return accepted
 
     def _collect_environment_events(self, now: float, telemetry: Mapping[str, Any]) -> tuple[NormalizedEnvironmentEvent, ...]:
-        # Foreground telemetry is structured even when the WinEvent hook missed a
-        # transition (startup/reconciliation). It is observe-level, never a wake by itself.
+        """Chỉ làm reconciliation source; semantic consume đã chuyển sang worker.
+
+        Tên hàm được giữ để patch không làm gãy adapter/test cũ, nhưng không còn
+        drain bus hay UIA-enrich trên self-turn. Event đã được worker xử lý ngay từ
+        lúc ``_publish_environment_event`` nhận callback native.
+        """
+        worker = getattr(self, "_semantic_environment_worker", None)
+        if worker is not None:
+            try:
+                worker.update_telemetry(telemetry)
+            except Exception:
+                pass
+
+        # Foreground telemetry là safety net khi WinEvent hook lỡ transition lúc
+        # startup/reconciliation. Nó level 1 nên không tự đánh thức cognition.
         if bool(telemetry.get("focus_changed", False)):
             self._publish_environment_event(NormalizedEnvironmentEvent(
                 timestamp=now, source="foreground_reconcile", event_type="foreground_changed", action="focus_changed",
@@ -307,8 +359,9 @@ class SelfTurnPipeline:
                 evidence_refs=("telemetry:foreground_reconcile",),
             ))
 
-        # Chromium accessibility reconcile 15s là safety net. WinEvent/UIA event
-        # có thể reset cadence để refresh sớm hơn; OCR không scan tab strip.
+        # Reconcile Chromium 15s vẫn tồn tại như safety net. Event-triggered IA2/UIA
+        # refresh đã nằm trong semantic worker nên tab switch bình thường không chờ
+        # cadence này.
         chromium_enabled = os.getenv("ERIS_CHROMIUM_IA2_ENABLED", "1").strip().lower() not in {"0", "false", "off", "no"}
         if chromium_enabled and now - self._last_chromium_poll_at >= 15.0:
             self._last_chromium_poll_at = now
@@ -316,33 +369,16 @@ class SelfTurnPipeline:
                 if self._chromium_accessibility is None:
                     from native.chromium_accessibility import ChromiumAccessibilityAdapter
                     self._chromium_accessibility = ChromiumAccessibilityAdapter().start()
+                    if worker is not None:
+                        worker.set_chromium_adapter(self._chromium_accessibility)
                 for event in self._chromium_accessibility.poll_all():
                     self._publish_environment_event(event)
             except Exception as exc:
                 self.host.logger.debug("[deep environment] chromium accessibility reconcile failed: %s", exc)
 
-        since = self._last_environment_event_at
-        events = list(self.environment_event_bus.drain(since=since, limit=128))
-
-        # WinEvent callback không dereference UIA object. Enrichment diễn ra tại
-        # consumer tick này để role/focus/dialog/editor đi vào semantic bus mà
-        # vẫn giữ callback native nhẹ và an toàn.
-        if self._uia_semantic_adapter is not None:
-            for raw_event in tuple(events):
-                if raw_event.source not in {"winevent", "foreground_reconcile"}:
-                    continue
-                try:
-                    enriched = self._uia_semantic_adapter.enrich(raw_event)
-                    if enriched is not None:
-                        accepted = self._publish_environment_event(enriched)
-                        if accepted is not None:
-                            events.append(accepted)
-                except Exception as exc:
-                    self.host.logger.debug("[deep environment] UIA enrichment failed: %s", exc)
-
-        if events:
-            self._last_environment_event_at = max(item.timestamp for item in events) + 1e-6
-        return tuple(events[-128:])
+        # Structured events không còn được consume ở đây. Self-turn lấy danh sách
+        # event đã xử lý qua build_perception_situation() để tránh backlog 13-18s.
+        return ()
 
     def run(self) -> bool:
         host = self.host
@@ -379,7 +415,12 @@ class SelfTurnPipeline:
             except Exception as exc:
                 host.logger.debug("[conversation arc] due check failed: %s", exc)
         blocked_until = float(getattr(host, "autonomous_presence_blocked_until", 0.0) or 0.0)
-        if now < blocked_until and not (short_continuation_due or arc_due):
+        semantic_worker = getattr(self, "_semantic_environment_worker", None)
+        pending_environment_attention = int(getattr(semantic_worker, "pending_attention_level", 0) or 0)
+        # Cooldown presence/social không được che một structured event level>=2.
+        # Worker chỉ bypass nhịp ngủ để planner nhìn situation; initiative governor
+        # vẫn có toàn quyền chọn silence/body_only nên đây không phải auto-speech.
+        if now < blocked_until and not (short_continuation_due or arc_due or pending_environment_attention >= 2):
             host._sleep_interruptible(min(4.0, max(0.2, blocked_until - now)))
             return True
 
@@ -1100,57 +1141,28 @@ class SelfTurnPipeline:
 
         observer_frame = previous_observer
 
-        environment_events = self._collect_environment_events(now, telemetry)
-        base_situation = self.desktop_semantic_runtime.observe(
-            screen,
-            telemetry=telemetry,
-            observer_frame=observer_frame,
-            now=now,
-        )
-        user_situation = self.desktop_semantic_runtime.observe_events(
-            environment_events,
-            telemetry=telemetry,
-            base_situation=base_situation,
-            now=now,
-        )
-        if environment_events:
-            observability = getattr(host, "observability", None)
-            if observability is not None:
-                try:
-                    kinds = tuple(str(item.event_type or "unknown") for item in environment_events)
-                    mechanical = all(item.attention_level == 0 or not item.semantic for item in environment_events)
-                    for item in environment_events:
-                        observability.observe(
-                            "environment_event_to_semantic_ms",
-                            max(0.0, (now - float(item.timestamp or now)) * 1000.0),
-                        )
-                        if item.event_type == "foreground_changed":
-                            observability.observe(
-                                "foreground_to_user_situation_ms",
-                                max(0.0, (now - float(item.timestamp or now)) * 1000.0),
-                            )
-                    wake_from_environment = bool(user_situation.semantic_delta and user_situation.max_attention_level >= 2)
-                    if mechanical and wake_from_environment:
-                        observability.increment("environment_false_wake_mechanical_total")
-                    observability.increment(
-                        "user_situation_from_environment_total",
-                        tags={
-                            "phase": user_situation.phase or "unknown",
-                            "attention_state": user_situation.attention_state or "unknown",
-                            "max_attention": str(max(0, min(4, int(user_situation.max_attention_level or 0)))),
-                            "semantic_delta": str(bool(user_situation.semantic_delta)).lower(),
-                            "wake": str(wake_from_environment).lower(),
-                        },
-                        fields={
-                            "event_count": len(environment_events),
-                            "event_types": list(dict.fromkeys(kinds))[:12],
-                            "task_hint": user_situation.task_hint,
-                            "busy_score": round(float(user_situation.busy_score or 0.0), 4),
-                            "interruption_cost": round(float(user_situation.interruption_cost or 0.0), 4),
-                        },
-                    )
-                except Exception:
-                    pass
+        # Reconcile source chỉ publish safety-net events. Structured semantic đã
+        # được daemon worker xử lý từ lúc native callback tới, không còn nằm trên
+        # critical path của self-turn cadence.
+        self._collect_environment_events(now, telemetry)
+        semantic_worker = getattr(self, "_semantic_environment_worker", None)
+        if semantic_worker is not None:
+            environment_events, user_situation = semantic_worker.build_perception_situation(
+                screen,
+                telemetry=telemetry,
+                observer_frame=observer_frame,
+                now=now,
+            )
+        else:
+            # Rollback phòng trường hợp worker không khởi tạo được. Nhánh này giữ
+            # OCR/screen fallback nhưng không phục hồi kiểu drain bus chậm cũ.
+            environment_events = ()
+            user_situation = self.desktop_semantic_runtime.observe(
+                screen,
+                telemetry=telemetry,
+                observer_frame=observer_frame,
+                now=now,
+            )
         setattr(host, "last_user_situation", user_situation)
 
         # Semantic Tutor nhận cùng screen contract + structured chess state. Nó

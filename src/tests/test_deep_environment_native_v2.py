@@ -472,3 +472,101 @@ def test_privacy_policy_loads_explicit_domain_override_from_env(monkeypatch) -> 
     decision = policy.scope_for(process_name="chrome.exe", url="https://learn.microsoft.com/windows")
     assert decision.scope == PrivacyScope.CONTENT_EPHEMERAL
     assert decision.ttl_ms > 0
+
+
+def test_semantic_environment_worker_processes_without_self_turn_tick() -> None:
+    """Structured event phải thành UserSituation ngay cả khi self-turn chưa chạy."""
+    from types import SimpleNamespace
+    from runtime.ai_orchestrated.semantic_environment_worker import SemanticEnvironmentWorker
+
+    class Logger:
+        def debug(self, *_args, **_kwargs):
+            pass
+        def warning(self, *_args, **_kwargs):
+            pass
+
+    class Observability:
+        def __init__(self):
+            self.names = []
+        def observe(self, name, _value, **_kwargs):
+            self.names.append(name)
+        def increment(self, name, *_args, **_kwargs):
+            self.names.append(name)
+
+    wakes = []
+    host = SimpleNamespace(
+        logger=Logger(),
+        observability=Observability(),
+        _wake_autonomous_loop=wakes.append,
+    )
+    runtime = DesktopSemanticRuntime()
+    worker = SemanticEnvironmentWorker(
+        host=host,
+        runtime=runtime,
+        publish_event=lambda _event: None,
+        batch_window_ms=0,
+    ).start()
+    try:
+        started_revision = worker.revision
+        worker.submit(_event("command_failed", level=3, title="pytest", now=time.time()))
+        assert worker.wait_until_revision(started_revision + 1, timeout=1.0)
+        situation = worker.latest_situation
+        assert situation is not None
+        assert situation.semantic_delta is True
+        assert situation.max_attention_level == 3
+        assert wakes and wakes[-1].startswith("environment_semantic:")
+        assert "environment_ingress_to_semantic_ms" in host.observability.names
+        assert "environment_event_to_semantic_ms" in host.observability.names
+    finally:
+        worker.stop()
+
+
+def test_semantic_worker_attention_is_consumed_once_per_perception() -> None:
+    """Event level cao không được đánh thức self-turn lặp lại sau khi đã consume."""
+    from types import SimpleNamespace
+    from runtime.ai_orchestrated.ambient_screen_context import AmbientScreenContext
+    from runtime.ai_orchestrated.semantic_environment_worker import SemanticEnvironmentWorker
+
+    class Logger:
+        def debug(self, *_args, **_kwargs):
+            pass
+        def warning(self, *_args, **_kwargs):
+            pass
+
+    host = SimpleNamespace(logger=Logger(), observability=None, _wake_autonomous_loop=lambda _reason: None)
+    runtime = DesktopSemanticRuntime()
+    worker = SemanticEnvironmentWorker(
+        host=host,
+        runtime=runtime,
+        publish_event=lambda _event: None,
+        batch_window_ms=0,
+    ).start()
+    try:
+        worker.submit(_event("command_failed", level=3, title="pytest", now=time.time()))
+        assert worker.wait_until_revision(1, timeout=1.0)
+        screen = AmbientScreenContext(
+            revision=1,
+            window_title="main.py - Visual Studio Code",
+            process_name="Code.exe",
+            age_seconds=0.1,
+        )
+        events1, situation1 = worker.build_perception_situation(
+            screen,
+            telemetry={"active_process": "Code.exe", "idle_seconds": 1},
+            now=time.time(),
+        )
+        events2, situation2 = worker.build_perception_situation(
+            screen,
+            telemetry={"active_process": "Code.exe", "idle_seconds": 1},
+            now=time.time() + 0.1,
+        )
+        assert len(events1) == 1
+        assert situation1.max_attention_level == 3
+        assert situation1.semantic_delta is True
+        assert events2 == ()
+        assert situation2.max_attention_level == 0
+        assert situation2.semantic_delta is False
+        # Task state vẫn còn dù attention của event đã được consume.
+        assert situation2.task_hint != "unknown"
+    finally:
+        worker.stop()

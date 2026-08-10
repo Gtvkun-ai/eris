@@ -87,6 +87,8 @@ class CoordinatorShutdownMixin:
                 worker.stop()
             except Exception as exc:
                 self.logger.warning("[screen text] stop error: %s", exc)
+        # Dừng producer native trước, rồi mới dừng semantic consumer. Như vậy
+        # shutdown không tạo thêm event sau khi worker đã ngừng nhận queue.
         native_broker = getattr(self, "native_environment_event_broker", None)
         if native_broker is not None:
             try:
@@ -98,6 +100,12 @@ class CoordinatorShutdownMixin:
                 monitor.stop()
             except Exception as exc:
                 self.logger.debug("[deep environment] monitor stop error: %s", exc)
+        semantic_worker = getattr(self, "semantic_environment_worker", None)
+        if semantic_worker is not None:
+            try:
+                semantic_worker.stop()
+            except Exception as exc:
+                self.logger.debug("[deep environment] semantic worker stop error: %s", exc)
         self._stop_mental_process_loop()
         supervisor = getattr(self, "subsystem_supervisor", None)
         if supervisor is not None:

@@ -669,8 +669,11 @@ class DesktopSemanticRuntime:
         activity = task_state.activity if task_state.activity != "unknown" else base.activity
         task_hint = task_state.label if task_state.label != "unknown" else base.task_hint
         phase = task_state.phase if task_state.phase != "unknown" else base.phase
-        focused_process = str(telemetry.get("active_process", "") or base.focused_process)
-        focused_app = focused_process or str(telemetry.get("active_app", "") or base.focused_app)
+        # Event-driven worker có thể nhận event trước telemetry tick đầu tiên. Khi
+        # đó lấy process identity trực tiếp từ structured event thay vì để focus rỗng.
+        event_process = next((str(item.process_name or "") for item in reversed(normalized) if item.process_name), "")
+        focused_process = str(telemetry.get("active_process", "") or base.focused_process or event_process)
+        focused_app = focused_process or str(telemetry.get("active_app", "") or base.focused_app or event_process)
         focused_object = base.focused_object
         for item in reversed(normalized):
             if item.title and str(item.privacy_scope).upper() not in {"OFF", "METADATA"}:
