@@ -84,9 +84,28 @@ class WindowsEventBroker:
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=1.5)
 
-    def emit_raw(self, event: int, hwnd: int, object_id: int = 0, child_id: int = 0, *, timestamp: float | None = None) -> NormalizedEnvironmentEvent | None:
-        """Injection seam used by tests and non-hook adapters."""
-        timestamp = time.time() if timestamp is None else float(timestamp)
+    def emit_raw(
+        self,
+        event: int,
+        hwnd: int,
+        object_id: int = 0,
+        child_id: int = 0,
+        *,
+        timestamp: float | None = None,
+        source_delay_ms: float | None = None,
+    ) -> NormalizedEnvironmentEvent | None:
+        """Injection seam cho test và WinEvent hook.
+
+        ``source_delay_ms`` lấy từ ``dwmsEventTime`` của WinEvent callback. Khi có
+        giá trị này ta lùi wall timestamp về thời điểm Windows phát event, nhờ đó
+        metric source->ingress không còn đoán thời điểm source bằng lúc callback
+        tình cờ được Python xử lý.
+        """
+        if timestamp is None:
+            delay_ms = max(0.0, min(60_000.0, float(source_delay_ms or 0.0)))
+            timestamp = time.time() - delay_ms / 1000.0
+        else:
+            timestamp = float(timestamp)
         if event not in _EVENT_NAMES or not hwnd:
             return None
         signature = (int(event), int(hwnd), int(object_id), int(child_id))
@@ -137,7 +156,13 @@ class WindowsEventBroker:
             confidence=0.96,
             attention_level=level,
             evidence_refs=(f"winevent:{event}:{hwnd}:{object_id}:{child_id}",),
-            metadata={"event_code": int(event), "object_id": int(object_id), "child_id": int(child_id), "raw_event_type": raw_kind},
+            metadata={
+                "event_code": int(event),
+                "object_id": int(object_id),
+                "child_id": int(child_id),
+                "raw_event_type": raw_kind,
+                "source_callback_delay_ms": max(0.0, float(source_delay_ms or 0.0)),
+            },
         )
         try:
             self.callback(normalized)
@@ -181,10 +206,24 @@ class WindowsEventBroker:
         user32.DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
         user32.DispatchMessageW.restype = wintypes.LPARAM
 
+        kernel32.GetTickCount.restype = wintypes.DWORD
+
         def callback(_hook, event, hwnd, object_id, child_id, _thread, event_time):
-            del _hook, _thread, event_time
+            del _hook, _thread
             try:
-                self.emit_raw(int(event), int(hwnd or 0), int(object_id), int(child_id))
+                # WinEvent dwmsEventTime dùng tick-count 32-bit. Phép trừ modulo
+                # giữ đúng cả khi counter wrap; giá trị phi lý >60s bị emit_raw clamp.
+                source_delay_ms = 0.0
+                if int(event_time or 0) > 0:
+                    tick_now = int(kernel32.GetTickCount())
+                    source_delay_ms = float((tick_now - int(event_time)) & 0xFFFFFFFF)
+                self.emit_raw(
+                    int(event),
+                    int(hwnd or 0),
+                    int(object_id),
+                    int(child_id),
+                    source_delay_ms=source_delay_ms,
+                )
             except Exception:
                 pass
 

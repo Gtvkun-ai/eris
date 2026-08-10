@@ -293,6 +293,15 @@ class SelfTurnPipeline:
                     },
                 )
                 observability.observe("environment_source_to_ingress_ms", source_to_ingress_ms, tags=tags)
+                source_callback_delay_ms = (accepted.metadata or {}).get("source_callback_delay_ms")
+                if source_callback_delay_ms is not None:
+                    # WinEvent dwmsEventTime -> callback delay thật, tách khỏi thời
+                    # gian enrich/derived-event để biết provider thread có nghẽn hay không.
+                    observability.observe(
+                        "environment_source_callback_delay_ms",
+                        max(0.0, float(source_callback_delay_ms or 0.0)),
+                        tags=tags,
+                    )
                 observability.observe("environment_bus_publish_duration_ms", publish_duration_ms, tags=tags)
                 # Tên cũ được giữ cho dashboard/probe tương thích. Từ V4 nó mang
                 # nghĩa source -> ingress, không còn giả làm thời gian bus.publish().

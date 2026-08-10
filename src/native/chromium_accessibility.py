@@ -296,12 +296,33 @@ class ChromiumAccessibilityAdapter:
         self._last_provider[snapshot.hwnd] = snapshot.provider
         return tuple(events)
 
+    def poll_window(
+        self,
+        hwnd: int,
+        *,
+        force: bool = False,
+        now: float | None = None,
+    ) -> tuple[NormalizedEnvironmentEvent, ...]:
+        """Refresh đúng Chromium HWND gây event.
+
+        Đường event-triggered V5 tuyệt đối không ``EnumWindows -> snapshot mọi
+        browser window`` cho mỗi selection/name change. Native WinEvent đã cho
+        ta HWND, nên đọc đúng cửa sổ đó là đủ. ``poll_all`` chỉ còn là safety-net
+        reconciliation định kỳ.
+        """
+        hwnd = int(hwnd or 0)
+        if not hwnd:
+            return ()
+        snapshot = self.snapshot_window(hwnd, force=force)
+        if snapshot is None:
+            return ()
+        return self.diff_events(snapshot, now=now)
+
     def poll_all(self, *, force: bool = False) -> tuple[NormalizedEnvironmentEvent, ...]:
+        """Reconciliation toàn bộ Chromium windows, không dùng cho hot path."""
         events: list[NormalizedEnvironmentEvent] = []
         for hwnd in self.discover_windows():
-            snapshot = self.snapshot_window(hwnd, force=force)
-            if snapshot is not None:
-                events.extend(self.diff_events(snapshot))
+            events.extend(self.poll_window(hwnd, force=force))
         return tuple(events)
 
 

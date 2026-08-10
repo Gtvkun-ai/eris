@@ -4,36 +4,34 @@
 Mục tiêu của module này là tách đường:
     native event -> semantic -> UserSituation
 khỏi nhịp self-turn. Native callback chỉ đưa event đã qua privacy/coalesce vào
-queue; một daemon thread riêng mới làm UIA enrichment, Chromium reconcile cục
-bộ, TaskGraph/RegionMemory và cập nhật ``UserSituation``.
+scheduler; daemon semantic xử lý TaskGraph/RegionMemory và cập nhật
+``UserSituation`` trước. UIA/Chromium enrichment được đẩy sang pool hậu xử lý để
+cross-process call không giữ critical path.
 
 Nhờ vậy cognition không phải đợi autonomous loop ngủ vài giây mới biết một
 ``command_failed`` vừa xảy ra. Self-turn chỉ đọc snapshot đã được xử lý sẵn.
 """
 from __future__ import annotations
 
-import queue
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass, replace
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from typing import Any, Callable, Mapping
 
 from .desktop_semantics import DesktopSemanticRuntime, UserSituation
 from .environment_event_bus import NormalizedEnvironmentEvent
+from .environment_ingress_scheduler import (
+    EnrichmentMode,
+    EnvironmentIngressScheduler,
+    EnvironmentPriority,
+    ScheduledEnvironmentEvent,
+)
 
 
 _CHROMIUM_PROCESSES = {"chrome.exe", "msedge.exe", "brave.exe", "chromium.exe"}
 _NATIVE_ENRICH_SOURCES = {"winevent", "foreground_reconcile"}
-
-
-@dataclass(frozen=True, slots=True)
-class _QueuedEnvironmentEvent:
-    """Envelope runtime-only; timing này không đi qua privacy payload/persistence."""
-
-    event: NormalizedEnvironmentEvent
-    ingress_monotonic_ns: int
-    ingress_wall_time: float
 
 
 class SemanticEnvironmentWorker:
@@ -41,8 +39,8 @@ class SemanticEnvironmentWorker:
 
     ``DesktopSemanticRuntime`` và ``TaskGraph`` đều có state mutable. Worker giữ
     một lock chung khi mutate chúng để self-turn chỉ được phép gọi fallback OCR/
-    screen qua ``build_perception_situation``. Cách này tránh hai thread cùng sửa
-    TaskGraph rồi tạo ra một task rất meta: debug race condition của TaskGraph.
+    screen qua ``build_perception_situation``. Enrichment async chỉ publish event
+    mới quay lại scheduler, tuyệt đối không sửa TaskGraph trực tiếp từ thread pool.
     """
 
     def __init__(
@@ -62,10 +60,20 @@ class SemanticEnvironmentWorker:
         self._publish_event = publish_event
         self._uia_adapter = uia_adapter
         self._chromium_adapter = chromium_adapter
-        self._queue: queue.Queue[_QueuedEnvironmentEvent] = queue.Queue(maxsize=max(64, int(max_queue)))
+        # V5: priority heap + coalescing index thay cho FIFO Queue. Event storm
+        # background không còn đứng trước foreground/error chỉ vì đến sớm hơn.
+        self._scheduler = EnvironmentIngressScheduler(max_pending=max_queue)
         self._batch_window_seconds = max(0.0, float(batch_window_ms)) / 1000.0
         self._chromium_refresh_min_ns = int(max(20.0, float(chromium_refresh_min_ms)) * 1_000_000.0)
-        self._last_chromium_refresh_ns = 0
+        self._last_chromium_refresh_ns_by_hwnd: dict[int, int] = {}
+
+        # Enrichment có thể chạm COM/cross-process nên không được chặn semantic
+        # critical path. Pool nhỏ, bounded theo policy scheduler; Chromium còn có
+        # coalescing riêng theo HWND khi một refresh đang chạy.
+        self._enrichment_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="eris-env-enrich")
+        self._enrichment_lock = threading.RLock()
+        self._chromium_refresh_inflight = False
+        self._pending_chromium_triggers: dict[int, ScheduledEnvironmentEvent] = {}
 
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -94,9 +102,14 @@ class SemanticEnvironmentWorker:
     def stop(self, timeout: float = 1.5) -> None:
         """Dừng worker có giới hạn thời gian; shutdown không được treo theo sensor."""
         self._stop_event.set()
+        self._scheduler.close()
         thread = self._thread
         if thread is not None and thread.is_alive() and thread is not threading.current_thread():
             thread.join(timeout=max(0.0, float(timeout)))
+        try:
+            self._enrichment_pool.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
 
     def set_uia_adapter(self, adapter: Any) -> None:
         self._uia_adapter = adapter
@@ -150,31 +163,44 @@ class SemanticEnvironmentWorker:
         ingress_monotonic_ns: int | None = None,
         ingress_wall_time: float | None = None,
     ) -> bool:
-        """Đưa event vào queue mà không block native callback.
+        """Đưa event vào ingress scheduler mà không block native callback.
 
-        Khi queue đầy, bỏ event cũ nhất rồi nhận event mới. Structured sensing
-        ưu tiên trạng thái mới nhất hơn việc giữ backlog nhiều giây, vì backlog
-        chính là thứ PDF muốn loại khỏi critical path.
+        V5 không còn FIFO "đến trước xử lý trước". Scheduler tự quyết định
+        priority/coalescing/backpressure theo policy tập trung, nên foreground hay
+        command_failed không bị kẹt sau một cơn bão structure_reordered.
         """
-        item = _QueuedEnvironmentEvent(
-            event=event,
-            ingress_monotonic_ns=int(ingress_monotonic_ns or time.monotonic_ns()),
-            ingress_wall_time=float(time.time() if ingress_wall_time is None else ingress_wall_time),
+        ingress_ns = int(ingress_monotonic_ns or time.monotonic_ns())
+        ingress_wall = float(time.time() if ingress_wall_time is None else ingress_wall_time)
+        result = self._scheduler.submit(
+            event,
+            ingress_monotonic_ns=ingress_ns,
+            ingress_wall_time=ingress_wall,
         )
-        try:
-            self._queue.put_nowait(item)
-            return True
-        except queue.Full:
+
+        observability = getattr(self.host, "observability", None)
+        if observability is not None and result.item is not None:
             try:
-                self._queue.get_nowait()
-            except queue.Empty:
+                callback_to_enqueue_ms = max(
+                    0.0,
+                    (result.item.enqueue_monotonic_ns - ingress_ns) / 1_000_000.0,
+                )
+                tags = {
+                    "source": event.source or "unknown",
+                    "event_type": event.event_type or "unknown",
+                    "priority": result.item.policy.priority.name.lower(),
+                }
+                observability.observe("environment_callback_to_enqueue_ms", callback_to_enqueue_ms, tags=tags)
+                observability.observe("environment_semantic_queue_depth", float(result.queue_depth), tags={"priority": tags["priority"]})
+            except Exception:
                 pass
-            self._metric_increment("environment_semantic_queue_drop_total")
-            try:
-                self._queue.put_nowait(item)
-                return True
-            except queue.Full:
-                return False
+
+        if result.coalesced:
+            self._metric_increment("environment_scheduler_coalesced_total")
+        if result.evicted:
+            self._metric_increment("environment_scheduler_evicted_total")
+        if result.dropped:
+            self._metric_increment("environment_scheduler_drop_total")
+        return bool(result.accepted)
 
     def wait_until_revision(self, revision: int, timeout: float = 1.0) -> bool:
         """Helper deterministic cho test/probe, không dùng polling nóng trong production."""
@@ -278,19 +304,37 @@ class SemanticEnvironmentWorker:
         )
 
     def _run(self) -> None:
-        """Main loop: batch cực ngắn để giảm overhead nhưng không tạo backlog."""
+        """Main loop của semantic critical path.
+
+        Critical event được xử lý ngay. NORMAL/BACKGROUND chỉ gom những item đã
+        sẵn có trong một cửa sổ rất ngắn để giảm overhead; worker không ngủ để
+        "đợi đủ batch". Enrichment chạy sau semantic và ở pool riêng.
+        """
         while not self._stop_event.is_set():
-            try:
-                first = self._queue.get(timeout=0.20)
-            except queue.Empty:
+            first = self._scheduler.get(timeout=0.20)
+            if first is None:
                 continue
 
             batch = [first]
-            batch_deadline = time.monotonic() + self._batch_window_seconds
-            while len(batch) < 64 and time.monotonic() < batch_deadline:
-                try:
-                    batch.append(self._queue.get_nowait())
-                except queue.Empty:
+            if first.policy.priority == EnvironmentPriority.CRITICAL:
+                max_items = 16
+                ceiling = EnvironmentPriority.CRITICAL
+                batch_deadline = time.monotonic()  # không chờ thêm cho critical
+            elif first.policy.priority == EnvironmentPriority.NORMAL:
+                max_items = 32
+                ceiling = EnvironmentPriority.NORMAL
+                batch_deadline = time.monotonic() + min(self._batch_window_seconds, 0.004)
+            else:
+                max_items = 64
+                ceiling = EnvironmentPriority.BACKGROUND
+                batch_deadline = time.monotonic() + self._batch_window_seconds
+
+            while len(batch) < max_items:
+                queued = self._scheduler.get_nowait(max_priority=ceiling)
+                if queued is None:
+                    break
+                batch.append(queued)
+                if time.monotonic() >= batch_deadline:
                     break
 
             try:
@@ -304,66 +348,36 @@ class SemanticEnvironmentWorker:
                         pass
                 self._metric_increment("environment_semantic_worker_error_total")
 
-    def _process_batch(self, batch: list[_QueuedEnvironmentEvent]) -> None:
+    def _process_batch(self, batch: list[ScheduledEnvironmentEvent]) -> None:
         if not batch:
             return
 
-        # UIA enrichment tuyệt đối không chạy trong WinEvent callback. Nó chạy ở
-        # daemon consumer này, sau đó publish lại để cùng privacy/coalesce path.
-        for queued in batch:
-            event = queued.event
-            if self._uia_adapter is not None and event.source in _NATIVE_ENRICH_SOURCES:
-                try:
-                    enriched = self._uia_adapter.enrich(event)
-                    if enriched is not None:
-                        self._publish_event(enriched)
-                except Exception as exc:  # noqa: BLE001
-                    self._debug("UIA enrichment lỗi: %s", exc)
-
-        # Với Chromium, native selection/name/focus event được dùng như trigger
-        # để IA2/UIA adapter diff ngay, thay vì chờ self-turn poll 15 giây.
-        chromium_triggers = [
-            item.event for item in batch
-            if str(item.event.process_name or "").lower() in _CHROMIUM_PROCESSES
-            and item.event.source in _NATIVE_ENRICH_SOURCES
-        ]
-        if self._chromium_adapter is not None and chromium_triggers:
-            now_ns = time.monotonic_ns()
-            if now_ns - self._last_chromium_refresh_ns >= self._chromium_refresh_min_ns:
-                self._last_chromium_refresh_ns = now_ns
-                trigger = min(chromium_triggers, key=lambda item: float(item.timestamp or 0.0))
-                try:
-                    for chromium_event in tuple(self._chromium_adapter.poll_all() or ()):
-                        # Gắn timestamp của native trigger vào event Chromium để
-                        # metric native -> browser semantic tính luôn thời gian IA2/UIA
-                        # diff, không tự đẹp số bằng cách bắt đầu đồng hồ sau poll.
-                        metadata = dict(chromium_event.metadata or {})
-                        metadata.setdefault("trigger_source", trigger.source)
-                        metadata.setdefault("trigger_event_type", trigger.event_type)
-                        triggered_event = replace(
-                            chromium_event,
-                            timestamp=min(float(chromium_event.timestamp), float(trigger.timestamp)),
-                            metadata=metadata,
-                            event_id="",
-                        )
-                        self._publish_event(triggered_event)
-                except Exception as exc:  # noqa: BLE001
-                    self._debug("Chromium event-triggered refresh lỗi: %s", exc)
-
+        # V5 quan trọng: semantic baseline được tính TRƯỚC enrichment. Một WinEvent
+        # foreground/focus hợp lệ phải cập nhật UserSituation ngay; UIA/IA2 có chậm
+        # thì chỉ làm giàu fact sau đó, không giữ critical path làm con tin.
+        processing_started_ns = time.monotonic_ns()
         events = tuple(item.event for item in batch)
         telemetry = self._telemetry_for_events(events)
-        semantic_wall_done = time.time()
+        semantic_wall_started = time.time()
+        semantic_started_ns = time.monotonic_ns()
         with self._runtime_lock:
             situation = self.runtime.observe_events(
                 events,
                 telemetry=telemetry,
                 base_situation=None,
-                now=semantic_wall_done,
+                now=semantic_wall_started,
             )
         semantic_done_ns = time.monotonic_ns()
         semantic_wall_done = time.time()
 
-        self._record_semantic_metrics(batch, situation, semantic_done_ns, semantic_wall_done)
+        self._record_semantic_metrics(
+            batch,
+            situation,
+            semantic_done_ns,
+            semantic_wall_done,
+            processing_started_ns=processing_started_ns,
+            semantic_started_ns=semantic_started_ns,
+        )
 
         with self._state_lock:
             self._latest_situation = situation
@@ -381,6 +395,165 @@ class SemanticEnvironmentWorker:
                     wake(f"environment_semantic:{kinds or 'event'}")
                 except Exception as exc:  # noqa: BLE001
                     self._debug("không đánh thức được autonomous loop: %s", exc)
+
+        # Enrichment là hậu xử lý bất đồng bộ. Event sinh ra từ UIA/IA2 sẽ quay
+        # lại publish -> scheduler như mọi event khác, nên privacy/coalesce vẫn là
+        # một đường duy nhất thay vì có lối tắt bí mật.
+        self._schedule_post_semantic_enrichment(batch)
+
+    def _schedule_post_semantic_enrichment(self, batch: list[ScheduledEnvironmentEvent]) -> None:
+        if self._stop_event.is_set():
+            return
+
+        for queued in batch:
+            event = queued.event
+            if (
+                self._uia_adapter is not None
+                and event.source in _NATIVE_ENRICH_SOURCES
+                and queued.policy.enrichment != EnrichmentMode.NONE
+            ):
+                try:
+                    self._enrichment_pool.submit(self._run_uia_enrichment, queued)
+                except RuntimeError:
+                    pass
+
+        chromium_triggers = [
+            item for item in batch
+            if item.policy.chromium_refresh
+            and str(item.event.process_name or "").lower() in _CHROMIUM_PROCESSES
+            and item.event.source in _NATIVE_ENRICH_SOURCES
+            and int(item.event.hwnd or 0)
+        ]
+        if self._chromium_adapter is not None and chromium_triggers:
+            # Giữ latest trigger theo HWND; selection/foreground critical sẽ thắng
+            # background name_changed nhờ priority scheduler.
+            for trigger in chromium_triggers:
+                self._schedule_chromium_refresh(trigger)
+
+    def _run_uia_enrichment(self, queued: ScheduledEnvironmentEvent) -> None:
+        if self._stop_event.is_set() or self._uia_adapter is None:
+            return
+        started_ns = time.monotonic_ns()
+        try:
+            enriched = self._uia_adapter.enrich(queued.event)
+            if enriched is not None:
+                self._publish_event(enriched)
+        except Exception as exc:  # noqa: BLE001
+            self._debug("UIA enrichment lỗi: %s", exc)
+        finally:
+            self._observe_enrichment_metric(
+                "uia",
+                queued.event,
+                max(0.0, (time.monotonic_ns() - started_ns) / 1_000_000.0),
+            )
+
+    def _schedule_chromium_refresh(self, trigger: ScheduledEnvironmentEvent) -> None:
+        hwnd = int(trigger.event.hwnd or 0)
+        if not hwnd:
+            return
+        with self._enrichment_lock:
+            previous = self._pending_chromium_triggers.get(hwnd)
+            should_replace = previous is None
+            if previous is not None:
+                if int(trigger.policy.priority) < int(previous.policy.priority):
+                    should_replace = True
+                elif (
+                    int(trigger.policy.priority) == int(previous.policy.priority)
+                    and float(trigger.event.timestamp or 0.0) >= float(previous.event.timestamp or 0.0)
+                ):
+                    should_replace = True
+            if should_replace:
+                self._pending_chromium_triggers[hwnd] = trigger
+            if self._chromium_refresh_inflight:
+                return
+            self._chromium_refresh_inflight = True
+        try:
+            self._enrichment_pool.submit(self._run_chromium_refresh_loop)
+        except RuntimeError:
+            with self._enrichment_lock:
+                self._chromium_refresh_inflight = False
+
+    def _run_chromium_refresh_loop(self) -> None:
+        """Refresh Chromium theo HWND, không EnumWindows/poll_all cho mỗi trigger."""
+        try:
+            while not self._stop_event.is_set():
+                with self._enrichment_lock:
+                    if not self._pending_chromium_triggers:
+                        self._chromium_refresh_inflight = False
+                        return
+                    # Critical trước; trong cùng priority lấy trigger mới nhất.
+                    hwnd, trigger = min(
+                        self._pending_chromium_triggers.items(),
+                        key=lambda pair: (int(pair[1].policy.priority), -float(pair[1].event.timestamp or 0.0)),
+                    )
+                    self._pending_chromium_triggers.pop(hwnd, None)
+
+                now_ns = time.monotonic_ns()
+                last_ns = self._last_chromium_refresh_ns_by_hwnd.get(hwnd, 0)
+                if (
+                    trigger.policy.priority != EnvironmentPriority.CRITICAL
+                    and now_ns - last_ns < self._chromium_refresh_min_ns
+                ):
+                    continue
+                self._last_chromium_refresh_ns_by_hwnd[hwnd] = now_ns
+
+                started_ns = time.monotonic_ns()
+                try:
+                    poll_window = getattr(self._chromium_adapter, "poll_window", None)
+                    if callable(poll_window):
+                        chromium_events = tuple(
+                            poll_window(
+                                hwnd,
+                                force=True,
+                                now=float(trigger.event.timestamp or time.time()),
+                            ) or ()
+                        )
+                    else:
+                        # Backward compatibility cho adapter test-double cũ.
+                        chromium_events = tuple(self._chromium_adapter.poll_all() or ())
+
+                    for chromium_event in chromium_events:
+                        metadata = dict(chromium_event.metadata or {})
+                        metadata.setdefault("trigger_source", trigger.event.source)
+                        metadata.setdefault("trigger_event_type", trigger.event.event_type)
+                        triggered_event = replace(
+                            chromium_event,
+                            timestamp=min(
+                                float(chromium_event.timestamp),
+                                float(trigger.event.timestamp or chromium_event.timestamp),
+                            ),
+                            metadata=metadata,
+                            event_id="",
+                        )
+                        self._publish_event(triggered_event)
+                except Exception as exc:  # noqa: BLE001
+                    self._debug("Chromium event-triggered refresh lỗi: %s", exc)
+                finally:
+                    self._observe_enrichment_metric(
+                        "chromium",
+                        trigger.event,
+                        max(0.0, (time.monotonic_ns() - started_ns) / 1_000_000.0),
+                    )
+        finally:
+            with self._enrichment_lock:
+                self._chromium_refresh_inflight = False
+
+    def _observe_enrichment_metric(self, provider: str, event: NormalizedEnvironmentEvent, value_ms: float) -> None:
+        observability = getattr(self.host, "observability", None)
+        if observability is None:
+            return
+        try:
+            observability.observe(
+                "environment_enrichment_ms",
+                float(value_ms),
+                tags={
+                    "provider": str(provider or "unknown"),
+                    "source": event.source or "unknown",
+                    "event_type": event.event_type or "unknown",
+                },
+            )
+        except Exception:
+            pass
 
     def _telemetry_for_events(self, events: tuple[NormalizedEnvironmentEvent, ...]) -> dict[str, Any]:
         with self._state_lock:
@@ -412,10 +585,13 @@ class SemanticEnvironmentWorker:
 
     def _record_semantic_metrics(
         self,
-        batch: list[_QueuedEnvironmentEvent],
+        batch: list[ScheduledEnvironmentEvent],
         situation: UserSituation,
         semantic_done_ns: int,
         semantic_wall_done: float,
+        *,
+        processing_started_ns: int,
+        semantic_started_ns: int,
     ) -> None:
         observability = getattr(self.host, "observability", None)
         if observability is None:
@@ -428,14 +604,19 @@ class SemanticEnvironmentWorker:
                 provider = str((event.metadata or {}).get("provider", "") or event.source or "unknown")[:40]
                 ingress_to_semantic_ms = max(0.0, (semantic_done_ns - item.ingress_monotonic_ns) / 1_000_000.0)
                 source_to_semantic_ms = max(0.0, (semantic_wall_done - float(event.timestamp or semantic_wall_done)) * 1000.0)
+                queue_wait_ms = max(0.0, (processing_started_ns - item.enqueue_monotonic_ns) / 1_000_000.0)
+                semantic_processing_ms = max(0.0, (semantic_done_ns - semantic_started_ns) / 1_000_000.0)
                 tags = {
                     "source": event.source or "unknown",
                     "event_type": event.event_type or "unknown",
                     "provider": provider,
+                    "priority": item.policy.priority.name.lower(),
                 }
+                observability.observe("environment_semantic_queue_wait_ms", queue_wait_ms, tags=tags)
+                observability.observe("environment_semantic_processing_ms", semantic_processing_ms, tags=tags)
                 observability.observe("environment_ingress_to_semantic_ms", ingress_to_semantic_ms, tags=tags)
                 observability.observe("environment_source_to_semantic_ms", source_to_semantic_ms, tags=tags)
-                # Giữ tên metric cũ để dashboard/probe hiện tại không gãy; từ V4
+                # Giữ tên metric cũ để dashboard/probe hiện tại không gãy.
                 # giá trị của nó là source -> semantic thật, không còn phụ thuộc self-turn tick.
                 observability.observe("environment_event_to_semantic_ms", source_to_semantic_ms, tags=tags)
                 if event.event_type == "foreground_changed":
