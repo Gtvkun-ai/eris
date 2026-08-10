@@ -33,6 +33,7 @@ WORKER_ROLES: tuple[str, ...] = (
     "tutor",
     "executive",
     "curator",
+    "research",
 )
 
 # Structured workers default to canonical one-line JSON whenever the caller
@@ -130,11 +131,15 @@ def load_worker_spec(role: object) -> DeepSeekWorkerSpec:
     # Role-specific key luôn được ưu tiên cao hơn shared key.
     # ERIS_DS2API_API_KEY (shared gateway key) chỉ là fallback cuối khi role
     # chưa có key riêng. Không để shared key override role-specific key đã khai.
+    shared_env_key = _clean_api_key(os.environ.get("ERIS_DS2API_API_KEY", "") or os.environ.get("ERIS_DS_API_KEY", ""))
     if normalized == "surface" and not _env_flag("ERIS_DS_SURFACE_ALLOW_SHARED_KEY", True):
         api_key = role_env_key or role_secret_key
+    elif normalized == "seed" and shared_env_key:
+        api_key = shared_env_key
     else:
         api_key = _clean_api_key(
             role_env_key
+            or shared_env_key
             or role_secret_key
             or get_secret("ERIS_DS2API_API_KEY")
             or get_secret("ERIS_DS_API_KEY")

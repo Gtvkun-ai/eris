@@ -54,7 +54,7 @@ async def test_transport_receives_correlated_frame() -> None:
 
 
 def test_python_and_csharp_contract_constants_match() -> None:
-    root = Path(__file__).resolve().parents[3]
+    root = Path(__file__).resolve().parents[2]
     csharp = (root / "body" / "SubjectPerformanceFrame.cs").read_text(encoding="utf-8")
     assert f'Protocol = "{SubjectPerformanceBodyAdapter.PROTOCOL}"' in csharp
     assert f"CurrentSchemaVersion = {SubjectPerformanceBodyAdapter.SCHEMA_VERSION}" in csharp

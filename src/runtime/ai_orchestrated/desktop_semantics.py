@@ -17,11 +17,16 @@ Design goals:
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import time
 from collections import deque
 from dataclasses import asdict, dataclass
 from typing import Any, Mapping, Sequence
+
+from .environment_event_bus import NormalizedEnvironmentEvent
+from .task_graph import TaskGraph
+from .region_memory import RegionMemory
 from urllib.parse import urlparse
 
 
@@ -109,6 +114,17 @@ def _looks_like_mechanical_item(text: str) -> bool:
     if len(normalized) <= 48 and "<n>" in shape and _numeric_fraction(normalized) >= 0.20:
         return True
     return False
+
+
+def _typed_mechanical_kind(items: Sequence[str]) -> str:
+    values = [str(item or "").strip() for item in items if str(item or "").strip()]
+    if values and all(_CLOCK_RE.fullmatch(value) for value in values):
+        return "clock_tick"
+    if values and all(_PROGRESS_RE.fullmatch(value) for value in values):
+        return "progress_update"
+    if values and all(_NUMBERISH_RE.fullmatch(value) or _looks_like_mechanical_item(value) for value in values):
+        return "counter_update"
+    return "mechanical_value_update"
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,7 +226,14 @@ class UserSituation:
 class DesktopSemanticRuntime:
     """Fuse telemetry + screen delta + observer state into a short activity timeline."""
 
-    def __init__(self, *, max_events: int = 64, history_window_seconds: float = 45.0) -> None:
+    def __init__(
+        self,
+        *,
+        max_events: int = 64,
+        history_window_seconds: float = 45.0,
+        task_graph: TaskGraph | None = None,
+        region_memory: RegionMemory | None = None,
+    ) -> None:
         self._events: deque[DesktopSemanticEvent] = deque(maxlen=max(16, int(max_events)))
         self._recent_event_keys: deque[str] = deque(maxlen=96)
         self._last_surface_key = ""
@@ -219,6 +242,10 @@ class DesktopSemanticRuntime:
         self._last_media_state = ""
         self._shape_history: dict[str, deque[tuple[float, str, str]]] = {}
         self._history_window_seconds = max(10.0, float(history_window_seconds))
+        self.task_graph = task_graph or TaskGraph()
+        # RegionMemory biến bounding-box change thành thuộc tính của cùng semantic
+        # region. Visual/OCR evidence yếu phải ổn định trước khi được phép nâng wake.
+        self.region_memory = region_memory or RegionMemory()
 
     def observe(
         self,
@@ -391,6 +418,22 @@ class DesktopSemanticRuntime:
                     identity=f"private:{surface_key}:{int(getattr(screen_context, 'revision', 0) or 0)}",
                 )
             elif mechanical:
+                typed_kind = _typed_mechanical_kind(changed_text)
+                emit(
+                    typed_kind,
+                    category="mechanical",
+                    semantic=False,
+                    level=0,
+                    confidence=mechanical_conf,
+                    novelty=max(0.01, changed_ratio * 0.15),
+                    importance=0.0,
+                    source="screen_delta_classifier",
+                    detail="typed mechanical visual delta",
+                    refs=evidence_refs,
+                    identity=f"typed_mechanical:{typed_kind}:{surface_key}:{int(getattr(screen_context, 'revision', 0) or 0)}",
+                )
+                # Compatibility event for older body/diagnostic consumers.  It
+                # stays level 0 and is no longer a cognition authority.
                 emit(
                     "mechanical_screen_delta",
                     category="mechanical",
@@ -400,7 +443,7 @@ class DesktopSemanticRuntime:
                     novelty=max(0.02, changed_ratio * 0.25),
                     importance=0.02,
                     source="screen_delta_classifier",
-                    detail="periodic/numeric OCR churn",
+                    detail=f"{typed_kind}: periodic/numeric OCR churn",
                     refs=evidence_refs,
                     identity=f"mechanical:{surface_key}:{int(getattr(screen_context, 'revision', 0) or 0)}",
                 )
@@ -520,6 +563,182 @@ class DesktopSemanticRuntime:
             recent_events=recent_events,
             evidence_refs=tuple(dict.fromkeys(all_refs))[:12],
         )
+
+    def observe_events(
+        self,
+        events: Sequence[NormalizedEnvironmentEvent | Mapping[str, Any]],
+        *,
+        telemetry: Mapping[str, Any] | None = None,
+        base_situation: UserSituation | None = None,
+        rolling_context: Any = None,
+        now: float | None = None,
+    ) -> UserSituation:
+        """Project structured native events into ``UserSituation``.
+
+        This is the production-facing path described by Deep Environment.  The
+        older ``observe(screen_context, ...)`` method remains as a compatibility
+        adapter and OCR fallback; callers can layer this method on top so
+        structured evidence becomes the wake authority without deleting the
+        old sensors in one risky migration.
+        """
+        now = time.time() if now is None else float(now)
+        telemetry = telemetry if isinstance(telemetry, Mapping) else {}
+        normalized: list[NormalizedEnvironmentEvent] = []
+        for raw in events:
+            item = raw if isinstance(raw, NormalizedEnvironmentEvent) else NormalizedEnvironmentEvent.from_mapping(raw, now=now)
+            if item.expired:
+                continue
+            normalized.append(item)
+
+        accepted: list[DesktopSemanticEvent] = []
+        visual_sources = {"ocr", "screen_ocr", "screen_pixel", "vision", "vlm"}
+        for item in normalized:
+            private = str(item.privacy_scope or "SEMANTIC").upper() in {"OFF", "METADATA"}
+
+            # Structured native event có semantic mạnh được đi thẳng. Visual/OCR
+            # candidate level>=2 phải qua region stability để jitter/layout shift
+            # không đánh thức cognition chỉ vì pixel đổi một nhịp.
+            region_id = item.region_id or RegionMemory.make_region_id(
+                process_name=item.process_name,
+                pid=item.pid,
+                hwnd=item.hwnd,
+                provider=item.source or "environment",
+                role=item.role or "unknown",
+            )
+            fingerprint = RegionMemory.fingerprint(
+                f"{item.event_type}|{item.action}|{item.role}|{item.title}|{item.value}"
+            )
+            region_seen_before = self.region_memory.get(region_id) is not None
+            _region_state, region_stable = self.region_memory.update(
+                region_id,
+                fingerprint=fingerprint,
+                now_ms=int(item.timestamp * 1000.0),
+                mechanical=(item.attention_level == 0 or not item.semantic),
+                semantic=bool(item.semantic and item.attention_level >= 1),
+                attention_level=item.attention_level,
+                owner_pid=item.pid,
+                hwnd=item.hwnd,
+                semantic_role=item.role or "unknown",
+                preferred_source=item.source or "structured",
+                sensitive=private,
+            )
+            if str(item.source or "").lower() in visual_sources and item.attention_level >= 2:
+                if not region_seen_before or not region_stable:
+                    continue
+
+            key = item.event_id or _stable_key(item.source, item.event_type, region_id, item.title)
+            if key in self._recent_event_keys:
+                continue
+            event = DesktopSemanticEvent(
+                timestamp=item.timestamp,
+                kind=item.event_type,
+                category=self._category_for_native_event(item.event_type),
+                semantic=bool(item.semantic),
+                attention_level=max(0, min(4, int(item.attention_level))),
+                confidence=_clamp01(item.confidence),
+                novelty=_clamp01(item.novelty),
+                importance=_clamp01(item.importance),
+                source=item.source,
+                app=item.process_name,
+                object_ref="" if private else _compact(region_id or item.role, 220),
+                detail="" if private else _compact(item.title or item.action, 260),
+                evidence_refs=tuple(item.evidence_refs)[:8],
+                privacy_level=str(item.privacy_scope or "SEMANTIC").lower(),
+                event_key=key,
+            )
+            self._events.append(event)
+            self._recent_event_keys.append(key)
+            accepted.append(event)
+
+        task_graph_enabled = os.getenv("ERIS_TASK_GRAPH_ENABLED", "1").strip().lower() not in {"0", "false", "off", "no"}
+        task_state = self.task_graph.ingest(normalized, now=now) if task_graph_enabled else self.task_graph.current
+        base = base_situation or UserSituation(timestamp=now)
+        max_native = max((event.attention_level for event in accepted if event.semantic), default=0)
+        max_level = max(base.max_attention_level, max_native)
+        semantic_delta = bool(base.semantic_delta or any(event.semantic and event.attention_level >= 2 for event in accepted))
+        wake_recommended = bool(base.wake_recommended or any(event.semantic and event.attention_level >= 3 for event in accepted))
+
+        idle_seconds = float(telemetry.get("idle_seconds", 0.0) or 0.0)
+        busy_score = _clamp01(getattr(rolling_context, "busy_score", base.busy_score))
+        if rolling_context is None and busy_score <= 0.0:
+            busy_score = 0.82 if task_state.phase in {"implementation", "testing", "diagnosis"} and idle_seconds < 8.0 else 0.35
+        interruption_cost = _clamp01(getattr(rolling_context, "interrupt_cost", base.interruption_cost))
+        if rolling_context is None:
+            interruption_cost = max(interruption_cost, self.task_graph.interruption_cost(idle_seconds=idle_seconds, busy_score=busy_score))
+
+        activity = task_state.activity if task_state.activity != "unknown" else base.activity
+        task_hint = task_state.label if task_state.label != "unknown" else base.task_hint
+        phase = task_state.phase if task_state.phase != "unknown" else base.phase
+        focused_process = str(telemetry.get("active_process", "") or base.focused_process)
+        focused_app = focused_process or str(telemetry.get("active_app", "") or base.focused_app)
+        focused_object = base.focused_object
+        for item in reversed(normalized):
+            if item.title and str(item.privacy_scope).upper() not in {"OFF", "METADATA"}:
+                focused_object = item.title
+                break
+
+        if idle_seconds >= 180.0:
+            attention_state = "away"
+        elif interruption_cost >= 0.72 or busy_score >= 0.72:
+            attention_state = "focused"
+        elif idle_seconds >= 45.0:
+            attention_state = "paused"
+        else:
+            attention_state = "active"
+
+        last_action = base.last_action
+        last_outcome = base.last_outcome
+        if accepted:
+            last = accepted[-1]
+            last_action = last.kind
+            if last.kind in {"command_failed", "test_failed", "build_failed"}:
+                last_outcome = "test_failed"
+            elif last.kind in {"command_succeeded", "test_passed", "build_succeeded", "task_completed"}:
+                last_outcome = "task_completed"
+
+        recent_events = tuple(self._events)[-10:]
+        refs: list[str] = []
+        for event in recent_events[-6:]:
+            refs.extend(event.evidence_refs)
+        confidence = max(base.confidence, task_state.confidence, max((event.confidence for event in accepted), default=0.0))
+        return UserSituation(
+            timestamp=now,
+            activity=activity,
+            task_hint=task_hint,
+            phase=phase,
+            focused_app=focused_app,
+            focused_process=focused_process,
+            focused_object=focused_object,
+            last_action=last_action,
+            last_outcome=last_outcome,
+            attention_state=attention_state,
+            interruption_cost=interruption_cost,
+            busy_score=busy_score,
+            confidence=confidence,
+            semantic_delta=semantic_delta,
+            wake_recommended=wake_recommended,
+            max_attention_level=max_level,
+            recent_events=recent_events,
+            evidence_refs=tuple(dict.fromkeys(refs))[:12],
+        )
+
+    @staticmethod
+    def _category_for_native_event(kind: str) -> str:
+        if kind in {"command_failed", "test_failed", "build_failed", "error_candidate", "blocking_dialog"}:
+            return "important"
+        if kind.startswith("browser_") or kind in {"foreground_changed", "focus_changed", "selection_changed"}:
+            return "ui_state"
+        if kind.startswith("file_") or kind in {"source_modified"}:
+            return "filesystem"
+        if kind.startswith("command_") or kind.startswith("test_") or kind.startswith("build_"):
+            return "terminal"
+        if kind.startswith("clipboard_"):
+            return "clipboard"
+        if kind.startswith("media_"):
+            return "media"
+        if kind in {"counter_update", "clock_tick", "scroll_churn", "ocr_jitter", "mechanical_value_update"}:
+            return "mechanical"
+        return "environment"
 
     def _classify_screen_delta(
         self,

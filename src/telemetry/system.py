@@ -3,6 +3,8 @@ import datetime
 import os
 import threading
 
+from native.process_resolver import ProcessResolver
+
 import psutil
 try:
     import uiautomation as auto
@@ -51,6 +53,53 @@ def _ensure_com_initialized() -> None:
 
 
 class TelemetryMixin:
+    def _get_process_resolver(self) -> ProcessResolver:
+        resolver = getattr(self, "_eris_process_resolver", None)
+        if resolver is None:
+            resolver = ProcessResolver()
+            self._eris_process_resolver = resolver
+        return resolver
+
+    def _resolve_foreground_identity(self) -> dict:
+        """Return structured foreground metadata, skipping Eris overlay when possible."""
+        if os.name != "nt":
+            return {"hwnd": 0, "pid": 0, "title": "Desktop", "process_name": "", "window_class": ""}
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = int(user32.GetForegroundWindow() or 0)
+            def title_for(candidate: int) -> str:
+                length = int(user32.GetWindowTextLengthW(candidate) or 0)
+                buff = ctypes.create_unicode_buffer(max(1, length + 1))
+                user32.GetWindowTextW(candidate, buff, len(buff))
+                return buff.value.strip()
+            title = title_for(hwnd) if hwnd else ""
+            if not title or _is_self_window(title):
+                chosen: list[tuple[int, str]] = []
+                PROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+                def cb(candidate, _):
+                    candidate = int(candidate or 0)
+                    if not candidate or not user32.IsWindowVisible(candidate):
+                        return True
+                    candidate_title = title_for(candidate)
+                    if candidate_title and not _is_self_window(candidate_title):
+                        chosen.append((candidate, candidate_title))
+                        return False
+                    return True
+                user32.EnumWindows(PROC(cb), 0)
+                if chosen:
+                    hwnd, title = chosen[0]
+            identity = self._get_process_resolver().resolve(hwnd, title=title)
+            return {
+                "hwnd": int(hwnd),
+                "pid": int(identity.pid),
+                "title": title or "Desktop",
+                "process_name": identity.process_name,
+                "window_class": identity.window_class,
+                "executable_path": identity.executable_path,
+            }
+        except Exception:
+            return {"hwnd": 0, "pid": 0, "title": "Không xác định", "process_name": "", "window_class": ""}
+
     def _get_content_metadata_collector(self):
         # Collector được lazy-init vì TelemetryMixin không chắc có __init__ riêng.
         # Nếu import/OS không hỗ trợ thì trả None, runtime vẫn sống. Đáng tiếc là
@@ -90,6 +139,30 @@ class TelemetryMixin:
         except Exception:
             return {"url": "", "tabs": (), "available": False}
 
+    def _get_chromium_accessibility(self) -> dict:
+        enabled = os.environ.get("ERIS_CHROMIUM_IA2_ENABLED", "1").strip().lower() not in {"0", "false", "off", "no"}
+        if not enabled:
+            return {"tabs": (), "selected_tab": "", "windows": (), "available": False}
+        try:
+            from native.chromium_accessibility import ChromiumAccessibilityAdapter
+            adapter = getattr(self, "_eris_chromium_accessibility", None)
+            if adapter is None:
+                adapter = ChromiumAccessibilityAdapter(resolver=self._get_process_resolver())
+                self._eris_chromium_accessibility = adapter
+            windows = []
+            tabs = []
+            selected = ""
+            for hwnd in adapter.discover_windows():
+                snap = adapter.snapshot_window(hwnd)
+                if snap is None:
+                    continue
+                windows.append({"hwnd": snap.hwnd, "pid": snap.pid, "process_name": snap.process_name, "tab_count": len(snap.tabs)})
+                tabs.extend(tab.title for tab in snap.tabs if tab.title)
+                selected = snap.selected_tab or selected
+            return {"tabs": tuple(dict.fromkeys(tabs)), "selected_tab": selected, "windows": tuple(windows), "available": bool(windows)}
+        except Exception:
+            return {"tabs": (), "selected_tab": "", "windows": (), "available": False}
+
     def _enum_visible_titled_windows(self) -> list:
         """Trả danh sách title cửa sổ hiển thị theo thứ tự Z (trên xuống dưới).
 
@@ -125,30 +198,7 @@ class TelemetryMixin:
         return self._enum_visible_titled_windows()
 
     def _resolve_active_window(self) -> str:
-        """Cửa sổ người dùng thực sự đang nhìn.
-
-        Nếu foreground là chính Eris (hoặc rỗng), bỏ qua nó và lấy cửa sổ thật
-        nằm ngay dưới theo Z-order. Nhờ vậy Eris không còn tự soi gương.
-        """
-        try:
-            hwnd = ctypes.windll.user32.GetForegroundWindow()
-            length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
-            buff = ctypes.create_unicode_buffer(length + 1)
-            ctypes.windll.user32.GetWindowTextW(hwnd, buff, length + 1)
-            foreground = buff.value.strip()
-        except Exception:
-            return "Không xác định"
-
-        if foreground and not _is_self_window(foreground):
-            return foreground
-
-        # Foreground là chính Eris hoặc không có title → tìm cửa sổ thật dưới nó.
-        try:
-            for title in self._enum_visible_titled_windows():
-                return title
-        except Exception:
-            pass
-        return "Desktop"
+        return str(self._resolve_foreground_identity().get("title", "Desktop") or "Desktop")
 
     def _get_idle_seconds(self) -> float:
         class LASTINPUTINFO(ctypes.Structure):
@@ -162,15 +212,18 @@ class TelemetryMixin:
         return max(0.0, millis / 1000.0)
 
     def capture_raw_telemetry(self, *, mood_score: int, inferred_pos_x: float) -> dict:
-        try:
-            active_window = self._resolve_active_window()
-        except Exception:
-            active_window = "Không xác định"
+        foreground = self._resolve_foreground_identity()
+        active_window = str(foreground.get("title", "Không xác định") or "Không xác định")
 
         try:
             browser_info = self._get_browser_telemetry_uia()
         except Exception:
             browser_info = {"url": "", "tabs": (), "available": False}
+        try:
+            chromium_info = self._get_chromium_accessibility()
+        except Exception:
+            chromium_info = {"tabs": (), "selected_tab": "", "windows": (), "available": False}
+        browser_tabs = tuple(dict.fromkeys(tuple(browser_info.get("tabs", ()) or ()) + tuple(chromium_info.get("tabs", ()) or ())))
 
         try:
             all_windows = self._get_all_windows()
@@ -185,7 +238,7 @@ class TelemetryMixin:
                 content_metadata = collector.collect(
                     active_window=active_window,
                     browser_url=str(browser_info.get("url", "") or ""),
-                    browser_tabs=tuple(browser_info.get("tabs", ()) or ()),
+                    browser_tabs=browser_tabs,
                 )
         except Exception:
             # Metadata nội dung là steroid, không phải single point of failure.
@@ -204,13 +257,27 @@ class TelemetryMixin:
             idle_seconds = self._get_idle_seconds()
         except Exception:
             idle_seconds = 0.0
+        foreground_hwnd = int(foreground.get("hwnd", 0) or 0)
+        last_hwnd = int(getattr(self, "_eris_last_foreground_hwnd", 0) or 0)
+        focus_changed = bool(last_hwnd and foreground_hwnd and foreground_hwnd != last_hwnd)
+        self._eris_last_foreground_hwnd = foreground_hwnd
+        interaction_state = "away" if idle_seconds >= 180.0 else "idle" if idle_seconds >= 45.0 else "active"
 
         return {
             "captured_at": current_time,
             "active_window": active_window,
-            "active_app": active_window,
+            "active_window_title": active_window,
+            "active_app": str(foreground.get("process_name", "") or active_window),
+            "active_process": str(foreground.get("process_name", "") or ""),
+            "foreground_hwnd": foreground_hwnd,
+            "foreground_pid": int(foreground.get("pid", 0) or 0),
+            "window_class": str(foreground.get("window_class", "") or ""),
+            "focus_changed": focus_changed,
+            "interaction_state": interaction_state,
             "browser_url": str(browser_info.get("url", "") or ""),
-            "browser_tabs": tuple(browser_info.get("tabs", ()) or ()),
+            "browser_tabs": browser_tabs,
+            "browser_windows": tuple(chromium_info.get("windows", ()) or ()),
+            "selected_browser_tab": str(chromium_info.get("selected_tab", "") or ""),
             "content_metadata": content_metadata,
             "open_windows": tuple(all_windows),
             "cpu_percent": cpu,

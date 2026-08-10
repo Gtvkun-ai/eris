@@ -9,6 +9,7 @@ một luật, thay vì chat nghiêm còn autonomous đi cửa sau như một qua
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 import re
 import unicodedata
 from typing import Any, Sequence
@@ -35,6 +36,8 @@ def _fold_vi(value: Any) -> str:
 # Chỉ giữ lại claim trực tiếp về perception sensor (thấy/nhìn/quan sát).
 _CURRENT_WORLD_PATTERNS = (
     re.compile(r"\btoi (?:dang )?(?:thay|nhin thay|nhin|quan sat)\b"),
+    re.compile(r"\btroi dang\b"),
+    re.compile(r"\bnhin ra ngoai\b"),
 )
 
 _CORRECTION_MARKERS = (

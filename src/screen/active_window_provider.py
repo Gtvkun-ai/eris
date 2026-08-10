@@ -7,9 +7,13 @@ from ctypes import wintypes
 import os
 
 from .evidence_models import ActiveWindowInfo
+from native.process_resolver import ProcessResolver
 
 
 class ActiveWindowProvider:
+    def __init__(self) -> None:
+        self._resolver = ProcessResolver()
+
     def get(self) -> ActiveWindowInfo:
         if os.name != "nt":
             return ActiveWindowInfo(title="Desktop")
@@ -28,6 +32,16 @@ class ActiveWindowProvider:
                 width = max(1, int(rect.right - rect.left))
                 height = max(1, int(rect.bottom - rect.top))
                 bounds = (int(rect.left), int(rect.top), width, height)
-            return ActiveWindowInfo(title=buff.value.strip() or "Desktop", hwnd=hwnd, bounds=bounds)
+            title = buff.value.strip() or "Desktop"
+            identity = self._resolver.resolve(hwnd, title=title)
+            return ActiveWindowInfo(
+                title=title,
+                hwnd=hwnd,
+                bounds=bounds,
+                process_name=identity.process_name,
+                pid=identity.pid,
+                window_class=identity.window_class,
+                executable_path=identity.executable_path,
+            )
         except Exception:
             return ActiveWindowInfo(title="Desktop")

@@ -162,7 +162,7 @@ class BrowserBridgeServer:
 
 def start_browser_bridge_server(port: int = _PORT, *, logger: Any = None) -> BrowserBridgeServer | None:
     """Khởi động server và trả về instance. Trả về None nếu disabled hoặc lỗi."""
-    enabled = str(os.environ.get("ERIS_BROWSER_BRIDGE_ENABLED", "1")).strip().lower()
+    enabled = str(os.environ.get("ERIS_BROWSER_BRIDGE_ENABLED", "0")).strip().lower()
     if enabled in {"0", "false", "no", "off"}:
         if logger:
             logger.info("[browser_bridge] disabled by env ERIS_BROWSER_BRIDGE_ENABLED=0")

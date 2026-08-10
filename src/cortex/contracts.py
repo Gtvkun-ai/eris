@@ -44,6 +44,13 @@ class TelemetrySnapshot:
     active_window_kind: str
     focus_summary: str
     active_app: str = ""
+    active_process: str = ""
+    active_window_title: str = ""
+    foreground_hwnd: int = 0
+    foreground_pid: int = 0
+    window_class: str = ""
+    focus_changed: bool = False
+    interaction_state: str = "unknown"
     browser_url: str = ""
     browser_tabs: tuple[str, ...] = ()
     open_windows: tuple[str, ...] = ()
@@ -68,6 +75,13 @@ class TelemetrySnapshot:
         context: dict[str, object] = {
             "time": self.captured_at,
             "active_app": self.active_app or self.active_window,
+            "active_process": self.active_process,
+            "active_window_title": self.active_window_title or self.active_window,
+            "foreground_hwnd": int(self.foreground_hwnd or 0),
+            "foreground_pid": int(self.foreground_pid or 0),
+            "window_class": self.window_class,
+            "focus_changed": bool(self.focus_changed),
+            "interaction_state": self.interaction_state,
             "idle_seconds": int(self.idle_seconds),
             "recent_events": list(self.recent_events),
             "user_signals": self.user_signals.to_dict(),

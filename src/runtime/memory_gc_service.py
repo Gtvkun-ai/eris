@@ -398,6 +398,19 @@ class MemoryGCService:
 
     # ── Client/model helpers ───────────────────────────────────────────────────
 
+    def _get_critic_client(self) -> Any | None:
+        try:
+            pm = getattr(self.llm_service, "_process_manager", None)
+            if pm is None:
+                pm = getattr(self.llm_service, "process_manager", None)
+            if pm is not None:
+                client = pm.build_deepseek_worker_client("critic", required=False)
+                if client is not None:
+                    return client
+        except Exception:
+            pass
+        return getattr(self.llm_service, "critic_client", None) or getattr(self.llm_service, "social_critic_client", None)
+
     def _get_curator_client(self) -> Any | None:
         """Lấy đúng DeepSeek curator worker, nếu không có thì fallback sang critic."""
         try:

@@ -87,6 +87,17 @@ class CoordinatorShutdownMixin:
                 worker.stop()
             except Exception as exc:
                 self.logger.warning("[screen text] stop error: %s", exc)
+        native_broker = getattr(self, "native_environment_event_broker", None)
+        if native_broker is not None:
+            try:
+                native_broker.stop()
+            except Exception as exc:
+                self.logger.debug("[deep environment] WinEvent stop error: %s", exc)
+        for monitor in tuple(getattr(self, "native_environment_monitors", ()) or ()):
+            try:
+                monitor.stop()
+            except Exception as exc:
+                self.logger.debug("[deep environment] monitor stop error: %s", exc)
         self._stop_mental_process_loop()
         supervisor = getattr(self, "subsystem_supervisor", None)
         if supervisor is not None:

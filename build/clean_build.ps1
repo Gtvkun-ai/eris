@@ -50,7 +50,12 @@ foreach ($p in @("Eris.exe", "Eris.console.exe", "Eris.pck", "data_Eris_windows_
 # -- 3. Godot export-release (body: Eris.exe/.pck/data_) ---------------------
 Write-Host "[3/5] Godot export-release 'Windows Desktop'..." -ForegroundColor Yellow
 $ErisExe = Join-Path $Out "Eris.exe"
+$prevErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 & $Godot --headless --path $Repo --export-release "Windows Desktop" $ErisExe 2>&1 | Out-Host
+$godotExitCode = $LASTEXITCODE
+$ErrorActionPreference = $prevErrorActionPreference
+if ($godotExitCode -ne 0) { throw "Godot export that bai: exit code $godotExitCode" }
 if (-not (Test-Path $ErisExe)) { throw "Godot export that bai: khong thay $ErisExe" }
 Write-Host "  OK: $ErisExe ($([math]::Round((Get-Item $ErisExe).Length/1MB)) MB)"
 

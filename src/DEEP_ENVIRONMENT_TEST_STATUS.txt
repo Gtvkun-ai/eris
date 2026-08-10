@@ -1,0 +1,32 @@
+Deep Environment V3 test status — 2026-08-10
+
+FOCUSED PASS:
+  pytest -q tests/test_architecture_c_runtime_regressions.py tests/test_desktop_semantic_environment_v1.py tests/test_deep_environment_native_v2.py
+  => 106 passed
+
+MECHANICAL ACCEPTANCE:
+  python tools/deep_environment_acceptance.py --mechanical-smoke --count 80
+  => mechanical_wakes=0
+  => sensitive_payload_leaks=0
+  => screen_noise_deliberations=0
+
+WINDOWS E2E PROBE IN THIS BUILD ENVIRONMENT:
+  python tools/deep_environment_windows_e2e.py
+  => SKIPPED_NOT_WINDOWS
+  Lý do: build container hiện tại là POSIX. Không bịa IA2/GSMTC/ConPTY/UIAccess benchmark.
+
+FULL SUITE ATTEMPT:
+  pytest -q
+  => collection blocked by pre-existing missing archive modules:
+     tools.package_source
+     tools.evaluate_social_plan_activation
+
+FULL SUITE EXCLUDING THOSE 3 COLLECTION-BLOCKING FILES:
+  => 950 passed, 12 failed
+  Remaining failures are outside this Deep Environment batch, including:
+  - archive root/path expectation for body/SubjectPerformanceFrame.cs
+  - DeepSeek worker role 'research'
+  - executive_cortex local variable 'arguments'
+  - memory GC legacy method mismatch
+  - missing legacy tools.report_pdf_acceptance / semantic audit tools
+  - one grounding_surface_gate Vietnamese current-world regression

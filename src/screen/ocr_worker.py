@@ -15,7 +15,10 @@ import time
 from pathlib import Path
 from typing import Protocol
 
-import mss
+try:
+    import mss
+except Exception:  # pragma: no cover - optional on headless CI
+    mss = None  # type: ignore
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 from .active_window_provider import ActiveWindowProvider
@@ -203,6 +206,8 @@ class IncrementalScreenTextWorker:
         self.logger = logger
         self.enabled = os.getenv("ERIS_SCREEN_TEXT_INDEX_ENABLED", "1").strip().lower() not in {"0", "false", "off", "no"}
         self.poll_sec = max(0.5, float(os.getenv("ERIS_SCREEN_TEXT_POLL_SEC", "1.2") or 1.2))
+        self.triggered_mode = os.getenv("ERIS_OCR_TRIGGERED_MODE", "1").strip().lower() not in {"0", "false", "off", "no"}
+        self.reconcile_sec = max(3.0, float(os.getenv("ERIS_SCREEN_RECONCILE_SEC", "15") or 15.0))
         self.min_ocr_interval = max(0.5, float(os.getenv("ERIS_SCREEN_OCR_MIN_INTERVAL_SEC", "1.5") or 1.5))
         self.full_refresh_sec = max(3.0, float(os.getenv("ERIS_SCREEN_OCR_FULL_REFRESH_SEC", "15") or 15.0))
         self.window_provider = ActiveWindowProvider()
@@ -212,6 +217,8 @@ class IncrementalScreenTextWorker:
         self._last_backend_probe_at = 0.0
         self._backend_warning_emitted = False
         self._stop = threading.Event()
+        self._trigger = threading.Event()
+        self._structured_coverage_until = 0.0
         # OCR nền và OCR cưỡng bức từ chat dùng chung capture/backend state.
         # Lock này ngăn hai luồng cùng chụp rồi ghi revision lộn thứ tự.
         self._capture_lock = threading.Lock()
@@ -246,9 +253,10 @@ class IncrementalScreenTextWorker:
         self._thread.start()
         if self.logger:
             self.logger.info(
-                "[screen text] worker started backend=%s poll=%.1fs",
+                "[screen text] worker started backend=%s mode=%s interval=%.1fs",
                 self.backend.name if self.backend is not None and self.backend.available else "unavailable",
-                self.poll_sec,
+                "triggered" if self.triggered_mode else "poll",
+                self.reconcile_sec if self.triggered_mode else self.poll_sec,
             )
 
     def stop(self) -> None:
@@ -257,7 +265,22 @@ class IncrementalScreenTextWorker:
         if thread is not None and thread.is_alive():
             thread.join(timeout=2.0)
 
+    def notify_environment_event(self, event_type: str, *, structured_coverage: bool = True) -> None:
+        """Wake the worker after a native/UI event without forcing OCR.
+
+        Strong structured coverage suppresses OCR for a short window; the
+        worker still refreshes UIA/snapshot metadata. Callers may pass
+        ``structured_coverage=False`` for canvas/game/unknown visual regions.
+        """
+        del event_type
+        now = time.time()
+        if structured_coverage:
+            self._structured_coverage_until = max(self._structured_coverage_until, now + 3.0)
+        self._trigger.set()
+
     def _capture(self, window: ActiveWindowInfo) -> Image.Image | None:
+        if mss is None:
+            return None
         try:
             with mss.mss() as sct:
                 if window.bounds:
@@ -350,10 +373,16 @@ class IncrementalScreenTextWorker:
             change = self.detector.inspect(image, key=f"{window.hwnd}:{window.title}")
             changed_ratio = change.ratio
             now = time.time()
+            structured_coverage_high = self.triggered_mode and now < self._structured_coverage_until
             should_ocr = bool(
                 force_ocr
-                or (change.changed and (now - self._last_ocr_at) >= self.min_ocr_interval)
-                or (now - self._last_full_at) >= self.full_refresh_sec
+                or (
+                    not structured_coverage_high
+                    and (
+                        (change.changed and (now - self._last_ocr_at) >= self.min_ocr_interval)
+                        or (now - self._last_full_at) >= self.full_refresh_sec
+                    )
+                )
             )
             if should_ocr:
                 self._ensure_ocr_backend(now)
@@ -406,6 +435,13 @@ class IncrementalScreenTextWorker:
 
     def _run(self) -> None:
         while not self._stop.is_set():
+            if self.triggered_mode:
+                # Native/UI events provide the fast path. A slow reconciliation
+                # tick repairs missed events without returning to 1.2s OCR polling.
+                self._trigger.wait(self.reconcile_sec)
+                self._trigger.clear()
+                if self._stop.is_set():
+                    break
             started = time.time()
             try:
                 with self._capture_lock:
@@ -413,22 +449,27 @@ class IncrementalScreenTextWorker:
             except Exception as exc:
                 if self.logger:
                     self.logger.warning("[screen text] background refresh failed: %s", exc)
-            elapsed = time.time() - started
-            self._stop.wait(max(0.05, self.poll_sec - elapsed))
+            if not self.triggered_mode:
+                elapsed = time.time() - started
+                self._stop.wait(max(0.05, self.poll_sec - elapsed))
 
     def _write_cache(self, snapshot: ScreenTextSnapshot) -> None:
         if snapshot.privacy_blocked:
             return
-        text = "\n".join(block.text for block in snapshot.blocks[:80])[:6000]
+        persist_raw = os.getenv("ERIS_OCR_CACHE_RAW_TEXT", "0").strip().lower() in {"1", "true", "yes", "on"}
+        digest_source = "\n".join(block.text for block in snapshot.blocks[:80])[:6000]
         payload = {
             "source": "accessibility" if any(b.source == "uia" for b in snapshot.blocks) else "ocr",
             "confidence": snapshot.best_confidence,
-            "visible_text": text,
+            "content_fingerprint": hashlib.sha256(digest_source.encode("utf-8", "ignore")).hexdigest()[:24] if digest_source else "",
             "title": snapshot.window.title,
+            "process_name": snapshot.window.process_name,
             "captured_at": snapshot.captured_at,
             "updated_at": snapshot.captured_at,
             "backend": snapshot.backend,
         }
+        if persist_raw:
+            payload["visible_text"] = digest_source
         try:
             self.cache_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.cache_path.with_suffix(self.cache_path.suffix + ".tmp")

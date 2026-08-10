@@ -1,0 +1,5 @@
+# Dependency tùy chọn cho Deep Environment trên Windows.
+# Linux CI không cần cài các package này.
+comtypes>=1.4.8; platform_system == "Windows"
+uiautomation>=2.0.20; platform_system == "Windows"
+winsdk>=1.0.0b10; platform_system == "Windows"

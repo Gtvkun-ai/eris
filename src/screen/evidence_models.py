@@ -19,6 +19,9 @@ class ActiveWindowInfo:
     hwnd: int = 0
     bounds: Bounds | None = None
     process_name: str = ""
+    pid: int = 0
+    window_class: str = ""
+    executable_path: str = ""
 
 
 @dataclass(slots=True, frozen=True)

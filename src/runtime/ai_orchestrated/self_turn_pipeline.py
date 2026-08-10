@@ -34,6 +34,10 @@ from .commentary_cadence import CommentaryCadence, CommentaryExpectation
 from .cognitive_blackboard import TypedCognitiveBlackboard
 from .contracts import AI_RUNTIME_VERSION, IntentionPlan, StateEvent
 from .discourse_state import DiscourseState, DiscourseStateBuilder
+from .desktop_semantics import DesktopSemanticRuntime, UserSituation
+from .environment_event_bus import EnvironmentEventBus, NormalizedEnvironmentEvent
+from .task_graph import TaskGraph
+from .region_memory import RegionMemory
 from .followup_appraisal import FollowUpAppraisalLayer
 from .identity import PendingStrategyUse
 from .initiative import InitiativeAction, InitiativeDecision
@@ -49,6 +53,31 @@ from runtime.subject_initiative_runtime import (
 )
 
 
+def environment_social_gate(situation: UserSituation | None) -> dict[str, Any]:
+    """Tính social gate từ UserSituation theo đúng Deep Environment Stage F.
+
+    Hàm thuần để test được trực tiếp, tránh chuyện một nhánh planner vô tình
+    dùng threshold khác nhánh relational rồi cả hệ thống tranh luận với chính nó.
+    """
+    interruption = float(getattr(situation, "interruption_cost", 0.0) or 0.0) if situation is not None else 0.0
+    busy = float(getattr(situation, "busy_score", 0.0) or 0.0) if situation is not None else 0.0
+    phase = str(getattr(situation, "phase", "") or "").strip().lower() if situation is not None else ""
+    attention = int(getattr(situation, "max_attention_level", 0) or 0) if situation is not None else 0
+    active_work_phase = phase in {"implementation", "testing", "debugging", "diagnosis"}
+    suppressed = bool(
+        interruption >= 0.60
+        or attention >= 2
+        or (active_work_phase and busy >= 0.70)
+    )
+    return {
+        "suppressed": suppressed,
+        "interruption_cost": max(0.0, min(1.0, interruption)),
+        "busy_score": max(0.0, min(1.0, busy)),
+        "phase": phase,
+        "attention_level": max(0, min(4, attention)),
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class PerceptionBundle:
     now: float
@@ -57,6 +86,8 @@ class PerceptionBundle:
     screen: AmbientScreenContext
     vision_facts: tuple[Any, ...]
     observer_frame: Any = None
+    user_situation: UserSituation | None = None
+    environment_events: tuple[NormalizedEnvironmentEvent, ...] = ()
 
     @property
     def mechanical_delta(self) -> bool:
@@ -127,6 +158,191 @@ class SelfTurnPipeline:
             setattr(host, "temporal_mind", temporal)
         self.temporal_mind = temporal
         self._last_temporal_gate = None
+
+        # Deep Environment: structured event là đường semantic chính; OCR/screen
+        # chỉ còn fallback và tín hiệu body animation. Khởi tạo Chromium adapter
+        # trước WinEvent broker để callback đầu tiên đã có nơi invalidate cache.
+        self.environment_event_bus = EnvironmentEventBus()
+        self.task_graph = TaskGraph()
+        self.region_memory = RegionMemory()
+        self.desktop_semantic_runtime = DesktopSemanticRuntime(task_graph=self.task_graph, region_memory=self.region_memory)
+        setattr(host, "environment_region_memory", self.region_memory)
+        self._last_environment_event_at = 0.0
+        self._last_chromium_poll_at = 0.0
+        self._native_event_broker = None
+        self._chromium_accessibility = None
+        self._uia_semantic_adapter = None
+        if os.getenv("ERIS_UIA_EVENTS_ENABLED", "1").strip().lower() not in {"0", "false", "off", "no"}:
+            try:
+                from native.uia_semantic_adapter import UIASemanticAdapter
+                self._uia_semantic_adapter = UIASemanticAdapter()
+                setattr(host, "uia_semantic_adapter", self._uia_semantic_adapter)
+            except Exception as exc:
+                host.logger.debug("[deep environment] UIA semantic adapter unavailable: %s", exc)
+        chromium_enabled = os.getenv("ERIS_CHROMIUM_IA2_ENABLED", "1").strip().lower() not in {"0", "false", "off", "no"}
+        if chromium_enabled:
+            try:
+                from native.chromium_accessibility import ChromiumAccessibilityAdapter
+                self._chromium_accessibility = ChromiumAccessibilityAdapter().start()
+                setattr(host, "chromium_accessibility_adapter", self._chromium_accessibility)
+            except Exception as exc:
+                host.logger.debug("[deep environment] Chromium accessibility unavailable: %s", exc)
+        if os.getenv("ERIS_NATIVE_EVENTS_ENABLED", "1").strip().lower() not in {"0", "false", "off", "no"}:
+            try:
+                from native.windows_event_broker import WindowsEventBroker
+                self._native_event_broker = WindowsEventBroker(self._publish_environment_event)
+                self._native_event_broker.start()
+                setattr(host, "native_environment_event_broker", self._native_event_broker)
+            except Exception as exc:
+                host.logger.debug("[deep environment] WinEvent broker unavailable: %s", exc)
+        self._native_aux_monitors: list[Any] = []
+        if os.getenv("ERIS_CLIPBOARD_MONITOR_ENABLED", "1").strip().lower() not in {"0", "false", "off", "no"}:
+            try:
+                from native.clipboard_monitor import ClipboardMonitor
+                clipboard = ClipboardMonitor(self._publish_environment_event)
+                clipboard.start()
+                self._native_aux_monitors.append(clipboard)
+            except Exception as exc:
+                host.logger.debug("[deep environment] clipboard listener unavailable: %s", exc)
+
+        if os.getenv("ERIS_MEDIA_MONITOR_ENABLED", "1").strip().lower() not in {"0", "false", "off", "no"}:
+            try:
+                from native.media_monitor import MediaMonitor
+                media = MediaMonitor(self._publish_environment_event)
+                media.start()
+                self._native_aux_monitors.append(media)
+            except Exception as exc:
+                host.logger.debug("[deep environment] GSMTC media monitor unavailable: %s", exc)
+
+        # UIAccess broker chỉ là client hẹp. Core Eris không nâng integrity và
+        # tuyệt đối không tự chạy Administrator chỉ vì muốn đọc elevated UI.
+        if os.getenv("ERIS_UIACCESS_BROKER_ENABLED", "0").strip().lower() not in {"0", "false", "off", "no"}:
+            try:
+                from native.uiaccess_broker import UIAccessBrokerClient
+                setattr(host, "uiaccess_broker_client", UIAccessBrokerClient())
+            except Exception as exc:
+                host.logger.debug("[deep environment] UIAccess broker client unavailable: %s", exc)
+
+        workspace_paths = os.getenv("ERIS_WORKSPACE_WATCH_PATHS", "").strip()
+        if workspace_paths:
+            try:
+                from native.filesystem_monitor import FilesystemMonitor
+                for raw_path in workspace_paths.split(os.pathsep):
+                    path = raw_path.strip()
+                    if not path:
+                        continue
+                    monitor = FilesystemMonitor(path, self._publish_environment_event)
+                    monitor.start()
+                    self._native_aux_monitors.append(monitor)
+            except Exception as exc:
+                host.logger.debug("[deep environment] workspace monitor unavailable: %s", exc)
+        setattr(host, "native_environment_monitors", self._native_aux_monitors)
+
+    def _publish_environment_event(self, event: NormalizedEnvironmentEvent) -> NormalizedEnvironmentEvent | None:
+        if os.getenv("ERIS_SEMANTIC_EVENT_BUS_ENABLED", "1").strip().lower() in {"0", "false", "off", "no"}:
+            return None
+        accepted = self.environment_event_bus.publish(event)
+        if accepted is None:
+            return None
+        observability = getattr(self.host, "observability", None)
+        if observability is not None:
+            try:
+                provider = str((accepted.metadata or {}).get("provider", "") or accepted.source or "unknown")[:40]
+                event_to_bus_ms = max(0.0, (time.time() - float(accepted.timestamp or 0.0)) * 1000.0)
+                observability.increment(
+                    "environment_event_total",
+                    tags={
+                        "source": accepted.source or "unknown",
+                        "event_type": accepted.event_type or "unknown",
+                        "provider": provider,
+                        "semantic": str(bool(accepted.semantic)).lower(),
+                        "attention": str(max(0, min(4, int(accepted.attention_level or 0)))),
+                        "privacy": str(accepted.privacy_scope or "SEMANTIC").lower(),
+                    },
+                )
+                observability.observe(
+                    "environment_event_to_bus_ms",
+                    event_to_bus_ms,
+                    tags={
+                        "source": accepted.source or "unknown",
+                        "event_type": accepted.event_type or "unknown",
+                        "provider": provider,
+                    },
+                )
+            except Exception:
+                pass
+
+        # WinEvent chỉ báo "có thay đổi"; Chromium/UIA cache refresh ở consumer
+        # thread, không dereference accessibility object ngay trong callback.
+        if self._chromium_accessibility is not None and accepted.source in {"winevent", "foreground_reconcile"}:
+            try:
+                self._chromium_accessibility.notify_native_event(accepted)
+                if str(accepted.process_name or "").lower() in {"chrome.exe", "msedge.exe", "brave.exe", "chromium.exe"}:
+                    self._last_chromium_poll_at = 0.0
+            except Exception:
+                pass
+
+        worker = getattr(self.host, "screen_text_worker", None)
+        notify = getattr(worker, "notify_environment_event", None)
+        if callable(notify):
+            try:
+                # UIA/WinEvent/Chromium events normally cover the changed semantic
+                # region. Unknown visual sources can explicitly opt out.
+                notify(accepted.event_type, structured_coverage=accepted.source not in {"screen_pixel", "vision"})
+            except Exception:
+                pass
+        return accepted
+
+    def _collect_environment_events(self, now: float, telemetry: Mapping[str, Any]) -> tuple[NormalizedEnvironmentEvent, ...]:
+        # Foreground telemetry is structured even when the WinEvent hook missed a
+        # transition (startup/reconciliation). It is observe-level, never a wake by itself.
+        if bool(telemetry.get("focus_changed", False)):
+            self._publish_environment_event(NormalizedEnvironmentEvent(
+                timestamp=now, source="foreground_reconcile", event_type="foreground_changed", action="focus_changed",
+                process_name=str(telemetry.get("active_process", "") or ""),
+                pid=int(telemetry.get("foreground_pid", 0) or 0), hwnd=int(telemetry.get("foreground_hwnd", 0) or 0),
+                window_class=str(telemetry.get("window_class", "") or ""), role="window",
+                title=str(telemetry.get("active_window_title", "") or ""), source_confidence=0.96, confidence=0.96,
+                novelty=0.65, importance=0.18, user_relevance=0.55, attention_level=1,
+                evidence_refs=("telemetry:foreground_reconcile",),
+            ))
+
+        # Chromium accessibility reconcile 15s là safety net. WinEvent/UIA event
+        # có thể reset cadence để refresh sớm hơn; OCR không scan tab strip.
+        chromium_enabled = os.getenv("ERIS_CHROMIUM_IA2_ENABLED", "1").strip().lower() not in {"0", "false", "off", "no"}
+        if chromium_enabled and now - self._last_chromium_poll_at >= 15.0:
+            self._last_chromium_poll_at = now
+            try:
+                if self._chromium_accessibility is None:
+                    from native.chromium_accessibility import ChromiumAccessibilityAdapter
+                    self._chromium_accessibility = ChromiumAccessibilityAdapter().start()
+                for event in self._chromium_accessibility.poll_all():
+                    self._publish_environment_event(event)
+            except Exception as exc:
+                self.host.logger.debug("[deep environment] chromium accessibility reconcile failed: %s", exc)
+
+        since = self._last_environment_event_at
+        events = list(self.environment_event_bus.drain(since=since, limit=128))
+
+        # WinEvent callback không dereference UIA object. Enrichment diễn ra tại
+        # consumer tick này để role/focus/dialog/editor đi vào semantic bus mà
+        # vẫn giữ callback native nhẹ và an toàn.
+        if self._uia_semantic_adapter is not None:
+            for raw_event in tuple(events):
+                if raw_event.source not in {"winevent", "foreground_reconcile"}:
+                    continue
+                try:
+                    enriched = self._uia_semantic_adapter.enrich(raw_event)
+                    if enriched is not None:
+                        accepted = self._publish_environment_event(enriched)
+                        if accepted is not None:
+                            events.append(accepted)
+                except Exception as exc:
+                    self.host.logger.debug("[deep environment] UIA enrichment failed: %s", exc)
+
+        if events:
+            self._last_environment_event_at = max(item.timestamp for item in events) + 1e-6
+        return tuple(events[-128:])
 
     def run(self) -> bool:
         host = self.host
@@ -884,6 +1100,59 @@ class SelfTurnPipeline:
 
         observer_frame = previous_observer
 
+        environment_events = self._collect_environment_events(now, telemetry)
+        base_situation = self.desktop_semantic_runtime.observe(
+            screen,
+            telemetry=telemetry,
+            observer_frame=observer_frame,
+            now=now,
+        )
+        user_situation = self.desktop_semantic_runtime.observe_events(
+            environment_events,
+            telemetry=telemetry,
+            base_situation=base_situation,
+            now=now,
+        )
+        if environment_events:
+            observability = getattr(host, "observability", None)
+            if observability is not None:
+                try:
+                    kinds = tuple(str(item.event_type or "unknown") for item in environment_events)
+                    mechanical = all(item.attention_level == 0 or not item.semantic for item in environment_events)
+                    for item in environment_events:
+                        observability.observe(
+                            "environment_event_to_semantic_ms",
+                            max(0.0, (now - float(item.timestamp or now)) * 1000.0),
+                        )
+                        if item.event_type == "foreground_changed":
+                            observability.observe(
+                                "foreground_to_user_situation_ms",
+                                max(0.0, (now - float(item.timestamp or now)) * 1000.0),
+                            )
+                    wake_from_environment = bool(user_situation.semantic_delta and user_situation.max_attention_level >= 2)
+                    if mechanical and wake_from_environment:
+                        observability.increment("environment_false_wake_mechanical_total")
+                    observability.increment(
+                        "user_situation_from_environment_total",
+                        tags={
+                            "phase": user_situation.phase or "unknown",
+                            "attention_state": user_situation.attention_state or "unknown",
+                            "max_attention": str(max(0, min(4, int(user_situation.max_attention_level or 0)))),
+                            "semantic_delta": str(bool(user_situation.semantic_delta)).lower(),
+                            "wake": str(wake_from_environment).lower(),
+                        },
+                        fields={
+                            "event_count": len(environment_events),
+                            "event_types": list(dict.fromkeys(kinds))[:12],
+                            "task_hint": user_situation.task_hint,
+                            "busy_score": round(float(user_situation.busy_score or 0.0), 4),
+                            "interruption_cost": round(float(user_situation.interruption_cost or 0.0), 4),
+                        },
+                    )
+                except Exception:
+                    pass
+        setattr(host, "last_user_situation", user_situation)
+
         # Semantic Tutor nhận cùng screen contract + structured chess state. Nó
         # tự quyết định có scene invalidation hay không; tick không đổi chỉ cập
         # nhật raw cache và không gọi DeepSeek.
@@ -921,6 +1190,8 @@ class SelfTurnPipeline:
             screen=screen,
             vision_facts=vision_facts,
             observer_frame=observer_frame,
+            user_situation=user_situation,
+            environment_events=environment_events,
         )
 
     def _schedule_observer_refresh(
@@ -1088,6 +1359,9 @@ class SelfTurnPipeline:
             "event_kind": "self_initiated_turn",
             "telemetry": dict(perception.telemetry),
             "screen_context": perception.screen.to_dict(),
+            "user_situation": perception.user_situation.to_dict() if perception.user_situation is not None else {},
+            "environment_events": [item.to_dict() for item in perception.environment_events[-16:]],
+            "task_graph": self.task_graph.to_dict(),
             "conversation_baton": context.discourse.to_dict(),
             "activity_session": context.activity.to_dict(),
             "vision_facts": list(perception.vision_facts),
@@ -1201,11 +1475,18 @@ class SelfTurnPipeline:
                     default=0.0,
                 )
                 curiosity = float(context.self_context.internal_state.get("curiosity", 0.0) or 0.0)
-                user_busy = bool(snapshot.get("user_busy", False))
-                attention_interrupt = float(context.self_context.attention.get("interrupt_cost", 0.0) or 0.0)
+                situation = context.perception.user_situation
+                environment_gate = environment_social_gate(situation)
+                environment_interrupt = float(environment_gate["interruption_cost"])
+                environment_busy = float(environment_gate["busy_score"])
+                user_busy = bool(snapshot.get("user_busy", False)) or bool(environment_gate["suppressed"]) or environment_busy >= 0.78
+                attention_interrupt = max(
+                    float(context.self_context.attention.get("interrupt_cost", 0.0) or 0.0),
+                    environment_interrupt,
+                )
                 relational_state = tick_relational(
                     now=context.perception.now,
-                    partner_available=0.24 if user_busy else 0.68,
+                    partner_available=0.16 if user_busy else 0.68,
                     interruption_cost=max(attention_interrupt, 0.78 if user_busy else 0.18),
                     sharing_signal=private_pressure,
                     curiosity_signal=curiosity,
@@ -1231,6 +1512,25 @@ class SelfTurnPipeline:
             except Exception as exc:
                 self.host.logger.debug("[relational] cheap tick failed: %s", exc)
 
+        # Deep Environment Stage F: social/autonomous governor phải tôn trọng
+        # interruption_cost và task phase thật, thay vì chỉ nhìn timer. Event level
+        # >=2 cũng tạm khóa social check-in vì hệ thống vừa thấy thay đổi đáng nghĩ.
+        situation = context.perception.user_situation
+        environment_gate = environment_social_gate(situation)
+        environment_interrupt = float(environment_gate["interruption_cost"])
+        environment_busy = float(environment_gate["busy_score"])
+        environment_phase = str(environment_gate["phase"])
+        environment_attention = int(environment_gate["attention_level"])
+        social_environment_suppressed = bool(environment_gate["suppressed"])
+        if isinstance(snapshot, dict):
+            snapshot["environment_social_gate"] = {
+                "suppressed": social_environment_suppressed,
+                "interruption_cost": round(environment_interrupt, 3),
+                "busy_score": round(environment_busy, 3),
+                "phase": environment_phase,
+                "attention_level": environment_attention,
+            }
+
         # V30: wake signal đi thẳng vào TemporalMind. Không tạo một kiểu event
         # riêng cho capability planner rồi map lại lần hai, vì planner không sở hữu
         # temporal policy. Một tín hiệu, một gate, một nguồn sự thật.
@@ -1251,8 +1551,8 @@ class SelfTurnPipeline:
         structured_strength = max(
             1.0 if social_continuation_due else 0.0,
             1.0 if conversation_arc_due else 0.0,
-            0.75 if social_agenda_active else 0.0,
-            0.70 if context.commentary.due else 0.0,
+            0.75 if social_agenda_active and not social_environment_suppressed else 0.0,
+            0.70 if context.commentary.due and not social_environment_suppressed else 0.0,
         )
         if structured_strength:
             emit(
@@ -1266,38 +1566,57 @@ class SelfTurnPipeline:
             )
         if context.discourse.followup_reminder_due:
             emit("followup_due", 0.85, "followup_appraisal")
-        if (
-            context.discourse.followup_abandoned and context.discourse.may_start_new_topic
-        ) or (context.discourse.assistant_may_continue and context.discourse.thread_fresh):
+        if not social_environment_suppressed and (
+            (context.discourse.followup_abandoned and context.discourse.may_start_new_topic)
+            or (context.discourse.assistant_may_continue and context.discourse.thread_fresh)
+        ):
             emit("open_discourse", 0.72, "typed_discourse_state")
 
         screen = context.perception.screen
-        if context.perception.mechanical_delta:
+        semantic_wake_gate = os.getenv("ERIS_SEMANTIC_WAKE_GATE_ENABLED", "1").strip().lower() not in {"0", "false", "off", "no"}
+        situation = context.perception.user_situation
+        if semantic_wake_gate and situation is not None:
+            # This is the critical migration: raw screen/mechanical_delta is no
+            # longer an authority for cognition. Level 1 updates world state;
+            # only level >=2 can ask TemporalMind to reconsider.
+            if situation.max_attention_level >= 2:
+                semantic_strength = max(
+                    0.55,
+                    min(1.0, 0.20 * situation.max_attention_level + 0.55 * situation.confidence),
+                )
+                emit(
+                    "environment_semantic",
+                    semantic_strength,
+                    "desktop_semantic_runtime",
+                    revision=screen.revision,
+                    attention_level=situation.max_attention_level,
+                    semantic_delta=bool(situation.semantic_delta),
+                    task=situation.task_hint,
+                    phase=situation.phase,
+                )
+        elif context.perception.mechanical_delta:
+            # Rollback path for ERIS_SEMANTIC_WAKE_GATE_ENABLED=0.
             scene_strength = max(
                 0.65 if bool(screen.window_changed) else 0.0,
                 0.55 if bool(screen.content_changed) else 0.0,
                 min(1.0, float(screen.changed_ratio or 0.0) * 4.0),
             )
-            emit(
-                "scene_delta",
-                scene_strength,
-                "ambient_screen_tracker",
-                revision=screen.revision,
-                window_changed=bool(screen.window_changed),
-                content_changed=bool(screen.content_changed),
-                changed_ratio=float(screen.changed_ratio or 0.0),
-            )
+            emit("scene_delta", scene_strength, "ambient_screen_tracker", revision=screen.revision)
+
         if context.activity.has_new_event:
             new_keys = set(context.activity.new_event_keys)
             new_events = [item for item in context.activity.recent_events if item.event_key in new_keys]
-            activity_strength = max((float(item.confidence or 0.0) for item in new_events), default=0.60)
-            emit(
-                "activity_event",
-                activity_strength,
-                "activity_session_tracker",
-                revision=context.activity.revision,
-                event_keys=list(context.activity.new_event_keys),
-            )
+            # Under semantic gating only planner-authored ActivitySemantics can
+            # wake cognition. Mechanical surface_entered/screen_delta remains a
+            # timeline/body cue and cannot sneak around the new authority.
+            if semantic_wake_gate:
+                new_events = [item for item in new_events if str(item.event_key).startswith("semantic:")]
+            if new_events:
+                activity_strength = max((float(item.confidence or 0.0) for item in new_events), default=0.60)
+                emit(
+                    "activity_event", activity_strength, "activity_session_tracker",
+                    revision=context.activity.revision, event_keys=[item.event_key for item in new_events],
+                )
         seed_strength = float(context.self_context.strongest_seed_score or 0.0)
         if context.self_context.has_public_seed:
             emit("seed_available", seed_strength, "public_safe_self_context")
@@ -1306,7 +1625,7 @@ class SelfTurnPipeline:
         if pressure > 0.0:
             emit("attention_pressure", pressure, "cortex_attention")
         relational_drive = float(relational_view.get("outreach_drive", 0.0) or 0.0) if relational_view else 0.0
-        if relational_drive >= 0.18:
+        if relational_drive >= 0.18 and not social_environment_suppressed:
             emit(
                 "relational_pressure",
                 relational_drive,

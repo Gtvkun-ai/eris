@@ -376,6 +376,7 @@ class ExecutiveCortex:
     def plan_interactive(self, user_text: str, *, snapshot: Mapping[str, Any] | None = None) -> InteractiveExecutiveDirective:
         source = snapshot or {}
         subject = source.get("subject_decision", {})
+        arguments: Mapping[str, Any] = {}
         if isinstance(subject, Mapping) and subject:
             arguments = subject.get("arguments", {})
             arguments = arguments if isinstance(arguments, Mapping) else {}
@@ -392,7 +393,30 @@ class ExecutiveCortex:
         if not self.capability_planner_enabled:
             return InteractiveExecutiveDirective(status="unavailable", reason="capability_planner_unavailable")
         index = build_capability_index(self.owner, refresh=True)
-        
+        if not arguments:
+            discovered = self._decide_interactive(
+                user_text,
+                snapshot=snapshot,
+                stage="interactive_initial",
+                capability_index=index.to_dict(),
+                candidate_tools=(),
+                offered_tools=(),
+            )
+            if discovered is None:
+                return InteractiveExecutiveDirective(status="unavailable", reason="interactive_capability_discovery_failure")
+            if discovered.action != "discover_capabilities":
+                return InteractiveExecutiveDirective(
+                    status="none",
+                    semantic_goal=discovered.semantic_target or discovered.capability_goal,
+                    reason=discovered.reason,
+                    confidence=discovered.confidence,
+                )
+            arguments = {
+                "required_effect": discovered.required_effect,
+                "maximum_risk": discovered.maximum_risk,
+                "capability_domain": discovered.capability_domain,
+            }
+
         required_effect = str(arguments.get("required_effect", "") or "")
         try:
             maximum_risk = float(arguments.get("maximum_risk", 1.0))
