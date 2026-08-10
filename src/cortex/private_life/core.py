@@ -34,6 +34,7 @@ from .contracts import (
     HabitatObservation,
     InternalErrand,
     LifeEvent,
+    MentalEvent,
     PrivateAnchor,
     PrivateAnchorUpdate,
     ObjectAttachment,
@@ -55,7 +56,7 @@ from .contracts import (
 )
 from .self_projection import PrivateLifeSelfProjector, PrivateLifeDriver
 
-PRIVATE_LIFE_VERSION = "private-life-v2-self-owned"
+PRIVATE_LIFE_VERSION = "private-life-v3-mental-workspace"
 
 
 def _getattr_or_mapping(obj: Any, name: str, default: Any = None) -> Any:
@@ -125,6 +126,155 @@ class PrivateLifeCore:
             project.surface_permission = 0.0
             project.notes = tuple((*project.notes, project.retired_reason))[-16:]
 
+    def ingest_seed_mental_event(self, seed: Any, *, now: float | None = None) -> MentalEvent | None:
+        """Nhận một semantic seed từ đúng *một* DeepSeek seed worker.
+
+        Reservoir vẫn nhỏ và session-local; workspace này mới là phần đời sống bền.
+        Seed không được nối thẳng ra lời nói. Ta chỉ lưu "ý gì vừa nảy ra", stance
+        nhận thức của nó, và nó có để lại open-loop hay không.
+        """
+
+        current = float(now if now is not None else time.time())
+        premise = compact_text(_getattr_or_mapping(seed, "premise", ""), 620)
+        if not premise:
+            return None
+        seed_id = compact_text(_getattr_or_mapping(seed, "seed_id", ""), 120)
+        kind = compact_text(_getattr_or_mapping(seed, "event_kind", "thought"), 64) or "thought"
+        epistemic = compact_text(_getattr_or_mapping(seed, "epistemic_mode", "opinion"), 64) or "opinion"
+        motive = compact_text(_getattr_or_mapping(seed, "eris_motive_kind", "want_to_express"), 64) or "want_to_express"
+        topic_tags = tuple(str(x) for x in (_getattr_or_mapping(seed, "topic_tags", ()) or ()) if str(x or "").strip())[:12]
+        source_refs = tuple(str(x) for x in (_getattr_or_mapping(seed, "source_refs", ()) or ()) if str(x or "").strip())[:16]
+
+        curiosity_kinds = {"curiosity_question", "knowledge_gap", "discovery_impulse", "unfinished_loop"}
+        open_loop = bool(_getattr_or_mapping(seed, "open_loop", False) or kind in curiosity_kinds)
+        confidence = clamp01(_getattr_or_mapping(seed, "confidence", 0.0))
+        authenticity = clamp01(_getattr_or_mapping(seed, "authenticity", 0.0))
+        personal_stake = clamp01(_getattr_or_mapping(seed, "personal_stake", 0.0))
+        fit = clamp01(_getattr_or_mapping(seed, "estimated_fit", 0.0))
+        uncertainty = clamp01(_getattr_or_mapping(seed, "uncertainty", 0.0))
+        ttl = max(120.0, min(1800.0, float(_getattr_or_mapping(seed, "ttl_seconds", 600.0) or 600.0)))
+
+        # Một event có thể quay lại nếu seed worker chạm cùng topic/kind. Reactivation
+        # tạo continuity mà không cần thêm model. Overlap tag được dùng thay vì regex
+        # "giống người" thần bí nào đó, vì đôi khi một set intersection cũng làm được việc.
+        tagset = set(topic_tags)
+        existing: MentalEvent | None = None
+        for candidate in self.state.mental_events.values():
+            if candidate.status in {"resolved", "expired"} or candidate.kind != kind:
+                continue
+            if tagset and tagset.intersection(candidate.topic_tags):
+                existing = candidate
+                break
+
+        salience = clamp01(0.34 * personal_stake + 0.28 * authenticity + 0.20 * confidence + 0.18 * fit)
+        novelty = clamp01(0.52 + 0.24 * authenticity + 0.12 * uncertainty)
+        curiosity = clamp01((0.68 if kind in curiosity_kinds else 0.18) + 0.22 * uncertainty)
+        emotional_charge = clamp01(0.20 * personal_stake + 0.18 * _getattr_or_mapping(seed, "daring", 0.0))
+        decay_rate = max(0.00005, min(0.004, 2.4 / ttl))
+
+        if existing is not None:
+            existing.content = premise
+            existing.epistemic_mode = epistemic  # type: ignore[assignment]
+            existing.motive = motive
+            existing.topic_tags = tuple(dict.fromkeys((*existing.topic_tags, *topic_tags)))[:12]
+            existing.salience = max(existing.salience * 0.88, salience)
+            existing.novelty = max(existing.novelty * 0.82, novelty * 0.86)
+            existing.curiosity = max(existing.curiosity, curiosity)
+            existing.emotional_charge = max(existing.emotional_charge * 0.85, emotional_charge)
+            existing.confidence = max(existing.confidence, confidence)
+            existing.social_relevance = max(existing.social_relevance * 0.90, fit)
+            existing.decay_rate = min(existing.decay_rate, decay_rate)
+            existing.open_loop = bool(existing.open_loop or open_loop)
+            existing.status = "active"
+            existing.updated_at = current
+            existing.last_activated_at = current
+            existing.activation_count += 1
+            existing.source_refs = tuple(dict.fromkeys((*existing.source_refs, *source_refs)))[:16]
+            event = existing
+            life_type = "mental_event_reactivated"
+        else:
+            event_id = f"mental.{seed_id}" if seed_id else stable_id("mental", kind, premise, int(current // 300))
+            event = MentalEvent(
+                id=event_id,
+                kind=kind,  # type: ignore[arg-type]
+                content=premise,
+                origin_source=compact_text(_getattr_or_mapping(seed, "source_kind", "seed_worker"), 80),
+                epistemic_mode=epistemic,  # type: ignore[arg-type]
+                motive=motive,
+                topic_tags=topic_tags,
+                salience=salience,
+                novelty=novelty,
+                emotional_charge=emotional_charge,
+                curiosity=curiosity,
+                confidence=confidence,
+                social_relevance=fit,
+                decay_rate=decay_rate,
+                open_loop=open_loop,
+                source_refs=source_refs,
+                created_at=current,
+                updated_at=current,
+                last_activated_at=current,
+            )
+            self.state.mental_events[event.id] = event
+            life_type = "mental_event_ingested"
+
+        # Workspace có giới hạn. Event già/yếu bị đẩy ra trước; open-loop được ưu tiên
+        # giữ lại để Eris còn có thể nhớ mình từng muốn biết gì.
+        self._decay_mental_workspace(now=current)
+        self.state.events = tuple((*self.state.events, LifeEvent(
+            type=life_type,  # type: ignore[arg-type]
+            title=f"Mental event: {event.kind}",
+            note=event.content,
+            evidence_ids=event.evidence_ids,
+            pressure=event.activation_score(current),
+            created_at=current,
+        )))[-64:]
+        self.state.updated_at = current
+        return event
+
+    def _decay_mental_workspace(self, *, now: float) -> None:
+        """Decay/compact deterministic. Không gọi model, không biến idle thành token tax."""
+
+        for event in self.state.mental_events.values():
+            if event.status in {"resolved", "expired"}:
+                continue
+            score = event.activation_score(now)
+            age = max(0.0, now - event.updated_at)
+            if score < 0.08 and age > 1800.0:
+                event.status = "dormant"
+            if score < 0.025 and age > 86400.0 and not event.open_loop:
+                event.status = "expired"
+
+        ranked = sorted(
+            self.state.mental_events.values(),
+            key=lambda item: (item.status != "expired", item.open_loop, item.activation_score(now), item.updated_at),
+            reverse=True,
+        )[:64]
+        self.state.mental_events = {item.id: item for item in ranked}
+
+    def mental_workspace_context(self, *, limit: int = 12, now: float | None = None) -> tuple[dict[str, Any], ...]:
+        """Public-safe-ish semantic context cho seed worker; vẫn không phải lời public."""
+
+        current = float(now if now is not None else time.time())
+        self._decay_mental_workspace(now=current)
+        ranked = sorted(
+            (item for item in self.state.mental_events.values() if item.status in {"active", "dormant"}),
+            key=lambda item: item.activation_score(current),
+            reverse=True,
+        )[: max(1, int(limit or 12))]
+        return tuple({
+            "id": item.id,
+            "kind": item.kind,
+            "content": item.content,
+            "epistemic_mode": item.epistemic_mode,
+            "motive": item.motive,
+            "topic_tags": list(item.topic_tags),
+            "open_loop": item.open_loop,
+            "status": item.status,
+            "activation_score": round(item.activation_score(current), 3),
+            "activation_count": item.activation_count,
+        } for item in ranked)
+
     def tick(
         self,
         *,
@@ -146,6 +296,7 @@ class PrivateLifeCore:
         """
 
         now = time.time()
+        self._decay_mental_workspace(now=now)
         idle = self._infer_idle_seconds(snapshot=snapshot, runtime_owner=runtime_owner, explicit=idle_seconds)
         events = tuple(recent_events or ())
 

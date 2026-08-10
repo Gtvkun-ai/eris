@@ -109,8 +109,6 @@ class UtteranceEvaluator:
         "toi co the giup gi",
         "ban can gi",
         "im hoi lau",
-        "nhip nay",
-        "khoang yen nay",
     )
     _GREETING_OPENERS = (
         "xin chao",

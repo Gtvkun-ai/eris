@@ -163,6 +163,44 @@ class ScreenVisionRuntimeMixin:
         )
 
 
+    def _ocr_salvage_scene_note(self, ocr_text: str, *, channel: str, reason: str) -> SemanticSceneNote | None:
+        """Giữ vision usable bằng OCR khi VLM/caption lane không tồn tại hoặc bị lỗi.
+
+        No-fallback của cognition không nên biến một sensor còn OCR thành sensor mù.
+        Fallback này chỉ phát visible text đã đọc được; nó tuyệt đối không tự suy
+        scene, thời tiết, cảm xúc hay hành động của user.
+        """
+
+        clean = str(ocr_text or "").strip()
+        if not clean:
+            return None
+        lines = [line.strip() for line in clean.splitlines() if line.strip()][:8]
+        if not lines:
+            return None
+        digest = hashlib.sha1(clean.encode("utf-8", errors="ignore")).hexdigest()[:12]
+        return SemanticSceneNote(
+            visible_context=lines[0],
+            important_text=lines,
+            activity_intent="reading",
+            semantic_family="screen_text",
+            novelty=0.35,
+            salience=0.55,
+            possible_error=0.0,
+            should_interrupt_user=False,
+            confidence=0.82,
+            content_summary=lines[0],
+            content_affect="neutral",
+            relation_to_user="",
+            delta="",
+            source="screen_text_evidence",
+            evidence=[
+                "screen_capture:ambient" if channel != "chat" else "screen_capture:chat_current",
+                f"ocr_text:{digest}",
+            ],
+            debug={"fallback_reason": str(reason or "vision_ocr_salvage")},
+        )
+
+
     def _is_low_value_screen_fact(self, fact: str) -> bool:
         normalized = self._normalize_user_message(fact)
         if not normalized:
@@ -653,48 +691,40 @@ class ScreenVisionRuntimeMixin:
                 trace = self._vision_trace_from_scene_note(note)
             except Exception as exc:
                 self._note_vision_failure("compressor", exc)
-                self.vision_stale_facts = tuple(self.vision_facts)
-                self.vision_facts_are_stale = bool(self.vision_facts)
-                self.last_vision_grounding_report = policy.empty_report(
-                    requested=requested,
-                    stale=True,
+                # VLM hỏng/không có client vẫn còn OCR. Đừng vứt luôn bằng chứng
+                # trực tiếp rồi để downstream tưởng rằng vision hoàn toàn mù.
+                salvage_note = self._ocr_salvage_scene_note(
+                    ocr_text_for_vision,
+                    channel=channel,
                     reason=f"vision_compressor_failed:{type(exc).__name__}",
-                    unknowns=("fresh_frame_not_interpreted",),
                 )
-                return self.vision_facts
+                if salvage_note is not None:
+                    self.logger.info(
+                        "[vision_facts] salvage=ocr_after_compressor_failure channel=%s",
+                        channel,
+                    )
+                    note = salvage_note
+                    trace = self._vision_trace_from_scene_note(note)
+                else:
+                    self.vision_stale_facts = tuple(self.vision_facts)
+                    self.vision_facts_are_stale = bool(self.vision_facts)
+                    self.last_vision_grounding_report = policy.empty_report(
+                        requested=requested,
+                        stale=True,
+                        reason=f"vision_compressor_failed:{type(exc).__name__}",
+                        unknowns=("fresh_frame_not_interpreted",),
+                    )
+                    return self.vision_facts
         else:
             self.logger.info(
                 "[vision_facts] source=ocr_salvage reason=no_compressor channel=%s",
                 channel,
             )
-            salvage_note = None
-            if ocr_text_for_vision:
-                lines = [line.strip() for line in ocr_text_for_vision.splitlines() if line.strip()][:8]
-                if lines:
-                    digest = hashlib.sha1(ocr_text_for_vision.encode("utf-8", errors="ignore")).hexdigest()[:12]
-                    salvage_note = SemanticSceneNote(
-                        visible_context=lines[0],
-                        important_text=lines,
-                        activity_intent="reading",
-                        semantic_family="screen_text",
-                        novelty=0.35,
-                        salience=0.55,
-                        possible_error=0.0,
-                        should_interrupt_user=False,
-                        confidence=0.82,
-                        content_summary=lines[0],
-                        content_affect="neutral",
-                        relation_to_user="",
-                        delta="",
-                        source="screen_text_evidence",
-                        evidence=[
-                            "screen_capture:ambient" if channel != "chat" else "screen_capture:chat_current",
-                            f"ocr_text:{digest}",
-                        ],
-                        debug={
-                            "fallback_reason": "vision_disabled_salvaged_from_ocr",
-                        },
-                    )
+            salvage_note = self._ocr_salvage_scene_note(
+                ocr_text_for_vision,
+                channel=channel,
+                reason="vision_disabled_salvaged_from_ocr",
+            )
 
             if salvage_note is not None:
                 note = salvage_note

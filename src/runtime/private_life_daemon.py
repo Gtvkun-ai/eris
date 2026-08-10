@@ -21,6 +21,7 @@ from __future__ import annotations
 from core.di import resolve_dependency
 
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -100,6 +101,9 @@ class PrivateLifeDaemon:
         self.failure_count = 0
         self.sync_failure_count = 0
         self.last_error: dict[str, Any] = {}
+        # Seed reservoir chạy background thread còn daemon tick đi theo runtime loop.
+        # Một lock nhỏ rẻ hơn rất nhiều so với debug state JSON bị ghi xen kẽ lúc 3 giờ sáng.
+        self._state_lock = threading.RLock()
         self._sync_runtime_owner()
 
     @classmethod
@@ -152,24 +156,25 @@ class PrivateLifeDaemon:
             if not isinstance(private_mind_digest, Mapping):
                 private_mind_digest = {}
 
-            result = self.core.tick(
-                snapshot=snapshot,
-                runtime_owner=owner,
-                user_text=user_text,
-                channel=channel,
-                idle_seconds=inferred_idle,
-                recent_events=recent_events,
-                subject_self=subject_self,
-                private_mind_digest=private_mind_digest,
-                force=force,
-            )
-            self.last_tick_at = now
-            self.tick_count += 1
-            self._maybe_enqueue_surface_seed(result.surface_seed)
-            if self.config.autosave and self.store is not None:
-                self.store.save(self.core.state)
-            self.last_digest = self.digest()
-            self._sync_runtime_owner()
+            with self._state_lock:
+                result = self.core.tick(
+                    snapshot=snapshot,
+                    runtime_owner=owner,
+                    user_text=user_text,
+                    channel=channel,
+                    idle_seconds=inferred_idle,
+                    recent_events=recent_events,
+                    subject_self=subject_self,
+                    private_mind_digest=private_mind_digest,
+                    force=force,
+                )
+                self.last_tick_at = now
+                self.tick_count += 1
+                self._maybe_enqueue_surface_seed(result.surface_seed)
+                if self.config.autosave and self.store is not None:
+                    self.store.save(self.core.state)
+                self.last_digest = self.digest()
+                self._sync_runtime_owner()
             tick = PrivateLifeDaemonTick(
                 ticked=True,
                 reason="ticked",
@@ -185,6 +190,30 @@ class PrivateLifeDaemon:
             tick = PrivateLifeDaemonTick(ticked=False, reason=f"error:{type(exc).__name__}", surface_queue_size=len(self.surface_queue))
             self.last_tick = tick
             return tick
+
+    def ingest_seed_mental_event(self, seed: Any) -> dict[str, Any] | None:
+        """Nhận mental event từ background seed worker và persist vào private life.
+
+        Đây là cầu nối có chủ đích giữa một DeepSeek seed worker và đời sống bền:
+        reservoir vẫn chỉ chứa vài candidate, còn private_life nhớ các curiosity,
+        thought và open-loop đủ đáng giữ. Không có speech nào được tạo ở đây.
+        """
+
+        if not self.config.enabled:
+            return None
+        try:
+            with self._state_lock:
+                event = self.core.ingest_seed_mental_event(seed)
+                if event is None:
+                    return None
+                if self.config.autosave and self.store is not None:
+                    self.store.save(self.core.state)
+                self.last_digest = self.digest()
+                self._sync_runtime_owner()
+                return event.to_dict()
+        except Exception as exc:
+            self._record_failure("seed_mental_event", exc)
+            return None
 
     def drain_surface_impulses(self, *, limit: int = 4) -> tuple[Any, ...]:
         """Đường migration cũ; mặc định PrivateLife không có quyền cấp speech."""

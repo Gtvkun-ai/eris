@@ -366,7 +366,7 @@ class SelfTurnPipeline:
             try:
                 subject_decision = subject_ingress.complete_session(
                     subject_session,
-                    executive=executive,
+                    committer=executive,
                 )
                 planner_snapshot["subject_decision"] = subject_decision.to_dict()
                 action_executor = getattr(host, "action_executor", None)
@@ -1669,6 +1669,7 @@ class SelfTurnPipeline:
                 str(getattr(decision, "text", "") or ""),
                 report=grounding_report,
                 engine=getattr(host, "source_grounding_engine", None),
+                channel="autonomous",
             )
             grounding_allowed = grounding_verdict.allowed
             grounding_code = grounding_verdict.violation_code or grounding_verdict.reason
@@ -1677,15 +1678,19 @@ class SelfTurnPipeline:
                 getattr(host, "source_grounding_engine", None),
                 str(getattr(decision, "text", "") or ""),
                 report=grounding_report,
+                channel="autonomous",
             )
             grounding_allowed = bool(legacy_verdict.allowed)
             grounding_code = str(legacy_verdict.violation_code or "grounding_blocked")
         if not grounding_allowed:
-            # V41: postflight chỉ ghi telemetry. Không được vứt câu đã sinh hoặc
-            # kéo autonomous sang fallback chung chung vì một word-marker nhận
-            # nhầm claim. Preflight provenance vẫn giữ privacy/evidence boundary.
+            # Grounding là hard boundary cho cả chat lẫn autonomous. Một self-turn
+            # không có user đang chờ câu trả lời nên fail-closed ở đây rẻ và sạch
+            # hơn nhiều so với phát claim sai rồi trông chờ observer sửa hậu quả.
+            gate_reason = f"grounding_gate:{grounding_code}"[:160]
+            self._release_seed_lease(candidate, reason=gate_reason)
+            self._defer_claimed_continuation(plan, reason=gate_reason, seconds=12.0)
             host.logger.warning(
-                "[grounding gate] autonomous surface risk subject=%s violations=%s; passing through",
+                "[grounding gate] autonomous surface blocked subject=%s violations=%s",
                 plan.semantics.subject_key,
                 grounding_code,
             )
@@ -1693,10 +1698,23 @@ class SelfTurnPipeline:
                 setattr(decision, "grounding_risk", {
                     "allowed": False,
                     "violation": grounding_code,
-                    "policy": "annotate_and_pass_through",
+                    "policy": "fail_closed",
                 })
             except Exception:
                 pass
+            try:
+                from runtime.public_lifecycle import lifecycle_for
+
+                lifecycle_for(host).transition(
+                    "DEGRADED",
+                    turn_id=str(plan.plan_id or f"autonomous:{context.turn_seq}"),
+                    reason=gate_reason,
+                )
+            except Exception:
+                pass
+            self._record_result(plan, result="grounding_blocked", gate_reason=gate_reason)
+            host._sleep_interruptible(10)
+            return True
         utterance_allowed, utterance_reason = self._autonomous_utterance_gate(
             str(getattr(decision, "text", "") or ""),
             context=context,

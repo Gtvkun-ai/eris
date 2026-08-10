@@ -886,7 +886,12 @@ INTENTION_PLAN_SCHEMA: dict[str, Any] = {
                         "discovery", "internal", "presence", "startup", "force_speak", "other"
                     ],
                 },
-                "speech_act": {"type": "string"},
+                # speech_act là identifier runtime, không phải chỗ model viết
+                # một câu mô tả tự do rồi để semantic_key nghiền thành ID rác.
+                "speech_act": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9_.:-]{0,63}$",
+                },
                 "subject_key": {"type": "string"},
                 "evidence_scope": {"type": "string"},
                 "continuation_key": {"type": "string"},
@@ -2441,6 +2446,8 @@ class AIRuntimeModelRouter:
             "vietnam_local_signal có thể chọn tin lạ hoặc lá cải đang lan truyền, nhưng reason phải yêu cầu gắn nhãn nguồn yếu/chưa kiểm chứng. "
             "Không suy ra sở thích User chỉ từ một từ khóa. Không tạo tin giả, không chọn chủ đề câu khách chỉ vì dễ gây sốc. "
             "reason phải nói rõ discovery này phục vụ curiosity riêng, useful follow-up, hay social opening; nếu chỉ là tin ngẫu nhiên không liên quan thì lane=none. "
+            "Nếu snapshot.self_context.private_life_workspace có mental event kind=discovery_impulse/knowledge_gap với open_loop=true và activation_score đủ cao, "
+            "hãy ưu tiên xem đó như curiosity thật của ERIS: stable knowledge vẫn lane=none, còn câu hỏi kiểu 'hôm nay có vụ gì' hoặc cần freshness thì có thể lane=fresh_curiosity/vietnam_local_signal. "
             "Nếu snapshot.discovery.ready_to_share đã có artifact tốt, không tạo search mới; trả lane=none. "
             "Topic phải là câu giao việc ngắn, có thể đưa thẳng cho Tutor, và reason nói vì sao ERIS thấy đáng tò mò."
         )
@@ -2697,6 +2704,7 @@ class AIRuntimeModelRouter:
             "Nếu anchor là self, chỉ surface seed đã được duyệt, không lộ raw thought. Nếu speech_act=followup_reminder, "
             "nhắc lại đúng một lần bằng một câu ngắn, giả định user chưa để ý, không nhắc chuyện bị lờ và không thêm câu hỏi mới. "
             "Nếu speech_intent.random_chat_seed có dữ liệu, premise là hạt ý bắt buộc: giữ motive, mode, personal_stake và daring của seed. "
+            "Giữ nguyên epistemic_mode: speculation phải nói như suy đoán, imagination phải nói như hình dung, opinion là quan điểm, question/research_intent không được nâng thành fact; bounded_inference phải giữ độ dè dặt. "
             "Khi motive là want_to_share/want_to_express, ưu tiên một phát biểu tự đủ nghĩa; không mặc định biến thành câu hỏi, không xin phép chia sẻ, "
             "không kết thúc bằng 'còn bạn thì sao', không gây áp lực phải trả lời. Daring cho phép ý kiến riêng, tự bộc lộ hoặc trêu nhẹ trong risk đã duyệt; "
             "nó không cho phép bịa fact, chạm memory nhạy cảm hay ép thân mật. Nếu speech_act=independent_topic_shift, bỏ hẳn chủ đề cũ, "

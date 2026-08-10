@@ -97,8 +97,9 @@ class AutonomousGroundingValidator:
         *,
         report: Any,
         engine: Any,
+        channel: str = "",
     ) -> GroundingDecision:
-        verdict = evaluate_grounded_surface(engine, str(text or ""), report=report)
+        verdict = evaluate_grounded_surface(engine, str(text or ""), report=report, channel=channel)
         if bool(getattr(verdict, "allowed", False)):
             return GroundingDecision(True, "surface_grounded")
         code = str(getattr(verdict, "violation_code", "") or "grounding_blocked")

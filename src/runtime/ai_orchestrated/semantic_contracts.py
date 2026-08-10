@@ -26,6 +26,34 @@ def semantic_key(value: Any, *, fallback: str = "unknown", limit: int = 96) -> s
     return (normalized or fallback)[:limit]
 
 
+_SPEECH_ACT_ALIASES = {
+    "random chat": "random_chat",
+    "small talk": "small_talk",
+    "user probe": "user_probe",
+    "direct answer": "direct_answer",
+    "topic shift": "independent_topic_shift",
+}
+
+
+def speech_act_key(value: Any, *, fallback: str = "unspecified", limit: int = 64) -> str:
+    """Chỉ nhận speech_act có hình dạng identifier; prose phải fail closed.
+
+    Trước đây một câu mô tả tiếng Việt bị ``semantic_key`` thay từng ký tự có
+    dấu thành ``_`` rồi trở thành ID rác trong cooldown/log. Speech act là API
+    identity, không phải chỗ chứa câu văn tự do.
+    """
+
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return fallback
+    if raw in _SPEECH_ACT_ALIASES:
+        return _SPEECH_ACT_ALIASES[raw][:limit]
+    # Identifier hợp lệ không chứa khoảng trắng và chỉ dùng ASCII key chars.
+    if re.fullmatch(r"[a-z0-9][a-z0-9_.:-]{0,95}", raw):
+        return raw[:limit]
+    return fallback
+
+
 @dataclass(frozen=True, slots=True)
 class DiscourseFrame:
     """Kết luận discourse do post-turn observer tạo.
@@ -94,7 +122,7 @@ class TurnSemantics:
             kind = "other"
         return cls(
             turn_kind=kind,
-            speech_act=semantic_key(data.get("speech_act", "unspecified"), fallback="unspecified", limit=64),
+            speech_act=speech_act_key(data.get("speech_act", "unspecified"), fallback="unspecified", limit=64),
             subject_key=semantic_key(data.get("subject_key", "unknown"), fallback="unknown", limit=96),
             evidence_scope=semantic_key(data.get("evidence_scope", "none"), fallback="none", limit=96),
             continuation_key=semantic_key(data.get("continuation_key", "none"), fallback="none", limit=96),
@@ -164,4 +192,5 @@ __all__ = [
     "TurnSemantics",
     "compact",
     "semantic_key",
+    "speech_act_key",
 ]

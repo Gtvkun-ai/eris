@@ -120,8 +120,19 @@ class AutonomousProposalSource:
         reply_expected = bool(public_view.get("reply_expected", getattr(blackboard, "reply_expected", False)))
         engagement_active = bool(public_view.get("engagement_active", getattr(blackboard, "engagement_active", False)))
 
-        proposals.extend((
-            {
+        # Chỉ đưa capability-grounded-speech vào khi có context thật đòi hỏi grounding:
+        # discovery sẵn sàng, màn hình đã grounded, hoặc affordance nào đó yêu cầu grounding.
+        # Nếu không có gì cụ thể để ground thì proposal này không được chen vào và giành
+        # Subject commit khỏi các proposal social speech thông thường.
+        grounding_needed = any(
+            bool(getattr(getattr(aff, "candidate", None), "requires_grounding", False))
+            for aff in affordances
+        )
+        discovery_ready = bool(public_view.get("discovery_ready", False))
+        screen_grounded = bool(public_view.get("screen_fresh", False))
+        has_grounding_context = grounding_needed or discovery_ready or screen_grounded
+        if has_grounding_context:
+            proposals.append({
                 "proposal_id": f"proposal:capability-grounded-speech:{turn_id}",
                 "action_kind": "speak",
                 "arguments": {
@@ -131,18 +142,19 @@ class AutonomousProposalSource:
                     "skill_id": "investigation",
                 },
                 "supporting_need_ids": ("coherence", "competence"),
-                "expected_need_relief": 0.38,
+                "expected_need_relief": 0.58,
                 "expected_action_efficacy": clamp01(self._subject.substrate.action_efficacy, 0.5),
                 "expected_epistemic_value": 0.78,
                 "value_congruence": 0.50,
                 "substrate_cost": max(0.08, 1.0 - self._subject.substrate.processing_capacity),
-                "uncertainty": 0.48,
+                "uncertainty": 0.38,
                 "project_contribution": self._subject.substrate.project_viability * 0.35,
                 "historical_success": 0.50,
                 "commitment_conflict": 0.08 if not reply_expected else 0.28,
                 "evidence_refs": (turn_id,),
                 "need_effects": {"coherence": 0.70, "competence": 0.48, "connection": -0.08},
-            },
+            })
+        proposals.extend((
             {
                 "proposal_id": f"proposal:silence:{turn_id}",
                 "action_kind": "silence",

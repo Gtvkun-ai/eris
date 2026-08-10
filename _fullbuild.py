@@ -199,6 +199,17 @@ for src, dst in deploy_pairs:
     shutil.copy2(src, dst)
     print("  [OK] " + os.path.basename(dst) + "  md5=" + md5_short(dst))
 
+# Deploy embedding_model directory to build directory if present
+embed_src = os.path.join(REPO, "embedding_model")
+embed_dst = os.path.join(OUT, "embedding_model")
+if os.path.exists(embed_src):
+    print("  Deploying embedding_model to build...")
+    try:
+        shutil.copytree(embed_src, embed_dst, dirs_exist_ok=True)
+        print("  [OK] embedding_model deployed")
+    except Exception as exc:
+        print("  [SKIP] embedding_model copy failed: " + str(exc))
+
 # Deploy memory_core directory to build directory if present
 mem_core_src = os.path.join(REPO, "memory_core")
 mem_core_dst = os.path.join(OUT, "memory_core")

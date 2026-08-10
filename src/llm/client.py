@@ -897,6 +897,19 @@ class ChainedFallbackClient:
                 # không treo UI khi nhà chính Whale2API dính rate limit.
                 fallback_timeout = max(5.0, min(15.0, requested_timeout))
                 call_kwargs["timeout"] = fallback_timeout
+                # DeepSeek v4-flash/v4-pro bật Extended Thinking mặc định. Nếu
+                # max_tokens quá nhỏ, reasoning tokens ăn hết budget → content
+                # trống → "Empty output content received from provider". Bump lên
+                # tối thiểu 2048 cho mọi fallback tier gọi DeepSeek Official.
+                fallback_client_url = str(getattr(client, "base_url", "") or "")
+                fallback_is_official_deepseek = "api.deepseek.com" in fallback_client_url.lower()
+                if fallback_is_official_deepseek:
+                    orig_max = call_kwargs.get("max_tokens")
+                    if orig_max is not None:
+                        try:
+                            call_kwargs["max_tokens"] = max(int(orig_max), 2048)
+                        except (TypeError, ValueError):
+                            call_kwargs["max_tokens"] = 2048
                 with inference_context(
                     parent_ctx.lane,
                     timeout_seconds=fallback_timeout,

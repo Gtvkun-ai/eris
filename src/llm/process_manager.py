@@ -533,8 +533,14 @@ class RemoteModelProcessManager:
             self.logger.info("Surface worker owner: public wording only")
         return client
 
+    def build_curator_client(self):
+        """Worker chuyên trách dọn dẹp Memory và tổng hợp Identity."""
+        return self.build_deepseek_worker_client("curator")
+
     def build_research_client(self):
-        return self.build_deepseek_worker_client("research")
+        # Research worker đã bị loại bỏ; các yêu cầu tra cứu từ Tutor
+        # sẽ được điều hướng sang Curator để dọn dẹp API keys.
+        return self.build_curator_client()
 
     def build_tutor_client(self):
         """Worker DeepSeek riêng để phân rã ngữ nghĩa scene theo sự kiện.
@@ -806,8 +812,10 @@ class RemoteModelProcessManager:
         vision default when ERIS_GROQ_API_KEY is available.
         """
         apply_secrets_to_environ()
-        raw_mode = os.environ.get("ERIS_VISION_API_ENABLED", "0").strip().lower()
-        if raw_mode in {"", "0", "false", "no", "off", "auto"}:
+        raw_mode = os.environ.get("ERIS_VISION_API_ENABLED", "auto").strip().lower()
+        # "auto" thực sự phải là auto: nếu có cấu hình/key multimodal thì dựng
+        # client; chỉ các giá trị tắt rõ ràng mới vô hiệu hóa vision API.
+        if raw_mode in {"0", "false", "no", "off", "disabled"}:
             return None
 
         provider = os.environ.get("ERIS_VISION_API_PROVIDER", os.environ.get("ERIS_VISION_PROVIDER", "")).strip().lower()

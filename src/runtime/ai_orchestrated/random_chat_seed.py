@@ -30,6 +30,14 @@ _ALLOWED_SOURCES = {
     "recent_shared_context",
     "eris_self_memory",
     "weak_association",
+    # Nguồn mới vẫn do đúng một seed worker tạo; đây chỉ là provenance semantic.
+    "private_life_workspace",
+    "endogenous_curiosity",
+    "general_knowledge",
+    "world_hypothesis",
+    "discovery_impulse",
+    "play_impulse",
+    "question_impulse",
 }
 _ALLOWED_MOTIVES = {
     "want_to_share",
@@ -37,6 +45,22 @@ _ALLOWED_MOTIVES = {
     "want_to_test",
     "want_to_connect",
     "want_to_amuse",
+    "want_to_know",
+    "want_to_explore",
+    "want_to_play",
+    "want_to_revisit",
+    "want_to_create",
+}
+
+_ALLOWED_EVENT_KINDS = {
+    "thought", "curiosity_question", "knowledge_gap", "discovery_impulse",
+    "speculation", "imagination", "opinion", "association", "memory_callback",
+    "playful_probe", "micro_challenge", "unfinished_loop", "creative_impulse",
+    "self_reflection", "prediction", "surprise", "contradiction_notice",
+}
+_ALLOWED_EPISTEMIC_MODES = {
+    "grounded_fact", "bounded_inference", "speculation", "imagination",
+    "opinion", "question", "research_intent",
 }
 
 _GENERIC_PATTERNS = (
@@ -122,6 +146,9 @@ class RandomChatSeed:
     source_kind: str = "recent_shared_context"
     source_refs: tuple[str, ...] = ()
     topic_tags: tuple[str, ...] = ()
+    event_kind: str = "thought"
+    epistemic_mode: str = "opinion"
+    open_loop: bool = False
     opening_move: str = "share_observation"
     desired_response: tuple[str, ...] = ()
     eris_motive_kind: str = "want_to_share"
@@ -147,6 +174,8 @@ class RandomChatSeed:
             and self.mode in _ALLOWED_MODES
             and self.source_kind in _ALLOWED_SOURCES
             and self.eris_motive_kind in _ALLOWED_MOTIVES
+            and self.event_kind in _ALLOWED_EVENT_KINDS
+            and self.epistemic_mode in _ALLOWED_EPISTEMIC_MODES
         )
 
     @property
@@ -185,6 +214,12 @@ class RandomChatSeed:
                 tag for tag in (_clean_tag(value) for value in _sequence(data.get("topic_tags"))[:8]) if tag
             )
         )
+        event_kind = _compact(data.get("event_kind", "thought"), 48).lower() or "thought"
+        if event_kind not in _ALLOWED_EVENT_KINDS:
+            event_kind = "thought"
+        epistemic_mode = _compact(data.get("epistemic_mode", "opinion"), 48).lower() or "opinion"
+        if epistemic_mode not in _ALLOWED_EPISTEMIC_MODES:
+            epistemic_mode = "opinion"
         desired = tuple(
             item for item in (_compact(value, 64).lower() for value in _sequence(data.get("desired_response"))[:6]) if item
         )
@@ -200,6 +235,9 @@ class RandomChatSeed:
             source_kind=source_kind,
             source_refs=source_refs,
             topic_tags=tags,
+            event_kind=event_kind,
+            epistemic_mode=epistemic_mode,
+            open_loop=bool(data.get("open_loop", event_kind in {"curiosity_question", "knowledge_gap", "discovery_impulse", "unfinished_loop"})),
             opening_move=_compact(data.get("opening_move", "share_observation"), 64).lower() or "share_observation",
             desired_response=desired,
             eris_motive_kind=motive_kind,
@@ -322,6 +360,8 @@ class RandomChatSeedAffinityStore:
                         "premise": item.get("premise", ""),
                         "topic_tags": list(item.get("topic_tags", ()) or ()),
                         "mode": item.get("mode", ""),
+                        "event_kind": item.get("event_kind", "thought"),
+                        "epistemic_mode": item.get("epistemic_mode", "opinion"),
                         "opening_move": item.get("opening_move", ""),
                         "outcome": item.get("outcome", ""),
                         "spoken_at": item.get("spoken_at", 0.0),
@@ -434,7 +474,12 @@ class RandomChatSeedAffinityStore:
             evidence_id = _compact(user_turn_id, 120) or f"seed_response:{int(current * 1000)}"
             affinities = {key: dict(value) for key, value in self._state.affinities.items()}
             feature_keys = [f"tag:{tag}" for tag in pending.get("topic_tags", ()) or ()]
-            feature_keys.extend((f"mode:{pending.get('mode', 'shared')}", f"move:{pending.get('opening_move', 'share_observation')}"))
+            feature_keys.extend((
+                f"mode:{pending.get('mode', 'shared')}",
+                f"event:{pending.get('event_kind', 'thought')}",
+                f"epistemic:{pending.get('epistemic_mode', 'opinion')}",
+                f"move:{pending.get('opening_move', 'share_observation')}",
+            ))
             for key in dict.fromkeys(feature_keys):
                 old = dict(affinities.get(key, {}))
                 positive = int(old.get("positive", 0) or 0)

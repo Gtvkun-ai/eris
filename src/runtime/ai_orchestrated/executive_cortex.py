@@ -374,24 +374,35 @@ class ExecutiveCortex:
         )
 
     def plan_interactive(self, user_text: str, *, snapshot: Mapping[str, Any] | None = None) -> InteractiveExecutiveDirective:
+        source = snapshot or {}
+        subject = source.get("subject_decision", {})
+        if isinstance(subject, Mapping) and subject:
+            arguments = subject.get("arguments", {})
+            arguments = arguments if isinstance(arguments, Mapping) else {}
+            # Subject đã commit một câu hội thoại thuần túy thì không gọi LLM chỉ
+            # để hỏi "có cần capability không". Tool planner chỉ được chạy khi
+            # capability_route được commit rõ ràng.
+            if not bool(arguments.get("capability_route", False)):
+                return InteractiveExecutiveDirective(
+                    status="none",
+                    semantic_goal=str(arguments.get("semantic_target", "") or ""),
+                    reason="subject_commit_requires_no_capability",
+                    confidence=1.0,
+                )
         if not self.capability_planner_enabled:
             return InteractiveExecutiveDirective(status="unavailable", reason="capability_planner_unavailable")
         index = build_capability_index(self.owner, refresh=True)
-        decision = self._decide_interactive(
-            user_text, snapshot=snapshot, stage="interactive_initial",
-            capability_index=index.to_dict(), candidate_tools=(), offered_tools=(),
-        )
-        if decision is None:
-            return InteractiveExecutiveDirective(status="unavailable", reason="interactive_capability_planner_failure")
-        if decision.action != "discover_capabilities":
-            return InteractiveExecutiveDirective(
-                status="none", semantic_goal=decision.semantic_target,
-                reason=decision.reason, confidence=decision.confidence,
-            )
+        
+        required_effect = str(arguments.get("required_effect", "") or "")
+        try:
+            maximum_risk = float(arguments.get("maximum_risk", 1.0))
+        except (TypeError, ValueError):
+            maximum_risk = 1.0
+        capability_domain = str(arguments.get("capability_domain", "") or "")
         candidates = self._candidate_capabilities(
-            required_effect=decision.required_effect,
-            maximum_risk=decision.maximum_risk,
-            domain=decision.capability_domain,
+            required_effect=required_effect,
+            maximum_risk=maximum_risk,
+            domain=capability_domain,
         )
         offered = self._semantic_shortlist_interactive(
             user_text, snapshot=snapshot, index=index.to_dict(), candidates=candidates,

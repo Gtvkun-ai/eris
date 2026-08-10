@@ -101,6 +101,38 @@ def _replace_case(match: re.Match[str], replacement: str) -> str:
     return replacement
 
 
+def _sanitize_assistant_self_pronoun(text: str) -> tuple[str, tuple[str, ...]]:
+    """Giữ đại từ tự xưng của ERIS ổn định giữa startup/chat/autonomous.
+
+    Chỉ sửa những vị trí có hình dạng chủ ngữ/ngôi sở hữu rõ; không global
+    replace từ "em" vì nó có thể đang nói về người thứ ba.
+    """
+
+    state = user_addressing_snapshot()
+    target = str(state.assistant_self_pronoun or "tôi").strip().lower() or "tôi"
+    out = str(text or "")
+    rules: list[str] = []
+    # Các biến thể thường do model mirror register nhất thời của user.
+    alternatives = tuple(item for item in ("em", "tui", "mình") if item != target)
+    for wrong in alternatives:
+        escaped = re.escape(wrong)
+        subject = re.compile(
+            rf"\b{escaped}\s+(?=(?:đang|dang|đã|da|sẽ|se|có|co|muốn|muon|cần|can|nghĩ|nghi|thấy|thay|"
+            rf"nhớ|nho|nói|noi|hỏi|hoi|làm|lam|ở|o|vẫn|van|xin|nhận|nhan|cảm|cam)\b)",
+            re.IGNORECASE,
+        )
+        out2, count = subject.subn(lambda m: _replace_case(m, target) + " ", out)
+        if count:
+            out = out2
+            rules.append("assistant_self_pronoun")
+        possessive = re.compile(rf"\b(?:của|cua)\s+{escaped}\b", re.IGNORECASE)
+        out2, count = possessive.subn(lambda m: ("của " if "ủ" in m.group(0) else "cua ") + target, out)
+        if count:
+            out = out2
+            rules.append("assistant_self_possessive")
+    return _squash(out), tuple(dict.fromkeys(rules))
+
+
 def _sanitize_dynamic_user_vocative(text: str) -> tuple[str, tuple[str, ...]]:
     """Enforce explicit user addressing state on public text.
 
@@ -231,6 +263,8 @@ def sanitize_legacy_addressing(text: str, *, surface: str = "display") -> Addres
 
     out = _squash(out)
     out = re.sub(r"\b[Bb]\u1ea1n\s+[Bb]\u1ea1n\b", lambda m: "Bạn" if m.group(0)[:1].isupper() else "bạn", out)
+    out, self_rules = _sanitize_assistant_self_pronoun(out)
+    rules.extend(self_rules)
     out, dynamic_rules = _sanitize_dynamic_user_vocative(out)
     rules.extend(dynamic_rules)
     return AddressingResult(out, changed=out != raw, rules=tuple(dict.fromkeys(rules)))

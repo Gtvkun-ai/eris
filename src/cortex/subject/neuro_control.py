@@ -412,17 +412,23 @@ class NeuroActionSelector:
         probabilities = self._softmax(scores, beta)
         entropy = self._normalized_entropy(probabilities)
         winner = frame.coalitions[winner_index]
-        conflict = self._commitment_conflict(frame, winner)
-
+        winner_action = str(getattr(winner, "action_kind", "") or "").lower()
+        is_harmless = winner_action in {"silence", "body_only"} and not getattr(winner, "capability_route", False)
+        
         reasons: list[str] = []
         if len(frame.coalitions) > 1 and margin < self.config.deliberation_margin:
             reasons.append("low_margin")
-        if _clamp01(getattr(winner, "uncertainty", 0.5), 0.5) >= self.config.uncertainty_threshold:
-            reasons.append("winner_uncertain")
-        if entropy >= self.config.entropy_threshold:
-            reasons.append("high_entropy")
-        if broadcast.surprise >= self.config.surprise_threshold and broadcast.precision < 0.62:
-            reasons.append("surprising_low_precision")
+            
+        # Nếu winner là hành động an toàn (im lặng), không cần tốn 20s LLM chỉ vì uncertainty/entropy cao
+        if not is_harmless:
+            if _clamp01(getattr(winner, "uncertainty", 0.5), 0.5) >= self.config.uncertainty_threshold:
+                reasons.append("winner_uncertain")
+            if entropy >= self.config.entropy_threshold:
+                reasons.append("high_entropy")
+            if broadcast.surprise >= self.config.surprise_threshold and broadcast.precision < 0.62:
+                reasons.append("surprising_low_precision")
+                
+        conflict = self._commitment_conflict(frame, winner)
         if conflict >= self.config.conflict_threshold:
             reasons.append("commitment_conflict")
 

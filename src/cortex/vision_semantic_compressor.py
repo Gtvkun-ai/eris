@@ -526,6 +526,17 @@ class VisionSemanticCompressor:
         has_caption_client = self.caption_client is not None and callable(getattr(self.caption_client, "caption_image", None))
         has_generic_client = self.client is not None and callable(getattr(self.client, "chat_json", None))
         if not has_caption_client and not has_generic_client:
+            # Không có VLM không đồng nghĩa không có sensor. Nếu OCR đã đọc được
+            # text hiện tại thì giữ đúng phần bằng chứng đó ngay cả ở no-fallback
+            # mode; no-fallback chỉ cấm bịa/model dự phòng, không cấm dùng sensor
+            # local đã có dữ liệu thật.
+            if str(ocr_text or "").strip() or str(getattr(signal_snapshot, "ocr_text", "") if signal_snapshot else "").strip():
+                return self._fallback_ocr_note(
+                    ocr_text=ocr_text,
+                    observer_frame=observer_frame,
+                    signal_snapshot=signal_snapshot,
+                    reason="missing_vision_client_ocr_salvage",
+                )
             if no_fallback_mode_enabled():
                 raise RuntimeError("no_fallback_vision:missing_vision_client")
             return self._fallback_ocr_note(

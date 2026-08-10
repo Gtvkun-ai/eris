@@ -794,7 +794,7 @@ def get_provider_circuit(provider_id: str) -> ProviderCircuitBreaker:
             _provider_circuits[key] = circuit
         return circuit
 
-
 def reset_provider_circuits() -> None:
     with _provider_circuits_lock:
         _provider_circuits.clear()
+

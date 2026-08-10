@@ -1467,6 +1467,9 @@ class RuntimePrivateMindModelAdapter:
 
     def _strip_markdown_fences(self, text: str) -> str:
         cleaned = str(text or "").strip()
+        # qwen3 và các model 'thinking' (DeepSeek V3/R1) hay chèn <think>...</think>
+        cleaned = re.sub(r"<think>.*?</think>", " ", cleaned, flags=re.S | re.I)
+        cleaned = re.sub(r"</?think>", " ", cleaned, flags=re.I)
         cleaned = re.sub(r"```(?:json|JSON)?\s*", "", cleaned)
         cleaned = cleaned.replace("```", "")
         return cleaned.strip()

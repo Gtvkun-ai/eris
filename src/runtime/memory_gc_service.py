@@ -254,18 +254,18 @@ class MemoryGCService:
             result.warnings.append(f"maintenance_failed:{type(exc).__name__}:{exc}")
             logger.warning("[memory_gc] maintenance runner failed: %s", exc)
 
-        critic = self._get_critic_client()
+        curator = self._get_curator_client()
 
         # 2. Semantic memory critic.
         try:
-            self._run_semantic_review(result, critic)
+            self._run_semantic_review(result, curator)
         except Exception as exc:
             result.warnings.append(f"semantic_review_failed:{type(exc).__name__}:{exc}")
             logger.warning("[memory_gc] semantic review failed: %s", exc)
 
         # 3. Living-user curator: Qwen gom cụm, DeepSeek critic phán, rule áp dụng.
         try:
-            self._run_living_user_review(result, critic)
+            self._run_living_user_review(result, curator)
         except Exception as exc:
             result.warnings.append(f"living_review_failed:{type(exc).__name__}:{exc}")
             logger.warning("[memory_gc] living-user review failed: %s", exc)
@@ -398,8 +398,8 @@ class MemoryGCService:
 
     # ── Client/model helpers ───────────────────────────────────────────────────
 
-    def _get_critic_client(self) -> Any | None:
-        """Lấy đúng DeepSeek critic worker, không mặc định gọi Gemma/main model."""
+    def _get_curator_client(self) -> Any | None:
+        """Lấy đúng DeepSeek curator worker, nếu không có thì fallback sang critic."""
         try:
             from llm.process_manager import RemoteModelProcessManager
 
@@ -409,6 +409,9 @@ class MemoryGCService:
             if pm is None and isinstance(self.llm_service, RemoteModelProcessManager):
                 pm = self.llm_service
             if pm is not None:
+                client = pm.build_deepseek_worker_client("curator", required=False)
+                if client is not None:
+                    return client
                 client = pm.build_deepseek_worker_client("critic", required=False)
                 if client is not None:
                     return client

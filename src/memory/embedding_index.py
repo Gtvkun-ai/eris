@@ -72,7 +72,7 @@ class EmbeddingIndex:
         self.model_name = model_name or os.getenv("ERIS_EMBEDDING_MODEL", self.DEFAULT_MODEL)
         self.cache_dir = cache_dir or os.getenv(
             "ERIS_EMBEDDING_CACHE_DIR",
-            str(Path("src") / "embedding_model"),
+            str(Path("embedding_model")),
         )
         self.model_family = self._detect_model_family(self.model_name)
         self.max_seq_length = int(

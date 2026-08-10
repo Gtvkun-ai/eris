@@ -127,6 +127,8 @@ class AutonomousSelfContext:
     agenda: tuple[Mapping[str, Any], ...] = ()
     private_mind_surface: tuple[Mapping[str, Any], ...] = ()
     private_life_surface: tuple[Mapping[str, Any], ...] = ()
+    # Mental workspace là context nội tại cho seed worker, không tự cấp quyền nói.
+    private_life_workspace: tuple[Mapping[str, Any], ...] = ()
     active_threads: tuple[Mapping[str, Any], ...] = ()
     has_public_seed: bool = False
     strongest_seed_score: float = 0.0
@@ -138,6 +140,7 @@ class AutonomousSelfContext:
             "agenda": [dict(item) for item in self.agenda],
             "private_mind_surface": [dict(item) for item in self.private_mind_surface],
             "private_life_surface": [dict(item) for item in self.private_life_surface],
+            "private_life_workspace": [dict(item) for item in self.private_life_workspace],
             "active_threads": [dict(item) for item in self.active_threads],
             "has_public_seed": bool(self.has_public_seed),
             "strongest_seed_score": round(float(self.strongest_seed_score), 3),
@@ -247,6 +250,11 @@ def build_autonomous_self_context(host: Any) -> AutonomousSelfContext:
         preview for preview in (_surface_preview(item) for item in tuple(life_source or ())[:6])
         if preview.get("topic_seed")
     )
+    life_current = _mapping(life_digest.get("current"))
+    private_life_workspace = tuple(
+        dict(item) for item in tuple(life_current.get("mental_workspace", ()) or ())[:12]
+        if isinstance(item, Mapping) and _compact(item.get("content", ""), 620)
+    )
 
     raw_threads = tuple(
         getattr(host, "active_causal_threads", ())
@@ -285,6 +293,7 @@ def build_autonomous_self_context(host: Any) -> AutonomousSelfContext:
         agenda=tuple(agenda_items[:5]),
         private_mind_surface=private_mind,
         private_life_surface=private_life,
+        private_life_workspace=private_life_workspace,
         active_threads=active_threads,
         has_public_seed=has_public_seed,
         strongest_seed_score=strongest,

@@ -79,3 +79,5 @@ build/_work/
 
 # HuggingFace model cache directory
 src/embedding_model/
+
+embedding_model/

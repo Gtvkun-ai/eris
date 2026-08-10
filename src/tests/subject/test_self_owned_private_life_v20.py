@@ -222,7 +222,7 @@ def test_private_life_v2_roundtrip_keeps_causal_origin(tmp_path) -> None:
     core = PrivateLifeCore(root_dir=tmp_path)
     core.tick(subject_self=_self_projection(), private_mind_digest={}, idle_seconds=60)
     payload = core.state.to_dict()
-    assert payload["version"] == 2
+    assert payload["version"] == 3
     restored = PrivateLifeState.from_mapping(payload)
     assert restored.anchors
     assert restored.projects

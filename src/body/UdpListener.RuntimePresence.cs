@@ -235,47 +235,9 @@ public partial class UdpListener : Node2D
 			indicatorChanged = true;
 		}
 
-		// Không tự biến mất sau 45 giây nữa. Nếu lifecycle im quá lâu,
-		// đổi màu để người dùng phân biệt runtime đang chậm với trạng thái mất tiến triển.
-		if (_runtimePresence.Thinking && _runtimePresence.LastProgressAtMs > 0)
-		{
-			ulong progressAge = now - _runtimePresence.LastProgressAtMs;
-			if (progressAge >= 75000 && _runtimePresence.ProgressWarningLevel < 2)
-			{
-				_runtimePresence.ProgressWarningLevel = 2;
-				_runtimePresence.Stage = "stalled";
-				_runtimePresence.StatusLabel = "Có vẻ đang bị kẹt";
-				_runtimePresence.StatusTone = "error";
-				indicatorChanged = true;
-			}
-			else if (progressAge >= 25000 && _runtimePresence.ProgressWarningLevel < 1)
-			{
-				_runtimePresence.ProgressWarningLevel = 1;
-				_runtimePresence.StatusLabel = "Đang chạy hơi lâu…";
-				_runtimePresence.StatusTone = "warning";
-				indicatorChanged = true;
-			}
-		}
-		if (!_runtimePresence.Thinking
-			&& _runtimePresence.RuntimeActivityActive
-			&& _runtimePresence.RuntimeActivityUpdatedAtMs > 0)
-		{
-			ulong activityAge = now - _runtimePresence.RuntimeActivityUpdatedAtMs;
-			if (activityAge >= 90000 && _runtimePresence.RuntimeActivityWarningLevel < 2)
-			{
-				_runtimePresence.RuntimeActivityWarningLevel = 2;
-				_runtimePresence.RuntimeActivityLabel = "Có vẻ đang bị kẹt";
-				_runtimePresence.RuntimeActivityTone = "error";
-				indicatorChanged = true;
-			}
-			else if (activityAge >= 30000 && _runtimePresence.RuntimeActivityWarningLevel < 1)
-			{
-				_runtimePresence.RuntimeActivityWarningLevel = 1;
-				_runtimePresence.RuntimeActivityLabel = "Đang chạy hơi lâu…";
-				_runtimePresence.RuntimeActivityTone = "warning";
-				indicatorChanged = true;
-			}
-		}
+		// Đã gỡ bỏ logic tự động báo "Có vẻ đang bị kẹt" theo thời gian
+		// để chỉ báo lỗi khi thực sự có lỗi từ backend trả về.
+
 		if (indicatorChanged)
 			RefreshRuntimePresenceIndicator();
 

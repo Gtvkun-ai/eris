@@ -17,7 +17,7 @@ from typing import Any, Mapping
 from failure_meta import build_failure_meta
 
 from runtime.no_fallback_policy import no_fallback_mode_enabled
-from runtime.grounding_surface_gate import evaluate_grounded_surface
+from runtime.grounding_surface_gate import evaluate_grounded_surface, is_grounding_correction
 from runtime.cognition.turn_anchor import anchor_from_semantic_frame
 from runtime.social_stance_policy import guard_subjective_stance_payload
 from runtime.companion_model_routing import route_companion_turn
@@ -592,6 +592,13 @@ class AIChatOrchestrator:
         prior_public_history = tuple(host._chat_history_for_llm(limit=16))
         if previous_public_context and not prior_public_history:
             prior_public_history = ({"role": "assistant", "content": previous_public_context},)
+        previous_assistant_for_repair = ""
+        for _item in reversed(prior_public_history):
+            if isinstance(_item, Mapping) and str(_item.get("role", "") or "").lower() == "assistant":
+                previous_assistant_for_repair = str(_item.get("content", "") or "").strip()
+                if previous_assistant_for_repair:
+                    break
+        grounding_correction = is_grounding_correction(user_text, previous_assistant_for_repair)
         host._append_chat_history("user", user_text)
         ingest_hot = getattr(host, "_ingest_user_turn_memory_hot_path", None)
         if callable(ingest_hot):
@@ -724,6 +731,13 @@ class AIChatOrchestrator:
             grounding_context = "\n\n".join(
                 part for part in (grounding_context, preference_context) if str(part).strip()
             )
+        if grounding_correction:
+            grounding_context = "\n\n".join((
+                grounding_context,
+                "DETERMINISTIC_GROUNDING_REPAIR: User is correcting a current-world/perception claim from ERIS's immediately previous line. "
+                "Treat this as factual/perception repair, not subjective disagreement. Briefly concede the unsupported claim, do not defend it, "
+                "state the corrected epistemic stance, then answer naturally without inventing new sensory evidence.",
+            ))
         # PDF annotation, pages 12-13 and 20: P2 cleanup removed the legacy
         # discourse/semantic committee entirely. ``semantic_frame.v1`` from the
         # public writer is the only conversational meaning object.
@@ -993,6 +1007,29 @@ class AIChatOrchestrator:
             else:
                 assistant_act = validate_assistant_act(payload.get("assistant_act", {})).act
 
+            if grounding_correction:
+                # Trường hợp hẹp nhưng có hậu quả lớn: user đang sửa một claim
+                # tri giác/current-world của ERIS. Không cho semantic frame gọi
+                # nó là "bất đồng ấn tượng" rồi mở đường cho câu phòng thủ.
+                corrected = typed_frame.to_dict()
+                corrected.update({
+                    "user_act": "correction_or_challenge",
+                    "discourse_relation": "challenge_assistant_assumption",
+                    "target": "assistant",
+                    "ambiguity_owner": "assistant",
+                    "tool_intent": "none",
+                })
+                obligation_data = dict(corrected.get("reply_obligation", {}) or {})
+                obligation_data.update({
+                    "must_answer": True,
+                    "must_not_broad_clarify": True,
+                    "must_not_call_tool": True,
+                })
+                corrected["reply_obligation"] = obligation_data
+                typed_frame = validate_semantic_frame(corrected).frame
+                payload["semantic_frame"] = typed_frame.to_dict()
+                payload["_typed_semantic_frame"] = typed_frame
+
             semantic_frame = typed_frame.to_dict()
             host.last_semantic_frame = semantic_frame
             user_meta["semantic_frame"] = semantic_frame
@@ -1132,6 +1169,65 @@ class AIChatOrchestrator:
                 payload["_typed_assistant_act"] = assistant_act
                 assistant_discourse_meta["assistant_act"] = assistant_act.to_dict()
 
+            if grounding_correction and str(getattr(getattr(assistant_act, "kind", None), "value", "") or "") != "repair":
+                # Prompt đã được neo repair từ trước; nếu writer vẫn chọn một act
+                # khác (ví dụ "disagreement" -> "Không. Tôi vẫn nghĩ vậy."),
+                # ép wording-only retry. Nếu provider lại hỏng thì dùng một câu
+                # repair deterministic hẹp, không bịa thêm fact mới.
+                repair_retry = host.ai_model_router.generate_public_reply(
+                    chat_history=history,
+                    user_text=user_message,
+                    memory_context=compiled_context.memory,
+                    grounding_context=compiled_context.grounding,
+                    relationship_context=compiled_context.relationship,
+                    personality_context=compiled_context.personality,
+                    interrupt_context=compiled_context.interrupt,
+                    engagement_context=compiled_context.engagement,
+                    routing_context=compiled_context.routing,
+                    discourse_context=compiled_context.discourse,
+                    use_escalation=use_escalation,
+                    reasoning_effort=reasoning_effort,
+                    thinking_mode=thinking_mode,
+                    allow_fallback=False,
+                    language_hint=_runtime_language(),
+                    speech_language_hint=_runtime_speech_language(),
+                    planned_intention=chat_plan,
+                    retry_instruction=(
+                        "This is a factual/perception repair. Briefly concede that the previous current-world claim lacked evidence. "
+                        "Do not defend the old claim, do not turn it into a subjective disagreement, and do not invent replacement sensory facts."
+                    ),
+                    locked_semantic_frame=typed_frame.to_dict(),
+                )
+                repair_text = str(repair_retry.get("text", "") or "").strip() if isinstance(repair_retry, Mapping) else ""
+                if repair_text:
+                    for _key in (
+                        "text", "display_language", "speech_text", "speech_language",
+                        "performance_hint", "performance_intensity", "nonverbal_cue",
+                        "delivery_priority", "interruptible", "utterance_turn_id", "utterance",
+                        "should_speak",
+                    ):
+                        if _key in repair_retry:
+                            payload[_key] = repair_retry[_key]
+                else:
+                    from runtime.utterance_spec import degrade_surface_payload
+                    payload = degrade_surface_payload(
+                        payload,
+                        text="Ừ, câu trước của tôi khẳng định quá tay. Tôi không có bằng chứng hiện tại để nói như vậy.",
+                        language=_runtime_language(),
+                        reason="grounding_correction_fail_closed",
+                        performance_preset="repair",
+                        should_speak=True,
+                    )
+                assistant_act = validate_assistant_act({
+                    "kind": "repair",
+                    "proposition_mode": "continue",
+                    "confidence": 1.0,
+                }).act
+                payload["assistant_act"] = assistant_act.to_dict()
+                payload["_typed_assistant_act"] = assistant_act
+                assistant_discourse_meta["assistant_act"] = assistant_act.to_dict()
+                host.logger.warning("[grounding repair] forced factual repair turn=%s", turn_seq)
+
             draft_text = str(payload.get("text", "") or "")
             if (
                 str(getattr(grounding_report, "structured_kind", "") or "") == "chess"
@@ -1160,28 +1256,82 @@ class AIChatOrchestrator:
             )
             grounding_annotations = grounding_verdict.annotations
             if not grounding_verdict.allowed:
-                # Chính sách V41: gate chỉ GẮN NHÃN rủi ro, không được xóa câu,
-                # không retry và không đẩy lượt chat sang văn mẫu fallback. Annotator
-                # hiện còn dựa khá nhiều vào marker chữ; dùng nó như telemetry thì
-                # hữu ích, dùng nó làm công tắc bịt miệng thì không.
                 violation_codes = ["UNGROUNDED_PERCEPTION_OR_ACTION_CLAIM"]
-                payload["grounding_risk"] = {
-                    "allowed": False,
-                    "violations": violation_codes,
-                    "annotations": [
-                        item.to_dict() if callable(getattr(item, "to_dict", None)) else str(item)
-                        for item in grounding_annotations
-                    ],
-                    "policy": "annotate_and_pass_through",
-                }
+                # Grounding là safety/integrity boundary: đã biết claim không có
+                # evidence thì không được phát nguyên văn. Thử wording-only đúng
+                # một lần; semantic frame/assistant act vẫn giữ nguyên authority.
+                retry_payload = host.ai_model_router.generate_public_reply(
+                    chat_history=history,
+                    user_text=user_message,
+                    memory_context=compiled_context.memory,
+                    grounding_context=compiled_context.grounding,
+                    relationship_context=compiled_context.relationship,
+                    personality_context=compiled_context.personality,
+                    interrupt_context=compiled_context.interrupt,
+                    engagement_context=compiled_context.engagement,
+                    routing_context=compiled_context.routing,
+                    discourse_context=compiled_context.discourse,
+                    use_escalation=use_escalation,
+                    reasoning_effort=reasoning_effort,
+                    thinking_mode=thinking_mode,
+                    allow_fallback=False,
+                    language_hint=_runtime_language(),
+                    speech_language_hint=_runtime_speech_language(),
+                    planned_intention=chat_plan,
+                    retry_instruction=grounding_verdict.retry_instruction(),
+                    locked_semantic_frame=typed_frame.to_dict() if typed_frame is not None else payload.get("semantic_frame", {}),
+                )
+                retry_text = str(retry_payload.get("text", "") or "").strip() if isinstance(retry_payload, Mapping) else ""
+                retry_verdict = evaluate_grounded_surface(
+                    grounding_engine, retry_text, report=grounding_report
+                ) if retry_text else None
+                if retry_text and retry_verdict is not None and retry_verdict.allowed:
+                    for _key in (
+                        "text", "display_language", "speech_text", "speech_language",
+                        "performance_hint", "performance_intensity", "nonverbal_cue",
+                        "delivery_priority", "interruptible", "utterance_turn_id", "utterance",
+                        "should_speak",
+                    ):
+                        if _key in retry_payload:
+                            payload[_key] = retry_payload[_key]
+                    payload["grounding_risk"] = {
+                        "allowed": True,
+                        "violations": violation_codes,
+                        "annotations": [
+                            item.to_dict() if callable(getattr(item, "to_dict", None)) else str(item)
+                            for item in grounding_annotations
+                        ],
+                        "policy": "rewrite_then_revalidate",
+                    }
+                    draft_text = retry_text
+                    host.logger.warning(
+                        "[cortex v2 gate] turn=%s violations=%s; rewritten and revalidated",
+                        turn_seq,
+                        ",".join(violation_codes),
+                    )
+                else:
+                    # Retry hỏng vẫn fail closed. Im một lượt tốt hơn phát một
+                    # claim mà runtime vừa chứng minh là không có căn cứ.
+                    payload["text"] = ""
+                    payload["speech_text"] = ""
+                    payload["should_speak"] = False
+                    payload["grounding_risk"] = {
+                        "allowed": False,
+                        "violations": violation_codes,
+                        "annotations": [
+                            item.to_dict() if callable(getattr(item, "to_dict", None)) else str(item)
+                            for item in grounding_annotations
+                        ],
+                        "policy": "fail_closed_after_rewrite",
+                    }
+                    host.logger.warning(
+                        "[cortex v2 gate] turn=%s violations=%s; suppressed after failed rewrite",
+                        turn_seq,
+                        ",".join(violation_codes),
+                    )
                 payload["grounding_confidence_cap"] = min(
                     float(payload.get("grounding_confidence_cap", 1.0) or 1.0),
                     float(getattr(grounding_report, "confidence_cap", 0.45) or 0.45),
-                )
-                host.logger.warning(
-                    "[cortex v2 gate] turn=%s violations=%s; passing original draft without retry",
-                    turn_seq,
-                    ",".join(violation_codes),
                 )
 
 

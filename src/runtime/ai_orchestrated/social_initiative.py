@@ -121,6 +121,9 @@ class SocialSpeechCandidate:
     seed_mode: str = ""
     source_kind: str = ""
     topic_tags: tuple[str, ...] = ()
+    seed_event_kind: str = "thought"
+    seed_epistemic_mode: str = "opinion"
+    seed_open_loop: bool = False
     desired_response: tuple[str, ...] = ()
     eris_motive_kind: str = ""
     eris_motive_why_now: str = ""
@@ -149,6 +152,9 @@ class SocialSpeechCandidate:
             "source_kind": self.source_kind,
             "source_refs": list(self.evidence_refs),
             "topic_tags": list(self.topic_tags),
+            "event_kind": self.seed_event_kind,
+            "epistemic_mode": self.seed_epistemic_mode,
+            "open_loop": self.seed_open_loop,
             "opening_move": self.speech_act,
             "desired_response": list(self.desired_response),
             "eris_motive": {
@@ -560,6 +566,9 @@ class SocialInitiativeEngine:
             seed_mode=seed.mode,
             source_kind=seed.source_kind,
             topic_tags=seed.topic_tags,
+            seed_event_kind=seed.event_kind,
+            seed_epistemic_mode=seed.epistemic_mode,
+            seed_open_loop=seed.open_loop,
             desired_response=seed.desired_response,
             eris_motive_kind=seed.eris_motive_kind,
             eris_motive_why_now=seed.eris_motive_why_now,

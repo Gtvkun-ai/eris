@@ -380,6 +380,9 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
         seed_store=random_chat_seed_store,
         wake_callback=getattr(host, "_wake_autonomous_loop", None),
         status_callback=lambda **payload: emit_runtime_status(host, **payload),
+        # Một seed DeepSeek vẫn là nguồn duy nhất. Sau validation, semantic event
+        # được private_life giữ lại như curiosity/thought/open-loop để có continuity.
+        mental_event_sink=getattr(getattr(host, "private_life_daemon", None), "ingest_seed_mental_event", None),
         logger=getattr(host, "logger", None),
         clock=runtime_clock,
     )

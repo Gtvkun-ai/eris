@@ -43,6 +43,8 @@ PrivateLifeEventType = Literal[
     "self_continuity_repaired",
     "private_anchor_activated",
     "private_anchor_surface_ready",
+    "mental_event_ingested",
+    "mental_event_reactivated",
 ]
 
 PrivateAnchorKind = Literal["identity", "aesthetic", "obsession", "world", "private_agenda"]
@@ -51,6 +53,22 @@ PrivateLifeOrigin = Literal["derived", "observed", "legacy_authored", "legacy_un
 ErrandStatus = Literal["open", "waiting", "blocked", "done", "dropped"]
 ObjectType = Literal["file", "module", "memory", "place", "model", "ritual", "folder", "service"]
 DailyPhase = Literal["startup", "first_observation", "deep_work", "idle_wandering", "late_consolidation", "shutdown", "unknown"]
+
+# MentalEvent là lớp trung gian giữa "seed vừa nảy ra" và "thứ Eris sẽ nói".
+# Nó cố ý nằm trong private_life để một ý nghĩ có thể sống lâu hơn reservoir vài phút,
+# lắng xuống, quay lại, hoặc biến thành open-loop. Một seed không còn là tờ giấy dùng
+# một lần rồi vứt vào hư vô, vốn là một mô phỏng khá tệ của đời sống con người.
+MentalEventKind = Literal[
+    "thought", "curiosity_question", "knowledge_gap", "discovery_impulse",
+    "speculation", "imagination", "opinion", "association", "memory_callback",
+    "playful_probe", "micro_challenge", "unfinished_loop", "creative_impulse",
+    "self_reflection", "prediction", "surprise", "contradiction_notice",
+]
+MentalEpistemicMode = Literal[
+    "grounded_fact", "bounded_inference", "speculation", "imagination",
+    "opinion", "question", "research_intent",
+]
+MentalEventStatus = Literal["active", "dormant", "resolved", "expired"]
 
 
 def now_ts() -> float:
@@ -743,6 +761,119 @@ class LifeEvent:
 
 
 @dataclass(slots=True)
+class MentalEvent:
+    """Một sự kiện tinh thần bền hơn random-chat reservoir.
+
+    `epistemic_mode` là phần quan trọng nhất: Eris được phép đoán, tưởng tượng, có
+    opinion hoặc tò mò mà không bị biến thành factual claim. Grounding chỉ nên
+    nghiêm với grounded_fact/bounded_inference; Surface phải bảo toàn stance này.
+    """
+
+    id: str
+    kind: MentalEventKind = "thought"
+    content: str = ""
+    origin_source: str = "seed_worker"
+    epistemic_mode: MentalEpistemicMode = "opinion"
+    motive: str = "want_to_express"
+    topic_tags: tuple[str, ...] = ()
+    salience: float = 0.0
+    novelty: float = 0.0
+    emotional_charge: float = 0.0
+    curiosity: float = 0.0
+    confidence: float = 0.0
+    social_relevance: float = 0.0
+    decay_rate: float = 0.0008
+    open_loop: bool = False
+    status: MentalEventStatus = "active"
+    source_refs: tuple[str, ...] = ()
+    evidence_ids: tuple[str, ...] = ()
+    created_at: float = field(default_factory=now_ts)
+    updated_at: float = field(default_factory=now_ts)
+    last_activated_at: float = field(default_factory=now_ts)
+    activation_count: int = 1
+
+    def __post_init__(self) -> None:
+        self.id = compact_text(self.id or stable_id("mental", self.kind, self.content), 160)
+        allowed_kind = {
+            "thought", "curiosity_question", "knowledge_gap", "discovery_impulse",
+            "speculation", "imagination", "opinion", "association", "memory_callback",
+            "playful_probe", "micro_challenge", "unfinished_loop", "creative_impulse",
+            "self_reflection", "prediction", "surprise", "contradiction_notice",
+        }
+        if self.kind not in allowed_kind:
+            self.kind = "thought"  # type: ignore[assignment]
+        allowed_epistemic = {
+            "grounded_fact", "bounded_inference", "speculation", "imagination",
+            "opinion", "question", "research_intent",
+        }
+        if self.epistemic_mode not in allowed_epistemic:
+            self.epistemic_mode = "opinion"  # type: ignore[assignment]
+        if self.status not in {"active", "dormant", "resolved", "expired"}:
+            self.status = "active"  # type: ignore[assignment]
+        self.content = compact_text(self.content, 620)
+        self.origin_source = compact_text(self.origin_source or "seed_worker", 80)
+        self.motive = compact_text(self.motive or "want_to_express", 64)
+        self.topic_tags = tuple(compact_text(x, 64) for x in self.topic_tags if str(x or "").strip())[:12]
+        self.salience = clamp01(self.salience)
+        self.novelty = clamp01(self.novelty)
+        self.emotional_charge = clamp01(self.emotional_charge)
+        self.curiosity = clamp01(self.curiosity)
+        self.confidence = clamp01(self.confidence)
+        self.social_relevance = clamp01(self.social_relevance)
+        try:
+            self.decay_rate = max(0.00002, min(0.02, float(self.decay_rate or 0.0008)))
+        except Exception:
+            self.decay_rate = 0.0008
+        self.source_refs = tuple(str(x) for x in self.source_refs if str(x or "").strip())[:16]
+        self.evidence_ids = tuple(str(x) for x in self.evidence_ids if str(x or "").strip())[:16]
+        self.activation_count = max(1, int(self.activation_count or 1))
+
+    def activation_score(self, now: float | None = None) -> float:
+        """Cheap salience competition; không cần thêm một DeepSeek chỉ để xếp hàng."""
+        current = float(now if now is not None else now_ts())
+        age = max(0.0, current - max(self.updated_at, self.last_activated_at, self.created_at))
+        freshness = math.exp(-self.decay_rate * age)
+        loop_bonus = 0.10 if self.open_loop else 0.0
+        return clamp01(
+            freshness * (0.34 * self.salience + 0.20 * self.novelty + 0.20 * self.curiosity
+                         + 0.12 * self.emotional_charge + 0.14 * self.social_relevance)
+            + loop_bonus
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["activation_score"] = round(self.activation_score(), 4)
+        return data
+
+    @classmethod
+    def from_mapping(cls, data: Mapping[str, Any]) -> "MentalEvent":
+        return cls(
+            id=str(data.get("id") or ""),
+            kind=str(data.get("kind") or "thought"),  # type: ignore[arg-type]
+            content=str(data.get("content") or data.get("premise") or ""),
+            origin_source=str(data.get("origin_source") or "seed_worker"),
+            epistemic_mode=str(data.get("epistemic_mode") or "opinion"),  # type: ignore[arg-type]
+            motive=str(data.get("motive") or "want_to_express"),
+            topic_tags=tuple(str(x) for x in data.get("topic_tags") or () if str(x).strip()),
+            salience=clamp01(data.get("salience", 0.0)),
+            novelty=clamp01(data.get("novelty", 0.0)),
+            emotional_charge=clamp01(data.get("emotional_charge", 0.0)),
+            curiosity=clamp01(data.get("curiosity", 0.0)),
+            confidence=clamp01(data.get("confidence", 0.0)),
+            social_relevance=clamp01(data.get("social_relevance", 0.0)),
+            decay_rate=float(data.get("decay_rate") or 0.0008),
+            open_loop=bool(data.get("open_loop", False)),
+            status=str(data.get("status") or "active"),  # type: ignore[arg-type]
+            source_refs=tuple(str(x) for x in data.get("source_refs") or () if str(x).strip()),
+            evidence_ids=tuple(str(x) for x in data.get("evidence_ids") or () if str(x).strip()),
+            created_at=float(data.get("created_at") or now_ts()),
+            updated_at=float(data.get("updated_at") or now_ts()),
+            last_activated_at=float(data.get("last_activated_at") or data.get("updated_at") or now_ts()),
+            activation_count=int(data.get("activation_count") or 1),
+        )
+
+
+@dataclass(slots=True)
 class SurfaceSeedCandidate:
     """Seed rất nhỏ có thể gửi sang SurfaceArbiter.
 
@@ -793,6 +924,7 @@ class PrivateLifeState:
     solitude: SolitudeLoop = field(default_factory=SolitudeLoop)
     rituals: dict[str, RitualMemory] = field(default_factory=dict)
     errands: dict[str, InternalErrand] = field(default_factory=dict)
+    mental_events: dict[str, MentalEvent] = field(default_factory=dict)
     events: tuple[LifeEvent, ...] = ()
     updated_at: float = field(default_factory=now_ts)
 
@@ -822,6 +954,11 @@ class PrivateLifeState:
             for k, v in dict(self.errands or {}).items()
             if str(k or "").strip()
         }
+        self.mental_events = {
+            str(k): (v if isinstance(v, MentalEvent) else MentalEvent.from_mapping(v))
+            for k, v in dict(self.mental_events or {}).items()
+            if str(k or "").strip()
+        }
         self.events = tuple(
             item if isinstance(item, LifeEvent) else LifeEvent.from_mapping(item)  # type: ignore[arg-type]
             for item in tuple(self.events or ())[-64:]
@@ -829,7 +966,7 @@ class PrivateLifeState:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "version": 2,
+            "version": 3,
             "updated_at": self.updated_at,
             "habitat": self.habitat.to_dict(),
             "attachments": {k: v.to_dict() for k, v in self.attachments.items()},
@@ -840,6 +977,7 @@ class PrivateLifeState:
             "solitude": self.solitude.to_dict(),
             "rituals": {k: v.to_dict() for k, v in self.rituals.items()},
             "errands": {k: v.to_dict() for k, v in self.errands.items()},
+            "mental_events": {k: v.to_dict() for k, v in self.mental_events.items()},
             "events": [item.to_dict() for item in self.events[-256:]],
         }
 
@@ -873,6 +1011,11 @@ class PrivateLifeState:
             errands={
                 str(k): InternalErrand.from_mapping(v)
                 for k, v in dict(data.get("errands") or {}).items()
+                if isinstance(v, Mapping)
+            },
+            mental_events={
+                str(k): MentalEvent.from_mapping(v)
+                for k, v in dict(data.get("mental_events") or {}).items()
                 if isinstance(v, Mapping)
             },
             events=tuple(LifeEvent.from_mapping(x) for x in tuple(data.get("events") or ()) if isinstance(x, Mapping)),
@@ -927,9 +1070,14 @@ def private_life_state_digest(state: PrivateLifeState | None) -> dict[str, Any]:
     )[:6]
     hot_objects = sorted(state.attachments.values(), key=lambda o: (o.irritation + o.attachment + min(1.0, o.neglect_count / 12.0)), reverse=True)[:6]
     open_errands = sorted((e for e in state.errands.values() if e.status in {"open", "waiting", "blocked"}), key=lambda e: e.priority, reverse=True)[:6]
+    active_mental = sorted(
+        (m for m in state.mental_events.values() if m.status in {"active", "dormant"}),
+        key=lambda m: m.activation_score(),
+        reverse=True,
+    )[:10]
     return {
         "updated_at": state.updated_at,
-        "state_version": 2,
+        "state_version": 3,
         "legacy_retired": {
             "anchors": sum(1 for item in state.anchors.values() if item.origin == "legacy_authored"),
             "projects": sum(1 for item in state.projects.values() if item.origin == "legacy_authored"),
@@ -985,6 +1133,21 @@ def private_life_state_digest(state: PrivateLifeState | None) -> dict[str, Any]:
                 "residue": o.residue,
             }
             for o in hot_objects
+        ],
+        "mental_workspace": [
+            {
+                "id": m.id,
+                "kind": m.kind,
+                "content": m.content,
+                "epistemic_mode": m.epistemic_mode,
+                "motive": m.motive,
+                "topic_tags": list(m.topic_tags),
+                "open_loop": m.open_loop,
+                "status": m.status,
+                "activation_score": round(m.activation_score(), 3),
+                "activation_count": m.activation_count,
+            }
+            for m in active_mental
         ],
         "errands": [
             {

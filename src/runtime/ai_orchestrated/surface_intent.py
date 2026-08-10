@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import re
+import unicodedata
 from difflib import SequenceMatcher
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
@@ -24,6 +25,7 @@ from .cognitive_blackboard import TypedCognitiveBlackboard
 from .initiative import SpeechIntent
 from .semantic_contracts import compact, semantic_key
 from runtime.utterance_spec import UtteranceSpec
+from runtime.grounding_surface_gate import current_world_claim_without_evidence
 
 
 SURFACE_MODES: tuple[str, ...] = (
@@ -67,6 +69,15 @@ def _normalized_surface_text(text: str) -> str:
     return " ".join(re.findall(r"\w+", str(text or "").casefold(), flags=re.UNICODE))
 
 
+def _fold_surface_text(text: str) -> str:
+    """Bỏ dấu chỉ cho fingerprint chống lặp; public text vẫn giữ nguyên Unicode."""
+
+    value = unicodedata.normalize("NFD", str(text or "").casefold())
+    value = "".join(ch for ch in value if unicodedata.category(ch) != "Mn")
+    value = value.replace("đ", "d")
+    return " ".join(re.findall(r"[a-z0-9]+", value))
+
+
 def _surface_text_is_duplicate(text: str, avoid_text: str) -> bool:
     """Catch exact/near-verbatim autonomous repetition without semantic guessing."""
     current = _normalized_surface_text(text)
@@ -81,7 +92,22 @@ def _surface_text_is_duplicate(text: str, avoid_text: str) -> bool:
     # greeting around the same sentence. Ratio catches punctuation/wording noise.
     if current in previous or previous in current:
         return True
-    return SequenceMatcher(None, current, previous, autojunk=False).ratio() >= 0.88
+    if SequenceMatcher(None, current, previous, autojunk=False).ratio() >= 0.88:
+        return True
+
+    # Bắt lặp "khung câu" dù model thay vài danh từ. Lần lỗi thực tế đã đổi
+    # "trời trong xanh" thành "hôm nay yên tĩnh" nhưng giữ nguyên scaffold
+    # "thỉnh thoảng ... cũng không tệ", lexical ratio nên bỏ lọt rất đẹp.
+    cadence_patterns = (
+        r"\bthinh thoang\b.*\bcung khong te\b",
+        r"\bdoi khi\b.*\bcung khong te\b",
+        r"\bco nhung (?:luc|khoanh khac)\b.*\bcung khong te\b",
+    )
+    def cadence_signature(value: str) -> tuple[str, ...]:
+        return tuple(pattern for pattern in cadence_patterns if re.search(pattern, value))
+    left_sig = cadence_signature(_fold_surface_text(current))
+    right_sig = cadence_signature(_fold_surface_text(previous))
+    return bool(left_sig and set(left_sig) & set(right_sig))
 
 
 def _bad_surface_utterance_reason(text: str, *, channel: str = "autonomous") -> str:
@@ -205,10 +231,19 @@ class SurfaceIntentEngine:
                 "avoid_repeating": avoid_text,
             },
         }
+        addressing = _mapping(_mapping(snapshot or {}).get("user_addressing"))
+        if addressing:
+            request["surface_contract"]["addressing_rules"] = [
+                f"Keep assistant self-pronoun consistently as {addressing.get('assistant_self_pronoun', 'tôi') or 'tôi'}.",
+                f"Address the user consistently as {addressing.get('user_vocative', 'bạn') or 'bạn'}.",
+                "Do not mirror a slang vocative from one user message unless the shared addressing state explicitly changed.",
+            ]
         if intent.random_chat_seed:
             request["surface_contract"]["random_chat_seed_rules"] = [
                 "The premise is a semantic seed, not text to copy verbatim.",
                 "Preserve ERIS motive, mode, personal stake, authenticity and approved daring.",
+                "Preserve event_kind and epistemic_mode. A speculation must still sound like a guess; imagination must sound imagined; a question/research_intent must not be rewritten as a factual observation.",
+                "Only grounded_fact/bounded_inference may sound factual, and bounded_inference must retain uncertainty. Do not upgrade an unsupported world_hypothesis into a current-world fact.",
                 "want_to_share/want_to_express may be a complete statement with no question and no demand for a reply.",
                 "Do not append a generic check-in, availability offer, permission request, or 'còn bạn thì sao'.",
                 "Daring may support a fresh opinion, self-disclosure or gentle tease only inside the supplied risk contract.",
@@ -289,6 +324,14 @@ class SurfaceIntentEngine:
             return self._unavailable(intent, "surface_missing_speech_text")
         if confidence < 0.25:
             return self._unavailable(intent, f"surface_low_confidence:{confidence:.2f}")
+        if current_world_claim_without_evidence(text, intent.evidence_refs):
+            self._log(
+                "warning",
+                "[surface worker] blocked current-world claim without evidence mode=%s text=%s",
+                intent.mode,
+                text[:180],
+            )
+            return self._unavailable(intent, "surface_current_world_claim_without_evidence")
         bad_utterance_reason = _bad_surface_utterance_reason(text)
         if bad_utterance_reason:
             return self._unavailable(intent, f"surface_bad_utterance:{bad_utterance_reason}")

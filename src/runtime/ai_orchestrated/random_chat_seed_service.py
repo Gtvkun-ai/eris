@@ -30,7 +30,8 @@ RANDOM_CHAT_SEED_OUTPUT_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
     "required": [
         "decision", "seed_id", "mode", "premise", "source_kind", "source_refs",
-        "topic_tags", "opening_move", "desired_response", "eris_motive", "risk",
+        "topic_tags", "event_kind", "epistemic_mode", "open_loop",
+        "opening_move", "desired_response", "eris_motive", "risk",
         "estimated_fit", "confidence", "tone", "ttl_seconds",
     ],
     "properties": {
@@ -40,10 +41,31 @@ RANDOM_CHAT_SEED_OUTPUT_SCHEMA: dict[str, Any] = {
         "premise": {"type": "string"},
         "source_kind": {
             "type": "string",
-            "enum": ["user_memory", "recent_shared_context", "eris_self_memory", "weak_association"],
+            "enum": [
+                "user_memory", "recent_shared_context", "eris_self_memory", "weak_association",
+                "private_life_workspace", "endogenous_curiosity", "general_knowledge",
+                "world_hypothesis", "discovery_impulse", "play_impulse", "question_impulse",
+            ],
         },
         "source_refs": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
         "topic_tags": {"type": "array", "items": {"type": "string"}, "minItems": 0, "maxItems": 8},
+        "event_kind": {
+            "type": "string",
+            "enum": [
+                "thought", "curiosity_question", "knowledge_gap", "discovery_impulse",
+                "speculation", "imagination", "opinion", "association", "memory_callback",
+                "playful_probe", "micro_challenge", "unfinished_loop", "creative_impulse",
+                "self_reflection", "prediction", "surprise", "contradiction_notice",
+            ],
+        },
+        "epistemic_mode": {
+            "type": "string",
+            "enum": [
+                "grounded_fact", "bounded_inference", "speculation", "imagination",
+                "opinion", "question", "research_intent",
+            ],
+        },
+        "open_loop": {"type": "boolean"},
         "opening_move": {"type": "string"},
         "desired_response": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
         "eris_motive": {
@@ -55,7 +77,8 @@ RANDOM_CHAT_SEED_OUTPUT_SCHEMA: dict[str, Any] = {
                     "type": "string",
                     "enum": [
                         "want_to_share", "want_to_express", "want_to_test",
-                        "want_to_connect", "want_to_amuse",
+                        "want_to_connect", "want_to_amuse", "want_to_know",
+                        "want_to_explore", "want_to_play", "want_to_revisit", "want_to_create",
                     ],
                 },
                 "why_now": {"type": "string"},
@@ -169,9 +192,18 @@ class RandomChatSeedGenerator:
             "private/sensitive, không suy diễn cảm xúc, kế hoạch hay tâm lý user, không tạo presence/check-in "
             "chung chung, không hỏi user đưa chủ đề, không tạo câu chỉ để lấp im lặng. Không lặp queued_seeds "
             "hoặc recent_seeds. Phản hồi âm chỉ hạ user/strategy fit, không xóa ERIS interest. Tôn trọng "
-            "daring_ceiling và intrusion risk. ttl_seconds nên 180-900 giây tùy độ phụ thuộc context; seed từ "
-            "recent_shared_context phải ngắn hơn seed từ user_memory hoặc eris_self_memory. Nếu không đủ cụ thể "
-            "và có động cơ thật, trả decision=none với field còn lại rỗng/an toàn. Return exactly one JSON object."
+            "daring_ceiling và intrusion risk. Seed là MENTAL EVENT chứ không phải chỉ là topic để lấp im lặng: "
+            "chọn event_kind phù hợp như thought, curiosity_question, knowledge_gap, discovery_impulse, speculation, "
+            "imagination, opinion, association, memory_callback, playful_probe, micro_challenge, unfinished_loop, "
+            "creative_impulse hoặc self_reflection. Dùng private_life_workspace để tiếp tục một open-loop cũ khi nó "
+            "thật sự còn lực, nhưng cũng phải tạo được ý tươi mới từ endogenous_curiosity/general_knowledge/play_impulse. "
+            "epistemic_mode phải nói ERIS đang biết, suy luận, đoán, tưởng tượng, có opinion, hỏi hay muốn đi tìm hiểu. "
+            "ĐẶC BIỆT: speculation/imagination là hợp lệ và không cần giả thành fact. Ví dụ 'có khi hôm nay trời đẹp' "
+            "có thể là speculation; tuyệt đối đừng đổi nó thành 'ngoài trời đang nắng' nếu không có evidence. "
+            "knowledge_gap/discovery_impulse nên open_loop=true để private life có thể nhớ điều ERIS muốn biết. "
+            "ttl_seconds nên 180-900 giây tùy độ phụ thuộc context; seed từ recent_shared_context phải ngắn hơn seed "
+            "từ user_memory, eris_self_memory hay private_life_workspace. Nếu không đủ cụ thể và có động cơ thật, "
+            "trả decision=none với field còn lại rỗng/an toàn. Return exactly one JSON object."
         )
 
     def generate(self, request: Mapping[str, Any]) -> RandomChatSeed:
@@ -258,6 +290,7 @@ class RandomChatSeedReservoir:
         seed_store: RandomChatSeedAffinityStore | None = None,
         wake_callback: Callable[[], Any] | None = None,
         status_callback: Callable[..., Any] | None = None,
+        mental_event_sink: Callable[[RandomChatSeed], Any] | None = None,
         logger: Any | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
@@ -265,6 +298,7 @@ class RandomChatSeedReservoir:
         self.seed_store = seed_store
         self.wake_callback = wake_callback
         self.status_callback = status_callback
+        self.mental_event_sink = mental_event_sink
         self.logger = logger
         self.clock = clock
         self.enabled = bool(
@@ -301,6 +335,7 @@ class RandomChatSeedReservoir:
         self._last_generate_at = 0.0
         self._next_generate_at = 0.0
         self._last_claimed_mode = ""
+        self._last_claimed_event_kind = ""
         self._stop = False
         self._thread: threading.Thread | None = None
 
@@ -413,6 +448,7 @@ class RandomChatSeedReservoir:
                 entry=chosen, leased_at=current, lease_expires_at=current + self.lease_ttl
             )
             self._last_claimed_mode = chosen.seed.mode
+            self._last_claimed_event_kind = chosen.seed.event_kind
             self._condition.notify_all()
             return SeedReservoirLease(
                 token=token, seed=chosen.seed, generated_at=chosen.generated_at,
@@ -478,11 +514,18 @@ class RandomChatSeedReservoir:
                     mode: sum(1 for entry in self._entries if entry.seed.mode == mode)
                     for mode in ("shared", "user_led", "eris_led", "experimental")
                 },
+                "event_kinds": {
+                    kind: sum(1 for entry in self._entries if entry.seed.event_kind == kind)
+                    for kind in sorted({entry.seed.event_kind for entry in self._entries})
+                },
                 "seeds": [
                     {
                         "seed_id": entry.seed.seed_id,
                         "mode": entry.seed.mode,
                         "source_kind": entry.seed.source_kind,
+                        "event_kind": entry.seed.event_kind,
+                        "epistemic_mode": entry.seed.epistemic_mode,
+                        "open_loop": entry.seed.open_loop,
                         "topic_tags": list(entry.seed.topic_tags),
                         "generated_at": entry.generated_at,
                         "expires_at": entry.expires_at,
@@ -579,6 +622,15 @@ class RandomChatSeedReservoir:
                 ready_count = len(self._entries)
                 self._condition.notify_all()
 
+            # Chỉ sau khi seed đã qua validation mới cho nó trở thành một mảnh đời
+            # bền trong private_life. Sink nằm ngoài reservoir lock để persistence
+            # không khóa producer lâu hơn cần thiết.
+            if allowed and callable(self.mental_event_sink):
+                try:
+                    self.mental_event_sink(seed)
+                except Exception as exc:
+                    self._log("warning", "[random chat seed] mental event sink failed: %s", exc)
+
             if failed:
                 self._status(
                     activity="random_chat_seed",
@@ -645,6 +697,9 @@ class RandomChatSeedReservoir:
             "private_life_surface": [
                 dict(item) for item in _sequence(raw_self.get("private_life_surface"))[-6:] if isinstance(item, Mapping)
             ],
+            "private_life_workspace": [
+                dict(item) for item in _sequence(raw_self.get("private_life_workspace"))[-12:] if isinstance(item, Mapping)
+            ],
             "has_public_seed": bool(raw_self.get("has_public_seed", False)),
             "strongest_seed_score": round(float(raw_self.get("strongest_seed_score", 0.0) or 0.0), 1),
         }
@@ -701,6 +756,17 @@ class RandomChatSeedReservoir:
                 "agenda": stable_surface(self_memory.get("agenda")),
                 "private_mind_surface": stable_surface(self_memory.get("private_mind_surface")),
                 "private_life_surface": stable_surface(self_memory.get("private_life_surface")),
+                "private_life_workspace": [
+                    {
+                        "id": _compact(item.get("id", ""), 80),
+                        "kind": _compact(item.get("kind", "thought"), 48),
+                        "content": _compact(item.get("content", ""), 260),
+                        "epistemic_mode": _compact(item.get("epistemic_mode", "opinion"), 48),
+                        "open_loop": bool(item.get("open_loop", False)),
+                    }
+                    for item in _sequence(self_memory.get("private_life_workspace"))[:12]
+                    if isinstance(item, Mapping)
+                ],
                 "has_public_seed": bool(self_memory.get("has_public_seed", False)),
             },
             "personality_summary": request.get("personality_summary", ""),
@@ -730,6 +796,7 @@ class RandomChatSeedReservoir:
             }
         )
         requested_mode = self._requested_mode_locked(learning)
+        requested_event_kind = self._requested_event_kind_locked()
         queued = [
             {
                 "seed_id": entry.seed.seed_id,
@@ -737,6 +804,9 @@ class RandomChatSeedReservoir:
                 "premise": entry.seed.premise,
                 "topic_tags": list(entry.seed.topic_tags),
                 "source_kind": entry.seed.source_kind,
+                "event_kind": entry.seed.event_kind,
+                "epistemic_mode": entry.seed.epistemic_mode,
+                "open_loop": entry.seed.open_loop,
             }
             for entry in self._entries
         ]
@@ -745,6 +815,7 @@ class RandomChatSeedReservoir:
             "seed_learning": learning,
             "reservoir_context": {
                 "requested_mode": requested_mode,
+                "requested_event_kind": requested_event_kind,
                 "target_size": self.target_size,
                 "ready_size": len(self._entries),
                 "queued_seeds": queued,
@@ -760,7 +831,12 @@ class RandomChatSeedReservoir:
                 "must_be_specific": True,
                 "must_allow_no_reply": True,
                 "requested_mode": requested_mode,
+                "requested_event_kind": requested_event_kind,
                 "modes": ["shared", "user_led", "eris_led", "experimental"],
+                "event_rule": (
+                    "Prefer requested_event_kind when it yields a real thought, but never fabricate. "
+                    "Keep speculation/imagination explicitly modal and preserve open loops for curiosity/discovery."
+                ),
             },
         }
 
@@ -779,6 +855,29 @@ class RandomChatSeedReservoir:
         return max(
             modes,
             key=lambda mode: (weights[mode] * self.target_size - counts[mode], weights[mode]),
+        )
+
+    def _requested_event_kind_locked(self) -> str:
+        """Giữ diversity theo loại *sự kiện tinh thần*, không chỉ theo social mode."""
+
+        mix = {
+            "thought": 0.14,
+            "curiosity_question": 0.13,
+            "knowledge_gap": 0.11,
+            "discovery_impulse": 0.11,
+            "speculation": 0.08,
+            "imagination": 0.08,
+            "opinion": 0.08,
+            "association": 0.08,
+            "playful_probe": 0.06,
+            "micro_challenge": 0.04,
+            "creative_impulse": 0.04,
+            "self_reflection": 0.05,
+        }
+        counts = {kind: sum(1 for entry in self._entries if entry.seed.event_kind == kind) for kind in mix}
+        return max(
+            mix,
+            key=lambda kind: (mix[kind] * self.target_size - counts[kind], mix[kind]),
         )
 
     def _validate_generated_locked(self, seed: RandomChatSeed, now: float) -> tuple[bool, str]:
@@ -823,23 +922,32 @@ class RandomChatSeedReservoir:
             return entry.user_epoch == self._user_epoch and drift <= 3
         if entry.seed.source_kind == "user_memory":
             return drift <= 8
-        if entry.seed.source_kind == "eris_self_memory":
+        if entry.seed.source_kind in {"eris_self_memory", "private_life_workspace"}:
             return drift <= 10
+        if entry.seed.source_kind in {
+            "endogenous_curiosity", "general_knowledge", "world_hypothesis",
+            "discovery_impulse", "play_impulse", "question_impulse",
+        }:
+            return drift <= 12
         return False
 
     def _score_entry(self, entry: _SeedEntry, now: float) -> float:
         seed = entry.seed
         lifetime = max(1.0, entry.expires_at - entry.generated_at)
         freshness = max(0.0, min(1.0, (entry.expires_at - now) / lifetime))
-        mode_novelty = 0.07 if seed.mode != self._last_claimed_mode else 0.0
+        mode_novelty = 0.06 if seed.mode != self._last_claimed_mode else 0.0
+        event_novelty = 0.07 if seed.event_kind != self._last_claimed_event_kind else 0.0
+        open_loop_value = 0.035 if seed.open_loop and seed.event_kind in {"knowledge_gap", "discovery_impulse", "unfinished_loop"} else 0.0
         return (
             0.28 * seed.estimated_fit
             + 0.24 * seed.personal_stake
             + 0.18 * seed.authenticity
             + 0.12 * seed.confidence
             + 0.08 * seed.daring
-            + 0.10 * freshness
+            + 0.09 * freshness
             + mode_novelty
+            + event_novelty
+            + open_loop_value
         )
 
     def _prune_locked(self, now: float) -> None:

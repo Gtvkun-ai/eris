@@ -527,11 +527,18 @@ class UdpTransport:
             )
         message = json.dumps(minimal, ensure_ascii=False)
         if len(message.encode("utf-8")) > MAX_UDP_PAYLOAD_BYTES:
+            # Khi vẫn lố 63KB, phải giữ lại inner_diary bằng mọi giá vì đây là 
+            # thứ user đọc. Vứt sạch các debug array nặng nề khác.
             minimal["private_mind_digest"] = {
-                "anchor": _bounded_panel_value(anchor, dict_limit=16, list_limit=6, text_limit=100),
+                "inner_diary": private_mind.get("inner_diary", {}) if isinstance(private_mind, dict) else {},
+                "anchor": _bounded_panel_value(anchor, dict_limit=12, list_limit=4, text_limit=80),
                 "udp_debug_truncated": True,
             }
-            minimal["depth_v2"] = _bounded_panel_value(depth, dict_limit=12, list_limit=5, text_limit=100)
+            minimal["depth_v2"] = _bounded_panel_value(depth, dict_limit=8, list_limit=3, text_limit=60)
+            minimal["emotion_debug"] = {}
+            minimal["identity_runtime"] = {}
+            if "hardening_status" in minimal:
+                minimal.pop("hardening_status")
             message = json.dumps(minimal, ensure_ascii=False)
         self.send_text(message)
         return packet_id
