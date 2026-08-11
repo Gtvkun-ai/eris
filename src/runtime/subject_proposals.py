@@ -7,9 +7,10 @@ need, value và competence.
 """
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from cortex.subject.service import SubjectService
+from cortex.active_concern import match_concern
 
 
 def clamp01(value: Any, default: float = 0.5) -> float:
@@ -29,7 +30,12 @@ class AutonomousProposalSource:
         self._subject = subject
 
     @staticmethod
-    def from_affordance(affordance: Any, *, turn_id: str) -> dict[str, Any] | None:
+    def from_affordance(
+        affordance: Any,
+        *,
+        turn_id: str,
+        active_concerns: Sequence[Mapping[str, Any]] = (),
+    ) -> dict[str, Any] | None:
         affordance_id = str(getattr(affordance, "affordance_id", "") or "").strip()
         candidate = getattr(affordance, "candidate", None)
         if not affordance_id or candidate is None:
@@ -81,7 +87,7 @@ class AutonomousProposalSource:
             for item in (getattr(candidate, "evidence_refs", ()) or ())
             if str(item or "").strip()
         ) or (turn_id, affordance_id)
-        return {
+        proposal = {
             "proposal_id": f"proposal:{affordance_id}",
             "action_kind": "speak",
             "arguments": {
@@ -144,16 +150,72 @@ class AutonomousProposalSource:
             },
         }
 
+        # V40: proposal được gắn với concern đang sống nếu semantic thực sự trùng.
+        # Concern không override action; nó chỉ làm Neuro thấy continuity, novelty
+        # và habituation trước commit, thay vì downstream mới phát hiện "lại nói nữa".
+        matched, match_score = match_concern(topic, active_concerns)
+        if matched is not None:
+            activation = clamp01(matched.get("activation", 0.0), 0.0)
+            novelty = clamp01(matched.get("novelty", 0.0), 0.0)
+            habituation = clamp01(matched.get("habituation", 0.0), 0.0)
+            speech_pressure = clamp01(matched.get("speech_pressure", 0.0), 0.0)
+            age_seconds = max(0.0, float(matched.get("age_seconds", 0.0) or 0.0))
+            mutation_count = max(0, int(matched.get("mutation_count", 0) or 0))
+            concern_id = str(matched.get("concern_id") or "").strip()
+            proposal["arguments"].update({
+                "active_concern_id": concern_id,
+                "concern_match": round(match_score, 3),
+                "concern_state": str(matched.get("state") or "simmering"),
+                "concern_trajectory": str(matched.get("trajectory") or "stable"),
+                "concern_activation": activation,
+                "concern_novelty": novelty,
+                "concern_habituation": habituation,
+                "concern_speech_pressure": speech_pressure,
+                "concern_mutation_count": mutation_count,
+            })
+            if "continuity" not in proposal["supporting_need_ids"]:
+                proposal["supporting_need_ids"] = tuple((*proposal["supporting_need_ids"], "continuity"))
+            # Fresh seed mới nhập concern nên được "ủ" một chút nếu không gấp. Đây
+            # là bias mềm, không hard-block: urgency cao vẫn có thể thắng.
+            incubation = 0.10 if age_seconds < 20.0 and urgency < 0.55 and mutation_count == 0 else 0.0
+            proposal["expected_need_relief"] = clamp01(
+                float(proposal["expected_need_relief"]) * (0.76 + 0.34 * speech_pressure)
+            )
+            proposal["expected_action_efficacy"] = clamp01(
+                float(proposal["expected_action_efficacy"]) * (0.84 + 0.20 * novelty)
+            )
+            proposal["substrate_cost"] = clamp01(
+                float(proposal["substrate_cost"]) + 0.20 * habituation + incubation
+            )
+            proposal["commitment_conflict"] = clamp01(
+                float(proposal["commitment_conflict"]) + 0.32 * habituation + incubation
+            )
+            proposal["need_effects"]["continuity"] = max(
+                float(proposal["need_effects"].get("continuity", 0.0) or 0.0),
+                0.30 + 0.34 * activation,
+            )
+        return proposal
+
     def collect(
         self,
         blackboard: Any,
         affordances: Sequence[Any],
         *,
         turn_id: str,
+        planning_context: Mapping[str, Any] | None = None,
     ) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
+        context = dict(planning_context or {})
+        raw_concerns = context.get("active_concerns")
+        if not isinstance(raw_concerns, (list, tuple)):
+            self_context = context.get("self_context") if isinstance(context.get("self_context"), Mapping) else {}
+            raw_concerns = self_context.get("active_concerns", ()) if isinstance(self_context, Mapping) else ()
+        active_concerns = tuple(item for item in tuple(raw_concerns or ()) if isinstance(item, Mapping))
         proposals = [
             item
-            for item in (self.from_affordance(affordance, turn_id=turn_id) for affordance in affordances)
+            for item in (
+                self.from_affordance(affordance, turn_id=turn_id, active_concerns=active_concerns)
+                for affordance in affordances
+            )
             if item is not None
         ]
         public_view = blackboard.public_view() if callable(getattr(blackboard, "public_view", None)) else {}

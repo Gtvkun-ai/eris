@@ -640,6 +640,27 @@ class SelfTurnPipeline:
             unique_affordances.append(affordance)
         affordances = unique_affordances
 
+        # V40: seed/affordance có thể trở thành một concern nội tại trước khi Neuro
+        # quyết định có nói hay không. Việc "được nhớ" tuyệt đối không phải quyền
+        # phát biểu; nó chỉ cho proposal thấy continuity/mutation/habituation thật.
+        concern_runtime = getattr(host, "active_concern_runtime", None)
+        if concern_runtime is not None:
+            try:
+                concern_runtime.absorb_affordances(affordances, now=now)
+                active_concerns = concern_runtime.snapshot(now=now, limit=8)
+                planner_snapshot["active_concerns"] = [dict(item) for item in active_concerns]
+                self.trace_store.append(
+                    "active_concerns",
+                    {
+                        "turn_seq": context.turn_seq,
+                        "count": len(active_concerns),
+                        "items": [dict(item) for item in active_concerns[:4]],
+                    },
+                    now=now,
+                )
+            except Exception as exc:
+                host.logger.debug("[active concern] projection failed: %s", exc)
+
         # Mọi affordance autonomous đi qua cùng nền Subject Core như chat.
         # Neuro gate chọn trên coalition có substrate, need pressure và evidence;
         # remote deliberation chỉ xuất hiện khi competition thật sự mơ hồ.
@@ -2303,6 +2324,22 @@ class SelfTurnPipeline:
                     )
                 except Exception as exc:
                     host.logger.debug("[subject initiative] public-act lifecycle failed: %s", exc)
+
+        # Public commit là điểm duy nhất concern được tính là đã surface. Nếu
+        # Surface/preemption fail thì không tăng habituation oan.
+        if subject_decision is not None:
+            concern_id = str(subject_decision.arguments.get("active_concern_id", "") or "").strip()
+            concern_runtime = getattr(host, "active_concern_runtime", None)
+            note_surface = getattr(concern_runtime, "note_public_surface", None)
+            if concern_id and callable(note_surface):
+                try:
+                    note_surface(
+                        concern_id,
+                        now=host.last_autonomous_spoken_at,
+                        evidence_ref=str(plan.plan_id or f"autonomous:{context.turn_seq}"),
+                    )
+                except Exception as exc:
+                    host.logger.debug("[active concern] surface receipt failed: %s", exc)
 
         self._commit_seed_lease(candidate)
         seed_store = getattr(host, "ai_random_chat_seed_store", None)

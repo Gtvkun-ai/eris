@@ -46,6 +46,7 @@ from memory.memory_kernel import MemoryKernel
 from runtime.architecture_flags import background_tutor_enabled, legacy_model_lanes_enabled
 from runtime.diagnostic_logging import safe_log
 from runtime.ai_orchestrated.cortex import CortexAttentionSignal, CortexRuntime
+from runtime.active_concern_runtime import ActiveConcernRuntime
 from runtime.body_bias import BodyBiasProjector
 from runtime.chat_cycle import ChatCycleMixin
 from runtime.failure_taxonomy import FailureContext, classify_failure, failure_details
@@ -607,6 +608,8 @@ class CoordinatorBootstrapMixin:
         self.private_mind_thought_pressure = 0.0
         self.private_mind_digest: dict[str, object] = {}
         self.private_mind_daemon_digest: dict[str, object] = {}
+        # V40: projection concern dùng lại ConcernStore hiện có; không tạo kho nhớ thứ hai.
+        self.active_concern_runtime = ActiveConcernRuntime(self, logger=self.logger)
         self.inner_diary_persister = InnerDiaryPersister(logger=self.logger)
         self.private_life_daemon = PrivateLifeDaemon.from_runtime(
             runtime_owner=self,

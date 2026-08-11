@@ -130,6 +130,8 @@ class AutonomousSelfContext:
     # Mental workspace là context nội tại cho seed worker, không tự cấp quyền nói.
     private_life_workspace: tuple[Mapping[str, Any], ...] = ()
     active_threads: tuple[Mapping[str, Any], ...] = ()
+    # V40: projection concern đang sống, dùng chung cho seed/planner/Neuro.
+    active_concerns: tuple[Mapping[str, Any], ...] = ()
     has_public_seed: bool = False
     strongest_seed_score: float = 0.0
 
@@ -142,6 +144,7 @@ class AutonomousSelfContext:
             "private_life_surface": [dict(item) for item in self.private_life_surface],
             "private_life_workspace": [dict(item) for item in self.private_life_workspace],
             "active_threads": [dict(item) for item in self.active_threads],
+            "active_concerns": [dict(item) for item in self.active_concerns],
             "has_public_seed": bool(self.has_public_seed),
             "strongest_seed_score": round(float(self.strongest_seed_score), 3),
         }
@@ -266,6 +269,15 @@ def build_autonomous_self_context(host: Any) -> AutonomousSelfContext:
         if preview.get("thread_id") and preview.get("evidence_refs")
     )
 
+    active_concerns: tuple[Mapping[str, Any], ...] = ()
+    concern_runtime = getattr(host, "active_concern_runtime", None)
+    snapshot_fn = getattr(concern_runtime, "snapshot", None)
+    if callable(snapshot_fn):
+        try:
+            active_concerns = tuple(dict(item) for item in tuple(snapshot_fn(limit=8) or ()) if isinstance(item, Mapping))
+        except Exception:
+            active_concerns = ()
+
     seed_scores: list[float] = []
     for item in agenda_items:
         speech_value = _clamp01(item.get("speech_value", 0.0))
@@ -280,12 +292,16 @@ def build_autonomous_self_context(host: Any) -> AutonomousSelfContext:
 
     for item in active_threads:
         seed_scores.append(_clamp01(item.get("salience", 0.0)) * (1.0 - 0.35 * _clamp01(item.get("uncertainty", 1.0), 1.0)))
+    for item in active_concerns:
+        # Concern có thể là public seed chỉ khi speech_pressure đủ; activation cao
+        # nhưng habituated/đang bị interruption không tự biến thành lý do nói.
+        seed_scores.append(_clamp01(item.get("speech_pressure", 0.0)))
 
     strongest = max(seed_scores, default=0.0)
     # A grounded causal thread may become a public seed. Scalar dread alone may
     # not. This keeps the planner informed without laundering private residue
     # into a claim about the user.
-    has_public_seed = bool(strongest >= 0.48 and (agenda_items or private_mind or private_life or active_threads))
+    has_public_seed = bool(strongest >= 0.48 and (agenda_items or private_mind or private_life or active_threads or active_concerns))
 
     return AutonomousSelfContext(
         internal_state=internal_state,
@@ -295,6 +311,7 @@ def build_autonomous_self_context(host: Any) -> AutonomousSelfContext:
         private_life_surface=private_life,
         private_life_workspace=private_life_workspace,
         active_threads=active_threads,
+        active_concerns=active_concerns,
         has_public_seed=has_public_seed,
         strongest_seed_score=strongest,
     )

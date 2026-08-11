@@ -272,6 +272,8 @@ class PrivateConcern:
         now = now_ts()
         self.recurrence += 1
         prev_evidence_count = len(self.evidence_ids)
+        prev_question_count = len(self.open_questions)
+        prev_hypothesis_labels = {h.label.lower() for h in self.hypotheses}
         merged_evidence = [*self.evidence_ids]
         for eid in fragment.evidence_ids:
             if eid not in merged_evidence:
@@ -298,6 +300,16 @@ class PrivateConcern:
             else:
                 merged_hypotheses.append(hyp)
         self.hypotheses = tuple(sorted(merged_hypotheses, key=lambda h: h.score, reverse=True)[:12])
+        # V40: recurrence chỉ nói rằng concern quay lại. Mutation chỉ tăng khi có
+        # nội dung/evidence thật sự mới. Hai khái niệm này tách ra để Neuro không
+        # thưởng cho việc nghĩ lặp cùng một thứ như thể đó là insight mới.
+        new_question = len(self.open_questions) > prev_question_count
+        new_hypothesis = any(h.label.lower() not in prev_hypothesis_labels for h in self.hypotheses)
+        self.metadata["reactivation_count"] = int(self.metadata.get("reactivation_count", 0) or 0) + 1
+        self.metadata["last_reactivated_at"] = now
+        if had_new_evidence or new_question or new_hypothesis:
+            self.metadata["mutation_count"] = int(self.metadata.get("mutation_count", 0) or 0) + 1
+            self.metadata["last_mutation_at"] = now
         if had_new_evidence:
             # Có bằng chứng mới thật → mối bận tâm được nuôi chính đáng, cho phép leo.
             self.pressure = clamp01(max(self.pressure * 0.92, fragment.pressure) + min(0.12, 0.018 * self.recurrence))

@@ -260,7 +260,15 @@ class ConcernStore:
                     recurrence=1,
                     status="open",
                     future_biases=tuple(str(x) for x in (fragment.metadata.get("future_biases") or ()) if str(x).strip()),
-                    metadata={"created_from_fragment": fragment.id, "fragment_sources": [fragment.source]},
+                    metadata={
+                        "created_from_fragment": fragment.id,
+                        "fragment_sources": [fragment.source],
+                        "mutation_count": 0,
+                        "reactivation_count": 0,
+                        "surfaced_count": 0,
+                        "last_mutation_at": time.time(),
+                        "last_reactivated_at": time.time(),
+                    },
                 )
                 self._concerns[concern.id] = concern
             else:
@@ -306,6 +314,8 @@ class ConcernStore:
             )
             self._concerns[concern.id] = concern
         else:
+            before_evidence = set(concern.evidence_ids)
+            before_questions = set(concern.open_questions)
             concern.pressure = clamp01(max(concern.pressure * 0.90, data.get("pressure", concern.pressure)))
             concern.uncertainty = clamp01(data.get("uncertainty", concern.uncertainty))
             concern.status = str(data.get("status") or concern.status)  # type: ignore[assignment]
@@ -318,6 +328,24 @@ class ConcernStore:
                     if text and text not in existing:
                         existing.append(text)
                 setattr(concern, key, tuple(existing[:64 if key == "evidence_ids" else 12]))
+            # V40: mỗi lần cùng một concern quay lại vẫn là recurrence/reactivation,
+            # nhưng CHỈ evidence/câu hỏi mới mới được tính là mutation. Nếu không
+            # tách hai khái niệm này, hệ sẽ tưởng "nghĩ lại" đồng nghĩa "có ý mới".
+            concern.recurrence = max(1, int(concern.recurrence or 0)) + 1
+            concern.metadata["reactivation_count"] = int(concern.metadata.get("reactivation_count", 0) or 0) + 1
+            concern.metadata["last_reactivated_at"] = concern.updated_at
+            if set(concern.evidence_ids) != before_evidence or set(concern.open_questions) != before_questions:
+                concern.metadata["mutation_count"] = int(concern.metadata.get("mutation_count", 0) or 0) + 1
+                concern.metadata["last_mutation_at"] = concern.updated_at
+            # Metadata có provenance mới được merge nhưng không được xóa lifecycle cũ.
+            # Seed V40 dùng đường này để các seed paraphrase khác ID vẫn nhập chung
+            # concern semantic thay vì đẻ một kho bản sao rất "sáng tạo".
+            incoming_meta = data.get("metadata")
+            if isinstance(incoming_meta, Mapping):
+                for meta_key, meta_value in incoming_meta.items():
+                    if meta_key in {"mutation_count", "reactivation_count", "surfaced_count"}:
+                        continue
+                    concern.metadata[str(meta_key)] = meta_value
         self._trim()
         self.save()
         return concern

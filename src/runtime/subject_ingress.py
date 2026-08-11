@@ -74,6 +74,10 @@ class SubjectIngress:
                     "engagement_active": bool((context.get("engagement_context") or {}).get("active", False))
                     if isinstance(context.get("engagement_context"), Mapping)
                     else False,
+                    "active_concerns": tuple(
+                        dict(item) for item in tuple(context.get("active_concerns", ()) or ())[:6]
+                        if isinstance(item, Mapping)
+                    ),
                     **dict(initiative_runtime),
                 },
             },
@@ -170,6 +174,7 @@ class SubjectIngress:
             blackboard,
             affordances,
             turn_id=turn_id,
+            planning_context=context,
         )
         reply_expected = bool(proposal_context["reply_expected"])
         engagement_active = bool(proposal_context["engagement_active"])
@@ -215,6 +220,10 @@ class SubjectIngress:
                     "social_curiosity": relational.get("social_curiosity", 0.0),
                     "unresolved_relational": relational.get("affiliation_deficit", 0.0),
                     "relational_evidence_refs": tuple(relational.get("evidence_refs", ())),
+                    "active_concerns": tuple(
+                        dict(item) for item in tuple(context.get("active_concerns", ()) or ())[:6]
+                        if isinstance(item, Mapping)
+                    ),
                     **dict(initiative_runtime),
                 },
             },

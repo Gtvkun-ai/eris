@@ -935,6 +935,17 @@ class AIChatOrchestrator:
                 else {}
             ),
         }
+        # V40: direct chat cũng đọc cùng ActiveConcern projection với autonomous.
+        # Concern chỉ tạo continuity context; user turn vẫn là foreground authority.
+        concern_runtime = getattr(host, "active_concern_runtime", None)
+        concern_snapshot = getattr(concern_runtime, "snapshot", None)
+        if callable(concern_snapshot):
+            try:
+                active_concerns = tuple(concern_snapshot(now=cycle_start, limit=8) or ())
+                planning_snapshot["active_concerns"] = [dict(item) for item in active_concerns]
+            except Exception as exc:
+                host.logger.debug("[active concern] chat projection failed: %s", exc)
+
         # V26: chat và self-turn dùng cùng motive context. User turn không reset
         # pending intention; nó chỉ là một observation origin=user đi vào MindLoop.
         try:

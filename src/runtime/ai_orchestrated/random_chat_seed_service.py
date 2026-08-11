@@ -316,7 +316,10 @@ class RandomChatSeedGenerator:
             "độ sâu giả. Dùng seed_contract.kind_contract làm tiêu chuẩn cho requested_event_kind. "
             "Không biến mọi event thành 'một góc nhìn sâu sắc của ERIS'. thought/self_reflection chỉ là hai loại trong nhiều "
             "loại; curiosity, play, memory callback, association, creative impulse, prediction, surprise và contradiction đều "
-            "là first-class. Premise không phải slogan, fortune-cookie hay presence chung chung; nhưng brevity tự nó KHÔNG phải lỗi. "
+            "là first-class. Nếu eris_self_memory.active_concerns có một chuyện đang sống, seed mới có thể va vào nó bằng "
+            "association/contradiction/new evidence/new question, nhưng KHÔNG được chỉ paraphrase concern cũ. Concern habituated "
+            "mà không có mutation mới thì ưu tiên decision=none hoặc một event khác; recurrence tự nó không phải novelty. "
+            "Premise không phải slogan, fortune-cookie hay presence chung chung; nhưng brevity tự nó KHÔNG phải lỗi. "
             "Cân bằng user affinity, ERIS ego và daring. ERIS được có curiosity/play/creative impulse riêng, không chỉ nói thứ "
             "dự đoán user sẽ thích. Không dùng memory private/sensitive, không suy diễn cảm xúc/kế hoạch/tâm lý user, không tạo "
             "presence/check-in chỉ để lấp im lặng, không hỏi user đưa chủ đề. Không lặp queued_seeds hoặc recent_seeds. "
@@ -848,6 +851,9 @@ class RandomChatSeedReservoir:
             "private_life_workspace": [
                 dict(item) for item in _sequence(raw_self.get("private_life_workspace"))[-12:] if isinstance(item, Mapping)
             ],
+            "active_concerns": [
+                dict(item) for item in _sequence(raw_self.get("active_concerns"))[-8:] if isinstance(item, Mapping)
+            ],
             "has_public_seed": bool(raw_self.get("has_public_seed", False)),
             "strongest_seed_score": round(float(raw_self.get("strongest_seed_score", 0.0) or 0.0), 1),
         }
@@ -913,6 +919,20 @@ class RandomChatSeedReservoir:
                         "open_loop": bool(item.get("open_loop", False)),
                     }
                     for item in _sequence(self_memory.get("private_life_workspace"))[:12]
+                    if isinstance(item, Mapping)
+                ],
+                "active_concerns": [
+                    {
+                        "concern_id": _compact(item.get("concern_id", ""), 80),
+                        "subject": _compact(item.get("subject", ""), 260),
+                        "state": _compact(item.get("state", ""), 40),
+                        "trajectory": _compact(item.get("trajectory", ""), 40),
+                        "activation": round(float(item.get("activation", 0.0) or 0.0), 2),
+                        "novelty": round(float(item.get("novelty", 0.0) or 0.0), 2),
+                        "habituation": round(float(item.get("habituation", 0.0) or 0.0), 2),
+                        "mutation_count": int(item.get("mutation_count", 0) or 0),
+                    }
+                    for item in _sequence(self_memory.get("active_concerns"))[:8]
                     if isinstance(item, Mapping)
                 ],
                 "has_public_seed": bool(self_memory.get("has_public_seed", False)),
