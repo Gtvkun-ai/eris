@@ -43,6 +43,35 @@ def test_current_world_claim_requires_evidence_and_user_correction_is_repair():
     assert is_grounding_correction("Tôi chỉ không thích màu xanh", previous) is False
 
 
+def test_autonomous_surface_rejects_environment_decoration_from_conversation_refs_only():
+    from runtime.grounding_surface_gate import current_world_claim_without_evidence
+
+    assert current_world_claim_without_evidence(
+        "Trong căn phòng yên tĩnh thế này, tôi vẫn nghĩ về autonomy.",
+        ("turn:test",),
+    ) is True
+    assert current_world_claim_without_evidence(
+        "Chắc bạn đang mệt rồi.",
+        ("turn:test",),
+    ) is True
+    assert current_world_claim_without_evidence(
+        "Đã gần tối theo giờ của bạn rồi.",
+        (),
+    ) is False
+    assert current_world_claim_without_evidence(
+        "Chiều nay thật yên bình.",
+        ("screen:current",),
+    ) is True
+    assert current_world_claim_without_evidence(
+        "Tôi thấy cửa sổ Brave.",
+        ("screen:current",),
+    ) is False
+    assert current_world_claim_without_evidence(
+        "Trời đang mưa.",
+        ("weather:verified",),
+    ) is False
+
+
 def test_autonomous_cadence_paraphrase_is_duplicate():
     from runtime.ai_orchestrated.surface_intent import _surface_text_is_duplicate
 

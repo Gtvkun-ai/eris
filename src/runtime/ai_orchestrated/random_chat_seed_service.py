@@ -259,11 +259,14 @@ def build_seed_temporal_context(now: float | None = None) -> dict[str, Any]:
         "local_date": local.date().isoformat(),
         "local_time": local.strftime("%H:%M:%S"),
         "weekday": local.strftime("%A"),
+        "local_hour": int(local.hour),
         "hour": int(local.hour),
         "minute": int(local.minute),
         "daypart": daypart,
         "daypart_vi": daypart_vi,
         "evidence_source": "runtime_clock",
+        "environment_evidence": False,
+        "sensor_evidence": False,
         "supports": [
             "current_user_local_time",
             "current_user_local_date",
@@ -651,11 +654,14 @@ class RandomChatSeedReservoir:
                         "mode": entry.seed.mode,
                         "source_kind": entry.seed.source_kind,
                         "event_kind": entry.seed.event_kind,
+                        "event_family": seed_event_family(entry.seed.event_kind),
                         "epistemic_mode": entry.seed.epistemic_mode,
                         "open_loop": entry.seed.open_loop,
+                        "premise": entry.seed.premise,
                         "topic_tags": list(entry.seed.topic_tags),
                         "quality": assess_seed_quality(entry.seed).to_dict(),
                         "generated_at": entry.generated_at,
+                        "generated_temporal_context": build_seed_temporal_context(entry.generated_at),
                         "expires_at": entry.expires_at,
                     }
                     for entry in self._entries
@@ -737,13 +743,26 @@ class RandomChatSeedReservoir:
                         )
                         self._entries = self._entries[-self.max_size :]
                         wake = was_empty
+                        quality = assess_seed_quality(seed)
+                        temporal = build_seed_temporal_context(current)
                         self._log(
                             "info",
-                            "[random chat seed] stocked seed=%s mode=%s source=%s quality=%.2f ready=%d",
+                            (
+                                "[random chat seed] stocked seed=%s mode=%s source=%s "
+                                "event_kind=%s family=%s quality=%.2f timezone=%s "
+                                "local_hour=%s daypart=%s environment_evidence=%s premise=%s ready=%d"
+                            ),
                             seed.seed_id,
                             seed.mode,
                             seed.source_kind,
-                            assess_seed_quality(seed).score,
+                            seed.event_kind,
+                            seed_event_family(seed.event_kind),
+                            quality.score,
+                            temporal.get("timezone", ""),
+                            temporal.get("local_hour", temporal.get("hour", "")),
+                            temporal.get("daypart", ""),
+                            str(bool(temporal.get("environment_evidence", False))).lower(),
+                            _compact(seed.premise, 180),
                             len(self._entries),
                         )
                     else:

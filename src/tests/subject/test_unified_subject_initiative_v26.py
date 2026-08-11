@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from types import SimpleNamespace
 
 from cortex.subject.contracts import ObservationOrigin, SubjectExecutiveCommit, WorldObservation
@@ -365,3 +366,26 @@ def test_seed_is_not_required_for_initiative_wake_source() -> None:
     assert 'emit(\n                "initiative_pressure"' in source
     assert "preview_understand" in source
     assert "user_model_uncertainty" in source
+
+
+def test_runtime_context_marks_unanswered_autonomous_speech_as_cost() -> None:
+    now = 1_000.0
+    host = SimpleNamespace(
+        private_mind_daemon=None,
+        private_mind_system=None,
+        private_mind_loop=None,
+        _startup_greeting_spoken_at=0.0,
+        _temporal_last_user_turn_at=800.0,
+        _temporal_last_assistant_turn_at=940.0,
+        last_autonomous_spoken_at=940.0,
+    )
+    original_time = time.time
+    try:
+        time.time = lambda: now
+        context = build_initiative_runtime_context(host)
+    finally:
+        time.time = original_time
+
+    assert context["recent_unsolicited_speech"] == 1.0
+    assert context["user_response_rate"] == 0.0
+    assert context["social_refractory_cost"] > 0.0

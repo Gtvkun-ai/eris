@@ -442,11 +442,18 @@ class NeuroActionSelector:
         observation_context = dict(getattr(getattr(frame, "observation", None), "context", {}) or {})
         runtime_context = observation_context.get("runtime_context")
         runtime_context = dict(runtime_context) if isinstance(runtime_context, Mapping) else {}
-        interruption_cost = _clamp01(runtime_context.get("interruption_cost", 0.0))
+        interruption_cost = max(
+            _clamp01(runtime_context.get("interruption_cost", 0.0)),
+            _clamp01(runtime_context.get("social_refractory_cost", 0.0)),
+        )
+        recent_unsolicited = _clamp01(runtime_context.get("recent_unsolicited_speech", 0.0))
+        user_response_rate = _clamp01(runtime_context.get("user_response_rate", 1.0), 1.0)
+        unanswered_penalty = recent_unsolicited * (0.55 + 0.45 * (1.0 - user_response_rate))
 
         if action == "speak":
             score += 0.035 * broadcast.social_drive
             score -= 0.10 * interruption_cost
+            score -= 0.13 * unanswered_penalty
             # Seed quality belongs upstream of the public decision. A thin seed
             # should lose utility here rather than win Neuro and get censored by
             # a downstream collection of special cases.
@@ -460,8 +467,10 @@ class NeuroActionSelector:
         elif action == "silence":
             score += 0.025 * (1.0 - broadcast.social_drive)
             score += 0.08 * interruption_cost
+            score += 0.11 * unanswered_penalty
         elif action == "body_only":
             score += 0.035 * interruption_cost
+            score += 0.04 * unanswered_penalty
         return score
 
     @staticmethod

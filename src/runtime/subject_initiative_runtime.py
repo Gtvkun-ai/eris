@@ -81,6 +81,19 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
                 greeting_at = 0.0
     seconds_since_greeting = max(0.0, current - greeting_at) if greeting_at > 0.0 else 10_000.0
     startup_social_cooldown_seconds = 150.0
+    last_user_at = float(getattr(host, "_temporal_last_user_turn_at", 0.0) or 0.0)
+    last_assistant_at = float(getattr(host, "_temporal_last_assistant_turn_at", 0.0) or 0.0)
+    last_autonomous_at = float(getattr(host, "last_autonomous_spoken_at", 0.0) or 0.0)
+    if last_autonomous_at <= 0.0:
+        last_autonomous_at = float(getattr(host, "_last_autonomous_spoken_at", 0.0) or 0.0)
+    seconds_since_autonomous = max(0.0, current - last_autonomous_at) if last_autonomous_at > 0.0 else 10_000.0
+    unanswered_autonomous = bool(last_autonomous_at > 0.0 and last_autonomous_at >= last_user_at)
+    recent_unsolicited_speech = 1.0 if unanswered_autonomous and seconds_since_autonomous <= 180.0 else 0.0
+    user_response_rate = 0.0 if recent_unsolicited_speech else 1.0
+    social_refractory_cost = _clamp01(
+        0.22 * recent_unsolicited_speech
+        + 0.16 * recent_unsolicited_speech * min(1.0, seconds_since_autonomous / 90.0)
+    )
 
     # Các tín hiệu dưới đây chỉ lấy từ projection đã có. Không có projection thì
     # để 0, tuyệt đối không bịa "user hiểu sai Eris" chỉ để kiếm chủ đề nói.
@@ -94,6 +107,11 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
         "seconds_since_startup_greeting": seconds_since_greeting,
         "startup_social_cooldown_seconds": startup_social_cooldown_seconds,
         "startup_social_cooldown_active": bool(seconds_since_greeting < startup_social_cooldown_seconds),
+        "recent_unsolicited_speech": recent_unsolicited_speech,
+        "seconds_since_last_autonomous_speech": seconds_since_autonomous,
+        "user_response_rate": user_response_rate,
+        "social_refractory_cost": social_refractory_cost,
+        "last_public_turn_unanswered": unanswered_autonomous,
     }
 
 

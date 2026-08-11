@@ -42,6 +42,7 @@ from .semantic_environment_worker import SemanticEnvironmentWorker
 from .followup_appraisal import FollowUpAppraisalLayer
 from .identity import PendingStrategyUse
 from .initiative import InitiativeAction, InitiativeDecision
+from .random_chat_seed import seed_event_family
 from .self_context import AutonomousSelfContext, build_autonomous_self_context
 from runtime.engagements import InteractionDecision
 from runtime.temporal_mind import TemporalMind, TemporalSignal
@@ -842,15 +843,33 @@ class SelfTurnPipeline:
         if candidate is not None:
             # Ghi candidate sau khi governor đã đóng plan_id, nhưng đặt event trước
             # governor trong trace để toàn chuỗi dùng đúng một identity ổn định.
+            candidate_payload = candidate.to_dict()
+            seed_payload = (
+                getattr(candidate, "random_chat_seed", {})
+                if isinstance(getattr(candidate, "random_chat_seed", {}), Mapping)
+                else {}
+            )
             self.trace_store.append("candidate", {
                 "trace_id": str(plan.plan_id or ""),
                 "stage": "candidate",
                 "owner": "social_initiative",
                 "candidate_source": str(getattr(candidate, "source", "") or ""),
                 "candidate_kind": str(getattr(candidate, "kind", "") or ""),
+                "candidate": candidate_payload,
                 "claim_token": str(getattr(candidate, "claim_token", "") or ""),
                 "idempotency_key": str(getattr(candidate, "idempotency_key", "") or ""),
                 "generation_epoch": context.turn_seq,
+                "seed": dict(seed_payload),
+                "seed_event_kind": str(getattr(candidate, "seed_event_kind", "") or ""),
+                "seed_event_family": seed_event_family(str(getattr(candidate, "seed_event_kind", "") or "")),
+                "seed_premise": str(getattr(candidate, "topic", "") or ""),
+                "seed_quality": {
+                    "score": float(getattr(candidate, "seed_quality_score", 0.0) or 0.0),
+                    "specificity": float(getattr(candidate, "seed_specificity", 0.0) or 0.0),
+                    "motive_strength": float(getattr(candidate, "seed_motive_strength", 0.0) or 0.0),
+                    "semantic_completeness": float(getattr(candidate, "seed_semantic_completeness", 0.0) or 0.0),
+                },
+                "materialized_temporal_context": dict(getattr(candidate, "seed_temporal_context", {}) or {}),
             }, now=now)
 
         self.trace_store.append("initiative_decision", {
@@ -970,12 +989,35 @@ class SelfTurnPipeline:
         surface_engine = getattr(host, "ai_surface_intent_engine", None)
         surface_turn = None
         if surface_engine is not None:
+            intent_payload = speech_intent.to_dict()
+            intent_seed = (
+                speech_intent.random_chat_seed
+                if isinstance(speech_intent.random_chat_seed, Mapping)
+                else {}
+            )
+            seed_claim_contract = (
+                intent_seed.get("claim_contract", {})
+                if isinstance(intent_seed.get("claim_contract", {}), Mapping)
+                else {}
+            )
             self.trace_store.append("surface_start", {
                 "trace_id": str(speech_intent.trace_id or plan.plan_id),
                 "stage": "surface",
                 "owner": "surface",
                 "generation_epoch": speech_intent.generation_epoch,
                 "surface_status": "started",
+                "semantic_intent": {
+                    "act": plan.semantics.speech_act,
+                    "subject": plan.semantics.subject_key,
+                    "turn_kind": plan.semantics.turn_kind,
+                    "allowed_claims": (
+                        seed_claim_contract.get("runtime_clock_is_evidence_for")
+                        if seed_claim_contract
+                        else list(speech_intent.evidence_refs)
+                    ),
+                    "claim_contract": dict(seed_claim_contract),
+                },
+                "speech_intent": intent_payload,
             })
             try:
                 surface_turn = surface_engine.realize(
@@ -993,6 +1035,8 @@ class SelfTurnPipeline:
                 "owner": "surface",
                 "generation_epoch": speech_intent.generation_epoch,
                 "surface_status": "realized",
+                "surface_added_claims": 0,
+                "unsupported_current_world_claim": False,
             })
             plan = surface_turn.plan
             surface_payload = surface_turn.public_payload

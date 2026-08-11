@@ -92,7 +92,9 @@ def test_user_clock_context_is_vietnam_local_time_and_has_narrow_evidence_scope(
     assert context["timezone"] == "Asia/Ho_Chi_Minh"
     assert context["local_date"] == "2026-08-11"
     assert context["local_time"].startswith("16:20")
+    assert context["local_hour"] == 16
     assert context["daypart"] == "afternoon"
+    assert context["environment_evidence"] is False
     assert "ambient_sound" in context["does_not_support"]
     assert "room_lighting" in context["does_not_support"]
 
@@ -165,3 +167,39 @@ def test_parallel_semantic_appraisal_can_make_silence_win_without_remote_winner_
     assert merged.winner_index == 1
     assert merged.winner(frame).action_kind == "silence"
     assert merged.reason.startswith("semantic_merge:")
+
+
+def test_recent_unanswered_autonomous_speech_increases_silence_utility():
+    observation = SimpleNamespace(context={"runtime_context": {
+        "recent_unsolicited_speech": 1.0,
+        "user_response_rate": 0.0,
+        "social_refractory_cost": 0.22,
+    }})
+    speak = SimpleNamespace(
+        action_kind="speak",
+        arguments={},
+        score=0.60,
+        expected_pragmatic_value=0.50,
+        expected_epistemic_value=0.30,
+        uncertainty=0.20,
+        proposal_refs=(),
+    )
+    silence = SimpleNamespace(
+        action_kind="silence",
+        arguments={},
+        score=0.59,
+        expected_pragmatic_value=0.20,
+        expected_epistemic_value=0.10,
+        uncertainty=0.10,
+        proposal_refs=(),
+    )
+    frame = SimpleNamespace(
+        observation=observation,
+        coalitions=(speak, silence),
+        appraisals=(),
+        activations=(),
+        proposals=(),
+        substrate=SimpleNamespace(processing_capacity=1.0),
+    )
+    selection = NeuroActionSelector().select(frame)
+    assert selection.winner(frame).action_kind == "silence"

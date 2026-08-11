@@ -34,10 +34,39 @@ def _fold_vi(value: Any) -> str:
 #   - "troi dang / hien tai / bay gio" — nói về thời tiết theo cảm xúc, không phải claim
 #   - "hom nay troi / thoi tiet" — idem
 # Chỉ giữ lại claim trực tiếp về perception sensor (thấy/nhìn/quan sát).
-_CURRENT_WORLD_PATTERNS = (
+_DIRECT_OBSERVATION_PATTERNS = (
     re.compile(r"\btoi (?:dang )?(?:thay|nhin thay|nhin|quan sat)\b"),
-    re.compile(r"\btroi dang\b"),
     re.compile(r"\bnhin ra ngoai\b"),
+)
+
+_PRESENT_ENVIRONMENT_PATTERNS = (
+    re.compile(r"\btroi (?:chac |co le |hinh nhu |dang |sap |da |co ve )*(?:toi|toi dan|mua|nang|nong|lanh|am u|am|lanh)\b"),
+    re.compile(r"\b(?:ngoai troi|ben ngoai|ngoai kia|ngoai cua so)\b.*\b(?:toi|mua|nang|gio|yen|vang|im)\b"),
+    re.compile(r"\b(?:gio|gió) (?:ben ngoai|ngoai troi|ngoai kia|ngoai cua so)\b"),
+    re.compile(r"\b(?:anh sang yeu|anh sang|anh den|den trong phong|phong .*den|phong .*sang)\b"),
+    re.compile(r"\b(?:khong gian|can phong|phong) (?:co ve |that |dang |rat )?(?:yen tinh|yen binh|im lang|vang lang)\b"),
+    re.compile(r"\b(?:dem nay|toi nay|chieu nay|sang nay|hom nay) (?:that |co ve |rat )?(?:yen tinh|yen binh|im lang|vang lang)\b"),
+    re.compile(r"\b(?:tieng dong|am thanh|tieng mua|tieng gio)\b"),
+    re.compile(r"\b(?:nhiet do|thoi tiet) (?:dang |hien |hom nay |bay gio |co ve )?\b"),
+)
+
+_PRESENT_USER_STATE_PATTERNS = (
+    re.compile(r"\b(?:chac |co le |hinh nhu )?ban (?:dang |sap |co ve )?(?:met|buon ngu|ngoi may|ngoi truoc may|di ngu)\b"),
+    re.compile(r"\buser (?:dang |sap |co ve )?(?:met|buon ngu|ngoi may|ngoi truoc may|di ngu)\b"),
+)
+
+_DIRECT_ENVIRONMENT_REF_PREFIXES = (
+    "environment:",
+    "weather:",
+    "sensor:",
+)
+
+_DIRECT_OBSERVATION_REF_PREFIXES = (
+    *_DIRECT_ENVIRONMENT_REF_PREFIXES,
+    "vision:",
+    "screen:",
+    "telemetry:",
+    "desktop:",
 )
 
 _CORRECTION_MARKERS = (
@@ -57,14 +86,35 @@ def has_current_world_claim(text: str) -> bool:
     """True khi câu đang khẳng định một trạng thái hiện tại cần evidence."""
 
     folded = _fold_vi(text)
-    return bool(folded and any(pattern.search(folded) for pattern in _CURRENT_WORLD_PATTERNS))
+    return bool(
+        folded
+        and any(
+            pattern.search(folded)
+            for pattern in (
+                *_DIRECT_OBSERVATION_PATTERNS,
+                *_PRESENT_ENVIRONMENT_PATTERNS,
+                *_PRESENT_USER_STATE_PATTERNS,
+            )
+        )
+    )
+
+
+def _matches_any(folded: str, patterns: Sequence[re.Pattern[str]]) -> bool:
+    return any(pattern.search(folded) for pattern in patterns)
 
 
 def current_world_claim_without_evidence(text: str, evidence_refs: Sequence[str] | None = None) -> bool:
     """Chặn autonomous nói như đang nhìn/thấy thế giới khi không có provenance."""
 
-    refs = tuple(str(item or "").strip() for item in (evidence_refs or ()) if str(item or "").strip())
-    return has_current_world_claim(text) and not refs
+    folded = _fold_vi(text)
+    if not folded:
+        return False
+    refs = tuple(str(item or "").strip().lower() for item in (evidence_refs or ()) if str(item or "").strip())
+    if _matches_any(folded, (*_PRESENT_ENVIRONMENT_PATTERNS, *_PRESENT_USER_STATE_PATTERNS)):
+        return not any(ref.startswith(_DIRECT_ENVIRONMENT_REF_PREFIXES) for ref in refs)
+    if _matches_any(folded, _DIRECT_OBSERVATION_PATTERNS):
+        return not any(ref.startswith(_DIRECT_OBSERVATION_REF_PREFIXES) for ref in refs)
+    return False
 
 
 def is_grounding_correction(user_text: str, previous_assistant_text: str) -> bool:

@@ -502,6 +502,66 @@ class ExecutiveCortex:
         )
 
     @staticmethod
+    def _selection_action_probabilities(
+        frame: SubjectDeliberationFrame,
+        selection: SelectionResult,
+    ) -> dict[str, float]:
+        totals: dict[str, float] = {}
+        for index, coalition in enumerate(frame.coalitions):
+            action = str(coalition.action_kind or "unknown").strip().lower() or "unknown"
+            probability = float(selection.probabilities[index]) if index < len(selection.probabilities) else 0.0
+            totals[action] = totals.get(action, 0.0) + probability
+        return {key: round(value, 4) for key, value in sorted(totals.items())}
+
+    def _log_neuro_selection(
+        self,
+        label: str,
+        frame: SubjectDeliberationFrame,
+        selection: SelectionResult,
+        *,
+        mode: str,
+        extra: Mapping[str, Any] | None = None,
+    ) -> None:
+        winner = selection.winner(frame)
+        self._log(
+            "info",
+            "[%s] mode=%s winner=%s action=%s probs=%s scores=%s margin=%.3f entropy=%.3f reason=%s extra=%s",
+            label,
+            mode,
+            selection.winner_index,
+            str(winner.action_kind or "unknown"),
+            self._selection_action_probabilities(frame, selection),
+            [round(float(value), 4) for value in selection.scores],
+            selection.margin,
+            selection.entropy,
+            selection.reason,
+            dict(extra or {}),
+        )
+
+    def _log_neuro_commit(
+        self,
+        frame: SubjectDeliberationFrame,
+        commit: SubjectExecutiveCommit,
+        *,
+        mode: str,
+    ) -> None:
+        coalition = next(
+            (item for item in frame.coalitions if item.coalition_id == commit.selected_coalition_id),
+            None,
+        )
+        self._log(
+            "info",
+            "[neuro-commit] mode=%s action=%s coalition=%s proposal=%s source=%s confidence=%.2f reason=%s",
+            mode,
+            str(getattr(coalition, "action_kind", "unknown") or "unknown"),
+            commit.selected_coalition_id,
+            commit.selected_proposal_ref,
+            commit.source,
+            commit.confidence,
+            commit.reason,
+        )
+
+    @staticmethod
     def _deliberation_choice_schema(frame: SubjectDeliberationFrame) -> dict[str, Any]:
         indices = list(range(len(frame.coalitions)))
         return {
@@ -1044,6 +1104,7 @@ class ExecutiveCortex:
         Không còn rollback sang LLM selector cũ và không có rebound/remap ID.
         """
         selection = self._neuro_selector.select(frame)
+        self._log_neuro_selection("neuro-fast", frame, selection, mode=mode)
 
         # Autonomous social speech gets a slow semantic appraisal before public
         # commit when the fast winner wants to speak. The model does not vote; it
@@ -1057,6 +1118,26 @@ class ExecutiveCortex:
                 frame, selection, snapshot=snapshot, mode=mode
             )
             if appraisal is not None:
+                self._log(
+                    "info",
+                    "[executive appraisal] mode=%s boundary_pressure=%.2f interruption_cost=%.2f confidence=%.2f choices=%s reason=%s",
+                    mode,
+                    appraisal.boundary_pressure,
+                    appraisal.interruption_cost,
+                    appraisal.confidence,
+                    [
+                        {
+                            "index": item.index,
+                            "motive_validity": round(item.motive_validity, 3),
+                            "novelty": round(item.novelty, 3),
+                            "continuity_fit": round(item.continuity_fit, 3),
+                            "epistemic_support": round(item.epistemic_support, 3),
+                            "reversibility": round(item.reversibility, 3),
+                        }
+                        for item in appraisal.choices
+                    ],
+                    appraisal.reason,
+                )
                 merged = self._neuro_selector.merge_semantic_appraisal(frame, selection, appraisal)
                 self._log(
                     "info",
@@ -1064,7 +1145,17 @@ class ExecutiveCortex:
                     selection.winner_index, merged.winner_index, merged.winner(frame).action_kind,
                     appraisal.boundary_pressure, appraisal.interruption_cost, merged.margin,
                 )
-                return self._commit_from_selection(
+                self._log_neuro_selection(
+                    "neuro-merge",
+                    frame,
+                    merged,
+                    mode=mode,
+                    extra={
+                        "boundary_pressure": round(appraisal.boundary_pressure, 3),
+                        "interruption_cost": round(appraisal.interruption_cost, 3),
+                    },
+                )
+                commit = self._commit_from_selection(
                     frame,
                     merged,
                     reason=merged.reason,
@@ -1074,14 +1165,18 @@ class ExecutiveCortex:
                     confidence=appraisal.confidence,
                     review_conditions=appraisal.review_conditions,
                 )
+                self._log_neuro_commit(frame, commit, mode=mode)
+                return commit
             # Never spend a second remote round merely because the appraisal lane
             # failed. The deterministic fast Neuro remains the sole degraded path.
-            return self._commit_from_selection(
+            commit = self._commit_from_selection(
                 frame, selection,
                 reason=f"semantic_appraisal_unavailable_use_fast_gate:{selection.reason}",
                 source="neuro_fast_gate_degraded",
                 review_conditions=("semantic_appraisal_available",),
             )
+            self._log_neuro_commit(frame, commit, mode=mode)
+            return commit
 
         if not selection.requires_deliberation:
             commit = self._commit_from_selection(
@@ -1099,6 +1194,7 @@ class ExecutiveCortex:
                 selection.margin,
                 selection.entropy,
             )
+            self._log_neuro_commit(frame, commit, mode=mode)
             return commit
 
         # Direct chat is availability-first: slow Neuro is never allowed to sit
@@ -1106,42 +1202,50 @@ class ExecutiveCortex:
         # this deterministic winner now; NeuroContinuationRuntime may review the
         # same frozen frame in parallel and later offer a cancellable follow-up.
         if str(mode or "").startswith("interactive"):
-            return self._commit_from_selection(
+            commit = self._commit_from_selection(
                 frame,
                 selection,
                 reason=f"parallel_review_deferred:{selection.reason}",
                 source="neuro_fast_gate",
                 review_conditions=("parallel_neuro_review",),
             )
+            self._log_neuro_commit(frame, commit, mode=mode)
+            return commit
 
         if not allow_remote_deliberation:
             # Cognitive review has already spent this session's remote-deliberation
             # budget. The revised frame is still re-scored, but the deterministic
             # Neuro gate owns the recommit instead of recursively asking the model.
-            return self._commit_from_selection(
+            commit = self._commit_from_selection(
                 frame,
                 selection,
                 reason=f"review_recommit_without_second_remote_round:{selection.reason}",
                 source="neuro_fast_gate",
             )
+            self._log_neuro_commit(frame, commit, mode=mode)
+            return commit
 
         if not self.neuro_deliberator_enabled:
             # Không tạo một policy khẩn cấp thứ hai. Khi deliberator vắng mặt,
             # chính competition đã tạo ra frame này tiếp tục sở hữu quyết định.
-            return self._fallback_subject_commit(frame, reason="neuro_deliberator_unavailable")
+            commit = self._fallback_subject_commit(frame, reason="neuro_deliberator_unavailable")
+            self._log_neuro_commit(frame, commit, mode=mode)
+            return commit
 
         self._log(
             "info",
             "[neuro-control] deliberation invited mode=%s reason=%s margin=%.3f entropy=%.3f",
             mode, selection.reason, selection.margin, selection.entropy,
         )
-        return self._deliberate_subject_choice(
+        commit = self._deliberate_subject_choice(
             frame,
             selection,
             user_text=user_text,
             snapshot=snapshot,
             mode=mode,
         )
+        self._log_neuro_commit(frame, commit, mode=mode)
+        return commit
 
     def _semantic_shortlist_interactive(
         self,
