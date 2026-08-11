@@ -177,6 +177,36 @@ class NeuroDeliberationAdvice:
 
 
 @dataclass(frozen=True, slots=True)
+class ChoiceSemanticAppraisal:
+    """Slow semantic measurements for one ephemeral action channel.
+
+    The LLM may estimate these bounded dimensions, but it never returns a winner.
+    Local Neuro owns the mapping from measurements to action competition.
+    """
+
+    index: int
+    motive_validity: float = 0.5
+    novelty: float = 0.5
+    continuity_fit: float = 0.5
+    epistemic_support: float = 0.5
+    reversibility: float = 0.5
+
+
+@dataclass(frozen=True, slots=True)
+class NeuroSemanticAppraisal:
+    """Typed slow-cognition delta merged into a single Neuro authority."""
+
+    choices: tuple[ChoiceSemanticAppraisal, ...]
+    boundary_pressure: float = 0.0
+    interruption_cost: float = 0.0
+    confidence: float = 0.0
+    reason: str = ""
+    semantic_commitments: tuple[str, ...] = ()
+    cognitive_requests: tuple[str, ...] = ()
+    review_conditions: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class NeuroControlConfig:
     """Continuous thresholds for competition and *material* deliberation.
 
@@ -408,10 +438,30 @@ class NeuroActionSelector:
             score += 0.06 * (learned_prior - 0.5)
 
         action = str(candidate.action_kind or "").lower()
+        arguments = dict(getattr(candidate, "arguments", {}) or {})
+        observation_context = dict(getattr(getattr(frame, "observation", None), "context", {}) or {})
+        runtime_context = observation_context.get("runtime_context")
+        runtime_context = dict(runtime_context) if isinstance(runtime_context, Mapping) else {}
+        interruption_cost = _clamp01(runtime_context.get("interruption_cost", 0.0))
+
         if action == "speak":
             score += 0.035 * broadcast.social_drive
+            score -= 0.10 * interruption_cost
+            # Seed quality belongs upstream of the public decision. A thin seed
+            # should lose utility here rather than win Neuro and get censored by
+            # a downstream collection of special cases.
+            if arguments.get("seed_id"):
+                seed_quality = _clamp01(arguments.get("seed_quality", 0.0))
+                motive_strength = _clamp01(arguments.get("seed_motive_strength", 0.0))
+                intrusion = _clamp01(arguments.get("intrusion_risk", 0.0))
+                score += 0.12 * (seed_quality - 0.5)
+                score += 0.07 * (motive_strength - 0.5)
+                score -= 0.09 * intrusion
         elif action == "silence":
             score += 0.025 * (1.0 - broadcast.social_drive)
+            score += 0.08 * interruption_cost
+        elif action == "body_only":
+            score += 0.035 * interruption_cost
         return score
 
     @staticmethod
@@ -429,6 +479,96 @@ class NeuroActionSelector:
             return 0.0
         entropy = -sum(p * math.log(max(p, 1e-12)) for p in probabilities)
         return _clamp01(entropy / math.log(len(probabilities)))
+
+    def merge_semantic_appraisal(
+        self,
+        frame: SubjectDeliberationFrame,
+        baseline: SelectionResult,
+        appraisal: NeuroSemanticAppraisal,
+    ) -> SelectionResult:
+        """Merge slow semantic measurements, then let local Neuro select once.
+
+        Deep cognition supplies bounded appraisals rather than a choice.  The
+        deterministic gate owns the utility transform and final winner, keeping a
+        single decision authority while still letting language-level context affect
+        autonomous restraint, motive strength, and epistemic support.
+        """
+
+        if len(baseline.scores) != len(frame.coalitions):
+            return baseline
+        metrics = {item.index: item for item in appraisal.choices}
+        boundary = _clamp01(appraisal.boundary_pressure)
+        interruption = _clamp01(appraisal.interruption_cost)
+        review_confidence = _clamp01(appraisal.confidence)
+        merged_scores: list[float] = []
+        for index, candidate in enumerate(frame.coalitions):
+            score = float(baseline.scores[index])
+            item = metrics.get(index)
+            action = str(candidate.action_kind or "").strip().lower()
+            if item is not None:
+                motive = _clamp01(item.motive_validity, 0.5)
+                novelty = _clamp01(item.novelty, 0.5)
+                continuity = _clamp01(item.continuity_fit, 0.5)
+                epistemic = _clamp01(item.epistemic_support, 0.5)
+                reversible = _clamp01(item.reversibility, 0.5)
+            else:
+                motive = novelty = continuity = epistemic = reversible = 0.5
+
+            # Confidence scales the slow lane's influence.  Even a confident
+            # reviewer can only modulate the Subject score; it cannot replace it.
+            gain = 0.55 + 0.45 * review_confidence
+            if action == "speak":
+                delta = (
+                    0.16 * (motive - 0.5)
+                    + 0.10 * (novelty - 0.5)
+                    + 0.10 * (continuity - 0.5)
+                    + 0.14 * (epistemic - 0.5)
+                    + 0.05 * (reversible - 0.5)
+                    - 0.22 * boundary
+                    - 0.16 * interruption
+                )
+                # Unsupported present-world speech should lose decisively before
+                # Surface is called, but this remains a score penalty rather than a
+                # downstream regex veto.
+                if epistemic < 0.22:
+                    delta -= 0.18 * ((0.22 - epistemic) / 0.22)
+                score += gain * delta
+            elif action == "silence":
+                score += gain * (
+                    0.18 * boundary
+                    + 0.13 * interruption
+                    + 0.07 * (0.5 - motive)
+                    + 0.05 * (0.5 - epistemic)
+                )
+            elif action == "body_only":
+                score += gain * (
+                    0.07 * boundary
+                    + 0.05 * interruption
+                    + 0.05 * (reversible - 0.5)
+                )
+            merged_scores.append(score)
+
+        scores = tuple(merged_scores)
+        order = sorted(range(len(scores)), key=lambda idx: (-scores[idx], idx))
+        winner_index = order[0]
+        runner_index = order[1] if len(order) > 1 else winner_index
+        margin = scores[winner_index] - scores[runner_index] if len(order) > 1 else 1.0
+        beta = 3.0 + 7.0 * baseline.broadcast.precision
+        probabilities = self._softmax(scores, beta)
+        entropy = self._normalized_entropy(probabilities)
+        return SelectionResult(
+            winner_index=winner_index,
+            scores=scores,
+            probabilities=probabilities,
+            margin=margin,
+            entropy=entropy,
+            requires_deliberation=False,
+            parallel_review_recommended=False,
+            reason=(
+                "semantic_merge:" + (_compact(appraisal.reason, 240) or "slow_appraisal")
+            ),
+            broadcast=baseline.broadcast,
+        )
 
     def select(self, frame: SubjectDeliberationFrame) -> SelectionResult:
         if not frame.coalitions:
@@ -573,6 +713,8 @@ __all__ = [
     "NeuroActionSelector",
     "NeuroControlConfig",
     "NeuroDeliberationAdvice",
+    "ChoiceSemanticAppraisal",
+    "NeuroSemanticAppraisal",
     "SelectionResult",
     "WorkspaceBroadcast",
     "WorkspaceSignal",

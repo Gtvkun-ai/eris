@@ -14,12 +14,13 @@ producer tiếp tục nạp nền, thay vì giật một worker khác sang phát
 from __future__ import annotations
 
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping, Sequence
 
 from .affordance import ExecutiveAffordance
 from .cognitive_blackboard import CognitiveAnchor, TypedCognitiveBlackboard
-from .random_chat_seed_service import RandomChatSeedReservoir
+from .random_chat_seed import assess_seed_quality
+from .random_chat_seed_service import RandomChatSeedReservoir, build_seed_temporal_context
 
 
 CANDIDATE_SCHEMA = "eris.social_speech_candidate.v1"
@@ -138,6 +139,11 @@ class SocialSpeechCandidate:
     seed_generated_at: float = 0.0
     seed_expires_at: float = 0.0
     seed_ttl_seconds: float = 600.0
+    seed_quality_score: float = 0.0
+    seed_specificity: float = 0.0
+    seed_motive_strength: float = 0.0
+    seed_semantic_completeness: float = 0.0
+    seed_temporal_context: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def random_chat_seed(self) -> dict[str, Any]:
@@ -174,6 +180,23 @@ class SocialSpeechCandidate:
             "confidence": self.confidence,
             "tone": self.tone,
             "ttl_seconds": self.seed_ttl_seconds,
+            "quality": {
+                "score": self.seed_quality_score,
+                "specificity": self.seed_specificity,
+                "motive_strength": self.seed_motive_strength,
+                "semantic_completeness": self.seed_semantic_completeness,
+            },
+            # Late-bound at materialization time, never copied from generation.
+            "temporal_context": dict(self.seed_temporal_context),
+            "claim_contract": {
+                "runtime_clock_is_evidence_for": ["local_time", "local_date", "weekday", "daypart_by_clock"],
+                "current_environment_requires_direct_evidence": True,
+                "clock_never_proves": [
+                    "weather", "ambient_sound", "room_lighting", "outdoor_lighting",
+                    "user_activity", "user_emotion", "user_fatigue",
+                ],
+                "surface_may_not_add_new_current_world_premises": True,
+            },
         }
 
     @property
@@ -245,6 +268,11 @@ class SocialSpeechCandidate:
             seed_generated_at=float(data.get("seed_generated_at", 0.0) or 0.0),
             seed_expires_at=float(data.get("seed_expires_at", 0.0) or 0.0),
             seed_ttl_seconds=max(60.0, min(1800.0, float(data.get("seed_ttl_seconds", 600.0) or 600.0))),
+            seed_quality_score=_clamp01(data.get("seed_quality_score", 0.0)),
+            seed_specificity=_clamp01(data.get("seed_specificity", 0.0)),
+            seed_motive_strength=_clamp01(data.get("seed_motive_strength", 0.0)),
+            seed_semantic_completeness=_clamp01(data.get("seed_semantic_completeness", 0.0)),
+            seed_temporal_context=dict(data.get("seed_temporal_context", {})) if isinstance(data.get("seed_temporal_context"), Mapping) else {},
         )
 
 
@@ -511,6 +539,7 @@ class SocialInitiativeEngine:
             preview.seed,
             generated_at=preview.generated_at,
             expires_at=preview.expires_at,
+            now=blackboard.now,
         )
         return ExecutiveAffordance(
             affordance_id=f"seed:{preview.seed.seed_id}:{preview.context_revision}",
@@ -541,9 +570,16 @@ class SocialInitiativeEngine:
         generated_at: float,
         expires_at: float,
         lease_token: str = "",
+        now: float | None = None,
     ) -> SocialSpeechCandidate:
+        quality = assess_seed_quality(seed)
+        temporal_context = build_seed_temporal_context(now)
+        # Quality raises or lowers the social candidate's effective confidence,
+        # but never decides speak/silence by itself. Neuro still owns that choice.
         confidence = max(seed.confidence, 0.34 + 0.40 * seed.authenticity)
+        confidence *= 0.80 + 0.20 * quality.score
         relevance = max(seed.estimated_fit, 0.36 + 0.34 * seed.personal_stake)
+        relevance *= 0.78 + 0.22 * quality.score
         return SocialSpeechCandidate(
             decision="candidate",
             kind="random_chat",
@@ -583,6 +619,11 @@ class SocialInitiativeEngine:
             seed_generated_at=generated_at,
             seed_expires_at=expires_at,
             seed_ttl_seconds=seed.ttl_seconds,
+            seed_quality_score=quality.score,
+            seed_specificity=quality.specificity,
+            seed_motive_strength=quality.motive_strength,
+            seed_semantic_completeness=quality.semantic_completeness,
+            seed_temporal_context=temporal_context,
         )
 
 

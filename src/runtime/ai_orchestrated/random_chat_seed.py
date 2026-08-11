@@ -58,6 +58,36 @@ _ALLOWED_EVENT_KINDS = {
     "playful_probe", "micro_challenge", "unfinished_loop", "creative_impulse",
     "self_reflection", "prediction", "surprise", "contradiction_notice",
 }
+
+# Event kinds are deliberately grouped by *mental function*.  Reservoir diversity
+# should not be fooled by four different labels that all realize as reflective
+# prose.  Families are also used by the quality scorer so a compact question or
+# playful probe is not penalized for failing to look like an essay.
+_EVENT_FAMILY_BY_KIND = {
+    "thought": "cognitive",
+    "opinion": "cognitive",
+    "surprise": "cognitive",
+    "contradiction_notice": "cognitive",
+    "curiosity_question": "curiosity",
+    "knowledge_gap": "curiosity",
+    "discovery_impulse": "curiosity",
+    "association": "associative",
+    "memory_callback": "associative",
+    "unfinished_loop": "associative",
+    "playful_probe": "play",
+    "micro_challenge": "play",
+    "imagination": "creative",
+    "creative_impulse": "creative",
+    "speculation": "uncertain_world",
+    "prediction": "uncertain_world",
+    "self_reflection": "self",
+}
+
+
+def seed_event_family(event_kind: str) -> str:
+    """Return the stable mental-event family for a seed kind."""
+
+    return _EVENT_FAMILY_BY_KIND.get(str(event_kind or "").strip().lower(), "cognitive")
 _ALLOWED_EPISTEMIC_MODES = {
     "grounded_fact", "bounded_inference", "speculation", "imagination",
     "opinion", "question", "research_intent",
@@ -254,6 +284,243 @@ class RandomChatSeed:
             tone=_compact(data.get("tone", "casual_warm"), 48).lower() or "casual_warm",
             ttl_seconds=max(60.0, min(1800.0, float(data.get("ttl_seconds", 600.0) or 600.0))),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class SeedQualityAssessment:
+    """Deterministic quality signal for a semantic seed.
+
+    This is deliberately not another language-model vote.  It measures whether
+    the seed already contains enough semantic substance for Neuro/Surface to use
+    without inventing a situation around it.
+    """
+
+    score: float
+    specificity: float
+    motive_strength: float
+    semantic_completeness: float
+    epistemic_integrity: float
+    reasons: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "score": round(self.score, 4),
+            "specificity": round(self.specificity, 4),
+            "motive_strength": round(self.motive_strength, 4),
+            "semantic_completeness": round(self.semantic_completeness, 4),
+            "epistemic_integrity": round(self.epistemic_integrity, 4),
+            "reasons": list(self.reasons),
+        }
+
+
+def assess_seed_quality(seed: RandomChatSeed) -> SeedQualityAssessment:
+    """Score a seed by the contract of its *mental event kind*.
+
+    V32 accidentally rewarded prose length, rich ``why_now`` text and reflective
+    framing for every seed.  The model did exactly what that objective asked and
+    the reservoir drifted toward mini-essays.  V33 instead asks whether a seed is
+    a good instance of its own kind: a curiosity question may be short, a memory
+    callback needs provenance, a playful probe needs an actual playable move, and
+    only reflective/cognitive kinds benefit from extra semantic depth.
+
+    This function still does not decide whether ERIS should speak now.  It only
+    determines whether the stocked premise is useful enough to become a candidate.
+    """
+
+    premise = _compact(seed.premise, 520)
+    tokens = _token_set(premise)
+    token_count = len(tokens)
+    why_now = _compact(seed.eris_motive_why_now, 220)
+    why_tokens = _token_set(why_now)
+    family = seed_event_family(seed.event_kind)
+
+    has_tags = bool(seed.topic_tags)
+    has_two_tags = len(seed.topic_tags) >= 2
+    has_refs = bool(seed.source_refs)
+    has_why = bool(why_tokens)
+    has_response_shape = bool(seed.desired_response)
+    has_move = bool(seed.opening_move)
+    is_question_mode = seed.epistemic_mode in {"question", "research_intent"}
+    is_uncertain_mode = seed.epistemic_mode in {"bounded_inference", "speculation", "imagination"}
+
+    # ``premise_core`` is intentionally coarse.  Passing 90 characters no longer
+    # earns anything.  Compact seeds win by being structurally appropriate for
+    # their event kind, not by producing more prose.
+    premise_core = 1.0 if token_count >= 5 else (0.72 if token_count >= 3 else 0.32 if token_count else 0.0)
+    anchor_strength = _clamp01(
+        0.38 * (1.0 if has_tags else 0.0)
+        + 0.24 * (1.0 if has_two_tags else 0.0)
+        + 0.23 * (1.0 if has_refs else 0.0)
+        + 0.15 * (1.0 if has_why else 0.0)
+    )
+
+    reasons: list[str] = []
+
+    # Kind-specific fit.  These rules are intentionally permissive about length
+    # and strict about the *shape* of the mental event.
+    if seed.event_kind == "curiosity_question":
+        kind_fit = _clamp01(
+            0.32 * premise_core
+            + 0.30 * (1.0 if is_question_mode else 0.0)
+            + 0.20 * (1.0 if seed.open_loop else 0.0)
+            + 0.18 * (1.0 if has_tags else 0.0)
+        )
+        if not is_question_mode:
+            reasons.append("question_without_question_epistemics")
+    elif seed.event_kind in {"knowledge_gap", "discovery_impulse"}:
+        kind_fit = _clamp01(
+            0.26 * premise_core
+            + 0.28 * (1.0 if seed.open_loop else 0.0)
+            + 0.24 * (1.0 if is_question_mode else 0.0)
+            + 0.12 * (1.0 if seed.eris_motive_kind in {"want_to_know", "want_to_explore"} else 0.0)
+            + 0.10 * (1.0 if has_tags else 0.0)
+        )
+        if not seed.open_loop:
+            reasons.append("discovery_without_open_loop")
+    elif seed.event_kind in {"playful_probe", "micro_challenge"}:
+        kind_fit = _clamp01(
+            0.25 * premise_core
+            + 0.24 * (1.0 if has_move else 0.0)
+            + 0.23 * (1.0 if has_response_shape else 0.0)
+            + 0.18 * (1.0 if seed.eris_motive_kind in {"want_to_play", "want_to_test", "want_to_amuse"} else 0.0)
+            + 0.10 * (1.0 if seed.intrusion_risk <= 0.35 else 0.0)
+        )
+        if not has_response_shape:
+            reasons.append("play_without_response_shape")
+    elif seed.event_kind == "memory_callback":
+        kind_fit = _clamp01(
+            0.22 * premise_core
+            + 0.42 * (1.0 if has_refs else 0.0)
+            + 0.18 * (1.0 if has_tags else 0.0)
+            + 0.18 * (1.0 if seed.eris_motive_kind == "want_to_revisit" else 0.0)
+        )
+        if not has_refs:
+            reasons.append("memory_callback_without_ref")
+    elif seed.event_kind == "unfinished_loop":
+        kind_fit = _clamp01(
+            0.24 * premise_core
+            + 0.32 * (1.0 if seed.open_loop else 0.0)
+            + 0.22 * (1.0 if has_refs else 0.0)
+            + 0.12 * (1.0 if has_tags else 0.0)
+            + 0.10 * (1.0 if seed.eris_motive_kind in {"want_to_revisit", "want_to_explore", "want_to_know"} else 0.0)
+        )
+        if not seed.open_loop:
+            reasons.append("unfinished_loop_closed")
+    elif seed.event_kind == "association":
+        kind_fit = _clamp01(
+            0.30 * premise_core
+            + 0.26 * (1.0 if has_two_tags else 0.0)
+            + 0.24 * (1.0 if has_refs else 0.0)
+            + 0.20 * (1.0 if has_why else 0.0)
+        )
+    elif seed.event_kind in {"imagination", "creative_impulse"}:
+        kind_fit = _clamp01(
+            0.30 * premise_core
+            + 0.25 * (1.0 if seed.epistemic_mode == "imagination" else 0.0)
+            + 0.20 * (1.0 if seed.eris_motive_kind in {"want_to_create", "want_to_play", "want_to_explore"} else 0.0)
+            + 0.15 * (1.0 if has_tags else 0.0)
+            + 0.10 * (1.0 if has_move else 0.0)
+        )
+    elif seed.event_kind in {"speculation", "prediction"}:
+        kind_fit = _clamp01(
+            0.28 * premise_core
+            + 0.28 * (1.0 if is_uncertain_mode else 0.0)
+            + 0.18 * min(1.0, seed.uncertainty / 0.35)
+            + 0.16 * (1.0 if has_tags else 0.0)
+            + 0.10 * (1.0 if has_why else 0.0)
+        )
+        if not is_uncertain_mode:
+            reasons.append("uncertain_event_overstated")
+    elif seed.event_kind in {"surprise", "contradiction_notice"}:
+        kind_fit = _clamp01(
+            0.30 * premise_core
+            + 0.28 * (1.0 if has_refs else 0.0)
+            + 0.22 * (1.0 if has_why else 0.0)
+            + 0.20 * (1.0 if has_tags else 0.0)
+        )
+    elif seed.event_kind == "self_reflection":
+        kind_fit = _clamp01(
+            0.32 * premise_core
+            + 0.26 * (1.0 if seed.eris_motive_kind in {"want_to_express", "want_to_share"} else 0.0)
+            + 0.22 * (1.0 if has_why else 0.0)
+            + 0.20 * (1.0 if has_tags else 0.0)
+        )
+    else:  # thought / opinion and future cognitive additions
+        kind_fit = _clamp01(
+            0.30 * premise_core
+            + 0.28 * anchor_strength
+            + 0.22 * (1.0 if has_why or has_refs else 0.0)
+            + 0.20 * (1.0 if seed.epistemic_mode in {"opinion", "bounded_inference", "grounded_fact"} else 0.0)
+        )
+
+    # ``specificity`` now means event-specific semantic anchoring rather than
+    # character count.  Keep the public field name for compatibility.
+    specificity = _clamp01(0.72 * kind_fit + 0.28 * anchor_strength)
+
+    # Why-now is useful, but it must not force every seed to write a paragraph.
+    # Event coherence and declared stake can carry compact curiosity/play seeds.
+    motive_strength = _clamp01(
+        0.27 * seed.personal_stake
+        + 0.27 * seed.authenticity
+        + 0.26 * kind_fit
+        + 0.20 * (1.0 if has_why else 0.0)
+    )
+
+    semantic_completeness = _clamp01(
+        0.28 * kind_fit
+        + 0.24 * (1.0 if has_tags else 0.0)
+        + 0.16 * (1.0 if has_move else 0.0)
+        + 0.16 * (1.0 if seed.event_kind in _ALLOWED_EVENT_KINDS else 0.0)
+        + 0.16 * (1.0 if seed.epistemic_mode in _ALLOWED_EPISTEMIC_MODES else 0.0)
+    )
+
+    epistemic_integrity = 1.0
+    if seed.generic:
+        reasons.append("generic_presence")
+        epistemic_integrity -= 0.55
+    if seed.epistemic_mode == "grounded_fact" and not seed.source_refs:
+        reasons.append("grounded_fact_without_refs")
+        epistemic_integrity -= 0.45
+    if seed.source_kind == "world_hypothesis" and seed.epistemic_mode == "grounded_fact":
+        reasons.append("world_hypothesis_promoted_to_fact")
+        epistemic_integrity -= 0.45
+    if family in {"cognitive", "self"} and token_count <= 5 and not has_refs and not has_why:
+        # Keep the old diagnostic for true fortune-cookie fragments, but do not
+        # apply it to valid compact questions/play/creative impulses.
+        reasons.append("thin_premise")
+    if not has_why and seed.personal_stake < 0.28 and family in {"cognitive", "self"}:
+        reasons.append("weak_why_now")
+    epistemic_integrity = _clamp01(epistemic_integrity)
+
+    score = _clamp01(
+        0.35 * specificity
+        + 0.25 * motive_strength
+        + 0.24 * semantic_completeness
+        + 0.16 * epistemic_integrity
+    )
+    if seed.generic:
+        score = min(score, 0.24)
+
+    # Fail only event-shape violations, not brevity itself.
+    if seed.event_kind == "memory_callback" and not has_refs:
+        score = min(score, 0.40)
+    if seed.event_kind in {"knowledge_gap", "discovery_impulse", "unfinished_loop"} and not seed.open_loop:
+        score = min(score, 0.42)
+    if seed.event_kind == "curiosity_question" and not is_question_mode:
+        score = min(score, 0.42)
+    if seed.event_kind in {"speculation", "prediction"} and not is_uncertain_mode:
+        score = min(score, 0.42)
+    if family in {"cognitive", "self"} and token_count <= 5 and not has_refs and not has_why:
+        score = min(score, 0.42)
+
+    return SeedQualityAssessment(
+        score=score,
+        specificity=specificity,
+        motive_strength=motive_strength,
+        semantic_completeness=semantic_completeness,
+        epistemic_integrity=epistemic_integrity,
+        reasons=tuple(dict.fromkeys(reasons)),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -666,6 +933,9 @@ __all__ = [
     "RANDOM_CHAT_SEED_SCHEMA",
     "RandomChatSeed",
     "RandomChatSeedAffinityStore",
+    "SeedQualityAssessment",
+    "assess_seed_quality",
+    "seed_event_family",
     "RandomChatSeedState",
     "SeedOutcome",
 ]

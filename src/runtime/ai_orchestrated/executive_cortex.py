@@ -20,7 +20,14 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Mapping, Sequence
 
 from cortex.subject.contracts import MindDecision, SubjectDeliberationFrame, SubjectExecutiveCommit
-from cortex.subject.neuro_control import NeuroActionSelector, NeuroDeliberationAdvice, SelectionResult, commit_selection
+from cortex.subject.neuro_control import (
+    ChoiceSemanticAppraisal,
+    NeuroActionSelector,
+    NeuroDeliberationAdvice,
+    NeuroSemanticAppraisal,
+    SelectionResult,
+    commit_selection,
+)
 
 from actions.capability_registry import (
     validate_capability_arguments,
@@ -554,7 +561,12 @@ class ExecutiveCortex:
                 "arguments": {
                     key: value
                     for key, value in dict(coalition.arguments).items()
-                    if key in {"semantic_target", "speech_act", "tone", "capability_route", "initiative_motive"}
+                    if key in {
+                        "semantic_target", "speech_act", "tone", "capability_route", "initiative_motive",
+                        "candidate_kind", "source_owner", "intrusion_risk", "seed_id", "seed_quality",
+                        "seed_specificity", "seed_motive_strength", "seed_semantic_completeness",
+                        "seed_epistemic_mode", "seed_temporal_context", "claim_contract",
+                    }
                 },
                 "supporting_need_ids": list(getattr(coalition, "supporting_need_ids", ()) or ()),
                 "channel_score": selection.scores[index],
@@ -576,7 +588,159 @@ class ExecutiveCortex:
             "recent_public_history": list(source.get("recent_public_history", ()))[-6:],
             "relationship": source.get("relationship_summary", source.get("relationship", {})),
             "grounding_context": _compact(source.get("grounding_context", ""), 1400),
+            "runtime_context": dict(
+                (getattr(frame.observation, "context", {}) or {}).get("runtime_context", {})
+            ) if isinstance((getattr(frame.observation, "context", {}) or {}).get("runtime_context", {}), Mapping) else {},
         }
+
+    @staticmethod
+    def _autonomous_semantic_appraisal_schema(frame: SubjectDeliberationFrame) -> dict[str, Any]:
+        indices = list(range(len(frame.coalitions)))
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "choice_appraisals", "boundary_pressure", "interruption_cost",
+                "semantic_commitments", "cognitive_requests", "review_conditions",
+                "reason", "confidence",
+            ],
+            "properties": {
+                "choice_appraisals": {
+                    "type": "array",
+                    "minItems": len(indices),
+                    "maxItems": len(indices),
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": [
+                            "index", "motive_validity", "novelty", "continuity_fit",
+                            "epistemic_support", "reversibility",
+                        ],
+                        "properties": {
+                            "index": {"type": "integer", "enum": indices},
+                            "motive_validity": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                            "novelty": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                            "continuity_fit": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                            "epistemic_support": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                            "reversibility": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                        },
+                    },
+                },
+                "boundary_pressure": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "interruption_cost": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "semantic_commitments": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+                "cognitive_requests": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
+                "review_conditions": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+                "reason": {"type": "string"},
+                "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+            },
+        }
+
+    @staticmethod
+    def _autonomous_semantic_review_needed(
+        frame: SubjectDeliberationFrame,
+        selection: SelectionResult,
+    ) -> bool:
+        winner = selection.winner(frame)
+        if str(winner.action_kind or "").strip().lower() != "speak":
+            return False
+        arguments = dict(winner.arguments or {})
+        kind = str(arguments.get("candidate_kind", "") or "").strip().lower()
+        source = str(arguments.get("source_owner", "") or "").strip().lower()
+        # Social/self-originated speech is exactly where semantic motive, recent
+        # user boundaries and epistemic support matter more than raw scheduler
+        # salience. Task/capability speech already carries stronger typed evidence.
+        return bool(
+            arguments.get("seed_id")
+            or kind in {"random_chat", "social_check_in", "casual_curiosity", "playful_prompt", "inner_thought"}
+            or source in {"random_chat_seed", "subject_initiative", "relational"}
+        )
+
+    def _appraise_autonomous_frame(
+        self,
+        frame: SubjectDeliberationFrame,
+        selection: SelectionResult,
+        *,
+        snapshot: Mapping[str, Any] | None,
+        mode: str,
+    ) -> NeuroSemanticAppraisal | None:
+        payload = self._subject_deliberation_payload(
+            frame, selection, user_text="", snapshot=snapshot, mode=mode
+        )
+        system = (
+            "You are ERIS's slow semantic appraisal lane for autonomous action. You do NOT choose an action and you do "
+            "NOT return a winner. Appraise every ephemeral choice_index on bounded dimensions only; local Neuro will merge "
+            "the measurements into one final competition. motive_validity asks whether there is a concrete reason to act now, "
+            "not merely a scheduler opportunity. novelty asks whether the semantic content adds something nontrivial. "
+            "continuity_fit asks whether it fits the current relationship/conversation state. boundary_pressure is high only "
+            "when recent public context contains a real user boundary/closure/request for quiet; do not infer it from mood. "
+            "interruption_cost estimates the social cost of breaking the current quiet. epistemic_support is support for the "
+            "specific semantic target: present-world claims require direct evidence. A runtime clock/seed_temporal_context proves "
+            "local time/date/weekday/daypart by clock only; it never proves weather, darkness, room lighting, ambient sound, user "
+            "activity, emotion, or fatigue. A seed premise is semantic material, not permission to invent a current scene. "
+            "reversibility measures how easy the action is to recover from socially. semantic_commitments are meaning constraints "
+            "for the final chosen action, never public wording. cognitive_requests may use only verify_evidence, reduce_intrusion, "
+            "preserve_continuity, estimate_capability, inspect_dissent. Return exactly one JSON object."
+        )
+        try:
+            raw = self.invoke_structured(
+                self.client,
+                system=system,
+                payload=payload,
+                schema=self._autonomous_semantic_appraisal_schema(frame),
+                name="eris_neuro_autonomous_semantic_appraisal",
+                max_tokens=620,
+                reasoning_effort="low",
+                inference_tier="main_cognition",
+                priority=70,
+                timeout_seconds=float(os.getenv("ERIS_NEURO_AUTONOMOUS_REVIEW_TIMEOUT_S", "5.0") or "5.0"),
+            )
+        except Exception as exc:
+            self._log("warning", "[neuro-control] autonomous semantic appraisal failed: %s", exc)
+            return None
+        if not isinstance(raw, Mapping):
+            return None
+        seen: set[int] = set()
+        choices: list[ChoiceSemanticAppraisal] = []
+        raw_items = raw.get("choice_appraisals", ())
+        if not isinstance(raw_items, Sequence) or isinstance(raw_items, (str, bytes, bytearray)):
+            return None
+        for item in raw_items:
+            if not isinstance(item, Mapping):
+                continue
+            try:
+                index = int(item.get("index"))
+            except (TypeError, ValueError):
+                continue
+            if index < 0 or index >= len(frame.coalitions) or index in seen:
+                continue
+            seen.add(index)
+            choices.append(ChoiceSemanticAppraisal(
+                index=index,
+                motive_validity=_clamp01(item.get("motive_validity", 0.5), 0.5),
+                novelty=_clamp01(item.get("novelty", 0.5), 0.5),
+                continuity_fit=_clamp01(item.get("continuity_fit", 0.5), 0.5),
+                epistemic_support=_clamp01(item.get("epistemic_support", 0.5), 0.5),
+                reversibility=_clamp01(item.get("reversibility", 0.5), 0.5),
+            ))
+        if len(seen) != len(frame.coalitions):
+            return None
+        return NeuroSemanticAppraisal(
+            choices=tuple(choices),
+            boundary_pressure=_clamp01(raw.get("boundary_pressure", 0.0)),
+            interruption_cost=_clamp01(raw.get("interruption_cost", 0.0)),
+            confidence=_clamp01(raw.get("confidence", 0.0)),
+            reason=_compact(raw.get("reason", "autonomous_semantic_appraisal"), 500),
+            semantic_commitments=tuple(
+                _compact(item, 500) for item in raw.get("semantic_commitments", ()) if _compact(item, 500)
+            )[:8],
+            cognitive_requests=tuple(
+                _compact(item, 160).lower() for item in raw.get("cognitive_requests", ()) if _compact(item, 160)
+            )[:6],
+            review_conditions=tuple(
+                _compact(item, 180).lower() for item in raw.get("review_conditions", ()) if _compact(item, 180)
+            )[:8],
+        )
 
     def review_subject_frame(
         self,
@@ -880,6 +1044,45 @@ class ExecutiveCortex:
         Không còn rollback sang LLM selector cũ và không có rebound/remap ID.
         """
         selection = self._neuro_selector.select(frame)
+
+        # Autonomous social speech gets a slow semantic appraisal before public
+        # commit when the fast winner wants to speak. The model does not vote; it
+        # supplies bounded measurements and local Neuro re-ranks exactly once.
+        autonomous_mode = str(mode or "").startswith("autonomous")
+        semantic_review_needed = bool(
+            autonomous_mode and self._autonomous_semantic_review_needed(frame, selection)
+        )
+        if semantic_review_needed and allow_remote_deliberation and self.neuro_deliberator_enabled:
+            appraisal = self._appraise_autonomous_frame(
+                frame, selection, snapshot=snapshot, mode=mode
+            )
+            if appraisal is not None:
+                merged = self._neuro_selector.merge_semantic_appraisal(frame, selection, appraisal)
+                self._log(
+                    "info",
+                    "[neuro-control] autonomous semantic merge fast=%s final=%s action=%s boundary=%.2f interrupt=%.2f margin=%.3f",
+                    selection.winner_index, merged.winner_index, merged.winner(frame).action_kind,
+                    appraisal.boundary_pressure, appraisal.interruption_cost, merged.margin,
+                )
+                return self._commit_from_selection(
+                    frame,
+                    merged,
+                    reason=merged.reason,
+                    source="neuro_parallel_semantic_merge",
+                    semantic_commitments=appraisal.semantic_commitments,
+                    cognitive_requests=appraisal.cognitive_requests,
+                    confidence=appraisal.confidence,
+                    review_conditions=appraisal.review_conditions,
+                )
+            # Never spend a second remote round merely because the appraisal lane
+            # failed. The deterministic fast Neuro remains the sole degraded path.
+            return self._commit_from_selection(
+                frame, selection,
+                reason=f"semantic_appraisal_unavailable_use_fast_gate:{selection.reason}",
+                source="neuro_fast_gate_degraded",
+                review_conditions=("semantic_appraisal_available",),
+            )
+
         if not selection.requires_deliberation:
             commit = self._commit_from_selection(
                 frame,

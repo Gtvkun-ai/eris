@@ -41,7 +41,21 @@ class AutonomousProposalSource:
         relevance = clamp01(getattr(candidate, "relevance", confidence))
         urgency = clamp01(getattr(candidate, "urgency", 0.2), 0.2)
         requires_grounding = bool(getattr(candidate, "requires_grounding", False))
-        intrusion = clamp01(getattr(candidate, "intrusion_risk", 1.0 - relevance), 1.0 - relevance)
+        seed_intrusion = clamp01(getattr(candidate, "seed_intrusion_risk", 0.0), 0.0)
+        intrusion = max(
+            seed_intrusion,
+            clamp01(getattr(candidate, "intrusion_risk", 1.0 - relevance), 1.0 - relevance),
+        )
+        seed_quality = clamp01(getattr(candidate, "seed_quality_score", 0.0), 0.0)
+        seed_specificity = clamp01(getattr(candidate, "seed_specificity", 0.0), 0.0)
+        seed_motive_strength = clamp01(getattr(candidate, "seed_motive_strength", 0.0), 0.0)
+        seed_semantic_completeness = clamp01(getattr(candidate, "seed_semantic_completeness", 0.0), 0.0)
+        seed_id = str(getattr(candidate, "seed_id", "") or "").strip()
+        seed_epistemic_mode = str(getattr(candidate, "seed_epistemic_mode", "") or "").strip().lower()
+        seed_temporal_context = getattr(candidate, "seed_temporal_context", {})
+        seed_temporal_context = (
+            dict(seed_temporal_context) if hasattr(seed_temporal_context, "items") else {}
+        )
         metadata = getattr(affordance, "metadata", {})
         metadata = metadata if isinstance(metadata, dict) else dict(metadata) if hasattr(metadata, "items") else {}
         intention_id = str(metadata.get("intention_id") or "").strip()
@@ -77,6 +91,21 @@ class AutonomousProposalSource:
                 "tone": str(getattr(candidate, "tone", "") or ""),
                 "source_owner": owner,
                 "candidate_kind": kind,
+                "intrusion_risk": intrusion,
+                **({
+                    "seed_id": seed_id,
+                    "seed_quality": seed_quality,
+                    "seed_specificity": seed_specificity,
+                    "seed_motive_strength": seed_motive_strength,
+                    "seed_semantic_completeness": seed_semantic_completeness,
+                    "seed_epistemic_mode": seed_epistemic_mode,
+                    "seed_temporal_context": seed_temporal_context,
+                    "claim_contract": {
+                        "current_environment_requires_direct_evidence": True,
+                        "surface_may_not_add_new_current_world_premises": True,
+                        "runtime_clock_scope": "clock_calendar_only",
+                    },
+                } if seed_id else {}),
                 # Giữ binding của Subject intention xuyên qua adapter runtime.
                 # V26 từng làm rơi hai field này, khiến public act không thể đóng
                 # đúng lifecycle và frame sau dễ quay lại proposal seed cũ.
@@ -86,12 +115,23 @@ class AutonomousProposalSource:
                 "skill_id": "dialogue",
             },
             "supporting_need_ids": tuple(dict.fromkeys(need_ids)),
-            "expected_need_relief": max(0.05, relevance),
-            "expected_action_efficacy": confidence,
-            "expected_epistemic_value": 0.62 if requires_grounding else 0.16,
-            "value_congruence": 0.50,
+            "expected_need_relief": max(
+                0.05,
+                relevance * (0.76 + 0.24 * seed_quality) if seed_id else relevance,
+            ),
+            "expected_action_efficacy": (
+                confidence * (0.78 + 0.22 * seed_semantic_completeness) if seed_id else confidence
+            ),
+            "expected_epistemic_value": (
+                0.62 if requires_grounding else (0.12 + 0.16 * seed_specificity if seed_id else 0.16)
+            ),
+            "value_congruence": (0.42 + 0.18 * seed_motive_strength if seed_id else 0.50),
             "substrate_cost": min(1.0, 0.12 + 0.45 * intrusion),
-            "uncertainty": 1.0 - confidence,
+            "uncertainty": max(
+                1.0 - confidence,
+                clamp01(getattr(candidate, "uncertainty", 0.0), 0.0),
+                (0.34 * (1.0 - seed_quality) if seed_id else 0.0),
+            ),
             "project_contribution": 0.55 if "competence" in need_ids else 0.0,
             "historical_success": 0.50,
             "commitment_conflict": max(0.0, intrusion - urgency * 0.25),

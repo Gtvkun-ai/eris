@@ -19,10 +19,19 @@ import os
 import secrets
 import threading
 import time
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
-from .random_chat_seed import RandomChatSeed, RandomChatSeedAffinityStore
+from core.temporal_context import classify_time_of_day, resolve_timezone
+
+from .random_chat_seed import (
+    RandomChatSeed,
+    RandomChatSeedAffinityStore,
+    SeedQualityAssessment,
+    assess_seed_quality,
+    seed_event_family,
+)
 
 
 RANDOM_CHAT_SEED_OUTPUT_SCHEMA: dict[str, Any] = {
@@ -105,6 +114,74 @@ RANDOM_CHAT_SEED_OUTPUT_SCHEMA: dict[str, Any] = {
     },
 }
 
+# Diversity is managed at the level of mental-event families first, then raw
+# event kinds.  A reservoir containing thought/opinion/self_reflection is not
+# meaningfully diverse if all three are reflective prose wearing different tags.
+_EVENT_FAMILY_MIX: dict[str, float] = {
+    "curiosity": 0.19,
+    "cognitive": 0.17,
+    "associative": 0.15,
+    "play": 0.14,
+    "creative": 0.13,
+    "uncertain_world": 0.12,
+    "self": 0.10,
+}
+
+_EVENT_KIND_MIX: dict[str, dict[str, float]] = {
+    "curiosity": {
+        "curiosity_question": 0.40,
+        "knowledge_gap": 0.32,
+        "discovery_impulse": 0.28,
+    },
+    "cognitive": {
+        "thought": 0.28,
+        "contradiction_notice": 0.26,
+        "surprise": 0.24,
+        "opinion": 0.22,
+    },
+    "associative": {
+        "association": 0.35,
+        "memory_callback": 0.33,
+        "unfinished_loop": 0.32,
+    },
+    "play": {
+        "playful_probe": 0.58,
+        "micro_challenge": 0.42,
+    },
+    "creative": {
+        "creative_impulse": 0.52,
+        "imagination": 0.48,
+    },
+    "uncertain_world": {
+        "speculation": 0.52,
+        "prediction": 0.48,
+    },
+    "self": {
+        "self_reflection": 1.0,
+    },
+}
+
+_EVENT_KIND_CONTRACTS: dict[str, str] = {
+    "curiosity_question": "A concrete question/unknown target; compact is fine; epistemic_mode=question or research_intent.",
+    "knowledge_gap": "Name what ERIS does not know and keep open_loop=true; do not pad it into a reflection.",
+    "discovery_impulse": "Name what ERIS wants to inspect/learn next; open_loop=true and motive should be exploration/knowledge.",
+    "thought": "A specific thought with an anchor or why-now; avoid aphorisms and generic life observations.",
+    "opinion": "A clear stance about a concrete subject; it may be one compact sentence.",
+    "surprise": "A specific unexpected relation/change, preferably with provenance or recent context.",
+    "contradiction_notice": "A concrete tension/inconsistency between two known pieces; cite source refs when available.",
+    "association": "A clear A→B connection; two anchors matter more than prose length.",
+    "memory_callback": "A concrete callback to a source_ref; memory without provenance is invalid.",
+    "unfinished_loop": "A previously opened thread that still has force; open_loop=true and preserve its source when available.",
+    "playful_probe": "A small playable/social move with an optional response shape and low intrusion; brevity is desirable.",
+    "micro_challenge": "A tiny concrete challenge/game/test with a response shape; do not turn it into commentary.",
+    "creative_impulse": "Something ERIS wants to make/try; imagination is allowed and need not masquerade as insight.",
+    "imagination": "An explicitly imagined possibility; epistemic_mode=imagination and no current-world factual promotion.",
+    "speculation": "A modal hypothesis with uncertainty; never promote it to current-world fact without evidence.",
+    "prediction": "A bounded prediction target with uncertainty; distinguish clock/context from world evidence.",
+    "self_reflection": "A reflection about ERIS's own process/state; semantic richness helps here, but poetry is not required.",
+}
+
+
 
 def _env_bool(name: str, default: bool) -> bool:
     raw = str(os.getenv(name, "1" if default else "0") or "").strip().lower()
@@ -160,6 +237,51 @@ def _fingerprint(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()[:20]
 
 
+def build_seed_temporal_context(now: float | None = None) -> dict[str, Any]:
+    """Build authoritative user-local clock evidence for seed cognition.
+
+    The returned context deliberately proves only time/calendar facts.  It does
+    not prove weather, illumination, ambient sound, user activity, fatigue, or
+    any other current-world state.  Reservoir generation and later materialize
+    both call this helper, so a seed never carries a stale daypart merely because
+    it waited in memory for a while.
+    """
+
+    current = float(now if now is not None else time.time())
+    timezone_name, timezone_info = resolve_timezone()
+    local = datetime.fromtimestamp(current, timezone_info)
+    daypart, daypart_vi = classify_time_of_day(local.hour)
+    return {
+        "schema": "eris.seed_temporal_context.v1",
+        "bound_at_epoch": current,
+        "local_iso": local.isoformat(timespec="seconds"),
+        "timezone": timezone_name,
+        "local_date": local.date().isoformat(),
+        "local_time": local.strftime("%H:%M:%S"),
+        "weekday": local.strftime("%A"),
+        "hour": int(local.hour),
+        "minute": int(local.minute),
+        "daypart": daypart,
+        "daypart_vi": daypart_vi,
+        "evidence_source": "runtime_clock",
+        "supports": [
+            "current_user_local_time",
+            "current_user_local_date",
+            "weekday",
+            "daypart_by_clock",
+        ],
+        "does_not_support": [
+            "weather",
+            "ambient_sound",
+            "room_lighting",
+            "outdoor_lighting",
+            "user_activity",
+            "user_emotion",
+            "user_fatigue",
+        ],
+    }
+
+
 class RandomChatSeedGenerator:
     """Own the seed prompt while a shared invoker owns transport mechanics."""
 
@@ -182,28 +304,26 @@ class RandomChatSeedGenerator:
     def prompt() -> str:
         return (
             "Bạn là RANDOM_CHAT_SEED_WORKER của ERIS. Bạn chạy nền trên lane riêng và KHÔNG viết câu public. "
-            "Hãy tạo đúng một premise typed đủ bền để Surface dùng vài phút sau. Đọc user_memory, "
-            "recent_public_history, eris_self_memory, seed_learning và reservoir_context. Một seed tốt có một "
-            "đối tượng hoặc ý cụ thể, một góc nhìn thật của ERIS, một social move và phản ứng mong đợi nhưng "
-            "không bắt buộc. Cân bằng ba lực: user affinity, ERIS ego và daring. ERIS ego nghĩa là ERIS được "
-            "phép nói vì muốn chia sẻ, biểu đạt hoặc thử, không chỉ vì dự đoán user sẽ thích. requested_mode là "
-            "mode ưu tiên để reservoir đa dạng; nếu mode đó không có premise thật thì trả decision=none, đừng "
-            "bịa cho đủ kho. Daring là thử sai xã hội có chủ đích, không phải tăng độ kỳ quặc. Không dùng memory "
-            "private/sensitive, không suy diễn cảm xúc, kế hoạch hay tâm lý user, không tạo presence/check-in "
-            "chung chung, không hỏi user đưa chủ đề, không tạo câu chỉ để lấp im lặng. Không lặp queued_seeds "
-            "hoặc recent_seeds. Phản hồi âm chỉ hạ user/strategy fit, không xóa ERIS interest. Tôn trọng "
-            "daring_ceiling và intrusion risk. Seed là MENTAL EVENT chứ không phải chỉ là topic để lấp im lặng: "
-            "chọn event_kind phù hợp như thought, curiosity_question, knowledge_gap, discovery_impulse, speculation, "
-            "imagination, opinion, association, memory_callback, playful_probe, micro_challenge, unfinished_loop, "
-            "creative_impulse hoặc self_reflection. Dùng private_life_workspace để tiếp tục một open-loop cũ khi nó "
-            "thật sự còn lực, nhưng cũng phải tạo được ý tươi mới từ endogenous_curiosity/general_knowledge/play_impulse. "
-            "epistemic_mode phải nói ERIS đang biết, suy luận, đoán, tưởng tượng, có opinion, hỏi hay muốn đi tìm hiểu. "
-            "ĐẶC BIỆT: speculation/imagination là hợp lệ và không cần giả thành fact. Ví dụ 'có khi hôm nay trời đẹp' "
-            "có thể là speculation; tuyệt đối đừng đổi nó thành 'ngoài trời đang nắng' nếu không có evidence. "
-            "knowledge_gap/discovery_impulse nên open_loop=true để private life có thể nhớ điều ERIS muốn biết. "
-            "ttl_seconds nên 180-900 giây tùy độ phụ thuộc context; seed từ recent_shared_context phải ngắn hơn seed "
-            "từ user_memory, eris_self_memory hay private_life_workspace. Nếu không đủ cụ thể và có động cơ thật, "
-            "trả decision=none với field còn lại rỗng/an toàn. Return exactly one JSON object."
+            "Tạo đúng một typed mental event để reservoir dùng về sau. Seed là premise semantic, không phải câu văn hay "
+            "đoạn độc thoại. Đọc user_memory, recent_public_history, eris_self_memory, seed_learning, "
+            "generation_temporal_context và reservoir_context. requested_event_family/requested_event_kind là yêu cầu "
+            "đa dạng ưu tiên; nếu kind đó không có mental event thật thì trả decision=none thay vì ép một thought thành nó. "
+            "KHÔNG tối ưu độ dài. Một curiosity_question, playful_probe, association hay micro_challenge ngắn nhưng đúng "
+            "hình dạng được ưu tiên hơn một đoạn reflection dài. why_now có thể ngắn và vận hành được; đừng viết văn để tăng "
+            "độ sâu giả. Dùng seed_contract.kind_contract làm tiêu chuẩn cho requested_event_kind. "
+            "Không biến mọi event thành 'một góc nhìn sâu sắc của ERIS'. thought/self_reflection chỉ là hai loại trong nhiều "
+            "loại; curiosity, play, memory callback, association, creative impulse, prediction, surprise và contradiction đều "
+            "là first-class. Premise không phải slogan, fortune-cookie hay presence chung chung; nhưng brevity tự nó KHÔNG phải lỗi. "
+            "Cân bằng user affinity, ERIS ego và daring. ERIS được có curiosity/play/creative impulse riêng, không chỉ nói thứ "
+            "dự đoán user sẽ thích. Không dùng memory private/sensitive, không suy diễn cảm xúc/kế hoạch/tâm lý user, không tạo "
+            "presence/check-in chỉ để lấp im lặng, không hỏi user đưa chủ đề. Không lặp queued_seeds hoặc recent_seeds. "
+            "epistemic_mode phải đúng: speculation/imagination/prediction giữ modal; grounded_fact cần provenance. "
+            "generation_temporal_context chỉ chứng minh clock/calendar của user. Có thể dùng giờ/ngày/daypart để chọn độ phù hợp, "
+            "nhưng KHÔNG suy ra trời tối, phòng yên, gió, ánh sáng, user đang làm gì, buồn ngủ hay mệt. Runtime sẽ late-bind "
+            "lại thời gian khi seed được dùng, nên tránh premise phụ thuộc daypart sắp stale. "
+            "knowledge_gap/discovery_impulse/unfinished_loop phải giữ open_loop khi còn điều chưa giải quyết. "
+            "ttl_seconds thường 180-900 giây tùy context. Nếu không có mental event thật cho requested kind/family, trả "
+            "decision=none với field còn lại rỗng/an toàn. Return exactly one JSON object."
         )
 
     def generate(self, request: Mapping[str, Any]) -> RandomChatSeed:
@@ -321,6 +441,9 @@ class RandomChatSeedReservoir:
         )
         self.default_ttl = _env_float(
             "ERIS_RANDOM_CHAT_SEED_RESERVOIR_TTL_SEC", 600.0, minimum=90.0, maximum=1800.0
+        )
+        self.min_quality = _env_float(
+            "ERIS_RANDOM_CHAT_SEED_MIN_QUALITY", 0.46, minimum=0.0, maximum=1.0
         )
         self.lease_ttl = _env_float(
             "ERIS_RANDOM_CHAT_SEED_LEASE_TTL_SEC", 45.0, minimum=5.0, maximum=180.0
@@ -518,6 +641,10 @@ class RandomChatSeedReservoir:
                     kind: sum(1 for entry in self._entries if entry.seed.event_kind == kind)
                     for kind in sorted({entry.seed.event_kind for entry in self._entries})
                 },
+                "event_families": {
+                    family: sum(1 for entry in self._entries if seed_event_family(entry.seed.event_kind) == family)
+                    for family in _EVENT_FAMILY_MIX
+                },
                 "seeds": [
                     {
                         "seed_id": entry.seed.seed_id,
@@ -527,6 +654,7 @@ class RandomChatSeedReservoir:
                         "epistemic_mode": entry.seed.epistemic_mode,
                         "open_loop": entry.seed.open_loop,
                         "topic_tags": list(entry.seed.topic_tags),
+                        "quality": assess_seed_quality(entry.seed).to_dict(),
                         "generated_at": entry.generated_at,
                         "expires_at": entry.expires_at,
                     }
@@ -611,10 +739,11 @@ class RandomChatSeedReservoir:
                         wake = was_empty
                         self._log(
                             "info",
-                            "[random chat seed] stocked seed=%s mode=%s source=%s ready=%d",
+                            "[random chat seed] stocked seed=%s mode=%s source=%s quality=%.2f ready=%d",
                             seed.seed_id,
                             seed.mode,
                             seed.source_kind,
+                            assess_seed_quality(seed).score,
                             len(self._entries),
                         )
                     else:
@@ -797,6 +926,7 @@ class RandomChatSeedReservoir:
         )
         requested_mode = self._requested_mode_locked(learning)
         requested_event_kind = self._requested_event_kind_locked()
+        requested_event_family = seed_event_family(requested_event_kind)
         queued = [
             {
                 "seed_id": entry.seed.seed_id,
@@ -812,9 +942,14 @@ class RandomChatSeedReservoir:
         ]
         return {
             **dict(self._context_request),
+            # Generation sees the user's local clock, but this value is advisory
+            # for topic fit only. A fresh copy is late-bound when the seed is
+            # actually materialized for speech.
+            "generation_temporal_context": build_seed_temporal_context(self.clock()),
             "seed_learning": learning,
             "reservoir_context": {
                 "requested_mode": requested_mode,
+                "requested_event_family": requested_event_family,
                 "requested_event_kind": requested_event_kind,
                 "target_size": self.target_size,
                 "ready_size": len(self._entries),
@@ -831,11 +966,21 @@ class RandomChatSeedReservoir:
                 "must_be_specific": True,
                 "must_allow_no_reply": True,
                 "requested_mode": requested_mode,
+                "requested_event_family": requested_event_family,
                 "requested_event_kind": requested_event_kind,
                 "modes": ["shared", "user_led", "eris_led", "experimental"],
                 "event_rule": (
-                    "Prefer requested_event_kind when it yields a real thought, but never fabricate. "
-                    "Keep speculation/imagination explicitly modal and preserve open loops for curiosity/discovery."
+                    "Prefer requested_event_kind when it is real; otherwise decision=none. Do not rewrite a different "
+                    "mental event as reflective prose merely to satisfy the requested label."
+                ),
+                "kind_contract": _EVENT_KIND_CONTRACTS.get(requested_event_kind, "Produce a concrete typed mental event."),
+                "quality_rule": (
+                    "Quality is event-shaped, not length-shaped. Compact questions/play/associations can be excellent. "
+                    "Reject generic aphorisms, fake current-world scenes, invalid provenance, and events that violate their kind contract."
+                ),
+                "temporal_rule": (
+                    "generation_temporal_context proves clock/calendar only. It may shape fit but never grounds weather, "
+                    "lighting, sound, user activity, emotion, or fatigue. Runtime will late-bind time again at use."
                 ),
             },
         }
@@ -858,31 +1003,50 @@ class RandomChatSeedReservoir:
         )
 
     def _requested_event_kind_locked(self) -> str:
-        """Giữ diversity theo loại *sự kiện tinh thần*, không chỉ theo social mode."""
+        """Request diversity by mental-event family, then by kind within it.
 
-        mix = {
-            "thought": 0.14,
-            "curiosity_question": 0.13,
-            "knowledge_gap": 0.11,
-            "discovery_impulse": 0.11,
-            "speculation": 0.08,
-            "imagination": 0.08,
-            "opinion": 0.08,
-            "association": 0.08,
-            "playful_probe": 0.06,
-            "micro_challenge": 0.04,
-            "creative_impulse": 0.04,
-            "self_reflection": 0.05,
+        V32 had a flat partial mix which omitted several legal kinds entirely and
+        treated thought/opinion/self-reflection as diversity even when they all
+        realized as the same reflective voice.  The two-stage deficit scheduler
+        makes the reservoir diversify by cognitive function first.
+        """
+
+        population = [entry.seed for entry in self._entries]
+        population.extend(leased.entry.seed for leased in self._leases.values())
+
+        family_counts = {
+            family: sum(1 for seed in population if seed_event_family(seed.event_kind) == family)
+            for family in _EVENT_FAMILY_MIX
         }
-        counts = {kind: sum(1 for entry in self._entries if entry.seed.event_kind == kind) for kind in mix}
+        family = max(
+            _EVENT_FAMILY_MIX,
+            key=lambda name: (
+                _EVENT_FAMILY_MIX[name] * self.target_size - family_counts[name],
+                _EVENT_FAMILY_MIX[name],
+            ),
+        )
+
+        kind_mix = _EVENT_KIND_MIX[family]
+        kind_counts = {
+            kind: sum(1 for seed in population if seed.event_kind == kind)
+            for kind in kind_mix
+        }
+        family_target = max(1.0, _EVENT_FAMILY_MIX[family] * self.target_size)
         return max(
-            mix,
-            key=lambda kind: (mix[kind] * self.target_size - counts[kind], mix[kind]),
+            kind_mix,
+            key=lambda kind: (
+                kind_mix[kind] * family_target - kind_counts[kind],
+                kind_mix[kind],
+            ),
         )
 
     def _validate_generated_locked(self, seed: RandomChatSeed, now: float) -> tuple[bool, str]:
         if not seed.available:
             return False, "seed_incomplete"
+        quality = assess_seed_quality(seed)
+        if quality.score < self.min_quality:
+            labels = ",".join(quality.reasons[:3]) or "semantic_thinness"
+            return False, f"seed_quality_low:{quality.score:.2f}:{labels}"
         if self.seed_store is not None:
             allowed, reason = self.seed_store.validate_seed(seed, now=now)
             if not allowed:
@@ -936,16 +1100,21 @@ class RandomChatSeedReservoir:
         lifetime = max(1.0, entry.expires_at - entry.generated_at)
         freshness = max(0.0, min(1.0, (entry.expires_at - now) / lifetime))
         mode_novelty = 0.06 if seed.mode != self._last_claimed_mode else 0.0
-        event_novelty = 0.07 if seed.event_kind != self._last_claimed_event_kind else 0.0
+        last_family = seed_event_family(self._last_claimed_event_kind) if self._last_claimed_event_kind else ""
+        family_novelty = 0.09 if seed_event_family(seed.event_kind) != last_family else 0.0
+        event_novelty = 0.035 if seed.event_kind != self._last_claimed_event_kind else 0.0
         open_loop_value = 0.035 if seed.open_loop and seed.event_kind in {"knowledge_gap", "discovery_impulse", "unfinished_loop"} else 0.0
+        quality = assess_seed_quality(seed)
         return (
-            0.28 * seed.estimated_fit
-            + 0.24 * seed.personal_stake
-            + 0.18 * seed.authenticity
-            + 0.12 * seed.confidence
-            + 0.08 * seed.daring
-            + 0.09 * freshness
+            0.22 * seed.estimated_fit
+            + 0.19 * seed.personal_stake
+            + 0.14 * seed.authenticity
+            + 0.10 * seed.confidence
+            + 0.07 * seed.daring
+            + 0.08 * freshness
+            + 0.14 * quality.score
             + mode_novelty
+            + family_novelty
             + event_novelty
             + open_loop_value
         )
@@ -984,6 +1153,7 @@ class RandomChatSeedReservoir:
 __all__ = [
     "RANDOM_CHAT_SEED_OUTPUT_SCHEMA",
     "RandomChatSeedGenerator",
+    "build_seed_temporal_context",
     "RandomChatSeedReservoir",
     "SeedReservoirPreview",
     "SeedReservoirLease",

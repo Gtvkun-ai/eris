@@ -240,10 +240,13 @@ class SurfaceIntentEngine:
             ]
         if intent.random_chat_seed:
             request["surface_contract"]["random_chat_seed_rules"] = [
-                "The premise is a semantic seed, not text to copy verbatim.",
+                "The premise is a semantic seed, not text to copy verbatim. Realize the supplied premise; do not invent a new factual premise merely to make it vivid.",
                 "Preserve ERIS motive, mode, personal stake, authenticity and approved daring.",
                 "Preserve event_kind and epistemic_mode. A speculation must still sound like a guess; imagination must sound imagined; a question/research_intent must not be rewritten as a factual observation.",
                 "Only grounded_fact/bounded_inference may sound factual, and bounded_inference must retain uncertainty. Do not upgrade an unsupported world_hypothesis into a current-world fact.",
+                "temporal_context is late-bound runtime clock evidence for the user's local time/date/weekday/daypart only. It does NOT prove weather, darkness/light in the room or outdoors, ambient sound, user activity, emotion, or fatigue.",
+                "claim_contract is binding. Never add a current-environment claim that is absent from the premise/evidence_refs, even as decorative small talk.",
+                "If the premise is time-compatible, you may naturally use the supplied local clock/daypart, but do not force a time reference into every line.",
                 "want_to_share/want_to_express may be a complete statement with no question and no demand for a reply.",
                 "Do not append a generic check-in, availability offer, permission request, or 'còn bạn thì sao'.",
                 "Daring may support a fresh opinion, self-disclosure or gentle tease only inside the supplied risk contract.",
