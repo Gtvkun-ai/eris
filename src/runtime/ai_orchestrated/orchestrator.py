@@ -22,6 +22,7 @@ from runtime.cognition.turn_anchor import anchor_from_semantic_frame
 from runtime.social_stance_policy import guard_subjective_stance_payload
 from runtime.companion_model_routing import route_companion_turn
 from runtime.public_reply_context import compile_public_reply_context
+from runtime.affective_voice_state import project_affective_voice_state
 from runtime.reply_obligation import enforce_reply_obligation
 from runtime.subject_initiative_runtime import build_initiative_runtime_context
 from runtime.observability import ensure_observability
@@ -818,7 +819,37 @@ class AIChatOrchestrator:
                 part for part in (discourse_context, arc_prompt) if str(part).strip()
             )
 
-        personality_context = mind_state.personality_prompt_context()
+        # V39: mood sống phải tới được public writer. Personality chỉ là shape;
+        # affective voice state mới là authority cho cường độ/hướng cảm xúc.
+        # Đặt block này TRƯỚC personality summary để hard-budget vẫn giữ được
+        # state động thay vì cắt nó rồi chỉ còn personality tĩnh.
+        affective_voice = project_affective_voice_state(
+            host,
+            mind_state=mind_state,
+            channel="chat",
+            now=cycle_start,
+        )
+        personality_context = "\n\n".join(
+            part for part in (
+                affective_voice.prompt_context(),
+                mind_state.personality_prompt_context(),
+            )
+            if str(part).strip()
+        )
+        host.logger.info(
+            "[affective voice] channel=chat version=%s valence=%+.2f arousal=%.2f curiosity=%.2f social=%.2f delight=%.2f play=%.2f irritation=%.2f sadness=%.2f expressive=%.2f trajectory=%.2f",
+            affective_voice.version,
+            affective_voice.valence,
+            affective_voice.arousal,
+            affective_voice.curiosity,
+            affective_voice.social_energy,
+            affective_voice.delight,
+            affective_voice.playfulness,
+            affective_voice.irritation,
+            affective_voice.sadness,
+            affective_voice.expressive_drive,
+            affective_voice.trajectory_strength,
+        )
         relationship_context = mind_state.relationship.prompt_summary()
         if social_agenda_store is not None:
             try:
@@ -881,6 +912,8 @@ class AIChatOrchestrator:
             "user_text": user_text,
             "recent_public_history": host._chat_history_for_llm(limit=8)[:-1],
             "personality_summary": personality_context,
+            "affective_voice_state": affective_voice.to_dict(),
+            "affective_voice_context": affective_voice.prompt_context(),
             "identity": mind_state.identity.panel_view(),
             "identity_summary": mind_state.identity_prompt_context(),
             "relationship_summary": relationship_context,

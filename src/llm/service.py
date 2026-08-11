@@ -20,10 +20,10 @@ from failure_meta import build_failure_meta, normalize_failure_meta
 from runtime.no_fallback_policy import build_no_fallback_payload, no_fallback_mode_enabled
 from runtime.voice_policy import VOICE_POLICY, ANTI_DISCLAIMER_FEWSHOT as _VOICE_POLICY_FEWSHOT
 from runtime.eris_voice_contract import (
-    CHAT_VOICE_CORE_V38,
-    CHAT_STYLE_RULES_V38,
-    AUTONOMOUS_VOICE_CORE_V38,
-    AUTONOMOUS_STYLE_RULES_V38,
+    CHAT_VOICE_CORE_V39,
+    CHAT_STYLE_RULES_V39,
+    AUTONOMOUS_VOICE_CORE_V39,
+    AUTONOMOUS_STYLE_RULES_V39,
 )
 from .contracts import (
     AUTONOMOUS_BEHAVIOR_PROMPT,
@@ -2313,7 +2313,7 @@ class LlmService:
         system_prompt = (
             "You are ERIS' local cognitive steering layer, not a safety boilerplate writer. "
             "A public sentence was stopped or requested by a runtime guard. Rewrite or generate only the public text. "
-            "Preserve ERIS' restrained Vietnamese voice, but obey the guard reason. "
+            "Preserve ERIS' current affective Vietnamese voice, but obey the guard reason. Do not reset the line toward a fixed restrained/warm/cold tone. "
             "Do not add new facts, file claims, screen claims, web/current claims, actions, or emotions. "
             "If evidence is missing, admit the uncertainty or turn the sentence into a small cautious probe. "
             "If the problem is mindreading, use hedge/question form or step back. "
@@ -2390,7 +2390,7 @@ class LlmService:
         Khác hẳn ``rewrite_guard_violation_text`` (vốn cấm thêm cảm xúc): hàm này
         được gọi RIÊNG khi van bước-cuối bật và câu cuối phẳng dưới mức biểu đạt
         thật. Nó CHO PHÉP cảm xúc lộ qua sự cụ thể/nhịp, nhưng vẫn cấm thêm fact/
-        claim màn hình/web và vẫn giữ giọng ERIS kìm nén. Không bao giờ làm câm:
+        claim màn hình/web và vẫn giữ đúng nhiệt độ cảm xúc hiện tại của ERIS. Không bao giờ làm câm:
         caller tự giữ bản gốc nếu hàm trả rỗng.
         """
         original_text = str(original_text or "").strip()
@@ -2410,7 +2410,7 @@ class LlmService:
             "You are ERIS' local cognitive steering layer. A public line came out flattened — "
             "shorter and more neutral than the real felt stance behind it. Rewrite ONLY the public text "
             "so that stance shows through concreteness, rhythm, and word choice. "
-            "Keep ERIS' restrained Vietnamese voice: feeling leaks indirectly, never as confession, flattery, or melodrama. "
+            "Keep ERIS' current affective Vietnamese voice: let the supplied felt state change cadence, energy and edge naturally, without turning it into confession, flattery, or melodrama. "
             "Do NOT add new facts, file/screen/web claims, or actions. Stay anchored to the same moment as the original. "
             "No disclaimers, no 'as an AI', no 'I have no feelings'. "
             "Return one JSON object only: {\"text\":\"...\"}."
@@ -2506,15 +2506,15 @@ class LlmService:
         return compact[:420]
 
     def _build_chat_style_block(self) -> str:
-        """Voice anchor V38 cho direct chat.
+        """Voice anchor V39 cho direct chat.
 
         Không ép ERIS thành "short/cold/direct" mặc định. Live personality vẫn
         quyết định cường độ, còn contract này giữ chất giọng dương tính để model
         biết cách nói tự nhiên thay vì chỉ né một rừng điều cấm.
         """
         return "\n".join((
-            f"Voice contract: {CHAT_VOICE_CORE_V38}",
-            *(f"- {rule}" for rule in CHAT_STYLE_RULES_V38),
+            f"Voice contract: {CHAT_VOICE_CORE_V39}",
+            *(f"- {rule}" for rule in CHAT_STYLE_RULES_V39),
         ))
 
     def _build_style_block(
@@ -2532,8 +2532,8 @@ class LlmService:
         runtime signals verbatim.
         """
         parts = [
-            "Voice contract: " + AUTONOMOUS_VOICE_CORE_V38,
-            *("- " + rule for rule in AUTONOMOUS_STYLE_RULES_V38),
+            "Voice contract: " + AUTONOMOUS_VOICE_CORE_V39,
+            *("- " + rule for rule in AUTONOMOUS_STYLE_RULES_V39),
         ]
         fe_block = re.sub(r"\s+", " ", str(fe_context or "").strip())
         appraisal_block = re.sub(r"\s+", " ", str(appraisal_context or "").strip())
@@ -3836,11 +3836,19 @@ class LlmService:
             if raw_ti_context.startswith(("speech_interrupt:", "speech_interrupt_reaction:", "Format repair:"))
             else ""
         )
+        # V39: legacy chat path vẫn bỏ các marker Ni/Ti/Fe cũ, nhưng KHÔNG được
+        # vứt AFFECTIVE_VOICE_STATE nếu caller đã project state sống vào đây.
+        # Đây là data typed-ish về ERIS, không phải marker suy diễn user.
+        raw_internal_state_context = str(internal_state_context or "").strip()
+        internal_state_context = (
+            raw_internal_state_context
+            if raw_internal_state_context.startswith("AFFECTIVE_VOICE_STATE")
+            else ""
+        )
         ni_context = ""
         fe_context = ""
         social_context = str(social_context or "").strip()
         appraisal_context = ""
-        internal_state_context = ""
         conversation_context = ""
         defusing_context = ""
         if self._dds_enabled() and use_chat_dds:
@@ -3880,6 +3888,8 @@ class LlmService:
             state_style_parts.append(f"Ti context:\n{ti_context}")
         if social_context:
             state_style_parts.append(f"Relationship continuity (observed earlier; context only):\n{social_context}")
+        if internal_state_context:
+            state_style_parts.append(f"Live affective voice state (delivery authority only):\n{internal_state_context}")
         if defusing_context:
             state_style_parts.append(f"Defusing context:\n{defusing_context}")
 

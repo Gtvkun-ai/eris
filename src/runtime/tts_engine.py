@@ -572,8 +572,8 @@ def _build_tts_prompt(
     if language_hint == "ja" and re.search(r"(?:ですね|だね|よね)[。！？…]*\s*$", str(text or "")):
         signature_line = (
             "Signature ending performance: let the final ね land with a small 140–220ms linger, "
-            "a tiny lift into the marker, then a gentle downward contour. Make it warm and memorable "
-            "but restrained; do not turn it into a theatrical anime catchphrase.\n"
+            "a tiny lift into the marker, then a gentle downward contour. Make it memorable at the "
+            "warmth/brightness actually supported by the current performance state; do not turn it into a theatrical anime catchphrase.\n"
         )
 
     performance_rules = ""
@@ -594,8 +594,8 @@ def _build_tts_prompt(
     # tác dụng âm học; không gửi lại một bài luận cho từng segment ngắn.
     prompt = (
         "ERIS VOICE\n"
-        "Character: quiet anime desktop companion; youthful, close, crisp, subtly warm.\n"
-        "Delivery: emotionally nuanced, restrained, never bubbly or theatrical.\n"
+        "Character: youthful, close, crisp desktop companion; emotional temperature follows the current line/performance state.\n"
+        "Delivery: emotionally nuanced and state-responsive; do not flatten joy, irritation, sadness, playfulness, or curiosity into a fixed restrained/warm baseline. Never become theatrical.\n"
         "Pacing: responsive and natural; tiny rhetorical pauses only, no long stalls.\n"
         "Rules: bracketed tags are silent acting directions; never read them aloud. "
         "Do not add, omit, paraphrase, or explain words.\n"
@@ -2213,8 +2213,8 @@ def _translate_to_japanese(text: str, api_key: str) -> str:
             config={
                 "system_instruction": (
                     "Translate Vietnamese or English into natural spoken Japanese for Eris, "
-                    "a warm-first, calm, lightly dry desktop companion. Preserve the exact meaning, "
-                    "emotional valence, and relationship distance. Do not invent questions, "
+                    "a state-responsive, lightly dry desktop companion. Preserve the exact meaning, "
+                    "current emotional temperature, energy, emotional valence, and relationship distance. Do not invent questions, "
                     "apologies, silence, dissatisfaction, commands, or hidden context. Do not "
                     "turn satisfaction into dissatisfaction. Avoid ご主人様 and マスター. Output "
                     "only Japanese, with no quotes, notes, explanations, or romanization."

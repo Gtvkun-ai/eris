@@ -962,8 +962,8 @@ def ensure_grounded_startup_plan(
             )
             data.update(base)
             data["topic"] = (
-                "Write a distinctive ERIS greeting from her own attitude only. Dry warmth, restrained curiosity, "
-                "or a small playful challenge are allowed. Make no factual claim about the user's activity, mood, "
+                "Write a distinctive ERIS greeting from her own attitude only, conditioned by current affect. Let current affect determine whether it is bright, quiet, curious, dry, playful, tired, or edged; do not impose a default warmth/restraint preset. "
+                "Make no factual claim about the user's activity, mood, "
                 "plans, screen, memory, or task. Avoid generic availability copy."
             )
     elif plan.speak:

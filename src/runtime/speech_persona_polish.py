@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
-"""speech_persona_polish.py — policy làm mềm lời nói ở lane TTS.
+"""speech_persona_polish.py — policy giữ personality khi localize TTS.
 
-Lớp này không sinh thêm nội dung và không gọi LLM riêng. Nó chỉ tạo một contract
-nhỏ cho localizer hiện có: giữ nguyên nghĩa, nhưng cho phép nhịp nói ấm hơn một
-chút, kín và có duyên hơn. Mục tiêu là tránh bubble thẳng bị voice đọc thành cộc,
-không biến Eris thành một nhân cách thứ hai chuyên tự thêm tình cảm.
+V39 không còn "làm ấm" mọi câu. Prosody style đã được runtime chọn từ affect
+sống, nên localizer chỉ được giữ đúng nhiệt độ đó, không phủ thêm một warm-base
+cố định. Lớp này không sinh nội dung và không gọi model riêng.
 """
 
 from __future__ import annotations
@@ -49,44 +48,41 @@ class SpeechPersonaPolicy:
     def prompt_directive(self) -> str:
         if not self.enabled:
             return (
-                "Speech persona polish is disabled. Translate warmly and preserve the exact intent."
+                "Speech persona polish is disabled. Translate naturally and preserve the exact intent and affect."
             )
 
         warmth_pct = int(round(self.warmth * 100))
         cute_pct = int(round(self.cuteness * 100))
         mode_line = {
-            "technical": "Keep technical clarity dominant, but keep the voice warm and human.",
-            "boundary": "Keep the boundary firm, but stay warm and respectful.",
-            "dry": "Keep a dry edge under a warm base; never make it cold.",
-            "soft": "Use warm, attentive delivery with a faint shy/playful softness.",
-        }.get(self.mode, "Use warm, thoughtful delivery with quiet presence.")
+            "technical": "Keep technical clarity dominant and preserve the source affect; do not add friendliness as compensation.",
+            "boundary": "Keep the boundary firm and preserve its current emotional temperature; respect does not require warmth.",
+            "dry": "Keep the dry edge at the current intensity; do not add a warm underlay or artificial coldness.",
+            "soft": "The live delivery state is explicitly soft/playful here; preserve that softness without exaggerating it.",
+        }.get(self.mode, "Preserve the source emotional temperature; do not normalize it toward warm, cold, calm, cute, or restrained.")
 
         if self.signature_ending_selected and self.signature_ending == "desu_ne":
             surface = self.signature_surface or "ですね"
             signature_line = (
                 "For this transcript only, the Eris signature ending is selected. When the final breath group "
                 f"is a natural declarative or reflective sentence, let it naturally carry {surface} once if it fits. "
-                "The signature family is ですね / だね / よね; use only one warm marker, like a soft spoken aftertaste. "
+                "The signature family is ですね / だね / よね; use only one subtle marker. "
                 f"Integrate it grammatically instead of mechanically appending {surface}. Never output a standalone "
                 f"marker sentence such as {surface}。 Never force it onto a "
                 "question, command, fragment, proper name, or sentence where it changes the stance. If it is not "
-                "natural Japanese, omit it rather than damaging the meaning."
+                "natural Japanese, omit it rather than damaging the meaning or affect."
             )
         else:
             signature_line = (
                 "No signature ending is selected for this transcript. Do not deliberately add ですね, だね, or よね as a "
-                "recurring character catchphrase; a natural sentence-final marker that is required by the translation is "
-                "still acceptable."
+                "recurring character catchphrase; a natural sentence-final marker required by the translation is acceptable."
             )
 
         return (
             f"Speech persona profile: {self.profile}. "
-            f"Apply only about {warmth_pct}% warmth and {cute_pct}% understated cuteness. "
-            "The feeling should be warm, attentive, perceptive, private, and gently alive; "
-            "never cold, flat, childish, bubbly, clingy, submissive, or exaggeratedly anime-like. "
+            f"Style-selected softening={warmth_pct}% and cuteness={cute_pct}%; these are delivery modifiers, NOT an emotional target. "
             f"{mode_line} {signature_line} "
-            "You may soften cadence, choose gentler particles, or add a tiny natural pause, but MUST NOT add "
-            "new facts, exaggerated affection, intimacy, apology, promise, agreement, request, action, or relationship status."
+            "Preserve source valence, energy, irritation, delight, sadness, playfulness and relationship distance. "
+            "You may adjust cadence or particles, but MUST NOT add new facts, affection, intimacy, apology, promise, agreement, request, action, or relationship status."
         )
 
 
@@ -239,29 +235,32 @@ def resolve_speech_persona_policy(
 
     if style in {"focused", "technical"}:
         mode = "technical"
-        # Kỹ thuật vẫn có cadence mềm; precision không đồng nghĩa vô cảm.
-        warmth = max(0.22, min(warmth, 0.30))
+        warmth = min(warmth, 0.16)
         cuteness = 0.0
     elif style == "cold_boundary":
         mode = "boundary"
-        warmth = max(0.20, min(warmth, 0.28))
+        warmth = 0.0
         cuteness = 0.0
     elif style == "sharp_deadpan":
         mode = "dry"
-        warmth = max(0.24, min(warmth, 0.30))
+        warmth = min(warmth, 0.08)
         cuteness = 0.0
     elif style in {"annoyed_soft", "deadpan", "dry_tease", "self_aware_dry"}:
         mode = "dry"
-        warmth = max(0.26, min(warmth, 0.34))
-        cuteness = min(cuteness, 0.06)
-    elif style in {"soft_tease", "low_quiet", "gentle", "warm"}:
+        warmth = min(warmth, 0.12)
+        cuteness = min(cuteness, 0.04)
+    elif style in {"soft_tease", "gentle", "warm", "warm_soft", "curious_soft"}:
         mode = "soft"
-        warmth = min(0.48, max(warmth + 0.06, 0.40))
-        cuteness = min(0.18, max(cuteness + 0.03, 0.08))
+        warmth = min(0.48, max(warmth, 0.22))
+        cuteness = min(0.18, max(cuteness, 0.04))
+    elif style == "low_quiet":
+        mode = "soft"
+        warmth = min(warmth, 0.12)
+        cuteness = 0.0
     else:
         mode = "neutral"
-        warmth = max(0.36, warmth)
-        cuteness = min(cuteness, 0.12)
+        warmth = 0.0
+        cuteness = 0.0
 
     signature_ending, signature_selected, signature_rate = _signature_ending_policy(
         source_text,

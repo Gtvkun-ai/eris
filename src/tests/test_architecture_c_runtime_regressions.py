@@ -662,10 +662,11 @@ def test_speech_persona_polish_is_subtle_and_style_aware(monkeypatch) -> None:
 
     assert neutral.enabled is True
     assert neutral.profile == "infj_5w4_subtle"
-    assert neutral.warmth == 0.36
-    assert neutral.cuteness == 0.08
+    # V39: neutral TTS không còn phủ warm-base cố định lên mọi mood.
+    assert neutral.warmth == 0.0
+    assert neutral.cuteness == 0.0
     assert technical.cuteness == 0.0
-    assert 0.22 <= technical.warmth <= 0.30
+    assert 0.0 <= technical.warmth <= 0.16
     assert soft.warmth > neutral.warmth
     assert soft.cuteness > neutral.cuteness
 

@@ -150,7 +150,7 @@ class SpeechDeliveryPlanner:
             motion = motion if motion != "none" else ("look_away" if voice_style == "dry_tease" else "small_smile")
             if "laugh_soft" not in actions and signals.valence >= 0.08 and signals.restraint <= 0.78:
                 actions.append("laugh_soft")
-            notes.append("Put the smile in the voice, not in extra words. Keep it restrained.")
+            notes.append("Put the smile in the voice at the intensity supported by current valence/arousal; do not flatten it just to preserve a restrained persona.")
         elif self._looks_boundary(hay, signals):
             voice_style = "deadpan"
             emotion = "flat_calm"
@@ -171,7 +171,7 @@ class SpeechDeliveryPlanner:
             voice_style = "warm_soft"
             emotion = "warm_soft"
             motion = motion if motion != "none" else "lean_in_small"
-            notes.append("Small warmth. Close, quiet, not bubbly.")
+            notes.append("Positive/attached state is active: let it register naturally. Brightness follows live arousal and social energy; no fixed quiet/not-bubbly ceiling.")
         elif signals.valence < -0.18:
             voice_style = "low_quiet"
             emotion = "quiet_low"

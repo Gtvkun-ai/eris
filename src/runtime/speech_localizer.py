@@ -342,9 +342,8 @@ class SpeechLocalizer:
             f"{budgeted_text}"
         )
         system_instruction = (
-            "Translate Vietnamese or English into natural spoken Japanese for Eris, "
-            "a warm-first, calm, lightly dry desktop companion. Preserve the exact meaning, "
-            "emotional valence, and relationship distance. Do not invent questions, "
+            "Translate Vietnamese or English into natural spoken Japanese for Eris. Preserve the exact meaning, "
+            "current emotional temperature, energy, irritation/delight balance, and relationship distance. Do not invent questions, "
             "apologies, silence, dissatisfaction, commands, or hidden context. Do not "
             "turn satisfaction into dissatisfaction. Avoid ご主人様 and マスター. Output "
             "only Japanese, with no quotes, notes, explanations, or romanization."
@@ -694,24 +693,24 @@ def _style_line(style: str) -> str:
 
     style = str(style or "").strip().lower()
     if style == "dry_tease":
-        return "Style hint: preserve a dry teasing edge under a warm base; polite, short, slightly amused."
+        return "Style hint: preserve the dry teasing edge at the intensity already chosen by the live delivery state; slightly amused when supported, never force a warm base."
     if style == "soft_tease":
-        return "Style hint: preserve soft teasing warmth; playful but restrained."
+        return "Style hint: preserve soft teasing and current playfulness; do not automatically restrain brightness when the live state is lively."
     if style == "self_aware_dry":
-        return "Style hint: quietly self-aware and dry, but still warm; admit the miss briefly without sounding submissive."
+        return "Style hint: self-aware and dry; let current affect decide whether the repair sounds relieved, annoyed, amused, low-energy, or neutral."
     if style == "annoyed_soft":
-        return "Style hint: controlled mild irritation with warmth underneath; crisp and concise, never loud."
+        return "Style hint: mild irritation is real here; keep it controlled and clear, but do not cover it with mandatory warmth."
     if style == "sharp_deadpan":
-        return "Style hint: one sharp deadpan retort over a warm base; measured pace and a clean ending."
+        return "Style hint: one sharp deadpan retort; intensity follows the current affect and boundary state, with no mandatory warm underlay."
     if style == "cold_boundary":
-        return "Style hint: firm boundary, but still warm and respectful; direct, non-threatening, no apology tail."
+        return "Style hint: firm boundary, direct and non-threatening. Respect does not require sounding warm; follow the current affect."
     if style == "deadpan":
-        return "Style hint: deadpan and concise, but not cold; polite with a warm base."
+        return "Style hint: deadpan delivery; keep the current emotional temperature instead of adding a warm base or artificial coldness."
     if style == "focused":
-        return "Style hint: technical and clear, but still warm and human; avoid cute filler."
+        return "Style hint: technical and clear while preserving the current affect; technical mode must not reset emotional temperature."
     if style == "low_quiet":
-        return "Style hint: quiet and understated, with a warm pulse; avoid dramatic wording."
-    return "Style hint: warm, natural, restrained, and concise."
+        return "Style hint: quiet and understated because the live state is low-energy; do not add a mandatory warm pulse or dramatic wording."
+    return "Style hint: natural delivery that follows the current affect and relationship state; do not normalize toward warm, cold, restrained, bubbly, or concise."
 
 
 __all__ = [

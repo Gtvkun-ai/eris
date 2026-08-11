@@ -686,11 +686,11 @@ class PersonalityProfile:
         if guardedness >= 0.66 or c.get("privacy_need", 0.0) >= 0.74:
             if warmth >= 0.46 or softening >= 0.58:
                 lines.append(
-                    "Cô ấy kín và chỉ bộc lộ có chọn lọc, nhưng kín không đồng nghĩa lạnh: "
-                    "lớp ngoài vẫn ấm, tinh tế và thường giữ thể diện cho người đối diện."
+                    "Cô ấy kín và chỉ bộc lộ có chọn lọc. Guardedness chỉ nói về lượng tự bộc lộ, "
+                    "không đặt nhiệt độ cảm xúc; mood hiện tại mới quyết định câu đang sáng, trầm, sắc hay playful đến đâu."
                 )
             else:
-                lines.append("Cô ấy kín và chỉ bộc lộ có chọn lọc; sự quan tâm thường hiện ra gián tiếp trước khi được nói thẳng.")
+                lines.append("Cô ấy kín và chỉ bộc lộ có chọn lọc; đừng suy guardedness thành một lệnh phải lạnh, nhỏ giọng hay ít cảm xúc.")
         if softening >= 0.58:
             lines.append(
                 "Trong giao tiếp, cô ấy thường làm mềm nhịp quan hệ, để lại đường quay lại khi bất đồng và không dùng khoảng cách như một màn cắt đứt mặc định."

@@ -644,8 +644,8 @@ class IdentityProfile:
         if personality_summary:
             parts.append(compact(personality_summary, 540))
         parts.append(
-            "Giữ khoảng cách chỉ giới hạn mức tự bộc lộ, không tự động làm giọng lạnh. "
-            "Bề mặt mặc định vẫn có sự ấm kín và xu hướng làm mềm quan hệ; lạnh đi phải có rupture, boundary, overload hoặc phòng thủ hiện tại làm căn cứ."
+            "Giữ khoảng cách chỉ giới hạn mức tự bộc lộ. Identity không đặt nhiệt độ giọng mặc định; "
+            "live affect quyết định cường độ/hướng cảm xúc, còn relationship và boundary chỉ điều biến bandwidth biểu đạt."
         )
 
         top_values = sorted(self.values.items(), key=lambda item: item[1], reverse=True)[:4]

@@ -85,17 +85,9 @@ class IdentityExpressionBridge:
         relational_softening = float(temperament.get("relational_softening", 0.0) or 0.0)
         hostile_humor = float(temperament.get("hostile_humor", 0.0) or 0.0)
 
-        # Bề mặt Ni-Fe mặc định là ấm kín. Guardedness chỉ làm ERIS ít lộ mình,
-        # không cho phép bridge tự suy ra một preset lạnh khi không có rupture hay
-        # phòng thủ đủ mạnh. Đây là style surface, không sửa nội dung public.
-        if requested == "neutral" and relational_softening >= 0.58:
-            add(
-                0.34 + 0.16 * relational_softening + 0.10 * warmth_expression,
-                "guarded_warm",
-                "guarded_but_relationally_soft",
-                "soft_compact",
-                0.02,
-            )
+        # V39: KHÔNG chọn preset cảm xúc chỉ vì temperament. Personality shape
+        # không được biến thành nhiệt độ nền. Warm/playful/cold preset chỉ thắng
+        # khi appraisal/mood/defense hiện tại ở các nhánh phía dưới thật sự đẩy nó.
 
         if embarrassment >= 0.42 and intellectualization >= 0.48:
             add(

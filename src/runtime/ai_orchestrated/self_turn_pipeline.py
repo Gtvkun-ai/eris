@@ -24,6 +24,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Callable, Mapping
 
 from runtime.no_fallback_policy import no_fallback_mode_enabled
+from runtime.affective_voice_state import project_affective_voice_state
 from runtime.grounding_surface_gate import evaluate_grounded_surface
 from runtime.json_boundary import public_payload
 
@@ -1444,6 +1445,14 @@ class SelfTurnPipeline:
     def _planner_snapshot(self, context: SelfTurnBundle) -> tuple[dict[str, Any], Any]:
         perception = context.perception
         state = context.state
+        # V39: autonomous Surface dùng cùng projector với direct chat. Không có
+        # một "tone autonomous" riêng và không tự suy mood từ seed.
+        affective_voice = project_affective_voice_state(
+            self.host,
+            mind_state=state,
+            channel="autonomous",
+            now=perception.now,
+        )
         initiative = getattr(self.host, "ai_initiative_controller", None)
         recent_initiative = []
         if initiative is not None:
@@ -1469,6 +1478,8 @@ class SelfTurnPipeline:
             ),
             "personality": state.personality.panel_view(),
             "personality_summary": state.personality_prompt_context(),
+            "affective_voice_state": affective_voice.to_dict(),
+            "affective_voice_context": affective_voice.prompt_context(),
             "identity": state.identity.panel_view(),
             "identity_summary": state.identity_prompt_context(),
             "relationship": state.relationship.to_dict(),

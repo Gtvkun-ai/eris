@@ -288,7 +288,7 @@ def test_panel_exposes_independent_integration_adaptation_and_direction_profiles
     assert "stance" in panel["relationship_profiles"]["primary_user"]
 
 
-def test_guarded_baseline_keeps_a_warm_relational_surface() -> None:
+def test_guarded_baseline_controls_disclosure_not_emotional_temperature() -> None:
     profile = PersonalityProfile()
     temperament = profile.temperament
 
@@ -298,8 +298,8 @@ def test_guarded_baseline_keeps_a_warm_relational_surface() -> None:
     assert temperament["relational_softening"] >= 0.70
 
     summary = profile.prompt_summary(limit=1200)
-    assert "kín không đồng nghĩa lạnh" in summary
-    assert "làm mềm nhịp quan hệ" in summary
+    assert "Guardedness chỉ nói về lượng tự bộc lộ" in summary
+    assert "mood hiện tại mới quyết định" in summary
 
 
 def test_warmer_direction_does_not_treat_lower_guardedness_as_required() -> None:
@@ -382,13 +382,13 @@ def test_identity_v1_cold_defense_baseline_migrates_without_overwriting_drift() 
     assert drifted.defenses["cold_distancing"] == 0.47
 
 
-def test_expression_bridge_defaults_to_guarded_warm_not_cold() -> None:
+def test_expression_bridge_neutral_does_not_invent_a_warm_or_cold_mood() -> None:
     from runtime.ai_orchestrated.contracts import RuntimeMindState
     from runtime.ai_orchestrated.expression import IdentityExpressionBridge
 
     expression = IdentityExpressionBridge().derive(RuntimeMindState(), requested_hint="neutral")
-    assert expression.preset == "guarded_warm"
-    assert "guarded_but_relationally_soft" in expression.reasons
+    assert expression.preset == "neutral"
+    assert "guarded_but_relationally_soft" not in expression.reasons
 
 
 def test_moderate_irritation_keeps_connection_unless_cold_defense_is_evidenced() -> None:

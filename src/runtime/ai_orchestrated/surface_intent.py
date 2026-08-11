@@ -211,10 +211,32 @@ class SurfaceIntentEngine:
             return self._unavailable(intent, "invalid_public_intent_owner")
         display_language, speech_language = _surface_languages()
         avoid_text = compact(avoid_text, 520)
+        affective_voice_state = _mapping(_mapping(snapshot or {}).get("affective_voice_state"))
+        affective_voice_context = compact(_mapping(snapshot or {}).get("affective_voice_context", ""), 1800)
+        if affective_voice_state:
+            self._log(
+                "info",
+                "[affective voice] channel=autonomous version=%s valence=%+.2f arousal=%.2f curiosity=%.2f social=%.2f delight=%.2f play=%.2f irritation=%.2f sadness=%.2f expressive=%.2f trajectory=%.2f",
+                str(affective_voice_state.get("version", "") or ""),
+                float(affective_voice_state.get("valence", 0.0) or 0.0),
+                float(affective_voice_state.get("arousal", 0.0) or 0.0),
+                float(affective_voice_state.get("curiosity", 0.0) or 0.0),
+                float(affective_voice_state.get("social_energy", 0.0) or 0.0),
+                float(affective_voice_state.get("delight", 0.0) or 0.0),
+                float(affective_voice_state.get("playfulness", 0.0) or 0.0),
+                float(affective_voice_state.get("irritation", 0.0) or 0.0),
+                float(affective_voice_state.get("sadness", 0.0) or 0.0),
+                float(affective_voice_state.get("expressive_drive", 0.0) or 0.0),
+                float(affective_voice_state.get("trajectory_strength", 0.0) or 0.0),
+            )
         request = {
             "speech_intent": intent.to_dict(),
             "blackboard": blackboard.public_view(),
             "recent_public_history": list(_sequence(_mapping(snapshot or {}).get("recent_public_history"))[-6:]),
+            # V39: Surface nhận đúng snapshot affect mà direct chat cũng dùng.
+            # Đây là voice-only context, tuyệt đối không phải evidence về user/world.
+            "affective_voice_state": dict(affective_voice_state),
+            "affective_voice_context": affective_voice_context,
             "surface_contract": {
                 "authority": "wording_only",
                 "fixed_mode": intent.mode,
@@ -232,6 +254,10 @@ class SurfaceIntentEngine:
                 ),
                 "voice_contract_version": VOICE_CONTRACT_VERSION,
                 "voice_rules": surface_voice_rules(intent.max_sentences),
+                "affect_authority": (
+                    "affective_voice_state is authoritative only for delivery/emotional intensity. "
+                    "It cannot create facts, change motive, or override semantic/grounding contracts."
+                ),
                 "avoid_repeating": avoid_text,
             },
         }

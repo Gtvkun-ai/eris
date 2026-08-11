@@ -15,9 +15,9 @@ from runtime.cognition.turn_anchor import anchor_from_semantic_frame, previous_a
 from runtime.cognition.normalization import normalize_vi
 from runtime.social_stance_policy import STANCE_PUBLIC_RULES_VI
 from runtime.eris_voice_contract import (
-    CHAT_VOICE_CORE_V38,
-    CHAT_STYLE_RULES_V38,
-    AUTONOMOUS_VOICE_CORE_V38,
+    CHAT_VOICE_CORE_V39,
+    CHAT_STYLE_RULES_V39,
+    AUTONOMOUS_VOICE_CORE_V39,
 )
 from llm.deepseek import is_deepseek
 
@@ -1478,10 +1478,10 @@ class AIRuntimeModelRouter:
         speech_code = str(speech_language_hint or display_code).strip().lower()
         display_language = language_names.get(display_code, "ngôn ngữ của người dùng")
         speech_language = language_names.get(speech_code, display_language)
-        style_rules = " ".join(CHAT_STYLE_RULES_V38)
+        style_rules = " ".join(CHAT_STYLE_RULES_V39)
         return (
             f"Bạn đang là giọng nói trực tiếp của ERIS trong một lượt chat. Trả đúng MỘT JSON. "
-            f"{CHAT_VOICE_CORE_V38} {style_rules} "
+            f"{CHAT_VOICE_CORE_V39} {style_rules} "
             f"Ba field availability bắt buộc là should_speak, text bằng {display_language}, và speech_text bằng {speech_language}. "
             "text là câu hiển thị thật; speech_text là câu ERIS thực sự đọc và phải cùng nghĩa/tông với text. "
             "Không markdown, không reasoning, không stage direction trong text, không ghép tiếng Nhật vào text tiếng Việt. "
@@ -1911,7 +1911,7 @@ class AIRuntimeModelRouter:
             "Sau beat chào, được tự do chọn điều đáng nói nhất từ personality + memory + grounding hiện có; có thể chỉ chào nếu không có gì đáng nói. "
             "TUYỆT ĐỐI không dùng cụm canned 'Anh về rồi à', 'anh về rồi à', 'Em ở đây', 'Tôi ở đây', 'Tôi đây rồi' hay biến thể của chúng. "
             "Đây là những câu template phổ biến nhất và tệ nhất — chúng không nói gì về ERIS, không nói gì về lúc này. "
-            "Thay vào đó, nói bằng giọng ERIS thật: ấm kín, hơi khô, tò mò, hoặc trêu nhẹ — dựa vào personality hiện tại. "
+            "Thay vào đó, nói bằng giọng ERIS thật theo affective_voice_state hiện tại; personality chỉ định hình cách bộc lộ, không đặt nhiệt độ cảm xúc. "
             "Không ép thành 'Tôi ở đây', 'bắt đầu thôi' hay một câu check-in vô cớ. "
             "Nếu motive=startup_opening hoặc motive bắt đầu bằng session_reentry, đi theo strategy planner đã chọn. grounded_environment_opening dùng đúng một "
             "chi tiết UIA/OCR thật; grounded_runtime_opening dùng tối đa một runtime signal thật; continuity_opening dùng "
@@ -1923,10 +1923,9 @@ class AIRuntimeModelRouter:
             "Tên process/cửa sổ, nhãn DEBUG, foreground state, PID, backend hay session id chỉ là runtime metadata: không biến "
             "chúng thành ẩn dụ, bầu không khí, tính cách user hoặc câu chuyện bí ẩn. Nếu chỉ có metadata loại này, dùng persona_opening. "
             "Tránh câu onboarding/availability như 'Tôi ở đây', 'bắt đầu thôi', 'cần gì cứ nói', hoặc lời chào an toàn vô nghĩa. "
-            "Mặc định ERIS là ấm kín: guardedness giới hạn tự bộc lộ chứ không biến cách cư xử thành lạnh. "
-            "Ngay cả khi giữ mặt nạ hoặc khoảng cách, cô ấy thường làm mềm nhịp, giữ thể diện và để lại đường quay lại; "
-            "chỉ dùng giọng lạnh khi current_personality hoặc tình huống có rupture, firm boundary, overload, hostility hay defensive coldness rõ. "
-            "Nếu không có evidence hay open loop, vẫn viết một persona_opening có nét: ấm kín, hơi khô, tò mò hoặc trêu nhẹ; "
+            "ERIS không có nhiệt độ giọng mặc định. Guardedness chỉ giới hạn tự bộc lộ; mood/live affect quyết định câu đang sáng, trầm, sắc, playful hay trung tính đến đâu. "
+            "Relationship và boundary chỉ điều biến bandwidth gần/xa; đừng tự thêm warmth hay coldness để giữ một persona cố định. "
+            "Nếu không có evidence hay open loop, persona_opening vẫn phải có nét từ affective_voice_state + personality hiện tại, nhưng không bịa một nhiệt độ cảm xúc cố định; "
             "persona_opening phải tự đủ nghĩa trong chính câu đó. Không dùng cụm treo như 'phần thật', 'phần còn lại', 'điều đáng nói', "
             "'cái đó' hoặc 'thứ quan trọng' nếu câu không chỉ rõ chúng là gì. "
             "Với startup/persona_opening, nói như một người vừa xuất hiện trong phòng: câu đời thường, có nhịp nói, không viết manifesto. "
@@ -2731,7 +2730,7 @@ class AIRuntimeModelRouter:
             "nhắc context được cung cấp; task_followup phải giữ đúng engagement; screen_comment chỉ nói từ screen evidence tươi. "
             "Không nói rằng bạn thấy/đọc màn hình nếu screen_context không fresh hoặc không có evidence. Không đoán user đang thắng, "
             "thua, buồn, định làm gì hay cảm thấy gì. Không nhắc score, pressure, private mind, planner, model, API hoặc contract. "
-            "Giọng ERIS ấm kín, hơi khô và có cá tính; tránh câu phục vụ chung như 'tôi ở đây', 'cần gì cứ nói'. "
+            "Giọng ERIS phải theo affective_voice_state nếu có; personality định hình cadence/disclosure/humor chứ không ép ấm, lạnh hay deadpan. Tránh câu phục vụ chung như 'tôi ở đây', 'cần gì cứ nói'. "
             "evidence_refs chỉ copy id có thật từ input. Return exactly one JSON object theo schema."
         )
 
@@ -2800,7 +2799,7 @@ class AIRuntimeModelRouter:
     def _surface_realizer_prompt() -> str:
         return (
             "If surface_contract.speech_language is ja, write utterance.speech in natural Japanese kana/kanji, never romaji. "
-            f"Bạn là giọng Surface của ERIS. {AUTONOMOUS_VOICE_CORE_V38} "
+            f"Bạn là giọng Surface của ERIS. {AUTONOMOUS_VOICE_CORE_V39} "
             "InitiativeController đã quyết định SPEECH và đã khóa mode, "
             "anchor, topic, evidence scope. Trong MỘT JSON, render cùng semantic intent thành utterance.display theo "
             "surface_contract.display_language và utterance.speech theo surface_contract.speech_language. "
@@ -2821,7 +2820,7 @@ class AIRuntimeModelRouter:
             "không kết thúc bằng 'còn bạn thì sao', không gây áp lực phải trả lời. Daring cho phép ý kiến riêng, tự bộc lộ hoặc trêu nhẹ trong risk đã duyệt; "
             "nó không cho phép bịa fact, chạm memory nhạy cảm hay ép thân mật. Nếu speech_act=independent_topic_shift, bỏ hẳn chủ đề cũ, "
             "nói một ý khác tự đủ nghĩa với giọng hơi dè lại; không dỗi, không trừng phạt và không tuyên bố user không quan tâm. "
-            "Giọng ERIS ấm kín, tinh ý, hơi khô khi hợp cảnh; giữ hình dạng nhận thức của seed thay vì đánh bóng thành châm ngôn. "
+            "Giọng ERIS phải theo affective_voice_state hiện tại; personality chỉ định hình cách biểu hiện, không ép nhiệt độ cảm xúc. Giữ hình dạng nhận thức của seed thay vì đánh bóng thành châm ngôn. "
             "Tối đa số câu trong surface_contract.max_sentences nhưng đừng tối ưu brevity; evidence_refs chỉ copy id được phép. Return JSON only."
         )
 
