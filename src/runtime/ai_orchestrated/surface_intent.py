@@ -26,6 +26,7 @@ from .initiative import SpeechIntent
 from .semantic_contracts import compact, semantic_key
 from runtime.utterance_spec import UtteranceSpec
 from runtime.grounding_surface_gate import current_world_claim_without_evidence
+from runtime.eris_voice_contract import VOICE_CONTRACT_VERSION, surface_voice_rules
 
 
 SURFACE_MODES: tuple[str, ...] = (
@@ -224,10 +225,13 @@ class SurfaceIntentEngine:
                 "display_language": display_language,
                 "speech_language": speech_language,
                 "rule": (
-                    f"Write one concise public line in {display_language} (display) and provide its {speech_language} translation (speech). "
+                    f"Write one natural public utterance in {display_language} (display) and provide its {speech_language} translation (speech), "
+                    f"using at most {intent.max_sentences} sentence(s). Do not optimize for brevity itself. "
                     "Do not decide speak/silence, change the topic owner, invent evidence, or mention internal contracts. "
                     "If avoid_repeating is non-empty, do not repeat or closely paraphrase that previous autonomous line."
                 ),
+                "voice_contract_version": VOICE_CONTRACT_VERSION,
+                "voice_rules": surface_voice_rules(intent.max_sentences),
                 "avoid_repeating": avoid_text,
             },
         }
@@ -250,6 +254,8 @@ class SurfaceIntentEngine:
                 "want_to_share/want_to_express may be a complete statement with no question and no demand for a reply.",
                 "Do not append a generic check-in, availability offer, permission request, or 'còn bạn thì sao'.",
                 "Daring may support a fresh opinion, self-disclosure or gentle tease only inside the supplied risk contract.",
+                "Do not polish a simple seed into an aphorism. Preserve its cognitive shape: curiosity may remain a specific question, association may feel like a connection, opinion may be stated as an owned view, and memory callback may feel like something resurfacing.",
+                "Avoid repeatedly opening autonomous lines with 'Tôi đang nghĩ' or 'Tôi tự hỏi'. Those phrases are allowed only when they are genuinely the most natural realization.",
             ]
 
         if intent.anchor_type == "semantic_scene":

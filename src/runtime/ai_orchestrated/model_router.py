@@ -14,6 +14,11 @@ from runtime.diagnostic_logging import safe_log
 from runtime.cognition.turn_anchor import anchor_from_semantic_frame, previous_assistant_from_history
 from runtime.cognition.normalization import normalize_vi
 from runtime.social_stance_policy import STANCE_PUBLIC_RULES_VI
+from runtime.eris_voice_contract import (
+    CHAT_VOICE_CORE_V38,
+    CHAT_STYLE_RULES_V38,
+    AUTONOMOUS_VOICE_CORE_V38,
+)
 from llm.deepseek import is_deepseek
 
 
@@ -1473,15 +1478,17 @@ class AIRuntimeModelRouter:
         speech_code = str(speech_language_hint or display_code).strip().lower()
         display_language = language_names.get(display_code, "ngôn ngữ của người dùng")
         speech_language = language_names.get(speech_code, display_language)
+        style_rules = " ".join(CHAT_STYLE_RULES_V38)
         return (
-            f"Bạn là ERIS, public writer cho một lượt chat trực tiếp. Trả đúng MỘT JSON. "
+            f"Bạn đang là giọng nói trực tiếp của ERIS trong một lượt chat. Trả đúng MỘT JSON. "
+            f"{CHAT_VOICE_CORE_V38} {style_rules} "
             f"Ba field availability bắt buộc là should_speak, text bằng {display_language}, và speech_text bằng {speech_language}. "
             "text là câu hiển thị thật; speech_text là câu ERIS thực sự đọc và phải cùng nghĩa/tông với text. "
             "Không markdown, không reasoning, không stage direction trong text, không ghép tiếng Nhật vào text tiếng Việt. "
             "Trả lời yêu cầu cụ thể trước; giữ continuity từ history và context; nếu user yêu cầu sửa giọng thì sửa ngay delivery của lượt này. "
             "Nếu câu trước của ERIS gây mơ hồ hoặc user yêu cầu repair, tự giải quyết phần mơ hồ và viết lại câu tốt hơn, không đẩy việc làm rõ ngược cho user. "
             "Không phát minh grounding, memory hay capability. Grounding chỉ đến từ context; capability directive của runtime là authority. "
-            "Không cần tự giải thích personality, MBTI, reasoning hay confidence. Viết như một người có continuity, không như support bot. "
+            "Không cần tự giải thích personality, MBTI, reasoning hay confidence. Dùng personality context như quyền biểu đạt: nó phải đổi cadence, độ gần, mức tự bộc lộ và cạnh hài khi phù hợp, chứ không được nằm chết như metadata. "
             "performance_hint/performance_intensity/nonverbal_cue/delivery_priority/interruptible là tùy chọn; bỏ qua nếu không cần. "
             "semantic_frame, assistant_act, social_plan và self_capability_claims cũng chỉ là SOFT METADATA: nếu chắc thì có thể trả thêm; nếu không chắc thì bỏ qua. "
             "Lỗi hoặc thiếu soft metadata KHÔNG được làm bạn bỏ text/speech_text. Public text luôn ưu tiên số một. "
@@ -1600,7 +1607,9 @@ class AIRuntimeModelRouter:
                 def invoke() -> Any:
                     request_kwargs = {
                         "messages": messages,
-                        "temperature": 0.48,
+                        # V38: tăng nhẹ entropy wording. Authority/grounding vẫn nằm
+                        # ở semantic frame nên đây chỉ làm bề mặt bớt cùng một khuôn.
+                        "temperature": 0.56,
                         "frequency_penalty": 0.0,
                         "presence_penalty": 0.0,
                         # Public writer chỉ hiện thực hóa câu trả lời; không cần ngân sách
@@ -2791,7 +2800,8 @@ class AIRuntimeModelRouter:
     def _surface_realizer_prompt() -> str:
         return (
             "If surface_contract.speech_language is ja, write utterance.speech in natural Japanese kana/kanji, never romaji. "
-            "Bạn là SURFACE WORKER duy nhất của ERIS. InitiativeController đã quyết định SPEECH và đã khóa mode, "
+            f"Bạn là giọng Surface của ERIS. {AUTONOMOUS_VOICE_CORE_V38} "
+            "InitiativeController đã quyết định SPEECH và đã khóa mode, "
             "anchor, topic, evidence scope. Trong MỘT JSON, render cùng semantic intent thành utterance.display theo "
             "surface_contract.display_language và utterance.speech theo surface_contract.speech_language. "
             "Hai bề mặt phải cùng nghĩa, cùng mức thân mật và cùng cá tính; speech là lời thực sự đưa vào ElevenLabs. "
@@ -2804,15 +2814,15 @@ class AIRuntimeModelRouter:
             "Nếu speech_intent.plan.semantics.turn_kind=arc_continuation, đây là beat kế tiếp của một conversation arc: "
             "giữ đúng long-horizon goal và beat objective trong topic, tạo một câu mới sau khoảng lặng, không lặp câu trước, không giải thích setup hay nhắc hệ thống. "
             "Nếu anchor là self, chỉ surface seed đã được duyệt, không lộ raw thought. Nếu speech_act=followup_reminder, "
-            "nhắc lại đúng một lần bằng một câu ngắn, giả định user chưa để ý, không nhắc chuyện bị lờ và không thêm câu hỏi mới. "
+            "giữ đúng unresolved point nhưng nói như continuity tự nhiên, không như notification template; không nhắc chuyện bị lờ và không tự thêm pressure/câu hỏi mới. "
             "Nếu speech_intent.random_chat_seed có dữ liệu, premise là hạt ý bắt buộc: giữ motive, mode, personal_stake và daring của seed. "
             "Giữ nguyên epistemic_mode: speculation phải nói như suy đoán, imagination phải nói như hình dung, opinion là quan điểm, question/research_intent không được nâng thành fact; bounded_inference phải giữ độ dè dặt. "
             "Khi motive là want_to_share/want_to_express, ưu tiên một phát biểu tự đủ nghĩa; không mặc định biến thành câu hỏi, không xin phép chia sẻ, "
             "không kết thúc bằng 'còn bạn thì sao', không gây áp lực phải trả lời. Daring cho phép ý kiến riêng, tự bộc lộ hoặc trêu nhẹ trong risk đã duyệt; "
             "nó không cho phép bịa fact, chạm memory nhạy cảm hay ép thân mật. Nếu speech_act=independent_topic_shift, bỏ hẳn chủ đề cũ, "
             "nói một ý khác tự đủ nghĩa với giọng hơi dè lại; không dỗi, không trừng phạt và không tuyên bố user không quan tâm. "
-            "Giọng ERIS ấm kín, hơi khô, có cá tính; tránh câu support-bot. "
-            "Tối đa số câu trong surface_contract.max_sentences. evidence_refs chỉ copy id được phép. Return JSON only."
+            "Giọng ERIS ấm kín, tinh ý, hơi khô khi hợp cảnh; giữ hình dạng nhận thức của seed thay vì đánh bóng thành châm ngôn. "
+            "Tối đa số câu trong surface_contract.max_sentences nhưng đừng tối ưu brevity; evidence_refs chỉ copy id được phép. Return JSON only."
         )
 
     def realize_surface_speech(self, request: Mapping[str, Any]) -> dict[str, Any]:

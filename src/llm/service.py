@@ -19,6 +19,12 @@ from cortex.banned_filler import HOLLOW_PRESENCE_LINES, STALE_MICRO_TEMPLATES, q
 from failure_meta import build_failure_meta, normalize_failure_meta
 from runtime.no_fallback_policy import build_no_fallback_payload, no_fallback_mode_enabled
 from runtime.voice_policy import VOICE_POLICY, ANTI_DISCLAIMER_FEWSHOT as _VOICE_POLICY_FEWSHOT
+from runtime.eris_voice_contract import (
+    CHAT_VOICE_CORE_V38,
+    CHAT_STYLE_RULES_V38,
+    AUTONOMOUS_VOICE_CORE_V38,
+    AUTONOMOUS_STYLE_RULES_V38,
+)
 from .contracts import (
     AUTONOMOUS_BEHAVIOR_PROMPT,
     CHAT_RULES_PROMPT,
@@ -2500,12 +2506,16 @@ class LlmService:
         return compact[:420]
 
     def _build_chat_style_block(self) -> str:
-        """Small stable voice anchor for direct chat only."""
-        return (
-            "Voice: ERIS. Natural Vietnamese, calm and observant, with restrained warmth "
-            "and a dry edge when it fits. Answer directly; avoid help-desk filler, forced disclaimers, "
-            "canned poetry, and repeated motifs."
-        )
+        """Voice anchor V38 cho direct chat.
+
+        Không ép ERIS thành "short/cold/direct" mặc định. Live personality vẫn
+        quyết định cường độ, còn contract này giữ chất giọng dương tính để model
+        biết cách nói tự nhiên thay vì chỉ né một rừng điều cấm.
+        """
+        return "\n".join((
+            f"Voice contract: {CHAT_VOICE_CORE_V38}",
+            *(f"- {rule}" for rule in CHAT_STYLE_RULES_V38),
+        ))
 
     def _build_style_block(
         self,
@@ -2522,11 +2532,8 @@ class LlmService:
         runtime signals verbatim.
         """
         parts = [
-            (
-                "Voice: ERIS. Natural Vietnamese, calm and observant, with restrained warmth "
-                "and a dry edge when it fits. Autonomous speech should feel like a nearby presence, "
-                "not a system notification."
-            )
+            "Voice contract: " + AUTONOMOUS_VOICE_CORE_V38,
+            *("- " + rule for rule in AUTONOMOUS_STYLE_RULES_V38),
         ]
         fe_block = re.sub(r"\s+", " ", str(fe_context or "").strip())
         appraisal_block = re.sub(r"\s+", " ", str(appraisal_context or "").strip())
@@ -2539,8 +2546,9 @@ class LlmService:
             parts.append(f"Persistent runtime state: {state_block[:900]}")
         parts.append(
             "Style principle: speak concretely and naturally. If evidence is clear, use it; "
-            "if evidence is thin, react to the nearest interaction rhythm without explaining the gap. "
-            "Prefer short, dry, everyday Vietnamese over symbolic or policy-sanitized wording."
+            "if evidence is thin, stay inside the approved semantic premise without inventing atmosphere. "
+            "Let sentence length follow the motive rather than a fixed shortness target; everyday Vietnamese "
+            "is preferred over symbolic, polished or policy-sanitized wording."
         )
         return "\n\n".join(parts)
 
@@ -2968,9 +2976,9 @@ class LlmService:
                 + f"Speech intent: {intent_guidance}\n"
                 + avoid_block
                 + f"Speech evidence đã lọc: {telemetry_data}\n"
-                + "Writing principle: Nói như người đang ở gần, không như báo cáo nội tâm. "
-                + "Nếu evidence rõ, dùng chi tiết cụ thể; nếu evidence mỏng, nói một câu đời thường theo nhịp gần nhất. "
-                + "Ưu tiên câu cụt, tự nhiên, hơi khô hoặc hơi châm nhẹ; tránh triết lý hóa. "
+                + "Writing principle: Nói như một ý thật vừa đi ra khỏi dòng nghĩ, không như báo cáo nội tâm. "
+                + "Nếu evidence rõ, dùng chi tiết cụ thể; nếu evidence mỏng, bám đúng premise đã được duyệt và không bịa không khí. "
+                + "Độ dài đi theo motive; có thể cụt, mềm, hơi khô hoặc có hai nhịp ngắn nếu tự nhiên. Tránh triết lý hóa và tránh ép mọi seed về cùng một khuôn. "
                 + "Hard bans kỹ thuật: không claim screen/action facts without evidence/action; không báo telemetry/parse_mode/system/debug. "
                 + "Không dùng generic presence lines như 'Tôi đây', 'Tôi đang nghe', 'Tôi vẫn quan sát'. "
                 + "Speak once. Return only valid JSON. No analysis."

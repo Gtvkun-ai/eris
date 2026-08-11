@@ -123,7 +123,7 @@ def compile_public_reply_context(
     }
     if simple_social:
         budgets.update(
-            personality=420,
+            personality=620,
             relationship=320,
             grounding=0,
             memory=0,
@@ -134,7 +134,7 @@ def compile_public_reply_context(
         )
     elif simple_command:
         budgets.update(
-            personality=220,
+            personality=360,
             relationship=0,
             memory=0,
             grounding=2100,
@@ -142,7 +142,7 @@ def compile_public_reply_context(
         )
     elif technical:
         budgets.update(
-            personality=260,
+            personality=520,
             relationship=0,
             grounding=2300,
             memory=900 if contextual else 0,
