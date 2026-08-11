@@ -221,8 +221,8 @@ def test_all_decision_worker_lanes_are_provider_stateless(monkeypatch) -> None:
     monkeypatch.setenv("ERIS_RUNTIME_SESSION_ID", "test-runtime")
     messages = [{"role": "system", "content": "bounded decision worker"}]
     for lane, optional in (
-        ("neuro_deliberation_required", False),
         ("neuro_deliberation", True),
+        ("neuro_continuation", True),
         ("capability_deliberation_required", False),
         ("capability_deliberation", True),
     ):

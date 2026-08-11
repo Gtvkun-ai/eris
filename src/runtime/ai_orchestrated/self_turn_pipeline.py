@@ -402,6 +402,7 @@ class SelfTurnPipeline:
         now = time.time()
         social_continuation_runtime = getattr(host, "ai_social_continuation_runtime", None)
         conversation_arc_runtime = getattr(host, "ai_conversation_arc_runtime", None)
+        neuro_continuation_runtime = getattr(host, "neuro_continuation_runtime", None)
         clock = getattr(host, "interaction_clock", None)
         interaction_busy = bool(getattr(clock, "busy", False)) if clock is not None else False
         short_continuation_due = False
@@ -423,13 +424,23 @@ class SelfTurnPipeline:
                 )
             except Exception as exc:
                 host.logger.debug("[conversation arc] due check failed: %s", exc)
+        neuro_due = False
+        if neuro_continuation_runtime is not None:
+            try:
+                neuro_due = bool(
+                    neuro_continuation_runtime.is_due(
+                        now=now, interaction_busy=interaction_busy
+                    )
+                )
+            except Exception as exc:
+                host.logger.debug("[neuro-continuation] due check failed: %s", exc)
         blocked_until = float(getattr(host, "autonomous_presence_blocked_until", 0.0) or 0.0)
         semantic_worker = getattr(self, "_semantic_environment_worker", None)
         pending_environment_attention = int(getattr(semantic_worker, "pending_attention_level", 0) or 0)
         # Cooldown presence/social không được che một structured event level>=2.
         # Worker chỉ bypass nhịp ngủ để planner nhìn situation; initiative governor
         # vẫn có toàn quyền chọn silence/body_only nên đây không phải auto-speech.
-        if now < blocked_until and not (short_continuation_due or arc_due or pending_environment_attention >= 2):
+        if now < blocked_until and not (short_continuation_due or arc_due or neuro_due or pending_environment_attention >= 2):
             host._sleep_interruptible(min(4.0, max(0.2, blocked_until - now)))
             return True
 
@@ -510,6 +521,16 @@ class SelfTurnPipeline:
                     affordances.append(preview)
             except Exception as exc:
                 host.logger.debug("[conversation arc] affordance peek failed: %s", exc)
+
+        if neuro_continuation_runtime is not None:
+            try:
+                preview = neuro_continuation_runtime.peek_due(
+                    now=now, interaction_busy=interaction_busy
+                )
+                if preview is not None:
+                    affordances.append(preview)
+            except Exception as exc:
+                host.logger.debug("[neuro-continuation] affordance peek failed: %s", exc)
 
         social_agenda_store = getattr(host, "ai_social_agenda_store", None)
         if social_agenda_store is not None:
@@ -725,6 +746,7 @@ class SelfTurnPipeline:
                         now=now,
                         social_continuation_runtime=social_continuation_runtime,
                         conversation_arc_runtime=conversation_arc_runtime,
+                        neuro_continuation_runtime=neuro_continuation_runtime,
                         social_agenda_store=social_agenda_store,
                         agenda_selector=agenda_selector,
                     )
@@ -1082,6 +1104,16 @@ class SelfTurnPipeline:
                     return True
             except Exception as exc:
                 host.logger.debug("[conversation arc] baton check failed: %s", exc)
+        neuro_continuation_runtime = getattr(host, "neuro_continuation_runtime", None)
+        if neuro_continuation_runtime is not None:
+            try:
+                if neuro_continuation_runtime.is_due(now=time.time(), interaction_busy=False):
+                    # Same-turn deep cognition is a continuation, not unsolicited
+                    # autonomous chatter. It may reuse the baton once public chat
+                    # generation/playback is idle.
+                    return True
+            except Exception as exc:
+                host.logger.debug("[neuro-continuation] baton check failed: %s", exc)
         stale_check = getattr(host, "_conversation_went_stale", None)
         if callable(stale_check) and stale_check():
             end_chat_cycle = getattr(host, "_end_chat_cycle", None)
@@ -1423,6 +1455,11 @@ class SelfTurnPipeline:
                 if getattr(self.host, "ai_conversation_arc_runtime", None) is not None
                 else {"pending": False, "due": False}
             ),
+            "neuro_continuation": (
+                self.host.neuro_continuation_runtime.snapshot(now=perception.now)
+                if getattr(self.host, "neuro_continuation_runtime", None) is not None
+                else {"pending": False, "due": False, "deep_thought_running": False}
+            ),
             "social_agenda": (
                 self.host.ai_social_agenda_store.snapshot(now=perception.now)
                 if getattr(self.host, "ai_social_agenda_store", None) is not None
@@ -1473,6 +1510,10 @@ class SelfTurnPipeline:
         conversation_arc = snapshot.get("conversation_arc")
         conversation_arc_due = bool(
             isinstance(conversation_arc, Mapping) and conversation_arc.get("due")
+        )
+        neuro_continuation = snapshot.get("neuro_continuation")
+        neuro_continuation_due = bool(
+            isinstance(neuro_continuation, Mapping) and neuro_continuation.get("due")
         )
         social_agenda = snapshot.get("social_agenda")
         social_agenda_active = bool(
@@ -1572,6 +1613,7 @@ class SelfTurnPipeline:
         structured_strength = max(
             1.0 if social_continuation_due else 0.0,
             1.0 if conversation_arc_due else 0.0,
+            1.0 if neuro_continuation_due else 0.0,
             0.75 if social_agenda_active and not social_environment_suppressed else 0.0,
             0.70 if context.commentary.due and not social_environment_suppressed else 0.0,
         )
@@ -1582,6 +1624,7 @@ class SelfTurnPipeline:
                 "typed_affordance_sources",
                 continuation_due=social_continuation_due,
                 arc_due=conversation_arc_due,
+                neuro_continuation_due=neuro_continuation_due,
                 social_agenda_active=social_agenda_active,
                 commentary_due=bool(context.commentary.due),
             )
@@ -1736,6 +1779,7 @@ class SelfTurnPipeline:
         now: float,
         social_continuation_runtime: Any | None,
         conversation_arc_runtime: Any | None,
+        neuro_continuation_runtime: Any | None,
         social_agenda_store: Any | None,
         agenda_selector: Any | None,
     ) -> Any | None:
@@ -1749,6 +1793,10 @@ class SelfTurnPipeline:
                 )
             if owner == "conversation_arc" and conversation_arc_runtime is not None:
                 return conversation_arc_runtime.claim_affordance(
+                    affordance, worker_id=worker_id, now=now
+                )
+            if owner == "neuro_continuation" and neuro_continuation_runtime is not None:
+                return neuro_continuation_runtime.claim_affordance(
                     affordance, worker_id=worker_id, now=now
                 )
             if owner == "social_agenda" and social_agenda_store is not None:

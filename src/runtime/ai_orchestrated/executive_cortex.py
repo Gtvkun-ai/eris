@@ -20,7 +20,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Mapping, Sequence
 
 from cortex.subject.contracts import MindDecision, SubjectDeliberationFrame, SubjectExecutiveCommit
-from cortex.subject.neuro_control import NeuroActionSelector, SelectionResult, commit_selection
+from cortex.subject.neuro_control import NeuroActionSelector, NeuroDeliberationAdvice, SelectionResult, commit_selection
 
 from actions.capability_registry import (
     validate_capability_arguments,
@@ -276,8 +276,8 @@ class ExecutiveCortex:
         self.logger = logger
         self._clock = clock
         # Neuro control is intentionally tiny: Subject Core already owns causal
-        # scoring, this layer only gates clear winners and asks the LLM to
-        # deliberate when the action landscape is genuinely ambiguous.
+        # scoring. This layer resolves routine competition locally and asks the LLM
+        # only when ambiguity is materially consequential or commitment-conflicted.
         self._neuro_selector = NeuroActionSelector()
 
     @property
@@ -516,21 +516,35 @@ class ExecutiveCortex:
             },
         }
 
-    def _deliberate_subject_choice(
-        self,
+    @staticmethod
+    def _deliberation_advice_schema(frame: SubjectDeliberationFrame) -> dict[str, Any]:
+        schema = ExecutiveCortex._deliberation_choice_schema(frame)
+        properties = dict(schema["properties"])
+        properties.update({
+            "should_follow_up": {"type": "boolean"},
+            "material_delta": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+            "followup_brief": {"type": "string"},
+        })
+        return {
+            **schema,
+            "required": [
+                *schema["required"],
+                "should_follow_up",
+                "material_delta",
+                "followup_brief",
+            ],
+            "properties": properties,
+        }
+
+    @staticmethod
+    def _subject_deliberation_payload(
         frame: SubjectDeliberationFrame,
         selection: SelectionResult,
         *,
         user_text: str,
         snapshot: Mapping[str, Any] | None,
         mode: str,
-    ) -> SubjectExecutiveCommit:
-        """Invite the LLM as a deliberative specialist, never as state owner.
-
-        The model sees semantic action channels with *local indices only*. It may
-        compare consequences or request one bounded cognitive review, but runtime
-        alone maps the result back to coalition/proposal identity.
-        """
+    ) -> dict[str, Any]:
         source = snapshot or {}
         choices = []
         for index, coalition in enumerate(frame.coalitions):
@@ -548,7 +562,7 @@ class ExecutiveCortex:
                 "epistemic_value": getattr(coalition, "expected_epistemic_value", 0.0),
                 "uncertainty": getattr(coalition, "uncertainty", 0.5),
             })
-        payload = {
+        return {
             "mode": str(mode or "runtime"),
             "user_text": str(user_text or ""),
             "workspace_broadcast": selection.broadcast.to_dict(),
@@ -563,9 +577,118 @@ class ExecutiveCortex:
             "relationship": source.get("relationship_summary", source.get("relationship", {})),
             "grounding_context": _compact(source.get("grounding_context", ""), 1400),
         }
+
+    def review_subject_frame(
+        self,
+        frame: SubjectDeliberationFrame,
+        *,
+        baseline_commit: SubjectExecutiveCommit,
+        user_text: str = "",
+        snapshot: Mapping[str, Any] | None = None,
+        mode: str = "interactive_continuation",
+    ) -> NeuroDeliberationAdvice | None:
+        """Run slow Neuro as an advisory continuation, never as a blocking commit.
+
+        The direct chat turn has already been finalized from the deterministic
+        fast gate.  This method therefore never calls SubjectService and cannot
+        retroactively rewrite authorship.  It only returns a semantic second
+        opinion that a continuation runtime may later discard or surface.
+        """
+        selection = self._neuro_selector.select(frame)
+        if not selection.parallel_review_recommended or not self.neuro_deliberator_enabled:
+            return None
+        payload = self._subject_deliberation_payload(
+            frame, selection, user_text=user_text, snapshot=snapshot, mode=mode
+        )
+        payload["baseline_commit"] = {
+            "provisional_winner_index": selection.winner_index,
+            "semantic_commitments": list(baseline_commit.semantic_commitments),
+        }
+        system = (
+            "You are ERIS's slow, bounded Neuro reviewer running in parallel with an already-served direct chat reply. "
+            "The fast path has already committed and may already be speaking, so you are advisory only. Compare the offered "
+            "semantic choices for consequential conflict, missed constraints, or a genuinely new insight. Return one current "
+            "choice_index using only the ephemeral indices in this frame. Never mention or invent runtime IDs. "
+            "followup_brief is a concise semantic brief for a possible later continuation, never final public wording. "
+            "Set should_follow_up=false and followup_brief='' when the slow review merely agrees, paraphrases, or adds trivia. "
+            "Set should_follow_up=true only when a still-current user would materially benefit from a correction or consequential "
+            "new point. material_delta measures that difference from 0 to 1. cognitive_requests may use only verify_evidence, "
+            "reduce_intrusion, preserve_continuity, estimate_capability, inspect_dissent. Return exactly one JSON object."
+        )
+        try:
+            raw = self.invoke_structured(
+                self.client,
+                system=system,
+                payload=payload,
+                schema=self._deliberation_advice_schema(frame),
+                name="eris_neuro_continuation_interactive",
+                max_tokens=440,
+                reasoning_effort="low",
+                inference_tier="main_cognition",
+                priority=72,
+                timeout_seconds=float(os.getenv("ERIS_NEURO_CONTINUATION_TIMEOUT_S", "10") or 10),
+            )
+        except Exception as exc:
+            self._log("warning", "[neuro-continuation] reviewer failed: %s", exc)
+            return None
+        if not isinstance(raw, Mapping):
+            return None
+        try:
+            choice_index = int(raw.get("choice_index"))
+        except (TypeError, ValueError):
+            return None
+        if choice_index < 0 or choice_index >= len(frame.coalitions):
+            return None
+        deliberated = SelectionResult(
+            winner_index=choice_index,
+            scores=selection.scores,
+            probabilities=selection.probabilities,
+            margin=selection.margin,
+            entropy=selection.entropy,
+            requires_deliberation=False,
+            parallel_review_recommended=False,
+            reason="parallel_neuro_review",
+            broadcast=selection.broadcast,
+        )
+        commit = self._commit_from_selection(
+            frame,
+            deliberated,
+            reason=_compact(raw.get("reason", "parallel_neuro_review"), 500) or "parallel_neuro_review",
+            source="neuro_parallel_advisory",
+            semantic_commitments=raw.get("semantic_commitments", ()),
+            cognitive_requests=raw.get("cognitive_requests", ()),
+            confidence=_clamp01(raw.get("confidence", 0.0)),
+            review_conditions=raw.get("review_conditions", ()),
+        )
+        return NeuroDeliberationAdvice(
+            commit=commit,
+            followup_brief=_compact(raw.get("followup_brief", ""), 1200),
+            material_delta=_clamp01(raw.get("material_delta", 0.0)),
+            should_follow_up=bool(raw.get("should_follow_up", False)),
+        )
+
+    def _deliberate_subject_choice(
+        self,
+        frame: SubjectDeliberationFrame,
+        selection: SelectionResult,
+        *,
+        user_text: str,
+        snapshot: Mapping[str, Any] | None,
+        mode: str,
+    ) -> SubjectExecutiveCommit:
+        """Invite the LLM as a deliberative specialist, never as state owner.
+
+        The model sees semantic action channels with *local indices only*. It may
+        compare consequences or request one bounded cognitive review, but runtime
+        alone maps the result back to coalition/proposal identity.
+        """
+        payload = self._subject_deliberation_payload(
+            frame, selection, user_text=user_text, snapshot=snapshot, mode=mode
+        )
         system = (
             "You are ERIS's bounded deliberative cortex. Routine action selection has already happened in a fast "
-            "competition layer. You are called only because the choice landscape is ambiguous, surprising or conflicted. "
+            "competition layer. You are called only because the remaining choice is materially consequential, surprising "
+            "in a consequential context, or commitment-conflicted. "
             "Compare the offered semantic choices and their likely consequences. Return exactly one current choice_index. "
             "The indices are ephemeral; do not mention or invent runtime IDs, thread IDs, coalition IDs or proposal IDs. "
             "semantic_commitments are concise meanings for Surface, never final wording. cognitive_requests may contain "
@@ -583,7 +706,13 @@ class ExecutiveCortex:
                 reasoning_effort="low",
                 inference_tier="main_cognition",
                 priority=98 if mode == "interactive" else 66,
-                timeout_seconds=float(os.getenv("ERIS_EXECUTIVE_TIMEOUT_S", "18") or 18),
+                timeout_seconds=float(
+                    os.getenv(
+                        "ERIS_NEURO_DELIBERATION_TIMEOUT_S",
+                        "10" if str(mode).startswith("interactive") else "8",
+                    )
+                    or ("10" if str(mode).startswith("interactive") else "8")
+                ),
             )
         except Exception as exc:
             self._log("warning", "[neuro-control] deliberator failed mode=%s: %s", mode, exc)
@@ -621,6 +750,7 @@ class ExecutiveCortex:
             margin=selection.margin,
             entropy=selection.entropy,
             requires_deliberation=False,
+            parallel_review_recommended=False,
             reason="deliberator_resolved_competition",
             broadcast=selection.broadcast,
         )
@@ -731,13 +861,16 @@ class ExecutiveCortex:
         user_text: str = "",
         snapshot: Mapping[str, Any] | None = None,
         mode: str = "interactive",
+        allow_remote_deliberation: bool = True,
     ) -> SubjectExecutiveCommit | None:
         """Chọn một hành động từ frame hiện tại bằng đúng một authority.
 
-        V30 invariant:
+        V31 invariant:
         - runtime giữ identity của coalition/proposal; model không nhìn thấy ID đó;
-        - fast gate xử lý trường hợp rõ ràng;
-        - chỉ khi cạnh tranh mơ hồ mới gọi deliberator one-shot bằng ``choice_index``;
+        - fast gate xử lý mọi lựa chọn routine/reversible, kể cả khi score sát nhau;
+        - direct chat luôn fast-commit; slow Neuro chạy qua continuation lane riêng;
+        - autonomous có thể remote-deliberate khi ambiguity gắn với hệ quả vật chất/conflict;
+        - mỗi blocking MindLoop session chỉ được mở tối đa một remote deliberation;
         - nếu deliberator không dùng được, fast gate vẫn là authority duy nhất.
 
         Không còn rollback sang LLM selector cũ và không có rebound/remap ID.
@@ -760,6 +893,30 @@ class ExecutiveCortex:
                 selection.entropy,
             )
             return commit
+
+        # Direct chat is availability-first: slow Neuro is never allowed to sit
+        # on the public reply's critical path.  The interactive caller commits
+        # this deterministic winner now; NeuroContinuationRuntime may review the
+        # same frozen frame in parallel and later offer a cancellable follow-up.
+        if str(mode or "").startswith("interactive"):
+            return self._commit_from_selection(
+                frame,
+                selection,
+                reason=f"parallel_review_deferred:{selection.reason}",
+                source="neuro_fast_gate",
+                review_conditions=("parallel_neuro_review",),
+            )
+
+        if not allow_remote_deliberation:
+            # Cognitive review has already spent this session's remote-deliberation
+            # budget. The revised frame is still re-scored, but the deterministic
+            # Neuro gate owns the recommit instead of recursively asking the model.
+            return self._commit_from_selection(
+                frame,
+                selection,
+                reason=f"review_recommit_without_second_remote_round:{selection.reason}",
+                source="neuro_fast_gate",
+            )
 
         if not self.neuro_deliberator_enabled:
             # Không tạo một policy khẩn cấp thứ hai. Khi deliberator vắng mặt,

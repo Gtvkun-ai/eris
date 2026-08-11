@@ -738,9 +738,10 @@ class AIChatOrchestrator:
                 "Treat this as factual/perception repair, not subjective disagreement. Briefly concede the unsupported claim, do not defend it, "
                 "state the corrected epistemic stance, then answer naturally without inventing new sensory evidence.",
             ))
-        # PDF annotation, pages 12-13 and 20: P2 cleanup removed the legacy
-        # discourse/semantic committee entirely. ``semantic_frame.v1`` from the
-        # public writer is the only conversational meaning object.
+        # V6 Public Writer Recovery: semantic_frame từ writer vẫn là authority khi
+        # có mặt và hợp lệ, nhưng nó là soft metadata ở availability boundary.
+        # Một metadata lỗi không còn quyền xóa câu public; runtime sẽ sanitize về
+        # typed default rồi observer hậu kỳ tiếp tục cập nhật continuity.
         user_meta["semantic_authority"] = "semantic_frame.v1"
         discovery_runtime = getattr(host, "ai_discovery_runtime", None)
         discovery_context = (
@@ -810,6 +811,22 @@ class AIChatOrchestrator:
         )
         subject_payload = subject_decision.to_dict()
         planning_snapshot["subject_decision"] = subject_payload
+        parallel_state_fn = getattr(subject_ingress, "parallel_cognition_state", None)
+        parallel_state = (
+            parallel_state_fn(turn_id)
+            if callable(parallel_state_fn)
+            else {"deep_thought_running": False, "may_follow_up": False, "policy": "parallel_nonblocking"}
+        )
+        planning_snapshot["parallel_cognition"] = dict(parallel_state or {})
+        if bool((parallel_state or {}).get("deep_thought_running", False)):
+            grounding_context = "\n\n".join(part for part in (
+                grounding_context,
+                "PARALLEL COGNITION STATUS: a bounded deep review is running for this same turn. "
+                "Do not wait for it and do not withhold the useful answer available now. Give the best provisional answer now. "
+                "Only when the issue is genuinely consequential may you naturally mention that you are still considering it and may follow up. "
+                "Never expose worker/model/Neuro implementation details and never ask the user to wait for routine conversation.",
+            ) if str(part).strip())
+            planning_snapshot["grounding_context"] = grounding_context
         subject_service = getattr(host, "subject_service", None)
         subject_inner_view = {}
         inner_view_fn = getattr(subject_service, "inner_view", None)
@@ -987,6 +1004,25 @@ class AIChatOrchestrator:
                     )
         finally:
             host._set_background_memory_digest_remote_inflight(False)
+
+        # The public writer has finished its remote generation. Only now may the
+        # queued slow Neuro review start, so it cannot steal provider capacity
+        # from the reply on the human-facing critical path.
+        neuro_continuation_runtime = getattr(host, "neuro_continuation_runtime", None)
+        if payload:
+            release_neuro = getattr(neuro_continuation_runtime, "release", None)
+            if callable(release_neuro):
+                try:
+                    release_neuro(turn_id)
+                except Exception as exc:
+                    host.logger.debug("[neuro-continuation] release failed: %s", exc)
+        else:
+            cancel_neuro = getattr(neuro_continuation_runtime, "cancel_turn", None)
+            if callable(cancel_neuro):
+                try:
+                    cancel_neuro(turn_id)
+                except Exception as exc:
+                    host.logger.debug("[neuro-continuation] cancel after empty public reply failed: %s", exc)
 
         discourse_resolution = None
         assistant_discourse_meta: dict[str, Any] = {}
@@ -1484,11 +1520,21 @@ class AIChatOrchestrator:
             hint = str(getattr(chat_plan, "performance_hint", "") or "neutral")
         host.ai_stage_planner.apply(decision, hint, state=mind_state, channel="chat")
         decision = host._execute_system_action(decision, snapshot=snapshot, frame=None)
+        commit_started = time.monotonic()
         public_text, assistant_meta = self._commit(
             decision,
             assistant_meta_extra=assistant_discourse_meta,
             idempotency_key=_chat_commit_idempotency_key(host, turn_id),
         )
+        try:
+            from runtime.observability import GLOBAL_OBSERVABILITY
+            GLOBAL_OBSERVABILITY.observe(
+                "public_writer_commit_ms",
+                max(0.0, (time.monotonic() - commit_started) * 1000.0),
+                tags={"usable": str(bool(public_text)).lower()},
+            )
+        except Exception:
+            pass
         # Commit semantic social plans only after the first public line succeeds.
         # The model appraises; runtime owns IDs, deadlines, leases and cancellation.
         social_plan = payload.get("social_plan") if isinstance(payload, Mapping) else None

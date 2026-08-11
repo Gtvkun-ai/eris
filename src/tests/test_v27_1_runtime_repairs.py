@@ -108,7 +108,11 @@ def _force_ambiguous_non_social_frame(frame):
         action_kind="speak",
         arguments={**dict(coalitions[1].arguments), "speech_act": "self_clarification"},
     )
-    return replace(frame, coalitions=tuple(coalitions))
+    appraisals = tuple(
+        replace(item, future_consequence=0.92, identity_significance=max(item.identity_significance, 0.82))
+        for item in frame.appraisals
+    )
+    return replace(frame, coalitions=tuple(coalitions), appraisals=appraisals)
 
 
 def test_current_subject_initiative_is_merged_into_same_frame_even_when_seed_exists() -> None:

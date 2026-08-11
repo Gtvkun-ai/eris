@@ -2,8 +2,9 @@
 """Neuro-inspired control layer for Subject Core.
 
 This module deliberately does *less* than the old Executive LLM path.
-It turns already-grounded coalition scores into fast action competition and only
-asks for expensive deliberation when the competition itself is ambiguous.
+It turns already-grounded coalition scores into fast action competition. Blocking
+deliberation is reserved for materially consequential conflict; direct chat may
+separately recommend an advisory parallel review without delaying its fast commit.
 
 The neuroscience analogy is intentionally modest:
 
@@ -151,6 +152,7 @@ class SelectionResult:
     margin: float
     entropy: float
     requires_deliberation: bool
+    parallel_review_recommended: bool
     reason: str
     broadcast: WorkspaceBroadcast
 
@@ -159,14 +161,37 @@ class SelectionResult:
 
 
 @dataclass(frozen=True, slots=True)
+class NeuroDeliberationAdvice:
+    """Advisory-only result from slow Neuro cognition.
+
+    ``commit`` describes the choice the slow reviewer would make on the frozen
+    frame.  It is deliberately *not* finalized by Subject Core.  ``followup_brief``
+    is a semantic continuation brief, never public wording.  Runtime decides
+    whether the advice is still current and material enough to surface.
+    """
+
+    commit: SubjectExecutiveCommit
+    followup_brief: str = ""
+    material_delta: float = 0.0
+    should_follow_up: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class NeuroControlConfig:
-    """A few continuous thresholds, not a forest of semantic booleans."""
+    """Continuous thresholds for competition and *material* deliberation.
+
+    Margin/entropy/uncertainty describe how indecisive the fast competition is.
+    They are diagnostics, not by themselves a reason to spend a remote LLM call.
+    Remote deliberation is reserved for ambiguity that also carries material
+    consequence, or for an explicit commitment conflict.
+    """
 
     deliberation_margin: float = 0.075
     uncertainty_threshold: float = 0.52
     entropy_threshold: float = 0.82
     surprise_threshold: float = 0.74
     conflict_threshold: float = 0.60
+    material_stakes_threshold: float = 0.72
     max_broadcast_signals: int = 3
 
 
@@ -429,6 +454,7 @@ class NeuroActionSelector:
                 margin=(scores[0] - scores[1] if len(scores) > 1 else 1.0),
                 entropy=self._normalized_entropy(probabilities),
                 requires_deliberation=False,
+                parallel_review_recommended=False,
                 reason="fast_gate:ranked_adapter",
                 broadcast=broadcast,
             )
@@ -445,40 +471,91 @@ class NeuroActionSelector:
         probabilities = self._softmax(scores, beta)
         entropy = self._normalized_entropy(probabilities)
         winner = frame.coalitions[winner_index]
-        winner_action = str(getattr(winner, "action_kind", "") or "").lower()
-        is_harmless = winner_action in {"silence", "body_only"} and not getattr(winner, "capability_route", False)
-        
-        reasons: list[str] = []
+
+        # Competition ambiguity and deliberation necessity are different things.
+        # A casual turn can legitimately have several nearly-equivalent actions
+        # and therefore high entropy. That does not make the turn semantically
+        # difficult or worth another network/model round-trip.
+        ambiguity: list[str] = []
         if len(frame.coalitions) > 1 and margin < self.config.deliberation_margin:
-            reasons.append("low_margin")
-            
-        # Nếu winner là hành động an toàn (im lặng), không cần tốn 20s LLM chỉ vì uncertainty/entropy cao
-        if not is_harmless:
-            if _clamp01(getattr(winner, "uncertainty", 0.5), 0.5) >= self.config.uncertainty_threshold:
-                reasons.append("winner_uncertain")
-            if entropy >= self.config.entropy_threshold:
-                reasons.append("high_entropy")
-            if broadcast.surprise >= self.config.surprise_threshold and broadcast.precision < 0.62:
-                reasons.append("surprising_low_precision")
-                
+            ambiguity.append("low_margin")
+        winner_uncertainty = _clamp01(getattr(winner, "uncertainty", 0.5), 0.5)
+        if winner_uncertainty >= self.config.uncertainty_threshold:
+            ambiguity.append("winner_uncertain")
+        high_entropy = entropy >= self.config.entropy_threshold
+        if high_entropy:
+            ambiguity.append("high_entropy")
+
+        # Materiality comes from the causal frame, not from wording heuristics.
+        # Goal relevance is intentionally excluded: a user can strongly want a
+        # trivial answer. Generic chat also carries a high baseline relational
+        # significance in SubjectService, so relational_significance is *not* a
+        # high-stakes trigger here. Consequence/identity stakes and explicit
+        # commitment conflict are what justify an expensive second opinion.
+        decision_stakes = max(
+            (
+                max(
+                    _clamp01(getattr(item, "future_consequence", 0.0)),
+                    _clamp01(getattr(item, "identity_significance", 0.0)),
+                )
+                for item in (getattr(frame, "appraisals", ()) or ())
+            ),
+            default=0.0,
+        )
         conflict = self._commitment_conflict(frame, winner)
+
+        reasons: list[str] = []
         if conflict >= self.config.conflict_threshold:
             reasons.append("commitment_conflict")
 
-        homogeneous_social_tie = self._homogeneous_social_tie(frame, order)
-        only_routine_ambiguity = bool(reasons) and set(reasons).issubset({
-            "low_margin", "winner_uncertain", "high_entropy"
-        })
-        if homogeneous_social_tie and only_routine_ambiguity:
-            # Winner is already deterministic from the scored competition. Do not
-            # spend a remote deliberation round choosing between two reversible
-            # variants of the same social-contact move.
-            reasons.clear()
-            decision_reason = "fast_gate:homogeneous_social_tie"
-        else:
-            decision_reason = ""
+        # Entropy is intentionally excluded from the trigger. A distribution can
+        # be diffuse simply because several reversible variants are all acceptable.
+        # Escalation needs local indecision (margin) or uncertainty *and* stakes.
+        consequential_ambiguity = any(
+            item in {"low_margin", "winner_uncertain"} for item in ambiguity
+        )
+        if consequential_ambiguity and decision_stakes >= self.config.material_stakes_threshold:
+            reasons.append("material_ambiguity")
+
+        if (
+            decision_stakes >= self.config.material_stakes_threshold
+            and broadcast.surprise >= self.config.surprise_threshold
+            and broadcast.precision < 0.62
+        ):
+            reasons.append("surprising_material_change")
 
         requires = bool(reasons)
+        homogeneous_tie = self._homogeneous_social_tie(frame, order) and bool(ambiguity)
+
+        # Public chat has a different latency contract from autonomous action.
+        # Ambiguity can be worth a *background second look* even when it is not
+        # consequential enough to block/override the fast choice. Keep this as a
+        # typed signal instead of teaching runtime to parse ``reason`` strings.
+        # Entropy alone still does nothing: diffuse but equivalent choices are
+        # common in conversation.
+        origin = getattr(getattr(frame, "observation", None), "origin", None)
+        origin_value = str(getattr(origin, "value", origin) or "").lower()
+        user_origin = origin_value == "user"
+        parallel_review_recommended = bool(
+            user_origin
+            and not homogeneous_tie
+            and (requires or any(item in {"low_margin", "winner_uncertain"} for item in ambiguity))
+        )
+
+        if requires:
+            reason = "deliberate:" + ",".join(reasons)
+            if ambiguity:
+                reason += ";competition=" + ",".join(ambiguity)
+        elif homogeneous_tie:
+            reason = "fast_gate:homogeneous_social_tie"
+        elif ambiguity:
+            # The deterministic winner is good enough for the public reply. A
+            # user-origin frame may still be reviewed asynchronously, which is
+            # advisory cognition rather than a delayed decision.
+            reason = "fast_gate:routine_ambiguity:" + ",".join(ambiguity)
+        else:
+            reason = "fast_gate:clear_winner"
+
         return SelectionResult(
             winner_index=winner_index,
             scores=scores,
@@ -486,7 +563,8 @@ class NeuroActionSelector:
             margin=margin,
             entropy=entropy,
             requires_deliberation=requires,
-            reason=("deliberate:" + ",".join(reasons)) if requires else (decision_reason or "fast_gate:clear_winner"),
+            parallel_review_recommended=parallel_review_recommended,
+            reason=reason,
             broadcast=broadcast,
         )
 
@@ -494,6 +572,7 @@ class NeuroActionSelector:
 __all__ = [
     "NeuroActionSelector",
     "NeuroControlConfig",
+    "NeuroDeliberationAdvice",
     "SelectionResult",
     "WorkspaceBroadcast",
     "WorkspaceSignal",

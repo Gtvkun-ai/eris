@@ -53,8 +53,10 @@ LANE_POLICIES: dict[str, LanePolicy] = {
     "speech_localizer": LanePolicy(35, True, 2, 10.0, 1),
     "tts_localizer": LanePolicy(35, True, 2, 10.0, 1),
     "romaji_localizer": LanePolicy(35, True, 2, 10.0, 1),
-    # Required one-shot conflict resolution for a direct user turn.
-    "neuro_deliberation_required": LanePolicy(25, False, 4, 22.0, 1),
+    # Direct-chat slow Neuro runs in parallel after the deterministic fast commit.
+    # It is lower priority than chat/TTS, cancellable by its own conversation scope,
+    # and may never become authority over the already-served public turn.
+    "neuro_continuation": LanePolicy(40, True, 2, 12.0, 1),
     # Tool/capability planning uses stable external capability identities, but the
     # planner itself is one-shot and may not own conversational session state.
     "capability_deliberation_required": LanePolicy(26, False, 4, 22.0, 1),
@@ -81,7 +83,7 @@ _DEFAULT_POLICY = LanePolicy(50, False, 8, 30.0, 2)
 # lanes are shed instead. A transport must explicitly advertise that it can
 # apply the smaller budget; otherwise the broker never lies about token use.
 _REQUIRED_DEGRADE_LANES = frozenset({
-    "chat_main", "chat", "chat_tool_required", "directive", "neuro_deliberation_required",
+    "chat_main", "chat", "chat_tool_required", "directive",
     "capability_deliberation_required", "transport",
 })
 

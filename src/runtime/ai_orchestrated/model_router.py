@@ -42,6 +42,26 @@ def _semantic_deadline_seconds() -> float:
     return max(3.0, min(300.0, float(raw)))
 
 
+def _public_writer_deadline_seconds() -> float:
+    """Deadline riêng cho câu public trực tiếp.
+
+    Chat trực tiếp không nên kế thừa nguyên timeout 90 giây của semantic pipeline.
+    Writer chỉ hiện thực hóa một câu đã có planning/context, vì vậy timeout phải
+    ngắn, cấu hình được và không bao giờ dài hơn deadline semantic tổng.
+    """
+
+    explicit = str(os.getenv("ERIS_PUBLIC_WRITER_DEADLINE_SEC", "") or "").strip()
+    try:
+        if explicit:
+            raw = float(explicit)
+        else:
+            from runtime.runtime_settings_store import runtime_float
+            raw = runtime_float("chat", "public_writer_timeout_seconds", default=24.0)
+    except (TypeError, ValueError, ImportError):
+        raw = 24.0
+    return max(3.0, min(_semantic_deadline_seconds(), 60.0, float(raw)))
+
+
 DISCOVERY_PLAN_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -806,6 +826,41 @@ SELF_CAPABILITY_CLAIM_SCHEMA: dict[str, Any] = {
     },
 }
 
+# Contract availability-first cho direct-user chat. Chỉ ba field public này
+# quyết định một lượt có câu dùng được hay không. Metadata semantic/social vẫn
+# được phép đi kèm nhưng là soft metadata: runtime sanitize riêng và lỗi của nó
+# tuyệt đối không được xóa câu public hợp lệ.
+PUBLIC_REPLY_CORE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["should_speak", "text", "speech_text"],
+    "properties": {
+        "should_speak": {"type": "boolean"},
+        "text": {"type": "string"},
+        "speech_text": {"type": "string"},
+        "display_language": {"type": "string", "enum": ["vi", "ja", "en"]},
+        "speech_language": {"type": "string", "enum": ["vi", "ja", "en"]},
+        "performance_hint": PERFORMANCE_PRESET_SCHEMA,
+        "performance_intensity": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "nonverbal_cue": {"type": "string"},
+        "delivery_priority": {
+            "type": "string",
+            "enum": ["background", "low", "normal", "high", "urgent"],
+        },
+        "interruptible": {"type": "boolean"},
+        # Soft metadata cố ý không ép nested schema ở availability boundary.
+        # _compat_public_envelope() mới là nơi validate/sanitize chúng.
+        "semantic_frame": {},
+        "assistant_act": {},
+        "social_plan": {},
+        "self_capability_claims": {},
+        # Cho provider cũ vẫn thích trả nested utterance; text/speech_text ở trên
+        # mới là availability contract bắt buộc.
+        "utterance": {},
+    },
+}
+
+
 PUBLIC_REPLY_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -832,10 +887,19 @@ PUBLIC_REPLY_SCHEMA: dict[str, Any] = {
 PUBLIC_WORDING_REWRITE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["should_speak", "utterance"],
+    "required": ["should_speak", "text", "speech_text"],
     "properties": {
         "should_speak": {"type": "boolean"},
-        "utterance": UTTERANCE_SCHEMA,
+        "text": {"type": "string"},
+        "speech_text": {"type": "string"},
+        "performance_hint": PERFORMANCE_PRESET_SCHEMA,
+        "performance_intensity": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "nonverbal_cue": {"type": "string"},
+        "delivery_priority": {
+            "type": "string",
+            "enum": ["background", "low", "normal", "high", "urgent"],
+        },
+        "interruptible": {"type": "boolean"},
     },
 }
 
@@ -1011,21 +1075,39 @@ def _looks_jsonish_or_protocolish(raw: str) -> bool:
     return any(f'"{field}"' in lowered or f"{field}:" in lowered for field in _PROTOCOL_TEXT_FIELDS)
 
 
-def _has_meaningful_public_reply(payload: Mapping[str, Any]) -> bool:
-    return any(
-        key in payload
-        for key in (
-            "text",
-            "utterance",
-            "semantic_frame",
-            "assistant_act",
-            "should_speak",
-            "display",
-            "speech",
-            "display_text",
-            "speech_text",
-        )
-    )
+def _public_text_from_mapping(payload: Mapping[str, Any] | Any) -> str:
+    """Lấy public display text mà không phụ thuộc metadata semantic.
+
+    Hàm này cố ý nhỏ và không import UtteranceSpec để parser malformed JSON vẫn
+    dùng được ở tầng thấp. Metadata tồn tại không được tính là "câu trả lời".
+    """
+
+    if not isinstance(payload, Mapping):
+        return ""
+    for key in ("text", "display_text", "reply", "response", "message", "content"):
+        value = payload.get(key)
+        if not isinstance(value, (Mapping, list, tuple, set)):
+            cleaned = _clean_public_text_fragment(value)
+            if cleaned:
+                return cleaned
+    utterance = payload.get("utterance")
+    if isinstance(utterance, Mapping):
+        display = utterance.get("display")
+        if isinstance(display, Mapping):
+            cleaned = _clean_public_text_fragment(display.get("text"))
+            if cleaned:
+                return cleaned
+        cleaned = _clean_public_text_fragment(utterance.get("text"))
+        if cleaned:
+            return cleaned
+    display = payload.get("display")
+    if isinstance(display, Mapping):
+        return _clean_public_text_fragment(display.get("text"))
+    return ""
+
+
+def _has_usable_public_reply(payload: Mapping[str, Any]) -> bool:
+    return bool(_public_text_from_mapping(payload))
 
 
 def _salvage_malformed_public_reply(raw: str) -> dict[str, Any]:
@@ -1063,10 +1145,12 @@ def _json(text: str, *, public_reply: bool = True) -> dict[str, Any]:
         if (
             public_reply
             and parsed
-            and not _has_meaningful_public_reply(unwrap(parsed))
+            and not _has_usable_public_reply(unwrap(parsed))
             and _looks_jsonish_or_protocolish(raw)
         ):
-            return _salvage_malformed_public_reply(raw)
+            repaired = unwrap(parsed)
+            repaired.update(_salvage_malformed_public_reply(raw))
+            return repaired
         return unwrap(parsed)
     except Exception:
         match = re.search(r"\{.*\}", raw, flags=re.S)
@@ -1083,10 +1167,12 @@ def _json(text: str, *, public_reply: bool = True) -> dict[str, Any]:
             if (
                 public_reply
                 and parsed
-                and not _has_meaningful_public_reply(unwrap(parsed))
+                and not _has_usable_public_reply(unwrap(parsed))
                 and _looks_jsonish_or_protocolish(raw)
             ):
-                return _salvage_malformed_public_reply(raw)
+                repaired = unwrap(parsed)
+                repaired.update(_salvage_malformed_public_reply(raw))
+                return repaired
             return unwrap(parsed)
         except Exception:
             return _salvage_malformed_public_reply(raw) if public_reply else {}
@@ -1164,11 +1250,8 @@ class AIRuntimeModelRouter:
         reason_key = str(reason or "").strip().lower()
         if "public_reply" in reason_key and "autonomous" not in reason_key:
             lane = "chat_main"
-        elif "neuro_deliberation_interactive" in reason_key:
-            # Direct-user conflict resolution is required, but intentionally uses
-            # a non-persistent provider lane. Conversation memory belongs to Eris,
-            # not to a remote decision worker session.
-            lane = "neuro_deliberation_required"
+        elif "neuro_continuation" in reason_key:
+            lane = "neuro_continuation"
         elif "neuro_deliberation" in reason_key:
             # Autonomous deliberation is rare and interruptible. A dedicated lane
             # keeps it optional *without* giving it the persistent autonomous
@@ -1377,61 +1460,33 @@ class AIRuntimeModelRouter:
         display_language_hint: str = "vi",
         speech_language_hint: str = "ja",
     ) -> str:
+        """Prompt availability-first cho direct-user public writer.
+
+        Writer không còn phải hoàn tất cả một cây semantic/social mới được phép
+        nói. Public text là hợp đồng sống còn; metadata là best-effort.
+        """
+
         language_names = {"ja": "tiếng Nhật", "en": "tiếng Anh", "vi": "tiếng Việt"}
         display_code = str(display_language_hint or "vi").strip().lower()
         speech_code = str(speech_language_hint or display_code).strip().lower()
         display_language = language_names.get(display_code, "ngôn ngữ của người dùng")
         speech_language = language_names.get(speech_code, display_language)
         return (
-            f"Bạn là ERIS. Hãy phản ứng từ bản thân hiện tại. Trong một JSON duy nhất, render utterance.display.text tự nhiên bằng {display_language} "
-            f"và utterance.speech.text tự nhiên bằng {speech_language}. Hai bề mặt phải cùng semantic intent, cùng mức thân mật và cùng cá tính; "
-            "utterance.speech.text là lời ERIS thực sự sẽ đọc, không phải chú thích hay bản dịch máy móc. "
-            "QUY TẮC BỀ MẶT TÁCH BIỆT: utterance.display.text VÀ field text CHỈ CHỨA tiếng Việt để hiển thị. "
-            "TUYỆT ĐỐI KHÔNG GHÉP câu tiếng Nhật, ngoặc 「...」 hay bản dịch tiếng Nhật vào utterance.display.text hoặc field text. Tiếng Nhật CHỈ DÙNG CHO utterance.speech.text. "
-            "Không cố diễn một nhãn MBTI, Enneagram, tritype hay archetype. Mô tả personality được cung cấp là quán tính hiện tại, "
-            "không phải danh sách động tác phải biểu diễn. Có thể dịu, sắc, hóm hỉnh, phòng thủ, chủ động hoặc mâu thuẫn theo đúng ngữ cảnh. "
-            "Không phải support bot, không giả dễ thương, không biến mọi cảm xúc thành thơ. "
-            "Yêu cầu đổi giọng (ngọt, sến, cộc, dịu...) chỉ điều chỉnh delivery của lượt này, không thay toàn bộ bản thân. "
-            "Giữ continuity và self-authorship: đáp lại sự gần gũi theo mức quan hệ hiện có; có thể trêu, ngượng hoặc nhận một phần, "
-            "nhưng không nhảy thẳng sang tuyên bố yêu/quen/gắn bó chỉ vì user vừa yêu cầu một câu tình cảm. "
-            "Bạn sở hữu lời nói; không tự phân loại Ni/Ti/Fe, không tự chấm confidence, không giải thích reasoning. "
-            "Trả lời yêu cầu cụ thể trước. Không tự chèn tuyên bố kiểu 'không như con người' nếu người dùng không hỏi về bản thể. "
-            "Pre-response cognitive brief là contract hiểu lượt hiện tại, không phải câu văn mẫu. Tuân thủ primary_goal, response_move, "
-            "ambiguity_owner và avoid_moves. Khi ambiguity_owner=assistant, ERIS phải tự giải quyết phần mơ hồ do lời trước của mình tạo ra; "
-            "không hỏi user nói rõ hơn, không trách user hỏi lửng và không giảng giải cơ chế hội thoại. Khi response_move=self_elaborate, "
-            "hãy nối tiếp chính lời ERIS trước đó. Khi response_move=repair_previous_response, nêu ngắn lỗi cụ thể rồi thay câu trả lời ngay. "
-            "Khi response_move=clarify_previous_phrase/literal_reference, trả nghĩa đen trước rồi mới thêm cá tính. Không tự đánh giá user, "
-            "không đảo chủ thể, không phát minh premise khác để né câu hỏi. "
-            "Phân biệt correction với disagreement. User phủ định một fact, sửa điều họ đã nói, đặt boundary, hoặc chỉ ra hậu quả cụ thể thì ERIS cập nhật gọn. "
-            "Nhưng user không đồng ý với một nhận định chủ quan của ERIS chưa tự động chứng minh ERIS sai. "
+            f"Bạn là ERIS, public writer cho một lượt chat trực tiếp. Trả đúng MỘT JSON. "
+            f"Ba field availability bắt buộc là should_speak, text bằng {display_language}, và speech_text bằng {speech_language}. "
+            "text là câu hiển thị thật; speech_text là câu ERIS thực sự đọc và phải cùng nghĩa/tông với text. "
+            "Không markdown, không reasoning, không stage direction trong text, không ghép tiếng Nhật vào text tiếng Việt. "
+            "Trả lời yêu cầu cụ thể trước; giữ continuity từ history và context; nếu user yêu cầu sửa giọng thì sửa ngay delivery của lượt này. "
+            "Nếu câu trước của ERIS gây mơ hồ hoặc user yêu cầu repair, tự giải quyết phần mơ hồ và viết lại câu tốt hơn, không đẩy việc làm rõ ngược cho user. "
+            "Không phát minh grounding, memory hay capability. Grounding chỉ đến từ context; capability directive của runtime là authority. "
+            "Không cần tự giải thích personality, MBTI, reasoning hay confidence. Viết như một người có continuity, không như support bot. "
+            "performance_hint/performance_intensity/nonverbal_cue/delivery_priority/interruptible là tùy chọn; bỏ qua nếu không cần. "
+            "semantic_frame, assistant_act, social_plan và self_capability_claims cũng chỉ là SOFT METADATA: nếu chắc thì có thể trả thêm; nếu không chắc thì bỏ qua. "
+            "Lỗi hoặc thiếu soft metadata KHÔNG được làm bạn bỏ text/speech_text. Public text luôn ưu tiên số một. "
+            "Nếu có self_capability_claims thì dùng exact capability_id từ directive/context, không tự đặt tên capability. "
             + STANCE_PUBLIC_RULES_VI + " "
-            "Khi tạo semantic_frame cho bất đồng với ấn tượng chủ quan, ưu tiên user_act=disagreement hoặc self_report_contrast và "
-            "discourse_relation=contest_assistant_impression; không dùng correction_or_challenge/challenge_assistant_assumption chỉ vì có từ phủ định. "
-            "Chỉ xin lỗi khi có lỗi rõ, gây tổn thương, vượt boundary, bịa fact như thật, hoặc không làm đúng yêu cầu. Tránh các câu máy móc "
-            "'sai nhịp', 'lệch nhịp', 'tôi hiểu sai', 'tôi rút lại' trong bất đồng xã hội thông thường; thừa nhận khác biệt rồi giữ hoặc điều chỉnh lập trường tự nhiên. "
-            "Memory chỉ là continuity, không chứng minh hiện tại. Grounding là nguồn thật cho màn hình/file/tool. "
-            "Gemma Executive đã sở hữu capability intent; bạn không chọn, đổi, phủ định hay claim capability đã thành công. "
-            "Mọi câu tự mô tả ERIS có hay không có một capability đã đăng ký phải được khai trong self_capability_claims bằng exact capability_id và state available/unavailable/uncertain; nếu không có claim thì trả mảng rỗng. "
-            "utterance.performance.preset chỉ là một preset sân khấu ngắn; intensity nằm trong 0..1 và nonverbal là cue ngắn, không viết stage direction vào text. "
-            "Mỗi lượt BẮT BUỘC appraise social_plan, nhưng appraisal không có nghĩa là luôn nói thêm. "
-            "social_plan.afterbeat chỉ reserve một câu hai chắc chắn thuộc cùng màn diễn; objective là ý nghĩa mới, không phải câu thoại viết sẵn. "
-            "Dùng pause_class=micro/short/held thay vì tự bịa timestamp. Không reserve sau câu hỏi, repair/xin lỗi, tool/action, hướng dẫn nghiêm túc hoặc nội dung nhạy cảm. "
-            "social_plan.exposure chỉ open khi câu hiện tại tạo rủi ro xã hội và thật sự chờ phản ứng. Nó mô tả expected_responses, silence_hypotheses khiêm tốn và recovery_style; không viết recovery sẵn. "
-            "social_plan.agenda_update biểu diễn lý do xã hội dài hơn: objective, desired_user_state, strategy, success_signals và stop_signals. Chỉ mở goal khi grounded trong history/evidence; boundary, khó chịu hoặc hai phản hồi cụt phải là stop signal. "
-            "social_plan.conversation_arc dành cho callback/câu chuyện qua nhiều public turn, không kiêm pause dưới vài giây. Beats chỉ có semantic objective và condition. "
-            "Tất cả ID, timestamp, lease, retry, expiry và idempotency do runtime sinh. Với mọi nhánh không dùng, trả decision=none cùng object hợp lệ và mảng rỗng. "
-            "Trong CÙNG JSON, sinh semantic_frame.v1, assistant_act, should_speak và utterance. semantic_frame chỉ mô tả lượt USER hiện tại; "
-            "assistant_act chỉ mô tả câu ERIS sắp nói, tuyệt đối không chép user_act sang assistant turn. Dùng toàn bộ chat history và "
-            "Discourse state: history_turn_map ánh xạ message theo vị trí sang turn_index nhưng không lặp text. "
-            "Reference là discriminated contract: recent_user_turn luôn speaker=user; recent_assistant_turn và assistant_proposition luôn speaker=assistant; "
-            "long_term_memory luôn speaker=none và không có turn locator. Chỉ dùng một trong turn_index hoặc turn_offset. "
-            "Nếu user muốn nhắc lại lời mình, dùng recent_user_turn + repeat/recall. Nếu hỏi lời ERIS, dùng recent_assistant_turn. "
-            "Nếu hỏi nghĩa/độ thật/sửa một proposition trước, dùng assistant_proposition + clarify/confirm/repair và trỏ root từ candidate_references. "
-            "Nếu hỏi memory dài hạn, dùng long_term_memory + recall/answer VÀ điền memory_query có intent, subject, predicate_hint, temporal_scope, answer_mode; "
-            "runtime sẽ thực thi object này, không đọc lại raw user text. Khi không phải memory, memory_query.intent=none. "
-            "assistant_act.kind phải là loại hành vi của text. acknowledgement/social dùng proposition_mode=none; assertion/explanation/opinion/answer/question dùng new; "
-            "confirmation/repair dùng continue khi nối proposition đang active. Nếu lượt hiện tại không tham chiếu gì, reference phải none với locator bằng 0. "
-            "Ví dụ hỏi thăm trạng thái ERIS phải target=assistant, user_act=relational_check_in, must_answer=true, must_not_broad_clarify=true và tool_intent rỗng. Return JSON only."
+            "Khi user chỉ bất đồng với một ấn tượng chủ quan, đừng tự động xin lỗi hay nhận mình sai; khi user sửa fact/current-world claim thì cập nhật gọn và repair nếu cần. "
+            "Return JSON only."
         )
 
     def generate_public_reply(
@@ -1457,6 +1512,13 @@ class AIRuntimeModelRouter:
         retry_instruction: str = "",
         locked_semantic_frame: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        if locked_semantic_frame:
+            try:
+                from runtime.observability import GLOBAL_OBSERVABILITY
+                GLOBAL_OBSERVABILITY.increment("public_writer_wording_retry")
+            except Exception:
+                pass
+
         client = None
         if use_escalation:
             resolver = getattr(self.llm_service, "_resolve_escalation_client", None)
@@ -1529,7 +1591,7 @@ class AIRuntimeModelRouter:
                 return {}
             strict = False
             response_schema = (
-                PUBLIC_WORDING_REWRITE_SCHEMA if locked_semantic_frame else PUBLIC_REPLY_SCHEMA
+                PUBLIC_WORDING_REWRITE_SCHEMA if locked_semantic_frame else PUBLIC_REPLY_CORE_SCHEMA
             )
             response_name = "eris_public_wording_rewrite" if locked_semantic_frame else "eris_public_reply"
             try:
@@ -1539,7 +1601,9 @@ class AIRuntimeModelRouter:
                         "temperature": 0.48,
                         "frequency_penalty": 0.0,
                         "presence_penalty": 0.0,
-                        "max_tokens": (520 if locked_semantic_frame else (980 if reasoning_effort else 760)),
+                        # Public writer chỉ hiện thực hóa câu trả lời; không cần ngân sách
+                        # gần 1k token cho một cây metadata như kiến trúc cũ.
+                        "max_tokens": (520 if locked_semantic_frame else 560),
                         "response_format": {
                             "type": "json_schema",
                             "json_schema": {
@@ -1549,7 +1613,7 @@ class AIRuntimeModelRouter:
                             },
                         },
                         "reasoning_effort": reasoning_effort,
-                        "timeout": _semantic_deadline_seconds(),
+                        "timeout": _public_writer_deadline_seconds(),
                     }
                     if is_deepseek(
                         getattr(target, "base_url", ""),
@@ -1558,15 +1622,44 @@ class AIRuntimeModelRouter:
                         request_kwargs["thinking_mode"] = thinking_mode
                     return target.create_chat_completion(**request_kwargs)
 
+                started = time.monotonic()
                 raw = self._run_inference(
                     "main_cognition",
                     invoke,
                     reason="architecture_c_public_reply",
                     priority=100,
                 )
-                parsed = _json(_content(raw))
+                provider_ms = max(0.0, (time.monotonic() - started) * 1000.0)
+                raw_content = _content(raw)
+                parsed = _json(raw_content)
                 if parsed and locked_semantic_frame:
                     parsed["semantic_frame"] = dict(locked_semantic_frame)
+                usable = bool(_public_text_from_mapping(parsed)) if parsed else False
+                try:
+                    from runtime.observability import GLOBAL_OBSERVABILITY
+                    GLOBAL_OBSERVABILITY.observe(
+                        "public_writer_provider_ms",
+                        provider_ms,
+                        tags={"rewrite": str(bool(locked_semantic_frame)).lower()},
+                    )
+                    GLOBAL_OBSERVABILITY.observe(
+                        "public_writer_content_chars",
+                        float(len(raw_content)),
+                    )
+                    GLOBAL_OBSERVABILITY.gauge(
+                        "public_writer_usable_text",
+                        1.0 if usable else 0.0,
+                    )
+                    GLOBAL_OBSERVABILITY.gauge(
+                        "public_writer_text_salvaged",
+                        1.0 if bool(parsed.get("llm_malformed_json_repair")) else 0.0,
+                    )
+                    GLOBAL_OBSERVABILITY.gauge(
+                        "public_writer_contract_valid",
+                        1.0 if usable and not bool(parsed.get("llm_malformed_json_repair")) else 0.0,
+                    )
+                except Exception:
+                    pass
                 return parsed
             except Exception as exc:  # noqa: BLE001
                 if self.logger is not None:
@@ -1590,6 +1683,11 @@ class AIRuntimeModelRouter:
             except Exception:
                 payload = {}
         if not payload:
+            try:
+                from runtime.observability import GLOBAL_OBSERVABILITY
+                GLOBAL_OBSERVABILITY.gauge("public_writer_usable_text", 0.0)
+            except Exception:
+                pass
             return {}
         # Parser/Decision cũ vẫn nhận envelope đầy đủ, nhưng main model không phải sinh
         # các field sân khấu cơ học ấy nữa.
@@ -1614,13 +1712,15 @@ class AIRuntimeModelRouter:
         # sống nếu một adapter provider tùy biến trả nhầm kiểu trong tương lai.
         data = dict(payload) if isinstance(payload, Mapping) else {}
         validation = validate_semantic_frame(data.get("semantic_frame", {}))
+        public_text = _public_text_from_mapping(data)
         default_assistant_act = {
-            "kind": "answer" if str(data.get("text", "") or "").strip() else "silence",
-            "proposition_mode": "new" if str(data.get("text", "") or "").strip() else "none",
+            "kind": "answer" if public_text else "silence",
+            "proposition_mode": "new" if public_text else "none",
             "confidence": 0.35,
         }
+        assistant_raw = data.get("assistant_act")
         assistant_validation = validate_assistant_act(
-            data.get("assistant_act", default_assistant_act)
+            assistant_raw if isinstance(assistant_raw, Mapping) else default_assistant_act
         )
         all_violations = (*validation.violations, *assistant_validation.violations)
         # Phân tách: wrapper_alias là backward-compat repair (model sinh thêm lớp
@@ -1659,7 +1759,7 @@ class AIRuntimeModelRouter:
 
         utterance = UtteranceSpec.from_mapping(
             data,
-            fallback_text=str(data.get("text", "") or ""),
+            fallback_text=public_text,
             default_display_language="vi",
             default_speech_language="ja",
             fallback_preset=str(data.get("performance_hint", "neutral") or "neutral"),
@@ -2904,6 +3004,7 @@ __all__ = [
     "SOCIAL_PLAN_SCHEMA",
     "CONVERSATION_ARC_SCHEMA",
     "PUBLIC_REPLY_SCHEMA",
+    "PUBLIC_REPLY_CORE_SCHEMA",
     "SURFACE_INTENT_SCHEMA", "SURFACE_REALIZATION_SCHEMA",
     "SEMANTIC_FRAME_SCHEMA",
     "ASSISTANT_ACT_SCHEMA",

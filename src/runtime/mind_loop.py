@@ -24,7 +24,7 @@ from cortex.subject.contracts import (
 )
 from cortex.subject.deliberation import CognitiveRequestKind
 from cortex.subject.service import SubjectService
-from cortex.subject.neuro_control import NeuroActionSelector, commit_selection
+from cortex.subject.neuro_control import NeuroActionSelector, SelectionResult, commit_selection
 from runtime.subject_cognition import BoundedSubjectCognition, SubjectCognitionPort
 
 
@@ -33,6 +33,15 @@ class DeliberationState(StrEnum):
     REVISED = "revised"
     COMMITTED = "committed"
     ABANDONED = "abandoned"
+
+
+@dataclass(frozen=True, slots=True)
+class FastMindResult:
+    """Immediate deterministic result for availability-first direct chat."""
+
+    decision: MindDecision
+    commit: SubjectExecutiveCommit
+    selection: SelectionResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +71,7 @@ class SubjectCommitPort(Protocol):
         user_text: str = "",
         snapshot: dict[str, Any] | None = None,
         mode: str = "runtime",
+        allow_remote_deliberation: bool = True,
     ) -> SubjectExecutiveCommit | None: ...
 
 
@@ -84,6 +94,9 @@ class LocalNeuroCommitter:
         self._clock = clock
         self._selector = NeuroActionSelector()
 
+    def select(self, frame: SubjectDeliberationFrame) -> SelectionResult:
+        return self._selector.select(frame)
+
     def commit_subject_frame(
         self,
         frame: SubjectDeliberationFrame,
@@ -91,13 +104,14 @@ class LocalNeuroCommitter:
         user_text: str = "",
         snapshot: dict[str, Any] | None = None,
         mode: str = "runtime",
+        allow_remote_deliberation: bool = True,
     ) -> SubjectExecutiveCommit:
         selection = self._selector.select(frame)
         return commit_selection(
             frame,
             selection,
-            reason=f"local_neuro_without_remote_deliberator:{selection.reason}",
-            source="neuro_fast_gate_local",
+            reason=selection.reason,
+            source="neuro_fast_gate",
             clock=self._clock,
             review_conditions=("remote_deliberator_available",) if selection.requires_deliberation else (),
         )
@@ -182,6 +196,31 @@ class MindLoop:
         )
         return await self.complete(session, committer=committer)
 
+    async def complete_fast(self, session: DeliberationSession) -> FastMindResult:
+        """Finalize one frame from the deterministic Neuro gate only.
+
+        This is the direct-chat path. It intentionally bypasses the remote
+        committer provider so public latency cannot inherit slow deliberation.
+        The returned frozen frame/selection may still be reviewed advisory-only
+        by a parallel continuation runtime after this commit.
+        """
+        if session.state not in {DeliberationState.PREPARED, DeliberationState.REVISED}:
+            raise ValueError(f"cannot fast-complete deliberation from state {session.state}")
+        local = self._local_committer
+        selector = getattr(local, "select", None)
+        selection = selector(session.frame) if callable(selector) else NeuroActionSelector().select(session.frame)
+        commit = local.commit_subject_frame(
+            session.frame,
+            user_text=session.user_text,
+            snapshot=dict(session.snapshot),
+            mode=session.mode,
+            allow_remote_deliberation=False,
+        )
+        if selection.requires_deliberation and "parallel_neuro_review" not in commit.review_conditions:
+            commit = replace(commit, review_conditions=(*commit.review_conditions, "parallel_neuro_review"))
+        decision = await self.subject.finalize_deliberation(session.frame, commit)
+        return FastMindResult(decision=decision, commit=commit, selection=selection)
+
     async def complete(
         self,
         session: DeliberationSession,
@@ -207,6 +246,10 @@ class MindLoop:
                         user_text=current.user_text,
                         snapshot=self._commit_snapshot(current.snapshot),
                         mode=step_mode,
+                        # A cognitive review may revise evidence and scores, but it
+                        # must not open a second remote deliberation inside the same
+                        # MindLoop session. Re-score the revised frame locally.
+                        allow_remote_deliberation=(current.review_count == 0),
                     )
             if commit is None:
                 await self.abandon(current, reason="subject_committer_returned_no_commit")
@@ -263,6 +306,9 @@ class MindLoop:
     def deliberate_sync(self, *args: Any, **kwargs: Any) -> MindDecision:
         return self.run_sync(self.deliberate(*args, **kwargs))
 
+    def complete_fast_sync(self, *args: Any, **kwargs: Any) -> FastMindResult:
+        return self.run_sync(self.complete_fast(*args, **kwargs))
+
     def complete_sync(self, *args: Any, **kwargs: Any) -> MindDecision:
         return self.run_sync(self.complete(*args, **kwargs))
 
@@ -273,6 +319,7 @@ class MindLoop:
 __all__ = [
     "DeliberationSession",
     "DeliberationState",
+    "FastMindResult",
     "LocalNeuroCommitter",
     "MindLoop",
     "SubjectCommitPort",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -152,7 +153,7 @@ def test_user_ingress_no_longer_injects_fixed_action_scores() -> None:
     ingress.mind_loop.abandon_sync(session, reason="test_cleanup")
 
 
-def test_executive_commit_uses_exact_subject_ids() -> None:
+def test_parallel_neuro_advice_maps_ephemeral_choice_back_to_exact_subject_ids() -> None:
     d = Determinism()
     service = SubjectService(
         config=SubjectServiceConfig(subject_id="eris", deterministic=True),
@@ -166,13 +167,19 @@ def test_executive_commit_uses_exact_subject_ids() -> None:
         turn_id="turn-exact",
     )
     frame = session.frame
-    selected = frame.coalitions[-1]
-
+    coalitions = tuple(
+        replace(item, score=(1.0 - 0.01 * index), uncertainty=0.72)
+        for index, item in enumerate(frame.coalitions)
+    )
+    appraisals = tuple(
+        replace(item, future_consequence=0.92, identity_significance=max(item.identity_significance, 0.82))
+        for item in frame.appraisals
+    )
+    frame = replace(frame, coalitions=coalitions, appraisals=appraisals)
     selected_index = len(frame.coalitions) - 1
+    selected = frame.coalitions[selected_index]
 
     def invoke(_client, **kwargs):
-        # V28: deliberator only sees ephemeral indices; runtime identity never
-        # crosses the model boundary.
         assert all("coalition_id" not in item for item in kwargs["payload"]["choices"])
         return {
             "choice_index": selected_index,
@@ -181,14 +188,25 @@ def test_executive_commit_uses_exact_subject_ids() -> None:
             "reason": "selected from current semantic choices",
             "confidence": 0.77,
             "review_conditions": ["new_evidence"],
+            "should_follow_up": True,
+            "material_delta": 0.8,
+            "followup_brief": "surface the material correction",
         }
 
     cortex = ExecutiveCortex(SimpleNamespace(), object(), invoke_structured=invoke, clock=d.clock)
-    commit = cortex.commit_subject_frame(frame, user_text="Kiểm tra giúp tôi.", snapshot={})
-    assert commit is not None
-    assert commit.selected_coalition_id == selected.coalition_id
-    assert commit.selected_proposal_ref == selected.primary_proposal_ref
+    fast = cortex.commit_subject_frame(frame, user_text="Kiểm tra giúp tôi.", snapshot={})
+    assert fast is not None
+    assert fast.source == "neuro_fast_gate"
 
+    advice = cortex.review_subject_frame(
+        frame,
+        baseline_commit=fast,
+        user_text="Kiểm tra giúp tôi.",
+        snapshot={},
+    )
+    assert advice is not None
+    assert advice.commit.selected_coalition_id == selected.coalition_id
+    assert advice.commit.selected_proposal_ref == selected.primary_proposal_ref
 
 def test_autonomous_subject_frame_is_committed_directly_without_backward_binding() -> None:
     d = Determinism()
@@ -237,7 +255,7 @@ def test_autonomous_subject_frame_is_committed_directly_without_backward_binding
     assert any(item.coalition_id == mind_decision.coalition_id for item in frame.coalitions)
 
 
-def test_interactive_executive_can_request_one_bounded_review() -> None:
+def test_interactive_user_turn_never_runs_blocking_executive_review() -> None:
     d = Determinism()
     service = SubjectService(
         config=SubjectServiceConfig(subject_id="eris", deterministic=True),
@@ -252,28 +270,9 @@ def test_interactive_executive_can_request_one_bounded_review() -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        def commit_subject_frame(self, frame, **_kwargs):
+        def commit_subject_frame(self, _frame, **_kwargs):
             self.calls += 1
-            if self.calls == 1:
-                selected = frame.coalitions[0]
-                requests = ("verify_evidence", "inspect_dissent")
-                reason = "need one bounded evidence review"
-            else:
-                selected = next(item for item in frame.coalitions if item.action_kind == "investigate")
-                requests = ()
-                reason = "review completed"
-            return SubjectExecutiveCommit(
-                commit_id=f"commit:{self.calls}",
-                frame_id=frame.frame_id,
-                selected_coalition_id=selected.coalition_id,
-                selected_proposal_ref=selected.primary_proposal_ref,
-                semantic_commitments=("không khẳng định trước khi kiểm chứng",),
-                cognitive_requests=requests,
-                reason=reason,
-                confidence=0.8,
-                review_conditions=(),
-                created_at=d.clock(),
-            )
+            raise AssertionError("interactive remote review must not sit on the public latency path")
 
     executive = _Executive()
     decision = ingress.observe_user_turn(
@@ -282,6 +281,5 @@ def test_interactive_executive_can_request_one_bounded_review() -> None:
         turn_id="turn-review",
         committer=executive,
     )
-    assert executive.calls == 2
-    assert decision.proposed_action == "investigate"
-    assert "executive_review" in decision.arguments
+    assert executive.calls == 0
+    assert decision.arguments["executive_commit"]["source"] == "neuro_fast_gate"

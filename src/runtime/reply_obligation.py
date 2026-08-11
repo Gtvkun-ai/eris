@@ -30,6 +30,19 @@ class ReplyObligationResult:
     reason: str = ""
 
 
+def _observe_public_writer_fallback(kind: str) -> None:
+    """Ghi fallback mà không để observability làm hỏng reply path."""
+
+    try:
+        from runtime.observability import GLOBAL_OBSERVABILITY
+        GLOBAL_OBSERVABILITY.increment(
+            "public_writer_fallback",
+            tags={"kind": str(kind or "unknown")},
+        )
+    except Exception:
+        pass
+
+
 def requirement_from_frame(frame: SemanticFrame | Mapping[str, Any] | None, *, direct_user_turn: bool = True) -> ReplyRequirement:
     if isinstance(frame, SemanticFrame):
         typed = frame
@@ -128,6 +141,7 @@ def enforce_reply_obligation(
             performance_preset=str(local.get("performance_hint", "neutral") or "neutral"),
             should_speak=True,
         )
+        _observe_public_writer_fallback("exact_local_required_reply")
         return ReplyObligationResult(local, requirement, repaired=True, reason="exact_local_required_reply")
 
     text, act_kind = _minimal_text(typed, language_hint=language_hint)
@@ -150,6 +164,7 @@ def enforce_reply_obligation(
         performance_preset="repair" if act_kind == "repair" else "neutral",
         should_speak=True,
     )
+    _observe_public_writer_fallback("required_reply_repair")
     return ReplyObligationResult(data, requirement, repaired=True, reason="required_reply_repair")
 
 

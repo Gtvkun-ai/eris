@@ -212,22 +212,56 @@ def _response_schema(response_format: Any) -> Mapping[str, Any]:
 
 
 def _validate_schema_shape(value: Any, schema: Mapping[str, Any], *, path: str = "$") -> None:
+    """Validate shape đệ quy cho JSONL worker.
+
+    Trước V6 lớp này chỉ nhìn required key ở top-level, nên object kiểu
+    ``semantic_frame=true`` vẫn lọt qua dù schema đòi object. Ta kiểm tra nested
+    properties/items nhưng vẫn cố ý không biến đây thành full jsonschema engine.
+    Schema rỗng ``{}`` là soft field và được bỏ qua.
+    """
+
+    if not isinstance(schema, Mapping) or not schema:
+        return
     expected_type = str(schema.get("type", "") or "").strip().lower()
     if expected_type == "object":
         if not isinstance(value, Mapping):
             raise JsonlContractError(f"schema_type:{path}:object")
-        missing = [
-            str(name)
-            for name in (schema.get("required") or ())
-            if str(name) not in value
-        ]
+        missing = [str(name) for name in (schema.get("required") or ()) if str(name) not in value]
         required_count = len(schema.get("required") or ())
         allowed_missing = required_count // 10 if path == "$" and required_count >= 10 else 0
         if len(missing) > allowed_missing:
             raise JsonlContractError(f"schema_required_missing:{path}:{','.join(missing)}")
-    elif expected_type == "array":
+        properties = schema.get("properties")
+        if isinstance(properties, Mapping):
+            for name, child_schema in properties.items():
+                if str(name) not in value or not isinstance(child_schema, Mapping):
+                    continue
+                _validate_schema_shape(value[str(name)], child_schema, path=f"{path}.{name}")
+        return
+    if expected_type == "array":
         if not isinstance(value, list):
             raise JsonlContractError(f"schema_type:{path}:array")
+        item_schema = schema.get("items")
+        if isinstance(item_schema, Mapping):
+            for index, item in enumerate(value):
+                _validate_schema_shape(item, item_schema, path=f"{path}[{index}]")
+        return
+    if expected_type == "string":
+        if not isinstance(value, str):
+            raise JsonlContractError(f"schema_type:{path}:string")
+    elif expected_type == "boolean":
+        if not isinstance(value, bool):
+            raise JsonlContractError(f"schema_type:{path}:boolean")
+    elif expected_type == "integer":
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise JsonlContractError(f"schema_type:{path}:integer")
+    elif expected_type == "number":
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise JsonlContractError(f"schema_type:{path}:number")
+
+    enum = schema.get("enum")
+    if isinstance(enum, list) and enum and value not in enum:
+        raise JsonlContractError(f"schema_enum:{path}")
 
 
 def _append_schema_instruction(messages: Any, *, role: str, response_format: Any) -> list[dict[str, Any]]:

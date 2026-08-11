@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """Cổng biến sự kiện runtime thành WorldObservation có provenance.
 
-Ingress không điều phối deliberation. Nó chỉ chuẩn hóa input, còn toàn bộ vòng
-prepare → cognitive review → Subject commit → finalize thuộc một MindLoop duy nhất.
-V30 chỉ expose session API; adapter frame/outcome của kiến trúc cũ đã bị xóa.
+Ingress chuẩn hóa input và giữ direct chat availability-first. User turns được
+fast-commit trong một MindLoop rồi chỉ *lên lịch* advisory Neuro continuation;
+autonomous/blocking deliberation vẫn thuộc MindLoop. Adapter frame/outcome cũ đã xóa.
 """
 from __future__ import annotations
 
@@ -29,10 +29,12 @@ class SubjectIngress:
         *,
         mind_loop: MindLoop | None = None,
         autonomous_proposals: AutonomousProposalSource | None = None,
+        neuro_continuation: Any | None = None,
     ) -> None:
         self.service = service
         self.mind_loop = mind_loop or MindLoop(subject=service)
         self.autonomous_proposals = autonomous_proposals or AutonomousProposalSource(service)
+        self.neuro_continuation = neuro_continuation
 
     def user_observation(
         self,
@@ -65,8 +67,6 @@ class SubjectIngress:
                 "expectation_violation": 0.10,
                 "controllability": 0.88,
                 "relational_significance": 0.76,
-                "identity_significance": 0.30,
-                "future_consequence": 0.35,
                 "uncertainty": uncertainty,
                 "primary_interpretation": "người dùng chủ động mở một lượt hội thoại công khai",
                 "runtime_context": {
@@ -245,6 +245,25 @@ class SubjectIngress:
         )
 
 
+    def parallel_cognition_state(self, turn_id: str = "") -> dict[str, Any]:
+        runtime = self.neuro_continuation
+        public_state = getattr(runtime, "public_state", None)
+        if not callable(public_state):
+            return {
+                "deep_thought_running": False,
+                "may_follow_up": False,
+                "policy": "parallel_nonblocking",
+            }
+        try:
+            state = public_state(turn_id)
+            return dict(state) if isinstance(state, Mapping) else {}
+        except Exception:
+            return {
+                "deep_thought_running": False,
+                "may_follow_up": False,
+                "policy": "parallel_nonblocking",
+            }
+
     def observe_user_turn(
         self,
         user_text: str,
@@ -254,26 +273,43 @@ class SubjectIngress:
         planning_context: Mapping[str, Any] | None = None,
         committer: SubjectCommitPort | None = None,
     ) -> MindDecision:
-        self.service.note_relational_user_turn(
-            now=created_at,
-            meaningful=bool(str(user_text or "").strip()),
-            engagement=0.82,
-            evidence_ref=turn_id,
-            persist=True,
-        )
-        observation = self.user_observation(
+        """Availability-first direct chat with optional parallel Neuro review.
+
+        ``committer`` is accepted for API compatibility but direct chat no longer
+        lets a remote committer sit on the public latency path.  The deterministic
+        Neuro gate commits immediately; a materially consequential frame may then
+        be reviewed advisory-only by ``NeuroContinuationRuntime``.
+        """
+        del committer
+        continuation = self.neuro_continuation
+        begin_turn = getattr(continuation, "begin_user_turn", None)
+        if callable(begin_turn):
+            begin_turn(turn_id)
+
+        session = self.prepare_user_session(
             user_text,
             created_at=created_at,
             turn_id=turn_id,
             planning_context=planning_context,
         )
-        return self.observe(
-            observation,
-            mode="interactive",
-            user_text=user_text,
-            planning_context=planning_context,
-            committer=committer,
-        )
+        fast = self.mind_loop.complete_fast_sync(session)
+
+        schedule = getattr(continuation, "schedule", None)
+        if callable(schedule) and fast.selection.parallel_review_recommended:
+            try:
+                schedule(
+                    frame=session.frame,
+                    selection=fast.selection,
+                    baseline_commit=fast.commit,
+                    origin_turn_id=turn_id,
+                    user_text=user_text,
+                    snapshot=planning_context or {},
+                )
+            except Exception:
+                # Deep review is best-effort by design. The committed public path
+                # remains valid even when the continuation worker is unavailable.
+                pass
+        return fast.decision
 
 
 

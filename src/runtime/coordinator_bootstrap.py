@@ -500,9 +500,16 @@ class CoordinatorBootstrapMixin:
         self.subject_actuator = self.subject_core_components.actuator
         self.subject_mind_loop = self.subject_core_components.mind_loop
         self.subject_runtime = self.subject_core_components.runtime
+        from runtime.neuro_continuation import NeuroContinuationRuntime
+        self.neuro_continuation_runtime = NeuroContinuationRuntime(
+            committer_provider=lambda: getattr(self, "ai_executive_cortex", None),
+            wake_callback=getattr(self, "_wake_autonomous_loop", None),
+            logger=self.logger,
+        )
         self.subject_ingress = SubjectIngress(
             self.subject_service,
             mind_loop=self.subject_mind_loop,
+            neuro_continuation=self.neuro_continuation_runtime,
         )
         self.logger.info(
             "[subject-core] authoritative subject=%s data=%s",

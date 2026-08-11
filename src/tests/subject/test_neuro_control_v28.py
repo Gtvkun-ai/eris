@@ -40,6 +40,18 @@ def _frame():
     return d, service, session.frame
 
 
+def _materially_ambiguous(frame):
+    coalitions = list(frame.coalitions)
+    if len(coalitions) >= 2:
+        coalitions[0] = replace(coalitions[0], score=1.0, uncertainty=0.72)
+        coalitions[1] = replace(coalitions[1], score=0.99, uncertainty=0.72)
+    appraisals = tuple(
+        replace(item, future_consequence=0.92, identity_significance=max(item.identity_significance, 0.82))
+        for item in frame.appraisals
+    )
+    return replace(frame, coalitions=tuple(coalitions), appraisals=appraisals)
+
+
 def test_fast_gate_commits_clear_winner_without_llm() -> None:
     d, service, frame = _frame()
     boosted = tuple(
@@ -108,11 +120,32 @@ def test_homogeneous_social_tie_fast_commits_without_llm() -> None:
     MindLoop.run_sync(service.abandon_deliberation(frame, reason="test_cleanup"))
 
 
-def test_deliberator_sees_ephemeral_indices_not_runtime_ids() -> None:
+def test_entropy_alone_does_not_wake_deliberator() -> None:
     d, service, frame = _frame()
+    selection = NeuroActionSelector().select(frame)
+    assert selection.entropy >= 0.82
+    assert selection.requires_deliberation is False
+    assert selection.reason.startswith("fast_gate:routine_ambiguity")
+
+    def should_not_run(*_args, **_kwargs):
+        raise AssertionError("entropy alone must never wake the deliberator")
+
+    executive = ExecutiveCortex(
+        SimpleNamespace(), object(), invoke_structured=should_not_run, clock=d.clock
+    )
+    commit = executive.commit_subject_frame(frame, mode="interactive")
+    assert commit is not None
+    assert commit.source == "neuro_fast_gate"
+    MindLoop.run_sync(service.abandon_deliberation(frame, reason="test_cleanup"))
+
+
+def test_interactive_commit_fast_paths_and_parallel_review_uses_ephemeral_indices() -> None:
+    d, service, frame = _frame()
+    frame = _materially_ambiguous(frame)
     selector = NeuroActionSelector()
     selection = selector.select(frame)
-    assert selection.requires_deliberation  # this real frame is intentionally ambiguous
+    assert selection.requires_deliberation
+    assert selection.parallel_review_recommended
     chosen_index = min(1, len(frame.coalitions) - 1)
     captured = {}
 
@@ -125,25 +158,44 @@ def test_deliberator_sees_ephemeral_indices_not_runtime_ids() -> None:
             "choice_index": chosen_index,
             "semantic_commitments": ["preserve the chosen semantic direction"],
             "cognitive_requests": [],
-            "reason": "conflict resolved from current semantic choices",
+            "reason": "deeper review found a materially better direction",
             "confidence": 0.81,
             "review_conditions": [],
+            "should_follow_up": True,
+            "material_delta": 0.74,
+            "followup_brief": "add the consequential constraint that the fast path could not settle",
         }
 
     executive = ExecutiveCortex(
         SimpleNamespace(), object(), invoke_structured=invoke, clock=d.clock
     )
+
+    # Human-facing direct chat must never invoke the remote deliberator.
     commit = executive.commit_subject_frame(frame, mode="interactive")
     assert commit is not None
-    assert commit.source == "neuro_deliberator"
-    assert commit.selected_coalition_id == frame.coalitions[chosen_index].coalition_id
-    assert captured["name"] == "eris_neuro_deliberation_interactive"
+    assert commit.source == "neuro_fast_gate"
+    assert captured == {}
+
+    advice = executive.review_subject_frame(
+        frame,
+        baseline_commit=commit,
+        user_text="consider this carefully",
+        snapshot={},
+    )
+    assert advice is not None
+    assert advice.commit.source == "neuro_parallel_advisory"
+    assert advice.commit.selected_coalition_id == frame.coalitions[chosen_index].coalition_id
+    assert advice.should_follow_up is True
+    assert captured["name"] == "eris_neuro_continuation_interactive"
     MindLoop.run_sync(service.abandon_deliberation(frame, reason="test_cleanup"))
 
 
-def test_invalid_deliberator_index_degrades_to_fast_gate_not_guessed_id() -> None:
+def test_invalid_parallel_review_index_is_discarded_without_rewriting_fast_commit() -> None:
     d, service, frame = _frame()
+    frame = _materially_ambiguous(frame)
     fast = NeuroActionSelector().select(frame)
+    assert fast.requires_deliberation
+    assert fast.parallel_review_recommended
 
     def invoke(_client, **_kwargs):
         return {
@@ -153,6 +205,9 @@ def test_invalid_deliberator_index_degrades_to_fast_gate_not_guessed_id() -> Non
             "reason": "bad model output",
             "confidence": 0.9,
             "review_conditions": [],
+            "should_follow_up": True,
+            "material_delta": 1.0,
+            "followup_brief": "invalid",
         }
 
     executive = ExecutiveCortex(
@@ -160,15 +215,21 @@ def test_invalid_deliberator_index_degrades_to_fast_gate_not_guessed_id() -> Non
     )
     commit = executive.commit_subject_frame(frame, mode="interactive")
     assert commit is not None
-    assert commit.source == "neuro_fast_gate_degraded"
+    assert commit.source == "neuro_fast_gate"
+    assert commit.selected_coalition_id == fast.winner(frame).coalition_id
+
+    advice = executive.review_subject_frame(
+        frame, baseline_commit=commit, user_text="x", snapshot={}
+    )
+    assert advice is None
+    # A bad advisory result cannot degrade or rewrite the already committed turn.
     assert commit.selected_coalition_id == fast.winner(frame).coalition_id
     MindLoop.run_sync(service.abandon_deliberation(frame, reason="test_cleanup"))
-
 
 def test_neuro_deliberation_lanes_are_provider_stateless(monkeypatch) -> None:
     monkeypatch.setenv("ERIS_RUNTIME_SESSION_ID", "test-runtime")
     messages = [{"role": "system", "content": "bounded deliberator"}]
-    with inference_context("neuro_deliberation_required", optional=False):
-        assert _web_session_header(messages) == ""
     with inference_context("neuro_deliberation", optional=True):
+        assert _web_session_header(messages) == ""
+    with inference_context("neuro_continuation", optional=True):
         assert _web_session_header(messages) == ""

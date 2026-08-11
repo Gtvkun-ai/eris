@@ -59,7 +59,7 @@ def test_cognitive_adapter_returns_typed_findings_and_domain_integrates_them() -
     MindLoop.run_sync(service.abandon_deliberation(revised, reason="test_cleanup"))
 
 
-def test_late_committer_provider_is_injected_without_bind() -> None:
+def test_direct_chat_does_not_bind_late_remote_committer_to_critical_path() -> None:
     d = Determinism()
     service = _service(d)
     holder: dict[str, object] = {}
@@ -73,20 +73,8 @@ def test_late_committer_provider_is_injected_without_bind() -> None:
     class Executive:
         enabled = True
 
-        def commit_subject_frame(self, frame, **_kwargs):
-            selected = next(item for item in frame.coalitions if item.action_kind == "investigate")
-            return SubjectExecutiveCommit(
-                commit_id="late-executive",
-                frame_id=frame.frame_id,
-                selected_coalition_id=selected.coalition_id,
-                selected_proposal_ref=selected.primary_proposal_ref,
-                semantic_commitments=("kiểm chứng trước khi nói",),
-                cognitive_requests=(),
-                reason="late provider resolved at decision time",
-                confidence=0.9,
-                review_conditions=(),
-                created_at=d.clock(),
-            )
+        def commit_subject_frame(self, _frame, **_kwargs):
+            raise AssertionError("direct chat must not wait on a late remote committer")
 
     holder["committer"] = Executive()
     decision = ingress.observe_user_turn(
@@ -94,9 +82,8 @@ def test_late_committer_provider_is_injected_without_bind() -> None:
         created_at=d.clock(),
         turn_id="late-provider",
     )
-    assert decision.proposed_action == "investigate"
-    assert decision.arguments["executive_commit"]["commit_id"] == "late-executive"
-
+    assert decision is not None
+    assert decision.arguments["executive_commit"]["source"] == "neuro_fast_gate"
 
 def test_autonomous_review_recommits_directly_on_revised_frame() -> None:
     """Cognitive review tạo frame mới; committer phải commit lại chính frame mới."""
@@ -134,9 +121,11 @@ def test_autonomous_review_recommits_directly_on_revised_frame() -> None:
 
         def __init__(self) -> None:
             self.frames: list[str] = []
+            self.remote_budget_flags: list[bool] = []
 
-        def commit_subject_frame(self, frame, **_kwargs):
+        def commit_subject_frame(self, frame, **kwargs):
             self.frames.append(frame.frame_id)
+            self.remote_budget_flags.append(bool(kwargs.get("allow_remote_deliberation", True)))
             selected = next(
                 item for item in frame.coalitions if item.arguments.get("affordance_id") == "seed:1"
             )
@@ -158,5 +147,6 @@ def test_autonomous_review_recommits_directly_on_revised_frame() -> None:
     assert decision is not None
     assert len(committer.frames) == 2
     assert committer.frames[0] != committer.frames[1]
+    assert committer.remote_budget_flags == [True, False]
     assert decision.arguments["executive_commit"]["commit_id"] == "auto:2"
 
