@@ -249,7 +249,7 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         # thực tế bị khóa bởi architecture.background_tutor_enabled=false.
         "enabled": True,
         "quick_search_enabled": True,
-        "research_enabled": True,
+        "research_enabled": False,
         "self_search_enabled": False,
         "low_confidence_clarify_threshold": 0.55,
         "stale_result_guard_enabled": True,

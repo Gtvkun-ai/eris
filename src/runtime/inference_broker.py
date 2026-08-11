@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import atexit
 import inspect
+import math
 import os
 import re
 import threading
@@ -56,11 +57,15 @@ LANE_POLICIES: dict[str, LanePolicy] = {
     # Direct-chat slow Neuro runs in parallel after the deterministic fast commit.
     # It is lower priority than chat/TTS, cancellable by its own conversation scope,
     # and may never become authority over the already-served public turn.
-    "neuro_continuation": LanePolicy(40, True, 2, 12.0, 1),
+    "neuro_continuation": LanePolicy(40, True, 2, 0.0, 1),
     # Tool/capability planning uses stable external capability identities, but the
     # planner itself is one-shot and may not own conversational session state.
     "capability_deliberation_required": LanePolicy(26, False, 4, 22.0, 1),
     "post_observer": LanePolicy(60, True, 2, 30.0, 1),
+    # Dedicated profile/curator key runs off the public response path. It is not
+    # shed merely because a chat turn is active: its own credential pool and
+    # worker thread are specifically meant to overlap the writer safely.
+    "memory_curator": LanePolicy(65, False, 4, 12.0, 1),
     "memory_digest": LanePolicy(70, True, 2, 25.0, 1),
     "private_mind": LanePolicy(80, True, 1, 20.0, 1),
     "private_mind_optional": LanePolicy(80, True, 1, 20.0, 1),
@@ -159,15 +164,19 @@ class CancellationToken:
 
     @property
     def cancelled(self) -> bool:
-        return self.event.is_set() or time.time() >= self.deadline_at
+        return self.event.is_set() or (
+            math.isfinite(self.deadline_at) and time.time() >= self.deadline_at
+        )
 
-    def remaining_seconds(self, *, floor: float = 0.05) -> float:
+    def remaining_seconds(self, *, floor: float = 0.05) -> float | None:
+        if not math.isfinite(self.deadline_at):
+            return None
         return max(float(floor), self.deadline_at - time.time())
 
     def raise_if_cancelled(self, request: InferenceRequest | None = None) -> None:
         if self.event.is_set():
             raise InferenceRejected("cancelled", request)
-        if time.time() >= self.deadline_at:
+        if math.isfinite(self.deadline_at) and time.time() >= self.deadline_at:
             raise InferenceRejected("deadline_exceeded", request)
 
 
@@ -229,7 +238,7 @@ def lane_policy(lane: str) -> LanePolicy:
         optional=base.optional,
         max_queued=_env_int(f"ERIS_BROKER_MAX_QUEUED_{env_key}", base.max_queued, minimum=0),
         deadline_seconds=_env_float(
-            f"ERIS_BROKER_DEADLINE_SEC_{env_key}", base.deadline_seconds, minimum=0.05
+            f"ERIS_BROKER_DEADLINE_SEC_{env_key}", base.deadline_seconds, minimum=0.0
         ),
         max_concurrency=_env_int(
             f"ERIS_BROKER_LANE_CONCURRENCY_{env_key}", base.max_concurrency, minimum=1
@@ -262,7 +271,12 @@ def inference_context(
     policy = lane_policy(lane)
     actual_deadline = deadline_at
     if actual_deadline is None and timeout_seconds is not None:
-        actual_deadline = time.time() + max(0.05, float(timeout_seconds))
+        requested_timeout = float(timeout_seconds)
+        actual_deadline = (
+            math.inf
+            if requested_timeout <= 0.0
+            else time.time() + max(0.05, requested_timeout)
+        )
     if actual_deadline is None:
         actual_deadline = parent.deadline_at
     merged_metadata = dict(parent.metadata)
@@ -554,7 +568,17 @@ class InferenceBroker:
         now = time.time()
         deadline = context.deadline_at
         if deadline is None:
-            deadline = now + max(0.05, float(timeout_seconds or policy.deadline_seconds))
+            if timeout_seconds is not None:
+                requested_timeout = float(timeout_seconds)
+                deadline = (
+                    math.inf
+                    if requested_timeout <= 0.0
+                    else now + max(0.05, requested_timeout)
+                )
+            elif float(policy.deadline_seconds) <= 0.0:
+                deadline = math.inf
+            else:
+                deadline = now + max(0.05, float(policy.deadline_seconds))
         combined_metadata = dict(context.metadata)
         combined_metadata.update(dict(metadata or {}))
         return InferenceRequest(
@@ -940,9 +964,10 @@ class InferenceBroker:
 
         task = asyncio.create_task(execute())
         try:
-            return await asyncio.wait_for(
-                task, timeout=cancel_token.remaining_seconds(floor=0.001)
-            )
+            timeout = cancel_token.remaining_seconds(floor=0.001)
+            if timeout is None:
+                return await task
+            return await asyncio.wait_for(task, timeout=timeout)
         except asyncio.TimeoutError as exc:
             cancel_token.event.set()
             task.cancel()
@@ -1046,7 +1071,7 @@ class InferenceBroker:
                     self._reject_waiting_locked(queued, queued.cancelled_reason)
                 if self._scope_cancelled_locked(request.cancel_scope):
                     self._reject_waiting_locked(queued, "cancel_scope")
-                if request.deadline_at <= now + 0.025:
+                if math.isfinite(request.deadline_at) and request.deadline_at <= now + 0.025:
                     self._reject_waiting_locked(queued, "deadline_too_close")
                 if request.optional and self._user_turn_scopes:
                     self._reject_waiting_locked(queued, "shed_optional_user_active")
@@ -1105,10 +1130,10 @@ class InferenceBroker:
                     wait_for = min(0.20, max(0.025, wait_quota))
                 else:
                     wait_for = 0.10
-                remaining = request.deadline_at - now
-                if remaining <= wait_for:
+                remaining = request.deadline_at - now if math.isfinite(request.deadline_at) else math.inf
+                if math.isfinite(remaining) and remaining <= wait_for:
                     self._reject_waiting_locked(queued, "deadline_before_admission")
-                self._condition.wait(min(wait_for, remaining))
+                self._condition.wait(wait_for if not math.isfinite(remaining) else min(wait_for, remaining))
 
     def _reject_waiting_locked(self, queued: _QueuedRequest, reason: str) -> None:
         """Release a queued idempotency lease before raising rejection."""
@@ -1120,7 +1145,7 @@ class InferenceBroker:
         raise InferenceRejected(reason, request)
 
     def _immediate_rejection_reason(self, request: InferenceRequest, now: float) -> str:
-        if request.deadline_at <= now + 0.025:
+        if math.isfinite(request.deadline_at) and request.deadline_at <= now + 0.025:
             return "deadline_too_close"
         if not request.lane:
             return "invalid_lane"
@@ -1392,7 +1417,11 @@ class InferenceBroker:
             model="advice",
             priority=policy.priority,
             optional=policy.optional,
-            deadline_at=time.time() + policy.deadline_seconds,
+            deadline_at=(
+                math.inf
+                if float(policy.deadline_seconds) <= 0.0
+                else time.time() + policy.deadline_seconds
+            ),
             cancel_scope="",
             estimated_input_tokens=0,
             reserved_output_tokens=0,
@@ -1608,7 +1637,11 @@ class InferenceBroker:
 
         if request.optional:
             return 0
-        remaining = max(0.0, request.deadline_at - now)
+        remaining = (
+            max(0.0, request.deadline_at - now)
+            if math.isfinite(request.deadline_at)
+            else math.inf
+        )
         pressure = self._provider_pressure_locked(request.provider, now, request=request)
         deadline_risk = remaining <= max(0.35, float(quota_wait_s) + 0.25)
         cancelled = 0

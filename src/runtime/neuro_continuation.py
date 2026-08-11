@@ -300,15 +300,11 @@ class NeuroContinuationRuntime:
                 return
             from runtime.inference_broker import inference_context
 
-            timeout = max(
-                2.0,
-                min(20.0, float(os.getenv("ERIS_NEURO_CONTINUATION_TIMEOUT_S", "10") or 10.0)),
-            )
             with inference_context(
                 "neuro_continuation",
                 optional=True,
                 priority=40,
-                timeout_seconds=timeout,
+                timeout_seconds=0.0,
                 cancel_scope=job.cancel_scope,
                 metadata={
                     "origin_turn_id": job.origin_turn_id,

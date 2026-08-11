@@ -233,12 +233,18 @@ class MemoryKernel:
 
         user_profile_debug: dict[str, Any] = {}
         living_user = self.living_user
-        if living_user is not None and effective_evidence:
+        context_map = dict(context or {})
+        delegate_living_user = bool(context_map.get("skip_living_user_observe", False))
+        if mode == "fast":
+            # Hard latency invariant: fast memory never calls profile extraction/model/JSON trace.
+            # A dedicated background curator lane owns per-turn living-user observation.
+            user_profile_debug = {"deferred": True, "reason": "fast_path_background_curator"}
+        elif living_user is not None and effective_evidence and not delegate_living_user:
             try:
                 observation = living_user.observe_turn(
                     raw,
                     evidence_ids=effective_evidence,
-                    context={**dict(context or {}), "source": source, "mode": mode},
+                    context={**context_map, "source": source, "mode": mode},
                 )
                 user_profile_debug = {
                     "applied": observation.applied,
@@ -247,11 +253,12 @@ class MemoryKernel:
                 }
                 # semantic_digest là lúc semantic claims vừa được làm giàu; đồng bộ
                 # projection ở đây để fact mới có mặt trong user context ngay.
-                if mode != "fast":
-                    sync_result = living_user.sync_semantic_memory()
-                    user_profile_debug["semantic_sync_changed"] = bool(sync_result.changed)
+                sync_result = living_user.sync_semantic_memory()
+                user_profile_debug["semantic_sync_changed"] = bool(sync_result.changed)
             except Exception as exc:  # pragma: no cover - profile không được giết chat
                 warnings.append(f"living_user_observe_failed:{type(exc).__name__}:{exc}")
+        elif delegate_living_user:
+            user_profile_debug = {"deferred": True, "reason": "dedicated_curator_lane"}
 
         return MemoryIngestResult(
             accepted=bool(commit_results),

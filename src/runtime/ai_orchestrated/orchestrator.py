@@ -78,6 +78,108 @@ def _orchestrator_boundary_note(host: Any, operation: str, exc: Exception) -> No
 
 
 
+class _ChatLatencyTrace:
+    def __init__(self, host: Any, *, cycle_start: float, user_text: str = "") -> None:
+        self.host = host
+        self.user_len = len(str(user_text or ""))
+        self.turn_id = ""
+        self.started_perf = time.perf_counter()
+        self.last_perf = self.started_perf
+        try:
+            self.started_wall = float(cycle_start)
+        except (TypeError, ValueError):
+            self.started_wall = time.time()
+        self.spans: list[tuple[str, float]] = []
+        self.finished = False
+        try:
+            raw = os.environ.get("ERIS_CHAT_LATENCY_SLOW_SPAN_MS", "750")
+            self.slow_span_ms = max(0.0, float(raw))
+        except (TypeError, ValueError):
+            self.slow_span_ms = 750.0
+
+    def set_turn(self, turn_id: str) -> None:
+        value = str(turn_id or "").strip()
+        if value:
+            self.turn_id = value
+
+    def mark(self, name: str) -> None:
+        now = time.perf_counter()
+        elapsed_ms = max(0.0, (now - self.last_perf) * 1000.0)
+        self.last_perf = now
+        label = str(name or "unknown").strip() or "unknown"
+        self.spans.append((label, elapsed_ms))
+        if self.slow_span_ms > 0.0 and elapsed_ms >= self.slow_span_ms:
+            logger = getattr(self.host, "logger", None)
+            if logger is not None:
+                try:
+                    logger.warning(
+                        "[chat latency slow] turn=%s span=%s elapsed=%.0fms",
+                        self.turn_id or "unknown",
+                        label,
+                        elapsed_ms,
+                    )
+                except Exception:
+                    pass
+
+    def finish(self, *, status: str = "ok") -> None:
+        if self.finished:
+            return
+        self.finished = True
+        total_ms = max(0.0, (time.perf_counter() - self.started_perf) * 1000.0)
+        wall_ms = max(0.0, (time.time() - self.started_wall) * 1000.0)
+        collapsed: dict[str, float] = {}
+        for name, value in self.spans:
+            collapsed[name] = collapsed.get(name, 0.0) + value
+        ordered = " ".join(
+            f"{name}={value:.0f}ms"
+            for name, value in collapsed.items()
+            if value >= 0.5
+        )
+        slow = ",".join(
+            name
+            for name, value in collapsed.items()
+            if self.slow_span_ms > 0.0 and value >= self.slow_span_ms
+        ) or "none"
+        logger = getattr(self.host, "logger", None)
+        if logger is not None:
+            try:
+                logger.info(
+                    "[chat latency] turn=%s status=%s %s total=%.0fms e2e=%.0fms slow=%s user_chars=%d",
+                    self.turn_id or "unknown",
+                    str(status or "ok"),
+                    ordered,
+                    total_ms,
+                    wall_ms,
+                    slow,
+                    self.user_len,
+                )
+            except Exception:
+                pass
+        try:
+            from runtime.observability import GLOBAL_OBSERVABILITY
+
+            GLOBAL_OBSERVABILITY.observe(
+                "chat_orchestrator_latency_ms",
+                total_ms,
+                tags={"status": str(status or "ok")},
+                fields={
+                    "turn_id": self.turn_id,
+                    "e2e_ms": round(wall_ms, 2),
+                    "spans": {name: round(value, 2) for name, value in collapsed.items()},
+                    "slow_spans": slow,
+                },
+            )
+            for name, value in collapsed.items():
+                GLOBAL_OBSERVABILITY.observe(
+                    "chat_orchestrator_span_ms",
+                    value,
+                    tags={"span": name, "status": str(status or "ok")},
+                    fields={"turn_id": self.turn_id},
+                )
+        except Exception:
+            pass
+
+
 def _opening_telemetry(
     host: Any,
     name: str,
@@ -406,6 +508,7 @@ class AIChatOrchestrator:
         speech_interrupt_reaction: Any | None = None,
     ) -> None:
         host = self.host
+        latency_trace = _ChatLatencyTrace(host, cycle_start=cycle_start, user_text=user_text)
         # Discourse resolution for fallbacks / failed turns: if previous turn failed or used repair obligation,
         # and user asks "nói lại", "gửi lại", etc., retry the specific cached failed turn text rather than
         # treating "nói lại" as a generic/new proposition.
@@ -422,6 +525,8 @@ class AIChatOrchestrator:
                 cached_failed_turn,
             )
             user_text = cached_failed_turn
+            latency_trace.user_len = len(str(user_text or ""))
+        latency_trace.mark("ingress")
         # Avoid carrying a previous turn's semantic category into telemetry when
         # the current authority call fails before producing a frame.
         host.last_semantic_frame = {}
@@ -435,6 +540,7 @@ class AIChatOrchestrator:
             if callable(getattr(snapshot, "to_machine_context", None))
             else {}
         )
+        latency_trace.mark("snapshot")
         engagement_runtime = getattr(host, "ai_engagement_runtime", None)
         engagement_context: dict[str, Any] = {"active": False}
         engagement_prompt_context = "active_engagement: none"
@@ -455,6 +561,7 @@ class AIChatOrchestrator:
                 engagement_prompt_context = engagement_runtime.prompt_context(now=cycle_start)
             except Exception as exc:
                 host.logger.debug("[engagement] chat observation failed: %s", exc)
+        latency_trace.mark("engagement")
 
         user_meta: dict[str, Any] = {
             "channel": "chat",
@@ -475,7 +582,9 @@ class AIChatOrchestrator:
             fallback=max(1, int(getattr(user_turn, "index", 0) or 0)),
         )
         turn_id = str(getattr(user_turn, "turn_id", "") or f"session_turn:{turn_seq}")
+        latency_trace.set_turn(turn_id)
         user_meta["ai_turn_seq"] = turn_seq
+        latency_trace.mark("ledger")
 
         # V27.1: user turn là outcome thật của một Subject intention đã được nói.
         # Chỉ đóng/revise lifecycle; không suy đoán cảm xúc hay ý định của user.
@@ -499,6 +608,7 @@ class AIChatOrchestrator:
                     )
             except Exception as exc:
                 host.logger.debug("[subject initiative] user outcome update failed: %s", exc)
+        latency_trace.mark("initiative_outcome")
 
         # User taking the floor invalidates reserved short beats immediately and
         # updates long-horizon social outcomes before the next plan is written.
@@ -543,6 +653,7 @@ class AIChatOrchestrator:
                     )
             except Exception as exc:
                 host.logger.debug("[random chat seed] user outcome failed: %s", exc)
+        latency_trace.mark("agenda")
 
         # Một public arc phải nhường lời ngay khi user chen vào. Runtime trả lại
         # mục tiêu/beat còn dang dở cho main writer để nó thích nghi theo câu mới,
@@ -561,6 +672,7 @@ class AIChatOrchestrator:
                 )
             except Exception as exc:
                 host.logger.debug("[conversation arc] user-turn yield failed: %s", exc)
+        latency_trace.mark("arc")
 
         # Grounding quyết định nguồn sự thật, không quyết định cảm xúc hay wording.
         pre_grounding = host._build_chat_source_grounding_report(
@@ -571,24 +683,30 @@ class AIChatOrchestrator:
             screen_image_data_uri="",
         )
         host.last_grounding_context = pre_grounding
+        latency_trace.mark("pre_grounding")
         if pre_grounding is not None and not bool(getattr(pre_grounding, "memory_answer_allowed", True)):
             host.long_term_memory = []
             memory_resonance = None
             memory_context = host._filter_memory_context_for_grounding("")
             host.active_memory_resonance = None
+            latency_trace.mark("memory_context")
         else:
             host.long_term_memory = host._memory_recall_texts(snapshot=snapshot)
+            latency_trace.mark("memory_recall")
             memory_resonance = host._recall_memory_resonance(
                 snapshot=snapshot,
                 user_text=user_text,
                 channel="chat",
                 fragments=tuple(host._chat_history_for_llm(limit=2)) if host.chat_history else (),
             )
+            latency_trace.mark("memory_resonance")
             memory_context = host._build_memory_context(snapshot, memory_resonance=memory_resonance)
+            latency_trace.mark("memory_context")
 
         host.chat_mode = True
         host._chat_last_activity_at = time.time()
         host.logger.info("Người dùng: %s", user_text)
+        latency_trace.mark("user_log")
         prior_public_history = tuple(host._chat_history_for_llm(limit=16))
         if previous_public_context and not prior_public_history:
             prior_public_history = ({"role": "assistant", "content": previous_public_context},)
@@ -599,16 +717,20 @@ class AIChatOrchestrator:
                 if previous_assistant_for_repair:
                     break
         grounding_correction = is_grounding_correction(user_text, previous_assistant_for_repair)
+        latency_trace.mark("prior_history")
         host._append_chat_history("user", user_text)
+        latency_trace.mark("append_history")
         ingest_hot = getattr(host, "_ingest_user_turn_memory_hot_path", None)
         if callable(ingest_hot):
             try:
                 ingest_hot(user_text, turn_id=turn_id)
             except Exception as exc:
                 host.logger.warning("[memory hot path] user turn ingest failed: %s", exc)
+        latency_trace.mark("hot_memory")
         merge_addressing = getattr(host, "_merge_user_addressing_context", None)
         if callable(merge_addressing):
             memory_context = merge_addressing(memory_context)
+        latency_trace.mark("addressing_merge")
 
         host._chat_snapshot_for_vision = snapshot
         try:
@@ -618,6 +740,7 @@ class AIChatOrchestrator:
             )
         finally:
             host._chat_snapshot_for_vision = None
+        latency_trace.mark("screen")
         grounding_report = host._build_chat_source_grounding_report(
             user_text=user_text,
             frame=None,
@@ -632,6 +755,7 @@ class AIChatOrchestrator:
             host._log_chat_source_grounding(grounding_report)
         except Exception as exc:
             _orchestrator_boundary_note(host, "chat_grounding.log", exc)
+        latency_trace.mark("grounding")
 
         # Nạp scene vào DeepSeek Semantic Tutor theo sự kiện. Chat chỉ chờ một
         # budget rất nhỏ; nếu packet chưa xong thì nhận raw OCR/structured facts
@@ -664,11 +788,13 @@ class AIChatOrchestrator:
                 semantic_prompt_context = semantic_tutor.prompt_context(channel="chat")
             except Exception as exc:
                 host.logger.debug("[semantic-tutor] chat context failed: %s", exc)
+        latency_trace.mark("semantic_tutor")
 
         # Đảm bảo pending strategy của lượt trước đã vào single-writer trước khi
         # observer dùng phản ứng user hiện tại để chấm hậu quả.
         host.ai_state_reducer.wait_idle(0.15)
         mind_state = host.ai_state_reducer.snapshot()
+        latency_trace.mark("state_wait")
 
         # Semantic authority phải phân loại conversation act trước khi runtime
         # quyết định dùng session ledger hay long-term memory. Không còn bước
@@ -742,6 +868,7 @@ class AIChatOrchestrator:
         # có mặt và hợp lệ, nhưng nó là soft metadata ở availability boundary.
         # Một metadata lỗi không còn quyền xóa câu public; runtime sẽ sanitize về
         # typed default rồi observer hậu kỳ tiếp tục cập nhật continuity.
+        latency_trace.mark("context")
         user_meta["semantic_authority"] = "semantic_frame.v1"
         discovery_runtime = getattr(host, "ai_discovery_runtime", None)
         discovery_context = (
@@ -800,6 +927,7 @@ class AIChatOrchestrator:
         # Subject Core chuẩn bị nền; Executive cam kết coalition; Subject Core
         # mới materialize MindDecision và authorship. Planner phía sau chỉ realize,
         # không được dựng một động cơ thứ hai vì con người đã có đủ hội đồng rồi.
+        latency_trace.mark("planning_context")
         subject_ingress = getattr(host, "subject_ingress", None)
         if subject_ingress is None:
             raise RuntimeError("Subject Core ingress is required")
@@ -818,6 +946,7 @@ class AIChatOrchestrator:
             else {"deep_thought_running": False, "may_follow_up": False, "policy": "parallel_nonblocking"}
         )
         planning_snapshot["parallel_cognition"] = dict(parallel_state or {})
+        latency_trace.mark("subject")
         if bool((parallel_state or {}).get("deep_thought_running", False)):
             grounding_context = "\n\n".join(part for part in (
                 grounding_context,
@@ -897,6 +1026,7 @@ class AIChatOrchestrator:
         )
         planning_snapshot["grounding_context"] = grounding_context
 
+        latency_trace.mark("executive")
         chat_plan = host.ai_intention_planner.plan_chat(
             planning_snapshot,
             turn_seq=turn_seq,
@@ -933,6 +1063,7 @@ class AIChatOrchestrator:
                     "evidence_refs": [],
                 })
                 chat_plan = IntentionPlan.from_mapping(data, channel="chat")
+        latency_trace.mark("planner")
         user_message = host.parser.build_chat_user_message(
             user_message=user_text,
             last_chat_answer=host.last_chat_answer,
@@ -956,6 +1087,7 @@ class AIChatOrchestrator:
             discourse=discourse_context,
         )
         host.last_public_context_compilation = compiled_context.to_dict()
+        latency_trace.mark("writer_context")
         payload: dict[str, Any] = {}
         host._set_background_memory_digest_remote_inflight(True)
         try:
@@ -1004,6 +1136,7 @@ class AIChatOrchestrator:
                     )
         finally:
             host._set_background_memory_digest_remote_inflight(False)
+        latency_trace.mark("writer")
 
         # The public writer has finished its remote generation. Only now may the
         # queued slow Neuro review start, so it cannot steal provider capacity
@@ -1023,6 +1156,7 @@ class AIChatOrchestrator:
                     cancel_neuro(turn_id)
                 except Exception as exc:
                     host.logger.debug("[neuro-continuation] cancel after empty public reply failed: %s", exc)
+        latency_trace.mark("neuro_release")
 
         discourse_resolution = None
         assistant_discourse_meta: dict[str, Any] = {}
@@ -1180,6 +1314,8 @@ class AIChatOrchestrator:
                     assistant_meta=assistant_meta,
                     event_kind="chat",
                 )
+                latency_trace.mark("deterministic_commit")
+                latency_trace.finish(status="deterministic")
                 return
 
             if discourse_surface.text and not str(payload.get("text", "") or "").strip():
@@ -1486,6 +1622,7 @@ class AIChatOrchestrator:
             raw = json.dumps(public_payload, ensure_ascii=False)
             host._log_raw_llm_output("chat_ai", raw)
             decision = host.parser.parse(raw, user_hint=user_text)
+        latency_trace.mark("post_writer")
 
         if str(directive_payload.get("status", "") or "") == "selected":
             decision.system_action = str(directive_payload.get("capability_id", "") or "")
@@ -1520,12 +1657,14 @@ class AIChatOrchestrator:
             hint = str(getattr(chat_plan, "performance_hint", "") or "neutral")
         host.ai_stage_planner.apply(decision, hint, state=mind_state, channel="chat")
         decision = host._execute_system_action(decision, snapshot=snapshot, frame=None)
+        latency_trace.mark("stage_action")
         commit_started = time.monotonic()
         public_text, assistant_meta = self._commit(
             decision,
             assistant_meta_extra=assistant_discourse_meta,
             idempotency_key=_chat_commit_idempotency_key(host, turn_id),
         )
+        latency_trace.mark("commit")
         try:
             from runtime.observability import GLOBAL_OBSERVABILITY
             GLOBAL_OBSERVABILITY.observe(
@@ -1684,6 +1823,8 @@ class AIChatOrchestrator:
             assistant_meta=assistant_meta,
             event_kind="chat",
         )
+        latency_trace.mark("post_commit")
+        latency_trace.finish(status="ok")
 
     def _commit(
         self,

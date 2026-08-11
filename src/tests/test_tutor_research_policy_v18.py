@@ -95,7 +95,9 @@ def test_delegation_modes_follow_runtime_switches(monkeypatch) -> None:
     }
     monkeypatch.setattr(policy, "_runtime_bool", lambda *path, default=True: values.get(tuple(path), default))
     assert policy.score_tutor_delegation("search web giúp tôi", intent="other").mode == "quick_search"
-    assert policy.score_tutor_delegation("deep research giúp tôi", intent="other").mode == "research"
+    retired = policy.score_tutor_delegation("deep research giúp tôi", intent="other")
+    assert retired.mode == "quick_search"
+    assert retired.reason == "research_retired_to_quick_search"
 
     values[("tutor", "enabled")] = False
     disabled = policy.score_tutor_delegation("search web giúp tôi", intent="other")

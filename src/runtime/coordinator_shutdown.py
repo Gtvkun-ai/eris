@@ -107,6 +107,13 @@ class CoordinatorShutdownMixin:
             except Exception as exc:
                 self.logger.debug("[deep environment] semantic worker stop error: %s", exc)
         self._stop_mental_process_loop()
+        for background_name in ("background_living_user_observer", "background_memory_digest"):
+            background_service = getattr(self, background_name, None)
+            if background_service is not None:
+                try:
+                    background_service.stop()
+                except Exception as exc:
+                    self.logger.debug("[%s] stop error: %s", background_name, exc)
         supervisor = getattr(self, "subsystem_supervisor", None)
         if supervisor is not None:
             supervisor.stop("runtime.tutor")

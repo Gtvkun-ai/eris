@@ -141,6 +141,7 @@ class LlmService:
         seed_client=None,
         surface_client=None,
         executive_client=None,
+        curator_client=None,
         logger=None,
     ):
         self.client = client
@@ -166,7 +167,13 @@ class LlmService:
         # Gemma Executive Cortex sits between DeepSeek cognition and runtime
         # mechanics. It does not replace any role-owned worker.
         self.executive_client = executive_client
-        self.research_client = research_client or fallback_client or client
+        # Curator owns memory/profile enrichment. Never alias this to companion:
+        # missing curator means the model enrichment lane is simply unavailable.
+        self.curator_client = curator_client
+        # Research is retired as an owned model lane. Keep the attribute for
+        # compatibility with older adapters/tests, but never alias it to another
+        # worker and quietly spend that worker's quota.
+        self.research_client = research_client
         # Worker tutor chỉ phân rã scene thành shared semantic context; không có
         # quyền viết câu public và không fallback ngầm sang companion.
         self.tutor_client = tutor_client

@@ -101,6 +101,20 @@ class StateCommitServiceMixin:
             self.logger.warning("[memory digest] enqueue failed: %s", exc)
             return False
 
+    def _enqueue_background_living_user_observation(self, user_text: str, *, turn_id: str = "", source: str = "chat_turn", context: dict | None = None) -> bool:
+        service = getattr(self, "background_living_user_observer", None)
+        if service is None or not bool(getattr(service, "enabled", False)):
+            return False
+        enqueue = getattr(service, "enqueue_user_turn", None)
+        if not callable(enqueue):
+            return False
+        try:
+            evidence_ids = [str(turn_id)] if str(turn_id or "").strip() else None
+            return bool(enqueue(user_text, turn_id=turn_id, evidence_ids=evidence_ids, source=source, context=context))
+        except Exception as exc:
+            self.logger.warning("[living user curator] enqueue failed: %s", exc)
+            return False
+
     def _set_background_memory_digest_remote_inflight(self, inflight: bool) -> None:
         service = getattr(self, "background_memory_digest", None)
         marker = getattr(service, "notify_remote_inflight", None)
@@ -436,12 +450,23 @@ class StateCommitServiceMixin:
             str(user_text or ""),
             turn_id=str(turn_id or "").strip() or None,
         )
+        living_user_enqueued = self._enqueue_background_living_user_observation(
+            str(user_text or ""),
+            turn_id=str(turn_id or "").strip(),
+            source="chat_turn",
+            context={"channel": "chat", "hot_path_committed": bool(committed)},
+        )
         self._enqueue_background_memory_digest(
             str(user_text or ""),
             turn_id=str(turn_id or "").strip(),
             source="chat_turn",
             priority="high" if committed else "normal",
-            context={"channel": "chat", "hot_path_committed": bool(committed)},
+            context={
+                "channel": "chat",
+                "hot_path_committed": bool(committed),
+                # Avoid duplicate model/profile work: dedicated curator lane owns it.
+                "skip_living_user_observe": bool(living_user_enqueued),
+            },
         )
         return committed
 

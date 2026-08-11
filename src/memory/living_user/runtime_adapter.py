@@ -32,6 +32,7 @@ class LlmServiceUserProfileAdapter:
     llm_service: Any
     timeout_seconds: float = 8.0
     max_tokens: int = 900
+    client: Any | None = None
 
     def propose_profile_operations(self, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
         return self._call(_PROFILE_SYSTEM, payload, operation="living_user_profile")
@@ -41,7 +42,7 @@ class LlmServiceUserProfileAdapter:
 
     def _call(self, system_prompt: str, payload: Mapping[str, Any], *, operation: str) -> Mapping[str, Any] | None:
         service = self.llm_service
-        client = getattr(service, "client", None)
+        client = self.client if self.client is not None else getattr(service, "client", None)
         create = getattr(client, "create_chat_completion", None)
         if not callable(create):
             return None
@@ -55,13 +56,15 @@ class LlmServiceUserProfileAdapter:
             from runtime.work_keys import stable_work_key
             work_key = stable_work_key(operation, json.dumps(payload, ensure_ascii=False, sort_keys=True)[:4000])
             with inference_context(
-                "memory_digest",
-                optional=True,
+                "memory_curator",
+                optional=False,
                 timeout_seconds=self.timeout_seconds,
                 cancel_scope=f"background:{operation}",
                 coalesce_key=work_key,
                 idempotency_key=work_key,
-                metadata={"operation": operation},
+                project="memory_curator",
+                credential_pool="curator",
+                metadata={"operation": operation, "worker_role": "curator"},
             ):
                 response = create(
                     messages=messages,

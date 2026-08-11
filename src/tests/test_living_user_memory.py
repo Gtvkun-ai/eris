@@ -276,3 +276,82 @@ def test_llm_adapter_parses_structured_profile_patch():
     result = LlmServiceUserProfileAdapter(Service()).propose_profile_operations({"user_text": "tui thích trời mưa"})
     assert result is not None
     assert result["operations"][0]["path"] == "preferences.favorite_weather"
+
+
+def test_llm_adapter_can_target_explicit_curator_client():
+    from memory.living_user import LlmServiceUserProfileAdapter
+
+    class Client:
+        def __init__(self, value):
+            self.value = value
+            self.calls = 0
+
+        def create_chat_completion(self, **kwargs):
+            self.calls += 1
+            return {"choices": [{"message": {"content": self.value}}]}
+
+    companion = Client('{"operations":[]}')
+    curator = Client('{"operations":[{"op":"add","path":"communication.response_rules","value":"ngắn","confidence":0.9,"explicitness":"explicit","evidence_ids":["turn_1"]}]}')
+
+    class Service:
+        client = companion
+
+    adapter = LlmServiceUserProfileAdapter(Service(), client=curator)
+    result = adapter.propose_profile_operations({"user_text": "trả lời ngắn", "evidence_ids": ["turn_1"]})
+
+    assert result is not None
+    assert result["operations"][0]["path"] == "communication.response_rules"
+    assert curator.calls == 1
+    assert companion.calls == 0
+
+
+def test_memory_kernel_fast_path_never_observes_living_user(tmp_path):
+    core = MemoryCognitionCore(str(tmp_path / "core"))
+    kernel = MemoryKernel.from_existing_core(core)
+    calls = []
+
+    class Adapter:
+        def propose_profile_operations(self, payload):
+            calls.append(payload)
+            return {"operations": []}
+
+        def summarize_episode(self, payload):
+            return None
+
+    core.living_user.bind_model_adapter(Adapter())
+    result = kernel.ingest(
+        "tôi thích trời mưa",
+        evidence_ids=["turn_1"],
+        turn_id="turn_1",
+        mode="fast",
+    )
+
+    assert calls == []
+    assert result.debug["living_user"]["deferred"] is True
+    assert result.debug["living_user"]["reason"] == "fast_path_background_curator"
+
+
+def test_memory_kernel_semantic_digest_can_delegate_living_user_to_curator_lane(tmp_path):
+    core = MemoryCognitionCore(str(tmp_path / "core"))
+    kernel = MemoryKernel.from_existing_core(core)
+    calls = []
+
+    class Adapter:
+        def propose_profile_operations(self, payload):
+            calls.append(payload)
+            return {"operations": []}
+
+        def summarize_episode(self, payload):
+            return None
+
+    core.living_user.bind_model_adapter(Adapter())
+    result = kernel.ingest(
+        "tôi thích trời mưa",
+        evidence_ids=["turn_1"],
+        turn_id="turn_1",
+        mode="semantic_digest",
+        context={"skip_living_user_observe": True},
+    )
+
+    assert calls == []
+    assert result.debug["living_user"]["reason"] == "dedicated_curator_lane"

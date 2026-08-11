@@ -293,13 +293,22 @@ class CoordinatorBootstrapMixin:
             self.memory_kernel._llm_service = llm_service
             living_user = getattr(self.memory_kernel, "living_user", None)
             if living_user is not None:
+                curator_client = getattr(llm_service, "curator_client", None)
                 try:
                     from memory.living_user import LlmServiceUserProfileAdapter
-                    living_user.bind_model_adapter(LlmServiceUserProfileAdapter(llm_service))
-                    self.logger.info("Living user memory đã nối episode/profile dreaming adapter.")
+                    if curator_client is not None:
+                        living_user.bind_model_adapter(
+                            LlmServiceUserProfileAdapter(llm_service, client=curator_client)
+                        )
+                        self.logger.info("Living user memory model owner: DeepSeek curator lane.")
+                    else:
+                        # Do not steal companion quota for bookkeeping. Deterministic profile
+                        # rules still work; model enrichment simply stays disabled.
+                        living_user.bind_model_adapter(None)
+                        self.logger.info("Living user curator lane chưa cấu hình; model enrichment tắt.")
                 except Exception as exc:
                     # Deterministic profile vẫn chạy; model adapter chỉ là enrichment.
-                    self.logger.warning("Không nối được living user model adapter: %s", exc)
+                    self.logger.warning("Không nối được living user curator adapter: %s", exc)
         self.body_running_fn = body_running_fn
         self.action_executor = action_executor
         self.memory_semantic_parser = memory_semantic_parser
@@ -346,6 +355,23 @@ class CoordinatorBootstrapMixin:
             bind_runtime_owner(self)
         except Exception as exc:
             self.logger.debug("[capability] runtime bind failed: %s", exc)
+        self.background_living_user_observer = None
+        living_user = getattr(self.memory_kernel, "living_user", None) if self.memory_kernel is not None else None
+        curator_client = getattr(llm_service, "curator_client", None)
+        if living_user is not None:
+            try:
+                from runtime.background_living_user_observer import build_background_living_user_observer_service
+                self.background_living_user_observer = build_background_living_user_observer_service(
+                    living_user=living_user,
+                    logger=self.logger,
+                )
+                if self.background_living_user_observer is not None:
+                    owner = "curator" if curator_client is not None else "deterministic-only"
+                    self.logger.info("Living user background lane started: %s", owner)
+            except Exception as exc:
+                self.logger.warning("Không khởi tạo được living user background lane: %s", exc)
+                self.background_living_user_observer = None
+
         self.background_memory_digest = None
         if memory_semantic_parser is not None:
             try:

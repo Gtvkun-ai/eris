@@ -3,6 +3,7 @@ import re
 import os
 import logging
 import hashlib
+import math
 
 from llm.token_budget import (
     detect_provider as _detect_provider,
@@ -232,7 +233,7 @@ def _brokered_post(
     model_name: str,
     messages,
     max_tokens: int,
-    timeout_seconds: float,
+    timeout_seconds: float | None,
     url: str,
     **request_kwargs,
 ):
@@ -274,7 +275,11 @@ def _brokered_post(
         },
     )
 
-    configured_timeout_seconds = float(timeout_seconds)
+    configured_timeout_seconds = None
+    if timeout_seconds is not None:
+        raw_timeout = float(timeout_seconds)
+        if raw_timeout > 0.0 and math.isfinite(raw_timeout):
+            configured_timeout_seconds = raw_timeout
 
     def send(*, cancel_token=None, timeout_seconds=None, inference_request=None):
         # PDF annotation, pages 5, 7 and 10: cancellation/deadline must reach
@@ -282,13 +287,12 @@ def _brokered_post(
         actual_request = inference_request or request
         if cancel_token is not None:
             cancel_token.raise_if_cancelled(actual_request)
-        effective_timeout = max(
-            0.05,
-            min(
-                float(timeout_seconds or configured_timeout_seconds),
-                configured_timeout_seconds,
-            ),
-        )
+        if configured_timeout_seconds is None:
+            effective_timeout = None
+        elif timeout_seconds is None:
+            effective_timeout = max(0.05, configured_timeout_seconds)
+        else:
+            effective_timeout = max(0.05, min(float(timeout_seconds), configured_timeout_seconds))
 
         effective_messages = list(messages or [])
         if supports_input_degrade and actual_request.estimated_input_tokens < prompt_tokens:

@@ -1283,7 +1283,9 @@ class AIRuntimeModelRouter:
             lane = "transport"
 
         optional = lane in {
-            "post_observer", "autonomous", "tutor_background", "capability_deliberation"
+            "post_observer", "autonomous", "tutor_background",
+            "neuro_continuation", "neuro_deliberation",
+            "capability_deliberation",
         }
         coalesce_key = reason_key if optional else ""
         with inference_context(

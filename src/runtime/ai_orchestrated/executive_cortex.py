@@ -626,7 +626,7 @@ class ExecutiveCortex:
                 reasoning_effort="low",
                 inference_tier="main_cognition",
                 priority=72,
-                timeout_seconds=float(os.getenv("ERIS_NEURO_CONTINUATION_TIMEOUT_S", "10") or 10),
+                timeout_seconds=0.0,
             )
         except Exception as exc:
             self._log("warning", "[neuro-continuation] reviewer failed: %s", exc)
@@ -708,10 +708,14 @@ class ExecutiveCortex:
                 priority=98 if mode == "interactive" else 66,
                 timeout_seconds=float(
                     os.getenv(
-                        "ERIS_NEURO_DELIBERATION_TIMEOUT_S",
-                        "10" if str(mode).startswith("interactive") else "8",
+                        (
+                            "ERIS_NEURO_DELIBERATION_TIMEOUT_S"
+                            if str(mode).startswith("interactive")
+                            else "ERIS_NEURO_BACKGROUND_TIMEOUT_S"
+                        ),
+                        "10" if str(mode).startswith("interactive") else "0",
                     )
-                    or ("10" if str(mode).startswith("interactive") else "8")
+                    or ("10" if str(mode).startswith("interactive") else "0")
                 ),
             )
         except Exception as exc:

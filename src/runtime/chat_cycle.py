@@ -699,23 +699,75 @@ class ChatCycleMixin:
         return raw in {"1", "true", "yes", "on", "always"}
 
     def _capture_screen_frame_for_chat(self, user_text: str, *, previous_public_turn=None) -> str:
+        screen_latency_started = time.perf_counter()
+        screen_latency_last = screen_latency_started
+        screen_latency_spans: list[tuple[str, float]] = []
+
+        def _screen_latency_mark(name: str) -> None:
+            nonlocal screen_latency_last
+            now = time.perf_counter()
+            screen_latency_spans.append((name, max(0.0, (now - screen_latency_last) * 1000.0)))
+            screen_latency_last = now
+
+        def _screen_latency_finish(outcome: str, result: str = "") -> str:
+            total_ms = max(0.0, (time.perf_counter() - screen_latency_started) * 1000.0)
+            collapsed: dict[str, float] = {}
+            for name, value in screen_latency_spans:
+                collapsed[name] = collapsed.get(name, 0.0) + value
+            ordered = " ".join(
+                f"{name}={value:.0f}ms"
+                for name, value in collapsed.items()
+                if value >= 0.5
+            )
+            try:
+                self.logger.info(
+                    "[chat screen latency] outcome=%s %s total=%.0fms bytes=%d",
+                    str(outcome or "unknown"),
+                    ordered,
+                    total_ms,
+                    len(str(result or "")),
+                )
+            except Exception:
+                pass
+            try:
+                from runtime.observability import GLOBAL_OBSERVABILITY
+
+                GLOBAL_OBSERVABILITY.observe(
+                    "chat_screen_latency_ms",
+                    total_ms,
+                    tags={"outcome": str(outcome or "unknown")},
+                    fields={
+                        "spans": {name: round(value, 2) for name, value in collapsed.items()},
+                        "bytes": len(str(result or "")),
+                    },
+                )
+            except Exception:
+                pass
+            return result
+
         self._chat_screen_route_decision = None
         ambient_blocks = self._chat_ambient_screen_blocks()
+        _screen_latency_mark("ambient")
         self._chat_screen_text_evidence = ambient_blocks
         self._chat_screen_capture_present = False
         self._chat_screen_capture_interpreted = False
 
         force_chat_vision = self._chat_main_vision_enabled()
         pending_force_vision = self._consume_next_turn_vision(user_text=user_text)
+        _screen_latency_mark("pending")
         previous_assistant_text = self._previous_assistant_text_for_screen_route(previous_public_turn)
+        _screen_latency_mark("previous_turn")
         explicit_or_inherited_request = self._looks_like_screen_vision_request(
             user_text,
             previous_assistant_text=previous_assistant_text,
         )
+        _screen_latency_mark("explicit_request")
         chess_relevant = self._looks_like_chess_context_request(user_text)
+        _screen_latency_mark("chess")
 
         if explicit_or_inherited_request and not chess_relevant:
             self._ensure_screen_text_worker_for_request()
+        _screen_latency_mark("ensure_ocr")
 
         router = getattr(self, "screen_relevance_router", None)
         route = None
@@ -733,6 +785,7 @@ class ChatCycleMixin:
 
         # OCR nền có thể vừa đổi frame nhưng chưa đến poll. Chỉ refresh cưỡng bức
         # khi user thật sự hỏi màn hình và structured chess state không đủ trả lời.
+        _screen_latency_mark("route")
         if (
             not chess_relevant
             and route is not None
@@ -753,13 +806,14 @@ class ChatCycleMixin:
 
         # Hai classifier từng bất đồng: request detector nhận ra “xem giúp”, router
         # lại trả mode=none. Explicit request thắng để evidence ladder còn hoạt động.
+        _screen_latency_mark("reroute")
         route_mode = str(getattr(route, "mode", "none") or "none") if route is not None else "none"
         if route is None or (route_mode == "none" and explicit_or_inherited_request):
             if route is None and not explicit_or_inherited_request and not force_chat_vision and not pending_force_vision:
                 self.logger.debug("[screen route] mode=none reason=no_screen_reference")
                 # Không return sớm khỏi grounding: ambient OCR vẫn được đọc trực
                 # tiếp từ ScreenEvidenceStore trong _chat_source_grounding_screen_facts.
-                return ""
+                return _screen_latency_finish("no_screen_reference")
             try:
                 from screen.evidence_models import ScreenRouteDecision
                 route = ScreenRouteDecision(
@@ -830,13 +884,14 @@ class ChatCycleMixin:
 
         # FEN tươi từ extension là direct structured evidence. Không chụp vision
         # lại bàn cờ và cũng không queue một escalation vô ích.
+        _screen_latency_mark("route_log")
         if chess_relevant:
             self.logger.info("[chess route] structured bridge selected; vision skipped")
             pending = getattr(self, "_chat_pending_vision_escalation", None)
             clear = getattr(pending, "clear", None)
             if callable(clear):
                 clear()
-            return ""
+            return _screen_latency_finish("chess_structured")
 
         mode = str(getattr(route, "mode", "none") or "none")
         should_capture_now = bool(
@@ -852,10 +907,10 @@ class ChatCycleMixin:
                 reason=str(getattr(route, "reason", "ocr_ambiguous") or "ocr_ambiguous"),
                 user_text=user_text,
             )
-            return ""
+            return _screen_latency_finish("queued_next_turn_vision")
 
         if not should_capture_now:
-            return ""
+            return _screen_latency_finish("no_capture")
         if mode != "vision" and force_chat_vision:
             self.logger.info("[vision chat] forcing main vision despite route mode=%s", mode)
 
@@ -864,19 +919,20 @@ class ChatCycleMixin:
             self.logger.info("[vision chat] telemetry service không hỗ trợ chụp màn hình.")
             if pending_force_vision:
                 self._queue_next_turn_vision(reason="pending_capture_unavailable", user_text=user_text)
-            return ""
+            return _screen_latency_finish("capture_unavailable")
         try:
             data_uri = capture_fn()
+            _screen_latency_mark("capture")
         except Exception as exc:
             self.logger.warning("[vision chat] không chụp được màn hình: %s", exc)
             if pending_force_vision:
                 self._queue_next_turn_vision(reason="pending_capture_failed", user_text=user_text)
-            return ""
+            return _screen_latency_finish("capture_failed")
         if not str(data_uri or "").strip():
             self.logger.warning("[vision chat] screen capture trả dữ liệu rỗng")
             if pending_force_vision:
                 self._queue_next_turn_vision(reason="pending_capture_empty", user_text=user_text)
-            return ""
+            return _screen_latency_finish("capture_empty")
         self._chat_screen_capture_present = True
         self.logger.info("[vision chat] captured=1 bytes=%d", len(str(data_uri)))
         snapshot = getattr(self, "_chat_snapshot_for_vision", None)
@@ -898,7 +954,8 @@ class ChatCycleMixin:
                 )
             except Exception as exc:
                 self.logger.warning("[vision chat] không nén được screenshot: %s", exc)
-        return data_uri
+        _screen_latency_mark("interpret")
+        return _screen_latency_finish("captured", data_uri)
 
     def _chat_vision_status_prompt_context(self, *, screen_image_data_uri: str = "") -> str:
         """Prompt guard cho stance khi có frame nhưng chưa có grounded vision claim.

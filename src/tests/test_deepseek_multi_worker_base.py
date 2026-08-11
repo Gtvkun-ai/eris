@@ -278,6 +278,24 @@ def test_llm_service_exposes_named_workers():
     assert service.social_critic_client is critic
 
 
+def test_research_client_no_longer_falls_back_to_main_or_fallback():
+    companion = object()
+    fallback = object()
+
+    service = LlmService(companion, fallback_client=fallback)
+
+    assert service.research_client is None
+
+
+def test_process_manager_research_client_is_retired(monkeypatch, tmp_path):
+    monkeypatch.setenv("ERIS_DS_BASE_URL", "http://127.0.0.1:6011/v1")
+    monkeypatch.setenv("ERIS_DS_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("ERIS_DS_RESEARCH_API_KEY", "research-gateway-key")
+    manager = RemoteModelProcessManager(logger=logging.getLogger("test"), project_root=str(tmp_path))
+
+    assert manager.build_research_client() is None
+
+
 def test_companion_key_can_boot_without_official_deepseek_key(monkeypatch, tmp_path):
     import llm.deepseek_workers as dw
     import llm.process_manager as pm
@@ -399,3 +417,25 @@ def test_settings_health_exposes_deepseek_worker_wiring_without_raw_keys(monkeyp
     assert seed["base_url"] == "http://127.0.0.1:6015/v1"
     assert seed["key_fingerprint"]
     assert seed["key_fingerprint"] != "seed-gateway-key"
+
+
+def test_curator_worker_uses_dedicated_gateway_key(monkeypatch):
+    monkeypatch.setenv("ERIS_DS_BASE_URL", "http://localhost:6011/v1")
+    monkeypatch.setenv("ERIS_DS_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("ERIS_DS2API_API_KEY", "shared-key")
+    monkeypatch.setenv("ERIS_DS_CURATOR_API_KEY", "curator-gateway-key")
+
+    spec = load_worker_spec("curator")
+
+    assert spec.role == "curator"
+    assert spec.api_key == "curator-gateway-key"
+    assert spec.jsonl_enabled is True
+
+
+def test_llm_service_keeps_curator_as_distinct_lane():
+    companion = object()
+    curator = object()
+    service = LlmService(companion, curator_client=curator)
+
+    assert service.client is companion
+    assert service.curator_client is curator

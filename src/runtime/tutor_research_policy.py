@@ -373,6 +373,9 @@ class TutorDelegationDecision:
     mode: str = "none"  # none | quick_search | research
 
 
+RESEARCH_MODE_RETIRED = True
+
+
 def score_tutor_delegation(text: object, *, intent: str = "", meaning_missing: bool = False) -> TutorDelegationDecision:
     """Gate chung cho Tutor web: quick_search hoặc research.
 
@@ -386,9 +389,15 @@ def score_tutor_delegation(text: object, *, intent: str = "", meaning_missing: b
     if not _runtime_bool("tutor", "enabled", default=True):
         return TutorDelegationDecision(False, 0.0, "tutor_disabled", "none")
 
+    quick_enabled = _runtime_bool("tutor", "quick_search_enabled", default=True)
+
     research = score_research_need(text, intent=intent, meaning_missing=meaning_missing)
     if research.should_delegate:
-        if _runtime_bool("tutor", "research_enabled", default=True):
+        if RESEARCH_MODE_RETIRED:
+            if quick_enabled:
+                return TutorDelegationDecision(True, min(0.88, research.score), "research_retired_to_quick_search", "quick_search")
+            return TutorDelegationDecision(False, research.score, "research_retired", "none")
+        if _runtime_bool("tutor", "research_enabled", default=False):
             return TutorDelegationDecision(True, research.score, research.reason, "research")
         return TutorDelegationDecision(False, research.score, "research_disabled", "none")
 
@@ -396,7 +405,6 @@ def score_tutor_delegation(text: object, *, intent: str = "", meaning_missing: b
     if not normalized:
         return TutorDelegationDecision(False, 0.0, "empty", "none")
 
-    quick_enabled = _runtime_bool("tutor", "quick_search_enabled", default=True)
     if is_explicit_search_request(text):
         return TutorDelegationDecision(bool(quick_enabled), 0.88, "explicit_search_cue" if quick_enabled else "quick_search_disabled", "quick_search" if quick_enabled else "none")
 
@@ -617,6 +625,7 @@ __all__ = [
     "is_explicit_search_request",
     "needs_external_verification",
     "needs_fresh_web",
+    "RESEARCH_MODE_RETIRED",
     "normalize_marker_text",
     "resolve_research_anchor",
     "resolve_research_topic",

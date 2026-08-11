@@ -538,9 +538,9 @@ class RemoteModelProcessManager:
         return self.build_deepseek_worker_client("curator")
 
     def build_research_client(self):
-        # Research worker đã bị loại bỏ; các yêu cầu tra cứu từ Tutor
-        # sẽ được điều hướng sang Curator để dọn dẹp API keys.
-        return self.build_curator_client()
+        # Retired lane. Keep the method as a compatibility shim so old startup
+        # paths do not fail, but do not alias research to curator/main.
+        return None
 
     def build_tutor_client(self):
         """Worker DeepSeek riêng để phân rã ngữ nghĩa scene theo sự kiện.
