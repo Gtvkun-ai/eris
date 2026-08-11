@@ -126,8 +126,9 @@ class AttentionOverseer:
         diary_client = self.process_manager.build_diary_client() if inner_diary_model_enabled() else None
         seed_client = self.process_manager.build_seed_client()
         surface_client = self.process_manager.build_surface_client()
-        curator_client = self.process_manager.build_curator_client()
+        research_client = self.process_manager.build_research_client() if background_tutor_enabled() else None
         tutor_client = self.process_manager.build_tutor_client() if background_tutor_enabled() else None
+        curator_client = self.process_manager.build_curator_client()
         if escalation_client is not None:
             provider_label = getattr(escalation_client, "base_url", "") or escalation_client.__class__.__name__
             self.logger.info("Escalation client (bái sư) đã sẵn sàng: %s", provider_label)
@@ -147,9 +148,9 @@ class AttentionOverseer:
             seed_client=seed_client,
             surface_client=surface_client,
             executive_client=executive_client,
-            curator_client=curator_client,
-            research_client=None,
+            research_client=research_client,
             tutor_client=tutor_client,
+            curator_client=curator_client,
             logger=self.logger,
         )
         configured_workers = [
@@ -163,9 +164,10 @@ class AttentionOverseer:
                 ("seed", getattr(self.llm_service, "seed_client", None)),
                 ("surface", getattr(self.llm_service, "surface_client", None)),
                 ("executive", getattr(self.llm_service, "executive_client", None)),
-                ("curator", getattr(self.llm_service, "curator_client", None)),
                 ("style", getattr(self.llm_service, "style_client", None)),
+                ("research", getattr(self.llm_service, "research_client", None)),
                 ("tutor", getattr(self.llm_service, "tutor_client", None)),
+                ("curator", getattr(self.llm_service, "curator_client", None)),
             )
             if worker is not None
         ]

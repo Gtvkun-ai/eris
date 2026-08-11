@@ -62,9 +62,10 @@ LANE_POLICIES: dict[str, LanePolicy] = {
     # planner itself is one-shot and may not own conversational session state.
     "capability_deliberation_required": LanePolicy(26, False, 4, 22.0, 1),
     "post_observer": LanePolicy(60, True, 2, 30.0, 1),
-    # Dedicated profile/curator key runs off the public response path. It is not
-    # shed merely because a chat turn is active: its own credential pool and
-    # worker thread are specifically meant to overlap the writer safely.
+    # Living-user extraction has its own DeepSeek curator credential pool. It is
+    # background with respect to the public writer, but it is not an expendable
+    # optional request: the dedicated credential means it may run concurrently
+    # without consuming the chat lane's concurrency/quota domain.
     "memory_curator": LanePolicy(65, False, 4, 12.0, 1),
     "memory_digest": LanePolicy(70, True, 2, 25.0, 1),
     "private_mind": LanePolicy(80, True, 1, 20.0, 1),

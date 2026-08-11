@@ -36,6 +36,7 @@ from .memory_kernel_contracts import (
     MaintenanceBudget,
     MemoryAnswerResult,
     MemoryIngestMode,
+    MemoryIngestPlan,
     MemoryIngestResult,
     MemoryKernelConfig,
     MemoryMaintenanceReport,
@@ -151,6 +152,150 @@ class MemoryKernel:
     # Ingest path
     # ------------------------------------------------------------------
 
+    def plan_ingest(
+        self,
+        text: str,
+        *,
+        evidence_ids: list[str] | None = None,
+        turn_id: str | None = None,
+        source: str = "chat_turn",
+        mode: MemoryIngestMode = "fast",
+        allow_candidate: bool | None = None,
+        storage_permission: bool = True,
+        permission_required: bool = False,
+        context: Mapping[str, Any] | None = None,
+    ) -> MemoryIngestPlan:
+        """Build an ingest proposal without touching durable memory state.
+
+        This is the only operation the realtime chat path should need. It may run
+        deterministic policy code, but it never calls ``core.commit`` and never
+        observes/synchronizes living-user state. The resulting requests are safe
+        to hand to a background commit owner later.
+        """
+
+        raw = str(text or "").strip()
+        if not raw:
+            return MemoryIngestPlan(
+                mode=mode,
+                source=source,
+                input_text="",
+                warnings=("empty_ingest_text",),
+                context=dict(context or {}),
+            )
+
+        allow_candidate = self.config.allow_candidate_by_default if allow_candidate is None else bool(allow_candidate)
+        policy = self.fast_policy if mode == "fast" else self.digest_policy
+        effective_evidence = list(evidence_ids or [])
+        if not effective_evidence and turn_id:
+            effective_evidence = [str(turn_id)]
+
+        decisions = policy.decide_from_user_turn(
+            raw,
+            turn_id=turn_id or (effective_evidence[0] if effective_evidence else None),
+            allow_candidate=allow_candidate,
+        )
+
+        requests: list[Any] = []
+        warnings: list[str] = []
+        for decision in decisions:
+            confidence = float(getattr(decision, "confidence", 0.0) or 0.0)
+            if mode != "fast" and confidence < self.config.digest_commit_min_confidence:
+                warnings.append(f"digest_decision_confidence_low:{confidence:.2f}")
+                continue
+            try:
+                request = decision.to_state_commit_request(
+                    storage_permission=storage_permission,
+                    permission_required=permission_required,
+                )
+                requests.append(self._annotate_request(
+                    request,
+                    mode=mode,
+                    source=source,
+                    context=context,
+                    evidence_ids=effective_evidence,
+                ))
+            except Exception as exc:
+                warnings.append(f"plan_failed:{type(exc).__name__}:{exc}")
+
+        return MemoryIngestPlan(
+            mode=mode,
+            source=source,
+            input_text=raw,
+            evidence_ids=tuple(effective_evidence),
+            decisions=tuple(decisions),
+            commit_requests=tuple(requests),
+            warnings=tuple(warnings),
+            context=dict(context or {}),
+            debug={
+                "decision_count": len(decisions),
+                "planned_request_count": len(requests),
+                "has_semantic_parser": self.semantic_parser is not None,
+                "policy": "fast_policy" if policy is self.fast_policy else "digest_policy",
+                "side_effect_free": True,
+            },
+        )
+
+    def commit_plan(
+        self,
+        plan: MemoryIngestPlan,
+        *,
+        observe_living_user: bool = False,
+        sync_living_user_semantic: bool = False,
+    ) -> MemoryIngestResult:
+        """Durably commit one previously planned ingest batch.
+
+        Living-user work is explicit here. Background semantic digestion normally
+        requests semantic projection sync only; the curator lane owns raw-turn
+        profile observation. This prevents duplicate model work and makes ordering
+        visible in code instead of hiding it inside ``mode`` folklore.
+        """
+
+        commit_results: list[Any] = []
+        warnings = list(plan.warnings)
+        for request in plan.commit_requests:
+            try:
+                commit_results.append(self.core.commit(request))
+            except Exception as exc:  # pragma: no cover - background commit must degrade, not crash runtime
+                warnings.append(f"commit_failed:{type(exc).__name__}:{exc}")
+
+        user_profile_debug: dict[str, Any] = {}
+        living_user = self.living_user
+        if living_user is not None and plan.evidence_ids:
+            if observe_living_user:
+                try:
+                    observation = living_user.observe_turn(
+                        plan.input_text,
+                        evidence_ids=list(plan.evidence_ids),
+                        context={**dict(plan.context or {}), "source": plan.source, "mode": plan.mode},
+                    )
+                    user_profile_debug.update({
+                        "applied": observation.applied,
+                        "rejected": observation.rejected,
+                        "operation_count": len(observation.operations),
+                    })
+                except Exception as exc:  # pragma: no cover
+                    warnings.append(f"living_user_observe_failed:{type(exc).__name__}:{exc}")
+            if sync_living_user_semantic:
+                try:
+                    sync_result = living_user.sync_semantic_memory()
+                    user_profile_debug["semantic_sync_changed"] = bool(sync_result.changed)
+                except Exception as exc:  # pragma: no cover
+                    warnings.append(f"living_user_sync_failed:{type(exc).__name__}:{exc}")
+
+        debug = dict(plan.debug)
+        debug["living_user"] = user_profile_debug
+        debug["commit_owner"] = "memory_kernel.commit_plan"
+        return MemoryIngestResult(
+            accepted=bool(commit_results),
+            mode=plan.mode,
+            source=plan.source,
+            input_text=plan.input_text,
+            decisions=list(plan.decisions),
+            commit_results=commit_results,
+            warnings=warnings,
+            debug=debug,
+        )
+
     def ingest(
         self,
         text: str,
@@ -164,117 +309,37 @@ class MemoryKernel:
         permission_required: bool = False,
         context: Mapping[str, Any] | None = None,
     ) -> MemoryIngestResult:
-        """Đưa một mảnh text/evidence vào memory lifecycle.
+        """Compatibility convenience: plan then commit in the current thread.
 
-        Đây là cổng ingest duy nhất mà runtime nên gọi.
-
-        mode="fast":
-            Không gọi parser/model. Dùng rule rẻ để commit fact rõ.
-
-        mode="semantic_digest":
-            Dùng digest_policy, có thể gọi parser model local đã inject.
-            Thích hợp cho background worker khi remote API đang pending.
-
-        mode="reflection":
-            Giống semantic_digest nhưng source/debug thể hiện là reflection.
+        ``fast`` is now strictly deterministic memory only: no profile model and
+        no living-user JSON/trace work. ``semantic_digest`` retains the legacy
+        full behavior for callers outside the new turn-memory pipeline.
         """
 
-        raw = str(text or "").strip()
-        if not raw:
+        plan = self.plan_ingest(
+            text,
+            evidence_ids=evidence_ids,
+            turn_id=turn_id,
+            source=source,
+            mode=mode,
+            allow_candidate=allow_candidate,
+            storage_permission=storage_permission,
+            permission_required=permission_required,
+            context=context,
+        )
+        if not plan.input_text:
             return MemoryIngestResult(
                 accepted=False,
                 mode=mode,
                 source=source,
                 input_text="",
-                warnings=["empty_ingest_text"],
+                warnings=list(plan.warnings),
+                debug=dict(plan.debug),
             )
-
-        allow_candidate = self.config.allow_candidate_by_default if allow_candidate is None else bool(allow_candidate)
-        policy = self.fast_policy if mode == "fast" else self.digest_policy
-
-        # turn_id là evidence mặc định nếu caller chưa đưa evidence_ids.
-        # Không có evidence thì commit layer hiện tại sẽ reject nhiều target, đúng thôi.
-        effective_evidence = list(evidence_ids or [])
-        if not effective_evidence and turn_id:
-            effective_evidence = [str(turn_id)]
-
-        # MemoryCommitPolicy hiện nhận turn_id, evidence nằm trong decision.
-        # Nếu cần evidence_ids trực tiếp hơn, sửa policy sau, không nhét hack vào store.
-        decisions = policy.decide_from_user_turn(
-            raw,
-            turn_id=turn_id or (effective_evidence[0] if effective_evidence else None),
-            allow_candidate=allow_candidate,
-        )
-
-        commit_results: list[Any] = []
-        warnings: list[str] = []
-        for decision in decisions:
-            try:
-                # Semantic digest không được commit claim quá yếu.
-                confidence = float(getattr(decision, "confidence", 0.0) or 0.0)
-                if mode != "fast" and confidence < self.config.digest_commit_min_confidence:
-                    warnings.append(f"digest_decision_confidence_low:{confidence:.2f}")
-                    continue
-
-                request = decision.to_state_commit_request(
-                    storage_permission=storage_permission,
-                    permission_required=permission_required,
-                )
-                request = self._annotate_request(
-                    request,
-                    mode=mode,
-                    source=source,
-                    context=context,
-                    evidence_ids=effective_evidence,
-                )
-                commit_results.append(self.core.commit(request))
-            except Exception as exc:  # pragma: no cover - ingest không được giết chat cycle
-                warnings.append(f"commit_failed:{type(exc).__name__}:{exc}")
-
-        user_profile_debug: dict[str, Any] = {}
-        living_user = self.living_user
-        context_map = dict(context or {})
-        delegate_living_user = bool(context_map.get("skip_living_user_observe", False))
-        if mode == "fast":
-            # Hard latency invariant: fast memory never calls profile extraction/model/JSON trace.
-            # A dedicated background curator lane owns per-turn living-user observation.
-            user_profile_debug = {"deferred": True, "reason": "fast_path_background_curator"}
-        elif living_user is not None and effective_evidence and not delegate_living_user:
-            try:
-                observation = living_user.observe_turn(
-                    raw,
-                    evidence_ids=effective_evidence,
-                    context={**context_map, "source": source, "mode": mode},
-                )
-                user_profile_debug = {
-                    "applied": observation.applied,
-                    "rejected": observation.rejected,
-                    "operation_count": len(observation.operations),
-                }
-                # semantic_digest là lúc semantic claims vừa được làm giàu; đồng bộ
-                # projection ở đây để fact mới có mặt trong user context ngay.
-                sync_result = living_user.sync_semantic_memory()
-                user_profile_debug["semantic_sync_changed"] = bool(sync_result.changed)
-            except Exception as exc:  # pragma: no cover - profile không được giết chat
-                warnings.append(f"living_user_observe_failed:{type(exc).__name__}:{exc}")
-        elif delegate_living_user:
-            user_profile_debug = {"deferred": True, "reason": "dedicated_curator_lane"}
-
-        return MemoryIngestResult(
-            accepted=bool(commit_results),
-            mode=mode,
-            source=source,
-            input_text=raw,
-            decisions=list(decisions),
-            commit_results=commit_results,
-            warnings=warnings,
-            debug={
-                "decision_count": len(decisions),
-                "evidence_ids": effective_evidence,
-                "has_semantic_parser": self.semantic_parser is not None,
-                "policy": "fast_policy" if policy is self.fast_policy else "digest_policy",
-                "living_user": user_profile_debug,
-            },
+        return self.commit_plan(
+            plan,
+            observe_living_user=(mode != "fast"),
+            sync_living_user_semantic=(mode != "fast"),
         )
 
     # ------------------------------------------------------------------

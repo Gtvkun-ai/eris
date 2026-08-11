@@ -211,6 +211,60 @@ class LivingUserMemoryService:
             "turns": self._turn_buffer[-48:],
         })
 
+    def propose_turn_operations(
+        self,
+        user_text: str,
+        *,
+        evidence_ids: Iterable[str],
+        context: Mapping[str, Any] | None = None,
+    ) -> tuple[ProfileOperation, ...]:
+        """Extract profile operations without mutating living-user state.
+
+        Curator/model work belongs on a proposal lane.  Authority checks and
+        durable writes deliberately happen later at the single mutation
+        boundary, so a slow model can run in parallel without becoming a
+        second state owner.
+        """
+        if not self.config.enabled or not self.config.auto_observe_turns:
+            return ()
+        ops = self.extractor.from_turn(
+            user_text,
+            evidence_ids=evidence_ids,
+            context=context,
+            existing_profile=self.profile_store.snapshot(limit=100),
+        )
+        return tuple(ops or ())
+
+    def apply_turn_operations(
+        self,
+        operations: Iterable[ProfileOperation],
+        *,
+        trace_context: Mapping[str, Any] | None = None,
+    ) -> UserTurnObservation:
+        """Apply already-extracted operations at the authoritative boundary."""
+        if not self.config.enabled or not self.config.auto_observe_turns:
+            return UserTurnObservation(diagnostics=("living_user_disabled",))
+        ops = tuple(operations or ())
+        guarded_ops, authority_rejected = self.authority_ledger.guard_operations(ops)
+        result = self.profile_store.apply(guarded_ops, checkpoint_reason="observe_user_turn")
+        self._reapply_authority_projection()
+        rejected = tuple((*result.rejected, *authority_rejected))
+        payload = {
+            "applied": len(result.record_ids), "rejected_count": len(rejected),
+            "operation_count": len(ops), "paths": [op.path for op in guarded_ops],
+            "operations": [op.to_dict() for op in guarded_ops],
+            "authority_rejected": list(authority_rejected),
+        }
+        if trace_context:
+            payload["context"] = dict(trace_context)
+        self.trace_journal.append("observe_turn", payload)
+        return UserTurnObservation(
+            applied=len(result.record_ids),
+            rejected=len(rejected),
+            operations=guarded_ops,
+            diagnostics=rejected,
+        )
+
     def observe_turn(
         self,
         user_text: str,
@@ -218,30 +272,19 @@ class LivingUserMemoryService:
         evidence_ids: Iterable[str],
         context: Mapping[str, Any] | None = None,
     ) -> UserTurnObservation:
+        """Compatibility facade: propose then apply synchronously.
+
+        Runtime turn-memory code uses the two explicit phases above; legacy
+        callers retain the old one-call behavior.
+        """
         if not self.config.enabled or not self.config.auto_observe_turns:
             return UserTurnObservation(diagnostics=("living_user_disabled",))
-        ops = self.extractor.from_turn(
+        ops = self.propose_turn_operations(
             user_text,
             evidence_ids=evidence_ids,
             context=context,
-            existing_profile=self.profile_store.snapshot(limit=100),
         )
-        guarded_ops, authority_rejected = self.authority_ledger.guard_operations(ops)
-        result = self.profile_store.apply(guarded_ops, checkpoint_reason="observe_user_turn")
-        self._reapply_authority_projection()
-        rejected = tuple((*result.rejected, *authority_rejected))
-        self.trace_journal.append("observe_turn", {
-            "applied": len(result.record_ids), "rejected_count": len(rejected),
-            "operation_count": len(ops), "paths": [op.path for op in guarded_ops],
-            "operations": [op.to_dict() for op in guarded_ops],
-            "authority_rejected": list(authority_rejected),
-        })
-        return UserTurnObservation(
-            applied=len(result.record_ids),
-            rejected=len(rejected),
-            operations=guarded_ops,
-            diagnostics=rejected,
-        )
+        return self.apply_turn_operations(ops, trace_context=context)
 
     def record_interaction_preference(
         self,

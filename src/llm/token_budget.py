@@ -100,7 +100,13 @@ def unlimited_prompt_for(base_url: str | None, model: str | None) -> bool:
 
 
 def budget_for_provider(provider: str) -> int:
-    return PROVIDER_TPM_BUDGET.get((provider or "default").lower(), PROVIDER_TPM_BUDGET["default"])
+    key = (provider or "default").lower()
+    # Broker may suffix a role-specific credential pool, e.g.
+    # ``deepseek__curator``. Quota state stays isolated by the full key, while
+    # static provider capacity should still inherit DeepSeek's budget rather
+    # than falling back to the generic 30k bucket.
+    base_key = key.split("__", 1)[0]
+    return PROVIDER_TPM_BUDGET.get(base_key, PROVIDER_TPM_BUDGET["default"])
 
 
 def hard_cap_for_provider(provider: str) -> int:

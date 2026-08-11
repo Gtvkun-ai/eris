@@ -30,9 +30,14 @@ Output: {"title":"...","summary":"...","outcome":"...","topics":[],"entities":[]
 @dataclass(slots=True)
 class LlmServiceUserProfileAdapter:
     llm_service: Any
+    client: Any = None
+    fallback_to_service_client: bool = True
+    inference_lane: str = "memory_digest"
+    inference_optional: bool = True
+    project: str = ""
+    credential_pool: str = ""
     timeout_seconds: float = 8.0
     max_tokens: int = 900
-    client: Any | None = None
 
     def propose_profile_operations(self, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
         return self._call(_PROFILE_SYSTEM, payload, operation="living_user_profile")
@@ -42,7 +47,9 @@ class LlmServiceUserProfileAdapter:
 
     def _call(self, system_prompt: str, payload: Mapping[str, Any], *, operation: str) -> Mapping[str, Any] | None:
         service = self.llm_service
-        client = self.client if self.client is not None else getattr(service, "client", None)
+        client = self.client
+        if client is None and self.fallback_to_service_client:
+            client = getattr(service, "client", None)
         create = getattr(client, "create_chat_completion", None)
         if not callable(create):
             return None
@@ -56,15 +63,15 @@ class LlmServiceUserProfileAdapter:
             from runtime.work_keys import stable_work_key
             work_key = stable_work_key(operation, json.dumps(payload, ensure_ascii=False, sort_keys=True)[:4000])
             with inference_context(
-                "memory_curator",
-                optional=False,
+                self.inference_lane,
+                optional=self.inference_optional,
                 timeout_seconds=self.timeout_seconds,
                 cancel_scope=f"background:{operation}",
                 coalesce_key=work_key,
                 idempotency_key=work_key,
-                project="memory_curator",
-                credential_pool="curator",
-                metadata={"operation": operation, "worker_role": "curator"},
+                project=self.project,
+                credential_pool=self.credential_pool,
+                metadata={"operation": operation},
             ):
                 response = create(
                     messages=messages,

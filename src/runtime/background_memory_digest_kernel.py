@@ -21,6 +21,7 @@ Một con worker biết thân phận của mình. Hiếm, nhưng nên có.
 """
 
 import os
+import itertools
 import queue
 import threading
 import time
@@ -170,14 +171,23 @@ class BackgroundMemoryDigestKernelService:
         config: BackgroundMemoryDigestKernelConfig | None = None,
         logger: Any = None,
         idle_probe: Any = None,
+        observe_living_user: bool = True,
+        commit_sink: Any = None,
     ) -> None:
         self.memory_kernel = memory_kernel
         self.config = resolve_dependency(config, lambda: BackgroundMemoryDigestKernelConfig())
         self.enabled = bool(self.config.enabled and self.memory_kernel is not None)
         self.logger = logger
         self.idle_probe = idle_probe
+        self.observe_living_user = bool(observe_living_user)
+        # Optional higher-level mutation owner. When present this worker only
+        # parses/plans and submits the immutable plan; it never commits stores.
+        self.commit_sink = commit_sink
         self.stats = MemoryDigestKernelStats()
-        self._queue: queue.Queue[MemoryDigestKernelJob] = queue.Queue(maxsize=max(1, self.config.max_queue_size))
+        self._queue: queue.PriorityQueue[tuple[int, int, MemoryDigestKernelJob]] = queue.PriorityQueue(
+            maxsize=max(1, self.config.max_queue_size)
+        )
+        self._sequence = itertools.count()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._remote_inflight = threading.Event()
@@ -249,7 +259,7 @@ class BackgroundMemoryDigestKernelService:
             not_before=now + (self.config.idle_quiet_seconds if self.config.idle_only else 0.0),
         )
         try:
-            self._queue.put_nowait(job)
+            self._put_job(job)
             self.stats.enqueued += 1
             return True
         except queue.Full:
@@ -286,7 +296,7 @@ class BackgroundMemoryDigestKernelService:
         processed = 0
         while True:
             try:
-                job = self._queue.get_nowait()
+                _rank, _seq, job = self._queue.get_nowait()
             except queue.Empty:
                 self._maybe_run_idle_maintenance(reason="test_idle")
                 return processed
@@ -310,7 +320,7 @@ class BackgroundMemoryDigestKernelService:
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
-                job = self._queue.get(timeout=self.config.worker_idle_sleep)
+                _rank, _seq, job = self._queue.get(timeout=self.config.worker_idle_sleep)
             except queue.Empty:
                 self._maybe_run_idle_maintenance(reason="worker_idle")
                 continue
@@ -378,7 +388,14 @@ class BackgroundMemoryDigestKernelService:
         return True
 
     def _requeue(self, job: MemoryDigestKernelJob) -> None:
-        self._queue.put_nowait(job)
+        self._put_job(job)
+
+    @staticmethod
+    def _priority_rank(priority: DigestPriority) -> int:
+        return {"high": 0, "normal": 1, "low": 2}.get(str(priority or "normal"), 1)
+
+    def _put_job(self, job: MemoryDigestKernelJob) -> None:
+        self._queue.put_nowait((self._priority_rank(job.priority), next(self._sequence), job))
 
     def _defer_job(self, job: MemoryDigestKernelJob, *, reason: str = "") -> bool:
         delay = max(0.05, float(self.config.requeue_delay_seconds))
@@ -400,7 +417,7 @@ class BackgroundMemoryDigestKernelService:
 
     def _process(self, job: MemoryDigestKernelJob) -> None:
         self.stats.last_job_id = job.job_id
-        result = self.memory_kernel.ingest(
+        plan = self.memory_kernel.plan_ingest(
             job.text,
             evidence_ids=list(job.evidence_ids),
             turn_id=job.turn_id,
@@ -415,6 +432,26 @@ class BackgroundMemoryDigestKernelService:
                 "background_role": job.role,
                 "background_priority": job.priority,
             },
+        )
+        sink = self.commit_sink
+        if callable(sink):
+            submitted = bool(sink(plan, job))
+            self.stats.processed += 1
+            if not submitted:
+                self.stats.skipped += 1
+                self.stats.last_error = f"commit_sink_rejected:{job.job_id}"
+            self.stats.last_result = {
+                "submitted": submitted,
+                "job_id": job.job_id,
+                "request_count": plan.request_count,
+            }
+            self._log("debug", f"memory_digest_planned:{job.job_id}:submitted={int(submitted)}")
+            return
+
+        result = self.memory_kernel.commit_plan(
+            plan,
+            observe_living_user=self.observe_living_user,
+            sync_living_user_semantic=True,
         )
         self.stats.processed += 1
         self.stats.committed += result.committed_count

@@ -293,22 +293,25 @@ class CoordinatorBootstrapMixin:
             self.memory_kernel._llm_service = llm_service
             living_user = getattr(self.memory_kernel, "living_user", None)
             if living_user is not None:
-                curator_client = getattr(llm_service, "curator_client", None)
                 try:
                     from memory.living_user import LlmServiceUserProfileAdapter
-                    if curator_client is not None:
-                        living_user.bind_model_adapter(
-                            LlmServiceUserProfileAdapter(llm_service, client=curator_client)
-                        )
-                        self.logger.info("Living user memory model owner: DeepSeek curator lane.")
-                    else:
-                        # Do not steal companion quota for bookkeeping. Deterministic profile
-                        # rules still work; model enrichment simply stays disabled.
-                        living_user.bind_model_adapter(None)
-                        self.logger.info("Living user curator lane chưa cấu hình; model enrichment tắt.")
+                    curator_client = getattr(llm_service, "curator_client", None)
+                    living_user.bind_model_adapter(LlmServiceUserProfileAdapter(
+                        llm_service,
+                        client=curator_client,
+                        fallback_to_service_client=False,
+                        inference_lane="memory_curator",
+                        inference_optional=False,
+                        project="memory_curator",
+                        credential_pool="curator",
+                    ))
+                    self.logger.info(
+                        "Living user memory model owner: %s.",
+                        "DeepSeek curator lane" if curator_client is not None else "deterministic only",
+                    )
                 except Exception as exc:
                     # Deterministic profile vẫn chạy; model adapter chỉ là enrichment.
-                    self.logger.warning("Không nối được living user curator adapter: %s", exc)
+                    self.logger.warning("Không nối được living user model adapter: %s", exc)
         self.body_running_fn = body_running_fn
         self.action_executor = action_executor
         self.memory_semantic_parser = memory_semantic_parser
@@ -355,45 +358,38 @@ class CoordinatorBootstrapMixin:
             bind_runtime_owner(self)
         except Exception as exc:
             self.logger.debug("[capability] runtime bind failed: %s", exc)
-        self.background_living_user_observer = None
-        living_user = getattr(self.memory_kernel, "living_user", None) if self.memory_kernel is not None else None
-        curator_client = getattr(llm_service, "curator_client", None)
-        if living_user is not None:
-            try:
-                from runtime.background_living_user_observer import build_background_living_user_observer_service
-                self.background_living_user_observer = build_background_living_user_observer_service(
-                    living_user=living_user,
-                    logger=self.logger,
-                )
-                if self.background_living_user_observer is not None:
-                    owner = "curator" if curator_client is not None else "deterministic-only"
-                    self.logger.info("Living user background lane started: %s", owner)
-            except Exception as exc:
-                self.logger.warning("Không khởi tạo được living user background lane: %s", exc)
-                self.background_living_user_observer = None
+        self.turn_memory_pipeline = None
+        self.background_memory_digest = None  # compatibility alias for older probes/callers
+        try:
+            from runtime.turn_memory_pipeline import build_turn_memory_pipeline
 
-        self.background_memory_digest = None
-        if memory_semantic_parser is not None:
-            try:
-                from runtime.background_memory_digest import build_background_memory_digest_service
-            except Exception:
-                try:
-                    from .background_memory_digest import build_background_memory_digest_service
-                except Exception as exc:
-                    self.logger.warning("Không import được background memory digest service: %s", exc)
-                    build_background_memory_digest_service = None
-            if build_background_memory_digest_service is not None:
-                try:
-                    self.background_memory_digest = build_background_memory_digest_service(
-                        memory_kernel=self.memory_kernel,
-                        semantic_parser=memory_semantic_parser,
-                        memory_core=memory_core,
-                        logger=self.logger,
-                        idle_probe=self._background_memory_digest_idle_probe,
-                    )
-                except Exception as exc:
-                    self.logger.warning("Không khởi tạo được background memory digest service: %s", exc)
-                    self.background_memory_digest = None
+            def _build_turn_memory_pipeline():
+                return build_turn_memory_pipeline(
+                    memory_kernel=self.memory_kernel,
+                    semantic_parser=memory_semantic_parser,
+                    living_user=getattr(self.memory_kernel, "living_user", None) if self.memory_kernel is not None else None,
+                    logger=self.logger,
+                    idle_probe=self._background_memory_digest_idle_probe,
+                )
+
+            self.turn_memory_pipeline = self.subsystem_supervisor.start(
+                "runtime.turn_memory_pipeline",
+                _build_turn_memory_pipeline,
+                failure_kind=FailureKind.PROGRAMMER_ERROR,
+                stop_methods=("stop", "shutdown", "close"),
+                details={"mode": "plan_then_background_commit"},
+            )
+            if self.turn_memory_pipeline is not None:
+                self.background_memory_digest = getattr(self.turn_memory_pipeline, "semantic_digest", None)
+                self.logger.info(
+                    "[turn-memory] ready semantic=%s curator=%s",
+                    int(self.background_memory_digest is not None),
+                    int(bool(getattr(self.turn_memory_pipeline, "curator_enabled", False))),
+                )
+        except Exception as exc:
+            self.logger.warning("Không khởi tạo được turn memory pipeline: %s", exc)
+            self.turn_memory_pipeline = None
+            self.background_memory_digest = None
 
     def _bootstrap_hardening_and_state(self, *, memory_core) -> None:
         self.internal_state_engine = InternalStateEngine()

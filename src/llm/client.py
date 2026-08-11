@@ -167,7 +167,17 @@ def _runtime_reasoning_effort() -> str:
 
 
 def _pressure_provider(base_url: str, model_name: str) -> str:
-    return _detect_provider(base_url, model_name)
+    provider = _detect_provider(base_url, model_name)
+    # A role-specific gateway key is a distinct quota/cooldown domain even when
+    # it reaches the same DS2API URL. Without this suffix, one curator 429 could
+    # poison chat admission despite the user explicitly provisioning a separate
+    # credential. Humans bought two lanes; the broker should not repaint them as
+    # one lane because their asphalt ends at the same host.
+    pool = str(getattr(current_inference_context(), "credential_pool", "") or "").strip().lower()
+    if not pool:
+        return provider
+    safe_pool = re.sub(r"[^a-z0-9._-]+", "-", pool).strip("-") or "pool"
+    return f"{provider}__{safe_pool}"
 
 
 def _record_pressure_request(base_url: str, model_name: str, messages, max_tokens: int) -> str:

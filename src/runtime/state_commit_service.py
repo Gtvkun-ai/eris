@@ -88,6 +88,10 @@ class StateCommitServiceMixin:
         service = getattr(self, "background_memory_digest", None)
         return bool(service is not None and getattr(service, "enabled", False))
 
+    def _turn_memory_pipeline_enabled(self) -> bool:
+        service = getattr(self, "turn_memory_pipeline", None)
+        return bool(service is not None and getattr(service, "enabled", False))
+
     def _enqueue_background_memory_digest(self, user_text: str, *, turn_id: str = "", source: str = "chat_turn", priority: str = "normal", context: dict | None = None) -> bool:
         service = getattr(self, "background_memory_digest", None)
         if service is None or not bool(getattr(service, "enabled", False)):
@@ -101,22 +105,8 @@ class StateCommitServiceMixin:
             self.logger.warning("[memory digest] enqueue failed: %s", exc)
             return False
 
-    def _enqueue_background_living_user_observation(self, user_text: str, *, turn_id: str = "", source: str = "chat_turn", context: dict | None = None) -> bool:
-        service = getattr(self, "background_living_user_observer", None)
-        if service is None or not bool(getattr(service, "enabled", False)):
-            return False
-        enqueue = getattr(service, "enqueue_user_turn", None)
-        if not callable(enqueue):
-            return False
-        try:
-            evidence_ids = [str(turn_id)] if str(turn_id or "").strip() else None
-            return bool(enqueue(user_text, turn_id=turn_id, evidence_ids=evidence_ids, source=source, context=context))
-        except Exception as exc:
-            self.logger.warning("[living user curator] enqueue failed: %s", exc)
-            return False
-
     def _set_background_memory_digest_remote_inflight(self, inflight: bool) -> None:
-        service = getattr(self, "background_memory_digest", None)
+        service = getattr(self, "turn_memory_pipeline", None) or getattr(self, "background_memory_digest", None)
         marker = getattr(service, "notify_remote_inflight", None)
         if callable(marker):
             try:
@@ -433,11 +423,12 @@ class StateCommitServiceMixin:
         return None
 
     def _ingest_user_turn_memory_hot_path(self, user_text: str, *, turn_id: str = "") -> bool:
-        """Wire the already-existing fast memory intake into every chat turn.
+        """Admit one user turn to memory without durable foreground writes.
 
-        The addressing store is the immediate authority; MemoryKernel remains the
-        durable semantic source for recall and profile views. Background digest is
-        also enqueued for richer extraction, but the current reply never waits for it.
+        The turn-memory pipeline performs a deterministic side-effect-free preview
+        and fans the immutable turn envelope to semantic + curator background
+        owners. Only when that pipeline is unavailable do we use the legacy
+        synchronous commit path as a compatibility fallback.
         """
         frame = SimpleNamespace(
             frame_id=str(turn_id or "").strip(),
@@ -445,28 +436,36 @@ class StateCommitServiceMixin:
             permission=None,
             memory_ingest_receipt=None,
         )
+        pipeline = getattr(self, "turn_memory_pipeline", None)
+        enqueue_turn = getattr(pipeline, "enqueue_user_turn", None)
+        if self._turn_memory_pipeline_enabled() and callable(enqueue_turn):
+            try:
+                receipt = enqueue_turn(
+                    str(user_text or ""),
+                    turn_id=str(turn_id or "").strip(),
+                    source="chat_turn",
+                    priority="normal",
+                    context={"channel": "chat"},
+                    storage_permission=self._frame_memory_storage_permission(frame),
+                )
+                return bool(receipt)
+            except Exception as exc:
+                # Pipeline failure should not silently drop memory forever, but the
+                # fallback below is intentionally only for subsystem failure, not
+                # for ordinary queue pressure.
+                self.logger.warning("Turn memory pipeline failed; using legacy fast commit: %s", exc)
+
         committed = self._ingest_user_turn_via_memory_kernel(
             frame,
             str(user_text or ""),
             turn_id=str(turn_id or "").strip() or None,
-        )
-        living_user_enqueued = self._enqueue_background_living_user_observation(
-            str(user_text or ""),
-            turn_id=str(turn_id or "").strip(),
-            source="chat_turn",
-            context={"channel": "chat", "hot_path_committed": bool(committed)},
         )
         self._enqueue_background_memory_digest(
             str(user_text or ""),
             turn_id=str(turn_id or "").strip(),
             source="chat_turn",
             priority="high" if committed else "normal",
-            context={
-                "channel": "chat",
-                "hot_path_committed": bool(committed),
-                # Avoid duplicate model/profile work: dedicated curator lane owns it.
-                "skip_living_user_observe": bool(living_user_enqueued),
-            },
+            context={"channel": "chat", "hot_path_committed": bool(committed)},
         )
         return committed
 

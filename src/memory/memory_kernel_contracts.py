@@ -17,7 +17,7 @@ Nguyên tắc:
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Mapping, Optional
 
 
 MemoryIngestMode = Literal["fast", "semantic_digest", "reflection"]
@@ -89,6 +89,35 @@ class MemoryKernelConfig:
     candidate_limit_small: int = 6
     candidate_limit_normal: int = 20
     candidate_limit_deep: int = 48
+
+
+@dataclass(slots=True)
+class MemoryIngestPlan:
+    """Side-effect-free ingest proposal produced before durable commit.
+
+    The hot chat path may inspect this object without taking the global memory
+    commit lock. Background workers can later commit the exact annotated
+    requests, which gives extraction and persistence an explicit ownership
+    boundary instead of letting every caller improvise one.
+    """
+
+    mode: MemoryIngestMode
+    source: str
+    input_text: str
+    evidence_ids: tuple[str, ...] = ()
+    decisions: tuple[Any, ...] = ()
+    commit_requests: tuple[Any, ...] = ()
+    warnings: tuple[str, ...] = ()
+    context: Mapping[str, Any] = field(default_factory=dict)
+    debug: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def decision_count(self) -> int:
+        return len(self.decisions)
+
+    @property
+    def request_count(self) -> int:
+        return len(self.commit_requests)
 
 
 @dataclass(slots=True)
@@ -216,6 +245,7 @@ __all__ = [
     "MemoryAnswerMode",
     "MaintenanceBudget",
     "MemoryKernelConfig",
+    "MemoryIngestPlan",
     "MemoryIngestResult",
     "MemoryAnswerResult",
     "MemoryMaintenanceReport",
