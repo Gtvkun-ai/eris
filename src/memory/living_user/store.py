@@ -449,7 +449,7 @@ class UserProfileStore:
         protected = {str(record_id) for record_id in protected_record_ids if str(record_id).strip()}
         changed_ids: list[str] = []
         rejected: list[str] = []
-        details = {"applied": 0, "archived": 0, "weakened": 0, "merged": 0}
+        details = {"applied": 0, "archived": 0, "weakened": 0, "merged": 0, "rewritten": 0, "hidden": 0}
 
         with self._lock:
             before = [r.to_dict() for r in self.all(include_inactive=True)]
@@ -458,7 +458,7 @@ class UserProfileStore:
                 record_ids = [str(x) for x in row.get("record_ids", ()) if str(x).strip()]
                 record_ids = list(dict.fromkeys(record_ids))
                 reason = " ".join(str(row.get("reason") or "").split())[:420]
-                if action not in {"archive", "weaken", "merge"} or not record_ids:
+                if action not in {"archive", "weaken", "merge", "rewrite", "hide"} or not record_ids:
                     rejected.append(f"unsupported_curator_operation:{action or 'empty'}")
                     continue
                 if any(record_id in protected for record_id in record_ids):
@@ -540,6 +540,32 @@ class UserProfileStore:
                     primary.metadata["curated_merge_ids"] = [r.id for r in selected if r.id != primary.id][-40:]
                     changed_ids.extend(record.id for record in selected)
                     details["merged"] += 1
+
+                elif action == "rewrite":
+                    if len(selected) != 1:
+                        rejected.append("rewrite_requires_one_record")
+                        continue
+                    value = row.get("value")
+                    if not value or not isinstance(value, str):
+                        rejected.append("rewrite_requires_string_value")
+                        continue
+                    record = selected[0]
+                    record.value = value.strip()[:1000]
+                    record.updated_at = now
+                    record.metadata["curator_reason"] = reason
+                    changed_ids.append(record.id)
+                    details["rewritten"] += 1
+
+                elif action == "hide":
+                    if len(selected) != 1:
+                        rejected.append("hide_requires_one_record")
+                        continue
+                    record = selected[0]
+                    record.updated_at = now
+                    record.metadata["hidden_from_ui"] = True
+                    record.metadata["curator_reason"] = reason
+                    changed_ids.append(record.id)
+                    details["hidden"] += 1
 
                 details["applied"] += 1
                 self._audit.append({

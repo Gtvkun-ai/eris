@@ -315,6 +315,15 @@ class InitiativeEngine:
         contribution_signal = _clamp01(runtime.get("contribution_signal", 0.0))
         active_goal_text = " ".join(str(runtime.get("active_goal_text") or "").split()).strip()[:320]
         active_goal_refs = tuple(str(item) for item in runtime.get("active_goal_evidence_refs", ()) if str(item or "").strip())
+        # V60: meaning do telemetry có cấu trúc tạo ra. Đây không phải OCR text
+        # nhét thẳng vào motive. Runtime bridge chỉ mở signal public khi meaning
+        # có evidence structured và đã qua privacy/TaskGraph.
+        environment_contribution = _clamp01(runtime.get("environment_contribution_signal", 0.0))
+        environment_target_text = " ".join(str(runtime.get("environment_target_text") or "").split()).strip()[:420]
+        environment_refs = tuple(str(item) for item in runtime.get("environment_evidence_refs", ()) if str(item or "").strip())
+        environment_self_relevance = _clamp01(runtime.get("environment_self_relevance_signal", 0.0))
+        environment_self_target = " ".join(str(runtime.get("environment_self_target_text") or "").split()).strip()[:420]
+        environment_self_refs = tuple(str(item) for item in runtime.get("environment_self_evidence_refs", ()) if str(item or "").strip())
         unresolved = _clamp01(runtime.get("unresolved_relational", 0.0))
         private_share = _clamp01(runtime.get("sharing_signal", sharing))
 
@@ -486,6 +495,43 @@ class InitiativeEngine:
             f"contribution_signal={contribution_signal:.2f}; active_goal={bool(active_goal_text)}",
             _uniq((*base_refs, *active_goal_refs), limit=12),
         )
+
+        # V60: Eris có thể muốn giúp vì những gì telemetry *có cấu trúc* cho
+        # thấy trong cùng task, ví dụ test fail rồi user mở docs/GitHub để chẩn
+        # đoán. Motive này khác open-loop: nó sinh từ thế giới đang diễn ra.
+        if environment_target_text:
+            add(
+                MotiveKind.CONTRIBUTE,
+                _clamp01(environment_contribution * (0.58 + 0.30 * kp + 0.12 * opportunity)),
+                0.20,
+                "environment_shared_task",
+                (
+                    "đóng góp một bước nhỏ dựa trên meaning môi trường có provenance, chỉ nói điều được "
+                    f"evidence hỗ trợ và không giả định cảm xúc/ý định user: {environment_target_text}"
+                ),
+                ("competence", "connection", "coherence"),
+                f"environment_contribution={environment_contribution:.2f}",
+                _uniq((*base_refs, *environment_refs), limit=12),
+            )
+
+        # Khi structured telemetry cho thấy user đang xem chính source/khái niệm
+        # của Eris, điều đó có thể chạm vào self-expression. Không suy ra user
+        # "muốn hiểu Eris"; chỉ coi đây là một cơ hội có provenance để chia sẻ
+        # một quan sát ngắn nếu thời điểm phù hợp.
+        if environment_self_target:
+            add(
+                MotiveKind.SHARE,
+                _clamp01(environment_self_relevance * (0.52 + 0.22 * cp + 0.26 * opportunity)),
+                0.18,
+                "environment_self_relevance",
+                (
+                    "chia sẻ một quan sát ngắn về Eris liên quan trực tiếp đối tượng user đang xem, "
+                    f"không suy diễn mục đích của user: {environment_self_target}"
+                ),
+                ("connection", "coherence"),
+                f"environment_self_relevance={environment_self_relevance:.2f}",
+                _uniq((*base_refs, *environment_self_refs), limit=12),
+            )
         if sp >= 0.42:
             add(
                 MotiveKind.PROTECT,

@@ -154,6 +154,7 @@ def build_memory_panel_snapshot(
             project_id=project_id,
             limit=limit,
         )
+        if not record.metadata.get("hidden_from_ui")
     ]
 
     actions = living_user.action_snapshot()

@@ -93,6 +93,8 @@ class MemoryGCResult:
     living_archived: int = 0
     living_weakened: int = 0
     living_merged: int = 0
+    living_rewritten: int = 0
+    living_hidden: int = 0
     living_history_removed: int = 0
     pruned_total: int = 0
     journal_compacted: bool = False
@@ -112,6 +114,8 @@ class MemoryGCResult:
             "living_archived": self.living_archived,
             "living_weakened": self.living_weakened,
             "living_merged": self.living_merged,
+            "living_rewritten": self.living_rewritten,
+            "living_hidden": self.living_hidden,
             "living_history_removed": self.living_history_removed,
             "pruned_total": self.pruned_total,
             "journal_compacted": self.journal_compacted,
@@ -301,7 +305,7 @@ class MemoryGCService:
                     self.run_count += 1
                     logger.info(
                         "[memory_gc] run #%d maintenance=%s semantic_drop=%d "
-                        "living(applied=%d archive=%d weaken=%d merge=%d) pruned=%d (%.1fs)",
+                        "living(applied=%d archive=%d weaken=%d merge=%d rewrite=%d hide=%d) pruned=%d (%.1fs)",
                         self.run_count,
                         result.maintenance_ran,
                         result.ds_dropped,
@@ -309,6 +313,8 @@ class MemoryGCService:
                         result.living_archived,
                         result.living_weakened,
                         result.living_merged,
+                        result.living_rewritten,
+                        result.living_hidden,
                         result.pruned_total,
                         result.duration_sec,
                     )
@@ -483,6 +489,8 @@ class MemoryGCService:
         result.living_archived = report.archived
         result.living_weakened = report.weakened
         result.living_merged = report.merged
+        result.living_rewritten = getattr(report, "rewritten", 0)
+        result.living_hidden = getattr(report, "hidden", 0)
         result.living_history_removed = report.history_removed
         result.warnings.extend(report.warnings[:6])
         result.notes.extend(report.notes[:8])

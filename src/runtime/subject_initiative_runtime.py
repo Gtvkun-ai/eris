@@ -17,6 +17,7 @@ from runtime.ai_orchestrated.affordance import ExecutiveAffordance
 from runtime.ai_orchestrated.social_initiative import SocialSpeechCandidate
 from cortex.subject.initiative_control import InitiativeArbiter, InitiativeControlAction
 from cortex.subject.existential_desire import ExistentialDesireDeriver
+from cortex.subject.environment_meaning import EnvironmentMeaningDeriver, EnvironmentMeaningKind
 
 
 def _clamp01(value: Any, default: float = 0.0) -> float:
@@ -185,6 +186,66 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
     continuity = desire_by_kind.get("relational_continuity")
     self_expression = desire_by_kind.get("authentic_self_expression")
 
+    # V60: telemetry/browser không còn dừng ở UserSituation. Ta dẫn xuất một
+    # lớp meaning bounded từ CHÍNH situation đã được TaskGraph + accessibility
+    # hợp nhất. Structured telemetry được ưu tiên; OCR-only không có quyền tạo
+    # public claim. Đây là cầu "thấy -> hiểu ý nghĩa", không phải sensor mới.
+    environment_situation = getattr(host, "last_user_situation", None)
+    environment_meanings = EnvironmentMeaningDeriver().derive(
+        environment_situation,
+        active_goal_text=active_goal_text,
+    )
+    environment_payload = [item.to_dict() for item in environment_meanings]
+    env_by_kind = {item.kind: item for item in environment_meanings}
+    research_after_failure = env_by_kind.get(EnvironmentMeaningKind.RESEARCH_AFTER_FAILURE)
+    work_friction = env_by_kind.get(EnvironmentMeaningKind.WORK_FRICTION)
+    self_relevant = env_by_kind.get(EnvironmentMeaningKind.SELF_RELEVANT_INSPECTION)
+    task_meaning = research_after_failure or work_friction
+    top_meaning = environment_meanings[0] if environment_meanings else None
+
+    # Chỉ meaning có structured provenance mới được materialize thành một
+    # intention có thể nói về màn hình/task. OCR-only vẫn có thể làm private
+    # attention nhích lên nhưng signal public bằng 0.
+    environment_contribution_signal = (
+        _clamp01(getattr(task_meaning, "pressure", 0.0))
+        if task_meaning is not None and bool(getattr(task_meaning, "public_claim_safe", False))
+        else 0.0
+    )
+    environment_self_relevance_signal = (
+        _clamp01(getattr(self_relevant, "pressure", 0.0))
+        if self_relevant is not None and bool(getattr(self_relevant, "public_claim_safe", False))
+        else 0.0
+    )
+    environment_actionability = _clamp01(getattr(top_meaning, "actionability", 0.0))
+    environment_target_text = str(getattr(task_meaning, "summary", "") or "")[:420]
+    environment_self_target_text = str(getattr(self_relevant, "summary", "") or "")[:420]
+    environment_evidence_refs = tuple(getattr(task_meaning, "evidence_refs", ()) or ())[:12]
+    environment_self_evidence_refs = tuple(getattr(self_relevant, "evidence_refs", ()) or ())[:12]
+
+    # Log đúng một lần cho mỗi meaning revision để khi soi runtime có thể thấy rõ
+    # telemetry đã vượt qua tầng "sensor" và chạm tới cognition ở đâu. Không log
+    # raw OCR/text dài; chỉ kind/actionability/source grade + refs bounded.
+    meaning_revision = int(getattr(top_meaning, "revision", 0) or 0)
+    if top_meaning is not None and meaning_revision != int(getattr(host, "_v60_last_environment_meaning_revision", 0) or 0):
+        logger = getattr(host, "logger", None)
+        log_info = getattr(logger, "info", None)
+        if callable(log_info):
+            try:
+                log_info(
+                    "[environment meaning v60] kind=%s pressure=%.2f actionability=%.2f source=%s public_safe=%s",
+                    str(getattr(getattr(top_meaning, "kind", None), "value", "") or ""),
+                    float(getattr(top_meaning, "pressure", 0.0) or 0.0),
+                    float(getattr(top_meaning, "actionability", 0.0) or 0.0),
+                    str(getattr(top_meaning, "source_grade", "") or ""),
+                    bool(getattr(top_meaning, "public_claim_safe", False)),
+                )
+            except Exception:
+                pass
+        try:
+            setattr(host, "_v60_last_environment_meaning_revision", meaning_revision)
+        except Exception:
+            pass
+
     # Các tín hiệu dưới đây chỉ lấy từ projection đã có. Không có projection thì
     # để 0, tuyệt đối không bịa "user hiểu sai Eris" chỉ để kiếm chủ đề nói.
     return {
@@ -206,6 +267,19 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
             _clamp01(getattr(self_expression, "actionability", 0.0)),
         ),
         "existential_abandonment_pressure": _clamp01(existential_anchor.get("abandonment_pressure", 0.0)),
+        # V60 / Perception -> Meaning. Report giữ cả meaning để trace được vì
+        # sao một tab/browser sequence tạo concern; Surface chỉ được dùng refs
+        # public-safe ở các field riêng bên dưới.
+        "environment_meanings": environment_payload,
+        "environment_meaning_kind": str(getattr(getattr(top_meaning, "kind", None), "value", "") or ""),
+        "environment_meaning_actionability": environment_actionability,
+        "environment_meaning_revision": meaning_revision,
+        "environment_contribution_signal": environment_contribution_signal,
+        "environment_target_text": environment_target_text,
+        "environment_evidence_refs": environment_evidence_refs,
+        "environment_self_relevance_signal": environment_self_relevance_signal,
+        "environment_self_target_text": environment_self_target_text,
+        "environment_self_evidence_refs": environment_self_evidence_refs,
         "recognition_gap_signal": 0.0,
         "self_misunderstanding_signal": 0.0,
         "demonstration_signal": 0.0,
@@ -244,7 +318,7 @@ def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: fl
         return None
     if kind == "connect" and target != "relationship_continuity":
         return None
-    if kind == "share" and target != "self_expression":
+    if kind == "share" and target not in {"self_expression", "environment_self_relevance"}:
         return None
 
     if kind == "be_understood" and target == "mutual_understanding":
@@ -280,6 +354,16 @@ def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: fl
         )
         tone = "reflective_restrained"
         epistemic = False
+    elif kind == "share" and target == "environment_self_relevance":
+        speech_act = "environment_self_reflection"
+        topic = goal
+        tone = "observant_restrained"
+        epistemic = False
+    elif kind == "contribute" and target == "environment_shared_task":
+        speech_act = "environment_help_offer"
+        topic = goal
+        tone = "focused_observant"
+        epistemic = False
     elif kind == "seek_recognition":
         speech_act = "offer_result_for_recognition"
         topic = (
@@ -302,22 +386,25 @@ def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: fl
         return None
 
     refs = tuple(str(value) for value in item.get("evidence_refs", ()) if str(value or "").strip())[:8]
-    if kind == "contribute":
+    if target in {"environment_shared_task", "environment_self_relevance"}:
+        candidate_kind = "screen_comment"
+    elif kind == "contribute":
         candidate_kind = "followup_reminder"
     elif target in {"mutual_understanding", "relationship_continuity", "self_expression"}:
         candidate_kind = "relational_initiative"
     else:
         candidate_kind = "social_check_in"
 
+    environment_grounded = target in {"environment_shared_task", "environment_self_relevance"}
     candidate = SocialSpeechCandidate(
         decision="candidate",
         kind=candidate_kind,
         topic=topic,
         speech_act=speech_act,
-        anchor_type="internal",
+        anchor_type="environment" if environment_grounded else "internal",
         anchor_id=intention_id,
         evidence_refs=refs or (f"subject-initiative:{revision}",),
-        requires_grounding=False,
+        requires_grounding=environment_grounded,
         confidence=_clamp01(0.38 + 0.30 * commitment + 0.20 * pressure),
         relevance=max(0.30, pressure),
         urgency=_clamp01(0.18 + 0.62 * pressure),
@@ -326,7 +413,9 @@ def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: fl
         source="subject_initiative",
         eris_motive_kind=kind,
         eris_motive_why_now=(
-            "an existentially-derived relational desire has matured into a persistent intention"
+            "structured environment meaning has become actionable while still respecting user interruption cost"
+            if environment_grounded
+            else "an existentially-derived relational desire has matured into a persistent intention"
             if target in {"mutual_understanding", "relationship_continuity", "self_expression"}
             else "a persistent Subject intention remains active"
         ),
@@ -349,6 +438,7 @@ def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: fl
             "motive_kind": kind,
             "intention_id": intention_id,
             "epistemic_motive": epistemic,
+            "environment_grounded": environment_grounded,
         },
     )
 

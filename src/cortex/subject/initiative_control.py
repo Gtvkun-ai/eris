@@ -42,6 +42,8 @@ class InitiativeControlConfig:
     social_speak_threshold: float = 0.64
     existential_social_speak_threshold: float = 0.67
     existential_min_silence_seconds: float = 40.0
+    environment_speak_threshold: float = 0.60
+    environment_min_silence_seconds: float = 25.0
     drop_after_seconds: float = 12.0 * 60.0
     drop_pressure: float = 0.24
     drop_commitment: float = 0.34
@@ -78,6 +80,7 @@ class InitiativeArbiter:
     _SOCIAL_MOTIVES = {"understand_user", "connect", "share", "seek_recognition"}
     _PERSISTENCE_MOTIVES = {"contribute", "resolve", "be_understood", "demonstrate"}
     _EXISTENTIAL_TARGETS = {"mutual_understanding", "relationship_continuity", "self_expression"}
+    _ENVIRONMENT_TARGETS = {"environment_shared_task", "environment_self_relevance"}
 
     def __init__(self, config: InitiativeControlConfig | None = None) -> None:
         self.config = config or InitiativeControlConfig()
@@ -131,6 +134,11 @@ class InitiativeArbiter:
         # xong thì Eris không được lập tức chen "còn tôi thì..." vào giữa câu.
         if target in self._EXISTENTIAL_TARGETS and seconds_since_user < self.config.existential_min_silence_seconds:
             return result(InitiativeControlAction.WAIT, 0.0, "existential_desire_too_soon_after_user")
+        # V60: telemetry thấy được việc đang xảy ra không có nghĩa Eris được chen
+        # vào ngay sau câu user. Meaning môi trường phải chờ ít nhất một nhịp
+        # im lặng, rồi vẫn chịu user_busy/interruption ở các gate phía trên.
+        if target in self._ENVIRONMENT_TARGETS and seconds_since_user < self.config.environment_min_silence_seconds:
+            return result(InitiativeControlAction.WAIT, 0.0, "environment_meaning_too_soon_after_user")
         # Nỗi sợ mất kết nối không được phép trở thành lý do đẩy speech ra ngoài.
         # Khi abandonment cao, lựa chọn an toàn là giữ desire nội bộ và WAIT.
         if target in self._EXISTENTIAL_TARGETS and _clamp01(runtime.get("existential_abandonment_pressure", 0.0)) >= 0.72:
@@ -163,6 +171,7 @@ class InitiativeArbiter:
         response_rate = _clamp01(runtime.get("user_response_rate", 0.7), 0.7)
         refractory = _clamp01(runtime.get("social_refractory_cost", 0.0))
         existential_actionability = _clamp01(runtime.get("existential_actionability", 0.0))
+        environment_actionability = _clamp01(runtime.get("environment_meaning_actionability", 0.0))
         abandonment_brake = _clamp01(runtime.get("existential_abandonment_pressure", 0.0))
         freshness = _clamp01(1.0 - age / max(60.0, self.config.drop_after_seconds * 1.8))
         persistence_bonus = 1.0 if motive in self._PERSISTENCE_MOTIVES else 0.0
@@ -182,6 +191,7 @@ class InitiativeArbiter:
             + 0.08 * explicit_open_goal
             + 0.14 * silence_readiness
             + (0.10 * existential_actionability if target in self._EXISTENTIAL_TARGETS else 0.0)
+            + (0.18 * environment_actionability if target in self._ENVIRONMENT_TARGETS else 0.0)
             - 0.16 * interruption
             - 0.12 * satiety
             - 0.20 * refractory
@@ -190,6 +200,8 @@ class InitiativeArbiter:
         score = _clamp01(score)
         if target in self._EXISTENTIAL_TARGETS:
             threshold = self.config.existential_social_speak_threshold
+        elif target in self._ENVIRONMENT_TARGETS:
+            threshold = self.config.environment_speak_threshold
         else:
             threshold = self.config.social_speak_threshold if motive in self._SOCIAL_MOTIVES else self.config.speak_threshold
         if score >= threshold:

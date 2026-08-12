@@ -115,6 +115,10 @@ _EVENT_WEIGHTS: dict[str, float] = {
     "attention_pressure": 0.34,
     "relational_pressure": 0.58,
     "initiative_pressure": 0.64,
+    # V60: không phải raw tab/OCR event. Đây là pattern đã được ghép có
+    # provenance (ví dụ fail -> docs cùng task) nên đủ trọng lượng để gọi
+    # cognition xem xét; InitiativeArbiter vẫn có quyền chọn WAIT.
+    "environment_meaning": 0.88,
 }
 
 _HARD_WAKE = frozenset({"force", "user_turn", "structured_due", "followup_due"})
@@ -228,7 +232,7 @@ class TemporalMind:
 
             # Probabilistic-union style accumulation: không cộng tuyến tính đến vô hạn.
             activation = 1.0 - (1.0 - activation) * (1.0 - effective * 0.82)
-            if signal.kind in {"open_discourse", "followup_due", "structured_due", "user_turn"}:
+            if signal.kind in {"open_discourse", "followup_due", "structured_due", "user_turn", "environment_meaning"}:
                 tension = 1.0 - (1.0 - tension) * (1.0 - effective * 0.70)
             if contribution > dominant_contribution:
                 dominant_contribution = contribution

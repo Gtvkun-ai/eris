@@ -1823,6 +1823,25 @@ class SelfTurnPipeline:
             )
             emit("scene_delta", scene_strength, "ambient_screen_tracker", revision=screen.revision)
 
+        # V60: browser_tab_activated level=1 vẫn chỉ cập nhật world state. Nhưng
+        # chuỗi có nghĩa đã được EnvironmentMeaningDeriver ghép (ví dụ failure
+        # -> docs/GitHub cùng task -> user pause) có quyền đề nghị TemporalMind
+        # đánh thức cognition. Đây là pattern authority, không phải nâng cấp mọi
+        # Alt-Tab thành "sự kiện quan trọng".
+        initiative_ctx = snapshot.get("initiative_runtime_context")
+        initiative_ctx = initiative_ctx if isinstance(initiative_ctx, Mapping) else {}
+        environment_meaning_actionability = float(initiative_ctx.get("environment_meaning_actionability", 0.0) or 0.0)
+        if environment_meaning_actionability >= 0.34:
+            emit(
+                "environment_meaning",
+                min(1.0, max(0.0, environment_meaning_actionability)),
+                "perception_to_meaning_v60",
+                revision=max(0, int(initiative_ctx.get("environment_meaning_revision", 0) or 0)),
+                meaning_kind=str(initiative_ctx.get("environment_meaning_kind", "") or ""),
+                task=str(getattr(situation, "task_hint", "") or "") if situation is not None else "",
+                phase=str(getattr(situation, "phase", "") or "") if situation is not None else "",
+            )
+
         if context.activity.has_new_event:
             new_keys = set(context.activity.new_event_keys)
             new_events = [item for item in context.activity.recent_events if item.event_key in new_keys]

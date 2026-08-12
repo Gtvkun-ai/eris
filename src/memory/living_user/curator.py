@@ -45,23 +45,26 @@ Hard rules:
   model is not proof.
 - Do not alter or remove user-authority records.
 - Prefer KEEP when a stable explicit preference has direct evidence.
-- ARCHIVE null/empty claims, resolved temporary open loops, malformed paths, unsupported
+- ARCHIVE null/empty claims, obsolete/superseded open loops, resolved temporary open loops, malformed paths, unsupported
   emotional inference, one-off scene details, and claims that merely paraphrase the
   current conversation without durable value.
+- HIDE from UI any records that are purely technical state, temporary tracking, or have no reading value for the user (but might be useful for AI context). Use the "hide" action.
+- REWRITE (translate/fix) values that are in English, mixed languages (Vietnamese-English), contain abbreviations, or are unaccented Vietnamese (tiếng Việt không dấu). Output natural, proper, and correctly accented Vietnamese. Keep the exact meaning. Use the "rewrite" action.
 - WEAKEN uncertain inferred/observed claims instead of deleting them when evidence is
   plausible but weak.
 - MERGE only records on the same path and scope that express the same durable fact.
 - Do not merge contradictions. Keep the strongest evidenced record and archive/weaken
   the weaker model-generated record.
-- Do not rewrite values and do not create new records.
+- Do not rewrite values (except for translation/fixing presentation) and do not create new records.
 
 Allowed schema:
 {
   "operations": [
     {
-      "action": "keep" | "archive" | "weaken" | "merge",
+      "action": "keep" | "archive" | "weaken" | "merge" | "rewrite" | "hide",
       "record_ids": ["upr_..."],
       "amount": 0.0,
+      "value": "translated text here (only for rewrite action)",
       "reason": "short evidence-based reason"
     }
   ]
@@ -114,6 +117,8 @@ class LivingUserCuratorResult:
     archived: int = 0
     weakened: int = 0
     merged: int = 0
+    rewritten: int = 0
+    hidden: int = 0
     protected: int = 0
     history_removed: int = 0
     skipped_reason: str = ""
@@ -392,7 +397,7 @@ class LivingUserMemoryCurator:
             action = str(row.get("action") or "").strip().lower()
             ids = [str(x) for x in row.get("record_ids", ()) if str(x) in records]
             ids = list(dict.fromkeys(ids))
-            if action not in {"keep", "archive", "weaken", "merge"} or not ids:
+            if action not in {"keep", "archive", "weaken", "merge", "rewrite", "hide"} or not ids:
                 continue
             if any(record_id in protected_ids for record_id in ids):
                 continue
@@ -406,11 +411,8 @@ class LivingUserMemoryCurator:
                 continue
             if action == "archive":
                 record = records[ids[0]]
-                # Không cho critic archive rule deterministic hoặc explicit fact có
-                # recurrence cao. Nó có thể đề xuất, validator có quyền cười rồi bỏ.
+                # Không cho critic archive rule deterministic.
                 if record.source == "behavior_rule":
-                    continue
-                if record.explicitness == "explicit" and record.recurrence >= 3 and record.evidence_ids:
                     continue
                 safe.append({"action": "archive", "record_ids": ids, "reason": reason or "DeepSeek critic đề xuất archive."})
             elif action == "weaken":
@@ -421,12 +423,23 @@ class LivingUserMemoryCurator:
                     continue
                 selected = [records[x] for x in ids]
                 same_path = len({r.path for r in selected}) == 1
-                same_scope = len({r.scope.identity for r in selected}) == 1
+                same_scope = len({r.scope.identity for record in selected}) == 1
                 same_value = len({value_fingerprint(r.value) for r in selected}) == 1
                 clustered = any(set(ids).issubset(cluster) for cluster in cluster_sets)
                 if not same_path or not same_scope or not (same_value or clustered):
                     continue
                 safe.append({"action": "merge", "record_ids": ids, "reason": reason or "Các record trùng nghĩa trên cùng path/scope."})
+            elif action == "rewrite":
+                if len(ids) != 1:
+                    continue
+                value = row.get("value")
+                if not value or not isinstance(value, str):
+                    continue
+                safe.append({"action": "rewrite", "record_ids": ids, "value": value[:1000], "reason": reason or "Sửa lỗi diễn đạt/Dịch sang tiếng Việt."})
+            elif action == "hide":
+                if len(ids) != 1:
+                    continue
+                safe.append({"action": "hide", "record_ids": ids, "reason": reason or "Ẩn khỏi UI vì không có giá trị đọc."})
             touched.update(ids)
         return safe
 
@@ -437,6 +450,8 @@ class LivingUserMemoryCurator:
         result.archived += int(details.get("archived", 0) or 0)
         result.weakened += int(details.get("weakened", 0) or 0)
         result.merged += int(details.get("merged", 0) or 0)
+        result.rewritten += int(details.get("rewritten", 0) or 0)
+        result.hidden += int(details.get("hidden", 0) or 0)
         rejected = tuple(getattr(applied, "rejected", ()) or ())
         if rejected:
             result.notes.append(f"validator_rejected:{len(rejected)}")

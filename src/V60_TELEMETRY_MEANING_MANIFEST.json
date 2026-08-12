@@ -1,0 +1,21 @@
+{
+  "release": "V60",
+  "name": "Telemetry to Meaning Initiative",
+  "language_notes": "vi",
+  "architecture": [
+    "structured telemetry",
+    "UserSituation",
+    "EnvironmentMeaningDeriver",
+    "Subject motive/intention",
+    "InitiativeArbiter",
+    "TemporalMind",
+    "grounded screen_comment"
+  ],
+  "principles": {
+    "structured_over_ocr": true,
+    "single_tab_switch_is_not_desire": true,
+    "ocr_only_public_claim": false,
+    "user_busy_means_wait": true,
+    "environment_claims_require_grounding": true
+  }
+}
