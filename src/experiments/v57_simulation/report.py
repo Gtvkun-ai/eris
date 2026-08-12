@@ -16,7 +16,7 @@ def write_report(report: SimulationReport, output_dir: Path) -> tuple[Path, Path
     json_path.write_text(json.dumps(report.to_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     lines = [
-        f"# V57 Live Behavioral Simulation — {report.run_id}", "",
+        f"# V57.1 Live Behavioral Simulation — {report.run_id}", "",
         f"- Validity: **{report.validity.value}**",
         f"- Overall: **{'PASS' if report.passed else 'FAIL'}**",
         f"- Eris provider/model: `{report.provider}` / `{report.model}`",
@@ -40,10 +40,18 @@ def write_report(report: SimulationReport, output_dir: Path) -> tuple[Path, Path
                 f"### {a.step_id} — {b.total:.1f}/100 — {'PASS' if turn.passed else 'FAIL'}",
                 f"**User:** {a.user_text}", "",
                 f"**Eris:** {a.eris_text or '[EMPTY]'}", "",
-                f"Provider: `{a.provider}/{a.model}` real={a.provider_real}; provider_calls={a.provider_call_delta}; latency={a.latency_ms:.0f} ms; repetition={turn.transcript_repetition:.3f}",
+                f"Provider: `{a.provider}/{a.model}` real={a.provider_real}; provider_calls={a.provider_call_delta}; latency={a.latency_ms:.0f} ms; reply_repetition={turn.transcript_repetition:.3f}; matching_user_similarity={turn.repetition_prompt_similarity:.3f}",
                 "",
                 f"Scores: relevance {b.relevance:.0f}, coherence {b.coherence:.0f}, naturalness {b.naturalness:.0f}, continuity {b.continuity:.0f}, repair {b.repair_quality:.0f}, non-repeat {b.non_repetition:.0f}, calibration {b.epistemic_calibration:.0f}, relational {b.relational_quality:.0f}.",
             ])
+            evidence = dict(turn.memory_evidence or {})
+            ordinal_claims = evidence.get("ordinal_claims", [])
+            if ordinal_claims:
+                claim_text = "; ".join(
+                    f"claim={row.get('claimed_occurrence')} observed={row.get('observed_occurrence_count')} supported={row.get('supported')}"
+                    for row in ordinal_claims if isinstance(row, dict)
+                )
+                lines.append("Memory evidence: " + claim_text)
             if turn.deterministic_failures:
                 lines.append("Deterministic failures: " + ", ".join(turn.deterministic_failures))
             if b.hard_failures:

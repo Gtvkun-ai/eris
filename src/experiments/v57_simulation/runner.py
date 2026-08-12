@@ -11,7 +11,9 @@ from typing import Callable, Sequence
 from .contracts import RunValidity, Scenario, ScenarioEvaluation, SimulationReport, TurnEvaluation
 from .judge import BehavioralJudge, build_explicit_judge_client
 from .live_runtime import LiveRuntimeHarness
-from .quality import deterministic_failures, max_prior_similarity, runtime_invariant_failures
+from .quality import (
+    build_memory_evidence, deterministic_failures, repetition_context, runtime_invariant_failures,
+)
 
 
 HarnessFactory = Callable[..., LiveRuntimeHarness]
@@ -33,7 +35,7 @@ class LiveSimulationRunner:
 
     def run(self, scenarios: Sequence[Scenario]) -> SimulationReport:
         started_at = time.time()
-        run_id = f"v57-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+        run_id = f"v57_1-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
         root = self.run_root / run_id
         root.mkdir(parents=True, exist_ok=True)
         harness = None
@@ -65,6 +67,7 @@ class LiveSimulationRunner:
                 turns: list[TurnEvaluation] = []
                 transcript: list[dict[str, str]] = []
                 prior_replies: list[str] = []
+                prior_user_texts: list[str] = []
                 failures: list[str] = []
                 for index, step in enumerate(scenario.steps, start=1):
                     if step.restart_before:
@@ -78,11 +81,22 @@ class LiveSimulationRunner:
                         scenario_id=scenario.scenario_id, step_id=step.step_id,
                         turn_index=index, day=step.day, text=step.user_text,
                     )
-                    repetition = max_prior_similarity(artifact.eris_text, prior_replies)
+                    repetition, repetition_prompt_similarity, _ = repetition_context(
+                        user_text=step.user_text,
+                        eris_text=artifact.eris_text,
+                        prior_user_texts=prior_user_texts,
+                        prior_replies=prior_replies,
+                    )
+                    memory_evidence = build_memory_evidence(
+                        user_text=step.user_text,
+                        eris_text=artifact.eris_text,
+                        prior_user_texts=prior_user_texts,
+                    )
                     local_failures = tuple(dict.fromkeys((
                         *deterministic_failures(
                             user_text=step.user_text, eris_text=artifact.eris_text,
-                            prior_replies=prior_replies, provider_real=artifact.provider_real,
+                            prior_replies=prior_replies, prior_user_texts=prior_user_texts,
+                            provider_real=artifact.provider_real,
                         ),
                         *runtime_invariant_failures(artifact),
                     )))
@@ -91,7 +105,7 @@ class LiveSimulationRunner:
                     try:
                         behavior = judge.evaluate(
                             step=step, transcript=transcript, eris_text=artifact.eris_text,
-                            repetition_score=repetition,
+                            repetition_score=repetition, memory_evidence=memory_evidence,
                         )
                     except Exception as exc:
                         validity = RunValidity.RUNTIME_FAILED
@@ -105,10 +119,16 @@ class LiveSimulationRunner:
                         artifact=artifact, behavior=behavior,
                         deterministic_failures=local_failures,
                         transcript_repetition=repetition,
+                        repetition_prompt_similarity=repetition_prompt_similarity,
+                        memory_evidence=memory_evidence,
                     )
                     turns.append(evaluation)
+                    prior_user_texts.append(step.user_text)
                     if artifact.eris_text:
                         prior_replies.append(artifact.eris_text)
+                    else:
+                        # Giữ alignment user/reply để repetition_context không ghép nhầm turn.
+                        prior_replies.append("")
                     if not evaluation.passed:
                         failures.append(f"{step.step_id}:behavior_or_invariant_failed")
                     if behavior.total < scenario.min_behavior_score:

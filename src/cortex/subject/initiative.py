@@ -290,6 +290,8 @@ class InitiativeEngine:
         misunderstanding = _clamp01(runtime.get("self_misunderstanding_signal", 0.0))
         demonstrate_signal = _clamp01(runtime.get("demonstration_signal", 0.0))
         contribution_signal = _clamp01(runtime.get("contribution_signal", 0.0))
+        active_goal_text = " ".join(str(runtime.get("active_goal_text") or "").split()).strip()[:320]
+        active_goal_refs = tuple(str(item) for item in runtime.get("active_goal_evidence_refs", ()) if str(item or "").strip())
         unresolved = _clamp01(runtime.get("unresolved_relational", 0.0))
         private_share = _clamp01(runtime.get("sharing_signal", sharing))
 
@@ -395,14 +397,20 @@ class InitiativeEngine:
             ("coherence", "continuity"),
             f"coherence_pressure={hp:.2f}; unresolved={unresolved:.2f}",
         )
+        contribution_goal = (
+            f"tiếp tục mục tiêu đang dang dở của user bằng một bước nhỏ, không giành quyền quyết định: {active_goal_text}"
+            if active_goal_text else
+            "đóng góp một hành động hữu ích vào việc đang chung mà không chiếm quyền quyết định của user"
+        )
         add(
             MotiveKind.CONTRIBUTE,
             _clamp01(contribution_signal * (0.55 + 0.45 * kp)),
             0.12,
             "shared_task",
-            "đóng góp một hành động hữu ích vào việc đang chung mà không chiếm quyền quyết định của user",
+            contribution_goal,
             ("competence", "connection"),
-            f"contribution_signal={contribution_signal:.2f}",
+            f"contribution_signal={contribution_signal:.2f}; active_goal={bool(active_goal_text)}",
+            _uniq((*base_refs, *active_goal_refs), limit=12),
         )
         if sp >= 0.42:
             add(
@@ -578,6 +586,42 @@ class InitiativeEngine:
             if item.intention_id == wanted and item.status == IntentionStatus.EXPRESSED:
                 changed = True
                 updated.append(replace(item, status=IntentionStatus.AWAITING_OUTCOME, updated_at=float(now)))
+            else:
+                updated.append(item)
+        if not changed:
+            return state
+        return InitiativeState(
+            revision=state.revision + 1, updated_at=float(now),
+            active_motives=state.active_motives, pending_intentions=tuple(updated),
+        )
+
+    def mark_abandoned(
+        self,
+        state: InitiativeState,
+        *,
+        intention_id: str,
+        now: float,
+        cooldown_seconds: float = 300.0,
+    ) -> InitiativeState:
+        """Bỏ một intention đã mất giá trị theo quyết định của Initiative Controller.
+
+        DROP khác WAIT: WAIT giữ nguyên quyền quay lại; DROP tạo tombstone ngắn để
+        motive cùng họ không bật lại ngay ở tick kế tiếp.
+        """
+        wanted = str(intention_id or "").strip()
+        if not wanted:
+            return state
+        changed = False
+        updated: list[PendingIntention] = []
+        for item in state.pending_intentions:
+            if item.intention_id == wanted and item.status == IntentionStatus.PENDING:
+                changed = True
+                updated.append(replace(
+                    item,
+                    status=IntentionStatus.ABANDONED,
+                    cooldown_until=max(item.cooldown_until, float(now) + max(30.0, float(cooldown_seconds))),
+                    updated_at=float(now),
+                ))
             else:
                 updated.append(item)
         if not changed:

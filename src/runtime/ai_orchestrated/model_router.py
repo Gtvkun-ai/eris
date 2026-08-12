@@ -47,6 +47,35 @@ def _semantic_deadline_seconds() -> float:
     return max(3.0, min(300.0, float(raw)))
 
 
+
+
+def _public_display_language_mismatch(text: str, language_code: str) -> bool:
+    """Guard hẹp cho lỗi model đổ speech language vào display text.
+
+    V57 live soak đã bắt được trường hợp display tiếng Việt đột nhiên thành cả
+    câu Nhật/Trung dù prompt yêu cầu text=vi và speech_text=ja. Không sửa nội
+    dung bằng regex; chỉ phát hiện để public writer được retry đúng một lần.
+    """
+    code = str(language_code or "vi").strip().lower()
+    if code != "vi":
+        return False
+    letters = [ch for ch in str(text or "") if ch.isalpha()]
+    if not letters:
+        return False
+
+    def is_cjk(ch: str) -> bool:
+        point = ord(ch)
+        return (
+            0x4E00 <= point <= 0x9FFF
+            or 0x3400 <= point <= 0x4DBF
+            or 0x3040 <= point <= 0x309F
+            or 0x30A0 <= point <= 0x30FF
+            or 0xAC00 <= point <= 0xD7AF
+        )
+
+    cjk = sum(1 for ch in letters if is_cjk(ch))
+    return cjk >= 4 and cjk / max(1, len(letters)) >= 0.25
+
 def _public_writer_deadline_seconds() -> float:
     """Deadline riêng cho câu public trực tiếp.
 
@@ -1531,6 +1560,7 @@ class AIRuntimeModelRouter:
             f"{CHAT_VOICE_CORE_V39} {style_rules} "
             f"Bốn field bắt buộc là should_speak, text bằng {display_language}, speech_text bằng {speech_language}, và claim_manifest. "
             "text là câu hiển thị thật; speech_text là câu ERIS thực sự đọc và phải cùng nghĩa/tông với text. "
+            "HARD DISPLAY LANGUAGE LOCK: text chỉ được dùng đúng display language đã chỉ định; tuyệt đối không đổi cả câu sang Nhật/Trung/Anh nếu display là tiếng Việt. "
             "Không markdown, không reasoning, không stage direction trong text, không ghép tiếng Nhật vào text tiếng Việt. "
             "Trả lời yêu cầu cụ thể trước; giữ continuity từ history và context; nếu user yêu cầu sửa giọng thì sửa ngay delivery của lượt này. "
             "Nếu câu trước của ERIS gây mơ hồ hoặc user yêu cầu repair, tự giải quyết phần mơ hồ và viết lại câu tốt hơn, không đẩy việc làm rõ ngược cho user. "
@@ -1629,6 +1659,11 @@ class AIRuntimeModelRouter:
                     ensure_ascii=False,
                 )
             )
+        language_names = {"ja": "tiếng Nhật", "en": "tiếng Anh", "vi": "tiếng Việt"}
+        display_code = str(language_hint or "vi").strip().lower()
+        speech_code = str(speech_language_hint or display_code).strip().lower()
+        display_language = language_names.get(display_code, "ngôn ngữ của người dùng")
+        speech_language = language_names.get(speech_code, display_language)
         system = self._public_reply_prompt(language_hint, speech_language_hint)
         if locked_semantic_frame:
             system += (
@@ -1644,7 +1679,7 @@ class AIRuntimeModelRouter:
             {"role": "user", "content": user_text},
         ]
 
-        def call(target: Any) -> dict[str, Any]:
+        def call(target: Any, *, request_messages: Sequence[Mapping[str, Any]] | None = None) -> dict[str, Any]:
             if target is None:
                 return {}
             strict = False
@@ -1655,7 +1690,7 @@ class AIRuntimeModelRouter:
             try:
                 def invoke() -> Any:
                     request_kwargs = {
-                        "messages": messages,
+                        "messages": list(request_messages or messages),
                         # V38: tăng nhẹ entropy wording. Authority/grounding vẫn nằm
                         # ở semantic frame nên đây chỉ làm bề mặt bớt cùng một khuôn.
                         "temperature": 0.56,
@@ -1727,6 +1762,41 @@ class AIRuntimeModelRouter:
                 return {}
 
         payload = call(client)
+
+        # V57.1: provider thật đã có lúc trả toàn bộ display text bằng Nhật/Trung
+        # dù display_language=vi. Không "dịch cứu" bằng local code vì như vậy sẽ
+        # che hành vi model. Thay vào đó retry provider đúng MỘT lần với language
+        # lock rõ ràng; nếu vẫn sai, payload đi tiếp và simulator sẽ đánh FAIL.
+        first_public_text = _public_text_from_mapping(payload) if payload else ""
+        if payload and _public_display_language_mismatch(first_public_text, display_code):
+            repair_messages = [
+                *messages,
+                {
+                    "role": "system",
+                    "content": (
+                        "LANGUAGE REPAIR ONLY: field text vừa bị sai ngôn ngữ. "
+                        f"Giữ nguyên nghĩa và intent, nhưng viết field text hoàn toàn bằng {display_language}. "
+                        f"speech_text vẫn bằng {speech_language}. Không đổi fact, memory, stance hay claim_manifest. "
+                        "Trả lại đúng JSON contract, không giải thích."
+                    ),
+                },
+            ]
+            repaired = call(client, request_messages=repair_messages)
+            repaired_text = _public_text_from_mapping(repaired) if repaired else ""
+            if repaired and repaired_text and not _public_display_language_mismatch(repaired_text, display_code):
+                payload = repaired
+                try:
+                    from runtime.observability import GLOBAL_OBSERVABILITY
+                    GLOBAL_OBSERVABILITY.increment("public_writer_language_repair_success")
+                except Exception:
+                    pass
+            else:
+                try:
+                    from runtime.observability import GLOBAL_OBSERVABILITY
+                    GLOBAL_OBSERVABILITY.increment("public_writer_language_repair_failed")
+                except Exception:
+                    pass
+
         if not payload and allow_fallback and not _deepseek_web_authority_mode():
             fallback = getattr(self.llm_service, "fallback_client", None)
             if fallback is not client:
@@ -2029,7 +2099,7 @@ class AIRuntimeModelRouter:
             {"role": "user", "content": json.dumps(context, ensure_ascii=False)},
         ]
 
-        def call(target: Any) -> dict[str, Any]:
+        def call(target: Any, *, request_messages: Sequence[Mapping[str, Any]] | None = None) -> dict[str, Any]:
             if target is None:
                 return {}
             strict = False
@@ -2065,6 +2135,41 @@ class AIRuntimeModelRouter:
                 return {}
 
         payload = call(client)
+
+        # V57.1: provider thật đã có lúc trả toàn bộ display text bằng Nhật/Trung
+        # dù display_language=vi. Không "dịch cứu" bằng local code vì như vậy sẽ
+        # che hành vi model. Thay vào đó retry provider đúng MỘT lần với language
+        # lock rõ ràng; nếu vẫn sai, payload đi tiếp và simulator sẽ đánh FAIL.
+        first_public_text = _public_text_from_mapping(payload) if payload else ""
+        if payload and _public_display_language_mismatch(first_public_text, display_code):
+            repair_messages = [
+                *messages,
+                {
+                    "role": "system",
+                    "content": (
+                        "LANGUAGE REPAIR ONLY: field text vừa bị sai ngôn ngữ. "
+                        f"Giữ nguyên nghĩa và intent, nhưng viết field text hoàn toàn bằng {display_language}. "
+                        f"speech_text vẫn bằng {speech_language}. Không đổi fact, memory, stance hay claim_manifest. "
+                        "Trả lại đúng JSON contract, không giải thích."
+                    ),
+                },
+            ]
+            repaired = call(client, request_messages=repair_messages)
+            repaired_text = _public_text_from_mapping(repaired) if repaired else ""
+            if repaired and repaired_text and not _public_display_language_mismatch(repaired_text, display_code):
+                payload = repaired
+                try:
+                    from runtime.observability import GLOBAL_OBSERVABILITY
+                    GLOBAL_OBSERVABILITY.increment("public_writer_language_repair_success")
+                except Exception:
+                    pass
+            else:
+                try:
+                    from runtime.observability import GLOBAL_OBSERVABILITY
+                    GLOBAL_OBSERVABILITY.increment("public_writer_language_repair_failed")
+                except Exception:
+                    pass
+
         if not payload and allow_fallback and not _deepseek_web_authority_mode():
             fallback = getattr(self.llm_service, "fallback_client", None)
             if fallback is not client:

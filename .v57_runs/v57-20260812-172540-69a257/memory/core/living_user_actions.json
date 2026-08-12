@@ -1,0 +1,271 @@
+{
+  "schema_version": 1,
+  "goals": [
+    {
+      "id": "goal_6026bc90267017cf80",
+      "title": "Tôi đang theo dõi checkpoint 11: mục tiêu là giữ continuity cho module Atlas-11",
+      "description": "Tôi đang theo dõi checkpoint 12: mục tiêu là giữ continuity cho module Atlas-12.",
+      "status": "active",
+      "priority": 0.72,
+      "confidence": 0.9,
+      "scope": {
+        "kind": "session",
+        "key": "stage_be17061036d14f41"
+      },
+      "evidence_ids": [
+        "turn_387a4e9aeaeb4892",
+        "turn_f760f0f2d6624663"
+      ],
+      "next_actions": [],
+      "blockers": [],
+      "due_at": null,
+      "created_at": 1786531196.3628092,
+      "updated_at": 1786531256.3628657,
+      "completed_at": null,
+      "metadata": {
+        "source": "explicit_user_goal"
+      }
+    },
+    {
+      "id": "goal_66f17b9eee6f97acda",
+      "title": "Tôi đang theo dõi checkpoint 10: mục tiêu là giữ continuity cho module Atlas-10",
+      "description": "Tôi đang theo dõi checkpoint 10: mục tiêu là giữ continuity cho module Atlas-10.",
+      "status": "active",
+      "priority": 0.72,
+      "confidence": 0.9,
+      "scope": {
+        "kind": "session",
+        "key": "stage_11bb3689f3ed4fd4"
+      },
+      "evidence_ids": [
+        "turn_6563c62c631e4e8d"
+      ],
+      "next_actions": [],
+      "blockers": [],
+      "due_at": null,
+      "created_at": 1786531142.011392,
+      "updated_at": 1786531142.011392,
+      "completed_at": null,
+      "metadata": {
+        "source": "explicit_user_goal"
+      }
+    },
+    {
+      "id": "goal_e459c6f40c54717cd4",
+      "title": "Tôi đang theo dõi checkpoint 8: mục tiêu là giữ continuity cho module Atlas-8",
+      "description": "Tôi đang theo dõi checkpoint 9: mục tiêu là giữ continuity cho module Atlas-9.",
+      "status": "active",
+      "priority": 0.72,
+      "confidence": 0.9,
+      "scope": {
+        "kind": "session",
+        "key": "stage_8c721da7545c4c66"
+      },
+      "evidence_ids": [
+        "turn_398da6c821394cf9",
+        "turn_38799191447a4e43"
+      ],
+      "next_actions": [],
+      "blockers": [],
+      "due_at": null,
+      "created_at": 1786531003.0060956,
+      "updated_at": 1786531072.6166635,
+      "completed_at": null,
+      "metadata": {
+        "source": "explicit_user_goal"
+      }
+    },
+    {
+      "id": "goal_19815a938efc6d6814",
+      "title": "Tôi đang theo dõi checkpoint 6: mục tiêu là giữ continuity cho module Atlas-6",
+      "description": "Tôi đang theo dõi checkpoint 7: mục tiêu là giữ continuity cho module Atlas-7.",
+      "status": "active",
+      "priority": 0.72,
+      "confidence": 0.9,
+      "scope": {
+        "kind": "session",
+        "key": "stage_3f546d59fcf144d0"
+      },
+      "evidence_ids": [
+        "turn_695ab56fd47e45b0",
+        "turn_89962a3b46a04af1"
+      ],
+      "next_actions": [],
+      "blockers": [],
+      "due_at": null,
+      "created_at": 1786530886.5120661,
+      "updated_at": 1786530946.3061001,
+      "completed_at": null,
+      "metadata": {
+        "source": "explicit_user_goal"
+      }
+    },
+    {
+      "id": "goal_7ca7d7f76b3994ccd1",
+      "title": "Tôi đang theo dõi checkpoint 5: mục tiêu là giữ continuity cho module Atlas-5",
+      "description": "Tôi đang theo dõi checkpoint 5: mục tiêu là giữ continuity cho module Atlas-5.",
+      "status": "active",
+      "priority": 0.72,
+      "confidence": 0.9,
+      "scope": {
+        "kind": "session",
+        "key": "stage_a20c062a5ab24f7f"
+      },
+      "evidence_ids": [
+        "turn_0d27652abf6b487c"
+      ],
+      "next_actions": [],
+      "blockers": [],
+      "due_at": null,
+      "created_at": 1786530824.2444944,
+      "updated_at": 1786530824.2444944,
+      "completed_at": null,
+      "metadata": {
+        "source": "explicit_user_goal"
+      }
+    },
+    {
+      "id": "goal_08837899b9a45f1a34",
+      "title": "Tôi đang theo dõi checkpoint 3: mục tiêu là giữ continuity cho module Atlas-3",
+      "description": "Tôi đang theo dõi checkpoint 4: mục tiêu là giữ continuity cho module Atlas-4.",
+      "status": "active",
+      "priority": 0.72,
+      "confidence": 0.9,
+      "scope": {
+        "kind": "session",
+        "key": "stage_91ee3a713c914b89"
+      },
+      "evidence_ids": [
+        "turn_fbddfb674999469f",
+        "turn_d2efb13cb67943fc"
+      ],
+      "next_actions": [],
+      "blockers": [],
+      "due_at": null,
+      "created_at": 1786530692.7964559,
+      "updated_at": 1786530752.5511916,
+      "completed_at": null,
+      "metadata": {
+        "source": "explicit_user_goal"
+      }
+    },
+    {
+      "id": "goal_0e0a6ebbae1dc7394d",
+      "title": "Tôi đang theo dõi checkpoint 1: mục tiêu là giữ continuity cho module Atlas-1",
+      "description": "Tôi đang theo dõi checkpoint 2: mục tiêu là giữ continuity cho module Atlas-2.",
+      "status": "active",
+      "priority": 0.72,
+      "confidence": 0.9,
+      "scope": {
+        "kind": "session",
+        "key": "stage_f694ecf57eb346f3"
+      },
+      "evidence_ids": [
+        "turn_5b5012ec60ca43fd",
+        "turn_a44ec6a907584dda"
+      ],
+      "next_actions": [],
+      "blockers": [],
+      "due_at": null,
+      "created_at": 1786530582.7326279,
+      "updated_at": 1786530637.8523927,
+      "completed_at": null,
+      "metadata": {
+        "source": "explicit_user_goal"
+      }
+    },
+    {
+      "id": "goal_c2fd18e4e2688ae2da",
+      "title": "Mục tiêu tuần này của tôi là hoàn thiện module memory replay. Tôi đang kẹt ở phần xác minh continuity",
+      "description": "Mục tiêu tuần này của tôi là hoàn thiện module memory replay. Tôi đang kẹt ở phần xác minh continuity.",
+      "status": "active",
+      "priority": 0.72,
+      "confidence": 0.9,
+      "scope": {
+        "kind": "session",
+        "key": "stage_f352d6d22e03452c"
+      },
+      "evidence_ids": [
+        "turn_8a632d5189714fe7"
+      ],
+      "next_actions": [],
+      "blockers": [],
+      "due_at": null,
+      "created_at": 1786530405.1049163,
+      "updated_at": 1786530405.1049163,
+      "completed_at": null,
+      "metadata": {
+        "source": "explicit_user_goal"
+      }
+    }
+  ],
+  "commitments": [
+    {
+      "id": "commit_3c586116aed8264ffa",
+      "actor": "assistant",
+      "action": "Rồi, ghi nhận checkpoint 1: Atlas-1 cần được giữ mạch. Tôi sẽ để ý",
+      "status": "active",
+      "confidence": 0.93,
+      "scope": {
+        "kind": "session",
+        "key": "stage_f694ecf57eb346f3"
+      },
+      "evidence_ids": [
+        "turn_da22ff3ec1e840d1"
+      ],
+      "related_goal_id": "",
+      "due_at": null,
+      "created_at": 1786530586.6416602,
+      "updated_at": 1786530586.6416602,
+      "completed_at": null,
+      "metadata": {
+        "source": "assistant_commitment"
+      }
+    },
+    {
+      "id": "commit_4e70563b126b757f04",
+      "actor": "assistant",
+      "action": "Rõ. Tôi sẽ rút lại ngay. Từ giờ tôi chỉ hỏi đúng phạm vi bạn mở. Cảm ơn bạn đã nói thẳng",
+      "status": "active",
+      "confidence": 0.93,
+      "scope": {
+        "kind": "session",
+        "key": "stage_6751031dd2d34ae6"
+      },
+      "evidence_ids": [
+        "turn_2b25a58736cc4b32"
+      ],
+      "related_goal_id": "",
+      "due_at": null,
+      "created_at": 1786530458.8568456,
+      "updated_at": 1786530458.8568456,
+      "completed_at": null,
+      "metadata": {
+        "source": "assistant_commitment"
+      }
+    },
+    {
+      "id": "commit_515ef30b8ec58750f0",
+      "actor": "assistant",
+      "action": "À, tôi hiểu rồi. Bạn không hỏi về session web hay backend, mà về chính state nhận thức của tôi. Về cơ bản, trong một lượt chat, tôi duy trì ngữ cảnh qua lịch sử tin nhắn và các chỉ thị hệ thống. Tôi không lưu trữ lâu dài giữa các phiên, nhưng trong cuộc trò chuyện này, tôi cố gắng giữ mạch và nhất quán. Nếu bạn cần tôi nhớ điều gì qua nhiều lần gặp, tôi sẽ cần bạn nhắc lại hoặc dùng cơ chế lưu trữ đặc biệt",
+      "status": "active",
+      "confidence": 0.93,
+      "scope": {
+        "kind": "session",
+        "key": "stage_f352d6d22e03452c"
+      },
+      "evidence_ids": [
+        "turn_a3e1b3e010bd435c"
+      ],
+      "related_goal_id": "",
+      "due_at": null,
+      "created_at": 1786530388.4343183,
+      "updated_at": 1786530388.4343183,
+      "completed_at": null,
+      "metadata": {
+        "source": "assistant_commitment"
+      }
+    }
+  ],
+  "workflows": []
+}

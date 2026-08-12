@@ -181,6 +181,9 @@ class SubjectService:
         # V56: cầu nối outcome của persistent intention sang appraisal của đúng
         # user turn kế tiếp. Chỉ giữ receipt tối thiểu, không lưu suy diễn cảm xúc.
         self._last_initiative_outcome: dict[str, Any] = {}
+        # V58: quyết định SPEAK/WAIT/DROP gần nhất chỉ là projection giải thích
+        # timing của initiative, không phải chain-of-thought và không tự chọn wording.
+        self._last_initiative_control: dict[str, Any] = {}
         self._decisions: dict[str, MindDecision] = {}
         self._decision_history: list[MindDecision] = []
         self._valued_decisions: list[MindDecision] = []
@@ -479,6 +482,47 @@ class SubjectService:
         if persist:
             self._persist_projection()
         return awaiting.to_dict()
+
+    def note_initiative_control(
+        self,
+        intention_id: str,
+        *,
+        action: str,
+        reason: str,
+        score: float = 0.0,
+        now: float | None = None,
+        persist: bool = False,
+    ) -> dict[str, Any]:
+        """Nhận quyết định SPEAK/WAIT/DROP từ Initiative Controller V58.
+
+        WAIT/SPEAK chỉ cập nhật projection chẩn đoán. DROP mới thay đổi lifecycle
+        thật sang ABANDONED, vì nó có nghĩa Eris đã quyết định không theo đuổi ý
+        định đó nữa.
+        """
+        current = self._clock() if now is None else float(now)
+        normalized = str(action or "wait").strip().lower()
+        self._last_initiative_control = {
+            "schema": "eris.initiative_control_receipt.v58",
+            "intention_id": str(intention_id or ""),
+            "action": normalized,
+            "reason": str(reason or ""),
+            "score": max(0.0, min(1.0, float(score or 0.0))),
+            "at": current,
+        }
+        if normalized == "drop":
+            before = self.initiative_state
+            after = self.initiative.mark_abandoned(
+                before, intention_id=str(intention_id or ""), now=current,
+            )
+            if after is not before:
+                self.initiative_state = after
+                self._append_event(
+                    "initiative_intention_abandoned",
+                    {**self._last_initiative_control, "initiative": after.to_dict()},
+                )
+                if persist:
+                    self._persist_projection()
+        return dict(self._last_initiative_control)
 
     def note_initiative_user_outcome(
         self,
@@ -2060,7 +2104,9 @@ class SubjectService:
         Không chứa raw chain-of-thought.  Runtime chỉ được materialize motive đã
         có ở Subject Core; nó không tự phát minh "Eris muốn gì" từ seed.
         """
-        return self.initiative_state.to_dict()
+        payload = self.initiative_state.to_dict()
+        payload["last_control"] = dict(self._last_initiative_control)
+        return payload
 
     def latest_appraisals(self) -> tuple[SubjectAppraisal, ...]:
         """Trả typed appraisal gần nhất cho runtime modulation/diagnostics."""

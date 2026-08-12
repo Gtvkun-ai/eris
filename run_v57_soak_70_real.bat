@@ -4,7 +4,7 @@ set PYTHONUTF8=1
 echo V57 LIVE SOAK 70 turn: moi turn goi Eris provider that va behavioral judge that.
 echo Luu y: lenh nay co the ton kha nhieu API request/token.
 echo.
-python tools\run_v57_live_simulation.py --scenario all --soak-turns 70 --restart-every 10 --strict
+python src\tools\run_v57_live_simulation.py --scenario all --soak-turns 70 --restart-every 10 --strict
 set CODE=%ERRORLEVEL%
 echo.
 if "%CODE%"=="0" (

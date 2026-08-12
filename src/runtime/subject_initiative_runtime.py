@@ -15,6 +15,7 @@ from typing import Any, Mapping, Sequence
 
 from runtime.ai_orchestrated.affordance import ExecutiveAffordance
 from runtime.ai_orchestrated.social_initiative import SocialSpeechCandidate
+from cortex.subject.initiative_control import InitiativeArbiter, InitiativeControlAction
 
 
 def _clamp01(value: Any, default: float = 0.0) -> float:
@@ -54,6 +55,25 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
     nội sinh ngay cả khi không có random seed.
     """
     snapshot = _snapshot_user_model(host)
+
+    # V58: lấy open-loop đã được state reducer ghi có provenance. Đây là "việc
+    # đang dang dở" thật của runtime, không phải model tự bịa một project để có cớ
+    # chủ động. Nếu không có open-loop, contribution_signal vẫn bằng 0.
+    active_goal_text = ""
+    active_goal_refs: tuple[str, ...] = ()
+    reducer = getattr(host, "ai_state_reducer", None)
+    reducer_snapshot = getattr(reducer, "snapshot", None)
+    if callable(reducer_snapshot):
+        try:
+            mind_state = reducer_snapshot()
+            loops = tuple(str(item or "").strip() for item in (getattr(mind_state, "open_loops", ()) or ()) if str(item or "").strip())
+            if loops:
+                active_goal_text = " ".join(loops[0].split())[:320]
+                active_goal_refs = ("runtime-mind:open_loop:0",)
+        except Exception:
+            active_goal_text = ""
+            active_goal_refs = ()
+
     thickness = _clamp01(snapshot.get("model_thickness", 0.0))
     belief_count = max(0, int(snapshot.get("belief_count", 0) or 0))
     if not snapshot:
@@ -87,6 +107,7 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
     if last_autonomous_at <= 0.0:
         last_autonomous_at = float(getattr(host, "_last_autonomous_spoken_at", 0.0) or 0.0)
     seconds_since_autonomous = max(0.0, current - last_autonomous_at) if last_autonomous_at > 0.0 else 10_000.0
+    seconds_since_user = max(0.0, current - last_user_at) if last_user_at > 0.0 else 10_000.0
     unanswered_autonomous = bool(last_autonomous_at > 0.0 and last_autonomous_at >= last_user_at)
     recent_unsolicited_speech = 1.0 if unanswered_autonomous and seconds_since_autonomous <= 180.0 else 0.0
     user_response_rate = 0.0 if recent_unsolicited_speech else 1.0
@@ -103,12 +124,17 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
         "recognition_gap_signal": 0.0,
         "self_misunderstanding_signal": 0.0,
         "demonstration_signal": 0.0,
-        "contribution_signal": 0.0,
+        # Có open-loop thật thì Eris có lý do nội sinh để giữ một intention
+        # đóng góp. Controller V58 vẫn quyết định có nên nói *bây giờ* hay WAIT.
+        "contribution_signal": 0.68 if active_goal_text else 0.0,
+        "active_goal_text": active_goal_text,
+        "active_goal_evidence_refs": active_goal_refs,
         "seconds_since_startup_greeting": seconds_since_greeting,
         "startup_social_cooldown_seconds": startup_social_cooldown_seconds,
         "startup_social_cooldown_active": bool(seconds_since_greeting < startup_social_cooldown_seconds),
         "recent_unsolicited_speech": recent_unsolicited_speech,
         "seconds_since_last_autonomous_speech": seconds_since_autonomous,
+        "seconds_since_last_user_turn": seconds_since_user,
         "user_response_rate": user_response_rate,
         "social_refractory_cost": social_refractory_cost,
         "last_public_turn_unanswered": unanswered_autonomous,
@@ -144,6 +170,14 @@ def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: fl
         )
         tone = "restrained"
         epistemic = False
+    elif kind == "contribute" and "mục tiêu đang dang dở" in goal:
+        # Đây là initiative có đối tượng cụ thể lấy từ open-loop thật. Surface
+        # được phép gợi lại hoặc đề xuất đúng *một bước nhỏ*, không được giả vờ
+        # user vừa yêu cầu và không được biến thành reminder dai dẳng.
+        speech_act = "resume_shared_goal"
+        topic = goal
+        tone = "focused_soft"
+        epistemic = False
     else:
         # Motive như demonstrate/resolve có thể tồn tại và ảnh hưởng Subject Core,
         # nhưng nếu không có object/task thật thì bridge không ép nó thành small-talk.
@@ -152,7 +186,7 @@ def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: fl
     refs = tuple(str(value) for value in item.get("evidence_refs", ()) if str(value or "").strip())[:8]
     candidate = SocialSpeechCandidate(
         decision="candidate",
-        kind="social_check_in",
+        kind=("followup_reminder" if kind == "contribute" else "social_check_in"),
         topic=topic,
         speech_act=speech_act,
         anchor_type="internal",
@@ -259,15 +293,52 @@ def build_subject_initiative_affordances(
 
     startup_cooldown = bool(runtime_context.get("startup_social_cooldown_active", False))
     output: list[ExecutiveAffordance] = []
+    arbiter = InitiativeArbiter()
+    note_control = getattr(subject_service, "note_initiative_control", None)
     for item in initiative.get("pending_intentions", ()):
         if not isinstance(item, Mapping) or str(item.get("status") or "pending") != "pending":
             continue
         candidate = _candidate_from_intention(item, revision=revision, now=now)
-        if candidate is not None:
-            speech_act = str(getattr(candidate.candidate, "speech_act", "") or "").strip().lower()
-            if startup_cooldown and speech_act in {"contact_bid", "user_probe", "curiosity_bid"}:
-                continue
-            output.append(candidate)
+        control = arbiter.decide(
+            item,
+            relational=relational,
+            runtime_context=runtime_context,
+            now=now,
+            contentful=candidate is not None,
+            reply_expected=reply_expected,
+            user_busy=user_busy,
+            interaction_busy=interaction_busy,
+        )
+        if callable(note_control):
+            try:
+                note_control(
+                    str(item.get("intention_id") or ""),
+                    action=control.action.value,
+                    reason=control.reason,
+                    score=control.score,
+                    now=now,
+                    persist=bool(control.action is InitiativeControlAction.DROP),
+                )
+            except Exception:
+                pass
+        if control.action is InitiativeControlAction.DROP:
+            continue
+        if control.action is not InitiativeControlAction.SPEAK or candidate is None:
+            continue
+        speech_act = str(getattr(candidate.candidate, "speech_act", "") or "").strip().lower()
+        if startup_cooldown and speech_act in {"contact_bid", "user_probe", "curiosity_bid"}:
+            continue
+        candidate = ExecutiveAffordance(
+            affordance_id=candidate.affordance_id,
+            owner=candidate.owner,
+            revision=candidate.revision,
+            candidate=candidate.candidate,
+            claim_required=candidate.claim_required,
+            expires_at=candidate.expires_at,
+            claim_key=candidate.claim_key,
+            metadata={**dict(candidate.metadata), "initiative_control": control.to_dict()},
+        )
+        output.append(candidate)
     # Không có content-bound intention thì không tạo preview social. Connection
     # pressure vẫn còn trong Subject state và sẽ tăng lực cho urge có nội dung.
     return tuple(output[:4])

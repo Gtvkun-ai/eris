@@ -1,0 +1,28 @@
+V57.1 TEST STATUS — 2026-08-12
+
+1) Regression liên quan V55/V56/V57 + public writer/model router:
+   108 passed.
+
+2) Unit test V57.1 riêng:
+   - repetition phải xét cả user prompt: PASS
+   - memory evidence chứng minh "lần thứ chín": PASS
+   - language drift Nhật/Trung trong hội thoại Việt: PASS
+   - Judge hallucinated-memory false-positive bị evidence override: PASS
+   - public writer gọi provider lần 2 để sửa display language: PASS
+
+3) Replay offline trên transcript soak 70 turn cũ do user cung cấp:
+   - đọc đủ 70 turn;
+   - 15 near_duplicate_reply false-positive cũ không còn là hard failure;
+   - soak-0050: observed occurrence count = 9, claim "lần thứ chín" = supported;
+   - phát hiện lỗi thật soak-0030: display tiếng Trung giữa hội thoại tiếng Việt.
+   Lưu ý: replay này chỉ chấm lại transcript cũ, KHÔNG thay thế live run mới.
+
+4) Cổng realism trong container hiện tại:
+   - không có provider credential;
+   - run trả PROVIDER_UNAVAILABLE, passed=false, exit code 2 đúng thiết kế;
+   - không có mock/stub nào được tính behavioral PASS.
+
+Để test thật trên máy Eris:
+   run_v57_1_real.bat
+hoặc soak 70 turn:
+   run_v57_1_soak_70_real.bat

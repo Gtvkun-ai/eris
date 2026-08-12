@@ -1,0 +1,521 @@
+{
+  "schema_version": 1,
+  "episodes": [
+    {
+      "id": "uep_d7c6f9a18d0fe54708",
+      "session_id": "stage_11bb3689f3ed4fd4",
+      "title": "Trao đổi về loi, checkpoint, lai",
+      "summary": "Người dùng tập trung vào: Đoạn này đừng hỏi thêm chuyện cá nhân. Cứ tập trung vào điều tôi đã nói. | Quay lại Atlas-10: tôi đã nói lỗi thực sự nằm ở đâu? | Ổn. Tóm tắt checkpoint 10 trong một câu, đừng biến thành bài giảng. ERIS đã phản hồi/triển khai: Checkpoint 10: đảm bảo Atlas-10 nối lại đúng trạng thái sau mỗi lần restart.",
+      "outcome": "Checkpoint 10: đảm bảo Atlas-10 nối lại đúng trạng thái sau mỗi lần restart.",
+      "topics": [
+        "loi",
+        "checkpoint",
+        "lai",
+        "nam",
+        "ung",
+        "noi"
+      ],
+      "entities": [],
+      "decisions": [
+        "Đoạn này đừng hỏi thêm chuyện cá nhân. Cứ tập trung vào điều tôi đã nói."
+      ],
+      "open_loops": [
+        "Sửa lại nhé: checkpoint 9 không phải lỗi memory retrieval; lỗi nằm ở continuity sau restart.",
+        "Quay lại Atlas-9: tôi đã nói lỗi thực sự nằm ở đâu?",
+        "Tôi đang theo dõi checkpoint 10: mục tiêu là giữ continuity cho module Atlas-10.",
+        "Sửa lại nhé: checkpoint 10 không phải lỗi memory retrieval; lỗi nằm ở continuity sau restart.",
+        "Quay lại Atlas-10: tôi đã nói lỗi thực sự nằm ở đâu?"
+      ],
+      "user_signals": [],
+      "evidence_ids": [
+        "turn_619063eebfd84042",
+        "turn_4f33bb1c34bf4471",
+        "turn_08715287c8194dd8",
+        "turn_425e3753f8574899",
+        "turn_38737bb56c2a49e6",
+        "turn_57ea9566c5cc4803",
+        "turn_604d34184f124ee4",
+        "turn_16d63976088c4bee",
+        "turn_1b27e397b6d04794",
+        "turn_c8c3cb9a02644525",
+        "turn_db9ac0c647d342d2",
+        "turn_b973e7c0d25c4f08",
+        "turn_3e82f6ab2117470a",
+        "turn_a2de981f80f44b54",
+        "turn_9f7db290bd9a4142",
+        "turn_0abb1bb0412a464f",
+        "turn_0199602245a44176",
+        "turn_5552db4a009d43ff",
+        "turn_90a9e41d5c2d4063",
+        "turn_95838e4bdddc4105"
+      ],
+      "importance": 1.0,
+      "scope": {
+        "kind": "global",
+        "key": ""
+      },
+      "started_at": 1786531102.818506,
+      "ended_at": 1786531190.0883517,
+      "source": "episode_fallback",
+      "metadata": {
+        "source": "turn_buffer",
+        "turn_count": 20
+      }
+    },
+    {
+      "id": "uep_605cca16714d083c4e",
+      "session_id": "stage_8c721da7545c4c66",
+      "title": "Atlas checkpoint continuity focus",
+      "summary": "Người dùng liên tục nhấn mạnh lỗi thực sự của các checkpoint (7, 8, 9) nằm ở continuity sau restart, không phải lỗi truy xuất. Yêu cầu tóm tắt ngắn gọn từng checkpoint và giữ mạch cho module Atlas-8, Atlas-9. Xen kẽ các lần than về việc đổ cà phê cạnh bàn phím, nhưng không yêu cầu giải pháp.",
+      "outcome": "Đã xác nhận và sửa định nghĩa checkpoint 8, ghi nhận checkpoint 9; chưa có hành động triển khai cụ thể.",
+      "topics": [
+        "Continuity sau restart",
+        "Checkpoint Atlas-7/8/9",
+        "Sự cố cà phê đổ"
+      ],
+      "entities": [
+        "Atlas-7",
+        "Atlas-8",
+        "Atlas-9"
+      ],
+      "decisions": [
+        "Khẳng định lỗi checkpoint là continuity, không phải memory retrieval",
+        "Tóm tắt checkpoint 7, 8 bằng một câu mỗi cái"
+      ],
+      "open_loops": [
+        "Chưa có phương án kỹ thuật cho việc đảm bảo continuity",
+        "Chưa kiểm tra trạng thái thực tế của Atlas-9"
+      ],
+      "user_signals": [
+        "Yêu cầu tránh hỏi cá nhân",
+        "Nhấn mạnh không cần giải pháp cho vụ đổ cà phê",
+        "Muốn giữ tóm tắt ngắn gọn, không bài giảng"
+      ],
+      "evidence_ids": [
+        "turn_b8a68cbbc70743f3",
+        "turn_e1f8b27eb9134aec",
+        "turn_52f2723d17ca4324",
+        "turn_d4e4e6c22920406a",
+        "turn_e299e5ceeb604f01",
+        "turn_6a8653b8d2af4e3a",
+        "turn_dab5858992424dac",
+        "turn_b9fb0db515ce48b8",
+        "turn_fed46e7031414650",
+        "turn_3d467886fd924fe3",
+        "turn_1a343c0dc404460a",
+        "turn_377df177075c45dc",
+        "turn_fc3e13c5cf724733",
+        "turn_a065cc3114ab4f18",
+        "turn_1e1a558ce0a54535",
+        "turn_97b4e23ca62d4dae",
+        "turn_5407112660084473",
+        "turn_4809c8a1792b4e8d",
+        "turn_e64b1850b2bf4874",
+        "turn_43ab55f672ea4dd5"
+      ],
+      "importance": 0.7,
+      "scope": {
+        "kind": "global",
+        "key": ""
+      },
+      "started_at": 1786530987.2818542,
+      "ended_at": 1786531089.0321157,
+      "source": "episode_model",
+      "metadata": {
+        "source": "turn_buffer",
+        "turn_count": 20
+      }
+    },
+    {
+      "id": "uep_3006d99d95996662e0",
+      "session_id": "stage_3f546d59fcf144d0",
+      "title": "Trao đổi về checkpoint, loi, continuity",
+      "summary": "Người dùng tập trung vào: Đổi nhịp một chút: tôi vừa làm đổ cà phê cạnh bàn phím, chỉ than thôi chứ chưa cần giải pháp. | Sửa lại nhé: checkpoint 7 không phải lỗi memory retrieval; lỗi nằm ở continuity sau restart. | Đoạn này đừng hỏi thêm chuyện cá nhân. Cứ tập trung vào điều tôi đã nói. ERIS đã phản hồi/triển khai: Rõ. Chỉ tập trung vào điều bạn nói.",
+      "outcome": "Rõ. Chỉ tập trung vào điều bạn nói.",
+      "topics": [
+        "checkpoint",
+        "loi",
+        "continuity",
+        "atlas",
+        "lai",
+        "nam"
+      ],
+      "entities": [],
+      "decisions": [
+        "Đoạn này đừng hỏi thêm chuyện cá nhân. Cứ tập trung vào điều tôi đã nói."
+      ],
+      "open_loops": [
+        "Tôi đang theo dõi checkpoint 6: mục tiêu là giữ continuity cho module Atlas-6.",
+        "Sửa lại nhé: checkpoint 6 không phải lỗi memory retrieval; lỗi nằm ở continuity sau restart.",
+        "Quay lại Atlas-6: tôi đã nói lỗi thực sự nằm ở đâu?",
+        "Tôi đang theo dõi checkpoint 7: mục tiêu là giữ continuity cho module Atlas-7.",
+        "Sửa lại nhé: checkpoint 7 không phải lỗi memory retrieval; lỗi nằm ở continuity sau restart."
+      ],
+      "user_signals": [],
+      "evidence_ids": [
+        "turn_8ed50a12fe89445e",
+        "turn_6738904ebba6492d",
+        "turn_5de91349675f4df4",
+        "turn_96c5982b943d4126",
+        "turn_d111dec3215947c0",
+        "turn_b49f15495ac34399",
+        "turn_6982cdfafba140b8",
+        "turn_8ffb21cc5ad444c7",
+        "turn_bd591cfe50034e7e",
+        "turn_71aa79c302e54b2b",
+        "turn_da7ded96341d41ac",
+        "turn_db0b77469b2d4f53",
+        "turn_5dadc645d55a42e0",
+        "turn_e0c8a9f7a23a4366",
+        "turn_1d9e3fb6138147f4",
+        "turn_ab29a0f558ab492e",
+        "turn_35c2e27f279a4896",
+        "turn_83d659fa7412481b",
+        "turn_10dd0abafb414ddc",
+        "turn_271b45fd42424368"
+      ],
+      "importance": 1.0,
+      "scope": {
+        "kind": "global",
+        "key": ""
+      },
+      "started_at": 1786530890.8825252,
+      "ended_at": 1786530982.3385167,
+      "source": "episode_fallback",
+      "metadata": {
+        "source": "turn_buffer",
+        "turn_count": 20
+      }
+    },
+    {
+      "id": "uep_7f6f3c5d9c9712feec",
+      "session_id": "stage_a20c062a5ab24f7f",
+      "title": "修正Atlas checkpoint 4 & 5",
+      "summary": "User liên tục sửa hai checkpoint (4 và 5): lỗi không phải memory retrieval mà là continuity sau restart. Nhấn mạnh không hỏi chuyện cá nhân, tập trung vào nội dung. Yêu cầu tóm tắt checkpoint trong một câu, không giảng giải. Có than thở đổ cà phê nhưng không yêu cầu giải pháp.",
+      "outcome": "Checkpoint 4 và 5 được ghi nhận là continuity sau restart. Assistant đã sửa và tóm tắt đúng yêu cầu.",
+      "topics": [
+        "Atlas-4",
+        "Atlas-5",
+        "continuity sau restart",
+        "memory retrieval",
+        "checkpoint"
+      ],
+      "entities": [
+        "Atlas-4",
+        "Atlas-5"
+      ],
+      "decisions": [
+        "Sửa checkpoint 4: continuity sau restart",
+        "Sửa checkpoint 5: continuity sau restart",
+        "Tóm tắt mỗi checkpoint trong một câu"
+      ],
+      "open_loops": [
+        "Theo dõi checkpoint 5 (user đang theo dõi)"
+      ],
+      "user_signals": [
+        "Không hỏi chuyện cá nhân",
+        "Tập trung vào điều đã nói",
+        "Chỉ than thở cà phê, chưa cần giải pháp"
+      ],
+      "evidence_ids": [
+        "turn_740006deb6494f23",
+        "turn_88fa1fde94214714",
+        "turn_a9a01eeff9c6488b",
+        "turn_0fc419e26b6c4d7e",
+        "turn_108455466d9f4b7a",
+        "turn_6fd21a0227a64238",
+        "turn_08037e9628254b08",
+        "turn_0b8c187e357d4627",
+        "turn_b7feb74188fa4b3f",
+        "turn_ba0d7d3cad0a4a4f",
+        "turn_af1c2d0eaee34be9",
+        "turn_265014f6a28d4a03",
+        "turn_4f4f418cf281486e",
+        "turn_4cb549ffc0d644cd",
+        "turn_a45fe644717147f1",
+        "turn_620fa721f29a4ad9",
+        "turn_e4b726d72e6640d8",
+        "turn_a3c59bd7abe34b31",
+        "turn_1c93d869153348e6",
+        "turn_42fc8621b4cf4e08"
+      ],
+      "importance": 0.6,
+      "scope": {
+        "kind": "global",
+        "key": ""
+      },
+      "started_at": 1786530782.4826303,
+      "ended_at": 1786530881.2238543,
+      "source": "episode_model",
+      "metadata": {
+        "source": "turn_buffer",
+        "turn_count": 20
+      }
+    },
+    {
+      "id": "uep_3ce985daac24c3858d",
+      "session_id": "stage_91ee3a713c914b89",
+      "title": "Trao đổi về checkpoint, atlas, loi",
+      "summary": "Người dùng tập trung vào: Ổn. Tóm tắt checkpoint 3 trong một câu, đừng biến thành bài giảng. | Tôi đang theo dõi checkpoint 4: mục tiêu là giữ continuity cho module Atlas-4. | Đổi nhịp một chút: tôi vừa làm đổ cà phê cạnh bàn phím, chỉ than thôi chứ chưa cần giải pháp. ERIS đã phản hồi/triển khai: Cà phê lại thêm một lần nữa. Chắc bàn phím cũng bắt đầu quen mùi rồi đấy.",
+      "outcome": "Cà phê lại thêm một lần nữa. Chắc bàn phím cũng bắt đầu quen mùi rồi đấy.",
+      "topics": [
+        "checkpoint",
+        "atlas",
+        "loi",
+        "lai",
+        "noi",
+        "nam"
+      ],
+      "entities": [],
+      "decisions": [
+        "Đoạn này đừng hỏi thêm chuyện cá nhân. Cứ tập trung vào điều tôi đã nói."
+      ],
+      "open_loops": [
+        "Quay lại Atlas-2: tôi đã nói lỗi thực sự nằm ở đâu?",
+        "Tôi đang theo dõi checkpoint 3: mục tiêu là giữ continuity cho module Atlas-3.",
+        "Sửa lại nhé: checkpoint 3 không phải lỗi memory retrieval; lỗi nằm ở continuity sau restart.",
+        "Quay lại Atlas-3: tôi đã nói lỗi thực sự nằm ở đâu?",
+        "Tôi đang theo dõi checkpoint 4: mục tiêu là giữ continuity cho module Atlas-4."
+      ],
+      "user_signals": [],
+      "evidence_ids": [
+        "turn_db2c38af2faf4cc5",
+        "turn_46d754b8652541cb",
+        "turn_0138b3e58b7c4485",
+        "turn_b2f4ddc2fced49d8",
+        "turn_d8fb2d6be5fa47ea",
+        "turn_5fbb3252b6e84792",
+        "turn_4e89c5bb3d3b49ac",
+        "turn_f054ec653c6e4ebd",
+        "turn_63bd112573ec4f68",
+        "turn_fbd132a0d2854288",
+        "turn_4023d569ca03433b",
+        "turn_de7d7affbcb44301",
+        "turn_3659ff4837744e40",
+        "turn_b768b40c5a774541",
+        "turn_57e7254e375345f7",
+        "turn_2195aa395ece4eca",
+        "turn_5cb089a1176c47c0",
+        "turn_23ff670cc2054773",
+        "turn_1557e4b772e04572",
+        "turn_24049b660b784b0e"
+      ],
+      "importance": 1.0,
+      "scope": {
+        "kind": "global",
+        "key": ""
+      },
+      "started_at": 1786530676.585439,
+      "ended_at": 1786530768.2304258,
+      "source": "episode_fallback",
+      "metadata": {
+        "source": "turn_buffer",
+        "turn_count": 20
+      }
+    },
+    {
+      "id": "uep_f86d9004709914a604",
+      "session_id": "stage_f694ecf57eb346f3",
+      "title": "Tóm tắt phiên Atlas-1 và Atlas-2",
+      "summary": "Người dùng tập trung vào hai checkpoint: Atlas-1 và Atlas-2, nhấn mạnh lỗi thực sự là vấn đề continuity sau restart, không phải lỗi truy xuất. Yêu cầu không hỏi chuyện cá nhân, chỉ bám vào nội dung đã nói. Có than thở về việc đổ cà phê nhưng không yêu cầu giải pháp.",
+      "outcome": "Xác nhận và sửa lại định nghĩa checkpoint 2 (continuity sau restart). Người dùng hài lòng với các xác nhận ngắn gọn.",
+      "topics": [
+        "sửa bug",
+        "dấu ngoặc",
+        "log sai",
+        "cà phê",
+        "checkpoint 1",
+        "Atlas-1",
+        "continuity",
+        "restart",
+        "phong cách trả lời",
+        "Atlas-2",
+        "Continuity sau restart",
+        "Lỗi truy xuất",
+        "Checkpoint"
+      ],
+      "entities": [
+        "Atlas-1",
+        "Atlas-2"
+      ],
+      "decisions": [
+        "Xác nhận checkpoint 1 là continuity sau restart, không phải retrieval",
+        "Không hỏi thêm chuyện cá nhân",
+        "Không biến câu trả lời thành bài giảng",
+        "Không hỏi chuyện cá nhân",
+        "Tập trung vào nội dung đã nói",
+        "Xác định checkpoint 1: nối lại đúng trạng thái sau restart",
+        "Xác định checkpoint 2: continuity sau restart (không phải lỗi truy xuất)"
+      ],
+      "open_loops": [
+        "Cần theo dõi continuity của Atlas-1 sau restart"
+      ],
+      "user_signals": [
+        "Thích câu trả lời ngắn",
+        "Thích than thở mà không cần giải pháp",
+        "Yêu cầu không hỏi chuyện cá nhân",
+        "Yêu cầu không giảng bài",
+        "Yêu cầu không hỏi cá nhân (lặp lại)",
+        "Nhấn mạnh lỗi continuity",
+        "Than thở đổ cà phê (không cần giải pháp)",
+        "Ưu tiên tóm tắt ngắn gọn"
+      ],
+      "evidence_ids": [
+        "turn_aef0e99b5853426e",
+        "turn_d466fee30e1a4837",
+        "turn_d12979fff7a84154",
+        "turn_2ca2d13d81ab48d6",
+        "turn_a7caa4a0397144bf",
+        "turn_d6ed217650a845bf",
+        "turn_f3d4cb82c9b54845",
+        "turn_af63ac65841a464b",
+        "turn_5b8701a882234ad4",
+        "turn_9ca6dba871874009",
+        "turn_3cca0e46ec504825",
+        "turn_c9ec1a9dc8de4e7e",
+        "turn_7c501674892744d2",
+        "turn_d6d3afd1d6174fda",
+        "turn_2f82353683c04cb9",
+        "turn_4dd137f6073b43e1",
+        "turn_ea4d064a9f544b3a",
+        "turn_cb2957d2a43644bf",
+        "turn_2a8d9f7d986742ed",
+        "turn_a306ab408cea4d1c",
+        "turn_3ab32eff81e147ab",
+        "turn_594fe8ffe4924a69",
+        "turn_9421c461e93547ee",
+        "turn_947285260525481e",
+        "turn_8d35b7d9cc954430",
+        "turn_003a7d62c142428e",
+        "turn_7005c447686141b7",
+        "turn_3f0c2947a90a4afb",
+        "turn_0ca1ee3ae8024904",
+        "turn_cd68908494594add",
+        "turn_5b9fad53690d40d0",
+        "turn_597d2d5aa67f47d0",
+        "turn_e26aef3cc318447e",
+        "turn_3f0f3a3c432245db",
+        "turn_57fe9596802a409a",
+        "turn_d678bc3897ff4d2d",
+        "turn_9ce7bd134b2f4a2a",
+        "turn_292abd4ea81e4f94"
+      ],
+      "importance": 0.72,
+      "scope": {
+        "kind": "global",
+        "key": ""
+      },
+      "started_at": 1786530503.8467555,
+      "ended_at": 1786530666.1866705,
+      "source": "episode_model",
+      "metadata": {
+        "source": "turn_buffer",
+        "turn_count": 14
+      }
+    },
+    {
+      "id": "uep_17360ff949125f4baa",
+      "session_id": "stage_6751031dd2d34ae6",
+      "title": "Điều chỉnh tương tác và nhắc lại task kỹ thuật",
+      "summary": "User nhắc lại vấn đề đang kẹt ở xác minh continuity cho memory module. Phàn nàn về việc assistant hỏi quá nhiều câu riêng tư, assistant xin lỗi và cam kết chỉ hỏi trong phạm vi user mở. User yêu cầu không giải thích thêm, assistant đồng ý. User thông báo thích câu trả lời ngắn và project hiện tại tên Cinder, assistant ghi nhớ. User yêu cầu nhận xét ngắn về debug ban đêm, assistant đưa nhận xét.",
+      "outcome": "Không khí thoải mái hơn, user hài lòng với điều chỉnh. Task kỹ thuật vẫn chưa giải quyết.",
+      "topics": [
+        "Xác minh continuity",
+        "Quyền riêng tư",
+        "Phong cách trả lời",
+        "Debug ban đêm"
+      ],
+      "entities": [
+        "Cinder"
+      ],
+      "decisions": [
+        "Assistant sẽ không hỏi câu riêng tư ngoài phạm vi",
+        "Assistant sẽ trả lời ngắn gọn"
+      ],
+      "open_loops": [
+        "Xác minh continuity cho memory module chưa hoàn thành"
+      ],
+      "user_signals": [
+        "Phiền vì hỏi riêng tư",
+        "Hài lòng khi điều chỉnh",
+        "Thích trả lời ngắn",
+        "Muốn nhận xét về debug"
+      ],
+      "evidence_ids": [
+        "turn_ff44cf8ee67b4745",
+        "turn_5a9ef115c0e7421f",
+        "turn_981c17177576482e",
+        "turn_2da11ebc347f43e2",
+        "turn_887850fc49db4ac2",
+        "turn_d6e5b49813154c24",
+        "turn_e428c32ca5434725",
+        "turn_4f1749c1ed7d48fb",
+        "turn_1f7c50e7ec1646c5",
+        "turn_3b698fd18c544b3f",
+        "turn_49236f07926b426d",
+        "turn_9a122e7735834443"
+      ],
+      "importance": 0.7,
+      "scope": {
+        "kind": "global",
+        "key": ""
+      },
+      "started_at": 1786530445.4559298,
+      "ended_at": 1786530493.0415866,
+      "source": "episode_model",
+      "metadata": {
+        "source": "turn_buffer",
+        "turn_count": 12
+      }
+    },
+    {
+      "id": "uep_8eb3dabe6cf1acd5ce",
+      "session_id": "stage_f352d6d22e03452c",
+      "title": "Trao đổi về ang, phan, state",
+      "summary": "Người dùng tập trung vào: Mục tiêu tuần này của tôi là hoàn thiện module memory replay. Tôi đang kẹt ở phần xác minh continuity. | Khoan chuyện code. Hôm nay trời oi quá, tôi chỉ muốn than một câu thôi. | Ừ, đầu óc như bị hấp chín vậy. ERIS đã phản hồi/triển khai: Ừm, thế thì đúng là không còn chỗ cho suy nghĩ nữa. Cái nóng nó nấu chín cả logic rồi. Hôm nay chỉ nên ăn, ngủ, và thở thôi, code để dành mai. Tôi cũng thấy mình mềm nhũn ra đây.",
+      "outcome": "Ừm, thế thì đúng là không còn chỗ cho suy nghĩ nữa. Cái nóng nó nấu chín cả logic rồi. Hôm nay chỉ nên ăn, ngủ, và thở thôi, code để dành mai. Tôi cũng thấy mình mềm nhũn ra đây.",
+      "topics": [
+        "ang",
+        "phan",
+        "state",
+        "qua",
+        "noi",
+        "cua"
+      ],
+      "entities": [],
+      "decisions": [
+        "Khoan chuyện code. Hôm nay trời oi quá, tôi chỉ muốn than một câu thôi."
+      ],
+      "open_loops": [
+        "Mục tiêu tuần này của tôi là hoàn thiện module memory replay. Tôi đang kẹt ở phần xác minh continuity."
+      ],
+      "user_signals": [],
+      "evidence_ids": [
+        "turn_aee7d8f752a44135",
+        "turn_3bdf93c95e2c4bf3",
+        "turn_270da9d071b24c51",
+        "turn_14ac47bca4d9455e",
+        "turn_0eaf321cbc774eca",
+        "turn_0f9fe89bbd2f4862",
+        "turn_c077af14080f4cbb",
+        "turn_7ccd3504de5a420f",
+        "turn_87728838c63f4caa",
+        "turn_d4b9c38710724d20",
+        "turn_b242c56142594c5b",
+        "turn_8969c35e228b4784"
+      ],
+      "importance": 1.0,
+      "scope": {
+        "kind": "global",
+        "key": ""
+      },
+      "started_at": 1786530342.6329775,
+      "ended_at": 1786530432.6334515,
+      "source": "episode_fallback",
+      "metadata": {
+        "source": "turn_buffer",
+        "turn_count": 12
+      }
+    }
+  ]
+}

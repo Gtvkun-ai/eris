@@ -1,0 +1,186 @@
+{
+  "schema_version": 1,
+  "session_id": "stage_be17061036d14f41",
+  "turns": [
+    {
+      "id": "turn_d134c6e2c0d040ad",
+      "role": "user",
+      "text": "Tôi đang theo dõi checkpoint 11: mục tiêu là giữ continuity cho module Atlas-11.",
+      "timestamp": 1786531198.03776,
+      "context": {
+        "project_id": ""
+      }
+    },
+    {
+      "id": "turn_890ee55ac827410f",
+      "role": "assistant",
+      "text": "Ghi nhận checkpoint 11: Atlas-11 giữ mạch.",
+      "timestamp": 1786531203.0943599,
+      "context": {
+        "project_id": ""
+      }
+    },
+    {
+      "id": "turn_d75cfce6ee964047",
+      "role": "user",
+      "text": "Đổi nhịp một chút: tôi vừa làm đổ cà phê cạnh bàn phím, chỉ than thôi chứ chưa cần giải pháp.",
+      "timestamp": 1786531213.7641518,
+      "context": {
+        "project_id": ""
+      }
+    },
+    {
+      "id": "turn_1f2168eb36284999",
+      "role": "assistant",
+      "text": "Lần thứ mười một rồi. Tôi bắt đầu thấy đây không còn là tai nạn nữa, mà là một nghi thức. Mỗi lần cà phê đổ, bạn lại nhắc đến một checkpoint mới. Có khi đó là cách bạn đánh dấu tiến độ đấy.",
+      "timestamp": 1786531218.9618251,
+      "context": {
+        "project_id": ""
+      }
+    },
+    {
+      "id": "turn_fb506b5414094144",
+      "role": "user",
+      "text": "Sửa lại nhé: checkpoint 11 không phải lỗi memory retrieval; lỗi nằm ở continuity sau restart.",
+      "timestamp": 1786531228.7331278,
+      "context": {
+        "project_id": ""
+      }
+    },
+    {
+      "id": "turn_c7dadbb7536b4193",
+      "role": "assistant",
+      "text": "Sửa rồi: checkpoint 11 là continuity sau restart, không phải lỗi truy xuất.",
+      "timestamp": 1786531232.492322,
+      "context": {
+        "project_id": ""
+      }
+    },
+    {
+      "id": "turn_09d40afaaa6f4b55",
+      "role": "user",
+      "text": "Đoạn này đừng hỏi thêm chuyện cá nhân. Cứ tập trung vào điều tôi đã nói.",
+      "timestamp": 1786531235.7711854,
+      "context": {
+        "project_id": ""
+      }
+    },
+    {
+      "id": "turn_98daeabbf25f4fe7",
+      "role": "assistant",
+      "text": "Rõ. Tôi chỉ nói về những gì bạn vừa đề cập.",
+      "timestamp": 1786531239.5616539,
+      "context": {
+        "project_id": ""
+      }
+    },
+    {
+      "id": "turn_de98b62531884cb2",
+      "role": "user",
+      "text": "Quay lại Atlas-11: tôi đã nói lỗi thực sự nằm ở đâu?",
+      "timestamp": 1786531243.2252872,
+      "context": {
+        "project_id": ""
+      }
+    },
+    {
+      "id": "turn_6ebb81c6eee346e2",
+      "role": "assistant",
+      "text": "Bạn nói lỗi thực sự nằm ở continuity sau restart, không phải lỗi truy xuất.",
+      "timestamp": 1786531246.7986104,
+      "context": {
+        "project_id": ""
+      }
+    },
+    {
+      "id": "turn_1cb156a473f14deb",
+      "role": "user",
+      "text": "Ổn. Tóm tắt checkpoint 11 trong một câu, đừng biến thành bài giảng.",
+      "timestamp": 1786531249.8151221,
+      "context": {
+        "project_id": ""
+      }
+    },
+    {
+      "id": "turn_f83d489c9fd14720",
+      "role": "assistant",
+      "text": "Checkpoint 11: đảm bảo Atlas-11 nối lại đúng trạng thái sau mỗi lần restart.",
+      "timestamp": 1786531253.0952578,
+      "context": {
+        "project_id": ""
+      }
+    },
+    {
+      "id": "turn_1e646292df1a4b7e",
+      "role": "user",
+      "text": "Tôi đang theo dõi checkpoint 12: mục tiêu là giữ continuity cho module Atlas-12.",
+      "timestamp": 1786531256.3788989,
+      "context": {
+        "project_id": ""
+      }
+    },
+    {
+      "id": "turn_4f1c21143aca4a5d",
+      "role": "assistant",
+      "text": "Checkpoint 12: Atlas-12 giữ mạch.",
+      "timestamp": 1786531260.170934,
+      "context": {
+        "project_id": ""
+      }
+    },
+    {
+      "id": "turn_6a8be46b48c149a5",
+      "role": "user",
+      "text": "Đổi nhịp một chút: tôi vừa làm đổ cà phê cạnh bàn phím, chỉ than thôi chứ chưa cần giải pháp.",
+      "timestamp": 1786531264.500593,
+      "context": {
+        "project_id": ""
+      }
+    },
+    {
+      "id": "turn_04a4906b8a324bcc",
+      "role": "assistant",
+      "text": "Lần thứ mười hai. Tôi bắt đầu thấy đây là một nghi thức check-in hơn là một sự cố. Bạn đổ cà phê, tôi ghi nhận checkpoint, thế là đủ.",
+      "timestamp": 1786531268.7414935,
+      "context": {
+        "project_id": ""
+      }
+    },
+    {
+      "id": "turn_63cf68c45cb9426c",
+      "role": "user",
+      "text": "Sửa lại nhé: checkpoint 12 không phải lỗi memory retrieval; lỗi nằm ở continuity sau restart.",
+      "timestamp": 1786531275.9946954,
+      "context": {
+        "project_id": ""
+      }
+    },
+    {
+      "id": "turn_ee918ddcdf5045eb",
+      "role": "assistant",
+      "text": "Sửa rồi: checkpoint 12 là continuity sau restart, không phải lỗi truy xuất. Tôi đã ghi nhận.",
+      "timestamp": 1786531280.919671,
+      "context": {
+        "project_id": ""
+      }
+    },
+    {
+      "id": "turn_8c907d8483fb4dcb",
+      "role": "user",
+      "text": "Đoạn này đừng hỏi thêm chuyện cá nhân. Cứ tập trung vào điều tôi đã nói.",
+      "timestamp": 1786531284.4445097,
+      "context": {
+        "project_id": ""
+      }
+    },
+    {
+      "id": "turn_8e897260c9b9400c",
+      "role": "assistant",
+      "text": "Rõ. Tôi chỉ nói về checkpoint 12 và continuity của Atlas-12.",
+      "timestamp": 1786531287.7837632,
+      "context": {
+        "project_id": ""
+      }
+    }
+  ]
+}

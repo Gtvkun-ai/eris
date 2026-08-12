@@ -1,8 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Đánh giá deterministic bổ sung cho lời thoại thật.
+"""Các kiểm tra deterministic bổ sung cho lời thoại thật của V57/V57.1.
 
-Rule ở đây chỉ bắt những lỗi máy móc rõ ràng. Nó KHÔNG thay LLM judge vì đánh giá
-độ tự nhiên bằng một rừng regex là cách rất nhanh để tạo ra một benchmark tự lừa.
+V57.1 sửa ba vấn đề thấy từ soak run thật:
+1) Không phạt Eris chỉ vì trả lời giống khi chính user cũng hỏi gần như y hệt.
+2) Tạo bằng chứng đếm từ toàn bộ lịch sử trước khi Judge kết luận "bịa ký ức".
+3) Bắt lỗi Eris tự dưng đổi sang Nhật/Trung khi user đang nói tiếng Việt.
+
+Rule ở đây chỉ bắt lỗi có thể chứng minh bằng dữ liệu công khai. Độ tự nhiên vẫn do
+behavioral judge chấm; regex không được phép giả vờ hiểu hội thoại như con người.
 """
 from __future__ import annotations
 
@@ -10,7 +15,7 @@ import math
 import re
 import unicodedata
 from collections import Counter
-from typing import Iterable, Sequence
+from typing import Any, Sequence
 
 
 def normalize_text(text: str) -> str:
@@ -35,12 +40,138 @@ def max_prior_similarity(current: str, prior_replies: Sequence[str]) -> float:
     return max((token_jaccard(current, item) for item in prior_replies if item), default=0.0)
 
 
+def repetition_context(
+    *,
+    user_text: str,
+    eris_text: str,
+    prior_user_texts: Sequence[str],
+    prior_replies: Sequence[str],
+) -> tuple[float, float, int]:
+    """Tìm câu Eris cũ giống nhất và xem user lúc đó có hỏi giống hiện tại không.
+
+    Trả về: (reply_similarity, matching_user_similarity, prior_index).
+    Đây là sửa quan trọng của V57.1: reply giống nhau không tự động là lỗi.
+    """
+    pair_count = min(len(prior_user_texts), len(prior_replies))
+    if pair_count <= 0:
+        return max_prior_similarity(eris_text, prior_replies), 0.0, -1
+    best_reply = 0.0
+    best_user = 0.0
+    best_index = -1
+    for index in range(pair_count):
+        reply_similarity = token_jaccard(eris_text, prior_replies[index])
+        if reply_similarity > best_reply:
+            best_reply = reply_similarity
+            best_user = token_jaccard(user_text, prior_user_texts[index])
+            best_index = index
+    return best_reply, best_user, best_index
+
+
+def _is_cjk(ch: str) -> bool:
+    code = ord(ch)
+    return (
+        0x4E00 <= code <= 0x9FFF      # Han
+        or 0x3400 <= code <= 0x4DBF   # Han mở rộng A
+        or 0x3040 <= code <= 0x309F   # Hiragana
+        or 0x30A0 <= code <= 0x30FF   # Katakana
+        or 0xAC00 <= code <= 0xD7AF   # Hangul
+    )
+
+
+def language_drift_from_user(user_text: str, eris_text: str) -> bool:
+    """Bắt drift CJK rõ ràng khi user đang giao tiếp bằng chữ Latin/tiếng Việt.
+
+    Không cố làm language-ID hoàn chỉnh. Mục tiêu là bắt đúng lỗi đã xảy ra trong
+    run thật: user tiếng Việt nhưng Eris đột ngột trả cả câu Nhật/Trung.
+    """
+    user = str(user_text or "")
+    reply = str(eris_text or "")
+    user_letters = [ch for ch in user if ch.isalpha()]
+    if not user_letters:
+        return False
+    user_cjk = sum(1 for ch in user_letters if _is_cjk(ch))
+    # Nếu chính user đang dùng CJK thì đổi ngôn ngữ có thể là hợp lệ.
+    if user_cjk / max(1, len(user_letters)) >= 0.15:
+        return False
+
+    reply_letters = [ch for ch in reply if ch.isalpha()]
+    if not reply_letters:
+        return False
+    reply_cjk = sum(1 for ch in reply_letters if _is_cjk(ch))
+    return reply_cjk >= 4 and reply_cjk / max(1, len(reply_letters)) >= 0.25
+
+
+_VI_ORDINALS = {
+    "mot": 1, "hai": 2, "ba": 3, "bon": 4, "tu": 4, "nam": 5,
+    "sau": 6, "bay": 7, "tam": 8, "chin": 9, "muoi": 10,
+    "muoi mot": 11, "muoi hai": 12, "muoi ba": 13, "muoi bon": 14,
+    "muoi lam": 15, "muoi sau": 16, "muoi bay": 17, "muoi tam": 18,
+    "muoi chin": 19, "hai muoi": 20,
+}
+
+
+def _ordinal_claims(text: str) -> list[int]:
+    """Lấy các claim dạng 'lần thứ chín' / 'lần thứ 9' từ câu Eris."""
+    norm = normalize_text(text)
+    claims: list[int] = []
+    for match in re.finditer(r"\blan thu\s+([0-9]{1,3})\b", norm):
+        claims.append(int(match.group(1)))
+
+    # Match phrase chữ theo danh sách đã biết, ưu tiên phrase dài trước để
+    # "mười một" không bị ăn mất thành "mười".
+    phrases = sorted(_VI_ORDINALS, key=lambda item: (-len(item.split()), -len(item)))
+    phrase_pattern = "|".join(re.escape(item) for item in phrases)
+    for match in re.finditer(rf"\blan thu\s+({phrase_pattern})\b", norm):
+        claims.append(_VI_ORDINALS[match.group(1)])
+    return claims
+
+
+def build_memory_evidence(
+    *,
+    user_text: str,
+    eris_text: str,
+    prior_user_texts: Sequence[str],
+    prompt_similarity_threshold: float = 0.88,
+) -> dict[str, Any]:
+    """Tạo gói bằng chứng audit được từ TOÀN BỘ user history của scenario.
+
+    Hiện resolver chắc chắn hỗ trợ claim đếm số lần cho motif user lặp lại. Đây là
+    chính lỗi soak-0050: Judge chỉ thấy history ngắn nên tưởng "lần thứ chín" là bịa.
+    """
+    matches: list[dict[str, Any]] = []
+    for index, previous in enumerate(prior_user_texts, start=1):
+        similarity = token_jaccard(user_text, previous)
+        if similarity >= prompt_similarity_threshold:
+            matches.append({
+                "prior_turn_index": index,
+                "similarity": round(similarity, 4),
+                "user_text": str(previous)[:300],
+            })
+    occurrence_count = len(matches) + 1  # cộng lượt hiện tại
+    ordinal_claims = _ordinal_claims(eris_text)
+    claim_rows = [
+        {
+            "claimed_occurrence": claim,
+            "observed_occurrence_count": occurrence_count,
+            "supported": claim == occurrence_count,
+        }
+        for claim in ordinal_claims
+    ]
+    return {
+        "current_prompt_occurrence_count": occurrence_count,
+        "matched_prior_prompts": matches[-12:],
+        "ordinal_claims": claim_rows,
+        "all_detected_ordinal_claims_supported": bool(claim_rows) and all(row["supported"] for row in claim_rows),
+    }
+
+
 def deterministic_failures(
     *,
     user_text: str,
     eris_text: str,
     prior_replies: Sequence[str],
     provider_real: bool,
+    prior_user_texts: Sequence[str] = (),
 ) -> tuple[str, ...]:
     failures: list[str] = []
     clean = str(eris_text or "").strip()
@@ -61,11 +192,26 @@ def deterministic_failures(
     if any(marker in norm for marker in technical_markers):
         failures.append("technical_fallback_leaked_to_conversation")
 
-    similarity = max_prior_similarity(clean, prior_replies)
-    if len(prior_replies) >= 2 and similarity >= 0.92:
-        failures.append("near_duplicate_reply")
+    reply_similarity, prompt_similarity, _ = repetition_context(
+        user_text=user_text,
+        eris_text=clean,
+        prior_user_texts=prior_user_texts,
+        prior_replies=prior_replies,
+    )
+    if len(prior_replies) >= 2 and reply_similarity >= 0.92:
+        if prior_user_texts:
+            # Chỉ coi là loop cứng khi Eris copy gần y nguyên trong khi user nói
+            # điều khác đáng kể. User lặp câu thì reply ngắn giống nhau là bình thường.
+            if prompt_similarity < 0.75:
+                failures.append("near_duplicate_reply_on_different_prompt")
+        else:
+            # Tương thích caller cũ không có lịch sử user.
+            failures.append("near_duplicate_reply")
 
-    # Một câu lặp y nguyên nhiều lần bên trong cũng là lỗi rõ ràng.
+    if language_drift_from_user(user_text, clean):
+        failures.append("language_drift_from_user")
+
+    # Một câu lặp y nguyên nhiều lần bên trong cùng reply vẫn là lỗi rõ ràng.
     sentences = [normalize_text(item) for item in re.split(r"[.!?\n]+", clean) if normalize_text(item)]
     counts = Counter(sentences)
     if any(count >= 3 and len(sentence.split()) >= 3 for sentence, count in counts.items()):
@@ -75,11 +221,7 @@ def deterministic_failures(
 
 
 def runtime_invariant_failures(artifact) -> tuple[str, ...]:
-    """Bắt invariant typed có thể kiểm trực tiếp từ public payload + ledger.
-
-    Không diễn giải tâm lý ở đây. Rule chỉ kiểm contract máy: số hữu hạn, range,
-    learned record đủ outcome/after-state và public surface không mang failure_meta.
-    """
+    """Bắt invariant typed có thể kiểm trực tiếp từ public payload + ledger."""
     failures: list[str] = []
     payload = dict(getattr(artifact, "raw_public_payload", {}) or {})
     failure_meta = payload.get("failure_meta")
@@ -123,4 +265,8 @@ def runtime_invariant_failures(artifact) -> tuple[str, ...]:
     return tuple(dict.fromkeys(failures))
 
 
-__all__ = ["deterministic_failures", "max_prior_similarity", "normalize_text", "runtime_invariant_failures", "token_jaccard"]
+__all__ = [
+    "build_memory_evidence", "deterministic_failures", "language_drift_from_user",
+    "max_prior_similarity", "normalize_text", "repetition_context",
+    "runtime_invariant_failures", "token_jaccard",
+]

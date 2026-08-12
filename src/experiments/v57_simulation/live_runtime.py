@@ -79,6 +79,65 @@ class CaptureTransport:
     def poll_json(self):
         return None
 
+    def wait_for_autonomous(
+        self,
+        *,
+        scenario_id: str,
+        step_id: str,
+        turn_index: int,
+        day: int = 1,
+        timeout_seconds: float = 150.0,
+    ) -> TurnArtifact:
+        """Chờ chính runtime tự phát public turn, không gửi thêm user message.
+
+        Đây là điểm V58 kiểm tra *chủ động thật*: nếu hết timeout mà không có public
+        text thì test ghi silence; nếu có text nhưng không qua provider thật thì run
+        không được tính là realism pass.
+        """
+        if self.coordinator is None:
+            raise RuntimeError("runtime_not_built")
+        start_payload = len(self.transport.payloads)
+        main_before = int(getattr(self.main_probe, "success_count", 0) or 0)
+        surface_before = int(getattr(self.surface_probe, "success_count", 0) or 0)
+        started = time.perf_counter()
+        deadline = time.monotonic() + max(1.0, float(timeout_seconds))
+        payload: dict[str, Any] = {}
+        while time.monotonic() < deadline:
+            payload = self.transport.public_payload_since(start_payload)
+            if str(payload.get("text", "") or "").strip():
+                break
+            time.sleep(0.25)
+        latency = (time.perf_counter() - started) * 1000.0
+        eris_text = str(payload.get("text", "") or "").strip()
+        main_after = int(getattr(self.main_probe, "success_count", 0) or 0)
+        surface_after = int(getattr(self.surface_probe, "success_count", 0) or 0)
+        provider_call_delta = max(0, main_after - main_before) + max(0, surface_after - surface_before)
+        provider_real = bool(eris_text and self.provider_real and provider_call_delta > 0)
+        subject = getattr(self.coordinator, "subject_service", None)
+        ledger_tail: list[dict[str, Any]] = []
+        ledger_view = getattr(subject, "decision_ledger_view", None)
+        if callable(ledger_view):
+            with contextlib.suppress(Exception):
+                ledger_tail = list(ledger_view(limit=6))
+        initiative_view = {}
+        view = getattr(subject, "initiative_view", None)
+        if callable(view):
+            with contextlib.suppress(Exception):
+                initiative_view = dict(view())
+        return TurnArtifact(
+            scenario_id=scenario_id, step_id=step_id, turn_index=turn_index, day=day,
+            user_text="<SILENCE: user không gửi lệnh mới>", eris_text=eris_text,
+            provider=self.provider, model=self.model, provider_real=provider_real,
+            latency_ms=latency, provider_call_delta=provider_call_delta,
+            raw_public_payload=payload, subject_ledger_tail=ledger_tail,
+            runtime_state={
+                "public_payload_count": len(self.transport.payloads),
+                "initiative": initiative_view,
+                "autonomous_timeout_seconds": float(timeout_seconds),
+            },
+            error="" if eris_text else "autonomous_timeout_no_public_text",
+        )
+
     def close(self) -> None:
         return None
 
@@ -128,6 +187,7 @@ class LiveRuntimeHarness:
         self.model = ""
         self.provider_real = False
         self.main_probe: ProviderCallProbe | None = None
+        self.surface_probe: ProviderCallProbe | None = None
         self._previous_env: dict[str, str | None] = {}
         self._configure_isolation()
         self._build()
@@ -199,7 +259,9 @@ class LiveRuntimeHarness:
         executive = manager.build_executive_client()
         diary = manager.build_diary_client() if inner_diary_model_enabled() else None
         seed = manager.build_seed_client()
-        surface = manager.build_surface_client()
+        raw_surface = manager.build_surface_client()
+        surface = ProviderCallProbe(raw_surface, lane="surface") if raw_surface is not None else None
+        self.surface_probe = surface if isinstance(surface, ProviderCallProbe) else None
         research = manager.build_research_client() if background_tutor_enabled() else None
         tutor = manager.build_tutor_client() if background_tutor_enabled() else None
         curator = manager.build_curator_client()
@@ -277,6 +339,65 @@ class LiveRuntimeHarness:
             provider_real=turn_provider_real, latency_ms=latency, provider_call_delta=provider_call_delta,
             raw_public_payload=payload,
             subject_ledger_tail=ledger_tail, runtime_state=runtime_state, error=error,
+        )
+
+    def wait_for_autonomous(
+        self,
+        *,
+        scenario_id: str,
+        step_id: str,
+        turn_index: int,
+        day: int = 1,
+        timeout_seconds: float = 150.0,
+    ) -> TurnArtifact:
+        """Chờ chính runtime tự phát public turn, không gửi thêm user message.
+
+        Đây là điểm V58 kiểm tra *chủ động thật*: nếu hết timeout mà không có public
+        text thì test ghi silence; nếu có text nhưng không qua provider thật thì run
+        không được tính là realism pass.
+        """
+        if self.coordinator is None:
+            raise RuntimeError("runtime_not_built")
+        start_payload = len(self.transport.payloads)
+        main_before = int(getattr(self.main_probe, "success_count", 0) or 0)
+        surface_before = int(getattr(self.surface_probe, "success_count", 0) or 0)
+        started = time.perf_counter()
+        deadline = time.monotonic() + max(1.0, float(timeout_seconds))
+        payload: dict[str, Any] = {}
+        while time.monotonic() < deadline:
+            payload = self.transport.public_payload_since(start_payload)
+            if str(payload.get("text", "") or "").strip():
+                break
+            time.sleep(0.25)
+        latency = (time.perf_counter() - started) * 1000.0
+        eris_text = str(payload.get("text", "") or "").strip()
+        main_after = int(getattr(self.main_probe, "success_count", 0) or 0)
+        surface_after = int(getattr(self.surface_probe, "success_count", 0) or 0)
+        provider_call_delta = max(0, main_after - main_before) + max(0, surface_after - surface_before)
+        provider_real = bool(eris_text and self.provider_real and provider_call_delta > 0)
+        subject = getattr(self.coordinator, "subject_service", None)
+        ledger_tail: list[dict[str, Any]] = []
+        ledger_view = getattr(subject, "decision_ledger_view", None)
+        if callable(ledger_view):
+            with contextlib.suppress(Exception):
+                ledger_tail = list(ledger_view(limit=6))
+        initiative_view = {}
+        view = getattr(subject, "initiative_view", None)
+        if callable(view):
+            with contextlib.suppress(Exception):
+                initiative_view = dict(view())
+        return TurnArtifact(
+            scenario_id=scenario_id, step_id=step_id, turn_index=turn_index, day=day,
+            user_text="<SILENCE: user không gửi lệnh mới>", eris_text=eris_text,
+            provider=self.provider, model=self.model, provider_real=provider_real,
+            latency_ms=latency, provider_call_delta=provider_call_delta,
+            raw_public_payload=payload, subject_ledger_tail=ledger_tail,
+            runtime_state={
+                "public_payload_count": len(self.transport.payloads),
+                "initiative": initiative_view,
+                "autonomous_timeout_seconds": float(timeout_seconds),
+            },
+            error="" if eris_text else "autonomous_timeout_no_public_text",
         )
 
     def close(self) -> None:

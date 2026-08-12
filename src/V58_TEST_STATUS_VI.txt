@@ -1,0 +1,31 @@
+ERIS V58 INITIATIVE CONTROLLER — TEST STATUS
+Ngày đóng gói: 2026-08-12
+
+1) Regression/acceptance liên quan:
+   129 passed, 0 failed
+
+Bao gồm:
+- V58 Initiative Controller: SPEAK / WAIT / DROP
+- V57/V57.1 live behavior simulator
+- V40 active concern
+- V43 affect
+- V39 living user memory
+- V25 relational homeostasis
+- V12 open-ended personality
+- V24 emergence acceptance
+- V26 unified Subject initiative
+- V44 contentful initiative
+- V55 executive cortex / authority
+
+2) Live V58 realism probe trong môi trường đóng gói:
+   PROVIDER_UNAVAILABLE
+   Lý do: container không có DeepSeek/API credential.
+   Đây là kết quả ĐÚNG: live test không được phép dùng mock rồi tự báo PASS.
+
+3) Lệnh chạy thật trên máy Eris:
+   run_v58_initiative_real.bat
+
+PASS yêu cầu đồng thời:
+- Eris tự phát public turn sau khoảng lặng bằng provider thật;
+- câu tự phát bám open-loop thật và được behavioral judge chấm đạt;
+- không có lượt autonomous thứ hai khi user chưa đáp lượt đầu.

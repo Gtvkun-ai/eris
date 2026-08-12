@@ -90,6 +90,8 @@ class TurnEvaluation:
     behavior: BehaviorScore
     deterministic_failures: tuple[str, ...] = ()
     transcript_repetition: float = 0.0
+    repetition_prompt_similarity: float = 0.0
+    memory_evidence: dict[str, Any] = field(default_factory=dict)
 
     @property
     def passed(self) -> bool:
@@ -107,6 +109,8 @@ class TurnEvaluation:
             "behavior": self.behavior.to_dict(),
             "deterministic_failures": list(self.deterministic_failures),
             "transcript_repetition": round(float(self.transcript_repetition), 4),
+            "repetition_prompt_similarity": round(float(self.repetition_prompt_similarity), 4),
+            "memory_evidence": dict(self.memory_evidence),
             "passed": self.passed,
         }
 
@@ -152,7 +156,7 @@ class SimulationReport:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "schema": "eris.v57.live_behavior_report.v1",
+            "schema": "eris.v57_1.live_behavior_report.v1",
             "run_id": self.run_id,
             "validity": self.validity.value,
             "passed": self.passed,
