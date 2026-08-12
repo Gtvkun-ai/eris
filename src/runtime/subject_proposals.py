@@ -183,21 +183,30 @@ class AutonomousProposalSource:
         # V44: desire có nội dung là utility dương thật sự, không phải một label
         # trang trí. Nó vẫn chịu policy/interruption cost ở các bước dưới.
         if expression_urge_id:
+            # V44.1: utility phải phản ánh một urge *đang sẵn sàng*, không chỉ
+            # pressure thô. Freshness và satisfaction quyết định pressure đó còn
+            # là desire hiện tại hay chỉ là một ý cũ đã mắc kẹt trong projection.
+            expression_readiness = clamp01(
+                expression_pressure
+                * (0.55 + 0.45 * expression_freshness)
+                * (1.0 - 0.82 * expression_satisfaction)
+            )
+            proposal["arguments"]["expression_readiness"] = expression_readiness
             proposal["expected_need_relief"] = clamp01(
-                float(proposal["expected_need_relief"]) + 0.24 * expression_pressure
+                float(proposal["expected_need_relief"]) + 0.34 * expression_readiness
             )
             proposal["value_congruence"] = clamp01(
-                float(proposal["value_congruence"]) + 0.16 * expression_pressure
+                float(proposal["value_congruence"]) + 0.18 * expression_readiness
             )
             proposal["expected_action_efficacy"] = clamp01(
-                float(proposal["expected_action_efficacy"]) + 0.07 * expression_freshness
+                float(proposal["expected_action_efficacy"]) + 0.09 * expression_freshness
             )
             proposal["commitment_conflict"] = clamp01(
                 float(proposal["commitment_conflict"]) + 0.08 * expression_satisfaction
             )
             proposal["need_effects"]["connection"] = max(
                 float(proposal["need_effects"].get("connection", 0.0) or 0.0),
-                0.42 + 0.38 * expression_pressure,
+                0.42 + 0.42 * expression_readiness,
             )
 
         if policy_cost > 0.0:

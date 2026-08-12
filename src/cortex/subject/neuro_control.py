@@ -464,8 +464,20 @@ class NeuroActionSelector:
             expression_freshness = _clamp01(arguments.get("expression_freshness", 0.0))
             expression_satisfaction = _clamp01(arguments.get("expression_satisfaction", 0.0))
             if arguments.get("expression_urge_id"):
-                score += 0.18 * expression_pressure
-                score += 0.045 * expression_freshness
+                # V44.1: Neuro nhận trực tiếp "readiness" của desire có nội dung.
+                # Khi đang chờ user trả lời, desire vẫn sống nhưng không được lấy
+                # pressure tích lũy để nói chồng lên câu hỏi vừa hỏi. Khi baton mở,
+                # readiness đủ cao phải thật sự cạnh tranh được với silence.
+                readiness = _clamp01(arguments.get("expression_readiness", 0.0))
+                if readiness <= 0.0:
+                    readiness = _clamp01(
+                        expression_pressure
+                        * (0.55 + 0.45 * expression_freshness)
+                        * (1.0 - 0.82 * expression_satisfaction)
+                    )
+                available_readiness = readiness * (0.24 if social_wait else 1.0)
+                score += 0.32 * available_readiness
+                score += 0.055 * expression_freshness * (0.35 if social_wait else 1.0)
                 score -= 0.09 * expression_satisfaction
             score -= 0.10 * interruption_cost
             score -= 0.13 * unanswered_penalty

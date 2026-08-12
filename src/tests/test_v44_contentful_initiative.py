@@ -251,3 +251,139 @@ def test_contentful_urge_can_change_neuro_winner_without_lowering_silence_thresh
     after = selector.select(after_frame)
     assert after_frame.coalitions[after.winner_index].action_kind == "speak"
     assert after.scores[0] > before.scores[0]
+
+
+def test_v44_1_effective_freshness_decays_without_new_input():
+    runtime = _runtime()
+    runtime.shape_affordances(
+        (_aff("seed:aging", "Tôi có một ý cụ thể muốn chia sẻ nhưng nếu không có gì mới thì nó phải tự già đi."),),
+        relational={"connection_pressure": 0.55},
+        affect={"curiosity": 0.55, "social_energy": 0.55},
+        now=100.0,
+    )
+    first = runtime.snapshot(now=100.0, relational={"connection_pressure": 0.55})[0]
+    later = runtime.snapshot(now=400.0, relational={"connection_pressure": 0.55})[0]
+    assert first["freshness"] > 0.70
+    assert later["freshness"] < 0.30
+    assert later["priority"] < first["priority"]
+
+
+def test_v44_1_new_relevant_urge_preempts_old_high_pressure_urge():
+    runtime = _runtime()
+    rel = {"connection_pressure": 0.60, "outreach_drive": 0.55}
+    aff = {"curiosity": 0.60, "social_energy": 0.60}
+    runtime.shape_affordances(
+        (_aff(
+            "seed:old",
+            "Tôi vẫn còn nghĩ về chuyện một câu trả lời ngắn có giữ được trọng lượng hay không.",
+            relevance=0.65,
+        ),),
+        relational=rel,
+        affect=aff,
+        now=100.0,
+    )
+    # Cho urge cũ đủ thời gian tích pressure nhưng đồng thời mất freshness.
+    old_later = runtime.snapshot(now=320.0, relational=rel, affect=aff)[0]
+    assert old_later["pressure"] > 0.60
+    assert old_later["freshness"] < 0.50
+
+    runtime.shape_affordances(
+        (_aff(
+            "seed:new",
+            "Bạn vừa bảo tôi chủ động kiếm chuyện, nên tôi đang muốn mang sang một ý mới ngay từ turn này.",
+            refs=("turn:new",),
+            relevance=0.95,
+            confidence=0.90,
+        ),),
+        relational=rel,
+        affect=aff,
+        now=320.0,
+    )
+    ranked = runtime.snapshot(now=320.0, relational=rel, affect=aff)
+    assert ranked[0]["evidence_refs"] == ["turn:new"]
+    assert ranked[0]["priority"] > ranked[1]["priority"]
+
+
+def test_v44_1_ready_urge_can_beat_strong_silence_when_baton_is_open():
+    from types import SimpleNamespace
+    from cortex.subject.neuro_control import NeuroActionSelector
+
+    def coalition(action: str, score: float, arguments: dict):
+        return SimpleNamespace(
+            action_kind=action,
+            score=score,
+            expected_pragmatic_value=0.50,
+            expected_epistemic_value=0.20,
+            uncertainty=0.20,
+            arguments=arguments,
+            proposal_refs=(),
+        )
+
+    speak = coalition(
+        "speak",
+        0.40,
+        {
+            "expression_urge_id": "urge:ready",
+            "expression_pressure": 1.0,
+            "expression_freshness": 0.85,
+            "expression_satisfaction": 0.0,
+            "expression_readiness": 0.93,
+        },
+    )
+    silence = coalition("silence", 0.64, {})
+    frame = SimpleNamespace(
+        coalitions=(speak, silence),
+        appraisals=(),
+        activations=(),
+        proposals=(),
+        substrate=SimpleNamespace(processing_capacity=1.0),
+        observation=SimpleNamespace(
+            context={"runtime_context": {"reply_expected": False, "user_busy": False}},
+            origin="internal",
+        ),
+    )
+    result = NeuroActionSelector().select(frame)
+    assert frame.coalitions[result.winner_index].action_kind == "speak"
+
+
+def test_v44_1_reply_expected_still_holds_even_with_ready_urge():
+    """Fix initiative không được biến thành nói chồng lên câu hỏi vừa hỏi user."""
+    from types import SimpleNamespace
+    from cortex.subject.neuro_control import NeuroActionSelector
+
+    def coalition(action: str, score: float, arguments: dict):
+        return SimpleNamespace(
+            action_kind=action,
+            score=score,
+            expected_pragmatic_value=0.50,
+            expected_epistemic_value=0.20,
+            uncertainty=0.20,
+            arguments=arguments,
+            proposal_refs=(),
+        )
+
+    speak = coalition(
+        "speak",
+        0.40,
+        {
+            "expression_urge_id": "urge:ready",
+            "expression_pressure": 1.0,
+            "expression_freshness": 0.85,
+            "expression_satisfaction": 0.0,
+            "expression_readiness": 0.93,
+        },
+    )
+    silence = coalition("silence", 0.64, {})
+    frame = SimpleNamespace(
+        coalitions=(speak, silence),
+        appraisals=(),
+        activations=(),
+        proposals=(),
+        substrate=SimpleNamespace(processing_capacity=1.0),
+        observation=SimpleNamespace(
+            context={"runtime_context": {"reply_expected": True, "user_busy": False}},
+            origin="internal",
+        ),
+    )
+    result = NeuroActionSelector().select(frame)
+    assert frame.coalitions[result.winner_index].action_kind == "silence"

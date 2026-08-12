@@ -30,7 +30,7 @@ from runtime.ai_orchestrated.affordance import ExecutiveAffordance
 from runtime.ai_orchestrated.social_initiative import SocialSpeechCandidate
 
 
-EXPRESSION_URGE_VERSION = "eris.initiative.v44.contentful_urge"
+EXPRESSION_URGE_VERSION = "eris.initiative.v44_1.contentful_urge_lifecycle"
 
 _GENERIC_SOCIAL_ACTS = {
     "contact_bid",
@@ -139,13 +139,27 @@ class ExpressionUrge:
     relevance: float = 0.60
     intrusion_risk: float = 0.14
 
+    def effective_freshness(self, *, now: float) -> float:
+        """Freshness sống theo thời gian, không phải con số đóng băng lúc tạo urge.
+
+        V44 cũ giữ ``freshness=1.0`` vô hạn nếu không có input mới. Kết quả là
+        một urge cũ có thể ngồi đầu hàng nhiều phút chỉ vì nó từng rất mới.
+        Freshness ở đây có half-life khoảng 3 phút; evidence mới sẽ nâng lại
+        stored freshness qua ``_ingest_content``.
+        """
+        since_input = max(0.0, float(now) - self.last_input_at)
+        decay = 0.5 ** (since_input / 180.0)
+        return clamp01(self.freshness * decay)
+
     def pressure(self, *, now: float, relational: Mapping[str, Any], affect: Mapping[str, Any]) -> float:
         age = max(0.0, float(now) - self.created_at)
         since_input = max(0.0, float(now) - self.last_input_at)
-        # Urge được giữ lại một lúc có thể tích lực, nhưng freshness đồng thời
-        # phai. Vì thế một ý có cơ hội "chín" chứ không tăng vô hạn như timer.
-        hold_gain = min(0.18, age / 240.0 * 0.18) * (0.45 + 0.55 * self.freshness)
-        stale_decay = min(0.26, max(0.0, since_input - 180.0) / 900.0 * 0.26)
+        effective_freshness = self.effective_freshness(now=now)
+        # Hold chỉ giúp một ý "chín" khi nó còn tươi. Khi không có evidence/input
+        # mới, freshness giảm và stale decay thắng dần. Pressure vì thế không thể
+        # bò lên 1.0 rồi ở đó vĩnh viễn như V44.
+        hold_gain = min(0.16, age / 240.0 * 0.16) * (0.25 + 0.75 * effective_freshness)
+        stale_decay = min(0.34, max(0.0, since_input - 75.0) / 420.0 * 0.34)
 
         connection = clamp01(relational.get("connection_pressure", 0.0))
         outreach = clamp01(relational.get("outreach_drive", 0.0))
@@ -172,7 +186,27 @@ class ExpressionUrge:
             - min(0.22, self.echo_count * 0.055)
         )
 
+    def selection_priority(self, *, now: float, relational: Mapping[str, Any], affect: Mapping[str, Any]) -> float:
+        """Độ ưu tiên giữa các urge, tách khỏi quyết định speak/silence của Neuro.
+
+        Priority cần trả lời "ý nào đáng được mang ra cân *bây giờ*", nên ngoài
+        pressure còn thưởng input mới và relevance. Nhờ vậy một event vừa xảy ra
+        có thể preempt urge cũ đang tích pressure, thay vì bị starvation.
+        """
+        pressure = self.pressure(now=now, relational=relational, affect=affect)
+        fresh = self.effective_freshness(now=now)
+        since_input = max(0.0, float(now) - self.last_input_at)
+        recency = clamp01(1.0 - since_input / 150.0)
+        unsatisfied = clamp01(1.0 - self.satisfaction)
+        return clamp01(
+            0.58 * pressure
+            + 0.20 * fresh
+            + 0.12 * self.relevance
+            + 0.10 * recency
+        ) * unsatisfied
+
     def to_dict(self, *, now: float, relational: Mapping[str, Any], affect: Mapping[str, Any]) -> dict[str, Any]:
+        fresh = self.effective_freshness(now=now)
         return {
             "urge_id": self.urge_id,
             "motive": self.motive,
@@ -180,7 +214,8 @@ class ExpressionUrge:
             "source": self.source,
             "concern_id": self.concern_id,
             "pressure": round(self.pressure(now=now, relational=relational, affect=affect), 3),
-            "freshness": round(self.freshness, 3),
+            "priority": round(self.selection_priority(now=now, relational=relational, affect=affect), 3),
+            "freshness": round(fresh, 3),
             "satisfaction": round(self.satisfaction, 3),
             "echo_count": self.echo_count,
             "age_seconds": round(max(0.0, now - self.created_at), 1),
@@ -374,7 +409,12 @@ class ExpressionUrgeRuntime:
         for urge_id, urge in self._urges.items():
             age = max(0.0, now - urge.created_at)
             stale = max(0.0, now - urge.last_input_at)
-            if urge.satisfaction >= 0.88 or age > 1800.0 or (stale > 720.0 and urge.freshness < 0.24):
+            effective_freshness = urge.effective_freshness(now=now)
+            if (
+                urge.satisfaction >= 0.88
+                or age > 1800.0
+                or (stale > 480.0 and effective_freshness < 0.18)
+            ):
                 dead.append(urge_id)
         for urge_id in dead:
             self._urges.pop(urge_id, None)
@@ -392,7 +432,9 @@ class ExpressionUrgeRuntime:
             (
                 clamp01(
                     urge.base_strength
-                    + min(0.16, max(0.0, current - urge.created_at) / 240.0 * 0.16)
+                    + min(0.14, max(0.0, current - urge.created_at) / 240.0 * 0.14)
+                    * (0.25 + 0.75 * urge.effective_freshness(now=current))
+                    - min(0.28, max(0.0, current - urge.last_input_at - 90.0) / 420.0 * 0.28)
                     - 0.60 * urge.satisfaction
                     - min(0.18, urge.echo_count * 0.05)
                 )
@@ -437,8 +479,9 @@ class ExpressionUrgeRuntime:
         ranked = sorted(
             self._urges.values(),
             key=lambda urge: (
+                urge.selection_priority(now=current, relational=rel, affect=aff),
                 urge.pressure(now=current, relational=rel, affect=aff),
-                urge.freshness,
+                urge.effective_freshness(now=current),
                 urge.updated_at,
             ),
             reverse=True,
@@ -446,7 +489,8 @@ class ExpressionUrgeRuntime:
         emitted = 0
         for urge in ranked:
             pressure = urge.pressure(now=current, relational=rel, affect=aff)
-            if pressure < 0.34 or urge.freshness < 0.12:
+            effective_freshness = urge.effective_freshness(now=current)
+            if pressure < 0.34 or effective_freshness < 0.12:
                 continue
             speech_act = _speech_act_for(urge.motive, urge.original_speech_act)
             candidate = SocialSpeechCandidate(
@@ -474,7 +518,7 @@ class ExpressionUrgeRuntime:
                 recovery_available=True,
                 expression_urge_id=urge.urge_id,
                 expression_pressure=pressure,
-                expression_freshness=urge.freshness,
+                expression_freshness=effective_freshness,
                 expression_satisfaction=urge.satisfaction,
                 expression_motive=urge.motive,
             )
@@ -505,7 +549,7 @@ class ExpressionUrgeRuntime:
         else:
             ranked = sorted(
                 self._urges.values(),
-                key=lambda urge: urge.pressure(now=now, relational=relational, affect=affect),
+                key=lambda urge: urge.selection_priority(now=now, relational=relational, affect=affect),
                 reverse=True,
             )
             top = ranked[0]
@@ -514,11 +558,12 @@ class ExpressionUrgeRuntime:
             if signature != self._last_log_signature:
                 self._log(
                     "info",
-                    "[expression urge] top id=%s motive=%s pressure=%.2f fresh=%.2f satisfaction=%.2f echoes=%s source=%s content=%s",
+                    "[expression urge] top id=%s motive=%s pressure=%.2f priority=%.2f fresh=%.2f satisfaction=%.2f echoes=%s source=%s content=%s",
                     top.urge_id,
                     top.motive,
                     p,
-                    top.freshness,
+                    top.selection_priority(now=now, relational=relational, affect=affect),
+                    top.effective_freshness(now=now),
                     top.satisfaction,
                     top.echo_count,
                     top.source,
@@ -559,7 +604,7 @@ class ExpressionUrgeRuntime:
         self._prune(current)
         ranked = sorted(
             self._urges.values(),
-            key=lambda urge: urge.pressure(now=current, relational=rel, affect=aff),
+            key=lambda urge: urge.selection_priority(now=current, relational=rel, affect=aff),
             reverse=True,
         )
         return tuple(urge.to_dict(now=current, relational=rel, affect=aff) for urge in ranked[: max(0, int(limit))])
