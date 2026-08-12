@@ -1,0 +1,36 @@
+{
+  "algorithm_version": "subject-service-v12-validated-agency-reflection",
+  "code_revision": "v24-integrated",
+  "metrics": {
+    "ablation_collateral_change": 0.0,
+    "ablation_target_drop": 0.0,
+    "authorship_integrity": 1.0,
+    "behavior_effect_d": 1.999999999996,
+    "brier_score": 0.41000000000000003,
+    "causal_replay_exact": 1.0,
+    "control_mean": 0.0,
+    "cross_instance_leakage": 0.0,
+    "effect_retention_ratio": 1.0,
+    "history_brier_delta": -0.16000000000000003,
+    "history_brier_improvement": -0.6400000000000001,
+    "history_classifier_auroc": 1.0,
+    "history_log_loss_improvement": -0.7369655941662061,
+    "log_loss": 1.203972804325936,
+    "narrative_brier": 0.0,
+    "one_turn_shift_sd": 0.0,
+    "ten_episode_shift_sd": 0.8,
+    "transfer_ratio": 1.0,
+    "treatment_mean": 1.0,
+    "within_condition_icc": 1.0
+  },
+  "notes": [],
+  "passed": true,
+  "run_count": 200,
+  "scenario_fingerprint": "da5d61f782651364e9a10a4ec5d6a8e8248a1db280986338ef2265b4a8ba8c32",
+  "scenario_id": "v24_counterfactual_holdout_smoke",
+  "split": "holdout",
+  "thresholds": {
+    "history_classifier_auroc": 0.75,
+    "within_condition_icc": 0.65
+  }
+}

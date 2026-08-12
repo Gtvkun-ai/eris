@@ -1,0 +1,64 @@
+{
+  "schema": "eris.social_agenda.full_cutover_manifest.v22",
+  "runtime_version": "ai_orchestrated.v22.full_social_cutover",
+  "project_version": "0.42.0",
+  "source_basis": "Nghiên cứu và thiết kế năng lực hội thoại xã hội voice-first kiểu Bunpo cho Eris",
+  "cutover": {
+    "mode": "full_cutover",
+    "active_lanes": [
+      "afterbeat",
+      "exposure",
+      "conversation_arc",
+      "agenda_update"
+    ],
+    "removed_runtime_paths": [
+      "social_rollout",
+      "generic_social_initiative_worker",
+      "blackboard_to_random_candidate_compatibility",
+      "legacy_top_level_conversation_arc"
+    ]
+  },
+  "durable_state_domains": [
+    "social_continuation",
+    "conversation_arc",
+    "social_agenda",
+    "public_turn_commit_receipts"
+  ],
+  "candidate_kinds": [
+    "afterbeat",
+    "social_exposure_recovery",
+    "conversation_arc",
+    "social_agenda"
+  ],
+  "voice_events": [
+    "vad_start",
+    "partial_asr",
+    "final_asr",
+    "laugh",
+    "backchannel",
+    "audio_playback_aborted"
+  ],
+  "defaults": {
+    "durable_state": "sqlite",
+    "durable_public_turns": true,
+    "cross_session_social_agenda": false
+  },
+  "verification": {
+    "focused_social_tests": 33,
+    "full_repository_tests": 652,
+    "runtime_coverage_percent": 43.39,
+    "compileall": true,
+    "architecture_budget": true,
+    "exception_budget": true,
+    "release_manifest_check": true,
+    "synthetic_harness_fixture_cases": 12,
+    "synthetic_harness_fixture_macro_f1": 1.0,
+    "synthetic_harness_fixture_is_model_evaluation": false
+  },
+  "external_validation_not_claimed": [
+    "live_elevenlabs_audition",
+    "real_frontend_vad_asr_device_session",
+    "real_model_activation_precision_recall",
+    "human_blinded_ab_result"
+  ]
+}

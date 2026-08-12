@@ -1,0 +1,85 @@
+{
+  "base_release": "eris-self-owned-private-life-v20",
+  "broad_test_result": {
+    "collection_files_missing_tools_modules": 3,
+    "failed_due_to_missing_archive_inputs": 6,
+    "passed": 855
+  },
+  "bundled_milestones": [
+    "V21 causal validation",
+    "V22 learned agency",
+    "V23 reflective self",
+    "V24 soak and hardening"
+  ],
+  "changed_files": [
+    "ERIS_CAUSAL_AGENCY_REFLECTIVE_V24.md",
+    "V24_ABLATION_REPORT.json",
+    "V24_COUNTERFACTUAL_HOLDOUT_REPORT.json",
+    "V24_COUNTERFACTUAL_HOLDOUT_REPORT.md",
+    "V24_SOAK_REPORT.json",
+    "V24_SOAK_REPORT.md",
+    "cortex/private_life/self_projection.py",
+    "cortex/subject/__init__.py",
+    "cortex/subject/agency.py",
+    "cortex/subject/beliefs.py",
+    "cortex/subject/narrative.py",
+    "cortex/subject/reflection.py",
+    "cortex/subject/service.py",
+    "experiments/emergence/__init__.py",
+    "experiments/emergence/acceptance.py",
+    "experiments/emergence/metrics.py",
+    "experiments/emergence/soak.py",
+    "experiments/emergence/validation.py",
+    "pyproject.toml",
+    "runtime/subject_bootstrap.py",
+    "runtime/world/__init__.py",
+    "runtime/world/mutation_journal.py",
+    "runtime/world/sandbox.py",
+    "tests/emergence/test_acceptance_profiles_v24.py",
+    "tests/emergence/test_causal_validation_v24.py",
+    "tests/subject/test_native_cutover.py",
+    "tests/subject/test_self_owned_private_life_v20.py",
+    "tests/subject/test_validated_agency_reflection_v24.py",
+    "tests/world/test_mutation_journal_v24.py"
+  ],
+  "direct_test_result": {
+    "failed": 0,
+    "passed": 66
+  },
+  "known_missing_archive_inputs": [
+    "tools.package_source",
+    "tools.evaluate_social_plan_activation",
+    "tools.report_pdf_acceptance",
+    "tools.evaluate_semantic_paraphrases",
+    "tools.audit_remote_inference_paths",
+    "tools.audit_semantic_authority_paths",
+    "body/SubjectPerformanceFrame.cs"
+  ],
+  "language_of_architecture_comments": "vi-VN",
+  "package_version": "0.87.0",
+  "release": "eris-causal-agency-reflective-v24",
+  "subject_algorithm_version": "subject-service-v12-validated-agency-reflection",
+  "validation_evidence": {
+    "causal_ablation": {
+      "collateral_change": 0.0,
+      "target_drop": 1.0,
+      "target_signal": "action_success:investigate"
+    },
+    "counterfactual_holdout": {
+      "history_classifier_auroc": 1.0,
+      "repetitions": 5,
+      "seed_pairs": 20,
+      "within_condition_icc": 1.0
+    },
+    "soak": {
+      "cross_instance_leakage": 0,
+      "event_chain_ok": true,
+      "max_projection_bytes_observed": 76017,
+      "non_finite_values": 0,
+      "replay_stable": true,
+      "restarts": 4,
+      "simulated_days": 7,
+      "turns": 84
+    }
+  }
+}

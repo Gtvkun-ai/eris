@@ -1,0 +1,17 @@
+ERIS V56 - TRẠNG THÁI KIỂM THỬ
+Ngày đóng gói: 2026-08-12
+
+1. Kiểm tra cú pháp các module V56: PASS.
+2. Bộ test riêng V56: 5/5 PASS.
+3. Nhóm regression liên quan Subject/Affect/Initiative/V55: 138/138 PASS.
+
+Lệnh nhóm regression đã chạy:
+python -m pytest -q tests/subject tests/test_v43_event_driven_affect.py tests/test_v44_contentful_initiative.py tests/test_v45_causal_mental_material.py tests/test_gemma_executive_cortex_v55.py tests/test_gemma_executive_cortex_v55_hardening.py tests/test_executive_authority_v55.py
+
+Ghi chú full suite:
+- Một lần chạy toàn bộ pytest đã chạm giới hạn thời gian sau khoảng 70% suite.
+- Các failure đã kiểm tra riêng nằm ở regression legacy, không phải các module V56 vừa thay đổi.
+- tests/test_conversation_arcs_v19.py còn kỳ vọng reason="allowed", trong khi implementation hiện hành dùng "reserved_arc_continuation".
+- tests/test_v27_1_runtime_repairs.py còn kỳ vọng neuro_fast_gate_degraded / user_probe theo kiến trúc cũ, trong khi implementation hiện hành dùng neuro_local_semantic_merge và cơ chế coalesce mới.
+
+V56 không sửa ngược các hành vi hiện hành chỉ để làm test legacy xanh.

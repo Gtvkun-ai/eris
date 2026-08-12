@@ -1,0 +1,61 @@
+{
+  "release": "v17-executive-subject-center",
+  "base": "startup-memory-callback-v16",
+  "subject_algorithm_version": "subject-service-v9-executive-center",
+  "architecture": {
+    "subject_core": "substrate_appraisal_needs_beliefs_values_coalitions_learning",
+    "executive": "attention_selection_inhibition_review_and_commitment",
+    "surface": "wording_only",
+    "runtime": "permission_validation_execution_and_evidence"
+  },
+  "features": {
+    "prepare_finalize_boundary": true,
+    "typed_subject_deliberation_frame": true,
+    "typed_executive_commit": true,
+    "exact_coalition_validation": true,
+    "single_bounded_cognitive_review": true,
+    "shared_chat_and_autonomous_subject_path": true,
+    "capability_realizes_committed_decision": true,
+    "fixed_chat_action_priors_removed": true,
+    "authorship_records_selection_source": true,
+    "vietnamese_architecture_comments": true
+  },
+  "review_requests": [
+    "verify_evidence",
+    "reduce_intrusion",
+    "preserve_continuity",
+    "estimate_capability",
+    "inspect_dissent"
+  ],
+  "changed_core_files": [
+    "cortex/subject/contracts.py",
+    "cortex/subject/coalitions.py",
+    "cortex/subject/service.py",
+    "cortex/subject/authorship.py",
+    "runtime/subject_ingress.py",
+    "runtime/subject_runtime.py",
+    "runtime/subject_bootstrap.py",
+    "runtime/ai_orchestrated/executive_cortex.py",
+    "runtime/ai_orchestrated/orchestrator.py",
+    "runtime/ai_orchestrated/self_turn_pipeline.py",
+    "runtime/ai_orchestrated/bootstrap.py"
+  ],
+  "verification": {
+    "targeted_subject_executive_opening": {
+      "passed": 62,
+      "failed": 0
+    },
+    "broad_archive_available_tests": {
+      "passed": 829,
+      "deselected_missing_external_resources": 5,
+      "failed": 0
+    },
+    "compileall": "passed",
+    "ast_parse": "passed",
+    "git_diff_check": "passed"
+  },
+  "known_archive_gaps": [
+    "missing tools.* modules used only by archive/evaluator tests",
+    "missing body/SubjectPerformanceFrame.cs outside uploaded source root"
+  ]
+}
