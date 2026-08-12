@@ -1,0 +1,38 @@
+ERIS V59 — EXISTENTIAL DESIRE -> RELATIONAL INTENTION
+
+MỚI:
+- cortex/subject/existential_desire.py
+  + mutual_understanding
+  + relational_continuity
+  + authentic_self_expression
+  + derive trực tiếp từ AnchorSystem hiện có
+  + abandonment là phanh, không phải nhiên liệu outreach
+
+SỬA:
+- runtime/subject_initiative_runtime.py
+  + đọc attachment/significance/witness/dread/abandonment thật
+  + đưa existential_desires vào runtime_context
+  + materialize mutual_understanding_bid / relationship_continuity_bid / grounded_self_disclosure
+
+- cortex/subject/initiative.py
+  + desire hiện sinh -> persistent motive/intention
+  + BE_UNDERSTOOD không coi "ừ/ok" là đã thấu hiểu
+
+- cortex/subject/initiative_control.py
+  + existential social silence gate 40s
+  + abandonment >= 0.72 => WAIT
+  + existential actionability được tính vào quyết định, nhưng abandonment trừ điểm
+
+- cortex/subject/service.py
+  + target hiện sinh không được bypass InitiativeArbiter
+
+LIVE:
+- tools/run_v59_existential_initiative_live.py
+- run_v59_existential_real.bat
+  + clone long-arc thật sang sandbox
+  + provider thật + public autonomous turn thật + LLM judge thật
+  + nếu quan hệ chưa đủ chín: RELATIONSHIP_NOT_MATURE, không ép PASS giả
+
+TEST:
+- tests/test_v59_existential_desire.py: 9 acceptance tests
+- regression liên quan: 155 passed / 0 failed

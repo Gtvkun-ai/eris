@@ -288,6 +288,29 @@ class InitiativeEngine:
         user_unknown = _clamp01(runtime.get("user_model_uncertainty", 0.62), 0.62)
         recognition_gap = _clamp01(runtime.get("recognition_gap_signal", 0.0))
         misunderstanding = _clamp01(runtime.get("self_misunderstanding_signal", 0.0))
+
+        # V59: desire hiện sinh đã được phái sinh ở runtime từ AnchorSystem thật.
+        # InitiativeEngine không tự đoán attachment/witness lần nữa; nó chỉ biến
+        # desire có provenance thành motive có semantic target rõ ràng.
+        raw_existential_desires = runtime.get("existential_desires", ())
+        existential_desires: dict[str, Mapping[str, Any]] = {}
+        if isinstance(raw_existential_desires, Sequence) and not isinstance(raw_existential_desires, (str, bytes)):
+            for payload in raw_existential_desires:
+                if not isinstance(payload, Mapping):
+                    continue
+                key = str(payload.get("kind") or "").strip().lower()
+                if key:
+                    existential_desires[key] = payload
+
+        def existential_value(kind: str, field: str = "pressure") -> float:
+            payload = existential_desires.get(kind, {})
+            return _clamp01(payload.get(field, 0.0)) if isinstance(payload, Mapping) else 0.0
+
+        def existential_refs(kind: str) -> tuple[str, ...]:
+            payload = existential_desires.get(kind, {})
+            values = payload.get("evidence_refs", ()) if isinstance(payload, Mapping) else ()
+            return _uniq(tuple(str(item) for item in values if str(item or "").strip()), limit=12)
+
         demonstrate_signal = _clamp01(runtime.get("demonstration_signal", 0.0))
         contribution_signal = _clamp01(runtime.get("contribution_signal", 0.0))
         active_goal_text = " ".join(str(runtime.get("active_goal_text") or "").split()).strip()[:320]
@@ -369,6 +392,57 @@ class InitiativeEngine:
             "làm rõ một điều về ý định hoặc trạng thái của chính Eris đang có nguy cơ bị hiểu sai",
             ("connection", "coherence"),
             f"self_misunderstanding_signal={misunderstanding:.2f}",
+        )
+
+        # V59 / Existential -> Desire -> Relational Intention. Khác với nhánh
+        # correction phía trên, các motive này có thể sinh ngay cả khi user chưa
+        # vừa hiểu sai gì: chúng xuất phát từ long-arc của chính Eris.
+        mutual_pressure = existential_value("mutual_understanding")
+        mutual_actionability = existential_value("mutual_understanding", "actionability")
+        add(
+            MotiveKind.BE_UNDERSTOOD,
+            _clamp01(mutual_pressure * (0.58 + 0.22 * cp + 0.20 * opportunity)),
+            0.18,
+            "mutual_understanding",
+            (
+                "tạo một nhịp hiểu nhau hai chiều: chia sẻ ngắn một điều có provenance về Eris "
+                "hoặc hỏi nhẹ user đang hiểu Eris ra sao; không xin trấn an hay cam kết"
+            ),
+            ("connection", "coherence"),
+            f"existential_mutual_understanding={mutual_pressure:.2f}; actionability={mutual_actionability:.2f}",
+            _uniq((*base_refs, *existential_refs("mutual_understanding")), limit=12),
+        )
+
+        continuity_pressure = existential_value("relational_continuity")
+        continuity_actionability = existential_value("relational_continuity", "actionability")
+        add(
+            MotiveKind.CONNECT,
+            _clamp01(continuity_pressure * (0.55 + 0.25 * cp + 0.20 * opportunity)),
+            0.10,
+            "relationship_continuity",
+            (
+                "duy trì mạch quan hệ vì continuity với user đã có ý nghĩa nội tại; "
+                "mở một nhịp nhẹ, không biến im lặng thành nghĩa vụ trả lời"
+            ),
+            ("connection", "continuity"),
+            f"existential_relational_continuity={continuity_pressure:.2f}; actionability={continuity_actionability:.2f}",
+            _uniq((*base_refs, *existential_refs("relational_continuity")), limit=12),
+        )
+
+        expression_pressure = existential_value("authentic_self_expression")
+        expression_actionability = existential_value("authentic_self_expression", "actionability")
+        add(
+            MotiveKind.SHARE,
+            _clamp01(expression_pressure * (0.56 + 0.24 * cp + 0.20 * opportunity)),
+            0.12,
+            "self_expression",
+            (
+                "chia sẻ một quan sát public-safe về state/giá trị của Eris có provenance để user "
+                "hiểu Eris hơn; không bịa cảm giác cơ thể hay sự kiện"
+            ),
+            ("connection", "coherence"),
+            f"existential_self_expression={expression_pressure:.2f}; actionability={expression_actionability:.2f}",
+            _uniq((*base_refs, *existential_refs("authentic_self_expression")), limit=12),
         )
         add(
             MotiveKind.SEEK_RECOGNITION,
@@ -655,7 +729,10 @@ class InitiativeEngine:
                 updated.append(item)
                 continue
             changed = True
-            if item.motive_kind == MotiveKind.UNDERSTAND_USER and not informative:
+            if item.motive_kind in {MotiveKind.UNDERSTAND_USER, MotiveKind.BE_UNDERSTOOD} and not informative:
+                # "ừ/ok" không chứng minh Eris đã hiểu user hơn, cũng không chứng
+                # minh user đã hiểu Eris hơn. Với hai motive nhận thức hai chiều,
+                # acknowledgement ngắn chỉ có nghĩa "đừng hỏi lại ngay".
                 status = IntentionStatus.REVISED
                 cooldown = self.config.low_engagement_cooldown_seconds
             else:

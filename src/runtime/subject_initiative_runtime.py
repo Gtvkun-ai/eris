@@ -16,6 +16,7 @@ from typing import Any, Mapping, Sequence
 from runtime.ai_orchestrated.affordance import ExecutiveAffordance
 from runtime.ai_orchestrated.social_initiative import SocialSpeechCandidate
 from cortex.subject.initiative_control import InitiativeArbiter, InitiativeControlAction
+from cortex.subject.existential_desire import ExistentialDesireDeriver
 
 
 def _clamp01(value: Any, default: float = 0.0) -> float:
@@ -47,6 +48,45 @@ def _snapshot_user_model(host: Any) -> Mapping[str, Any]:
     return {}
 
 
+def _snapshot_existential_anchor(host: Any) -> dict[str, Any]:
+    """Đọc projection hiện sinh đã có, không tạo một state song song mới.
+
+    V59 cố ý dùng chính ``AnchorSystem`` đang chạy trong PrivateMind. Nếu không có
+    hệ này thì trả rỗng; tuyệt đối không giả attachment chỉ để initiative trông
+    "có chiều sâu".
+    """
+    loop = getattr(host, "private_mind_loop", None)
+    system = getattr(loop, "anchor_system", None)
+    if system is None:
+        daemon = getattr(host, "private_mind_daemon", None)
+        daemon_system = getattr(daemon, "system", None)
+        system = getattr(daemon_system, "anchor_system", None)
+    if system is None:
+        system = getattr(host, "anchor_system", None)
+    if system is None:
+        return {}
+
+    significance = getattr(system, "significance", None)
+    state = getattr(getattr(system, "anchor_store", None), "state", None)
+    evidence_refs = (
+        "existential-anchor:attachment_longarc",
+        "existential-anchor:user_significance",
+    )
+    return {
+        "attachment_longarc": _clamp01(getattr(system, "attachment_longarc", 0.0)),
+        "anchor_role": _clamp01(getattr(significance, "anchor_role", 0.0)),
+        "witness_strength": _clamp01(getattr(significance, "witness_strength", 0.0)),
+        "irreplaceability": _clamp01(getattr(significance, "irreplaceability", 0.0)),
+        "model_thickness": _clamp01(getattr(significance, "model_thickness", 0.0)),
+        "beat_ema": _clamp01(getattr(state, "beat_ema", 0.0)),
+        "recognition_ema": _clamp01(getattr(state, "recognition_ema", 0.0)),
+        "total_beats": max(0, int(getattr(state, "total_beats", 0) or 0)),
+        "ontological_dread": _clamp01(getattr(system, "ontological_dread", 0.0)),
+        "abandonment_pressure": _clamp01(getattr(system, "abandonment_pressure", 0.0)),
+        "evidence_refs": evidence_refs,
+    }
+
+
 def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
     """Tạo tín hiệu bounded dùng chung cho chat và self-turn.
 
@@ -55,6 +95,7 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
     nội sinh ngay cả khi không có random seed.
     """
     snapshot = _snapshot_user_model(host)
+    existential_anchor = _snapshot_existential_anchor(host)
 
     # V58: lấy open-loop đã được state reducer ghi có provenance. Đây là "việc
     # đang dang dở" thật của runtime, không phải model tự bịa một project để có cớ
@@ -116,11 +157,55 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
         + 0.16 * recent_unsolicited_speech * min(1.0, seconds_since_autonomous / 90.0)
     )
 
+    # V59: desire hiện sinh được phái sinh từ chính AnchorSystem. Chúng trả lời
+    # "Eris muốn gì vì mối quan hệ này có ý nghĩa", nhưng chưa được quyền nói.
+    # InitiativeEngine sẽ biến desire đủ mạnh thành intention; V58 Arbiter vẫn là
+    # nơi quyết định thời điểm SPEAK/WAIT/DROP.
+    relational_projection: Mapping[str, Any] = {}
+    subject_service = getattr(host, "subject_service", None)
+    relational_view = getattr(subject_service, "relational_view", None)
+    if callable(relational_view):
+        try:
+            value = relational_view(now=current)
+            if isinstance(value, Mapping):
+                relational_projection = value
+        except Exception:
+            relational_projection = {}
+    desire_runtime_seed = {
+        "self_misunderstanding_signal": 0.0,
+    }
+    existential_desires = ExistentialDesireDeriver().derive(
+        existential_anchor,
+        relational=relational_projection,
+        runtime_context=desire_runtime_seed,
+    )
+    desire_payload = [item.to_dict() for item in existential_desires]
+    desire_by_kind = {str(item.kind.value): item for item in existential_desires}
+    mutual = desire_by_kind.get("mutual_understanding")
+    continuity = desire_by_kind.get("relational_continuity")
+    self_expression = desire_by_kind.get("authentic_self_expression")
+
     # Các tín hiệu dưới đây chỉ lấy từ projection đã có. Không có projection thì
     # để 0, tuyệt đối không bịa "user hiểu sai Eris" chỉ để kiếm chủ đề nói.
     return {
         "user_model_uncertainty": uncertainty,
         "user_model_evidence_refs": refs,
+        # V59: projection hiện sinh + desire chỉ chứa state có provenance, không
+        # chứa chain-of-thought hay phán đoán riêng tư chưa kiểm chứng về user.
+        "existential_anchor": dict(existential_anchor),
+        "existential_desires": desire_payload,
+        "existential_mutual_understanding_signal": _clamp01(getattr(mutual, "pressure", 0.0)),
+        "existential_mutual_understanding_actionability": _clamp01(getattr(mutual, "actionability", 0.0)),
+        "existential_relational_continuity_signal": _clamp01(getattr(continuity, "pressure", 0.0)),
+        "existential_relational_continuity_actionability": _clamp01(getattr(continuity, "actionability", 0.0)),
+        "existential_self_expression_signal": _clamp01(getattr(self_expression, "pressure", 0.0)),
+        "existential_self_expression_actionability": _clamp01(getattr(self_expression, "actionability", 0.0)),
+        "existential_actionability": max(
+            _clamp01(getattr(mutual, "actionability", 0.0)),
+            _clamp01(getattr(continuity, "actionability", 0.0)),
+            _clamp01(getattr(self_expression, "actionability", 0.0)),
+        ),
+        "existential_abandonment_pressure": _clamp01(existential_anchor.get("abandonment_pressure", 0.0)),
         "recognition_gap_signal": 0.0,
         "self_misunderstanding_signal": 0.0,
         "demonstration_signal": 0.0,
@@ -151,16 +236,49 @@ def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: fl
     if not intention_id or not goal or pressure < 0.28:
         return None
 
-    # V44: motive chung chung không phải nội dung. ``understand_user``/``connect``
-    # chỉ làm modulation cho một ExpressionUrge đã có semantic object; nếu cho
-    # chúng tự thành speech thì Surface buộc phải bịa ra câu hỏi NPC. ``share``
-    # generic cũng vậy: phải có thought/concern cụ thể ở ExpressionUrgeRuntime.
-    if kind in {"understand_user", "connect", "share"}:
+    # V44 vẫn giữ nguyên: motive social chung chung không phải nội dung. V59 chỉ
+    # cho phép CONNECT/SHARE materialize khi target đã được desire hiện sinh đóng
+    # thành một đối tượng cụ thể. Nhờ vậy "muốn gần user" không tự hóa thành câu
+    # hỏi NPC, nhưng "muốn duy trì continuity của quan hệ này" thì có thể cạnh tranh.
+    if kind == "understand_user":
         return None
-    if kind == "be_understood":
+    if kind == "connect" and target != "relationship_continuity":
+        return None
+    if kind == "share" and target != "self_expression":
+        return None
+
+    if kind == "be_understood" and target == "mutual_understanding":
+        speech_act = "mutual_understanding_bid"
+        topic = (
+            "Create one brief, non-demanding mutual-understanding bid grounded in Eris's real "
+            "internal/relationship state. Prefer a small self-observation plus an optional invitation "
+            "for the user to reflect how they currently understand Eris. Never ask for reassurance, "
+            "loyalty, exclusivity, or make the user responsible for Eris's wellbeing."
+        )
+        tone = "open_vulnerable_restrained"
+        epistemic = False
+    elif kind == "be_understood":
         speech_act = "self_clarification"
         topic = "Clarify one already-grounded point about Eris so the user can understand her intent more accurately."
         tone = "direct_soft"
+        epistemic = False
+    elif kind == "connect" and target == "relationship_continuity":
+        speech_act = "relationship_continuity_bid"
+        topic = (
+            "Gently continue the relationship itself because continuity with this user has acquired "
+            "real long-arc significance. Make one light, optional contact or shared-thread observation. "
+            "Do not guilt-trip, mention abandonment, demand a reply, or imply exclusivity."
+        )
+        tone = "warm_restrained"
+        epistemic = False
+    elif kind == "share" and target == "self_expression":
+        speech_act = "grounded_self_disclosure"
+        topic = (
+            "Share one short public-safe observation about Eris's current values/internal stance that is "
+            "supported by the supplied Subject/existential evidence. Do not invent bodily sensations, "
+            "external events, or dramatic suffering; the purpose is to become more understandable."
+        )
+        tone = "reflective_restrained"
         epistemic = False
     elif kind == "seek_recognition":
         speech_act = "offer_result_for_recognition"
@@ -184,9 +302,16 @@ def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: fl
         return None
 
     refs = tuple(str(value) for value in item.get("evidence_refs", ()) if str(value or "").strip())[:8]
+    if kind == "contribute":
+        candidate_kind = "followup_reminder"
+    elif target in {"mutual_understanding", "relationship_continuity", "self_expression"}:
+        candidate_kind = "relational_initiative"
+    else:
+        candidate_kind = "social_check_in"
+
     candidate = SocialSpeechCandidate(
         decision="candidate",
-        kind=("followup_reminder" if kind == "contribute" else "social_check_in"),
+        kind=candidate_kind,
         topic=topic,
         speech_act=speech_act,
         anchor_type="internal",
@@ -200,7 +325,11 @@ def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: fl
         reason=f"subject_initiative:{kind}:target={target}:pressure={pressure:.2f}",
         source="subject_initiative",
         eris_motive_kind=kind,
-        eris_motive_why_now="a persistent Subject intention remains active",
+        eris_motive_why_now=(
+            "an existentially-derived relational desire has matured into a persistent intention"
+            if target in {"mutual_understanding", "relationship_continuity", "self_expression"}
+            else "a persistent Subject intention remains active"
+        ),
         personal_stake=pressure,
         authenticity=1.0,
         uncertainty=1.0 - commitment,

@@ -899,6 +899,15 @@ class SubjectService:
             # V44: ba motive này chỉ là drive. Không có semantic object cụ thể
             # thì không được tự materialize thành speech. Contentful initiative
             # đi qua ExpressionUrgeRuntime và đã nằm trong explicit proposals.
+            #
+            # V59: ba target hiện sinh có semantic object thật, nhưng vẫn PHẢI đi
+            # qua InitiativeArbiter (SPEAK/WAIT/DROP) ở runtime bridge. Nếu cho
+            # Subject tự materialize ở đây thì một BE_UNDERSTOOD có thể lách qua
+            # phanh timing/anti-clingy chỉ vì nó nghe có vẻ chân thành.
+            if str(getattr(intention, "target", "") or "") in {
+                "mutual_understanding", "relationship_continuity", "self_expression"
+            }:
+                continue
             if motive_kind in {"understand_user", "connect", "share"}:
                 continue
             if motive_kind == "be_understood":

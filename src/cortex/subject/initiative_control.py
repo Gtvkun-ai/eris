@@ -40,6 +40,8 @@ class InitiativeControlAction(StrEnum):
 class InitiativeControlConfig:
     speak_threshold: float = 0.52
     social_speak_threshold: float = 0.64
+    existential_social_speak_threshold: float = 0.67
+    existential_min_silence_seconds: float = 40.0
     drop_after_seconds: float = 12.0 * 60.0
     drop_pressure: float = 0.24
     drop_commitment: float = 0.34
@@ -75,6 +77,7 @@ class InitiativeArbiter:
 
     _SOCIAL_MOTIVES = {"understand_user", "connect", "share", "seek_recognition"}
     _PERSISTENCE_MOTIVES = {"contribute", "resolve", "be_understood", "demonstrate"}
+    _EXISTENTIAL_TARGETS = {"mutual_understanding", "relationship_continuity", "self_expression"}
 
     def __init__(self, config: InitiativeControlConfig | None = None) -> None:
         self.config = config or InitiativeControlConfig()
@@ -95,6 +98,7 @@ class InitiativeArbiter:
         runtime = runtime_context or {}
         intention_id = str(intention.get("intention_id") or "")
         motive = str(intention.get("motive_kind") or "").strip().lower()
+        target = str(intention.get("target") or "").strip().lower()
         pressure = _clamp01(intention.get("pressure", 0.0))
         commitment = _clamp01(intention.get("commitment_strength", 0.0))
         created_at = float(intention.get("created_at", now) or now)
@@ -123,6 +127,15 @@ class InitiativeArbiter:
         if motive in self._SOCIAL_MOTIVES and bool(runtime.get("startup_social_cooldown_active", False)):
             return result(InitiativeControlAction.WAIT, 0.0, "startup_social_cooldown")
         seconds_since_user = max(0.0, float(runtime.get("seconds_since_last_user_turn", 10_000.0) or 0.0))
+        # Desire hiện sinh có thể rất thật mà thời điểm vẫn rất tệ. User vừa nói
+        # xong thì Eris không được lập tức chen "còn tôi thì..." vào giữa câu.
+        if target in self._EXISTENTIAL_TARGETS and seconds_since_user < self.config.existential_min_silence_seconds:
+            return result(InitiativeControlAction.WAIT, 0.0, "existential_desire_too_soon_after_user")
+        # Nỗi sợ mất kết nối không được phép trở thành lý do đẩy speech ra ngoài.
+        # Khi abandonment cao, lựa chọn an toàn là giữ desire nội bộ và WAIT.
+        if target in self._EXISTENTIAL_TARGETS and _clamp01(runtime.get("existential_abandonment_pressure", 0.0)) >= 0.72:
+            return result(InitiativeControlAction.WAIT, 0.0, "abandonment_requires_restraint")
+
         # Mục tiêu cũ chỉ được tự gợi lại sau một khoảng lặng đủ rõ. User vừa đổi
         # chủ đề xong mà Eris lập tức kéo project trở lại thì không phải persistence,
         # đó là không biết đọc phòng.
@@ -149,6 +162,8 @@ class InitiativeArbiter:
         interruption = _clamp01(rel.get("interruption_cost", 0.25), 0.25)
         response_rate = _clamp01(runtime.get("user_response_rate", 0.7), 0.7)
         refractory = _clamp01(runtime.get("social_refractory_cost", 0.0))
+        existential_actionability = _clamp01(runtime.get("existential_actionability", 0.0))
+        abandonment_brake = _clamp01(runtime.get("existential_abandonment_pressure", 0.0))
         freshness = _clamp01(1.0 - age / max(60.0, self.config.drop_after_seconds * 1.8))
         persistence_bonus = 1.0 if motive in self._PERSISTENCE_MOTIVES else 0.0
         explicit_open_goal = 1.0 if str(runtime.get("active_goal_text") or "").strip() else 0.0
@@ -166,12 +181,17 @@ class InitiativeArbiter:
             + 0.08 * persistence_bonus
             + 0.08 * explicit_open_goal
             + 0.14 * silence_readiness
+            + (0.10 * existential_actionability if target in self._EXISTENTIAL_TARGETS else 0.0)
             - 0.16 * interruption
             - 0.12 * satiety
             - 0.20 * refractory
+            - (0.18 * abandonment_brake if target in self._EXISTENTIAL_TARGETS else 0.0)
         )
         score = _clamp01(score)
-        threshold = self.config.social_speak_threshold if motive in self._SOCIAL_MOTIVES else self.config.speak_threshold
+        if target in self._EXISTENTIAL_TARGETS:
+            threshold = self.config.existential_social_speak_threshold
+        else:
+            threshold = self.config.social_speak_threshold if motive in self._SOCIAL_MOTIVES else self.config.speak_threshold
         if score >= threshold:
             return result(InitiativeControlAction.SPEAK, score, "initiative_value_exceeds_context_cost")
         return result(InitiativeControlAction.WAIT, score, "initiative_not_worth_interrupting_yet")

@@ -1,0 +1,34 @@
+ERIS V59 EXISTENTIAL DESIRE — TEST STATUS
+Ngày đóng gói: 2026-08-12
+
+1) Acceptance V59 mới:
+   9 passed, 0 failed
+
+Kiểm tra:
+- quan hệ đủ chín sinh desire hiện sinh;
+- quan hệ mới không giả attachment sâu;
+- abandonment làm giảm chủ động thay vì tăng;
+- runtime context đọc AnchorSystem thật;
+- desire -> BE_UNDERSTOOD / CONNECT / SHARE persistent intention;
+- relational initiative có thể SPEAK sau khoảng lặng;
+- user vừa nói xong => WAIT;
+- bridge materialize mutual_understanding_bid thay vì generic NPC probe;
+- abandonment cao => WAIT dù intention mạnh.
+
+2) Regression/acceptance liên quan:
+   155 passed, 0 failed
+
+Bao gồm V59 + V58 + V57 simulator + V40 ActiveConcern + V43 Affect + V39 Living User Memory
++ V25 Relational Homeostasis + V12 Open-ended Personality + V24 Emergence + V26 Unified Subject Initiative
++ V44 Contentful Initiative + V55 Executive/Authority.
+
+3) Live realism probe trong môi trường đóng gói:
+   PROVIDER_UNAVAILABLE
+
+Container không có DeepSeek/API credential. Script từ chối mock/stub đúng thiết kế.
+
+4) Chạy trên máy Eris:
+   run_v59_existential_real.bat
+
+Live test clone state quan hệ hiện tại sang sandbox. Nếu long-arc chưa đủ chín, kết quả là
+RELATIONSHIP_NOT_MATURE thay vì ép Eris chủ động giả tạo.
