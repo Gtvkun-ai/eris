@@ -51,6 +51,13 @@ public partial class UdpListener : Node2D
 	private LineEdit _memorySearchInput;
 	private OptionButton _memoryCategorySelect;
 	private CheckButton _memoryIncludeInferredToggle;
+	private CheckButton _memoryAutoCleanupToggle;
+	private Button _memoryCleanupNowButton;
+	private Label _memoryCleanupLabel;
+	private Label _memoryFeedTraceLabel;
+	private bool _memoryApplyingCleanupSnapshot;
+	private bool _memoryCleanupPolling;
+	private ulong _memoryCleanupPollAtMs;
 	private Label _memoryDetailTitle;
 	private Label _memoryDetailMeta;
 	private Label _memoryDetailPath;
@@ -75,6 +82,7 @@ public partial class UdpListener : Node2D
 	private string _memoryLastRequestId = "";
 	private ulong _memoryRequestSentAtMs;
 	private bool _memoryRequestPending;
+	private string _memoryPendingAction = "";
 	private string _memoryHardDeleteArmedPath = "";
 
 	private static readonly Color MemoryInk = new(0.39f, 0.08f, 0.25f);
@@ -201,6 +209,46 @@ public partial class UdpListener : Node2D
 		summaryBox.AddChild(_memorySummaryLabel);
 		_memoryCountLabel = CreateUiLabel("Chưa có thống kê", 11, MemoryInkSoft);
 		summaryBox.AddChild(_memoryCountLabel);
+
+		// V41: DeepSeek chỉ đề xuất cleanup; Brain validator mới được quyền ghi store.
+		// UI điều khiển authority service, tuyệt đối không xóa JSON/SQLite trực tiếp.
+		var curatorCard = CreateMemoryCard(new Color(0.985f, 0.965f, 1f, 0.96f), 14);
+		root.AddChild(curatorCard);
+		var curatorMargin = new MarginContainer();
+		curatorMargin.AddThemeConstantOverride("margin_left", 14);
+		curatorMargin.AddThemeConstantOverride("margin_right", 14);
+		curatorMargin.AddThemeConstantOverride("margin_top", 8);
+		curatorMargin.AddThemeConstantOverride("margin_bottom", 8);
+		curatorCard.AddChild(curatorMargin);
+		var curatorRow = new HBoxContainer();
+		curatorRow.AddThemeConstantOverride("separation", 10);
+		curatorMargin.AddChild(curatorRow);
+		var curatorTitle = CreateUiLabel("DeepSeek Memory Curator", 12, MemoryInk);
+		curatorTitle.CustomMinimumSize = new Vector2(170f, 34f);
+		curatorTitle.VerticalAlignment = VerticalAlignment.Center;
+		curatorRow.AddChild(curatorTitle);
+		_memoryAutoCleanupToggle = new CheckButton { Text = "Tự động dọn", ButtonPressed = false };
+		_memoryAutoCleanupToggle.AddThemeFontSizeOverride("font_size", 11);
+		_memoryAutoCleanupToggle.AddThemeColorOverride("font_color", MemoryInkSoft);
+		_memoryAutoCleanupToggle.Toggled += enabled =>
+		{
+			if (_memoryApplyingCleanupSnapshot) return;
+			SendMemoryPanelRequest("set_auto_cleanup", new Dictionary<string, object> { ["enabled"] = enabled });
+		};
+		curatorRow.AddChild(_memoryAutoCleanupToggle);
+		_memoryCleanupNowButton = CreateMemoryButton("DeepSeek dọn ngay", StartMemoryCleanup, primary: true);
+		_memoryCleanupNowButton.CustomMinimumSize = new Vector2(144f, 34f);
+		curatorRow.AddChild(_memoryCleanupNowButton);
+		_memoryCleanupLabel = CreateUiLabel("Chưa chạy cleanup.", 10, MemoryInkSoft);
+		_memoryCleanupLabel.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		_memoryCleanupLabel.VerticalAlignment = VerticalAlignment.Center;
+		_memoryCleanupLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		curatorRow.AddChild(_memoryCleanupLabel);
+		_memoryFeedTraceLabel = CreateUiLabel("Memory feed: chưa có trace.", 10, new Color(0.45f, 0.30f, 0.52f));
+		_memoryFeedTraceLabel.CustomMinimumSize = new Vector2(240f, 34f);
+		_memoryFeedTraceLabel.VerticalAlignment = VerticalAlignment.Center;
+		_memoryFeedTraceLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		curatorRow.AddChild(_memoryFeedTraceLabel);
 
 		var filters = new HBoxContainer();
 		filters.AddThemeConstantOverride("separation", 10);
@@ -402,6 +450,7 @@ public partial class UdpListener : Node2D
 			return;
 		}
 		_memoryRequestPending = true;
+		_memoryPendingAction = action;
 		_memoryRequestSentAtMs = Time.GetTicksMsec();
 		SetMemoryStatus(action == "snapshot" ? "Đang đọc memory..." : "Đang áp dụng thay đổi...");
 	}
@@ -426,6 +475,7 @@ public partial class UdpListener : Node2D
 				return true;
 
 			_memoryRequestPending = false;
+			_memoryPendingAction = "";
 			string status = ReadJsonString(root, "status");
 			string message = ReadJsonString(root, "message");
 			if (root.TryGetProperty("memory_panel", out JsonElement panel) && panel.ValueKind == JsonValueKind.Object)
@@ -494,6 +544,31 @@ public partial class UdpListener : Node2D
 				+ $"{ReadJsonInt(counts, "goals")} mục tiêu  ·  "
 				+ $"{ReadJsonInt(counts, "workflows")} quy trình";
 		}
+
+		if (panel.TryGetProperty("cleanup", out JsonElement cleanup) && cleanup.ValueKind == JsonValueKind.Object)
+		{
+			bool available = ReadJsonBool(cleanup, "available");
+			bool autoCleanup = ReadJsonBool(cleanup, "auto_cleanup");
+			_memoryApplyingCleanupSnapshot = true;
+			if (_memoryAutoCleanupToggle != null)
+			{
+				_memoryAutoCleanupToggle.Disabled = !available;
+				_memoryAutoCleanupToggle.ButtonPressed = autoCleanup;
+			}
+			_memoryApplyingCleanupSnapshot = false;
+			bool running = ReadJsonBool(cleanup, "running");
+			_memoryCleanupPolling = running;
+			if (running) _memoryCleanupPollAtMs = Time.GetTicksMsec() + 2500UL;
+			if (_memoryCleanupNowButton != null) _memoryCleanupNowButton.Disabled = !available || running;
+			if (_memoryCleanupLabel != null) _memoryCleanupLabel.Text = FormatCleanupStatus(cleanup);
+		}
+		if (panel.TryGetProperty("memory_feed_trace", out JsonElement feed) && feed.ValueKind == JsonValueKind.Object
+			&& _memoryFeedTraceLabel != null)
+			_memoryFeedTraceLabel.Text = FormatMemoryFeedTrace(feed);
+
+		if (panel.TryGetProperty("cleanup_report", out JsonElement cleanupReport) && cleanupReport.ValueKind == JsonValueKind.Object
+			&& _memoryCleanupLabel != null)
+			_memoryCleanupLabel.Text = FormatCleanupReport(cleanupReport);
 
 		if (panel.TryGetProperty("explanation", out JsonElement explanation))
 			_memoryExplanationLabel.Text = FormatMemoryExplanation(explanation);
@@ -774,12 +849,59 @@ public partial class UdpListener : Node2D
 		});
 	}
 
+	private void StartMemoryCleanup()
+	{
+		_memoryCleanupPolling = true;
+		_memoryCleanupPollAtMs = Time.GetTicksMsec() + 2500UL;
+		if (_memoryCleanupNowButton != null) _memoryCleanupNowButton.Disabled = true;
+		if (_memoryCleanupLabel != null) _memoryCleanupLabel.Text = "DeepSeek đang rà memory...";
+		SendMemoryPanelRequest("cleanup_now");
+	}
+
+	private static string FormatCleanupStatus(JsonElement cleanup)
+	{
+		if (!ReadJsonBool(cleanup, "available")) return "Curator chưa sẵn sàng.";
+		if (ReadJsonBool(cleanup, "running")) return "DeepSeek đang rà; runtime sẽ validate trước khi ghi.";
+		string prefix = ReadJsonBool(cleanup, "auto_cleanup") ? "Auto cleanup đang bật" : "Auto cleanup đang tắt";
+		if (!cleanup.TryGetProperty("last_result", out JsonElement last) || last.ValueKind != JsonValueKind.Object)
+			return prefix + ".";
+		int dropped = ReadJsonInt(last, "ds_dropped") + ReadJsonInt(last, "living_applied")
+			+ ReadJsonInt(last, "behavior_removed") + ReadJsonInt(last, "thought_removed");
+		return dropped > 0 ? $"{prefix} · lần gần nhất áp dụng {dropped} thay đổi" : prefix + " · lần gần nhất không cần đổi";
+	}
+
+	private static string FormatCleanupReport(JsonElement report)
+	{
+		int reviewed = ReadJsonInt(report, "ds_reviewed") + ReadJsonInt(report, "living_reviewed");
+		int changed = ReadJsonInt(report, "ds_dropped") + ReadJsonInt(report, "living_applied")
+			+ ReadJsonInt(report, "behavior_removed") + ReadJsonInt(report, "thought_removed");
+		return $"DeepSeek rà {reviewed} · runtime áp dụng {changed} thay đổi an toàn";
+	}
+
+	private static string FormatMemoryFeedTrace(JsonElement feed)
+	{
+		if (!feed.TryGetProperty("latest", out JsonElement latest) || latest.ValueKind != JsonValueKind.Object)
+			return "Memory feed: chưa có trace.";
+		int retrieved = ReadJsonInt(latest, "retrieved");
+		int admitted = ReadJsonInt(latest, "admitted");
+		int rejected = ReadJsonInt(latest, "rejected");
+		int rendered = ReadJsonInt(latest, "rendered");
+		return $"Feed {retrieved} → nhận {admitted} / loại {rejected} → prompt {rendered}";
+	}
+
 	private void TickMemoryPanelStatus()
 	{
+		ulong now = Time.GetTicksMsec();
+		if (!_memoryRequestPending && _memoryCleanupPolling && now >= _memoryCleanupPollAtMs)
+		{
+			_memoryCleanupPollAtMs = now + 2500UL;
+			SendMemoryPanelRequest("snapshot");
+			return;
+		}
 		if (!_memoryRequestPending)
 			return;
-		ulong elapsed = Time.GetTicksMsec() - _memoryRequestSentAtMs;
-		if (elapsed > 6500)
+		ulong elapsed = now - _memoryRequestSentAtMs;
+		if (elapsed > 6500UL)
 		{
 			_memoryRequestPending = false;
 			SetMemoryStatus("Brain chưa trả lời; vẫn đang hiển thị cache gần nhất.", true);
@@ -979,6 +1101,14 @@ public partial class UdpListener : Node2D
 			JsonValueKind.Null => "",
 			_ => value.ToString(),
 		};
+	}
+
+	private static bool ReadJsonBool(JsonElement root, string name)
+	{
+		if (!root.TryGetProperty(name, out JsonElement value)) return false;
+		if (value.ValueKind == JsonValueKind.True) return true;
+		if (value.ValueKind == JsonValueKind.False) return false;
+		return bool.TryParse(value.ToString(), out bool parsed) && parsed;
 	}
 
 	private static int ReadJsonInt(JsonElement root, string name)

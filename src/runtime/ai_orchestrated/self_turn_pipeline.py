@@ -485,15 +485,9 @@ class SelfTurnPipeline:
 
         self._last_deliberation_at = now
         self.temporal_mind.mark_heavy_deliberation(now=now)
-        emit_runtime_status(
-            host,
-            activity="autonomous_deliberation",
-            phase="executive",
-            label="Đang nghĩ xem có nên nói…",
-            active=True,
-            tone="active",
-            priority=45,
-        )
+        # V42: cognition nền là private state, không phải public lifecycle.
+        # Không treo banner "đang nghĩ/chuẩn bị nói" trong lúc Neuro còn chưa
+        # hề commit speech; nếu không UI sẽ sáng gần như suốt phiên chạy.
 
         # Collect-before-claim: every source exposes a typed affordance, Gemma
         # chooses one exact ID, and only then may runtime reserve it.  No Python
@@ -640,13 +634,41 @@ class SelfTurnPipeline:
             unique_affordances.append(affordance)
         affordances = unique_affordances
 
-        # V40: seed/affordance có thể trở thành một concern nội tại trước khi Neuro
-        # quyết định có nói hay không. Việc "được nhớ" tuyệt đối không phải quyền
-        # phát biểu; nó chỉ cho proposal thấy continuity/mutation/habituation thật.
+        # V42: đưa reply-baton/busy/cooldown/repeat/budget thành feature TRƯỚC
+        # Neuro. InitiativeController từ đây không còn là ông bảo vệ đứng sau
+        # quyết định để đổi speak -> silence nữa.
+        initiative_policy = getattr(host, "ai_initiative_controller", None)
+        if initiative_policy is not None:
+            try:
+                policy_signals = initiative_policy.policy_signals(blackboard, affordances)
+                planner_snapshot["initiative_policy_signals"] = dict(policy_signals)
+                if policy_signals:
+                    initiative_runtime_context = dict(initiative_runtime_context)
+                    initiative_runtime_context["initiative_policy_max_cost"] = max(
+                        float(item.get("total_cost", 0.0) or 0.0)
+                        for item in policy_signals.values()
+                        if isinstance(item, dict)
+                    )
+                    planner_snapshot["initiative_runtime_context"] = dict(initiative_runtime_context)
+            except Exception as exc:
+                host.logger.debug("[initiative policy] projection failed: %s", exc)
+
+        # V43: current mood được quyền nghiêng attention/selection nhẹ trước
+        # Neuro, nhưng không được tự chọn action hay nới grounding. Đây chỉ là
+        # typed bias, cùng triết lý policy-cost của V42.
+        try:
+            from cortex.affective_dynamics import affective_selection_bias
+            planner_snapshot["affective_selection_bias"] = affective_selection_bias(host._get_internal_state())
+        except Exception as exc:
+            host.logger.debug("[affect-v43] selection bias degraded: %s", exc)
+
+        # V42: chỉ COGNITIVE EVENT MỚI được phép làm concern đổi state. Reservoir
+        # có thể đưa lại cùng seed qua nhiều tick, nhưng event ledger sẽ consume đúng
+        # một lần; các tick sau chỉ project/decay. Không còn "đọc lại = nghĩ lại".
         concern_runtime = getattr(host, "active_concern_runtime", None)
         if concern_runtime is not None:
             try:
-                concern_runtime.absorb_affordances(affordances, now=now)
+                concern_runtime.ingest_affordances(affordances, now=now)
                 active_concerns = concern_runtime.snapshot(now=now, limit=8)
                 planner_snapshot["active_concerns"] = [dict(item) for item in active_concerns]
                 self.trace_store.append(
@@ -811,7 +833,14 @@ class SelfTurnPipeline:
                 IntentionPlan.silence(channel="autonomous", reason="controller_unavailable"),
             )
         else:
-            decision = initiative.decide(blackboard, candidate)
+            decision = initiative.decide(
+                blackboard,
+                candidate,
+                committed_by_neuro=bool(
+                    executive_outcome is not None
+                    and str(getattr(executive_outcome, "action", "") or "").lower() == "speak"
+                ),
+            )
             if executive_outcome is not None and candidate is None and executive_outcome.action == "silence":
                 decision = replace(decision, reason=f"subject_materializer:{executive_outcome.reason}")
         host.logger.info(
@@ -946,16 +975,6 @@ class SelfTurnPipeline:
                 force_body_only=True, body_motion=decision.body_motion,
             )
         if host._process_pending_user_input():
-            emit_runtime_status(
-                host,
-                activity="autonomous_deliberation",
-                phase="preempted",
-                label="Đã nhường lượt",
-                active=False,
-                tone="muted",
-                priority=45,
-                notice_ms=0,
-            )
             self._release_seed_lease(candidate, reason="user_input_preempted")
             self.trace_store.append("outcome", {
                 "trace_id": str(plan.plan_id or ""),
@@ -986,16 +1005,9 @@ class SelfTurnPipeline:
                     body_motion=decision.body_motion,
                 )
 
-        emit_runtime_status(
-            host,
-            activity="autonomous_deliberation",
-            phase="handoff",
-            label="Đang chuẩn bị nói…",
-            active=False,
-            tone="success",
-            priority=45,
-            notice_ms=0,
-        )
+        # V42: không phát UI "đang chuẩn bị nói". Cognitive/Surface latency là
+        # background implementation detail; chỉ khi public lifecycle thật bắt đầu
+        # phát speech/audio thì UI mới có lý do báo hành vi ra ngoài.
         from runtime.public_lifecycle import lifecycle_for
         lifecycle_turn_id = str(plan.plan_id or f"autonomous:{context.turn_seq}")
         host._active_public_lifecycle_turn_id = lifecycle_turn_id
@@ -1057,7 +1069,8 @@ class SelfTurnPipeline:
                 "owner": "surface",
                 "generation_epoch": speech_intent.generation_epoch,
                 "surface_status": "realized",
-                "surface_added_claims": 0,
+                "surface_added_claims": int(getattr(surface_turn, "surface_added_claims", 0) or 0),
+                "claim_manifest": [dict(item) for item in tuple(getattr(surface_turn, "claim_manifest", ()) or ())[:8]],
                 "unsupported_current_world_claim": False,
             })
             plan = surface_turn.plan
@@ -1974,21 +1987,7 @@ class SelfTurnPipeline:
             int(body_only),
         )
         self.temporal_mind.mark_silence(now=context.perception.now)
-        emit_runtime_status(
-            self.host,
-            activity="autonomous_deliberation",
-            phase="body_only" if body_only else "deliberate_silence",
-            label=(
-                "Đã chọn không nói"
-                if body_only
-                else "Đã chọn im lặng"
-            ),
-            active=False,
-            tone="warning",
-            priority=45,
-            notice_ms=4600,
-            detail=gate_reason,
-        )
+        # Silence/body-only là outcome nội bộ; không bật public status.
         # Sau silence quay về cheap tick; cooldown của TemporalMind ngăn gọi
         # deliberator lại ngay, nên không cần đóng băng toàn loop 8–24 giây.
         self.host._sleep_interruptible(2.5)

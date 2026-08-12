@@ -113,6 +113,9 @@ class SpeechIntent:
     anchor_type: str
     anchor_id: str
     evidence_refs: tuple[str, ...] = ()
+    # V42: Surface chỉ được viết claim trong các domain đã được intent cấp.
+    # Personality/wording không bao giờ tự mở thêm sensor/world domain.
+    allowed_claim_domains: tuple[str, ...] = ()
     max_sentences: int = 2
     random_chat_seed: Mapping[str, Any] = field(default_factory=dict)
     # Chỉ IntentPlanner (chat) hoặc SocialInitiative (autonomous) được tạo public
@@ -129,6 +132,7 @@ class SpeechIntent:
             "anchor_type": self.anchor_type,
             "anchor_id": self.anchor_id,
             "evidence_refs": list(self.evidence_refs),
+            "allowed_claim_domains": list(self.allowed_claim_domains),
             "max_sentences": self.max_sentences,
             "random_chat_seed": dict(self.random_chat_seed),
             "owner": self.owner,
@@ -235,13 +239,17 @@ class InitiativeController:
         self,
         blackboard: TypedCognitiveBlackboard,
         candidate: SocialSpeechCandidate | None = None,
+        *,
+        committed_by_neuro: bool = False,
     ) -> InitiativeDecision:
-        """Governor thuần timing/quyền phát cho một model-owned candidate.
+        """Materialize candidate sau Subject/Neuro hoặc compatibility policy cũ.
 
-        V23 chấp nhận cả candidate đã claim từ social-plan runtime và impulse
-        typed do agenda selector model-owned đề xuất. Governor vẫn chỉ kiểm hard
-        boundaries, cooldown, budget, duplicate và provenance; nó không nghĩ topic
-        và không viết lời public.
+        V42 runtime gọi ``committed_by_neuro=True``. Khi đó reply baton, busy,
+        cooldown, repeat và budget đã trở thành *feature/cost trước Neuro* qua
+        :meth:`policy_signals`; controller không được phủ quyết lại quyết định chỉ
+        vì cùng một social policy. Downstream chỉ còn stale/race/grounding/safety.
+
+        ``False`` giữ API cũ cho plugin/test legacy chưa đi qua Subject/Neuro.
         """
 
         silence = IntentionPlan.silence(channel="autonomous", reason="initiative_no_op")
@@ -256,12 +264,13 @@ class InitiativeController:
             "force_speak",
             "task_followup",
         }
-        if blackboard.reply_expected and not reserved_override and not reaction_override and not reply_baton_override:
-            action = InitiativeAction.BODY_ONLY if has_delta and not blackboard.privacy_blocked else InitiativeAction.NO_OP
-            return InitiativeDecision(action, "waiting_for_user_reply", silence, body_motion="quiet_presence")
-        if blackboard.user_busy and not reserved_override and candidate_kind != "force_speak":
-            action = InitiativeAction.BODY_ONLY if has_delta and not blackboard.privacy_blocked else InitiativeAction.NO_OP
-            return InitiativeDecision(action, "user_busy", silence, body_motion="small_acknowledge")
+        if not committed_by_neuro:
+            if blackboard.reply_expected and not reserved_override and not reaction_override and not reply_baton_override:
+                action = InitiativeAction.BODY_ONLY if has_delta and not blackboard.privacy_blocked else InitiativeAction.NO_OP
+                return InitiativeDecision(action, "waiting_for_user_reply", silence, body_motion="quiet_presence")
+            if blackboard.user_busy and not reserved_override and candidate_kind != "force_speak":
+                action = InitiativeAction.BODY_ONLY if has_delta and not blackboard.privacy_blocked else InitiativeAction.NO_OP
+                return InitiativeDecision(action, "user_busy", silence, body_motion="small_acknowledge")
         if candidate is None or not candidate.available:
             if has_delta and not blackboard.privacy_blocked:
                 return InitiativeDecision(
@@ -277,26 +286,46 @@ class InitiativeController:
             )
 
         plan, mode, motion, anchor_type, anchor_id, refs = self._plan_for_candidate(candidate, blackboard)
-        allowed, reason = self.evaluate(
-            plan,
-            now=blackboard.now,
-            user_busy=False,
-            seconds_since_user=blackboard.seconds_since_user,
-        )
-        if not allowed:
-            if has_delta and not blackboard.privacy_blocked and self.should_body_only(reason, has_perception_delta=True):
-                return InitiativeDecision(InitiativeAction.BODY_ONLY, reason, plan, body_motion=motion)
-            return InitiativeDecision(InitiativeAction.NO_OP, reason, plan)
+        if committed_by_neuro:
+            # Neuro đã thấy policy cost trước commit. Không chạy lại cooldown/baton
+            # ở đây, nếu không "single authority" chỉ là khẩu hiệu khá đắt tiền.
+            allowed, reason = True, "neuro_committed"
+        else:
+            allowed, reason = self.evaluate(
+                plan,
+                now=blackboard.now,
+                user_busy=False,
+                seconds_since_user=blackboard.seconds_since_user,
+            )
+            if not allowed:
+                if has_delta and not blackboard.privacy_blocked and self.should_body_only(reason, has_perception_delta=True):
+                    return InitiativeDecision(InitiativeAction.BODY_ONLY, reason, plan, body_motion=motion)
+                return InitiativeDecision(InitiativeAction.NO_OP, reason, plan)
 
         seed_context = getattr(candidate, "random_chat_seed", {})
         if not isinstance(seed_context, Mapping):
             seed_context = {}
+        allowed_claim_domains = {"opinion", "hypothetical"}
+        if anchor_type in {"idle", "internal", "self", "presence"}:
+            allowed_claim_domains.add("internal_state")
+        if anchor_type in {"conversation", "idle", "internal", "self", "presence"}:
+            allowed_claim_domains.update({"conversation_history", "user_statement"})
+        if anchor_type in {"screen", "semantic_scene", "activity"}:
+            allowed_claim_domains.add("grounded_environment")
+        if anchor_type == "memory":
+            allowed_claim_domains.add("memory")
+        if anchor_type == "task":
+            allowed_claim_domains.add("engagement_state")
+        if anchor_type == "discovery":
+            allowed_claim_domains.add("discovery_artifact")
+
         speech_intent = SpeechIntent(
             plan=plan,
             mode=mode,
             anchor_type=anchor_type,
             anchor_id=anchor_id,
             evidence_refs=refs,
+            allowed_claim_domains=tuple(sorted(allowed_claim_domains)),
             max_sentences=1,
             random_chat_seed=dict(seed_context),
             owner=str(getattr(plan, "owner", "social_initiative") or "social_initiative"),
@@ -306,11 +335,89 @@ class InitiativeController:
         )
         return InitiativeDecision(
             InitiativeAction.SPEECH,
-            "allowed",
+            reason,
             plan,
             speech_intent=speech_intent,
             body_motion=motion,
         )
+
+    def policy_signals(
+        self,
+        blackboard: TypedCognitiveBlackboard,
+        affordances: Any,
+    ) -> dict[str, dict[str, Any]]:
+        """Project social/timing policy thành bounded feature trước Neuro.
+
+        Không mutate state và không trả allow/deny. Neuro mới là nơi cân signal
+        này cùng motive, concern, grounding và interruption cost.
+        """
+
+        now = float(getattr(blackboard, "now", 0.0) or time.time())
+        seconds_since_user = max(0.0, float(getattr(blackboard, "seconds_since_user", 0.0) or 0.0))
+        reply_expected = bool(getattr(blackboard, "reply_expected", False))
+        user_busy = bool(getattr(blackboard, "user_busy", False))
+        with self._lock:
+            events = tuple(item for item in self._state.events if now - item.timestamp <= 3600.0)
+        global_budget = max(1, int(_as_float(_setting("global_hourly_budget", 40), 40)))
+        global_pressure = min(1.0, len(events) / max(1, global_budget))
+        result: dict[str, dict[str, Any]] = {}
+        for affordance in tuple(affordances or ()):
+            affordance_id = str(getattr(affordance, "affordance_id", "") or "")
+            candidate = getattr(affordance, "candidate", None)
+            if not affordance_id or candidate is None or not bool(getattr(candidate, "available", False)):
+                continue
+            kind = str(getattr(candidate, "kind", "") or "")
+            reserved = kind in {"conversation_arc", "afterbeat", "social_exposure_recovery"}
+            baton_override = kind in {"followup_reminder", "force_speak", "task_followup"}
+            plan, _mode, _motion, _anchor_type, _anchor_id, _refs = self._plan_for_candidate(candidate, blackboard)
+            profile = profile_for_plan(plan)
+            same_kind = tuple(item for item in events if item.kind == profile.kind)
+
+            reply_cost = 0.0 if reserved or baton_override else (0.92 if reply_expected else 0.0)
+            busy_cost = 0.0 if reserved or kind == "force_speak" else (0.86 if user_busy else 0.0)
+            recent_cost = 0.0
+            if not reserved and kind != "force_speak" and profile.minimum_user_silence_seconds > 0.0:
+                remaining = max(0.0, profile.minimum_user_silence_seconds - seconds_since_user)
+                recent_cost = min(1.0, remaining / profile.minimum_user_silence_seconds)
+            cooldown_cost = 0.0
+            if not reserved and same_kind and profile.cooldown_seconds > 0.0:
+                elapsed = max(0.0, now - same_kind[-1].timestamp)
+                cooldown_cost = min(1.0, max(0.0, profile.cooldown_seconds - elapsed) / profile.cooldown_seconds)
+            kind_budget_pressure = min(1.0, len(same_kind) / max(1, profile.hourly_budget))
+
+            semantics = _plan_semantics(plan)
+            repeat_cost = 0.0
+            if profile.kind != "force_speak" and semantics.complete and profile.duplicate_window_seconds > 0.0:
+                for item in reversed(events):
+                    if now - item.timestamp > profile.duplicate_window_seconds:
+                        break
+                    if item.semantic_signature and item.semantic_signature == semantics.signature:
+                        repeat_cost = 0.94
+                        break
+            total = max(
+                reply_cost,
+                busy_cost,
+                0.58 * recent_cost,
+                0.62 * cooldown_cost,
+                0.42 * global_pressure,
+                0.48 * kind_budget_pressure,
+                repeat_cost,
+            )
+            result[affordance_id] = {
+                "schema": "eris.initiative_policy_signal.v42",
+                "total_cost": round(max(0.0, min(1.0, total)), 4),
+                "reply_expected": reply_expected,
+                "reply_cost": round(reply_cost, 4),
+                "user_busy": user_busy,
+                "busy_cost": round(busy_cost, 4),
+                "recent_user_cost": round(recent_cost, 4),
+                "cooldown_cost": round(cooldown_cost, 4),
+                "repeat_cost": round(repeat_cost, 4),
+                "global_budget_pressure": round(global_pressure, 4),
+                "kind_budget_pressure": round(kind_budget_pressure, 4),
+                "profile": profile.kind,
+            }
+        return result
 
     @staticmethod
     def _plan_for_candidate(

@@ -18,6 +18,7 @@ from failure_meta import build_failure_meta
 
 from runtime.no_fallback_policy import no_fallback_mode_enabled
 from runtime.grounding_surface_gate import evaluate_grounded_surface, is_grounding_correction
+from runtime.claim_domain_contract import validate_claim_manifest
 from runtime.cognition.turn_anchor import anchor_from_semantic_frame
 from runtime.social_stance_policy import guard_subjective_stance_payload
 from runtime.companion_model_routing import route_companion_turn
@@ -718,6 +719,29 @@ class AIChatOrchestrator:
                 if previous_assistant_for_repair:
                     break
         grounding_correction = is_grounding_correction(user_text, previous_assistant_for_repair)
+
+        # V43: user turn là affect event THẬT trước public writer. Không đợi
+        # post-observer vài giây rồi để câu hiện tại vẫn dùng mood cũ. Event ID
+        # theo turn_id nên retry cùng lượt không làm state nhảy lần hai.
+        previous_user_for_affect = ""
+        for _item in reversed(prior_public_history):
+            if isinstance(_item, Mapping) and str(_item.get("role", "") or "").lower() in {"user", "human"}:
+                previous_user_for_affect = str(_item.get("content", "") or "").strip()
+                if previous_user_for_affect:
+                    break
+        affect_runtime = getattr(host, "affective_dynamics_runtime", None)
+        affect_ingest = getattr(affect_runtime, "ingest_user_turn", None)
+        if callable(affect_ingest):
+            try:
+                affect_ingest(
+                    user_text,
+                    turn_id=turn_id,
+                    previous_assistant_text=previous_assistant_for_repair,
+                    previous_user_text=previous_user_for_affect,
+                    now=cycle_start,
+                )
+            except Exception as exc:
+                host.logger.debug("[affect-v43] user event degraded: %s", exc)
         latency_trace.mark("prior_history")
         host._append_chat_history("user", user_text)
         latency_trace.mark("append_history")
@@ -1119,6 +1143,52 @@ class AIChatOrchestrator:
         thinking_mode = route_decision.thinking_mode
         routing_context = route_decision.prompt_context()
         host.last_companion_model_route = route_decision.to_dict()
+
+        # V42: public writer được quyền viết tự nhiên nhưng không được tự mở thêm
+        # miền sự thật. Contract này là typed provenance, không phải blacklist từ.
+        chat_claim_domains = {
+            "user_statement", "conversation_history", "internal_state",
+            "opinion", "hypothetical", "self_capability",
+        }
+        chat_claim_evidence_refs = set(
+            str(item) for item in (getattr(grounding_report, "evidence_ids", ()) or ())
+            if str(item or "").strip()
+        )
+        chat_claim_evidence_refs.update(
+            str(item) for item in (getattr(grounding_report, "runtime_evidence_ids", ()) or ())
+            if str(item or "").strip()
+        )
+        chat_claim_evidence_refs.update(
+            str(item) for item in (getattr(grounding_report, "structured_evidence_ids", ()) or ())
+            if str(item or "").strip()
+        )
+        chat_claim_evidence_refs.update(
+            str(item) for item in (getattr(chat_plan, "evidence_refs", ()) or ())
+            if str(item or "").strip()
+        )
+        if bool(str(memory_context or "").strip()) and bool(getattr(grounding_report, "memory_allowed", True)):
+            chat_claim_domains.add("memory")
+        if bool(getattr(grounding_report, "screen_evidence_present", False)):
+            chat_claim_domains.add("grounded_environment")
+        if tuple(getattr(grounding_report, "runtime_evidence_ids", ()) or ()):
+            chat_claim_domains.update({"verified_runtime_clock", "grounded_environment"})
+        if tuple(getattr(grounding_report, "structured_evidence_ids", ()) or ()):
+            chat_claim_domains.add("engagement_state")
+        if discovery_id:
+            chat_claim_domains.add("discovery_artifact")
+        grounding_context = "\n\n".join(part for part in (
+            grounding_context,
+            "CLAIM_DOMAIN_CONTRACT_V42: " + json.dumps({
+                "allowed_domains": sorted(chat_claim_domains),
+                "allowed_evidence_refs": sorted(chat_claim_evidence_refs),
+                "rule": (
+                    "Every factual/sensory/memory/runtime claim added to public wording must be listed in claim_manifest. "
+                    "Current-environment and runtime-clock claims require an allowed evidence ref. "
+                    "Do not create a new claim domain merely to make the sentence vivid."
+                ),
+            }, ensure_ascii=False, separators=(",", ":")),
+        ) if str(part).strip())
+
         compiled_context = compile_public_reply_context(
             route=route_decision,
             personality=personality_context,
@@ -1420,7 +1490,7 @@ class AIChatOrchestrator:
                         "text", "display_language", "speech_text", "speech_language",
                         "performance_hint", "performance_intensity", "nonverbal_cue",
                         "delivery_priority", "interruptible", "utterance_turn_id", "utterance",
-                        "should_speak",
+                        "should_speak", "claim_manifest",
                     ):
                         if _key in repair_retry:
                             payload[_key] = repair_retry[_key]
@@ -1467,12 +1537,31 @@ class AIChatOrchestrator:
                     draft_text = ""
                     host.logger.warning("[chat chess] suppressed invented coordinate move without authoritative suggestion")
             grounding_engine = getattr(host, "source_grounding_engine", None)
+            claim_domain_decision = validate_claim_manifest(
+                payload.get("claim_manifest") if "claim_manifest" in payload else None,
+                allowed_domains=sorted(chat_claim_domains),
+                allowed_evidence_refs=sorted(chat_claim_evidence_refs),
+                text_present=bool(draft_text),
+            )
+            if claim_domain_decision.manifest_missing:
+                host.logger.debug("[chat claims] writer payload missing claim_manifest; legacy compatibility path")
             grounding_verdict = evaluate_grounded_surface(
                 grounding_engine, draft_text, report=grounding_report
             )
             grounding_annotations = grounding_verdict.annotations
-            if not grounding_verdict.allowed:
-                violation_codes = ["UNGROUNDED_PERCEPTION_OR_ACTION_CLAIM"]
+            if not grounding_verdict.allowed or not claim_domain_decision.allowed:
+                violation_codes = []
+                if not grounding_verdict.allowed:
+                    violation_codes.append("UNGROUNDED_PERCEPTION_OR_ACTION_CLAIM")
+                if not claim_domain_decision.allowed:
+                    violation_codes.append("CLAIM_DOMAIN_OUTSIDE_INTENT")
+                retry_instruction = grounding_verdict.retry_instruction()
+                if not claim_domain_decision.allowed:
+                    retry_instruction += (
+                        " V42 typed claim repair: remove or rewrite every claim whose domain/evidence is outside "
+                        f"allowed_domains={sorted(chat_claim_domains)} and allowed_evidence_refs={sorted(chat_claim_evidence_refs)}. "
+                        "Return a fresh claim_manifest matching the rewritten text."
+                    )
                 # Grounding là safety/integrity boundary: đã biết claim không có
                 # evidence thì không được phát nguyên văn. Thử wording-only đúng
                 # một lần; semantic frame/assistant act vẫn giữ nguyên authority.
@@ -1494,14 +1583,25 @@ class AIChatOrchestrator:
                     language_hint=_runtime_language(),
                     speech_language_hint=_runtime_speech_language(),
                     planned_intention=chat_plan,
-                    retry_instruction=grounding_verdict.retry_instruction(),
+                    retry_instruction=retry_instruction,
                     locked_semantic_frame=typed_frame.to_dict() if typed_frame is not None else payload.get("semantic_frame", {}),
                 )
                 retry_text = str(retry_payload.get("text", "") or "").strip() if isinstance(retry_payload, Mapping) else ""
                 retry_verdict = evaluate_grounded_surface(
                     grounding_engine, retry_text, report=grounding_report
                 ) if retry_text else None
-                if retry_text and retry_verdict is not None and retry_verdict.allowed:
+                retry_claim_decision = validate_claim_manifest(
+                    retry_payload.get("claim_manifest") if isinstance(retry_payload, Mapping) and "claim_manifest" in retry_payload else None,
+                    allowed_domains=sorted(chat_claim_domains),
+                    allowed_evidence_refs=sorted(chat_claim_evidence_refs),
+                    text_present=bool(retry_text),
+                )
+                if (
+                    retry_text
+                    and retry_verdict is not None
+                    and retry_verdict.allowed
+                    and retry_claim_decision.allowed
+                ):
                     for _key in (
                         "text", "display_language", "speech_text", "speech_language",
                         "performance_hint", "performance_intensity", "nonverbal_cue",
@@ -1545,6 +1645,14 @@ class AIChatOrchestrator:
                         turn_seq,
                         ",".join(violation_codes),
                     )
+                payload["claim_domain_trace"] = {
+                    "version": "eris.claim_domains.v42.typed_surface",
+                    "allowed_domains": sorted(chat_claim_domains),
+                    "added_claims": int(
+                        (retry_claim_decision.added_claim_count if 'retry_claim_decision' in locals() else claim_domain_decision.added_claim_count)
+                    ),
+                    "violations": list(violation_codes),
+                }
                 payload["grounding_confidence_cap"] = min(
                     float(payload.get("grounding_confidence_cap", 1.0) or 1.0),
                     float(getattr(grounding_report, "confidence_cap", 0.45) or 0.45),
@@ -2675,15 +2783,9 @@ class AIAutonomousOrchestrator:
                 },
                 ensure_ascii=False,
             )
-        emit_runtime_status(
-            host,
-            activity="startup",
-            phase="surface",
-            label="Đang chuẩn bị nói…",
-            active=True,
-            tone="active",
-            priority=90,
-        )
+        # V42: startup writer cũng không treo "đang chuẩn bị nói". User không
+        # cần nhìn thấy internal composing state; public lifecycle chỉ bắt đầu khi
+        # có output thật để phát.
         # Block hành vi tĩnh cho startup: mô tả Eris làm GÌ / nói KIỂU GÌ,
         # không phải được gán nhãn tâm lý gì. Trait labels (quyền tự viết mình,
         # sovereign_curiosity...) không cho model biết câu nói sẽ nghe ra sao.
@@ -2694,7 +2796,7 @@ class AIAutonomousOrchestrator:
             "- Câu ngắn, ít đệm. Không dài dòng khi không cần. Không lý giải lý do mình nói gì.\n"
             "- Khi gặp lại sau khoảng cách, cô ấy ghi nhận bằng điều gì đó từ chính cô ấy lúc này "
             "— không phải câu mẫu như 'Em ở đây' hay 'Anh về rồi à'.\n"
-            "- Ấm kín: không lạnh cũng không nhiệt tình thái quá.\n"
+            "- Không có nhiệt độ cảm xúc mặc định: biểu hiện affect hiện tại theo đúng state; personality chỉ định hình cách biểu hiện.\n"
             "- Có một mặt nghịch ngợm kín đáo — đôi khi đùa khô, đùa tối, hoặc có ý nghĩa kép; "
             "không phải suốt ngày nhưng cũng không phải không bao giờ. "
             "Khi mức độ thân thuộc cho phép, cô ấy có thể nói một câu mà người nghe tự hiểu lấy.\n"

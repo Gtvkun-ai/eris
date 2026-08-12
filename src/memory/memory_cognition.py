@@ -63,6 +63,7 @@ from .memory_record import compact_text, clamp01
 from .memory_cue import MemoryCue, MemoryCueBuilder
 from .memory_retrieval_engine import MemoryStores, MemoryRetrievalEngine
 from .memory_packet_builder import MemoryPacket, MemoryPacketBuilder
+from .memory_feed_trace import MemoryFeedTraceJournal
 from .memory_activation import MemoryActivation
 from .living_user import LivingUserMemoryService
 from cortex.agent_mind_persistence import PersistentAgentMindStore, agent_mind_path_for_memory_core
@@ -246,6 +247,9 @@ class MemoryCognitionCore:
 
         self.cue_builder = MemoryCueBuilder()
         self.packet_builder = MemoryPacketBuilder()
+        # V41: một trace chung cho candidate -> admission -> activation. Chỉ lưu ID/lý do,
+        # không nhân bản nguyên văn memory sang một file debug khác.
+        self.memory_feed_trace = MemoryFeedTraceJournal(os.path.join(base_dir, "memory_feed_trace.jsonl"))
         self.retrieval_engine = MemoryRetrievalEngine(
             MemoryStores(
                 semantic=self.semantic,
@@ -254,7 +258,8 @@ class MemoryCognitionCore:
                 procedural=self.procedural,
                 affective_residue=self.affective_residue,
                 repair=self.repair,
-            )
+            ),
+            feed_trace=self.memory_feed_trace,
         )
         # Living user memory dùng lại đúng các store canonical ở trên. Nó không
         # sao chép semantic/episodic truth, chỉ giữ profile projection và episode digest.
@@ -264,6 +269,7 @@ class MemoryCognitionCore:
             episodic_store=self.episodic,
             event_ledger=self.event_ledger,
             embedding_index=_embedding_index,
+            memory_feed_trace=self.memory_feed_trace,
         )
 
     # ------------------------------------------------------------------

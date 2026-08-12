@@ -147,7 +147,8 @@ def affect_state_event(
     allowed = (
         "valence", "arousal", "curiosity", "boredom", "social_energy",
         "attachment", "irritation", "protectiveness", "confidence",
-        "fatigue", "tenderness", "cognitive_tension",
+        "fatigue", "tenderness", "delight", "sadness", "anxiety",
+        "playfulness", "embarrassment", "cognitive_tension",
         "ontological_dread", "self_coherence", "vulnerability", "restraint",
         "withdrawal", "conflict_tension", "shadow_intensity",
     )

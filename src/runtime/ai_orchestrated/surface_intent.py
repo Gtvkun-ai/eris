@@ -27,6 +27,7 @@ from .semantic_contracts import compact, semantic_key
 from runtime.utterance_spec import UtteranceSpec
 from runtime.grounding_surface_gate import current_world_claim_without_evidence
 from runtime.eris_voice_contract import VOICE_CONTRACT_VERSION, surface_voice_rules
+from runtime.claim_domain_contract import normalize_claim_manifest, validate_claim_manifest
 
 
 SURFACE_MODES: tuple[str, ...] = (
@@ -164,6 +165,8 @@ class SurfaceTurn:
     mode: str
     reason: str = ""
     source: str = "surface_worker"
+    claim_manifest: tuple[Mapping[str, Any], ...] = ()
+    surface_added_claims: int = 0
 
 
 class SurfaceIntentEngine:
@@ -243,6 +246,11 @@ class SurfaceIntentEngine:
                 "fixed_anchor_type": intent.anchor_type,
                 "fixed_anchor_id": intent.anchor_id,
                 "allowed_evidence_refs": list(intent.evidence_refs),
+                "allowed_claim_domains": list(intent.allowed_claim_domains),
+                "claim_domain_rule": (
+                    "Every claim added by Surface must be declared in claim_manifest. "
+                    "Never use a domain outside allowed_claim_domains and never invent an evidence ref."
+                ),
                 "max_sentences": intent.max_sentences,
                 "display_language": display_language,
                 "speech_language": speech_language,
@@ -347,6 +355,30 @@ class SurfaceIntentEngine:
         confidence = _clamp01(raw.get("confidence", 0.0))
         if not text:
             return self._unavailable(intent, "surface_missing_display_text")
+        raw_manifest = raw.get("claim_manifest") if "claim_manifest" in raw else None
+        claim_manifest = normalize_claim_manifest(raw_manifest)
+        claim_decision = validate_claim_manifest(
+            raw_manifest,
+            allowed_domains=intent.allowed_claim_domains,
+            allowed_evidence_refs=intent.evidence_refs,
+            text_present=bool(text),
+        )
+        if not claim_decision.allowed:
+            self._log(
+                "warning",
+                "[surface claims] blocked mode=%s reason=%s domains=%s refs=%s",
+                intent.mode,
+                claim_decision.reason,
+                list(claim_decision.violating_domains),
+                list(claim_decision.unknown_evidence_refs),
+            )
+            return self._unavailable(intent, f"surface_{claim_decision.reason}")
+        if claim_decision.manifest_missing:
+            self._log(
+                "debug",
+                "[surface claims] legacy payload missing claim_manifest mode=%s",
+                intent.mode,
+            )
         if avoid_text and _surface_text_is_duplicate(text, avoid_text):
             self._log(
                 "warning",
@@ -422,6 +454,8 @@ class SurfaceIntentEngine:
             mode=intent.mode,
             reason=reason,
             source="surface_worker",
+            claim_manifest=tuple(claim_manifest),
+            surface_added_claims=len(claim_manifest),
         )
 
     def _unavailable(self, intent: SpeechIntent | None, reason: str) -> None:

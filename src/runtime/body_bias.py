@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Callable
 
 from cortex.internal_state import PersistentInternalState
+from cortex.affective_dynamics import effective_affect_values
 
 
 class BodyBiasProjector:
@@ -23,6 +24,7 @@ class BodyBiasProjector:
         """
         impulse_hint = dict(impulse_hint or {})
         state = self._state_provider()
+        affect = effective_affect_values(state)
         focus_kind = self.normalize_focus_kind(str(getattr(state, "last_focus_kind", "") or "unknown"))
         observer_salience = self.clamp(getattr(observer_frame, "salience", 0.0) if observer_frame is not None else 0.0)
         observer_error = self.clamp(getattr(observer_frame, "possible_error", 0.0) if observer_frame is not None else 0.0)
@@ -37,7 +39,7 @@ class BodyBiasProjector:
         )
         curiosity = self.clamp(
             max(
-                float(getattr(state, "curiosity", 0.0) or 0.0),
+                float(affect.get("curiosity", getattr(state, "curiosity", 0.0)) or 0.0),
                 float(getattr(state, "curiosity_pressure", 0.0) or 0.0),
                 float(getattr(state, "association_pressure", 0.0) or 0.0) * 0.86,
                 observer_salience * (0.74 if focus_kind == "code" else 0.52),
@@ -86,6 +88,14 @@ class BodyBiasProjector:
             "solitude": round(solitude, 3),
             "focus_kind": focus_kind,
             "preferred_anchor": preferred_anchor,
+            # V43: body nhận cùng affect hiệu dụng với writer/TTS. Godot cũ có
+            # thể bỏ qua field mới; stage mới có dữ liệu mà không cần suy lại.
+            "valence": round(float(affect.get("valence", 0.0)), 3),
+            "arousal": round(float(affect.get("arousal", 0.0)), 3),
+            "playfulness": round(float(affect.get("playfulness", 0.0)), 3),
+            "delight": round(float(affect.get("delight", 0.0)), 3),
+            "irritation": round(float(affect.get("irritation", 0.0)), 3),
+            "tenderness": round(float(affect.get("tenderness", 0.0)), 3),
         }
         if body_action_bias:
             payload["body_action_bias"] = body_action_bias

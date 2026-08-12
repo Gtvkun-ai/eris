@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from runtime.stage_protocol_adapter import affect_state_event
+from cortex.affective_dynamics import effective_affect_values
 
 
 _AFFECT_KEYS = (
@@ -23,6 +24,11 @@ _AFFECT_KEYS = (
     "confidence",
     "fatigue",
     "tenderness",
+    "delight",
+    "sadness",
+    "anxiety",
+    "playfulness",
+    "embarrassment",
     "cognitive_tension",
     "ontological_dread",
     "self_coherence",
@@ -59,6 +65,12 @@ def _extract_affect(runtime_owner: Any) -> dict[str, float]:
             for key in _AFFECT_KEYS
             if hasattr(state, key)
         }
+    raw = dict(raw)
+    # V43: chỉ overlay projection mới khi đây thật sự là PersistentInternalState
+    # có affective_state. Harness/plugin legacy có to_dict riêng phải giữ nguyên
+    # số của nó, không được bị default V43 vô tình đè thành 0.38/0.16.
+    if hasattr(state, "affective_state"):
+        raw.update(effective_affect_values(state))
     return _clean_affect(raw)
 
 

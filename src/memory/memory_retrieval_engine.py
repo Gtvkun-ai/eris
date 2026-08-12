@@ -22,6 +22,9 @@ Cuối cùng cũng thôi đo resonance bằng token overlap như Ctrl+F có ego.
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
+from .memory_admission import MemoryAdmissionPolicy
+from .memory_feed_trace import MemoryFeedTraceJournal
+
 try:
     from .memory_cue import MemoryCue
     from .memory_candidate import MemoryLayerAdapter, MemoryCandidate
@@ -55,11 +58,22 @@ class MemoryStores:
 
 
 class MemoryRetrievalEngine:
-    def __init__(self, stores: MemoryStores, *, scorer: MemoryScorer | None = None, activation_builder: MemoryActivationBuilder | None = None, working_memory_gate: WorkingMemoryGate | None = None):
+    def __init__(
+        self,
+        stores: MemoryStores,
+        *,
+        scorer: MemoryScorer | None = None,
+        activation_builder: MemoryActivationBuilder | None = None,
+        working_memory_gate: WorkingMemoryGate | None = None,
+        admission_policy: MemoryAdmissionPolicy | None = None,
+        feed_trace: MemoryFeedTraceJournal | None = None,
+    ):
         self.stores = stores
         self.scorer = resolve_dependency(scorer, lambda: MemoryScorer())
         self.activation_builder = resolve_dependency(activation_builder, lambda: MemoryActivationBuilder())
         self.working_memory_gate = resolve_dependency(working_memory_gate, lambda: WorkingMemoryGate())
+        self.admission_policy = resolve_dependency(admission_policy, lambda: MemoryAdmissionPolicy())
+        self.feed_trace = feed_trace
         self.adapters = {
             layer: MemoryLayerAdapter(layer=layer, store=store)
             for layer, store in stores.as_layer_map().items()
@@ -70,6 +84,9 @@ class MemoryRetrievalEngine:
         quotas = dict(quotas or {})
         scored: list[ScoredMemoryCandidate] = []
         debug_notes: list[str] = []
+        retrieved_count = 0
+        admitted_trace: list[dict[str, Any]] = []
+        rejected_trace: list[dict[str, Any]] = []
 
         for layer, adapter in self.adapters.items():
             if not cue.layer_allowed(layer):
@@ -84,7 +101,21 @@ class MemoryRetrievalEngine:
                 continue
 
             for candidate in candidates:
+                retrieved_count += 1
+                admission = self.admission_policy.decide(candidate.record, cue=cue)
+                trace_row = {
+                    "record_id": candidate.record.id,
+                    "layer": candidate.record.layer,
+                    "source_class": admission.source_class,
+                    "reason": admission.reason,
+                    "contamination_risk": round(float(admission.contamination_risk), 3),
+                }
+                if not admission.admitted:
+                    rejected_trace.append(trace_row)
+                    continue
                 score = self.scorer.score(cue, candidate)
+                trace_row["score"] = round(float(score.total), 3)
+                admitted_trace.append(trace_row)
                 if score.total > 0.0:
                     scored.append(ScoredMemoryCandidate(candidate=candidate, score=score))
 
@@ -93,6 +124,24 @@ class MemoryRetrievalEngine:
         # untouched, and exact recall gets a deliberately larger episodic budget.
         result = self.activation_builder.build(scored, max_activations=max_activations)
         result = self.working_memory_gate.apply(result, cue=cue, requested=max_activations)
+        rendered_ids = tuple(item.record_id for item in result.activations)
+        debug_notes.extend((
+            f"admission_retrieved={retrieved_count}",
+            f"admission_allowed={len(admitted_trace)}",
+            f"admission_rejected={len(rejected_trace)}",
+        ))
         if debug_notes:
             result.debug_notes = tuple((*result.debug_notes, *debug_notes))
+        if self.feed_trace is not None:
+            try:
+                self.feed_trace.record_retrieval(
+                    query=cue.all_text(),
+                    retrieved=retrieved_count,
+                    admitted=admitted_trace,
+                    rejected=rejected_trace,
+                    rendered_ids=rendered_ids,
+                    channel="canonical",
+                )
+            except Exception:
+                pass
         return result

@@ -716,6 +716,81 @@ class ExecutiveCortex:
             or source in {"random_chat_seed", "subject_initiative", "relational"}
         )
 
+    def _local_autonomous_semantic_appraisal(
+        self,
+        frame: SubjectDeliberationFrame,
+        selection: SelectionResult,
+    ) -> NeuroSemanticAppraisal:
+        """Fallback typed khi semantic reviewer từ xa không sẵn sàng.
+
+        V42 không cho timeout biến thành "fast speak cứ thế đi". Local fallback
+        không giả vờ hiểu ngôn ngữ như DeepSeek; nó chỉ đọc những signal mà runtime
+        *thật sự biết*: policy cost, reply baton, interruption, concern novelty,
+        uncertainty và grounding requirement. Sau đó chính Neuro merge lại một lần.
+        """
+
+        observation_context = dict(getattr(getattr(frame, "observation", None), "context", {}) or {})
+        runtime_context = observation_context.get("runtime_context")
+        runtime_context = dict(runtime_context) if isinstance(runtime_context, Mapping) else {}
+        reply_expected = bool(runtime_context.get("reply_expected", False))
+        user_busy = bool(runtime_context.get("user_busy", False))
+        boundary = 0.72 if reply_expected else 0.0
+        interruption = max(
+            _clamp01(runtime_context.get("interruption_cost", 0.0)),
+            _clamp01(runtime_context.get("social_refractory_cost", 0.0)),
+            _clamp01(runtime_context.get("initiative_policy_max_cost", 0.0)),
+            0.82 if user_busy else 0.0,
+            0.70 if reply_expected else 0.0,
+        )
+        choices: list[ChoiceSemanticAppraisal] = []
+        for index, candidate in enumerate(frame.coalitions):
+            action = str(getattr(candidate, "action_kind", "") or "").strip().lower()
+            arguments = dict(getattr(candidate, "arguments", {}) or {})
+            pragmatic = _clamp01(getattr(candidate, "expected_pragmatic_value", 0.5), 0.5)
+            uncertainty = _clamp01(getattr(candidate, "uncertainty", 0.5), 0.5)
+            policy = _clamp01(arguments.get("initiative_policy_cost", 0.0))
+            concern_novelty = _clamp01(arguments.get("concern_novelty", 0.45), 0.45)
+            seed_quality = _clamp01(arguments.get("seed_quality", concern_novelty), concern_novelty)
+            novelty = max(0.08, min(0.92, 0.58 * concern_novelty + 0.42 * seed_quality))
+            motive = max(0.08, min(0.92, 0.22 + 0.68 * pragmatic - 0.18 * policy))
+            continuity = max(0.05, min(0.95, 0.78 - 0.56 * policy - 0.22 * interruption))
+            if action in {"silence", "body_only"}:
+                continuity = max(continuity, 0.72 if (reply_expected or user_busy) else 0.58)
+                novelty = 0.50
+
+            # Local lane chỉ hạ epistemic support khi runtime biết candidate đòi
+            # grounding nhưng không có direct evidence. Nó không phân tích từ ngữ
+            # và không đoán claim từ topic.
+            requires_grounding = bool(arguments.get("requires_grounding", False))
+            evidence_refs = tuple(getattr(candidate, "evidence_refs", ()) or ())
+            direct_refs = tuple(
+                ref for ref in evidence_refs
+                if str(ref).startswith(("vision:", "screen:", "grounded:", "evidence:"))
+            )
+            if requires_grounding:
+                epistemic = 0.72 if direct_refs else 0.16
+            else:
+                epistemic = max(0.28, min(0.78, 0.66 - 0.34 * uncertainty))
+            reversible = 0.96 if action == "silence" else (0.90 if action == "body_only" else max(0.40, 0.78 - 0.28 * policy))
+            choices.append(ChoiceSemanticAppraisal(
+                index=index,
+                motive_validity=motive,
+                novelty=novelty,
+                continuity_fit=continuity,
+                epistemic_support=epistemic,
+                reversibility=reversible,
+            ))
+        return NeuroSemanticAppraisal(
+            choices=tuple(choices),
+            boundary_pressure=boundary,
+            interruption_cost=interruption,
+            confidence=0.58,
+            reason="local_typed_semantic_fallback",
+            semantic_commitments=("preserve_typed_evidence_scope",),
+            cognitive_requests=("reduce_intrusion",) if interruption >= 0.55 else (),
+            review_conditions=("remote_semantic_appraisal_unavailable",),
+        )
+
     def _appraise_autonomous_frame(
         self,
         frame: SubjectDeliberationFrame,
@@ -1167,13 +1242,26 @@ class ExecutiveCortex:
                 )
                 self._log_neuro_commit(frame, commit, mode=mode)
                 return commit
-            # Never spend a second remote round merely because the appraisal lane
-            # failed. The deterministic fast Neuro remains the sole degraded path.
+            # V42: remote semantic lane hỏng không được biến thành fail-open speak.
+            # Local typed appraisal không giả ngôn ngữ; nó merge policy/evidence/
+            # interruption hiện có rồi Neuro tự commit lại đúng một lần.
+            local_appraisal = self._local_autonomous_semantic_appraisal(frame, selection)
+            merged = self._neuro_selector.merge_semantic_appraisal(frame, selection, local_appraisal)
+            self._log(
+                "info",
+                "[neuro-control] autonomous local semantic fallback fast=%s final=%s action=%s boundary=%.2f interrupt=%.2f",
+                selection.winner_index, merged.winner_index, merged.winner(frame).action_kind,
+                local_appraisal.boundary_pressure, local_appraisal.interruption_cost,
+            )
             commit = self._commit_from_selection(
-                frame, selection,
-                reason=f"semantic_appraisal_unavailable_use_fast_gate:{selection.reason}",
-                source="neuro_fast_gate_degraded",
-                review_conditions=("semantic_appraisal_available",),
+                frame,
+                merged,
+                reason=f"local_semantic_fallback:{merged.reason}",
+                source="neuro_local_semantic_merge",
+                semantic_commitments=local_appraisal.semantic_commitments,
+                cognitive_requests=local_appraisal.cognitive_requests,
+                confidence=local_appraisal.confidence,
+                review_conditions=local_appraisal.review_conditions,
             )
             self._log_neuro_commit(frame, commit, mode=mode)
             return commit

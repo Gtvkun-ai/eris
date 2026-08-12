@@ -72,6 +72,16 @@ class MentalProcessRuntimeMixin:
             mood_score = self.mood_score
             inferred_pos_x = self.inferred_pos_x
             current = self._get_internal_state()
+        # V43: background tick chỉ cho mood/impulse PHẢI DẦN. Nó không tự tạo
+        # affect event. Sau đó mental-process axes mới nudge curiosity/energy như
+        # trước, nhờ vậy idle scheduler không thể giả vờ "có chuyện vừa xảy ra".
+        affect_runtime = getattr(self, "affective_dynamics_runtime", None)
+        affect_decay = getattr(affect_runtime, "decay_state", None)
+        if callable(affect_decay):
+            try:
+                current = affect_decay(current, now=time.time())
+            except Exception as exc:
+                self.logger.debug("[affect-v43] background decay degraded: %s", exc)
         snapshot = self.telemetry_service.capture_snapshot(
             mood_score=mood_score,
             inferred_pos_x=inferred_pos_x,

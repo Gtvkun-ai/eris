@@ -394,6 +394,14 @@ class CoordinatorBootstrapMixin:
 
     def _bootstrap_hardening_and_state(self, *, memory_core) -> None:
         self.internal_state_engine = InternalStateEngine()
+        # V43: một owner duy nhất cho event -> affect state. Service này chỉ
+        # mutate PersistentInternalState; writer/TTS/body chỉ đọc projection.
+        try:
+            from runtime.affective_dynamics_runtime import AffectiveDynamicsRuntime
+            self.affective_dynamics_runtime = AffectiveDynamicsRuntime(self, logger=self.logger)
+        except Exception as exc:
+            self.affective_dynamics_runtime = None
+            self.logger.warning("[affect-v43] runtime init failed: %s", exc)
         self.outcome_observer = OutcomeObserver()
         try:
             from runtime.observability import ErisObservability

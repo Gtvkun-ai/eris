@@ -177,6 +177,7 @@ class SubjectIngress:
             planning_context=context,
         )
         reply_expected = bool(proposal_context["reply_expected"])
+        user_busy = bool(proposal_context.get("user_busy", False))
         engagement_active = bool(proposal_context["engagement_active"])
         relational = context.get("relational_state") if isinstance(context.get("relational_state"), Mapping) else {}
         initiative_runtime = (
@@ -211,6 +212,7 @@ class SubjectIngress:
                 "action_proposals": tuple(proposals),
                 "runtime_context": {
                     "reply_expected": reply_expected,
+                    "user_busy": user_busy,
                     "engagement_active": engagement_active,
                     "affordance_count": len(affordances),
                     "snapshot_revision": context.get("state_revision", 0),

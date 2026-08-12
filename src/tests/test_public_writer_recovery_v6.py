@@ -15,7 +15,9 @@ from runtime.ai_orchestrated.model_router import (
 def test_direct_public_contract_chi_block_public_text() -> None:
     """Soft metadata không còn là điều kiện để một direct reply tồn tại."""
 
-    assert PUBLIC_REPLY_CORE_SCHEMA["required"] == ["should_speak", "text", "speech_text"]
+    # V42: claim_manifest là phần bắt buộc của public boundary để Surface/chat
+    # không thể thêm factual domain ngoài authority chỉ bằng prose.
+    assert PUBLIC_REPLY_CORE_SCHEMA["required"] == ["should_speak", "text", "speech_text", "claim_manifest"]
     for key in ("semantic_frame", "assistant_act", "social_plan", "self_capability_claims"):
         assert key not in PUBLIC_REPLY_CORE_SCHEMA["required"]
         assert key in PUBLIC_REPLY_CORE_SCHEMA["properties"]
@@ -111,6 +113,7 @@ def test_direct_writer_uses_core_schema_not_full_semantic_tree(monkeypatch) -> N
                                 "should_speak": True,
                                 "text": "Tôi trả lời được rồi.",
                                 "speech_text": "ちゃんと返せるようになった。",
+                                "claim_manifest": [],
                                 # Cố tình metadata sai kiểu: public text vẫn phải sống.
                                 "semantic_frame": True,
                             },
@@ -126,7 +129,7 @@ def test_direct_writer_uses_core_schema_not_full_semantic_tree(monkeypatch) -> N
     payload = router.generate_public_reply(chat_history=[], user_text="đừng nói như máy nữa")
 
     schema = captured["response_format"]["json_schema"]["schema"]
-    assert schema["required"] == ["should_speak", "text", "speech_text"]
+    assert schema["required"] == ["should_speak", "text", "speech_text", "claim_manifest"]
     assert "social_plan" not in schema["required"]
     assert captured["timeout"] == 11.0
     assert captured["max_tokens"] == 560
@@ -143,6 +146,7 @@ def test_direct_writer_jsonl_wrapper_does_not_repair_soft_metadata_bool() -> Non
                 "should_speak": True,
                 "text": "Không, lần này tôi nói thẳng hơn.",
                 "speech_text": "今回はもっと直接言う。",
+                "claim_manifest": [],
                 "semantic_frame": True,
                 "assistant_act": False,
             },

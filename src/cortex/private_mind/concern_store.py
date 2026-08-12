@@ -63,6 +63,14 @@ _CONCERN_STOPWORDS = frozenset({
 # nhưng vẫn cần ≥2 khái niệm chung nên không gộp bừa hai lo lắng chỉ chạm 1 từ.
 _CONCEPT_MATCH_MIN = 0.34
 
+# V42: event-driven ingress dùng ngưỡng riêng, chặt hơn rất nhiều. Semantic gần
+# nhau chỉ đủ để tạo LINK, không đủ để hai câu hỏi khác nhau biến thành cùng một
+# mega-concern. Merge event chỉ xảy ra khi hai theme thực sự gần đồng nhất hoặc
+# có provenance/evidence chung độc lập.
+_STRICT_EVENT_CONCEPT_MIN = 0.78
+_STRICT_EVENT_JACCARD_MIN = 0.46
+_RELATED_CONCEPT_MIN = 0.34
+
 
 def _ascii_fold(text: str) -> str:
     """Bỏ dấu tiếng Việt + 'đ'→'d' để token hoá ổn định, không lệ thuộc dấu."""
@@ -104,6 +112,20 @@ class ConcernStoreConfig:
     # với "đã nguôi êm". Đây là lối thoát cho rumination, không để nó nằm open lê thê.
     rumination_burnout_echoes: int = 6
     rumination_burnout_pressure: float = 0.34
+
+
+@dataclass(frozen=True, slots=True)
+class ConcernEventReceipt:
+    """Kết quả ingest một CognitiveEvent vào concern state.
+
+    ``duplicate`` nghĩa là event này đã được tiêu thụ trước đó và KHÔNG làm
+    state thay đổi lần nữa. ``related`` chỉ nối graph, không merge identity.
+    """
+
+    concern: PrivateConcern | None
+    outcome: str
+    mutation: bool = False
+    related_ids: tuple[str, ...] = ()
 
 
 class ConcernStore:
@@ -237,49 +259,323 @@ class ConcernStore:
         self.save()
         return existing
 
+    def _event_ids(self, concern: PrivateConcern) -> tuple[str, ...]:
+        raw = concern.metadata.get("cognitive_event_ids", ())
+        if not isinstance(raw, (list, tuple, set)):
+            return ()
+        return tuple(str(item) for item in raw if str(item or "").strip())
+
+    def _match_event_theme(
+        self,
+        theme: str,
+        evidence_ids: tuple[str, ...],
+        *,
+        event_kind: str,
+        source_ref: str,
+    ) -> PrivateConcern | None:
+        """Merge CHẶT cho cognitive event.
+
+        V40 từng dùng semantic similarity như giấy đăng ký kết hôn: hai ý cùng
+        nhắc "im lặng / khoảng trống" là bị nhập hộ khẩu chung. V42 chỉ merge khi
+        gần như cùng một chuyện hoặc có provenance độc lập thật sự trùng. Những
+        ý chỉ có liên quan sẽ được link ở ``_link_related_concerns``.
+        """
+
+        f_clean = _strip_noise_prefix(str(theme or "").lower())
+        f_sig = _concept_signature(f_clean)
+        f_tokens = {t for t in f_clean.replace("_", " ").split() if len(t) >= 4}
+        # seed ID/event ID chỉ là provenance của event, không phải bằng chứng độc lập
+        # rằng hai concern là cùng một chuyện.
+        independent = {
+            str(item) for item in evidence_ids
+            if str(item).strip()
+            and str(item) != str(source_ref or "")
+            and not str(item).startswith(("seed.", "mental.seed.", "cogevt:"))
+        }
+        best: tuple[float, PrivateConcern] | None = None
+        for concern in self._concerns.values():
+            if concern.status in {"resolved", "rejected"}:
+                continue
+            c_clean = _strip_noise_prefix(concern.theme.lower())
+            if c_clean == f_clean:
+                return concern
+            c_sig = _concept_signature(c_clean)
+            shared = len(f_sig & c_sig) if f_sig and c_sig else 0
+            coeff = shared / max(1, min(len(f_sig), len(c_sig))) if shared else 0.0
+            c_tokens = {t for t in c_clean.replace("_", " ").split() if len(t) >= 4}
+            jaccard = len(f_tokens & c_tokens) / max(1, len(f_tokens | c_tokens))
+            existing_independent = {
+                str(item) for item in concern.evidence_ids
+                if str(item).strip()
+                and not str(item).startswith(("seed.", "mental.seed.", "cogevt:"))
+            }
+            evidence_overlap = (
+                len(independent & existing_independent) / max(1, len(independent))
+                if independent else 0.0
+            )
+            last_kind = str(concern.metadata.get("last_event_kind", "") or "")
+            same_kind = not last_kind or last_kind == str(event_kind or "")
+
+            # Hai đường merge hợp lệ:
+            # 1) semantic gần đồng nhất + cùng event kind;
+            # 2) có provenance độc lập chung + semantic vẫn đủ gần.
+            semantic_same = (
+                same_kind
+                and shared >= 3
+                and coeff >= _STRICT_EVENT_CONCEPT_MIN
+                and jaccard >= _STRICT_EVENT_JACCARD_MIN
+            )
+            evidence_same = evidence_overlap >= 0.50 and shared >= 2 and coeff >= 0.52
+            if not (semantic_same or evidence_same):
+                continue
+            score = max(coeff * 0.72 + jaccard * 0.28, 0.72 * evidence_overlap + 0.28 * coeff)
+            if best is None or score > best[0]:
+                best = (score, concern)
+        return best[1] if best else None
+
+    def _link_related_concerns(self, concern: PrivateConcern) -> tuple[str, ...]:
+        """Nối graph cho ý liên quan nhưng không nhập identity."""
+
+        base = _concept_signature(_strip_noise_prefix(concern.theme.lower()))
+        if not base:
+            return ()
+        related: list[tuple[float, PrivateConcern]] = []
+        for other in self._concerns.values():
+            if other.id == concern.id or other.status in {"resolved", "rejected"}:
+                continue
+            sig = _concept_signature(_strip_noise_prefix(other.theme.lower()))
+            if not sig:
+                continue
+            shared = len(base & sig)
+            if shared < 2:
+                continue
+            coeff = shared / max(1, min(len(base), len(sig)))
+            if coeff >= _RELATED_CONCEPT_MIN:
+                related.append((coeff, other))
+        related.sort(key=lambda pair: pair[0], reverse=True)
+        ids = tuple(item.id for _score, item in related[:6])
+        concern.metadata["related_concern_ids"] = list(ids)
+        for _score, other in related[:6]:
+            backlinks = list(other.metadata.get("related_concern_ids") or ())
+            if concern.id not in backlinks:
+                backlinks.append(concern.id)
+                other.metadata["related_concern_ids"] = backlinks[-6:]
+        return ids
+
+    @_locked
+    def ingest_cognitive_event(self, data: Mapping[str, Any] | None) -> ConcernEventReceipt:
+        """Áp đúng MỘT cognitive event vào concern state.
+
+        Đây là ingress event-driven của V42. Gọi lại cùng ``event_id`` là no-op
+        tuyệt đối: không recurrence, không activation, không updated_at, không gì
+        cả. Tick scheduler vì thế không còn quyền "nghĩ lại" hộ Eris.
+        """
+
+        if not data:
+            return ConcernEventReceipt(None, "invalid")
+        event_id = compact_text(data.get("event_id") or "", 220)
+        theme = compact_text(data.get("subject") or data.get("theme") or "", 360)
+        if not event_id or not theme or self._is_degenerate_theme(theme):
+            return ConcernEventReceipt(None, "invalid")
+        current = float(data.get("occurred_at") or time.time())
+        event_kind = compact_text(data.get("kind") or "thought", 64)
+        source_ref = compact_text(data.get("source_ref") or "", 220)
+        incoming_meta = dict(data.get("metadata") or {}) if isinstance(data.get("metadata"), Mapping) else {}
+        evidence = tuple(dict.fromkeys(
+            str(item).strip() for item in (data.get("evidence_refs") or ()) if str(item).strip()
+        ))[:32]
+
+        # Persisted idempotency: runtime object có restart thì cùng event vẫn không
+        # được bơm lại state nếu store còn giữ receipt.
+        for existing in self._concerns.values():
+            if event_id in self._event_ids(existing):
+                return ConcernEventReceipt(existing, "duplicate")
+
+        concern = self._match_event_theme(
+            theme,
+            evidence,
+            event_kind=event_kind,
+            source_ref=source_ref,
+        )
+        created = concern is None
+        mutation = False
+        if concern is None:
+            question = theme if event_kind in {"curiosity_question", "knowledge_gap"} else ""
+            concern = PrivateConcern(
+                id=stable_id("concern", "event", event_kind, theme),
+                theme=theme,
+                evidence_ids=evidence,
+                open_questions=((question,) if question else ()),
+                pressure=clamp01(0.18 + 0.30 * clamp01(incoming_meta.get("seed_quality", 0.5), 0.5)
+                                 + 0.20 * clamp01(incoming_meta.get("seed_motive_strength", 0.4), 0.4)),
+                uncertainty=clamp01(incoming_meta.get("uncertainty", 0.45), 0.45),
+                recurrence=1,
+                status="open",
+                metadata={
+                    "cognitive_event_ids": [event_id],
+                    "event_count": 1,
+                    "echo_streak": 0,
+                    "mutation_count": 0,
+                    "reactivation_count": 0,
+                    "surfaced_count": 0,
+                    "last_event_at": current,
+                    "last_event_kind": event_kind,
+                    "last_event_origin": compact_text(data.get("origin") or "internal", 48),
+                    "last_mutation_at": current,
+                    **{k: v for k, v in incoming_meta.items() if k not in {
+                        "mutation_count", "reactivation_count", "surfaced_count", "echo_streak"
+                    }},
+                },
+                created_at=current,
+                updated_at=current,
+                last_reviewed_at=current,
+            )
+            self._concerns[concern.id] = concern
+            outcome = "created"
+        else:
+            old_theme = concern.theme
+            old_sig = _concept_signature(_strip_noise_prefix(old_theme.lower()))
+            new_sig = _concept_signature(_strip_noise_prefix(theme.lower()))
+            shared = len(old_sig & new_sig) if old_sig and new_sig else 0
+            semantic_overlap = shared / max(1, min(len(old_sig), len(new_sig))) if shared else 0.0
+            old_evidence = set(concern.evidence_ids)
+            new_independent = {
+                ref for ref in evidence
+                if ref not in old_evidence
+                and ref != source_ref
+                and not ref.startswith(("seed.", "mental.seed.", "cogevt:"))
+            }
+            # V42: paraphrase từ seed generator KHÔNG phải insight. Mutation chỉ
+            # được công nhận khi có evidence độc lập mới hoặc upstream thought
+            # engine đánh dấu rõ đây là semantic mutation. Không dùng độ lệch câu
+            # chữ để tự phong một cách diễn đạt khác thành suy nghĩ mới.
+            explicit_mutation = bool(incoming_meta.get("semantic_mutation", False))
+            mutation = bool(new_independent or explicit_mutation)
+            merged_evidence = list(concern.evidence_ids)
+            for ref in evidence:
+                if ref not in merged_evidence:
+                    merged_evidence.append(ref)
+            concern.evidence_ids = tuple(merged_evidence[:64])
+            event_ids = list(self._event_ids(concern))
+            event_ids.append(event_id)
+            concern.metadata["cognitive_event_ids"] = event_ids[-64:]
+            concern.metadata["event_count"] = int(concern.metadata.get("event_count", 1) or 1) + 1
+            concern.metadata["reactivation_count"] = int(concern.metadata.get("reactivation_count", 0) or 0) + 1
+            concern.metadata["last_reactivated_at"] = current
+            concern.metadata["last_event_at"] = current
+            concern.metadata["last_event_kind"] = event_kind
+            concern.metadata["last_event_origin"] = compact_text(data.get("origin") or "internal", 48)
+            concern.recurrence = max(1, int(concern.recurrence or 1)) + 1
+            concern.last_reviewed_at = current
+            concern.updated_at = current
+            if mutation:
+                concern.metadata["mutation_count"] = int(concern.metadata.get("mutation_count", 0) or 0) + 1
+                concern.metadata["last_mutation_at"] = current
+                concern.metadata["echo_streak"] = 0
+                concern.pressure = clamp01(max(concern.pressure * 0.94, 0.34) + 0.06)
+                # Giữ theme identity; mutation mới chỉ được lưu như event, không để
+                # một câu mới từ từ rewrite concern thành blob tổng hợp.
+                mutations = list(concern.metadata.get("mutation_subjects") or ())
+                if theme != old_theme and theme not in mutations:
+                    mutations.append(theme)
+                    concern.metadata["mutation_subjects"] = mutations[-6:]
+                outcome = "mutated"
+            else:
+                concern.metadata["echo_streak"] = int(concern.metadata.get("echo_streak", 0) or 0) + 1
+                # Event mới nhưng không thêm gì: nhận ra nó rồi lờn đi. Không pump.
+                concern.pressure = clamp01(concern.pressure * 0.90)
+                concern.uncertainty = clamp01(concern.uncertainty + 0.015)
+                outcome = "echo"
+
+        related = self._link_related_concerns(concern)
+        self._trim()
+        self.save()
+        return ConcernEventReceipt(concern, outcome, mutation=mutation, related_ids=related)
+
     @_locked
     def update_from_fragments(self, fragments: Iterable[ThoughtFragment]) -> tuple[PrivateConcern, ...]:
+        """Nhận fragment như INTERNAL EVENT, không như một tick mới.
+
+        V40 gọi ``merge_fragment`` mỗi lần evaluator trả cùng ý, nên evaluator lặp
+        lại cùng claim/evidence cũng vô tình làm concern "sống hơn". V42 cấp cho
+        mỗi fragment một event id ổn định. Cùng fragment quay lại là no-op; một
+        paraphrase mới nhưng không có evidence/detail mới chỉ là echo và phải lờn.
+        """
+
         updated: list[PrivateConcern] = []
         for fragment in fragments:
             if not fragment.claim or fragment.score < 0.28:
                 continue
-            theme_candidate = self._theme_from_fragment(fragment)
-            if self._is_degenerate_theme(theme_candidate):
+            theme = self._theme_from_fragment(fragment)
+            if self._is_degenerate_theme(theme):
                 continue
-            concern = self._find_matching_concern(fragment)
-            if concern is None:
-                theme = theme_candidate
-                concern = PrivateConcern(
-                    id=stable_id("concern", theme),
-                    theme=theme,
-                    evidence_ids=fragment.evidence_ids,
-                    open_questions=tuple([fragment.suggested_question] if fragment.suggested_question else []),
-                    hypotheses=fragment.hypotheses,
-                    pressure=fragment.pressure,
-                    uncertainty=1.0 - fragment.confidence,
-                    recurrence=1,
-                    status="open",
-                    future_biases=tuple(str(x) for x in (fragment.metadata.get("future_biases") or ()) if str(x).strip()),
-                    metadata={
-                        "created_from_fragment": fragment.id,
-                        "fragment_sources": [fragment.source],
-                        "mutation_count": 0,
-                        "reactivation_count": 0,
-                        "surfaced_count": 0,
-                        "last_mutation_at": time.time(),
-                        "last_reactivated_at": time.time(),
-                    },
-                )
-                self._concerns[concern.id] = concern
-            else:
-                concern.merge_fragment(fragment)
-                biases = list(concern.future_biases)
-                for bias in tuple(fragment.metadata.get("future_biases") or ()):  # type: ignore[arg-type]
-                    text = compact_text(bias, 160)
-                    if text and text not in biases:
-                        biases.append(text)
-                concern.future_biases = tuple(biases[:12])
+            receipt = self.ingest_cognitive_event({
+                "event_id": f"cogevt:fragment:{fragment.id}",
+                "origin": "private_mind",
+                "kind": "private_thought",
+                "subject": theme,
+                "occurred_at": float(fragment.created_at or time.time()),
+                "evidence_refs": list(fragment.evidence_ids),
+                "source_ref": fragment.id,
+                "metadata": {
+                    "seed_quality": fragment.score,
+                    "seed_motive_strength": fragment.pressure,
+                    "uncertainty": 1.0 - fragment.confidence,
+                    # Chỉ thought-engine nào biết mình thực sự tạo semantic delta
+                    # mới được bật cờ này. Khác wording tự nó không phải insight.
+                    "semantic_mutation": bool(fragment.metadata.get("semantic_mutation", False)),
+                    "fragment_source": fragment.source,
+                },
+            })
+            concern = receipt.concern
+            if concern is None or receipt.outcome in {"invalid", "duplicate"}:
+                continue
+
+            before_q = set(concern.open_questions)
+            before_h = {h.label.lower() for h in concern.hypotheses}
+            before_b = set(concern.future_biases)
+
+            if fragment.suggested_question and fragment.suggested_question not in before_q:
+                concern.open_questions = tuple([*concern.open_questions, fragment.suggested_question][:12])
+
+            merged_hypotheses = list(concern.hypotheses)
+            by_label = {h.label.lower(): idx for idx, h in enumerate(merged_hypotheses)}
+            for hyp in fragment.hypotheses:
+                key = hyp.label.lower()
+                if key in by_label:
+                    old = merged_hypotheses[by_label[key]]
+                    # Detail merge không được tự tăng recurrence/pressure.
+                    if hyp.score > old.score:
+                        merged_hypotheses[by_label[key]] = hyp
+                else:
+                    by_label[key] = len(merged_hypotheses)
+                    merged_hypotheses.append(hyp)
+            concern.hypotheses = tuple(sorted(merged_hypotheses, key=lambda h: h.score, reverse=True)[:12])
+
+            biases = list(concern.future_biases)
+            for bias in tuple(fragment.metadata.get("future_biases") or ()):
+                text = compact_text(bias, 160)
+                if text and text not in biases:
+                    biases.append(text)
+            concern.future_biases = tuple(biases[:12])
+
+            detail_mutation = (
+                set(concern.open_questions) != before_q
+                or {h.label.lower() for h in concern.hypotheses} != before_h
+                or set(concern.future_biases) != before_b
+            )
+            if detail_mutation and not receipt.mutation:
+                concern.metadata["mutation_count"] = int(concern.metadata.get("mutation_count", 0) or 0) + 1
+                concern.metadata["last_mutation_at"] = float(fragment.created_at or time.time())
+                concern.metadata["echo_streak"] = 0
+                concern.pressure = clamp01(max(concern.pressure, fragment.pressure * 0.78))
+
+            sources = list(concern.metadata.get("fragment_sources") or ())
+            if fragment.source not in sources:
+                sources.append(fragment.source)
+            concern.metadata["fragment_sources"] = sources[-12:]
             updated.append(concern)
+
         if updated:
             self._trim()
             self.save()

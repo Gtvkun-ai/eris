@@ -205,6 +205,8 @@ class _SurfaceRouter:
             "confidence": 0.90,
             "performance_hint": "warm_soft",
             "evidence_refs": [],
+            # V42 public boundary bắt buộc typed claim manifest, kể cả rỗng.
+            "claim_manifest": [],
             "reason": "wording_complete",
         }
 

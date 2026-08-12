@@ -22,7 +22,12 @@ class MemoryPanelResult:
     payload: dict[str, Any]
 
 
-def handle_memory_panel_request(living_user: Any, request: Mapping[str, Any]) -> MemoryPanelResult:
+def handle_memory_panel_request(
+    living_user: Any,
+    request: Mapping[str, Any],
+    *,
+    cleanup_service: Any = None,
+) -> MemoryPanelResult:
     """Thực thi một action panel và luôn trả snapshot mới sau mutation."""
     if living_user is None:
         return MemoryPanelResult("error", "Living User Memory chưa sẵn sàng.", {})
@@ -82,6 +87,31 @@ def handle_memory_panel_request(living_user: Any, request: Mapping[str, Any]) ->
                     raise RuntimeError(rejected or "scope_move_rejected")
             project_id = target_key if target_kind == "project" else ""
             message = "Đã đổi phạm vi sử dụng memory."
+        elif action == "set_auto_cleanup":
+            if cleanup_service is None or not callable(getattr(cleanup_service, "set_auto_cleanup", None)):
+                raise RuntimeError("cleanup_service_unavailable")
+            enabled = bool(request.get("enabled", False))
+            actual = bool(cleanup_service.set_auto_cleanup(enabled))
+            message = "Đã bật DeepSeek tự dọn memory." if actual else "Đã tắt DeepSeek tự dọn memory."
+        elif action == "cleanup_now":
+            if cleanup_service is None:
+                raise RuntimeError("cleanup_service_unavailable")
+            request_cleanup = getattr(cleanup_service, "request_cleanup", None)
+            if callable(request_cleanup):
+                request_result = request_cleanup()
+                extra["cleanup_request"] = _json_safe(request_result)
+                message = (
+                    "Đã giao DeepSeek rà memory ở background."
+                    if bool(request_result.get("accepted"))
+                    else "Memory cleanup đang chạy; không tạo lượt dọn trùng."
+                )
+            elif callable(getattr(cleanup_service, "run_once", None)):
+                report = cleanup_service.run_once(force=True)
+                report_dict = report.to_dict() if callable(getattr(report, "to_dict", None)) else {}
+                extra["cleanup_report"] = report_dict
+                message = _cleanup_message(report_dict)
+            else:
+                raise RuntimeError("cleanup_service_unavailable")
         else:
             raise ValueError(f"unsupported_action:{action}")
 
@@ -89,6 +119,7 @@ def handle_memory_panel_request(living_user: Any, request: Mapping[str, Any]) ->
             living_user,
             include_inferred=bool(request.get("include_inferred", True)),
             project_id=project_id,
+            cleanup_service=cleanup_service,
         )
         payload.update(extra)
         return MemoryPanelResult("ok", message, payload)
@@ -97,6 +128,7 @@ def handle_memory_panel_request(living_user: Any, request: Mapping[str, Any]) ->
             living_user,
             include_inferred=bool(request.get("include_inferred", True)),
             project_id=project_id,
+            cleanup_service=cleanup_service,
         )
         return MemoryPanelResult(
             "error",
@@ -111,6 +143,7 @@ def build_memory_panel_snapshot(
     include_inferred: bool = True,
     project_id: str = "",
     limit: int = 48,
+    cleanup_service: Any = None,
 ) -> dict[str, Any]:
     """Tạo payload UI nhỏ, ổn định và không chứa memory nhạy cảm."""
     records = [
@@ -128,6 +161,8 @@ def build_memory_panel_snapshot(
     commitments = _compact_action_rows(actions.get("commitments"), "commitment", 18)
     workflows = _compact_action_rows(actions.get("workflows"), "workflow", 18)
 
+    cleanup_status = _cleanup_status(cleanup_service)
+    feed_trace = _feed_trace_snapshot(living_user)
     counts = {
         "total": len(records),
         "confirmed": sum(1 for row in records if row["explicitness"] == "explicit"),
@@ -139,14 +174,17 @@ def build_memory_panel_snapshot(
         "workflows": len(workflows),
     }
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "authority_mode": "canonical_ledger",
+        "memory_policy": "v41_admission_before_prompt",
         "summary_text": _render_panel_brief(records),
         "counts": counts,
         "records": records,
         "goals": goals,
         "commitments": commitments,
         "workflows": workflows,
+        "cleanup": cleanup_status,
+        "memory_feed_trace": feed_trace,
         "project_id": project_id,
         "generated_at": time.time(),
     }
@@ -343,6 +381,52 @@ def _scope_label(kind: str, key: str) -> str:
     return "Mọi cuộc trò chuyện"
 
 
+def _cleanup_status(cleanup_service: Any) -> dict[str, Any]:
+    if cleanup_service is None:
+        return {"available": False, "auto_cleanup": False, "last_result": {}}
+    snapshot = getattr(cleanup_service, "status_snapshot", None)
+    if callable(snapshot):
+        try:
+            value = snapshot()
+            if isinstance(value, Mapping):
+                return _json_safe(value)
+        except Exception:
+            pass
+    return {
+        "available": True,
+        "auto_cleanup": bool(getattr(cleanup_service, "auto_cleanup_enabled", False)),
+        "last_result": _json_safe(getattr(cleanup_service, "last_result", {}) or {}),
+    }
+
+
+def _feed_trace_snapshot(living_user: Any) -> dict[str, Any]:
+    trace = getattr(living_user, "memory_feed_trace", None)
+    recent = getattr(trace, "recent", None)
+    if not callable(recent):
+        return {"available": False, "recent": []}
+    try:
+        rows = list(recent(8))
+    except Exception:
+        rows = []
+    latest = rows[-1] if rows else {}
+    return {
+        "available": True,
+        "latest": _json_safe(latest),
+        "recent": [_json_safe(row) for row in rows[-8:]],
+    }
+
+
+def _cleanup_message(report: Mapping[str, Any]) -> str:
+    reviewed = int(report.get("ds_reviewed", 0) or 0) + int(report.get("living_reviewed", 0) or 0)
+    changed = (
+        int(report.get("ds_dropped", 0) or 0)
+        + int(report.get("living_applied", 0) or 0)
+        + int(report.get("behavior_removed", 0) or 0)
+        + int(report.get("thought_removed", 0) or 0)
+    )
+    return f"DeepSeek đã rà {reviewed} mục; runtime áp dụng {changed} thay đổi an toàn."
+
+
 def _friendly_error(exc: Exception) -> str:
     text = str(exc)
     mapping = {
@@ -350,6 +434,7 @@ def _friendly_error(exc: Exception) -> str:
         "memory_not_found": "Không tìm thấy memory này.",
         "missing_project_id": "Cần nhập mã dự án trước khi đổi phạm vi.",
         "unsupported_scope": "Panel hiện chỉ hỗ trợ phạm vi toàn cục hoặc theo dự án.",
+        "cleanup_service_unavailable": "DeepSeek Memory Curator chưa sẵn sàng.",
     }
     return mapping.get(text, f"Không thể xử lý memory: {text[:180]}")
 

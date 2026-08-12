@@ -29,6 +29,7 @@ from .models import DreamReport, ProfileContextPacket, ProfileOperation, UserEpi
 from .sources import MemoryExplanation, MemorySourceTracker
 from .store import ApplyResult, UserProfileStore, UserProfileStoreConfig
 from .trace import MemoryReplayDebugger, MemoryTraceJournal
+from memory.memory_feed_trace import MemoryFeedTraceJournal
 
 
 @dataclass(slots=True)
@@ -77,6 +78,7 @@ class LivingUserMemoryService:
         model_adapter: UserProfileModelAdapter | None = None,
         config: LivingUserMemoryConfig | None = None,
         profile_store_config: UserProfileStoreConfig | None = None,
+        memory_feed_trace: MemoryFeedTraceJournal | None = None,
     ) -> None:
         self.base_dir = Path(base_dir)
         self.base_dir.mkdir(parents=True, exist_ok=True)
@@ -93,6 +95,7 @@ class LivingUserMemoryService:
         self.episode_store = UserEpisodeStore(self.base_dir / self.config.episode_filename)
         self.action_store = ActionMemoryStore(self.base_dir / self.config.action_filename)
         self.trace_journal = MemoryTraceJournal(self.base_dir / self.config.trace_filename)
+        self.memory_feed_trace = memory_feed_trace or MemoryFeedTraceJournal(self.base_dir / "memory_feed_trace.jsonl")
         self.replay_debugger = MemoryReplayDebugger(self.trace_journal)
         self.clarification_policy = MemoryClarificationPolicy()
         self.extractor = UserProfileExtractor(model_adapter=model_adapter)
@@ -453,7 +456,32 @@ class LivingUserMemoryService:
             "episode_ids": [episode.id for episode in packet.episodes],
             "goal_ids": [goal.id for goal in getattr(packet.action_context, "goals", ())],
             "workflow_ids": [flow.id for flow in getattr(packet.action_context, "workflows", ())],
+            "diagnostics": list(packet.diagnostics),
         })
+        try:
+            # diagnostics dùng dạng reject:PATH:reason; trace chỉ giữ ID + lý do, không sao chép text memory.
+            rejected = []
+            for row in packet.diagnostics:
+                text = str(row)
+                if not text.startswith("reject:"):
+                    continue
+                payload = text[len("reject:"):]
+                path, _, reason = payload.partition(":")
+                rejected.append({"record_id": path, "layer": "living_user", "reason": reason or "admission_rejected"})
+            admitted = [
+                {"record_id": item.path, "layer": "living_user", "reason": item.use_mode, "score": round(float(item.score), 3)}
+                for item in packet.items
+            ]
+            self.memory_feed_trace.record_retrieval(
+                query=query,
+                retrieved=len(packet.items) + len(rejected),
+                admitted=admitted,
+                rejected=rejected,
+                rendered_ids=[item.path for item in packet.items],
+                channel="living_user",
+            )
+        except Exception:
+            pass
         return packet
 
     def summary(self, *, include_sensitive: bool = False, limit: int = 60) -> dict[str, Any]:

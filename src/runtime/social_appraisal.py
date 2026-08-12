@@ -378,7 +378,7 @@ class SocialAppraisalEngine:
         "toi dang", "minh dang", "ma toi", "nhung toi",
     )
     _PLAYFUL = (
-        "haha", "hehe", "hihi", "lol", "=))", ":))", "thoi ma", "choc", "khia", "dua", "gia vo", "ngay tho",
+        "haha", "hehe", "hihi", "hi hi", "lol", "=))", ":))", "thoi ma", "choc", "khia", "dua", "gia vo", "ngay tho",
     )
     _IRRITATED = (
         "dcm", "dm", "vcl", "vl", "ngu", "xam", "vo ly", "bia dat", "noi linh tinh", "kho chiu", "sai hoai", "lai nua", "dung bia",

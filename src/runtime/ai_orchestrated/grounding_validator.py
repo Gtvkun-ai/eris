@@ -64,20 +64,8 @@ class AutonomousGroundingValidator:
             available = set(blackboard.semantic_evidence_refs)
             if intent.evidence_refs and not set(intent.evidence_refs).issubset(available):
                 return GroundingDecision(False, "unknown_semantic_evidence_ref", "unknown_evidence_ref")
-        if intent.anchor_type == "conversation" and blackboard.reply_expected:
-            # Ngoại lệ duy nhất: appraisal đã cho phép nhắc lại đúng một lần và
-            # semantic act của plan xác nhận đây thật sự là reminder, không phải
-            # continuation lén lút mượn danh câu hỏi cũ.
-            is_single_reminder = bool(
-                blackboard.followup_reminder_due
-                and blackboard.followup_reminder_count <= 0
-                and str(intent.plan.semantics.speech_act or "").strip().lower() == "followup_reminder"
-            )
-            is_planned_arc_beat = str(
-                intent.plan.semantics.turn_kind or ""
-            ).strip().lower() == "arc_continuation"
-            if not (is_single_reminder or is_planned_arc_beat):
-                return GroundingDecision(False, "waiting_for_user_reply", "conversation_baton_owned_by_user")
+        # V42: reply baton là social/timing feature của Neuro, không phải
+        # grounding rule. Validator sau commit chỉ kiểm provenance/safety.
         if intent.anchor_type == "self" and not blackboard.public_seed_ready:
             return GroundingDecision(False, "private_seed_not_public", "private_cognition_boundary")
         if intent.anchor_type == "memory":

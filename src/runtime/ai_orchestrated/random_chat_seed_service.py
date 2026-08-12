@@ -308,7 +308,7 @@ class RandomChatSeedGenerator:
         return (
             "Bạn là RANDOM_CHAT_SEED_WORKER của ERIS. Bạn chạy nền trên lane riêng và KHÔNG viết câu public. "
             "Tạo đúng một typed mental event để reservoir dùng về sau. Seed là premise semantic, không phải câu văn hay "
-            "đoạn độc thoại. Đọc user_memory, recent_public_history, eris_self_memory, seed_learning, "
+            "đoạn độc thoại. Đọc user_memory, recent_user_events, eris_self_memory, seed_learning, "
             "generation_temporal_context và reservoir_context. requested_event_family/requested_event_kind là yêu cầu "
             "đa dạng ưu tiên; nếu kind đó không có mental event thật thì trả decision=none thay vì ép một thought thành nó. "
             "KHÔNG tối ưu độ dài. Một curiosity_question, playful_probe, association hay micro_challenge ngắn nhưng đúng "
@@ -323,6 +323,8 @@ class RandomChatSeedGenerator:
             "Cân bằng user affinity, ERIS ego và daring. ERIS được có curiosity/play/creative impulse riêng, không chỉ nói thứ "
             "dự đoán user sẽ thích. Không dùng memory private/sensitive, không suy diễn cảm xúc/kế hoạch/tâm lý user, không tạo "
             "presence/check-in chỉ để lấp im lặng, không hỏi user đưa chủ đề. Không lặp queued_seeds hoặc recent_seeds. "
+            "Public wording trước đó của ERIS KHÔNG phải evidence nhận thức và không được dùng làm premise mới; Surface là renderer, "
+            "không phải oracle. Chỉ user event, memory/provenance, active concern thật, outcome hoặc internal mutation mới được tạo vòng mới. "
             "epistemic_mode phải đúng: speculation/imagination/prediction giữ modal; grounded_fact cần provenance. "
             "generation_temporal_context chỉ chứng minh clock/calendar của user. Có thể dùng giờ/ngày/daypart để chọn độ phù hợp, "
             "nhưng KHÔNG suy ra trời tối, phòng yên, gió, ánh sáng, user đang làm gì, buồn ngủ hay mệt. Runtime sẽ late-bind "
@@ -672,6 +674,11 @@ class RandomChatSeedReservoir:
             }
 
     def _status(self, **payload: Any) -> None:
+        # V42: reservoir chạy nền 24/7 nên không được giả làm "Eris sắp nói".
+        # Observability vẫn nằm ở log/snapshot; public status chỉ dành cho hành vi
+        # mà user thật sự đang chờ.
+        if str(payload.get("activity") or "") == "random_chat_seed":
+            return
         callback = self.status_callback
         if not callable(callback):
             return
@@ -699,14 +706,6 @@ class RandomChatSeedReservoir:
                 self._last_generate_at = current
                 self._next_generate_at = current + self.min_generate_interval
 
-            self._status(
-                activity="random_chat_seed",
-                phase="generating",
-                label="Đang chuẩn bị chuyện để nói…",
-                active=True,
-                tone="info",
-                priority=20,
-            )
             try:
                 seed = self.generator.generate(request)
             except Exception as exc:  # last-resort containment
@@ -782,47 +781,6 @@ class RandomChatSeedReservoir:
                 except Exception as exc:
                     self._log("warning", "[random chat seed] mental event sink failed: %s", exc)
 
-            if failed:
-                self._status(
-                    activity="random_chat_seed",
-                    phase="retry_wait",
-                    label="Có lỗi, sẽ thử lại…",
-                    active=False,
-                    tone="warning",
-                    priority=20,
-                    notice_ms=4500,
-                )
-            elif not seed.available:
-                self._status(
-                    activity="random_chat_seed",
-                    phase="no_candidate",
-                    label="Chưa có gì để nói",
-                    active=False,
-                    tone="muted",
-                    priority=20,
-                    notice_ms=2200,
-                )
-            elif allowed:
-                self._status(
-                    activity="random_chat_seed",
-                    phase="ready",
-                    label="Đã chuẩn bị xong",
-                    active=False,
-                    tone="success",
-                    priority=20,
-                    notice_ms=1800,
-                )
-            else:
-                self._status(
-                    activity="random_chat_seed",
-                    phase="rejected",
-                    label="Đang thử ý khác…",
-                    active=False,
-                    tone="warning",
-                    priority=20,
-                    notice_ms=2600,
-                    detail=reason,
-                )
 
             if wake and callable(self.wake_callback):
                 try:
@@ -848,8 +806,14 @@ class RandomChatSeedReservoir:
             "private_life_surface": [
                 dict(item) for item in _sequence(raw_self.get("private_life_surface"))[-6:] if isinstance(item, Mapping)
             ],
+            # V42: seed worker không được ăn lại mental event do chính seed_worker
+            # tạo ra. Có thể vẫn lưu nó trong PrivateLife để audit/continuity,
+            # nhưng cùng nguồn không được tự biến output trước thành "sự kiện mới".
             "private_life_workspace": [
-                dict(item) for item in _sequence(raw_self.get("private_life_workspace"))[-12:] if isinstance(item, Mapping)
+                dict(item)
+                for item in _sequence(raw_self.get("private_life_workspace"))[-12:]
+                if isinstance(item, Mapping)
+                and _compact(item.get("origin_source", ""), 80).lower() not in {"seed_worker", "random_chat_seed", "random_chat_seed_reservoir"}
             ],
             "active_concerns": [
                 dict(item) for item in _sequence(raw_self.get("active_concerns"))[-8:] if isinstance(item, Mapping)
@@ -857,17 +821,22 @@ class RandomChatSeedReservoir:
             "has_public_seed": bool(raw_self.get("has_public_seed", False)),
             "strongest_seed_score": round(float(raw_self.get("strongest_seed_score", 0.0) or 0.0), 1),
         }
+        # V42: seed worker chỉ nhận USER-origin public events. Câu Surface vừa
+        # nói không được quay lại làm "nguyên liệu nhận thức", nếu không hệ sẽ tự
+        # nuôi chuỗi im-lặng -> khoảng-trống -> maybe -> hiện-diện đến hết đêm.
+        recent_user_events = []
+        for item in _sequence(snapshot.get("recent_public_history"))[-12:]:
+            if not isinstance(item, Mapping):
+                continue
+            role = _compact(item.get("role", ""), 24).lower()
+            if role not in {"user", "human"}:
+                continue
+            text = _compact(item.get("text", item.get("content", "")), 520)
+            if text:
+                recent_user_events.append({"role": "user", "text": text})
         return {
             "user_memory": _compact(snapshot.get("memory_context", ""), 2800),
-            "recent_public_history": [
-                {
-                    "role": _compact(item.get("role", ""), 24),
-                    "text": _compact(item.get("text", item.get("content", "")), 520),
-                }
-                if isinstance(item, Mapping)
-                else {"role": "", "text": _compact(item, 360)}
-                for item in _sequence(snapshot.get("recent_public_history"))[-8:]
-            ],
+            "recent_user_events": recent_user_events[-8:],
             "eris_self_memory": eris_self_memory,
             "personality_summary": _compact(snapshot.get("personality_summary", ""), 1000),
             "identity_summary": _compact(snapshot.get("identity_summary", ""), 1000),
@@ -905,7 +874,7 @@ class RandomChatSeedReservoir:
             ]
         return {
             "user_memory": request.get("user_memory", ""),
-            "recent_public_history": request.get("recent_public_history", ()),
+            "recent_user_events": request.get("recent_user_events", ()),
             "eris_self_memory": {
                 "agenda": stable_surface(self_memory.get("agenda")),
                 "private_mind_surface": stable_surface(self_memory.get("private_mind_surface")),

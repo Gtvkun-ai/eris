@@ -96,6 +96,8 @@ class MemoryGCResult:
     living_history_removed: int = 0
     pruned_total: int = 0
     journal_compacted: bool = False
+    behavior_removed: int = 0
+    thought_removed: int = 0
     duration_sec: float = 0.0
     warnings: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
@@ -113,6 +115,8 @@ class MemoryGCResult:
             "living_history_removed": self.living_history_removed,
             "pruned_total": self.pruned_total,
             "journal_compacted": self.journal_compacted,
+            "behavior_removed": self.behavior_removed,
+            "thought_removed": self.thought_removed,
             "duration_sec": round(self.duration_sec, 2),
             "warnings": self.warnings[:16],
             "notes": self.notes[:24],
@@ -153,8 +157,14 @@ class MemoryGCService:
             else _env_float("ERIS_MEMORY_GC_JOURNAL_MAX_MB", _DEFAULT_ANCHOR_JOURNAL_MAX_MB)
         )
         self._enabled = _env_flag("ERIS_MEMORY_GC_ENABLED", True)
+        base_dir = str(getattr(memory_core, "base_dir", "") or os.getenv("ERIS_MEMORY_CORE_DIR", "memory_core"))
+        self._settings_path = os.path.join(base_dir, "memory_cleanup_settings.json")
+        self._load_runtime_settings()
+        self._force_review = False
+        self._gc_lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._manual_thread: threading.Thread | None = None
         self._last_run_at = 0.0
         self._last_living_user_review_version = -1
         self._last_living_user_review_at = 0.0
@@ -179,9 +189,101 @@ class MemoryGCService:
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=timeout)
 
-    def run_once(self) -> MemoryGCResult:
-        """Chạy một lượt GC đồng bộ, tiện cho test và nút trigger thủ công."""
-        return self._run_gc()
+    @property
+    def auto_cleanup_enabled(self) -> bool:
+        return bool(self._enabled)
+
+    def set_auto_cleanup(self, enabled: bool) -> bool:
+        """Bật/tắt daemon từ panel và persist lựa chọn cạnh memory core."""
+        self._enabled = bool(enabled)
+        self._persist_runtime_settings()
+        if self._enabled:
+            self.start()
+        return self._enabled
+
+    def run_once(self, *, force: bool = True) -> MemoryGCResult:
+        """Chạy cleanup thủ công. ``force`` bỏ throttle version của Living User.
+
+        DeepSeek vẫn chỉ đề xuất; semantic/living validator deterministic mới có
+        quyền mutation. Nút UI không biến model thành root user của database.
+        """
+        previous = self._force_review
+        self._force_review = bool(force)
+        try:
+            result = self._run_gc()
+            self.last_result = result.to_dict()
+            self._last_run_at = time.time()
+            return result
+        finally:
+            self._force_review = previous
+
+    def request_cleanup(self) -> dict[str, Any]:
+        """Enqueue cleanup thủ công, không block protocol/chat thread."""
+        if self._manual_thread is not None and self._manual_thread.is_alive():
+            return {"accepted": False, "reason": "cleanup_already_running"}
+        if self._gc_lock.locked():
+            return {"accepted": False, "reason": "cleanup_busy"}
+        self._manual_thread = threading.Thread(
+            target=self._run_manual_cleanup_job,
+            name="ERIS-MemoryGC-Manual",
+            daemon=True,
+        )
+        self._manual_thread.start()
+        return {"accepted": True, "reason": "manual_cleanup_started"}
+
+    def _run_manual_cleanup_job(self) -> None:
+        previous = self._force_review
+        self._force_review = True
+        try:
+            result = self._run_gc()
+            self.last_result = result.to_dict()
+            self._last_run_at = time.time()
+            self.run_count += 1
+            logger.info(
+                "[memory_gc] manual cleanup finished reviewed=%d dropped=%d living_applied=%d transient=%d/%d",
+                result.ds_reviewed + result.living_reviewed,
+                result.ds_dropped,
+                result.living_applied,
+                result.behavior_removed,
+                result.thought_removed,
+            )
+        finally:
+            self._force_review = previous
+
+    def status_snapshot(self) -> dict[str, Any]:
+        running = bool(
+            (self._manual_thread is not None and self._manual_thread.is_alive())
+            or self._gc_lock.locked()
+        )
+        return {
+            "available": True,
+            "auto_cleanup": bool(self._enabled),
+            "running": running,
+            "interval_seconds": float(self.interval_seconds),
+            "last_run_at": float(self._last_run_at),
+            "run_count": int(self.run_count),
+            "last_result": dict(self.last_result or {}),
+        }
+
+    def _load_runtime_settings(self) -> None:
+        try:
+            if not os.path.isfile(self._settings_path):
+                return
+            data = json.loads(open(self._settings_path, "r", encoding="utf-8").read())
+            if isinstance(data, dict) and "auto_cleanup" in data:
+                self._enabled = bool(data.get("auto_cleanup"))
+        except Exception:
+            pass
+
+    def _persist_runtime_settings(self) -> None:
+        try:
+            os.makedirs(os.path.dirname(self._settings_path) or ".", exist_ok=True)
+            tmp = self._settings_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as handle:
+                json.dump({"schema_version": 1, "auto_cleanup": bool(self._enabled)}, handle, ensure_ascii=False, indent=2)
+            os.replace(tmp, self._settings_path)
+        except Exception as exc:
+            logger.warning("[memory_gc] persist cleanup settings failed: %s", exc)
 
     # ── Loop ───────────────────────────────────────────────────────────────────
 
@@ -192,7 +294,7 @@ class MemoryGCService:
         while not self._stop.is_set():
             try:
                 now = time.time()
-                if now - self._last_run_at >= self.interval_seconds and self._is_idle():
+                if self._enabled and now - self._last_run_at >= self.interval_seconds and self._is_idle():
                     result = self._run_gc()
                     self._last_run_at = time.time()
                     self.last_result = result.to_dict()
@@ -232,6 +334,16 @@ class MemoryGCService:
     # ── GC logic ───────────────────────────────────────────────────────────────
 
     def _run_gc(self) -> MemoryGCResult:
+        # Manual button và daemon có thể đụng cùng lúc. Chỉ một cleanup transaction
+        # được chạy; caller thứ hai nhận report busy thay vì hai curator cùng dọn một store.
+        if not self._gc_lock.acquire(blocking=False):
+            return MemoryGCResult(warnings=["cleanup_busy"], notes=["another_cleanup_is_running"])
+        try:
+            return self._run_gc_unlocked()
+        finally:
+            self._gc_lock.release()
+
+    def _run_gc_unlocked(self) -> MemoryGCResult:
         result = MemoryGCResult()
         t0 = time.time()
 
@@ -270,7 +382,14 @@ class MemoryGCService:
             result.warnings.append(f"living_review_failed:{type(exc).__name__}:{exc}")
             logger.warning("[memory_gc] living-user review failed: %s", exc)
 
-        # 4. Compact anchor journal nếu quá lớn.
+        # 4. Dọn transient cognition/audit-adjacent stores. Đây là deterministic
+        # hygiene, không biến thought/behavior thành semantic memory.
+        try:
+            self._compact_transient_stores(result)
+        except Exception as exc:
+            result.warnings.append(f"transient_compact_failed:{type(exc).__name__}:{exc}")
+
+        # 5. Compact anchor journal nếu quá lớn.
         try:
             self._compact_anchor_journal(result)
         except Exception as exc:
@@ -339,7 +458,8 @@ class MemoryGCService:
         now = time.time()
         max_age = _env_float("ERIS_MEMORY_GC_LIVING_REVIEW_MAX_AGE_SEC", 24 * 3600.0)
         if (
-            version == self._last_living_user_review_version
+            not self._force_review
+            and version == self._last_living_user_review_version
             and now - self._last_living_user_review_at < max_age
         ):
             result.notes.append("living_review_skipped:profile_unchanged")
@@ -374,6 +494,27 @@ class MemoryGCService:
         if report.skipped_reason != "no_critic_reviewer":
             self._last_living_user_review_version = int(getattr(store, "version", version))
             self._last_living_user_review_at = now
+
+    def _compact_transient_stores(self, result: MemoryGCResult) -> None:
+        base_dir = str(getattr(self.memory_core, "base_dir", "") or os.getenv("ERIS_MEMORY_CORE_DIR", "memory_core"))
+        try:
+            from runtime.behavior_observation import BehaviorObservationJournal
+            journal = BehaviorObservationJournal(path=os.path.join(base_dir, "behavior_observations.jsonl"))
+            report = journal.compact()
+            result.behavior_removed = int(report.get("removed", 0))
+            if result.behavior_removed:
+                result.notes.append(f"behavior_observations_removed:{result.behavior_removed}")
+        except Exception as exc:
+            result.warnings.append(f"behavior_compact_failed:{type(exc).__name__}")
+        try:
+            from cortex.private_mind.thought_continuity import ThoughtContinuityStore
+            thoughts = ThoughtContinuityStore(path=os.path.join(base_dir, "thought_stream.jsonl"))
+            report = thoughts.compact()
+            result.thought_removed = int(report.get("removed", 0))
+            if result.thought_removed:
+                result.notes.append(f"thought_stream_removed:{result.thought_removed}")
+        except Exception as exc:
+            result.warnings.append(f"thought_compact_failed:{type(exc).__name__}")
 
     def _compact_anchor_journal(self, result: MemoryGCResult) -> None:
         core_dir = str(os.getenv("ERIS_MEMORY_CORE_DIR", "memory_core"))

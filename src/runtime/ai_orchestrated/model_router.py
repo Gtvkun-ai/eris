@@ -811,11 +811,33 @@ CONVERSATION_ARC_SCHEMA: dict[str, Any] = {
 SURFACE_REALIZATION_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["utterance", "confidence", "evidence_refs", "reason"],
+    "required": ["utterance", "confidence", "evidence_refs", "claim_manifest", "reason"],
     "properties": {
         "utterance": UTTERANCE_SCHEMA,
         "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
         "evidence_refs": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
+        "claim_manifest": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["domain", "claim", "evidence_refs"],
+                "properties": {
+                    "domain": {
+                        "type": "string",
+                        "enum": [
+                            "internal_state", "conversation_history", "user_statement",
+                            "memory", "verified_runtime_clock", "grounded_environment",
+                            "engagement_state", "discovery_artifact", "self_capability",
+                            "opinion", "hypothetical"
+                        ],
+                    },
+                    "claim": {"type": "string"},
+                    "evidence_refs": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+                },
+            },
+        },
         "reason": {"type": "string"},
     },
 }
@@ -831,18 +853,42 @@ SELF_CAPABILITY_CLAIM_SCHEMA: dict[str, Any] = {
     },
 }
 
-# Contract availability-first cho direct-user chat. Chỉ ba field public này
-# quyết định một lượt có câu dùng được hay không. Metadata semantic/social vẫn
+CLAIM_MANIFEST_SCHEMA: dict[str, Any] = {
+    "type": "array",
+    "maxItems": 10,
+    "items": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["domain", "claim", "evidence_refs"],
+        "properties": {
+            "domain": {
+                "type": "string",
+                "enum": [
+                    "internal_state", "conversation_history", "user_statement",
+                    "memory", "verified_runtime_clock", "grounded_environment",
+                    "engagement_state", "discovery_artifact", "self_capability",
+                    "opinion", "hypothetical"
+                ],
+            },
+            "claim": {"type": "string"},
+            "evidence_refs": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+        },
+    },
+}
+
+# Contract public writer V42. Ba surface field vẫn là availability payload;
+# claim_manifest là integrity metadata bắt buộc để runtime kiểm domain sự thật. Metadata semantic/social vẫn
 # được phép đi kèm nhưng là soft metadata: runtime sanitize riêng và lỗi của nó
 # tuyệt đối không được xóa câu public hợp lệ.
 PUBLIC_REPLY_CORE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["should_speak", "text", "speech_text"],
+    "required": ["should_speak", "text", "speech_text", "claim_manifest"],
     "properties": {
         "should_speak": {"type": "boolean"},
         "text": {"type": "string"},
         "speech_text": {"type": "string"},
+        "claim_manifest": CLAIM_MANIFEST_SCHEMA,
         "display_language": {"type": "string", "enum": ["vi", "ja", "en"]},
         "speech_language": {"type": "string", "enum": ["vi", "ja", "en"]},
         "performance_hint": PERFORMANCE_PRESET_SCHEMA,
@@ -892,11 +938,12 @@ PUBLIC_REPLY_SCHEMA: dict[str, Any] = {
 PUBLIC_WORDING_REWRITE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["should_speak", "text", "speech_text"],
+    "required": ["should_speak", "text", "speech_text", "claim_manifest"],
     "properties": {
         "should_speak": {"type": "boolean"},
         "text": {"type": "string"},
         "speech_text": {"type": "string"},
+        "claim_manifest": CLAIM_MANIFEST_SCHEMA,
         "performance_hint": PERFORMANCE_PRESET_SCHEMA,
         "performance_intensity": {"type": "number", "minimum": 0.0, "maximum": 1.0},
         "nonverbal_cue": {"type": "string"},
@@ -1482,12 +1529,14 @@ class AIRuntimeModelRouter:
         return (
             f"Bạn đang là giọng nói trực tiếp của ERIS trong một lượt chat. Trả đúng MỘT JSON. "
             f"{CHAT_VOICE_CORE_V39} {style_rules} "
-            f"Ba field availability bắt buộc là should_speak, text bằng {display_language}, và speech_text bằng {speech_language}. "
+            f"Bốn field bắt buộc là should_speak, text bằng {display_language}, speech_text bằng {speech_language}, và claim_manifest. "
             "text là câu hiển thị thật; speech_text là câu ERIS thực sự đọc và phải cùng nghĩa/tông với text. "
             "Không markdown, không reasoning, không stage direction trong text, không ghép tiếng Nhật vào text tiếng Việt. "
             "Trả lời yêu cầu cụ thể trước; giữ continuity từ history và context; nếu user yêu cầu sửa giọng thì sửa ngay delivery của lượt này. "
             "Nếu câu trước của ERIS gây mơ hồ hoặc user yêu cầu repair, tự giải quyết phần mơ hồ và viết lại câu tốt hơn, không đẩy việc làm rõ ngược cho user. "
             "Không phát minh grounding, memory hay capability. Grounding chỉ đến từ context; capability directive của runtime là authority. "
+            "V42 claim-domain contract: mọi factual/sensory/memory/runtime claim được thêm vào câu phải khai báo trong claim_manifest. "
+            "Chỉ dùng domain/evidence ref mà Current grounding cho phép; opinion/hypothetical/internal_state có thể không cần evidence ref. Không có claim thì claim_manifest=[]. "
             "Không cần tự giải thích personality, MBTI, reasoning hay confidence. Dùng personality context như quyền biểu đạt: nó phải đổi cadence, độ gần, mức tự bộc lộ và cạnh hài khi phù hợp, chứ không được nằm chết như metadata. "
             "performance_hint/performance_intensity/nonverbal_cue/delivery_priority/interruptible là tùy chọn; bỏ qua nếu không cần. "
             "semantic_frame, assistant_act, social_plan và self_capability_claims cũng chỉ là SOFT METADATA: nếu chắc thì có thể trả thêm; nếu không chắc thì bỏ qua. "
@@ -1583,7 +1632,7 @@ class AIRuntimeModelRouter:
         system = self._public_reply_prompt(language_hint, speech_language_hint)
         if locked_semantic_frame:
             system += (
-                "\n\nThis is a wording-only retry. Return only should_speak and a complete utterance. "
+                "\n\nThis is a wording-only retry. Return should_speak, the complete utterance surfaces, and claim_manifest. "
                 "The semantic frame and assistant act above are immutable and runtime will reuse them verbatim. "
                 "Rewrite display and speech together; do not classify the turn again."
             )
@@ -1789,6 +1838,7 @@ class AIRuntimeModelRouter:
             "self_capability_claims": normalize_self_capability_claims(
                 data.get("self_capability_claims", ())
             ),
+            "claim_manifest": list(data.get("claim_manifest", ())) if isinstance(data.get("claim_manifest"), list) else [],
             **flattened,
             "should_speak": bool(data.get("should_speak", True)),
             "system_action": str(tool_intent or ""),
@@ -2821,6 +2871,9 @@ class AIRuntimeModelRouter:
             "nó không cho phép bịa fact, chạm memory nhạy cảm hay ép thân mật. Nếu speech_act=independent_topic_shift, bỏ hẳn chủ đề cũ, "
             "nói một ý khác tự đủ nghĩa với giọng hơi dè lại; không dỗi, không trừng phạt và không tuyên bố user không quan tâm. "
             "Giọng ERIS phải theo affective_voice_state hiện tại; personality chỉ định hình cách biểu hiện, không ép nhiệt độ cảm xúc. Giữ hình dạng nhận thức của seed thay vì đánh bóng thành châm ngôn. "
+            "V42 claim-domain contract: với MỌI factual/sensory/memory/runtime claim bạn thêm vào wording, khai báo một item trong claim_manifest. "
+            "domain phải nằm trong surface_contract.allowed_claim_domains; evidence_refs của claim chỉ được copy từ surface_contract.allowed_evidence_refs. "
+            "Opinion/hypothetical/internal_state vẫn khai báo domain nhưng có thể không cần evidence ref. Không có claim thì claim_manifest=[]. "
             "Tối đa số câu trong surface_contract.max_sentences nhưng đừng tối ưu brevity; evidence_refs chỉ copy id được phép. Return JSON only."
         )
 

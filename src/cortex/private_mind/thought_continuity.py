@@ -91,6 +91,7 @@ class ThoughtContinuityStore:
         recent_default: int = 5,
         unresolved_cooldown_sec: float = 900.0,
         unresolved_min_pressure: float = 0.45,
+        max_age_seconds: float = 7 * 86400.0,
         logger: Any = None,
     ) -> None:
         self.path = Path(path) if path else None
@@ -98,6 +99,7 @@ class ThoughtContinuityStore:
         self.recent_default = max(1, int(recent_default or 5))
         self.unresolved_cooldown_sec = max(60.0, float(unresolved_cooldown_sec or 900.0))
         self.unresolved_min_pressure = _clamp01(unresolved_min_pressure)
+        self.max_age_seconds = max(3600.0, float(max_age_seconds or 7 * 86400.0))
         self.logger = logger
         self._entries: list[ThoughtEntry] = []
         self._load()
@@ -112,6 +114,7 @@ class ThoughtContinuityStore:
             recent_default=int(os.getenv("ERIS_THOUGHT_CONTINUITY_RECENT", "5") or 5),
             unresolved_cooldown_sec=float(os.getenv("ERIS_THOUGHT_FOLLOWUP_COOLDOWN_SEC", "900") or 900.0),
             unresolved_min_pressure=float(os.getenv("ERIS_THOUGHT_FOLLOWUP_MIN_PRESSURE", "0.45") or 0.45),
+            max_age_seconds=float(os.getenv("ERIS_THOUGHT_CONTINUITY_MAX_AGE_SEC", str(7 * 86400)) or 7 * 86400),
             logger=logger,
         )
 
@@ -143,9 +146,10 @@ class ThoughtContinuityStore:
         except Exception as exc:
             self._log("warning", "[ThoughtContinuity] load error: %s", exc)
             return
-        # Giữ tối đa max_entries gần nhất theo thời gian.
+        # V41: thought stream là transient cognition, không phải nhật ký bất tử.
+        # Open thought có thể sống lâu nếu còn pressure; resolved/drifting hết hạn nhanh hơn.
         entries.sort(key=lambda e: e.ts)
-        self._entries = entries[-self.max_entries :]
+        self._entries = self._pruned(entries)[-self.max_entries :]
 
     def _rewrite_file(self) -> None:
         if self.path is None:
@@ -173,10 +177,11 @@ class ThoughtContinuityStore:
         if not entry.text.strip():
             return
         self._entries.append(entry)
-        trimmed = len(self._entries) > self.max_entries
+        before = len(self._entries)
+        self._entries = self._pruned(self._entries)[-self.max_entries :]
+        trimmed = len(self._entries) != before
         if trimmed:
-            self._entries = self._entries[-self.max_entries :]
-            self._rewrite_file()  # đã cắt nên ghi lại toàn bộ
+            self._rewrite_file()  # TTL/cắt nên ghi lại toàn bộ
         else:
             self._append_line(entry)
 
@@ -222,6 +227,7 @@ class ThoughtContinuityStore:
     # --------------------------------------------------------------- readers
     def recent(self, n: int | None = None) -> tuple[ThoughtEntry, ...]:
         count = self.recent_default if n is None else max(1, int(n))
+        self._entries = self._pruned(self._entries)[-self.max_entries :]
         return tuple(self._entries[-count:])
 
     def recent_for_prompt(self, n: int | None = None) -> list[dict[str, Any]]:
@@ -229,6 +235,12 @@ class ThoughtContinuityStore:
         out: list[dict[str, Any]] = []
         now = _now()
         for e in self.recent(n):
+            # Thought model có thể tự suy đoán nhất thời. Chỉ feed lại nếu mạch còn
+            # pressure/confidence đủ để đáng nối; còn lại để nó chết trong transient state.
+            if e.status == "resolved":
+                continue
+            if e.confidence < 0.35 and e.pressure < 0.55:
+                continue
             ago = max(0, int((now - e.ts)))
             out.append({
                 "khi": self._humanize_ago(ago),
@@ -269,6 +281,29 @@ class ThoughtContinuityStore:
 
     def has_followup_due(self) -> bool:
         return bool(self.unresolved(limit=1))
+
+    def compact(self) -> dict[str, int]:
+        """Dọn transient thought theo TTL và rewrite JSONL."""
+        before = len(self._entries)
+        self._entries = self._pruned(self._entries)[-self.max_entries :]
+        self._rewrite_file()
+        return {"before": before, "after": len(self._entries), "removed": max(0, before - len(self._entries))}
+
+    def _pruned(self, entries: list[ThoughtEntry]) -> list[ThoughtEntry]:
+        now = _now()
+        kept: list[ThoughtEntry] = []
+        for entry in entries:
+            age = max(0.0, now - float(entry.ts or now))
+            ttl = self.max_age_seconds
+            if entry.status == "resolved":
+                ttl = min(ttl, 12 * 3600.0)
+            elif entry.status == "drifting":
+                ttl = min(ttl, 36 * 3600.0)
+            elif entry.pressure >= 0.72 and entry.confidence >= 0.55:
+                ttl *= 1.5
+            if age <= ttl:
+                kept.append(entry)
+        return kept
 
     @staticmethod
     def _humanize_ago(seconds: int) -> str:

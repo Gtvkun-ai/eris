@@ -974,6 +974,9 @@ class PersistentInternalState:
     confidence: float = 0.44
     fatigue: float = 0.12
     tenderness: float = 0.16
+    # V43: current affect vẫn thuộc PersistentInternalState. Dict này chỉ giữ
+    # các trục phụ + impulse ngắn hạn chưa có field riêng, không phải mood store thứ ba.
+    affective_state: dict[str, object] = field(default_factory=dict)
     silence_pressure: float = 0.06
     social_pressure: float = 0.03
     curiosity_pressure: float = 0.04
@@ -1055,6 +1058,7 @@ class PersistentInternalState:
             "confidence": round(float(self.confidence), 3),
             "fatigue": round(float(self.fatigue), 3),
             "tenderness": round(float(self.tenderness), 3),
+            "affective_state": dict(self.affective_state or {}),
             "silence_pressure": round(float(self.silence_pressure), 3),
             "social_pressure": round(float(self.social_pressure), 3),
             "curiosity_pressure": round(float(self.curiosity_pressure), 3),
@@ -1136,6 +1140,7 @@ class PersistentInternalState:
             confidence=_clamp(data.get("confidence", 0.44)),
             fatigue=_clamp(data.get("fatigue", 0.12)),
             tenderness=_clamp(data.get("tenderness", 0.16)),
+            affective_state=dict(data.get("affective_state") or {}) if isinstance(data.get("affective_state"), dict) else {},
             silence_pressure=_clamp(data.get("silence_pressure", 0.06)),
             social_pressure=_clamp(data.get("social_pressure", 0.03)),
             curiosity_pressure=_clamp(data.get("curiosity_pressure", 0.04)),
@@ -1728,6 +1733,7 @@ class InternalStateEngine:
             confidence=_clamp(_smooth(state.confidence, ni_confidence, inertia=0.84)),
             fatigue=_clamp(_smooth(state.fatigue, fatigue_signal, inertia=0.82)),
             tenderness=_clamp(_smooth(state.tenderness, tenderness_signal, inertia=0.86)),
+            affective_state=dict(state.affective_state or {}),
             silence_pressure=_clamp(_smooth(state.silence_pressure, silence_signal, inertia=0.78)),
             social_pressure=_clamp(_smooth(state.social_pressure, social_pressure_signal, inertia=0.72)),
             curiosity_pressure=_clamp(_smooth(state.curiosity_pressure, curiosity_pressure_signal, inertia=0.74)),
@@ -1957,6 +1963,7 @@ class InternalStateEngine:
             confidence=state.confidence,
             fatigue=state.fatigue,
             tenderness=committed_tenderness,
+            affective_state=dict(state.affective_state or {}),
             silence_pressure=silence_pressure,
             social_pressure=pressure_values["social_pressure"],
             curiosity_pressure=pressure_values["curiosity_pressure"],

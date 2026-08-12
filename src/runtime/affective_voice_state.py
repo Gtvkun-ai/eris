@@ -2,16 +2,15 @@
 """Projection duy nhất từ mood sống sang giọng public của ERIS.
 
 V39 sửa một lỗi kiến trúc khá ngớ ngẩn nhưng dễ mắc: personality từng vô tình
-được dùng như một *nhiệt độ giọng cố định* (ấm kín / lạnh / restrained). Trong
-khi đó runtime đã có mood duy trì thật ở ``PersistentInternalState`` và mood
-quỹ đạo trong ``PersonalityProfile``. Kết quả là state có thay đổi nhưng writer
-lại bị prompt kéo về cùng một giọng nền.
+được dùng như một *nhiệt độ giọng cố định* (ấm kín / lạnh / restrained). V43
+đóng nốt phần còn thiếu: ``PersistentInternalState`` là current affect authority,
+còn ``PersonalityProfile.mood`` chỉ là disposition chậm để state hồi về.
 
 Module này không tạo mood mới và không quyết định speak/silence. Nó chỉ chiếu
 state đã tồn tại thành một ``AffectiveVoiceState`` dùng CHUNG cho direct chat
 và autonomous Surface:
 
-    mood sống + mood dài hạn + quan hệ + personality shape
+    current mood + slow disposition + quan hệ + personality shape
                          ↓
                  AffectiveVoiceState
                     ↙            ↘
@@ -33,8 +32,10 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
 
+from cortex.affective_dynamics import effective_affect_values
 
-AFFECTIVE_VOICE_VERSION = "eris.affective_voice.v39.state_authority"
+
+AFFECTIVE_VOICE_VERSION = "eris.affective_voice.v43.event_driven_mood"
 
 
 def _clamp01(value: object, default: float = 0.0) -> float:
@@ -59,6 +60,22 @@ def _signed(value: object, default: float = 0.0) -> float:
 
 def _mapping(value: object) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
+
+
+def _affective_parts(state: object | None) -> tuple[Mapping[str, Any], Mapping[str, Any], Mapping[str, Any]]:
+    payload = _mapping(getattr(state, "affective_state", {}) if state is not None else {})
+    mood = _mapping(payload.get("mood"))
+    impulse = _mapping(payload.get("impulse"))
+    return payload, mood, impulse
+
+
+def _effective_unit(base: float, impulse: object, *, gain: float = 0.62) -> float:
+    value = float(base) + _signed(impulse, 0.0) * float(gain)
+    return _clamp01(value)
+
+
+def _effective_signed(base: float, impulse: object, *, gain: float = 0.58) -> float:
+    return _signed(float(base) + _signed(impulse, 0.0) * float(gain))
 
 
 def _attr(state: object | None, name: str, default: float = 0.0) -> float:
@@ -93,7 +110,14 @@ class AffectiveVoiceState:
     anxiety: float = 0.0
     playfulness: float = 0.0
     yearning: float = 0.0
+    embarrassment: float = 0.0
     restraint: float = 0.0
+
+    # Provenance biểu đạt, không phải fact semantic. Dùng để debug mood có thật
+    # sự đổi vì event hay writer đang tự diễn ngoài state.
+    affect_event_kind: str = ""
+    affect_event_age_seconds: float = 0.0
+    affect_impulse_strength: float = 0.0
 
     # Personality chỉ là shape, không phải affect target.
     disclosure_selectivity: float = 0.0
@@ -137,7 +161,8 @@ class AffectiveVoiceState:
             f"valence={self.valence:+.2f}, arousal={self.arousal:.2f}, curiosity={self.curiosity:.2f}, "
             f"social_energy={self.social_energy:.2f}, delight={self.delight:.2f}, playfulness={self.playfulness:.2f}, "
             f"tenderness={self.tenderness:.2f}, attachment={self.attachment:.2f}, irritation={self.irritation:.2f}, "
-            f"sadness={self.sadness:.2f}, anxiety={self.anxiety:.2f}, fatigue={self.fatigue:.2f}, restraint={self.restraint:.2f}"
+            f"sadness={self.sadness:.2f}, anxiety={self.anxiety:.2f}, embarrassment={self.embarrassment:.2f}, "
+            f"fatigue={self.fatigue:.2f}, restraint={self.restraint:.2f}"
         )
         shape = (
             f"disclosure_selectivity={self.disclosure_selectivity:.2f}, social_guardedness={self.social_guardedness:.2f}, "
@@ -161,6 +186,8 @@ class AffectiveVoiceState:
             f"Derived expression: expressive_drive={self.expressive_drive:.2f}, affiliation={self.affiliation:.2f}, "
             f"withdrawal={self.withdrawal:.2f}. Trajectory since previous sample: {trajectory}; "
             f"strength={self.trajectory_strength:.2f}; stable_for≈{self.stable_for_seconds:.0f}s. "
+            f"Last affect event={self.affect_event_kind or 'none'} age≈{self.affect_event_age_seconds:.0f}s "
+            f"impulse_strength={self.affect_impulse_strength:.2f}. "
             "Affect hiện tại là authority cho hướng và cường độ cảm xúc trong lời nói. Personality chỉ định hình cadence, "
             "độ tự bộc lộ, directness và humor; không được kéo affect về một preset ấm/lạnh/điềm/restrained cố định. "
             "Nếu state đang vui/hứng thú thì cho phép câu sáng, nhanh hoặc playful hơn thật sự; nếu đang bực thì được có cạnh; "
@@ -194,26 +221,54 @@ class AffectiveVoiceTracker:
         current_time = float(now if now is not None else time.time())
         personality_mood = _mapping(getattr(personality, "mood", {}))
         temperament = _mapping(getattr(personality, "temperament", {}))
+        affect_meta, dynamic_mood, impulse = _affective_parts(internal_state)
 
-        valence = _signed(getattr(internal_state, "valence", 0.0) if internal_state is not None else 0.0)
-        arousal = _attr(internal_state, "arousal", personality_mood.get("energy", 0.2))
-        curiosity = _attr(internal_state, "curiosity", personality_mood.get("curiosity", 0.4))
-        social_energy = _attr(internal_state, "social_energy", personality_mood.get("energy", 0.3))
-        attachment = _attr(internal_state, "attachment", 0.0)
-        tenderness_internal = _attr(internal_state, "tenderness", 0.0)
-        irritation_internal = _attr(internal_state, "irritation", 0.0)
+        # V43: PersistentInternalState + event impulse là current affect authority.
+        # PersonalityProfile.mood chỉ còn làm fallback cho profile cũ chưa từng
+        # nhận một affect event V43, không được giữ current mood ở baseline tĩnh.
+        has_dynamic_affect = bool(dynamic_mood or impulse or affect_meta.get("version"))
+        raw_valence = _signed(getattr(internal_state, "valence", 0.0) if internal_state is not None else 0.0)
         fatigue = _attr(internal_state, "fatigue", 0.0)
         restraint = _attr(internal_state, "restraint_pressure", 0.0)
         playful_pressure = _attr(internal_state, "playful_pressure", 0.0)
 
-        delight = _clamp01(personality_mood.get("delight", max(0.0, valence)))
-        sadness = _clamp01(personality_mood.get("sadness", max(0.0, -valence)))
-        anxiety = _clamp01(personality_mood.get("anxiety_tension", 0.0))
-        mischief = _clamp01(personality_mood.get("mischief", 0.0))
-        yearning = _clamp01(personality_mood.get("yearning", 0.0))
-        tenderness = _clamp01(max(tenderness_internal, personality_mood.get("tenderness", 0.0)))
-        irritation = _clamp01(max(irritation_internal, personality_mood.get("irritation", 0.0)))
-        playfulness = _clamp01(mischief * 0.62 + playful_pressure * 0.38)
+        if has_dynamic_affect and internal_state is not None:
+            # Một projection duy nhất cho text/TTS/body. Đừng copy lại gain ở
+            # ba chỗ rồi vài version sau mỗi nơi có một Eris hơi khác nhau.
+            live = effective_affect_values(internal_state)
+            valence = _signed(live.get("valence", raw_valence))
+            arousal = _clamp01(live.get("arousal", _attr(internal_state, "arousal", 0.2)))
+            curiosity = _clamp01(live.get("curiosity", _attr(internal_state, "curiosity", 0.4)))
+            social_energy = _clamp01(live.get("social_energy", _attr(internal_state, "social_energy", 0.3)))
+            attachment = _clamp01(live.get("attachment", _attr(internal_state, "attachment", 0.0)))
+            tenderness = _clamp01(live.get("tenderness", _attr(internal_state, "tenderness", 0.0)))
+            irritation = _clamp01(live.get("irritation", _attr(internal_state, "irritation", 0.0)))
+            delight = _clamp01(live.get("delight", 0.0))
+            sadness = _clamp01(live.get("sadness", 0.0))
+            anxiety = _clamp01(live.get("anxiety", 0.0))
+            playfulness = _clamp01(live.get("playfulness", 0.0))
+            yearning = _clamp01(live.get("yearning", 0.0))
+            embarrassment = _clamp01(live.get("embarrassment", 0.0))
+        else:
+            # Legacy/profile chưa từng nhận V43 event: giữ compatibility để
+            # startup không mất giọng, nhưng đây không còn là current authority.
+            valence = raw_valence
+            arousal = _attr(internal_state, "arousal", personality_mood.get("energy", 0.2))
+            curiosity = _attr(internal_state, "curiosity", personality_mood.get("curiosity", 0.4))
+            social_energy = _attr(internal_state, "social_energy", personality_mood.get("energy", 0.3))
+            attachment = _attr(internal_state, "attachment", 0.0)
+            tenderness = _attr(internal_state, "tenderness", personality_mood.get("tenderness", 0.0))
+            irritation = _attr(internal_state, "irritation", personality_mood.get("irritation", 0.0))
+            delight = _clamp01(personality_mood.get("delight", max(0.0, raw_valence)))
+            sadness = _clamp01(personality_mood.get("sadness", max(0.0, -raw_valence)))
+            anxiety = _clamp01(personality_mood.get("anxiety_tension", 0.0))
+            playfulness = _clamp01(personality_mood.get("mischief", 0.0) * 0.62 + playful_pressure * 0.38)
+            yearning = _clamp01(personality_mood.get("yearning", 0.0))
+            embarrassment = _clamp01(personality_mood.get("embarrassment", 0.0))
+        last_event_at = float(affect_meta.get("last_event_at", 0.0) or 0.0)
+        affect_event_age = max(0.0, current_time - last_event_at) if last_event_at > 0.0 else 0.0
+        affect_event_kind = str(affect_meta.get("last_event_kind", "") or "")
+        affect_impulse_strength = max((abs(_signed(v, 0.0)) for v in impulse.values()), default=0.0)
 
         disclosure_selectivity = _clamp01(temperament.get("self_disclosure_selectivity", 0.5))
         social_guardedness = _clamp01(temperament.get("social_guardedness", 0.5))
@@ -253,6 +308,7 @@ class AffectiveVoiceTracker:
             "irritation": irritation,
             "sadness": sadness,
             "anxiety": anxiety,
+            "embarrassment": embarrassment,
             "fatigue": fatigue,
             "restraint": restraint,
             "affiliation": affiliation,
@@ -295,7 +351,11 @@ class AffectiveVoiceTracker:
             anxiety=anxiety,
             playfulness=playfulness,
             yearning=yearning,
+            embarrassment=embarrassment,
             restraint=restraint,
+            affect_event_kind=affect_event_kind,
+            affect_event_age_seconds=affect_event_age,
+            affect_impulse_strength=affect_impulse_strength,
             disclosure_selectivity=disclosure_selectivity,
             social_guardedness=social_guardedness,
             directness_trait=directness_trait,

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from memory.semantic_memory import normalize_text
+from memory.memory_admission import MemoryAdmissionPolicy
 
 from .action_memory import ActionMemoryStore
 from .clarification import MemoryClarificationPolicy
@@ -44,6 +45,7 @@ class ProfileContextCompiler:
         action_store: ActionMemoryStore | None = None,
         clarification_policy: MemoryClarificationPolicy | None = None,
         config: ProfileContextCompilerConfig | None = None,
+        admission_policy: MemoryAdmissionPolicy | None = None,
     ) -> None:
         self.profile_store = profile_store
         self.episode_store = episode_store
@@ -51,6 +53,7 @@ class ProfileContextCompiler:
         self.action_store = action_store
         self.clarification_policy = resolve_dependency(clarification_policy, lambda: MemoryClarificationPolicy())
         self.config = resolve_dependency(config, lambda: ProfileContextCompilerConfig())
+        self.admission_policy = resolve_dependency(admission_policy, lambda: MemoryAdmissionPolicy())
 
     def compile(
         self,
@@ -64,14 +67,22 @@ class ProfileContextCompiler:
         active_scope = scope or UserMemoryScope()
         resolved_domain = domain or infer_domain(query)
         budget = max(160, int(token_budget or self.config.default_token_budget))
-        # Giữ cả inferred mức trung gian để policy có thể yêu cầu xác nhận.
-        # Chúng không được tự động dùng như fact; ``use_mode`` bên dưới kiểm soát việc đó.
-        records = [
-            r for r in self.profile_store.all()
-            if r.scope.matches(active_scope)
-            and (include_sensitive or r.sensitivity not in {"private", "sensitive"})
-            and (r.explicitness != "inferred" or r.confidence >= self.clarification_policy.clarify_threshold)
-        ]
+        # V41: profile cũng phải qua admission trước relevance. Một record model suy đoán
+        # không được vào prompt chỉ vì path khớp query. Explicit user memory vẫn có
+        # quyền ưu tiên cao nhất; observed/inferred cần evidence thật.
+        records: list[ProfileRecord] = []
+        admission_rejected: list[str] = []
+        for record in self.profile_store.all():
+            if not record.scope.matches(active_scope):
+                continue
+            if not include_sensitive and record.sensitivity in {"private", "sensitive"}:
+                admission_rejected.append(f"{record.path}:sensitive")
+                continue
+            decision = self.admission_policy.decide_profile_record(record)
+            if not decision.admitted:
+                admission_rejected.append(f"{record.path}:{decision.reason}")
+                continue
+            records.append(record)
         q_vec = self._query_vector(query)
         scored: list[tuple[float, ProfileRecord, str]] = []
         for record in records:
@@ -127,7 +138,13 @@ class ProfileContextCompiler:
             action_context=action_context,
             clarifications=tuple(dict.fromkeys(clarifications)),
             token_budget=budget,
-            diagnostics=(f"profile_candidates={len(records)}", f"selected={len(items)}", f"domain={resolved_domain}"),
+            diagnostics=(
+                f"profile_candidates={len(records)}",
+                f"selected={len(items)}",
+                f"admission_rejected={len(admission_rejected)}",
+                f"domain={resolved_domain}",
+                *(f"reject:{row}" for row in admission_rejected[:8]),
+            ),
         )
 
     def _score(

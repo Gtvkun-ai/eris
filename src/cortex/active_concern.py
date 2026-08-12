@@ -21,7 +21,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Iterable, Mapping
 
 
-ACTIVE_CONCERN_VERSION = "eris.cognitive_continuity.v40.active_concern"
+ACTIVE_CONCERN_VERSION = "eris.cognitive_continuity.v42.event_driven_concern"
 
 
 def clamp01(value: Any, default: float = 0.0) -> float:
@@ -122,25 +122,35 @@ def private_concern_view(
     recurrence = max(1, int(getattr(concern, "recurrence", 1) or 1))
     mutation_count = max(0, int(meta.get("mutation_count", 0) or 0))
     surfaced_count = max(0, int(meta.get("surfaced_count", 0) or 0))
-    last_mutation = float(meta.get("last_mutation_at", updated) or updated)
+    last_mutation = float(meta.get("last_mutation_at", 0.0) or 0.0)
+    last_event = float(meta.get("last_event_at", updated) or updated)
     last_surface = float(meta.get("last_surfaced_at", 0.0) or 0.0)
     echo_streak = max(0, int(meta.get("echo_streak", 0) or 0))
+    event_count = max(1, int(meta.get("event_count", recurrence) or recurrence))
 
-    # Persistence là khả năng còn treo, không phải áp lực nói.
+    # Persistence là khả năng còn treo, không phải áp lực nói. Recurrence chỉ giữ
+    # một ý sống, nó không được trực tiếp biến thành novelty/speech pressure.
     recurrence_term = min(1.0, math.log1p(recurrence) / math.log(8.0))
     freshness = 1.0 if updated_age <= 300.0 else max(0.12, 1.0 - (updated_age - 300.0) / 7200.0)
-    persistence = clamp01(0.42 * pressure + 0.33 * recurrence_term + 0.25 * freshness)
+    persistence = clamp01(0.44 * pressure + 0.28 * recurrence_term + 0.28 * freshness)
     tension = clamp01(0.68 * pressure + 0.32 * uncertainty)
 
-    mutation_age = max(0.0, current - last_mutation)
-    mutation_freshness = 1.0 if mutation_count and mutation_age <= 600.0 else max(0.0, 1.0 - mutation_age / 3600.0)
-    evidence_count = len(tuple(getattr(concern, "evidence_ids", ()) or ()))
+    # V42: không có mutation thì mutation_freshness PHẢI bằng 0. V40 vô tình
+    # cho branch else vẫn trả gần 1.0, khiến concern chưa từng có insight mới mà
+    # novelty cứ ~0.7 suốt nhiều phút. Một dòng nhỏ, một vòng rumination to đùng.
+    if mutation_count > 0 and last_mutation > 0.0:
+        mutation_age = max(0.0, current - last_mutation)
+        mutation_freshness = 1.0 if mutation_age <= 300.0 else max(0.0, 1.0 - (mutation_age - 300.0) / 3300.0)
+    else:
+        mutation_freshness = 0.0
+    event_age = max(0.0, current - last_event)
+    event_freshness = 1.0 if event_age <= 120.0 else max(0.0, 1.0 - (event_age - 120.0) / 1680.0)
     novelty = clamp01(
-        0.20
-        + 0.26 * mutation_freshness
-        + min(0.18, evidence_count * 0.025)
-        + 0.12 * uncertainty
-        - min(0.34, echo_streak * 0.07)
+        0.08
+        + 0.30 * mutation_freshness
+        + 0.24 * event_freshness
+        + 0.08 * uncertainty
+        - min(0.42, echo_streak * 0.095)
     )
 
     if last_surface > 0.0:
@@ -148,7 +158,12 @@ def private_concern_view(
         recent_surface = max(0.0, 1.0 - since_surface / 1800.0)
     else:
         recent_surface = 0.0
-    habituation = clamp01(min(0.78, surfaced_count * 0.18) * (0.35 + 0.65 * recent_surface))
+    surface_habituation = min(0.72, surfaced_count * 0.18) * (0.35 + 0.65 * recent_surface)
+    echo_habituation = min(0.82, echo_streak * 0.16)
+    # Nhiều event nhưng không mutation cũng là dấu hiệu lờn. Không cần Surface
+    # phải nói trước thì habituation mới tồn tại.
+    stale_event_habituation = min(0.34, max(0, event_count - mutation_count - 1) * 0.055)
+    habituation = clamp01(max(surface_habituation, echo_habituation, stale_event_habituation))
 
     activation = clamp01(0.46 * pressure + 0.26 * persistence + 0.18 * uncertainty + 0.10 * novelty)
     speech_pressure = clamp01(
@@ -202,7 +217,9 @@ def private_concern_view(
         metadata={
             "status": status,
             "echo_streak": echo_streak,
+            "event_count": event_count,
             "open_question_count": len(tuple(getattr(concern, "open_questions", ()) or ())),
+            "related_concern_ids": list(meta.get("related_concern_ids") or ())[:6],
         },
     )
 
@@ -344,28 +361,32 @@ def agenda_concern_view(
     )
 
 
-def merge_concern_views(views: Iterable[ActiveConcernView], *, overlap_threshold: float = 0.52) -> tuple[ActiveConcernView, ...]:
-    """Gộp các projection semantic trùng mà không cộng áp lực hai lần.
+def merge_concern_views(views: Iterable[ActiveConcernView], *, overlap_threshold: float = 0.86) -> tuple[ActiveConcernView, ...]:
+    """Dedupe projection theo identity/provenance, KHÔNG merge chỉ vì cùng vibe.
 
-    Khi PrivateConcern và ThoughtStream cùng nói về một chuyện, ta lấy max/bounded
-    signals chứ không cộng. Nếu cộng, việc có nhiều subsystem sẽ tự biến thành bằng
-    chứng rằng concern quan trọng hơn, một vòng tự khuếch đại khá máy móc.
+    V40 dùng semantic overlap thuần nên "im lặng", "maybe", "hiện diện" có thể
+    dần thành một mega-concern. V42 chỉ gộp khi cùng concern_id hoặc có evidence
+    chung và semantic rất gần. Ý liên quan được giữ riêng; ConcernStore đã link nó.
     """
     merged: list[ActiveConcernView] = []
     for view in views:
         if not view.subject:
             continue
         match_index = -1
-        best = 0.0
         for idx, existing in enumerate(merged):
-            score = semantic_overlap(view.subject, existing.subject)
-            if score >= overlap_threshold and score > best:
-                best, match_index = score, idx
+            if view.concern_id == existing.concern_id:
+                match_index = idx
+                break
+            shared_refs = set(view.evidence_refs) & set(existing.evidence_refs)
+            overlap = semantic_overlap(view.subject, existing.subject)
+            shared_tokens = len(semantic_tokens(view.subject) & semantic_tokens(existing.subject))
+            if shared_refs and shared_tokens >= 3 and overlap >= overlap_threshold:
+                match_index = idx
+                break
         if match_index < 0:
             merged.append(view)
             continue
         old = merged[match_index]
-        # Ưu tiên ID concern persistent nếu một phía là PrivateConcern.
         keeper, other = (old, view) if not old.concern_id.startswith(("thought:", "agenda:")) else (view, old)
         if keeper.concern_id.startswith(("thought:", "agenda:")) and not other.concern_id.startswith(("thought:", "agenda:")):
             keeper, other = other, keeper

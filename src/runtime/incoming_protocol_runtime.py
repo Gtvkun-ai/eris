@@ -119,7 +119,11 @@ class IncomingProtocolRuntimeMixin:
         request_id = str(msg.get("request_id", "") or "")
         kernel = getattr(self, "memory_kernel", None)
         living_user = getattr(kernel, "living_user", None)
-        result = handle_memory_panel_request(living_user, msg)
+        result = handle_memory_panel_request(
+            living_user,
+            msg,
+            cleanup_service=getattr(self, "memory_gc_service", None),
+        )
         self._send_runtime_json({
             "type": "memory_panel_ack",
             "parse_mode": "memory_panel_ack",

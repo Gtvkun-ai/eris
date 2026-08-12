@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -20,7 +21,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, Iterable, Mapping
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def _clean(value: Any, limit: int = 420) -> str:
@@ -33,6 +34,20 @@ def _clamp01(value: Any, default: float = 0.0) -> float:
         return max(0.0, min(1.0, float(value)))
     except (TypeError, ValueError):
         return default
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().casefold() in {"1", "true", "yes", "on", "y"}
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, "") or default)
+    except Exception:
+        return float(default)
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +84,22 @@ class BehaviorSignal:
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["evidence"] = list(self.evidence)
+        return data
+
+    def to_persisted_dict(self, *, include_public_text: bool = False) -> dict[str, Any]:
+        """Bản ghi bền không nhân bản public prose vào vùng cognition-adjacent.
+
+        Raw public text vẫn tồn tại ở transcript/audit đúng chỗ của nó. Behavior journal
+        chỉ cần hậu quả + hint + hash để dedupe/forensic. Nhét nguyên câu lỗi vào đây rồi
+        feed lại prompt là cách rất hiệu quả để dạy model lặp lại chính lỗi của mình.
+        """
+        data = self.to_dict()
+        text = str(data.get("public_text") or "")
+        data["public_text_hash"] = hashlib.sha1(text.encode("utf-8")).hexdigest()[:16] if text else ""
+        if not include_public_text:
+            data["public_text"] = ""
+        data["prompt_eligible"] = False
+        data["source_class"] = "audit_runtime"
         return data
 
     @classmethod
@@ -122,10 +153,12 @@ def attach_behavior_signal(decision: Any, signal: BehaviorSignal) -> Any:
 class BehaviorObservationJournal:
     """Ring journal bền vững cho hậu quả hành vi, không phải bộ lọc câu chữ."""
 
-    def __init__(self, path: str | os.PathLike[str] | None = None, *, max_records: int = 240, logger: Any = None) -> None:
+    def __init__(self, path: str | os.PathLike[str] | None = None, *, max_records: int = 160, ttl_seconds: float | None = None, logger: Any = None) -> None:
         default = os.environ.get("ERIS_BEHAVIOR_OBSERVATION_PATH", "").strip()
         self.path = Path(path or default or "memory_core/behavior_observations.jsonl")
         self.max_records = max(32, int(max_records))
+        self.ttl_seconds = max(3600.0, float(ttl_seconds if ttl_seconds is not None else _env_float("ERIS_BEHAVIOR_OBSERVATION_TTL_SEC", 72 * 3600.0)))
+        self.store_public_text = _env_flag("ERIS_BEHAVIOR_STORE_PUBLIC_TEXT", False)
         self.logger = logger
         self._lock = RLock()
         self._records: list[BehaviorSignal] = []
@@ -136,14 +169,26 @@ class BehaviorObservationJournal:
         try:
             if not self.path.exists():
                 return
-            lines = self.path.read_text(encoding="utf-8").splitlines()[-self.max_records :]
+            lines = self.path.read_text(encoding="utf-8").splitlines()[-self.max_records * 2 :]
+            cutoff = time.time() - self.ttl_seconds
             for line in lines:
                 if not line.strip():
                     continue
                 signal = BehaviorSignal.from_mapping(json.loads(line))
+                if signal.created_at < cutoff:
+                    continue
+                # V41: legacy rows có public_text được sanitize ngay khi load vào journal.
+                if signal.public_text and not self.store_public_text:
+                    signal = BehaviorSignal(
+                        family=signal.family, source=signal.source, confidence=signal.confidence,
+                        severity=signal.severity, evidence=signal.evidence, consequence=signal.consequence,
+                        next_turn_hint=signal.next_turn_hint, public_text="", turn_id=signal.turn_id,
+                        channel=signal.channel, created_at=signal.created_at, schema_version=SCHEMA_VERSION,
+                    )
                 if signal.signature not in self._signatures:
                     self._records.append(signal)
                     self._signatures.add(signal.signature)
+            self._records = self._records[-self.max_records :]
         except Exception as exc:
             if self.logger is not None:
                 self.logger.warning("[behavior-observation] load failed: %s", exc)
@@ -159,13 +204,14 @@ class BehaviorObservationJournal:
                 added.append(signal)
             if not added:
                 return ()
-            self._records = self._records[-self.max_records :]
+            cutoff = time.time() - self.ttl_seconds
+            self._records = [item for item in self._records if item.created_at >= cutoff][-self.max_records :]
             self._signatures = {item.signature for item in self._records}
             try:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 temp = self.path.with_suffix(self.path.suffix + ".tmp")
                 temp.write_text(
-                    "\n".join(json.dumps(item.to_dict(), ensure_ascii=False) for item in self._records) + "\n",
+                    "\n".join(json.dumps(item.to_persisted_dict(include_public_text=self.store_public_text), ensure_ascii=False) for item in self._records) + "\n",
                     encoding="utf-8",
                 )
                 temp.replace(self.path)
@@ -176,7 +222,27 @@ class BehaviorObservationJournal:
 
     def recent(self, limit: int = 8) -> tuple[BehaviorSignal, ...]:
         with self._lock:
+            cutoff = time.time() - self.ttl_seconds
+            self._records = [item for item in self._records if item.created_at >= cutoff][-self.max_records :]
+            self._signatures = {item.signature for item in self._records}
             return tuple(self._records[-max(1, int(limit)) :])
+
+    def compact(self) -> dict[str, int]:
+        """TTL/prune + rewrite bền, dùng cho DeepSeek cleanup/maintenance."""
+        with self._lock:
+            before = len(self._records)
+            cutoff = time.time() - self.ttl_seconds
+            self._records = [item for item in self._records if item.created_at >= cutoff][-self.max_records :]
+            self._signatures = {item.signature for item in self._records}
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+                body = "\n".join(json.dumps(item.to_persisted_dict(include_public_text=self.store_public_text), ensure_ascii=False) for item in self._records)
+                tmp.write_text((body + "\n") if body else "", encoding="utf-8")
+                tmp.replace(self.path)
+            except Exception:
+                pass
+            return {"before": before, "after": len(self._records), "removed": max(0, before - len(self._records))}
 
     def prompt_context(self, *, limit: int = 6) -> str:
         signals = self.recent(limit)

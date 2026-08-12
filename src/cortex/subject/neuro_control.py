@@ -449,11 +449,20 @@ class NeuroActionSelector:
         recent_unsolicited = _clamp01(runtime_context.get("recent_unsolicited_speech", 0.0))
         user_response_rate = _clamp01(runtime_context.get("user_response_rate", 1.0), 1.0)
         unanswered_penalty = recent_unsolicited * (0.55 + 0.45 * (1.0 - user_response_rate))
+        reply_expected = bool(runtime_context.get("reply_expected", False))
+        user_busy = bool(runtime_context.get("user_busy", False))
+        policy_cost = _clamp01(arguments.get("initiative_policy_cost", 0.0))
+        policy_floor = _clamp01(runtime_context.get("initiative_policy_max_cost", 0.0))
+        social_wait = 1.0 if (reply_expected or user_busy) else 0.0
 
         if action == "speak":
             score += 0.035 * broadcast.social_drive
             score -= 0.10 * interruption_cost
             score -= 0.13 * unanswered_penalty
+            # V42: baton/busy/cooldown/repeat được cân ở đúng nơi có authority.
+            # Đây là cost mềm trước commit, không phải downstream veto.
+            score -= 0.24 * policy_cost
+            score -= 0.14 * social_wait
             # Seed quality belongs upstream of the public decision. A thin seed
             # should lose utility here rather than win Neuro and get censored by
             # a downstream collection of special cases.
@@ -468,9 +477,13 @@ class NeuroActionSelector:
             score += 0.025 * (1.0 - broadcast.social_drive)
             score += 0.08 * interruption_cost
             score += 0.11 * unanswered_penalty
+            score += 0.13 * social_wait
+            score += 0.08 * policy_floor
         elif action == "body_only":
             score += 0.035 * interruption_cost
             score += 0.04 * unanswered_penalty
+            score += 0.07 * social_wait
+            score += 0.04 * policy_floor
         return score
 
     @staticmethod

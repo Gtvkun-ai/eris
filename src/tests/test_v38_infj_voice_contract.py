@@ -114,7 +114,7 @@ def test_v38_direct_writer_uses_slightly_more_wording_entropy_without_changing_a
     assert out["should_speak"] is True
     assert client.kwargs["temperature"] == 0.56
     assert client.kwargs["response_format"]["json_schema"]["schema"]["required"] == [
-        "should_speak", "text", "speech_text"
+        "should_speak", "text", "speech_text", "claim_manifest"
     ]
 
 

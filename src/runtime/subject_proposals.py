@@ -35,6 +35,8 @@ class AutonomousProposalSource:
         *,
         turn_id: str,
         active_concerns: Sequence[Mapping[str, Any]] = (),
+        policy_signal: Mapping[str, Any] | None = None,
+        affective_bias: Mapping[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         affordance_id = str(getattr(affordance, "affordance_id", "") or "").strip()
         candidate = getattr(affordance, "candidate", None)
@@ -66,6 +68,9 @@ class AutonomousProposalSource:
         metadata = metadata if isinstance(metadata, dict) else dict(metadata) if hasattr(metadata, "items") else {}
         intention_id = str(metadata.get("intention_id") or "").strip()
         motive_kind = str(metadata.get("motive_kind") or "").strip().lower()
+        speech_act = str(getattr(candidate, "speech_act", "") or "").strip().lower()
+        tone = str(getattr(candidate, "tone", "") or "").strip().lower()
+        affect_bias = dict(affective_bias or {})
 
         need_ids: list[str] = []
         lowered = f"{owner} {kind}".casefold()
@@ -87,16 +92,20 @@ class AutonomousProposalSource:
             for item in (getattr(candidate, "evidence_refs", ()) or ())
             if str(item or "").strip()
         ) or (turn_id, affordance_id)
+        policy = dict(policy_signal or {})
+        policy_cost = clamp01(policy.get("total_cost", 0.0), 0.0)
+
         proposal = {
             "proposal_id": f"proposal:{affordance_id}",
             "action_kind": "speak",
             "arguments": {
                 "affordance_id": affordance_id,
                 "semantic_target": topic,
-                "speech_act": str(getattr(candidate, "speech_act", "") or ""),
-                "tone": str(getattr(candidate, "tone", "") or ""),
+                "speech_act": speech_act,
+                "tone": tone,
                 "source_owner": owner,
                 "candidate_kind": kind,
+                "requires_grounding": requires_grounding,
                 "intrusion_risk": intrusion,
                 **({
                     "seed_id": seed_id,
@@ -119,6 +128,15 @@ class AutonomousProposalSource:
                 **({"initiative_motive": motive_kind} if motive_kind else {}),
                 "context": "autonomous",
                 "skill_id": "dialogue",
+                # V42: policy xã hội/timing chỉ là feature trước Neuro. Không có
+                # allow/deny ở đây; proposal mang chi phí để Neuro tự cân cùng motive.
+                "initiative_policy_cost": policy_cost,
+                "initiative_policy_signal": policy,
+                "affective_selection_bias": {
+                    key: round(clamp01(value, 0.0), 3)
+                    for key, value in affect_bias.items()
+                    if key in {"exploration_pull", "playful_pull", "social_withdrawal", "friction_salience"}
+                },
             },
             "supporting_need_ids": tuple(dict.fromkeys(need_ids)),
             "expected_need_relief": max(
@@ -149,6 +167,36 @@ class AutonomousProposalSource:
                 **({"continuity": 0.58} if "continuity" in need_ids else {}),
             },
         }
+
+        if policy_cost > 0.0:
+            # Không biến policy thành veto trá hình. Cost chỉ làm speech kém hấp dẫn
+            # tương ứng với baton/busy/cooldown/repeat trước khi Neuro commit.
+            proposal["substrate_cost"] = clamp01(float(proposal["substrate_cost"]) + 0.34 * policy_cost)
+            proposal["commitment_conflict"] = clamp01(float(proposal["commitment_conflict"]) + 0.46 * policy_cost)
+            proposal["expected_need_relief"] = clamp01(float(proposal["expected_need_relief"]) * (1.0 - 0.28 * policy_cost))
+            proposal["expected_action_efficacy"] = clamp01(float(proposal["expected_action_efficacy"]) * (1.0 - 0.20 * policy_cost))
+            proposal["need_effects"]["sovereignty"] = min(
+                float(proposal["need_effects"].get("sovereignty", 0.0) or 0.0),
+                -0.22 * policy_cost,
+            )
+
+        # V43: mood chỉ bias selection nhẹ trước Neuro. Không action veto, không
+        # hạ grounding threshold, không cho playful mood tự cấp quyền nói.
+        exploration_pull = clamp01(affect_bias.get("exploration_pull", 0.0), 0.0)
+        playful_pull = clamp01(affect_bias.get("playful_pull", 0.0), 0.0)
+        social_withdrawal = clamp01(affect_bias.get("social_withdrawal", 0.0), 0.0)
+        friction_salience = clamp01(affect_bias.get("friction_salience", 0.0), 0.0)
+        semantic_shape = f"{owner} {kind} {speech_act} {tone}".casefold()
+        if any(token in semantic_shape for token in ("curiosity", "probe", "investigat", "question", "association", "explore")):
+            proposal["expected_epistemic_value"] = clamp01(float(proposal["expected_epistemic_value"]) + 0.08 * exploration_pull)
+            proposal["expected_action_efficacy"] = clamp01(float(proposal["expected_action_efficacy"]) + 0.03 * exploration_pull)
+        if any(token in semantic_shape for token in ("play", "tease", "joke", "banter", "humor")):
+            proposal["expected_need_relief"] = clamp01(float(proposal["expected_need_relief"]) + 0.055 * playful_pull)
+        if any(token in semantic_shape for token in ("repair", "correct", "contradict", "clarif")):
+            proposal["expected_epistemic_value"] = clamp01(float(proposal["expected_epistemic_value"]) + 0.055 * friction_salience)
+        if social_withdrawal > 0.0:
+            proposal["substrate_cost"] = clamp01(float(proposal["substrate_cost"]) + 0.085 * social_withdrawal)
+            proposal["commitment_conflict"] = clamp01(float(proposal["commitment_conflict"]) + 0.055 * social_withdrawal)
 
         # V40: proposal được gắn với concern đang sống nếu semantic thực sự trùng.
         # Concern không override action; nó chỉ làm Neuro thấy continuity, novelty
@@ -210,16 +258,32 @@ class AutonomousProposalSource:
             self_context = context.get("self_context") if isinstance(context.get("self_context"), Mapping) else {}
             raw_concerns = self_context.get("active_concerns", ()) if isinstance(self_context, Mapping) else ()
         active_concerns = tuple(item for item in tuple(raw_concerns or ()) if isinstance(item, Mapping))
+        raw_policy_signals = context.get("initiative_policy_signals")
+        policy_signals = raw_policy_signals if isinstance(raw_policy_signals, Mapping) else {}
+        raw_affective_bias = context.get("affective_selection_bias")
+        affective_bias = raw_affective_bias if isinstance(raw_affective_bias, Mapping) else {}
         proposals = [
             item
             for item in (
-                self.from_affordance(affordance, turn_id=turn_id, active_concerns=active_concerns)
+                self.from_affordance(
+                    affordance,
+                    turn_id=turn_id,
+                    active_concerns=active_concerns,
+                    policy_signal=(
+                        policy_signals.get(str(getattr(affordance, "affordance_id", "") or ""), {})
+                        if isinstance(policy_signals, Mapping)
+                        else {}
+                    ),
+                    affective_bias=affective_bias,
+                )
                 for affordance in affordances
             )
             if item is not None
         ]
         public_view = blackboard.public_view() if callable(getattr(blackboard, "public_view", None)) else {}
         reply_expected = bool(public_view.get("reply_expected", getattr(blackboard, "reply_expected", False)))
+        user_busy = bool(getattr(blackboard, "user_busy", False))
+        social_wait = bool(reply_expected or user_busy)
         engagement_active = bool(public_view.get("engagement_active", getattr(blackboard, "engagement_active", False)))
 
         # Chỉ đưa capability-grounded-speech vào khi có context thật đòi hỏi grounding:
@@ -252,7 +316,7 @@ class AutonomousProposalSource:
                 "uncertainty": 0.38,
                 "project_contribution": self._subject.substrate.project_viability * 0.35,
                 "historical_success": 0.50,
-                "commitment_conflict": 0.08 if not reply_expected else 0.28,
+                "commitment_conflict": 0.08 if not social_wait else 0.34,
                 "evidence_refs": (turn_id,),
                 "need_effects": {"coherence": 0.70, "competence": 0.48, "connection": -0.08},
             })
@@ -262,36 +326,41 @@ class AutonomousProposalSource:
                 "action_kind": "silence",
                 "arguments": {"context": "autonomous", "reason_family": "low_pressure_wait"},
                 "supporting_need_ids": ("sovereignty", "coherence"),
-                "expected_need_relief": 0.44 if not reply_expected else 0.18,
+                "expected_need_relief": 0.44 if not social_wait else 0.74,
                 "expected_action_efficacy": 0.96,
                 "expected_epistemic_value": 0.24,
                 "value_congruence": 0.50,
                 "substrate_cost": 0.01,
                 "uncertainty": 0.10,
                 "historical_success": 0.50,
-                "commitment_conflict": 0.62 if reply_expected else 0.04,
+                "commitment_conflict": 0.02 if social_wait else 0.04,
                 "evidence_refs": (turn_id,),
-                "need_effects": {"sovereignty": 0.42, "coherence": 0.22, "connection": -0.72},
+                "need_effects": {
+                    "sovereignty": 0.58 if social_wait else 0.42,
+                    "coherence": 0.42 if social_wait else 0.22,
+                    "connection": -0.08 if social_wait else -0.72,
+                },
             },
             {
                 "proposal_id": f"proposal:body-only:{turn_id}",
                 "action_kind": "body_only",
                 "arguments": {"context": "autonomous", "reason_family": "nonverbal_presence"},
                 "supporting_need_ids": ("connection", "sovereignty"),
-                "expected_need_relief": 0.32 if not engagement_active else 0.16,
+                "expected_need_relief": 0.42 if social_wait else (0.32 if not engagement_active else 0.16),
                 "expected_action_efficacy": 0.80,
                 "expected_epistemic_value": 0.08,
                 "value_congruence": 0.50,
                 "substrate_cost": 0.04,
                 "uncertainty": 0.18,
                 "historical_success": 0.50,
-                "commitment_conflict": 0.18 if reply_expected else 0.02,
+                "commitment_conflict": 0.05 if social_wait else 0.02,
                 "evidence_refs": (turn_id,),
                 "need_effects": {"connection": 0.24, "sovereignty": 0.30},
             },
         ))
         return tuple(proposals), {
             "reply_expected": reply_expected,
+            "user_busy": user_busy,
             "engagement_active": engagement_active,
             "novelty": clamp01(public_view.get("novelty", 0.30), 0.30),
         }

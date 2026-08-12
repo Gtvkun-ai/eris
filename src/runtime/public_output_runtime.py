@@ -33,6 +33,7 @@ from cortex.appetite_system import AppetiteSystem, build_evidence_buffet
 from cortex.connection_drive import ConnectionDrive, ConnectionDriveState
 from cortex.contracts import CognitiveDisturbance, PerceptEvent, SocialPresenceEvent, SubconsciousReport, ThoughtSurface, ThoughtStreamReport, TiPolicyReport
 from cortex.internal_state import InternalStateEngine, PersistentInternalState
+from cortex.affective_dynamics import effective_affect_values
 from cortex.micro_policy import MicroLinePolicy, RelationalContext, SemanticRepeatGuard
 from cortex.subconscious import build_phase1234567_workers
 from cortex.self_observation import SelfObservationEngine
@@ -962,10 +963,14 @@ class PublicOutputRuntimeMixin:
                 "note": note,
             }
 
-        valence = clamp_signed(get_val(appraisal, "valence", value(state, "valence", 0.0)))
+        # V43: panel/stage/TTS đọc cùng affect hiệu dụng với text writer. Không
+        # để avatar bình thản trong lúc public writer vừa nhận một playful impulse.
+        live_affect = effective_affect_values(state)
+        valence = clamp_signed(live_affect.get("valence", get_val(appraisal, "valence", value(state, "valence", 0.0))))
+        live_arousal = clamp01(live_affect.get("arousal", get_val(appraisal, "arousal", value(state, "arousal", 0.0))))
         if valence >= 0.18:
             mood_label = "vui"
-        elif valence <= -0.18 or clamp01(get_val(state, "irritation", 0.0)) >= 0.45:
+        elif valence <= -0.18 or clamp01(live_affect.get("irritation", get_val(state, "irritation", 0.0))) >= 0.45:
             mood_label = "kho_chiu"
         else:
             mood_label = "trung_tinh"
@@ -978,9 +983,9 @@ class PublicOutputRuntimeMixin:
         ))
         stability = clamp01(1.0 - max(
             abs(valence) * 0.50,
-            clamp01(get_val(appraisal, "arousal", value(state, "arousal", 0.0))),
+            live_arousal,
             clamp01(get_val(state, "cognitive_tension", 0.0)),
-            clamp01(get_val(state, "irritation", 0.0)),
+            clamp01(live_affect.get("irritation", get_val(state, "irritation", 0.0))),
         ))
         mood_inertia = clamp01(
             clamp01(get_val(state, "recursive_reactivation_pressure", 0.0)) * 0.34
@@ -996,23 +1001,27 @@ class PublicOutputRuntimeMixin:
                 "label": "vui / kho_chiu / trung_tinh",
                 "value": mood_label,
                 "valence": round(valence, 3),
+                "arousal": round(live_arousal, 3),
+                "delight": round(clamp01(live_affect.get("delight", 0.0)), 3),
+                "playfulness": round(clamp01(live_affect.get("playfulness", 0.0)), 3),
+                "irritation": round(clamp01(live_affect.get("irritation", 0.0)), 3),
                 "state": str(value(self_state, "state_label", "") or value(state, "last_self_state_label", "") or ""),
             },
             "private_mind": getattr(self, "private_mind_digest", {}) or {},
             "private_life": getattr(self, "private_life_digest", {}) or {},
             "items": {
-                "calm_aroused": metric("binh tinh <-> kich thich", get_val(appraisal, "arousal", value(state, "arousal", 0.0)), group="core"),
+                "calm_aroused": metric("binh tinh <-> kich thich", live_arousal, group="core"),
                 "emotional_stability": metric("on dinh cam xuc", stability, group="core"),
                 "mood_inertia": metric("quan tinh mood", mood_inertia, group="core"),
                 "attachment": metric("muc quan tam/gan bo", get_val(state, "attachment", 0.0), group="bond"),
-                "tenderness": metric("diu dang", get_val(appraisal, "tenderness", value(state, "tenderness", 0.0)), group="bond"),
+                "tenderness": metric("diu dang", live_affect.get("tenderness", value(state, "tenderness", 0.0)), group="bond"),
                 "protectiveness": metric("muon bao ve", get_val(appraisal, "protectiveness", value(state, "protectiveness", 0.0)), group="bond"),
                 "emotional_exposure": metric("lo cam xuc nhieu hay it", get_val(relationship, "attachment_visibility", 0.0, is_rel=True), group="bond"),
-                "irritation": metric("kho chiu", get_val(state, "irritation", 0.0), group="friction"),
+                "irritation": metric("kho chiu", live_affect.get("irritation", get_val(state, "irritation", 0.0)), group="friction"),
                 "perceived_rejection": metric("cam giac bi tu choi", get_val(relationship, "rupture", 0.0, is_rel=True), group="friction"),
-                "confrontation": metric("xu huong doi dau", max(float(get_val(appraisal, "threat", 0.0)), float(get_val(state, "irritation", 0.0))), group="friction"),
+                "confrontation": metric("xu huong doi dau", max(float(get_val(appraisal, "threat", 0.0)), float(live_affect.get("irritation", get_val(state, "irritation", 0.0)))), group="friction"),
                 "post_exposure_recoil": metric("rut lai sau khi lo cam xuc", get_val(relationship, "exposure_recoil", 0.0, is_rel=True), group="friction"),
-                "curiosity": metric("to mo", max(float(get_val(state, "curiosity", 0.0)), float(get_val(state, "curiosity_pressure", 0.0))), group="attention"),
+                "curiosity": metric("to mo", max(float(live_affect.get("curiosity", get_val(state, "curiosity", 0.0))), float(get_val(state, "curiosity_pressure", 0.0))), group="attention"),
                 "attention_bias": {
                     "label": "thien huong chu y",
                     "value": str(semantic_frame.get("discourse_relation", "") or value(state, "last_focus_kind", "") or ""),
@@ -1025,7 +1034,7 @@ class PublicOutputRuntimeMixin:
                 "social_pressure": metric("ap luc xa hoi", get_val(state, "social_pressure", 0.0), group="speech"),
                 "forced_reply": metric("bi ep phan hoi", forced_reply, group="speech"),
                 "brevity": metric("xu huong noi ngan", get_val(state, "restraint_pressure", 0.0), group="speech"),
-                "playfulness": metric("muc dua", get_val(state, "playful_pressure", 0.0), group="tone"),
+                "playfulness": metric("muc dua", live_affect.get("playfulness", get_val(state, "playful_pressure", 0.0)), group="tone"),
                 "tease": metric("thich treu", get_val(style, "sarcasm_level", 0.0), group="tone"),
                 "sarcasm": metric("mia mai", get_val(style, "sarcasm_level", 0.0), group="tone"),
                 "warmth": metric("do am ap", get_val(style, "warmth_level", value(appraisal, "tenderness", 0.0)), group="tone"),
