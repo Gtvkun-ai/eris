@@ -136,11 +136,20 @@ class ExpressionUrge:
     updated_at: float = 0.0
     last_input_at: float = 0.0
     last_expressed_at: float = 0.0
+    # V61: khi Surface chặn vì câu public quá giống câu vừa nói, urge không được
+    # quay lại nguyên lực ở tick kế tiếp. Đây là cooldown biểu đạt, KHÔNG phải
+    # đánh dấu "đã nói"; evidence mới có thể mở lại urge ngay.
+    surface_blocked_until: float = 0.0
+    surface_duplicate_blocks: int = 0
     echo_count: int = 0
     original_speech_act: str = ""
     confidence: float = 0.72
     relevance: float = 0.60
     intrusion_risk: float = 0.14
+    # V61: meaning có structured environment provenance cần được ưu tiên hơn một
+    # urge nội bộ cũ khi cả hai cùng cạnh tranh. Đây không phải "màn hình luôn
+    # thắng"; chỉ candidate đã qua EnvironmentMeaning + privacy mới có cờ này.
+    environment_grounded: bool = False
 
     def effective_freshness(self, *, now: float) -> float:
         """Freshness sống theo thời gian, không phải con số đóng băng lúc tạo urge.
@@ -206,6 +215,7 @@ class ExpressionUrge:
             + 0.20 * fresh
             + 0.12 * self.relevance
             + 0.10 * recency
+            + (0.08 * fresh if self.environment_grounded else 0.0)
         ) * unsatisfied
 
     def to_dict(self, *, now: float, relational: Mapping[str, Any], affect: Mapping[str, Any]) -> dict[str, Any]:
@@ -221,6 +231,9 @@ class ExpressionUrge:
             "priority": round(self.selection_priority(now=now, relational=relational, affect=affect), 3),
             "freshness": round(fresh, 3),
             "satisfaction": round(self.satisfaction, 3),
+            "surface_blocked_seconds": round(max(0.0, self.surface_blocked_until - now), 1),
+            "surface_duplicate_blocks": self.surface_duplicate_blocks,
+            "environment_grounded": self.environment_grounded,
             "echo_count": self.echo_count,
             "age_seconds": round(max(0.0, now - self.created_at), 1),
             "evidence_refs": list(self.evidence_refs),
@@ -276,6 +289,7 @@ class ExpressionUrgeRuntime:
         confidence: float = 0.72,
         relevance: float = 0.60,
         intrusion_risk: float = 0.14,
+        environment_grounded: bool = False,
     ) -> ExpressionUrge | None:
         content = compact(content, 520)
         if len(content) < 18:
@@ -296,9 +310,14 @@ class ExpressionUrgeRuntime:
                 similar.base_strength = clamp01(max(similar.base_strength, base_strength) + 0.07)
                 similar.freshness = clamp01(max(similar.freshness, freshness) + 0.08)
                 similar.echo_count = max(0, similar.echo_count - 1)
+                # Evidence mới nghĩa là hoàn cảnh đã đổi. Cho phép urge bị chặn
+                # duplicate trước đó được cân lại thay vì chịu cooldown mù.
+                similar.surface_blocked_until = 0.0
+                similar.surface_duplicate_blocks = max(0, similar.surface_duplicate_blocks - 1)
                 similar.updated_at = now
                 similar.last_input_at = now
                 similar.evidence_refs = _refs((*similar.evidence_refs, *refs))
+                similar.environment_grounded = bool(similar.environment_grounded or environment_grounded)
                 if concern_id:
                     similar.concern_id = concern_id
             else:
@@ -329,6 +348,7 @@ class ExpressionUrgeRuntime:
             confidence=clamp01(confidence, 0.72),
             relevance=clamp01(relevance, 0.60),
             intrusion_risk=clamp01(intrusion_risk, 0.14),
+            environment_grounded=bool(environment_grounded),
         )
         self._urges[urge_id] = urge
         return urge
@@ -351,6 +371,18 @@ class ExpressionUrgeRuntime:
             content = str(getattr(candidate, "topic", "") or "")
             motive = _motive_from_candidate(candidate)
             meta = dict(getattr(affordance, "metadata", {}) or {})
+            environment_grounded = bool(
+                meta.get("environment_grounded", False)
+                or str(getattr(candidate, "anchor_type", "") or "").strip().lower() == "environment"
+            )
+            base_strength = self._base_from_candidate(candidate)
+            freshness = max(0.32, clamp01(getattr(candidate, "seed_specificity", 0.0)))
+            if environment_grounded:
+                # Structured environment meaning vừa xảy ra là evidence mới theo
+                # thời gian thực. Cho nó đủ freshness để cạnh tranh với thought cũ;
+                # OCR-only không có cờ environment_grounded nên không được boost.
+                base_strength = max(base_strength, 0.72)
+                freshness = max(freshness, 0.96)
             self._ingest_content(
                 input_key=f"aff:{str(getattr(affordance, 'affordance_id', '') or _digest(content))}",
                 content=content,
@@ -358,8 +390,8 @@ class ExpressionUrgeRuntime:
                 source=owner or str(getattr(candidate, "source", "") or "affordance"),
                 evidence_refs=tuple(getattr(candidate, "evidence_refs", ()) or ()),
                 now=current,
-                base_strength=self._base_from_candidate(candidate),
-                freshness=max(0.32, clamp01(getattr(candidate, "seed_specificity", 0.0))),
+                base_strength=base_strength,
+                freshness=freshness,
                 source_material_id=str(meta.get("material_id", "") or "") if owner == "mental_material" else "",
                 original_speech_act=str(getattr(candidate, "speech_act", "") or ""),
                 confidence=clamp01(getattr(candidate, "confidence", 0.72), 0.72),
@@ -368,6 +400,7 @@ class ExpressionUrgeRuntime:
                     clamp01(getattr(candidate, "seed_intrusion_risk", 0.0)),
                     clamp01(getattr(candidate, "intrusion_risk", 0.0)),
                 ),
+                environment_grounded=environment_grounded,
             )
 
         # ActiveConcern là nguồn continuity. Concern không cần phải sinh từ seed;
@@ -447,6 +480,7 @@ class ExpressionUrgeRuntime:
                     - min(0.18, urge.echo_count * 0.05)
                 )
                 for urge in self._urges.values()
+                if current >= float(urge.surface_blocked_until or 0.0)
             ),
             default=0.0,
         )
@@ -496,6 +530,8 @@ class ExpressionUrgeRuntime:
         )
         emitted = 0
         for urge in ranked:
+            if current < float(urge.surface_blocked_until or 0.0):
+                continue
             pressure = urge.pressure(now=current, relational=rel, affect=aff)
             effective_freshness = urge.effective_freshness(now=current)
             if pressure < 0.34 or effective_freshness < 0.12:
@@ -578,6 +614,37 @@ class ExpressionUrgeRuntime:
                     compact(top.content, 180),
                 )
         self._last_log_signature = signature
+
+    def note_surface_duplicate(self, urge_id: str, *, now: float | None = None) -> bool:
+        """Tạm hạ một urge bị Surface chặn vì wording trùng gần đây.
+
+        Đây không phải ``note_expressed``: Eris chưa nói gì ra ngoài nên không được
+        giả receipt public. Ta chỉ ghi rằng *cách biểu đạt hiện tại* đã bế tắc, hạ
+        freshness/strength và đặt cooldown. Evidence mới sẽ mở lại urge ở
+        ``_ingest_content``. Nhờ vậy một ý cũ không thành zombie cứ thắng Neuro rồi
+        đâm vào cùng duplicate guard hết lượt này sang lượt khác.
+        """
+        urge = self._urges.get(str(urge_id or "").strip())
+        if urge is None:
+            return False
+        current = float(now or time.time())
+        urge.surface_duplicate_blocks += 1
+        cooldown = min(240.0, 45.0 + 45.0 * urge.surface_duplicate_blocks)
+        urge.surface_blocked_until = max(urge.surface_blocked_until, current + cooldown)
+        urge.updated_at = current
+        urge.satisfaction = clamp01(max(urge.satisfaction, 0.42))
+        urge.base_strength = clamp01(urge.base_strength * 0.68)
+        urge.freshness = clamp01(urge.freshness * 0.58)
+        urge.echo_count += 1
+        self._log(
+            "info",
+            "[expression urge] duplicate-suppressed id=%s blocks=%s cooldown=%.0fs remaining=%.2f",
+            urge.urge_id,
+            urge.surface_duplicate_blocks,
+            cooldown,
+            urge.base_strength,
+        )
+        return True
 
     def note_expressed(self, urge_id: str, *, now: float | None = None) -> bool:
         urge = self._urges.get(str(urge_id or "").strip())

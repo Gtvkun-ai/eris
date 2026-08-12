@@ -757,13 +757,15 @@ class CoordinatorBootstrapMixin:
         self.last_reengagement_at = 0.0
         self.autonomous_sleep_seconds = self._load_autonomous_sleep_seconds(
             "ERIS_AUTONOMOUS_SLEEP_SEC",
-            default=(30, 45, 60, 90),
+            # V62: cadence mặc định bớt ì. Đây chỉ là lúc *được xét lại*;
+            # governor vẫn có toàn quyền WAIT/DROP nên không đồng nghĩa spam.
+            default=(18, 28, 42, 60),
         )
         self.autonomous_suppressed_sleep_seconds = self._load_autonomous_sleep_seconds(
             "ERIS_AUTONOMOUS_SUPPRESSED_SLEEP_SEC",
             # No-speech không phải output đã lặp. Giữ vòng suppressed ngắn hơn
             # để silence_debt/vital pressure có cơ hội tích và surface.
-            default=(12, 18, 25, 35),
+            default=(8, 12, 18, 26),
         )
         self.force_speak_repeat_guard_count = 0
         self.force_speak_intent_guard_count = 0

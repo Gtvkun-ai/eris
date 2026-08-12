@@ -1,0 +1,35 @@
+{
+  "release": "V59",
+  "name": "Existential Desire -> Relational Intention",
+  "date": "2026-08-12",
+  "language_notes": "Vietnamese comments and implementation notes included",
+  "architecture": [
+    "Existential Anchor",
+    "ExistentialDesireDeriver",
+    "InitiativeEngine",
+    "Persistent Intention",
+    "InitiativeArbiter SPEAK/WAIT/DROP",
+    "Executive/Neuro",
+    "Public Outcome"
+  ],
+  "desires": [
+    "mutual_understanding",
+    "relational_continuity",
+    "authentic_self_expression"
+  ],
+  "safety_invariants": [
+    "new_relationship_cannot_fake_deep_attachment",
+    "abandonment_is_brake_not_outreach_fuel",
+    "existential_initiative_requires_silence_window",
+    "unanswered_autonomous_turn_forces_wait",
+    "no_reassurance_or_exclusivity_demand",
+    "existential_targets_cannot_bypass_initiative_arbiter"
+  ],
+  "tests": {
+    "v59_acceptance_passed": 9,
+    "related_regression_passed": 155,
+    "failed": 0,
+    "live_packaging_probe": "PROVIDER_UNAVAILABLE"
+  },
+  "live_command": "run_v59_existential_real.bat"
+}

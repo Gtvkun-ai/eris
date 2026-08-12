@@ -1,0 +1,38 @@
+ERIS V60 TELEMETRY -> MEANING — TEST STATUS
+Ngày đóng gói: 2026-08-12
+
+1) Acceptance V60 mới:
+   10 passed, 0 failed
+
+Kiểm tra:
+- browser_tab_activated attention=1 + failure cùng task => research_after_failure meaning;
+- đổi tab đơn lẻ => không tự sinh help desire;
+- OCR-only => không được public screen claim;
+- runtime context đọc host.last_user_situation thật;
+- environment meaning -> persistent CONTRIBUTE intention;
+- user pause / actionability cao => có thể SPEAK;
+- user busy => WAIT;
+- public candidate là grounded screen_comment, không generic check-in;
+- structured self-inspection có thể tạo self-expression restrained;
+- environment meaning mạnh có thể đánh thức TemporalMind dù raw browser event vẫn level 1.
+
+2) Regression/acceptance liên quan:
+   187 passed, 0 failed
+
+Bao gồm V60 + V59 + V58 + V57 simulator + Deep Environment + TemporalMind
++ V40 ActiveConcern + V43 Affect + V39 Living User Memory + V25 Relational Homeostasis
++ V12 Open-ended Personality + V24 Emergence + V26 Unified Subject Initiative
++ V44 Contentful Initiative + V55 Executive/Authority.
+
+3) Compile check:
+   python -m compileall -q cortex runtime native tools experiments
+   PASS
+
+4) Probe sensor thật trên Windows:
+   run_v60_windows_sensor_probe.bat
+
+Probe này dùng IA2/UIA/Chromium provider thật và xuất report vào v60_reports/.
+Nó không dùng OCR để giả browser telemetry.
+
+5) Acceptance code:
+   run_v60_acceptance.bat

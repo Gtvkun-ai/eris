@@ -1,0 +1,32 @@
+{
+  "schema_version": 2,
+  "mode": "authoritative",
+  "created_at": 1786016951.6713982,
+  "updated_at": 1786017181.3018582,
+  "beliefs": [],
+  "episodes": [],
+  "projections": {},
+  "procedural_policies": {},
+  "calibration": {},
+  "pending_hypotheses": [
+    {
+      "id": "tf.82ae835c8b699060",
+      "claim": "tôi đoán họ chỉ đang chào thử, chưa thấy mục đích rõ ràng...",
+      "subject": "private_mind",
+      "facet": "general",
+      "confidence": 0.6,
+      "uncertainty": 0.45,
+      "overread_risk": 0.65,
+      "origin": "private_mind",
+      "evidence_ids": [
+        "dossier.user.history.0",
+        "dossier.runtime.state",
+        "dossier.runtime.thought_stream",
+        "dossier.runtime.private_state"
+      ],
+      "storable": false,
+      "created_at": 1786017181.3018582
+    }
+  ],
+  "learning_log": []
+}

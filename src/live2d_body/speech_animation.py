@@ -237,14 +237,35 @@ class SpeechAnimator:
         self._cue_starts = tuple(cue.start for cue in self._cues)
         self._duration = max((cue.end for cue in self._cues), default=0.0)
         raw_envelope = tuple(context.audio_envelope or ())
+        self._audio_frame_ms = max(0, int(context.audio_frame_ms or 0))
+        self._audio_duration_ms = max(0, int(context.audio_duration_ms or 0))
         # RMS từ vài backend có biên rất thấp dù audio nghe rõ. Chuẩn hóa chỉ khi
         # peak yếu, giữ nguyên số 0 để khoảng im vẫn khép miệng thật và không biến
         # Eris thành cá cảnh đang thở theo nhiễu nền.
         peak = max(raw_envelope, default=0.0)
-        # Backend đôi khi gửi envelope đúng độ dài nhưng toàn số 0. Nếu vẫn ưu
-        # tiên nó, miệng sẽ đứng hình suốt audio. Chỉ cần một peak thật là đủ
-        # tin envelope; còn toàn số 0 thì cue chữ phải tiếp quản.
-        if peak <= 0.018:
+        # V62: "có một peak" chưa đủ để gọi envelope là sống. Một vài backend
+        # từng trả mảng dài gần như toàn zero nhưng có đúng một spike; code cũ
+        # tin mù quáng và giữ ParamMouthOpenY=-1 gần suốt câu dù audio đang phát.
+        # Kiểm cả tỷ lệ frame có tiếng và độ khớp duration; nếu đáng ngờ thì bỏ
+        # envelope và để pseudo-viseme theo text cứu môi.
+        voiced_floor = max(0.012, peak * 0.06)
+        voiced_frames = sum(1 for value in raw_envelope if value > voiced_floor)
+        voiced_coverage = (voiced_frames / len(raw_envelope)) if raw_envelope else 0.0
+        expected_frames = (
+            max(1, int(round(self._audio_duration_ms / self._audio_frame_ms)))
+            if self._audio_duration_ms > 0 and self._audio_frame_ms > 0
+            else 0
+        )
+        duration_ratio = (len(raw_envelope) / expected_frames) if expected_frames > 0 else 1.0
+        sparse_envelope = bool(
+            len(raw_envelope) >= 8
+            and (voiced_frames < 2 or voiced_coverage < 0.08)
+        )
+        duration_mismatch = bool(
+            expected_frames >= 4
+            and not (0.65 <= duration_ratio <= 1.35)
+        )
+        if peak <= 0.018 or sparse_envelope or duration_mismatch:
             self._audio_envelope = ()
         elif peak < 0.55:
             gain = min(8.0, 0.72 / peak)
@@ -254,8 +275,6 @@ class SpeechAnimator:
             )
         else:
             self._audio_envelope = raw_envelope
-        self._audio_frame_ms = max(0, int(context.audio_frame_ms or 0))
-        self._audio_duration_ms = max(0, int(context.audio_duration_ms or 0))
         # Phase ổn định theo text, tránh mọi câu cùng gật ở đúng một nhịp.
         checksum = sum((index + 1) * ord(char) for index, char in enumerate(context.text[:160]))
         self._phase = (checksum % 997) / 997.0 * math.tau

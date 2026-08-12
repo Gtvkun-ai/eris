@@ -69,7 +69,8 @@ class Live2DRenderer:
         )
         self._last_geometry: WindowGeometry | None = None
         self._last_speaking = False
-        self._mouth_probe_at = -1.0
+        self._last_stage_event_type = ""
+        self._mouth_probe_times: list[float] = []
 
     def run(self) -> None:
         glfw, live2d = _load_dependencies()
@@ -194,9 +195,17 @@ class Live2DRenderer:
                 dt = min(0.10, max(0.0, now - last))
                 last = now
                 snapshot = self.state.advance(dt, now=now)
-                if snapshot.speaking and not self._last_speaking:
-                    self._mouth_probe_at = now + 0.16
-                if snapshot.speaking and self._mouth_probe_at > 0.0 and now >= self._mouth_probe_at:
+                audio_start_edge = bool(
+                    snapshot.speaking
+                    and snapshot.last_event_type in {"audio_start", "audio_playback_started"}
+                    and snapshot.last_event_type != self._last_stage_event_type
+                )
+                if snapshot.speaking and (not self._last_speaking or audio_start_edge):
+                    # V62: probe cũ bám event ``speaking`` sớm hơn audio thật, nên
+                    # có thể chụp đúng leading-silence rồi kết luận "miệng chết".
+                    # Re-arm ở audio start và lấy ba mẫu để thấy cả nhịp giữa câu.
+                    self._mouth_probe_times = [now + 0.18, now + 0.45, now + 0.90]
+                if snapshot.speaking and self._mouth_probe_times and now >= self._mouth_probe_times[0]:
                     print(
                         "[Live2D][Mouth] "
                         f"ratio={snapshot.mouth_open_ratio:.3f} "
@@ -205,10 +214,11 @@ class Live2DRenderer:
                         f"cue={snapshot.speech_cue}",
                         flush=True,
                     )
-                    self._mouth_probe_at = -1.0
+                    self._mouth_probe_times.pop(0)
                 if not snapshot.speaking:
-                    self._mouth_probe_at = -1.0
+                    self._mouth_probe_times.clear()
                 self._last_speaking = snapshot.speaking
+                self._last_stage_event_type = snapshot.last_event_type
                 if not window_visible:
                     # 20 Hz control check, gần như không tốn render CPU/GPU.
                     time.sleep(0.05)

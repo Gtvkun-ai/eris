@@ -570,3 +570,43 @@ def test_semantic_worker_attention_is_consumed_once_per_perception() -> None:
         assert situation2.task_hint != "unknown"
     finally:
         worker.stop()
+
+
+def test_v61_semantic_worker_coalesces_same_meaning_wake_storm():
+    from types import SimpleNamespace
+    from runtime.ai_orchestrated.desktop_semantics import UserSituation
+    from runtime.ai_orchestrated.environment_ingress_scheduler import ScheduledEnvironmentEvent, scheduling_policy_for
+    from runtime.ai_orchestrated.semantic_environment_worker import SemanticEnvironmentWorker
+
+    class Runtime:
+        def observe_events(self, events, telemetry=None, base_situation=None, now=None):
+            return UserSituation(
+                timestamp=float(now or time.time()),
+                task_hint="inspect eris source",
+                phase="inspection",
+                confidence=0.90,
+                semantic_delta=True,
+                max_attention_level=3,
+            )
+
+    wakes = []
+    host = SimpleNamespace(logger=None, observability=None, _wake_autonomous_loop=wakes.append)
+    worker = SemanticEnvironmentWorker(host=host, runtime=Runtime(), publish_event=lambda _event: None, batch_window_ms=0)
+    worker._record_semantic_metrics = lambda *args, **kwargs: None
+    worker._schedule_post_semantic_enrichment = lambda _batch: None
+
+    event = _event("dialog_candidate", level=3, title="Eris source", now=time.time())
+    policy = scheduling_policy_for(event)
+    item = ScheduledEnvironmentEvent(
+        event=event,
+        ingress_monotonic_ns=time.monotonic_ns(),
+        ingress_wall_time=time.time(),
+        enqueue_monotonic_ns=time.monotonic_ns(),
+        policy=policy,
+        sequence=1,
+        coalesce_key="",
+    )
+    worker._process_batch([item])
+    worker._process_batch([item])
+    worker._process_batch([item])
+    assert len(wakes) == 1

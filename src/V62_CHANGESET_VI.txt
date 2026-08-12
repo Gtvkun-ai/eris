@@ -1,0 +1,10 @@
+V62 CHANGESET
+=============
+1. Surface duplicate -> 1 lan rewrite bang cung Surface worker.
+2. Safe silence -> DONE, khong DEGRADED.
+3. Body khong bao autonomous "loi" chi vi Surface hut mot luot.
+4. Post-chat grace mac dinh 18s -> 10s; autonomous cadence nhanh hon vua phai.
+5. Lip-sync reject sparse/duration-mismatch envelope -> text cue fallback.
+6. Mouth probe bam audio_playback_started va lay 3 mau.
+7. Them tests V62 + tool tools/v62_runtime_probe.py.
+8. Giu nguyen src/body theo cau truc project cua user.

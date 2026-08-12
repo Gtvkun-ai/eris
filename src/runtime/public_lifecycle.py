@@ -22,7 +22,9 @@ class PublicLifecycleSnapshot:
 _TERMINAL_STATES = {"DEGRADED", "INTERRUPTED", "DONE"}
 _ALLOWED_TRANSITIONS = {
     "IDLE": set(),
-    "COMPOSING": {"CONTENT_COMMITTED", "DEGRADED", "INTERRUPTED"},
+    # V62: một public turn có thể chủ động chọn im ngay trong giai đoạn compose
+    # (dedupe/grounding/policy). DONE là kết thúc hợp lệ, không phải subsystem lỗi.
+    "COMPOSING": {"CONTENT_COMMITTED", "DEGRADED", "INTERRUPTED", "DONE"},
     "CONTENT_COMMITTED": {"AUDIO_BUFFERING", "SPEAKING", "DEGRADED", "INTERRUPTED", "DONE"},
     "AUDIO_BUFFERING": {"SPEAKING", "DEGRADED", "INTERRUPTED", "DONE"},
     "SPEAKING": {"DEGRADED", "INTERRUPTED", "DONE"},

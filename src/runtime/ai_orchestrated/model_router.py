@@ -2010,14 +2010,16 @@ class AIRuntimeModelRouter:
         speech_language_hint: str = "ja",
     ) -> dict[str, Any]:
         client = getattr(self.llm_service, "client", None)
-        language = {"ja": "tiếng Nhật", "en": "tiếng Anh", "vi": "tiếng Việt"}.get(
-            str(language_hint or "vi").strip().lower(),
-            "ngôn ngữ gần nhất của cuộc trò chuyện",
-        )
-        speech_language = {"ja": "tiếng Nhật", "en": "tiếng Anh", "vi": "tiếng Việt"}.get(
-            str(speech_language_hint or "ja").strip().lower(),
-            "tiếng Nhật",
-        )
+        # V61: autonomous writer dùng cùng language contract với direct chat.
+        # Bản V57.1 trước đây chỉ thêm language-repair ở cuối hàm nhưng quên tạo
+        # ``display_code/display_language`` tại nhánh autonomous, khiến startup có
+        # thể chết bằng NameError trong khi process chính vẫn còn sống.
+        language_names = {"ja": "tiếng Nhật", "en": "tiếng Anh", "vi": "tiếng Việt"}
+        display_code = str(language_hint or "vi").strip().lower()
+        speech_code = str(speech_language_hint or display_code).strip().lower()
+        display_language = language_names.get(display_code, "ngôn ngữ gần nhất của cuộc trò chuyện")
+        speech_language = language_names.get(speech_code, display_language)
+        language = display_language
         system = (
             f"Bạn là ERIS đang có một ý định chủ động đã được planner duyệt. "
             f"Trong cùng một JSON, render display bằng {language} và speech bằng {speech_language}. "
@@ -2105,8 +2107,12 @@ class AIRuntimeModelRouter:
             strict = False
             try:
                 def invoke() -> Any:
+                    # V61: language-repair phải gửi đúng prompt repair. Bản cũ
+                    # nhận ``request_messages`` nhưng vẫn luôn gọi ``messages`` gốc,
+                    # nên retry thực chất chỉ bắn lại cùng request.
+                    effective_messages = list(request_messages or messages)
                     return target.create_chat_completion(
-                        messages=messages,
+                        messages=effective_messages,
                         temperature=0.52,
                         frequency_penalty=0.0,
                         presence_penalty=0.0,
@@ -2969,6 +2975,8 @@ class AIRuntimeModelRouter:
             "giữ đúng long-horizon goal và beat objective trong topic, tạo một câu mới sau khoảng lặng, không lặp câu trước, không giải thích setup hay nhắc hệ thống. "
             "Nếu anchor là self, chỉ surface seed đã được duyệt, không lộ raw thought. Nếu speech_act=followup_reminder, "
             "giữ đúng unresolved point nhưng nói như continuity tự nhiên, không như notification template; không nhắc chuyện bị lờ và không tự thêm pressure/câu hỏi mới. "
+            "Nếu surface_contract.rewrite_required=true, output trước vừa bị runtime bác vì lặp: bắt buộc bám speech_intent HIỆN TẠI, "
+            "không tái sử dụng rejected_display_text/avoid_repeating và không quay về chủ đề autonomous cũ chỉ vì nó còn trong recent history. "
             "Nếu speech_intent.random_chat_seed có dữ liệu, premise là hạt ý bắt buộc: giữ motive, mode, personal_stake và daring của seed. "
             "Giữ nguyên epistemic_mode: speculation phải nói như suy đoán, imagination phải nói như hình dung, opinion là quan điểm, question/research_intent không được nâng thành fact; bounded_inference phải giữ độ dè dặt. "
             "Khi motive là want_to_share/want_to_express, ưu tiên một phát biểu tự đủ nghĩa; không mặc định biến thành câu hỏi, không xin phép chia sẻ, "

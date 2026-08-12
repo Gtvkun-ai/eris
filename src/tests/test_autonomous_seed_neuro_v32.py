@@ -203,3 +203,36 @@ def test_recent_unanswered_autonomous_speech_increases_silence_utility():
     )
     selection = NeuroActionSelector().select(frame)
     assert selection.winner(frame).action_kind == "silence"
+
+
+def test_v61_moderate_high_interruption_and_low_continuity_can_flip_speak_to_silence():
+    """Tái hiện đúng mẫu log 21:11:07: reviewer bảo nên im thì utility phải phản ánh được."""
+    speak = SimpleNamespace(action_kind="speak", arguments={})
+    silence = SimpleNamespace(action_kind="silence", arguments={})
+    body = SimpleNamespace(action_kind="body_only", arguments={})
+    frame = SimpleNamespace(coalitions=(speak, silence, body))
+    broadcast = WorkspaceBroadcast(signals=(), surprise=0.0, precision=0.7, resource=1.0, social_drive=0.5)
+    baseline = SelectionResult(
+        winner_index=0,
+        scores=(0.7171, 0.4905, 0.4129),
+        probabilities=(0.75, 0.15, 0.10),
+        margin=0.2266,
+        entropy=0.65,
+        requires_deliberation=False,
+        parallel_review_recommended=False,
+        reason="fast_gate:clear_winner",
+        broadcast=broadcast,
+    )
+    appraisal = NeuroSemanticAppraisal(
+        choices=(
+            ChoiceSemanticAppraisal(index=0, motive_validity=0.65, novelty=0.70, continuity_fit=0.45, epistemic_support=0.20, reversibility=0.80),
+            ChoiceSemanticAppraisal(index=1, motive_validity=0.15, novelty=0.05, continuity_fit=0.90, epistemic_support=0.50, reversibility=0.95),
+            ChoiceSemanticAppraisal(index=2, motive_validity=0.10, novelty=0.30, continuity_fit=0.60, epistemic_support=0.20, reversibility=0.90),
+        ),
+        boundary_pressure=0.0,
+        interruption_cost=0.716,
+        confidence=0.84,
+        reason="high interruption and weak continuity make silence safer",
+    )
+    merged = NeuroActionSelector().merge_semantic_appraisal(frame, baseline, appraisal)
+    assert merged.winner(frame).action_kind == "silence"

@@ -1,0 +1,8 @@
+V57.1 evaluator fixes
+- Context-conditioned repetition: không phạt reply giống nếu user prompt cũng giống.
+- Full-scenario memory evidence cho claim "lần thứ N".
+- Evidence override chỉ cho hallucinated-memory claim đếm đã được chứng minh.
+- Public writer language lock + one-shot real-provider rewrite khi display tiếng Việt bị drift sang Nhật/Trung.
+- Language drift invariant: nếu rewrite vẫn sai thì bắt CJK reply và FAIL.
+- Report thêm matching_user_similarity + memory evidence.
+- Thêm run_v57_1_real.bat và run_v57_1_soak_70_real.bat.

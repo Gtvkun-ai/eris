@@ -69,8 +69,11 @@ class ChatCycleMixin:
             self.logger.info("Exited chat mode; autonomous can resume (conversation buffer kept).")
             return
         try:
-            raw_grace = str(os.environ.get("ERIS_POST_CHAT_GRACE_SEC", "18") or "18").strip()
-            grace = max(8.0, float(raw_grace) if raw_grace else 18.0)
+            # V62: 18s + autonomous scheduler 30s khiến desire thật có thể mất
+            # gần một phút mới được thử. 10s vẫn đủ để user giữ lượt nói, còn
+            # InitiativeController/boundary gate tiếp tục quyết định có chen hay không.
+            raw_grace = str(os.environ.get("ERIS_POST_CHAT_GRACE_SEC", "10") or "10").strip()
+            grace = max(5.0, float(raw_grace) if raw_grace else 10.0)
             block_fn(now=time.time(), seconds=grace)
             self.logger.info("Exited chat mode; autonomous blocked for %.0fs (post-chat grace).", grace)
         except TypeError:

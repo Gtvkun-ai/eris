@@ -387,3 +387,76 @@ def test_v44_1_reply_expected_still_holds_even_with_ready_urge():
     )
     result = NeuroActionSelector().select(frame)
     assert frame.coalitions[result.winner_index].action_kind == "silence"
+
+
+def test_v61_duplicate_surface_block_suppresses_zombie_urge_until_new_evidence():
+    runtime = _runtime()
+    thought = _aff(
+        "seed:zombie",
+        "Thử kết nối những hồi ức, không phải để tìm câu trả lời, mà để kiểm tra cách đặt câu hỏi khác đi.",
+        refs=("turn:1",),
+    )
+    shaped = runtime.shape_affordances((thought,), now=100.0)
+    urge_id = shaped[0].candidate.expression_urge_id
+    assert runtime.note_surface_duplicate(urge_id, now=101.0) is True
+    assert runtime.shape_affordances((thought,), now=110.0) == ()
+    snap = runtime.snapshot(now=110.0)[0]
+    assert snap["surface_blocked_seconds"] > 0
+    assert snap["surface_duplicate_blocks"] == 1
+
+    # Evidence mới cho cùng ý mở lại urge, vì hoàn cảnh thực sự đã thay đổi.
+    reinforced = _aff(
+        "seed:zombie:new-evidence",
+        "Thử kết nối những hồi ức, không phải để tìm câu trả lời, mà để kiểm tra cách đặt câu hỏi khác đi.",
+        refs=("turn:1", "turn:2"),
+    )
+    reopened = runtime.shape_affordances((reinforced,), now=115.0)
+    assert reopened
+    assert reopened[0].candidate.expression_urge_id == urge_id
+
+
+def test_v61_structured_environment_meaning_preempts_stale_internal_urge():
+    runtime = _runtime()
+    old = _aff(
+        "seed:old",
+        "Thử kết nối những hồi ức, không phải để tìm câu trả lời, mà để kiểm tra cách đặt câu hỏi khác đi.",
+        refs=("turn:old",),
+        relevance=0.85,
+        confidence=0.90,
+    )
+    runtime.shape_affordances((old,), now=100.0, relational={"connection_pressure": 0.5}, affect={"curiosity": 0.6})
+
+    env = ExecutiveAffordance(
+        affordance_id="subject-intention:env",
+        owner="subject_initiative",
+        revision=2,
+        candidate=SocialSpeechCandidate(
+            decision="candidate",
+            kind="screen_comment",
+            topic="User đang xem source initiative của Eris; có thể chia sẻ một quan sát ngắn liên quan trực tiếp phần đó.",
+            speech_act="environment_self_reflection",
+            anchor_type="environment",
+            anchor_id="intention:env",
+            evidence_refs=("environment:structured:1",),
+            requires_grounding=True,
+            confidence=0.70,
+            relevance=0.66,
+            urgency=0.50,
+            source="subject_initiative",
+            eris_motive_kind="share",
+            personal_stake=0.66,
+            authenticity=1.0,
+        ),
+        claim_required=False,
+        expires_at=999.0,
+        metadata={"environment_grounded": True},
+    )
+    shaped = runtime.shape_affordances(
+        (env,), now=110.0,
+        relational={"connection_pressure": 0.5}, affect={"curiosity": 0.6}, limit=3,
+    )
+    assert shaped
+    assert shaped[0].candidate.anchor_type == "internal"  # urge projection owns the final candidate
+    assert "source initiative" in shaped[0].candidate.topic.lower()
+    snap = runtime.snapshot(now=110.0)
+    assert any(item["environment_grounded"] for item in snap)

@@ -188,6 +188,7 @@ class _SurfaceRouter:
             "confidence": 0.88,
             "performance_hint": "dry",
             "evidence_refs": [],
+            "claim_manifest": [],
             "reason": "wording_complete",
         }
 
@@ -221,6 +222,7 @@ class _ThinPresenceSurfaceRouter(_SurfaceRouter):
             "confidence": 0.88,
             "performance_hint": "soft",
             "evidence_refs": [],
+            "claim_manifest": [],
             "reason": "wording_complete",
         }
 
@@ -466,3 +468,93 @@ def test_blackboard_reports_observer_and_critic_without_raw_reasoning():
     assert background["repair_pending"] is True
     assert "reasoning_content" not in str(view)
     assert "raw reasoning must not pass" not in str(view)
+
+
+class _DuplicateThenFreshSurfaceRouter(_SurfaceRouter):
+    def __init__(self):
+        super().__init__()
+        self.calls = 0
+
+    def realize_surface_speech(self, request):
+        self.requests.append(request)
+        self.calls += 1
+        if self.calls == 1:
+            return {
+                "text": "Câu cũ đã nói rồi.",
+                "confidence": 0.88,
+                "performance_hint": "soft",
+                "evidence_refs": [],
+                "claim_manifest": [],
+                "reason": "stale_surface_cache",
+            }
+        return {
+            "text": "Ý mới này mới là điều tôi muốn nói lúc này.",
+            "confidence": 0.90,
+            "performance_hint": "soft",
+            "evidence_refs": [],
+            "claim_manifest": [],
+            "reason": "rewrite_current_intent",
+        }
+
+
+def test_v62_surface_duplicate_gets_one_same_worker_rewrite_retry(tmp_path: Path):
+    """Câu cũ của Surface không được biến một desire mới thành im lặng giả chết."""
+
+    controller = InitiativeController(state_path=tmp_path / "initiative.json")
+    board = TypedCognitiveBlackboard.from_snapshot(
+        _snapshot(commentary_expectation={"due": True, "required": True, "reason": "maximum_quiet_reached", "anchor_kind": "persona_presence"}),
+        now=1000.0,
+    )
+    decision = controller.decide(board, _social_agenda_candidate())
+    router = _DuplicateThenFreshSurfaceRouter()
+    engine = SurfaceIntentEngine(router, _Reducer())
+
+    turn = engine.realize(
+        decision.speech_intent,
+        board,
+        snapshot=_snapshot(),
+        avoid_text="Câu cũ đã nói rồi.",
+    )
+
+    assert turn is not None
+    assert router.calls == 2
+    assert turn.public_payload["text"].startswith("Ý mới này")
+    assert router.requests[1]["surface_contract"]["rewrite_required"] is True
+    assert router.requests[1]["surface_retry"]["attempt"] == 2
+    assert engine.last_failure_reason == ""
+
+
+class _DuplicateTwiceSurfaceRouter(_DuplicateThenFreshSurfaceRouter):
+    def realize_surface_speech(self, request):
+        self.requests.append(request)
+        self.calls += 1
+        return {
+            "text": "Câu cũ đã nói rồi.",
+            "confidence": 0.88,
+            "performance_hint": "soft",
+            "evidence_refs": [],
+            "claim_manifest": [],
+            "reason": "still_stale",
+        }
+
+
+def test_v62_surface_duplicate_retry_is_bounded_to_two_calls(tmp_path: Path):
+    controller = InitiativeController(state_path=tmp_path / "initiative.json")
+    board = TypedCognitiveBlackboard.from_snapshot(
+        _snapshot(commentary_expectation={"due": True, "required": True, "reason": "maximum_quiet_reached", "anchor_kind": "persona_presence"}),
+        now=1000.0,
+    )
+    decision = controller.decide(board, _social_agenda_candidate())
+    router = _DuplicateTwiceSurfaceRouter()
+    engine = SurfaceIntentEngine(router, _Reducer())
+
+    turn = engine.realize(
+        decision.speech_intent,
+        board,
+        snapshot=_snapshot(),
+        avoid_text="Câu cũ đã nói rồi.",
+    )
+
+    assert turn is None
+    assert router.calls == 2
+    assert engine.last_failure_reason == "surface_duplicate_recent_utterance"

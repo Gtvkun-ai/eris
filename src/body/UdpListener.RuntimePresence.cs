@@ -172,8 +172,18 @@ public partial class UdpListener : Node2D
 					_runtimePresence.Stage = "speaking";
 					break;
 				case "degraded":
-					SetRuntimePresenceTerminal("degraded");
+				{
+					// V62: Surface/provider hụt một lượt không có nghĩa autonomous
+					// "chết". Lifecycle data có channel nên UI phân biệt lỗi tạm
+					// của lời chủ động với lỗi runtime thật.
+					string degradedChannel = RuntimePresenceString(data, "channel").Trim().ToLowerInvariant();
+					string degradedReason = RuntimePresenceString(root, "reason").Trim().ToLowerInvariant();
+					if (degradedChannel == "autonomous" && degradedReason.StartsWith("surface_"))
+						SetRuntimePresenceTerminal("autonomous_retry");
+					else
+						SetRuntimePresenceTerminal("degraded");
 					break;
+				}
 				case "interrupted":
 					SetRuntimePresenceTerminal("interrupted");
 					break;
@@ -295,6 +305,12 @@ public partial class UdpListener : Node2D
 			_runtimePresence.StatusLabel = "Đã chọn im lặng";
 			_runtimePresence.StatusTone = "warning";
 			_runtimePresence.NoticeUntilMs = now + 5200;
+		}
+		else if (stage == "autonomous_retry")
+		{
+			_runtimePresence.StatusLabel = "Lời chủ động hụt một nhịp, sẽ thử lại";
+			_runtimePresence.StatusTone = "warning";
+			_runtimePresence.NoticeUntilMs = now + 3600;
 		}
 		else if (stage == "degraded")
 		{

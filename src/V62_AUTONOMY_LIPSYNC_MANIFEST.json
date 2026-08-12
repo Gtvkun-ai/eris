@@ -1,0 +1,19 @@
+{
+  "version": "V62",
+  "name": "Autonomous Surface Recovery + Live2D Mouth Liveness",
+  "language_notes": "Vietnamese comments/notes included",
+  "fixes": [
+    "surface duplicate one-shot rewrite retry",
+    "safe silence lifecycle DONE instead of DEGRADED",
+    "transient autonomous surface status is warning, not runtime death",
+    "faster but gated autonomous cadence",
+    "sparse/misaligned audio envelope fallback",
+    "audio-start aligned multi-sample mouth probe"
+  ],
+  "tests": {
+    "targeted": "27/27 passed",
+    "related_regression": "215/215 passed",
+    "compileall": "passed"
+  },
+  "body_location": "src/body preserved intentionally"
+}

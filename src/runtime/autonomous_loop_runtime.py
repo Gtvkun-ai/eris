@@ -203,8 +203,31 @@ class AutonomousLoopRuntimeMixin:
         startup_failed = False
         try:
             orchestrator.run_startup()
+            health = getattr(self, "subsystem_health_registry", None)
+            if callable(getattr(health, "record_success", None)):
+                health.record_success("ai_orchestrated.startup")
         except Exception as exc:
             startup_failed = True
+            # V61: process còn sống không có nghĩa startup cognition còn khỏe.
+            # Ghi lỗi vào health registry để diagnostics/readiness nhìn thấy ngay,
+            # thay vì operator phải đoán từ một WARNING giữa hàng nghìn dòng log.
+            health = getattr(self, "subsystem_health_registry", None)
+            if callable(getattr(health, "record_failure", None)):
+                failure_kind = (
+                    FailureKind.PROGRAMMER_ERROR
+                    if isinstance(exc, (NameError, AttributeError, TypeError, UnboundLocalError))
+                    else FailureKind.UNKNOWN
+                )
+                try:
+                    health.record_failure(
+                        "ai_orchestrated.startup",
+                        exc,
+                        kind=failure_kind,
+                        degraded=True,
+                        reason="startup autonomous failed before public presence",
+                    )
+                except Exception:
+                    pass
             self._ai_startup_ran = False
             emit_runtime_status(
                 self,
@@ -243,7 +266,24 @@ class AutonomousLoopRuntimeMixin:
             try:
                 time.sleep(self.runtime_policy_settings.run_loop.startup_retry_delay_seconds)
                 orchestrator.run_startup()
+                health = getattr(self, "subsystem_health_registry", None)
+                if callable(getattr(health, "record_success", None)):
+                    health.record_success("ai_orchestrated.startup", details={"recovered_after_retry": True})
             except Exception as exc:
+                health = getattr(self, "subsystem_health_registry", None)
+                if callable(getattr(health, "record_failure", None)):
+                    failure_kind = (
+                        FailureKind.PROGRAMMER_ERROR
+                        if isinstance(exc, (NameError, AttributeError, TypeError, UnboundLocalError))
+                        else FailureKind.UNKNOWN
+                    )
+                    try:
+                        health.record_failure(
+                            "ai_orchestrated.startup", exc, kind=failure_kind, degraded=False,
+                            reason="startup retry failed; startup presence unavailable",
+                        )
+                    except Exception:
+                        pass
                 self._ai_startup_ran = False
                 emit_runtime_status(
                     self,

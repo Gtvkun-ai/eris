@@ -1,0 +1,30 @@
+V58 CHANGESET — CHỦ ĐỘNG CÓ KIỀM CHẾ
+
++ cortex/subject/initiative_control.py
+  - InitiativeArbiter
+  - InitiativeControlAction: SPEAK / WAIT / DROP
+  - điểm quyết định dựa goal, commitment, curiosity, relationship, timing, refractory
+
+~ cortex/subject/initiative.py
+  - CONTRIBUTION intention có thể mang open-loop thật
+  - thêm mark_abandoned() cho DROP
+
+~ cortex/subject/service.py
+  - note_initiative_control()
+  - initiative_view() xuất last_control để debug/report
+
+~ runtime/subject_initiative_runtime.py
+  - đọc RuntimeMindState.open_loops
+  - tạo active_goal_text + contribution_signal có provenance
+  - controller quyết định trước khi materialize affordance
+  - contribution có nội dung -> resume_shared_goal
+
+~ experiments/v57_simulation/live_runtime.py
+  - thêm surface provider probe
+  - wait_for_autonomous(): không gửi user prompt, chờ public turn runtime thật
+
++ tools/run_v58_initiative_live.py
++ run_v58_initiative_real.bat
++ tests/test_v58_initiative_controller.py
++ V58_INITIATIVE_CONTROLLER_NOTES_VI.md
++ V58_TEST_STATUS_VI.txt

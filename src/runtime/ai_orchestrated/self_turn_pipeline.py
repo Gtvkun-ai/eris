@@ -1183,10 +1183,32 @@ class SelfTurnPipeline:
                 if surface_reason.startswith("surface_")
                 else f"surface_unavailable:{surface_reason}"
             )
+
+            # V61: duplicate guard là bằng chứng rằng *cách nói hiện tại* đã bế
+            # tắc, không phải provider outage. Nếu cứ giữ urge nguyên lực, tick sau
+            # Neuro lại chọn đúng nó rồi Surface lại chặn, tạo zombie loop nhìn bên
+            # ngoài như Eris đứng ngơ. Chỉ suppress urge tương ứng; không giả public
+            # receipt và không làm mất desire nếu sau đó có evidence mới.
+            if surface_reason == "surface_duplicate_recent_utterance" and subject_decision is not None:
+                urge_id = str(subject_decision.arguments.get("expression_urge_id", "") or "").strip()
+                urge_runtime = getattr(host, "expression_urge_runtime", None)
+                note_duplicate = getattr(urge_runtime, "note_surface_duplicate", None)
+                if urge_id and callable(note_duplicate):
+                    try:
+                        note_duplicate(urge_id, now=time.time())
+                    except Exception as exc:
+                        host.logger.debug("[expression urge] duplicate suppression degraded: %s", exc)
             self._release_seed_lease(candidate, reason=gate_reason)
             self._defer_claimed_continuation(plan, reason=gate_reason, seconds=12.0)
+            # V62: dedupe là một lựa chọn im an toàn, không phải autonomous
+            # subsystem chết. Chỉ lỗi kỹ thuật/provider thật mới phát DEGRADED.
+            terminal_state = (
+                "DONE"
+                if surface_reason == "surface_duplicate_recent_utterance"
+                else "DEGRADED"
+            )
             public_lifecycle.transition(
-                "DEGRADED",
+                terminal_state,
                 turn_id=lifecycle_turn_id,
                 reason=gate_reason,
             )
@@ -2248,8 +2270,10 @@ class SelfTurnPipeline:
             try:
                 from runtime.public_lifecycle import lifecycle_for
 
+                # V62: policy/grounding veto là autonomous đã quyết định an
+                # toàn, không phải runtime hỏng. UI cần thấy "đã chọn im lặng".
                 lifecycle_for(host).transition(
-                    "DEGRADED",
+                    "DONE",
                     turn_id=str(plan.plan_id or f"autonomous:{context.turn_seq}"),
                     reason=gate_reason,
                 )
@@ -2276,8 +2300,10 @@ class SelfTurnPipeline:
             try:
                 from runtime.public_lifecycle import lifecycle_for
 
+                # V62: policy/grounding veto là autonomous đã quyết định an
+                # toàn, không phải runtime hỏng. UI cần thấy "đã chọn im lặng".
                 lifecycle_for(host).transition(
-                    "DEGRADED",
+                    "DONE",
                     turn_id=str(plan.plan_id or f"autonomous:{context.turn_seq}"),
                     reason=gate_reason,
                 )

@@ -261,3 +261,38 @@ def test_stage_state_merges_segment_expression_with_audio_envelope(monkeypatch) 
     assert "question" in snapshot.speech_cue
     assert "tilt" in snapshot.speech_cue
     assert snapshot.gaze_bias_y > 0.0
+
+
+def test_v62_sparse_audio_envelope_falls_back_to_text_mouth_cues() -> None:
+    """Một spike đơn độc không được giữ miệng đóng suốt câu đang có tiếng."""
+
+    animator = SpeechAnimator()
+    sparse = tuple([0.0] * 10 + [0.82] + [0.0] * 9)
+    animator.start(
+        now=0.0,
+        context=SpeechContext(
+            text="Xin chào, tôi đang nói đây.",
+            audio_envelope=sparse,
+            audio_frame_ms=40,
+            audio_duration_ms=800,
+        ),
+    )
+
+    # Nếu tin envelope hỏng, 140 ms vẫn là zero. V62 phải bỏ nó và dùng cue chữ.
+    assert animator.sample(now=0.14).mouth_open_ratio > 0.20
+    assert max(animator.sample(now=index / 100.0).mouth_open_ratio for index in range(90)) > 0.45
+
+
+def test_v62_duration_mismatched_envelope_falls_back_to_text_cues() -> None:
+    animator = SpeechAnimator()
+    animator.start(
+        now=10.0,
+        context=SpeechContext(
+            text="Miệng vẫn phải sống khi metadata audio lệch.",
+            audio_envelope=(0.0, 0.7, 0.5, 0.0),
+            audio_frame_ms=40,
+            audio_duration_ms=1600,  # expected ~40 frame nhưng chỉ nhận 4
+        ),
+    )
+
+    assert animator.sample(now=10.14).mouth_open_ratio > 0.15

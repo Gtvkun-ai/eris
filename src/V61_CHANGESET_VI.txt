@@ -1,0 +1,30 @@
+ERIS V61 - Runtime Liveness & Cognitive Recovery
+
+SỬA LỖI CHÍNH
+1) runtime/ai_orchestrated/model_router.py
+   - Khai báo display_code/speech_code/display_language trong autonomous writer.
+   - Language-repair retry dùng đúng request_messages.
+
+2) runtime/expression_urge_runtime.py
+   - Thêm cooldown cho urge bị Surface chặn duplicate.
+   - Evidence mới mở lại urge.
+   - Structured environment urge có freshness/priority hợp lý hơn thought cũ.
+
+3) runtime/ai_orchestrated/self_turn_pipeline.py
+   - Khi duplicate surface xảy ra, gửi receipt suppression về đúng expression urge.
+
+4) runtime/ai_orchestrated/semantic_environment_worker.py
+   - Coalesce cùng semantic wake trong cửa sổ 3 giây.
+
+5) cortex/subject/neuro_control.py
+   - Tăng bounded restraint khi interruption cao + continuity SPEAK thấp.
+
+6) runtime/autonomous_loop_runtime.py
+   - Startup failure/recovery được ghi vào subsystem health registry.
+
+7) tools/check_v61_runtime_log.py
+   - Quét startup crash, zombie duplicate storm và environment wake storm.
+
+8) Giữ hotfix Body V60.1
+   - Loại src/body khỏi package.
+   - C# fixture đổi sang .cs.fixture.txt.

@@ -84,6 +84,12 @@ class SemanticEnvironmentWorker:
         self._processed: deque[tuple[int, NormalizedEnvironmentEvent]] = deque(maxlen=512)
         self._revision = 0
         self._last_perception_revision = 0
+        # V61: enrichment có thể phát nhiều event cùng nghĩa trong vài trăm ms.
+        # Scheduler coalesce theo HWND/object vẫn chưa đủ khi cùng semantic change
+        # đi qua nhiều nguồn. Giữ một wake signature ngắn để không đánh thức
+        # autonomous loop 4-5 lần cho cùng một thay đổi.
+        self._last_semantic_wake_signature = ""
+        self._last_semantic_wake_at = 0.0
 
     def start(self) -> "SemanticEnvironmentWorker":
         """Khởi động daemon thread nếu chưa chạy."""
@@ -391,10 +397,29 @@ class SemanticEnvironmentWorker:
             wake = getattr(self.host, "_wake_autonomous_loop", None)
             if callable(wake):
                 kinds = ",".join(dict.fromkeys(event.event_type for event in events))[:120]
-                try:
-                    wake(f"environment_semantic:{kinds or 'event'}")
-                except Exception as exc:  # noqa: BLE001
-                    self._debug("không đánh thức được autonomous loop: %s", exc)
+                # Dedupe theo *ý nghĩa* thay vì raw event id. Cùng task/phase/kind
+                # trong cửa sổ 3 giây chỉ cần một lần mở mắt; state snapshot vẫn
+                # được cập nhật cho mọi event ở phía trên nên không mất telemetry.
+                now_mono = time.monotonic()
+                wake_signature = "|".join((
+                    kinds or "event",
+                    str(getattr(situation, "task_hint", "") or "")[:120],
+                    str(getattr(situation, "phase", "") or "")[:80],
+                    str(int(getattr(situation, "max_attention_level", 0) or 0)),
+                ))
+                duplicate_wake = bool(
+                    wake_signature == self._last_semantic_wake_signature
+                    and (now_mono - self._last_semantic_wake_at) < 3.0
+                )
+                if not duplicate_wake:
+                    self._last_semantic_wake_signature = wake_signature
+                    self._last_semantic_wake_at = now_mono
+                    try:
+                        wake(f"environment_semantic:{kinds or 'event'}")
+                    except Exception as exc:  # noqa: BLE001
+                        self._debug("không đánh thức được autonomous loop: %s", exc)
+                else:
+                    self._metric_increment("environment_semantic_wake_coalesced_total")
 
         # Enrichment là hậu xử lý bất đồng bộ. Event sinh ra từ UIA/IA2 sẽ quay
         # lại publish -> scheduler như mọi event khác, nên privacy/coalesce vẫn là

@@ -2,14 +2,20 @@ import os
 import signal
 import subprocess
 import sys
+import time
+import urllib.request
+import urllib.parse
 import msvcrt
 import traceback
 
-from actions import ActionExecutor, ActionRouter
+from actions import ActionExecutor
 from app_logging import configure_logging, get_logger
 from domain import Decision
 from llm import LlmService
 from llm.process_manager import RemoteModelProcessManager
+from runtime.architecture_flags import (
+    background_tutor_enabled, inner_diary_model_enabled, legacy_model_lanes_enabled,
+)
 from memory.memory_cognition import MemoryCognitionCore
 from parser_grounding import DecisionParser
 from runtime.coordinator import RuntimeCoordinator
@@ -33,6 +39,16 @@ class AttentionOverseer:
         self.process_logger = get_logger("LLM")
         self.loop_logger = get_logger("Loop")
         self.action_logger = get_logger("Action")
+
+        git_commit = "unknown"
+        try:
+            root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            res = subprocess.run(["git", "-C", root_dir, "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=2.0)
+            if res.returncode == 0 and res.stdout.strip():
+                git_commit = res.stdout.strip()
+        except Exception:
+            pass
+        self.logger.info("[Environment Telemetry] interpreter=%s | file=%s | commit=%s", sys.executable, os.path.abspath(__file__), git_commit)
 
         remote_enabled = os.environ.get("ERIS_REMOTE_API_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
         if remote_enabled:
@@ -58,16 +74,19 @@ class AttentionOverseer:
             logger=self.process_logger,
             project_root=project_root,
         )
+        self.ds2api_procs = self._start_ds2api_daemons(project_root)
         self.llm_client = self.process_manager.build_client(
             model_path=model_path,
             n_ctx=n_ctx,
             n_gpu_layers=n_gpu_layers,
         )
+        # local/open-model style lane cũ không còn được khởi động mặc định. Code vẫn
+        # nằm sau feature flag để rollback có kiểm soát, thay vì âm thầm sống lại.
         style_client = self.process_manager.build_style_client(
             model_path=model_path,
             n_ctx=min(n_ctx, 4096),
             n_gpu_layers=n_gpu_layers,
-        )
+        ) if legacy_model_lanes_enabled() else None
         if style_client is not None:
             provider_label = getattr(style_client, "base_url", "") or style_client.__class__.__name__
             self.logger.info("Speech/style client đã sẵn sàng: %s", provider_label)
@@ -96,7 +115,20 @@ class AttentionOverseer:
         ).strip().lower() in {"1", "true", "yes", "on"}
         social_parser_client = self.process_manager.build_social_parser_client() if social_models_enabled else None
         social_critic_client = self.process_manager.build_social_critic_client() if social_models_enabled else None
-        social_fallback_client = self.process_manager.build_social_fallback_client() if social_models_enabled else None
+        # Social fallback cũ là một worker riêng và chỉ được sống khi flag legacy
+        # được bật rõ. Primary/deep observer không được tự biến thành fallback.
+        social_fallback_client = (
+            self.process_manager.build_social_fallback_client()
+            if social_models_enabled and legacy_model_lanes_enabled() else None
+        )
+        inner_client = self.process_manager.build_inner_client()
+        executive_client = self.process_manager.build_executive_client()
+        diary_client = self.process_manager.build_diary_client() if inner_diary_model_enabled() else None
+        seed_client = self.process_manager.build_seed_client()
+        surface_client = self.process_manager.build_surface_client()
+        research_client = self.process_manager.build_research_client() if background_tutor_enabled() else None
+        tutor_client = self.process_manager.build_tutor_client() if background_tutor_enabled() else None
+        curator_client = self.process_manager.build_curator_client()
         if escalation_client is not None:
             provider_label = getattr(escalation_client, "base_url", "") or escalation_client.__class__.__name__
             self.logger.info("Escalation client (bái sư) đã sẵn sàng: %s", provider_label)
@@ -109,9 +141,37 @@ class AttentionOverseer:
             social_parser_client=social_parser_client,
             social_critic_client=social_critic_client,
             social_fallback_client=social_fallback_client,
+            observer_client=social_parser_client,
+            critic_client=social_critic_client,
+            inner_client=inner_client,
+            diary_client=diary_client,
+            seed_client=seed_client,
+            surface_client=surface_client,
+            executive_client=executive_client,
+            research_client=research_client,
+            tutor_client=tutor_client,
+            curator_client=curator_client,
             logger=self.logger,
         )
-        self.logger.info("Mô hình đã sẵn sàng.")
+        configured_workers = [
+            role
+            for role, worker in (
+                ("companion", self.llm_client),
+                ("observer", getattr(self.llm_service, "observer_client", None)),
+                ("critic", getattr(self.llm_service, "critic_client", None)),
+                ("inner", getattr(self.llm_service, "inner_client", None)),
+                ("diary", getattr(self.llm_service, "diary_client", None)),
+                ("seed", getattr(self.llm_service, "seed_client", None)),
+                ("surface", getattr(self.llm_service, "surface_client", None)),
+                ("executive", getattr(self.llm_service, "executive_client", None)),
+                ("style", getattr(self.llm_service, "style_client", None)),
+                ("research", getattr(self.llm_service, "research_client", None)),
+                ("tutor", getattr(self.llm_service, "tutor_client", None)),
+                ("curator", getattr(self.llm_service, "curator_client", None)),
+            )
+            if worker is not None
+        ]
+        self.logger.info("Mô hình đã sẵn sàng. cognitive_workers=%s", ",".join(configured_workers))
         self.memory_semantic_parser = build_runtime_memory_semantic_parser(
             llm_service=self.llm_service,
             logger=self.memory_logger,
@@ -146,7 +206,6 @@ class AttentionOverseer:
         self.decision_parser = DecisionParser(fallback_decision, logger=self.parse_logger)
         self.telemetry_service = TelemetryService()
         self.action_executor = ActionExecutor(logger=self.action_logger)
-        self.action_router = ActionRouter()
         self.coordinator = RuntimeCoordinator(
             logger=self.loop_logger,
             transport=self.transport,
@@ -156,7 +215,6 @@ class AttentionOverseer:
             memory_core=self.memory_core,
             body_running_fn=self._is_body_running,
             action_executor=self.action_executor,
-            action_router=self.action_router,
             memory_semantic_parser=self.memory_semantic_parser,
         )
         if memory_state is not None:
@@ -184,6 +242,123 @@ class AttentionOverseer:
         except Exception:
             return True
 
+    def _start_ds2api_daemons(self, project_root: str) -> list:
+        """Start một hoặc nhiều Whale2API instance, mỗi cái trên một port riêng.
+
+        Cấu hình qua env:
+            ERIS_DS2API_PORTS=6011,6012,6013,6014,6015   (seed mặc định: 6015)
+
+        Mỗi instance nhận PORT override qua environment, dùng chung binary và
+        database (.db) từ ds2api_dir. Circuit breaker của mỗi worker role đã
+        được tách theo provider_circuit_id = base_url#role → fault isolation
+        tự nhiên giữa các port.
+        """
+
+        enabled = os.environ.get("ERIS_DS2API_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+        if not enabled:
+            return []
+
+        ds2api_dir = os.path.join(project_root, "tools", "whale2api")
+        binary = os.path.join(ds2api_dir, "whale2api.exe")
+        if not os.path.exists(binary):
+            self.logger.warning("ERIS_DS2API_ENABLED=1 but whale2api.exe not found at %s", binary)
+            return []
+
+        # Đọc danh sách port từ env, fallback về 6011 đơn để tương thích cũ.
+        raw_ports = os.environ.get("ERIS_DS2API_PORTS", os.environ.get("ERIS_DS2API_PORT", "6011")).strip()
+        ports: list[int] = []
+        for chunk in raw_ports.replace(";", ",").split(","):
+            chunk = chunk.strip()
+            if chunk:
+                try:
+                    ports.append(int(chunk))
+                except ValueError:
+                    self.logger.warning("ERIS_DS2API_PORTS: bo qua gia tri khong hop le '%s'", chunk)
+        if not ports:
+            ports = [6011]
+        ports = list(dict.fromkeys(ports))  # dedup, giữ thứ tự
+
+        # Random-chat seed có DS2API instance riêng. Dù config cũ chỉ liệt kê
+        # 6011-6014, runtime vẫn bổ sung cổng local của role seed khi reservoir
+        # được bật. Đây là fault isolation thật, không phải alias role trên giấy.
+        seed_reservoir_enabled = str(
+            os.environ.get("ERIS_RANDOM_CHAT_SEED_RESERVOIR_ENABLED", "1") or "1"
+        ).strip().lower() not in {"0", "false", "no", "off", "disabled", "none"}
+        if seed_reservoir_enabled:
+            seed_base = str(
+                os.environ.get("ERIS_DS_SEED_BASE_URL", "http://127.0.0.1:6015/v1")
+                or "http://127.0.0.1:6015/v1"
+            ).strip()
+            try:
+                parsed_seed = urllib.parse.urlparse(seed_base)
+                seed_host = str(parsed_seed.hostname or "").lower()
+                seed_port = int(parsed_seed.port or 6015)
+            except (TypeError, ValueError):
+                seed_host, seed_port = "127.0.0.1", 6015
+            if seed_host in {"127.0.0.1", "localhost", "::1"} and seed_port not in ports:
+                ports.append(seed_port)
+                self.logger.info("DS2API seed port %d appended for background reservoir.", seed_port)
+
+        procs: list = []
+        creationflags = 0x08000000 if os.name == "nt" else 0
+
+        for port in ports:
+            # Nếu port đã có process đang nghe → reuse, không start mới.
+            already_running = False
+            try:
+                res = urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=3.0)
+                if getattr(res, "status", None) == 200:
+                    already_running = True
+            except Exception:
+                pass
+
+            if already_running:
+                self.logger.info("DS2API port %d: already running, reuse.", port)
+                continue
+
+            self.logger.info("Starting Whale2API instance on port %d from %s...", port, binary)
+            try:
+                # Truyền PORT qua env của subprocess; các biến khác kế thừa từ
+                # process hiện tại (đã được apply_secrets_to_environ nạp đầy đủ).
+                env = os.environ.copy()
+                env["PORT"] = str(port)
+                # Pool UI của các instance phụ chạy trên cổng khác để không xung đột.
+                # Instance đầu tiên giữ nguyên POOL_UI_PORT từ .env.
+                if port != ports[0]:
+                    try:
+                        base_ui_port = int(env.get("POOL_UI_PORT", "5010"))
+                        env["POOL_UI_PORT"] = str(base_ui_port + ports.index(port))
+                    except (ValueError, TypeError):
+                        pass
+                proc = subprocess.Popen(
+                    [binary],
+                    cwd=ds2api_dir,
+                    env=env,
+                    creationflags=creationflags,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                # Health-check với tối đa 6 giây.
+                started = False
+                for _ in range(12):
+                    time.sleep(0.5)
+                    try:
+                        hc = urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=2.0)
+                        if getattr(hc, "status", None) == 200:
+                            started = True
+                            break
+                    except Exception:
+                        continue
+                if started:
+                    self.logger.info("DS2API daemon started and passed inference health check on port %d (PID=%s).", port, getattr(proc, "pid", "?"))
+                else:
+                    self.logger.warning("DS2API daemon spawned (PID=%s) on port %d, but inference health check on /v1/models timed out.", getattr(proc, "pid", "?"), port)
+                procs.append(proc)
+            except Exception as exc:
+                self.logger.error("Failed to start DS2API instance on port %d: %s", port, exc)
+
+        return procs
+
     def stop(self, reason: str = ""):
         if not self.coordinator.running:
             return
@@ -193,6 +368,18 @@ class AttentionOverseer:
         self.process_manager.stop()
         if hasattr(self, "tts_engine") and self.tts_engine is not None:
             self.tts_engine.shutdown()
+        if hasattr(self, "ds2api_procs") and self.ds2api_procs:
+            self.logger.info("Stopping DS2API daemons (%d instance(s))...", len(self.ds2api_procs))
+            for proc in self.ds2api_procs:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=3)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+            self.ds2api_procs = []
 
     def run_loop(self):
         self.coordinator.run_loop()

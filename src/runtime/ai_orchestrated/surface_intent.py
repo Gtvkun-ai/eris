@@ -193,7 +193,11 @@ class SurfaceIntentEngine:
         snapshot: Mapping[str, Any] | None = None,
         avoid_text: str = "",
     ) -> SurfaceTurn | None:
-        """Gọi Surface Worker đúng một lần để viết câu từ SpeechIntent.
+        """Gọi Surface Worker để viết câu từ SpeechIntent.
+
+        Bình thường chỉ gọi một lần. V62 cho phép đúng *một* rewrite retry khi
+        câu đầu là bản lặp của public line gần nhất; đây vẫn là cùng Surface
+        authority, không mở đường cho worker khác giả làm miệng của Eris.
 
         Model không được trả ``silence`` hay đổi mode. Nếu provider/schema lỗi,
         trả ``None`` ngay. Với chess, caller bắt buộc im/body-only; không có local
@@ -355,6 +359,95 @@ class SurfaceIntentEngine:
         confidence = _clamp01(raw.get("confidence", 0.0))
         if not text:
             return self._unavailable(intent, "surface_missing_display_text")
+        if avoid_text and _surface_text_is_duplicate(text, avoid_text):
+            # V62: Surface đôi khi trả đúng *câu cũ* dù SpeechIntent hiện tại đã
+            # đổi hẳn. Chặn luôn làm autonomous trông như chết: desire mới có,
+            # Neuro chọn SPEAK, nhưng writer cứ phát lại ký ức cũ rồi bị dedupe.
+            # Cho CHÍNH Surface worker một cơ hội viết lại, không dùng companion
+            # hay câu local giả. Như vậy vẫn giữ single-writer authority.
+            self._log(
+                "warning",
+                "[surface worker] duplicate detected; retry current intent mode=%s text=%s",
+                intent.mode,
+                text[:180],
+            )
+            retry_request = dict(request)
+            retry_contract = dict(_mapping(request.get("surface_contract")))
+            retry_contract["avoid_repeating"] = compact(
+                " | ".join(part for part in (avoid_text, text) if part),
+                900,
+            )
+            retry_contract["rewrite_required"] = True
+            retry_contract["rewrite_rule"] = (
+                "The previous Surface realization was rejected as a repeat. "
+                "Realize the CURRENT speech_intent from scratch. Preserve its motive, "
+                "anchor, evidence and claim domains, but do not reuse or closely "
+                "paraphrase either rejected/avoided public line."
+            )
+            retry_request["surface_contract"] = retry_contract
+            retry_request["surface_retry"] = {
+                "attempt": 2,
+                "reason": "duplicate_recent_utterance",
+                "trace_id": str(intent.trace_id or intent.plan.plan_id),
+                # Trường này cố ý làm request thứ hai khác request đầu để proxy
+                # cache không trả lại nguyên response vừa bị bác.
+                "retry_nonce": f"{intent.trace_id or intent.plan.plan_id}:rewrite:2",
+                "rejected_display_text": text,
+            }
+            try:
+                retry_raw = writer(retry_request)
+            except Exception as exc:
+                self._log(
+                    "warning",
+                    "[surface worker] duplicate rewrite failed exception=%s",
+                    type(exc).__name__,
+                )
+                return self._unavailable(intent, "surface_duplicate_recent_utterance")
+            if isinstance(retry_raw, Mapping) and retry_raw:
+                retry_unavailable = compact(
+                    retry_raw.get("_surface_unavailable_reason", retry_raw.get("surface_unavailable_reason", "")),
+                    160,
+                )
+                if not retry_unavailable:
+                    retry_utterance = UtteranceSpec.from_mapping(
+                        retry_raw,
+                        default_display_language=display_language,
+                        default_speech_language=speech_language,
+                        fallback_preset=intent.plan.performance_hint or "neutral",
+                        turn_id=intent.plan.plan_id,
+                    )
+                    retry_text = compact(retry_utterance.display.text, 520)
+                    if retry_text and not _surface_text_is_duplicate(retry_text, avoid_text) and not _surface_text_is_duplicate(retry_text, text):
+                        raw = retry_raw
+                        utterance = retry_utterance
+                        text = retry_text
+                        confidence = _clamp01(raw.get("confidence", 0.0))
+                        self._log(
+                            "info",
+                            "[surface worker] duplicate rewrite recovered mode=%s text=%s",
+                            intent.mode,
+                            text[:180],
+                        )
+                    else:
+                        self._log(
+                            "warning",
+                            "[surface worker] duplicate rewrite still stale mode=%s text=%s",
+                            intent.mode,
+                            retry_text[:180],
+                        )
+                        return self._unavailable(intent, "surface_duplicate_recent_utterance")
+                else:
+                    self._log(
+                        "warning",
+                        "[surface worker] duplicate rewrite unavailable reason=%s",
+                        retry_unavailable,
+                    )
+                    return self._unavailable(intent, "surface_duplicate_recent_utterance")
+            else:
+                return self._unavailable(intent, "surface_duplicate_recent_utterance")
+
+        # Validate claims *after* a possible rewrite retry, otherwise manifest của
+        # câu cũ được dùng để duyệt câu mới. Đó là kiểu bug giấy tờ rất con người.
         raw_manifest = raw.get("claim_manifest") if "claim_manifest" in raw else None
         claim_manifest = normalize_claim_manifest(raw_manifest)
         claim_decision = validate_claim_manifest(
@@ -379,14 +472,6 @@ class SurfaceIntentEngine:
                 "[surface claims] legacy payload missing claim_manifest mode=%s",
                 intent.mode,
             )
-        if avoid_text and _surface_text_is_duplicate(text, avoid_text):
-            self._log(
-                "warning",
-                "[surface worker] blocked duplicate recent autonomous wording mode=%s text=%s",
-                intent.mode,
-                text[:180],
-            )
-            return self._unavailable(intent, "surface_duplicate_recent_utterance")
         if not utterance.speech.text:
             return self._unavailable(intent, "surface_missing_speech_text")
         if confidence < 0.25:

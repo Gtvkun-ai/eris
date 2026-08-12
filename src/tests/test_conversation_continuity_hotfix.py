@@ -267,7 +267,7 @@ def test_no_phrase_marker_classifier_remains_in_runtime_path() -> None:
 def test_settings_cooldown_still_uses_int64() -> None:
     body_source = Path(__file__).resolve().parents[2] / "body" / "UdpListener.SettingsPanel.cs"
     if not body_source.exists():
-        body_source = Path(__file__).resolve().parents[1] / "integration" / "body_contracts" / "UdpListener.SettingsPanel.cs"
+        body_source = Path(__file__).resolve().parents[1] / "integration" / "body_contracts" / "UdpListener.SettingsPanel.cs.fixture.txt"
     source = body_source.read_text(encoding="utf-8")
 
     assert "public long CooldownMs" in source

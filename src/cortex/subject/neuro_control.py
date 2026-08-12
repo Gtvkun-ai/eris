@@ -572,6 +572,15 @@ class NeuroActionSelector:
                     - 0.22 * boundary
                     - 0.16 * interruption
                 )
+                # V61: nếu slow appraisal có confidence tốt và báo interruption
+                # cao trong khi chính candidate SPEAK có continuity thấp, restraint
+                # phải đủ lực để thay đổi quyết định. Bản cũ cho reviewer nói
+                # "silence is safest" nhưng utility vẫn thắng SPEAK với margin vài
+                # phần nghìn, khiến log và hành vi tự mâu thuẫn. Đây vẫn là local
+                # utility transform; model không được chọn action trực tiếp.
+                restraint = _clamp01((interruption - 0.55) / 0.45) * review_confidence
+                if continuity < 0.50 and restraint > 0.0:
+                    delta -= 0.10 * restraint * _clamp01((0.55 - continuity) / 0.55)
                 # Unsupported present-world speech should lose decisively before
                 # Surface is called, but this remains a score penalty rather than a
                 # downstream regex veto.
@@ -579,11 +588,13 @@ class NeuroActionSelector:
                     delta -= 0.18 * ((0.22 - epistemic) / 0.22)
                 score += gain * delta
             elif action == "silence":
+                restraint = _clamp01((interruption - 0.55) / 0.45) * review_confidence
                 score += gain * (
                     0.18 * boundary
                     + 0.13 * interruption
                     + 0.07 * (0.5 - motive)
                     + 0.05 * (0.5 - epistemic)
+                    + 0.055 * restraint
                 )
             elif action == "body_only":
                 score += gain * (
