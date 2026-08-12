@@ -76,6 +76,50 @@ class AffectiveDynamicsRuntime:
         self._log_receipt(event, delta, updated)
         return AffectEventReceipt(event.event_id, event.kind, True, delta=delta, reason="applied")
 
+    def ingest_subject_appraisal(self, appraisal: Any, *, now: float | None = None) -> AffectEventReceipt:
+        """Áp một SubjectAppraisal đúng một lần vào current affect.
+
+        Event ID dựa trên appraisal_id nên retry cùng frame không được cộng mood
+        lần hai. Đây là modulation hậu-appraisal, nhỏ hơn social event gốc.
+        """
+        appraisal_id = str(getattr(appraisal, "appraisal_id", "") or "").strip()
+        if not appraisal_id:
+            return AffectEventReceipt("", "goal_appraisal", False, reason="missing_appraisal_id")
+        current = float(now if now is not None else time.time())
+        refs = tuple(str(item) for item in getattr(appraisal, "evidence_refs", ()) if str(item or "").strip())
+        event = CognitiveEvent(
+            event_id=f"cogevt:appraisal:{appraisal_id}",
+            origin="subject_appraisal",
+            kind="goal_appraisal",
+            subject=str(getattr(appraisal, "primary_interpretation", "") or "goal-relative appraisal")[:360],
+            occurred_at=current,
+            evidence_refs=refs or (appraisal_id,),
+            source_ref=appraisal_id,
+            novelty_key=f"subject-appraisal:{appraisal_id}",
+            metadata={
+                "goal_congruence": float(getattr(appraisal, "goal_congruence", 0.0) or 0.0),
+                "goal_progress_delta": float(getattr(appraisal, "goal_progress_delta", 0.0) or 0.0),
+                "uncertainty": float(getattr(appraisal, "uncertainty", 0.5) or 0.5),
+            },
+        )
+        with self._lock:
+            if not self._ledger.accept(event, now=current):
+                return AffectEventReceipt(event.event_id, event.kind, False, reason="duplicate_event")
+            try:
+                state = self.host._get_internal_state()
+                delta = self.engine.appraise_goal_appraisal(appraisal)
+                if delta.strength < 0.003:
+                    return AffectEventReceipt(event.event_id, event.kind, False, delta=delta, reason="no_affect_delta")
+                updated = self.engine.apply_event(
+                    state, event, delta=delta, now=current, disposition=self._disposition()
+                )
+                self.host._set_internal_state(updated)
+            except Exception as exc:
+                self._log("warning", "[affect event] subject appraisal failed id=%s error=%s", event.event_id, exc)
+                return AffectEventReceipt(event.event_id, event.kind, False, reason="runtime_error")
+        self._log_receipt(event, delta, updated)
+        return AffectEventReceipt(event.event_id, event.kind, True, delta=delta, reason="applied")
+
     def ingest_cognitive_event(self, event: CognitiveEvent, *, now: float | None = None) -> AffectEventReceipt:
         """Nhận seed/internal event đã có identity V42, không tái diễn giải câu Surface."""
         if not isinstance(event, CognitiveEvent):

@@ -404,6 +404,63 @@ class AffectiveDynamicsEngine:
         strength = max((abs(float(v)) for v in (*mood.values(), *impulse.values())), default=0.0)
         return AffectDelta(mood=mood, impulse=impulse, labels=tuple(labels), strength=clamp01(strength))
 
+    def appraise_goal_appraisal(self, appraisal: Any) -> AffectDelta:
+        """Map appraisal theo goal thành modulation affect nhỏ và có provenance.
+
+        Đây là cầu V56 giữa Subject Appraisal và current affect. Nó chỉ dùng state
+        của Eris (goal congruence/uncertainty/controllability), không suy diễn
+        người dùng đang vui, buồn hay có ý đồ gì.
+        """
+        relevance = clamp01(getattr(appraisal, "goal_relevance", 0.0), 0.0)
+        congruence = clamp_signed(getattr(appraisal, "goal_congruence", 0.0), 0.0)
+        progress = clamp_signed(getattr(appraisal, "goal_progress_delta", 0.0), 0.0)
+        uncertainty = clamp01(getattr(appraisal, "uncertainty", 0.5), 0.5)
+        controllability = clamp01(getattr(appraisal, "controllability", 0.5), 0.5)
+        relational = clamp01(getattr(appraisal, "relational_significance", 0.0), 0.0)
+        identity = clamp01(getattr(appraisal, "identity_significance", 0.0), 0.0)
+
+        support = max(0.0, congruence)
+        threat = max(0.0, -congruence)
+        forward = max(0.0, progress)
+        setback = max(0.0, -progress)
+        evidence_gain = relevance * (0.55 + 0.45 * (1.0 - uncertainty))
+
+        mood = {
+            "valence": 0.10 * support * evidence_gain - 0.12 * threat * evidence_gain,
+            "arousal": 0.04 * abs(congruence) * relevance + 0.025 * setback,
+            "curiosity": 0.035 * uncertainty * relevance,
+            "social_energy": 0.035 * support * relational - 0.045 * threat * relational,
+            "attachment": 0.018 * support * relational - 0.018 * threat * relational,
+            "irritation": 0.055 * threat * controllability + 0.025 * setback,
+            "tenderness": 0.025 * support * relational,
+            "delight": 0.075 * support * evidence_gain + 0.035 * forward,
+            "sadness": 0.055 * threat * (0.55 + 0.45 * identity),
+            "anxiety": 0.085 * threat * (1.0 - 0.65 * controllability) + 0.025 * uncertainty * relevance,
+            "embarrassment": 0.035 * setback * controllability * identity,
+        }
+        impulse = {
+            "valence": 0.15 * support * evidence_gain - 0.17 * threat * evidence_gain,
+            "arousal": 0.07 * abs(congruence) * relevance,
+            "curiosity": 0.055 * uncertainty * relevance,
+            "social_energy": 0.055 * support * relational - 0.065 * threat * relational,
+            "irritation": 0.08 * threat * controllability,
+            "delight": 0.12 * support * evidence_gain + 0.05 * forward,
+            "sadness": 0.08 * threat * (0.55 + 0.45 * identity),
+            "anxiety": 0.12 * threat * (1.0 - 0.65 * controllability),
+            "embarrassment": 0.05 * setback * controllability * identity,
+        }
+        labels: list[str] = []
+        if support >= 0.20:
+            labels.append("goal_supported")
+        if threat >= 0.20:
+            labels.append("goal_threatened")
+        if forward >= 0.20:
+            labels.append("goal_progress")
+        if setback >= 0.20:
+            labels.append("goal_setback")
+        strength = max((abs(float(v)) for v in (*mood.values(), *impulse.values())), default=0.0)
+        return AffectDelta(mood=mood, impulse=impulse, labels=tuple(labels), strength=clamp01(strength))
+
     def appraise_cognitive_event(self, event: CognitiveEvent) -> AffectDelta:
         """Internal/seed event chỉ nudge cognition, không tự bịa vui/buồn."""
 

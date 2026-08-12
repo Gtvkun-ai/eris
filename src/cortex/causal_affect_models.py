@@ -48,6 +48,17 @@ def clamp01(value: Any, default: float = 0.0) -> float:
     return max(0.0, min(1.0, number))
 
 
+def clamp_signed(value: Any, default: float = 0.0) -> float:
+    """Kẹp tín hiệu appraisal có dấu để controller không thể runaway."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = default
+    if number != number or number in (float("inf"), float("-inf")):
+        number = default
+    return max(-1.0, min(1.0, number))
+
+
 def compact_text(value: Any, limit: int = 240) -> str:
     text = " ".join(str(value or "").split()).strip()
     if len(text) <= limit:
@@ -96,16 +107,20 @@ class AppraisalFrame:
     alternative_interpretations: tuple[str, ...]
     affected_goal_ids: tuple[str, ...]
     evidence_refs: tuple[str, ...]
+    # V56: signed appraisal. 0 = chưa biết/không liên quan chiều tiến độ.
+    goal_congruence: float = 0.0
+    goal_progress_delta: float = 0.0
 
     @property
     def salience(self) -> float:
         return clamp01(
-            0.24 * self.goal_relevance
-            + 0.18 * self.expectation_violation
-            + 0.19 * self.relational_significance
-            + 0.17 * self.identity_significance
-            + 0.12 * self.future_consequence
-            + 0.10 * self.novelty
+            0.20 * self.goal_relevance
+            + 0.14 * abs(clamp_signed(self.goal_congruence))
+            + 0.16 * self.expectation_violation
+            + 0.18 * self.relational_significance
+            + 0.16 * self.identity_significance
+            + 0.10 * self.future_consequence
+            + 0.06 * self.novelty
         )
 
     @property

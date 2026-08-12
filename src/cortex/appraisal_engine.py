@@ -4,13 +4,52 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from cortex.causal_affect_models import AppraisalFrame, ExogenousEvent, clamp01, compact_text
+from cortex.causal_affect_models import AppraisalFrame, ExogenousEvent, clamp01, clamp_signed, compact_text
 
 
 def _read(obj: Any, key: str, default: Any = None) -> Any:
     if isinstance(obj, Mapping):
         return obj.get(key, default)
     return getattr(obj, key, default)
+
+
+def _active_goal_ids(goals: tuple[Any, ...]) -> tuple[str, ...]:
+    """Lấy ID mục tiêu đang còn hiệu lực mà không biến summary thành identity."""
+    output: list[str] = []
+    for goal in goals:
+        goal_id = compact_text(_read(goal, "goal_id", _read(goal, "id", "")), 120)
+        if not goal_id:
+            continue
+        status = str(_read(goal, "status", "active") or "active").strip().lower()
+        explicit_active = _read(goal, "active", None)
+        if status in {"closed", "retired", "cancelled", "fulfilled"}:
+            continue
+        if explicit_active is False:
+            continue
+        output.append(goal_id)
+    return tuple(dict.fromkeys(output))[:6]
+
+
+def _goal_relation_for_kind(kind: str) -> tuple[float, float]:
+    """Ước lượng chiều tác động của *event type* lên goal liên quan.
+
+    Đây chỉ là prior có dấu cho các event đã được chuẩn hoá. Nó không đoán ý định
+    của user. Caller có semantic evidence tốt hơn vẫn có thể dùng appraisal khác.
+    """
+    table = {
+        "user_returned": (0.55, 0.30),
+        "promise_made": (0.18, 0.08),
+        "promise_fulfilled": (0.82, 0.72),
+        "recognition_received": (0.66, 0.42),
+        "shared_success": (0.92, 0.88),
+        "user_left": (-0.18, -0.08),
+        "user_ignored_turn": (-0.48, -0.30),
+        "promise_broken": (-0.84, -0.72),
+        "correction_received": (-0.56, -0.34),
+        "continuity_break": (-0.88, -0.78),
+        "capability_shutdown_proposed": (-0.90, -0.82),
+    }
+    return table.get(str(kind or "").strip().lower(), (0.0, 0.0))
 
 
 def _expectation_stake(expectations: tuple[Any, ...], event: ExogenousEvent) -> tuple[float, float]:
@@ -49,12 +88,9 @@ class AppraisalEngine:
         rupture = clamp01(_read(relationship, "rupture", 0.0))
         attachment = clamp01(_read(relationship, "attachment_visibility", 0.12), 0.12)
         identity_stability = clamp01(_read(self_model, "self_coherence", 0.5), 0.5)
-        goal_ids = tuple(
-            compact_text(_read(goal, "goal_id", _read(goal, "id", "")), 120)
-            for goal in goals
-            if compact_text(_read(goal, "goal_id", _read(goal, "id", "")), 120)
-        )[:6]
+        goal_ids = _active_goal_ids(goals)
         kind = event.kind
+        goal_congruence, goal_progress_delta = _goal_relation_for_kind(kind)
 
         defaults = {
             "goal_relevance": 0.45,
@@ -174,8 +210,10 @@ class AppraisalEngine:
             uncertainty=clamp01(defaults["uncertainty"]),
             primary_interpretation=str(defaults["primary"]),
             alternative_interpretations=tuple(str(item) for item in defaults["alternatives"]),
-            affected_goal_ids=goal_ids or (("goal_preserve_shared_continuity",) if kind in {"user_returned", "promise_broken", "user_ignored_turn"} else ()),
+            affected_goal_ids=goal_ids or (("goal_preserve_shared_continuity",) if kind in {"user_returned", "user_left", "promise_fulfilled", "promise_broken", "user_ignored_turn", "continuity_break"} else ()),
             evidence_refs=event.evidence_refs,
+            goal_congruence=clamp_signed(goal_congruence),
+            goal_progress_delta=clamp_signed(goal_progress_delta),
         )
         # Sensitive appraisals must carry at least one alternative explanation.
         if frame.is_sensitive and not frame.alternative_interpretations:

@@ -26,6 +26,7 @@ from .competence import CompetenceService, PracticePlanner
 from .agency import LearnedAgencyPlanner
 from .consolidation import TemporalConsolidator
 from .continuity import ContinuityService
+from .decision_ledger import IntegratedDecisionLedger
 from .contracts import (
     ActionProposal,
     ActionRequest,
@@ -166,6 +167,9 @@ class SubjectService:
             deterministic=self.config.deterministic,
         )
         self.review_integrator = DeliberationReviewIntegrator(self.arbiter)
+        # V56: một ledger kiểm toán duy nhất nối các state đã có. Ledger không
+        # được trở thành policy authority thứ hai, chỉ chụp causal trace.
+        self.decision_ledger = IntegratedDecisionLedger(max_records=192)
 
         self.substrate = self.substrate_monitor.initial(
             subject_id=self.config.subject_id,
@@ -174,6 +178,9 @@ class SubjectService:
         self.inner = InnerLifeState()
         self._last_appraisals: tuple[SubjectAppraisal, ...] = ()
         self._last_activations: tuple[NeedActivation, ...] = ()
+        # V56: cầu nối outcome của persistent intention sang appraisal của đúng
+        # user turn kế tiếp. Chỉ giữ receipt tối thiểu, không lưu suy diễn cảm xúc.
+        self._last_initiative_outcome: dict[str, Any] = {}
         self._decisions: dict[str, MindDecision] = {}
         self._decision_history: list[MindDecision] = []
         self._valued_decisions: list[MindDecision] = []
@@ -258,6 +265,9 @@ class SubjectService:
         initiative_payload = payload.get("initiative")
         if isinstance(initiative_payload, Mapping):
             self.initiative_state = InitiativeState.from_dict(initiative_payload)
+        ledger_payload = payload.get("decision_ledger")
+        if isinstance(ledger_payload, list):
+            self.decision_ledger.restore(item for item in ledger_payload if isinstance(item, Mapping))
 
     def _projection_payload(self) -> dict[str, Any]:
         return {
@@ -270,6 +280,8 @@ class SubjectService:
             "substrate": self.substrate.to_dict(),
             "relational": self.relational_state.to_dict(),
             "initiative": self.initiative_state.to_dict(),
+            # Chỉ giữ bounded projection gần nhất; event store vẫn là audit nguồn.
+            "decision_ledger": self.decision_ledger.to_projection(limit=96),
         }
 
     def _persist_projection(self) -> None:
@@ -487,6 +499,13 @@ class SubjectService:
             item.to_dict() for item in after.pending_intentions
             if item.status.value in {"satisfied", "revised"} and item.last_outcome_at == current
         ]
+        # Receipt này cho phép appraisal kế tiếp biết một goal vừa tiến/lùi dựa
+        # trên lifecycle thật, thay vì đoán từ sentiment của câu user.
+        self._last_initiative_outcome = {
+            "observed_at": current,
+            "evidence_ref": str(evidence_ref or ""),
+            "resolved": changed,
+        } if changed else {}
         self._append_event(
             "initiative_user_outcome",
             {
@@ -500,9 +519,195 @@ class SubjectService:
             self._persist_projection()
         return after.to_dict()
 
+    def _ledger_state_snapshot(
+        self,
+        *,
+        substrate: OrganismicSubstrate | None = None,
+        appraisals: tuple[SubjectAppraisal, ...] | None = None,
+        activations: tuple[NeedActivation, ...] | None = None,
+    ) -> dict[str, Any]:
+        """Tạo state snapshot bounded cho Decision Ledger.
+
+        Không gọi LLM, không render diary và không copy raw private evidence. Đây
+        là state có kiểu mà test/soak có thể so sánh trước-sau một cách máy móc.
+        """
+        substrate = substrate or self.substrate
+        appraisals = self._last_appraisals if appraisals is None else appraisals
+        activations = self._last_activations if activations is None else activations
+        relational = self.relational_state.to_dict()
+        goal_support = max((max(0.0, float(item.goal_congruence)) for item in appraisals), default=0.0)
+        goal_threat = max((max(0.0, -float(item.goal_congruence)) for item in appraisals), default=0.0)
+        surprise = max((max(float(item.novelty), float(item.expectation_violation)) for item in appraisals), default=0.0)
+        uncertainty = max((float(item.uncertainty) for item in appraisals), default=0.0)
+        social_drive = max((float(item.pressure) for item in activations if item.need_id == "connection"), default=0.0)
+        return {
+            "substrate_ref": f"substrate:{substrate.subject_id}:{substrate.revision}",
+            "substrate": {
+                key: round(float(value), 6)
+                for key, value in substrate.viability_vector().items()
+            },
+            "modulators": {
+                "goal_support": round(goal_support, 6),
+                "goal_threat": round(goal_threat, 6),
+                "surprise": round(max(0.0, min(1.0, surprise)), 6),
+                "uncertainty": round(max(0.0, min(1.0, uncertainty)), 6),
+                "social_drive": round(max(0.0, min(1.0, social_drive)), 6),
+            },
+            "needs": {
+                item.need_id: {
+                    "pressure": round(float(item.pressure), 6),
+                    "urgency": round(float(item.urgency), 6),
+                    "opportunity": round(float(item.opportunity), 6),
+                }
+                for item in activations[:12]
+            },
+            "appraisals": [
+                {
+                    "appraisal_id": item.appraisal_id,
+                    "goal_relevance": round(float(item.goal_relevance), 6),
+                    "goal_congruence": round(float(item.goal_congruence), 6),
+                    "goal_progress_delta": round(float(item.goal_progress_delta), 6),
+                    "uncertainty": round(float(item.uncertainty), 6),
+                    "affected_need_ids": list(item.affected_need_ids),
+                    "affected_goal_ids": list(item.affected_goal_ids),
+                }
+                for item in appraisals[:8]
+            ],
+            "intentions": [
+                {
+                    "intention_id": item.intention_id,
+                    "status": str(getattr(item.status, "value", item.status)),
+                    "motive_kind": str(getattr(item.motive_kind, "value", item.motive_kind)),
+                    "target": item.target,
+                    "pressure": round(float(item.pressure), 6),
+                    "commitment_strength": round(float(item.commitment_strength), 6),
+                }
+                for item in self.initiative_state.pending_intentions[:12]
+            ],
+            "relational": {
+                key: relational.get(key)
+                for key in (
+                    "revision", "trust", "closeness", "security", "connection_pressure",
+                    "outreach_drive", "partner_availability", "interruption_cost",
+                )
+                if key in relational
+            },
+            "belief_refs": [item.belief_id for item in self.beliefs.accessible(minimum_accessibility=0.5)[:12]],
+            "value_refs": [item.value_id for item in self.inner.values[:12]],
+        }
+
     # ------------------------------------------------------------------
     # Appraisal / proposal generation
     # ------------------------------------------------------------------
+    @staticmethod
+    def _signed_score(value: Any, default: float = 0.0) -> float:
+        """Kẹp tín hiệu có dấu cho appraisal/control trong [-1, 1]."""
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            number = default
+        if number != number or number in (float("inf"), float("-inf")):
+            number = default
+        return max(-1.0, min(1.0, number))
+
+    def _goal_relation_for_observation(
+        self,
+        observation: WorldObservation,
+        substrate_delta: Mapping[str, float],
+    ) -> tuple[float, float, tuple[str, ...]]:
+        """Suy ra chiều tiến/lùi của goal từ evidence đã có trong Subject Core.
+
+        Ưu tiên dữ liệu explicit từ ingress. Nếu user turn vừa đóng một persistent
+        intention, lifecycle đó là evidence mạnh hơn keyword/sentiment. Event type
+        chỉ là prior cuối cùng cho các observation chuẩn hoá như failure/success.
+        """
+        context = observation.context
+        explicit_congruence = context.get("goal_congruence")
+        explicit_progress = context.get("goal_progress_delta")
+        goal_ids = tuple(
+            dict.fromkeys(
+                str(item) for item in context.get("affected_goal_ids", ())
+                if str(item or "").strip()
+            )
+        )[:8]
+        if explicit_congruence is not None or explicit_progress is not None:
+            congruence = self._signed_score(explicit_congruence, 0.0)
+            progress = self._signed_score(
+                explicit_progress, congruence * max(0.25, float(context.get("controllability", 0.5) or 0.5))
+            )
+            return congruence, progress, goal_ids
+
+        # Đúng user turn vừa được dùng để resolve/revise một intention đang chờ.
+        receipt = self._last_initiative_outcome
+        receipt_ref = str(receipt.get("evidence_ref", "") or "") if isinstance(receipt, Mapping) else ""
+        same_evidence = bool(receipt_ref and receipt_ref in observation.evidence_refs)
+        same_instant = bool(
+            isinstance(receipt, Mapping)
+            and abs(float(receipt.get("observed_at", -1.0) or -1.0) - float(observation.created_at)) <= 1e-6
+        )
+        resolved = tuple(receipt.get("resolved", ()) or ()) if isinstance(receipt, Mapping) else ()
+        if resolved and (same_evidence or same_instant):
+            signed: list[tuple[float, float]] = []
+            resolved_goal_ids: list[str] = []
+            for item in resolved:
+                if not isinstance(item, Mapping):
+                    continue
+                status = str(item.get("status") or "").strip().lower()
+                weight = max(0.25, min(1.0, float(item.get("commitment_strength", 0.5) or 0.5)))
+                if status == "satisfied":
+                    signed.append((0.82, weight))
+                elif status == "revised":
+                    signed.append((-0.34, weight))
+                intention_id = str(item.get("intention_id") or "").strip()
+                if intention_id:
+                    resolved_goal_ids.append(intention_id)
+            if signed:
+                mass = sum(weight for _, weight in signed) or 1.0
+                congruence = sum(value * weight for value, weight in signed) / mass
+                progress = 0.72 * congruence if congruence >= 0.0 else 0.55 * congruence
+                return (
+                    self._signed_score(congruence),
+                    self._signed_score(progress),
+                    tuple(dict.fromkeys((*goal_ids, *resolved_goal_ids)))[:8],
+                )
+
+        kind = observation.kind.strip().lower()
+        positive = {
+            "shared_success": (0.90, 0.84),
+            "task_succeeded": (0.82, 0.75),
+            "promise_fulfilled": (0.78, 0.68),
+            "recognition_received": (0.62, 0.40),
+        }
+        negative = {
+            "task_failed": (-0.82, -0.72),
+            "task_failure": (-0.82, -0.72),
+            "promise_broken": (-0.84, -0.72),
+            "correction_received": (-0.56, -0.32),
+            "continuity_break": (-0.88, -0.78),
+            "capability_denied": (-0.72, -0.56),
+        }
+        if kind in positive:
+            congruence, progress = positive[kind]
+        elif kind in negative:
+            congruence, progress = negative[kind]
+        elif kind == "substrate_measurement" and substrate_delta:
+            # Measurement thật có thể cho biết viability đang tốt lên/xấu đi.
+            deltas = [float(value) for value in substrate_delta.values()]
+            average = sum(deltas) / len(deltas) if deltas else 0.0
+            congruence = self._signed_score(average * 2.0)
+            progress = self._signed_score(average)
+        else:
+            congruence = progress = 0.0
+
+        if (congruence or progress) and not goal_ids:
+            active_ids = [
+                item.intention_id
+                for item in self.initiative_state.pending_intentions
+                if str(getattr(item.status, "value", item.status)) in {"pending", "expressed", "awaiting_outcome"}
+            ]
+            goal_ids = tuple(dict.fromkeys(active_ids))[:8]
+        return self._signed_score(congruence), self._signed_score(progress), goal_ids
+
     def _appraise(
         self,
         observation: WorldObservation,
@@ -531,6 +736,9 @@ class SubjectService:
             distribution = AttributionDistribution.unknown()
         refs = observation.evidence_refs or (observation.observation_id,)
         substrate_delta = self.substrate_monitor.delta(before, after)
+        goal_congruence, goal_progress_delta, affected_goal_ids = self._goal_relation_for_observation(
+            observation, substrate_delta
+        )
         clamp = lambda x: max(0.0, min(1.0, float(x)))
         appraisal = SubjectAppraisal(
             appraisal_id=self._id_factory(),
@@ -560,6 +768,9 @@ class SubjectService:
             alternatives=tuple(
                 str(item) for item in context.get("alternative_interpretations", ())
             ),
+            goal_congruence=goal_congruence,
+            goal_progress_delta=goal_progress_delta,
+            affected_goal_ids=affected_goal_ids,
         )
         return (appraisal,)
 
@@ -1002,6 +1213,7 @@ class SubjectService:
         )
 
         before = self.substrate
+        before_ledger_state = self._ledger_state_snapshot(substrate=before)
         measured = self.substrate_monitor.measure(observation, before)
         appraisals = self._appraise(observation, before, measured)
         runtime_context = observation.context.get("runtime_context")
@@ -1062,6 +1274,26 @@ class SubjectService:
             revision=frame_revision,
         )
         self._pending_frames[frame.frame_id] = frame
+
+        ledger_record = self.decision_ledger.begin(
+            trace_id=f"ledger:{frame.frame_id}",
+            observation_id=observation.observation_id,
+            observation_kind=observation.kind,
+            correlation_id=observation.correlation_id,
+            started_at=observation.created_at,
+            frame_id=frame.frame_id,
+            before_state=before_ledger_state,
+            appraisal_state=self._ledger_state_snapshot(
+                substrate=measured, appraisals=appraisals, activations=activations
+            ),
+            causal_refs=(observation.observation_id, *tuple(item.appraisal_id for item in appraisals)),
+        )
+        self._append_event(
+            "decision_ledger_appraised",
+            ledger_record.to_dict(),
+            causal_refs=(observation.observation_id, frame.frame_id),
+            correlation_id=observation.correlation_id,
+        )
 
         # Các projection được ghi trước quyết định để forensic phân biệt rõ
         # "điều đã được nhận thấy" với "điều Executive đã chọn".
@@ -1238,6 +1470,31 @@ class SubjectService:
             substrate_ref=frame.substrate_ref,
             executive_trace=executive_trace,
         )
+        ledger_decision = self.decision_ledger.note_decision(
+            frame_id=frame.frame_id,
+            decision_id=decision.decision_id,
+            decision_state={
+                "decision_id": decision.decision_id,
+                "coalition_id": decision.coalition_id,
+                "proposal_refs": list(decision.proposal_refs),
+                "proposed_action": decision.proposed_action,
+                "supporting_need_ids": list(decision.supporting_need_ids),
+                "dissenting_need_ids": list(decision.dissenting_need_ids),
+                "uncertainty": round(float(decision.uncertainty), 6),
+                "executive_source": commit.source,
+                "executive_confidence": round(float(commit.confidence), 6),
+                "reason_summary": commit.reason,
+                "semantic_commitments": list(commit.semantic_commitments),
+            },
+            causal_refs=(commit.commit_id, candidate.coalition_id, commit.selected_proposal_ref),
+        )
+        if ledger_decision is not None:
+            self._append_event(
+                "decision_ledger_decided",
+                ledger_decision.to_dict(),
+                causal_refs=(frame.frame_id, decision.decision_id, commit.commit_id),
+                correlation_id=frame.observation.correlation_id,
+            )
 
         # Narrative cũ phải dự đoán được hành vi mới. Nếu sai, ghi mismatch;
         # tuyệt đối không sửa ngược quá khứ để khiến Executive trông luôn đúng.
@@ -1739,6 +1996,30 @@ class SubjectService:
             self._as_payload(receipt),
             causal_refs=(outcome.outcome_id,),
         )
+        ledger_outcome = self.decision_ledger.note_outcome(
+            decision_id=decision.decision_id,
+            outcome_id=outcome.outcome_id,
+            outcome_state={
+                "outcome_id": outcome.outcome_id,
+                "status": outcome.status.value,
+                "success_score": round(float(outcome.success_score), 6),
+                "observed_changes": list(outcome.observed_changes),
+                "unintended_changes": list(outcome.unintended_changes),
+                "closed_episode_ids": list(receipt.closed_episode_ids),
+                "belief_revision_ids": list(receipt.belief_revision_ids),
+                "competence_estimate_ids": list(receipt.competence_estimate_ids),
+                "authorship_id": receipt.authorship_id,
+            },
+            after_state=self._ledger_state_snapshot(),
+            completed_at=outcome.completed_at,
+            causal_refs=(outcome.outcome_id, receipt.receipt_id),
+        )
+        if ledger_outcome is not None:
+            self._append_event(
+                "decision_ledger_learned",
+                ledger_outcome.to_dict(),
+                causal_refs=(decision.decision_id, outcome.outcome_id, receipt.receipt_id),
+            )
         self._persist_projection()
         return receipt
 
@@ -1780,6 +2061,14 @@ class SubjectService:
         có ở Subject Core; nó không tự phát minh "Eris muốn gì" từ seed.
         """
         return self.initiative_state.to_dict()
+
+    def latest_appraisals(self) -> tuple[SubjectAppraisal, ...]:
+        """Trả typed appraisal gần nhất cho runtime modulation/diagnostics."""
+        return tuple(self._last_appraisals)
+
+    def decision_ledger_view(self, *, limit: int = 20) -> tuple[dict[str, Any], ...]:
+        """Projection causal gần nhất cho debug/acceptance, không chứa CoT."""
+        return tuple(item.to_dict() for item in self.decision_ledger.latest(limit=limit))
 
     def inner_view(self) -> dict[str, Any]:
         """Projection nội tâm cho planner/UI, không lộ raw chain-of-thought."""
@@ -1828,6 +2117,7 @@ class SubjectService:
             "substrate": self.substrate.to_dict(),
             "relational": self.relational_state.to_dict(),
             "initiative": self.initiative_state.to_dict(),
+            "decision_ledger": list(self.decision_ledger_view(limit=20)),
             "active_appraisal_ids": [item.appraisal_id for item in self._last_appraisals],
             "active_needs": [self._as_payload(item) for item in self._last_activations],
             "open_episode_ids": [item.episode_id for item in self.episodes.open_episodes()],

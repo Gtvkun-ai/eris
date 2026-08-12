@@ -270,6 +270,7 @@ class NeuroActionSelector:
             label = str(item.primary_interpretation or "appraisal").strip()[:220]
             salience = max(
                 _clamp01(item.goal_relevance),
+                _clamp01(abs(float(getattr(item, "goal_congruence", 0.0)))),
                 _clamp01(item.relational_significance),
                 _clamp01(item.identity_significance),
                 _clamp01(item.expectation_violation),

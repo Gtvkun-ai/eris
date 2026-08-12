@@ -81,12 +81,28 @@ class NeedSystem:
             )
             relevant = appraisals_by_need.get(need_id, [])
             if relevant:
-                appraisal_pressure = max(
-                    a.goal_relevance * (0.5 + 0.5 * a.expectation_violation) * (0.5 + 0.5 * a.future_consequence)
+                def _pressure_from_appraisal(a: SubjectAppraisal) -> float:
+                    base = (
+                        a.goal_relevance
+                        * (0.5 + 0.5 * a.expectation_violation)
+                        * (0.5 + 0.5 * a.future_consequence)
+                    )
+                    # V56: event tích cực không được làm Need tăng chỉ vì nó rất
+                    # quan trọng. Congruence âm tăng pressure; dương tạo relief.
+                    threat = max(0.0, -float(a.goal_congruence))
+                    support = max(0.0, float(a.goal_congruence))
+                    modulation = max(0.25, min(1.45, 1.0 + 0.45 * threat - 0.55 * support))
+                    return base * modulation
+
+                appraisal_pressure = max(_pressure_from_appraisal(a) for a in relevant)
+                opportunity = max(
+                    min(1.0, a.controllability + 0.18 * max(0.0, float(a.goal_progress_delta)))
                     for a in relevant
                 )
-                opportunity = max(a.controllability for a in relevant)
-                urgency = max(a.future_consequence for a in relevant)
+                urgency = max(
+                    min(1.0, a.future_consequence + 0.22 * max(0.0, -float(a.goal_congruence)))
+                    for a in relevant
+                )
                 refs = tuple(dict.fromkeys(ref for a in relevant for ref in a.evidence_refs))
             else:
                 appraisal_pressure = 0.0

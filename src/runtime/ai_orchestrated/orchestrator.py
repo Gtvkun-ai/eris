@@ -1017,6 +1017,21 @@ class AIChatOrchestrator:
         )
         subject_payload = subject_decision.to_dict()
         planning_snapshot["subject_decision"] = subject_payload
+
+        # V56: appraisal theo goal đã có authority ở Subject Core thì phải thật sự
+        # điều tiết current affect, thay vì nằm trong log rồi bị quên. Social event
+        # gốc đã chạy trước đó; bước này chỉ thêm một delta nhỏ, idempotent theo
+        # appraisal_id và không suy diễn cảm xúc của user.
+        subject_service = getattr(host, "subject_service", None)
+        latest_appraisals = getattr(subject_service, "latest_appraisals", None)
+        affect_goal_ingest = getattr(affect_runtime, "ingest_subject_appraisal", None)
+        if callable(latest_appraisals) and callable(affect_goal_ingest):
+            try:
+                for _appraisal in tuple(latest_appraisals() or ())[:4]:
+                    affect_goal_ingest(_appraisal, now=cycle_start)
+            except Exception as exc:
+                host.logger.debug("[affect-v56] subject appraisal modulation degraded: %s", exc)
+
         parallel_state_fn = getattr(subject_ingress, "parallel_cognition_state", None)
         parallel_state = (
             parallel_state_fn(turn_id)
@@ -1034,7 +1049,6 @@ class AIChatOrchestrator:
                 "Never expose worker/model/Neuro implementation details and never ask the user to wait for routine conversation.",
             ) if str(part).strip())
             planning_snapshot["grounding_context"] = grounding_context
-        subject_service = getattr(host, "subject_service", None)
         subject_inner_view = {}
         inner_view_fn = getattr(subject_service, "inner_view", None)
         if callable(inner_view_fn):

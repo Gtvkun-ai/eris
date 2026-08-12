@@ -1,0 +1,16 @@
+ERIS V56 - CHANGESET TÍCH HỢP THEO KIẾN TRÚC LỚN TRONG PDF
+
+Các phần chính:
+- Appraisal theo mục tiêu có dấu: goal_congruence và goal_progress_delta.
+- Nối appraisal -> need pressure/opportunity/urgency.
+- Nối appraisal -> affect runtime theo event idempotent.
+- Outcome của persistent intention được đưa trở lại appraisal lượt tiếp theo.
+- Integrated Decision Ledger: appraised -> decided -> learned.
+- Ledger lưu state/evidence có cấu trúc, không lưu chain-of-thought.
+- Persistence/restore ledger qua inner-life projection.
+- Acceptance evaluator cho invariant và coverage.
+- CLI tools/v56_integrated_acceptance.py để đánh giá ledger JSON.
+- Test V56 và regression liên quan.
+- Chú thích/ghi chú kiến trúc bằng tiếng Việt tại các phần mới hoặc sửa quan trọng.
+
+Tài liệu chi tiết: V56_INTEGRATED_COGNITION_NOTES_VI.md

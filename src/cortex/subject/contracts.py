@@ -33,6 +33,24 @@ def clamp01(value: Any, *, field_name: str = "score") -> float:
     return number
 
 
+def signed_score(value: Any, *, field_name: str = "signed_score") -> float:
+    """Xác thực một đại lượng có dấu trong [-1, 1].
+
+    Appraisal cần phân biệt *quan trọng* với *có lợi/có hại*. ``goal_relevance``
+    vẫn là [0, 1], còn ``goal_congruence`` và ``goal_progress_delta`` dùng dấu để
+    không biến một sự kiện tích cực thành áp lực chỉ vì nó rất quan trọng.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be numeric") from exc
+    if number != number or number in (float("inf"), float("-inf")):
+        raise ValueError(f"{field_name} must be finite")
+    if not -1.0 <= number <= 1.0:
+        raise ValueError(f"{field_name} must be in [-1, 1]")
+    return number
+
+
 def ensure_non_empty(value: str, *, field_name: str) -> str:
     normalized = str(value or "").strip()
     if not normalized:
@@ -274,6 +292,11 @@ class SubjectAppraisal:
     substrate_delta: Mapping[str, float] = field(default_factory=dict)
     primary_interpretation: str = ""
     alternatives: tuple[str, ...] = ()
+    # V56: appraisal theo mục tiêu phải có dấu. Relevance chỉ nói "quan trọng";
+    # hai trường dưới mới nói sự kiện đang đẩy mục tiêu tiến hay lùi.
+    goal_congruence: float = 0.0
+    goal_progress_delta: float = 0.0
+    affected_goal_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -281,9 +304,14 @@ class SubjectAppraisal:
             "relational_significance", "identity_significance", "future_consequence", "uncertainty",
         ):
             clamp01(getattr(self, field_name), field_name=field_name)
+        signed_score(self.goal_congruence, field_name="goal_congruence")
+        signed_score(self.goal_progress_delta, field_name="goal_progress_delta")
         if not self.evidence_refs:
             raise ValueError("appraisal requires evidence_refs")
         object.__setattr__(self, "substrate_delta", freeze_mapping(self.substrate_delta))
+        object.__setattr__(self, "affected_goal_ids", tuple(dict.fromkeys(
+            str(item) for item in self.affected_goal_ids if str(item or "").strip()
+        )))
 
 
 @dataclass(frozen=True, slots=True)
@@ -604,6 +632,9 @@ class SubjectDeliberationFrame:
                 {
                     "appraisal_id": item.appraisal_id,
                     "goal_relevance": item.goal_relevance,
+                    "goal_congruence": item.goal_congruence,
+                    "goal_progress_delta": item.goal_progress_delta,
+                    "affected_goal_ids": list(item.affected_goal_ids),
                     "controllability": item.controllability,
                     "relational_significance": item.relational_significance,
                     "identity_significance": item.identity_significance,

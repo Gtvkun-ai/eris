@@ -21,6 +21,8 @@ from .neuro_control import (
 from .self_model import SelfFacet, SubjectSelfProjection, SubjectSelfProjector
 from .relational import RelationalConfig, RelationalHomeostasis, RelationalState
 from .service import SubjectService, SubjectServiceConfig
+from .decision_ledger import DecisionLedgerRecord, IntegratedDecisionLedger
+from .acceptance import IntegratedAcceptanceEvaluator, IntegratedAcceptanceReport, InvariantCheck
 
 __all__ = [
     "ActionMemory",
@@ -39,6 +41,11 @@ __all__ = [
     "SubjectSelfProjector",
     "SubjectService",
     "SubjectServiceConfig",
+    "DecisionLedgerRecord",
+    "IntegratedDecisionLedger",
+    "IntegratedAcceptanceEvaluator",
+    "IntegratedAcceptanceReport",
+    "InvariantCheck",
     "RelationalConfig",
     "RelationalHomeostasis",
     "RelationalState",
