@@ -457,6 +457,16 @@ class NeuroActionSelector:
 
         if action == "speak":
             score += 0.035 * broadcast.social_drive
+            # V44: "tôi có cái muốn nói" là tín hiệu dương trước commit. Đây
+            # không phải speak-threshold mới; policy/busy/interruption vẫn trừ
+            # ngay bên dưới và Neuro vẫn có thể chọn hold = silence.
+            expression_pressure = _clamp01(arguments.get("expression_pressure", 0.0))
+            expression_freshness = _clamp01(arguments.get("expression_freshness", 0.0))
+            expression_satisfaction = _clamp01(arguments.get("expression_satisfaction", 0.0))
+            if arguments.get("expression_urge_id"):
+                score += 0.18 * expression_pressure
+                score += 0.045 * expression_freshness
+                score -= 0.09 * expression_satisfaction
             score -= 0.10 * interruption_cost
             score -= 0.13 * unanswered_penalty
             # V42: baton/busy/cooldown/repeat được cân ở đúng nơi có authority.

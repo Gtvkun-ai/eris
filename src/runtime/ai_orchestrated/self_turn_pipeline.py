@@ -47,7 +47,6 @@ from .random_chat_seed import seed_event_family
 from .self_context import AutonomousSelfContext, build_autonomous_self_context
 from runtime.engagements import InteractionDecision
 from runtime.temporal_mind import TemporalMind, TemporalSignal
-from runtime.relational_affordance import build_relational_affordance
 from runtime.runtime_status import emit_runtime_status
 from runtime.subject_initiative_runtime import (
     build_initiative_runtime_context,
@@ -459,6 +458,17 @@ class SelfTurnPipeline:
         # Subject có lý do chủ động.
         initiative_runtime_context = build_initiative_runtime_context(host)
         planner_snapshot["initiative_runtime_context"] = dict(initiative_runtime_context)
+        # V44: chỉ một urge đã có nội dung mới được quyền đánh thức cognition vì
+        # "muốn nói". Connection pressure trừu tượng không còn tự biến thành wake.
+        expression_urge_runtime = getattr(host, "expression_urge_runtime", None)
+        if expression_urge_runtime is not None:
+            try:
+                planner_snapshot["expression_urge_pressure"] = float(
+                    expression_urge_runtime.wake_pressure(now=now)
+                )
+            except Exception as exc:
+                planner_snapshot["expression_urge_pressure"] = 0.0
+                host.logger.debug("[expression urge] cheap wake projection failed: %s", exc)
         seed_reservoir = getattr(host, "ai_random_chat_seed_reservoir", None)
         if seed_reservoir is not None:
             try:
@@ -546,42 +556,30 @@ class SelfTurnPipeline:
             except Exception as exc:
                 host.logger.debug("[social initiative] affordance collection failed: %s", exc)
 
-        # V25: Subject Core có thể tự tạo một *cơ hội tiếp xúc* từ relational
-        # pressure. Đây là motivational provenance, không phải fact về user.
+        # V44: relational homeostasis chỉ là lực điều biến. Nó không còn quyền
+        # tự materialize thành ``contact_bid`` rồi bắt Surface bịa một câu hỏi
+        # xã giao cho đủ thủ tục. Muốn nói phải có contentful urge ở phía dưới.
         subject_service = getattr(host, "subject_service", None)
+        relational_view: Mapping[str, Any] = {}
         relational_view_fn = getattr(subject_service, "relational_view", None)
         if callable(relational_view_fn):
             try:
                 relational_view = relational_view_fn(now=now)
+                relational_view = relational_view if isinstance(relational_view, Mapping) else {}
                 planner_snapshot["relational_state"] = dict(relational_view)
-                if bool(initiative_runtime_context.get("startup_social_cooldown_active", False)):
-                    host.logger.debug(
-                        "[relational] contact affordance suppressed after startup greeting age=%.1fs",
-                        float(initiative_runtime_context.get("seconds_since_startup_greeting", 0.0) or 0.0),
-                    )
-                else:
-                    relational_affordance = build_relational_affordance(
-                        relational_view,
-                        now=now,
-                        reply_expected=bool(getattr(blackboard, "reply_expected", False)),
-                        user_busy=bool(getattr(blackboard, "user_busy", False)),
-                        interaction_busy=interaction_busy,
-                    )
-                    if relational_affordance is not None:
-                        affordances.append(relational_affordance)
-                        host.logger.info(
-                            "[relational] contact affordance pressure=%.2f opportunity=%.2f drive=%.2f revision=%s",
-                            float(relational_view.get("connection_pressure", 0.0) or 0.0),
-                            float(relational_view.get("opportunity", 0.0) or 0.0),
-                            float(relational_view.get("outreach_drive", 0.0) or 0.0),
-                            relational_view.get("revision", 0),
-                        )
+                host.logger.debug(
+                    "[relational] modulation pressure=%.2f opportunity=%.2f drive=%.2f revision=%s",
+                    float(relational_view.get("connection_pressure", 0.0) or 0.0),
+                    float(relational_view.get("opportunity", 0.0) or 0.0),
+                    float(relational_view.get("outreach_drive", 0.0) or 0.0),
+                    relational_view.get("revision", 0),
+                )
             except Exception as exc:
-                host.logger.debug("[relational] affordance build failed: %s", exc)
+                host.logger.debug("[relational] state projection failed: %s", exc)
 
-        # V26: pending Subject intentions có thể tự tạo affordance mà không cần
-        # random seed. Ví dụ user-model còn mỏng -> motive understand_user ->
-        # một user_probe candidate. Runtime chỉ materialize, Subject Core vẫn rank.
+        # V44: Subject motive vẫn tồn tại, nhưng chỉ intention có semantic object
+        # cụ thể mới được materialize. ``muốn kết nối``/``muốn hiểu user`` chung
+        # chung không còn được phép tự hóa thành câu hỏi xã giao.
         if subject_service is not None:
             try:
                 initiative_affordances = build_subject_initiative_affordances(
@@ -634,24 +632,10 @@ class SelfTurnPipeline:
             unique_affordances.append(affordance)
         affordances = unique_affordances
 
-        # V42: đưa reply-baton/busy/cooldown/repeat/budget thành feature TRƯỚC
-        # Neuro. InitiativeController từ đây không còn là ông bảo vệ đứng sau
-        # quyết định để đổi speak -> silence nữa.
+        # V44 giữ đúng một authority projection cho policy. Tập affordance còn
+        # phải đi qua content-first shaping ở dưới, nên nếu tính cost tại đây rồi
+        # tính lại lần nữa ta sẽ có hai ảnh chụp policy cho cùng một tick.
         initiative_policy = getattr(host, "ai_initiative_controller", None)
-        if initiative_policy is not None:
-            try:
-                policy_signals = initiative_policy.policy_signals(blackboard, affordances)
-                planner_snapshot["initiative_policy_signals"] = dict(policy_signals)
-                if policy_signals:
-                    initiative_runtime_context = dict(initiative_runtime_context)
-                    initiative_runtime_context["initiative_policy_max_cost"] = max(
-                        float(item.get("total_cost", 0.0) or 0.0)
-                        for item in policy_signals.values()
-                        if isinstance(item, dict)
-                    )
-                    planner_snapshot["initiative_runtime_context"] = dict(initiative_runtime_context)
-            except Exception as exc:
-                host.logger.debug("[initiative policy] projection failed: %s", exc)
 
         # V43: current mood được quyền nghiêng attention/selection nhẹ trước
         # Neuro, nhưng không được tự chọn action hay nới grounding. Đây chỉ là
@@ -661,6 +645,8 @@ class SelfTurnPipeline:
             planner_snapshot["affective_selection_bias"] = affective_selection_bias(host._get_internal_state())
         except Exception as exc:
             host.logger.debug("[affect-v43] selection bias degraded: %s", exc)
+
+        active_concerns: tuple[dict[str, Any], ...] = ()
 
         # V42: chỉ COGNITIVE EVENT MỚI được phép làm concern đổi state. Reservoir
         # có thể đưa lại cùng seed qua nhiều tick, nhưng event ledger sẽ consume đúng
@@ -682,6 +668,55 @@ class SelfTurnPipeline:
                 )
             except Exception as exc:
                 host.logger.debug("[active concern] projection failed: %s", exc)
+
+        # V44: từ đây public competition chỉ nhìn những thứ Eris có *nội dung*
+        # muốn biểu đạt. Relation/mood làm urge mạnh/yếu hơn nhưng không sinh topic.
+        expression_urge_runtime = getattr(host, "expression_urge_runtime", None)
+        if expression_urge_runtime is not None:
+            try:
+                affect_bias = planner_snapshot.get("affective_selection_bias")
+                affect_bias = affect_bias if isinstance(affect_bias, Mapping) else {}
+                current_state = host._get_internal_state()
+                affect_for_urge = {
+                    **dict(affect_bias),
+                    "curiosity": float(getattr(current_state, "curiosity", 0.0) or 0.0),
+                    "social_energy": float(getattr(current_state, "social_energy", 0.5) or 0.5),
+                }
+                affordances = list(expression_urge_runtime.shape_affordances(
+                    affordances,
+                    active_concerns=active_concerns,
+                    relational=relational_view,
+                    affect=affect_for_urge,
+                    now=now,
+                    limit=3,
+                ))
+                urge_snapshot = expression_urge_runtime.snapshot(
+                    now=now, relational=relational_view, affect=affect_for_urge, limit=6
+                )
+                planner_snapshot["expression_urges"] = [dict(item) for item in urge_snapshot]
+                planner_snapshot["expression_urge_pressure"] = max(
+                    (float(item.get("pressure", 0.0) or 0.0) for item in urge_snapshot),
+                    default=0.0,
+                )
+            except Exception as exc:
+                host.logger.debug("[expression urge] shaping failed: %s", exc)
+
+        # Policy phải chạy trên tập affordance *sau* khi V44 đã bỏ generic
+        # contact/probe và materialize urge. Như vậy urge vẫn chịu reply/busy/
+        # cooldown cost trước Neuro, không có cửa VIP vì nó nghe có vẻ chân thành.
+        if initiative_policy is not None:
+            try:
+                policy_signals = initiative_policy.policy_signals(blackboard, affordances)
+                planner_snapshot["initiative_policy_signals"] = dict(policy_signals)
+                if policy_signals:
+                    initiative_runtime_context = dict(initiative_runtime_context)
+                    initiative_runtime_context["initiative_policy_max_cost"] = max(
+                        float(item.get("total_cost", 0.0) or 0.0)
+                        for item in policy_signals.values() if isinstance(item, dict)
+                    )
+                    planner_snapshot["initiative_runtime_context"] = dict(initiative_runtime_context)
+            except Exception as exc:
+                host.logger.debug("[initiative policy] projection failed: %s", exc)
 
         # Mọi affordance autonomous đi qua cùng nền Subject Core như chat.
         # Neuro gate chọn trên coalition có substrate, need pressure và evidence;
@@ -1777,49 +1812,18 @@ class SelfTurnPipeline:
             emit("discovery_ready", 0.90, "discovery_runtime")
         if pressure > 0.0:
             emit("attention_pressure", pressure, "cortex_attention")
+        # V44: connection pressure không còn là lý do đủ để wake một lượt nói.
+        # Nó chỉ làm contentful urge mạnh hơn sau khi cognition đã có *cái gì*
+        # muốn mang sang user. Đây là chỗ cắt gốc NPC check-in.
         relational_drive = float(relational_view.get("outreach_drive", 0.0) or 0.0) if relational_view else 0.0
-        if relational_drive >= 0.18 and not social_environment_suppressed:
+        urge_pressure = float(snapshot.get("expression_urge_pressure", 0.0) or 0.0)
+        if urge_pressure >= 0.18 and not social_environment_suppressed:
             emit(
-                "relational_pressure",
-                relational_drive,
-                "subject_relational_homeostasis",
+                "expression_urge",
+                urge_pressure,
+                "contentful_initiative",
                 revision=0,
-                connection_pressure=float(relational_view.get("connection_pressure", 0.0) or 0.0),
-                opportunity=float(relational_view.get("opportunity", 0.0) or 0.0),
-            )
-
-        # V26: motive tự khởi phát có wake signal riêng. Nếu PendingIntention đã
-        # tồn tại thì dùng pressure của Subject Core; ở tick đầu, user-model gap
-        # + social curiosity có thể tạo preview pressure để không cần seed đánh thức.
-        initiative_drive = 0.0
-        initiative_revision = 0
-        initiative_view_fn = getattr(subject_service, "initiative_view", None)
-        if callable(initiative_view_fn):
-            try:
-                iview = initiative_view_fn()
-                if isinstance(iview, Mapping):
-                    initiative_drive = float(iview.get("initiative_pressure", 0.0) or 0.0)
-                    initiative_revision = int(iview.get("revision", 0) or 0)
-            except Exception:
-                pass
-        initiative_runtime = snapshot.get("initiative_runtime_context")
-        initiative_runtime = initiative_runtime if isinstance(initiative_runtime, Mapping) else {}
-        if relational_view:
-            cp = float(relational_view.get("connection_pressure", 0.0) or 0.0)
-            curiosity = float(relational_view.get("social_curiosity", 0.0) or 0.0)
-            opportunity = float(relational_view.get("opportunity", 0.0) or 0.0)
-            unknown = float(initiative_runtime.get("user_model_uncertainty", 0.72) or 0.72)
-            preview_understand = max(0.0, min(1.0,
-                (0.42 * cp + 0.34 * curiosity + 0.24 * unknown) * (0.58 + 0.42 * opportunity)
-            ))
-            initiative_drive = max(initiative_drive, preview_understand)
-        if initiative_drive >= 0.18:
-            emit(
-                "initiative_pressure",
-                initiative_drive,
-                "subject_initiative",
-                revision=initiative_revision,
-                motive="understand_user_or_pending_intention",
+                relational_modulation=relational_drive,
             )
 
         affordance_strength = max(
@@ -1828,8 +1832,7 @@ class SelfTurnPipeline:
             0.72 if context.discourse.assistant_may_continue else 0.0,
             seed_strength,
             0.90 if discovery_ready else 0.0,
-            relational_drive,
-            initiative_drive,
+            urge_pressure,
         )
         if affordance_strength:
             emit("affordance_changed", affordance_strength, "affordance_collector_inputs")
@@ -2323,6 +2326,18 @@ class SelfTurnPipeline:
                     )
                 except Exception as exc:
                     host.logger.debug("[subject initiative] public-act lifecycle failed: %s", exc)
+
+        # V44: urge chỉ được tính là thỏa mãn sau public commit thật. Neuro chọn
+        # silence hay Surface fail thì desire vẫn còn và có thể được cân lại sau.
+        if subject_decision is not None:
+            urge_id = str(subject_decision.arguments.get("expression_urge_id", "") or "").strip()
+            urge_runtime = getattr(host, "expression_urge_runtime", None)
+            note_urge = getattr(urge_runtime, "note_expressed", None)
+            if urge_id and callable(note_urge):
+                try:
+                    note_urge(urge_id, now=host.last_autonomous_spoken_at)
+                except Exception as exc:
+                    host.logger.debug("[expression urge] surface receipt failed: %s", exc)
 
         # Public commit là điểm duy nhất concern được tính là đã surface. Nếu
         # Surface/preemption fail thì không tăng habituation oan.

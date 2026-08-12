@@ -125,23 +125,13 @@ def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: fl
     if not intention_id or not goal or pressure < 0.28:
         return None
 
-    if kind == "understand_user":
-        speech_act = "user_probe"
-        topic = (
-            "Ask one low-pressure, genuinely informative question that helps Eris understand the user better. "
-            "Use only the uncertainty/relationship context already provided; do not assume the answer or invent a reason."
-        )
-        tone = "curious"
-        epistemic = True
-    elif kind == "share":
-        speech_act = "share_self_originated_thought"
-        topic = (
-            "Share one public-safe self-originated thought that is already represented by Subject/PrivateMind state. "
-            "Do not manufacture an external event as a pretext for speaking."
-        )
-        tone = "casual_warm"
-        epistemic = False
-    elif kind == "be_understood":
+    # V44: motive chung chung không phải nội dung. ``understand_user``/``connect``
+    # chỉ làm modulation cho một ExpressionUrge đã có semantic object; nếu cho
+    # chúng tự thành speech thì Surface buộc phải bịa ra câu hỏi NPC. ``share``
+    # generic cũng vậy: phải có thought/concern cụ thể ở ExpressionUrgeRuntime.
+    if kind in {"understand_user", "connect", "share"}:
+        return None
+    if kind == "be_understood":
         speech_act = "self_clarification"
         topic = "Clarify one already-grounded point about Eris so the user can understand her intent more accurately."
         tone = "direct_soft"
@@ -153,11 +143,6 @@ def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: fl
             "Do not ask for praise and do not invent an accomplishment."
         )
         tone = "restrained"
-        epistemic = False
-    elif kind == "connect":
-        speech_act = "contact_bid"
-        topic = "Make one low-pressure contact bid because connection currently matters; do not guilt the user or invent context."
-        tone = "casual_warm"
         epistemic = False
     else:
         # Motive như demonstrate/resolve có thể tồn tại và ảnh hưởng Subject Core,
@@ -283,33 +268,9 @@ def build_subject_initiative_affordances(
             if startup_cooldown and speech_act in {"contact_bid", "user_probe", "curiosity_bid"}:
                 continue
             output.append(candidate)
-    if output:
-        return tuple(output[:4])
-    if startup_cooldown:
-        return ()
-
-    # Tick đầu chưa có PendingIntention: preview duy nhất được phép là motive
-    # hiểu user, vì uncertainty của user-model tự nó đã là epistemic gap thật.
-    cp = _clamp01(relational.get("connection_pressure", 0.0))
-    curiosity = _clamp01(relational.get("social_curiosity", 0.0))
-    opportunity = _clamp01(relational.get("opportunity", 0.0))
-    unknown = _clamp01(runtime_context.get("user_model_uncertainty", 0.72), 0.72)
-    pressure = _clamp01((0.42 * cp + 0.34 * curiosity + 0.24 * unknown) * (0.58 + 0.42 * opportunity))
-    if pressure < 0.30 or opportunity < 0.18:
-        return ()
-    preview = {
-        "intention_id": f"preview-understand-user:{int(relational.get('revision', 0) or 0)}",
-        "motive_kind": "understand_user",
-        "semantic_goal": "thăm dò một điều còn chưa biết về user bằng câu hỏi mở",
-        "target": "user",
-        "pressure": pressure,
-        "commitment_strength": 0.42,
-        "evidence_refs": tuple(runtime_context.get("user_model_evidence_refs", ())) + (
-            f"relational-state:{int(relational.get('revision', 0) or 0)}",
-        ),
-    }
-    candidate = _candidate_from_intention(preview, revision=revision, now=now)
-    return (candidate,) if candidate is not None else ()
+    # Không có content-bound intention thì không tạo preview social. Connection
+    # pressure vẫn còn trong Subject state và sẽ tăng lực cho urge có nội dung.
+    return tuple(output[:4])
 
 
 __all__ = [

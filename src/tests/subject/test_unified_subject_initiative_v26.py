@@ -90,10 +90,10 @@ def test_understand_user_motive_is_generated_without_random_seed() -> None:
     assert understand.pressure >= 0.40
     assert "user-model:thin" in understand.evidence_refs
     assert "seed" not in understand.reason.lower()
-    assert any(
+    # V44: motive vẫn là state thật, nhưng không tự hóa thành một câu hỏi NPC.
+    assert not any(
         item.action_kind == "speak"
         and item.arguments.get("speech_act") == "user_probe"
-        and item.arguments.get("initiative_motive") == "understand_user"
         for item in frame.proposals
     )
     asyncio.run(service.abandon_deliberation(frame, reason="test_cleanup"))
@@ -140,11 +140,13 @@ def test_pending_intention_survives_origin_change_from_internal_to_user() -> Non
     )
     assert after.intention_id == intention.intention_id
     assert after.source_origin is ObservationOrigin.INTERNAL
-    assert any(item.arguments.get("intention_id") == intention.intention_id for item in second.proposals)
+    # Intention sống qua origin change, nhưng V44 giữ nó ở motive layer cho tới
+    # khi có contentful urge; không tự bịa semantic target để phát ngôn.
+    assert not any(item.arguments.get("intention_id") == intention.intention_id for item in second.proposals)
     asyncio.run(service.abandon_deliberation(second, reason="test_cleanup"))
 
 
-def test_subject_initiative_builds_user_probe_affordance_without_seed() -> None:
+def test_subject_initiative_does_not_materialize_generic_probe_without_content() -> None:
     d = Determinism()
     service = _service(d)
     frame = asyncio.run(service.prepare_deliberation(_internal_observation(d)))
@@ -158,10 +160,7 @@ def test_subject_initiative_builds_user_probe_affordance_without_seed() -> None:
         },
         now=d.now + 1.0,
     )
-    probe = next(item for item in affordances if item.candidate.speech_act == "user_probe")
-    assert probe.owner == "subject_initiative"
-    assert probe.candidate.requires_grounding is False
-    assert "assume" in probe.candidate.topic.lower()
+    assert not any(item.candidate.speech_act in {"user_probe", "contact_bid"} for item in affordances)
 
 
 
@@ -286,60 +285,32 @@ def test_chat_and_self_turn_commit_through_same_mindloop_port() -> None:
     assert executive.modes == ["interactive", "autonomous"]
 
 
-def test_committed_subject_probe_materializes_without_second_executive_decision() -> None:
+def test_generic_subject_probe_is_not_available_for_commit_without_content() -> None:
     d = Determinism()
     service = _service(d)
     ingress = SubjectIngress(service)
-    # Prime initiative state first.
     frame = asyncio.run(service.prepare_deliberation(_internal_observation(d)))
     asyncio.run(service.abandon_deliberation(frame, reason="prime"))
     affordances = build_subject_initiative_affordances(
-        service,
-        runtime_context={"user_model_uncertainty": 0.92},
-        now=d.now + 1.0,
+        service, runtime_context={"user_model_uncertainty": 0.92}, now=d.now + 1.0
     )
     blackboard = SimpleNamespace(
         reply_expected=False, engagement_active=False, user_busy=False,
         public_view=lambda: {"reply_expected": False, "engagement_active": False, "novelty": 0.1},
     )
     session = ingress.prepare_autonomous_session(
-        blackboard, affordances, created_at=d.now + 1.0, turn_id="materialize-v26",
+        blackboard, affordances, created_at=d.now + 1.0, turn_id="materialize-v44",
         planning_context={
             "relational_state": service.relational_view(),
             "initiative_runtime_context": {"user_model_uncertainty": 0.92},
         },
     )
-
-    class Committer:
-        enabled = True
-
-        def commit_subject_frame(self, frame, **_kwargs):
-            selected = next(
-                item for item in frame.coalitions
-                if item.arguments.get("speech_act") == "user_probe"
-            )
-            return SubjectExecutiveCommit(
-                commit_id="probe-commit", frame_id=frame.frame_id,
-                selected_coalition_id=selected.coalition_id,
-                selected_proposal_ref=selected.primary_proposal_ref,
-                semantic_commitments=("ask one open probe",), cognitive_requests=(),
-                reason="understand user", confidence=0.8, review_conditions=(), created_at=d.now,
-            )
-
-    decision = ingress.complete_session(session, committer=Committer())
-    invoked: list[object] = []
-    cortex = ExecutiveCortex(
-        SimpleNamespace(action_executor=None),
-        None,
-        invoke_structured=lambda *_a, **_k: invoked.append(object()),
-        clock=lambda: d.now,
+    assert not any(
+        item.arguments.get("speech_act") in {"user_probe", "contact_bid"}
+        for item in session.frame.coalitions
     )
-    outcome = cortex.materialize_subject_decision(decision, affordances, subject_frame=session.frame)
-    assert outcome is not None
-    assert outcome.action == "use_candidate"
-    assert outcome.candidate is not None
-    assert outcome.candidate.speech_act == "user_probe"
-    assert invoked == []
+    ingress.mind_loop.abandon_sync(session, reason="v44_no_generic_probe")
+
 
 
 def test_production_self_turn_uses_unified_subject_commit_path() -> None:
@@ -357,15 +328,15 @@ def test_production_self_turn_uses_unified_subject_commit_path() -> None:
     assert commit_pos < capability_pos < legacy_exec_pos
 
 
-def test_seed_is_not_required_for_initiative_wake_source() -> None:
-    """Guard tĩnh nhỏ: initiative_pressure tồn tại độc lập seed_available."""
+def test_seed_is_not_required_for_contentful_urge_wake_source() -> None:
+    """V44: urge đã tồn tại có thể wake lại dù seed gốc đã hết lease."""
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[2]
     source = (root / "runtime" / "ai_orchestrated" / "self_turn_pipeline.py").read_text(encoding="utf-8")
-    assert 'emit(\n                "initiative_pressure"' in source
-    assert "preview_understand" in source
-    assert "user_model_uncertainty" in source
+    assert 'emit(\n                "expression_urge"' in source
+    assert "expression_urge_pressure" in source
+    assert "preview_understand" not in source
 
 
 def test_runtime_context_marks_unanswered_autonomous_speech_as_cost() -> None:

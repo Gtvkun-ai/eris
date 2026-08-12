@@ -144,6 +144,13 @@ class SocialSpeechCandidate:
     seed_motive_strength: float = 0.0
     seed_semantic_completeness: float = 0.0
     seed_temporal_context: Mapping[str, Any] = field(default_factory=dict)
+    # V44: desire có nội dung. Các field này chỉ là projection trước Neuro;
+    # chúng không phải lệnh speak và không được Surface tự sửa.
+    expression_urge_id: str = ""
+    expression_pressure: float = 0.0
+    expression_freshness: float = 0.0
+    expression_satisfaction: float = 0.0
+    expression_motive: str = ""
 
     @property
     def random_chat_seed(self) -> dict[str, Any]:
@@ -273,6 +280,11 @@ class SocialSpeechCandidate:
             seed_motive_strength=_clamp01(data.get("seed_motive_strength", 0.0)),
             seed_semantic_completeness=_clamp01(data.get("seed_semantic_completeness", 0.0)),
             seed_temporal_context=dict(data.get("seed_temporal_context", {})) if isinstance(data.get("seed_temporal_context"), Mapping) else {},
+            expression_urge_id=_compact(data.get("expression_urge_id", ""), 96),
+            expression_pressure=_clamp01(data.get("expression_pressure", 0.0)),
+            expression_freshness=_clamp01(data.get("expression_freshness", 0.0)),
+            expression_satisfaction=_clamp01(data.get("expression_satisfaction", 0.0)),
+            expression_motive=_compact(data.get("expression_motive", ""), 32).lower(),
         )
 
 

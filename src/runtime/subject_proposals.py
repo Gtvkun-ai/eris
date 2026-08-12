@@ -70,6 +70,11 @@ class AutonomousProposalSource:
         motive_kind = str(metadata.get("motive_kind") or "").strip().lower()
         speech_act = str(getattr(candidate, "speech_act", "") or "").strip().lower()
         tone = str(getattr(candidate, "tone", "") or "").strip().lower()
+        expression_urge_id = str(getattr(candidate, "expression_urge_id", "") or "").strip()
+        expression_pressure = clamp01(getattr(candidate, "expression_pressure", 0.0), 0.0)
+        expression_freshness = clamp01(getattr(candidate, "expression_freshness", 0.0), 0.0)
+        expression_satisfaction = clamp01(getattr(candidate, "expression_satisfaction", 0.0), 0.0)
+        expression_motive = str(getattr(candidate, "expression_motive", "") or "").strip().lower()
         affect_bias = dict(affective_bias or {})
 
         need_ids: list[str] = []
@@ -107,6 +112,13 @@ class AutonomousProposalSource:
                 "candidate_kind": kind,
                 "requires_grounding": requires_grounding,
                 "intrusion_risk": intrusion,
+                **({
+                    "expression_urge_id": expression_urge_id,
+                    "expression_pressure": expression_pressure,
+                    "expression_freshness": expression_freshness,
+                    "expression_satisfaction": expression_satisfaction,
+                    "expression_motive": expression_motive,
+                } if expression_urge_id else {}),
                 **({
                     "seed_id": seed_id,
                     "seed_quality": seed_quality,
@@ -167,6 +179,26 @@ class AutonomousProposalSource:
                 **({"continuity": 0.58} if "continuity" in need_ids else {}),
             },
         }
+
+        # V44: desire có nội dung là utility dương thật sự, không phải một label
+        # trang trí. Nó vẫn chịu policy/interruption cost ở các bước dưới.
+        if expression_urge_id:
+            proposal["expected_need_relief"] = clamp01(
+                float(proposal["expected_need_relief"]) + 0.24 * expression_pressure
+            )
+            proposal["value_congruence"] = clamp01(
+                float(proposal["value_congruence"]) + 0.16 * expression_pressure
+            )
+            proposal["expected_action_efficacy"] = clamp01(
+                float(proposal["expected_action_efficacy"]) + 0.07 * expression_freshness
+            )
+            proposal["commitment_conflict"] = clamp01(
+                float(proposal["commitment_conflict"]) + 0.08 * expression_satisfaction
+            )
+            proposal["need_effects"]["connection"] = max(
+                float(proposal["need_effects"].get("connection", 0.0) or 0.0),
+                0.42 + 0.38 * expression_pressure,
+            )
 
         if policy_cost > 0.0:
             # Không biến policy thành veto trá hình. Cost chỉ làm speech kém hấp dẫn

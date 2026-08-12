@@ -1483,14 +1483,19 @@ class ExecutiveCortex:
                 tone=tone or "casual_warm",
                 reason=f"subject_committed:{arguments.get('initiative_motive', 'initiative')}",
                 source="subject_initiative_committed",
-                eris_motive_kind=str(arguments.get("initiative_motive") or "initiative"),
-                eris_motive_why_now="Subject Core and Neuro Control committed a persistent intention",
+                eris_motive_kind=str(arguments.get("initiative_motive") or arguments.get("expression_motive") or "initiative"),
+                eris_motive_why_now="Subject Core and Neuro Control committed a contentful intention",
                 personal_stake=_clamp01(subject_decision.expected_pragmatic_value),
                 authenticity=1.0,
                 uncertainty=subject_decision.uncertainty,
                 seed_intrusion_risk=0.12,
                 face_risk=0.12,
                 recovery_available=True,
+                expression_urge_id=str(arguments.get("expression_urge_id") or ""),
+                expression_pressure=_clamp01(arguments.get("expression_pressure", 0.0)),
+                expression_freshness=_clamp01(arguments.get("expression_freshness", 0.0)),
+                expression_satisfaction=_clamp01(arguments.get("expression_satisfaction", 0.0)),
+                expression_motive=str(arguments.get("expression_motive") or ""),
             )
             decision = replace(base, action="select_affordance", affordance_id=wanted)
             return ExecutiveOutcome(candidate, wanted, "use_candidate", reason, decision)

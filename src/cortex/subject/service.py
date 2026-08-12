@@ -641,28 +641,12 @@ class SubjectService:
             affordance_id = f"subject-intention:{intention.intention_id}"
             if affordance_id in explicit_affordance_ids:
                 continue
-            if motive_kind == "understand_user":
-                speech_act = "user_probe"
-                if explicit_speech_acts & {"user_probe", "curiosity_bid"}:
-                    continue
-                supporting = ("connection", "coherence")
-                epistemic = 0.82
-                need_effects = {"connection": 0.52, "coherence": 0.70, "sovereignty": -0.08}
-            elif motive_kind == "connect":
-                speech_act = "contact_bid"
-                if "contact_bid" in explicit_speech_acts:
-                    continue
-                supporting = ("connection",)
-                epistemic = 0.14
-                need_effects = {"connection": 0.72, "sovereignty": -0.08}
-            elif motive_kind == "share":
-                speech_act = "share_self_originated_thought"
-                if "share_self_originated_thought" in explicit_speech_acts:
-                    continue
-                supporting = ("connection", "coherence")
-                epistemic = 0.16
-                need_effects = {"connection": 0.58, "coherence": 0.30, "sovereignty": -0.06}
-            elif motive_kind == "be_understood":
+            # V44: ba motive này chỉ là drive. Không có semantic object cụ thể
+            # thì không được tự materialize thành speech. Contentful initiative
+            # đi qua ExpressionUrgeRuntime và đã nằm trong explicit proposals.
+            if motive_kind in {"understand_user", "connect", "share"}:
+                continue
+            if motive_kind == "be_understood":
                 speech_act = "self_clarification"
                 supporting = ("connection", "coherence")
                 epistemic = 0.30
