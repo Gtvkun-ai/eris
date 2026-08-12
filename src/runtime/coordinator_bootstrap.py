@@ -48,6 +48,7 @@ from runtime.diagnostic_logging import safe_log
 from runtime.ai_orchestrated.cortex import CortexAttentionSignal, CortexRuntime
 from runtime.active_concern_runtime import ActiveConcernRuntime
 from runtime.expression_urge_runtime import ExpressionUrgeRuntime
+from runtime.mental_material_runtime import MentalMaterialRuntime
 from runtime.body_bias import BodyBiasProjector
 from runtime.chat_cycle import ChatCycleMixin
 from runtime.failure_taxonomy import FailureContext, classify_failure, failure_details
@@ -627,6 +628,9 @@ class CoordinatorBootstrapMixin:
             logger=self.logger,
         )
         self.private_life_core = getattr(self.private_life_daemon, "core", None)
+        # V45: associative seed đi vào một lifecycle material riêng trước khi có
+        # quyền thành concern/urge. Đây là projection session-local, không phải DB.
+        self.mental_material_runtime = MentalMaterialRuntime(self, logger=self.logger)
         self.private_life_surface_queue: list[object] = getattr(self.private_life_daemon, "surface_queue", []) if self.private_life_daemon is not None else []
         self.private_life_digest: dict[str, object] = {}
         self.last_semantic_scene_note: SemanticSceneNote | None = None

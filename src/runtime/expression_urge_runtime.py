@@ -110,9 +110,11 @@ def _speech_act_for(motive: str, original: str = "") -> str:
     if motive == "contribute":
         return original or "share_grounded_runtime_finding"
     if motive == "explore":
-        # Curiosity trước hết là thứ Eris đang nghĩ. Surface có thể để ngỏ một
-        # câu hỏi nếu semantic intent thật sự cần user input, nhưng mặc định không
-        # biến mỗi khoảng tò mò thành questionnaire.
+        # V45: genuine question chỉ được material lifecycle phát ra khi nó có
+        # expected_update cụ thể. Khi đã có contract đó thì giữ hình dạng hỏi;
+        # curiosity khác vẫn mặc định là chia sẻ thought, không questionnaire.
+        if original == "ask_genuine_question":
+            return original
         return "share_self_originated_thought"
     return original if original and original not in _GENERIC_SOCIAL_ACTS else "share_self_originated_thought"
 
@@ -126,6 +128,7 @@ class ExpressionUrge:
     source: str
     evidence_refs: tuple[str, ...]
     concern_id: str = ""
+    source_material_id: str = ""
     base_strength: float = 0.0
     freshness: float = 0.0
     satisfaction: float = 0.0
@@ -213,6 +216,7 @@ class ExpressionUrge:
             "content": self.content,
             "source": self.source,
             "concern_id": self.concern_id,
+            "source_material_id": self.source_material_id,
             "pressure": round(self.pressure(now=now, relational=relational, affect=affect), 3),
             "priority": round(self.selection_priority(now=now, relational=relational, affect=affect), 3),
             "freshness": round(fresh, 3),
@@ -267,6 +271,7 @@ class ExpressionUrgeRuntime:
         base_strength: float,
         freshness: float,
         concern_id: str = "",
+        source_material_id: str = "",
         original_speech_act: str = "",
         confidence: float = 0.72,
         relevance: float = 0.60,
@@ -313,6 +318,7 @@ class ExpressionUrgeRuntime:
             source=source,
             evidence_refs=refs,
             concern_id=concern_id,
+            source_material_id=str(source_material_id or "").strip(),
             base_strength=clamp01(base_strength),
             freshness=clamp01(freshness),
             satisfaction=0.0,
@@ -344,6 +350,7 @@ class ExpressionUrgeRuntime:
                 continue
             content = str(getattr(candidate, "topic", "") or "")
             motive = _motive_from_candidate(candidate)
+            meta = dict(getattr(affordance, "metadata", {}) or {})
             self._ingest_content(
                 input_key=f"aff:{str(getattr(affordance, 'affordance_id', '') or _digest(content))}",
                 content=content,
@@ -353,6 +360,7 @@ class ExpressionUrgeRuntime:
                 now=current,
                 base_strength=self._base_from_candidate(candidate),
                 freshness=max(0.32, clamp01(getattr(candidate, "seed_specificity", 0.0))),
+                source_material_id=str(meta.get("material_id", "") or "") if owner == "mental_material" else "",
                 original_speech_act=str(getattr(candidate, "speech_act", "") or ""),
                 confidence=clamp01(getattr(candidate, "confidence", 0.72), 0.72),
                 relevance=clamp01(getattr(candidate, "relevance", 0.60), 0.60),
@@ -581,6 +589,14 @@ class ExpressionUrgeRuntime:
         urge.satisfaction = clamp01(max(urge.satisfaction, 0.76))
         urge.base_strength = clamp01(urge.base_strength * 0.52)
         urge.freshness = clamp01(urge.freshness * 0.72)
+        if urge.source_material_id:
+            material_runtime = getattr(self.host, "mental_material_runtime", None)
+            note_material = getattr(material_runtime, "note_expressed", None)
+            if callable(note_material):
+                try:
+                    note_material(urge.source_material_id, now=current)
+                except Exception as exc:
+                    self._log("debug", "[mental material] expression receipt degraded: %s", exc)
         self._log(
             "info",
             "[expression urge] expressed id=%s satisfaction=%.2f remaining=%.2f",

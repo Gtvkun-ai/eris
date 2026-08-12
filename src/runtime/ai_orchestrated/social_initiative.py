@@ -547,6 +547,12 @@ class SocialInitiativeEngine:
         preview = reservoir.peek(now=blackboard.now)
         if preview is None:
             return None
+        # V45 production seed là associative material, không phải một social
+        # candidate đang chờ được nói. Nó phải đi qua MentalMaterial lifecycle →
+        # Concern/ExpressionUrge trước khi Neuro nhìn thấy. Legacy seed vẫn giữ
+        # đường này cho compatibility/plugin cũ.
+        if bool(getattr(preview.seed, "material_only", False)):
+            return None
         candidate = self._candidate_from_seed(
             preview.seed,
             generated_at=preview.generated_at,

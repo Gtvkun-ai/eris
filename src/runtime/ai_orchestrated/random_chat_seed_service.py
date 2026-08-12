@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
 from core.temporal_context import classify_time_of_day, resolve_timezone
+from cortex.mental_material import MATERIAL_KINDS, derive_causal_motives
 
 from .random_chat_seed import (
     RandomChatSeed,
@@ -38,35 +39,16 @@ RANDOM_CHAT_SEED_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "required": [
-        "decision", "seed_id", "mode", "premise", "source_kind", "source_refs",
-        "topic_tags", "event_kind", "epistemic_mode", "open_loop",
-        "opening_move", "desired_response", "eris_motive", "risk",
-        "estimated_fit", "confidence", "tone", "ttl_seconds",
+        "decision", "seed_id", "material_kind", "premise", "topic_tags",
+        "epistemic_mode", "open_loop", "expected_update", "uncertainty",
+        "confidence", "ttl_seconds",
     ],
     "properties": {
         "decision": {"type": "string", "enum": ["seed", "none"]},
         "seed_id": {"type": "string"},
-        "mode": {"type": "string", "enum": ["user_led", "shared", "eris_led", "experimental"]},
+        "material_kind": {"type": "string", "enum": sorted(MATERIAL_KINDS)},
         "premise": {"type": "string"},
-        "source_kind": {
-            "type": "string",
-            "enum": [
-                "user_memory", "recent_shared_context", "eris_self_memory", "weak_association",
-                "private_life_workspace", "endogenous_curiosity", "general_knowledge",
-                "world_hypothesis", "discovery_impulse", "play_impulse", "question_impulse",
-            ],
-        },
-        "source_refs": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
         "topic_tags": {"type": "array", "items": {"type": "string"}, "minItems": 0, "maxItems": 8},
-        "event_kind": {
-            "type": "string",
-            "enum": [
-                "thought", "curiosity_question", "knowledge_gap", "discovery_impulse",
-                "speculation", "imagination", "opinion", "association", "memory_callback",
-                "playful_probe", "micro_challenge", "unfinished_loop", "creative_impulse",
-                "self_reflection", "prediction", "surprise", "contradiction_notice",
-            ],
-        },
         "epistemic_mode": {
             "type": "string",
             "enum": [
@@ -75,42 +57,12 @@ RANDOM_CHAT_SEED_OUTPUT_SCHEMA: dict[str, Any] = {
             ],
         },
         "open_loop": {"type": "boolean"},
-        "opening_move": {"type": "string"},
-        "desired_response": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
-        "eris_motive": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["kind", "why_now", "personal_stake", "authenticity"],
-            "properties": {
-                "kind": {
-                    "type": "string",
-                    "enum": [
-                        "want_to_share", "want_to_express", "want_to_test",
-                        "want_to_connect", "want_to_amuse", "want_to_know",
-                        "want_to_explore", "want_to_play", "want_to_revisit", "want_to_create",
-                    ],
-                },
-                "why_now": {"type": "string"},
-                "personal_stake": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-                "authenticity": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-            },
-        },
-        "risk": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["daring", "uncertainty", "intrusion_risk", "face_risk", "recovery_available"],
-            "properties": {
-                "daring": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-                "uncertainty": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-                "intrusion_risk": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-                "face_risk": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-                "recovery_available": {"type": "boolean"},
-            },
-        },
-        "estimated_fit": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        # Question V45 phải có nơi cập nhật state nếu user trả lời. Với material
+        # khác field này có thể rỗng. Đây không phải desired_response/public plan.
+        "expected_update": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+        "uncertainty": {"type": "number", "minimum": 0.0, "maximum": 1.0},
         "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-        "tone": {"type": "string"},
-        "ttl_seconds": {"type": "number", "minimum": 60.0, "maximum": 1800.0},
+        "ttl_seconds": {"type": "number", "minimum": 90.0, "maximum": 1800.0},
     },
 }
 
@@ -288,6 +240,8 @@ def build_seed_temporal_context(now: float | None = None) -> dict[str, Any]:
 class RandomChatSeedGenerator:
     """Own the seed prompt while a shared invoker owns transport mechanics."""
 
+    causal_material_generation = True
+
     def __init__(
         self,
         client: Any,
@@ -306,32 +260,22 @@ class RandomChatSeedGenerator:
     @staticmethod
     def prompt() -> str:
         return (
-            "Bạn là RANDOM_CHAT_SEED_WORKER của ERIS. Bạn chạy nền trên lane riêng và KHÔNG viết câu public. "
-            "Tạo đúng một typed mental event để reservoir dùng về sau. Seed là premise semantic, không phải câu văn hay "
-            "đoạn độc thoại. Đọc user_memory, recent_user_events, eris_self_memory, seed_learning, "
-            "generation_temporal_context và reservoir_context. requested_event_family/requested_event_kind là yêu cầu "
-            "đa dạng ưu tiên; nếu kind đó không có mental event thật thì trả decision=none thay vì ép một thought thành nó. "
-            "KHÔNG tối ưu độ dài. Một curiosity_question, playful_probe, association hay micro_challenge ngắn nhưng đúng "
-            "hình dạng được ưu tiên hơn một đoạn reflection dài. why_now có thể ngắn và vận hành được; đừng viết văn để tăng "
-            "độ sâu giả. Dùng seed_contract.kind_contract làm tiêu chuẩn cho requested_event_kind. "
-            "Không biến mọi event thành 'một góc nhìn sâu sắc của ERIS'. thought/self_reflection chỉ là hai loại trong nhiều "
-            "loại; curiosity, play, memory callback, association, creative impulse, prediction, surprise và contradiction đều "
-            "là first-class. Nếu eris_self_memory.active_concerns có một chuyện đang sống, seed mới có thể va vào nó bằng "
-            "association/contradiction/new evidence/new question, nhưng KHÔNG được chỉ paraphrase concern cũ. Concern habituated "
-            "mà không có mutation mới thì ưu tiên decision=none hoặc một event khác; recurrence tự nó không phải novelty. "
-            "Premise không phải slogan, fortune-cookie hay presence chung chung; nhưng brevity tự nó KHÔNG phải lỗi. "
-            "Cân bằng user affinity, ERIS ego và daring. ERIS được có curiosity/play/creative impulse riêng, không chỉ nói thứ "
-            "dự đoán user sẽ thích. Không dùng memory private/sensitive, không suy diễn cảm xúc/kế hoạch/tâm lý user, không tạo "
-            "presence/check-in chỉ để lấp im lặng, không hỏi user đưa chủ đề. Không lặp queued_seeds hoặc recent_seeds. "
-            "Public wording trước đó của ERIS KHÔNG phải evidence nhận thức và không được dùng làm premise mới; Surface là renderer, "
-            "không phải oracle. Chỉ user event, memory/provenance, active concern thật, outcome hoặc internal mutation mới được tạo vòng mới. "
-            "epistemic_mode phải đúng: speculation/imagination/prediction giữ modal; grounded_fact cần provenance. "
-            "generation_temporal_context chỉ chứng minh clock/calendar của user. Có thể dùng giờ/ngày/daypart để chọn độ phù hợp, "
-            "nhưng KHÔNG suy ra trời tối, phòng yên, gió, ánh sáng, user đang làm gì, buồn ngủ hay mệt. Runtime sẽ late-bind "
-            "lại thời gian khi seed được dùng, nên tránh premise phụ thuộc daypart sắp stale. "
-            "knowledge_gap/discovery_impulse/unfinished_loop phải giữ open_loop khi còn điều chưa giải quyết. "
-            "ttl_seconds thường 180-900 giây tùy context. Nếu không có mental event thật cho requested kind/family, trả "
-            "decision=none với field còn lại rỗng/an toàn. Return exactly one JSON object."
+            "Bạn là ASSOCIATIVE_MATERIAL_WORKER của ERIS V45. Bạn KHÔNG viết câu public, KHÔNG quyết định ERIS có nên nói, "
+            "KHÔNG tự khai motive/why_now/opening_move/desired_response. Runtime đã đưa causal_motive tồn tại TRƯỚC output của bạn. "
+            "Nhiệm vụ duy nhất: materialize một mảnh nội tâm cụ thể từ semantic_focus của causal_motive. "
+            "requested_material_kind chỉ là hình dạng ưu tiên trong allowed_material_kinds của motive; nếu không có material thật, "
+            "trả decision=none. Không đổi nguyên nhân chỉ để thỏa quota diversity. "
+            "Material có thể là observation, opinion, association, memory_callback, unfinished_thought, desire, plan, reaction, "
+            "question, playful_impulse, small_contact, self_reflection hoặc hunch. Đây là mental object, không phải lời thoại hoàn chỉnh. "
+            "small_contact là hợp lệ khi nó bám vào semantic_focus thật; không tạo check-in chung chung để lấp im lặng. "
+            "question chỉ dùng khi có một gap cụ thể và phải khai expected_update: state/model nào của ERIS có thể đổi nếu user trả lời. "
+            "Nếu expected_update rỗng, ưu tiên observation/opinion/reaction thay vì hỏi cho có hội thoại. "
+            "Không biến mọi thứ thành câu hỏi triết học. Một reaction ngắn, một opinion có stance, một association cụ thể hay một câu nhẹ "
+            "đúng context thường tốt hơn essay. Không paraphrase nguyên semantic_focus rồi gọi đó là novelty. "
+            "Public wording trước đó của ERIS không phải evidence. Không tự thêm source_refs; provenance thuộc causal_motive runtime-owned. "
+            "Không suy diễn current-world facts, cảm xúc/kế hoạch user, thời tiết, âm thanh, ánh sáng hay hoạt động nếu causal focus không chứng minh. "
+            "epistemic_mode phải đúng với material: opinion là stance, hunch/speculation giữ modal, grounded_fact cần evidence thật từ runtime. "
+            "generation_temporal_context chỉ chứng minh clock/calendar. ttl_seconds thường 180-900 giây. Return exactly one JSON object."
         )
 
     def generate(self, request: Mapping[str, Any]) -> RandomChatSeed:
@@ -359,7 +303,17 @@ class RandomChatSeedGenerator:
         except Exception as exc:  # transport errors must not touch public speech
             self._log("warning", "[random chat seed] background worker failed: %s", exc)
             return RandomChatSeed()
-        return RandomChatSeed.from_mapping(raw)
+        causal_motive = request.get("causal_motive") if isinstance(request.get("causal_motive"), Mapping) else {}
+        if not causal_motive:
+            # Compatibility cho tool/test/plugin gọi generator trực tiếp. Production
+            # reservoir V45 luôn truyền causal_motive trước model call.
+            return RandomChatSeed.from_mapping(raw)
+        reservoir_context = request.get("reservoir_context") if isinstance(request.get("reservoir_context"), Mapping) else {}
+        return RandomChatSeed.from_material_mapping(
+            raw,
+            causal_motive=causal_motive,
+            requested_mode=str(reservoir_context.get("requested_mode", "eris_led") or "eris_led"),
+        )
 
     def _log(self, level: str, message: str, *args: Any) -> None:
         if self.logger is None:
@@ -467,6 +421,12 @@ class RandomChatSeedReservoir:
         self._next_generate_at = 0.0
         self._last_claimed_mode = ""
         self._last_claimed_event_kind = ""
+        # V45: budget theo causal source, không theo "kho thiếu loại gì". Count
+        # sống suốt session để cùng một user event không đẻ vô hạn paraphrase sau
+        # khi material cũ hết TTL. Concern mutation tạo cause_id mới nên vẫn có
+        # quyền sinh material mới khi thực sự có thay đổi.
+        self._cause_generation_counts: dict[str, int] = {}
+        self._cause_material_counts: dict[str, dict[str, int]] = {}
         self._stop = False
         self._thread: threading.Thread | None = None
 
@@ -744,21 +704,26 @@ class RandomChatSeedReservoir:
                             )
                         )
                         self._entries = self._entries[-self.max_size :]
-                        wake = was_empty
+                        if seed.material_only and seed.cause_id:
+                            self._cause_generation_counts[seed.cause_id] = int(
+                                self._cause_generation_counts.get(seed.cause_id, 0) or 0
+                            ) + 1
+                            material_counts = self._cause_material_counts.setdefault(seed.cause_id, {})
+                            material_counts[seed.material_kind] = int(material_counts.get(seed.material_kind, 0) or 0) + 1
+                        wake = bool(seed.material_only) or was_empty
                         quality = assess_seed_quality(seed)
                         temporal = build_seed_temporal_context(current)
                         self._log(
                             "info",
                             (
-                                "[random chat seed] stocked seed=%s mode=%s source=%s "
-                                "event_kind=%s family=%s quality=%.2f timezone=%s "
-                                "local_hour=%s daypart=%s environment_evidence=%s premise=%s ready=%d"
+                                "[associative material] stocked seed=%s material=%s cause=%s/%s motive=%s "
+                                "quality=%.2f timezone=%s local_hour=%s daypart=%s environment_evidence=%s premise=%s ready=%d"
                             ),
                             seed.seed_id,
-                            seed.mode,
-                            seed.source_kind,
-                            seed.event_kind,
-                            seed_event_family(seed.event_kind),
+                            seed.material_kind or seed.event_kind,
+                            seed.cause_kind or seed.source_kind,
+                            seed.cause_id or "legacy",
+                            seed.runtime_motive_kind or seed.eris_motive_kind,
                             quality.score,
                             temporal.get("timezone", ""),
                             temporal.get("local_hour", temporal.get("hour", "")),
@@ -772,14 +737,14 @@ class RandomChatSeedReservoir:
                 ready_count = len(self._entries)
                 self._condition.notify_all()
 
-            # Chỉ sau khi seed đã qua validation mới cho nó trở thành một mảnh đời
-            # bền trong private_life. Sink nằm ngoài reservoir lock để persistence
-            # không khóa producer lâu hơn cần thiết.
+            # V45: sau validation, seed đi vào MentalMaterialRuntime. Nó KHÔNG
+            # tự trở thành concern hay speech candidate. Sink nằm ngoài lock để
+            # lifecycle/persistence khác không giữ producer thread.
             if allowed and callable(self.mental_event_sink):
                 try:
                     self.mental_event_sink(seed)
                 except Exception as exc:
-                    self._log("warning", "[random chat seed] mental event sink failed: %s", exc)
+                    self._log("warning", "[associative material] material sink failed: %s", exc)
 
 
             if wake and callable(self.wake_callback):
@@ -833,7 +798,11 @@ class RandomChatSeedReservoir:
                 continue
             text = _compact(item.get("text", item.get("content", "")), 520)
             if text:
-                recent_user_events.append({"role": "user", "text": text})
+                event_ref = _compact(
+                    item.get("turn_id", item.get("event_id", item.get("id", item.get("message_id", "")))),
+                    120,
+                )
+                recent_user_events.append({"role": "user", "text": text, "event_ref": event_ref})
         return {
             "user_memory": _compact(snapshot.get("memory_context", ""), 2800),
             "recent_user_events": recent_user_events[-8:],
@@ -917,6 +886,49 @@ class RandomChatSeedReservoir:
             "commentary_expectation": request.get("commentary_expectation", {}),
         }
 
+    def _eligible_causal_motives_locked(self) -> tuple[Any, ...]:
+        motives = derive_causal_motives(self._context_request, now=self.clock())
+        eligible = []
+        for motive in motives:
+            used = int(self._cause_generation_counts.get(motive.cause_id, 0) or 0)
+            if used < max(1, int(motive.generation_budget)):
+                eligible.append(motive)
+        return tuple(eligible)
+
+    def _select_causal_motive_locked(self) -> Any | None:
+        eligible = self._eligible_causal_motives_locked()
+        if not eligible:
+            return None
+        # Strength là causal salience. Count penalty chỉ chia cơ hội giữa nhiều
+        # cause đang sống; nó không được biến quota thành nguyên nhân sinh thought.
+        return max(
+            eligible,
+            key=lambda item: (
+                float(item.strength) - 0.16 * self._cause_generation_counts.get(item.cause_id, 0),
+                item.cause_kind == "user_event",
+            ),
+        )
+
+    def _requested_material_kind_locked(self, motive: Any) -> str:
+        allowed = tuple(kind for kind in tuple(getattr(motive, "allowed_material_kinds", ()) or ()) if kind in MATERIAL_KINDS)
+        if not allowed:
+            return "observation"
+        counts = self._cause_material_counts.get(str(motive.cause_id), {})
+        # Diversity chỉ là tie-breaker SAU khi motive/cause đã tồn tại. Question
+        # không có bonus đặc biệt; reaction/opinion/observation giúp tránh cái bệnh
+        # biến mọi context thành seminar triết học.
+        base = {
+            "reaction": 1.00, "opinion": 0.96, "observation": 0.93,
+            "association": 0.90, "small_contact": 0.86, "playful_impulse": 0.84,
+            "hunch": 0.82, "question": 0.80, "memory_callback": 0.92,
+            "unfinished_thought": 0.88, "desire": 0.84, "plan": 0.82,
+            "self_reflection": 0.78,
+        }
+        return max(
+            allowed,
+            key=lambda kind: (base.get(kind, 0.80) - 0.55 * int(counts.get(kind, 0) or 0), base.get(kind, 0.80)),
+        )
+
     def _generation_request_locked(self) -> dict[str, Any]:
         learning = (
             self.seed_store.selection_context(now=self.clock())
@@ -932,63 +944,66 @@ class RandomChatSeedReservoir:
                 },
             }
         )
+        motive = self._select_causal_motive_locked()
         requested_mode = self._requested_mode_locked(learning)
-        requested_event_kind = self._requested_event_kind_locked()
-        requested_event_family = seed_event_family(requested_event_kind)
+        requested_material_kind = self._requested_material_kind_locked(motive) if motive is not None else "observation"
         queued = [
             {
                 "seed_id": entry.seed.seed_id,
-                "mode": entry.seed.mode,
+                "material_id": entry.seed.material_id,
+                "material_kind": entry.seed.material_kind,
                 "premise": entry.seed.premise,
                 "topic_tags": list(entry.seed.topic_tags),
-                "source_kind": entry.seed.source_kind,
-                "event_kind": entry.seed.event_kind,
-                "epistemic_mode": entry.seed.epistemic_mode,
-                "open_loop": entry.seed.open_loop,
+                "cause_id": entry.seed.cause_id,
+                "cause_kind": entry.seed.cause_kind,
             }
             for entry in self._entries
         ]
+        causal_payload = motive.to_dict() if motive is not None else {}
         return {
             **dict(self._context_request),
-            # Generation sees the user's local clock, but this value is advisory
-            # for topic fit only. A fresh copy is late-bound when the seed is
-            # actually materialized for speech.
             "generation_temporal_context": build_seed_temporal_context(self.clock()),
+            # Learning còn được đưa vào để tránh lặp thứ user ghét/đã chán, nhưng
+            # không được dùng để model tự phát minh motive. CausalMotive đã chốt.
             "seed_learning": learning,
+            "causal_motive": causal_payload,
             "reservoir_context": {
                 "requested_mode": requested_mode,
-                "requested_event_family": requested_event_family,
-                "requested_event_kind": requested_event_kind,
+                "requested_material_kind": requested_material_kind,
+                # Deprecated compatibility labels. V45 không dùng chúng làm
+                # authority generation; giữ để diagnostic/tests cũ không vỡ API.
+                "requested_event_family": "material",
+                "requested_event_kind": requested_material_kind,
                 "target_size": self.target_size,
                 "ready_size": len(self._entries),
-                "queued_seeds": queued,
+                "queued_materials": queued,
                 "context_revision": self._context_revision,
                 "rule": (
-                    "Produce one durable semantic seed for the requested mode. Surface owns wording. "
-                    "A reservoir seed may be used later, so avoid references that expire within seconds."
+                    "Materialize one mental object from causal_motive.semantic_focus. "
+                    "Do not invent a new motive or conversation plan."
                 ),
             },
             "seed_contract": {
-                "authority": "semantic_seed_only",
+                "authority": "associative_material_only",
+                "motive_owner": "runtime",
                 "surface_owns_wording": True,
-                "must_be_specific": True,
-                "must_allow_no_reply": True,
+                "conversation_planning_forbidden": True,
                 "requested_mode": requested_mode,
-                "requested_event_family": requested_event_family,
-                "requested_event_kind": requested_event_kind,
-                "modes": ["shared", "user_led", "eris_led", "experimental"],
-                "event_rule": (
-                    "Prefer requested_event_kind when it is real; otherwise decision=none. Do not rewrite a different "
-                    "mental event as reflective prose merely to satisfy the requested label."
+                "requested_material_kind": requested_material_kind,
+                "allowed_material_kinds": list(getattr(motive, "allowed_material_kinds", ()) or ()),
+                "kind_contract": "Material kind must match the pre-existing causal motive; do not manufacture motive to satisfy diversity.",
+                "quality_rule": "Quality is not length-shaped; compact context-specific material beats generic reflective prose.",
+                "material_rule": (
+                    "Use requested_material_kind only if it is a truthful shape for this causal motive. "
+                    "Otherwise choose another allowed material kind or decision=none."
                 ),
-                "kind_contract": _EVENT_KIND_CONTRACTS.get(requested_event_kind, "Produce a concrete typed mental event."),
-                "quality_rule": (
-                    "Quality is event-shaped, not length-shaped. Compact questions/play/associations can be excellent. "
-                    "Reject generic aphorisms, fake current-world scenes, invalid provenance, and events that violate their kind contract."
+                "question_rule": (
+                    "A question needs a concrete gap and non-empty expected_update. "
+                    "Do not ask merely to prolong conversation."
                 ),
                 "temporal_rule": (
-                    "generation_temporal_context proves clock/calendar only. It may shape fit but never grounds weather, "
-                    "lighting, sound, user activity, emotion, or fatigue. Runtime will late-bind time again at use."
+                    "generation_temporal_context proves clock/calendar only; it never grounds weather, lighting, sound, "
+                    "user activity, emotion, or fatigue."
                 ),
             },
         }
@@ -1065,24 +1080,34 @@ class RandomChatSeedReservoir:
             if _similarity(seed.premise, entry.seed.premise) >= 0.68:
                 return False, "reservoir_duplicate"
             if set(seed.topic_tags) == set(entry.seed.topic_tags) and seed.topic_tags:
-                return False, "reservoir_topic_duplicate"
+                # V45 cho phép cùng causal topic sinh reaction rồi opinion/question;
+                # tag giống nhau không đồng nghĩa mental object giống nhau. Chỉ
+                # chặn nếu cả material kind cũng trùng.
+                if not seed.material_only or seed.material_kind == entry.seed.material_kind:
+                    return False, "reservoir_topic_duplicate"
         for leased in self._leases.values():
             if _similarity(seed.premise, leased.entry.seed.premise) >= 0.68:
                 return False, "leased_duplicate"
         return True, "allowed"
 
     def _ready_to_generate_locked(self, now: float) -> bool:
-        return bool(
-            self.enabled
-            and self._context_request
-            and len(self._entries) + len(self._leases) < self.target_size
-            and now >= self._next_generate_at
-        )
+        if not (self.enabled and self._context_request and now >= self._next_generate_at):
+            return False
+        if not bool(getattr(self.generator, "causal_material_generation", False)):
+            return len(self._entries) + len(self._leases) < self.target_size
+        # V45 không dùng "reservoir còn slot" làm nguyên nhân generation nữa.
+        # Chỉ khi còn một causal source chưa dùng hết budget mới gọi model.
+        return bool(self._eligible_causal_motives_locked())
 
     def _wait_seconds_locked(self, now: float) -> float:
         if self._stop:
             return 0.05
-        if not self._context_request or len(self._entries) + len(self._leases) >= self.target_size:
+        if not self._context_request:
+            return 15.0
+        if not bool(getattr(self.generator, "causal_material_generation", False)):
+            if len(self._entries) + len(self._leases) >= self.target_size:
+                return 15.0
+        elif not self._eligible_causal_motives_locked():
             return 15.0
         return max(0.25, min(15.0, self._next_generate_at - now))
 

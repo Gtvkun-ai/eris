@@ -517,7 +517,7 @@ class RemoteModelProcessManager:
                 "Kiem tra ERIS_DS_SEED_BASE_URL/API_KEY va DS2API port 6015."
             )
         else:
-            self.logger.info("Seed worker owner: background random-chat premise reservoir")
+            self.logger.info("Seed worker owner: background associative mental-material generator")
         return client
 
     def build_surface_client(self):

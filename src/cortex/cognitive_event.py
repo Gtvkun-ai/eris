@@ -103,17 +103,20 @@ class CognitiveEvent:
                 if str(item).strip()
             )
         )[:16]
-        event_id = f"cogevt:seed:{seed_id}"
+        candidate_source = _compact(getattr(candidate, "source", "") or "", 80)
+        is_material = candidate_source == "mental_material"
+        event_id = f"cogevt:material:{seed_id}" if is_material else f"cogevt:seed:{seed_id}"
         return cls(
             event_id=event_id,
-            origin="seed",
+            origin="mental_material" if is_material else "seed",
             kind=event_kind,
             subject=subject,
             occurred_at=float(now or time.time()),
             evidence_refs=refs,
             source_ref=seed_id,
-            novelty_key=_stable_digest("seed", event_kind, subject),
+            novelty_key=_stable_digest("mental_material" if is_material else "seed", event_kind, subject),
             metadata={
+                "material_source": bool(is_material),
                 "seed_id": seed_id,
                 "seed_family": source_kind,
                 "seed_quality": float(getattr(candidate, "seed_quality_score", 0.0) or 0.0),

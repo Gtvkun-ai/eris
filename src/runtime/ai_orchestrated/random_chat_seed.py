@@ -21,6 +21,8 @@ import time
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Callable, Mapping, Sequence
 
+from cortex.mental_material import MATERIAL_KINDS, MATERIAL_TO_EPISTEMIC, MATERIAL_TO_EVENT_KIND
+
 
 RANDOM_CHAT_SEED_SCHEMA = "eris.random_chat_seed.v1"
 
@@ -194,6 +196,17 @@ class RandomChatSeed:
     confidence: float = 0.0
     tone: str = "casual_warm"
     ttl_seconds: float = 90.0
+    # V45: production seed chỉ là associative material carrier. Các field dưới
+    # được runtime gắn từ CausalMotive có trước, không phải model tự khai sau khi
+    # đã nghĩ ra premise. Legacy seed vẫn để material_only=False.
+    material_only: bool = False
+    material_id: str = ""
+    material_kind: str = ""
+    cause_id: str = ""
+    cause_kind: str = ""
+    cause_strength: float = 0.0
+    runtime_motive_kind: str = ""
+    expected_update: tuple[str, ...] = ()
 
     @property
     def available(self) -> bool:
@@ -219,6 +232,7 @@ class RandomChatSeed:
         payload["source_refs"] = list(self.source_refs)
         payload["topic_tags"] = list(self.topic_tags)
         payload["desired_response"] = list(self.desired_response)
+        payload["expected_update"] = list(self.expected_update)
         return payload
 
     @classmethod
@@ -257,6 +271,9 @@ class RandomChatSeed:
         if motive_kind not in _ALLOWED_MOTIVES:
             motive_kind = "want_to_share"
         seed_id = _compact(data.get("seed_id", ""), 80) or (_seed_id(premise, mode) if premise else "")
+        expected_update = tuple(
+            item for item in (_compact(value, 100) for value in _sequence(data.get("expected_update"))[:8]) if item
+        )
         return cls(
             decision=decision,
             seed_id=seed_id,
@@ -283,6 +300,116 @@ class RandomChatSeed:
             confidence=_clamp01(data.get("confidence", 0.0)),
             tone=_compact(data.get("tone", "casual_warm"), 48).lower() or "casual_warm",
             ttl_seconds=max(60.0, min(1800.0, float(data.get("ttl_seconds", 600.0) or 600.0))),
+            material_only=bool(data.get("material_only", False)),
+            material_id=_compact(data.get("material_id", seed_id), 100) or seed_id,
+            material_kind=_compact(data.get("material_kind", ""), 48).lower(),
+            cause_id=_compact(data.get("cause_id", ""), 120),
+            cause_kind=_compact(data.get("cause_kind", ""), 64).lower(),
+            cause_strength=_clamp01(data.get("cause_strength", 0.0)),
+            runtime_motive_kind=_compact(data.get("runtime_motive_kind", ""), 64).lower(),
+            expected_update=expected_update,
+        )
+
+    @classmethod
+    def from_material_mapping(
+        cls,
+        payload: Mapping[str, Any] | None,
+        *,
+        causal_motive: Mapping[str, Any],
+        requested_mode: str = "eris_led",
+    ) -> "RandomChatSeed":
+        """Dựng carrier V45: model chỉ sở hữu material, runtime sở hữu motive.
+
+        ``opening_move`` và ``desired_response`` cố ý để rỗng. Conversation shape
+        được quyết muộn hơn từ material lifecycle, tránh seed vừa sinh đã mặc áo
+        một câu public tương lai.
+        """
+
+        data = dict(payload or {})
+        decision = _compact(data.get("decision", "none"), 16).lower()
+        if decision != "seed":
+            return cls()
+        premise = _compact(data.get("premise", data.get("content", "")), 520)
+        material_kind = _compact(data.get("material_kind", "observation"), 48).lower()
+        if material_kind not in MATERIAL_KINDS:
+            return cls()
+        cause_id = _compact(causal_motive.get("cause_id", ""), 120)
+        cause_kind = _compact(causal_motive.get("cause_kind", ""), 64).lower()
+        runtime_motive_kind = _compact(causal_motive.get("motive_kind", "share_internal_material"), 64).lower()
+        if not premise or not cause_id:
+            return cls()
+        mode = _compact(requested_mode, 24).lower() or "eris_led"
+        if mode not in _ALLOWED_MODES:
+            mode = "eris_led"
+        source_kind = {
+            "user_event": "recent_shared_context",
+            "active_concern": "endogenous_curiosity",
+            "private_thought": "private_life_workspace",
+            "memory_context": "user_memory",
+            "self_outcome": "eris_self_memory",
+        }.get(cause_kind, "weak_association")
+        # Provenance chỉ lấy từ causal state runtime-owned. Model không được tự
+        # cấp source_ref cho premise của chính nó rồi gọi đó là evidence.
+        source_refs = tuple(dict.fromkeys(
+            item for item in (
+                *(_compact(value, 140) for value in _sequence(causal_motive.get("source_refs"))[:8]),
+                cause_id,
+            ) if item
+        ))[:12]
+        tags = tuple(dict.fromkeys(
+            tag for tag in (_clean_tag(value) for value in _sequence(data.get("topic_tags"))[:8]) if tag
+        ))
+        if not tags:
+            tags = tuple(_clean_tag(x) for x in _token_set(premise) if _clean_tag(x))[:4]
+        expected_update = tuple(
+            item for item in (_compact(value, 100) for value in _sequence(data.get("expected_update"))[:8]) if item
+        )
+        event_kind = MATERIAL_TO_EVENT_KIND.get(material_kind, "thought")
+        epistemic_mode = _compact(data.get("epistemic_mode", MATERIAL_TO_EPISTEMIC.get(material_kind, "bounded_inference")), 48).lower()
+        if epistemic_mode not in _ALLOWED_EPISTEMIC_MODES:
+            epistemic_mode = MATERIAL_TO_EPISTEMIC.get(material_kind, "bounded_inference")
+        uncertainty = _clamp01(data.get("uncertainty", 0.28))
+        confidence = _clamp01(data.get("confidence", 0.68), 0.68)
+        cause_strength = _clamp01(causal_motive.get("strength", 0.0))
+        legacy_motive = _compact(causal_motive.get("legacy_motive_kind", "want_to_share"), 40).lower()
+        if legacy_motive not in _ALLOWED_MOTIVES:
+            legacy_motive = "want_to_share"
+        seed_id = _compact(data.get("seed_id", ""), 80) or (_seed_id(premise, mode) if premise else "")
+        material_id = _compact(data.get("material_id", seed_id), 100) or seed_id
+        return cls(
+            decision="seed",
+            seed_id=seed_id,
+            mode=mode,
+            premise=premise,
+            source_kind=source_kind,
+            source_refs=source_refs,
+            topic_tags=tags,
+            event_kind=event_kind,
+            epistemic_mode=epistemic_mode,
+            open_loop=bool(data.get("open_loop", material_kind in {"question", "unfinished_thought"})),
+            opening_move="",
+            desired_response=(),
+            eris_motive_kind=legacy_motive,
+            eris_motive_why_now=_compact(causal_motive.get("why_now", ""), 220),
+            personal_stake=cause_strength,
+            authenticity=_clamp01(0.46 + 0.34 * confidence + 0.20 * bool(source_refs)),
+            daring=_clamp01(data.get("daring", 0.18), 0.18),
+            uncertainty=uncertainty,
+            intrusion_risk=_clamp01(data.get("intrusion_risk", 0.12), 0.12),
+            face_risk=_clamp01(data.get("face_risk", 0.08), 0.08),
+            recovery_available=True,
+            estimated_fit=_clamp01(0.38 + 0.44 * cause_strength + 0.12 * confidence),
+            confidence=confidence,
+            tone="natural",
+            ttl_seconds=max(90.0, min(1800.0, float(data.get("ttl_seconds", 600.0) or 600.0))),
+            material_only=True,
+            material_id=material_id,
+            material_kind=material_kind,
+            cause_id=cause_id,
+            cause_kind=cause_kind,
+            cause_strength=cause_strength,
+            runtime_motive_kind=runtime_motive_kind,
+            expected_update=expected_update,
         )
 
 
@@ -329,6 +456,58 @@ def assess_seed_quality(seed: RandomChatSeed) -> SeedQualityAssessment:
 
     premise = _compact(seed.premise, 520)
     tokens = _token_set(premise)
+
+    # V45 material-only seed không được chấm theo conversation shape. Không còn
+    # thưởng opening_move/desired_response/why_now do model viết. Motive strength
+    # ở đây chính là strength của causal source runtime-owned.
+    if seed.material_only:
+        reasons: list[str] = []
+        token_count = len(tokens)
+        has_tags = bool(seed.topic_tags)
+        has_refs = bool(seed.source_refs)
+        kind_ok = seed.material_kind in MATERIAL_KINDS
+        premise_core = 1.0 if token_count >= 5 else (0.72 if token_count >= 3 else 0.25 if token_count else 0.0)
+        provenance = _clamp01(0.55 * (1.0 if has_refs else 0.0) + 0.45 * seed.cause_strength)
+        kind_fit = 1.0 if kind_ok else 0.0
+        question_fit = 1.0
+        if seed.material_kind == "question":
+            question_fit = 1.0 if seed.expected_update else 0.58
+            if not seed.expected_update:
+                reasons.append("question_without_expected_update")
+        epistemic_integrity = 1.0
+        if seed.epistemic_mode == "grounded_fact" and not has_refs:
+            epistemic_integrity = 0.45
+            reasons.append("grounded_fact_without_refs")
+        if seed.generic:
+            epistemic_integrity = min(epistemic_integrity, 0.35)
+            reasons.append("generic_presence")
+        specificity = _clamp01(0.48 * premise_core + 0.26 * provenance + 0.16 * (1.0 if has_tags else 0.0) + 0.10 * question_fit)
+        motive_strength = _clamp01(seed.cause_strength)
+        semantic_completeness = _clamp01(0.38 * premise_core + 0.24 * kind_fit + 0.20 * provenance + 0.18 * question_fit)
+        score = _clamp01(
+            0.34 * specificity
+            + 0.24 * motive_strength
+            + 0.26 * semantic_completeness
+            + 0.16 * epistemic_integrity
+        )
+        if seed.generic:
+            score = min(score, 0.28)
+        if seed.material_kind == "question" and not seed.expected_update:
+            # Câu hỏi không có state nào để cập nhật chỉ là conversation filler
+            # đội lốt curiosity. Small talk vẫn hợp lệ ở small_contact; question
+            # thì phải có gap thật.
+            score = min(score, 0.42)
+        if not kind_ok:
+            score = min(score, 0.30)
+            reasons.append("unknown_material_kind")
+        return SeedQualityAssessment(
+            score=score,
+            specificity=specificity,
+            motive_strength=motive_strength,
+            semantic_completeness=semantic_completeness,
+            epistemic_integrity=_clamp01(epistemic_integrity),
+            reasons=tuple(dict.fromkeys(reasons)),
+        )
     token_count = len(tokens)
     why_now = _compact(seed.eris_motive_why_now, 220)
     why_tokens = _token_set(why_now)
@@ -659,10 +838,13 @@ class RandomChatSeedAffinityStore:
             return False, "seed_intrusion_risk"
         if seed.daring > 0.86:
             return False, "seed_daring_out_of_lane"
-        if seed.mode == "eris_led" and (seed.personal_stake < 0.34 or seed.authenticity < 0.38):
+        # V45 material-only seed chưa phải conversation move. Mode/daring affinity
+        # chỉ có ý nghĩa sau khi material trở thành ExpressionUrge; đừng reject một
+        # thought tốt vì nó chưa mang đủ "ego stake" để được nói ngay.
+        if not seed.material_only and seed.mode == "eris_led" and (seed.personal_stake < 0.34 or seed.authenticity < 0.38):
             return False, "eris_led_without_ego_stake"
         context = self.selection_context(now=current)
-        if seed.daring > float(context.get("daring_ceiling", 0.60) or 0.60) + 0.10:
+        if not seed.material_only and seed.daring > float(context.get("daring_ceiling", 0.60) or 0.60) + 0.10:
             return False, "seed_exceeds_adaptive_daring"
         with self._lock:
             for item in reversed(self._state.recent[-16:]):

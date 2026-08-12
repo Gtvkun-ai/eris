@@ -108,6 +108,34 @@ def test_interactive_capability_planner_bypasses_when_subject_does_not_route_too
     assert calls == []
 
 
+def test_vague_meaning_question_anchors_to_last_assistant_answer():
+    from domain import Decision
+    from parser_grounding.service import DecisionParser
+
+    parser = DecisionParser(Decision(text="", animation="stand"))
+
+    message = parser.build_chat_user_message(
+        user_message="ý em là sao",
+        last_chat_answer="Gắn nhãn không phải để hiểu, mà để tạm đặt xuống.",
+    )
+
+    assert "Câu trả lời trước của bạn" in message
+    assert "Gắn nhãn không phải để hiểu" in message
+
+
+def test_previous_public_turn_context_is_always_merged_for_chat_prompt():
+    from runtime.ai_orchestrated.orchestrator import _merge_previous_public_context
+
+    context = _merge_previous_public_context(
+        "Current grounding: user_text",
+        "previous_public_turn within reply window:\n- text=Gắn nhãn không phải để hiểu.",
+    )
+
+    assert "Current grounding: user_text" in context
+    assert "previous_public_turn within reply window" in context
+    assert "Gắn nhãn không phải để hiểu" in context
+
+
 def test_public_addressing_keeps_assistant_self_pronoun_stable(tmp_path: Path):
     from runtime.addressing_policy import clean_public_addressing
     from runtime.user_addressing_state import UserAddressingStore, set_global_user_addressing_store

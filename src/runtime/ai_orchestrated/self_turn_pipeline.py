@@ -469,6 +469,15 @@ class SelfTurnPipeline:
             except Exception as exc:
                 planner_snapshot["expression_urge_pressure"] = 0.0
                 host.logger.debug("[expression urge] cheap wake projection failed: %s", exc)
+        mental_material_runtime = getattr(host, "mental_material_runtime", None)
+        if mental_material_runtime is not None:
+            try:
+                planner_snapshot["mental_material_pressure"] = float(
+                    mental_material_runtime.wake_pressure(now=now)
+                )
+            except Exception as exc:
+                planner_snapshot["mental_material_pressure"] = 0.0
+                host.logger.debug("[mental material] cheap wake projection failed: %s", exc)
         seed_reservoir = getattr(host, "ai_random_chat_seed_reservoir", None)
         if seed_reservoir is not None:
             try:
@@ -647,6 +656,27 @@ class SelfTurnPipeline:
             host.logger.debug("[affect-v43] selection bias degraded: %s", exc)
 
         active_concerns: tuple[dict[str, Any], ...] = ()
+        material_concern_affordances: tuple[Any, ...] = ()
+        material_expression_affordances: tuple[Any, ...] = ()
+
+        # V45: associative seed không còn nằm trong executive affordance list.
+        # MentalMaterialRuntime tự quyết một material chỉ là thought, đủ pull để
+        # thành concern, hay đủ pull biểu đạt. Hai projection được tách để "có
+        # thought" không tự động đồng nghĩa "muốn nói thought".
+        mental_material_runtime = getattr(host, "mental_material_runtime", None)
+        if mental_material_runtime is not None:
+            try:
+                material_concern_affordances, material_expression_affordances = mental_material_runtime.project(
+                    now=now, limit=8
+                )
+                material_snapshot = mental_material_runtime.snapshot(now=now, limit=10)
+                planner_snapshot["mental_materials"] = [dict(item) for item in material_snapshot]
+                planner_snapshot["mental_material_pressure"] = max(
+                    (max(float(item.get("expression_pull", 0.0) or 0.0), float(item.get("concern_pull", 0.0) or 0.0)) for item in material_snapshot),
+                    default=0.0,
+                )
+            except Exception as exc:
+                host.logger.debug("[mental material] projection failed: %s", exc)
 
         # V42: chỉ COGNITIVE EVENT MỚI được phép làm concern đổi state. Reservoir
         # có thể đưa lại cùng seed qua nhiều tick, nhưng event ledger sẽ consume đúng
@@ -654,7 +684,9 @@ class SelfTurnPipeline:
         concern_runtime = getattr(host, "active_concern_runtime", None)
         if concern_runtime is not None:
             try:
-                concern_runtime.ingest_affordances(affordances, now=now)
+                concern_runtime.ingest_affordances(
+                    tuple(affordances) + tuple(material_concern_affordances), now=now
+                )
                 active_concerns = concern_runtime.snapshot(now=now, limit=8)
                 planner_snapshot["active_concerns"] = [dict(item) for item in active_concerns]
                 self.trace_store.append(
@@ -683,7 +715,7 @@ class SelfTurnPipeline:
                     "social_energy": float(getattr(current_state, "social_energy", 0.5) or 0.5),
                 }
                 affordances = list(expression_urge_runtime.shape_affordances(
-                    affordances,
+                    tuple(affordances) + tuple(material_expression_affordances),
                     active_concerns=active_concerns,
                     relational=relational_view,
                     affect=affect_for_urge,
@@ -1816,6 +1848,14 @@ class SelfTurnPipeline:
         # Nó chỉ làm contentful urge mạnh hơn sau khi cognition đã có *cái gì*
         # muốn mang sang user. Đây là chỗ cắt gốc NPC check-in.
         relational_drive = float(relational_view.get("outreach_drive", 0.0) or 0.0) if relational_view else 0.0
+        material_pressure = float(snapshot.get("mental_material_pressure", 0.0) or 0.0)
+        if material_pressure >= 0.22:
+            emit(
+                "mental_material",
+                material_pressure,
+                "causal_material_lifecycle",
+                revision=0,
+            )
         urge_pressure = float(snapshot.get("expression_urge_pressure", 0.0) or 0.0)
         if urge_pressure >= 0.18 and not social_environment_suppressed:
             emit(
@@ -1832,6 +1872,7 @@ class SelfTurnPipeline:
             0.72 if context.discourse.assistant_may_continue else 0.0,
             seed_strength,
             0.90 if discovery_ready else 0.0,
+            material_pressure,
             urge_pressure,
         )
         if affordance_strength:

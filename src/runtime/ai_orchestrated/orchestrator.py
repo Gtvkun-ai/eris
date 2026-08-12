@@ -79,6 +79,15 @@ def _orchestrator_boundary_note(host: Any, operation: str, exc: Exception) -> No
     _LOG.debug("[ai orchestrator] %s degraded: %s", operation, exc, exc_info=exc)
 
 
+def _merge_previous_public_context(grounding_context: str, previous_public_context: str) -> str:
+    """Keep the reply-window public turn visible to chat planning/writing."""
+
+    return "\n\n".join(
+        part for part in (str(grounding_context or ""), str(previous_public_context or ""))
+        if part.strip()
+    )
+
+
 
 class _ChatLatencyTrace:
     def __init__(self, host: Any, *, cycle_start: float, user_text: str = "") -> None:
@@ -886,6 +895,7 @@ class AIChatOrchestrator:
                     part for part in (relationship_context, agenda_prompt_context) if str(part).strip()
                 )
         grounding_context = str(getattr(grounding_report, "prompt_context", "") or "")
+        grounding_context = _merge_previous_public_context(grounding_context, previous_public_context)
         if semantic_prompt_context:
             grounding_context = "\n\n".join(
                 part for part in (grounding_context, semantic_prompt_context) if str(part).strip()
