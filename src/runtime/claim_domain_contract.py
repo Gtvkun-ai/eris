@@ -36,6 +36,16 @@ EVIDENCE_REQUIRED_DOMAINS = frozenset({
     "grounded_environment",
 })
 
+# Domain không cần evidence — tán nhảm, triết học, ý kiến cá nhân, trạng thái nội tâm.
+# Model được phép khai báo bất kỳ evidence_refs nào (hoặc không có); refs lạ không block.
+EVIDENCE_EXEMPT_DOMAINS = frozenset({
+    "opinion",
+    "hypothetical",
+    "internal_state",
+    "conversation_history",
+    "user_statement",
+})
+
 
 def _compact(value: Any, limit: int = 280) -> str:
     text = " ".join(str(value or "").split()).strip()
@@ -109,7 +119,13 @@ def validate_claim_manifest(
                 bad_refs.append(f"{domain}:missing")
             else:
                 bad_refs.extend(ref for ref in refs if ref not in evidence)
+        elif domain in EVIDENCE_EXEMPT_DOMAINS:
+            # Tán nhảm, triết học, ý kiến — không cần evidence và cũng không
+            # phạt model vì khai báo thêm ref tùy ý. Bỏ qua hoàn toàn.
+            pass
         else:
+            # Domain khác (memory, engagement_state, discovery_artifact…):
+            # nếu runtime có evidence set và model thêm ref lạ thì mới cảnh báo.
             bad_refs.extend(ref for ref in refs if evidence and ref not in evidence)
     if bad_domains:
         return ClaimDomainDecision(
@@ -134,6 +150,8 @@ def validate_claim_manifest(
 
 __all__ = [
     "CLAIM_DOMAIN_VERSION",
+    "EVIDENCE_EXEMPT_DOMAINS",
+    "EVIDENCE_REQUIRED_DOMAINS",
     "KNOWN_CLAIM_DOMAINS",
     "ClaimDomainDecision",
     "normalize_claim_manifest",

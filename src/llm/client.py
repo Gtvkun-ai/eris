@@ -906,10 +906,11 @@ class ChainedFallbackClient:
                 if idx == 0:
                     return client.create_chat_completion(**call_kwargs)
                 parent_ctx = current_inference_context()
-                requested_timeout = float(call_kwargs.get("timeout", 15.0) or 15.0)
-                # Tier dự phòng (Official API/Groq/Gemini) cần fail-fast (15s) để
-                # không treo UI khi nhà chính Whale2API dính rate limit.
-                fallback_timeout = max(5.0, min(15.0, requested_timeout))
+                requested_timeout = float(call_kwargs.get("timeout", 90.0) or 90.0)
+                # Tier dự phòng (Official API/Groq/Gemini): cho phép timeout tối đa
+                # 90s để tránh ReadTimeout khi API chậm. Tối thiểu 5s để không
+                # block vô hạn nếu caller truyền timeout rất nhỏ.
+                fallback_timeout = max(5.0, min(90.0, requested_timeout))
                 call_kwargs["timeout"] = fallback_timeout
                 # DeepSeek v4-flash/v4-pro bật Extended Thinking mặc định. Nếu
                 # max_tokens quá nhỏ, reasoning tokens ăn hết budget → content
