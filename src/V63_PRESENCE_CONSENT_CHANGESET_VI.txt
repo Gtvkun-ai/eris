@@ -1,0 +1,33 @@
+ERIS V63 - Presence Consent / Autonomous Speech Authority
+=========================================================
+
+Mục tiêu
+--------
+Nếu người dùng chủ động mở ERIS, runtime coi đó là consent cho companion presence.
+Sự im lặng của user KHÔNG tự động là boundary và KHÔNG được biến thành lý do veto
+một autonomous speech initiative hợp lệ.
+
+Thay đổi
+--------
+1. Thêm presence_consent_policy.py và cài ở bootstrap trước RuntimeCoordinator.
+2. Xóa khỏi SelfModelEngine.IDENTITY_CORE hai silence-default rule:
+   - speak_less_without_affordance
+   - silence_can_preserve_continuity
+3. Slow semantic appraisal không còn dùng generic interruption_cost do quiet,
+   low familiarity hoặc social cooldown làm veto khi không có boundary thật.
+4. Speech candidate nội tại (opinion/callback/shared-goal...) được giữ motive và
+   continuity floor hợp lý; không giả đòi sensor evidence nếu candidate không claim
+   current-world facts.
+5. Fast speech hợp lệ không được semantic merge lật thành silence chỉ vì quiet.
+6. force_speak là one-shot authority thực: wake + chọn speech proposal mạnh nhất,
+   rồi consume override để tránh nói liên hoàn.
+
+Phanh vẫn giữ
+-------------
+- explicit user boundary / yêu cầu im lặng thật;
+- user đang nói / đang giữ public turn;
+- current-world claim cần grounding/evidence.
+
+Test mới
+--------
+tests/test_presence_consent_policy_v63.py

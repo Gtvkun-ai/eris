@@ -24,6 +24,7 @@ from runtime.tts_engine import build_tts_engine
 from runtime.workspace_manager import ErisHome
 from telemetry import TelemetryService
 from transport import UdpTransport
+from expression_commitment_authority import install_expression_commitment_authority
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
@@ -206,6 +207,11 @@ class AttentionOverseer:
         self.decision_parser = DecisionParser(fallback_decision, logger=self.parse_logger)
         self.telemetry_service = TelemetryService()
         self.action_executor = ActionExecutor(logger=self.action_logger)
+        # V65: quyền biểu đạt bắt nguồn từ Eris, không bắt nguồn từ sự cho phép
+        # được suy diễn từ user. Initiative tạo Expression Commitment; pacing chỉ
+        # được trì hoãn nhịp nói. Neuro/Executive/Surface không được tự đổi một
+        # commitment hợp lệ thành SILENCE vì quiet, low familiarity hay cooldown.
+        install_expression_commitment_authority(self.loop_logger)
         self.coordinator = RuntimeCoordinator(
             logger=self.loop_logger,
             transport=self.transport,
