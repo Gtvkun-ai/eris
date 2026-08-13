@@ -77,6 +77,7 @@ MATERIAL_TO_EPISTEMIC = {
 # Motive runtime-owned vẫn dùng vocabulary cũ ở boundary để không phá Subject.
 MATERIAL_MOTIVE_TO_LEGACY = {
     "engage_user_event": "want_to_explore",
+    "continue_conversation_trajectory": "want_to_revisit",
     "continue_concern": "want_to_revisit",
     "revisit_memory": "want_to_revisit",
     "continue_private_thought": "want_to_express",
@@ -311,6 +312,57 @@ def derive_causal_motives(context: Mapping[str, Any], *, now: float | None = Non
             generation_budget=2 if index == len(recent_user[-3:]) - 1 else 1,
             relationship_modulation=connection,
         ))
+
+    # V75: một chat reply đã consume user_event để ngăn double-reply, nhưng topic
+    # vẫn có thể tiếp tục sống trong private cognition. Trajectory tạo một causal
+    # motive RIÊNG, vì thế seed/autonomous có thể đào sâu sau chat mà không giả rằng
+    # user vẫn đang nợ câu trả lời cũ.
+    trajectory = context.get("conversation_trajectory") if isinstance(context.get("conversation_trajectory"), Mapping) else {}
+    if trajectory and bool(trajectory.get("active", True)) and not bool(trajectory.get("closed", False)):
+        topic_id = _compact(trajectory.get("topic_id", ""), 100)
+        focus = _compact(trajectory.get("current_focus", ""), 620)
+        root = _compact(trajectory.get("root_focus", ""), 420)
+        extension = _compact(trajectory.get("last_assistant_extension", trajectory.get("last_assistant_text", "")), 420)
+        revision = max(0, int(trajectory.get("revision", 0) or 0))
+        momentum = _clamp01(trajectory.get("momentum", 0.0))
+        engagement = _clamp01(trajectory.get("user_engagement", 0.0))
+        depth = max(0, int(trajectory.get("depth", 0) or 0))
+        development_mode = _compact(trajectory.get("development_mode", "deepen"), 24).lower()
+        if topic_id and focus and momentum >= 0.34:
+            semantic_focus = (
+                f"topic_id={topic_id}; current_focus={focus}; "
+                f"root_focus={root or focus}; prior_eris_extension={extension or '<none>'}; "
+                f"trajectory_depth={depth}; preferred_development={development_mode or 'deepen'}. "
+                "Phát triển cùng semantic spine; không mở chủ đề ngẫu nhiên. "
+                "prior_eris_extension chỉ là ngữ cảnh hội thoại, không phải bằng chứng factual."
+            )
+            refs = tuple(
+                dict.fromkeys(
+                    str(item).strip() for item in _seq(trajectory.get("source_refs"))
+                    if str(item or "").strip()
+                )
+            )[:8]
+            cause_id = f"trajectory:{topic_id}:r{revision}"
+            motives.append(CausalMotive(
+                cause_id=cause_id,
+                cause_kind="conversation_trajectory",
+                motive_kind="continue_conversation_trajectory",
+                semantic_focus=_compact(semantic_focus, 1200),
+                why_now=(
+                    f"conversation_trajectory_active:{topic_id}:depth={depth}:"
+                    f"momentum={momentum:.2f}:engagement={engagement:.2f}"
+                ),
+                strength=_clamp01(0.66 + 0.22 * momentum + 0.08 * engagement),
+                source_refs=tuple(dict.fromkeys((*refs, f"trajectory:{topic_id}")))[:10],
+                allowed_material_kinds=(
+                    "reaction", "opinion", "association", "unfinished_thought",
+                    "hunch", "self_reflection", "question",
+                ),
+                generation_budget=2,
+                relationship_modulation=connection,
+                development_required=True,
+                allowed_development_modes=("deepen", "connect", "reinterpret", "test", "personalize"),
+            ))
 
     self_memory = context.get("eris_self_memory") if isinstance(context.get("eris_self_memory"), Mapping) else {}
     concerns = [item for item in _seq(self_memory.get("active_concerns")) if isinstance(item, Mapping)]

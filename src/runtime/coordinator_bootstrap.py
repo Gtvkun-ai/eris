@@ -49,6 +49,10 @@ from runtime.ai_orchestrated.cortex import CortexAttentionSignal, CortexRuntime
 from runtime.active_concern_runtime import ActiveConcernRuntime
 from runtime.expression_consummation import ExpressionConsummationRuntime
 from runtime.expression_urge_runtime import ExpressionUrgeRuntime
+from runtime.life_horizon import LifeHorizonManager
+from runtime.conversation_courtesy import ConversationCourtesyContract
+from runtime.horizon_arbiter import HorizonArbiter
+from runtime.review_lock import ReviewLock
 from runtime.mental_material_runtime import MentalMaterialRuntime
 from runtime.body_bias import BodyBiasProjector
 from runtime.chat_cycle import ChatCycleMixin
@@ -627,6 +631,15 @@ class CoordinatorBootstrapMixin:
         self.expression_consummation_runtime = ExpressionConsummationRuntime(self, logger=self.logger)
         # V44: urge là projection ngắn hạn trên concern/content hiện có, không tạo kho nhớ mới.
         self.expression_urge_runtime = ExpressionUrgeRuntime(self, logger=self.logger)
+
+        # V74 Life-Horizon: bốn object tách vai trò rõ ràng. Manager giữ H0-H4,
+        # Arbiter chỉ điều chỉnh utility, Courtesy sở hữu quyền giữ lượt, còn
+        # ReviewLock giữ semantic winner sau merge. Không object nào là public writer.
+        self.life_horizon_manager = LifeHorizonManager(self, logger=self.logger)
+        self.horizon_arbiter = HorizonArbiter(logger=self.logger)
+        self.conversation_courtesy_contract = ConversationCourtesyContract(logger=self.logger)
+        self.review_lock = ReviewLock(logger=self.logger)
+
         self.inner_diary_persister = InnerDiaryPersister(logger=self.logger)
         self.private_life_daemon = PrivateLifeDaemon.from_runtime(
             runtime_owner=self,

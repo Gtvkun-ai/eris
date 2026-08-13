@@ -761,6 +761,24 @@ class AIChatOrchestrator:
         except Exception as exc:
             host.logger.debug("[topic boundary] user reopen check degraded: %s", exc)
         handoff_runtime = ensure_conversation_handoff_runtime(host)
+        # V75: trajectory giữ semantic spine riêng với pending question. User turn
+        # mới resolve câu hỏi cũ nhưng không xóa chủ đề, để seed/autonomous còn
+        # một anchor phát triển tiếp thay vì rơi về random social prompt.
+        from runtime.conversation_trajectory import ensure_conversation_trajectory_runtime
+        trajectory_runtime = ensure_conversation_trajectory_runtime(host)
+        trajectory_state = trajectory_runtime.observe_user_turn(
+            user_text,
+            turn_ref=turn_id,
+            turn_index=user_turn.index,
+            previous_assistant_text=previous_assistant_for_repair,
+            now=cycle_start,
+        )
+        from runtime.conversation_courtesy import ensure_conversation_courtesy
+        from runtime.life_horizon import ensure_life_horizon_manager
+        courtesy_runtime = ensure_conversation_courtesy(host)
+        courtesy_runtime.observe_user_turn(turn_ref=turn_id, now=cycle_start)
+        life_horizon_manager = ensure_life_horizon_manager(host)
+        life_horizon_manager.observe_user_turn(turn_ref=turn_id, now=cycle_start)
         _ledger_for_handoff = host._ensure_session_turn_ledger()
         _prior_turns_for_handoff = _ledger_for_handoff.recent_turns(
             before_index=user_turn.index, limit=8
@@ -938,7 +956,11 @@ class AIChatOrchestrator:
         # Nó nói "đang nợ lượt nào / reaction có thể do ai gây ra", không nói
         # current-world fact. Public writer nhận cùng object mà Subject/Neuro sẽ nhận.
         discourse_context = "\n\n".join(
-            part for part in (discourse_context, handoff_runtime.prompt_context())
+            part for part in (
+                discourse_context,
+                handoff_runtime.prompt_context(),
+                life_horizon_manager.prompt_context(now=cycle_start),
+            )
             if str(part).strip()
         )
 
@@ -1048,6 +1070,9 @@ class AIChatOrchestrator:
             "engagement_context": engagement_context,
             "discourse_context": discourse_context,
             "conversation_handoff": handoff_state.to_dict(),
+            "conversation_trajectory": trajectory_state.to_dict(),
+            "conversation_courtesy": courtesy_runtime.runtime_context(now=cycle_start),
+            "life_horizon": life_horizon_manager.refresh_from_runtime(now=cycle_start).to_dict(),
             "causal_discourse": {
                 "self_caused_reaction_probability": handoff_state.self_caused_reaction_probability,
                 "repair_needed": handoff_state.repair_needed,
@@ -1096,6 +1121,11 @@ class AIChatOrchestrator:
             now=cycle_start,
         )
         planning_snapshot["conversation_handoff"] = handoff_state.to_dict()
+        # Refresh sau build_initiative_runtime_context để mọi lane đọc cùng revision.
+        trajectory_state = trajectory_runtime.snapshot(now=cycle_start)
+        planning_snapshot["conversation_trajectory"] = trajectory_state.to_dict()
+        planning_snapshot["conversation_courtesy"] = courtesy_runtime.runtime_context(now=cycle_start)
+        planning_snapshot["life_horizon"] = life_horizon_manager.refresh_from_runtime(now=cycle_start).to_dict()
         planning_snapshot["causal_discourse"] = {
             "self_caused_reaction_probability": handoff_state.self_caused_reaction_probability,
             "repair_needed": handoff_state.repair_needed,
@@ -2059,14 +2089,28 @@ class AIChatOrchestrator:
                 _ledger_turns = host._ensure_session_turn_ledger().assistant_turns()
                 if _ledger_turns:
                     _assistant_turn_index = int(_ledger_turns[-1].index)
+                _assistant_ref = (f"session-turn:{_assistant_turn_index}" if _assistant_turn_index else turn_id)
                 handoff_runtime.observe_assistant_commit(
                     public_text,
-                    turn_ref=(f"session-turn:{_assistant_turn_index}" if _assistant_turn_index else turn_id),
+                    turn_ref=_assistant_ref,
+                    turn_index=_assistant_turn_index,
+                    speech_act=_assistant_act_value,
+                    now=time.time(),
+                )
+                trajectory_runtime.observe_assistant_commit(
+                    public_text,
+                    turn_ref=_assistant_ref,
                     turn_index=_assistant_turn_index,
                     speech_act=_assistant_act_value,
                     now=time.time(),
                 )
                 handoff_runtime.note_self_commitment(public_text, now=time.time())
+                courtesy_runtime.observe_assistant_commit(
+                    public_text, speech_act=_assistant_act_value, turn_ref=_assistant_ref, now=time.time()
+                )
+                life_horizon_manager.observe_assistant_commit(
+                    speech_act=_assistant_act_value, turn_ref=_assistant_ref, now=time.time()
+                )
             except Exception as exc:
                 host.logger.debug("[conversation handoff v71] chat commit receipt degraded: %s", exc)
         # V69: nếu Eris vừa tự nói "tôi sẽ đổi chủ đề", lời đó trở thành
@@ -2551,17 +2595,45 @@ class AIAutonomousOrchestrator:
         try:
             from runtime.conversation_handoff import ensure_conversation_handoff_runtime
             _handoff_runtime = ensure_conversation_handoff_runtime(host)
+            _auto_turn_ref = (
+                f"session-turn:{getattr(_autonomous_assistant_turn, 'index', 0)}"
+                if _autonomous_assistant_turn is not None else str(idempotency_key or "")
+            )
+            _auto_turn_index = int(getattr(_autonomous_assistant_turn, "index", 0) or 0)
+            _auto_speech_act = str(getattr(decision, "speech_act", "") or "")
             _handoff_runtime.observe_assistant_commit(
                 public_text,
-                turn_ref=(
-                    f"session-turn:{getattr(_autonomous_assistant_turn, 'index', 0)}"
-                    if _autonomous_assistant_turn is not None else str(idempotency_key or "")
-                ),
-                turn_index=int(getattr(_autonomous_assistant_turn, "index", 0) or 0),
-                speech_act=str(getattr(decision, "speech_act", "") or ""),
+                turn_ref=_auto_turn_ref,
+                turn_index=_auto_turn_index,
+                speech_act=_auto_speech_act,
+                now=time.time(),
+            )
+            from runtime.conversation_trajectory import ensure_conversation_trajectory_runtime
+            ensure_conversation_trajectory_runtime(host).observe_assistant_commit(
+                public_text,
+                turn_ref=_auto_turn_ref,
+                turn_index=_auto_turn_index,
+                speech_act=_auto_speech_act,
                 now=time.time(),
             )
             _handoff_runtime.note_self_commitment(public_text, now=time.time())
+            from runtime.conversation_courtesy import ensure_conversation_courtesy
+            from runtime.life_horizon import ensure_life_horizon_manager
+            _auto_ref = (
+                f"session-turn:{getattr(_autonomous_assistant_turn, 'index', 0)}"
+                if _autonomous_assistant_turn is not None else str(idempotency_key or "")
+            )
+            ensure_conversation_courtesy(host).observe_assistant_commit(
+                public_text,
+                speech_act=str(getattr(decision, "speech_act", "") or ""),
+                turn_ref=_auto_ref,
+                now=time.time(),
+            )
+            ensure_life_horizon_manager(host).observe_assistant_commit(
+                speech_act=str(getattr(decision, "speech_act", "") or ""),
+                turn_ref=_auto_ref,
+                now=time.time(),
+            )
         except Exception as exc:
             host.logger.debug("[conversation handoff v71] autonomous commit receipt degraded: %s", exc)
         host._apply_position_update(decision)
@@ -2656,6 +2728,13 @@ class AIAutonomousOrchestrator:
                 recent_history=recent_history,
                 now=time.time(),
             )
+            try:
+                from runtime.conversation_trajectory import ensure_conversation_trajectory_runtime
+                ensure_conversation_trajectory_runtime(host).prime_from_history(
+                    recent_history, now=time.time()
+                )
+            except Exception as exc:
+                _orchestrator_boundary_note(host, "startup.conversation_trajectory_prime", exc)
             host.logger.info(
                 "[architecture C startup] continuity primed rev=%s owner=%s pressure=%.2f pending=%s public_greeting=disabled",
                 handoff.revision,

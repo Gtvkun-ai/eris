@@ -654,8 +654,27 @@ class NeuroActionSelector:
             )
 
         scores = tuple(self._channel_score(frame, item, broadcast) for item in frame.coalitions)
+        runtime_context = _runtime_context(frame)
+
+        # V74 Courtesy Contract là turn-taking boundary cứng. Khi ERIS vừa hỏi
+        # và đang chờ user, selector không được để một speech candidate điểm cao
+        # vượt qua boundary chỉ vì utility nội tại lớn. Nếu frame có SILENCE, chỉ SILENCE
+        # được quyền cạnh tranh cho tick này. Không áp dụng quy tắc này cho các
+        # hard boundary khác để tránh thay đổi semantics V67 ngoài phạm vi patch.
+        courtesy_hold = bool(
+            runtime_context.get("courtesy_hold")
+            or runtime_context.get("awaiting_user_answer")
+        )
+        silence_family = tuple(
+            index
+            for index, candidate in enumerate(frame.coalitions)
+            if str(getattr(candidate, "action_kind", "") or "").strip().lower() == "silence"
+        )
         committed_family = _committed_family(frame)
-        eligible = committed_family or tuple(range(len(scores)))
+        if courtesy_hold and silence_family:
+            eligible = silence_family
+        else:
+            eligible = committed_family or tuple(range(len(scores)))
         order = sorted(eligible, key=lambda idx: (-scores[idx], idx))
         winner_index = order[0]
         runner_index = order[1] if len(order) > 1 else winner_index

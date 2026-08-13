@@ -1013,6 +1013,17 @@ class ProjectOperationsRuntime:
         if self.logger is not None:
             self.logger.info("[project-ops] capability=%s operation=%s state=%s verified=%s",
                              result.capability_id, result.operation_id, result.state.value, result.verified)
+
+        # V74: ProjectOperations trả receipt tiến độ thật cho Life-Horizon. Chỉ
+        # cập nhật progress từ state/evidence đã được verify.
+        try:
+            manager = getattr(self.owner, "life_horizon_manager", None)
+            note_operation = getattr(manager, "note_project_operation", None)
+            if callable(note_operation):
+                note_operation(result, now=result.completed_at)
+        except Exception as exc:
+            if self.logger is not None:
+                self.logger.debug("[life-horizon-v74] project receipt degraded: %s", exc)
         return result
 
 

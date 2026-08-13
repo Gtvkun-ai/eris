@@ -57,9 +57,24 @@ class SubjectIngress:
             if isinstance(context.get("conversation_handoff"), Mapping)
             else {}
         )
+        trajectory = (
+            context.get("conversation_trajectory")
+            if isinstance(context.get("conversation_trajectory"), Mapping)
+            else {}
+        )
         causal_discourse = (
             context.get("causal_discourse")
             if isinstance(context.get("causal_discourse"), Mapping)
+            else {}
+        )
+        courtesy = (
+            context.get("conversation_courtesy")
+            if isinstance(context.get("conversation_courtesy"), Mapping)
+            else {}
+        )
+        life_horizon = (
+            context.get("life_horizon")
+            if isinstance(context.get("life_horizon"), Mapping)
             else {}
         )
         explicit_proposals = []
@@ -100,7 +115,15 @@ class SubjectIngress:
                     # long-term memory. Đưa thẳng vào runtime_context để cả Subject
                     # và Neuro semantic critic nhìn cùng một handoff authoritative.
                     "conversation_handoff": dict(handoff),
+                    "conversation_trajectory": dict(trajectory),
                     "causal_discourse": dict(causal_discourse),
+                    # V74: Courtesy phải nằm top-level runtime_context để hard
+                    # expression boundary đọc deterministic, không parse prompt.
+                    "conversation_courtesy": dict(courtesy),
+                    "life_horizon": dict(life_horizon),
+                    "courtesy_hold": bool(courtesy.get("courtesy_hold", courtesy.get("effective_wait", False))),
+                    "awaiting_user_answer": bool(courtesy.get("awaiting_user_answer", False)),
+                    "pending_question_id": str(courtesy.get("pending_question_id", "") or ""),
                     **dict(initiative_runtime),
                 },
             },
@@ -213,9 +236,24 @@ class SubjectIngress:
             if isinstance(context.get("conversation_handoff"), Mapping)
             else {}
         )
+        trajectory = (
+            context.get("conversation_trajectory")
+            if isinstance(context.get("conversation_trajectory"), Mapping)
+            else {}
+        )
         causal_discourse = (
             context.get("causal_discourse")
             if isinstance(context.get("causal_discourse"), Mapping)
+            else {}
+        )
+        courtesy = (
+            context.get("conversation_courtesy")
+            if isinstance(context.get("conversation_courtesy"), Mapping)
+            else {}
+        )
+        life_horizon = (
+            context.get("life_horizon")
+            if isinstance(context.get("life_horizon"), Mapping)
             else {}
         )
         relational_pressure = float(relational.get("connection_pressure", 0.0) or 0.0)
@@ -260,7 +298,13 @@ class SubjectIngress:
                         if isinstance(item, Mapping)
                     ),
                     "conversation_handoff": dict(handoff),
+                    "conversation_trajectory": dict(trajectory),
                     "causal_discourse": dict(causal_discourse),
+                    "conversation_courtesy": dict(courtesy),
+                    "life_horizon": dict(life_horizon),
+                    "courtesy_hold": bool(courtesy.get("courtesy_hold", courtesy.get("effective_wait", False))),
+                    "awaiting_user_answer": bool(courtesy.get("awaiting_user_answer", False)),
+                    "pending_question_id": str(courtesy.get("pending_question_id", "") or ""),
                     **dict(initiative_runtime),
                 },
             },

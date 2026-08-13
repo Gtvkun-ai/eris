@@ -442,6 +442,9 @@ class SelfTurnPipeline:
                 now=now,
             )
             planner_snapshot["conversation_handoff"] = handoff_state.to_dict()
+            from runtime.conversation_trajectory import ensure_conversation_trajectory_runtime
+            trajectory_state = ensure_conversation_trajectory_runtime(host).snapshot(now=now)
+            planner_snapshot["conversation_trajectory"] = trajectory_state.to_dict()
             planner_snapshot["causal_discourse"] = {
                 "self_caused_reaction_probability": handoff_state.self_caused_reaction_probability,
                 "repair_needed": handoff_state.repair_needed,
@@ -449,6 +452,25 @@ class SelfTurnPipeline:
             }
         except Exception as exc:
             host.logger.debug("[conversation handoff v71] autonomous projection failed: %s", exc)
+
+        # V74: Courtesy + Life-Horizon đi vào planning snapshot trước khi Subject
+        # dựng frame. Courtesy là hard turn boundary; Life-Horizon chỉ là goal
+        # modulation. Hai tín hiệu được giữ tách biệt để tránh biến heuristic
+        # hội thoại thành quyền phủ quyết không có state typed.
+        try:
+            from runtime.conversation_courtesy import ensure_conversation_courtesy
+            courtesy_runtime = ensure_conversation_courtesy(host)
+            planner_snapshot["conversation_courtesy"] = courtesy_runtime.runtime_context(now=now)
+        except Exception as exc:
+            planner_snapshot["conversation_courtesy"] = {}
+            host.logger.debug("[courtesy-v74] autonomous projection failed: %s", exc)
+        try:
+            from runtime.life_horizon import ensure_life_horizon_manager
+            life_horizon = ensure_life_horizon_manager(host)
+            planner_snapshot["life_horizon"] = life_horizon.refresh_from_runtime(now=now).to_dict()
+        except Exception as exc:
+            planner_snapshot["life_horizon"] = {}
+            host.logger.debug("[life-horizon-v74] autonomous projection failed: %s", exc)
         # V44: chỉ một urge đã có nội dung mới được quyền đánh thức cognition vì
         # "muốn nói". Connection pressure trừu tượng không còn tự biến thành wake.
         expression_urge_runtime = getattr(host, "expression_urge_runtime", None)
@@ -1649,6 +1671,21 @@ class SelfTurnPipeline:
                 if callable(getattr(getattr(self.host, "conversation_handoff_runtime", None), "to_dict", None))
                 else {}
             ),
+            "conversation_trajectory": (
+                getattr(self.host, "conversation_trajectory_runtime", None).to_dict()
+                if callable(getattr(getattr(self.host, "conversation_trajectory_runtime", None), "to_dict", None))
+                else {}
+            ),
+            "conversation_courtesy": (
+                getattr(self.host, "conversation_courtesy_contract", None).runtime_context(now=perception.now)
+                if callable(getattr(getattr(self.host, "conversation_courtesy_contract", None), "runtime_context", None))
+                else {}
+            ),
+            "life_horizon": (
+                getattr(self.host, "life_horizon_manager", None).snapshot(now=perception.now).to_dict()
+                if callable(getattr(getattr(self.host, "life_horizon_manager", None), "snapshot", None))
+                else {}
+            ),
             "seconds_since_user": context.seconds_since_user,
             "seconds_since_assistant": context.seconds_since_assistant,
             "self_context": context.self_context.to_dict(),
@@ -1692,6 +1729,8 @@ class SelfTurnPipeline:
                 "a grounded non-stale claim with evidence ids. Social chat may be non-factual and require no screen anchor. "
                 "When engagement_context.active=true, preserve its objective and do not switch to unrelated banter. "
                 "conversation_handoff is authoritative for unfinished conversational obligations and who owns the next move; "
+                "conversation_courtesy is a hard turn-taking boundary: when awaiting_user_answer=true, do not create another public speech turn. "
+                "life_horizon carries H0-H4 goal context and may change priority, but it is not speech authority. "
                 "an empty current user_text in autonomous mode does NOT erase a pending user request. "
                 "When shared_semantic_context.packet exists, use its foreground/facts/options as the stable scene baseline; "
                 "do not reinterpret raw OCR into a competing story."

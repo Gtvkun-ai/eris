@@ -29,6 +29,9 @@ from cortex.subject.neuro_control import (
     SelectionResult,
     commit_selection,
 )
+from runtime.life_horizon import ensure_life_horizon_manager
+from runtime.horizon_arbiter import HorizonArbiter
+from runtime.review_lock import ReviewLock
 
 from actions.capability_registry import (
     validate_capability_arguments,
@@ -287,6 +290,9 @@ class ExecutiveCortex:
         # scoring. This layer resolves routine competition locally and asks the LLM
         # only when ambiguity is materially consequential or commitment-conflicted.
         self._neuro_selector = NeuroActionSelector()
+        # V74: giữ reference riêng để test/degraded owner không cần full coordinator.
+        self._horizon_arbiter = getattr(owner, "horizon_arbiter", None) or HorizonArbiter(logger=logger)
+        self._review_lock = getattr(owner, "review_lock", None) or ReviewLock(logger=logger)
 
     @property
     def enabled(self) -> bool:
@@ -488,6 +494,14 @@ class ExecutiveCortex:
         confidence: float | None = None,
         review_conditions: Sequence[str] = (),
     ) -> SubjectExecutiveCommit:
+        # V74 ReviewLock được ghi sau khi winner cuối cùng đã qua merge/review.
+        # Nó không chọn winner; nó chỉ bảo toàn semantic identity cho các review
+        # downstream và audit, trừ khi một boundary mới invalidates quyết định.
+        try:
+            self._review_lock.lock(frame, selection, now=float(self._clock()))
+        except Exception as exc:
+            self._log("debug", "[review-lock-v74] lock degraded: %s", exc)
+
         # Một mapping duy nhất nằm ở neuro_control. ExecutiveCortex chỉ điều phối
         # việc có cần mời deliberator hay không, không sở hữu cách bind runtime ID.
         return commit_selection(
@@ -734,6 +748,116 @@ class ExecutiveCortex:
         handoff = runtime_context.get("conversation_handoff")
         return dict(handoff) if isinstance(handoff, Mapping) else {}
 
+    @staticmethod
+    def _conversation_trajectory_from_frame(frame: SubjectDeliberationFrame) -> dict[str, Any]:
+        """Lấy trajectory typed cùng revision mà Subject đã nhìn thấy."""
+        observation_context = dict(getattr(getattr(frame, "observation", None), "context", {}) or {})
+        runtime_context = observation_context.get("runtime_context")
+        runtime_context = dict(runtime_context) if isinstance(runtime_context, Mapping) else {}
+        trajectory = runtime_context.get("conversation_trajectory")
+        return dict(trajectory) if isinstance(trajectory, Mapping) else {}
+
+    @classmethod
+    def _apply_conversation_trajectory_appraisal(
+        cls,
+        frame: SubjectDeliberationFrame,
+        appraisal: NeuroSemanticAppraisal,
+    ) -> NeuroSemanticAppraisal:
+        """Ưu tiên semantic development cùng topic, không ép ERIS phải nói.
+
+        Trajectory chỉ bias giữa các *speech candidate*. SILENCE/BODY_ONLY vẫn giữ
+        nguyên để Courtesy và nhịp công khai có quyền chờ. Nếu handoff còn một user
+        debt/task thật, handoff thắng trajectory.
+        """
+        trajectory = cls._conversation_trajectory_from_frame(frame)
+        if not trajectory or not bool(trajectory.get("active", False)) or bool(trajectory.get("closed", False)):
+            return appraisal
+        topic_id = _compact(trajectory.get("topic_id", ""), 100)
+        momentum = _clamp01(trajectory.get("momentum", 0.0))
+        if not topic_id or momentum < 0.42:
+            return appraisal
+
+        observation_context = dict(getattr(getattr(frame, "observation", None), "context", {}) or {})
+        runtime_context = observation_context.get("runtime_context")
+        runtime_context = dict(runtime_context) if isinstance(runtime_context, Mapping) else {}
+        if bool(runtime_context.get("courtesy_hold", False) or runtime_context.get("awaiting_user_answer", False)):
+            return appraisal
+        handoff = runtime_context.get("conversation_handoff")
+        handoff = dict(handoff) if isinstance(handoff, Mapping) else {}
+        if (
+            str(handoff.get("next_move_owner", "") or "").strip().lower() == "eris"
+            and bool(handoff.get("repair_needed", False) or handoff.get("pending_shared_goal") or handoff.get("unresolved_intent"))
+        ):
+            return appraisal
+
+        aligned: set[int] = set()
+        mapped: list[ChoiceSemanticAppraisal] = []
+        ref_prefix = f"trajectory:{topic_id}"
+        for item in appraisal.choices:
+            if item.index < 0 or item.index >= len(frame.coalitions):
+                mapped.append(item)
+                continue
+            coalition = frame.coalitions[item.index]
+            action = str(getattr(coalition, "action_kind", "") or "").strip().lower()
+            args = dict(getattr(coalition, "arguments", {}) or {})
+            refs = tuple(str(ref or "").strip() for ref in (getattr(coalition, "evidence_refs", ()) or ()))
+            is_aligned = any(ref == ref_prefix or ref.startswith(ref_prefix + ":") for ref in refs)
+            if is_aligned and action == "speak":
+                aligned.add(item.index)
+                mapped.append(replace(
+                    item,
+                    motive_validity=_clamp01(max(item.motive_validity, 0.70 + 0.22 * momentum)),
+                    continuity_fit=_clamp01(max(item.continuity_fit, 0.82 + 0.16 * momentum)),
+                    novelty=_clamp01(max(item.novelty, 0.48)),
+                ))
+                continue
+
+            if action == "speak":
+                kind = str(args.get("candidate_kind", "") or "").strip().lower()
+                source = str(args.get("source_owner", "") or "").strip().lower()
+                speech_act = str(args.get("speech_act", "") or "").strip().lower()
+                randomish = bool(
+                    kind in {"random_chat", "social_check_in", "casual_curiosity", "playful_prompt"}
+                    or source in {"mental_material", "expression_urge", "random_chat_seed"}
+                )
+                explicit_shift = speech_act in {"independent_topic_shift", "topic_shift", "shift_topic"}
+                penalty = (0.58 if randomish and not explicit_shift else 0.34) * momentum
+                motive = max(0.05, item.motive_validity * (1.0 - penalty))
+                continuity = max(0.05, item.continuity_fit * (1.0 - min(0.78, penalty + 0.12)))
+                if momentum >= 0.62 and randomish and not explicit_shift:
+                    # Khi một topic đang có đà, generic small-talk không được thắng
+                    # chỉ vì seed continuation chưa materialize kịp ở tick này.
+                    # WAIT tốt hơn teleport sang "niềm vui nhỏ hôm nay".
+                    motive = min(motive, 0.44)
+                    continuity = min(continuity, 0.34)
+                mapped.append(replace(
+                    item,
+                    motive_validity=motive,
+                    continuity_fit=continuity,
+                ))
+            else:
+                # Không phạt silence/body_only. V75 định hướng *nói về gì* nếu đã
+                # nói, chứ không biến trajectory thành máy ép chatter.
+                mapped.append(item)
+
+        if not aligned:
+            return replace(
+                appraisal,
+                choices=tuple(mapped),
+                reason=f"trajectory_v75:no_aligned_candidate:{_compact(appraisal.reason, 420)}",
+            )
+        commitments = tuple(dict.fromkeys((
+            *appraisal.semantic_commitments,
+            "preserve_conversation_trajectory",
+            "prefer_deepen_or_connect_before_unrelated_topic_shift",
+        )))
+        return replace(
+            appraisal,
+            choices=tuple(mapped),
+            reason=f"trajectory_v75:topic={topic_id}:momentum={momentum:.2f}:{_compact(appraisal.reason, 360)}",
+            semantic_commitments=commitments[:8],
+        )
+
     @classmethod
     def _apply_conversation_handoff_appraisal(
         cls,
@@ -924,7 +1048,8 @@ class ExecutiveCortex:
             cognitive_requests=("reduce_intrusion",) if interruption >= 0.55 else (),
             review_conditions=("remote_semantic_appraisal_unavailable",),
         )
-        return self._apply_conversation_handoff_appraisal(frame, appraisal)
+        appraisal = self._apply_conversation_handoff_appraisal(frame, appraisal)
+        return self._apply_conversation_trajectory_appraisal(frame, appraisal)
 
     def _appraise_autonomous_frame(
         self,
@@ -944,6 +1069,8 @@ class ExecutiveCortex:
             "not merely a scheduler opportunity. novelty asks whether the semantic content adds something nontrivial. "
             "continuity_fit asks whether the semantic target remains coherent with the current thread, not whether ERIS should be quiet. "
             "runtime_context.conversation_handoff is AUTHORITATIVE for unfinished user requests, repair_needed and next_move_owner. "
+            "runtime_context.conversation_trajectory is the authoritative semantic spine of the current topic. When it is active with high momentum, "
+            "score trajectory-linked DEEPEN/CONNECT/BRANCH material above unrelated random_chat novelty; do not infer that every idle tick needs a new topic. "
             "In autonomous mode user_text is intentionally empty; NEVER infer from that empty field that there is no pending user request. "
             "If the handoff says next_move_owner=eris, score candidates that actually fulfill its unresolved_intent/pending_shared_goal as higher continuity and motive. "
             "If repair_needed=true, prefer a typed conversation_repair/causal_repair candidate over unrelated self-reflection; causal hypotheses remain uncertain premises, not facts. "
@@ -1019,7 +1146,8 @@ class ExecutiveCortex:
                 _compact(item, 180).lower() for item in raw.get("review_conditions", ()) if _compact(item, 180)
             )[:8],
         )
-        return self._apply_conversation_handoff_appraisal(frame, appraisal)
+        appraisal = self._apply_conversation_handoff_appraisal(frame, appraisal)
+        return self._apply_conversation_trajectory_appraisal(frame, appraisal)
 
     def review_subject_frame(
         self,
@@ -1322,6 +1450,22 @@ class ExecutiveCortex:
 
         Không còn rollback sang LLM selector cũ và không có rebound/remap ID.
         """
+        # V74 Life-Horizon chạy ngay trước Neuro competition. Nó chỉ sửa utility
+        # của coalition đã có, giữ nguyên frame/coalition/proposal identity.
+        try:
+            manager = ensure_life_horizon_manager(self.owner)
+            if manager.enabled:
+                horizon_snapshot = manager.refresh_from_runtime(now=float(self._clock()))
+                observation_context = dict(getattr(getattr(frame, "observation", None), "context", {}) or {})
+                raw_runtime = observation_context.get("runtime_context")
+                raw_runtime = dict(raw_runtime) if isinstance(raw_runtime, Mapping) else {}
+                courtesy_wait = bool(raw_runtime.get("courtesy_hold") or raw_runtime.get("awaiting_user_answer"))
+                frame = self._horizon_arbiter.adjust_frame(
+                    frame, horizon_snapshot, courtesy_wait=courtesy_wait
+                )
+        except Exception as exc:
+            self._log("debug", "[life-horizon-v74] arbiter degraded: %s", exc)
+
         selection = self._neuro_selector.select(frame)
         self._log_neuro_selection("neuro-fast", frame, selection, mode=mode)
 

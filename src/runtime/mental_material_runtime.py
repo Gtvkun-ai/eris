@@ -92,6 +92,7 @@ def _legacy_motive(motive_kind: str, material_kind: str = "") -> str:
         return by_material[material_kind]
     return {
         "engage_user_event": "want_to_explore",
+        "continue_conversation_trajectory": "want_to_revisit",
         "continue_concern": "want_to_revisit",
         "revisit_memory": "want_to_revisit",
         "continue_private_thought": "want_to_express",

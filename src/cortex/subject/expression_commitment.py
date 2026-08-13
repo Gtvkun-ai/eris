@@ -154,6 +154,11 @@ def hard_expression_boundary(runtime_context: Mapping[str, Any] | None) -> tuple
     checks = (
         ("explicit_quiet_request", "explicit_quiet_request"),
         ("user_requested_quiet", "user_requested_quiet"),
+        # V74 Courtesy Contract: sau một câu hỏi cần phản hồi, quyền giữ lượt
+        # thuộc về user cho đến khi có user turn mới (hoặc timeout contract).
+        # Đây là hard boundary có state typed, khác hẳn heuristic reply_expected.
+        ("courtesy_hold", "awaiting_user_answer"),
+        ("awaiting_user_answer", "awaiting_user_answer"),
         ("conversation_closed", "conversation_closed"),
         ("shutdown_requested", "shutdown_requested"),
         ("user_speaking", "user_speaking"),

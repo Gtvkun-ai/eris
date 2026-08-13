@@ -353,6 +353,7 @@ class RandomChatSeed:
             mode = "eris_led"
         source_kind = {
             "user_event": "recent_shared_context",
+            "conversation_trajectory": "recent_shared_context",
             "active_concern": "endogenous_curiosity",
             "private_thought": "private_life_workspace",
             "memory_context": "user_memory",

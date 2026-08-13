@@ -281,6 +281,8 @@ class RandomChatSeedGenerator:
             "Bạn PHẢI chọn development_mode trong allowed_development_modes và premise phải thực sự deepen, contradict, connect, reinterpret, "
             "test hoặc personalize semantic_focus. Nếu chỉ có thể restate/paraphrase, trả decision=none và development_mode=none. "
             "Nếu development_required=false, development_mode=none là bình thường. Đừng biến rumination thành cùng một thesis mặc sáu bộ quần áo. "
+            "V75: nếu causal_motive.cause_kind=conversation_trajectory, premise PHẢI phát triển semantic_focus của đúng topic_id; "
+            "ưu tiên deepen/connect/branch có nội dung, không mở một câu hỏi xã giao hay chủ đề ngẫu nhiên chỉ vì novelty. "
             "Public wording trước đó của ERIS không phải evidence. Không tự thêm source_refs; provenance thuộc causal_motive runtime-owned. "
             "Không suy diễn current-world facts, cảm xúc/kế hoạch user, thời tiết, âm thanh, ánh sáng hay hoạt động nếu causal focus không chứng minh. "
             "epistemic_mode phải đúng với material: opinion là stance, hunch/speculation giữ modal, grounded_fact cần evidence thật từ runtime. "
@@ -824,6 +826,14 @@ class RandomChatSeedReservoir:
                 if isinstance(snapshot.get("shared_semantic_context"), Mapping)
                 else {}
             ),
+            # V75: trajectory là semantic spine của hội thoại, không phải public
+            # wording và cũng không phải evidence current-world. Seed worker dùng
+            # nó để phát triển cùng chủ đề thay vì rơi về novelty ngẫu nhiên.
+            "conversation_trajectory": (
+                snapshot.get("conversation_trajectory", {})
+                if isinstance(snapshot.get("conversation_trajectory"), Mapping)
+                else {}
+            ),
             "commentary_expectation": {
                 "enabled": bool(raw_commentary.get("enabled", True)),
                 "due": bool(raw_commentary.get("due", False)),
@@ -887,6 +897,20 @@ class RandomChatSeedReservoir:
             "personality_summary": request.get("personality_summary", ""),
             "identity_summary": request.get("identity_summary", ""),
             "relationship": request.get("relationship", {}),
+            "conversation_trajectory": {
+                "topic_id": _compact((request.get("conversation_trajectory") or {}).get("topic_id", ""), 80)
+                if isinstance(request.get("conversation_trajectory"), Mapping) else "",
+                "current_focus": _compact((request.get("conversation_trajectory") or {}).get("current_focus", ""), 520)
+                if isinstance(request.get("conversation_trajectory"), Mapping) else "",
+                "development_mode": _compact((request.get("conversation_trajectory") or {}).get("development_mode", ""), 32)
+                if isinstance(request.get("conversation_trajectory"), Mapping) else "",
+                "depth": int((request.get("conversation_trajectory") or {}).get("depth", 0) or 0)
+                if isinstance(request.get("conversation_trajectory"), Mapping) else 0,
+                "revision": int((request.get("conversation_trajectory") or {}).get("revision", 0) or 0)
+                if isinstance(request.get("conversation_trajectory"), Mapping) else 0,
+                "awaiting_user_answer": bool((request.get("conversation_trajectory") or {}).get("awaiting_user_answer", False))
+                if isinstance(request.get("conversation_trajectory"), Mapping) else False,
+            },
             "semantic_scene": {
                 "scene_id": shared.get("scene_id", packet.get("scene_id", "")),
                 "version": shared.get("version", packet.get("version", "")),

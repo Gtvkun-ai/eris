@@ -31,6 +31,25 @@ def _clamp01(value: Any, default: float = 0.0) -> float:
     return max(0.0, min(1.0, number))
 
 
+def _looks_like_reply_wait_open_loop(text: Any) -> bool:
+    """Nhận diện open-loop observer chỉ đang nói "user có thể trả lời câu cũ".
+
+    Đây không phải task/project debt. Khi trajectory đã ghi nhận một user turn mới
+    giải quyết pending question, giữ loại open-loop này sẽ làm planner tưởng user
+    vẫn chưa trả lời và kéo cả autonomous về một thread ma.
+    """
+    lowered = " ".join(str(text or "").casefold().split())
+    if not lowered:
+        return False
+    markers = (
+        "user may respond", "user may answer", "user may eventually answer",
+        "user may still answer", "no response yet", "awaiting user response",
+        "awaiting the user's response", "question remains open",
+        "người dùng có thể trả lời", "user chưa trả lời", "chưa có phản hồi",
+    )
+    return any(marker in lowered for marker in markers)
+
+
 def _snapshot_user_model(host: Any) -> Mapping[str, Any]:
     """Đọc projection user-model public-safe; không kéo raw private reasoning."""
     daemon = getattr(host, "private_mind_daemon", None)
@@ -116,6 +135,24 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
         except Exception:
             active_goal_text = ""
             active_goal_refs = ()
+
+    # V75: Courtesy/Trajectory đã có state typed cho câu hỏi đang chờ. Nếu user
+    # vừa trả lời nhưng state reducer còn giữ một observer sentence kiểu
+    # "user may respond to the question...", đừng tái nhập nó thành shared goal.
+    # Task/project open-loop thật không đụng tới vì helper chỉ nhận dạng reply-wait.
+    trajectory_runtime = getattr(host, "conversation_trajectory_runtime", None)
+    trajectory_snapshot_fn = getattr(trajectory_runtime, "snapshot", None)
+    if active_goal_text and callable(trajectory_snapshot_fn) and _looks_like_reply_wait_open_loop(active_goal_text):
+        try:
+            trajectory_state = trajectory_snapshot_fn(now=time.time())
+            if (
+                bool(getattr(trajectory_state, "last_resolved_question_id", ""))
+                and not bool(getattr(trajectory_state, "awaiting_user_answer", False))
+            ):
+                active_goal_text = ""
+                active_goal_refs = ()
+        except Exception:
+            pass
 
     thickness = _clamp01(snapshot.get("model_thickness", 0.0))
     belief_count = max(0, int(snapshot.get("belief_count", 0) or 0))
