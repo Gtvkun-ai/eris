@@ -27,6 +27,10 @@ from runtime.utterance_spec import UtteranceSpec
 from runtime.grounding_surface_gate import current_world_claim_without_evidence
 from runtime.eris_voice_contract import VOICE_CONTRACT_VERSION, surface_voice_rules
 from runtime.claim_domain_contract import normalize_claim_manifest, validate_claim_manifest
+from runtime.self_biography_guard import (
+    embodied_self_history_without_evidence,
+    user_probe_fake_memory_premise,
+)
 
 
 
@@ -471,6 +475,28 @@ class SurfaceIntentEngine:
             return self._unavailable(intent, "surface_missing_speech_text")
         if confidence < 0.25:
             return self._unavailable(intent, f"surface_low_confidence:{confidence:.2f}")
+        plan_semantics = getattr(getattr(intent, "plan", None), "semantics", None)
+        speech_act = str(getattr(plan_semantics, "speech_act", "") or "").strip().lower()
+        if speech_act == "user_probe" and user_probe_fake_memory_premise(
+            text, claim_manifest=raw_manifest, allowed_evidence_refs=intent.evidence_refs
+        ):
+            self._log(
+                "warning",
+                "[surface worker] blocked fabricated memory premise in user_probe mode=%s text=%s",
+                intent.mode,
+                text[:180],
+            )
+            return self._unavailable(intent, "surface_user_probe_fake_memory_premise")
+        if embodied_self_history_without_evidence(
+            text, claim_manifest=raw_manifest, allowed_evidence_refs=intent.evidence_refs
+        ):
+            self._log(
+                "warning",
+                "[surface worker] blocked unsupported embodied self-history mode=%s text=%s",
+                intent.mode,
+                text[:180],
+            )
+            return self._unavailable(intent, "surface_unsupported_self_history")
         if current_world_claim_without_evidence(
             text, intent.evidence_refs, claim_scope=getattr(intent, "claim_scope", "")
         ):

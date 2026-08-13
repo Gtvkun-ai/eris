@@ -19,6 +19,7 @@ from failure_meta import build_failure_meta
 from runtime.no_fallback_policy import no_fallback_mode_enabled
 from runtime.grounding_surface_gate import evaluate_grounded_surface, is_grounding_correction
 from runtime.claim_domain_contract import validate_claim_manifest
+from runtime.self_biography_guard import embodied_self_history_without_evidence
 from runtime.cognition.turn_anchor import anchor_from_semantic_frame
 from runtime.social_stance_policy import guard_subjective_stance_payload
 from runtime.companion_model_routing import route_companion_turn
@@ -1302,12 +1303,15 @@ class AIChatOrchestrator:
         # miền sự thật. Contract này là typed provenance, không phải blacklist từ.
         chat_claim_domains = {
             "user_statement", "conversation_history", "internal_state",
-            "opinion", "hypothetical", "self_capability",
+            "opinion", "hypothetical", "self_capability", "self_preference",
         }
         chat_claim_evidence_refs = set(
             str(item) for item in (getattr(grounding_report, "evidence_ids", ()) or ())
             if str(item or "").strip()
         )
+        # The foreground user message is real evidence, but give it a typed ref
+        # so user_statement is no longer an evidence-exempt escape hatch.
+        chat_claim_evidence_refs.add("user-statement:current-turn")
         chat_claim_evidence_refs.update(
             str(item) for item in (getattr(grounding_report, "runtime_evidence_ids", ()) or ())
             if str(item or "").strip()
@@ -1703,18 +1707,36 @@ class AIChatOrchestrator:
                 grounding_engine, draft_text, report=grounding_report
             )
             grounding_annotations = grounding_verdict.annotations
-            if not grounding_verdict.allowed or not claim_domain_decision.allowed:
+            self_history_blocked = embodied_self_history_without_evidence(
+                draft_text,
+                claim_manifest=payload.get("claim_manifest") if "claim_manifest" in payload else None,
+                allowed_evidence_refs=sorted(chat_claim_evidence_refs),
+            )
+            if self_history_blocked:
+                host.logger.warning(
+                    "[chat claims] blocked unsupported embodied self-history turn=%s text=%s",
+                    turn_seq,
+                    draft_text[:180],
+                )
+            if not grounding_verdict.allowed or not claim_domain_decision.allowed or self_history_blocked:
                 violation_codes = []
                 if not grounding_verdict.allowed:
                     violation_codes.append("UNGROUNDED_PERCEPTION_OR_ACTION_CLAIM")
                 if not claim_domain_decision.allowed:
                     violation_codes.append("CLAIM_DOMAIN_OUTSIDE_INTENT")
+                if self_history_blocked:
+                    violation_codes.append("UNSUPPORTED_EMBODIED_SELF_HISTORY")
                 retry_instruction = grounding_verdict.retry_instruction()
                 if not claim_domain_decision.allowed:
                     retry_instruction += (
                         " V42 typed claim repair: remove or rewrite every claim whose domain/evidence is outside "
                         f"allowed_domains={sorted(chat_claim_domains)} and allowed_evidence_refs={sorted(chat_claim_evidence_refs)}. "
                         "Return a fresh claim_manifest matching the rewritten text."
+                    )
+                if self_history_blocked:
+                    retry_instruction += (
+                        " Remove autobiographical physical-habit claims about ERIS (for example claiming ERIS usually drinks/eats/does a bodily activity). "
+                        "You may express a non-embodied preference as self_preference, but do not invent physical lived history."
                     )
                 # Grounding là safety/integrity boundary: đã biết claim không có
                 # evidence thì không được phát nguyên văn. Thử wording-only đúng
@@ -1750,17 +1772,23 @@ class AIChatOrchestrator:
                     allowed_evidence_refs=sorted(chat_claim_evidence_refs),
                     text_present=bool(retry_text),
                 )
+                retry_self_history_blocked = embodied_self_history_without_evidence(
+                    retry_text,
+                    claim_manifest=retry_payload.get("claim_manifest") if isinstance(retry_payload, Mapping) else None,
+                    allowed_evidence_refs=sorted(chat_claim_evidence_refs),
+                ) if retry_text else False
                 if (
                     retry_text
                     and retry_verdict is not None
                     and retry_verdict.allowed
                     and retry_claim_decision.allowed
+                    and not retry_self_history_blocked
                 ):
                     for _key in (
                         "text", "display_language", "speech_text", "speech_language",
                         "performance_hint", "performance_intensity", "nonverbal_cue",
                         "delivery_priority", "interruptible", "utterance_turn_id", "utterance",
-                        "should_speak",
+                        "should_speak", "claim_manifest",
                     ):
                         if _key in retry_payload:
                             payload[_key] = retry_payload[_key]

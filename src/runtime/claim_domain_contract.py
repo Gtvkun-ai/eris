@@ -24,26 +24,32 @@ KNOWN_CLAIM_DOMAINS = frozenset({
     "engagement_state",
     "discovery_artifact",
     "self_capability",
+    "self_preference",
+    "self_history",
     "opinion",
     "hypothetical",
 })
 
 EVIDENCE_REQUIRED_DOMAINS = frozenset({
-    # P0 integrity: mọi claim về thế giới *hiện tại* phải mang provenance trực tiếp.
-    # Memory/engagement/discovery còn có validator riêng và được migrate dần sang
-    # evidence-ref bắt buộc ở phiên sau để V42 không phá compatibility vô ích.
+    # P0 integrity: current-world, historical conversation/memory and embodied
+    # self-history claims must carry direct typed provenance.
     "verified_runtime_clock",
     "grounded_environment",
+    # "you told me before..." and autobiographical physical habits are
+    # historical claims, not decorative wording. They require a real ref.
+    "conversation_history",
+    "user_statement",
+    "memory",
+    "self_history",
 })
 
-# Domain không cần evidence — tán nhảm, triết học, ý kiến cá nhân, trạng thái nội tâm.
+# Domain không cần evidence — ý kiến, giả thuyết, trạng thái nội tâm và sở thích.
 # Model được phép khai báo bất kỳ evidence_refs nào (hoặc không có); refs lạ không block.
 EVIDENCE_EXEMPT_DOMAINS = frozenset({
     "opinion",
     "hypothetical",
     "internal_state",
-    "conversation_history",
-    "user_statement",
+    "self_preference",
 })
 
 

@@ -761,7 +761,7 @@ SURFACE_REALIZATION_SCHEMA = {
                             "internal_state", "conversation_history", "user_statement",
                             "memory", "verified_runtime_clock", "grounded_environment",
                             "engagement_state", "discovery_artifact", "self_capability",
-                            "opinion", "hypothetical"
+                            "self_preference", "self_history", "opinion", "hypothetical"
                         ],
                     },
                     "claim": {"type": "string"},
@@ -798,7 +798,7 @@ CLAIM_MANIFEST_SCHEMA: dict[str, Any] = {
                     "internal_state", "conversation_history", "user_statement",
                     "memory", "verified_runtime_clock", "grounded_environment",
                     "engagement_state", "discovery_artifact", "self_capability",
-                    "opinion", "hypothetical"
+                    "self_preference", "self_history", "opinion", "hypothetical"
                 ],
             },
             "claim": {"type": "string"},
@@ -2848,13 +2848,15 @@ class AIRuntimeModelRouter:
             "Khi motive là want_to_share/want_to_express, ưu tiên một phát biểu tự đủ nghĩa; không mặc định biến thành câu hỏi, không xin phép chia sẻ, "
             "không kết thúc bằng 'còn bạn thì sao', không gây áp lực phải trả lời. Daring cho phép ý kiến riêng, tự bộc lộ hoặc trêu nhẹ trong risk đã duyệt; "
             "nó không cho phép bịa fact, chạm memory nhạy cảm hay ép thân mật. Nếu speech_act=user_probe, hỏi đúng MỘT câu nhẹ, cụ thể về user để lấp một khoảng chưa biết thật; "
+            "user_probe TUYỆT ĐỐI không được mở bằng ký ức giả kiểu 'lúc trước bạn có kể/anh từng nói' nếu speech_intent không cấp conversation_history/memory cùng evidence ref thật. Hỏi từ cái chưa biết, đừng bịa tiền đề để câu hỏi có vẻ tự nhiên. "
             "nếu đây là nhịp mới sau topic closure, mở bằng một bridge tự nhiên ngắn (tương đương 'à mà', 'nói chuyện khác chút', v.v.), không dùng cùng một template mỗi lần. "
             "Nếu speech_act=independent_topic_shift, bỏ hẳn chủ đề cũ nhưng phải có một cầu nối hội thoại ngắn trước ý mới; có thể mời user phản ứng kiểu 'anh nghĩ sao' khi thật sự phù hợp. "
             "Không dỗi, không trừng phạt, không tuyên bố user không quan tâm, và không chuyển chủ đề bằng một độc thoại trừu tượng dài. "
             "Giọng ERIS phải theo affective_voice_state hiện tại; personality chỉ định hình cách biểu hiện, không ép nhiệt độ cảm xúc. Giữ hình dạng nhận thức của seed thay vì đánh bóng thành châm ngôn. "
             "V42 claim-domain contract: với MỌI factual/sensory/memory/runtime claim bạn thêm vào wording, khai báo một item trong claim_manifest. "
             "domain phải nằm trong surface_contract.allowed_claim_domains; evidence_refs của claim chỉ được copy từ surface_contract.allowed_evidence_refs. "
-            "Opinion/hypothetical/internal_state vẫn khai báo domain nhưng có thể không cần evidence ref. Không có claim thì claim_manifest=[]. "
+            "Opinion/hypothetical/internal_state/self_preference vẫn khai báo domain nhưng có thể không cần evidence ref. "
+            "conversation_history/memory/self_history bắt buộc dùng evidence ref thật. self_preference chỉ là sở thích/quan điểm; self_history là tuyên bố ERIS từng/thường thực hiện một hành động và không được bịa trải nghiệm thân thể. Không có claim thì claim_manifest=[]. "
             "Tối đa số câu trong surface_contract.max_sentences nhưng đừng tối ưu brevity; evidence_refs chỉ copy id được phép. Return JSON only."
         )
 

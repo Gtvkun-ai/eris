@@ -684,38 +684,48 @@ def _dispatch_policy(
     if any(str(getattr(task.frame, "audio_asset", "") or "").strip() for task in tasks):
         return TtsDispatchPolicy(strategy="prefetch", workers=1, reason="audio_preset")
     mode = os.environ.get("ERIS_TTS_TASK_STRATEGY", "auto").strip().lower()
-    if mode in {"inline", "join"}:
-        return TtsDispatchPolicy(strategy="inline", workers=1, reason="forced_inline")
 
     total_chars = sum(len(task.text) for task in tasks)
     segment_count = len(tasks)
     max_segments = max_prefetch_segments or _max_prefetch_segments()
     max_chars = _max_prefetch_chars()
     max_single = _max_prefetch_single_chars()
-    if mode not in {"auto", "prefetch", "parallel", "queued"}:
+    if mode not in {"auto", "prefetch", "parallel", "queued", "inline", "join"}:
         mode = "auto"
-    if mode == "auto":
-        if segment_count > max_segments:
-            return TtsDispatchPolicy(
-                strategy="inline",
-                workers=1,
-                reason=f"segments={segment_count}>{max_segments}",
-            )
-        if total_chars > max_chars:
-            return TtsDispatchPolicy(
-                strategy="inline",
-                workers=1,
-                reason=f"chars={total_chars}>{max_chars}",
-            )
-        if any(len(task.text) > max_single for task in tasks):
-            return TtsDispatchPolicy(
-                strategy="inline",
-                workers=1,
-                reason=f"single_segment>{max_single}",
-            )
 
-    workers = min(prefetch_workers or _prefetch_workers(), max(1, segment_count))
-    return TtsDispatchPolicy(strategy="prefetch", workers=workers, reason=f"segments={segment_count};chars={total_chars}")
+    # P0 continuity contract: once StageOutput has split a turn into multiple
+    # provider-safe clips, TaskManager owns that turn. It must NOT return False
+    # merely because there are more clips than an old prefetch threshold. Doing
+    # so routes the turn into the legacy queue, whose historical capacity was 4,
+    # producing seq=1 cancellation and several seconds of synthesis dead air.
+    if segment_count > 1:
+        configured_workers = min(prefetch_workers or _prefetch_workers(), max(1, segment_count))
+        # A segmented remote turn needs at least two synth requests in flight;
+        # otherwise the next clip starts synthesizing only after the previous
+        # one has consumed most of its playback time. Cap the automatic boost at
+        # three to avoid turning one sentence into a provider burst.
+        workers = min(max(2, configured_workers), min(3, segment_count))
+        pressure_reasons: list[str] = []
+        if segment_count > max_segments:
+            pressure_reasons.append(f"segments={segment_count}>{max_segments}")
+        if total_chars > max_chars:
+            pressure_reasons.append(f"chars={total_chars}>{max_chars}")
+        if any(len(task.text) > max_single for task in tasks):
+            pressure_reasons.append(f"single_segment>{max_single}")
+        # Under unusually large turns, reduce burst concurrency instead of
+        # abandoning the lossless manager path. The output pipeline still owns
+        # the hard per-request transcript limit.
+        if pressure_reasons:
+            workers = min(workers, 2)
+        forced_note = ";forced_inline_ignored_for_segmented_turn" if mode in {"inline", "join"} else ""
+        reason = ";".join(pressure_reasons) or f"segments={segment_count};chars={total_chars}"
+        return TtsDispatchPolicy(strategy="prefetch", workers=max(1, workers), reason=reason + forced_note)
+
+    if mode in {"inline", "join"}:
+        return TtsDispatchPolicy(strategy="inline", workers=1, reason="forced_inline_single_segment")
+
+    workers = min(prefetch_workers or _prefetch_workers(), 1)
+    return TtsDispatchPolicy(strategy="prefetch", workers=max(1, workers), reason=f"segments=1;chars={total_chars}")
 
 
 def _max_prefetch_segments() -> int:

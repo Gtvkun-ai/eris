@@ -32,10 +32,16 @@ _CONVERSATION = StageRuntimeProfile(
     # thể bắt đầu ngay dù HTTP request của turn cũ chưa chịu trả về. Worker legacy
     # tuần tự từng khiến một request đã bị hủy vẫn chặn giọng của câu kế tiếp.
     task_manager_enabled=True,
+    # Keep the historical per-turn profile value for compatibility. TaskManager
+    # promotes multi-segment turns to a small 2-3 worker synthesis window so
+    # ordinary single-clip turns remain unchanged.
     prefetch_workers=1,
     max_tts_segments=8,
     min_split_chars=58,
-    max_prefetch_segments=4,
+    # Never configure the manager below the number of segments the output
+    # pipeline itself is allowed to create. Otherwise a perfectly valid 5-piece
+    # turn falls back to the legacy queue and can lose a sentence.
+    max_prefetch_segments=8,
 )
 _PRESETS = {"conversation": _CONVERSATION}
 

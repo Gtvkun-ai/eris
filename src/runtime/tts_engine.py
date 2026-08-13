@@ -186,11 +186,14 @@ def _pace_directive() -> str:
     return ""
 
 def _queue_size() -> int:
-    raw = os.environ.get("ERIS_TTS_QUEUE_SIZE", "4").strip()
+    # Legacy fallback only. Keep enough headroom for the full conversation
+    # StageOutput budget (8 segments) plus control traffic. A default of 4 was
+    # able to delete seq=1 from a five-segment turn.
+    raw = os.environ.get("ERIS_TTS_QUEUE_SIZE", "12").strip()
     try:
-        return max(1, min(24, int(raw)))
+        return max(8, min(24, int(raw)))
     except ValueError:
-        return 4
+        return 12
 
 
 def _remote_provider_is_gemini() -> bool:
@@ -2362,11 +2365,20 @@ class _TtsWorker:
         try:
             self._queue.put_nowait(req)
         except queue.Full:
-            self._drop_one_pending(reason="queue_full")
-            try:
-                self._queue.put_nowait(req)
-            except queue.Full:
-                self._emit(req, "audio_failed", reason="queue_full", error="TTS queue is full")
+            if replace:
+                # A genuinely newer turn may replace stale pending speech.
+                self._drop_one_pending(reason="queue_full_replaced")
+                try:
+                    self._queue.put_nowait(req)
+                except queue.Full:
+                    self._emit(req, "audio_failed", reason="queue_full", error="TTS queue is full")
+                    return
+            else:
+                # Never evict an earlier segment from the SAME turn to make room
+                # for a later segment. Preserve ordering and fail the newest
+                # append instead; normal conversation should never reach this
+                # branch because TaskManager owns segmented turns.
+                self._emit(req, "audio_failed", reason="queue_full_append", error="TTS queue is full")
                 return
         self._emit(req, "audio_queued")
 

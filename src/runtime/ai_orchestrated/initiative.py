@@ -286,8 +286,12 @@ class InitiativeController:
             seed_context = {}
         allowed_claim_domains = {"opinion", "hypothetical"}
         if anchor_type in {"idle", "internal", "self", "presence"}:
-            allowed_claim_domains.add("internal_state")
-        if anchor_type in {"conversation", "idle", "internal", "self", "presence"}:
+            allowed_claim_domains.update({"internal_state", "self_preference"})
+        if anchor_type == "conversation" and refs:
+            # Historical/user-statement claims are available only when the
+            # selected candidate is actually conversation-anchored and carries
+            # provenance. Idle/internal presence is not evidence about what the
+            # user supposedly said before.
             allowed_claim_domains.update({"conversation_history", "user_statement"})
         if anchor_type in {"screen", "semantic_scene", "activity", "environment"}:
             allowed_claim_domains.add("grounded_environment")
@@ -297,6 +301,15 @@ class InitiativeController:
             allowed_claim_domains.add("engagement_state")
         if anchor_type == "discovery":
             allowed_claim_domains.add("discovery_artifact")
+
+        speech_act = str(getattr(candidate, "speech_act", "") or "").strip().lower()
+        if speech_act == "user_probe":
+            # A probe exists precisely because ERIS does NOT know the answer.
+            # Do not let Surface manufacture a bridge such as "you told me
+            # before..." from a subject-initiative bookkeeping ref.
+            allowed_claim_domains.difference_update({
+                "conversation_history", "user_statement", "memory"
+            })
 
         if anchor_type in {"screen", "semantic_scene", "activity", "environment"}:
             claim_scope = "current_environment"
