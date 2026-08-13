@@ -122,6 +122,16 @@ class CognitiveEvent:
                 "seed_quality": float(getattr(candidate, "seed_quality_score", 0.0) or 0.0),
                 "seed_motive_strength": float(getattr(candidate, "seed_motive_strength", 0.0) or 0.0),
                 "uncertainty": float(getattr(candidate, "uncertainty", 0.35) or 0.35),
+                # V70: chỉ development đã qua deterministic score mới được mở
+                # completion concern. Model label đơn độc không đủ quyền mutation.
+                "semantic_mutation": bool(
+                    is_material
+                    and float(getattr(candidate, "semantic_development_score", 0.0) or 0.0) >= 0.62
+                ),
+                "semantic_development_mode": _compact(getattr(candidate, "semantic_development_mode", ""), 32),
+                "semantic_development_score": float(getattr(candidate, "semantic_development_score", 0.0) or 0.0),
+                "rumination_return": bool(getattr(candidate, "rumination_return", False)),
+                "semantic_parent_concern_id": _compact(getattr(candidate, "semantic_parent_concern_id", ""), 140),
             },
         )
 

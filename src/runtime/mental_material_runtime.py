@@ -18,6 +18,7 @@ from cortex.mental_material import (
     MATERIAL_KINDS,
     MentalMaterial,
 )
+from cortex.rumination_dynamics import semantic_development_score
 from runtime.ai_orchestrated.affordance import ExecutiveAffordance
 from runtime.ai_orchestrated.random_chat_seed import assess_seed_quality
 from runtime.ai_orchestrated.social_initiative import SocialSpeechCandidate
@@ -138,6 +139,13 @@ class MentalMaterialRuntime:
         expected_update = tuple(
             str(x).strip() for x in (getattr(seed, "expected_update", ()) or ()) if str(x or "").strip()
         )[:8]
+        development_mode = str(getattr(seed, "development_mode", "") or "").strip().lower()
+        cause_focus = _compact(getattr(seed, "cause_semantic_focus", ""), 620)
+        development_score = semantic_development_score(cause_focus, content, development_mode)
+        development_required = bool(getattr(seed, "development_required", False))
+        rumination_return = bool(getattr(seed, "rumination_return", False))
+        source_refs = _refs(tuple(getattr(seed, "source_refs", ()) or ()))
+        parent_concern_id = next((ref for ref in source_refs if str(ref).startswith("concern.")), "")
         material = MentalMaterial(
             material_id=material_id,
             material_kind=material_kind,
@@ -146,7 +154,7 @@ class MentalMaterialRuntime:
             cause_kind=str(getattr(seed, "cause_kind", "") or "").strip(),
             motive_kind=str(getattr(seed, "runtime_motive_kind", "") or "share_internal_material").strip(),
             source_kind=str(getattr(seed, "source_kind", "") or "weak_association").strip(),
-            source_refs=_refs(tuple(getattr(seed, "source_refs", ()) or ())),
+            source_refs=source_refs,
             topic_tags=tuple(str(x) for x in (getattr(seed, "topic_tags", ()) or ()) if str(x or "").strip())[:10],
             epistemic_mode=str(getattr(seed, "epistemic_mode", "") or "bounded_inference").strip(),
             open_loop=bool(getattr(seed, "open_loop", False)),
@@ -158,20 +166,45 @@ class MentalMaterialRuntime:
             last_input_at=current,
             ttl_seconds=max(90.0, min(1800.0, float(getattr(seed, "ttl_seconds", 600.0) or 600.0))),
             expected_update=expected_update,
+            development_mode=development_mode,
+            development_score=development_score,
+            development_required=development_required,
+            rumination_return=rumination_return,
+            cause_semantic_focus=cause_focus,
+            parent_concern_id=parent_concern_id,
             freshness=1.0,
         )
         self._materials[material.material_id] = material
         self._log(
             "info",
-            "[mental material] born id=%s kind=%s cause=%s motive=%s strength=%.2f quality=%.2f content=%s",
+            "[mental material] born id=%s kind=%s cause=%s motive=%s strength=%.2f quality=%.2f rumination=%s development=%s/%.2f content=%s",
             material.material_id,
             material.material_kind,
             material.cause_kind,
             material.motive_kind,
             material.cause_strength,
             material.quality,
+            str(material.rumination_return).lower(),
+            material.development_mode or "none",
+            material.development_score,
             _compact(material.content, 180),
         )
+        # V70: một material sinh từ active concern là một private return thật.
+        # Ghi receipt vào concern owner, nhưng không tạo evidence/speech pressure.
+        if material.cause_kind == "active_concern" and material.rumination_return:
+            concern_id = material.parent_concern_id
+            note_return = getattr(getattr(self.host, "active_concern_runtime", None), "note_private_return", None)
+            if concern_id and callable(note_return):
+                try:
+                    note_return(
+                        concern_id,
+                        material_id=material.material_id,
+                        development_mode=material.development_mode,
+                        development_score=material.development_score,
+                        now=current,
+                    )
+                except Exception as exc:
+                    self._log("debug", "[rumination v70] private return receipt degraded: %s", exc)
         self._prune(current)
         return material.to_dict(current)
 
@@ -200,10 +233,17 @@ class MentalMaterialRuntime:
         self._prune(current)
         # Material chỉ đánh thức self-turn nếu thật sự có pull sống. Một thought
         # 0.2 không nên khiến scheduler chạy vòng nặng chỉ vì nó tồn tại.
-        return max(
-            (max(item.expression_pull(current), item.concern_pull(current) * 0.78) for item in self._materials.values()),
-            default=0.0,
-        )
+        pulls: list[float] = []
+        for item in self._materials.values():
+            # V70: worker đã quay lại concern nhưng chỉ restate thì material được
+            # giữ private để audit/awareness, không được tạo wake loop chỉ vì
+            # expression_pull legacy vẫn cao. Insight hợp lệ hoặc material mới
+            # bình thường vẫn đánh thức như trước.
+            if item.development_required and item.development_score < 0.62:
+                pulls.append(0.0)
+                continue
+            pulls.append(max(item.expression_pull(current), item.concern_pull(current) * 0.78))
+        return max(pulls, default=0.0)
 
     def project(
         self,
@@ -235,6 +275,10 @@ class MentalMaterialRuntime:
             expression_pull = material.expression_pull(current)
             if state == "fading":
                 continue
+            valid_development = bool(material.development_score >= 0.62)
+            # Nếu concern đã consummate và worker chỉ paraphrase, material vẫn
+            # được tồn tại private nhưng không được lẻn sang expression lane.
+            expression_allowed = not material.development_required or valid_development
 
             common = dict(
                 decision="candidate",
@@ -281,9 +325,24 @@ class MentalMaterialRuntime:
                 seed_specificity=material.quality,
                 seed_motive_strength=material.cause_strength,
                 seed_semantic_completeness=material.quality,
+                semantic_development_mode=material.development_mode,
+                semantic_development_score=material.development_score,
+                semantic_development_required=material.development_required,
+                rumination_return=material.rumination_return,
+                semantic_parent_concern_id=material.parent_concern_id,
             )
 
-            if concern_pull >= 0.58 and material.quality >= 0.58:
+            if (
+                material.quality >= 0.58
+                and expression_allowed
+                and (
+                    concern_pull >= 0.58
+                    # V70: semantic development thật tự nó là một cognitive event
+                    # đáng cập nhật concern cha, kể cả material không có open-loop
+                    # đủ mạnh để vượt concern_pull legacy.
+                    or (material.cause_kind == "active_concern" and valid_development)
+                )
+            ):
                 candidate = SocialSpeechCandidate(
                     **common,
                     speech_act="internal_material",
@@ -313,7 +372,7 @@ class MentalMaterialRuntime:
                 # ledger V42 consume đúng một lần. Giữ retry-safe nếu ConcernStore
                 # tạm unavailable thay vì đánh dấu "đã promote" trước receipt.
 
-            if expression_pull >= 0.60:
+            if expression_pull >= 0.60 and expression_allowed:
                 candidate = SocialSpeechCandidate(
                     **common,
                     speech_act=_material_speech_act(material.material_kind, expected_update=material.expected_update),

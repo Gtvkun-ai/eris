@@ -151,6 +151,10 @@ class ExpressionUrge:
     # urge nội bộ cũ khi cả hai cùng cạnh tranh. Đây không phải "màn hình luôn
     # thắng"; chỉ candidate đã qua EnvironmentMeaning + privacy mới có cờ này.
     environment_grounded: bool = False
+    # V70: semantic development có thể reopen một phần desire đã consummate.
+    semantic_development_mode: str = ""
+    semantic_development_score: float = 0.0
+    rumination_return: bool = False
 
     def effective_freshness(self, *, now: float) -> float:
         """Freshness sống theo thời gian, không phải con số đóng băng lúc tạo urge.
@@ -235,6 +239,9 @@ class ExpressionUrge:
             "surface_blocked_seconds": round(max(0.0, self.surface_blocked_until - now), 1),
             "surface_duplicate_blocks": self.surface_duplicate_blocks,
             "environment_grounded": self.environment_grounded,
+            "semantic_development_mode": self.semantic_development_mode,
+            "semantic_development_score": round(self.semantic_development_score, 3),
+            "rumination_return": self.rumination_return,
             "echo_count": self.echo_count,
             "age_seconds": round(max(0.0, now - self.created_at), 1),
             "evidence_refs": list(self.evidence_refs),
@@ -271,6 +278,8 @@ class ExpressionUrgeRuntime:
                 content=urge.content,
                 concern_id=urge.concern_id,
                 evidence_refs=urge.evidence_refs,
+                development_mode=urge.semantic_development_mode,
+                development_score=urge.semantic_development_score,
                 now=now,
             )
             to_dict = getattr(result, "to_dict", None)
@@ -287,6 +296,7 @@ class ExpressionUrgeRuntime:
         reopen = max(
             clamp01(assessment.get("reopen_credit", 0.0)),
             clamp01(assessment.get("novel_evidence", 0.0)),
+            clamp01(assessment.get("development_reopen_credit", 0.0)),
         )
         # Bình thường completion chỉ tăng satisfaction. Chỉ user/evidence mới
         # được phép hạ nó để semantic family thực sự mở lại.
@@ -336,6 +346,9 @@ class ExpressionUrgeRuntime:
         relevance: float = 0.60,
         intrusion_risk: float = 0.14,
         environment_grounded: bool = False,
+        semantic_development_mode: str = "",
+        semantic_development_score: float = 0.0,
+        rumination_return: bool = False,
     ) -> ExpressionUrge | None:
         content = compact(content, 520)
         if len(content) < 18:
@@ -352,12 +365,11 @@ class ExpressionUrgeRuntime:
         if similar is not None:
             old_refs = set(similar.evidence_refs)
             new_evidence = bool(set(refs) - old_refs)
-            if new_evidence:
-                similar.base_strength = clamp01(max(similar.base_strength, base_strength) + 0.07)
+            development_reopen = float(semantic_development_score or 0.0) >= 0.62
+            if new_evidence or development_reopen:
+                similar.base_strength = clamp01(max(similar.base_strength, base_strength) + (0.07 if new_evidence else 0.04))
                 similar.freshness = clamp01(max(similar.freshness, freshness) + 0.08)
                 similar.echo_count = max(0, similar.echo_count - 1)
-                # Evidence mới nghĩa là hoàn cảnh đã đổi. Cho phép urge bị chặn
-                # duplicate trước đó được cân lại thay vì chịu cooldown mù.
                 similar.surface_blocked_until = 0.0
                 similar.surface_duplicate_blocks = max(0, similar.surface_duplicate_blocks - 1)
                 similar.updated_at = now
@@ -366,6 +378,15 @@ class ExpressionUrgeRuntime:
                 similar.environment_grounded = bool(similar.environment_grounded or environment_grounded)
                 if concern_id:
                     similar.concern_id = concern_id
+                # V70: nếu cùng semantic family nhưng insight thực sự phát triển,
+                # urge phải mang *nội dung mới*, không giữ lại câu cũ rồi gọi là reopen.
+                if development_reopen:
+                    similar.content = content
+                    similar.semantic_key = _digest(content)
+                    similar.source_material_id = str(source_material_id or similar.source_material_id).strip()
+                    similar.semantic_development_mode = str(semantic_development_mode or "").strip().lower()
+                    similar.semantic_development_score = clamp01(semantic_development_score)
+                    similar.rumination_return = bool(rumination_return)
             else:
                 # Paraphrase cùng evidence không được tự phong thành novelty.
                 similar.echo_count += 1
@@ -396,6 +417,9 @@ class ExpressionUrgeRuntime:
             relevance=clamp01(relevance, 0.60),
             intrusion_risk=clamp01(intrusion_risk, 0.14),
             environment_grounded=bool(environment_grounded),
+            semantic_development_mode=str(semantic_development_mode or "").strip().lower(),
+            semantic_development_score=clamp01(semantic_development_score),
+            rumination_return=bool(rumination_return),
         )
         self._urges[urge_id] = urge
         self._inherit_consummation(urge, now=now)
@@ -455,6 +479,9 @@ class ExpressionUrgeRuntime:
                     clamp01(getattr(candidate, "intrusion_risk", 0.0)),
                 ),
                 environment_grounded=environment_grounded,
+                semantic_development_mode=str(getattr(candidate, "semantic_development_mode", "") or ""),
+                semantic_development_score=clamp01(getattr(candidate, "semantic_development_score", 0.0)),
+                rumination_return=bool(getattr(candidate, "rumination_return", False)),
             )
 
         # ActiveConcern là nguồn continuity. Concern không cần phải sinh từ seed;
@@ -633,6 +660,9 @@ class ExpressionUrgeRuntime:
                 expression_satisfaction=urge.satisfaction,
                 expression_motive=urge.motive,
                 expression_commitment=commitment,
+                semantic_development_mode=urge.semantic_development_mode,
+                semantic_development_score=urge.semantic_development_score,
+                rumination_return=urge.rumination_return,
             )
             preserved.append(ExecutiveAffordance(
                 affordance_id=f"expression-urge:{urge.urge_id}",
@@ -738,6 +768,8 @@ class ExpressionUrgeRuntime:
                     concern_id=urge.concern_id,
                     evidence_refs=urge.evidence_refs,
                     public_text=public_text,
+                    development_mode=urge.semantic_development_mode,
+                    development_score=urge.semantic_development_score,
                     now=current,
                 )
             except Exception as exc:

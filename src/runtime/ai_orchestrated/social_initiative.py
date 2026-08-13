@@ -146,6 +146,12 @@ class SocialSpeechCandidate:
     seed_motive_strength: float = 0.0
     seed_semantic_completeness: float = 0.0
     seed_temporal_context: Mapping[str, Any] = field(default_factory=dict)
+    # V70: private-rumination provenance. Không phải evidence/current-world claim.
+    semantic_development_mode: str = ""
+    semantic_development_score: float = 0.0
+    semantic_development_required: bool = False
+    rumination_return: bool = False
+    semantic_parent_concern_id: str = ""
     # V44: desire có nội dung. Các field này chỉ là projection trước Neuro;
     # chúng không phải lệnh speak và không được Surface tự sửa.
     expression_urge_id: str = ""
@@ -277,6 +283,11 @@ class SocialSpeechCandidate:
             seed_intrusion_risk=_clamp01(data.get("seed_intrusion_risk", 0.0)),
             face_risk=_clamp01(data.get("face_risk", 0.0)),
             recovery_available=bool(data.get("recovery_available", False)),
+            semantic_development_mode=_compact(data.get("semantic_development_mode", ""), 24).lower(),
+            semantic_development_score=_clamp01(data.get("semantic_development_score", 0.0)),
+            semantic_development_required=bool(data.get("semantic_development_required", False)),
+            rumination_return=bool(data.get("rumination_return", False)),
+            semantic_parent_concern_id=_compact(data.get("semantic_parent_concern_id", ""), 120),
             seed_lease_token=_compact(data.get("seed_lease_token", ""), 120),
             seed_generated_at=float(data.get("seed_generated_at", 0.0) or 0.0),
             seed_expires_at=float(data.get("seed_expires_at", 0.0) or 0.0),

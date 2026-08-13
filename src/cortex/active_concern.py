@@ -20,6 +20,8 @@ import unicodedata
 from dataclasses import asdict, dataclass, field
 from typing import Any, Iterable, Mapping
 
+from cortex.rumination_dynamics import derive_rumination_state
+
 
 ACTIVE_CONCERN_VERSION = "eris.cognitive_continuity.v42.event_driven_concern"
 
@@ -83,6 +85,10 @@ class ActiveConcernView:
     tension: float = 0.0
     novelty: float = 0.0
     habituation: float = 0.0
+    # V70: private cognitive attractor. Ba field này KHÔNG cấp quyền nói.
+    stickiness: float = 0.0
+    attractor_strength: float = 0.0
+    rumination_awareness: float = 0.0
     speech_pressure: float = 0.0
     interruption_cost: float = 0.0
     recurrence: int = 0
@@ -98,6 +104,7 @@ class ActiveConcernView:
         data = asdict(self)
         for key in (
             "activation", "persistence", "tension", "novelty", "habituation",
+            "stickiness", "attractor_strength", "rumination_awareness",
             "speech_pressure", "interruption_cost", "age_seconds", "updated_age_seconds",
         ):
             data[key] = round(float(data[key]), 3)
@@ -165,17 +172,34 @@ def private_concern_view(
     stale_event_habituation = min(0.34, max(0, event_count - mutation_count - 1) * 0.055)
     habituation = clamp01(max(surface_habituation, echo_habituation, stale_event_habituation))
 
-    activation = clamp01(0.46 * pressure + 0.26 * persistence + 0.18 * uncertainty + 0.10 * novelty)
-    # V66: speech_pressure là thuộc tính nội tại của concern. Scene telemetry
-    # ``interruption_cost`` vẫn được giữ trong view để Surface có thể điều chỉnh
-    # cách nói, nhưng không được làm thought của Eris "kém muốn nói" chỉ vì user
-    # đang focus/typing. Hard collision được xử lý ở ExpressionCommitment runtime.
+    # Completion được đọc TRƯỚC activation V70 để private attractor có thể biết
+    # "đã nói đủ nhưng vẫn chưa hiểu đủ". Đây là nơi obsession nhẹ sống.
     completion = dict(meta.get("completion") or {})
     expressive_completion = clamp01(completion.get("expressive", 0.0))
     epistemic_completion = clamp01(completion.get("epistemic", 0.0))
     relational_completion = clamp01(completion.get("relational", 0.0))
-    # V69: completion chỉ hạ speech pressure, KHÔNG hạ activation/persistence.
-    # Eris vẫn có thể tiếp tục nghĩ riêng về một concern sau khi đã nói đủ.
+    private_return_count = max(0, int(meta.get("private_return_count", 0) or 0))
+    rumination = derive_rumination_state(
+        pressure=pressure,
+        uncertainty=uncertainty,
+        recurrence=recurrence,
+        mutation_count=mutation_count,
+        private_return_count=private_return_count,
+        echo_streak=echo_streak,
+        habituation=habituation,
+        epistemic_completion=epistemic_completion,
+        expressive_completion=expressive_completion,
+        relational_completion=relational_completion,
+        stored_stickiness=clamp01(meta.get("stickiness", 0.0)),
+    )
+
+    # V70 giữ invariant V69: completion/rumination KHÔNG rewrite activation hay
+    # persistence gốc. Cognitive attractor là một trục song song được seed worker
+    # dùng để quay lại private thought; nó không giả làm activation để lách các
+    # lifecycle cũ. Tách trục như vậy sạch hơn và tránh "đã nói" làm nội tâm yếu đi.
+    activation = clamp01(0.46 * pressure + 0.26 * persistence + 0.18 * uncertainty + 0.10 * novelty)
+
+    # V66/V69: speech_pressure là thuộc tính biểu đạt, tách khỏi private attention.
     expressive_residual = clamp01(1.0 - expressive_completion)
     speech_pressure = clamp01(
         activation
@@ -216,6 +240,9 @@ def private_concern_view(
         tension=tension,
         novelty=novelty,
         habituation=habituation,
+        stickiness=rumination.stickiness,
+        attractor_strength=rumination.attractor_strength,
+        rumination_awareness=rumination.rumination_awareness,
         speech_pressure=speech_pressure,
         interruption_cost=clamp01(interruption_cost),
         recurrence=recurrence,
@@ -236,6 +263,12 @@ def private_concern_view(
                 "expressive": round(expressive_completion, 3),
                 "relational": round(relational_completion, 3),
                 "residual_expression": round(expressive_residual, 3),
+            },
+            "rumination": {
+                **rumination.to_dict(),
+                "private_return_count": private_return_count,
+                "semantic_development_count": int(meta.get("semantic_development_count", 0) or 0),
+                "last_development_mode": str(meta.get("last_development_mode", "") or ""),
             },
         },
     )
@@ -415,6 +448,9 @@ def merge_concern_views(views: Iterable[ActiveConcernView], *, overlap_threshold
             tension=max(keeper.tension, other.tension),
             novelty=max(keeper.novelty, other.novelty),
             habituation=max(keeper.habituation, other.habituation),
+            stickiness=max(keeper.stickiness, other.stickiness),
+            attractor_strength=max(keeper.attractor_strength, other.attractor_strength),
+            rumination_awareness=max(keeper.rumination_awareness, other.rumination_awareness),
             speech_pressure=max(keeper.speech_pressure, other.speech_pressure),
             interruption_cost=max(keeper.interruption_cost, other.interruption_cost),
             recurrence=max(keeper.recurrence, other.recurrence),

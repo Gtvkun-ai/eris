@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from .contracts import PrivateConcern, ThoughtFragment, compact_text, stable_id, to_plain, clamp01
+from cortex.rumination_dynamics import derive_rumination_state
 
 
 def _locked(method):
@@ -259,6 +260,70 @@ class ConcernStore:
         self.save()
         return existing
 
+    @_locked
+    def note_private_return(
+        self,
+        concern_id: str,
+        *,
+        material_id: str,
+        development_mode: str = "",
+        development_score: float = 0.0,
+        now: float | None = None,
+    ) -> bool:
+        """Ghi một lần attention thật sự quay lại concern trong private cognition.
+
+        Đây KHÔNG phải evidence mới và KHÔNG tăng pressure. Nó chỉ cho concern
+        hình thành ``stickiness`` và ``rumination_awareness`` từ việc Eris thực sự
+        quay lại nghĩ về nó. ``material_id`` là idempotency key để scheduler không
+        được giả vờ rằng cùng một thought vừa xảy ra thêm lần nữa.
+        """
+
+        cid = str(concern_id or "").strip()
+        mid = str(material_id or "").strip()
+        concern = self._concerns.get(cid)
+        if concern is None or not mid:
+            return False
+        meta = dict(concern.metadata or {})
+        seen = [str(x) for x in (meta.get("private_return_material_ids") or ()) if str(x).strip()]
+        if mid in seen:
+            return False
+        current = float(now or time.time())
+        seen.append(mid)
+        meta["private_return_material_ids"] = seen[-24:]
+        meta["private_return_count"] = int(meta.get("private_return_count", 0) or 0) + 1
+        meta["last_private_return_at"] = current
+
+        completion = dict(meta.get("completion") or {})
+        state = derive_rumination_state(
+            pressure=concern.pressure,
+            uncertainty=concern.uncertainty,
+            recurrence=concern.recurrence,
+            mutation_count=int(meta.get("mutation_count", 0) or 0),
+            private_return_count=int(meta.get("private_return_count", 0) or 0),
+            echo_streak=int(meta.get("echo_streak", 0) or 0),
+            habituation=min(1.0, 0.16 * int(meta.get("surfaced_count", 0) or 0) + 0.10 * int(meta.get("echo_streak", 0) or 0)),
+            epistemic_completion=float(completion.get("epistemic", 0.0) or 0.0),
+            expressive_completion=float(completion.get("expressive", 0.0) or 0.0),
+            relational_completion=float(completion.get("relational", 0.0) or 0.0),
+            stored_stickiness=float(meta.get("stickiness", 0.0) or 0.0),
+        )
+        # Attention quay lại có thể làm concern "lì" hơn một chút, nhưng ceiling
+        # mềm giữ nó ở mức ám ảnh nhẹ chứ không chiếm toàn bộ cognition.
+        epistemic_residual = clamp01(1.0 - float(completion.get("epistemic", 0.0) or 0.0))
+        bump = 0.012 + 0.022 * epistemic_residual
+        if float(development_score or 0.0) >= 0.62:
+            bump += 0.012
+            meta["semantic_development_count"] = int(meta.get("semantic_development_count", 0) or 0) + 1
+            meta["last_semantic_development_at"] = current
+            meta["last_development_mode"] = str(development_mode or "")[:32]
+        meta["stickiness"] = min(0.88, max(state.stickiness, float(meta.get("stickiness", 0.0) or 0.0)) + bump)
+        meta["rumination_awareness"] = state.rumination_awareness
+        concern.metadata = meta
+        concern.last_reviewed_at = current
+        concern.updated_at = max(float(concern.updated_at or 0.0), current)
+        self.save()
+        return True
+
     def _event_ids(self, concern: PrivateConcern) -> tuple[str, ...]:
         raw = concern.metadata.get("cognitive_event_ids", ())
         if not isinstance(raw, (list, tuple, set)):
@@ -391,12 +456,20 @@ class ConcernStore:
             if event_id in self._event_ids(existing):
                 return ConcernEventReceipt(existing, "duplicate")
 
-        concern = self._match_event_theme(
-            theme,
-            evidence,
-            event_kind=event_kind,
-            source_ref=source_ref,
-        )
+        # V70: semantic development có typed parent identity. Khi upstream đã
+        # chứng minh development bằng deterministic score, đừng bắt fuzzy matcher
+        # đoán parent từ câu insight mới rồi vô tình tách nó thành concern khác.
+        parent_concern_id = compact_text(incoming_meta.get("semantic_parent_concern_id") or "", 140)
+        concern = None
+        if bool(incoming_meta.get("semantic_mutation", False)) and parent_concern_id:
+            concern = self._concerns.get(parent_concern_id)
+        if concern is None:
+            concern = self._match_event_theme(
+                theme,
+                evidence,
+                event_kind=event_kind,
+                source_ref=source_ref,
+            )
         created = concern is None
         mutation = False
         if concern is None:

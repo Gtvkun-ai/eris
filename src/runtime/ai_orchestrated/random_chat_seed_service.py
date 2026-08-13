@@ -47,6 +47,11 @@ RANDOM_CHAT_SEED_OUTPUT_SCHEMA: dict[str, Any] = {
         "decision": {"type": "string", "enum": ["seed", "none"]},
         "seed_id": {"type": "string"},
         "material_kind": {"type": "string", "enum": sorted(MATERIAL_KINDS)},
+        # V70: optional because non-ruminative causes do not need a relation mode.
+        "development_mode": {
+            "type": "string",
+            "enum": ["none", "deepen", "contradict", "connect", "reinterpret", "test", "personalize"],
+        },
         "premise": {"type": "string"},
         "topic_tags": {"type": "array", "items": {"type": "string"}, "minItems": 0, "maxItems": 8},
         "epistemic_mode": {
@@ -272,6 +277,10 @@ class RandomChatSeedGenerator:
             "Nếu expected_update rỗng, ưu tiên observation/opinion/reaction thay vì hỏi cho có hội thoại. "
             "Không biến mọi thứ thành câu hỏi triết học. Một reaction ngắn, một opinion có stance, một association cụ thể hay một câu nhẹ "
             "đúng context thường tốt hơn essay. Không paraphrase nguyên semantic_focus rồi gọi đó là novelty. "
+            "V70: nếu causal_motive.development_required=true, đây là một private return vào concern đã được nghĩ/nói trước đó. "
+            "Bạn PHẢI chọn development_mode trong allowed_development_modes và premise phải thực sự deepen, contradict, connect, reinterpret, "
+            "test hoặc personalize semantic_focus. Nếu chỉ có thể restate/paraphrase, trả decision=none và development_mode=none. "
+            "Nếu development_required=false, development_mode=none là bình thường. Đừng biến rumination thành cùng một thesis mặc sáu bộ quần áo. "
             "Public wording trước đó của ERIS không phải evidence. Không tự thêm source_refs; provenance thuộc causal_motive runtime-owned. "
             "Không suy diễn current-world facts, cảm xúc/kế hoạch user, thời tiết, âm thanh, ánh sáng hay hoạt động nếu causal focus không chứng minh. "
             "epistemic_mode phải đúng với material: opinion là stance, hunch/speculation giữ modal, grounded_fact cần evidence thật từ runtime. "
@@ -1000,6 +1009,10 @@ class RandomChatSeedReservoir:
                 "question_rule": (
                     "A question needs a concrete gap and non-empty expected_update. "
                     "Do not ask merely to prolong conversation."
+                ),
+                "development_rule": (
+                    "When causal_motive.development_required is true, material must change the idea, not merely reword it. "
+                    "Choose one allowed_development_mode; otherwise return decision=none."
                 ),
                 "temporal_rule": (
                     "generation_temporal_context proves clock/calendar only; it never grounds weather, lighting, sound, "

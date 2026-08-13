@@ -1,0 +1,79 @@
+ERIS V70 - TEST STATUS
+======================
+
+Ngày: 2026-08-13
+Release: V70 Rumination Attractor / Ám ảnh nhẹ có kiểm soát
+
+1) Acceptance V70
+-----------------
+Command:
+  python -m pytest -q tests/test_v70_rumination_attractor.py
+
+Result:
+  12 passed
+
+Các case chính:
+- concern đã consummate vẫn sticky nhưng speech pressure thấp;
+- private return idempotent, không pump pressure;
+- sticky concern vẫn sinh private causal motive;
+- paraphrase đẹp bị từ chối, reinterpret/contradict thật được chấp nhận;
+- restatement bị giữ private và không tạo wake loop;
+- semantic development nội bộ mở lại expression một phần, không giả evidence;
+- ngay sau user yêu cầu đổi chủ đề, insight vẫn bị giữ private;
+- đổi chủ đề không thành blacklist vĩnh viễn;
+- chỉ development đủ score mới được đánh dấu semantic mutation;
+- seed worker contract bắt buộc phát triển semantic khi cần;
+- development cập nhật typed parent concern thay vì tạo concern clone;
+- private-return receipt đi qua single persistence owner.
+
+2) V69 compatibility
+--------------------
+Command:
+  python -m pytest -q tests/test_v70_rumination_attractor.py tests/test_v69_expression_consummation.py
+
+Result:
+  19 passed
+  (V70: 12 / V69: 7)
+
+3) Relevant regression
+----------------------
+Command gồm:
+- test_v42_event_driven_mind.py
+- test_v44_contentful_initiative.py
+- test_v45_causal_mental_material.py
+- test_v45_json_boundary_integration.py
+- test_v66_native_expression_commitment.py
+- test_v67_expression_contract_cleanup.py
+- test_v68_memory_curator_environment_semantics.py
+- test_v69_expression_consummation.py
+- test_v70_rumination_attractor.py
+- test_random_chat_seed_reservoir_v28.py
+
+Result:
+  105 passed
+
+4) Wider architecture regression
+--------------------------------
+Có thêm V40 active concern và V27 random chat seed.
+
+Result sau khi deselect đúng 3 test legacy đã xác nhận fail ở V69 baseline:
+  123 passed, 3 deselected
+
+Ba test legacy đó fail y hệt trên V69 baseline vì còn kỳ vọng public candidate/speech không cần typed ExpressionCommitment:
+- test_v40_active_concern.py::test_matching_concern_enriches_proposal_before_neuro
+- test_v40_active_concern.py::test_unrelated_concern_does_not_pollute_candidate
+- test_random_chat_seed_v27.py::test_governor_preserves_seed_in_surface_intent_and_plan
+
+Không coi ba test này là regression V70.
+
+5) Compile
+----------
+Command:
+  python -m compileall -q cortex runtime tests/test_v70_rumination_attractor.py
+
+Result:
+  PASS
+
+Ghi chú:
+- Không tuyên bố full-suite toàn repository pass. Source hiện có nhiều test legacy/integration ngoài scope kiến trúc này.
+- Release này được đánh giá theo acceptance mới + compatibility V69 + targeted architecture regression.

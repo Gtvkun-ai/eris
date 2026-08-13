@@ -179,7 +179,17 @@ class ActiveConcernRuntime:
         views = list(merge_concern_views(projected))
         for view in views:
             self._last_activation[view.concern_id] = view.activation
-        views.sort(key=lambda item: (item.speech_pressure, item.activation, item.persistence), reverse=True)
+        # V70: snapshot phục vụ cả private material generation lẫn expression.
+        # Một concern đã nói đủ vẫn được nổi lên nếu cognitive attractor còn mạnh;
+        # ExpressionUrge sẽ đọc completion riêng và không vì vậy mà tự được nói.
+        views.sort(
+            key=lambda item: (
+                max(item.speech_pressure, 0.92 * item.attractor_strength),
+                item.activation,
+                item.persistence,
+            ),
+            reverse=True,
+        )
         payload = tuple(item.to_dict() for item in views[: max(0, int(limit))])
         signature = "|".join(
             f"{item['concern_id']}:{item['state']}:{round(float(item['activation']),1)}:{round(float(item['speech_pressure']),1)}"
@@ -190,12 +200,14 @@ class ActiveConcernRuntime:
             meta = dict(top.get("metadata") or {})
             self._log(
                 "info",
-                "[active concern] top id=%s state=%s activation=%.2f novelty=%.2f habituation=%.2f speech=%.2f trajectory=%s events=%s echoes=%s sources=%s",
+                "[active concern] top id=%s state=%s activation=%.2f novelty=%.2f habituation=%.2f attractor=%.2f awareness=%.2f speech=%.2f trajectory=%s events=%s echoes=%s sources=%s",
                 top.get("concern_id", ""),
                 top.get("state", ""),
                 float(top.get("activation", 0.0)),
                 float(top.get("novelty", 0.0)),
                 float(top.get("habituation", 0.0)),
+                float(top.get("attractor_strength", 0.0)),
+                float(top.get("rumination_awareness", 0.0)),
                 float(top.get("speech_pressure", 0.0)),
                 top.get("trajectory", ""),
                 int(meta.get("event_count", 0) or 0),
@@ -204,6 +216,44 @@ class ActiveConcernRuntime:
             )
             self._last_signature = signature
         return payload
+
+    def note_private_return(
+        self,
+        concern_id: str,
+        *,
+        material_id: str,
+        development_mode: str = "",
+        development_score: float = 0.0,
+        now: float | None = None,
+    ) -> bool:
+        """Receipt V70: một mental material thật vừa quay lại concern này.
+
+        Method chỉ delegate sang ConcernStore để giữ single owner persistence.
+        Không tăng speech pressure và không tạo CognitiveEvent giả.
+        """
+        store = self._store()
+        note = getattr(store, "note_private_return", None) if store is not None else None
+        if not callable(note):
+            return False
+        current = float(now or time.time())
+        try:
+            changed = bool(note(
+                concern_id,
+                material_id=material_id,
+                development_mode=development_mode,
+                development_score=development_score,
+                now=current,
+            ))
+        except Exception as exc:
+            self._log("debug", "[rumination v70] private return degraded concern=%s error=%s", concern_id, exc)
+            return False
+        if changed:
+            self._log(
+                "info",
+                "[rumination v70] private-return concern=%s material=%s mode=%s development=%.2f",
+                concern_id, material_id, development_mode or "none", float(development_score or 0.0),
+            )
+        return changed
 
     def note_public_surface(self, concern_id: str, *, now: float | None = None, evidence_ref: str = "") -> bool:
         """Ghi habituation sau public speech, KHÔNG feed câu Surface ngược vào cognition."""

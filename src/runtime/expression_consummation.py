@@ -21,7 +21,7 @@ from typing import Any, Iterable, Mapping
 from cortex.active_concern import clamp01, compact, semantic_overlap, semantic_tokens
 
 
-EXPRESSION_CONSUMMATION_VERSION = "eris.expression_consummation.v69.residual_tension"
+EXPRESSION_CONSUMMATION_VERSION = "eris.expression_consummation.v70.rumination_reopen"
 
 
 def _digest(value: str) -> str:
@@ -120,6 +120,7 @@ class ConsummationAssessment:
     habituation: float = 0.0
     reopen_credit: float = 0.0
     novel_evidence: float = 0.0
+    development_reopen_credit: float = 0.0
     semantic_satiation: float = 0.0
     residual_tension: float = 1.0
     inherited_satisfaction: float = 0.0
@@ -208,6 +209,8 @@ class ExpressionConsummationRuntime:
         content: str,
         concern_id: str = "",
         evidence_refs: Iterable[Any] = (),
+        development_mode: str = "",
+        development_score: float = 0.0,
         now: float | None = None,
     ) -> ConsummationAssessment:
         current = float(now or time.time())
@@ -218,9 +221,23 @@ class ExpressionConsummationRuntime:
         old_refs = _substantive_refs(trace.evidence_refs)
         incoming = _substantive_refs(evidence_refs)
         novel = clamp01(len(incoming - old_refs) / max(1, len(incoming))) if incoming else 0.0
-        reopen = max(reopen, 0.86 * novel)
-        commitment = clamp01(trace.self_commitment_away * max(0.0, 1.0 - 0.88 * reopen))
-        inherited = clamp01(expressive * (1.0 - 0.82 * reopen))
+        external_reopen = max(reopen, 0.86 * novel)
+        # V70: private rumination có thể tự tạo một insight đủ mới để biểu đạt
+        # lại *một phần*, nhưng yếu hơn user/evidence reopen. Đây là chỗ "hơi ám
+        # ảnh" được phép có tiếng nói mà không biến paraphrase thành zombie urge.
+        mode = str(development_mode or "").strip().lower()
+        dev_score = clamp01(development_score)
+        development_reopen = clamp01((0.46 + 0.30 * dev_score) if mode and dev_score >= 0.62 else 0.0)
+        # Self-commitment-away chỉ được nới nhẹ bởi insight nội bộ. User/evidence
+        # reopen mới có quyền tháo gần hết cam kết. Nếu user vừa bảo "đổi chủ đề",
+        # Eris vẫn có thể nghĩ nhưng không được lấy ám ảnh làm cớ dí user.
+        commitment_release = 0.88 * external_reopen
+        commitment_release = max(commitment_release, 0.36 * development_reopen)
+        commitment = clamp01(trace.self_commitment_away * max(0.0, 1.0 - commitment_release))
+        # Insight nội bộ chỉ "tiêu" khoảng 58% sức reopen vào satisfaction; phần
+        # còn lại vẫn bị expressive completion cũ giữ lại. User/evidence thì mở mạnh.
+        satisfaction_reopen = max(external_reopen, 0.58 * development_reopen)
+        inherited = clamp01(expressive * (1.0 - 0.82 * satisfaction_reopen))
         # Self-commitment là lời Eris tự chịu trách nhiệm, không phải user ban.
         # Khi chưa có reopen hợp lệ, nó giữ semantic family ở trạng thái đã
         # consummate ngay cả khi completion tự decay theo thời gian.
@@ -230,7 +247,10 @@ class ExpressionConsummationRuntime:
             (1.0 - inherited)
             * (0.55 + 0.45 * receptivity)
             * (1.0 - 0.42 * habituation)
-            + 0.30 * reopen
+            + 0.30 * external_reopen
+            # Internal insight chỉ được chạm public residual khi social state còn
+            # mở. Đây chính là ranh giới "vẫn ám ảnh" và "đem ám ảnh dí user".
+            + 0.16 * development_reopen * receptivity * (1.0 - commitment)
         )
         return ConsummationAssessment(
             matched=True,
@@ -243,6 +263,7 @@ class ExpressionConsummationRuntime:
             habituation=habituation,
             reopen_credit=reopen,
             novel_evidence=novel,
+            development_reopen_credit=development_reopen,
             semantic_satiation=satiation,
             residual_tension=residual,
             inherited_satisfaction=inherited,
@@ -257,6 +278,8 @@ class ExpressionConsummationRuntime:
         concern_id: str = "",
         evidence_refs: Iterable[Any] = (),
         public_text: str = "",
+        development_mode: str = "",
+        development_score: float = 0.0,
         now: float | None = None,
     ) -> SemanticConsummationTrace:
         current = float(now or time.time())
@@ -282,7 +305,12 @@ class ExpressionConsummationRuntime:
         # Nói ra chủ yếu hoàn tất nhu cầu biểu đạt. Nó không tự giả định rằng Eris
         # đã hiểu hết vấn đề (epistemic) hay user đã hiểu/đồng ý (relational).
         trace.expressive_completion = clamp01(max(trace.expressive_completion, 0.90) + 0.035 * max(0, trace.expressed_count - 1))
-        trace.epistemic_completion = clamp01(max(trace.epistemic_completion, 0.18 if motive in {"explore", "clarify"} else 0.10))
+        base_epistemic = 0.18 if motive in {"explore", "clarify"} else 0.10
+        dev_score = clamp01(development_score)
+        # Một insight phát triển thật làm Eris hiểu concern thêm chút ít; nói lại
+        # chính thesis không được tự tăng epistemic completion.
+        epistemic_gain = 0.12 * dev_score if str(development_mode or "").strip() and dev_score >= 0.62 else 0.0
+        trace.epistemic_completion = clamp01(max(trace.epistemic_completion, base_epistemic) + epistemic_gain)
         trace.relational_completion = clamp01(max(trace.relational_completion, 0.26))
         trace.habituation = clamp01(max(trace.habituation, 0.34) + 0.16 * max(0, trace.expressed_count - 1))
         trace.reopen_credit = clamp01(trace.reopen_credit * 0.30)

@@ -1,0 +1,41 @@
+{
+  "version": "V70",
+  "base": "V69 Expression Consummation / current user source",
+  "package_mode": "change-only",
+  "architecture": "Rumination Attractor + Semantic Development",
+  "invariants": [
+    "internal persistence is not expression pressure",
+    "stickiness and attractor strength keep a concern available to private cognition without granting speech authority",
+    "private-return receipts are idempotent and do not pump concern pressure",
+    "a consumed semantic family must genuinely develop before internal rumination can reopen expression",
+    "model-proposed development mode is verified by deterministic semantic-development scoring",
+    "user topic fatigue keeps a sticky concern private immediately but does not create a permanent topic blacklist",
+    "typed parent concern routing prevents a developed insight from splitting into a duplicate concern",
+    "typed ExpressionCommitment and Neuro remain the public speech authority"
+  ],
+  "changed_files": [
+    "cortex/active_concern.py",
+    "cortex/cognitive_event.py",
+    "cortex/mental_material.py",
+    "cortex/private_mind/concern_store.py",
+    "cortex/rumination_dynamics.py",
+    "runtime/active_concern_runtime.py",
+    "runtime/ai_orchestrated/random_chat_seed.py",
+    "runtime/ai_orchestrated/random_chat_seed_service.py",
+    "runtime/ai_orchestrated/social_initiative.py",
+    "runtime/expression_consummation.py",
+    "runtime/expression_urge_runtime.py",
+    "runtime/mental_material_runtime.py",
+    "tests/test_v70_rumination_attractor.py",
+    "V70_RUMINATION_ATTRACTOR_NOTES_VI.md",
+    "V70_TEST_STATUS_VI.txt",
+    "V70_CHANGE_ONLY_MANIFEST.json"
+  ],
+  "tests": {
+    "v70_acceptance": "12 passed",
+    "v69_plus_v70": "19 passed",
+    "related_regression": "105 passed",
+    "wider_regression": "123 passed, 3 known V69-baseline legacy tests deselected",
+    "compileall": "PASS"
+  }
+}

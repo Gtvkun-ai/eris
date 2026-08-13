@@ -128,6 +128,11 @@ class CausalMotive:
     allowed_material_kinds: tuple[str, ...] = ()
     generation_budget: int = 1
     relationship_modulation: float = 0.0
+    # V70: private rumination metadata. Đây là lực tạo material, KHÔNG phải quyền nói.
+    rumination_attractor: float = 0.0
+    rumination_awareness: float = 0.0
+    development_required: bool = False
+    allowed_development_modes: tuple[str, ...] = ()
 
     @property
     def legacy_motive_kind(self) -> str:
@@ -163,6 +168,13 @@ class MentalMaterial:
     last_input_at: float
     ttl_seconds: float
     expected_update: tuple[str, ...] = ()
+    # V70: semantic relation của một private return với concern cha.
+    development_mode: str = ""
+    development_score: float = 0.0
+    development_required: bool = False
+    rumination_return: bool = False
+    cause_semantic_focus: str = ""
+    parent_concern_id: str = ""
     freshness: float = 1.0
     satisfaction: float = 0.0
     echo_count: int = 0
@@ -243,6 +255,12 @@ class MentalMaterial:
             "epistemic_mode": self.epistemic_mode,
             "open_loop": self.open_loop,
             "expected_update": list(self.expected_update),
+            "development_mode": self.development_mode,
+            "development_score": round(self.development_score, 3),
+            "development_required": self.development_required,
+            "rumination_return": self.rumination_return,
+            "cause_semantic_focus": self.cause_semantic_focus,
+            "parent_concern_id": self.parent_concern_id,
             "cause_strength": round(self.cause_strength, 3),
             "quality": round(self.quality, 3),
             "confidence": round(self.confidence, 3),
@@ -304,24 +322,54 @@ def derive_causal_motives(context: Mapping[str, Any], *, now: float | None = Non
         activation = _clamp01(item.get("activation", 0.0))
         novelty = _clamp01(item.get("novelty", 0.0))
         habituation = _clamp01(item.get("habituation", 0.0))
+        attractor = _clamp01(item.get("attractor_strength", 0.0))
+        awareness = _clamp01(item.get("rumination_awareness", 0.0))
+        meta = item.get("metadata") if isinstance(item.get("metadata"), Mapping) else {}
+        completion = meta.get("completion") if isinstance(meta.get("completion"), Mapping) else {}
+        expressive_completion = _clamp01(completion.get("expressive", 0.0))
+        epistemic_completion = _clamp01(completion.get("epistemic", 0.0))
         mutation_count = int(item.get("mutation_count", 0) or 0)
-        strength = _clamp01(0.46 * activation + 0.34 * novelty + 0.12 * (1.0 - habituation))
+        epistemic_residual = _clamp01(1.0 - epistemic_completion)
+        # V70: một concern đã consummate vẫn có thể sinh private material nhờ
+        # attractor + epistemic residual. Không cộng speech pressure vào đây.
+        strength = _clamp01(
+            0.30 * activation
+            + 0.18 * novelty
+            + 0.34 * attractor
+            + 0.10 * (1.0 - habituation)
+            + 0.08 * epistemic_residual
+        )
         if strength < 0.28:
             continue
+        rumination_meta = meta.get("rumination") if isinstance(meta.get("rumination"), Mapping) else {}
+        development_required = bool(
+            rumination_meta.get("development_required", False)
+            or expressive_completion >= 0.72
+            or (awareness >= 0.48 and attractor >= 0.40)
+        )
         cause_id = f"concern:{cid}:m{mutation_count}"
         motives.append(CausalMotive(
             cause_id=cause_id,
             cause_kind="active_concern",
             motive_kind="continue_concern",
             semantic_focus=subject,
-            why_now=f"active_concern:{cid}:mutation={mutation_count}",
+            why_now=(
+                f"active_concern:{cid}:mutation={mutation_count}:"
+                f"attractor={attractor:.2f}:awareness={awareness:.2f}"
+            ),
             strength=strength,
             source_refs=(cid,),
             allowed_material_kinds=(
                 "unfinished_thought", "opinion", "association", "question", "hunch", "self_reflection",
             ),
-            generation_budget=2 if mutation_count > 0 else 1,
+            generation_budget=2 if (mutation_count > 0 or attractor >= 0.55) else 1,
             relationship_modulation=connection,
+            rumination_attractor=attractor,
+            rumination_awareness=awareness,
+            development_required=development_required,
+            allowed_development_modes=(
+                "deepen", "contradict", "connect", "reinterpret", "test", "personalize",
+            ) if development_required else (),
         ))
 
     workspace = [item for item in _seq(self_memory.get("private_life_workspace")) if isinstance(item, Mapping)]

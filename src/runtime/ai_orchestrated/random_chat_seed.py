@@ -207,6 +207,12 @@ class RandomChatSeed:
     cause_strength: float = 0.0
     runtime_motive_kind: str = ""
     expected_update: tuple[str, ...] = ()
+    # V70: relation semantic của material với active concern cha. Model chỉ đề
+    # xuất mode; runtime sẽ chấm delta lại trước khi coi đó là mutation.
+    development_mode: str = ""
+    development_required: bool = False
+    cause_semantic_focus: str = ""
+    rumination_return: bool = False
 
     @property
     def available(self) -> bool:
@@ -308,6 +314,10 @@ class RandomChatSeed:
             cause_strength=_clamp01(data.get("cause_strength", 0.0)),
             runtime_motive_kind=_compact(data.get("runtime_motive_kind", ""), 64).lower(),
             expected_update=expected_update,
+            development_mode=_compact(data.get("development_mode", ""), 24).lower(),
+            development_required=bool(data.get("development_required", False)),
+            cause_semantic_focus=_compact(data.get("cause_semantic_focus", ""), 520),
+            rumination_return=bool(data.get("rumination_return", False)),
         )
 
     @classmethod
@@ -376,6 +386,13 @@ class RandomChatSeed:
             legacy_motive = "want_to_share"
         seed_id = _compact(data.get("seed_id", ""), 80) or (_seed_id(premise, mode) if premise else "")
         material_id = _compact(data.get("material_id", seed_id), 100) or seed_id
+        allowed_dev = {str(x).strip().lower() for x in _sequence(causal_motive.get("allowed_development_modes"))}
+        proposed_dev = _compact(data.get("development_mode", ""), 24).lower()
+        development_mode = proposed_dev if proposed_dev in allowed_dev else ""
+        rumination_return = bool(
+            causal_motive.get("cause_kind") == "active_concern"
+            and float(causal_motive.get("rumination_attractor", 0.0) or 0.0) >= 0.35
+        )
         return cls(
             decision="seed",
             seed_id=seed_id,
@@ -410,6 +427,10 @@ class RandomChatSeed:
             cause_strength=cause_strength,
             runtime_motive_kind=runtime_motive_kind,
             expected_update=expected_update,
+            development_mode=development_mode,
+            development_required=bool(causal_motive.get("development_required", False)),
+            cause_semantic_focus=_compact(causal_motive.get("semantic_focus", ""), 520),
+            rumination_return=rumination_return,
         )
 
 
