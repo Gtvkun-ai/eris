@@ -2385,7 +2385,11 @@ class SelfTurnPipeline:
             note_urge = getattr(urge_runtime, "note_expressed", None)
             if urge_id and callable(note_urge):
                 try:
-                    note_urge(urge_id, now=host.last_autonomous_spoken_at)
+                    note_urge(
+                        urge_id,
+                        public_text=text,
+                        now=host.last_autonomous_spoken_at,
+                    )
                 except Exception as exc:
                     host.logger.debug("[expression urge] surface receipt failed: %s", exc)
 

@@ -472,6 +472,16 @@ class ConcernStore:
                 concern.metadata["mutation_count"] = int(concern.metadata.get("mutation_count", 0) or 0) + 1
                 concern.metadata["last_mutation_at"] = current
                 concern.metadata["echo_streak"] = 0
+                # V69: evidence/semantic mutation thật mở lại phần chưa hoàn tất.
+                # Chỉ reset completion khi có mutation, không vì scheduler tick hay
+                # paraphrase. Concern identity và private pressure vẫn được giữ.
+                completion = dict(concern.metadata.get("completion") or {})
+                if completion:
+                    completion["expressive"] = clamp01(float(completion.get("expressive", 0.0) or 0.0) * 0.42)
+                    completion["epistemic"] = clamp01(float(completion.get("epistemic", 0.0) or 0.0) * 0.58)
+                    completion["relational"] = clamp01(float(completion.get("relational", 0.0) or 0.0) * 0.82)
+                    completion["updated_at"] = current
+                    concern.metadata["completion"] = completion
                 concern.pressure = clamp01(max(concern.pressure * 0.94, 0.34) + 0.06)
                 # Giữ theme identity; mutation mới chỉ được lưu như event, không để
                 # một câu mới từ từ rewrite concern thành blob tổng hợp.

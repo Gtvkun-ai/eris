@@ -1,0 +1,20 @@
+ERIS V69 - TEST STATUS
+======================
+
+Acceptance V69:
+- 7 passed / 0 failed
+
+Regression liên quan:
+- 138 passed / 0 failed / 4 deselected
+
+4 test deselected là test legacy đã fail y hệt trên ZIP V68 gốc do còn kỳ vọng speech candidate không cần typed ExpressionCommitment:
+- tests/test_v40_active_concern.py::test_matching_concern_enriches_proposal_before_neuro
+- tests/test_v40_active_concern.py::test_unrelated_concern_does_not_pollute_candidate
+- tests/test_social_initiative_v18.py::test_social_candidate_can_speak_without_factual_grounding
+- tests/test_social_initiative_v18.py::test_screen_mode_has_no_local_wording_fallback
+
+Compileall các file thay đổi: PASS
+
+Replay semantic family từ log 2026-08-13:
+- sau 1 lần expression: residual_tension ~0.08
+- sau user satiation + self-commitment đổi topic: residual_tension ~0.02

@@ -218,6 +218,15 @@ class ActiveConcernRuntime:
         meta = dict(getattr(concern, "metadata", {}) or {})
         meta["surfaced_count"] = int(meta.get("surfaced_count", 0) or 0) + 1
         meta["last_surfaced_at"] = current
+        # V69: concern vẫn có thể sống sau khi nói, nhưng nhu cầu *biểu đạt* của
+        # concern đó đã được consummate. Ba trục completion tách việc "còn quan
+        # tâm" khỏi "còn cần nói".
+        completion = dict(meta.get("completion") or {})
+        completion["expressive"] = clamp01(max(float(completion.get("expressive", 0.0) or 0.0), 0.90))
+        completion["epistemic"] = clamp01(max(float(completion.get("epistemic", 0.0) or 0.0), 0.10))
+        completion["relational"] = clamp01(max(float(completion.get("relational", 0.0) or 0.0), 0.26))
+        completion["updated_at"] = current
+        meta["completion"] = completion
         if evidence_ref:
             refs = list(getattr(concern, "evidence_ids", ()) or ())
             if evidence_ref not in refs:

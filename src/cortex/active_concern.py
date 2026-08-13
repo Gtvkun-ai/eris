@@ -170,10 +170,18 @@ def private_concern_view(
     # ``interruption_cost`` vẫn được giữ trong view để Surface có thể điều chỉnh
     # cách nói, nhưng không được làm thought của Eris "kém muốn nói" chỉ vì user
     # đang focus/typing. Hard collision được xử lý ở ExpressionCommitment runtime.
+    completion = dict(meta.get("completion") or {})
+    expressive_completion = clamp01(completion.get("expressive", 0.0))
+    epistemic_completion = clamp01(completion.get("epistemic", 0.0))
+    relational_completion = clamp01(completion.get("relational", 0.0))
+    # V69: completion chỉ hạ speech pressure, KHÔNG hạ activation/persistence.
+    # Eris vẫn có thể tiếp tục nghĩ riêng về một concern sau khi đã nói đủ.
+    expressive_residual = clamp01(1.0 - expressive_completion)
     speech_pressure = clamp01(
         activation
         * (0.48 + 0.52 * novelty)
         * (1.0 - 0.72 * habituation)
+        * (0.18 + 0.82 * expressive_residual)
     )
 
     if previous_activation is None or abs(activation - previous_activation) < 0.05:
@@ -223,6 +231,12 @@ def private_concern_view(
             "event_count": event_count,
             "open_question_count": len(tuple(getattr(concern, "open_questions", ()) or ())),
             "related_concern_ids": list(meta.get("related_concern_ids") or ())[:6],
+            "completion": {
+                "epistemic": round(epistemic_completion, 3),
+                "expressive": round(expressive_completion, 3),
+                "relational": round(relational_completion, 3),
+                "residual_expression": round(expressive_residual, 3),
+            },
         },
     )
 

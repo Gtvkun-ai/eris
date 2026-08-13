@@ -256,6 +256,51 @@ class ExpressionUrgeRuntime:
         if callable(fn):
             fn(message, *args)
 
+    def _consummation_assessment(self, urge: ExpressionUrge, *, now: float) -> Mapping[str, Any]:
+        """Đọc completion semantic trước khi urge được nâng thành commitment.
+
+        Đây là lifecycle của desire biểu đạt, không phải một speech threshold mới.
+        Nếu một ý đã được nói đủ, paraphrase mới phải kế thừa completion đó.
+        """
+        runtime = getattr(self.host, "expression_consummation_runtime", None)
+        assess = getattr(runtime, "assess", None)
+        if not callable(assess):
+            return {}
+        try:
+            result = assess(
+                content=urge.content,
+                concern_id=urge.concern_id,
+                evidence_refs=urge.evidence_refs,
+                now=now,
+            )
+            to_dict = getattr(result, "to_dict", None)
+            return dict(to_dict() if callable(to_dict) else result or {})
+        except Exception as exc:
+            self._log("debug", "[expression consummation] assessment degraded: %s", exc)
+            return {}
+
+    def _inherit_consummation(self, urge: ExpressionUrge, *, now: float) -> None:
+        assessment = self._consummation_assessment(urge, now=now)
+        if not assessment or not bool(assessment.get("matched", False)):
+            return
+        inherited = clamp01(assessment.get("inherited_satisfaction", 0.0))
+        reopen = max(
+            clamp01(assessment.get("reopen_credit", 0.0)),
+            clamp01(assessment.get("novel_evidence", 0.0)),
+        )
+        # Bình thường completion chỉ tăng satisfaction. Chỉ user/evidence mới
+        # được phép hạ nó để semantic family thực sự mở lại.
+        if reopen >= 0.35:
+            urge.satisfaction = min(urge.satisfaction, inherited)
+            urge.freshness = clamp01(max(urge.freshness, 0.68 + 0.22 * reopen))
+        else:
+            urge.satisfaction = max(urge.satisfaction, inherited)
+        urge.updated_at = max(urge.updated_at, now)
+
+    def _refresh_consummation(self, now: float) -> None:
+        for urge in self._urges.values():
+            self._inherit_consummation(urge, now=now)
+
     def _find_similar(self, content: str) -> ExpressionUrge | None:
         best = None
         score = 0.0
@@ -327,6 +372,7 @@ class ExpressionUrgeRuntime:
                 similar.freshness = clamp01(similar.freshness * 0.86)
                 similar.base_strength = clamp01(similar.base_strength * 0.97)
                 similar.last_input_at = now
+            self._inherit_consummation(similar, now=now)
             return similar
 
         urge_id = f"urge:{_digest(f'{source}|{content}')}"
@@ -352,6 +398,7 @@ class ExpressionUrgeRuntime:
             environment_grounded=bool(environment_grounded),
         )
         self._urges[urge_id] = urge
+        self._inherit_consummation(urge, now=now)
         return urge
 
     def observe(
@@ -450,6 +497,7 @@ class ExpressionUrgeRuntime:
                 # risk nền nhỏ; boundary/turn collision thuộc runtime phía sau.
                 intrusion_risk=0.14,
             )
+        self._refresh_consummation(current)
         self._prune(current)
 
     def _prune(self, now: float) -> None:
@@ -461,7 +509,7 @@ class ExpressionUrgeRuntime:
             stale = max(0.0, now - urge.last_input_at)
             effective_freshness = urge.effective_freshness(now=now)
             if (
-                urge.satisfaction >= 0.88
+                urge.satisfaction >= 0.98
                 or age > 1800.0
                 or (stale > 480.0 and effective_freshness < 0.18)
             ):
@@ -475,6 +523,7 @@ class ExpressionUrgeRuntime:
 
     def wake_pressure(self, *, now: float | None = None) -> float:
         current = float(now or time.time())
+        self._refresh_consummation(current)
         self._prune(current)
         # Cheap path chưa cần đọc relationship/mood. Chỉ cần biết có một ý đang
         # đủ lực để TemporalMind nhìn lại. Modulation đầy đủ diễn ra sau wake.
@@ -665,16 +714,37 @@ class ExpressionUrgeRuntime:
             urge_id, reason="surface_duplicate_recent_utterance", now=now
         )
 
-    def note_expressed(self, urge_id: str, *, now: float | None = None) -> bool:
+    def note_expressed(
+        self,
+        urge_id: str,
+        *,
+        public_text: str = "",
+        now: float | None = None,
+    ) -> bool:
         urge = self._urges.get(str(urge_id or "").strip())
         if urge is None:
             return False
         current = float(now or time.time())
         urge.last_expressed_at = current
         urge.updated_at = current
-        urge.satisfaction = clamp01(max(urge.satisfaction, 0.76))
-        urge.base_strength = clamp01(urge.base_strength * 0.52)
-        urge.freshness = clamp01(urge.freshness * 0.72)
+        # V69: public receipt consummates semantic family, không chỉ đúng object urge.
+        consummation = getattr(self.host, "expression_consummation_runtime", None)
+        note_expression = getattr(consummation, "note_expression", None)
+        if callable(note_expression):
+            try:
+                note_expression(
+                    content=urge.content,
+                    motive=urge.motive,
+                    concern_id=urge.concern_id,
+                    evidence_refs=urge.evidence_refs,
+                    public_text=public_text,
+                    now=current,
+                )
+            except Exception as exc:
+                self._log("debug", "[expression consummation] public receipt degraded: %s", exc)
+        urge.satisfaction = clamp01(max(urge.satisfaction, 0.90))
+        urge.base_strength = clamp01(urge.base_strength * 0.42)
+        urge.freshness = clamp01(urge.freshness * 0.64)
         if urge.source_material_id:
             material_runtime = getattr(self.host, "mental_material_runtime", None)
             note_material = getattr(material_runtime, "note_expressed", None)
@@ -703,13 +773,21 @@ class ExpressionUrgeRuntime:
         current = float(now or time.time())
         rel = dict(relational or {})
         aff = dict(affect or {})
+        self._refresh_consummation(current)
         self._prune(current)
         ranked = sorted(
             self._urges.values(),
             key=lambda urge: urge.selection_priority(now=current, relational=rel, affect=aff),
             reverse=True,
         )
-        return tuple(urge.to_dict(now=current, relational=rel, affect=aff) for urge in ranked[: max(0, int(limit))])
+        rows: list[dict[str, Any]] = []
+        for urge in ranked[: max(0, int(limit))]:
+            row = urge.to_dict(now=current, relational=rel, affect=aff)
+            assessment = self._consummation_assessment(urge, now=current)
+            if assessment:
+                row["consummation"] = dict(assessment)
+            rows.append(row)
+        return tuple(rows)
 
 
 __all__ = ["EXPRESSION_URGE_VERSION", "ExpressionUrge", "ExpressionUrgeRuntime"]

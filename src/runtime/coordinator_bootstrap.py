@@ -47,6 +47,7 @@ from runtime.architecture_flags import background_tutor_enabled, legacy_model_la
 from runtime.diagnostic_logging import safe_log
 from runtime.ai_orchestrated.cortex import CortexAttentionSignal, CortexRuntime
 from runtime.active_concern_runtime import ActiveConcernRuntime
+from runtime.expression_consummation import ExpressionConsummationRuntime
 from runtime.expression_urge_runtime import ExpressionUrgeRuntime
 from runtime.mental_material_runtime import MentalMaterialRuntime
 from runtime.body_bias import BodyBiasProjector
@@ -620,6 +621,10 @@ class CoordinatorBootstrapMixin:
         self.private_mind_daemon_digest: dict[str, object] = {}
         # V40: projection concern dùng lại ConcernStore hiện có; không tạo kho nhớ thứ hai.
         self.active_concern_runtime = ActiveConcernRuntime(self, logger=self.logger)
+        # V69: semantic consummation giữ completion/receptivity của phần *đã nói*.
+        # Nó không thay ConcernStore và không cấp quyền SPEAK; ExpressionUrge đọc
+        # state này trước khi materialize typed ExpressionCommitment.
+        self.expression_consummation_runtime = ExpressionConsummationRuntime(self, logger=self.logger)
         # V44: urge là projection ngắn hạn trên concern/content hiện có, không tạo kho nhớ mới.
         self.expression_urge_runtime = ExpressionUrgeRuntime(self, logger=self.logger)
         self.inner_diary_persister = InnerDiaryPersister(logger=self.logger)

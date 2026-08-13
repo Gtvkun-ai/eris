@@ -621,6 +621,24 @@ class AIChatOrchestrator:
                 host.logger.debug("[subject initiative] user outcome update failed: %s", exc)
         latency_trace.mark("initiative_outcome")
 
+        # V69: user turn là outcome của semantic expression gần nhất. Cập nhật
+        # receptivity/completion trước khi planner tạo desire mới. Đây là state
+        # transition, không phải keyword blacklist và không veto một commitment
+        # đã tồn tại.
+        consummation_runtime = getattr(host, "expression_consummation_runtime", None)
+        observe_consumption = getattr(consummation_runtime, "observe_user_turn", None)
+        if callable(observe_consumption):
+            try:
+                consume_outcome = observe_consumption(user_text, now=cycle_start)
+                if isinstance(consume_outcome, Mapping) and consume_outcome.get("matched"):
+                    host.logger.info(
+                        "[expression consummation] applied user outcome=%s trace=%s",
+                        consume_outcome.get("outcome", "neutral"),
+                        consume_outcome.get("trace_id", ""),
+                    )
+            except Exception as exc:
+                host.logger.debug("[expression consummation] user outcome degraded: %s", exc)
+
         # User taking the floor invalidates reserved short beats immediately and
         # updates long-horizon social outcomes before the next plan is written.
         social_continuation_runtime = getattr(host, "ai_social_continuation_runtime", None)
@@ -1840,6 +1858,16 @@ class AIChatOrchestrator:
             assistant_meta_extra=assistant_discourse_meta,
             idempotency_key=_chat_commit_idempotency_key(host, turn_id),
         )
+        # V69: nếu Eris vừa tự nói "tôi sẽ đổi chủ đề", lời đó trở thành
+        # self-commitment của chính semantic family vừa gây satiation.
+        if public_text:
+            consummation_runtime = getattr(host, "expression_consummation_runtime", None)
+            note_public_text = getattr(consummation_runtime, "note_public_text", None)
+            if callable(note_public_text):
+                try:
+                    note_public_text(public_text, now=time.time())
+                except Exception as exc:
+                    host.logger.debug("[expression consummation] self-commitment degraded: %s", exc)
         latency_trace.mark("commit")
         try:
             from runtime.observability import GLOBAL_OBSERVABILITY
