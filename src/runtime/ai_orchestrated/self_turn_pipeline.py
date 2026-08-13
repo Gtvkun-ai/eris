@@ -561,8 +561,6 @@ class SelfTurnPipeline:
                     subject_service,
                     runtime_context=initiative_runtime_context,
                     now=now,
-                    reply_expected=bool(getattr(blackboard, "reply_expected", False)),
-                    user_busy=bool(getattr(blackboard, "user_busy", False)),
                     interaction_busy=interaction_busy,
                 )
                 affordances.extend(initiative_affordances)
@@ -699,9 +697,9 @@ class SelfTurnPipeline:
             except Exception as exc:
                 host.logger.debug("[expression urge] shaping failed: %s", exc)
 
-        # Policy phải chạy trên tập affordance *sau* khi V44 đã bỏ generic
-        # contact/probe và materialize urge. Như vậy urge vẫn chịu reply/busy/
-        # cooldown cost trước Neuro, không có cửa VIP vì nó nghe có vẻ chân thành.
+        # Policy chạy sau khi materialize urge để đo đúng mật độ/repetition của
+        # tập candidate hiện tại. V67: đây chỉ là self-rhythm telemetry cho các
+        # opportunity chưa commit; một ExpressionCommitment không bị vote lại.
         if initiative_policy is not None:
             try:
                 policy_signals = initiative_policy.policy_signals(blackboard, affordances)
@@ -866,27 +864,9 @@ class SelfTurnPipeline:
                 IntentionPlan.silence(channel="autonomous", reason="controller_unavailable"),
             )
         else:
-            decision = initiative.decide(
-                blackboard,
-                candidate,
-                committed_by_neuro=bool(
-                    executive_outcome is not None
-                    and str(getattr(executive_outcome, "action", "") or "").lower() == "speak"
-                ),
-            )
-            # V66: bind commitment native vào SpeechIntent SAU Subject commit.
-            # Đây là semantic identity mà Surface phải realize, không phải một
-            # global lease hay monkey-patch state.
-            if subject_decision is not None and decision.speech_intent is not None:
-                raw_commitment = subject_decision.arguments.get("expression_commitment", {})
-                if isinstance(raw_commitment, Mapping) and raw_commitment:
-                    decision = replace(
-                        decision,
-                        speech_intent=replace(
-                            decision.speech_intent,
-                            expression_commitment=dict(raw_commitment),
-                        ),
-                    )
+            # V67: candidate đã mang typed ExpressionCommitment từ owner nguồn.
+            # Không còn cờ compatibility hay bước bind lại từ SubjectDecision.
+            decision = initiative.decide(blackboard, candidate)
             if executive_outcome is not None and candidate is None and executive_outcome.action == "silence":
                 decision = replace(decision, reason=f"subject_materializer:{executive_outcome.reason}")
         host.logger.info(

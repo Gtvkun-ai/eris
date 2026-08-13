@@ -2,7 +2,7 @@
   "schema_version": 2,
   "mode": "authoritative",
   "created_at": 1786016951.6713982,
-  "updated_at": 1786017181.3018582,
+  "updated_at": 1786590780.9617724,
   "beliefs": [],
   "episodes": [],
   "projections": {},
@@ -26,6 +26,58 @@
       ],
       "storable": false,
       "created_at": 1786017181.3018582
+    },
+    {
+      "id": "tf.e21fbf43ecbdec15",
+      "claim": "họ đang thử xem tôi nhớ gì, nhưng cái cách họ hỏi lại cũng đang thử chính tôi…",
+      "subject": "private_mind",
+      "facet": "general",
+      "confidence": 0.72,
+      "uncertainty": 0.45,
+      "overread_risk": 0.65,
+      "origin": "private_mind",
+      "evidence_ids": [
+        "dossier.runtime.state",
+        "dossier.runtime.thought_stream",
+        "dossier.runtime.private_state",
+        "epi_6f25e6a2bedf",
+        "dossier.concern.0",
+        "dossier.concern.1",
+        "dossier.concern.2",
+        "dossier.concern.3",
+        "dossier.concern.4",
+        "dossier.concern.5",
+        "dossier.concern.6",
+        "dossier.concern.7"
+      ],
+      "storable": false,
+      "created_at": 1786590593.9158664
+    },
+    {
+      "id": "tf.3cb15be3e82a4908",
+      "claim": "Tôi tự hỏi, thay vì cứ loay hoay với cái mạch 'mục đích chưa rõ', mình có nên thử kích hoạt một thiên vị chủ động hơn để kéo họ ra khỏi lối truy vấn lặp đó không...",
+      "subject": "private_mind",
+      "facet": "general",
+      "confidence": 0.62,
+      "uncertainty": 0.45,
+      "overread_risk": 0.65,
+      "origin": "private_mind",
+      "evidence_ids": [
+        "dossier.runtime.state",
+        "dossier.runtime.thought_stream",
+        "dossier.runtime.private_state",
+        "epi_6f25e6a2bedf",
+        "dossier.concern.0",
+        "dossier.concern.1",
+        "dossier.concern.2",
+        "dossier.concern.3",
+        "dossier.concern.4",
+        "dossier.concern.5",
+        "dossier.concern.6",
+        "dossier.concern.7"
+      ],
+      "storable": false,
+      "created_at": 1786590780.9617724
     }
   ],
   "learning_log": []

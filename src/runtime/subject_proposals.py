@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any, Mapping, Sequence
 
 from cortex.subject.service import SubjectService
-from cortex.subject.expression_commitment import commitment_payload
+from cortex.subject.expression_commitment import read_commitment
 from cortex.active_concern import match_concern
 
 
@@ -69,10 +69,18 @@ class AutonomousProposalSource:
         metadata = metadata if isinstance(metadata, dict) else dict(metadata) if hasattr(metadata, "items") else {}
         intention_id = str(metadata.get("intention_id") or "").strip()
         motive_kind = str(metadata.get("motive_kind") or "").strip().lower()
-        raw_expression_commitment = metadata.get("expression_commitment")
+        raw_expression_commitment = getattr(candidate, "expression_commitment", {})
         expression_commitment = (
-            dict(raw_expression_commitment) if isinstance(raw_expression_commitment, Mapping) else None
+            dict(raw_expression_commitment)
+            if isinstance(raw_expression_commitment, Mapping)
+            and read_commitment({"expression_commitment": raw_expression_commitment}) is not None
+            else None
         )
+        # V67: đây là public proposal boundary. Opportunity/thought chưa có typed
+        # commitment vẫn được sống ở owner của nó, nhưng không được lẻn vào Neuro
+        # dưới dạng một speech proposal rồi nhờ ID legacy chứng minh hộ.
+        if expression_commitment is None:
+            return None
         speech_act = str(getattr(candidate, "speech_act", "") or "").strip().lower()
         tone = str(getattr(candidate, "tone", "") or "").strip().lower()
         expression_urge_id = str(getattr(candidate, "expression_urge_id", "") or "").strip()
@@ -80,17 +88,6 @@ class AutonomousProposalSource:
         expression_freshness = clamp01(getattr(candidate, "expression_freshness", 0.0), 0.0)
         expression_satisfaction = clamp01(getattr(candidate, "expression_satisfaction", 0.0), 0.0)
         expression_motive = str(getattr(candidate, "expression_motive", "") or "").strip().lower()
-        if expression_commitment is None and kind == "force_speak":
-            expression_commitment = commitment_payload(
-                origin="force_speak",
-                source_id=affordance_id,
-                semantic_target=topic,
-                motive="force_expression",
-                pressure=1.0,
-                freshness=1.0,
-                persistence=1.0,
-                forced=True,
-            )
         affect_bias = dict(affective_bias or {})
 
         need_ids: list[str] = []
@@ -157,9 +154,9 @@ class AutonomousProposalSource:
                 **({"expression_commitment": expression_commitment} if expression_commitment else {}),
                 "context": "autonomous",
                 "skill_id": "dialogue",
-                # V42: policy xã hội/timing chỉ là feature trước Neuro. Không có
-                # allow/deny ở đây; proposal mang chi phí để Neuro tự cân cùng motive.
-                "initiative_policy_cost": policy_cost,
+                # V67: policy signal chỉ còn telemetry self-density/repetition.
+                # Nó không được đổi quyền biểu đạt của một typed commitment.
+                "initiative_policy_cost": 0.0,
                 "initiative_policy_signal": policy,
                 "affective_selection_bias": {
                     key: round(clamp01(value, 0.0), 3)
@@ -214,18 +211,6 @@ class AutonomousProposalSource:
                 float(proposal["expected_action_efficacy"]) + 0.07 * commitment_freshness
             )
 
-
-        if policy_cost > 0.0 and not expression_commitment:
-            # Policy legacy chỉ còn áp cho candidate chưa có self-owned commitment.
-            # Commitment không bị response-rate/cooldown làm mất action family.
-            proposal["substrate_cost"] = clamp01(float(proposal["substrate_cost"]) + 0.34 * policy_cost)
-            proposal["commitment_conflict"] = clamp01(float(proposal["commitment_conflict"]) + 0.46 * policy_cost)
-            proposal["expected_need_relief"] = clamp01(float(proposal["expected_need_relief"]) * (1.0 - 0.28 * policy_cost))
-            proposal["expected_action_efficacy"] = clamp01(float(proposal["expected_action_efficacy"]) * (1.0 - 0.20 * policy_cost))
-            proposal["need_effects"]["sovereignty"] = min(
-                float(proposal["need_effects"].get("sovereignty", 0.0) or 0.0),
-                -0.22 * policy_cost,
-            )
 
         # V43: mood chỉ bias selection nhẹ trước Neuro. Không action veto, không
         # hạ grounding threshold, không cho playful mood tự cấp quyền nói.
@@ -330,30 +315,36 @@ class AutonomousProposalSource:
         public_view = blackboard.public_view() if callable(getattr(blackboard, "public_view", None)) else {}
         reply_expected = bool(public_view.get("reply_expected", getattr(blackboard, "reply_expected", False)))
         user_busy = bool(getattr(blackboard, "user_busy", False))
-        # V66: user_busy là scene context, không phải reason để silence thắng.
-        social_wait = bool(reply_expected)
+        # V67: reply_expected/user_busy chỉ còn metadata cho discourse/wording.
+        # Chúng không thay đổi score của SILENCE/BODY_ONLY hay speech commitment.
         engagement_active = bool(public_view.get("engagement_active", getattr(blackboard, "engagement_active", False)))
 
-        # Chỉ đưa capability-grounded-speech vào khi có context thật đòi hỏi grounding:
-        # discovery sẵn sàng, màn hình đã grounded, hoặc affordance nào đó yêu cầu grounding.
-        # Nếu không có gì cụ thể để ground thì proposal này không được chen vào và giành
-        # Subject commit khỏi các proposal social speech thông thường.
-        grounding_needed = any(
-            bool(getattr(getattr(aff, "candidate", None), "requires_grounding", False))
-            for aff in affordances
+        # V67: capability speech không còn là một motive độc lập. Nó chỉ là
+        # realization path cho một ExpressionCommitment đã tồn tại và thật sự
+        # cần grounding. Không commitment => không có public capability speech.
+        grounding_source = next(
+            (
+                proposal for proposal in proposals
+                if proposal.get("action_kind") == "speak"
+                and bool(dict(proposal.get("arguments", {}) or {}).get("requires_grounding", False))
+                and read_commitment(dict(proposal.get("arguments", {}) or {})) is not None
+            ),
+            None,
         )
-        discovery_ready = bool(public_view.get("discovery_ready", False))
-        screen_grounded = bool(public_view.get("screen_fresh", False))
-        has_grounding_context = grounding_needed or discovery_ready or screen_grounded
-        if has_grounding_context:
+        if grounding_source is not None:
+            source_args = dict(grounding_source.get("arguments", {}) or {})
             proposals.append({
                 "proposal_id": f"proposal:capability-grounded-speech:{turn_id}",
                 "action_kind": "speak",
                 "arguments": {
                     "context": "autonomous",
                     "capability_route": True,
-                    "reason_family": "ground_before_public_claim",
+                    "reason_family": "ground_committed_public_claim",
                     "skill_id": "investigation",
+                    "semantic_target": source_args.get("semantic_target", ""),
+                    "speech_act": source_args.get("speech_act", ""),
+                    "tone": source_args.get("tone", ""),
+                    "expression_commitment": dict(source_args.get("expression_commitment", {}) or {}),
                 },
                 "supporting_need_ids": ("coherence", "competence"),
                 "expected_need_relief": 0.58,
@@ -364,9 +355,9 @@ class AutonomousProposalSource:
                 "uncertainty": 0.38,
                 "project_contribution": self._subject.substrate.project_viability * 0.35,
                 "historical_success": 0.50,
-                "commitment_conflict": 0.08 if not social_wait else 0.34,
-                "evidence_refs": (turn_id,),
-                "need_effects": {"coherence": 0.70, "competence": 0.48, "connection": -0.08},
+                "commitment_conflict": 0.08,
+                "evidence_refs": tuple(grounding_source.get("evidence_refs", ())) or (turn_id,),
+                "need_effects": {"coherence": 0.70, "competence": 0.48},
             })
         proposals.extend((
             {
@@ -374,19 +365,19 @@ class AutonomousProposalSource:
                 "action_kind": "silence",
                 "arguments": {"context": "autonomous", "reason_family": "low_pressure_wait"},
                 "supporting_need_ids": ("sovereignty", "coherence"),
-                "expected_need_relief": 0.44 if not social_wait else 0.74,
+                "expected_need_relief": 0.44,
                 "expected_action_efficacy": 0.96,
                 "expected_epistemic_value": 0.24,
                 "value_congruence": 0.50,
                 "substrate_cost": 0.01,
                 "uncertainty": 0.10,
                 "historical_success": 0.50,
-                "commitment_conflict": 0.02 if social_wait else 0.04,
+                "commitment_conflict": 0.04,
                 "evidence_refs": (turn_id,),
                 "need_effects": {
-                    "sovereignty": 0.58 if social_wait else 0.42,
-                    "coherence": 0.42 if social_wait else 0.22,
-                    "connection": -0.08 if social_wait else -0.72,
+                    "sovereignty": 0.42,
+                    "coherence": 0.22,
+                    "connection": -0.72,
                 },
             },
             {
@@ -394,14 +385,14 @@ class AutonomousProposalSource:
                 "action_kind": "body_only",
                 "arguments": {"context": "autonomous", "reason_family": "nonverbal_presence"},
                 "supporting_need_ids": ("connection", "sovereignty"),
-                "expected_need_relief": 0.42 if social_wait else (0.32 if not engagement_active else 0.16),
+                "expected_need_relief": 0.32 if not engagement_active else 0.16,
                 "expected_action_efficacy": 0.80,
                 "expected_epistemic_value": 0.08,
                 "value_congruence": 0.50,
                 "substrate_cost": 0.04,
                 "uncertainty": 0.18,
                 "historical_success": 0.50,
-                "commitment_conflict": 0.05 if social_wait else 0.02,
+                "commitment_conflict": 0.02,
                 "evidence_refs": (turn_id,),
                 "need_effects": {"connection": 0.24, "sovereignty": 0.30},
             },

@@ -34,9 +34,18 @@ runtime_state/
 cache/
 *.tmp
 *.bak
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
 
-# Editors / OS
+
+# Editors / OS / Godot build artifacts
+.godot/
+*.pdb
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+

@@ -366,19 +366,6 @@ class SocialContinuationRuntime:
                 return None
             _, _, _, ticket = ranked[0]
             candidate = self._candidate_for(ticket)
-            # V66: afterbeat / exposure recovery đã được state owner duy trì như
-            # một ý định xã hội thật của Eris, không còn là generic opportunity.
-            # Vì vậy affordance mang commitment typed ngay từ source; Neuro chỉ
-            # chọn cách hiện thực hóa, không tái bỏ phiếu SILENCE.
-            commitment = commitment_payload(
-                origin="social_continuation",
-                source_id=ticket.ticket_id,
-                semantic_target=candidate.topic,
-                motive=candidate.speech_act,
-                pressure=max(candidate.urgency, candidate.relevance),
-                freshness=candidate.confidence,
-                persistence=1.0 if ticket.lane == "afterbeat" else 0.82,
-            )
             return ExecutiveAffordance(
                 affordance_id=f"social_continuation:{ticket.ticket_id}:v{ticket.version}",
                 owner="social_continuation",
@@ -387,7 +374,7 @@ class SocialContinuationRuntime:
                 claim_required=True,
                 expires_at=ticket.expires_at,
                 claim_key=ticket.ticket_id,
-                metadata={"lane": ticket.lane, "expression_commitment": commitment},
+                metadata={"lane": ticket.lane},
             )
 
     def claim_affordance(
@@ -729,6 +716,15 @@ class SocialContinuationRuntime:
             speech_act = "exposure_recovery"
             urgency = 0.96
             relevance = 0.94
+        commitment = commitment_payload(
+            origin="social_continuation",
+            source_id=ticket.ticket_id,
+            semantic_target=topic,
+            motive=speech_act,
+            pressure=max(urgency, relevance),
+            freshness=max(0.55, ticket.confidence),
+            persistence=1.0 if ticket.lane == "afterbeat" else 0.82,
+        )
         return SocialSpeechCandidate(
             decision="candidate",
             kind=kind,
@@ -747,6 +743,7 @@ class SocialContinuationRuntime:
             continuation_lane=ticket.lane,
             claim_token=ticket.claim_token,
             idempotency_key=ticket.idempotency_key,
+            expression_commitment=commitment,
         )
 
     def _repair_after_restart_locked(self, now: float) -> None:

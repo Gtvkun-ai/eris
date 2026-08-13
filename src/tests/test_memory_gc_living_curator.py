@@ -49,12 +49,13 @@ def test_deterministic_curator_archives_null_and_resolved_open_loop(tmp_path):
     )
     report = curator.run()
 
-    assert report.archived == 2
+    assert report.archived == 1
+    assert report.deleted == 1
     assert not service.profile_store.get("preferences.chess_sharing")
     assert not service.profile_store.get("open_loops.file_creation")
 
 
-def test_curator_protects_user_authority_record(tmp_path):
+def test_curator_can_restructure_user_authority_record(tmp_path):
     service = LivingUserMemoryService(tmp_path)
     service.correct("user.name", "Khang", evidence_ids=("turn_1",))
     record = service.profile_store.get("user.name")[0]
@@ -62,15 +63,23 @@ def test_curator_protects_user_authority_record(tmp_path):
     def reviewer(system: str, user: str, max_tokens: int):
         return json.dumps({
             "operations": [
-                {"action": "archive", "record_ids": [record.id], "reason": "bad idea"}
+                {
+                    "action": "canonicalize",
+                    "record_ids": [record.id],
+                    "path": "identity.name",
+                    "value": "Khang",
+                    "reason": "normalize path while preserving user-authority meaning",
+                }
             ]
         })
 
     curator = LivingUserMemoryCurator(service, reviewer=reviewer)
     report = curator.run()
 
-    assert service.profile_store.get("user.name")[0].value == "Khang"
-    assert report.archived == 0
+    rows = service.profile_store.get("identity.name")
+    assert report.canonicalized == 1
+    assert rows and rows[0].value == "Khang"
+    assert "turn_1" in rows[0].evidence_ids
 
 
 def test_qwen_cluster_then_deepseek_merge_same_path(tmp_path):

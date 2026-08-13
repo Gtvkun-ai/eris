@@ -62,7 +62,6 @@ def test_quiet_busy_and_unanswered_are_not_expression_boundaries():
         },
         now=130.0,
         contentful=True,
-        user_busy=True,
     )
     assert decision.action is InitiativeControlAction.SPEAK
     assert decision.reason == "self_owned_expression"
@@ -205,7 +204,7 @@ def test_reply_expected_is_conversation_context_not_user_floor_ownership():
             "reply_expected": True,
             "seconds_since_last_autonomous_speech": 100.0,
         },
-        now=130.0, contentful=True, reply_expected=True,
+        now=130.0, contentful=True,
     )
     assert decision.action is InitiativeControlAction.SPEAK
     assert decision.reason == "self_owned_expression"

@@ -63,6 +63,7 @@ class EnvironmentMeaning:
     evidence_refs: tuple[str, ...]
     source_grade: str
     public_claim_safe: bool
+    semantic_key: str
     revision: int
 
     def to_dict(self) -> dict[str, Any]:
@@ -77,6 +78,7 @@ class EnvironmentMeaning:
             "evidence_refs": list(self.evidence_refs),
             "source_grade": self.source_grade,
             "public_claim_safe": bool(self.public_claim_safe),
+            "semantic_key": self.semantic_key,
             "revision": int(self.revision),
         }
 
@@ -117,6 +119,15 @@ class EnvironmentMeaningDeriver:
         source = str(payload.get("source") or "").lower()
         privacy = str(payload.get("privacy") or "normal").lower()
         return source not in cls._VISUAL_SOURCES and privacy not in {"off", "metadata", "private", "sensitive"}
+
+    @staticmethod
+    def _semantic_key(kind: str, semantic_object: str) -> str:
+        # Identity của meaning KHÔNG phụ thuộc evidence/event ID. Cùng một đối
+        # tượng đứng yên trên desktop phải là cùng semantic state, không phải một
+        # "sự kiện mới" chỉ vì accessibility phát ref mới ở tick sau.
+        normalized = " ".join(str(semantic_object or "").casefold().split())[:320]
+        digest = hashlib.sha1(f"{kind}|{normalized}".encode("utf-8", "ignore")).hexdigest()[:14]
+        return f"{kind}:{digest}"
 
     @staticmethod
     def _revision(kind: str, refs: Sequence[str], semantic_object: str) -> int:
@@ -202,6 +213,7 @@ class EnvironmentMeaningDeriver:
                 evidence_refs=refs_tuple,
                 source_grade=source_grade,
                 public_claim_safe=bool(public_claim_safe and refs_tuple),
+                semantic_key=self._semantic_key(kind.value, obj),
                 revision=self._revision(kind.value, refs_tuple, obj),
             ))
 

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from cortex.subject.expression_commitment import commitment_payload
 
 from types import SimpleNamespace
 
@@ -159,7 +160,7 @@ def test_mental_material_expression_lane_can_form_expression_desire():
     shaped = runtime.shape_affordances((ready,), now=100.0)
     assert len(shaped) == 1
     assert shaped[0].owner == "expression_urge"
-    assert shaped[0].metadata["expression_commitment"]["origin"] == "expression_urge"
+    assert shaped[0].candidate.expression_commitment["origin"] == "expression_urge"
 
 def test_paraphrase_same_evidence_merges_and_does_not_pump_novelty():
     runtime = _runtime()
@@ -300,6 +301,10 @@ def test_contentful_urge_can_change_neuro_winner_without_lowering_silence_thresh
             "expression_pressure": 0.80,
             "expression_freshness": 0.80,
             "expression_satisfaction": 0.0,
+            "expression_commitment": commitment_payload(
+                origin="expression_urge", source_id="urge:test", semantic_target="ý contentful",
+                pressure=0.8, freshness=0.8, persistence=1.0,
+            ),
         },
     )
     after_frame = SimpleNamespace(**{**frame.__dict__, "coalitions": (urge_speak, silence)})
@@ -383,6 +388,10 @@ def test_v44_1_ready_urge_can_beat_strong_silence_when_baton_is_open():
             "expression_freshness": 0.85,
             "expression_satisfaction": 0.0,
             "expression_readiness": 0.93,
+            "expression_commitment": commitment_payload(
+                origin="expression_urge", source_id="urge:ready", semantic_target="ý ready",
+                pressure=1.0, freshness=0.85, persistence=1.0,
+            ),
         },
     )
     silence = coalition("silence", 0.64, {})
@@ -426,6 +435,10 @@ def test_v66_reply_expected_does_not_veto_ready_expression_urge():
             "expression_freshness": 0.85,
             "expression_satisfaction": 0.0,
             "expression_readiness": 0.93,
+            "expression_commitment": commitment_payload(
+                origin="expression_urge", source_id="urge:ready:reply", semantic_target="ý ready khi đang chờ reply",
+                pressure=1.0, freshness=0.85, persistence=1.0,
+            ),
         },
     )
     silence = coalition("silence", 0.64, {})

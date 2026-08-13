@@ -505,27 +505,12 @@ class SocialAgendaStore:
                 return None
             _, goal = selected
             candidate = self._candidate_for_goal(goal)
-            # V66: goal active đã qua lifecycle/salience của chính Eris. Khi nó
-            # đến hạn, đây là commitment xã hội chứ không phải lời đề nghị để
-            # một governor khác hỏi lại "user có muốn nghe không?".
-            commitment = commitment_payload(
-                origin="social_agenda",
-                source_id=f"{goal.goal_id}:move:{goal.move_seq + 1}",
-                semantic_target=candidate.topic,
-                motive=goal.goal_type or candidate.speech_act,
-                pressure=max(goal.salience, candidate.urgency),
-                freshness=goal.confidence,
-                persistence=max(0.35, 1.0 - goal.progress),
-            )
             return ExecutiveAffordance(
                 affordance_id=f"social_agenda:{goal.goal_id}:v{goal.version}",
                 owner="social_agenda", revision=goal.version,
                 candidate=candidate, claim_required=True,
                 expires_at=0.0, claim_key=goal.goal_id,
-                metadata={
-                    "goal_type": goal.goal_type,
-                    "expression_commitment": commitment,
-                },
+                metadata={"goal_type": goal.goal_type},
             )
 
     def claim_affordance(
@@ -664,6 +649,15 @@ class SocialAgendaStore:
             "Choose one semantic move only: yield, callback, continue_bit, share, invite_story, "
             "light_challenge, soft_check_in, reopen_topic, or close_goal. Do not reveal the goal machinery."
         )
+        commitment = commitment_payload(
+            origin="social_agenda",
+            source_id=f"{goal.goal_id}:move:{goal.move_seq + 1}",
+            semantic_target=topic,
+            motive=goal.goal_type or "advance_social_goal",
+            pressure=max(goal.salience, max(0.15, 0.45 - goal.progress * 0.2)),
+            freshness=goal.confidence,
+            persistence=max(0.35, 1.0 - goal.progress),
+        )
         return SocialSpeechCandidate(
             decision="candidate",
             kind="social_agenda",
@@ -682,6 +676,7 @@ class SocialAgendaStore:
             continuation_lane="social_agenda",
             claim_token=goal.claim_token,
             idempotency_key=f"{goal.goal_id}:move:{goal.move_seq + 1}",
+            expression_commitment=commitment,
         )
 
     def snapshot(self, *, now: float | None = None) -> dict[str, Any]:

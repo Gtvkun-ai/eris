@@ -811,6 +811,7 @@ class ExecutiveCortex:
             "activity, emotion, or fatigue. A seed premise is semantic material, not permission to invent a current scene. "
             "reversibility measures how easy the wording is to revise. If an ExpressionCommitment exists, you are a critic only: "
             "you may request grounding/revision or rank speech realizations, but you must not reinterpret quiet as a reason to revoke expression. "
+            "Write the JSON reason and semantic_commitments in natural Vietnamese so runtime traces stay readable; do not switch to Chinese. "
             "semantic_commitments are meaning constraints "
             "for the final chosen action, never public wording. cognitive_requests may use only verify_evidence, reduce_intrusion, "
             "preserve_continuity, estimate_capability, inspect_dissent. Return exactly one JSON object."
@@ -1411,6 +1412,7 @@ class ExecutiveCortex:
         semantic_target = _compact(arguments.get("semantic_target", ""), 1600)
         speech_act = _compact(arguments.get("speech_act", ""), 100).lower()
         tone = _compact(arguments.get("tone", ""), 100).lower()
+        expression_commitment = read_commitment(arguments)
 
         base = ExecutiveDecision(
             action="silence",
@@ -1436,6 +1438,9 @@ class ExecutiveCortex:
             return ExecutiveOutcome(None, "", "body_only", reason, decision)
         if action_kind != "speak":
             return None
+        if expression_commitment is None:
+            unavailable = replace(base, action="silence", reason="speak_without_expression_commitment")
+            return ExecutiveOutcome(None, "", "silence", unavailable.reason, unavailable)
         if bool(arguments.get("capability_route", False)):
             return None
 
@@ -1494,6 +1499,7 @@ class ExecutiveCortex:
                 expression_freshness=_clamp01(arguments.get("expression_freshness", 0.0)),
                 expression_satisfaction=_clamp01(arguments.get("expression_satisfaction", 0.0)),
                 expression_motive=str(arguments.get("expression_motive") or ""),
+                expression_commitment=expression_commitment.to_dict(),
             )
             decision = replace(base, action="select_affordance", affordance_id=wanted)
             return ExecutiveOutcome(candidate, wanted, "use_candidate", reason, decision)
@@ -1521,6 +1527,10 @@ class ExecutiveCortex:
 
         committed = subject_frame.coalitions[0]
         committed_args = dict(getattr(committed, "arguments", {}) or {})
+        expression_commitment = read_commitment(committed_args)
+        if expression_commitment is None:
+            decision = ExecutiveDecision.unavailable("capability_route_without_expression_commitment")
+            return ExecutiveOutcome(None, "", "silence", decision.reason, decision)
         if not bool(committed_args.get("capability_route", False)):
             decision = ExecutiveDecision.unavailable("capability_planner_without_committed_route")
             return ExecutiveOutcome(None, "", "silence", decision.reason, decision)
@@ -1577,7 +1587,10 @@ class ExecutiveCortex:
                 return ExecutiveOutcome(None, "", "silence", unavailable.reason, unavailable)
             decision = replace(decision, capability_result=result)
         if decision.action == "speak_from_capability":
-            candidate = self._candidate_from_capability(decision)
+            candidate = self._candidate_from_capability(
+                decision,
+                expression_commitment=expression_commitment.to_dict(),
+            )
             if candidate is None:
                 silent = replace(decision, action="silence", reason="capability_result_not_grounded")
                 return ExecutiveOutcome(None, "", "silence", silent.reason, silent)
@@ -1807,7 +1820,11 @@ class ExecutiveCortex:
             return candidate
 
     @staticmethod
-    def _candidate_from_capability(decision: ExecutiveDecision) -> Any | None:
+    def _candidate_from_capability(
+        decision: ExecutiveDecision,
+        *,
+        expression_commitment: Mapping[str, Any],
+    ) -> Any | None:
         result = decision.capability_result or {}
         if not bool(result.get("success")) or not bool(result.get("observed")):
             return None
@@ -1833,6 +1850,7 @@ class ExecutiveCortex:
                 tone=decision.tone or "matter_of_fact_warm",
                 reason=f"capability_planner:verified_capability:{capability_id}:{decision.reason}",
                 source="capability_planner",
+                expression_commitment=dict(expression_commitment),
             )
         except Exception:
             return None

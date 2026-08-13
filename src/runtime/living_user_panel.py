@@ -9,6 +9,7 @@ một bài thơ hậu hiện đại không parse được.
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any, Mapping
@@ -146,16 +147,14 @@ def build_memory_panel_snapshot(
     cleanup_service: Any = None,
 ) -> dict[str, Any]:
     """Tạo payload UI nhỏ, ổn định và không chứa memory nhạy cảm."""
-    records = [
-        _record_to_panel_dict(record)
-        for record in living_user.list_memories(
-            include_inferred=include_inferred,
-            include_sensitive=False,
-            project_id=project_id,
-            limit=limit,
-        )
-        if not record.metadata.get("hidden_from_ui")
-    ]
+    raw_records = list(living_user.list_memories(
+        include_inferred=include_inferred,
+        include_sensitive=False,
+        project_id=project_id,
+        limit=max(limit * 4, 160),
+    ))
+    visible_records = _select_user_readable_records(raw_records, limit=limit)
+    records = [_record_to_panel_dict(record) for record in visible_records]
 
     actions = living_user.action_snapshot()
     goals = _compact_action_rows(actions.get("goals"), "goal", 18)
@@ -163,7 +162,8 @@ def build_memory_panel_snapshot(
     workflows = _compact_action_rows(actions.get("workflows"), "workflow", 18)
 
     cleanup_status = _cleanup_status(cleanup_service)
-    feed_trace = _feed_trace_snapshot(living_user)
+    # Feed trace là telemetry/debug, không phải thứ user cần đọc trong "ERIS nhớ gì".
+    # Journal vẫn tồn tại cho developer/audit; payload user-facing không dump nó nữa.
     counts = {
         "total": len(records),
         "confirmed": sum(1 for row in records if row["explicitness"] == "explicit"),
@@ -175,9 +175,9 @@ def build_memory_panel_snapshot(
         "workflows": len(workflows),
     }
     return {
-        "schema_version": 3,
-        "authority_mode": "canonical_ledger",
-        "memory_policy": "v41_admission_before_prompt",
+        "schema_version": 4,
+        "authority_mode": "deepseek_canonical_projection",
+        "memory_policy": "v68_curator_authoritative_working_store",
         "summary_text": _render_panel_brief(records),
         "counts": counts,
         "records": records,
@@ -185,11 +185,54 @@ def build_memory_panel_snapshot(
         "commitments": commitments,
         "workflows": workflows,
         "cleanup": cleanup_status,
-        "memory_feed_trace": feed_trace,
         "project_id": project_id,
         "generated_at": time.time(),
     }
 
+
+
+_GARBAGE_PATH_RE = re.compile(r"(?:^|\.)upr(?:[_\.-]?)[0-9a-f]{8,}(?:\.|$)", re.IGNORECASE)
+_NON_PROFILE_PREFIXES = (
+    "open_loops.", "goals.open_loops", "runtime.", "tracking.", "telemetry.",
+    "internal.", "debug.", "temporary.",
+)
+
+def _select_user_readable_records(records: list[Any], *, limit: int) -> list[Any]:
+    """Panel chỉ hiển thị projection có giá trị đọc, không dump working DB.
+
+    DeepSeek V68 đánh dấu ``canonical_user_memory`` sau khi canonicalize/rewrite/merge.
+    Nếu profile cũ chưa từng được curator V68 chạy, fallback bảo thủ chỉ giữ path
+    sạch và mỗi path/scope một record mạnh nhất. Raw UPR/open-loop/technical state
+    biến mất khỏi UI ngay cả trước lượt cleanup đầu tiên.
+    """
+    usable = [r for r in records if not _record_is_ui_garbage(r)]
+    canonical = [r for r in usable if bool(getattr(r, "metadata", {}).get("canonical_user_memory"))]
+    pool = canonical if canonical else usable
+    best: dict[tuple[str, str], Any] = {}
+    for record in pool:
+        key = (str(getattr(record, "path", "")), str(getattr(getattr(record, "scope", None), "identity", "global")))
+        current = best.get(key)
+        if current is None or (float(getattr(record, "trust_weight", 0.0)), float(getattr(record, "updated_at", 0.0))) > (
+            float(getattr(current, "trust_weight", 0.0)), float(getattr(current, "updated_at", 0.0))
+        ):
+            best[key] = record
+    rows = sorted(best.values(), key=lambda r: (-float(getattr(r, "trust_weight", 0.0)), -float(getattr(r, "updated_at", 0.0))))
+    return rows[: max(1, int(limit))]
+
+def _record_is_ui_garbage(record: Any) -> bool:
+    metadata = getattr(record, "metadata", {}) or {}
+    if bool(metadata.get("hidden_from_ui")):
+        return True
+    path = str(getattr(record, "path", "") or "").strip().lower()
+    if not path or _GARBAGE_PATH_RE.search(path) or path.startswith(_NON_PROFILE_PREFIXES):
+        return True
+    value = str(getattr(record, "value", "") or "").strip()
+    if not value or value.lower() in {"none", "null", "unknown", "n/a"}:
+        return True
+    # ID kỹ thuật lộ thẳng ra value không phải memory người dùng cần đọc.
+    if re.fullmatch(r"(?:upr_)?[0-9a-f]{16,}", value, flags=re.IGNORECASE):
+        return True
+    return False
 
 
 def _render_panel_brief(records: list[dict[str, Any]]) -> str:
@@ -397,23 +440,6 @@ def _cleanup_status(cleanup_service: Any) -> dict[str, Any]:
         "available": True,
         "auto_cleanup": bool(getattr(cleanup_service, "auto_cleanup_enabled", False)),
         "last_result": _json_safe(getattr(cleanup_service, "last_result", {}) or {}),
-    }
-
-
-def _feed_trace_snapshot(living_user: Any) -> dict[str, Any]:
-    trace = getattr(living_user, "memory_feed_trace", None)
-    recent = getattr(trace, "recent", None)
-    if not callable(recent):
-        return {"available": False, "recent": []}
-    try:
-        rows = list(recent(8))
-    except Exception:
-        rows = []
-    latest = rows[-1] if rows else {}
-    return {
-        "available": True,
-        "latest": _json_safe(latest),
-        "recent": [_json_safe(row) for row in rows[-8:]],
     }
 
 

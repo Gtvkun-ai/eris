@@ -3,8 +3,8 @@
 
 V18 giao controller đúng một trách nhiệm: kiểm quyền phát cho một typed candidate
 do Social Initiative Worker đề xuất. Controller không nghĩ topic, không đọc OCR
-thô, không gọi model và không viết lời public. V66 chỉ giữ reply/turn collision,
-cooldown, budget, duplicate và provenance trước Surface Realizer.
+thô, không gọi model và không viết lời public. V67 materialize duy nhất typed ExpressionCommitment đã được Subject/Neuro chọn;
+reply_expected/user_busy chỉ còn là discourse/scene metadata ở nơi khác.
 """
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ from .contracts import IntentionPlan
 from .cognitive_blackboard import TypedCognitiveBlackboard
 from .semantic_contracts import TurnSemantics
 from .social_candidate import SocialSpeechCandidate
+from cortex.subject.expression_commitment import read_commitment
 
 
 def _setting(name: str, default: Any) -> Any:
@@ -242,35 +243,19 @@ class InitiativeController:
         self,
         blackboard: TypedCognitiveBlackboard,
         candidate: SocialSpeechCandidate | None = None,
-        *,
-        committed_by_neuro: bool = False,
     ) -> InitiativeDecision:
-        """Materialize candidate sau Subject/Neuro hoặc compatibility policy cũ.
+        """Materialize một candidate đã được Subject/Neuro commit.
 
-        V66 runtime gọi ``committed_by_neuro=True`` cho ExpressionCommitment.
-        Khi đó controller tuyệt đối không bỏ phiếu lại action-family. Downstream
-        chỉ còn stale/race/grounding/safety và realization.
-
-        ``False`` giữ API compatibility, nhưng vẫn theo cùng triết lý native:
-        ``user_busy`` hay thời gian từ user turn không phải quyền phủ quyết.
+        V67 bỏ hoàn toàn cờ compatibility V66. Public lane
+        chỉ chấp nhận candidate có typed ``ExpressionCommitment`` ngay trên chính
+        candidate. Controller không rerank, không hỏi lại reply baton và không
+        suy user im lặng thành boundary.
         """
 
         silence = IntentionPlan.silence(channel="autonomous", reason="initiative_no_op")
         has_delta = bool(blackboard.mechanical_delta or blackboard.activity_event)
         if not _as_bool(_setting("enabled", True), True):
             return InitiativeDecision(InitiativeAction.NO_OP, "initiative_disabled", silence)
-        candidate_kind = str(getattr(candidate, "kind", "") or "") if candidate is not None else ""
-        reserved_override = candidate_kind in {"conversation_arc", "afterbeat"}
-        reaction_override = candidate_kind == "social_exposure_recovery"
-        reply_baton_override = candidate_kind in {
-            "followup_reminder",
-            "force_speak",
-            "task_followup",
-        }
-        if not committed_by_neuro:
-            if blackboard.reply_expected and not reserved_override and not reaction_override and not reply_baton_override:
-                action = InitiativeAction.BODY_ONLY if has_delta and not blackboard.privacy_blocked else InitiativeAction.NO_OP
-                return InitiativeDecision(action, "waiting_for_user_reply", silence, body_motion="quiet_presence")
         if candidate is None or not candidate.available:
             if has_delta and not blackboard.privacy_blocked:
                 return InitiativeDecision(
@@ -279,29 +264,19 @@ class InitiativeController:
                     silence,
                     body_motion="curious_glance",
                 )
-            return InitiativeDecision(
-                InitiativeAction.NO_OP,
-                "no_speech_candidate",
-                silence,
-            )
+            return InitiativeDecision(InitiativeAction.NO_OP, "no_speech_candidate", silence)
+
+        raw_commitment = getattr(candidate, "expression_commitment", {})
+        commitment = read_commitment(
+            {"expression_commitment": raw_commitment}
+            if isinstance(raw_commitment, Mapping) else {}
+        )
+        if commitment is None:
+            # Fail closed ở đúng public boundary. Opportunity không commitment vẫn
+            # có thể sống trong cognition, nhưng không được biến thành lời public.
+            return InitiativeDecision(InitiativeAction.NO_OP, "candidate_without_expression_commitment", silence)
 
         plan, mode, motion, anchor_type, anchor_id, refs = self._plan_for_candidate(candidate, blackboard)
-        if committed_by_neuro:
-            # Neuro đã thấy policy cost trước commit. Không chạy lại cooldown/baton
-            # ở đây, nếu không "single authority" chỉ là khẩu hiệu khá đắt tiền.
-            allowed, reason = True, "neuro_committed"
-        else:
-            allowed, reason = self.evaluate(
-                plan,
-                now=blackboard.now,
-                user_busy=False,
-                seconds_since_user=blackboard.seconds_since_user,
-            )
-            if not allowed:
-                if has_delta and not blackboard.privacy_blocked and self.should_body_only(reason, has_perception_delta=True):
-                    return InitiativeDecision(InitiativeAction.BODY_ONLY, reason, plan, body_motion=motion)
-                return InitiativeDecision(InitiativeAction.NO_OP, reason, plan)
-
         seed_context = getattr(candidate, "random_chat_seed", {})
         if not isinstance(seed_context, Mapping):
             seed_context = {}
@@ -310,7 +285,7 @@ class InitiativeController:
             allowed_claim_domains.add("internal_state")
         if anchor_type in {"conversation", "idle", "internal", "self", "presence"}:
             allowed_claim_domains.update({"conversation_history", "user_statement"})
-        if anchor_type in {"screen", "semantic_scene", "activity"}:
+        if anchor_type in {"screen", "semantic_scene", "activity", "environment"}:
             allowed_claim_domains.add("grounded_environment")
         if anchor_type == "memory":
             allowed_claim_domains.add("memory")
@@ -328,14 +303,15 @@ class InitiativeController:
             allowed_claim_domains=tuple(sorted(allowed_claim_domains)),
             max_sentences=1,
             random_chat_seed=dict(seed_context),
+            expression_commitment=commitment.to_dict(),
             owner=str(getattr(plan, "owner", "social_initiative") or "social_initiative"),
             trace_id=str(plan.plan_id or candidate.idempotency_key),
-            generation_epoch=0,  # Pipeline đóng epoch theo turn_seq ngay trước Surface.
+            generation_epoch=0,
             claim_token=str(getattr(candidate, "claim_token", "") or ""),
         )
         return InitiativeDecision(
             InitiativeAction.SPEECH,
-            reason,
+            "expression_committed",
             plan,
             speech_intent=speech_intent,
             body_motion=motion,
@@ -353,9 +329,6 @@ class InitiativeController:
         """
 
         now = float(getattr(blackboard, "now", 0.0) or time.time())
-        seconds_since_user = max(0.0, float(getattr(blackboard, "seconds_since_user", 0.0) or 0.0))
-        reply_expected = bool(getattr(blackboard, "reply_expected", False))
-        user_busy = bool(getattr(blackboard, "user_busy", False))
         with self._lock:
             events = tuple(item for item in self._state.events if now - item.timestamp <= 3600.0)
         global_budget = max(1, int(_as_float(_setting("global_hourly_budget", 40), 40)))
@@ -369,20 +342,17 @@ class InitiativeController:
             kind = str(getattr(candidate, "kind", "") or "")
             metadata = getattr(affordance, "metadata", {})
             metadata = metadata if isinstance(metadata, Mapping) else {}
-            expression_committed = isinstance(metadata.get("expression_commitment"), Mapping)
-            reserved = kind in {"conversation_arc", "afterbeat", "social_exposure_recovery"}
-            baton_override = kind in {"followup_reminder", "force_speak", "task_followup"}
+            expression_committed = read_commitment(
+                {"expression_commitment": getattr(candidate, "expression_commitment", {})}
+            ) is not None
             plan, _mode, _motion, _anchor_type, _anchor_id, _refs = self._plan_for_candidate(candidate, blackboard)
             profile = profile_for_plan(plan)
             same_kind = tuple(item for item in events if item.kind == profile.kind)
 
-            # V66: self-owned expression chỉ bị chặn bởi active turn collision.
-            # "user_busy" và thời gian từ user turn không còn là quyền phủ quyết.
-            reply_cost = 0.0 if reserved or baton_override else (0.92 if reply_expected else 0.0)
-            busy_cost = 0.0
-            recent_cost = 0.0
+            # V67: policy chỉ đo self-density/repetition. reply_expected/user_busy
+            # là discourse/scene metadata và không xuất hiện trong policy schema.
             cooldown_cost = 0.0
-            if not reserved and same_kind and profile.cooldown_seconds > 0.0:
+            if same_kind and profile.cooldown_seconds > 0.0:
                 elapsed = max(0.0, now - same_kind[-1].timestamp)
                 cooldown_cost = min(1.0, max(0.0, profile.cooldown_seconds - elapsed) / profile.cooldown_seconds)
             kind_budget_pressure = min(1.0, len(same_kind) / max(1, profile.hourly_budget))
@@ -397,22 +367,14 @@ class InitiativeController:
                         repeat_cost = 0.94
                         break
             total = max(
-                reply_cost,
-                # Các cost còn lại là self-density / repetition, không phải đoán
-                # user muốn hay không muốn nghe.
                 0.62 * cooldown_cost,
                 0.42 * global_pressure,
                 0.48 * kind_budget_pressure,
                 repeat_cost,
             )
             result[affordance_id] = {
-                "schema": "eris.initiative_policy_signal.v66",
+                "schema": "eris.initiative_policy_signal.v67",
                 "total_cost": round(max(0.0, min(1.0, total)), 4),
-                "reply_expected": reply_expected,
-                "reply_cost": round(reply_cost, 4),
-                "user_busy": user_busy,
-                "busy_cost": round(busy_cost, 4),
-                "recent_user_cost": round(recent_cost, 4),
                 "cooldown_cost": round(cooldown_cost, 4),
                 "repeat_cost": round(repeat_cost, 4),
                 "global_budget_pressure": round(global_pressure, 4),
@@ -543,8 +505,6 @@ class InitiativeController:
         plan: Any,
         *,
         now: float | None = None,
-        user_busy: bool = False,
-        seconds_since_user: float = 0.0,
         **_: Any,
     ) -> tuple[bool, str]:
         now = float(now if now is not None else time.time())
@@ -560,10 +520,6 @@ class InitiativeController:
         if profile.kind in {"arc_continuation", "afterbeat", "social_exposure"}:
             reason = {"arc_continuation": "reserved_arc_continuation", "afterbeat": "reserved_afterbeat", "social_exposure": "exposure_recovery"}[profile.kind]
             return self._remember(True, reason, plan, now, profile=profile)
-        # V66: ``user_busy`` và recency của user chỉ là context cho wording/scene.
-        # Chúng không quyết định quyền biểu đạt. Turn collision thật được giữ ở
-        # reply baton / interaction lock trước khi tới controller.
-
         with self._lock:
             events = tuple(item for item in self._state.events if now - item.timestamp <= 3600.0)
         # Companion-commentary là chế độ nghe ERIS sống cùng màn hình, không phải

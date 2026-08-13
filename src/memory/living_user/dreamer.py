@@ -81,20 +81,9 @@ class UserProfileDreamer:
                     source="dream_deterministic",
                     metadata={"episode_id": episode.id},
                 ))
-            for loop in episode.open_loops[:4]:
-                out.append(ProfileOperation(
-                    op="reinforce",
-                    path="goals.open_loops",
-                    value=loop,
-                    confidence=clamp01(0.55 + episode.importance * 0.25),
-                    explicitness="observed",
-                    scope=effective_scope,
-                    cardinality="multi",
-                    evidence_ids=episode.evidence_ids,
-                    reason="Việc người dùng để mở ở cuối episode.",
-                    source="dream_deterministic",
-                    metadata={"episode_id": episode.id, "expires_at": episode.ended_at + 60 * 60 * 24 * 45},
-                ))
+            # V68: open loop thuộc episode/action continuity, KHÔNG phải chân dung user.
+            # Giữ nó trong episode_store/context_compiler; tuyệt đối không chiếu sang
+            # canonical user profile rồi bắt user nhìn một danh sách "nợ câu trả lời".
         return out
 
     def _model_ops(self, episodes: list[UserEpisode], *, reason: str, scope: UserMemoryScope | None) -> list[ProfileOperation]:
@@ -111,6 +100,7 @@ class UserProfileDreamer:
                 "Không suy diễn thuộc tính nhạy cảm.",
                 "Dùng update/supersede khi thông tin đã thay đổi.",
                 "Không chép nguyên văn cả cuộc trò chuyện vào profile.",
+                "Không tạo goals.open_loops/open_loops trong user profile; open loop thuộc episode/action continuity.",
             ],
         }
         try:

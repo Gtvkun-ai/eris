@@ -82,7 +82,6 @@ def test_discourse_state_obeys_observer_waiting_user_without_text_heuristic() ->
                 "evidence": ["observer:last_public_turn"],
             }
         },
-        seconds_since_user=50,
         seconds_since_assistant=10,
     )
     assert state.reply_expected is True
@@ -155,11 +154,11 @@ def test_initiative_uses_typed_kind_cooldowns_not_global_twenty_minutes(tmp_path
 
     controller = InitiativeController(state_path=tmp_path / "initiative.json")
     first = _plan(subject_key="autonomous_architecture")
-    assert controller.evaluate(first, now=1000, seconds_since_user=50)[0] is True
+    assert controller.evaluate(first, now=1000)[0] is True
     controller.record_spoken(first, now=1000)
 
     second = _plan(subject_key="activity_session")
-    assert controller.evaluate(second, now=1040, seconds_since_user=50) == (True, "allowed")
+    assert controller.evaluate(second, now=1040) == (True, "allowed")
 
     environment = _plan(
         kind="environment",
@@ -176,7 +175,6 @@ def test_initiative_uses_typed_kind_cooldowns_not_global_twenty_minutes(tmp_path
             topic="Godot hiện lỗi mới",
         ),
         now=1120,
-        seconds_since_user=50,
     )
     assert denied is False
     assert reason == "kind_cooldown"
@@ -201,7 +199,6 @@ def test_initiative_blocks_exact_model_semantic_signature_not_word_overlap(tmp_p
             topic="câu chữ hoàn toàn khác nhưng semantic key vẫn giữ nguyên",
         ),
         now=1100,
-        seconds_since_user=60,
     )
     assert allowed is False
     assert reason == "semantic_repeat"
@@ -215,7 +212,6 @@ def test_initiative_blocks_exact_model_semantic_signature_not_word_overlap(tmp_p
             topic="hỏi người dùng về game Mini World đang mở",
         ),
         now=1100,
-        seconds_since_user=60,
     )
     assert (allowed, reason) == (True, "allowed")
 

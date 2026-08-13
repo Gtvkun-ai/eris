@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from cortex.active_concern import private_concern_view
+from cortex.subject.expression_commitment import commitment_payload
 from cortex.private_mind.concern_store import ConcernStore
 from cortex.private_mind.contracts import ThoughtFragment
 from runtime.active_concern_runtime import ActiveConcernRuntime
@@ -41,6 +42,10 @@ def _seed_candidate(seed_id: str, topic: str, *, evidence_refs=("seed-source",))
         uncertainty=0.24,
         source_kind="recent_shared_context",
         seed_event_kind="thought",
+        expression_commitment=commitment_payload(
+            origin="test_seed", source_id=seed_id, semantic_target=topic,
+            pressure=0.8, freshness=0.9, persistence=0.7,
+        ),
     )
 
 
@@ -219,35 +224,36 @@ def _social_candidate() -> SocialSpeechCandidate:
         relevance=0.75,
         urgency=0.20,
         source="random_chat_seed",
+        expression_commitment=commitment_payload(
+            origin="test", source_id="social:v67", semantic_target="chia sẻ một ý mới có nội dung",
+            pressure=0.8, freshness=0.9, persistence=0.7,
+        ),
     )
 
 
-def test_waiting_for_user_is_feature_before_neuro_not_downstream_veto(tmp_path: Path):
+def test_reply_expected_is_not_part_of_expression_policy_or_public_veto(tmp_path: Path):
     controller = InitiativeController(state_path=tmp_path / "initiative.json")
     board = _board(reply_expected=True)
     candidate = _social_candidate()
     aff = SimpleNamespace(affordance_id="aff:wait", candidate=candidate)
     signals = controller.policy_signals(board, (aff,))
-    assert signals["aff:wait"]["reply_cost"] >= 0.9
+    assert "reply_cost" not in signals["aff:wait"]
+    assert "reply_expected" not in signals["aff:wait"]
 
-    # Legacy callers still get the old guard, but production path after Neuro does not.
-    assert controller.decide(board, candidate).action is not InitiativeAction.SPEECH
-    committed = controller.decide(board, candidate, committed_by_neuro=True)
+    # Typed commitment là đủ contract cho materializer; không còn cờ compatibility.
+    committed = controller.decide(board, candidate)
     assert committed.action is InitiativeAction.SPEECH
-    assert committed.reason == "neuro_committed"
+    assert committed.reason == "expression_committed"
 
-
-def test_policy_cost_is_attached_to_speech_proposal_before_neuro():
+def test_expression_commitment_ignores_policy_cost_as_action_authority():
     proposal = AutonomousProposalSource.from_affordance(
         _aff("seed.v42.policy", "một ý đủ cụ thể để chia sẻ"),
         turn_id="autonomous:42",
-        policy_signal={"total_cost": 0.92, "reply_expected": True, "reply_cost": 0.92},
+        policy_signal={"total_cost": 0.92, "cooldown_cost": 0.92},
     )
     assert proposal is not None
-    assert proposal["arguments"]["initiative_policy_cost"] == 0.92
-    assert proposal["substrate_cost"] > 0.4
-    assert proposal["commitment_conflict"] > 0.4
-
+    assert proposal["arguments"]["initiative_policy_cost"] == 0.0
+    assert proposal["arguments"]["expression_commitment"]
 
 def test_claim_domain_contract_rejects_sensor_claim_without_authority():
     verdict = validate_claim_manifest(
@@ -298,8 +304,12 @@ def test_grounding_validator_does_not_re_veto_reply_baton_after_neuro(tmp_path: 
         evidence_refs=("turn:1",),
         confidence=0.8,
         relevance=0.8,
+        expression_commitment=commitment_payload(
+            origin="test", source_id="continuation:v67", semantic_target="tiếp đúng thread đã được Neuro commit",
+            pressure=0.8, freshness=0.9, persistence=0.8,
+        ),
     )
-    decision = controller.decide(board, candidate, committed_by_neuro=True)
+    decision = controller.decide(board, candidate)
     assert decision.speech_intent is not None
     assert AutonomousGroundingValidator().validate_intent(decision.speech_intent, board).allowed is True
 

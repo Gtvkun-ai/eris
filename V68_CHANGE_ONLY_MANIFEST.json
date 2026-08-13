@@ -1,0 +1,29 @@
+{
+  "version": "V68",
+  "base": "V67 Expression Contract Final",
+  "type": "change_only_overlay",
+  "changed_files": [
+    "body/UdpListener.MemoryPanel.cs",
+    "cortex/subject/environment_meaning.py",
+    "cortex/subject/initiative.py",
+    "cortex/subject/initiative_control.py",
+    "integration/body_contracts/UdpListener.MemoryPanel.cs",
+    "integration/body_contracts/UdpListener.MemoryPanel.cs.fixture.txt",
+    "memory/living_user/curator.py",
+    "memory/living_user/dreamer.py",
+    "memory/living_user/store.py",
+    "runtime/ai_orchestrated/executive_cortex.py",
+    "runtime/ai_orchestrated/semantic_environment_worker.py",
+    "runtime/ai_orchestrated/surface_intent.py",
+    "runtime/living_user_panel.py",
+    "runtime/memory_gc_service.py",
+    "runtime/subject_initiative_runtime.py",
+    "tests/test_memory_authority_v41.py",
+    "tests/test_memory_gc_living_curator.py",
+    "tests/test_memory_hygiene_v41.py",
+    "tests/test_v68_memory_curator_environment_semantics.py"
+  ],
+  "deleted_files": [],
+  "notes": "DeepSeek authoritative working-memory canonicalization + semantic environment edge/self-reference fix.",
+  "direct_regression": "104/104 passed"
+}

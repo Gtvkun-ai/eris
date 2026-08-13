@@ -5,15 +5,16 @@ Luồng mới:
 1. Chạy maintenance deterministic/canonical hiện có.
 2. Dùng DeepSeek worker ``critic`` để rà semantic memory.
 3. Dọn Living User Memory:
-   - rule deterministic xử lý null/open-loop đã xong;
+   - rule deterministic xử lý null/open-loop chắc chắn;
    - Qwen embedding gom duplicate/near-duplicate;
-   - DeepSeek critic đề xuất archive/weaken/merge;
-   - validator trong UserProfileStore mới được áp dụng thật.
+   - DeepSeek curator có toàn quyền cấu trúc working profile: delete/archive/merge/
+     rewrite/canonicalize, kể cả representation từng được user xác nhận;
+   - store giữ audit/undo và evidence để quyền cấu trúc không biến thành quyền bịa fact.
 4. Thu gọn undo history và anchor journal.
 
-Mặc định chạy mỗi 10 phút. Không chạy khi chat bận. Critic không có quyền sửa value,
-tạo fact mới hoặc đụng vào memory do người dùng xác nhận trực tiếp. Một chút giới hạn
-quyền lực chưa từng làm hại hệ thống lưu dữ liệu cá nhân nào cả.
+Mặc định chạy mỗi 10 phút. Không chạy khi chat bận. V68 bảo vệ *meaning/evidence*,
+không bảo vệ hình dạng record rác. User không được thuê làm DBA chỉ vì extractor từng
+đẻ ra một path xấu.
 """
 from __future__ import annotations
 
@@ -91,10 +92,12 @@ class MemoryGCResult:
     living_reviewed: int = 0
     living_applied: int = 0
     living_archived: int = 0
+    living_deleted: int = 0
     living_weakened: int = 0
     living_merged: int = 0
     living_rewritten: int = 0
     living_hidden: int = 0
+    living_canonicalized: int = 0
     living_history_removed: int = 0
     pruned_total: int = 0
     journal_compacted: bool = False
@@ -112,10 +115,12 @@ class MemoryGCResult:
             "living_reviewed": self.living_reviewed,
             "living_applied": self.living_applied,
             "living_archived": self.living_archived,
+            "living_deleted": self.living_deleted,
             "living_weakened": self.living_weakened,
             "living_merged": self.living_merged,
             "living_rewritten": self.living_rewritten,
             "living_hidden": self.living_hidden,
+            "living_canonicalized": self.living_canonicalized,
             "living_history_removed": self.living_history_removed,
             "pruned_total": self.pruned_total,
             "journal_compacted": self.journal_compacted,
@@ -208,8 +213,9 @@ class MemoryGCService:
     def run_once(self, *, force: bool = True) -> MemoryGCResult:
         """Chạy cleanup thủ công. ``force`` bỏ throttle version của Living User.
 
-        DeepSeek vẫn chỉ đề xuất; semantic/living validator deterministic mới có
-        quyền mutation. Nút UI không biến model thành root user của database.
+        DeepSeek curator là authority cấu trúc của working profile; store chỉ kiểm tra
+        operation có hợp lệ và giữ audit/evidence. Đây là root đối với *representation*,
+        không phải giấy phép bịa meaning trái evidence.
         """
         previous = self._force_review
         self._force_review = bool(force)
@@ -305,15 +311,17 @@ class MemoryGCService:
                     self.run_count += 1
                     logger.info(
                         "[memory_gc] run #%d maintenance=%s semantic_drop=%d "
-                        "living(applied=%d archive=%d weaken=%d merge=%d rewrite=%d hide=%d) pruned=%d (%.1fs)",
+                        "living(applied=%d archive=%d delete=%d weaken=%d merge=%d rewrite=%d canonicalize=%d hide=%d) pruned=%d (%.1fs)",
                         self.run_count,
                         result.maintenance_ran,
                         result.ds_dropped,
                         result.living_applied,
                         result.living_archived,
+                        result.living_deleted,
                         result.living_weakened,
                         result.living_merged,
                         result.living_rewritten,
+                        result.living_canonicalized,
                         result.living_hidden,
                         result.pruned_total,
                         result.duration_sec,
@@ -487,10 +495,12 @@ class MemoryGCService:
         result.living_reviewed = report.reviewed
         result.living_applied = report.applied
         result.living_archived = report.archived
+        result.living_deleted = getattr(report, "deleted", 0)
         result.living_weakened = report.weakened
         result.living_merged = report.merged
         result.living_rewritten = getattr(report, "rewritten", 0)
         result.living_hidden = getattr(report, "hidden", 0)
+        result.living_canonicalized = getattr(report, "canonicalized", 0)
         result.living_history_removed = report.history_removed
         result.warnings.extend(report.warnings[:6])
         result.notes.extend(report.notes[:8])

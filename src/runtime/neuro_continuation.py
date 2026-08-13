@@ -442,6 +442,15 @@ class NeuroContinuationRuntime:
             packet = self._pending
             if packet is None:
                 return None
+            commitment = commitment_payload(
+                origin="neuro_continuation",
+                source_id=packet.packet_id,
+                semantic_target=packet.semantic_target,
+                motive="deep_thought_followup",
+                pressure=max(packet.urgency, packet.material_delta),
+                freshness=packet.confidence,
+                persistence=packet.material_delta,
+            )
             candidate = SocialSpeechCandidate(
                 decision="candidate",
                 kind="continuation",
@@ -461,15 +470,7 @@ class NeuroContinuationRuntime:
                 idempotency_key=packet.packet_id,
                 uncertainty=max(0.0, 1.0 - packet.confidence),
                 seed_intrusion_risk=0.06,
-            )
-            commitment = commitment_payload(
-                origin="neuro_continuation",
-                source_id=packet.packet_id,
-                semantic_target=packet.semantic_target,
-                motive="deep_thought_followup",
-                pressure=max(packet.urgency, packet.material_delta),
-                freshness=packet.confidence,
-                persistence=packet.material_delta,
+                expression_commitment=commitment,
             )
             return ExecutiveAffordance(
                 affordance_id=f"neuro_continuation:{packet.packet_id}:v{packet.revision}",
@@ -483,7 +484,6 @@ class NeuroContinuationRuntime:
                     "origin_turn_id": packet.origin_turn_id,
                     "conversation_epoch": packet.conversation_epoch,
                     "material_delta": packet.material_delta,
-                    "expression_commitment": commitment,
                 },
             )
 

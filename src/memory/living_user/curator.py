@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
 """Bộ kiểm toán và dọn dẹp Living User Memory.
 
-Phân vai cố ý rõ ràng:
-- Gemma/profile model chỉ đề xuất hoặc ghi nhận memory candidate.
-- Qwen embedding chỉ gom các record gần nghĩa để giảm context gửi sang critic.
-- DeepSeek critic đề xuất thao tác dọn dẹp.
-- Validator deterministic trong module này mới có quyền áp dụng thay đổi.
+Phân vai V68:
+- Extractor/dreamer chỉ tạo evidence-backed working records.
+- Qwen embedding chỉ gom hàng xóm gần nghĩa để DeepSeek nhìn được cụm.
+- DeepSeek curator là authority duy nhất của *cấu trúc working memory*: được quyền
+  archive/delete/merge/rewrite/canonicalize mọi record, kể cả record user-confirmed.
+- User authority vẫn là evidence có trọng lượng cao về *meaning*, không phải ổ khóa
+  bảo vệ một path/value representation khỏi việc dọn dẹp.
 
-Critic không được xóa trực tiếp file JSON. Con người đã thử mô hình "AI có toàn quyền
-vì prompt bảo nó cẩn thận" đủ nhiều lần rồi; kết quả thường giàu tính giáo dục.
+Store vẫn áp operation theo ID và giữ audit/undo window. Quyền lực tuyệt đối ở đây
+nghĩa là DeepSeek có toàn quyền dọn projection đang sống, không phải được quyền bịa
+meaning trái evidence. Hộp đen vẫn còn; cái phòng khách thì không cần chất rác.
 """
 from __future__ import annotations
 
@@ -32,46 +35,51 @@ _RESOLVED_MARKERS = (
     "đã giải quyết", "đã xong", "hoàn tất", "hoàn thành", "ổn rồi",
     "được rồi", "chắc dị dc rồi", "không còn cần", "không cần nữa",
 )
-_BAD_PATH_SEGMENT = re.compile(r"(?:^|\.)upr_[0-9a-f]{8,}(?:\.|$)", re.IGNORECASE)
+_BAD_PATH_SEGMENT = re.compile(r"(?:^|\.)upr(?:[_\.-]?)[0-9a-f]{8,}(?:\.|$)", re.IGNORECASE)
 
 
-_LIVING_CURATOR_SYSTEM = """You are the memory curator for ERIS.
-Your job is to clean a canonical user profile, not to invent a nicer biography.
+_LIVING_CURATOR_SYSTEM = """You are the authoritative memory curator for ERIS.
+Your job is to turn a noisy working user profile into a small canonical profile.
 
-Hard rules:
-- Output ONLY one JSON object. No markdown and no prose outside JSON.
-- Use only record IDs present in the input.
-- Evidence is stronger than model confidence. A confidence number written by another
-  model is not proof.
-- Do not alter or remove user-authority records.
-- Prefer KEEP when a stable explicit preference has direct evidence.
-- ARCHIVE null/empty claims, obsolete/superseded open loops, resolved temporary open loops, malformed paths, unsupported
-  emotional inference, one-off scene details, and claims that merely paraphrase the
-  current conversation without durable value.
-- HIDE from UI any records that are purely technical state, temporary tracking, or have no reading value for the user (but might be useful for AI context). Use the "hide" action.
-- REWRITE (translate/fix) values that are in English, mixed languages (Vietnamese-English), contain abbreviations, or are unaccented Vietnamese (tiếng Việt không dấu). Output natural, proper, and correctly accented Vietnamese. Keep the exact meaning. Use the "rewrite" action.
-- WEAKEN uncertain inferred/observed claims instead of deleting them when evidence is
-  plausible but weak.
-- MERGE only records on the same path and scope that express the same durable fact.
-- Do not merge contradictions. Keep the strongest evidenced record and archive/weaken
-  the weaker model-generated record.
-- Do not rewrite values (except for translation/fixing presentation) and do not create new records.
+Authority:
+- You MAY restructure ANY record, including user-confirmed/behavior_rule/user_authority records.
+- User-confirmed evidence has the highest semantic weight, but its current path/value representation is NOT protected.
+- You may delete redundant confirmed records after their meaning/evidence has been preserved in a canonical record.
+- Do not invent facts or contradict direct user evidence. Structural authority is absolute; factual authority still comes from evidence.
+
+Goals:
+- Prefer a few durable canonical concepts over many raw observations/rules.
+- Remove technical IDs, malformed UPR paths, parser debris, stale one-off observations and duplicated paraphrases.
+- Open loops/conversation debt are NOT user-profile facts. Delete/archive them from this store.
+- Canonical values shown to the user must be natural Vietnamese unless the value is intrinsically a code/name/token.
+- Cross-path duplicates SHOULD be collapsed with canonicalize.
+- If several records express one concept, canonicalize them into one stable path/value and preserve all evidence IDs.
+- Use hide only for a record that is still genuinely useful to cognition but has no user-facing reading value.
+
+Output ONLY one JSON object. No markdown/prose outside JSON. Use only record IDs present in input.
 
 Allowed schema:
 {
   "operations": [
     {
-      "action": "keep" | "archive" | "weaken" | "merge" | "rewrite" | "hide",
+      "action": "keep" | "archive" | "delete" | "weaken" | "merge" | "rewrite" | "hide" | "canonicalize",
       "record_ids": ["upr_..."],
       "amount": 0.0,
-      "value": "translated text here (only for rewrite action)",
+      "path": "stable.canonical_path",
+      "value": "canonical Vietnamese value",
+      "scope": {"kind":"global|project|session|temporary|private","key":""},
+      "cardinality": "single|multi",
       "reason": "short evidence-based reason"
     }
   ]
 }
 
-For archive/keep/weaken use exactly one record ID. For merge use two or more IDs.
-For weaken, amount must be between 0.05 and 0.30.
+Rules:
+- keep/archive/delete/weaken/rewrite/hide normally use one ID.
+- merge is for same-path duplicates; canonicalize is for one or more records and may move across paths.
+- canonicalize must provide a stable path; provide value when the existing wording is noisy or multiple records need synthesis.
+- weaken amount must be 0.05..0.30.
+- Never preserve a garbage representation merely because it was previously marked confirmed.
 """
 
 _LIVING_CURATOR_USER = """Review these Living User Memory candidates.
@@ -90,8 +98,8 @@ Return safe operations for records that need action. Omit records that should si
 class LivingUserCuratorConfig:
     """Cấu hình dọn profile; đọc env để runtime có thể chỉnh mà không sửa code."""
 
-    max_review_records: int = 40
-    max_clusters: int = 10
+    max_review_records: int = 80
+    max_clusters: int = 16
     duplicate_cosine: float = 0.86
     stale_days: float = 90.0
     history_snapshots: int = 8
@@ -100,8 +108,8 @@ class LivingUserCuratorConfig:
     @classmethod
     def from_env(cls) -> "LivingUserCuratorConfig":
         return cls(
-            max_review_records=max(8, _env_int("ERIS_MEMORY_GC_LIVING_LIMIT", 40)),
-            max_clusters=max(2, _env_int("ERIS_MEMORY_GC_LIVING_CLUSTER_LIMIT", 10)),
+            max_review_records=max(8, _env_int("ERIS_MEMORY_GC_LIVING_LIMIT", 80)),
+            max_clusters=max(2, _env_int("ERIS_MEMORY_GC_LIVING_CLUSTER_LIMIT", 16)),
             duplicate_cosine=min(0.99, max(0.50, _env_float("ERIS_MEMORY_GC_LIVING_DUPLICATE_COSINE", 0.86))),
             stale_days=max(7.0, _env_float("ERIS_MEMORY_GC_LIVING_STALE_DAYS", 90.0)),
             history_snapshots=max(2, _env_int("ERIS_LIVING_USER_HISTORY_SNAPSHOTS", 8)),
@@ -115,10 +123,12 @@ class LivingUserCuratorResult:
     proposed: int = 0
     applied: int = 0
     archived: int = 0
+    deleted: int = 0
     weakened: int = 0
     merged: int = 0
     rewritten: int = 0
     hidden: int = 0
+    canonicalized: int = 0
     protected: int = 0
     history_removed: int = 0
     skipped_reason: str = ""
@@ -184,7 +194,25 @@ class LivingUserMemoryCurator:
             result.history_removed = self._compact_history(store)
             return result
 
-        selected = [r for r in active if r.id in candidate_ids][: self.config.max_review_records]
+        # Giữ đúng thứ tự suspicion do _select_candidates tính. Trước V68 đoạn này
+        # đổi candidate_ids thành set rồi quay lại thứ tự trust của store, vô tình bắt
+        # curator đọc record sạch trước record rác. Sau đó con người lại ngạc nhiên vì
+        # garbage collection ưu tiên đồ không phải garbage.
+        selected: list[ProfileRecord] = []
+        seen: set[str] = set()
+        for record in candidates:
+            if record.id in candidate_ids and record.id not in seen:
+                selected.append(record)
+                seen.add(record.id)
+        # Cluster có thể kéo thêm hàng xóm canonicalization chưa nằm trong top suspicion.
+        by_id = {record.id: record for record in active}
+        for cluster in clusters:
+            for record_id in cluster:
+                record = by_id.get(record_id)
+                if record is not None and record_id not in seen:
+                    selected.append(record)
+                    seen.add(record_id)
+        selected = selected[: self.config.max_review_records]
         result.reviewed = len(selected)
         if not selected:
             result.skipped_reason = "no_selected_records"
@@ -199,7 +227,9 @@ class LivingUserMemoryCurator:
             records=self._format_records(selected, protected_ids),
             clusters=self._format_clusters(clusters, selected),
         )
-        raw = self.reviewer(_LIVING_CURATOR_SYSTEM, prompt, 2200)
+        # 80 record + cross-path clusters cần đủ ngân sách để DeepSeek thực sự
+        # canonicalize thay vì hết token giữa JSON rồi để nguyên bãi rác.
+        raw = self.reviewer(_LIVING_CURATOR_SYSTEM, prompt, 3600)
         if not raw:
             result.warnings.append("critic_no_response")
             result.history_removed = self._compact_history(store)
@@ -237,16 +267,17 @@ class LivingUserMemoryCurator:
     ) -> list[dict[str, Any]]:
         operations: list[dict[str, Any]] = []
         for record in records:
-            if record.id in protected_ids:
-                continue
             value = _value_text(record.value)
             reason = ""
+            action = "archive"
             if record.value is None or not value:
                 reason = "Giá trị null/rỗng không mang thông tin có thể truy hồi."
-            elif record.path.startswith("open_loops.") and _contains_resolved_marker(value):
-                reason = "Open loop tự mô tả là đã hoàn tất nên phải archive."
+            elif record.path.startswith(("open_loops.", "goals.open_loops")):
+                # Open loop thuộc conversation/action continuity, không phải chân dung user.
+                action = "delete"
+                reason = "Open loop là state hội thoại, không phải canonical user memory."
             if reason:
-                operations.append({"action": "archive", "record_ids": [record.id], "reason": reason})
+                operations.append({"action": action, "record_ids": [record.id], "reason": reason})
         return operations
 
     def _select_candidates(
@@ -262,8 +293,6 @@ class LivingUserMemoryCurator:
 
         ranked: list[tuple[int, float, ProfileRecord]] = []
         for record in records:
-            if record.id in protected_ids:
-                continue
             suspicion = 0
             value = _value_text(record.value)
             if _BAD_PATH_SEGMENT.search(record.path):
@@ -288,8 +317,9 @@ class LivingUserMemoryCurator:
                 suspicion += 2
             if record.path.startswith(("needs.", "relationship.")) and record.source in {"profile_model", "dream_model"}:
                 suspicion += 2
-            if suspicion > 0:
-                ranked.append((suspicion, record.updated_at, record))
+            # DeepSeek phải được nhìn cả record "trông sạch" để canonicalize
+            # cross-path. suspicion chỉ quyết định thứ tự, không quyết định quyền review.
+            ranked.append((suspicion, record.updated_at, record))
 
         ranked.sort(key=lambda row: (row[0], row[1]), reverse=True)
         return [row[2] for row in ranked[: self.config.max_review_records]]
@@ -329,12 +359,12 @@ class LivingUserMemoryCurator:
                     right = pool[j]
                     if left.scope.identity != right.scope.identity:
                         continue
-                    # Chỉ gom hàng xóm có cùng root hoặc cùng path. Hai câu tình cảm
-                    # và một sở thích cờ vua không được cưới nhau vì vector thấy thơ.
-                    if _path_root(left.path) != _path_root(right.path) and left.path != right.path:
-                        continue
                     score = _cosine(vectors[i], vectors[j])
-                    if score >= self.config.duplicate_cosine:
+                    same_family = _path_root(left.path) == _path_root(right.path) or left.path == right.path
+                    # Cùng family dùng ngưỡng bình thường; khác path/root chỉ gom
+                    # khi similarity rất cao. DeepSeek mới là người quyết định merge/canonicalize.
+                    threshold = self.config.duplicate_cosine if same_family else max(0.90, self.config.duplicate_cosine + 0.04)
+                    if score >= threshold:
                         near.append(right.id)
                 if len(near) >= 2:
                     key = frozenset(near)
@@ -364,24 +394,14 @@ class LivingUserMemoryCurator:
     # ------------------------------------------------------------------
 
     def _protected_record_ids(self, records: Iterable[ProfileRecord]) -> set[str]:
-        protected: set[str] = set()
-        ledger = getattr(self.living_user, "authority_ledger", None)
-        latest_rule = getattr(ledger, "latest_rule", None)
-        for record in records:
-            if any(str(eid).startswith("authority:") for eid in record.evidence_ids):
-                protected.add(record.id)
-                continue
-            if record.source.startswith("user_authority") or record.source == "behavior_rule":
-                protected.add(record.id)
-                continue
-            if callable(latest_rule):
-                try:
-                    event = latest_rule(record.path, record.scope)
-                except Exception:
-                    event = None
-                if event is not None and getattr(event, "action", "") in {"correct", "confirm", "move_scope"}:
-                    protected.add(record.id)
-        return protected
+        """V68: không record nào được miễn dọn chỉ vì authority provenance.
+
+        Giữ method để caller/test cũ không gãy. User authority được truyền cho
+        DeepSeek dưới dạng evidence/source/trust, không biến representation thành
+        bất khả xâm phạm.
+        """
+        _ = tuple(records)
+        return set()
 
     def _validate_operations(
         self,
@@ -391,55 +411,52 @@ class LivingUserMemoryCurator:
         protected_ids: set[str],
         cluster_sets: Sequence[set[str]],
     ) -> list[dict[str, Any]]:
+        """Validator cấu trúc, không phải authority semantic thứ hai.
+
+        V68 cố ý không veto operation vì record được user xác nhận, khác path hay
+        khác root. DeepSeek đã là curator authority; validator chỉ chặn schema hỏng,
+        ID không tồn tại và mutation mơ hồ.
+        """
+        del protected_ids, cluster_sets
         safe: list[dict[str, Any]] = []
         touched: set[str] = set()
+        allowed = {"keep", "archive", "delete", "weaken", "merge", "rewrite", "hide", "canonicalize"}
         for row in operations:
             action = str(row.get("action") or "").strip().lower()
             ids = [str(x) for x in row.get("record_ids", ()) if str(x) in records]
             ids = list(dict.fromkeys(ids))
-            if action not in {"keep", "archive", "weaken", "merge", "rewrite", "hide"} or not ids:
+            if action not in allowed or not ids or any(record_id in touched for record_id in ids):
                 continue
-            if any(record_id in protected_ids for record_id in ids):
-                continue
-            if any(record_id in touched for record_id in ids):
-                continue
-            reason = " ".join(str(row.get("reason") or "").split())[:260]
-            if action in {"keep", "archive", "weaken"} and len(ids) != 1:
-                continue
+            reason = " ".join(str(row.get("reason") or "").split())[:420]
             if action == "keep":
                 touched.update(ids)
                 continue
-            if action == "archive":
-                record = records[ids[0]]
-                # Không cho critic archive rule deterministic.
-                if record.source == "behavior_rule":
-                    continue
-                safe.append({"action": "archive", "record_ids": ids, "reason": reason or "DeepSeek critic đề xuất archive."})
-            elif action == "weaken":
-                amount = min(0.30, max(0.05, _as_float(row.get("amount"), 0.12)))
-                safe.append({"action": "weaken", "record_ids": ids, "amount": amount, "reason": reason or "Evidence chưa đủ mạnh."})
-            elif action == "merge":
-                if len(ids) < 2:
-                    continue
-                selected = [records[x] for x in ids]
-                same_path = len({r.path for r in selected}) == 1
-                same_scope = len({r.scope.identity for record in selected}) == 1
-                same_value = len({value_fingerprint(r.value) for r in selected}) == 1
-                clustered = any(set(ids).issubset(cluster) for cluster in cluster_sets)
-                if not same_path or not same_scope or not (same_value or clustered):
-                    continue
-                safe.append({"action": "merge", "record_ids": ids, "reason": reason or "Các record trùng nghĩa trên cùng path/scope."})
+            if action in {"archive", "delete", "weaken", "rewrite", "hide"} and len(ids) != 1:
+                continue
+            payload: dict[str, Any] = {"action": action, "record_ids": ids, "reason": reason}
+            if action == "weaken":
+                payload["amount"] = min(0.30, max(0.05, _as_float(row.get("amount"), 0.12)))
             elif action == "rewrite":
-                if len(ids) != 1:
-                    continue
                 value = row.get("value")
-                if not value or not isinstance(value, str):
+                if not isinstance(value, str) or not value.strip():
                     continue
-                safe.append({"action": "rewrite", "record_ids": ids, "value": value[:1000], "reason": reason or "Sửa lỗi diễn đạt/Dịch sang tiếng Việt."})
-            elif action == "hide":
-                if len(ids) != 1:
+                payload["value"] = value.strip()[:1400]
+            elif action == "merge" and len(ids) < 2:
+                continue
+            elif action == "canonicalize":
+                path = str(row.get("path") or "").strip()
+                if not path:
                     continue
-                safe.append({"action": "hide", "record_ids": ids, "reason": reason or "Ẩn khỏi UI vì không có giá trị đọc."})
+                payload["path"] = path[:220]
+                if row.get("value") is not None:
+                    payload["value"] = row.get("value")
+                scope = row.get("scope")
+                if isinstance(scope, Mapping):
+                    payload["scope"] = dict(scope)
+                cardinality = str(row.get("cardinality") or "").strip().lower()
+                if cardinality in {"single", "multi"}:
+                    payload["cardinality"] = cardinality
+            safe.append(payload)
             touched.update(ids)
         return safe
 
@@ -448,10 +465,12 @@ class LivingUserMemoryCurator:
         details = dict(getattr(applied, "details", {}) or {})
         result.applied += int(details.get("applied", 0) or 0)
         result.archived += int(details.get("archived", 0) or 0)
+        result.deleted += int(details.get("deleted", 0) or 0)
         result.weakened += int(details.get("weakened", 0) or 0)
         result.merged += int(details.get("merged", 0) or 0)
         result.rewritten += int(details.get("rewritten", 0) or 0)
         result.hidden += int(details.get("hidden", 0) or 0)
+        result.canonicalized += int(details.get("canonicalized", 0) or 0)
         rejected = tuple(getattr(applied, "rejected", ()) or ())
         if rejected:
             result.notes.append(f"validator_rejected:{len(rejected)}")
@@ -486,7 +505,7 @@ class LivingUserMemoryCurator:
                 "source": record.source,
                 "evidence_ids": list(record.evidence_ids[:12]),
                 "updated_at": record.updated_at,
-                "protected": record.id in protected_ids,
+                "authority_evidence": any(str(eid).startswith("authority:") for eid in record.evidence_ids) or record.source.startswith("user_authority"),
                 "reason": str(record.metadata.get("reason") or "")[:240],
             }
             rows.append(json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str))

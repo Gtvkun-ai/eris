@@ -474,6 +474,15 @@ class ConversationArcRuntime:
             "Deliver one new self-contained callback after a real pause; do not repeat, "
             "explain timing, mention the arc, or ask the user to wait."
         )
+        commitment = commitment_payload(
+            origin="conversation_arc",
+            source_id=f"{arc.arc_id}:beat:{arc.next_beat_index}",
+            semantic_target=topic,
+            motive=f"arc_{beat.role}",
+            pressure=1.0,
+            freshness=0.94,
+            persistence=0.96,
+        )
         return SocialSpeechCandidate(
             decision="candidate", kind="conversation_arc", topic=_compact(topic, 900),
             speech_act=f"arc_{beat.role}", anchor_type="conversation", anchor_id=arc.arc_id,
@@ -481,6 +490,7 @@ class ConversationArcRuntime:
             tone=beat.tone, reason=f"reserved_arc_beat:{arc.next_beat_index + 1}/{len(arc.beats)}",
             source="conversation_arc_runtime", continuation_lane="conversation_arc",
             claim_token=arc.claim_token, idempotency_key=f"{arc.arc_id}:beat:{arc.next_beat_index}",
+            expression_commitment=commitment,
         )
 
     def peek_due(
@@ -501,25 +511,11 @@ class ConversationArcRuntime:
             candidate = self._candidate_for_arc(arc)
             if candidate is None:
                 return None
-            # V66: một beat đã được arc owner giữ lại là continuation intent
-            # của chính Eris. Nó không cần user im đủ lâu để "được phép" tồn tại.
-            commitment = commitment_payload(
-                origin="conversation_arc",
-                source_id=f"{arc.arc_id}:beat:{arc.next_beat_index}",
-                semantic_target=candidate.topic,
-                motive=candidate.speech_act,
-                pressure=max(candidate.urgency, candidate.relevance),
-                freshness=candidate.confidence,
-                persistence=0.96,
-            )
             return ExecutiveAffordance(
                 affordance_id=f"conversation_arc:{arc.arc_id}:beat:{arc.next_beat_index}:v{arc.version}",
                 owner="conversation_arc", revision=arc.version, candidate=candidate,
                 claim_required=True, expires_at=arc.expires_at, claim_key=arc.arc_id,
-                metadata={
-                    "beat_index": arc.next_beat_index,
-                    "expression_commitment": commitment,
-                },
+                metadata={"beat_index": arc.next_beat_index},
             )
 
     def claim_affordance(

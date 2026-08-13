@@ -436,20 +436,21 @@ class UserProfileStore:
         protected_record_ids: Iterable[str] = (),
         checkpoint_reason: str = "living_user_curator",
     ) -> ApplyResult:
-        """Áp dụng batch dọn memory theo record ID một cách atomic.
+        """Áp dụng batch curator theo record ID một cách atomic.
 
-        DeepSeek chỉ được đề xuất operation. Method này mới là cổng ghi thật và
-        chỉ hỗ trợ archive/weaken/merge. Không có thao tác tạo claim mới, đổi path
-        hay sửa value, vì cô lao công không nên tiện tay viết lại tiểu sử chủ nhà.
+        V68: DeepSeek là authority cấu trúc của working profile. Store không còn
+        bảo vệ representation user-confirmed khỏi curator; authority evidence vẫn
+        được giữ trong record/audit để meaning có thể được truy nguyên.
         """
         rows = tuple(dict(row) for row in operations if isinstance(row, Mapping))
         if not rows:
             return ApplyResult(False, version=self._version, details={"applied": 0})
 
-        protected = {str(record_id) for record_id in protected_record_ids if str(record_id).strip()}
+        # Param giữ compatibility cho caller cũ; V68 không có record miễn dọn.
+        _ = tuple(protected_record_ids)
         changed_ids: list[str] = []
         rejected: list[str] = []
-        details = {"applied": 0, "archived": 0, "weakened": 0, "merged": 0, "rewritten": 0, "hidden": 0}
+        details = {"applied": 0, "archived": 0, "deleted": 0, "weakened": 0, "merged": 0, "rewritten": 0, "hidden": 0, "canonicalized": 0}
 
         with self._lock:
             before = [r.to_dict() for r in self.all(include_inactive=True)]
@@ -458,11 +459,8 @@ class UserProfileStore:
                 record_ids = [str(x) for x in row.get("record_ids", ()) if str(x).strip()]
                 record_ids = list(dict.fromkeys(record_ids))
                 reason = " ".join(str(row.get("reason") or "").split())[:420]
-                if action not in {"archive", "weaken", "merge", "rewrite", "hide"} or not record_ids:
+                if action not in {"archive", "delete", "weaken", "merge", "rewrite", "hide", "canonicalize"} or not record_ids:
                     rejected.append(f"unsupported_curator_operation:{action or 'empty'}")
-                    continue
-                if any(record_id in protected for record_id in record_ids):
-                    rejected.append(f"protected_record:{','.join(record_ids)}")
                     continue
                 records = [self._records.get(record_id) for record_id in record_ids]
                 if any(record is None for record in records):
@@ -483,9 +481,22 @@ class UserProfileStore:
                     record.updated_at = now
                     record.valid_until = now
                     record.metadata["curator_reason"] = reason
-                    record.metadata["curated_by"] = "deepseek_critic_or_rule"
+                    record.metadata["curated_by"] = "deepseek_curator"
                     changed_ids.append(record.id)
                     details["archived"] += 1
+
+                elif action == "delete":
+                    if len(selected) != 1:
+                        rejected.append("delete_requires_one_record")
+                        continue
+                    record = selected[0]
+                    record.status = "deleted"
+                    record.updated_at = now
+                    record.valid_until = now
+                    record.metadata["curator_reason"] = reason
+                    record.metadata["curated_by"] = "deepseek_curator"
+                    changed_ids.append(record.id)
+                    details["deleted"] += 1
 
                 elif action == "weaken":
                     if len(selected) != 1:
@@ -512,9 +523,6 @@ class UserProfileStore:
                     if len(selected) < 2:
                         rejected.append("merge_requires_multiple_records")
                         continue
-                    if len({record.path for record in selected}) != 1:
-                        rejected.append("merge_path_mismatch")
-                        continue
                     if len({record.scope.identity for record in selected}) != 1:
                         rejected.append("merge_scope_mismatch")
                         continue
@@ -537,9 +545,70 @@ class UserProfileStore:
                     primary.updated_at = now
                     primary.last_confirmed_at = max(record.last_confirmed_at for record in selected)
                     primary.metadata["curator_reason"] = reason
+                    primary.metadata["curated_by"] = "deepseek_curator"
+                    primary.metadata["canonical_user_memory"] = True
                     primary.metadata["curated_merge_ids"] = [r.id for r in selected if r.id != primary.id][-40:]
                     changed_ids.extend(record.id for record in selected)
                     details["merged"] += 1
+
+                elif action == "canonicalize":
+                    target_path = normalize_path(str(row.get("path") or ""))
+                    if not target_path:
+                        rejected.append("canonicalize_requires_path")
+                        continue
+                    target_scope = UserMemoryScope.from_value(row.get("scope")) if isinstance(row.get("scope"), Mapping) else None
+                    cardinality = str(row.get("cardinality") or "").strip().lower()
+
+                    # Canonical path là unique semantic home trong cùng scope. Nếu đã có
+                    # một record active ở đích mà model không liệt kê, nhập luôn nó vào
+                    # batch thay vì để canonicalization tạo thêm một duplicate mới.
+                    desired_scope = target_scope or selected[0].scope
+                    selected_ids = {record.id for record in selected}
+                    collisions = [
+                        record for record in self._records.values()
+                        if record.id not in selected_ids
+                        and record.status in {"active", "disputed"}
+                        and record.path == target_path
+                        and record.scope.identity == desired_scope.identity
+                    ]
+                    if collisions:
+                        selected.extend(collisions)
+
+                    primary = max(selected, key=lambda r: (r.trust_weight, r.recurrence, r.updated_at))
+                    evidence: list[str] = []
+                    recurrence = 0
+                    last_confirmed = 0.0
+                    for record in selected:
+                        evidence.extend(record.evidence_ids)
+                        recurrence += record.recurrence
+                        last_confirmed = max(last_confirmed, record.last_confirmed_at)
+                        if record.id != primary.id:
+                            record.status = "superseded"
+                            record.valid_until = now
+                            record.updated_at = now
+                            record.metadata["merged_into"] = primary.id
+                            record.metadata["curator_reason"] = reason
+                            record.metadata["curated_by"] = "deepseek_curator"
+                    primary.path = target_path
+                    if row.get("value") is not None:
+                        primary.value = row.get("value")
+                    if target_scope is not None:
+                        primary.scope = target_scope
+                    if cardinality in {"single", "multi"}:
+                        primary.cardinality = cardinality  # type: ignore[assignment]
+                    primary.evidence_ids = tuple(dict.fromkeys(evidence))[:96]
+                    primary.recurrence = max(1, recurrence)
+                    primary.confidence = clamp01(max(record.confidence for record in selected))
+                    primary.last_confirmed_at = max(primary.last_confirmed_at, last_confirmed)
+                    primary.updated_at = now
+                    primary.valid_until = None
+                    primary.status = "active"
+                    primary.metadata["curator_reason"] = reason
+                    primary.metadata["curated_by"] = "deepseek_curator"
+                    primary.metadata["canonical_user_memory"] = True
+                    primary.metadata["canonicalized_from"] = [r.id for r in selected][-60:]
+                    changed_ids.extend(record.id for record in selected)
+                    details["canonicalized"] += 1
 
                 elif action == "rewrite":
                     if len(selected) != 1:
@@ -553,6 +622,8 @@ class UserProfileStore:
                     record.value = value.strip()[:1000]
                     record.updated_at = now
                     record.metadata["curator_reason"] = reason
+                    record.metadata["curated_by"] = "deepseek_curator"
+                    record.metadata["canonical_user_memory"] = True
                     changed_ids.append(record.id)
                     details["rewritten"] += 1
 
@@ -564,6 +635,7 @@ class UserProfileStore:
                     record.updated_at = now
                     record.metadata["hidden_from_ui"] = True
                     record.metadata["curator_reason"] = reason
+                    record.metadata["curated_by"] = "deepseek_curator"
                     changed_ids.append(record.id)
                     details["hidden"] += 1
 

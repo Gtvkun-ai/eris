@@ -21,6 +21,7 @@ from .affordance import ExecutiveAffordance
 from .cognitive_blackboard import CognitiveAnchor, TypedCognitiveBlackboard
 from .random_chat_seed import assess_seed_quality
 from .random_chat_seed_service import RandomChatSeedReservoir, build_seed_temporal_context
+from cortex.subject.expression_commitment import commitment_payload
 
 
 CANDIDATE_SCHEMA = "eris.social_speech_candidate.v1"
@@ -83,6 +84,7 @@ _ALLOWED_KINDS = {
     "memory_callback",
     "inner_thought",
     "social_check_in",
+    "relational_initiative",
     "casual_curiosity",
     "playful_prompt",
     "random_chat",
@@ -151,6 +153,10 @@ class SocialSpeechCandidate:
     expression_freshness: float = 0.0
     expression_satisfaction: float = 0.0
     expression_motive: str = ""
+    # V67: semantic identity typed của một public expression đã được Eris commit.
+    # Candidate có thể tồn tại trước commitment (opportunity/thought), nhưng chỉ
+    # candidate mang payload này mới được phép bước vào public proposal lane.
+    expression_commitment: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def random_chat_seed(self) -> dict[str, Any]:
@@ -285,6 +291,10 @@ class SocialSpeechCandidate:
             expression_freshness=_clamp01(data.get("expression_freshness", 0.0)),
             expression_satisfaction=_clamp01(data.get("expression_satisfaction", 0.0)),
             expression_motive=_compact(data.get("expression_motive", ""), 32).lower(),
+            expression_commitment=(
+                dict(data.get("expression_commitment", {}))
+                if isinstance(data.get("expression_commitment"), Mapping) else {}
+            ),
         )
 
 
@@ -394,6 +404,16 @@ class SocialInitiativeEngine:
                     urgency=1.0,
                     reason="explicit_user_pull",
                     source="runtime_presence_request",
+                    expression_commitment=commitment_payload(
+                        origin="force_speak",
+                        source_id="force_speak",
+                        semantic_target="Respond to the explicit request for presence with one short grounded line.",
+                        motive="force_expression",
+                        pressure=1.0,
+                        freshness=1.0,
+                        persistence=1.0,
+                        forced=True,
+                    ),
                 ),
                 owner="runtime_presence_request",
             )

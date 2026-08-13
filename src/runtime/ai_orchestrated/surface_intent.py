@@ -254,6 +254,11 @@ class SurfaceIntentEngine:
                     "Do not decide speak/silence, change the topic owner, invent evidence, or mention internal contracts. "
                     "If avoid_repeating is non-empty, do not repeat or closely paraphrase that previous autonomous line."
                 ),
+                "self_reference_rule": (
+                    "When referring to ERIS as the current assistant/self, speak in first person (tôi/em according to addressing state), "
+                    "not as if ERIS were a third-party person. If the user is inspecting ERIS code/UI, do not merely announce that fact; "
+                    "realize the committed self-owned thought instead."
+                ),
                 "voice_contract_version": VOICE_CONTRACT_VERSION,
                 "voice_rules": surface_voice_rules(intent.max_sentences),
                 "affect_authority": (

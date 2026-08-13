@@ -63,7 +63,7 @@ def test_v58_contentful_persistent_goal_can_speak_without_new_user_command():
 def test_v66_user_busy_is_context_not_expression_boundary():
     decision = InitiativeArbiter().decide(
         _intention(), relational=_relational(), runtime_context=_runtime(),
-        now=1040.0, contentful=True, user_busy=True,
+        now=1040.0, contentful=True,
     )
     assert decision.action is InitiativeControlAction.SPEAK
     assert decision.reason == "self_owned_expression"
@@ -152,7 +152,7 @@ def test_v66_reply_expected_is_not_a_hard_expression_boundary():
             notes.append(kwargs)
 
     affordances = build_subject_initiative_affordances(
-        Subject(), runtime_context=_runtime(), now=1040.0, reply_expected=True,
+        Subject(), runtime_context=_runtime(reply_expected=True), now=1040.0,
     )
     # Eris từng hỏi không có nghĩa user đang giữ lượt. Self-rhythm/collision mới
     # quyết định DEFER; silence của user không chặn intention contentful.

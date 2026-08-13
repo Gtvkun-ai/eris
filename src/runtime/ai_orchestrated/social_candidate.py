@@ -8,7 +8,7 @@ not part of the production path.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping, Sequence
 
 
@@ -76,6 +76,8 @@ class SocialSpeechCandidate:
     seed_intrusion_risk: float = 0.0
     face_risk: float = 0.0
     recovery_available: bool = False
+    # V67: public semantic identity. Structured social owners emit this natively.
+    expression_commitment: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def available(self) -> bool:
@@ -124,6 +126,7 @@ class SocialSpeechCandidate:
         payload["evidence_refs"] = list(self.evidence_refs)
         payload["topic_tags"] = list(self.topic_tags)
         payload["desired_response"] = list(self.desired_response)
+        payload["expression_commitment"] = dict(self.expression_commitment or {})
         payload["random_chat_seed"] = self.random_chat_seed
         return payload
 
@@ -186,6 +189,10 @@ class SocialSpeechCandidate:
             seed_intrusion_risk=_clamp01(risk.get("intrusion_risk", data.get("seed_intrusion_risk", 0.0))),
             face_risk=_clamp01(risk.get("face_risk", data.get("face_risk", 0.0))),
             recovery_available=bool(risk.get("recovery_available", data.get("recovery_available", False))),
+            expression_commitment=(
+                dict(data.get("expression_commitment", {}))
+                if isinstance(data.get("expression_commitment"), Mapping) else {}
+            ),
         )
 
 

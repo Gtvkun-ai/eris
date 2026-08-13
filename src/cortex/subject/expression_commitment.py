@@ -51,7 +51,7 @@ class ExpressionCommitment:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "schema": "eris.expression_commitment.v66",
+            "schema": "eris.expression_commitment.v67",
             "commitment_id": self.commitment_id,
             "origin": self.origin,
             "source_id": self.source_id,
@@ -136,13 +136,10 @@ def is_committed_speech(candidate: Any) -> bool:
         return False
     arguments = getattr(candidate, "arguments", {})
     args = arguments if isinstance(arguments, Mapping) else {}
-    if read_commitment(args) is not None:
-        return True
-    # Compatibility migration: V44/V58 frames có thể được dựng bởi owner cũ
-    # chưa phát payload typed. Hai ID này vốn chỉ xuất hiện sau khi Eris đã
-    # có contentful urge/intention, nên có thể coi là commitment cũ mà không mở
-    # cửa cho generic social candidate.
-    return bool(str(args.get("expression_urge_id") or "").strip() or str(args.get("intention_id") or "").strip())
+    # V67: chỉ typed ExpressionCommitment mới có authority. Không còn suy luận
+    # commitment từ expression_urge_id/intention_id vì đó là hai representation
+    # khác nhau của lifecycle, không phải quyết định public expression.
+    return read_commitment(args) is not None
 
 
 def hard_expression_boundary(runtime_context: Mapping[str, Any] | None) -> tuple[bool, str]:

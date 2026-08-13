@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Owner native của commitment biểu đạt trong Subject Core (V66).
+"""Owner native của commitment biểu đạt trong Subject Core (V67).
 
 Module này cố ý không viết câu trả lời và không gọi model. Nó chỉ trả một trong
 ba lựa chọn có nghĩa hành vi rõ ràng:
@@ -9,7 +9,7 @@ ba lựa chọn có nghĩa hành vi rõ ràng:
 - WAIT: ý định vẫn đáng giữ nhưng đang vướng turn collision hoặc self-rhythm.
 - DROP: ý định đã yếu/cũ tới mức nên bỏ thay vì biến thành lời nhắc dai dẳng.
 
-Điểm quan trọng V66: một intention đã có nội dung là quyền biểu đạt của Eris.
+Điểm quan trọng V67: một intention đã có nội dung là quyền biểu đạt của Eris.
 Arbiter chỉ DEFER vì boundary thật hoặc nhịp tự thân; im lặng/ít phản hồi của user
 không được chuyển lậu thành lệnh im.
 """
@@ -42,7 +42,7 @@ class InitiativeControlAction(StrEnum):
 class InitiativeControlConfig:
     """Ngưỡng chỉ dành cho *lifecycle* của intention, không cấp quyền nói.
 
-    V66 bỏ toàn bộ speak-threshold user-centric. Một intention đã contentful thì
+    V67 bỏ toàn bộ speak-threshold user-centric. Một intention đã contentful thì
     mặc định được SPEAK; WAIT chỉ đến từ turn collision, self-rhythm hoặc một
     restraint thực sự thuộc về Eris.
     """
@@ -65,7 +65,7 @@ class InitiativeControlDecision:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "schema": "eris.initiative_control.v66",
+            "schema": "eris.initiative_control.v67",
             "action": self.action.value,
             "score": round(self.score, 4),
             "reason": self.reason,
@@ -87,7 +87,7 @@ class InitiativeArbiter:
     _SOCIAL_MOTIVES = {"understand_user", "connect", "share", "seek_recognition"}
     _PERSISTENCE_MOTIVES = {"contribute", "resolve", "be_understood", "demonstrate"}
     _EXISTENTIAL_TARGETS = {"mutual_understanding", "relationship_continuity", "self_expression"}
-    _ENVIRONMENT_TARGETS = {"environment_shared_task", "environment_self_relevance"}
+    _ENVIRONMENT_TARGETS = {"environment_shared_task"}
 
     def __init__(self, config: InitiativeControlConfig | None = None) -> None:
         self.config = config or InitiativeControlConfig()
@@ -100,8 +100,6 @@ class InitiativeArbiter:
         runtime_context: Mapping[str, Any] | None,
         now: float,
         contentful: bool,
-        reply_expected: bool = False,
-        user_busy: bool = False,
         interaction_busy: bool = False,
     ) -> InitiativeControlDecision:
         rel = relational or {}
@@ -126,8 +124,8 @@ class InitiativeArbiter:
                 contentful=bool(contentful),
             )
 
-        # Hard boundary / turn collision có evidence trực tiếp. ``user_busy``
-        # không phải boundary: user đang làm việc vẫn có thể muốn companion ở đó.
+        # Hard boundary / turn collision có evidence trực tiếp. User-side scene
+        # metadata như reply_expected/user_busy không thuộc API authority này.
         runtime_with_call = dict(runtime)
         # ``reply_expected`` chỉ mô tả Eris từng mở một câu hỏi; user im lặng
         # không đồng nghĩa họ đang giữ floor. Chỉ processing/collision trực tiếp

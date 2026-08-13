@@ -546,6 +546,15 @@ class ExpressionUrgeRuntime:
             if urge.satisfaction >= 0.88:
                 continue
             speech_act = _speech_act_for(urge.motive, urge.original_speech_act)
+            commitment = commitment_payload(
+                origin="expression_urge",
+                source_id=urge.urge_id,
+                semantic_target=urge.content,
+                motive=urge.motive,
+                pressure=pressure,
+                freshness=effective_freshness,
+                persistence=clamp01(1.0 - urge.satisfaction),
+            )
             candidate = SocialSpeechCandidate(
                 decision="candidate",
                 kind="random_chat",
@@ -574,6 +583,7 @@ class ExpressionUrgeRuntime:
                 expression_freshness=effective_freshness,
                 expression_satisfaction=urge.satisfaction,
                 expression_motive=urge.motive,
+                expression_commitment=commitment,
             )
             preserved.append(ExecutiveAffordance(
                 affordance_id=f"expression-urge:{urge.urge_id}",
@@ -587,15 +597,6 @@ class ExpressionUrgeRuntime:
                     "urge_id": urge.urge_id,
                     "concern_id": urge.concern_id,
                     "motive": urge.motive,
-                    "expression_commitment": commitment_payload(
-                        origin="expression_urge",
-                        source_id=urge.urge_id,
-                        semantic_target=urge.content,
-                        motive=urge.motive,
-                        pressure=pressure,
-                        freshness=effective_freshness,
-                        persistence=clamp01(1.0 - urge.satisfaction),
-                    ),
                 },
             ))
             emitted += 1

@@ -91,6 +91,26 @@ class SemanticEnvironmentWorker:
         self._last_semantic_wake_signature = ""
         self._last_semantic_wake_at = 0.0
 
+    @staticmethod
+    def _semantic_wake_signature(situation: UserSituation) -> str:
+        """Identity của semantic state dùng để edge-trigger autonomous wake.
+
+        Cố ý không chứa event kind, event id, timestamp hay evidence ref. Các field
+        đó là provenance/telemetry và có thể đổi khi *meaning* vẫn y nguyên.
+        """
+        return "|".join((
+            str(getattr(situation, "activity", "") or "")[:80],
+            str(getattr(situation, "task_hint", "") or "")[:120],
+            str(getattr(situation, "phase", "") or "")[:80],
+            str(getattr(situation, "focused_app", "") or "")[:80],
+            str(getattr(situation, "focused_process", "") or "")[:80],
+            str(getattr(situation, "focused_object", "") or "")[:180],
+            str(getattr(situation, "last_action", "") or "")[:100],
+            str(getattr(situation, "last_outcome", "") or "")[:100],
+            str(getattr(situation, "attention_state", "") or "")[:60],
+            str(int(getattr(situation, "max_attention_level", 0) or 0)),
+        ))
+
     def start(self) -> "SemanticEnvironmentWorker":
         """Khởi động daemon thread nếu chưa chạy."""
         thread = self._thread
@@ -397,20 +417,14 @@ class SemanticEnvironmentWorker:
             wake = getattr(self.host, "_wake_autonomous_loop", None)
             if callable(wake):
                 kinds = ",".join(dict.fromkeys(event.event_type for event in events))[:120]
-                # Dedupe theo *ý nghĩa* thay vì raw event id. Cùng task/phase/kind
-                # trong cửa sổ 3 giây chỉ cần một lần mở mắt; state snapshot vẫn
-                # được cập nhật cho mọi event ở phía trên nên không mất telemetry.
+                # V68: wake theo *semantic state edge*, không theo loại event vừa tới.
+                # UIA có thể luân phiên focus_changed/dialog_candidate/foreground_changed
+                # cho đúng một màn hình đứng yên; nếu cho event kind vào signature thì
+                # autonomous sẽ bị đánh thức vô hạn và cuối cùng lặp cùng một observation.
+                # Snapshot/evidence vẫn cập nhật đầy đủ phía trên, chỉ wake bị coalesce.
                 now_mono = time.monotonic()
-                wake_signature = "|".join((
-                    kinds or "event",
-                    str(getattr(situation, "task_hint", "") or "")[:120],
-                    str(getattr(situation, "phase", "") or "")[:80],
-                    str(int(getattr(situation, "max_attention_level", 0) or 0)),
-                ))
-                duplicate_wake = bool(
-                    wake_signature == self._last_semantic_wake_signature
-                    and (now_mono - self._last_semantic_wake_at) < 3.0
-                )
+                wake_signature = self._semantic_wake_signature(situation)
+                duplicate_wake = wake_signature == self._last_semantic_wake_signature
                 if not duplicate_wake:
                     self._last_semantic_wake_signature = wake_signature
                     self._last_semantic_wake_at = now_mono

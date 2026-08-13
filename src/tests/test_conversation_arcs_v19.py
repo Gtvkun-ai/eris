@@ -307,5 +307,6 @@ def test_reserved_arc_bypasses_normal_autonomous_waiting_gates(tmp_path: Path):
         candidate,
     )
     assert decision.action is InitiativeAction.SPEECH
-    assert decision.reason == "allowed"
-    assert controller.panel_view(now=1000.25)["last_decision"]["reason"] == "reserved_arc_continuation"
+    assert decision.reason == "expression_committed"
+    assert candidate.reason.startswith("reserved_arc_beat:")
+    # V67: provenance của arc ở candidate; controller chỉ sở hữu contract commitment.

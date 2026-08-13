@@ -98,7 +98,7 @@ def test_panel_protocol_does_not_bypass_service_boundary():
     source = (Path(__file__).parents[1] / "runtime" / "living_user_panel.py").read_text(encoding="utf-8")
     assert "living_user.profile_store" not in source
     assert "living_user.action_store" not in source
-    assert '"authority_mode": "canonical_ledger"' in source
+    assert '"authority_mode": "deepseek_canonical_projection"' in source
 
 
 def test_hard_forget_scrubs_authority_values_but_keeps_tombstone(tmp_path):

@@ -212,17 +212,48 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
     # Chỉ meaning có structured provenance mới được materialize thành một
     # intention có thể nói về màn hình/task. OCR-only vẫn có thể làm private
     # attention nhích lên nhưng signal public bằng 0.
+    # V68: EnvironmentMeaning là STATE. Mỗi *lane semantic* tự giữ edge riêng;
+    # không dùng top-meaning chung vì thứ tự top có thể dao động giữa hai meaning
+    # và vô tình làm một state cũ trông như state mới. Evidence ref đổi không ảnh
+    # hưởng semantic_key.
+    top_semantic_key = str(getattr(top_meaning, "semantic_key", "") or "")
+    previous_semantic_key = str(getattr(host, "_v68_last_environment_semantic_key", "") or "")
+    semantic_edge = bool(top_semantic_key and top_semantic_key != previous_semantic_key)
+
+    task_semantic_key = str(getattr(task_meaning, "semantic_key", "") or "")
+    previous_task_key = str(getattr(host, "_v68_last_environment_task_semantic_key", "") or "")
+    task_semantic_edge = bool(task_semantic_key and task_semantic_key != previous_task_key)
+
+    self_semantic_key = str(getattr(self_relevant, "semantic_key", "") or "")
+    previous_self_key = str(getattr(host, "_v68_last_environment_self_semantic_key", "") or "")
+    self_semantic_edge = bool(self_semantic_key and self_semantic_key != previous_self_key)
+    try:
+        setattr(host, "_v68_last_environment_semantic_key", top_semantic_key)
+        if task_semantic_key:
+            setattr(host, "_v68_last_environment_task_semantic_key", task_semantic_key)
+        if self_semantic_key:
+            setattr(host, "_v68_last_environment_self_semantic_key", self_semantic_key)
+    except Exception:
+        pass
+
+    # Task affordance là event-like: cùng task đứng yên chỉ nên tạo một cơ hội
+    # đóng góp public, không tái phát mỗi tick.
     environment_contribution_signal = (
         _clamp01(getattr(task_meaning, "pressure", 0.0))
-        if task_meaning is not None and bool(getattr(task_meaning, "public_claim_safe", False))
+        if task_semantic_edge and task_meaning is not None and bool(getattr(task_meaning, "public_claim_safe", False))
         else 0.0
     )
+    # Self relevance là *context*, không phải public event. Nó có thể tồn tại khi
+    # user vẫn đang nhìn Eris để làm self-expression thật liên quan hơn, nhưng nó
+    # không sở hữu semantic target và vì vậy không thể tự phát câu "bạn đang xem Eris".
     environment_self_relevance_signal = (
         _clamp01(getattr(self_relevant, "pressure", 0.0))
         if self_relevant is not None and bool(getattr(self_relevant, "public_claim_safe", False))
         else 0.0
     )
-    environment_actionability = _clamp01(getattr(top_meaning, "actionability", 0.0))
+    environment_actionability = (
+        _clamp01(getattr(task_meaning, "actionability", 0.0)) if task_semantic_edge and task_meaning is not None else 0.0
+    )
     environment_target_text = str(getattr(task_meaning, "summary", "") or "")[:420]
     environment_self_target_text = str(getattr(self_relevant, "summary", "") or "")[:420]
     environment_evidence_refs = tuple(getattr(task_meaning, "evidence_refs", ()) or ())[:12]
@@ -280,6 +311,12 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
         "environment_meaning_kind": str(getattr(getattr(top_meaning, "kind", None), "value", "") or ""),
         "environment_meaning_actionability": environment_actionability,
         "environment_meaning_revision": meaning_revision,
+        "environment_meaning_semantic_key": top_semantic_key,
+        "environment_meaning_edge": semantic_edge,
+        "environment_task_semantic_key": task_semantic_key,
+        "environment_task_edge": task_semantic_edge,
+        "environment_self_semantic_key": self_semantic_key,
+        "environment_self_edge": self_semantic_edge,
         "environment_contribution_signal": environment_contribution_signal,
         "environment_target_text": environment_target_text,
         "environment_evidence_refs": environment_evidence_refs,
@@ -327,7 +364,7 @@ def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: fl
         return None
     if kind == "connect" and target != "relationship_continuity":
         return None
-    if kind == "share" and target not in {"self_expression", "environment_self_relevance"}:
+    if kind == "share" and target != "self_expression":
         return None
 
     if kind == "be_understood" and target == "mutual_understanding":
@@ -363,11 +400,6 @@ def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: fl
         )
         tone = "reflective_restrained"
         epistemic = False
-    elif kind == "share" and target == "environment_self_relevance":
-        speech_act = "environment_self_reflection"
-        topic = goal
-        tone = "observant_restrained"
-        epistemic = False
     elif kind == "contribute" and target == "environment_shared_task":
         speech_act = "environment_help_offer"
         topic = goal
@@ -395,7 +427,7 @@ def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: fl
         return None
 
     refs = tuple(str(value) for value in item.get("evidence_refs", ()) if str(value or "").strip())[:8]
-    if target in {"environment_shared_task", "environment_self_relevance"}:
+    if target == "environment_shared_task":
         candidate_kind = "screen_comment"
     elif kind == "contribute":
         candidate_kind = "followup_reminder"
@@ -404,7 +436,16 @@ def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: fl
     else:
         candidate_kind = "social_check_in"
 
-    environment_grounded = target in {"environment_shared_task", "environment_self_relevance"}
+    environment_grounded = target == "environment_shared_task"
+    expression_commitment = commitment_payload(
+        origin="subject_initiative",
+        source_id=intention_id,
+        semantic_target=topic,
+        motive=kind,
+        pressure=pressure,
+        freshness=1.0,
+        persistence=commitment,
+    )
     candidate = SocialSpeechCandidate(
         decision="candidate",
         kind=candidate_kind,
@@ -434,6 +475,7 @@ def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: fl
         seed_intrusion_risk=_clamp01(0.24 - 0.10 * commitment),
         face_risk=_clamp01(0.10 + 0.18 * pressure),
         recovery_available=True,
+        expression_commitment=expression_commitment,
     )
     return ExecutiveAffordance(
         affordance_id=f"subject-intention:{intention_id}",
@@ -448,17 +490,6 @@ def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: fl
             "intention_id": intention_id,
             "epistemic_motive": epistemic,
             "environment_grounded": environment_grounded,
-            # Native commitment: lifecycle vẫn thuộc Subject initiative; metadata
-            # chỉ mang semantic identity xuyên qua proposal/Neuro/Surface.
-            "expression_commitment": commitment_payload(
-                origin="subject_initiative",
-                source_id=intention_id,
-                semantic_target=topic,
-                motive=kind,
-                pressure=pressure,
-                freshness=1.0,
-                persistence=commitment,
-            ),
         },
     )
 
@@ -516,8 +547,6 @@ def build_subject_initiative_affordances(
     *,
     runtime_context: Mapping[str, Any],
     now: float,
-    reply_expected: bool = False,
-    user_busy: bool = False,
     interaction_busy: bool = False,
 ) -> tuple[ExecutiveAffordance, ...]:
     if interaction_busy:
@@ -543,8 +572,6 @@ def build_subject_initiative_affordances(
             runtime_context=runtime_context,
             now=now,
             contentful=candidate is not None,
-            reply_expected=reply_expected,
-            user_busy=user_busy,
             interaction_busy=interaction_busy,
         )
         if callable(note_control):

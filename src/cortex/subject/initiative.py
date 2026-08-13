@@ -440,17 +440,21 @@ class InitiativeEngine:
 
         expression_pressure = existential_value("authentic_self_expression")
         expression_actionability = existential_value("authentic_self_expression", "actionability")
+        # V68: user đang xem thứ liên quan Eris chỉ làm *context boost* cho một
+        # self-expression đã tồn tại. Nó không tự sinh semantic target public.
+        # Nhờ vậy màn hình đứng yên không biến Eris thành cái loa "bạn đang xem Eris".
+        self_context_boost = 1.0 + 0.22 * environment_self_relevance
         add(
             MotiveKind.SHARE,
-            _clamp01(expression_pressure * (0.56 + 0.24 * cp + 0.20 * opportunity)),
+            _clamp01(expression_pressure * self_context_boost * (0.56 + 0.24 * cp + 0.20 * opportunity)),
             0.12,
             "self_expression",
             (
-                "chia sẻ một quan sát public-safe về state/giá trị của Eris có provenance để user "
-                "hiểu Eris hơn; không bịa cảm giác cơ thể hay sự kiện"
+                "chia sẻ một quan sát public-safe về state/giá trị của chính mình có provenance; "
+                "nếu context liên quan Eris thì dùng nó như nền, không mô tả màn hình như một thông báo"
             ),
             ("connection", "coherence"),
-            f"existential_self_expression={expression_pressure:.2f}; actionability={expression_actionability:.2f}",
+            f"existential_self_expression={expression_pressure:.2f}; context_boost={self_context_boost:.2f}; actionability={expression_actionability:.2f}",
             _uniq((*base_refs, *existential_refs("authentic_self_expression")), limit=12),
         )
         add(
@@ -514,24 +518,9 @@ class InitiativeEngine:
                 _uniq((*base_refs, *environment_refs), limit=12),
             )
 
-        # Khi structured telemetry cho thấy user đang xem chính source/khái niệm
-        # của Eris, điều đó có thể chạm vào self-expression. Không suy ra user
-        # "muốn hiểu Eris"; chỉ coi đây là một cơ hội có provenance để chia sẻ
-        # một quan sát ngắn nếu thời điểm phù hợp.
-        if environment_self_target:
-            add(
-                MotiveKind.SHARE,
-                _clamp01(environment_self_relevance * (0.52 + 0.22 * cp + 0.26 * opportunity)),
-                0.18,
-                "environment_self_relevance",
-                (
-                    "chia sẻ một quan sát ngắn về Eris liên quan trực tiếp đối tượng user đang xem, "
-                    f"không suy diễn mục đích của user: {environment_self_target}"
-                ),
-                ("connection", "coherence"),
-                f"environment_self_relevance={environment_self_relevance:.2f}",
-                _uniq((*base_refs, *environment_self_refs), limit=12),
-            )
+        # V68: không materialize SELF_RELEVANT_INSPECTION thành motive riêng.
+        # Nó đã được dùng ở self_context_boost phía trên; content phải xuất phát
+        # từ state/thought của Eris, không từ một observation trần về màn hình.
         if sp >= 0.42:
             add(
                 MotiveKind.PROTECT,

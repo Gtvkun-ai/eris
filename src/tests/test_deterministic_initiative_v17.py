@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from cortex.subject.expression_commitment import commitment_payload
+
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -75,6 +77,10 @@ def _social_agenda_candidate() -> SocialSpeechCandidate:
         continuation_lane="social_agenda",
         claim_token="goal:test:v2:worker",
         idempotency_key="goal:test:move:1",
+        expression_commitment=commitment_payload(
+            origin="test_social_agenda", source_id="agenda:v67",
+            semantic_target="advance the active social goal", pressure=0.8, freshness=0.9, persistence=0.8,
+        ),
     )
 
 def test_blackboard_only_surfaces_public_safe_inner_seed():
@@ -136,7 +142,7 @@ def test_v66_controller_does_not_treat_user_busy_as_expression_boundary(tmp_path
     decision = controller.decide(board, _social_agenda_candidate())
 
     assert decision.action is InitiativeAction.SPEECH
-    assert decision.reason == "allowed"
+    assert decision.reason == "expression_committed"
     assert decision.speech_intent is not None
 
 
