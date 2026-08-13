@@ -283,11 +283,18 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
         except Exception:
             pass
 
+    handoff_runtime = getattr(host, "conversation_handoff_runtime", None)
+    handoff_state = getattr(handoff_runtime, "snapshot", lambda: None)() if handoff_runtime is not None else None
+    conversation_topic_closed = bool(getattr(handoff_state, "topic_closed", False))
+    conversation_move_hint = str(getattr(handoff_state, "conversation_move_hint", "") or "")
+
     # Các tín hiệu dưới đây chỉ lấy từ projection đã có. Không có projection thì
     # để 0, tuyệt đối không bịa "user hiểu sai Eris" chỉ để kiếm chủ đề nói.
     return {
         "user_model_uncertainty": uncertainty,
         "user_model_evidence_refs": refs,
+        "conversation_topic_closed": conversation_topic_closed,
+        "conversation_move_hint": conversation_move_hint,
         # V59: projection hiện sinh + desire chỉ chứa state có provenance, không
         # chứa chain-of-thought hay phán đoán riêng tư chưa kiểm chứng về user.
         "existential_anchor": dict(existential_anchor),
@@ -346,7 +353,9 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
     }
 
 
-def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: float) -> ExecutiveAffordance | None:
+def _candidate_from_intention(
+    item: Mapping[str, Any], *, revision: int, now: float, runtime_context: Mapping[str, Any] | None = None
+) -> ExecutiveAffordance | None:
     kind = str(item.get("motive_kind") or "").strip().lower()
     intention_id = str(item.get("intention_id") or "").strip()
     goal = str(item.get("semantic_goal") or "").strip()
@@ -360,14 +369,30 @@ def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: fl
     # cho phép CONNECT/SHARE materialize khi target đã được desire hiện sinh đóng
     # thành một đối tượng cụ thể. Nhờ vậy "muốn gần user" không tự hóa thành câu
     # hỏi NPC, nhưng "muốn duy trì continuity của quan hệ này" thì có thể cạnh tranh.
-    if kind == "understand_user":
+    runtime_context = dict(runtime_context or {})
+    topic_closed = bool(runtime_context.get("conversation_topic_closed", False))
+    user_unknown = _clamp01(runtime_context.get("user_model_uncertainty", 0.72), 0.72)
+    if kind == "understand_user" and not (topic_closed or user_unknown >= 0.58):
         return None
     if kind == "connect" and target != "relationship_continuity":
         return None
     if kind == "share" and target != "self_expression":
         return None
 
-    if kind == "be_understood" and target == "mutual_understanding":
+    if kind == "understand_user":
+        speech_act = "user_probe"
+        topic = (
+            "Ask the user one specific, light, non-invasive question that fills a real gap in ERIS's user model "
+            "about a preference, habit, current interest, taste, or way of thinking. Do not interrogate and do not "
+            "ask a generic 'what are you doing?'. If this starts a fresh topic after a closure, use a brief natural "
+            "bridge before the question (for example an equivalent of 'à mà' / 'nói chuyện khác chút'), varying the wording."
+        )
+        tone = "curious_warm_low_pressure"
+        epistemic = True
+        if topic_closed:
+            pressure = max(pressure, 0.82)
+            commitment = max(commitment, 0.72)
+    elif kind == "be_understood" and target == "mutual_understanding":
         speech_act = "mutual_understanding_bid"
         topic = (
             "Create one brief, non-demanding mutual-understanding bid grounded in Eris's real "
@@ -461,6 +486,7 @@ def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: fl
         tone=tone,
         reason=f"subject_initiative:{kind}:target={target}:pressure={pressure:.2f}",
         source="subject_initiative",
+        seed_id=intention_id if kind == "understand_user" else "",
         eris_motive_kind=kind,
         eris_motive_why_now=(
             "structured environment meaning became meaningful enough for Eris to express"
@@ -565,7 +591,9 @@ def build_subject_initiative_affordances(
     for item in initiative.get("pending_intentions", ()):
         if not isinstance(item, Mapping) or str(item.get("status") or "pending") != "pending":
             continue
-        candidate = _candidate_from_intention(item, revision=revision, now=now)
+        candidate = _candidate_from_intention(
+            item, revision=revision, now=now, runtime_context=runtime_context
+        )
         control = arbiter.decide(
             item,
             relational=relational,

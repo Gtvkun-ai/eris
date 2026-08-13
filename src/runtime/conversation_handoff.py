@@ -46,6 +46,22 @@ def _contains_any(text: str, phrases: Sequence[str]) -> bool:
     return any(phrase in lowered for phrase in phrases)
 
 
+_TOPIC_CLOSURE_RE = re.compile(
+    r"(?:\b(?:đổi|chuyển)\s+(?:chủ đề|đề tài|chuyện|cái khác)\b"
+    r"|\b(?:nói|bàn|chuyển sang)\s+(?:chuyện|cái|chủ đề)\s+khác\b"
+    r"|\b(?:bỏ|cho qua|khép|dừng|thôi)\s+(?:qua\s+)?(?:vụ|chuyện|chủ đề|cái)?\s*(?:này|đó|ấy)?\b"
+    r"|\b(?:coi như|cho)\s+(?:vụ|chuyện|cái)?\s*.+?\s+(?:đi vào dĩ vãng|qua rồi|xong rồi)\b"
+    r"|\bđi vào dĩ vãng\b|\bđừng nhắc(?: lại)? nữa\b|\bkhông bàn(?: nữa)?\b"
+    r"|\b(?:change|switch)\s+(?:the\s+)?topic\b|\bmove\s+on\b|\blet(?:'s| us)\s+(?:leave|drop)\s+(?:that|it)\b)",
+    re.IGNORECASE,
+)
+
+
+def _explicit_topic_closure(text: Any) -> bool:
+    cleaned = _compact(text, 1000)
+    return bool(cleaned and _TOPIC_CLOSURE_RE.search(cleaned))
+
+
 def _assistant_complexity(text: str) -> float:
     """Ước lượng độ khó của câu trước bằng đặc trưng cơ học, không phán nội dung.
 
@@ -98,6 +114,9 @@ class ConversationHandoff:
     next_move_owner: str = "none"  # eris | user | shared | none
     user_stance: str = "unknown"
     eris_commitment: str = ""
+    topic_closed: bool = False
+    topic_closure_text: str = ""
+    conversation_move_hint: str = ""
     continuity_pressure: float = 0.0
     repair_needed: bool = False
     self_caused_reaction_probability: float = 0.0
@@ -120,6 +139,9 @@ class ConversationHandoff:
             "next_move_owner": self.next_move_owner,
             "user_stance": self.user_stance,
             "eris_commitment": _compact(self.eris_commitment, 320),
+            "topic_closed": bool(self.topic_closed),
+            "topic_closure_text": _compact(self.topic_closure_text, 360),
+            "conversation_move_hint": _compact(self.conversation_move_hint, 240),
             "continuity_pressure": round(_clamp01(self.continuity_pressure), 4),
             "repair_needed": bool(self.repair_needed),
             "self_caused_reaction_probability": round(
@@ -137,7 +159,11 @@ class ConversationHandoff:
             + "\nRules: preserve unfinished user requests and ERIS self-commitments across chat/autonomous turns. "
               "Causal hypotheses are hypotheses, not facts. When self_caused_reaction_probability is high, "
               "first consider whether the user's reaction is to ERIS's immediately preceding public move; "
-              "prefer repair/clarification over asking a context-free 'what happened?'."
+              "prefer repair/clarification over asking a context-free 'what happened?'. "
+              "When topic_closed=true, the previous topic is a public boundary: do not revive it from old concerns/material. "
+              "If ERIS opens a fresh topic, bridge the turn naturally before the new content (for example a brief 'à mà', "
+              "'nói chuyện khác chút', or another non-template transition appropriate to the language). Prefer a light, "
+              "specific user-directed question when user-model uncertainty is useful, rather than another self-monologue."
         )
 
 
@@ -269,6 +295,7 @@ class ConversationHandoffRuntime:
         user = _compact(user_text, 760)
         previous = _compact(previous_assistant_text or self._state.last_assistant_text, 1200)
         lowered = _norm(user)
+        topic_closure = _explicit_topic_closure(user)
 
         confusion = _contains_any(user, (
             "không hiểu", "ko hiểu", "không hiểu gì", "khó hiểu", "ý gì", "nghĩa là gì",
@@ -357,10 +384,12 @@ class ConversationHandoffRuntime:
         repair_needed = bool(
             confusion
             or (self_deprecation and self_cause >= 0.72)
-            or (bored and self_cause >= 0.70)
+            or (bored and self_cause >= 0.70 and not topic_closure)
         )
         if confusion:
             stance = "confused"
+        elif topic_closure:
+            stance = "topic_closed"
         elif bored:
             stance = "topic_satiated"
         elif self_deprecation:
@@ -375,6 +404,10 @@ class ConversationHandoffRuntime:
             unresolved = "repair_or_clarify_previous_eris_move"
             next_owner = "eris"
             pressure = max(0.92, pressure)
+        elif topic_closure:
+            unresolved = ""
+            next_owner = "eris"
+            pressure = max(0.70, pressure)
         elif user:
             # User vừa mở turn thì ERIS sở hữu lượt trả lời hiện tại, nhưng không
             # giả rằng mọi câu đều tạo long-lived open loop.
@@ -396,6 +429,11 @@ class ConversationHandoffRuntime:
             unresolved_intent=unresolved,
             next_move_owner=next_owner,
             user_stance=stance,
+            topic_closed=bool(topic_closure),
+            topic_closure_text=(user if topic_closure else ""),
+            conversation_move_hint=(
+                "acknowledge_closure_then_bridge_or_learn_user" if topic_closure else ""
+            ),
             continuity_pressure=_clamp01(pressure),
             repair_needed=repair_needed,
             self_caused_reaction_probability=self_cause,
@@ -428,7 +466,30 @@ class ConversationHandoffRuntime:
         # giải thích lại, quyền next move quay về ERIS để hoàn tất yêu cầu đổi chủ
         # đề, chứ không đẩy quả bóng ngược cho user như thể open-loop biến mất.
         pending_after_repair = bool(repaired and prior.pending_shared_goal)
-        if repaired:
+        act = str(speech_act or "").strip().lower()
+        fresh_move_after_closure = bool(
+            prior.topic_closed
+            and act in {
+                "user_probe", "independent_topic_shift", "casual_curiosity",
+                "ask_genuine_question", "relationship_continuity_bid",
+            }
+        )
+        if fresh_move_after_closure:
+            # The closure did its job: ERIS has now crossed the bridge into a fresh
+            # conversational beat. Keep the old material/urge boundary in their own
+            # runtimes, but stop treating every later turn as "still closing".
+            next_owner = "user"
+            next_pressure = min(0.36, max(0.18, prior.continuity_pressure * 0.42))
+            next_unresolved = ""
+        elif prior.topic_closed and not repaired:
+            # Closing acknowledgement completes ERIS's immediate obligation, but the
+            # boundary remains active until a genuinely fresh public move or a new
+            # user turn. This prevents autonomous cognition from resurrecting the
+            # just-closed thread while still allowing ERIS to lead the next beat.
+            next_owner = "shared"
+            next_pressure = min(0.42, max(0.22, prior.continuity_pressure * 0.55))
+            next_unresolved = ""
+        elif repaired:
             next_owner = "eris" if pending_after_repair else "user"
             next_pressure = (
                 max(0.82, prior.continuity_pressure * 0.72)
@@ -449,6 +510,9 @@ class ConversationHandoffRuntime:
             last_assistant_turn_ref=str(turn_ref or ""),
             last_assistant_turn_index=max(0, int(turn_index or 0)),
             next_move_owner=next_owner,
+            topic_closed=False if fresh_move_after_closure else prior.topic_closed,
+            topic_closure_text="" if fresh_move_after_closure else prior.topic_closure_text,
+            conversation_move_hint="" if fresh_move_after_closure else prior.conversation_move_hint,
             continuity_pressure=next_pressure,
             repair_needed=False if repaired else prior.repair_needed,
             unresolved_intent=next_unresolved,

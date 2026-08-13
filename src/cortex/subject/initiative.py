@@ -326,6 +326,13 @@ class InitiativeEngine:
         environment_self_refs = tuple(str(item) for item in runtime.get("environment_self_evidence_refs", ()) if str(item or "").strip())
         unresolved = _clamp01(runtime.get("unresolved_relational", 0.0))
         private_share = _clamp01(runtime.get("sharing_signal", sharing))
+        conversation_topic_closed = bool(runtime.get("conversation_topic_closed", False))
+        autonomous_expression_streak = max(0, int(runtime.get("autonomous_expression_streak", 0) or 0))
+        # Conversation rhythm is not just semantic novelty. If ERIS has taken
+        # several autonomous public turns in a row, marginal value should shift
+        # from another self-expression toward learning something real about user.
+        # This is a soft bias, not a forced question quota.
+        userward_balance = _clamp01(max(0, autonomous_expression_streak - 1) / 3.0)
 
         rel_refs = tuple(str(item) for item in rel.get("evidence_refs", ()) if str(item or "").strip())
         user_refs = tuple(str(item) for item in runtime.get("user_model_evidence_refs", ()) if str(item or "").strip())
@@ -364,6 +371,8 @@ class InitiativeEngine:
         understand_pressure = _clamp01(
             (0.42 * cp + 0.34 * curiosity + 0.24 * user_unknown)
             * (0.58 + 0.42 * opportunity)
+            + (0.24 + 0.12 * user_unknown if conversation_topic_closed else 0.0)
+            + 0.18 * userward_balance * user_unknown
         )
         add(
             MotiveKind.UNDERSTAND_USER,
@@ -386,7 +395,12 @@ class InitiativeEngine:
         )
         add(
             MotiveKind.SHARE,
-            _clamp01(max(sharing, private_share) * (0.52 + 0.48 * cp)),
+            _clamp01(
+                max(sharing, private_share)
+                * (0.52 + 0.48 * cp)
+                * (0.58 if conversation_topic_closed else 1.0)
+                * (1.0 - 0.38 * userward_balance)
+            ),
             0.14,
             "user",
             "chia sẻ một suy nghĩ public-safe đã có nguồn nội tại mà không bịa cái cớ bên ngoài",

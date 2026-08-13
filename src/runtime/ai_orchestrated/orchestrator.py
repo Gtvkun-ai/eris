@@ -777,6 +777,19 @@ class AIChatOrchestrator:
             ),
             now=cycle_start,
         )
+        if bool(getattr(handoff_state, "topic_closed", False)):
+            # User explicitly closed/moved past the current topic. Private cognition
+            # may keep processing it, but the old public-expression backlog loses
+            # the floor immediately. New user-directed/new-topic initiatives remain
+            # eligible and can bridge naturally into a fresh conversational beat.
+            for _runtime_name in ("mental_material_runtime", "expression_urge_runtime"):
+                _runtime = getattr(host, _runtime_name, None)
+                _boundary = getattr(_runtime, "mark_conversation_boundary", None)
+                if callable(_boundary):
+                    try:
+                        _boundary(now=cycle_start, reason="user_topic_closure")
+                    except Exception as exc:
+                        host.logger.debug("[conversation rhythm] %s boundary failed: %s", _runtime_name, exc)
 
         # V43: user turn là affect event THẬT trước public writer. Không đợi
         # post-observer vài giây rồi để câu hiện tại vẫn dùng mood cũ. Event ID
@@ -1938,6 +1951,17 @@ class AIChatOrchestrator:
             assistant_meta_extra=assistant_discourse_meta,
             idempotency_key=_chat_commit_idempotency_key(host, turn_id),
         )
+        # Foreground chat consumed this exact user event. Keep any later
+        # associative material private instead of letting it become a second reply.
+        # This MUST live in the chat scope where user_text/turn_id actually exist.
+        if public_text:
+            material_runtime = getattr(host, "mental_material_runtime", None)
+            mark_answered = getattr(material_runtime, "mark_user_event_answered", None)
+            if callable(mark_answered):
+                try:
+                    mark_answered(user_text, turn_id=turn_id, now=time.time())
+                except Exception as exc:
+                    host.logger.debug("[mental material] user event consume failed: %s", exc)
         if public_text:
             try:
                 # Subject speech_act là ownership semantic thật của lượt. AssistantAct
@@ -2262,17 +2286,6 @@ class AIChatOrchestrator:
                 _orchestrator_boundary_note(host, "chat_ttft.observe", exc)
         if memory_text:
             host._append_chat_history("assistant", memory_text, invalid=False)
-        # Một foreground reply đã tiêu thụ quyền public của user event này.
-        # Associative/rumination vẫn được giữ private, nhưng không được quay lại
-        # vài giây sau như một "reply thứ hai" cho cùng câu user.
-        if public_text:
-            material_runtime = getattr(host, "mental_material_runtime", None)
-            mark_answered = getattr(material_runtime, "mark_user_event_answered", None)
-            if callable(mark_answered):
-                try:
-                    mark_answered(user_text, turn_id=turn_id, now=time.time())
-                except Exception as exc:
-                    host.logger.debug("[mental material] user event consume failed: %s", exc)
         assistant_meta: dict[str, Any] | None = None
         if bool(getattr(decision, "should_speak", False)) and public_text:
             assistant_meta = {

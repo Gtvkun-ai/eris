@@ -109,6 +109,8 @@ class MentalMaterialRuntime:
         self._materials: dict[str, MentalMaterial] = {}
         self._answered_user_events: dict[str, float] = {}
         self._last_log_signature = ""
+        self._conversation_boundary_at: float = 0.0
+        self._conversation_boundary_until: float = 0.0
 
     def _log(self, level: str, message: str, *args: Any) -> None:
         fn = getattr(self.logger, level, None) if self.logger is not None else None
@@ -126,6 +128,29 @@ class MentalMaterialRuntime:
             digest = hashlib.sha256(clean.encode("utf-8", errors="replace")).hexdigest()[:20]
             keys.append(f"user_event:{digest}")
         return tuple(dict.fromkeys(keys))
+
+    def mark_conversation_boundary(
+        self, *, now: float | None = None, reason: str = "topic_boundary", hold_seconds: float = 180.0
+    ) -> None:
+        """Keep cognition alive while closing the old topic's public projection."""
+        current = float(now or time.time())
+        self._conversation_boundary_at = max(self._conversation_boundary_at, current)
+        self._conversation_boundary_until = max(
+            self._conversation_boundary_until, current + max(15.0, float(hold_seconds))
+        )
+        self._log(
+            "info", "[conversation rhythm] material boundary reason=%s hold=%.0fs",
+            reason, max(0.0, self._conversation_boundary_until - current),
+        )
+
+    def _boundary_consumes_public_route(self, material: MentalMaterial, now: float) -> bool:
+        if material.created_at <= self._conversation_boundary_at:
+            return True
+        if now < self._conversation_boundary_until and material.cause_kind in {
+            "active_concern", "continue_private_thought", "react_to_self_outcome"
+        }:
+            return True
+        return False
 
     def mark_user_event_answered(
         self,
@@ -155,11 +180,15 @@ class MentalMaterialRuntime:
             self._log("info", "[mental material] consumed user event public floor causes=%s", ",".join(keys))
         return keys
 
-    def _public_route_consumed(self, material: MentalMaterial) -> bool:
+    def _public_route_consumed(self, material: MentalMaterial, *, now: float | None = None) -> bool:
+        current = float(now or time.time())
         return bool(
-            material.cause_kind == "user_event"
-            and material.cause_id
-            and material.cause_id in self._answered_user_events
+            self._boundary_consumes_public_route(material, current)
+            or (
+                material.cause_kind == "user_event"
+                and material.cause_id
+                and material.cause_id in self._answered_user_events
+            )
         )
 
     def ingest_seed(self, seed: Any, *, now: float | None = None) -> dict[str, Any] | None:
@@ -284,7 +313,7 @@ class MentalMaterialRuntime:
         # 0.2 không nên khiến scheduler chạy vòng nặng chỉ vì nó tồn tại.
         pulls: list[float] = []
         for item in self._materials.values():
-            if self._public_route_consumed(item):
+            if self._public_route_consumed(item, now=current):
                 # Thought vẫn ở material field để private cognition/audit nhìn thấy,
                 # nhưng foreground reply đã tiêu thụ quyền đánh thức public lane.
                 pulls.append(0.0)
@@ -330,7 +359,7 @@ class MentalMaterialRuntime:
             if state == "fading":
                 continue
             valid_development = bool(material.development_score >= 0.62)
-            public_route_consumed = self._public_route_consumed(material)
+            public_route_consumed = self._public_route_consumed(material, now=current)
             # Nếu concern đã consummate và worker chỉ paraphrase, material vẫn
             # được tồn tại private nhưng không được lẻn sang expression lane.
             # Tương tự, user_event đã có foreground reply không được promote sang

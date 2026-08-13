@@ -257,11 +257,44 @@ class ExpressionUrgeRuntime:
         self._urges: dict[str, ExpressionUrge] = {}
         self._seen_inputs: dict[str, float] = {}
         self._last_log_signature = ""
+        self._conversation_boundary_at: float = 0.0
+        self._conversation_boundary_until: float = 0.0
 
     def _log(self, level: str, message: str, *args: Any) -> None:
         fn = getattr(self.logger, level, None) if self.logger is not None else None
         if callable(fn):
             fn(message, *args)
+
+    def mark_conversation_boundary(
+        self, *, now: float | None = None, reason: str = "topic_boundary", hold_seconds: float = 180.0
+    ) -> int:
+        """Close the *public* backlog at an explicit conversational boundary.
+
+        Existing urges remain inspectable until prune, but are marked satisfied.
+        For a short hold window, active-concern/mental-material sources may keep
+        thinking privately but cannot immediately rebuild the same public monologue.
+        Structured task continuations and new user-probe initiatives are unaffected.
+        """
+        current = float(now or time.time())
+        self._conversation_boundary_at = max(self._conversation_boundary_at, current)
+        self._conversation_boundary_until = max(
+            self._conversation_boundary_until, current + max(15.0, float(hold_seconds))
+        )
+        changed = 0
+        for urge in self._urges.values():
+            if urge.created_at <= current and urge.satisfaction < 0.98:
+                urge.satisfaction = 1.0
+                urge.updated_at = current
+                changed += 1
+        self._log(
+            "info", "[conversation rhythm] expression boundary reason=%s retired_urges=%s hold=%.0fs",
+            reason, changed, max(0.0, self._conversation_boundary_until - current),
+        )
+        self._prune(current)
+        return changed
+
+    def _boundary_blocks_private_expression(self, now: float) -> bool:
+        return bool(self._conversation_boundary_until > float(now))
 
     def _consummation_assessment(self, urge: ExpressionUrge, *, now: float) -> Mapping[str, Any]:
         """Đọc completion semantic trước khi urge được nâng thành commitment.
@@ -440,6 +473,8 @@ class ExpressionUrgeRuntime:
             owner = str(getattr(affordance, "owner", "") or "")
             if owner in _STRUCTURED_OWNERS or str(getattr(candidate, "kind", "") or "") == "force_speak":
                 continue
+            if self._boundary_blocks_private_expression(current) and owner in {"mental_material", "active_concern"}:
+                continue
             meta = dict(getattr(affordance, "metadata", {}) or {})
             # V66: MentalMaterial có hai lane khác nhau: ``concern`` chỉ nói rằng
             # thought đáng được giữ trong cognition; ``expression_ready`` mới là
@@ -486,7 +521,10 @@ class ExpressionUrgeRuntime:
 
         # ActiveConcern là nguồn continuity. Concern không cần phải sinh từ seed;
         # memory/agenda/thought thật cũng có thể trở thành một urge có nội dung.
-        for raw in tuple(active_concerns or ()):
+        # Sau explicit topic boundary, concern vẫn sống private nhưng tạm mất quyền
+        # tái tạo public urge. Đây là conversational floor, không phải xoá suy nghĩ.
+        _active_concern_inputs = () if self._boundary_blocks_private_expression(current) else tuple(active_concerns or ())
+        for raw in _active_concern_inputs:
             concern = dict(raw)
             content = compact(concern.get("subject", ""), 520)
             state = str(concern.get("state") or "simmering")

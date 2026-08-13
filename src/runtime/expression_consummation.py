@@ -58,7 +58,9 @@ def _substantive_refs(values: Iterable[Any]) -> set[str]:
 
 _SHIFT_RE = re.compile(
     r"(?:\bđổi\s+(?:chủ đề|đề tài|cái khác)|\bchuyển\s+(?:chủ đề|đề tài)|\bnói\s+(?:cái|chuyện|chủ đề)\s+khác"
-    r"|\brẽ\s+sang\s+(?:hướng|chuyện|chủ đề)\s+khác|\bnew\s+topic\b|\bchange\s+(?:the\s+)?topic\b)",
+    r"|\brẽ\s+sang\s+(?:hướng|chuyện|chủ đề)\s+khác|\b(?:bỏ|cho qua|khép|dừng|thôi)\s+(?:qua\s+)?(?:vụ|chuyện|chủ đề|cái)?\s*(?:này|đó|ấy)?\b"
+    r"|\bđi vào dĩ vãng\b|\bđừng nhắc(?: lại)? nữa\b|\bkhông bàn(?: nữa)?\b"
+    r"|\bnew\s+topic\b|\bchange\s+(?:the\s+)?topic\b|\bmove\s+on\b|\blet(?:'s| us)\s+(?:leave|drop)\s+(?:that|it)\b)",
     re.IGNORECASE,
 )
 _REPETITION_FATIGUE_RE = re.compile(
