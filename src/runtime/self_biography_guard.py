@@ -82,7 +82,7 @@ def user_probe_fake_memory_premise(
     return not _has_valid_history_ref(
         claim_manifest,
         allowed_evidence_refs,
-        domains=frozenset({"conversation_history", "memory"}),
+        domains=frozenset({"conversation_history", "shared_episode", "memory"}),
     )
 
 

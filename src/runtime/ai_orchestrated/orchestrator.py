@@ -1299,16 +1299,43 @@ class AIChatOrchestrator:
         routing_context = route_decision.prompt_context()
         host.last_companion_model_route = route_decision.to_dict()
 
+        # V73: positive evidence enrichment for foreground chat too. Memory/user
+        # facts are selected first with provenance; the public writer then gets
+        # both the semantic inventory and the exact refs it may cite.
+        chat_evidence_bundle: dict[str, Any] = {}
+        chat_enriched_refs: tuple[str, ...] = ()
+        chat_enriched_domains: tuple[str, ...] = ()
+        try:
+            from runtime.evidence_enrichment import compiler_for
+            chat_bundle = compiler_for(host).compile(
+                speech_act=str(getattr(getattr(chat_plan, "semantics", None), "speech_act", "") or "direct_reply"),
+                semantic_goal=str(getattr(chat_plan, "motive", "") or ""),
+                topic=str(getattr(chat_plan, "topic", "") or ""),
+                current_user_text=user_text,
+                recent_history=history,
+            )
+            chat_evidence_bundle = chat_bundle.to_dict()
+            chat_enriched_refs = chat_bundle.evidence_refs
+            chat_enriched_domains = chat_bundle.claim_domains
+            host.logger.info(
+                "[evidence enrichment] channel=chat user_facts=%s episodes=%s self_facts=%s",
+                len(chat_bundle.user_facts), len(chat_bundle.shared_episodes), len(chat_bundle.self_facts),
+            )
+        except Exception as exc:
+            host.logger.debug("[evidence enrichment] chat compile failed: %s", exc)
+
         # V42: public writer được quyền viết tự nhiên nhưng không được tự mở thêm
         # miền sự thật. Contract này là typed provenance, không phải blacklist từ.
         chat_claim_domains = {
             "user_statement", "conversation_history", "internal_state",
             "opinion", "hypothetical", "self_capability", "self_preference",
         }
+        chat_claim_domains.update(chat_enriched_domains)
         chat_claim_evidence_refs = set(
             str(item) for item in (getattr(grounding_report, "evidence_ids", ()) or ())
             if str(item or "").strip()
         )
+        chat_claim_evidence_refs.update(chat_enriched_refs)
         # The foreground user message is real evidence, but give it a typed ref
         # so user_statement is no longer an evidence-exempt escape hatch.
         chat_claim_evidence_refs.add("user-statement:current-turn")
@@ -1336,6 +1363,8 @@ class AIChatOrchestrator:
             chat_claim_domains.add("discovery_artifact")
         grounding_context = "\n\n".join(part for part in (
             grounding_context,
+            ("EVIDENCE_ENRICHMENT_V73: " + json.dumps(chat_evidence_bundle, ensure_ascii=False, separators=(",", ":")))
+            if chat_evidence_bundle else "",
             "CLAIM_DOMAIN_CONTRACT_V42: " + json.dumps({
                 "allowed_domains": sorted(chat_claim_domains),
                 "allowed_evidence_refs": sorted(chat_claim_evidence_refs),

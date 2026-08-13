@@ -245,6 +245,14 @@ class SurfaceIntentEngine:
                 ),
                 "allowed_evidence_refs": list(intent.evidence_refs),
                 "allowed_claim_domains": list(intent.allowed_claim_domains),
+                "evidence_bundle": dict(intent.evidence_bundle),
+                "evidence_bundle_rule": (
+                    "Use the typed evidence_bundle as positive semantic input. Facts may be ignored when irrelevant, "
+                    "but must never be strengthened beyond their confidence/provenance. For user_probe, prefer the "
+                    "supplied open_user_gap and use known facts only to make the question more relevant; never turn "
+                    "an unknown into a remembered fact. recent_user_turns/shared_episodes may support continuity only "
+                    "when the corresponding evidence ref is copied into claim_manifest."
+                ),
                 "claim_domain_rule": (
                     "Every claim added by Surface must be declared in claim_manifest. "
                     "Never use a domain outside allowed_claim_domains and never invent an evidence ref."

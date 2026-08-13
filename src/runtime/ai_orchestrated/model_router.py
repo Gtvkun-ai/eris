@@ -759,9 +759,9 @@ SURFACE_REALIZATION_SCHEMA = {
                         "type": "string",
                         "enum": [
                             "internal_state", "conversation_history", "user_statement",
-                            "memory", "verified_runtime_clock", "grounded_environment",
+                            "user_profile", "shared_episode", "memory", "verified_runtime_clock", "grounded_environment",
                             "engagement_state", "discovery_artifact", "self_capability",
-                            "self_preference", "self_history", "opinion", "hypothetical"
+                            "self_preference", "self_model", "self_history", "opinion", "hypothetical"
                         ],
                     },
                     "claim": {"type": "string"},
@@ -796,9 +796,9 @@ CLAIM_MANIFEST_SCHEMA: dict[str, Any] = {
                 "type": "string",
                 "enum": [
                     "internal_state", "conversation_history", "user_statement",
-                    "memory", "verified_runtime_clock", "grounded_environment",
+                    "user_profile", "shared_episode", "memory", "verified_runtime_clock", "grounded_environment",
                     "engagement_state", "discovery_artifact", "self_capability",
-                    "self_preference", "self_history", "opinion", "hypothetical"
+                    "self_preference", "self_model", "self_history", "opinion", "hypothetical"
                 ],
             },
             "claim": {"type": "string"},
@@ -1472,8 +1472,9 @@ class AIRuntimeModelRouter:
             "Khi thực sự chuyển sang chủ đề khác, tạo một cầu nối hội thoại tự nhiên trước khi rẽ (ví dụ tương đương 'à mà', 'nói chuyện khác chút', hoặc một câu mời ý kiến như 'anh nghĩ sao'); đừng nhảy topic như thay kênh. "
             "Không biến mọi lượt thành bàn luận của ERIS. Khi không còn việc cụ thể phải giải quyết và context cho phép, ưu tiên một câu hỏi nhẹ, cụ thể để hiểu user hơn thay vì thêm một self-monologue. Tránh phỏng vấn liên hoàn và tránh câu hỏi generic. "
             "Không phát minh grounding, memory hay capability. Grounding chỉ đến từ context; capability directive của runtime là authority. "
+            "Nếu Current grounding chứa EVIDENCE_ENRICHMENT_V73, đó là positive semantic input đã được runtime tuyển từ user profile, shared episodes, recent turns và self-model có provenance. Dùng nó để làm câu trả lời liên tục và cụ thể hơn; không bắt buộc nhắc fact không liên quan, không nâng unknown thành fact, và không tự bịa cầu nối ký ức. "
             "V42 claim-domain contract: mọi factual/sensory/memory/runtime claim được thêm vào câu phải khai báo trong claim_manifest. "
-            "Chỉ dùng domain/evidence ref mà Current grounding cho phép; opinion/hypothetical/internal_state có thể không cần evidence ref. Không có claim thì claim_manifest=[]. "
+            "Chỉ dùng domain/evidence ref mà Current grounding cho phép; user_profile/shared_episode/self_model phải dùng ref thật; opinion/hypothetical/internal_state có thể không cần evidence ref. Không có claim thì claim_manifest=[]. "
             "Không cần tự giải thích personality, MBTI, reasoning hay confidence. Dùng personality context như quyền biểu đạt: nó phải đổi cadence, độ gần, mức tự bộc lộ và cạnh hài khi phù hợp, chứ không được nằm chết như metadata. "
             "performance_hint/performance_intensity/nonverbal_cue/delivery_priority/interruptible là tùy chọn; bỏ qua nếu không cần. "
             "semantic_frame, assistant_act, social_plan và self_capability_claims cũng chỉ là SOFT METADATA: nếu chắc thì có thể trả thêm; nếu không chắc thì bỏ qua. "
@@ -2848,7 +2849,9 @@ class AIRuntimeModelRouter:
             "Khi motive là want_to_share/want_to_express, ưu tiên một phát biểu tự đủ nghĩa; không mặc định biến thành câu hỏi, không xin phép chia sẻ, "
             "không kết thúc bằng 'còn bạn thì sao', không gây áp lực phải trả lời. Daring cho phép ý kiến riêng, tự bộc lộ hoặc trêu nhẹ trong risk đã duyệt; "
             "nó không cho phép bịa fact, chạm memory nhạy cảm hay ép thân mật. Nếu speech_act=user_probe, hỏi đúng MỘT câu nhẹ, cụ thể về user để lấp một khoảng chưa biết thật; "
-            "user_probe TUYỆT ĐỐI không được mở bằng ký ức giả kiểu 'lúc trước bạn có kể/anh từng nói' nếu speech_intent không cấp conversation_history/memory cùng evidence ref thật. Hỏi từ cái chưa biết, đừng bịa tiền đề để câu hỏi có vẻ tự nhiên. "
+            "Nếu speech_intent.evidence_bundle có dữ liệu, coi đó là kho semantic đã được runtime tuyển chọn: user_facts/recent_user_turns/shared_episodes/self_facts là dữ kiện có provenance; open_user_gap là khoảng chưa biết nên ưu tiên khi speech_act=user_probe. Không bắt buộc nhắc fact nếu không liên quan, nhưng tuyệt đối không nâng unknown thành fact. "
+            "Với user_probe, nếu open_user_gap tồn tại thì câu hỏi phải nhắm đúng gap đó hoặc một biến thể semantic rất gần; đừng tự bốc một chủ đề đời thường khác chỉ để có chuyện hỏi. "
+            "user_probe TUYỆT ĐỐI không được mở bằng ký ức giả kiểu 'lúc trước bạn có kể/anh từng nói' nếu speech_intent không cấp conversation_history/shared_episode/memory cùng evidence ref thật. Hỏi từ cái chưa biết, đừng bịa tiền đề để câu hỏi có vẻ tự nhiên. "
             "nếu đây là nhịp mới sau topic closure, mở bằng một bridge tự nhiên ngắn (tương đương 'à mà', 'nói chuyện khác chút', v.v.), không dùng cùng một template mỗi lần. "
             "Nếu speech_act=independent_topic_shift, bỏ hẳn chủ đề cũ nhưng phải có một cầu nối hội thoại ngắn trước ý mới; có thể mời user phản ứng kiểu 'anh nghĩ sao' khi thật sự phù hợp. "
             "Không dỗi, không trừng phạt, không tuyên bố user không quan tâm, và không chuyển chủ đề bằng một độc thoại trừu tượng dài. "
@@ -2856,7 +2859,7 @@ class AIRuntimeModelRouter:
             "V42 claim-domain contract: với MỌI factual/sensory/memory/runtime claim bạn thêm vào wording, khai báo một item trong claim_manifest. "
             "domain phải nằm trong surface_contract.allowed_claim_domains; evidence_refs của claim chỉ được copy từ surface_contract.allowed_evidence_refs. "
             "Opinion/hypothetical/internal_state/self_preference vẫn khai báo domain nhưng có thể không cần evidence ref. "
-            "conversation_history/memory/self_history bắt buộc dùng evidence ref thật. self_preference chỉ là sở thích/quan điểm; self_history là tuyên bố ERIS từng/thường thực hiện một hành động và không được bịa trải nghiệm thân thể. Không có claim thì claim_manifest=[]. "
+            "conversation_history/user_profile/shared_episode/memory/self_model/self_history bắt buộc dùng evidence ref thật. user_profile là fact bền về user; shared_episode là continuity có episode thật; self_model là facet dẫn xuất có provenance. self_preference chỉ là sở thích/quan điểm; self_history là tuyên bố ERIS từng/thường thực hiện một hành động và không được bịa trải nghiệm thân thể. Không có claim thì claim_manifest=[]. "
             "Tối đa số câu trong surface_contract.max_sentences nhưng đừng tối ưu brevity; evidence_refs chỉ copy id được phép. Return JSON only."
         )
 

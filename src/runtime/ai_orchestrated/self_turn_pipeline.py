@@ -1044,6 +1044,52 @@ class SelfTurnPipeline:
                 plan=plan, context=context, activity=activity, gate_reason="missing_speech_intent",
             )
 
+        # V73 positive grounding: collect real user/history/self evidence BEFORE
+        # Surface writes a sentence. The writer receives a bounded semantic
+        # inventory and a selected information gap instead of inventing a premise
+        # first and hoping the validator accepts it later.
+        try:
+            from runtime.evidence_enrichment import compiler_for
+            semantics = getattr(getattr(speech_intent, "plan", None), "semantics", None)
+            speech_act = str(getattr(semantics, "speech_act", "") or "")
+            semantic_goal = str(getattr(speech_intent.plan, "motive", "") or "")
+            bundle = compiler_for(host).compile(
+                speech_act=speech_act,
+                semantic_goal=semantic_goal,
+                topic=str(getattr(speech_intent.plan, "topic", "") or ""),
+                recent_history=context.recent_history,
+            )
+            bundle_payload = bundle.to_dict()
+            enriched_refs = tuple(dict.fromkeys((*speech_intent.evidence_refs, *bundle.evidence_refs)))[:96]
+            enriched_domains = tuple(dict.fromkeys((*speech_intent.allowed_claim_domains, *bundle.claim_domains)))[:24]
+            speech_intent = replace(
+                speech_intent,
+                evidence_refs=enriched_refs,
+                allowed_claim_domains=enriched_domains,
+                evidence_bundle=bundle_payload,
+            )
+            decision = replace(decision, speech_intent=speech_intent)
+            self.trace_store.append("evidence_enrichment", {
+                "trace_id": str(speech_intent.trace_id or plan.plan_id),
+                "stage": "evidence_enrichment",
+                "owner": "runtime",
+                "generation_epoch": speech_intent.generation_epoch,
+                "speech_act": speech_act,
+                "user_fact_count": len(bundle.user_facts),
+                "recent_user_turn_count": len(bundle.recent_user_turns),
+                "shared_episode_count": len(bundle.shared_episodes),
+                "self_fact_count": len(bundle.self_facts),
+                "open_user_gap": bundle.open_user_gap.to_dict() if bundle.open_user_gap else None,
+            })
+            if bundle.open_user_gap is not None:
+                host.logger.info(
+                    "[evidence enrichment] speech_act=%s gap=%s score=%.2f user_facts=%s episodes=%s self_facts=%s",
+                    speech_act, bundle.open_user_gap.key, bundle.open_user_gap.score,
+                    len(bundle.user_facts), len(bundle.shared_episodes), len(bundle.self_facts),
+                )
+        except Exception as exc:
+            host.logger.debug("[evidence enrichment] autonomous compile failed: %s", exc)
+
         validator = getattr(host, "ai_autonomous_grounding_validator", None)
         if validator is not None:
             preflight = validator.validate_intent(speech_intent, blackboard)

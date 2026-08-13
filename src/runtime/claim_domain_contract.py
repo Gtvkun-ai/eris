@@ -18,6 +18,8 @@ KNOWN_CLAIM_DOMAINS = frozenset({
     "internal_state",
     "conversation_history",
     "user_statement",
+    "user_profile",
+    "shared_episode",
     "memory",
     "verified_runtime_clock",
     "grounded_environment",
@@ -25,6 +27,7 @@ KNOWN_CLAIM_DOMAINS = frozenset({
     "discovery_artifact",
     "self_capability",
     "self_preference",
+    "self_model",
     "self_history",
     "opinion",
     "hypothetical",
@@ -39,7 +42,10 @@ EVIDENCE_REQUIRED_DOMAINS = frozenset({
     # historical claims, not decorative wording. They require a real ref.
     "conversation_history",
     "user_statement",
+    "user_profile",
+    "shared_episode",
     "memory",
+    "self_model",
     "self_history",
 })
 
