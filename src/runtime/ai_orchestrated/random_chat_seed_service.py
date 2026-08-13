@@ -1089,15 +1089,35 @@ class RandomChatSeedReservoir:
                 return False, reason
         elif seed.generic or seed.intrusion_risk > 0.46 or seed.daring > 0.86:
             return False, "seed_policy_rejected"
+
+        # --- Per-cause_id reservoir cap ---
+        # Một concern đơn lẻ không được chiếm quá 2 slot trong kho; nếu không
+        # seed worker sẽ cứ nảy ra céc biến thể của cùng 1 chủ đề triết học mãi.
+        _MAX_SLOTS_PER_CAUSE = 2
+        if seed.material_only and seed.cause_id:
+            cause_slots = sum(
+                1 for e in self._entries if e.seed.cause_id == seed.cause_id
+            )
+            if cause_slots >= _MAX_SLOTS_PER_CAUSE:
+                return False, "reservoir_cause_slots_full"
+
         for entry in self._entries:
             if _similarity(seed.premise, entry.seed.premise) >= 0.68:
                 return False, "reservoir_duplicate"
-            if set(seed.topic_tags) == set(entry.seed.topic_tags) and seed.topic_tags:
-                # V45 cho phép cùng causal topic sinh reaction rồi opinion/question;
-                # tag giống nhau không đồng nghĩa mental object giống nhau. Chỉ
-                # chặn nếu cả material kind cũng trùng.
-                if not seed.material_only or seed.material_kind == entry.seed.material_kind:
-                    return False, "reservoir_topic_duplicate"
+            # --- Broader topic-tag overlap using Jaccard (replaces exact-match) ---
+            # Exact-match cũ bỏ sót trường hợp 2 seed cùng chủ đề nhưng khác 1 tag nhỏ;
+            # Jaccard >= 0.50 bắt được đa số trường hợp tất cả các tag core giống nhau.
+            new_tags = set(seed.topic_tags)
+            old_tags = set(entry.seed.topic_tags)
+            if new_tags and old_tags:
+                intersection = len(new_tags & old_tags)
+                union = len(new_tags | old_tags)
+                tag_jaccard = intersection / max(1, union)
+                if tag_jaccard >= 0.50:
+                    # Chỉ block nếu material_kind cũng giống (giữ văn bản cũ: cùng cause
+                    # vẫn có thể sinh reaction và opinion cho cùng topic).
+                    if not seed.material_only or seed.material_kind == entry.seed.material_kind:
+                        return False, "reservoir_topic_overlap"
         for leased in self._leases.values():
             if _similarity(seed.premise, leased.entry.seed.premise) >= 0.68:
                 return False, "leased_duplicate"
@@ -1150,6 +1170,15 @@ class RandomChatSeedReservoir:
         family_novelty = 0.09 if seed_event_family(seed.event_kind) != last_family else 0.0
         event_novelty = 0.035 if seed.event_kind != self._last_claimed_event_kind else 0.0
         open_loop_value = 0.035 if seed.open_loop and seed.event_kind in {"knowledge_gap", "discovery_impulse", "unfinished_loop"} else 0.0
+        # Penalty nếu nhiều seed cùng cause_id đang nằm trong kho: ưu tiên seed từ
+        # cause mới/khác lên đầu danh sách peek. Score nhân toàn bộ loạt cause-peers
+        # thường khi cause chiếm nhiều slot; không chỉ cộng hằng số.
+        cause_peers = (
+            sum(1 for e in self._entries if e.seed.cause_id == seed.cause_id and seed.cause_id)
+            if seed.material_only and seed.cause_id
+            else 0
+        )
+        cause_concentration_penalty = 0.20 * max(0, cause_peers - 1)
         quality = assess_seed_quality(seed)
         return (
             0.22 * seed.estimated_fit
@@ -1163,6 +1192,7 @@ class RandomChatSeedReservoir:
             + family_novelty
             + event_novelty
             + open_loop_value
+            - cause_concentration_penalty
         )
 
     def _prune_locked(self, now: float) -> None:

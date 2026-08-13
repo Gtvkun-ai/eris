@@ -146,8 +146,13 @@ class SelfTurnPipeline:
         self._last_probe_at = 0.0
         self._observer_thread: threading.Thread | None = None
         self._observer_thread_lock = threading.Lock()
-        # Track câu autonomous gần nhất riêng biệt với last_text (last_text bị overwrite
-        # bởi chat reply sau mỗi lượt user, nên không đủ để tránh lặp câu autonomous).
+        # Track N câu autonomous gần nhất riêng biệt với last_text (last_text bị
+        # overwrite bởi chat reply sau mỗi lượt user, nên không đủ để tránh lặp câu
+        # autonomous). Deque 4 phần tử bao phủ window đủ dài để Surface và utterance
+        # gate nhận ra lặp chủ đề, không chỉ lặp câu chữ liền kề.
+        import collections as _col
+        self._recent_autonomous_texts: _col.deque[str] = _col.deque(maxlen=4)
+        # Compatibility alias - một số nhánh cũ đọc _last_autonomous_text trực tiếp.
         self._last_autonomous_text: str = ""
 
         # V19: TemporalMind là state timing rẻ dùng chung cả chat/autonomous.
@@ -1104,7 +1109,7 @@ class SelfTurnPipeline:
                     speech_intent,
                     blackboard,
                     snapshot=planner_snapshot,
-                    avoid_text=self._last_autonomous_text,
+                    avoid_text="\n".join(self._recent_autonomous_texts) or self._last_autonomous_text,
                 )
             except Exception as exc:
                 host.logger.warning("[surface worker] realization failed: %s", exc)
@@ -2161,7 +2166,7 @@ class SelfTurnPipeline:
                 ) if part),
                 engagement_context=context.engagement_prompt_context,
                 recent_history=context.recent_history,
-                avoid_text=self._last_autonomous_text or str(getattr(host, "last_text", "") or ""),
+                avoid_text="\n".join(self._recent_autonomous_texts) or self._last_autonomous_text or str(getattr(host, "last_text", "") or ""),
                 allow_fallback=not no_fallback_mode_enabled(),
                 language_hint=self._runtime_language(),
                 speech_language_hint=self._runtime_speech_language(),
@@ -2376,7 +2381,10 @@ class SelfTurnPipeline:
         host._note_autonomous_spoken()
         # Cập nhật sau commit thành công để avoid_text của lượt sau luôn tránh
         # câu autonomous vừa nói, kể cả khi chat reply đã overwrite host.last_text.
-        self._last_autonomous_text = str(text or "")
+        _committed_text = str(text or "")
+        self._last_autonomous_text = _committed_text
+        if _committed_text:
+            self._recent_autonomous_texts.append(_committed_text)
 
         # V27.1: public text là điểm duy nhất được quyền consume một Subject
         # intention. Trước điểm này Surface/gate/preemption đều có thể fail, nên
@@ -2574,7 +2582,7 @@ class SelfTurnPipeline:
         context: SelfTurnBundle,
         grounding_report: Any,
     ) -> tuple[bool, str]:
-        recent_autonomous_text = str(getattr(self, "_last_autonomous_text", "") or "")
+        recent_autonomous_text = "\n".join(getattr(self, "_recent_autonomous_texts", ())) or str(getattr(self, "_last_autonomous_text", "") or "")
         if recent_autonomous_text:
             try:
                 from .surface_intent import _surface_text_is_duplicate

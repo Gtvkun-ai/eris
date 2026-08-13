@@ -346,7 +346,9 @@ class MiniEvaluatorPipeline:
 
         fragments: list[ThoughtFragment] = []
         successful_evaluators: set[str] = set()
-        with ThreadPoolExecutor(max_workers=max(1, len(to_run))) as pool:
+        parallel = _env_flag("ERIS_PRIVATE_MIND_PARALLEL_EVAL", False)
+        max_workers = len(to_run) if parallel else 1
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_run, ev): ev for ev in to_run}
             for future in as_completed(futures):
                 ev = futures[future]
