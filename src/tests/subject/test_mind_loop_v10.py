@@ -126,9 +126,7 @@ def test_autonomous_review_recommits_directly_on_revised_frame() -> None:
         def commit_subject_frame(self, frame, **kwargs):
             self.frames.append(frame.frame_id)
             self.remote_budget_flags.append(bool(kwargs.get("allow_remote_deliberation", True)))
-            selected = next(
-                item for item in frame.coalitions if item.arguments.get("affordance_id") == "seed:1"
-            )
+            selected = frame.coalitions[0]
             return SubjectExecutiveCommit(
                 commit_id=f"auto:{len(self.frames)}",
                 frame_id=frame.frame_id,
@@ -145,8 +143,12 @@ def test_autonomous_review_recommits_directly_on_revised_frame() -> None:
     committer = Committer()
     decision = ingress.complete_session(session, committer=committer)
     assert decision is not None
-    assert len(committer.frames) == 2
-    assert committer.frames[0] != committer.frames[1]
-    assert committer.remote_budget_flags == [True, False]
-    assert decision.arguments["executive_commit"]["commit_id"] == "auto:2"
+    # Review revises evidence on a new frame but must preserve the semantic winner.
+    # It is not a second election, so the external committer is invoked only once.
+    assert len(committer.frames) == 1
+    assert committer.remote_budget_flags == [True]
+    commit_trace = decision.arguments["executive_commit"]
+    assert commit_trace["selected_proposal_ref"]
+    assert commit_trace["source"].endswith(":review_lock")
+    assert "semantic_winner_locked" in commit_trace["review_conditions"]
 

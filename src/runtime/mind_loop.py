@@ -221,6 +221,51 @@ class MindLoop:
         decision = await self.subject.finalize_deliberation(session.frame, commit)
         return FastMindResult(decision=decision, commit=commit, selection=selection)
 
+    @staticmethod
+    def _review_locked_commit(
+        frame: SubjectDeliberationFrame,
+        prior: SubjectExecutiveCommit,
+    ) -> SubjectExecutiveCommit | None:
+        """Re-bind a reviewed frame to the semantic winner already committed.
+
+        Cognitive review is allowed to revise evidence/cost/uncertainty, but it is
+        not a second action election.  The proposal identity chosen by the semantic
+        commit remains authoritative unless review structurally invalidates it
+        (proposal/coalition disappears or conflict becomes effectively hard).
+        """
+        proposal = next(
+            (item for item in frame.proposals if item.proposal_id == prior.selected_proposal_ref),
+            None,
+        )
+        if proposal is None:
+            return None
+        # A review may discover a real incompatibility.  This is the narrow escape
+        # hatch from the lock; ordinary score drift must not change the winner.
+        if float(getattr(proposal, "commitment_conflict", 0.0) or 0.0) >= 0.95:
+            return None
+        coalition = next(
+            (
+                item
+                for item in frame.coalitions
+                if item.primary_proposal_ref == prior.selected_proposal_ref
+            ),
+            None,
+        )
+        if coalition is None:
+            return None
+        return replace(
+            prior,
+            commit_id=f"review-lock:{uuid.uuid4()}",
+            frame_id=frame.frame_id,
+            selected_coalition_id=coalition.coalition_id,
+            selected_proposal_ref=prior.selected_proposal_ref,
+            cognitive_requests=(),
+            reason=f"review_lock_preserved:{prior.reason}"[:500],
+            review_conditions=tuple(dict.fromkeys((*prior.review_conditions, "semantic_winner_locked"))),
+            created_at=time.time(),
+            source=f"{prior.source}:review_lock",
+        )
+
     async def complete(
         self,
         session: DeliberationSession,
@@ -257,6 +302,10 @@ class MindLoop:
 
             requests = CognitiveRequestKind.normalize_many(commit.cognitive_requests)
             if requests and current.can_review:
+                # The first semantic commit owns action identity. Review may revise
+                # the selected proposal, but must not silently run a second election
+                # and swap in another stale urge merely because local scores moved.
+                semantic_commit = commit
                 findings = self._cognition.execute(current.frame, requests)
                 revised = await self.subject.integrate_cognitive_results(current.frame, findings)
                 current = replace(
@@ -265,6 +314,13 @@ class MindLoop:
                     state=DeliberationState.REVISED,
                     review_count=current.review_count + 1,
                 )
+                locked = self._review_locked_commit(revised, semantic_commit)
+                if locked is not None:
+                    commit = locked
+                    continue
+                # Structural invalidation is the only case where review is allowed
+                # to reopen competition.  The reviewed frame is then scored locally
+                # (never another remote semantic election).
                 commit = None
                 continue
 

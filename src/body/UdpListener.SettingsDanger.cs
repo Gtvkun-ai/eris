@@ -28,6 +28,11 @@ public partial class UdpListener : Node2D
 	private string _dangerPendingConfirmLabel = "Xác nhận";
 	private string _dangerPendingSeverity = "danger";
 	private JsonObject _dangerPendingOptions = new();
+	private bool _dangerPreviewInFlight = false;
+	private string _dangerPreviewKey = "";
+	private long _dangerPreviewRequestedAtMs = 0L;
+	private long _dangerPendingExpiresAtMs = 0L;
+	private const long DangerPreviewDebounceMs = 1500L;
 
 	private static readonly Color DangerRed = new(0.72f, 0.12f, 0.22f);
 	private static readonly Color DangerRedDeep = new(0.62f, 0.06f, 0.16f);
@@ -50,6 +55,10 @@ public partial class UdpListener : Node2D
 		_dangerConfirmInput = null;
 		_dangerConfirmButton = null;
 		_dangerBackupRoot = "";
+		_dangerPreviewInFlight = false;
+		_dangerPreviewKey = "";
+		_dangerPreviewRequestedAtMs = 0L;
+		_dangerPendingExpiresAtMs = 0L;
 	}
 
 	private void BuildDangerSettingsPage(Control root)
@@ -538,8 +547,31 @@ public partial class UdpListener : Node2D
 			return;
 		}
 
-		string requestId = Guid.NewGuid().ToString("N");
 		JsonObject options = BuildMaintenanceOptions(action);
+		string previewKey = $"{action}|{options.ToJsonString()}";
+		long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+		// Reuse a still-valid manifest instead of asking Brain to mint another
+		// confirmation token for the exact same destructive action.
+		if (!string.IsNullOrWhiteSpace(_dangerPendingToken)
+			&& string.Equals(_dangerPendingAction, action, StringComparison.OrdinalIgnoreCase)
+			&& string.Equals(_dangerPreviewKey, previewKey, StringComparison.Ordinal)
+			&& _dangerPendingExpiresAtMs > nowMs)
+		{
+			_dangerConfirmDialog?.PopupCentered();
+			SetSettingsStatus("Đang dùng lại preview còn hiệu lực từ Brain.");
+			return;
+		}
+
+		if (string.Equals(_dangerPreviewKey, previewKey, StringComparison.Ordinal)
+			&& ((_dangerPreviewInFlight && nowMs - _dangerPreviewRequestedAtMs < 5000L)
+				|| nowMs - _dangerPreviewRequestedAtMs < DangerPreviewDebounceMs))
+		{
+			SetSettingsStatus("Preview cùng phạm vi đang được xử lý…");
+			return;
+		}
+
+		string requestId = Guid.NewGuid().ToString("N");
 		var payload = new JsonObject
 		{
 			["type"] = "maintenance_request",
@@ -549,6 +581,16 @@ public partial class UdpListener : Node2D
 			["options"] = options.DeepClone(),
 		};
 		Error error = _chatSend.PutPacket(Encoding.UTF8.GetBytes(payload.ToJsonString()));
+		if (error == Error.Ok)
+		{
+			_dangerPreviewInFlight = true;
+			_dangerPreviewKey = previewKey;
+			_dangerPreviewRequestedAtMs = nowMs;
+		}
+		else
+		{
+			_dangerPreviewInFlight = false;
+		}
 		SetSettingsStatus(error == Error.Ok ? "Đang đọc phạm vi ảnh hưởng từ Brain…" : $"Không gửi được preview: {error}");
 	}
 
@@ -638,6 +680,9 @@ public partial class UdpListener : Node2D
 					: $"Thao tác lỗi: {errors} lỗi. Xem log để biết chi tiết.");
 				if (ok)
 					ApplyMaintenanceResultToUi(action, result);
+				_dangerPreviewInFlight = false;
+				_dangerPendingToken = "";
+				_dangerPendingExpiresAtMs = 0L;
 				RequestMaintenanceCatalog();
 			}
 		}
@@ -671,6 +716,7 @@ public partial class UdpListener : Node2D
 
 	private void ShowMaintenancePreview(JsonElement preview)
 	{
+		_dangerPreviewInFlight = false;
 		_dangerPendingAction = preview.TryGetProperty("action", out JsonElement actionEl) ? actionEl.GetString() ?? "" : "";
 		_dangerPendingToken = preview.TryGetProperty("confirmation_token", out JsonElement tokenEl) ? tokenEl.GetString() ?? "" : "";
 		string title = preview.TryGetProperty("title", out JsonElement titleEl) ? titleEl.GetString() ?? _dangerPendingAction : _dangerPendingAction;
@@ -687,6 +733,7 @@ public partial class UdpListener : Node2D
 		bool reversible = preview.TryGetProperty("reversible", out JsonElement reversibleEl) && reversibleEl.ValueKind == JsonValueKind.True;
 		bool requiresConfirmation = !preview.TryGetProperty("requires_confirmation", out JsonElement confirmEl) || confirmEl.ValueKind != JsonValueKind.False;
 		int expires = preview.TryGetProperty("expires_in_seconds", out JsonElement expiresEl) && expiresEl.TryGetInt32(out int seconds) ? seconds : 120;
+		_dangerPendingExpiresAtMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + Math.Max(1, expires) * 1000L;
 		_dangerPendingOptions = preview.TryGetProperty("options", out JsonElement optionsEl) && optionsEl.ValueKind == JsonValueKind.Object
 			? JsonNode.Parse(optionsEl.GetRawText())?.AsObject() ?? new JsonObject()
 			: new JsonObject();

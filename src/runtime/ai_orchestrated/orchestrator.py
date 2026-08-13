@@ -751,6 +751,14 @@ class AIChatOrchestrator:
         # Đây là state causal/continuity trước Subject+Neuro, không đợi post-observer
         # vài chục giây rồi mới biết câu user có thể là phản ứng với chính lời ERIS.
         from runtime.conversation_handoff import ensure_conversation_handoff_runtime
+        from runtime.public_topic_boundary import ensure_public_topic_boundary_store
+        topic_boundary_store = ensure_public_topic_boundary_store(host)
+        # If the user themselves brings a previously closed topic back, that is an
+        # explicit reopen. Do this before handoff classifies the new turn.
+        try:
+            topic_boundary_store.note_user_turn(user_text, now=cycle_start)
+        except Exception as exc:
+            host.logger.debug("[topic boundary] user reopen check degraded: %s", exc)
         handoff_runtime = ensure_conversation_handoff_runtime(host)
         _ledger_for_handoff = host._ensure_session_turn_ledger()
         _prior_turns_for_handoff = _ledger_for_handoff.recent_turns(
@@ -778,10 +786,21 @@ class AIChatOrchestrator:
             now=cycle_start,
         )
         if bool(getattr(handoff_state, "topic_closed", False)):
-            # User explicitly closed/moved past the current topic. Private cognition
-            # may keep processing it, but the old public-expression backlog loses
-            # the floor immediately. New user-directed/new-topic initiatives remain
-            # eligible and can bridge naturally into a fresh conversational beat.
+            # User explicitly closed/moved past the current topic. Persist a small
+            # topic fingerprint so restart cannot resurrect the same public thread.
+            # Private cognition stays intact; only public projection is bounded.
+            try:
+                topic_boundary_store.close_topic(
+                    user_text,
+                    context_text=(
+                        str(getattr(_previous_assistant_turn, "text", "") or "").strip()
+                        or previous_assistant_for_repair
+                    ),
+                    reason="user_topic_closure",
+                    now=cycle_start,
+                )
+            except Exception as exc:
+                host.logger.debug("[topic boundary] persist closure degraded: %s", exc)
             for _runtime_name in ("mental_material_runtime", "expression_urge_runtime"):
                 _runtime = getattr(host, _runtime_name, None)
                 _boundary = getattr(_runtime, "mark_conversation_boundary", None)

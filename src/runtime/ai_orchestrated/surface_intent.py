@@ -471,7 +471,9 @@ class SurfaceIntentEngine:
             return self._unavailable(intent, "surface_missing_speech_text")
         if confidence < 0.25:
             return self._unavailable(intent, f"surface_low_confidence:{confidence:.2f}")
-        if current_world_claim_without_evidence(text, intent.evidence_refs):
+        if current_world_claim_without_evidence(
+            text, intent.evidence_refs, claim_scope=getattr(intent, "claim_scope", "")
+        ):
             self._log(
                 "warning",
                 "[surface worker] blocked current-world claim without evidence mode=%s text=%s",

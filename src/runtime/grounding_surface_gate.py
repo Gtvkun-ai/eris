@@ -46,7 +46,11 @@ _PRESENT_ENVIRONMENT_PATTERNS = (
     re.compile(r"\b(?:anh sang yeu|anh sang|anh den|den trong phong|phong .*den|phong .*sang)\b"),
     re.compile(r"\b(?:khong gian|can phong|phong) (?:co ve |that |dang |rat )?(?:yen tinh|yen binh|im lang|vang lang)\b"),
     re.compile(r"\b(?:dem nay|toi nay|chieu nay|sang nay|hom nay) (?:that |co ve |rat )?(?:yen tinh|yen binh|im lang|vang lang)\b"),
-    re.compile(r"\b(?:tieng dong|am thanh|tieng mua|tieng gio)\b"),
+    # Bare "âm thanh" is often a retrospective/abstract noun ("sức nặng của
+    # âm thanh"), not evidence that ERIS currently hears something. Require an
+    # explicit present-perception construction for generic sound.
+    re.compile(r"\b(?:toi (?:dang )?(?:nghe|nghe thay)|dang nghe)\b.*\b(?:tieng|am thanh)\b"),
+    re.compile(r"\b(?:tieng mua|tieng gio|tieng dong)\b.*\b(?:ngoai|ben ngoai|trong phong|luc nay|bay gio|dang)\b"),
     re.compile(r"\b(?:nhiet do|thoi tiet) (?:dang |hien |hom nay |bay gio |co ve )?\b"),
 )
 
@@ -103,17 +107,36 @@ def _matches_any(folded: str, patterns: Sequence[re.Pattern[str]]) -> bool:
     return any(pattern.search(folded) for pattern in patterns)
 
 
-def current_world_claim_without_evidence(text: str, evidence_refs: Sequence[str] | None = None) -> bool:
-    """Chặn autonomous nói như đang nhìn/thấy thế giới khi không có provenance."""
+def current_world_claim_without_evidence(
+    text: str,
+    evidence_refs: Sequence[str] | None = None,
+    *,
+    claim_scope: str = "",
+) -> bool:
+    """Chặn claim hiện-tại thiếu evidence nhưng tôn trọng provenance của intent.
+
+    ``claim_scope`` comes from the already-approved SpeechIntent.  A memory, past
+    conversation or internal interpretation is not magically a live sensor claim
+    merely because its wording contains nouns such as "âm thanh" or "im lặng".
+    Explicit first-person perception ("tôi đang thấy/nghe...") remains guarded
+    regardless of scope.
+    """
 
     folded = _fold_vi(text)
     if not folded:
         return False
     refs = tuple(str(item or "").strip().lower() for item in (evidence_refs or ()) if str(item or "").strip())
-    if _matches_any(folded, (*_PRESENT_ENVIRONMENT_PATTERNS, *_PRESENT_USER_STATE_PATTERNS)):
-        return not any(ref.startswith(_DIRECT_ENVIRONMENT_REF_PREFIXES) for ref in refs)
+    scope = str(claim_scope or "").strip().lower()
+    non_live_scopes = {
+        "past_conversation", "memory", "internal_interpretation",
+        "hypothesis", "opinion", "retrospective",
+    }
     if _matches_any(folded, _DIRECT_OBSERVATION_PATTERNS):
         return not any(ref.startswith(_DIRECT_OBSERVATION_REF_PREFIXES) for ref in refs)
+    if scope in non_live_scopes:
+        return False
+    if _matches_any(folded, (*_PRESENT_ENVIRONMENT_PATTERNS, *_PRESENT_USER_STATE_PATTERNS)):
+        return not any(ref.startswith(_DIRECT_ENVIRONMENT_REF_PREFIXES) for ref in refs)
     return False
 
 

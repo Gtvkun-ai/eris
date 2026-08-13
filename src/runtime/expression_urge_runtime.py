@@ -138,8 +138,8 @@ class ExpressionUrge:
     updated_at: float = 0.0
     last_input_at: float = 0.0
     last_expressed_at: float = 0.0
-    # Field legacy để đọc state V61. V66 không còn dùng nó làm cooldown hay
-    # speech veto; realization failure chỉ tăng counter để trace.
+    # Realization retry state. Desire/content may remain alive upstream, but a
+    # failed public wording attempt gets bounded backoff and can be retired.
     surface_blocked_until: float = 0.0
     surface_duplicate_blocks: int = 0
     echo_count: int = 0
@@ -296,6 +296,14 @@ class ExpressionUrgeRuntime:
     def _boundary_blocks_private_expression(self, now: float) -> bool:
         return bool(self._conversation_boundary_until > float(now))
 
+    def _durable_topic_blocks(self, text: str, *, now: float) -> bool:
+        try:
+            from runtime.public_topic_boundary import ensure_public_topic_boundary_store
+            return bool(ensure_public_topic_boundary_store(self.host).is_blocked(text, now=now))
+        except Exception as exc:
+            self._log("debug", "[topic boundary] urge check degraded: %s", exc)
+            return False
+
     def _consummation_assessment(self, urge: ExpressionUrge, *, now: float) -> Mapping[str, Any]:
         """Đọc completion semantic trước khi urge được nâng thành commitment.
 
@@ -404,7 +412,8 @@ class ExpressionUrgeRuntime:
                 similar.freshness = clamp01(max(similar.freshness, freshness) + 0.08)
                 similar.echo_count = max(0, similar.echo_count - 1)
                 similar.surface_blocked_until = 0.0
-                similar.surface_duplicate_blocks = max(0, similar.surface_duplicate_blocks - 1)
+                similar.surface_duplicate_blocks = 0
+                similar.satisfaction = min(similar.satisfaction, 0.48)
                 similar.updated_at = now
                 similar.last_input_at = now
                 similar.evidence_refs = _refs((*similar.evidence_refs, *refs))
@@ -475,6 +484,9 @@ class ExpressionUrgeRuntime:
                 continue
             if self._boundary_blocks_private_expression(current) and owner in {"mental_material", "active_concern"}:
                 continue
+            _candidate_topic = str(getattr(candidate, "topic", "") or "")
+            if owner in {"mental_material", "active_concern"} and self._durable_topic_blocks(_candidate_topic, now=current):
+                continue
             meta = dict(getattr(affordance, "metadata", {}) or {})
             # V66: MentalMaterial có hai lane khác nhau: ``concern`` chỉ nói rằng
             # thought đáng được giữ trong cognition; ``expression_ready`` mới là
@@ -527,6 +539,8 @@ class ExpressionUrgeRuntime:
         for raw in _active_concern_inputs:
             concern = dict(raw)
             content = compact(concern.get("subject", ""), 520)
+            if self._durable_topic_blocks(content, now=current):
+                continue
             state = str(concern.get("state") or "simmering")
             novelty = clamp01(concern.get("novelty", 0.0))
             speech = clamp01(concern.get("speech_pressure", 0.0))
@@ -603,6 +617,7 @@ class ExpressionUrgeRuntime:
                     - min(0.18, urge.echo_count * 0.05)
                 )
                 for urge in self._urges.values()
+                if urge.surface_blocked_until <= current
             ),
             default=0.0,
         )
@@ -652,6 +667,10 @@ class ExpressionUrgeRuntime:
         )
         emitted = 0
         for urge in ranked:
+            if urge.surface_blocked_until > current:
+                continue
+            if self._durable_topic_blocks(urge.content, now=current):
+                continue
             pressure = urge.pressure(now=current, relational=rel, affect=aff)
             effective_freshness = urge.effective_freshness(now=current)
             # V66: urge đã là một desire có nội dung. Không đặt thêm readiness
@@ -751,32 +770,79 @@ class ExpressionUrgeRuntime:
                 )
         self._last_log_signature = signature
 
+    @staticmethod
+    def _realization_failure_kind(reason: str) -> str:
+        value = str(reason or "").strip().lower()
+        if any(token in value for token in (
+            "timeout", "provider", "transport", "connection", "rate_limit",
+            "temporarily", "model_unavailable", "service_unavailable", "unavailable", "exception",
+        )):
+            return "transient"
+        if value.startswith("surface_duplicate_recent_utterance") or value.startswith(
+            "surface_current_world_claim_without_evidence"
+        ) or value.startswith("surface_bad_utterance") or value.startswith(
+            "surface_claim_"
+        ) or "claim_manifest" in value or "unknown_evidence" in value:
+            return "reformulatable"
+        return "bounded"
+
     def note_realization_failure(
         self, urge_id: str, *, reason: str = "surface_realization_failed", now: float | None = None
     ) -> bool:
-        """Ghi lỗi wording mà không thay đổi quyền biểu đạt của content.
+        """Bound public realization retries without deleting the private thought.
 
-        Surface failure là lỗi realization, không phải bằng chứng rằng desire đã
-        mất giá trị. Lifecycle của urge chỉ thay đổi khi có public receipt, stale
-        evidence hoặc self-restraint thật.
+        The semantic material/concern remains upstream.  What expires here is the
+        *public attempt*.  A wording/grounding failure may be retried once after a
+        short backoff; repeated semantic failures retire this urge so it cannot
+        become a zombie candidate forever.  Transport/provider failures use a
+        longer exponential backoff instead of semantic retirement.
         """
         urge = self._urges.get(str(urge_id or "").strip())
         if urge is None:
             return False
         current = float(now or time.time())
+        kind = self._realization_failure_kind(reason)
         urge.surface_duplicate_blocks += 1
-        urge.surface_blocked_until = 0.0
+        blocks = urge.surface_duplicate_blocks
         urge.echo_count += 1
-        urge.freshness = clamp01(urge.freshness * 0.86)
-        urge.base_strength = clamp01(urge.base_strength * 0.97)
+        urge.freshness = clamp01(urge.freshness * (0.88 if kind == "transient" else 0.80))
+        urge.base_strength = clamp01(urge.base_strength * (0.98 if kind == "transient" else 0.90))
         urge.updated_at = current
+
+        retired = False
+        if kind == "transient" and blocks <= 5:
+            # Keep the public commitment, but stop hammering a dead provider.
+            urge.surface_blocked_until = current + min(90.0, 4.0 * (2 ** min(blocks - 1, 4)))
+        elif kind == "transient":
+            # A provider can be down for a long time. Do not let one public attempt
+            # become immortal just because every failure is transport-shaped.
+            retired = True
+            urge.surface_blocked_until = current + 3600.0
+            urge.satisfaction = max(urge.satisfaction, 0.99)
+        elif blocks <= 1:
+            # One later attempt is allowed with fresh Surface context/provenance.
+            urge.surface_blocked_until = current + 10.0
+        else:
+            # Desire remains represented by MentalMaterial/ActiveConcern. This
+            # public realization has exhausted its bounded attempts.
+            retired = True
+            urge.surface_blocked_until = current + 3600.0
+            urge.satisfaction = max(urge.satisfaction, 0.99)
+
         self._log(
             "info",
-            "[expression urge] realization-failed id=%s blocks=%s reason=%s commitment_preserved=1",
+            "[expression urge] realization-failed id=%s blocks=%s kind=%s reason=%s retry_in=%.1fs public_commitment_retired=%s desire_preserved_upstream=1",
             urge.urge_id,
-            urge.surface_duplicate_blocks,
+            blocks,
+            kind,
             compact(reason, 120),
+            max(0.0, urge.surface_blocked_until - current),
+            int(retired),
         )
+        if retired:
+            # Prune only the expression projection. Source material/concern is a
+            # separate lifecycle and deliberately remains available to cognition.
+            self._prune(current)
         return True
 
     def note_surface_duplicate(self, urge_id: str, *, now: float | None = None) -> bool:

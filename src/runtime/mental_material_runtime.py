@@ -143,6 +143,14 @@ class MentalMaterialRuntime:
             reason, max(0.0, self._conversation_boundary_until - current),
         )
 
+    def _durable_topic_blocks(self, text: str, *, now: float) -> bool:
+        try:
+            from runtime.public_topic_boundary import ensure_public_topic_boundary_store
+            return bool(ensure_public_topic_boundary_store(self.host).is_blocked(text, now=now))
+        except Exception as exc:
+            self._log("debug", "[topic boundary] material check degraded: %s", exc)
+            return False
+
     def _boundary_consumes_public_route(self, material: MentalMaterial, now: float) -> bool:
         if material.created_at <= self._conversation_boundary_at:
             return True
@@ -183,7 +191,8 @@ class MentalMaterialRuntime:
     def _public_route_consumed(self, material: MentalMaterial, *, now: float | None = None) -> bool:
         current = float(now or time.time())
         return bool(
-            self._boundary_consumes_public_route(material, current)
+            self._durable_topic_blocks(material.content, now=current)
+            or self._boundary_consumes_public_route(material, current)
             or (
                 material.cause_kind == "user_event"
                 and material.cause_id

@@ -130,7 +130,8 @@ ACTION_SPECS: dict[str, MaintenanceActionSpec] = {
         "reset_private_mind", "Reset dòng suy nghĩ & bận tâm",
         "Xóa concern, thought stream, inner diary và queue private-mind.",
         "danger", True, True,
-        ("private_concerns.json", "thought_stream.jsonl", "inner_diary.json", "internal_agenda.json"),
+        ("private_concerns.json", "thought_stream.jsonl", "inner_diary.json", "internal_agenda.json",
+         "public_topic_boundaries.json"),
         destructive=True, confirmation_mode="typed", confirm_label="Reset dòng suy nghĩ",
     ),
     "reset_private_life": MaintenanceActionSpec(
@@ -202,12 +203,14 @@ class MaintenanceService:
     """Owner duy nhất cho các command Danger Zone."""
 
     TOKEN_TTL_SECONDS = 120.0
+    PREVIEW_COALESCE_SECONDS = 2.5
 
     def __init__(self, owner: Any, *, logger: Any = None) -> None:
         self.owner = owner
         self.logger = logger
         self._lock = threading.RLock()
         self._tokens: dict[str, tuple[float, str, str, str]] = {}
+        self._preview_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
     @staticmethod
     def confirmation_phrase(action: str) -> str:
@@ -253,9 +256,18 @@ class MaintenanceService:
         if spec is None:
             raise ValueError(f"unsupported maintenance action: {action}")
         options = dict(options or {})
+        digest = self._request_digest(action, options)
+        cache_key = f"{action}:{digest}"
+        current = time.time()
+        with self._lock:
+            cached = self._preview_cache.get(cache_key)
+            if cached is not None and cached[0] > current:
+                # Idempotent preview: repeated UI redraw/click bursts reuse the
+                # same confirmation token + manifest instead of minting a new
+                # destructive request identity every few hundred milliseconds.
+                return json.loads(json.dumps(cached[1], ensure_ascii=False))
         files = self._files_for_action(action, options=options)
         affected = [self._path_stat(path) for path in files]
-        digest = self._request_digest(action, options)
         token = uuid.uuid4().hex
         phrase = self.confirmation_phrase(action)
         self._tokens[token] = (time.time() + self.TOKEN_TTL_SECONDS, action, digest, phrase)
@@ -295,6 +307,14 @@ class MaintenanceService:
                 for item in affected[:8]
             ] or self._preview_notes(action, options),
         }
+        with self._lock:
+            self._preview_cache[cache_key] = (
+                current + self.PREVIEW_COALESCE_SECONDS,
+                json.loads(json.dumps(preview, ensure_ascii=False)),
+            )
+            for key, (expires_at, _payload) in tuple(self._preview_cache.items()):
+                if expires_at <= current:
+                    self._preview_cache.pop(key, None)
         self._append_audit("preview", preview)
         self._record_observability("preview", preview)
         return preview
@@ -528,6 +548,19 @@ class MaintenanceService:
         self.owner.private_mind_speech_bias = {}
         self.owner.private_mind_active_state = {}
         self.owner.private_mind_thought_pressure = 0.0
+        boundary_store = getattr(self.owner, "public_topic_boundary_store", None)
+        clear_boundaries = getattr(boundary_store, "clear", None)
+        if callable(clear_boundaries):
+            try:
+                clear_boundaries()
+                result.changed.append("public_topic_boundaries")
+            except Exception as exc:
+                result.warnings.append(f"public_topic_boundaries.clear: {exc}")
+        else:
+            try:
+                (self.memory_root / "public_topic_boundaries.json").unlink(missing_ok=True)
+            except Exception as exc:
+                result.warnings.append(f"public_topic_boundaries.unlink: {exc}")
         # Inner diary persister không có public reset; ghi baseline JSON an toàn.
         self._atomic_json(self.memory_root / "inner_diary.json", {
             "updated_at": time.time(),

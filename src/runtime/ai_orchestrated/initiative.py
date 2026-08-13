@@ -116,6 +116,9 @@ class SpeechIntent:
     # V42: Surface chỉ được viết claim trong các domain đã được intent cấp.
     # Personality/wording không bao giờ tự mở thêm sensor/world domain.
     allowed_claim_domains: tuple[str, ...] = ()
+    # Typed provenance for downstream grounding. Surface may phrase the intent,
+    # but it must not reinterpret a retrospective/internal thought as live sensor data.
+    claim_scope: str = "internal_interpretation"
     max_sentences: int = 2
     random_chat_seed: Mapping[str, Any] = field(default_factory=dict)
     # V66: semantic identity của self-owned expression đã commit. Surface chỉ
@@ -136,6 +139,7 @@ class SpeechIntent:
             "anchor_id": self.anchor_id,
             "evidence_refs": list(self.evidence_refs),
             "allowed_claim_domains": list(self.allowed_claim_domains),
+            "claim_scope": self.claim_scope,
             "max_sentences": self.max_sentences,
             "random_chat_seed": dict(self.random_chat_seed),
             "expression_commitment": dict(self.expression_commitment),
@@ -294,6 +298,19 @@ class InitiativeController:
         if anchor_type == "discovery":
             allowed_claim_domains.add("discovery_artifact")
 
+        if anchor_type in {"screen", "semantic_scene", "activity", "environment"}:
+            claim_scope = "current_environment"
+        elif anchor_type == "memory":
+            claim_scope = "memory"
+        elif anchor_type == "conversation":
+            claim_scope = "past_conversation"
+        elif anchor_type in {"idle", "internal", "self", "presence"}:
+            claim_scope = "internal_interpretation"
+        elif anchor_type in {"task", "discovery"}:
+            claim_scope = "runtime_context"
+        else:
+            claim_scope = "internal_interpretation"
+
         speech_intent = SpeechIntent(
             plan=plan,
             mode=mode,
@@ -301,6 +318,7 @@ class InitiativeController:
             anchor_id=anchor_id,
             evidence_refs=refs,
             allowed_claim_domains=tuple(sorted(allowed_claim_domains)),
+            claim_scope=claim_scope,
             max_sentences=1,
             random_chat_seed=dict(seed_context),
             expression_commitment=commitment.to_dict(),

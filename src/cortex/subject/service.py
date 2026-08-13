@@ -1492,6 +1492,8 @@ class SubjectService:
             "source": commit.source,
             "reason": commit.reason,
             "confidence": commit.confidence,
+            "selected_coalition_id": commit.selected_coalition_id,
+            "selected_proposal_ref": commit.selected_proposal_ref,
             "semantic_commitments": list(commit.semantic_commitments),
             "cognitive_requests": list(commit.cognitive_requests),
             "review_conditions": list(commit.review_conditions),
