@@ -60,23 +60,23 @@ def test_v58_contentful_persistent_goal_can_speak_without_new_user_command():
     assert decision.score >= 0.52
 
 
-def test_v58_user_busy_means_wait_not_forget():
+def test_v66_user_busy_is_context_not_expression_boundary():
     decision = InitiativeArbiter().decide(
         _intention(), relational=_relational(), runtime_context=_runtime(),
         now=1040.0, contentful=True, user_busy=True,
     )
-    assert decision.action is InitiativeControlAction.WAIT
-    assert decision.reason == "user_or_runtime_busy"
+    assert decision.action is InitiativeControlAction.SPEAK
+    assert decision.reason == "self_owned_expression"
 
 
-def test_v58_unanswered_autonomous_turn_forces_wait():
+def test_v66_unanswered_user_does_not_revoke_expression():
     decision = InitiativeArbiter().decide(
         _intention(), relational=_relational(),
         runtime_context=_runtime(recent_unsolicited_speech=1.0, last_public_turn_unanswered=True),
         now=1040.0, contentful=True,
     )
-    assert decision.action is InitiativeControlAction.WAIT
-    assert "unanswered" in decision.reason
+    assert decision.action is InitiativeControlAction.SPEAK
+    assert decision.reason == "self_owned_expression"
 
 
 def test_v58_generic_curiosity_does_not_turn_into_npc_question():
@@ -141,7 +141,7 @@ def test_v58_bridge_only_materializes_when_controller_says_speak():
     assert notes[-1][1]["action"] == "speak"
 
 
-def test_v58_bridge_waits_when_reply_expected():
+def test_v66_reply_expected_is_not_a_hard_expression_boundary():
     notes = []
     class Subject:
         def initiative_view(self):
@@ -154,19 +154,21 @@ def test_v58_bridge_waits_when_reply_expected():
     affordances = build_subject_initiative_affordances(
         Subject(), runtime_context=_runtime(), now=1040.0, reply_expected=True,
     )
-    assert affordances == ()
-    # Early user-busy/reply gate intentionally avoids touching lifecycle at all.
-    assert notes == []
+    # Eris từng hỏi không có nghĩa user đang giữ lượt. Self-rhythm/collision mới
+    # quyết định DEFER; silence của user không chặn intention contentful.
+    assert len(affordances) == 1
+    assert affordances[0].metadata["initiative_control"]["action"] == "speak"
+    assert notes[-1]["action"] == "speak"
 
 
-def test_v58_persistent_goal_does_not_interrupt_immediately_after_user():
+def test_v66_recent_user_turn_is_not_a_veto_after_baton_release():
     decision = InitiativeArbiter().decide(
         _intention(), relational=_relational(),
         runtime_context=_runtime(seconds_since_last_user_turn=20.0),
         now=1040.0, contentful=True,
     )
-    assert decision.action is InitiativeControlAction.WAIT
-    assert decision.reason == "persistent_goal_too_soon_after_user"
+    assert decision.action is InitiativeControlAction.SPEAK
+    assert decision.reason == "self_owned_expression"
 
 
 def test_v58_drop_changes_pending_intention_to_abandoned():

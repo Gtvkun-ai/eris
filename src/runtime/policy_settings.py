@@ -64,24 +64,12 @@ class AIRuntimeSettings:
 @dataclass(frozen=True, slots=True)
 class PublicTurnSettings:
     reply_window_seconds: float = 30.0
-    block_min_seconds: float = 8.0
-    block_max_seconds: float = 120.0
-    default_block_seconds: float = 18.0
+    # V66: đây chỉ là khoảng đệm chống đè đúng *lượt phát ngôn*, không phải
+    # social cooldown và tuyệt đối không được dùng để ngủ cả cognition loop.
+    collision_grace_seconds: float = 2.5
 
     @classmethod
     def load(cls) -> "PublicTurnSettings":
-        minimum = _clamp_float(
-            runtime_float("public_turn", "block_min_seconds", default=8.0),
-            8.0,
-            minimum=0.0,
-            maximum=120.0,
-        )
-        maximum = _clamp_float(
-            runtime_float("public_turn", "block_max_seconds", default=120.0),
-            120.0,
-            minimum=max(1.0, minimum),
-            maximum=600.0,
-        )
         return cls(
             reply_window_seconds=_clamp_float(
                 runtime_float("public_turn", "reply_window_seconds", default=30.0),
@@ -89,13 +77,11 @@ class PublicTurnSettings:
                 minimum=5.0,
                 maximum=300.0,
             ),
-            block_min_seconds=minimum,
-            block_max_seconds=maximum,
-            default_block_seconds=_clamp_float(
-                runtime_float("public_turn", "default_block_seconds", default=18.0),
-                18.0,
-                minimum=minimum,
-                maximum=maximum,
+            collision_grace_seconds=_clamp_float(
+                runtime_float("public_turn", "collision_grace_seconds", default=2.5),
+                2.5,
+                minimum=0.0,
+                maximum=5.0,
             ),
         )
 

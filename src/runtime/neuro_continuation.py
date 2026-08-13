@@ -10,8 +10,9 @@ Important invariants:
 - the advisory result never rewrites/finalizes the already committed turn;
 - a new user turn cancels older work and invalidates pending callbacks;
 - only materially new, still-current advice becomes an affordance;
-- the continuation still passes Subject/Neuro local competition + initiative
-  governor, so the background worker never owns the microphone.
+- once such advice becomes a due packet, it is a self-owned expression
+  commitment. Neuro may rank its realization, but may not reinterpret ordinary
+  user silence as permission to revoke it.
 """
 from __future__ import annotations
 
@@ -24,6 +25,7 @@ from typing import Any, Callable, Mapping
 
 from cortex.subject.contracts import SubjectDeliberationFrame, SubjectExecutiveCommit
 from cortex.subject.neuro_control import NeuroDeliberationAdvice, SelectionResult
+from cortex.subject.expression_commitment import commitment_payload
 from runtime.ai_orchestrated.affordance import ExecutiveAffordance
 from runtime.ai_orchestrated.social_initiative import SocialSpeechCandidate
 
@@ -460,6 +462,15 @@ class NeuroContinuationRuntime:
                 uncertainty=max(0.0, 1.0 - packet.confidence),
                 seed_intrusion_risk=0.06,
             )
+            commitment = commitment_payload(
+                origin="neuro_continuation",
+                source_id=packet.packet_id,
+                semantic_target=packet.semantic_target,
+                motive="deep_thought_followup",
+                pressure=max(packet.urgency, packet.material_delta),
+                freshness=packet.confidence,
+                persistence=packet.material_delta,
+            )
             return ExecutiveAffordance(
                 affordance_id=f"neuro_continuation:{packet.packet_id}:v{packet.revision}",
                 owner="neuro_continuation",
@@ -472,6 +483,7 @@ class NeuroContinuationRuntime:
                     "origin_turn_id": packet.origin_turn_id,
                     "conversation_epoch": packet.conversation_epoch,
                     "material_delta": packet.material_delta,
+                    "expression_commitment": commitment,
                 },
             )
 

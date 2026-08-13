@@ -29,6 +29,19 @@ class PresenceControllerMixin:
         now: float | None = None,
     ) -> None:
         current_time = time.time() if now is None else float(now)
+
+        # V66: self-rhythm của Eris. Streak chỉ mô tả mật độ lời của CHÍNH Eris;
+        # user reply không cấp lại "quyền nói". Khoảng cách đủ dài tự làm streak
+        # decay, nhờ vậy pacing là self-regulation chứ không phải obedience.
+        previous = float(getattr(self, "_last_expression_rhythm_spoken_at", 0.0) or 0.0)
+        streak = max(0, int(getattr(self, "autonomous_expression_streak", 0) or 0))
+        if previous <= 0.0 or current_time - previous >= 90.0:
+            streak = 1
+        else:
+            streak += 1
+        self.autonomous_expression_streak = streak
+        self._last_expression_rhythm_spoken_at = current_time
+
         if presence_maintenance:
             self.last_presence_maintenance_at = current_time
             self.presence_maintenance_silent_cycles = 0

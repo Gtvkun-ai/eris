@@ -18,6 +18,7 @@ from runtime.ai_orchestrated.social_initiative import SocialSpeechCandidate
 from cortex.subject.initiative_control import InitiativeArbiter, InitiativeControlAction
 from cortex.subject.existential_desire import ExistentialDesireDeriver
 from cortex.subject.environment_meaning import EnvironmentMeaningDeriver, EnvironmentMeaningKind
+from cortex.subject.expression_commitment import commitment_payload
 
 
 def _clamp01(value: Any, default: float = 0.0) -> float:
@@ -129,9 +130,8 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
         refs = (f"user-model:beliefs:{belief_count}", f"user-model:thickness:{thickness:.3f}")
 
     # Sau lời chào startup, đừng lập tức sinh thêm một contact/check-in chỉ vì
-    # relational pressure cao. Lời chào vừa rồi đã là contact. Cooldown này chỉ
-    # chặn social probe/contact vô căn cứ; thought/task/scene có nội dung thật vẫn
-    # đi qua các affordance khác bình thường.
+    # Startup greeting chỉ là một event continuity để quan sát. V66 không biến
+    # khoảng thời gian sau greeting thành social cooldown cấp quyền nói.
     current = time.time()
     greeting_at = float(getattr(host, "_startup_greeting_spoken_at", 0.0) or 0.0)
     if greeting_at <= 0.0:
@@ -142,7 +142,6 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
             except Exception:
                 greeting_at = 0.0
     seconds_since_greeting = max(0.0, current - greeting_at) if greeting_at > 0.0 else 10_000.0
-    startup_social_cooldown_seconds = 150.0
     last_user_at = float(getattr(host, "_temporal_last_user_turn_at", 0.0) or 0.0)
     last_assistant_at = float(getattr(host, "_temporal_last_assistant_turn_at", 0.0) or 0.0)
     last_autonomous_at = float(getattr(host, "last_autonomous_spoken_at", 0.0) or 0.0)
@@ -150,18 +149,25 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
         last_autonomous_at = float(getattr(host, "_last_autonomous_spoken_at", 0.0) or 0.0)
     seconds_since_autonomous = max(0.0, current - last_autonomous_at) if last_autonomous_at > 0.0 else 10_000.0
     seconds_since_user = max(0.0, current - last_user_at) if last_user_at > 0.0 else 10_000.0
-    unanswered_autonomous = bool(last_autonomous_at > 0.0 and last_autonomous_at >= last_user_at)
-    recent_unsolicited_speech = 1.0 if unanswered_autonomous and seconds_since_autonomous <= 180.0 else 0.0
-    user_response_rate = 0.0 if recent_unsolicited_speech else 1.0
-    social_refractory_cost = _clamp01(
-        0.22 * recent_unsolicited_speech
-        + 0.16 * recent_unsolicited_speech * min(1.0, seconds_since_autonomous / 90.0)
-    )
+    # V66: không suy "user không muốn nghe" từ việc chưa phản hồi. Runtime chỉ
+    # xuất nhịp của chính Eris; boundary thật được truyền bằng flag riêng.
+    autonomous_expression_streak = max(0, int(getattr(host, "autonomous_expression_streak", 0) or 0))
+    # Public-turn collision là boundary cơ học có timestamp trực tiếp. Nó không
+    # làm cognition dừng; chỉ được downstream dùng để DEFER public expression.
+    turn_collision_until = float(getattr(host, "autonomous_turn_collision_until", 0.0) or 0.0)
+    public_turn_busy = current < turn_collision_until
+    try:
+        from runtime.runtime_settings_store import runtime_bool
+        autonomous_expression_enabled = runtime_bool(
+            "commentary", "autonomous_expression_enabled", default=True
+        )
+    except Exception:
+        autonomous_expression_enabled = True
 
     # V59: desire hiện sinh được phái sinh từ chính AnchorSystem. Chúng trả lời
     # "Eris muốn gì vì mối quan hệ này có ý nghĩa", nhưng chưa được quyền nói.
-    # InitiativeEngine sẽ biến desire đủ mạnh thành intention; V58 Arbiter vẫn là
-    # nơi quyết định thời điểm SPEAK/WAIT/DROP.
+    # InitiativeEngine biến desire thành intention; V66 expression owner quyết
+    # định SPEAK/WAIT/DROP bằng state của Eris + hard turn boundary.
     relational_projection: Mapping[str, Any] = {}
     subject_service = getattr(host, "subject_service", None)
     relational_view = getattr(subject_service, "relational_view", None)
@@ -284,19 +290,22 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
         "self_misunderstanding_signal": 0.0,
         "demonstration_signal": 0.0,
         # Có open-loop thật thì Eris có lý do nội sinh để giữ một intention
-        # đóng góp. Controller V58 vẫn quyết định có nên nói *bây giờ* hay WAIT.
+        # đóng góp. V66 expression owner quyết định nói/defer theo self-rhythm.
         "contribution_signal": 0.68 if active_goal_text else 0.0,
         "active_goal_text": active_goal_text,
         "active_goal_evidence_refs": active_goal_refs,
+        # Giữ timestamp startup/user cho observability và semantic context, nhưng
+        # chúng không còn là speech veto.
         "seconds_since_startup_greeting": seconds_since_greeting,
-        "startup_social_cooldown_seconds": startup_social_cooldown_seconds,
-        "startup_social_cooldown_active": bool(seconds_since_greeting < startup_social_cooldown_seconds),
-        "recent_unsolicited_speech": recent_unsolicited_speech,
         "seconds_since_last_autonomous_speech": seconds_since_autonomous,
         "seconds_since_last_user_turn": seconds_since_user,
-        "user_response_rate": user_response_rate,
-        "social_refractory_cost": social_refractory_cost,
-        "last_public_turn_unanswered": unanswered_autonomous,
+        "autonomous_expression_streak": autonomous_expression_streak,
+        "public_turn_busy": public_turn_busy,
+        "turn_collision_remaining_seconds": max(0.0, turn_collision_until - current),
+        # False chỉ có thể đến từ explicit persisted boundary; user silence không
+        # bao giờ ghi key này.
+        "explicit_quiet_request": not bool(autonomous_expression_enabled),
+        "expression_authority": "self_owned",
     }
 
 
@@ -307,7 +316,7 @@ def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: fl
     target = str(item.get("target") or "relationship").strip()
     pressure = _clamp01(item.get("pressure", 0.0))
     commitment = _clamp01(item.get("commitment_strength", 0.0))
-    if not intention_id or not goal or pressure < 0.28:
+    if not intention_id or not goal:
         return None
 
     # V44 vẫn giữ nguyên: motive social chung chung không phải nội dung. V59 chỉ
@@ -413,7 +422,7 @@ def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: fl
         source="subject_initiative",
         eris_motive_kind=kind,
         eris_motive_why_now=(
-            "structured environment meaning has become actionable while still respecting user interruption cost"
+            "structured environment meaning became meaningful enough for Eris to express"
             if environment_grounded
             else "an existentially-derived relational desire has matured into a persistent intention"
             if target in {"mutual_understanding", "relationship_continuity", "self_expression"}
@@ -439,6 +448,17 @@ def _candidate_from_intention(item: Mapping[str, Any], *, revision: int, now: fl
             "intention_id": intention_id,
             "epistemic_motive": epistemic,
             "environment_grounded": environment_grounded,
+            # Native commitment: lifecycle vẫn thuộc Subject initiative; metadata
+            # chỉ mang semantic identity xuyên qua proposal/Neuro/Surface.
+            "expression_commitment": commitment_payload(
+                origin="subject_initiative",
+                source_id=intention_id,
+                semantic_target=topic,
+                motive=kind,
+                pressure=pressure,
+                freshness=1.0,
+                persistence=commitment,
+            ),
         },
     )
 
@@ -500,7 +520,7 @@ def build_subject_initiative_affordances(
     user_busy: bool = False,
     interaction_busy: bool = False,
 ) -> tuple[ExecutiveAffordance, ...]:
-    if reply_expected or user_busy or interaction_busy:
+    if interaction_busy:
         return ()
     initiative_fn = getattr(subject_service, "initiative_view", None)
     relational_fn = getattr(subject_service, "relational_view", None)
@@ -510,7 +530,6 @@ def build_subject_initiative_affordances(
     relational = relational if isinstance(relational, Mapping) else {}
     revision = max(0, int(initiative.get("revision", 0) or 0))
 
-    startup_cooldown = bool(runtime_context.get("startup_social_cooldown_active", False))
     output: list[ExecutiveAffordance] = []
     arbiter = InitiativeArbiter()
     note_control = getattr(subject_service, "note_initiative_control", None)
@@ -543,9 +562,6 @@ def build_subject_initiative_affordances(
         if control.action is InitiativeControlAction.DROP:
             continue
         if control.action is not InitiativeControlAction.SPEAK or candidate is None:
-            continue
-        speech_act = str(getattr(candidate.candidate, "speech_act", "") or "").strip().lower()
-        if startup_cooldown and speech_act in {"contact_bid", "user_probe", "curiosity_bid"}:
             continue
         candidate = ExecutiveAffordance(
             affordance_id=candidate.affordance_id,

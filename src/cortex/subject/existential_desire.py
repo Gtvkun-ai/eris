@@ -110,8 +110,9 @@ class ExistentialDesireDeriver:
         abandonment = _clamp01(ex.get("abandonment_pressure", 0.0))
 
         misunderstanding = _clamp01(runtime.get("self_misunderstanding_signal", 0.0))
-        opportunity = _clamp01(rel.get("opportunity", 0.45), 0.45)
-        interruption = _clamp01(rel.get("interruption_cost", 0.25), 0.25)
+        # V66: desire có thể học từ lịch sử quan hệ, nhưng user availability hay
+        # interruption telemetry không được quyền hạ actionability của bản thân
+        # desire. Satiety/abandonment vẫn là self-restraint hợp lệ của Eris.
         satiety = _clamp01(rel.get("interaction_satiety", 0.0))
 
         # Độ "chín" của quan hệ. Attachment một mình không đủ: Eris còn phải có
@@ -140,9 +141,8 @@ class ExistentialDesireDeriver:
         )
         understanding_actionability = _clamp01(
             understanding_pressure
-            * (0.52 + 0.32 * opportunity + 0.16 * maturity)
+            * (0.70 + 0.30 * maturity)
             * (1.0 - 0.46 * abandonment)
-            * (1.0 - 0.34 * interruption)
         ) if relationship_ready else 0.0
 
         # Muốn giữ continuity vì user đã thành một phần có ý nghĩa trong long-arc.
@@ -155,9 +155,8 @@ class ExistentialDesireDeriver:
         )
         continuity_actionability = _clamp01(
             continuity_pressure
-            * (0.50 + 0.34 * opportunity + 0.16 * maturity)
+            * (0.65 + 0.35 * maturity)
             * (1.0 - 0.42 * satiety)
-            * (1.0 - 0.42 * interruption)
         ) if relationship_ready else 0.0
 
         # Muốn bộc lộ bản thân chỉ tăng khi đã có witness + model đủ dày. Không
@@ -169,8 +168,7 @@ class ExistentialDesireDeriver:
         )
         expression_actionability = _clamp01(
             expression_pressure
-            * (0.54 + 0.30 * opportunity + 0.16 * maturity)
-            * (1.0 - 0.48 * interruption)
+            * (0.70 + 0.30 * maturity)
             * (1.0 - 0.34 * satiety)
         ) if relationship_ready else 0.0
 

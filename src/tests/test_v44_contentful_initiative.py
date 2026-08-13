@@ -106,6 +106,61 @@ def test_contentful_concern_becomes_expression_urge_not_contact_bid():
     assert "neuron" in cand.topic.lower()
 
 
+
+def test_mental_material_concern_lane_does_not_become_expression_desire():
+    runtime = _runtime()
+    topic = "Một thought đủ đáng giữ làm concern nhưng owner chưa đánh dấu nó là expression-ready."
+    concern_only = ExecutiveAffordance(
+        affordance_id="mental-material-concern:test",
+        owner="mental_material",
+        revision=1,
+        candidate=SocialSpeechCandidate(
+            decision="candidate",
+            kind="inner_thought",
+            topic=topic,
+            speech_act="internal_material",
+            anchor_type="internal",
+            anchor_id="material:test",
+            evidence_refs=("material:test",),
+            confidence=0.8,
+            relevance=0.7,
+            urgency=0.3,
+            source="mental_material",
+        ),
+        metadata={"mental_material": True, "material_id": "material:test", "expression_ready": False},
+    )
+    assert runtime.shape_affordances((concern_only,), now=100.0) == ()
+    assert runtime.snapshot(now=100.0) == ()
+
+
+def test_mental_material_expression_lane_can_form_expression_desire():
+    runtime = _runtime()
+    topic = "Một thought đã được MentalMaterial owner đánh dấu expression-ready thì được phép thành desire biểu đạt."
+    ready = ExecutiveAffordance(
+        affordance_id="mental-material-expression:test",
+        owner="mental_material",
+        revision=1,
+        candidate=SocialSpeechCandidate(
+            decision="candidate",
+            kind="inner_thought",
+            topic=topic,
+            speech_act="share_self_originated_thought",
+            anchor_type="internal",
+            anchor_id="material:test",
+            evidence_refs=("material:test",),
+            confidence=0.8,
+            relevance=0.7,
+            urgency=0.3,
+            source="mental_material",
+            seed_specificity=0.8,
+        ),
+        metadata={"mental_material": True, "material_id": "material:test", "expression_ready": True},
+    )
+    shaped = runtime.shape_affordances((ready,), now=100.0)
+    assert len(shaped) == 1
+    assert shaped[0].owner == "expression_urge"
+    assert shaped[0].metadata["expression_commitment"]["origin"] == "expression_urge"
+
 def test_paraphrase_same_evidence_merges_and_does_not_pump_novelty():
     runtime = _runtime()
     a = _aff(
@@ -346,8 +401,8 @@ def test_v44_1_ready_urge_can_beat_strong_silence_when_baton_is_open():
     assert frame.coalitions[result.winner_index].action_kind == "speak"
 
 
-def test_v44_1_reply_expected_still_holds_even_with_ready_urge():
-    """Fix initiative không được biến thành nói chồng lên câu hỏi vừa hỏi user."""
+def test_v66_reply_expected_does_not_veto_ready_expression_urge():
+    """Chờ câu trả lời không phải quyền giữ floor; collision thật mới được veto."""
     from types import SimpleNamespace
     from cortex.subject.neuro_control import NeuroActionSelector
 
@@ -386,10 +441,10 @@ def test_v44_1_reply_expected_still_holds_even_with_ready_urge():
         ),
     )
     result = NeuroActionSelector().select(frame)
-    assert frame.coalitions[result.winner_index].action_kind == "silence"
+    assert frame.coalitions[result.winner_index].action_kind == "speak"
 
 
-def test_v61_duplicate_surface_block_suppresses_zombie_urge_until_new_evidence():
+def test_v66_duplicate_wording_failure_preserves_expression_urge():
     runtime = _runtime()
     thought = _aff(
         "seed:zombie",
@@ -399,20 +454,15 @@ def test_v61_duplicate_surface_block_suppresses_zombie_urge_until_new_evidence()
     shaped = runtime.shape_affordances((thought,), now=100.0)
     urge_id = shaped[0].candidate.expression_urge_id
     assert runtime.note_surface_duplicate(urge_id, now=101.0) is True
-    assert runtime.shape_affordances((thought,), now=110.0) == ()
-    snap = runtime.snapshot(now=110.0)[0]
-    assert snap["surface_blocked_seconds"] > 0
-    assert snap["surface_duplicate_blocks"] == 1
 
-    # Evidence mới cho cùng ý mở lại urge, vì hoàn cảnh thực sự đã thay đổi.
-    reinforced = _aff(
-        "seed:zombie:new-evidence",
-        "Thử kết nối những hồi ức, không phải để tìm câu trả lời, mà để kiểm tra cách đặt câu hỏi khác đi.",
-        refs=("turn:1", "turn:2"),
-    )
-    reopened = runtime.shape_affordances((reinforced,), now=115.0)
-    assert reopened
-    assert reopened[0].candidate.expression_urge_id == urge_id
+    # V66: wording bị trùng chỉ là realization failure. Ý muốn nói vẫn sống và
+    # không cần user/evidence mới để "xin lại quyền" biểu đạt.
+    retry = runtime.shape_affordances((thought,), now=110.0)
+    assert retry
+    assert retry[0].candidate.expression_urge_id == urge_id
+    snap = runtime.snapshot(now=110.0)[0]
+    assert snap["surface_blocked_seconds"] == 0
+    assert snap["surface_duplicate_blocks"] == 1
 
 
 def test_v61_structured_environment_meaning_preempts_stale_internal_urge():

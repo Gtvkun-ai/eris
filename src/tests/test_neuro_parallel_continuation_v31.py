@@ -129,6 +129,7 @@ def test_material_advice_becomes_claimable_continuation_but_trivia_does_not() ->
     assert affordance is not None
     assert affordance.owner == "neuro_continuation"
     assert affordance.claim_required is True
+    assert affordance.metadata["expression_commitment"]["origin"] == "neuro_continuation"
     candidate = runtime.claim_affordance(affordance, worker_id="self-turn", now=clock())
     assert candidate is not None
     assert candidate.speech_act == "deep_thought_followup"

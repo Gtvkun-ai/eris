@@ -2,8 +2,8 @@
 """Public-turn continuity service extracted from RuntimeCoordinator.
 
 The coordinator keeps compatibility wrappers, while this service owns ledger
-recording, reply-window linking and the short autonomous presence block.  One
-responsibility removed is still better than drawing another architecture box.
+recording, reply-window linking and a tiny *turn-collision* marker. The marker
+never pauses cognition and never means that the user wants ERIS to be quiet.
 """
 from __future__ import annotations
 from core.di import resolve_dependency
@@ -67,25 +67,34 @@ class PublicTurnRuntime:
             timestamp=self._clock(),
         )
 
-    def block_autonomous_presence(self, now: float | None = None, *, seconds: float | None = None) -> None:
+    def note_turn_collision(self, now: float | None = None, *, seconds: float | None = None) -> None:
+        """Đánh dấu một cửa sổ rất ngắn để tránh hai public turn đè lên nhau.
+
+        Đây là boundary cơ học của lượt nói, không phải social cooldown. Vì vậy
+        method không đọc ``presence_maintenance_cooldown_sec`` hay
+        ``reengagement_cooldown_sec`` và cũng không sở hữu quyền làm cognition
+        ngủ. Self-turn vẫn được suy nghĩ; ExpressionCommitment chỉ DEFER output.
+        """
         current_time = self._clock() if now is None else float(now)
         config = self.settings
-        if seconds is not None:
+        if seconds is None:
+            requested = float(config.collision_grace_seconds)
+        else:
             try:
                 requested = float(seconds)
             except (TypeError, ValueError):
-                requested = config.default_block_seconds
-        else:
-            requested = max(
-                config.default_block_seconds,
-                float(getattr(self.owner, "presence_maintenance_cooldown_sec", 0.0) or 0.0),
-                float(getattr(self.owner, "reengagement_cooldown_sec", 0.0) or 0.0),
-            )
-        window = max(config.block_min_seconds, min(config.block_max_seconds, requested))
-        self.owner.autonomous_presence_blocked_until = max(
-            float(getattr(self.owner, "autonomous_presence_blocked_until", 0.0) or 0.0),
-            current_time + window,
+                requested = float(config.collision_grace_seconds)
+        # Turn collision phải nhỏ và bounded. Một config 20-120s từ flow cũ
+        # không được lén quay lại thành lệnh "đừng làm phiền user".
+        window = max(0.0, min(5.0, requested))
+        if window <= 0.0:
+            return
+        until = current_time + window
+        self.owner.autonomous_turn_collision_until = max(
+            float(getattr(self.owner, "autonomous_turn_collision_until", 0.0) or 0.0),
+            until,
         )
+
 
     def link_previous_for_chat(self, user_timestamp: float):
         recent = self.ensure_ledger().latest_visible_before(user_timestamp)

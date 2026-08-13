@@ -20,6 +20,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Mapping, Sequence
 
 from cortex.subject.contracts import MindDecision, SubjectDeliberationFrame, SubjectExecutiveCommit
+from cortex.subject.expression_commitment import hard_expression_boundary, read_commitment
 from cortex.subject.neuro_control import (
     ChoiceSemanticAppraisal,
     NeuroActionSelector,
@@ -732,30 +733,24 @@ class ExecutiveCortex:
         observation_context = dict(getattr(getattr(frame, "observation", None), "context", {}) or {})
         runtime_context = observation_context.get("runtime_context")
         runtime_context = dict(runtime_context) if isinstance(runtime_context, Mapping) else {}
-        reply_expected = bool(runtime_context.get("reply_expected", False))
-        user_busy = bool(runtime_context.get("user_busy", False))
-        boundary = 0.72 if reply_expected else 0.0
-        interruption = max(
-            _clamp01(runtime_context.get("interruption_cost", 0.0)),
-            _clamp01(runtime_context.get("social_refractory_cost", 0.0)),
-            _clamp01(runtime_context.get("initiative_policy_max_cost", 0.0)),
-            0.82 if user_busy else 0.0,
-            0.70 if reply_expected else 0.0,
-        )
+        blocked, boundary_reason = hard_expression_boundary(runtime_context)
+        boundary = 1.0 if blocked else 0.0
+        interruption = 1.0 if blocked else 0.0
         choices: list[ChoiceSemanticAppraisal] = []
         for index, candidate in enumerate(frame.coalitions):
             action = str(getattr(candidate, "action_kind", "") or "").strip().lower()
             arguments = dict(getattr(candidate, "arguments", {}) or {})
             pragmatic = _clamp01(getattr(candidate, "expected_pragmatic_value", 0.5), 0.5)
             uncertainty = _clamp01(getattr(candidate, "uncertainty", 0.5), 0.5)
-            policy = _clamp01(arguments.get("initiative_policy_cost", 0.0))
+            committed = read_commitment(arguments) is not None
+            policy = 0.0 if committed else _clamp01(arguments.get("initiative_policy_cost", 0.0))
             concern_novelty = _clamp01(arguments.get("concern_novelty", 0.45), 0.45)
             seed_quality = _clamp01(arguments.get("seed_quality", concern_novelty), concern_novelty)
             novelty = max(0.08, min(0.92, 0.58 * concern_novelty + 0.42 * seed_quality))
             motive = max(0.08, min(0.92, 0.22 + 0.68 * pragmatic - 0.18 * policy))
             continuity = max(0.05, min(0.95, 0.78 - 0.56 * policy - 0.22 * interruption))
             if action in {"silence", "body_only"}:
-                continuity = max(continuity, 0.72 if (reply_expected or user_busy) else 0.58)
+                continuity = max(continuity, 0.72 if blocked else 0.58)
                 novelty = 0.50
 
             # Local lane chỉ hạ epistemic support khi runtime biết candidate đòi
@@ -785,7 +780,7 @@ class ExecutiveCortex:
             boundary_pressure=boundary,
             interruption_cost=interruption,
             confidence=0.58,
-            reason="local_typed_semantic_fallback",
+            reason=f"local_typed_semantic_critic:{boundary_reason or 'no_hard_boundary'}",
             semantic_commitments=("preserve_typed_evidence_scope",),
             cognitive_requests=("reduce_intrusion",) if interruption >= 0.55 else (),
             review_conditions=("remote_semantic_appraisal_unavailable",),
@@ -807,13 +802,16 @@ class ExecutiveCortex:
             "NOT return a winner. Appraise every ephemeral choice_index on bounded dimensions only; local Neuro will merge "
             "the measurements into one final competition. motive_validity asks whether there is a concrete reason to act now, "
             "not merely a scheduler opportunity. novelty asks whether the semantic content adds something nontrivial. "
-            "continuity_fit asks whether it fits the current relationship/conversation state. boundary_pressure is high only "
-            "when recent public context contains a real user boundary/closure/request for quiet; do not infer it from mood. "
-            "interruption_cost estimates the social cost of breaking the current quiet. epistemic_support is support for the "
+            "continuity_fit asks whether the semantic target remains coherent with the current thread, not whether ERIS should be quiet. "
+            "boundary_pressure is high ONLY for an explicit user quiet/closure boundary or an active turn collision with direct runtime evidence. "
+            "User silence, low familiarity, low response rate, generic cooldown, or merely appearing busy are NOT boundaries. "
+            "interruption_cost is ONLY turn-collision cost; ordinary quiet has zero interruption cost. epistemic_support is support for the "
             "specific semantic target: present-world claims require direct evidence. A runtime clock/seed_temporal_context proves "
             "local time/date/weekday/daypart by clock only; it never proves weather, darkness, room lighting, ambient sound, user "
             "activity, emotion, or fatigue. A seed premise is semantic material, not permission to invent a current scene. "
-            "reversibility measures how easy the action is to recover from socially. semantic_commitments are meaning constraints "
+            "reversibility measures how easy the wording is to revise. If an ExpressionCommitment exists, you are a critic only: "
+            "you may request grounding/revision or rank speech realizations, but you must not reinterpret quiet as a reason to revoke expression. "
+            "semantic_commitments are meaning constraints "
             "for the final chosen action, never public wording. cognitive_requests may use only verify_evidence, reduce_intrusion, "
             "preserve_continuity, estimate_capability, inspect_dissent. Return exactly one JSON object."
         )
@@ -1195,7 +1193,7 @@ class ExecutiveCortex:
             if appraisal is not None:
                 self._log(
                     "info",
-                    "[executive appraisal] mode=%s boundary_pressure=%.2f interruption_cost=%.2f confidence=%.2f choices=%s reason=%s",
+                    "[executive semantic critic] mode=%s boundary_pressure=%.2f interruption_cost=%.2f confidence=%.2f choices=%s reason=%s",
                     mode,
                     appraisal.boundary_pressure,
                     appraisal.interruption_cost,

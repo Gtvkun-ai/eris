@@ -213,7 +213,7 @@ DEFAULT_APPETITES: tuple[AppetiteConfig, ...] = (
     ),
     AppetiteConfig(
         name="tenderness",
-        lens="mềm, để ý xem bạn ổn không, một câu chạm khẽ không làm phiền",
+        lens="mềm, để ý xem bạn ổn không, một câu chạm khẽ nhưng không đòi user phải phản hồi",
         affinity={"user_event": 0.7, "memory": 0.5, "chat": 0.45},
         threshold=0.5,
     ),

@@ -166,11 +166,14 @@ def private_concern_view(
     habituation = clamp01(max(surface_habituation, echo_habituation, stale_event_habituation))
 
     activation = clamp01(0.46 * pressure + 0.26 * persistence + 0.18 * uncertainty + 0.10 * novelty)
+    # V66: speech_pressure là thuộc tính nội tại của concern. Scene telemetry
+    # ``interruption_cost`` vẫn được giữ trong view để Surface có thể điều chỉnh
+    # cách nói, nhưng không được làm thought của Eris "kém muốn nói" chỉ vì user
+    # đang focus/typing. Hard collision được xử lý ở ExpressionCommitment runtime.
     speech_pressure = clamp01(
         activation
         * (0.48 + 0.52 * novelty)
         * (1.0 - 0.72 * habituation)
-        * (1.0 - 0.62 * clamp01(interruption_cost))
     )
 
     if previous_activation is None or abs(activation - previous_activation) < 0.05:
@@ -251,7 +254,6 @@ def thought_concern_view(
     habituation = clamp01(min(0.72, surfaced * 0.16) * (0.62 + 0.38 * (1.0 - novelty)))
     speech_pressure = clamp01(
         activation * (0.42 + 0.58 * novelty) * (1.0 - 0.68 * habituation)
-        * (1.0 - 0.62 * clamp01(interruption_cost))
     )
     if previous_activation is None or abs(activation - previous_activation) < 0.05:
         trajectory = "stable"
@@ -321,7 +323,6 @@ def agenda_concern_view(
     habituation = clamp01(min(0.65, attempts * 0.13) * (1.0 - 0.45 * novelty))
     speech_pressure = clamp01(
         activation * speech_value * (0.62 + 0.38 * novelty) * (1.0 - 0.64 * habituation)
-        * (1.0 - 0.62 * clamp01(interruption_cost))
     )
     if previous_activation is None or abs(activation - previous_activation) < 0.05:
         trajectory = "stable"

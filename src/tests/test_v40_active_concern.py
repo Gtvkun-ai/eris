@@ -95,6 +95,21 @@ def test_surface_habituation_reduces_speech_pressure_without_erasing_concern():
     assert repeated.state == "habituated"
 
 
+
+def test_scene_interruption_does_not_weaken_intrinsic_concern_speech_pressure():
+    import time
+    now = time.time()
+    concern = PrivateConcern(
+        id="c-self-owned", theme="một ý Eris thực sự muốn nói", evidence_ids=("e1",),
+        pressure=0.72, uncertainty=0.35, recurrence=2,
+        created_at=now - 300, updated_at=now - 20,
+        metadata={"mutation_count": 1, "last_mutation_at": now - 10, "surfaced_count": 0},
+    )
+    open_scene = private_concern_view(concern, now=now, interruption_cost=0.0)
+    busy_scene = private_concern_view(concern, now=now, interruption_cost=1.0)
+    assert busy_scene.interruption_cost == 1.0  # telemetry vẫn còn cho wording
+    assert busy_scene.speech_pressure == open_scene.speech_pressure
+
 def test_matching_concern_enriches_proposal_before_neuro():
     concerns = ({
         "concern_id": "concern:autonomy",

@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 """Nhịp bình luận chủ động cho ERIS.
 
-Module này không viết câu và không đoán user đang làm gì. Nó chỉ trả lời một
-câu cơ học: đã đến lúc main planner *phải cân nhắc phát biểu* hay chưa.
+Module này không viết câu, không cấp quyền và không đoán user muốn nghe hay không.
+Nó chỉ xuất telemetry về *nhịp tự biểu đạt của Eris* cho planner/observability.
 
-Tách riêng cadence khỏi semantic giúp tránh hai cực đoan quen thuộc:
-- timer tự nhét câu canned vào miệng ERIS;
-- model có toàn quyền chọn im mãi dù sản phẩm được mở lên để nghe companion nói.
+Từ V66, cadence không còn đợi "user im đủ lâu". Expression phải có motive thật;
+nhịp chỉ giúp Eris không tự làm loãng lời của mình.
 """
 from __future__ import annotations
 
@@ -85,12 +84,10 @@ class CommentaryCadence:
         desired = max(25.0, _as_float(_setting("desired_interval_seconds", 60.0), 60.0))
         maximum = max(desired + 20.0, _as_float(_setting("maximum_quiet_seconds", 120.0), 120.0))
         startup_delay = max(5.0, _as_float(_setting("startup_delay_seconds", 8.0), 8.0))
-        min_user_silence = max(4.0, _as_float(_setting("minimum_user_silence_seconds", 12.0), 12.0))
-
         baseline = float(last_commentary_at or session_started_at or self._started_at or now)
         since_commentary = max(0.0, now - baseline)
         telemetry = telemetry or {}
-        user_busy = bool(telemetry.get("user_busy", False) or telemetry.get("interaction_busy", False))
+        interaction_busy = bool(telemetry.get("interaction_busy", False))
 
         decision_data: Mapping[str, Any]
         if isinstance(engagement_decision, Mapping):
@@ -127,11 +124,8 @@ class CommentaryCadence:
         if not enabled:
             return CommentaryExpectation(False, False, False, "commentary_disabled", desired, maximum,
                                          since_commentary, seconds_since_user, seconds_since_assistant, anchor_kind)
-        if user_busy:
-            return CommentaryExpectation(True, False, False, "user_busy", desired, maximum,
-                                         since_commentary, seconds_since_user, seconds_since_assistant, anchor_kind)
-        if seconds_since_user < min_user_silence:
-            return CommentaryExpectation(True, False, False, "user_recently_active", desired, maximum,
+        if interaction_busy:
+            return CommentaryExpectation(True, False, False, "interaction_busy", desired, maximum,
                                          since_commentary, seconds_since_user, seconds_since_assistant, anchor_kind)
         if since_commentary < startup_delay:
             return CommentaryExpectation(True, False, False, "startup_grace", desired, maximum,

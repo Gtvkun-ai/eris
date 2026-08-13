@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """Session-scoped social goals and cautious scene-partner hypotheses.
 
-This store represents why Eris might continue a social thread.  It is not a
-psychological profile and it does not grant itself permission to speak.  Goals
-carry evidence, success signals, stop signals, confidence and cooldown; the
-floor governor still owns the microphone.
+This store represents why Eris might continue a social thread. It is not a
+psychological profile. A due, evidence-backed active goal is a self-owned
+expression commitment của Eris; runtime chỉ giữ hard boundary/turn collision,
+không suy diễn quyền im lặng từ mức phản hồi của user.
 """
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from .atomic_state import SQLiteAtomicStateStore, SQLiteStateTransaction
 from .social_candidate import SocialSpeechCandidate
 from .affordance import ExecutiveAffordance
 from .social_plan import normalize_agenda_update
+from cortex.subject.expression_commitment import commitment_payload
 
 
 SOCIAL_AGENDA_STATE_SCHEMA = "eris.social_agenda_state.v1"
@@ -476,10 +477,9 @@ class SocialAgendaStore:
             self._persist_locked()
 
     def _eligible_goal_locked(self, blackboard: Any, current: float) -> tuple[int, SocialGoal] | None:
-        if bool(getattr(blackboard, "user_busy", False)):
-            return None
-        if float(getattr(blackboard, "seconds_since_user", 0.0) or 0.0) < 18.0:
-            return None
+        # V66: agenda là một motive của Eris. User đang active/busy hay vừa nói
+        # không tự động hủy motive; boundary thật nằm ở boundary_flags/risk_context
+        # và turn-collision guard của pipeline.
         goals = list(self._state.goals)
         partner = self._state.scene_partner
         if partner.boundary_flags or partner.risk_context:
@@ -504,12 +504,28 @@ class SocialAgendaStore:
             if selected is None:
                 return None
             _, goal = selected
+            candidate = self._candidate_for_goal(goal)
+            # V66: goal active đã qua lifecycle/salience của chính Eris. Khi nó
+            # đến hạn, đây là commitment xã hội chứ không phải lời đề nghị để
+            # một governor khác hỏi lại "user có muốn nghe không?".
+            commitment = commitment_payload(
+                origin="social_agenda",
+                source_id=f"{goal.goal_id}:move:{goal.move_seq + 1}",
+                semantic_target=candidate.topic,
+                motive=goal.goal_type or candidate.speech_act,
+                pressure=max(goal.salience, candidate.urgency),
+                freshness=goal.confidence,
+                persistence=max(0.35, 1.0 - goal.progress),
+            )
             return ExecutiveAffordance(
                 affordance_id=f"social_agenda:{goal.goal_id}:v{goal.version}",
                 owner="social_agenda", revision=goal.version,
-                candidate=self._candidate_for_goal(goal), claim_required=True,
+                candidate=candidate, claim_required=True,
                 expires_at=0.0, claim_key=goal.goal_id,
-                metadata={"goal_type": goal.goal_type},
+                metadata={
+                    "goal_type": goal.goal_type,
+                    "expression_commitment": commitment,
+                },
             )
 
     def claim_affordance(

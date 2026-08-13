@@ -181,7 +181,7 @@ class SubjectService:
         # V56: cầu nối outcome của persistent intention sang appraisal của đúng
         # user turn kế tiếp. Chỉ giữ receipt tối thiểu, không lưu suy diễn cảm xúc.
         self._last_initiative_outcome: dict[str, Any] = {}
-        # V58: quyết định SPEAK/WAIT/DROP gần nhất chỉ là projection giải thích
+        # V66: quyết định SPEAK/WAIT/DROP gần nhất chỉ là projection giải thích
         # timing của initiative, không phải chain-of-thought và không tự chọn wording.
         self._last_initiative_control: dict[str, Any] = {}
         self._decisions: dict[str, MindDecision] = {}
@@ -451,11 +451,11 @@ class SubjectService:
         evidence_ref: str = "",
         persist: bool = True,
     ) -> dict[str, Any]:
-        """Chuyển intention đã nói: PENDING -> EXPRESSED -> AWAITING_OUTCOME.
+        """Chuyển intention đã nói: PENDING -> EXPRESSED.
 
-        Runtime chỉ gọi sau khi public commit thật sự có text. Nhờ vậy Surface lỗi,
-        utterance gate chặn hoặc user preempt không làm mất intention oan. Hai event
-        tách riêng để forensic nhìn được hành vi đã phát trước khi chờ phản ứng.
+        Public commit là completion của *expression*, không tạo nghĩa vụ user phải
+        phản hồi. Motive nền có thể được user turn thật làm SATISFIED sau đó, nhưng
+        silence không được tự chuyển thành low-engagement outcome.
         """
         current = self._clock() if now is None else float(now)
         before = self.initiative_state
@@ -470,18 +470,10 @@ class SubjectService:
             {"intention_id": str(intention_id or ""), "initiative": expressed.to_dict()},
             causal_refs=((evidence_ref,) if evidence_ref else ()),
         )
-        awaiting = self.initiative.mark_awaiting_outcome(
-            expressed, intention_id=str(intention_id or ""), now=current,
-        )
-        self.initiative_state = awaiting
-        self._append_event(
-            "initiative_intention_awaiting_outcome",
-            {"intention_id": str(intention_id or ""), "initiative": awaiting.to_dict()},
-            causal_refs=((evidence_ref,) if evidence_ref else ()),
-        )
+        # V66: không auto-await user. Expression của Eris tự có lifecycle riêng.
         if persist:
             self._persist_projection()
-        return awaiting.to_dict()
+        return expressed.to_dict()
 
     def note_initiative_control(
         self,
@@ -493,7 +485,7 @@ class SubjectService:
         now: float | None = None,
         persist: bool = False,
     ) -> dict[str, Any]:
-        """Nhận quyết định SPEAK/WAIT/DROP từ Initiative Controller V58.
+        """Nhận quyết định SPEAK/WAIT/DROP từ expression owner native V66.
 
         WAIT/SPEAK chỉ cập nhật projection chẩn đoán. DROP mới thay đổi lifecycle
         thật sang ABANDONED, vì nó có nghĩa Eris đã quyết định không theo đuổi ý
@@ -502,7 +494,7 @@ class SubjectService:
         current = self._clock() if now is None else float(now)
         normalized = str(action or "wait").strip().lower()
         self._last_initiative_control = {
-            "schema": "eris.initiative_control_receipt.v58",
+            "schema": "eris.initiative_control_receipt.v66",
             "intention_id": str(intention_id or ""),
             "action": normalized,
             "reason": str(reason or ""),
@@ -532,7 +524,7 @@ class SubjectService:
         evidence_ref: str = "",
         persist: bool = True,
     ) -> dict[str, Any]:
-        """Đóng/revise intention đang chờ bằng user turn thật, không đoán cảm xúc."""
+        """Dùng user turn thật làm evidence dương; silence không tạo outcome."""
         current = self._clock() if now is None else float(now)
         before = self.initiative_state
         after = self.initiative.observe_user_outcome(before, user_text=user_text, now=current)

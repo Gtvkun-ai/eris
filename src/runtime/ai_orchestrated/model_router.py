@@ -122,104 +122,6 @@ DISCOVERY_PLAN_SCHEMA: dict[str, Any] = {
     },
 }
 
-SURFACE_INTENT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": [
-        "decision", "mode", "topic", "text", "confidence",
-        "performance_hint", "anchor_type", "anchor_id", "evidence_refs", "reason",
-    ],
-    "properties": {
-        "decision": {"type": "string", "enum": ["speak", "silence"]},
-        "mode": {
-            "type": "string",
-            "enum": [
-                "silence", "small_talk", "dry_tease", "soft_tease",
-                "inner_thought", "random_chat", "continuation",
-                "memory_callback", "task_followup", "screen_comment",
-            ],
-        },
-        "topic": {"type": "string"},
-        "text": {"type": "string"},
-        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-        "performance_hint": {"type": "string"},
-        "anchor_type": {
-            "type": "string",
-            "enum": ["none", "idle", "conversation", "self", "memory", "task", "screen", "semantic_scene"],
-        },
-        "anchor_id": {"type": "string"},
-        "evidence_refs": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
-        "reason": {"type": "string"},
-    },
-}
-
-OPENING_PLANNER_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["decision", "candidate_id", "reason"],
-    "properties": {
-        "decision": {"type": "string", "enum": ["select", "silence"]},
-        "candidate_id": {"type": "string"},
-        "reason": {"type": "string"},
-    },
-}
-
-OPENING_SURFACE_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["display", "speech", "self_check"],
-    "properties": {
-        "display": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["language", "beats", "full_text"],
-            "properties": {
-                "language": {"type": "string"},
-                "beats": {
-                    "type": "array",
-                    "maxItems": 3,
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": ["beat_id", "text"],
-                        "properties": {"beat_id": {"type": "string"}, "text": {"type": "string"}},
-                    },
-                },
-                "full_text": {"type": "string"},
-            },
-        },
-        "speech": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["language", "beats", "full_text"],
-            "properties": {
-                "language": {"type": "string"},
-                "beats": {
-                    "type": "array",
-                    "maxItems": 3,
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": ["beat_id", "text"],
-                        "properties": {"beat_id": {"type": "string"}, "text": {"type": "string"}},
-                    },
-                },
-                "full_text": {"type": "string"},
-            },
-        },
-        "self_check": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["all_beats_realized", "unsupported_claims", "question_count"],
-            "properties": {
-                "all_beats_realized": {"type": "boolean"},
-                "unsupported_claims": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
-                "question_count": {"type": "integer", "minimum": 0, "maximum": 3},
-            },
-        },
-    },
-}
-
 SOCIAL_INITIATIVE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -2058,7 +1960,7 @@ class AIRuntimeModelRouter:
             "surface candidate, pressure, score hay hệ thống nội bộ. Numeric internal_state chỉ điều chỉnh sắc thái, không tự tạo topic. "
             "không được bịa fact bên ngoài để tạo cảm giác thông minh. "
             "Autonomous là lượt public tiếp theo trong cùng conversation: semantics.turn_kind=continuation phải nối trực tiếp mạch trước "
-            "mà không chào lại hay giả như một phiên mới. DISCOURSE_STATE.reply_expected=true nghĩa là ERIS đang chờ user, không được nhắc lại câu hỏi. "
+            "mà không chào lại hay giả như một phiên mới. DISCOURSE_STATE.reply_expected=true chỉ cấm nag/nhắc lại câu hỏi; nó không khóa một ExpressionCommitment độc lập của ERIS. "
             "ACTIVITY_SESSION cho continuity của app/game; chỉ phản ứng vào mechanical event hoặc annotation activity mới, đừng hỏi lại cùng một app như vừa tỉnh dậy. "
             "Nếu strategy=companion_commentary, nhiệm vụ là giữ căn phòng có sự sống: viết một nhận xét/câu hỏi/continuation cụ thể, không viết câu báo trạng thái năng lực. "
             "Đừng lặp lại 'tôi chưa thấy màn hình/chưa có nội dung' nếu cùng giới hạn đó đã được nói ở turn gần nhất; hãy chuyển sang neo an toàn khác như app/window literal, mạch chat, hoặc một thought public-safe. "
@@ -2811,9 +2713,9 @@ class AIRuntimeModelRouter:
     def _planner_prompt() -> str:
         return (
             "Bạn là bộ deliberation cho self-initiated public turn của ERIS, không viết câu public. "
-            "Autonomous không phải một channel tách biệt: đó là lượt tiếp theo trong cùng conversation khi user tạm im. "
+            "Autonomous không phải một channel phụ thuộc vào sự im lặng của user: đó là public expression bắt nguồn từ motive, concern, curiosity và continuity của ERIS trong cùng shared space. "
             "Đọc conversation_baton trước; assistant_may_continue/thread_fresh/unresolved_point và thread_key mới là bằng chứng nối mạch, không phải timer đơn thuần. "
-            "Nếu reply_expected=true vì ERIS vừa hỏi user, không được nag hoặc tự trả lời thay user; ưu tiên im/body-only. "
+            "Nếu reply_expected=true vì ERIS vừa hỏi user, không được nag hoặc tự trả lời thay user; nhưng đây KHÔNG phải boundary cho một ExpressionCommitment độc lập của ERIS. "
             "Nếu có mạch thật chưa khép, ưu tiên useful_followup/carry_own_thread trước ambient mới. Không phát minh unresolved thread từ một câu đã kết thúc rõ. "
             "Đọc activity_session như chuỗi public-safe: session và mechanical new_event_keys chỉ cho biết surface/window/screen đã đổi; "
             "activity_kind/phase/event là annotation từ deliberation trước, không phải kết luận runtime. Dùng chúng để tránh hỏi lại app mỗi tick. "
@@ -2826,9 +2728,8 @@ class AIRuntimeModelRouter:
             "Nếu self_context có agenda item kèm evidence và speech_value đủ cao, có thể dùng motive=internal_agenda. Nếu có candidate trong "
             "private_mind_surface hoặc private_life_surface, có thể dùng motive tương ứng. Chỉ chọn một seed cụ thể và copy evidence refs của nó. "
             "internal_state dạng số chỉ điều chỉnh tone/độ kiềm chế; boredom, silence_pressure hay attachment_pressure không phải lý do công khai để nói. "
-            "Đọc commentary_expectation như product contract về nhịp hiện diện, không phải topic. due=true nghĩa là user đã mở ERIS ở chế độ companion-commentary và đang đến nhịp nên phát biểu; "
-            "hãy chọn một source thật trong conversation/screen/window/self_context rồi ưu tiên speak=true. required=true nghĩa là đã im quá lâu: chỉ được chọn silence nếu user_busy, privacy_blocked, "
-            "hoặc reply_expected=true. Không biến nhịp thành câu 'tôi ở đây' vô nghĩa; nhịp chỉ buộc bạn tìm một comment/question/continuation có giá trị thấp nhưng thật. "
+            "Đọc commentary_expectation chỉ như telemetry nhịp cũ để quan sát, KHÔNG phải nguồn cấp quyền hay motive phát biểu. Expression phải bắt nguồn từ một source thật trong conversation/screen/window/self_context hoặc commitment của ERIS. "
+            "user_busy và reply_expected không phải boundary; privacy_blocked chỉ chặn claim từ dữ liệu riêng tư. Chỉ user_speaking/active_user_turn/public_turn_busy/interaction_busy mới là turn collision thật. Không bịa topic chỉ để lấp một khoảng im. "
             "Nếu commentary_recovery tồn tại, draft trước đã quá dè và bạn phải deliberation lại một lần theo anchor_kind được chỉ ra. "
             "Bạn là authority semantic duy nhất cho self-turn. Luôn điền semantics kể cả khi speak=false. "
             "turn_kind chọn đúng một loại; speech_act là hành vi xã hội ổn định; subject_key là chủ thể ngắn dạng snake_case; "
@@ -2839,13 +2740,12 @@ class AIRuntimeModelRouter:
             "Nếu nói, chọn strategy và value_focus rõ. Khi snapshot.discovery.ready_to_share có artifact thật, có thể dùng strategy=share_discovery; "
             "khi current_activity có id/status thật, có thể dùng update_own_activity. Không phát minh discovery/activity để lấp im lặng. "
             "Không ép ERIS về một phiên bản tốt hơn; chỉ dùng identity, personality, relationship và history hiện tại. "
-            "Ngoài nhịp commentary có thể im khi không có continuation, delta, open loop, public-safe seed hay curiosity có căn cứ. "
-            "Trong nhịp commentary due/required, app/window literal hoặc persona presence là anchor tối thiểu hợp lệ cho một câu hỏi/nhận xét chung. Riêng startup_opening_required=true phải speak=true. "
+            "Có thể im khi chính ERIS không có continuation, delta, open loop, public-safe seed, curiosity hay motive nội tại có nghĩa. Commentary due/required không tự tạo motive. Riêng startup_opening_required=true vẫn là lifecycle opening của session. "
             "Các motive hợp lệ gồm repair_previous_miss, important_open_loop, meaningful_environment_change, useful_followup, grounded_curiosity, "
             "internal_agenda, private_mind_surface, private_life_surface, startup_opening và user_force_speak. "
             "Ở startup, chọn theo thứ tự screen evidence, runtime signal có nghĩa, continuity thật, rồi persona_opening; semantics.turn_kind=startup. "
             "Topic phải nêu source và mục tiêu giao tiếp, không tạo câu thoại. Không bịa screen fact. "
-            "intrusion_risk cao nếu user đang họp, đang nhập liệu dồn dập, vừa phát biểu hoặc screen delta chỉ là animation lặp. "
+            "Nếu user có vẻ đang họp/nhập liệu dồn dập, dùng tín hiệu đó để giảm câu hỏi đòi phản hồi hoặc chọn wording gọn hơn; đừng biến nó thành quyền phủ quyết expression. Vừa phát biểu/active collision thì runtime tự giữ floor. "
             "Tên process/PID/backend đơn lẻ không đủ để dựng premise sâu, nhưng app/window thật có thể làm nền cho một câu hỏi rất chung. "
             "Nếu có suy đoán về mood/intent, đó chỉ là low-risk hypothesis có căn cứ và cho phép user sửa. "
             "Luôn để tool_intent và tool_input rỗng. Gemma Executive sở hữu mọi capability selection; "
@@ -2878,56 +2778,15 @@ class AIRuntimeModelRouter:
         return IntentionPlan.from_mapping(data, channel="autonomous")
 
     @staticmethod
-    def _surface_intent_prompt() -> str:
-        return (
-            "Bạn là lane SELF_SURFACE riêng của ERIS. Nhiệm vụ của bạn là chọn một kiểu biểu hiện công khai "
-            "được phép và viết luôn đúng một micro-line tự nhiên bằng ngôn ngữ gần nhất của hội thoại. "
-            "Bạn không phải observer, không viết chain-of-thought và không giải thích hệ thống. "
-            "Chỉ chọn mode nằm trong surface_contract.allowed_modes. Khi không có điều gì đáng nói hoặc user đang bận, "
-            "trả decision=silence, mode=silence, text/topic rỗng. Khi nói, topic phải là neo cụ thể và text phải tự đủ nghĩa. "
-            "small_talk là một câu đời thường; dry_tease là khịa khô nhưng không hạ nhục; soft_tease là trêu có đường lui; "
-            "inner_thought chỉ dùng một public-safe seed thật trong self_context; random_chat vẫn phải liên quan tới căn phòng, "
-            "mạch gần đây hoặc personality chứ không bịa fact; continuation nối đúng conversation_baton; memory_callback chỉ "
-            "nhắc context được cung cấp; task_followup phải giữ đúng engagement; screen_comment chỉ nói từ screen evidence tươi. "
-            "Không nói rằng bạn thấy/đọc màn hình nếu screen_context không fresh hoặc không có evidence. Không đoán user đang thắng, "
-            "thua, buồn, định làm gì hay cảm thấy gì. Không nhắc score, pressure, private mind, planner, model, API hoặc contract. "
-            "Giọng ERIS phải theo affective_voice_state nếu có; personality định hình cadence/disclosure/humor chứ không ép ấm, lạnh hay deadpan. Tránh câu phục vụ chung như 'tôi ở đây', 'cần gì cứ nói'. "
-            "evidence_refs chỉ copy id có thật từ input. Return exactly one JSON object theo schema."
-        )
-
-    def plan_surface_intent(self, snapshot: Mapping[str, Any]) -> dict[str, Any]:
-        """Cho worker ``surface`` chọn mode và viết micro-line trong một call."""
-
-        client = self.surface_client
-        if client is None:
-            return {}
-        try:
-            timeout = max(15.0, float(os.getenv("ERIS_SURFACE_INTENT_TIMEOUT_SEC", "90") or 90.0))
-        except (TypeError, ValueError):
-            timeout = 90.0
-        return self._call(
-            client,
-            system=self._surface_intent_prompt(),
-            payload=snapshot,
-            schema=SURFACE_INTENT_SCHEMA,
-            name="eris_autonomous_surface_intent",
-            max_tokens=420,
-            reasoning_effort=None,
-            inference_tier="main_cognition",
-            priority=82,
-            timeout_seconds=timeout,
-        )
-
-    @staticmethod
     def _social_initiative_prompt() -> str:
         return (
             "Bạn là SOCIAL AGENDA SELECTOR của ERIS. Bạn chỉ đề xuất một impulse/chủ đề typed, không viết câu public. "
-            "Runtime sẽ quyết định quyền nói và Surface Worker sẽ viết câu sau. Đọc blackboard, recent_public_history và social_context. "
-            "Trả decision=none khi impulse chỉ để lấp im lặng, lặp lại, gây phiền, thiếu neo, user đang bận hoặc ERIS đang chờ user. "
+            "Bạn chỉ phát hiện opportunity; quyền biểu đạt thuộc ExpressionCommitment của ERIS và Surface Worker chỉ hiện thực hóa wording. Đọc blackboard, recent_public_history và social_context. "
+            "Trả decision=none khi ERIS thực sự không có impulse tự thân đủ cụ thể, hoặc impulse chỉ lặp lại/thiếu neo. "
             "Khi có một lý do xã hội thật, chọn đúng một kind và mô tả topic như mục tiêu giao tiếp cụ thể. "
             "followup_reminder chỉ nhắc đúng một lần không trách móc; screen_comment phải copy evidence_refs tươi; semantic_scene dùng shared semantic context; "
             "memory_callback chỉ dùng memory anchor có sẵn; inner_thought chỉ dùng public-safe self seed; social_check_in/casual_curiosity/playful_prompt/random_chat "
-            "không được bịa quan sát, cảm xúc, kế hoạch hoặc ký ức của user. Silence là lựa chọn hợp lệ. Return JSON only theo schema."
+            "không được bịa quan sát, cảm xúc, kế hoạch hoặc ký ức của user. decision=none chỉ có nghĩa là chưa có social opportunity thật. Return JSON only theo schema."
         )
 
     def propose_social_initiative(self, request: Mapping[str, Any]) -> dict[str, Any]:
@@ -2961,7 +2820,7 @@ class AIRuntimeModelRouter:
         return (
             "If surface_contract.speech_language is ja, write utterance.speech in natural Japanese kana/kanji, never romaji. "
             f"Bạn là giọng Surface của ERIS. {AUTONOMOUS_VOICE_CORE_V39} "
-            "InitiativeController đã quyết định SPEECH và đã khóa mode, "
+            "ExpressionCommitment/Neuro đã cam kết action family SPEECH và khóa mode, "
             "anchor, topic, evidence scope. Trong MỘT JSON, render cùng semantic intent thành utterance.display theo "
             "surface_contract.display_language và utterance.speech theo surface_contract.speech_language. "
             "Hai bề mặt phải cùng nghĩa, cùng mức thân mật và cùng cá tính; speech là lời thực sự đưa vào ElevenLabs. "
@@ -2993,8 +2852,9 @@ class AIRuntimeModelRouter:
     def realize_surface_speech(self, request: Mapping[str, Any]) -> dict[str, Any]:
         """Surface Worker chỉ viết wording từ SpeechIntent đã được duyệt.
 
-        Surface chết thì trả rỗng để caller im/body-only. Companion, critic hay
-        observer không được giả làm Surface. Đường tương thích cũ vẫn còn sau
+        Surface không hiện thực hóa được thì trả trạng thái unavailable để caller DEFER/REVISE commitment;
+        lỗi wording không được đổi nghĩa thành một quyết định SILENCE. Companion, critic hay observer
+        không được giả làm Surface. Đường tương thích cũ vẫn còn sau
         ``surface_cross_worker_fallback`` và mặc định tắt.
         """
 
@@ -3182,7 +3042,7 @@ __all__ = [
     "CONVERSATION_ARC_SCHEMA",
     "PUBLIC_REPLY_SCHEMA",
     "PUBLIC_REPLY_CORE_SCHEMA",
-    "SURFACE_INTENT_SCHEMA", "SURFACE_REALIZATION_SCHEMA",
+    "SURFACE_REALIZATION_SCHEMA",
     "SEMANTIC_FRAME_SCHEMA",
     "ASSISTANT_ACT_SCHEMA",
 ]

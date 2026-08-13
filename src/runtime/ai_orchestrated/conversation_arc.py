@@ -23,6 +23,7 @@ from typing import Any, Callable, Mapping, Sequence
 from .atomic_state import SQLiteAtomicStateStore, SQLiteStateTransaction
 from .social_candidate import SocialSpeechCandidate
 from .affordance import ExecutiveAffordance
+from cortex.subject.expression_commitment import commitment_payload
 
 
 ARC_SCHEMA = "eris.conversation_arc.v1"
@@ -500,11 +501,25 @@ class ConversationArcRuntime:
             candidate = self._candidate_for_arc(arc)
             if candidate is None:
                 return None
+            # V66: một beat đã được arc owner giữ lại là continuation intent
+            # của chính Eris. Nó không cần user im đủ lâu để "được phép" tồn tại.
+            commitment = commitment_payload(
+                origin="conversation_arc",
+                source_id=f"{arc.arc_id}:beat:{arc.next_beat_index}",
+                semantic_target=candidate.topic,
+                motive=candidate.speech_act,
+                pressure=max(candidate.urgency, candidate.relevance),
+                freshness=candidate.confidence,
+                persistence=0.96,
+            )
             return ExecutiveAffordance(
                 affordance_id=f"conversation_arc:{arc.arc_id}:beat:{arc.next_beat_index}:v{arc.version}",
                 owner="conversation_arc", revision=arc.version, candidate=candidate,
                 claim_required=True, expires_at=arc.expires_at, claim_key=arc.arc_id,
-                metadata={"beat_index": arc.next_beat_index},
+                metadata={
+                    "beat_index": arc.next_beat_index,
+                    "expression_commitment": commitment,
+                },
             )
 
     def claim_affordance(

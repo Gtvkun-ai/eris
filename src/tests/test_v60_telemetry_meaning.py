@@ -231,13 +231,13 @@ def test_v60_grounded_environment_intention_can_speak_when_user_paused():
     assert decision.action is InitiativeControlAction.SPEAK
 
 
-def test_v60_environment_intention_waits_while_user_busy():
+def test_v66_environment_intention_ignores_inferred_user_busy_as_boundary():
     decision = InitiativeArbiter().decide(
         _env_intention(), relational=_relational(), runtime_context=_runtime(),
         now=1120.0, contentful=True, user_busy=True,
     )
-    assert decision.action is InitiativeControlAction.WAIT
-    assert decision.reason == "user_or_runtime_busy"
+    assert decision.action is InitiativeControlAction.SPEAK
+    assert decision.reason == "self_owned_expression"
 
 
 def test_v60_bridge_materializes_grounded_screen_comment_not_generic_checkin():

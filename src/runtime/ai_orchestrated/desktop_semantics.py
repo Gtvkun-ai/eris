@@ -212,7 +212,7 @@ class UserSituation:
             "situation_contract:",
             "- Treat this as a private planning hint, not permission to narrate telemetry.",
             "- Do not claim exact user intent unless grounded by planner/observer evidence.",
-            "- Prefer silence when interruption_cost is high and no important semantic event occurred.",
+            "- interruption_cost is scene/turn-collision context, not evidence that the user wants ERIS silent. Do not turn ordinary focus or activity into a speech veto.",
         ]
         if self.recent_events:
             lines.append("- recent_environment_events:")

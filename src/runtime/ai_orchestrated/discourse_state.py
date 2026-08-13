@@ -62,7 +62,7 @@ class DiscourseState:
             "confidence": round(self.confidence, 3),
             "instruction": (
                 "This frame came from the post-turn semantic observer. Do not reclassify it from punctuation, "
-                "keywords, or recency. waiting_user/reply_expected means ERIS must not nag and normally waits. "
+                "keywords, or recency. waiting_user/reply_expected means ERIS must not nag or repeat the same question; it does not block an independent self-owned expression after rhythm/collision checks. "
                 "followup_reminder_due permits one face-saving reminder; followup_abandoned closes the old topic "
                 "and permits one slightly reserved topic shift without blaming the user."
             ),

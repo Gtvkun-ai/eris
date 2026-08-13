@@ -741,7 +741,7 @@ class CoordinatorBootstrapMixin:
         self.inferred_pos_x = 0.5 # vị trí avatar
         self.idle_cycles = 0
         self.last_autonomous_spoken_at = 0.0
-        self.autonomous_presence_blocked_until = 0.0
+        self.autonomous_turn_collision_until = 0.0
         self._autonomous_wakeup_event = threading.Event()
         self._autonomous_wakeup_reason = ""
         self.presence_maintenance_silent_cycles = 0

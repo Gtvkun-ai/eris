@@ -9,14 +9,15 @@ Luật quan trọng:
 - connection/social pressure KHÔNG tự sinh lời thoại;
 - contact_bid/user_probe chung chung không phải content, nên không được thành speech;
 - một thought/concern/seed có nội dung có thể tạo urge và urge có thể sống qua
-  nhiều tick nếu Neuro chọn silence;
+  nhiều tick khi self-rhythm DEFER hoặc Surface chưa hiện thực hóa được;
 - cùng ý được paraphrase lại không tạo thêm urge, chỉ làm freshness giảm nếu
   không có evidence mới;
 - public commit làm satisfaction tăng và pressure hạ. Surface text không feed
   ngược thành một event mới.
 
 Nói ngắn: motive trả lời "tôi muốn gần bạn", urge trả lời "tôi muốn mang *cái gì*
-sang phía bạn". Neuro chỉ cân lớp thứ hai khi quyết định phát ngôn.
+sang phía bạn". Khi urge đã thành ExpressionCommitment, Neuro chỉ xếp hạng giữa
+những điều Eris cùng muốn nói; nó không tái bỏ phiếu quyền được biểu đạt.
 """
 from __future__ import annotations
 
@@ -26,6 +27,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Iterable, Mapping, Sequence
 
 from cortex.active_concern import clamp01, compact, semantic_overlap
+from cortex.subject.expression_commitment import commitment_payload
 from runtime.ai_orchestrated.affordance import ExecutiveAffordance
 from runtime.ai_orchestrated.social_initiative import SocialSpeechCandidate
 
@@ -136,9 +138,8 @@ class ExpressionUrge:
     updated_at: float = 0.0
     last_input_at: float = 0.0
     last_expressed_at: float = 0.0
-    # V61: khi Surface chặn vì câu public quá giống câu vừa nói, urge không được
-    # quay lại nguyên lực ở tick kế tiếp. Đây là cooldown biểu đạt, KHÔNG phải
-    # đánh dấu "đã nói"; evidence mới có thể mở lại urge ngay.
+    # Field legacy để đọc state V61. V66 không còn dùng nó làm cooldown hay
+    # speech veto; realization failure chỉ tăng counter để trace.
     surface_blocked_until: float = 0.0
     surface_duplicate_blocks: int = 0
     echo_count: int = 0
@@ -368,9 +369,15 @@ class ExpressionUrgeRuntime:
             owner = str(getattr(affordance, "owner", "") or "")
             if owner in _STRUCTURED_OWNERS or str(getattr(candidate, "kind", "") or "") == "force_speak":
                 continue
+            meta = dict(getattr(affordance, "metadata", {}) or {})
+            # V66: MentalMaterial có hai lane khác nhau: ``concern`` chỉ nói rằng
+            # thought đáng được giữ trong cognition; ``expression_ready`` mới là
+            # quyết định nó đã bước sang desire biểu đạt. Không để việc bỏ legacy
+            # readiness threshold vô tình biến mọi concern thành speech desire.
+            if owner == "mental_material" and not bool(meta.get("expression_ready", False)):
+                continue
             content = str(getattr(candidate, "topic", "") or "")
             motive = _motive_from_candidate(candidate)
-            meta = dict(getattr(affordance, "metadata", {}) or {})
             environment_grounded = bool(
                 meta.get("environment_grounded", False)
                 or str(getattr(candidate, "anchor_type", "") or "").strip().lower() == "environment"
@@ -439,7 +446,9 @@ class ExpressionUrgeRuntime:
                 original_speech_act="",
                 confidence=clamp01(0.52 + 0.30 * activation),
                 relevance=clamp01(0.42 + 0.42 * max(speech, activation)),
-                intrusion_risk=clamp01(concern.get("interruption_cost", 0.0)) * 0.55,
+                # Scene interruption không phải phẩm chất của thought. Giữ một
+                # risk nền nhỏ; boundary/turn collision thuộc runtime phía sau.
+                intrusion_risk=0.14,
             )
         self._prune(current)
 
@@ -480,7 +489,6 @@ class ExpressionUrgeRuntime:
                     - min(0.18, urge.echo_count * 0.05)
                 )
                 for urge in self._urges.values()
-                if current >= float(urge.surface_blocked_until or 0.0)
             ),
             default=0.0,
         )
@@ -530,11 +538,12 @@ class ExpressionUrgeRuntime:
         )
         emitted = 0
         for urge in ranked:
-            if current < float(urge.surface_blocked_until or 0.0):
-                continue
             pressure = urge.pressure(now=current, relational=rel, affect=aff)
             effective_freshness = urge.effective_freshness(now=current)
-            if pressure < 0.34 or effective_freshness < 0.12:
+            # V66: urge đã là một desire có nội dung. Không đặt thêm readiness
+            # threshold để cấp quyền nói lần hai; stale/satisfied được lifecycle
+            # phía trên tự prune.
+            if urge.satisfaction >= 0.88:
                 continue
             speech_act = _speech_act_for(urge.motive, urge.original_speech_act)
             candidate = SocialSpeechCandidate(
@@ -578,6 +587,15 @@ class ExpressionUrgeRuntime:
                     "urge_id": urge.urge_id,
                     "concern_id": urge.concern_id,
                     "motive": urge.motive,
+                    "expression_commitment": commitment_payload(
+                        origin="expression_urge",
+                        source_id=urge.urge_id,
+                        semantic_target=urge.content,
+                        motive=urge.motive,
+                        pressure=pressure,
+                        freshness=effective_freshness,
+                        persistence=clamp01(1.0 - urge.satisfaction),
+                    ),
                 },
             ))
             emitted += 1
@@ -615,36 +633,36 @@ class ExpressionUrgeRuntime:
                 )
         self._last_log_signature = signature
 
-    def note_surface_duplicate(self, urge_id: str, *, now: float | None = None) -> bool:
-        """Tạm hạ một urge bị Surface chặn vì wording trùng gần đây.
+    def note_realization_failure(
+        self, urge_id: str, *, reason: str = "surface_realization_failed", now: float | None = None
+    ) -> bool:
+        """Ghi lỗi wording mà không thay đổi quyền biểu đạt của content.
 
-        Đây không phải ``note_expressed``: Eris chưa nói gì ra ngoài nên không được
-        giả receipt public. Ta chỉ ghi rằng *cách biểu đạt hiện tại* đã bế tắc, hạ
-        freshness/strength và đặt cooldown. Evidence mới sẽ mở lại urge ở
-        ``_ingest_content``. Nhờ vậy một ý cũ không thành zombie cứ thắng Neuro rồi
-        đâm vào cùng duplicate guard hết lượt này sang lượt khác.
+        Surface failure là lỗi realization, không phải bằng chứng rằng desire đã
+        mất giá trị. Lifecycle của urge chỉ thay đổi khi có public receipt, stale
+        evidence hoặc self-restraint thật.
         """
         urge = self._urges.get(str(urge_id or "").strip())
         if urge is None:
             return False
         current = float(now or time.time())
         urge.surface_duplicate_blocks += 1
-        cooldown = min(240.0, 45.0 + 45.0 * urge.surface_duplicate_blocks)
-        urge.surface_blocked_until = max(urge.surface_blocked_until, current + cooldown)
+        urge.surface_blocked_until = 0.0
         urge.updated_at = current
-        urge.satisfaction = clamp01(max(urge.satisfaction, 0.42))
-        urge.base_strength = clamp01(urge.base_strength * 0.68)
-        urge.freshness = clamp01(urge.freshness * 0.58)
-        urge.echo_count += 1
         self._log(
             "info",
-            "[expression urge] duplicate-suppressed id=%s blocks=%s cooldown=%.0fs remaining=%.2f",
+            "[expression urge] realization-failed id=%s blocks=%s reason=%s commitment_preserved=1",
             urge.urge_id,
             urge.surface_duplicate_blocks,
-            cooldown,
-            urge.base_strength,
+            compact(reason, 120),
         )
         return True
+
+    def note_surface_duplicate(self, urge_id: str, *, now: float | None = None) -> bool:
+        """Compatibility alias V61; V66 không còn suppress urge."""
+        return self.note_realization_failure(
+            urge_id, reason="surface_duplicate_recent_utterance", now=now
+        )
 
     def note_expressed(self, urge_id: str, *, now: float | None = None) -> bool:
         urge = self._urges.get(str(urge_id or "").strip())

@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Mapping, Sequence
 
 from cortex.subject.service import SubjectService
+from cortex.subject.expression_commitment import commitment_payload
 from cortex.active_concern import match_concern
 
 
@@ -68,6 +69,10 @@ class AutonomousProposalSource:
         metadata = metadata if isinstance(metadata, dict) else dict(metadata) if hasattr(metadata, "items") else {}
         intention_id = str(metadata.get("intention_id") or "").strip()
         motive_kind = str(metadata.get("motive_kind") or "").strip().lower()
+        raw_expression_commitment = metadata.get("expression_commitment")
+        expression_commitment = (
+            dict(raw_expression_commitment) if isinstance(raw_expression_commitment, Mapping) else None
+        )
         speech_act = str(getattr(candidate, "speech_act", "") or "").strip().lower()
         tone = str(getattr(candidate, "tone", "") or "").strip().lower()
         expression_urge_id = str(getattr(candidate, "expression_urge_id", "") or "").strip()
@@ -75,6 +80,17 @@ class AutonomousProposalSource:
         expression_freshness = clamp01(getattr(candidate, "expression_freshness", 0.0), 0.0)
         expression_satisfaction = clamp01(getattr(candidate, "expression_satisfaction", 0.0), 0.0)
         expression_motive = str(getattr(candidate, "expression_motive", "") or "").strip().lower()
+        if expression_commitment is None and kind == "force_speak":
+            expression_commitment = commitment_payload(
+                origin="force_speak",
+                source_id=affordance_id,
+                semantic_target=topic,
+                motive="force_expression",
+                pressure=1.0,
+                freshness=1.0,
+                persistence=1.0,
+                forced=True,
+            )
         affect_bias = dict(affective_bias or {})
 
         need_ids: list[str] = []
@@ -138,6 +154,7 @@ class AutonomousProposalSource:
                 # đúng lifecycle và frame sau dễ quay lại proposal seed cũ.
                 **({"intention_id": intention_id} if intention_id else {}),
                 **({"initiative_motive": motive_kind} if motive_kind else {}),
+                **({"expression_commitment": expression_commitment} if expression_commitment else {}),
                 "context": "autonomous",
                 "skill_id": "dialogue",
                 # V42: policy xã hội/timing chỉ là feature trước Neuro. Không có
@@ -180,38 +197,27 @@ class AutonomousProposalSource:
             },
         }
 
-        # V44: desire có nội dung là utility dương thật sự, không phải một label
-        # trang trí. Nó vẫn chịu policy/interruption cost ở các bước dưới.
-        if expression_urge_id:
-            # V44.1: utility phải phản ánh một urge *đang sẵn sàng*, không chỉ
-            # pressure thô. Freshness và satisfaction quyết định pressure đó còn
-            # là desire hiện tại hay chỉ là một ý cũ đã mắc kẹt trong projection.
-            expression_readiness = clamp01(
-                expression_pressure
-                * (0.55 + 0.45 * expression_freshness)
-                * (1.0 - 0.82 * expression_satisfaction)
-            )
-            proposal["arguments"]["expression_readiness"] = expression_readiness
+        # V66: commitment đã quyết định action family. Pressure/freshness chỉ
+        # xếp hạng giữa NHIỀU điều Eris cùng muốn nói, không cạnh tranh quyền
+        # được nói với SILENCE.
+        if expression_commitment:
+            commitment_pressure = clamp01(expression_commitment.get("pressure", expression_pressure), expression_pressure)
+            commitment_freshness = clamp01(expression_commitment.get("freshness", expression_freshness), expression_freshness)
+            commitment_persistence = clamp01(expression_commitment.get("persistence", 0.5), 0.5)
             proposal["expected_need_relief"] = clamp01(
-                float(proposal["expected_need_relief"]) + 0.34 * expression_readiness
+                float(proposal["expected_need_relief"]) + 0.22 * commitment_pressure
             )
             proposal["value_congruence"] = clamp01(
-                float(proposal["value_congruence"]) + 0.18 * expression_readiness
+                float(proposal["value_congruence"]) + 0.14 * commitment_persistence
             )
             proposal["expected_action_efficacy"] = clamp01(
-                float(proposal["expected_action_efficacy"]) + 0.09 * expression_freshness
-            )
-            proposal["commitment_conflict"] = clamp01(
-                float(proposal["commitment_conflict"]) + 0.08 * expression_satisfaction
-            )
-            proposal["need_effects"]["connection"] = max(
-                float(proposal["need_effects"].get("connection", 0.0) or 0.0),
-                0.42 + 0.42 * expression_readiness,
+                float(proposal["expected_action_efficacy"]) + 0.07 * commitment_freshness
             )
 
-        if policy_cost > 0.0:
-            # Không biến policy thành veto trá hình. Cost chỉ làm speech kém hấp dẫn
-            # tương ứng với baton/busy/cooldown/repeat trước khi Neuro commit.
+
+        if policy_cost > 0.0 and not expression_commitment:
+            # Policy legacy chỉ còn áp cho candidate chưa có self-owned commitment.
+            # Commitment không bị response-rate/cooldown làm mất action family.
             proposal["substrate_cost"] = clamp01(float(proposal["substrate_cost"]) + 0.34 * policy_cost)
             proposal["commitment_conflict"] = clamp01(float(proposal["commitment_conflict"]) + 0.46 * policy_cost)
             proposal["expected_need_relief"] = clamp01(float(proposal["expected_need_relief"]) * (1.0 - 0.28 * policy_cost))
@@ -324,7 +330,8 @@ class AutonomousProposalSource:
         public_view = blackboard.public_view() if callable(getattr(blackboard, "public_view", None)) else {}
         reply_expected = bool(public_view.get("reply_expected", getattr(blackboard, "reply_expected", False)))
         user_busy = bool(getattr(blackboard, "user_busy", False))
-        social_wait = bool(reply_expected or user_busy)
+        # V66: user_busy là scene context, không phải reason để silence thắng.
+        social_wait = bool(reply_expected)
         engagement_active = bool(public_view.get("engagement_active", getattr(blackboard, "engagement_active", False)))
 
         # Chỉ đưa capability-grounded-speech vào khi có context thật đòi hỏi grounding:

@@ -696,7 +696,7 @@ class PublicOutputRuntimeMixin:
         return {
             "architecture": "semantic_frame_v1",
             "chat_active": bool(getattr(self, "chat_mode", False) or getattr(self, "_chat_processing", False)),
-            "autonomous_blocked_until": round(float(getattr(self, "autonomous_presence_blocked_until", 0.0) or 0.0), 3),
+            "autonomous_turn_collision_until": round(float(getattr(self, "autonomous_turn_collision_until", 0.0) or 0.0), 3),
             "semantic_frame": {
                 key: semantic_frame.get(key)
                 for key in ("version", "discourse_relation", "user_act", "target", "ambiguity_owner", "tool_intent")
@@ -832,13 +832,14 @@ class PublicOutputRuntimeMixin:
         except ValueError:
             return 1.2
 
-    def _block_autonomous_presence_after_public_turn(
+    def _note_autonomous_turn_collision(
         self,
         now: float | None = None,
         *,
         seconds: float | None = None,
     ) -> None:
-        self._ensure_public_turn_runtime().block_autonomous_presence(now, seconds=seconds)
+        """Ghi boundary cơ học của public turn; không khóa self-cognition."""
+        self._ensure_public_turn_runtime().note_turn_collision(now, seconds=seconds)
 
     def _link_previous_public_turn_for_chat(self, user_timestamp: float):
         return self._ensure_public_turn_runtime().link_previous_for_chat(user_timestamp)

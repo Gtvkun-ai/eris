@@ -198,7 +198,7 @@ def test_contact_and_user_probe_are_coalesced_before_competition() -> None:
     assert [item.affordance_id for item in thick_model] == ["relational:contact:1", "task:1"]
 
 
-def test_startup_social_cooldown_blocks_immediate_check_in() -> None:
+def test_v66_startup_greeting_does_not_create_expression_cooldown() -> None:
     import time
 
     host = SimpleNamespace(
@@ -208,7 +208,8 @@ def test_startup_social_cooldown_blocks_immediate_check_in() -> None:
         private_mind_loop=None,
     )
     runtime_context = build_initiative_runtime_context(host)
-    assert runtime_context["startup_social_cooldown_active"] is True
+    assert "startup_social_cooldown_active" not in runtime_context
+    assert runtime_context["expression_authority"] == "self_owned"
 
     d = Determinism()
     service = _service(d)
@@ -339,7 +340,7 @@ def test_seed_is_not_required_for_contentful_urge_wake_source() -> None:
     assert "preview_understand" not in source
 
 
-def test_runtime_context_marks_unanswered_autonomous_speech_as_cost() -> None:
+def test_v66_runtime_context_does_not_encode_unanswered_user_as_expression_cost() -> None:
     now = 1_000.0
     host = SimpleNamespace(
         private_mind_daemon=None,
@@ -357,6 +358,8 @@ def test_runtime_context_marks_unanswered_autonomous_speech_as_cost() -> None:
     finally:
         time.time = original_time
 
-    assert context["recent_unsolicited_speech"] == 1.0
-    assert context["user_response_rate"] == 0.0
-    assert context["social_refractory_cost"] > 0.0
+    assert "recent_unsolicited_speech" not in context
+    assert "user_response_rate" not in context
+    assert "social_refractory_cost" not in context
+    assert context["expression_authority"] == "self_owned"
+    assert context["seconds_since_last_autonomous_speech"] == 60.0

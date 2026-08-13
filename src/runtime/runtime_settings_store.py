@@ -26,7 +26,7 @@ from runtime.workspace_manager import default_eris_home
 
 
 _DEFAULT_SETTINGS: dict[str, Any] = {
-    "version": 16,
+    "version": 17,
     "architecture": {
         "mode": "ai_orchestrated",
         "startup_greeting": True,
@@ -224,7 +224,6 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "hourly_budget": 2,  # legacy UI value; Initiative v3 không dùng làm global cap
         "global_hourly_budget": 40,
         "minimum_interval_seconds": 60,
-        "minimum_user_silence_seconds": 12,
         "importance_margin": 0.08,
         "semantic_duplicate_threshold": 0.66,
         "activity_update_cooldown_seconds": 120,
@@ -232,7 +231,9 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
     "commentary": {
         # Preference do user nói trực tiếp trong chat. Đặt cùng cadence để không
         # sinh thêm một section UI chỉ nhằm chứa ba boolean khá tự phụ.
-        "user_requested_autonomous_surface": False,
+        # V66: expression public mở mặc định vì quyền biểu đạt thuộc Eris.
+        # User chỉ đóng cửa này bằng directive rõ ràng.
+        "autonomous_expression_enabled": True,
         "surface_only": True,
         "open_topic": True,
         "preference_updated_at": 0,
@@ -242,7 +243,6 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "desired_interval_seconds": 60,
         "maximum_quiet_seconds": 120,
         "startup_delay_seconds": 8,
-        "minimum_user_silence_seconds": 12,
     },
     "tutor": {
         # Các preference tutor vẫn được giữ để UI/config cũ không vỡ; startup
@@ -261,9 +261,9 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
     },
     "public_turn": {
         "reply_window_seconds": 30.0,
-        "block_min_seconds": 8.0,
-        "block_max_seconds": 120.0,
-        "default_block_seconds": 18.0,
+        # V66: chỉ chống collision cơ học của hai public turn. Không còn social
+        # cooldown dài 8-120s làm câm cả self-turn.
+        "collision_grace_seconds": 2.5,
     },
     "engagement": {
         "enabled": True,
@@ -418,7 +418,6 @@ _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
     ("initiative", "hourly_budget"): ("ERIS_INITIATIVE_HOURLY_BUDGET", "int"),
     ("initiative", "global_hourly_budget"): ("ERIS_INITIATIVE_GLOBAL_HOURLY_BUDGET", "int"),
     ("initiative", "minimum_interval_seconds"): ("ERIS_INITIATIVE_MINIMUM_INTERVAL_SECONDS", "int"),
-    ("initiative", "minimum_user_silence_seconds"): ("ERIS_INITIATIVE_MINIMUM_USER_SILENCE_SECONDS", "int"),
     ("initiative", "semantic_duplicate_threshold"): ("ERIS_INITIATIVE_SEMANTIC_DUPLICATE_THRESHOLD", "float"),
     ("initiative", "importance_margin"): ("ERIS_INITIATIVE_IMPORTANCE_MARGIN", "float"),
     ("initiative", "activity_update_cooldown_seconds"): ("ERIS_INITIATIVE_ACTIVITY_UPDATE_COOLDOWN_SECONDS", "int"),
@@ -426,7 +425,6 @@ _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
     ("commentary", "desired_interval_seconds"): ("ERIS_COMMENTARY_DESIRED_INTERVAL_SECONDS", "int"),
     ("commentary", "maximum_quiet_seconds"): ("ERIS_COMMENTARY_MAXIMUM_QUIET_SECONDS", "int"),
     ("commentary", "startup_delay_seconds"): ("ERIS_COMMENTARY_STARTUP_DELAY_SECONDS", "int"),
-    ("commentary", "minimum_user_silence_seconds"): ("ERIS_COMMENTARY_MINIMUM_USER_SILENCE_SECONDS", "int"),
     ("prompt", "hard_cap_tokens"): ("ERIS_LLM_PROMPT_HARD_CAP_TOKENS", "int"),
     ("prompt", "dds_enabled"): ("ERIS_DDS_ENABLED", "bool"),
     ("prompt", "strict_grounding"): ("ERIS_STRICT_GROUNDING", "bool"),
@@ -478,9 +476,7 @@ _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
     ("ai_runtime", "observer_workers"): ("ERIS_AI_OBSERVER_WORKERS", "int"),
     ("ai_runtime", "state_persistence_interval_seconds"): ("ERIS_AI_STATE_PERSIST_INTERVAL_SEC", "float"),
     ("public_turn", "reply_window_seconds"): ("ERIS_PUBLIC_TURN_REPLY_WINDOW_SEC", "float"),
-    ("public_turn", "block_min_seconds"): ("ERIS_PUBLIC_TURN_BLOCK_MIN_SEC", "float"),
-    ("public_turn", "block_max_seconds"): ("ERIS_PUBLIC_TURN_BLOCK_MAX_SEC", "float"),
-    ("public_turn", "default_block_seconds"): ("ERIS_PUBLIC_TURN_DEFAULT_BLOCK_SEC", "float"),
+    ("public_turn", "collision_grace_seconds"): ("ERIS_PUBLIC_TURN_COLLISION_GRACE_SEC", "float"),
     ("engagement", "enabled"): ("ERIS_ENGAGEMENT_ENABLED", "bool"),
     ("engagement", "max_events"): ("ERIS_ENGAGEMENT_MAX_EVENTS", "int"),
     ("engagement", "persistence_interval_seconds"): ("ERIS_ENGAGEMENT_PERSIST_INTERVAL_SEC", "float"),
@@ -966,6 +962,39 @@ class RuntimeSettingsStore:
             out["opening_director"] = opening
             migrated = True
 
+        if version < 17:
+            # V66: ba setting ``block_*`` thuộc triết lý presence cooldown cũ.
+            # Không migrate giá trị 18/120s sang semantics mới vì làm vậy chỉ
+            # đổi tên cái gate cũ. Collision thật chỉ cần một grace rất ngắn.
+            public_turn = dict(out.get("public_turn") or {}) if isinstance(out.get("public_turn"), Mapping) else {}
+            public_turn.pop("block_min_seconds", None)
+            public_turn.pop("block_max_seconds", None)
+            public_turn.pop("default_block_seconds", None)
+            public_turn.setdefault("collision_grace_seconds", 2.5)
+            out["public_turn"] = public_turn
+
+            commentary = dict(out.get("commentary") or {}) if isinstance(out.get("commentary"), Mapping) else {}
+            old_requested = commentary.pop("user_requested_autonomous_surface", None)
+            preference_updated = int(commentary.get("preference_updated_at", 0) or 0)
+            if preference_updated > 0 and old_requested is not None:
+                commentary["autonomous_expression_enabled"] = bool(old_requested)
+                # Directive cũ từng tắt cả subsystem. V66 khôi phục cognition;
+                # boundary mới chỉ chặn public expression ở cuối luồng.
+                commentary["enabled"] = True
+            else:
+                # ``False`` từng là default opt-in cũ, không phải bằng chứng user
+                # muốn ERIS im. Schema mới phải mở expression mặc định.
+                commentary["autonomous_expression_enabled"] = True
+            commentary.pop("minimum_user_silence_seconds", None)
+            out["commentary"] = commentary
+
+            initiative = dict(out.get("initiative") or {}) if isinstance(out.get("initiative"), Mapping) else {}
+            initiative.pop("minimum_user_silence_seconds", None)
+            if preference_updated > 0 and old_requested is not None:
+                initiative["enabled"] = True
+            out["initiative"] = initiative
+            migrated = True
+
         out["version"] = target_version
         return out, True if version != target_version else migrated
 
@@ -1202,17 +1231,13 @@ def _coerce_setting(path: str, value: Any, expected: Any) -> tuple[bool, Any]:
         "commentary.preference_updated_at": (0, 4102444800),
         "initiative.global_hourly_budget": (0, 120),
         "initiative.minimum_interval_seconds": (15, 3600),
-        "initiative.minimum_user_silence_seconds": (3, 120),
         "commentary.desired_interval_seconds": (20, 1800),
         "commentary.maximum_quiet_seconds": (30, 3600),
         "commentary.startup_delay_seconds": (0, 120),
-        "commentary.minimum_user_silence_seconds": (3, 120),
         "ai_runtime.observer_workers": (1, 8),
         "ai_runtime.state_persistence_interval_seconds": (0, 60),
         "public_turn.reply_window_seconds": (5, 300),
-        "public_turn.block_min_seconds": (0, 120),
-        "public_turn.block_max_seconds": (1, 600),
-        "public_turn.default_block_seconds": (0, 600),
+        "public_turn.collision_grace_seconds": (0, 5),
         "engagement.max_events": (24, 4096),
         "engagement.persistence_interval_seconds": (0, 60),
         "engagement.signal_importance_threshold": (0.0, 1.0),

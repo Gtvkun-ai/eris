@@ -1060,7 +1060,6 @@ def test_empty_startup_context_skips_main_planner(monkeypatch) -> None:
         ai_stage_planner=SimpleNamespace(apply=lambda *args, **kwargs: None),
         _log_raw_llm_output=lambda *args, **kwargs: None,
         _note_autonomous_spoken=lambda **kwargs: None,
-        _block_autonomous_presence_after_public_turn=lambda **kwargs: None,
         _send_decision_to_body=lambda decision, channel: sent.append((decision, channel)),
     )
     runtime = AIAutonomousOrchestrator(host)
@@ -1665,7 +1664,7 @@ def test_runtime_settings_v2_migrates_only_old_warmth_baseline() -> None:
         }
     )
     assert changed is True
-    assert migrated["version"] == 16
+    assert migrated["version"] == 17
     assert migrated["tts"]["language"] == "vi"
     assert migrated["tts"]["speech_persona_warmth"] == 0.36
 

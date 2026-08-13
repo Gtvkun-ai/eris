@@ -6,7 +6,6 @@ from cortex.subject.contracts import WorldObservation
 from cortex.subject.needs import NeedSystem
 from cortex.subject.relational import RelationalHomeostasis, RelationalState
 from cortex.subject.service import SubjectService, SubjectServiceConfig
-from runtime.relational_affordance import build_relational_affordance
 from runtime.temporal_mind import TemporalMind, TemporalMindConfig, TemporalSignal
 
 
@@ -75,27 +74,6 @@ def test_non_reply_bearing_startup_contact_satisfies_state_without_waiting() -> 
     # greeting into a failed outreach merely because the user stayed quiet.
     later = home.tick(updated, now=300.0)
     assert later.unanswered_outreach == 3
-
-
-def test_relational_affordance_needs_no_external_factual_pretext() -> None:
-    state = RelationalState(
-        revision=7,
-        updated_at=100.0,
-        affiliation_deficit=0.75,
-        interaction_satiety=0.05,
-        partner_availability=0.85,
-        interruption_cost=0.08,
-        outreach_confidence=0.72,
-        reciprocity_expectation=0.70,
-        evidence_refs=("relational:history:7",),
-    )
-    affordance = build_relational_affordance(state.to_dict(), now=200.0)
-    assert affordance is not None
-    assert affordance.owner == "subject_relational_homeostasis"
-    assert affordance.candidate.kind == "social_check_in"
-    assert affordance.candidate.requires_grounding is False
-    assert "relational-state:7" in affordance.candidate.evidence_refs
-    assert "fabricate" in affordance.candidate.topic.lower() or "do not invent" in affordance.candidate.topic.lower()
 
 
 def test_connection_need_can_activate_from_relational_homeostasis() -> None:
@@ -208,52 +186,6 @@ def test_relational_pressure_can_wake_temporal_mind() -> None:
     assert gate.dominant_kind == "relational_pressure"
 
 
-def test_relational_affordance_enters_subject_frame_and_beats_silence() -> None:
-    from runtime.subject_ingress import SubjectIngress
-
-    class Blackboard:
-        reply_expected = False
-        engagement_active = False
-        user_busy = False
-
-        @staticmethod
-        def public_view():
-            return {"reply_expected": False, "engagement_active": False, "novelty": 0.1}
-
-    now = 3000.0
-    service = SubjectService(
-        config=SubjectServiceConfig(restore_projection=False),
-        clock=lambda: now,
-        id_factory=(lambda counter=iter(range(10000)): f"rid-{next(counter)}"),
-    )
-    service.relational_state = RelationalState(
-        revision=12,
-        updated_at=now,
-        last_meaningful_exchange_at=now - 2200.0,
-        affiliation_deficit=0.90,
-        interaction_satiety=0.02,
-        partner_availability=0.90,
-        interruption_cost=0.06,
-        outreach_confidence=0.80,
-        reciprocity_expectation=0.76,
-        evidence_refs=("relational:episode:12",),
-    )
-    affordance = build_relational_affordance(service.relational_view(), now=now)
-    assert affordance is not None
-    ingress = SubjectIngress(service)
-    session = ingress.prepare_autonomous_session(
-        Blackboard(),
-        (affordance,),
-        created_at=now,
-        turn_id="autonomous:12",
-        planning_context={"relational_state": service.relational_view()},
-    )
-    frame = session.frame
-    assert any(item.action_kind == "speak" for item in frame.coalitions)
-    assert frame.coalitions[0].action_kind == "speak"
-    assert frame.coalitions[0].arguments.get("affordance_id") == affordance.affordance_id
-
-
 def test_relational_pressure_is_owned_by_temporal_mind_not_executive_policy() -> None:
     # V30: relational pressure vẫn đánh thức cognition, nhưng đi qua TemporalMind
     # trực tiếp thay vì một ExecutiveState/reconsider policy song song.
@@ -264,3 +196,37 @@ def test_relational_pressure_is_owned_by_temporal_mind_not_executive_policy() ->
     )
     assert decision.wake is True
     assert decision.dominant_kind == "relational_pressure"
+
+
+def test_v66_unanswered_outreach_is_neutral_not_self_silencing() -> None:
+    home = RelationalHomeostasis()
+    state = RelationalState(
+        updated_at=100.0,
+        last_outreach_at=100.0,
+        outreach_waiting=True,
+        affiliation_deficit=0.78,
+        sharing_pressure=0.72,
+        outreach_confidence=0.66,
+        reciprocity_expectation=0.62,
+        interruption_cost=0.18,
+    )
+    before_drive = state.outreach_drive
+    later = home.tick(state, now=260.0)
+    assert later.outreach_waiting is False
+    assert later.unanswered_outreach == 1
+    assert later.outreach_confidence == state.outreach_confidence
+    assert later.reciprocity_expectation == state.reciprocity_expectation
+    assert later.interruption_cost == state.interruption_cost
+    assert later.outreach_drive >= before_drive * 0.70
+    assert any("no_response_observed" in ref for ref in later.evidence_refs)
+
+
+def test_v66_relational_opportunity_is_self_owned_not_partner_availability() -> None:
+    open_scene = RelationalState(
+        outreach_confidence=0.70, partner_availability=0.95, interruption_cost=0.05
+    )
+    busy_scene = RelationalState(
+        outreach_confidence=0.70, partner_availability=0.05, interruption_cost=0.95
+    )
+    assert busy_scene.opportunity == open_scene.opportunity
+    assert busy_scene.scene_availability < open_scene.scene_availability

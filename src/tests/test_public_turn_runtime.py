@@ -6,16 +6,14 @@ from runtime.public_turn_ledger import PublicTurnLedger
 from runtime.public_turn_runtime import PublicTurnRuntime
 
 
-def test_public_turn_runtime_records_links_and_blocks_presence() -> None:
+def test_public_turn_runtime_records_links_and_marks_short_turn_collision() -> None:
     now = {"value": 100.0}
     owner = SimpleNamespace(
         public_turn_ledger=PublicTurnLedger(),
         reply_context=SimpleNamespace(previous_public_turn=None),
         chat_mode=True,
         _chat_processing=False,
-        autonomous_presence_blocked_until=0.0,
-        presence_maintenance_cooldown_sec=12.0,
-        reengagement_cooldown_sec=18.0,
+        autonomous_turn_collision_until=0.0,
     )
     runtime = PublicTurnRuntime(owner, clock=lambda: now["value"])
     decision = SimpleNamespace(
@@ -37,5 +35,7 @@ def test_public_turn_runtime_records_links_and_blocks_presence() -> None:
     assert owner.reply_context.previous_public_turn is turn
     assert "age_seconds=15.0" in runtime.previous_turn_context(turn)
 
-    runtime.block_autonomous_presence(seconds=25.0)
-    assert owner.autonomous_presence_blocked_until == 140.0
+    runtime.note_turn_collision(seconds=25.0)
+    # Requested 25s bị cap còn 5s: turn collision không được biến thành
+    # "presence cooldown" dài chỉ vì user vừa có public turn.
+    assert owner.autonomous_turn_collision_until == 120.0

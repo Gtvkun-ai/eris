@@ -64,21 +64,20 @@ class ChatCycleMixin:
         self.active_conversational_topic = ""
         self.repeated_user_count = 0
 
-        block_fn = getattr(self, "_block_autonomous_presence_after_public_turn", None)
-        if not callable(block_fn):
+        collision_fn = getattr(self, "_note_autonomous_turn_collision", None)
+        if not callable(collision_fn):
             self.logger.info("Exited chat mode; autonomous can resume (conversation buffer kept).")
             return
         try:
-            # V62: 18s + autonomous scheduler 30s khiến desire thật có thể mất
-            # gần một phút mới được thử. 10s vẫn đủ để user giữ lượt nói, còn
-            # InitiativeController/boundary gate tiếp tục quyết định có chen hay không.
-            raw_grace = str(os.environ.get("ERIS_POST_CHAT_GRACE_SEC", "10") or "10").strip()
-            grace = max(5.0, float(raw_grace) if raw_grace else 10.0)
-            block_fn(now=time.time(), seconds=grace)
-            self.logger.info("Exited chat mode; autonomous blocked for %.0fs (post-chat grace).", grace)
+            # V66: grace chỉ bảo vệ turn collision, không phải "user vừa nói nên
+            # Eris phải im". Self-rhythm ở ExpressionCommitment xử lý mật độ riêng.
+            raw_grace = str(os.environ.get("ERIS_POST_CHAT_GRACE_SEC", "2.5") or "2.5").strip()
+            grace = max(1.5, float(raw_grace) if raw_grace else 2.5)
+            collision_fn(now=time.time(), seconds=grace)
+            self.logger.info("Exited chat mode; turn-collision guard %.1fs; self-cognition continues.", grace)
         except TypeError:
-            block_fn(now=time.time())
-            self.logger.info("Exited chat mode; autonomous grace applied.")
+            collision_fn(now=time.time())
+            self.logger.info("Exited chat mode; turn-collision guard applied.")
         except Exception:
             self.logger.info("Exited chat mode; autonomous can resume (conversation buffer kept).")
 
@@ -218,16 +217,16 @@ class ChatCycleMixin:
         speech_interrupt_event=None,
         speech_interrupt_reaction=None,
     ) -> None:
-        # Directive sản phẩm rõ ràng được áp trước model call. Nhờ vậy Surface
-        # nhận context "đã bật" và không đẩy việc nghĩ nội dung ngược lại user.
-        self._autonomous_surface_preference_context = ""
+        # Explicit output boundary được áp trước model call. Nó chỉ đóng/mở cửa
+        # public expression; cognition/initiative của Eris không bị tắt theo.
+        self._expression_boundary_preference_context = ""
         try:
-            from runtime.autonomous_surface_preference import apply_autonomous_surface_preference
-            preference = apply_autonomous_surface_preference(self, user_text)
+            from runtime.expression_boundary_preference import apply_expression_boundary_preference
+            preference = apply_expression_boundary_preference(self, user_text)
             if preference.applied:
-                self._autonomous_surface_preference_context = preference.prompt_context
+                self._expression_boundary_preference_context = preference.prompt_context
         except Exception as exc:
-            self.logger.debug("[autonomous preference] detector failed: %s", exc)
+            self.logger.debug("[expression boundary] detector failed: %s", exc)
 
         orchestrator = getattr(self, "ai_chat_orchestrator", None)
         if not bool(getattr(self, "ai_runtime_enabled", False)) or orchestrator is None:
@@ -545,10 +544,10 @@ class ChatCycleMixin:
                 "tags": ["runtime_state", "weather", "telemetry"],
             })
 
-        preference = str(getattr(self, "_autonomous_surface_preference_context", "") or "").strip()
+        preference = str(getattr(self, "_expression_boundary_preference_context", "") or "").strip()
         if preference:
             facts.append({
-                "id": f"runtime_policy:autonomous_surface:{int(now.timestamp())}",
+                "id": f"runtime_policy:expression_boundary:{int(now.timestamp())}",
                 "source": "runtime_state",
                 "claim": preference,
                 "confidence": 1.0,

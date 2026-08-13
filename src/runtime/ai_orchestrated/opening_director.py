@@ -136,15 +136,13 @@ class OpeningDirector:
         if selected_plan is None:
             selected_plan = self._candidate_to_plan(opening_input, ranked[0])
 
-        # Startup callback là một contract sản phẩm, không chỉ là một feature
-        # score. Khi memory đã cấp anchor hợp lệ và user không bận/đặt boundary,
-        # model không được lùi về câu chào trống chỉ vì candidate đó an toàn hơn.
+        # V66: startup callback là một biểu đạt của Eris, không phải phần thưởng
+        # phụ thuộc engagement. Khi continuity đã có anchor hợp lệ, chỉ boundary
+        # trực tiếp mới được chặn; im lặng/bận suy đoán/ít phản hồi không có quyền veto.
         if (
             opening_input.policy.prefer_continuity_hook
             and preferred_continuity is not None
             and selected_plan.hook.source != "continuity"
-            and opening_input.user_signals.availability not in {"busy", "unavailable"}
-            and not opening_input.user_signals.recent_low_engagement
             and not opening_input.user_signals.explicit_boundary
             and not opening_input.scene_partner.boundary_flags
         ):
@@ -371,8 +369,8 @@ class OpeningDirector:
 
     @staticmethod
     def _vibe_for(opening_input: OpeningInput, move: OpeningMoveDefinition) -> str:
-        if opening_input.user_signals.recent_low_engagement or opening_input.scene_partner.availability in {"busy", "unavailable"}:
-            return "quiet_warm"
+        # V66: vibe thuộc move/personality của Eris. Availability/engagement của user
+        # có thể đổi việc *hỏi lại* ở hook, nhưng không được đổi Eris thành quiet persona.
         if move.family in {"mock_indifference", "tsundere_denial", "dry_observation"}:
             return "anime_dry_warm"
         if move.family in {"delayed_affection", "quiet_presence"}:
@@ -405,10 +403,8 @@ class OpeningDirector:
         intrusion_risk = move.risk
         if hook.reply_bearing:
             intrusion_risk += 0.12
-        if opening_input.user_signals.availability == "uncertain":
-            intrusion_risk += 0.08
-        if opening_input.user_signals.recent_low_engagement:
-            intrusion_risk += 0.28
+        # V66: inferred availability / low engagement không phải intrusion debt.
+        # Nếu hook đòi user trả lời, reply_bearing tự mang một cost nhỏ ở trên.
         boundary_risk = 1.0 if opening_input.scene_partner.boundary_flags or opening_input.user_signals.explicit_boundary else 0.0
         repetition_risk = 1.0 - novelty
         grounding_uncertainty = 0.0 if hook.decision == "none" else 1.0 - evidence_relevance

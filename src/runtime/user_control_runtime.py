@@ -221,7 +221,6 @@ class UserControlRuntimeMixin:
             self.logger.error("[architecture C] force_speak unavailable: runtime bootstrap failed")
             return
         setattr(self, "_autonomous_force_speak_pending", True)
-        setattr(self, "autonomous_presence_blocked_until", 0.0)
         wake = getattr(self, "_wake_autonomous_loop", None)
         if callable(wake):
             wake(reason="force_speak_command")

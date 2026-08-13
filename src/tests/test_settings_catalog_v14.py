@@ -20,7 +20,7 @@ def test_catalog_covers_every_runtime_setting_without_secrets() -> None:
     catalog = build_settings_catalog(defaults)
     fields = {item["path"]: item for item in catalog["fields"]}
 
-    assert catalog["schema_version"] == 16
+    assert catalog["schema_version"] == 17
     assert set(fields) == _default_paths()
     assert len(catalog["sections"]) == 25
     assert all(item["owner"] == "brain_runtime" for item in fields.values())

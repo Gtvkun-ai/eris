@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from .contracts import CoalitionCandidate, SubjectDeliberationFrame, SubjectExecutiveCommit
+from .expression_commitment import committed_indices, hard_expression_boundary, is_committed_speech
 
 
 def _clamp01(value: Any, default: float = 0.0) -> float:
@@ -43,6 +44,21 @@ def _clamp01(value: Any, default: float = 0.0) -> float:
 def _compact(value: Any, limit: int = 800) -> str:
     text = " ".join(str(value or "").split()).strip()
     return text if len(text) <= limit else text[: max(0, limit - 1)].rstrip() + "…"
+
+
+def _runtime_context(frame: SubjectDeliberationFrame) -> dict[str, Any]:
+    observation_context = dict(getattr(getattr(frame, "observation", None), "context", {}) or {})
+    raw = observation_context.get("runtime_context")
+    return dict(raw) if isinstance(raw, Mapping) else {}
+
+
+def _committed_family(frame: SubjectDeliberationFrame) -> tuple[int, ...]:
+    """Trả action family đã commit, trừ khi có hard boundary thật."""
+    family = committed_indices(frame.coalitions)
+    if not family:
+        return ()
+    blocked, _reason = hard_expression_boundary(_runtime_context(frame))
+    return () if blocked else family
 
 
 def commit_selection(
@@ -440,50 +456,32 @@ class NeuroActionSelector:
 
         action = str(candidate.action_kind or "").lower()
         arguments = dict(getattr(candidate, "arguments", {}) or {})
-        observation_context = dict(getattr(getattr(frame, "observation", None), "context", {}) or {})
-        runtime_context = observation_context.get("runtime_context")
-        runtime_context = dict(runtime_context) if isinstance(runtime_context, Mapping) else {}
-        interruption_cost = max(
-            _clamp01(runtime_context.get("interruption_cost", 0.0)),
-            _clamp01(runtime_context.get("social_refractory_cost", 0.0)),
-        )
-        recent_unsolicited = _clamp01(runtime_context.get("recent_unsolicited_speech", 0.0))
-        user_response_rate = _clamp01(runtime_context.get("user_response_rate", 1.0), 1.0)
-        unanswered_penalty = recent_unsolicited * (0.55 + 0.45 * (1.0 - user_response_rate))
-        reply_expected = bool(runtime_context.get("reply_expected", False))
-        user_busy = bool(runtime_context.get("user_busy", False))
-        policy_cost = _clamp01(arguments.get("initiative_policy_cost", 0.0))
-        policy_floor = _clamp01(runtime_context.get("initiative_policy_max_cost", 0.0))
-        social_wait = 1.0 if (reply_expected or user_busy) else 0.0
+        runtime_context = _runtime_context(frame)
+        committed = is_committed_speech(candidate)
+        blocked, _boundary_reason = hard_expression_boundary(runtime_context)
+        # V66: quiet/response-rate/user_busy không còn là speech cost. Chỉ collision
+        # trực tiếp mới là boundary. Với commitment đang mở, action family đã được
+        # quyết định nên policy legacy không có quyền kéo về SILENCE.
+        interruption_cost = 1.0 if blocked else 0.0
+        unanswered_penalty = 0.0
+        policy_cost = 0.0 if committed else _clamp01(arguments.get("initiative_policy_cost", 0.0))
+        policy_floor = 0.0
+        social_wait = 1.0 if blocked else 0.0
 
         if action == "speak":
             score += 0.035 * broadcast.social_drive
-            # V44: "tôi có cái muốn nói" là tín hiệu dương trước commit. Đây
-            # không phải speak-threshold mới; policy/busy/interruption vẫn trừ
-            # ngay bên dưới và Neuro vẫn có thể chọn hold = silence.
+            # V66: pressure/freshness chỉ rank nhiều expression commitment, không
+            # phải readiness threshold để xin quyền nói.
             expression_pressure = _clamp01(arguments.get("expression_pressure", 0.0))
             expression_freshness = _clamp01(arguments.get("expression_freshness", 0.0))
             expression_satisfaction = _clamp01(arguments.get("expression_satisfaction", 0.0))
-            if arguments.get("expression_urge_id"):
-                # V44.1: Neuro nhận trực tiếp "readiness" của desire có nội dung.
-                # Khi đang chờ user trả lời, desire vẫn sống nhưng không được lấy
-                # pressure tích lũy để nói chồng lên câu hỏi vừa hỏi. Khi baton mở,
-                # readiness đủ cao phải thật sự cạnh tranh được với silence.
-                readiness = _clamp01(arguments.get("expression_readiness", 0.0))
-                if readiness <= 0.0:
-                    readiness = _clamp01(
-                        expression_pressure
-                        * (0.55 + 0.45 * expression_freshness)
-                        * (1.0 - 0.82 * expression_satisfaction)
-                    )
-                available_readiness = readiness * (0.24 if social_wait else 1.0)
-                score += 0.32 * available_readiness
-                score += 0.055 * expression_freshness * (0.35 if social_wait else 1.0)
-                score -= 0.09 * expression_satisfaction
+            if committed:
+                raw_commitment = arguments.get("expression_commitment")
+                raw_commitment = raw_commitment if isinstance(raw_commitment, Mapping) else {}
+                score += 0.18 * _clamp01(raw_commitment.get("pressure", expression_pressure))
+                score += 0.10 * _clamp01(raw_commitment.get("freshness", expression_freshness))
+                score += 0.08 * _clamp01(raw_commitment.get("persistence", 1.0 - expression_satisfaction))
             score -= 0.10 * interruption_cost
-            score -= 0.13 * unanswered_penalty
-            # V42: baton/busy/cooldown/repeat được cân ở đúng nơi có authority.
-            # Đây là cost mềm trước commit, không phải downstream veto.
             score -= 0.24 * policy_cost
             score -= 0.14 * social_wait
             # Seed quality belongs upstream of the public decision. A thin seed
@@ -497,16 +495,11 @@ class NeuroActionSelector:
                 score += 0.07 * (motive_strength - 0.5)
                 score -= 0.09 * intrusion
         elif action == "silence":
-            score += 0.025 * (1.0 - broadcast.social_drive)
+            # SILENCE là lựa chọn khi chưa có commitment hoặc có hard boundary;
+            # nó không được thưởng chỉ vì user im/ít phản hồi.
             score += 0.08 * interruption_cost
-            score += 0.11 * unanswered_penalty
-            score += 0.13 * social_wait
-            score += 0.08 * policy_floor
         elif action == "body_only":
-            score += 0.035 * interruption_cost
-            score += 0.04 * unanswered_penalty
-            score += 0.07 * social_wait
-            score += 0.04 * policy_floor
+            score += 0.04 * interruption_cost
         return score
 
     @staticmethod
@@ -542,8 +535,9 @@ class NeuroActionSelector:
         if len(baseline.scores) != len(frame.coalitions):
             return baseline
         metrics = {item.index: item for item in appraisal.choices}
-        boundary = _clamp01(appraisal.boundary_pressure)
-        interruption = _clamp01(appraisal.interruption_cost)
+        committed_family = _committed_family(frame)
+        boundary = 0.0 if committed_family else _clamp01(appraisal.boundary_pressure)
+        interruption = 0.0 if committed_family else _clamp01(appraisal.interruption_cost)
         review_confidence = _clamp01(appraisal.confidence)
         merged_scores: list[float] = []
         for index, candidate in enumerate(frame.coalitions):
@@ -605,12 +599,15 @@ class NeuroActionSelector:
             merged_scores.append(score)
 
         scores = tuple(merged_scores)
-        order = sorted(range(len(scores)), key=lambda idx: (-scores[idx], idx))
+        eligible = committed_family or tuple(range(len(scores)))
+        order = sorted(eligible, key=lambda idx: (-scores[idx], idx))
         winner_index = order[0]
         runner_index = order[1] if len(order) > 1 else winner_index
         margin = scores[winner_index] - scores[runner_index] if len(order) > 1 else 1.0
         beta = 3.0 + 7.0 * baseline.broadcast.precision
-        probabilities = self._softmax(scores, beta)
+        eligible_probs = self._softmax(tuple(scores[idx] for idx in eligible), beta)
+        probability_map = dict(zip(eligible, eligible_probs))
+        probabilities = tuple(probability_map.get(idx, 0.0) for idx in range(len(scores)))
         entropy = self._normalized_entropy(probabilities)
         return SelectionResult(
             winner_index=winner_index,
@@ -621,7 +618,8 @@ class NeuroActionSelector:
             requires_deliberation=False,
             parallel_review_recommended=False,
             reason=(
-                "semantic_merge:" + (_compact(appraisal.reason, 240) or "slow_appraisal")
+                ("semantic_critique_committed:" if committed_family else "semantic_merge:")
+                + (_compact(appraisal.reason, 240) or "slow_appraisal")
             ),
             broadcast=baseline.broadcast,
         )
@@ -656,15 +654,19 @@ class NeuroActionSelector:
             )
 
         scores = tuple(self._channel_score(frame, item, broadcast) for item in frame.coalitions)
-        order = sorted(range(len(scores)), key=lambda idx: (-scores[idx], idx))
+        committed_family = _committed_family(frame)
+        eligible = committed_family or tuple(range(len(scores)))
+        order = sorted(eligible, key=lambda idx: (-scores[idx], idx))
         winner_index = order[0]
         runner_index = order[1] if len(order) > 1 else winner_index
         margin = scores[winner_index] - scores[runner_index] if len(order) > 1 else 1.0
 
-        # Precision controls the sharpness of competition. High uncertainty makes
-        # the distribution flatter, which naturally increases deliberation chance.
+        # Khi commitment tồn tại, xác suất chỉ phân phối trong speech family.
+        # SILENCE/BODY_ONLY không còn là phiếu phủ quyết lần hai.
         beta = 3.0 + 7.0 * broadcast.precision
-        probabilities = self._softmax(scores, beta)
+        eligible_probs = self._softmax(tuple(scores[idx] for idx in eligible), beta)
+        probability_map = dict(zip(eligible, eligible_probs))
+        probabilities = tuple(probability_map.get(idx, 0.0) for idx in range(len(scores)))
         entropy = self._normalized_entropy(probabilities)
         winner = frame.coalitions[winner_index]
 

@@ -1,23 +1,25 @@
 # -*- coding: utf-8 -*-
-"""Bộ điều khiển *khi nào nên chủ động* của Subject Core (V58).
+"""Owner native của commitment biểu đạt trong Subject Core (V66).
 
 Module này cố ý không viết câu trả lời và không gọi model. Nó chỉ trả một trong
 ba lựa chọn có nghĩa hành vi rõ ràng:
 
 - SPEAK: ý định có nội dung, đủ quan trọng và thời điểm phù hợp để đưa vào vòng
   cạnh tranh của Executive/Neuro.
-- WAIT: ý định vẫn đáng giữ nhưng hiện tại chưa nên làm phiền user.
+- WAIT: ý định vẫn đáng giữ nhưng đang vướng turn collision hoặc self-rhythm.
 - DROP: ý định đã yếu/cũ tới mức nên bỏ thay vì biến thành lời nhắc dai dẳng.
 
-Điểm quan trọng: "có ý định" không đồng nghĩa "phải nói". Nếu thiếu lớp này,
-agent rất dễ nhầm chủ động với spam, một nhầm lẫn mà con người đã minh họa đủ
-trên mọi ứng dụng có notification.
+Điểm quan trọng V66: một intention đã có nội dung là quyền biểu đạt của Eris.
+Arbiter chỉ DEFER vì boundary thật hoặc nhịp tự thân; im lặng/ít phản hồi của user
+không được chuyển lậu thành lệnh im.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Mapping
+
+from cortex.subject.expression_commitment import expression_rhythm, hard_expression_boundary
 
 
 def _clamp01(value: Any, default: float = 0.0) -> float:
@@ -38,12 +40,13 @@ class InitiativeControlAction(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class InitiativeControlConfig:
-    speak_threshold: float = 0.52
-    social_speak_threshold: float = 0.64
-    existential_social_speak_threshold: float = 0.67
-    existential_min_silence_seconds: float = 40.0
-    environment_speak_threshold: float = 0.60
-    environment_min_silence_seconds: float = 25.0
+    """Ngưỡng chỉ dành cho *lifecycle* của intention, không cấp quyền nói.
+
+    V66 bỏ toàn bộ speak-threshold user-centric. Một intention đã contentful thì
+    mặc định được SPEAK; WAIT chỉ đến từ turn collision, self-rhythm hoặc một
+    restraint thực sự thuộc về Eris.
+    """
+
     drop_after_seconds: float = 12.0 * 60.0
     drop_pressure: float = 0.24
     drop_commitment: float = 0.34
@@ -62,7 +65,7 @@ class InitiativeControlDecision:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "schema": "eris.initiative_control.v58",
+            "schema": "eris.initiative_control.v66",
             "action": self.action.value,
             "score": round(self.score, 4),
             "reason": self.reason,
@@ -75,7 +78,11 @@ class InitiativeControlDecision:
 
 
 class InitiativeArbiter:
-    """Cân mục tiêu + tò mò + quan hệ + ngữ cảnh để chọn SPEAK/WAIT/DROP."""
+    """Owner duy nhất của SPEAK/WAIT/DROP trước khi commitment vào Neuro.
+
+    Arbiter không đoán ý user từ im lặng. Nó chỉ giữ lượt khi có boundary/collision
+    trực tiếp và điều tiết nhịp của chính Eris.
+    """
 
     _SOCIAL_MOTIVES = {"understand_user", "connect", "share", "seek_recognition"}
     _PERSISTENCE_MOTIVES = {"contribute", "resolve", "be_understood", "demonstrate"}
@@ -119,39 +126,19 @@ class InitiativeArbiter:
                 contentful=bool(contentful),
             )
 
-        # Đây là các trường hợp "đừng giành micro". WAIT giữ nguyên intention để
-        # Eris có thể quay lại sau, khác với DROP là chủ động từ bỏ.
-        if reply_expected:
-            return result(InitiativeControlAction.WAIT, 0.0, "user_reply_expected")
-        if user_busy or interaction_busy:
-            return result(InitiativeControlAction.WAIT, 0.0, "user_or_runtime_busy")
-        if bool(runtime.get("last_public_turn_unanswered", False)) and _clamp01(runtime.get("recent_unsolicited_speech", 0.0)) >= 0.5:
-            return result(InitiativeControlAction.WAIT, 0.0, "previous_autonomous_turn_unanswered")
-        if motive in self._SOCIAL_MOTIVES and bool(runtime.get("startup_social_cooldown_active", False)):
-            return result(InitiativeControlAction.WAIT, 0.0, "startup_social_cooldown")
-        seconds_since_user = max(0.0, float(runtime.get("seconds_since_last_user_turn", 10_000.0) or 0.0))
-        # Desire hiện sinh có thể rất thật mà thời điểm vẫn rất tệ. User vừa nói
-        # xong thì Eris không được lập tức chen "còn tôi thì..." vào giữa câu.
-        if target in self._EXISTENTIAL_TARGETS and seconds_since_user < self.config.existential_min_silence_seconds:
-            return result(InitiativeControlAction.WAIT, 0.0, "existential_desire_too_soon_after_user")
-        # V60: telemetry thấy được việc đang xảy ra không có nghĩa Eris được chen
-        # vào ngay sau câu user. Meaning môi trường phải chờ ít nhất một nhịp
-        # im lặng, rồi vẫn chịu user_busy/interruption ở các gate phía trên.
-        if target in self._ENVIRONMENT_TARGETS and seconds_since_user < self.config.environment_min_silence_seconds:
-            return result(InitiativeControlAction.WAIT, 0.0, "environment_meaning_too_soon_after_user")
-        # Nỗi sợ mất kết nối không được phép trở thành lý do đẩy speech ra ngoài.
-        # Khi abandonment cao, lựa chọn an toàn là giữ desire nội bộ và WAIT.
-        if target in self._EXISTENTIAL_TARGETS and _clamp01(runtime.get("existential_abandonment_pressure", 0.0)) >= 0.72:
-            return result(InitiativeControlAction.WAIT, 0.0, "abandonment_requires_restraint")
+        # Hard boundary / turn collision có evidence trực tiếp. ``user_busy``
+        # không phải boundary: user đang làm việc vẫn có thể muốn companion ở đó.
+        runtime_with_call = dict(runtime)
+        # ``reply_expected`` chỉ mô tả Eris từng mở một câu hỏi; user im lặng
+        # không đồng nghĩa họ đang giữ floor. Chỉ processing/collision trực tiếp
+        # mới được nâng thành hard boundary.
+        runtime_with_call["interaction_busy"] = bool(interaction_busy or runtime.get("interaction_busy", False))
+        blocked, boundary_reason = hard_expression_boundary(runtime_with_call)
+        if blocked:
+            return result(InitiativeControlAction.WAIT, 0.0, f"hard_boundary:{boundary_reason}")
 
-        # Mục tiêu cũ chỉ được tự gợi lại sau một khoảng lặng đủ rõ. User vừa đổi
-        # chủ đề xong mà Eris lập tức kéo project trở lại thì không phải persistence,
-        # đó là không biết đọc phòng.
-        if motive in self._PERSISTENCE_MOTIVES and seconds_since_user < 75.0:
-            return result(InitiativeControlAction.WAIT, 0.0, "persistent_goal_too_soon_after_user")
-
-        # Ý định cũ và yếu nên được bỏ. Không dùng DROP chỉ vì user đang bận,
-        # nếu không một cuộc điện thoại đến cũng đủ làm Eris "quên" mục tiêu.
+        # Ý định cũ và yếu nên tự tan. Đây là restraint của Eris, không liên quan
+        # chuyện user có phản hồi hay không.
         if (
             age >= self.config.drop_after_seconds
             and pressure <= self.config.drop_pressure
@@ -159,54 +146,46 @@ class InitiativeArbiter:
         ):
             return result(InitiativeControlAction.DROP, 0.0, "stale_low_value_intention")
 
-        # Không có đối tượng cụ thể để nói thì cứ WAIT. Curiosity chung chung vẫn
-        # được giữ làm động lực nội tại, nhưng không được phép hóa thành câu hỏi NPC.
+        # Không có semantic object thì chưa có gì để public hóa. WAIT giữ motive
+        # sống để cognition có thể kết tinh thành nội dung sau.
         if not contentful:
             return result(InitiativeControlAction.WAIT, 0.0, "no_contentful_object")
 
-        opportunity = _clamp01(rel.get("opportunity", 0.45), 0.45)
+        # Nỗi sợ abandonment không được tự ép thành speech. Đây là self-restraint
+        # hợp lệ vì nguồn của nó nằm trong Eris, không phải suy đoán user khó chịu.
+        if target in self._EXISTENTIAL_TARGETS and _clamp01(runtime.get("existential_abandonment_pressure", 0.0)) >= 0.72:
+            return result(InitiativeControlAction.WAIT, 0.0, "self_restraint:abandonment_pressure")
+
+        rhythm = expression_rhythm(
+            runtime,
+            force=bool(runtime.get("force_speak", False) or runtime.get("force_expression", False)),
+        )
+        if not rhythm.allow:
+            # WAIT ở đây chỉ là DEFER theo nhịp biểu đạt của chính Eris.
+            return result(
+                InitiativeControlAction.WAIT,
+                0.0,
+                f"self_rhythm:gap={rhythm.min_gap_seconds:.1f}s:streak={rhythm.streak}",
+            )
+
+        # Score từ đây chỉ dùng observability/ranking, KHÔNG còn là ngưỡng cấp
+        # quyền nói. Nó cố ý dựa vào state của Eris thay vì response-rate/cooldown.
+        freshness = _clamp01(1.0 - age / max(60.0, self.config.drop_after_seconds * 1.8))
         curiosity = _clamp01(rel.get("social_curiosity", 0.0))
-        satiety = _clamp01(rel.get("interaction_satiety", 0.0))
-        interruption = _clamp01(rel.get("interruption_cost", 0.25), 0.25)
-        response_rate = _clamp01(runtime.get("user_response_rate", 0.7), 0.7)
-        refractory = _clamp01(runtime.get("social_refractory_cost", 0.0))
         existential_actionability = _clamp01(runtime.get("existential_actionability", 0.0))
         environment_actionability = _clamp01(runtime.get("environment_meaning_actionability", 0.0))
-        abandonment_brake = _clamp01(runtime.get("existential_abandonment_pressure", 0.0))
-        freshness = _clamp01(1.0 - age / max(60.0, self.config.drop_after_seconds * 1.8))
         persistence_bonus = 1.0 if motive in self._PERSISTENCE_MOTIVES else 0.0
-        explicit_open_goal = 1.0 if str(runtime.get("active_goal_text") or "").strip() else 0.0
-        silence_readiness = _clamp01((seconds_since_user - 60.0) / 120.0)
-
-        # Công thức cố ý đơn giản và bounded để test/replay được. Nó không giả vờ
-        # là "ý chí". Nó chỉ làm rõ tại sao một ý định được đưa ra public lúc này.
-        score = (
-            0.31 * pressure
-            + 0.24 * commitment
-            + 0.13 * opportunity
+        score = _clamp01(
+            0.38 * pressure
+            + 0.30 * commitment
+            + 0.12 * freshness
             + 0.08 * curiosity
-            + 0.07 * freshness
-            + 0.07 * response_rate
-            + 0.08 * persistence_bonus
-            + 0.08 * explicit_open_goal
-            + 0.14 * silence_readiness
+            + 0.07 * persistence_bonus
             + (0.10 * existential_actionability if target in self._EXISTENTIAL_TARGETS else 0.0)
-            + (0.18 * environment_actionability if target in self._ENVIRONMENT_TARGETS else 0.0)
-            - 0.16 * interruption
-            - 0.12 * satiety
-            - 0.20 * refractory
-            - (0.18 * abandonment_brake if target in self._EXISTENTIAL_TARGETS else 0.0)
+            + (0.14 * environment_actionability if target in self._ENVIRONMENT_TARGETS else 0.0)
         )
-        score = _clamp01(score)
-        if target in self._EXISTENTIAL_TARGETS:
-            threshold = self.config.existential_social_speak_threshold
-        elif target in self._ENVIRONMENT_TARGETS:
-            threshold = self.config.environment_speak_threshold
-        else:
-            threshold = self.config.social_speak_threshold if motive in self._SOCIAL_MOTIVES else self.config.speak_threshold
-        if score >= threshold:
-            return result(InitiativeControlAction.SPEAK, score, "initiative_value_exceeds_context_cost")
-        return result(InitiativeControlAction.WAIT, score, "initiative_not_worth_interrupting_yet")
+        return result(InitiativeControlAction.SPEAK, score, "self_owned_expression")
+
 
 
 __all__ = [

@@ -195,6 +195,9 @@ def test_afterbeat_claim_is_atomic_under_concurrency():
     runtime = SocialContinuationRuntime(clock=lambda: 1000.0, timer_factory=_FakeTimer)
     assert _schedule(runtime, _afterbeat_plan()) == {"afterbeat": True, "exposure": False}
     assert runtime.notify_audio_finished(1000.0, source_turn_id="turn:1") == 1
+    affordance = runtime.peek_due(now=1001.0, interaction_busy=False)
+    assert affordance is not None
+    assert affordance.metadata["expression_commitment"]["origin"] == "social_continuation"
 
     barrier = threading.Barrier(8)
     results = []
@@ -331,6 +334,9 @@ def test_social_agenda_move_claim_is_atomic_and_completes_once():
     store = SocialAgendaStore(clock=lambda: 1000.0)
     store.apply_update(_agenda_update(), source_turn_id="turn:1", now=1000.0)
     board = _board(seconds_since_user=90.0)
+    affordance = store.peek_due(board, now=1001.0)
+    assert affordance is not None
+    assert affordance.metadata["expression_commitment"]["origin"] == "social_agenda"
     barrier = threading.Barrier(6)
     results = []
     lock = threading.Lock()
@@ -424,6 +430,9 @@ def test_conversation_arc_claim_prevents_double_wake():
         assistant_act={"kind": "answer"},
         now=1000.0,
     )
+    affordance = runtime.peek_due(now=1008.0, interaction_busy=False)
+    assert affordance is not None
+    assert affordance.metadata["expression_commitment"]["origin"] == "conversation_arc"
     first = runtime.claim_due(worker_id="w1", now=1008.0)
     second = runtime.claim_due(worker_id="w2", now=1008.0)
     assert first is not None

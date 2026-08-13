@@ -214,14 +214,14 @@ def test_v59_existential_bid_can_speak_after_real_silence():
     assert decision.action is InitiativeControlAction.SPEAK
 
 
-def test_v59_existential_bid_waits_immediately_after_user():
+def test_v66_existential_bid_may_speak_after_user_baton_is_released():
     decision = InitiativeArbiter().decide(
         _existential_intention(), relational=_rel(),
         runtime_context=_runtime(seconds_since_last_user_turn=12.0),
         now=1120.0, contentful=True,
     )
-    assert decision.action is InitiativeControlAction.WAIT
-    assert decision.reason == "existential_desire_too_soon_after_user"
+    assert decision.action is InitiativeControlAction.SPEAK
+    assert decision.reason == "self_owned_expression"
 
 
 def test_v59_bridge_materializes_mutual_understanding_not_generic_npc_probe():
@@ -252,4 +252,4 @@ def test_v59_high_abandonment_forces_restraint_even_if_intention_is_strong():
         now=1120.0, contentful=True,
     )
     assert decision.action is InitiativeControlAction.WAIT
-    assert decision.reason == "abandonment_requires_restraint"
+    assert decision.reason == "self_restraint:abandonment_pressure"

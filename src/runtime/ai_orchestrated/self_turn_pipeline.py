@@ -406,44 +406,10 @@ class SelfTurnPipeline:
         neuro_continuation_runtime = getattr(host, "neuro_continuation_runtime", None)
         clock = getattr(host, "interaction_clock", None)
         interaction_busy = bool(getattr(clock, "busy", False)) if clock is not None else False
-        short_continuation_due = False
-        if social_continuation_runtime is not None:
-            try:
-                short_continuation_due = bool(
-                    social_continuation_runtime.is_due(now=now, interaction_busy=interaction_busy)
-                )
-            except Exception as exc:
-                host.logger.debug("[social continuation] due check failed: %s", exc)
-        arc_due = False
-        if conversation_arc_runtime is not None:
-            try:
-                arc_due = bool(
-                    conversation_arc_runtime.is_due(
-                        now=now,
-                        interaction_busy=interaction_busy,
-                    )
-                )
-            except Exception as exc:
-                host.logger.debug("[conversation arc] due check failed: %s", exc)
-        neuro_due = False
-        if neuro_continuation_runtime is not None:
-            try:
-                neuro_due = bool(
-                    neuro_continuation_runtime.is_due(
-                        now=now, interaction_busy=interaction_busy
-                    )
-                )
-            except Exception as exc:
-                host.logger.debug("[neuro-continuation] due check failed: %s", exc)
-        blocked_until = float(getattr(host, "autonomous_presence_blocked_until", 0.0) or 0.0)
-        semantic_worker = getattr(self, "_semantic_environment_worker", None)
-        pending_environment_attention = int(getattr(semantic_worker, "pending_attention_level", 0) or 0)
-        # Cooldown presence/social không được che một structured event level>=2.
-        # Worker chỉ bypass nhịp ngủ để planner nhìn situation; initiative governor
-        # vẫn có toàn quyền chọn silence/body_only nên đây không phải auto-speech.
-        if now < blocked_until and not (short_continuation_due or arc_due or neuro_due or pending_environment_attention >= 2):
-            host._sleep_interruptible(min(4.0, max(0.2, blocked_until - now)))
-            return True
+        # V66: không còn global "presence blocked" trước cognition. Sau một
+        # public turn, runtime chỉ ghi turn-collision vào context; ERIS vẫn được
+        # tiếp tục suy nghĩ và hình thành commitment. Boundary đó chỉ DEFER lúc
+        # materialize speech, nên không biến user activity thành thuốc mê nội tâm.
 
         phase_started = time.monotonic()
         perception = self._assemble_perception(now)
@@ -908,6 +874,19 @@ class SelfTurnPipeline:
                     and str(getattr(executive_outcome, "action", "") or "").lower() == "speak"
                 ),
             )
+            # V66: bind commitment native vào SpeechIntent SAU Subject commit.
+            # Đây là semantic identity mà Surface phải realize, không phải một
+            # global lease hay monkey-patch state.
+            if subject_decision is not None and decision.speech_intent is not None:
+                raw_commitment = subject_decision.arguments.get("expression_commitment", {})
+                if isinstance(raw_commitment, Mapping) and raw_commitment:
+                    decision = replace(
+                        decision,
+                        speech_intent=replace(
+                            decision.speech_intent,
+                            expression_commitment=dict(raw_commitment),
+                        ),
+                    )
             if executive_outcome is not None and candidate is None and executive_outcome.action == "silence":
                 decision = replace(decision, reason=f"subject_materializer:{executive_outcome.reason}")
         host.logger.info(
@@ -1184,22 +1163,24 @@ class SelfTurnPipeline:
                 else f"surface_unavailable:{surface_reason}"
             )
 
-            # V61: duplicate guard là bằng chứng rằng *cách nói hiện tại* đã bế
-            # tắc, không phải provider outage. Nếu cứ giữ urge nguyên lực, tick sau
-            # Neuro lại chọn đúng nó rồi Surface lại chặn, tạo zombie loop nhìn bên
-            # ngoài như Eris đứng ngơ. Chỉ suppress urge tương ứng; không giả public
-            # receipt và không làm mất desire nếu sau đó có evidence mới.
+            # V66: Surface failure không được viết ngược thành "Eris quyết định
+            # im". Commitment vẫn sống; ta chỉ ghi lỗi realization và defer một
+            # nhịp để writer có context mới.
             if surface_reason == "surface_duplicate_recent_utterance" and subject_decision is not None:
                 urge_id = str(subject_decision.arguments.get("expression_urge_id", "") or "").strip()
                 urge_runtime = getattr(host, "expression_urge_runtime", None)
-                note_duplicate = getattr(urge_runtime, "note_surface_duplicate", None)
-                if urge_id and callable(note_duplicate):
+                note_failure = getattr(urge_runtime, "note_realization_failure", None)
+                if urge_id and callable(note_failure):
                     try:
-                        note_duplicate(urge_id, now=time.time())
+                        note_failure(urge_id, reason=surface_reason, now=time.time())
                     except Exception as exc:
-                        host.logger.debug("[expression urge] duplicate suppression degraded: %s", exc)
+                        host.logger.debug("[expression urge] realization receipt degraded: %s", exc)
+                gate_reason = "expression_realization_deferred:duplicate_recent_utterance"
             self._release_seed_lease(candidate, reason=gate_reason)
-            self._defer_claimed_continuation(plan, reason=gate_reason, seconds=12.0)
+            self._defer_claimed_continuation(
+                plan, reason=gate_reason,
+                seconds=2.5 if surface_reason == "surface_duplicate_recent_utterance" else 12.0,
+            )
             # V62: dedupe là một lựa chọn im an toàn, không phải autonomous
             # subsystem chết. Chỉ lỗi kỹ thuật/provider thật mới phát DEGRADED.
             terminal_state = (
@@ -1726,6 +1707,9 @@ class SelfTurnPipeline:
                 )
                 relational_state = tick_relational(
                     now=context.perception.now,
+                    # Availability/interruption vẫn được lưu làm scene context cho
+                    # wording, nhưng RelationalState V66 không dùng chúng để hạ
+                    # outreach_drive hay expression authority.
                     partner_available=0.16 if user_busy else 0.68,
                     interruption_cost=max(attention_interrupt, 0.78 if user_busy else 0.18),
                     sharing_signal=private_pressure,
@@ -1752,9 +1736,9 @@ class SelfTurnPipeline:
             except Exception as exc:
                 self.host.logger.debug("[relational] cheap tick failed: %s", exc)
 
-        # Deep Environment Stage F: social/autonomous governor phải tôn trọng
-        # interruption_cost và task phase thật, thay vì chỉ nhìn timer. Event level
-        # >=2 cũng tạm khóa social check-in vì hệ thống vừa thấy thay đổi đáng nghĩ.
+        # Deep Environment Stage F: giữ task phase/interruption làm semantic scene
+        # context. V66 không dùng chúng như expression veto; hard collision đi qua
+        # typed boundary, còn event mới có thể làm cognition thức dậy.
         situation = context.perception.user_situation
         environment_gate = environment_social_gate(situation)
         environment_interrupt = float(environment_gate["interruption_cost"])
@@ -2406,7 +2390,7 @@ class SelfTurnPipeline:
                         persist=True,
                     )
                     host.logger.info(
-                        "[subject initiative] public act intention=%s status=awaiting_outcome revision=%s",
+                        "[subject initiative] public act intention=%s status=expressed revision=%s",
                         intention_id,
                         receipt.get("revision", 0) if isinstance(receipt, Mapping) else 0,
                     )

@@ -53,9 +53,9 @@ class MotiveKind(StrEnum):
 class IntentionStatus(StrEnum):
     """Vòng đời của một ý định, không chỉ cờ pending/đã xong.
 
-    ``EXPRESSED`` và ``AWAITING_OUTCOME`` cố ý tách nhau để causal trace có thể
-    chứng minh Eris đã thực sự phát ý định ra ngoài trước khi chờ phản ứng. Một
-    intention đang chờ outcome tuyệt đối không được materialize lại thành speech.
+    ``EXPRESSED`` là receipt cho việc Eris đã thực sự đưa intention ra public.
+    ``AWAITING_OUTCOME`` chỉ còn để đọc state cũ / những lane thật sự tạo nghĩa vụ
+    phản hồi; V66 không tự chuyển mọi expression sang trạng thái chờ user.
     """
 
     PENDING = "pending"
@@ -237,7 +237,7 @@ class InitiativeConfig:
     intention_ttl_seconds: float = 1800.0
     outcome_wait_seconds: float = 240.0
     post_expression_cooldown_seconds: float = 180.0
-    low_engagement_cooldown_seconds: float = 420.0
+    revision_cooldown_seconds: float = 60.0
     satisfied_cooldown_seconds: float = 900.0
     max_motives: int = 8
     max_intentions: int = 8
@@ -584,17 +584,31 @@ class InitiativeEngine:
                 ))
                 continue
 
-            if item.status in {IntentionStatus.EXPRESSED, IntentionStatus.AWAITING_OUTCOME}:
+            if item.status == IntentionStatus.EXPRESSED:
+                # Một expression tự hoàn tất ở public commit. User không cần trả
+                # lời để Eris được phép có motive tiếp theo. Chỉ giữ tombstone
+                # ngắn theo semantic family để Eris không lặp chính mình.
+                expressed_at = item.last_expressed_at or item.updated_at
+                if now - expressed_at >= self.config.post_expression_cooldown_seconds:
+                    lifecycle_records.append(replace(
+                        item, status=IntentionStatus.RETIRED, updated_at=now, cooldown_until=now,
+                    ))
+                    continue
+                lifecycle_records.append(item)
+                blocked_keys.add(key)
+                continue
+
+            if item.status == IntentionStatus.AWAITING_OUTCOME:
+                # Compatibility cho state cũ hoặc lane thật sự chờ outcome. Hết
+                # cửa sổ mà user không trả lời chỉ có nghĩa "không có evidence";
+                # không có low-engagement penalty.
                 expressed_at = item.last_expressed_at or item.updated_at
                 if now - expressed_at > self.config.outcome_wait_seconds:
                     item = replace(
                         item,
                         status=IntentionStatus.REVISED,
                         updated_at=now,
-                        cooldown_until=max(
-                            item.cooldown_until,
-                            now + self.config.low_engagement_cooldown_seconds,
-                        ),
+                        cooldown_until=max(item.cooldown_until, now + self.config.revision_cooldown_seconds),
                     )
                 lifecycle_records.append(item)
                 blocked_keys.add(key)
@@ -698,7 +712,11 @@ class InitiativeEngine:
         intention_id: str,
         now: float,
     ) -> InitiativeState:
-        """Sau public commit, khóa intention khỏi materialization cho tới outcome."""
+        """Compatibility: chỉ dùng khi một lane *thật sự* cần outcome.
+
+        V66 không gọi method này cho mọi public expression nữa. User silence không
+        phải trạng thái lỗi cần treo intention để chờ giải cứu.
+        """
         wanted = str(intention_id or "").strip()
         changed = False
         updated: list[PendingIntention] = []
@@ -758,11 +776,11 @@ class InitiativeEngine:
         user_text: str,
         now: float,
     ) -> InitiativeState:
-        """Giải quyết intention đang chờ phản ứng bằng outcome tối thiểu có thật.
+        """Ghi nhận user turn như *evidence dương* nếu nó thật sự giải quyết motive.
 
-        Không suy đoán cảm xúc user. Ta chỉ phân biệt phản hồi có nội dung với
-        acknowledgement rất ngắn. Probe gặp ``ok/ừ/...`` được REVISED rồi cooldown,
-        không được hỏi lại đúng chuyện đó sau vài giây.
+        Không phản hồi và acknowledgement ngắn đều không phải rejection. Với motive
+        nhận thức hai chiều, ``ok/ừ`` chỉ được ghi receipt chứ không hạ pressure hay
+        tạo cooldown. Self-repetition đã do lifecycle EXPRESSED quản lý.
         """
         raw = str(user_text or "").strip()
         folded = raw.casefold().strip(" .!?…")
@@ -776,20 +794,22 @@ class InitiativeEngine:
                 continue
             changed = True
             if item.motive_kind in {MotiveKind.UNDERSTAND_USER, MotiveKind.BE_UNDERSTOOD} and not informative:
-                # "ừ/ok" không chứng minh Eris đã hiểu user hơn, cũng không chứng
-                # minh user đã hiểu Eris hơn. Với hai motive nhận thức hai chiều,
-                # acknowledgement ngắn chỉ có nghĩa "đừng hỏi lại ngay".
-                status = IntentionStatus.REVISED
-                cooldown = self.config.low_engagement_cooldown_seconds
-            else:
-                status = IntentionStatus.SATISFIED
-                cooldown = self.config.satisfied_cooldown_seconds
+                # Acknowledgement không có semantic evidence. Giữ EXPRESSED (hoặc
+                # AWAITING legacy) nguyên nghĩa, chỉ ghi receipt; tuyệt đối không
+                # biến "ok" thành low-engagement punishment.
+                updated.append(replace(
+                    item,
+                    last_outcome_at=float(now),
+                    outcome_count=item.outcome_count + 1,
+                    updated_at=float(now),
+                ))
+                continue
             updated.append(replace(
                 item,
-                status=status,
+                status=IntentionStatus.SATISFIED,
                 last_outcome_at=float(now),
                 outcome_count=item.outcome_count + 1,
-                cooldown_until=max(item.cooldown_until, float(now) + cooldown),
+                cooldown_until=max(item.cooldown_until, float(now) + self.config.satisfied_cooldown_seconds),
                 updated_at=float(now),
             ))
         if not changed:

@@ -169,7 +169,7 @@ def test_parallel_semantic_appraisal_can_make_silence_win_without_remote_winner_
     assert merged.reason.startswith("semantic_merge:")
 
 
-def test_recent_unanswered_autonomous_speech_increases_silence_utility():
+def test_v66_unanswered_user_does_not_create_silence_utility():
     observation = SimpleNamespace(context={"runtime_context": {
         "recent_unsolicited_speech": 1.0,
         "user_response_rate": 0.0,
@@ -202,7 +202,7 @@ def test_recent_unanswered_autonomous_speech_increases_silence_utility():
         substrate=SimpleNamespace(processing_capacity=1.0),
     )
     selection = NeuroActionSelector().select(frame)
-    assert selection.winner(frame).action_kind == "silence"
+    assert selection.winner(frame).action_kind == "speak"
 
 
 def test_v61_moderate_high_interruption_and_low_continuity_can_flip_speak_to_silence():

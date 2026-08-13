@@ -916,7 +916,7 @@ class AIChatOrchestrator:
                 part for part in (grounding_context, vision_status_context) if str(part).strip()
             )
         preference_context = str(
-            getattr(host, "_autonomous_surface_preference_context", "") or ""
+            getattr(host, "_expression_boundary_preference_context", "") or ""
         ).strip()
         if preference_context:
             grounding_context = "\n\n".join(
@@ -3143,11 +3143,9 @@ class AIAutonomousOrchestrator:
         host.last_autonomous_spoken_at = spoken_at
         host._note_autonomous_spoken(now=spoken_at)
 
-        # Startup greeting is already a real public contact. Feed that success
-        # into relational homeostasis instead of merely hiding the still-high
-        # pressure behind a 150s runtime cooldown. It is intentionally
-        # non-reply-bearing: silence after a gentle reentry greeting must not be
-        # counted as failed/unanswered outreach when the response window expires.
+        # Startup greeting là public contact thật nên được ghi vào relational
+        # homeostasis. V66 không dùng response window để phạt silence; cờ
+        # expect_response=False ở đây chỉ mô tả đúng speech act của opening.
         note_relational = getattr(getattr(host, "subject_service", None), "note_relational_public_act", None)
         if callable(note_relational):
             try:
@@ -3161,9 +3159,6 @@ class AIAutonomousOrchestrator:
                 )
             except Exception as exc:
                 host.logger.debug("[relational] startup greeting public-act update failed: %s", exc)
-        block = getattr(host, "_block_autonomous_presence_after_public_turn", None)
-        if callable(block):
-            block(now=spoken_at)
         host.logger.info(
             "[architecture C startup] spoke motive=%s text=%s",
             plan.motive,

@@ -10,8 +10,8 @@ V60 giữ nguyên nguyên tắc an toàn:
 - structured telemetry/accessibility được ưu tiên hơn OCR/vision;
 - một tab đổi đơn lẻ KHÔNG đủ để sinh desire;
 - OCR-only không được phép tự trở thành public claim;
-- meaning có thể làm cognition thức dậy, nhưng InitiativeArbiter vẫn có quyền
-  WAIT nếu user đang tập trung. Thấy được không có nghĩa được quyền chen ngang.
+- meaning có thể làm cognition thức dậy; user focus/busy là scene context, không
+  phải quyền phủ quyết expression. Turn collision thật vẫn được chặn downstream.
 """
 from __future__ import annotations
 
@@ -138,24 +138,15 @@ class EnvironmentMeaningDeriver:
         task_hint = _compact(_get(situation, "task_hint", ""), 260)
         focused_object = _compact(_get(situation, "focused_object", ""), 260)
         last_outcome = str(_get(situation, "last_outcome", "unknown") or "unknown").strip().lower()
-        attention_state = str(_get(situation, "attention_state", "unknown") or "unknown").strip().lower()
-        busy = _clamp01(_get(situation, "busy_score", 0.0))
-        interruption = _clamp01(_get(situation, "interruption_cost", 0.0))
         situation_conf = _clamp01(_get(situation, "confidence", 0.0))
         recent_raw = tuple(_get(situation, "recent_events", ()) or ())
         events = [self._event_payload(item) for item in recent_raw]
 
-        # Nếu user đang pause/idle, cùng một concern trở nên *actionable* hơn mà
-        # không cần bịa thêm event. Ngược lại, đang focused thì concern vẫn sống
-        # nhưng chỉ ở private state; đây là dây phanh chống "camera thấy là nói".
-        if attention_state in {"paused", "away"}:
-            timing = 0.92
-        elif attention_state == "active":
-            timing = 0.60
-        else:
-            timing = 0.34
-        timing *= max(0.10, 1.0 - 0.72 * interruption - 0.42 * busy)
-        timing = _clamp01(timing)
+        # V66: actionability phản ánh độ salient của event đối với Eris, không
+        # phải "user có vẻ rảnh để nghe chưa". Attention level ở đây là mức quan
+        # trọng của event sensor; trạng thái focus của user không tham gia score.
+        event_salience = max((item["attention"] for item in events), default=0) / 4.0
+        timing = _clamp01(0.58 + 0.42 * event_salience)
 
         structured_events = [item for item in events if self._structured(item)]
         visual_only = bool(events) and not structured_events
@@ -241,7 +232,8 @@ class EnvironmentMeaningDeriver:
             )
 
         # Friction không cần browser: failure kéo dài trong task có object rõ vẫn
-        # có thể tạo concern "muốn giúp", nhưng nếu user đang tập trung thì chỉ WAIT.
+        # có thể tạo concern "muốn góp ý". User focus không làm concern mất quyền
+        # trở thành desire; collision thật được xử lý ở expression boundary.
         if has_failure and phase == "diagnosis":
             semantic_object = task_hint if task_hint and task_hint != "unknown" else (focused_object or active_goal_text)
             refs: list[str] = []

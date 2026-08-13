@@ -104,7 +104,6 @@ class InteractionContract:
 class ContinuityPolicy:
     desired_interval_seconds: float = 75.0
     maximum_quiet_seconds: float = 150.0
-    minimum_user_silence_seconds: float = 10.0
     minimum_event_gap_seconds: float = 12.0
     inactivity_timeout_seconds: float = 3600.0
     survive_surface_change: bool = True
@@ -140,7 +139,6 @@ class ContinuityPolicy:
         return cls(
             desired_interval_seconds=desired,
             maximum_quiet_seconds=maximum,
-            minimum_user_silence_seconds=number("minimum_user_silence_seconds", 10.0, 0.0),
             minimum_event_gap_seconds=number("minimum_event_gap_seconds", 12.0, 0.0),
             inactivity_timeout_seconds=number("inactivity_timeout_seconds", 3600.0, 120.0),
             survive_surface_change=bool(data.get("survive_surface_change", True)),

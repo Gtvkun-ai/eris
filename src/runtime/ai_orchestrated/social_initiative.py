@@ -5,7 +5,7 @@ Quyền được tách theo ownership thật:
 
 - worker ``seed`` chạy nền trên DS2API port riêng và tích lũy premise typed;
 - agenda selector chỉ xử lý các lane có cấu trúc khác;
-- runtime governor kiểm timing, cooldown, privacy, duplicate và user-busy;
+- runtime giữ privacy/turn collision; self-rhythm điều tiết mật độ, không suy user-busy thành boundary;
 - worker ``surface`` chỉ viết câu cuối sau khi candidate đã được duyệt.
 
 Random chat không gọi model trên critical path. Kho seed trống thì ERIS im và
@@ -53,11 +53,11 @@ def _env_float(name: str, default: float, *, minimum: float, maximum: float) -> 
     return max(minimum, min(maximum, value))
 
 
-def _autonomous_surface_policy() -> dict[str, Any]:
-    """Đọc preference user đã lưu; không phát câu tại đây."""
+def _autonomous_expression_policy() -> dict[str, Any]:
+    """Đọc explicit output boundary + self-rhythm settings; không cấp quyền nói."""
     try:
         from runtime.runtime_settings_store import runtime_bool, runtime_float
-        enabled = runtime_bool("commentary", "user_requested_autonomous_surface", default=False)
+        enabled = runtime_bool("commentary", "autonomous_expression_enabled", default=True)
         return {
             "enabled": enabled,
             "surface_only": runtime_bool("commentary", "surface_only", default=True),
@@ -66,7 +66,7 @@ def _autonomous_surface_policy() -> dict[str, Any]:
             "maximum": runtime_float("commentary", "maximum_quiet_seconds", default=70.0),
         }
     except Exception:
-        return {"enabled": False, "surface_only": True, "open_topic": True, "desired": 35.0, "maximum": 70.0}
+        return {"enabled": True, "surface_only": True, "open_topic": True, "desired": 35.0, "maximum": 70.0}
 
 
 _ALLOWED_KINDS = {
@@ -344,13 +344,14 @@ class SocialInitiativeEngine:
     ) -> tuple[ExecutiveAffordance, ...]:
         """Collect every currently meaningful social move without claiming it.
 
-        ``reply_expected`` is evidence for the Executive, not an early-return
-        switch.  The deterministic governor still owns hard concurrency and an
-        unreleased required reply obligation still blocks public speech later.
+        ``reply_expected`` chỉ mô tả mạch hội thoại để tránh nag/lặp câu hỏi;
+        nó không phải hard boundary. Chỉ turn collision/interaction đang hoạt động
+        mới được giữ public floor ở downstream.
         """
 
-        if blackboard.user_busy:
-            return ()
+        # V66: telemetry ``user_busy`` không phải social boundary. Affordance vẫn
+        # được materialize; hard turn collision/boundary sẽ được xử lý bởi owner
+        # native của expression commitment.
 
         revision = max(1, int(float(blackboard.now or 0.0) * 1000.0))
         found: list[ExecutiveAffordance] = []
@@ -404,7 +405,7 @@ class SocialInitiativeEngine:
         add(self._task_followup_candidate(blackboard, reason="typed_task_event"), owner="engagement_runtime")
         add(self._semantic_scene_candidate(blackboard, reason="typed_semantic_scene"), owner="semantic_context")
 
-        surface_policy = _autonomous_surface_policy()
+        surface_policy = _autonomous_expression_policy()
         soft_default = float(surface_policy.get("desired", 35.0)) if surface_policy.get("enabled") else 180.0
         soft = _env_float(
             "ERIS_SOCIAL_INITIATIVE_SOFT_SILENCE_SEC",
@@ -412,10 +413,11 @@ class SocialInitiativeEngine:
             minimum=20.0,
             maximum=3600.0,
         )
+        # V66: opportunity clock thuộc nhịp của Eris. User im lâu không phải
+        # nguyên nhân sinh expression và user vừa nói cũng không phải lý do cấm nó.
         social_opportunity_due = bool(
             blackboard.commentary_due
             or blackboard.seconds_since_assistant >= soft
-            or blackboard.seconds_since_user >= soft
         )
 
         if self._has_structured_opportunity(blackboard):
@@ -496,15 +498,16 @@ class SocialInitiativeEngine:
                 "memory_context": _compact(snapshot.get("memory_context", ""), 1800),
                 "self_context": snapshot.get("self_context", {}),
             },
-            "autonomous_surface_preference": dict(surface_policy),
+            "autonomous_expression_policy": dict(surface_policy),
             "candidate_contract": {
                 "authority": "affordance_only",
                 "allowed_kinds": sorted(_ALLOWED_KINDS),
                 "social_kinds_do_not_require_grounding": sorted(_SOCIAL_KINDS),
                 "rule": (
                     "Propose at most one public-safe semantic affordance. Do not choose whether it will be used, "
-                    "do not reserve the public lane, and do not write final wording. Silence is handled by the "
-                    "Executive. Prefer a specific grounded shared-context move over generic presence language."
+                    "do not reserve the public lane, and do not write final wording. A generic affordance is only an option; "
+                    "Subject/Neuro may later form or choose an ExpressionCommitment. Do not infer permission or rejection from user silence. "
+                    "Prefer a specific grounded shared-context move over generic presence language."
                 ),
             },
         }

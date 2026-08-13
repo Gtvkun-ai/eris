@@ -273,7 +273,7 @@ def test_autonomous_semantic_timeout_uses_local_merge_not_fast_speak_fail_open()
     source = (Path(__file__).resolve().parents[1] / "runtime" / "ai_orchestrated" / "executive_cortex.py").read_text(encoding="utf-8")
     assert "semantic_appraisal_unavailable_use_fast_gate" not in source
     assert "neuro_local_semantic_merge" in source
-    assert "local_typed_semantic_fallback" in source
+    assert "local_typed_semantic_critic" in source
 
 
 def test_surface_wording_schema_requires_typed_claim_manifest():

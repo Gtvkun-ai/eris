@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Biến yêu cầu nói chủ động của user thành policy runtime thật.
+"""Boundary public-expression do user nói rõ, không phải nguồn quyền của ERIS.
 
-Không dùng model để đoán một directive quá rõ như "mở lên là nói tự động".
-Module này chỉ nhận diện ý định điều khiển sản phẩm, lưu preference vào
-``runtime_settings.json`` và tạo prompt context xác nhận policy đã áp dụng.
-Nó không tự viết câu public và không tạo local text fallback.
+ERIS tự sở hữu expression và mặc định có thể chủ động biểu đạt. Module này chỉ
+nhận directive sản phẩm rõ ràng như "im đi" / "cứ nói đi" để đóng hoặc mở *cửa
+phát public*. Nó không tắt cognition, không xóa desire và không cấp quyền nói.
 """
 from __future__ import annotations
 
@@ -18,7 +17,7 @@ from runtime.runtime_settings_store import get_runtime_settings_store
 
 
 @dataclass(frozen=True, slots=True)
-class AutonomousSurfacePreferenceResult:
+class ExpressionBoundaryPreferenceResult:
     applied: bool = False
     mode: str = ""
     reason: str = ""
@@ -52,7 +51,7 @@ def _normalized(text: str) -> str:
     return " ".join(normalize_vi(str(text or "")).split()).strip().lower()
 
 
-def detect_autonomous_surface_directive(user_text: str) -> str:
+def detect_expression_boundary_directive(user_text: str) -> str:
     """Trả ``enable``/``disable``/``""`` cho directive rõ ràng của user."""
 
     text = _normalized(user_text)
@@ -71,36 +70,31 @@ def detect_autonomous_surface_directive(user_text: str) -> str:
     return ""
 
 
-def apply_autonomous_surface_preference(host: Any, user_text: str) -> AutonomousSurfacePreferenceResult:
+def apply_expression_boundary_preference(host: Any, user_text: str) -> ExpressionBoundaryPreferenceResult:
     """Áp directive vào runtime settings và trả context cho public writer.
 
-    Preference này làm DeepSeek Surface được cân nhắc thường xuyên hơn; nó không
-    cấp quyền cho runtime phát câu hard-code. Surface unavailable thì im và thử
-    lại ở nhịp sau, đúng kiểu thất bại trung thực thay vì loa phường đóng giả AI.
+    Boundary này chỉ điều khiển cửa public output. Nó không hạ pressure, không
+    tắt initiative và không xóa commitment. Khi cửa đóng, cognition vẫn chạy và
+    expression được DEFER thay vì bị diễn giải thành rejection.
     """
 
-    mode = detect_autonomous_surface_directive(user_text)
+    mode = detect_expression_boundary_directive(user_text)
     if not mode:
-        return AutonomousSurfacePreferenceResult()
+        return ExpressionBoundaryPreferenceResult()
 
     enabled = mode == "enable"
     patch = {
         "commentary": {
-            "user_requested_autonomous_surface": enabled,
-            "surface_only": True,
-            "open_topic": True,
+            # V66: đây là explicit output boundary. Default của schema là True;
+            # False chỉ xuất hiện sau directive rõ ràng của user.
+            "autonomous_expression_enabled": enabled,
             "preference_updated_at": int(time.time()),
-            "enabled": enabled,
+            # Cadence chỉ là self-rhythm preference khi cửa expression đang mở.
+            # Không đụng ``initiative.enabled``/``commentary.enabled`` để nội tâm
+            # và desire của Eris tiếp tục tồn tại ngay cả khi user muốn yên lặng.
             "desired_interval_seconds": 35 if enabled else 60,
             "maximum_quiet_seconds": 70 if enabled else 120,
             "startup_delay_seconds": 5 if enabled else 8,
-            "minimum_user_silence_seconds": 8 if enabled else 12,
-        },
-        "initiative": {
-            "enabled": enabled,
-            "global_hourly_budget": 120 if enabled else 40,
-            "minimum_interval_seconds": 25 if enabled else 60,
-            "minimum_user_silence_seconds": 8 if enabled else 12,
         },
     }
     try:
@@ -113,29 +107,29 @@ def apply_autonomous_surface_preference(host: Any, user_text: str) -> Autonomous
         logger = getattr(host, "logger", None)
         if logger is not None:
             try:
-                logger.warning("[autonomous preference] apply failed: %s", exc)
+                logger.warning("[expression boundary] apply failed: %s", exc)
             except Exception:
                 pass
-        return AutonomousSurfacePreferenceResult(
+        return ExpressionBoundaryPreferenceResult(
             applied=False,
             mode=mode,
             reason="settings_apply_failed",
         )
 
-    setattr(host, "_autonomous_surface_user_enabled", enabled)
+    setattr(host, "_autonomous_expression_boundary_open", enabled)
     context = (
-        "autonomous_surface_preference: enabled; source=user_directive; surface_only=true; "
-        "cadence=35s; max_quiet=70s. The runtime already applied this preference. "
-        "Acknowledge briefly; do not ask the user what content to provide and do not claim a fake action."
+        "expression_boundary: open; source=user_directive. ERIS expression remains self-owned; "
+        "the user only reopened public output. Acknowledge briefly; do not frame this as permission to exist."
         if enabled
         else
-        "autonomous_surface_preference: disabled; source=user_directive. The runtime already applied this preference."
+        "expression_boundary: closed; source=user_directive. Public autonomous expression is deferred, "
+        "while private cognition and self-owned desires continue."
     )
     logger = getattr(host, "logger", None)
     if logger is not None:
         try:
             logger.info(
-                "[autonomous preference] applied mode=%s surface_only=1 desired=%ss max_quiet=%ss",
+                "[expression boundary] applied mode=%s desired=%ss max_quiet=%ss",
                 mode,
                 35 if enabled else 60,
                 70 if enabled else 120,
@@ -145,10 +139,10 @@ def apply_autonomous_surface_preference(host: Any, user_text: str) -> Autonomous
     wake = getattr(host, "_wake_autonomous_loop", None)
     if enabled and callable(wake):
         try:
-            wake("user_enabled_autonomous_surface")
+            wake("expression_boundary_reopened")
         except Exception:
             pass
-    return AutonomousSurfacePreferenceResult(
+    return ExpressionBoundaryPreferenceResult(
         applied=True,
         mode=mode,
         reason="user_directive",
@@ -157,7 +151,7 @@ def apply_autonomous_surface_preference(host: Any, user_text: str) -> Autonomous
 
 
 __all__ = [
-    "AutonomousSurfacePreferenceResult",
-    "detect_autonomous_surface_directive",
-    "apply_autonomous_surface_preference",
+    "ExpressionBoundaryPreferenceResult",
+    "detect_expression_boundary_directive",
+    "apply_expression_boundary_preference",
 ]

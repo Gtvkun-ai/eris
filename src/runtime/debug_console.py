@@ -555,7 +555,6 @@ class DebugConsole:
             return "Đã đưa cờ force_speak và đánh thức lượt autonomous!"
 
         setattr(self.coord, "_autonomous_force_speak_pending", True)
-        setattr(self.coord, "autonomous_presence_blocked_until", 0.0)
         wake = getattr(self.coord, "_wake_autonomous_loop", None)
         if callable(wake):
             wake(reason="debug_force_speak")

@@ -191,8 +191,8 @@ def test_legacy_runtime_ids_from_model_cannot_steer_current_frame() -> None:
     asyncio.run(service.abandon_deliberation(session.frame, reason="test_cleanup"))
 
 
-def test_spoken_probe_enters_awaiting_outcome_and_cannot_repeat_on_next_ticks() -> None:
-    """Một intention đã public không được phát lại trước khi có outcome/cooldown."""
+def test_spoken_probe_is_expressed_without_making_user_reply_an_obligation() -> None:
+    """Public expression tự hoàn tất; user silence không bị mã hóa thành outcome xấu."""
     d = Determinism()
     service = _service(d)
 
@@ -236,9 +236,9 @@ def test_spoken_probe_enters_awaiting_outcome_and_cannot_repeat_on_next_ticks() 
         evidence_ref="public:probe:1",
         persist=False,
     )
-    waiting = next(item for item in service.initiative_state.pending_intentions if item.intention_id == intention.intention_id)
-    assert waiting.status is IntentionStatus.AWAITING_OUTCOME
-    assert waiting.expression_count == 1
+    expressed = next(item for item in service.initiative_state.pending_intentions if item.intention_id == intention.intention_id)
+    assert expressed.status is IntentionStatus.EXPRESSED
+    assert expressed.expression_count == 1
 
     affordances = build_subject_initiative_affordances(
         service,
@@ -247,11 +247,12 @@ def test_spoken_probe_enters_awaiting_outcome_and_cannot_repeat_on_next_ticks() 
     )
     assert not any(item.candidate.speech_act == "user_probe" for item in affordances)
 
-    # "ok" là outcome thật nhưng không cung cấp thông tin cho epistemic probe.
+    # "ok" không cung cấp evidence cho epistemic motive và cũng không phải
+    # low-engagement punishment. Lifecycle vẫn EXPRESSED; repetition guard tự lo.
     service.note_initiative_user_outcome("ok", now=d.now + 8.0, evidence_ref="user:ok", persist=False)
-    revised = next(item for item in service.initiative_state.pending_intentions if item.intention_id == intention.intention_id)
-    assert revised.status is IntentionStatus.REVISED
-    assert revised.outcome_count == 1
+    receipt = next(item for item in service.initiative_state.pending_intentions if item.intention_id == intention.intention_id)
+    assert receipt.status is IntentionStatus.EXPRESSED
+    assert receipt.outcome_count == 1
 
     d.now += 60.0
     frame2 = asyncio.run(service.prepare_deliberation(obs.__class__(

@@ -4,9 +4,10 @@
 Triết lý rất thẳng:
 - Main model sở hữu lời public.
 - Observer model diễn giải điều vừa xảy ra.
-- Chat/startup appraise social_plan. Autonomous ưu tiên candidate đã atomic-claim
-  từ social state, rồi mới dùng agenda selector model-owned để đề xuất một impulse
-  mới. Mọi candidate vẫn đi qua floor governor -> Surface Realizer.
+- Chat/startup appraise social_plan. Autonomous ưu tiên stateful expression
+  commitment đã được owner của Eris duy trì; generic affordance vẫn chỉ là option.
+  Subject/Neuro sở hữu action family, Executive là semantic critic, Surface chỉ
+  hiện thực hóa wording.
 - Reducer là nơi duy nhất được ghi state.
 - Runtime chỉ thực thi sự thật cơ học.
 

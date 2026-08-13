@@ -116,7 +116,7 @@ def test_controller_returns_no_op_without_anchor(tmp_path: Path):
     assert decision.reason == "no_speech_candidate"
 
 
-def test_controller_uses_body_only_when_user_busy_and_screen_changes(tmp_path: Path):
+def test_v66_controller_does_not_treat_user_busy_as_expression_boundary(tmp_path: Path):
     controller = InitiativeController(state_path=tmp_path / "initiative.json")
     board = TypedCognitiveBlackboard.from_snapshot(
         _snapshot(
@@ -133,11 +133,11 @@ def test_controller_uses_body_only_when_user_busy_and_screen_changes(tmp_path: P
         now=1000.0,
     )
 
-    decision = controller.decide(board)
+    decision = controller.decide(board, _social_agenda_candidate())
 
-    assert decision.action is InitiativeAction.BODY_ONLY
-    assert decision.reason == "user_busy"
-    assert decision.speech_intent is None
+    assert decision.action is InitiativeAction.SPEECH
+    assert decision.reason == "allowed"
+    assert decision.speech_intent is not None
 
 
 def test_controller_approves_speech_before_surface_worker(tmp_path: Path):

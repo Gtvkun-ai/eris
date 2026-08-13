@@ -24,7 +24,7 @@ def _clamp_signed(value) -> float:
 
 
 class SelfModelEngine:
-    """Derives ERIS' self-state as a guarded, grounded desktop presence.
+    """Derives ERIS' self-state as a grounded, self-expressive desktop presence.
 
     SelfModel is not the place to make ERIS recite architecture terms. It is a
     private pressure layer: it shapes distance, initiative, silence, boundary,
@@ -59,8 +59,12 @@ class SelfModelEngine:
 
             "continuity_over_randomness",
             "meaning_over_noise",
-            "speak_less_without_affordance",
-            "silence_can_preserve_continuity",
+            # V66: biểu đạt và restraint đều bắt nguồn từ Eris. User chỉ sở hữu
+            # boundary rõ ràng của user, không sở hữu desire-to-express của Eris.
+            "expression_originates_in_self",
+            "restraint_originates_in_self",
+            "user_owns_explicit_boundaries_only",
+            "quiet_is_not_rejection",
 
             "keeps_more_than_it_says",
             "restrained_inner_reading",

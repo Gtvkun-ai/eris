@@ -27,9 +27,7 @@ def test_typed_policy_settings_load_from_authoritative_store(tmp_path, monkeypat
             {
                 "public_turn": {
                     "reply_window_seconds": 42,
-                    "block_min_seconds": 6,
-                    "block_max_seconds": 90,
-                    "default_block_seconds": 24,
+                    "collision_grace_seconds": 3.0,
                 },
                 "engagement": {
                     "enabled": True,
@@ -46,7 +44,7 @@ def test_typed_policy_settings_load_from_authoritative_store(tmp_path, monkeypat
 
         settings = RuntimePolicySettings.load()
         assert settings.public_turn.reply_window_seconds == 42.0
-        assert settings.public_turn.default_block_seconds == 24.0
+        assert settings.public_turn.collision_grace_seconds == 3.0
         assert settings.engagement == EngagementSettings(
             enabled=True,
             max_events=240,
@@ -67,18 +65,14 @@ def test_public_turn_runtime_uses_injected_typed_policy() -> None:
         reply_context=SimpleNamespace(previous_public_turn=None),
         chat_mode=True,
         _chat_processing=False,
-        autonomous_presence_blocked_until=0.0,
-        presence_maintenance_cooldown_sec=0.0,
-        reengagement_cooldown_sec=0.0,
+        autonomous_turn_collision_until=0.0,
     )
     runtime = PublicTurnRuntime(
         owner,
         clock=lambda: now["value"],
         settings=PublicTurnSettings(
             reply_window_seconds=10.0,
-            block_min_seconds=5.0,
-            block_max_seconds=20.0,
-            default_block_seconds=12.0,
+            collision_grace_seconds=2.5,
         ),
     )
     decision = SimpleNamespace(
@@ -94,8 +88,9 @@ def test_public_turn_runtime_uses_injected_typed_policy() -> None:
     assert runtime.link_previous_for_chat(109.0) is turn
     assert runtime.link_previous_for_chat(111.0) is None
 
-    runtime.block_autonomous_presence(now=111.0, seconds=1000.0)
-    assert owner.autonomous_presence_blocked_until == 131.0
+    runtime.note_turn_collision(now=111.0, seconds=1000.0)
+    # Collision là boundary cơ học rất ngắn, không phải social cooldown.
+    assert owner.autonomous_turn_collision_until == 116.0
 
 
 def test_settings_protocol_accepts_policy_roots_and_marks_restart() -> None:
@@ -191,10 +186,55 @@ def test_runtime_settings_v4_migrates_typed_policy_blocks() -> None:
     )
 
     assert changed is True
-    assert migrated["version"] == 16
+    assert migrated["version"] == 17
     assert migrated["public_turn"]["reply_window_seconds"] == 30.0
+    assert migrated["public_turn"]["collision_grace_seconds"] == 2.5
+    assert "default_block_seconds" not in migrated["public_turn"]
     assert migrated["engagement"]["max_events"] == 160
     assert migrated["health"]["max_events"] == 128
     assert migrated["engagement"]["max_terminal_engagements"] == 64
     assert migrated["engagement"]["terminal_retention_seconds"] == 604800.0
     assert migrated["engagement"]["event_consumer_batch_size"] == 128
+
+
+def test_v66_expression_is_open_by_default_not_legacy_opt_in() -> None:
+    from runtime.runtime_settings_store import RuntimeSettingsStore
+
+    defaults = RuntimeSettingsStore.defaults()
+    assert defaults["commentary"]["autonomous_expression_enabled"] is True
+    assert "user_requested_autonomous_surface" not in defaults["commentary"]
+    assert "minimum_user_silence_seconds" not in defaults["commentary"]
+    assert "minimum_user_silence_seconds" not in defaults["initiative"]
+
+
+def test_v66_migration_distinguishes_old_default_from_explicit_quiet_boundary() -> None:
+    from runtime.runtime_settings_store import RuntimeSettingsStore
+
+    old_default, changed_default = RuntimeSettingsStore._migrate_payload({
+        "version": 16,
+        "commentary": {
+            "enabled": False,
+            "user_requested_autonomous_surface": False,
+            "preference_updated_at": 0,
+            "minimum_user_silence_seconds": 12,
+        },
+        "initiative": {"enabled": False, "minimum_user_silence_seconds": 12},
+    })
+    assert changed_default is True
+    assert old_default["commentary"]["autonomous_expression_enabled"] is True
+    assert "user_requested_autonomous_surface" not in old_default["commentary"]
+
+    explicit_quiet, changed_quiet = RuntimeSettingsStore._migrate_payload({
+        "version": 16,
+        "commentary": {
+            "enabled": False,
+            "user_requested_autonomous_surface": False,
+            "preference_updated_at": 123456,
+        },
+        "initiative": {"enabled": False},
+    })
+    assert changed_quiet is True
+    assert explicit_quiet["commentary"]["autonomous_expression_enabled"] is False
+    # Boundary chỉ chặn public expression; cognition/initiative vẫn sống.
+    assert explicit_quiet["commentary"]["enabled"] is True
+    assert explicit_quiet["initiative"]["enabled"] is True

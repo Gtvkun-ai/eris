@@ -41,7 +41,7 @@ def test_runtime_store_applies_new_advanced_fields_and_reports_metadata(tmp_path
             "enabled": True,
             "desired_interval_seconds": 35,
             "maximum_quiet_seconds": 75,
-            "minimum_user_silence_seconds": 10,
+            "autonomous_expression_enabled": True,
         },
         "project_ops": {
             "autonomy_mode": "read_only",

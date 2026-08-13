@@ -77,9 +77,6 @@ def emit_session_ritual_preset(runtime: Any, report: Any) -> bool:
         note_spoken = getattr(runtime, "_note_autonomous_spoken", None)
         if callable(note_spoken):
             note_spoken(now=spoken_at)
-        block = getattr(runtime, "_block_autonomous_presence_after_public_turn", None)
-        if callable(block):
-            block(now=spoken_at)
         runtime._send_decision_to_body(decision, channel="session_ritual")
         resolver = getattr(getattr(runtime, "session_ritual_engine", None), "preset_resolver", None)
         if resolver is None:

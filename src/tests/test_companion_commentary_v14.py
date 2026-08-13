@@ -12,7 +12,6 @@ def test_commentary_cadence_requires_deliberation_after_maximum_quiet(monkeypatc
         "desired_interval_seconds": 60,
         "maximum_quiet_seconds": 120,
         "startup_delay_seconds": 8,
-        "minimum_user_silence_seconds": 12,
     }
     monkeypatch.setattr(module, "_setting", lambda name, default: settings.get(name, default))
     cadence = module.CommentaryCadence()
@@ -34,7 +33,7 @@ def test_commentary_cadence_requires_deliberation_after_maximum_quiet(monkeypatc
     assert expectation.anchor_kind == "persona_presence"
 
 
-def test_commentary_cadence_never_forces_over_active_user(monkeypatch) -> None:
+def test_v66_commentary_cadence_does_not_treat_user_busy_as_boundary(monkeypatch) -> None:
     from runtime.ai_orchestrated import commentary_cadence as module
 
     monkeypatch.setattr(module, "_setting", lambda name, default: {
@@ -42,7 +41,6 @@ def test_commentary_cadence_never_forces_over_active_user(monkeypatch) -> None:
         "desired_interval_seconds": 60,
         "maximum_quiet_seconds": 120,
         "startup_delay_seconds": 8,
-        "minimum_user_silence_seconds": 12,
     }.get(name, default))
     expectation = module.CommentaryCadence().evaluate(
         now=1300.0,
@@ -56,9 +54,35 @@ def test_commentary_cadence_never_forces_over_active_user(monkeypatch) -> None:
         has_public_seed=True,
         telemetry={"user_busy": True},
     )
+    assert expectation.due is True
+    assert expectation.required is True
+    assert expectation.reason == "maximum_quiet_reached"
+
+
+def test_v66_commentary_cadence_defers_for_real_interaction_collision(monkeypatch) -> None:
+    from runtime.ai_orchestrated import commentary_cadence as module
+
+    monkeypatch.setattr(module, "_setting", lambda name, default: {
+        "enabled": True,
+        "desired_interval_seconds": 60,
+        "maximum_quiet_seconds": 120,
+        "startup_delay_seconds": 8,
+    }.get(name, default))
+    expectation = module.CommentaryCadence().evaluate(
+        now=1300.0,
+        last_commentary_at=1000.0,
+        session_started_at=1000.0,
+        seconds_since_user=2.0,
+        seconds_since_assistant=300.0,
+        discourse_open=True,
+        perception_delta=True,
+        activity_event=True,
+        has_public_seed=True,
+        telemetry={"user_busy": True, "interaction_busy": True},
+    )
     assert expectation.due is False
     assert expectation.required is False
-    assert expectation.reason == "user_busy"
+    assert expectation.reason == "interaction_busy"
 
 
 def test_heart_metaphor_stays_in_conversation_instead_of_web_route() -> None:
@@ -135,7 +159,7 @@ def test_runtime_settings_v3_migrates_companion_commentary_defaults() -> None:
         "tts": {"speech_persona_warmth": 0.24},
     })
     assert changed is True
-    assert migrated["version"] == 16
+    assert migrated["version"] == 17
     assert migrated["initiative"]["global_hourly_budget"] == 40
     assert migrated["commentary"]["enabled"] is True
     assert migrated["commentary"]["maximum_quiet_seconds"] == 120

@@ -80,13 +80,11 @@ class WanderingThoughtEngine:
         current = now_timestamp() if now is None else float(now)
         idle = self._idle_seconds(snapshot)
         focus = self._focus_family(snapshot=snapshot, frame=frame)
-        deep_focus = self._deep_focus(snapshot=snapshot, frame=frame)
         trigger, trigger_reason = self._trigger_reason(
             frame=frame,
             snapshot=snapshot,
             internal_state=internal_state,
             idle=idle,
-            deep_focus=deep_focus,
         )
 
         seeds = self.seed_pool.generate(frame=frame, snapshot=snapshot, memory_packet=memory_packet, internal_state=internal_state, now=current)
@@ -101,20 +99,14 @@ class WanderingThoughtEngine:
 
         fragments: list[ThoughtFragment] = []
         topic_candidates: list[str] = []
-        associations = self.association_engine.associate(self.drift_pool, now=current, limit=3, allow_weak_random=not deep_focus)
+        associations = self.association_engine.associate(self.drift_pool, now=current, limit=3, allow_weak_random=True)
         if allow_fragments and trigger:
             for association in associations:
                 if association.score < self.min_resonance_for_fragment:
                     continue
                 topic = self.topic_memory.touch_association(association, now=current)
                 topic_candidates.append(topic.theme)
-                surface_allowed = self._surface_allowed(
-                    association,
-                    idle=idle,
-                    deep_focus=deep_focus,
-                    focus=focus,
-                    internal_state=internal_state,
-                )
+                surface_allowed = self._surface_allowed(association)
                 kind = "wandering_surface_candidate" if surface_allowed else "wandering_fragment"
                 fragment = association.to_fragment(
                     surface_allowed=surface_allowed,
@@ -130,7 +122,7 @@ class WanderingThoughtEngine:
         mood_delta = self._mood_delta(sparks, fragments, internal_state=internal_state)
         if not topic_candidates:
             topic_candidates = [topic.theme for topic in self.topic_memory.active_topics(limit=5)]
-        debug_bits = [trigger_reason, f"idle={idle:.1f}", f"focus={focus}", f"deep_focus={int(deep_focus)}", f"sparks={len(sparks)}", f"fragments={len(fragments)}"]
+        debug_bits = [trigger_reason, f"idle={idle:.1f}", f"focus={focus}", f"sparks={len(sparks)}", f"fragments={len(fragments)}"]
         result = WanderingThoughtResult(
             sparks=sparks,
             fragments=fragments,
@@ -141,15 +133,15 @@ class WanderingThoughtEngine:
         self.last_result = result
         return result
 
-    def _trigger_reason(self, *, frame: Any, snapshot: Any, internal_state: Any, idle: float, deep_focus: bool) -> tuple[bool, str]:
+    def _trigger_reason(self, *, frame: Any, snapshot: Any, internal_state: Any, idle: float) -> tuple[bool, str]:
         boredom = clamp01(_get(internal_state, "boredom", 0.0))
         solitude = clamp01(_get(internal_state, "solitude", 0.0))
         curiosity = max(clamp01(_get(internal_state, "curiosity", 0.0)), clamp01(_get(internal_state, "mental_processes.curiosity.level", 0.0)))
         repeated = self._has_repeated_runtime_event(frame=frame, snapshot=snapshot)
         drift_ready = bool(self.drift_pool.related_groups(now=now_timestamp(), min_size=2))
         after_debug = self._after_debug(frame=frame, snapshot=snapshot)
-        if deep_focus and idle < max(60.0, self.min_idle_seconds * 2):
-            return False, "deep_focus_hold"
+        # V66: deep focus của user không được tắt đời sống nội tâm của Eris.
+        # Nó có thể đi vào scene/wording ở downstream, không phải cognition veto.
         if idle >= self.min_idle_seconds:
             return True, "idle_light"
         if boredom >= 0.38 or solitude >= 0.32:
@@ -164,31 +156,14 @@ class WanderingThoughtEngine:
         # không phải tick nào cũng phải ném câu thơ vào blackboard như máy rải hoa.
         return False, "private_simmer_only"
 
-    def _surface_allowed(
-        self,
-        association: AssociationPath,
-        *,
-        idle: float,
-        deep_focus: bool,
-        focus: str,
-        internal_state: Any,
-    ) -> bool:
-        if deep_focus:
-            return False
+    def _surface_allowed(self, association: AssociationPath) -> bool:
         if self._is_status_ping(association.statement):
             return False
-        if focus in {"code", "docs", "debug", "terminal"} and idle < 90.0:
-            return False
-        interruption_cost = max(
-            clamp01(_get(internal_state, "interruption_cost", 0.0)),
-            clamp01(_get(internal_state, "speech_cost", 0.0)),
-        )
-        if interruption_cost >= 0.62:
-            return False
+        # Surface ở đây chỉ nghĩa "đủ rõ để trở thành fragment có thể biểu đạt",
+        # chưa phải phát public speech. User focus/typing không thuộc contract này.
         grounded_enough = association.groundedness >= 0.34 and association.score >= self.min_resonance_for_fragment
-        idle_enough = idle >= self.min_idle_seconds or focus in {"media", "idle", "thought_stream", "general"}
         weird_not_noise = 0.18 <= association.weirdness <= 0.86
-        return bool(grounded_enough and idle_enough and weird_not_noise)
+        return bool(grounded_enough and weird_not_noise)
 
     def _idle_seconds(self, snapshot: Any) -> float:
         try:
@@ -213,12 +188,6 @@ class WanderingThoughtEngine:
         if raw in {"focus_aid_media", "youtube", "browser_media", "media", "entertainment"}:
             return "media"
         return raw or "idle"
-
-    def _deep_focus(self, *, snapshot: Any, frame: Any) -> bool:
-        focus = self._focus_family(snapshot=snapshot, frame=frame)
-        user_typing = bool(_get(snapshot, "user_is_typing", False) or _get(frame, "user_is_typing", False))
-        active = bool(_get(snapshot, "keyboard_active", False) or _get(frame, "keyboard_active", False))
-        return focus in {"code", "docs"} and (user_typing or active or self._idle_seconds(snapshot) < 60.0)
 
     def _has_repeated_runtime_event(self, *, frame: Any, snapshot: Any) -> bool:
         for source in (_get(frame, "recent_events", ()), _get(snapshot, "recent_events", ()), _get(frame, "runtime_events", ())):

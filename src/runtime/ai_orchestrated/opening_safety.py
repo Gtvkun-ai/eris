@@ -83,9 +83,8 @@ def move_is_allowed(opening_input: OpeningInput, move: OpeningMoveDefinition | s
         reasons.append("tease_estimate_low")
     if partner.tease_tolerance_confidence < definition.minimum_tease_confidence:
         reasons.append("tease_confidence_low")
-    if signals.recent_low_engagement or signals.recent_barge_in or signals.availability in {"busy", "unavailable"}:
-        if definition.risk >= 0.18:
-            reasons.append("low_availability")
+    # V66: low engagement / inferred busy / một barge-in trong quá khứ chỉ là
+    # scene history. Chúng không phải boundary và không được hard-block move của Eris.
     if signals.explicit_boundary or partner.boundary_flags:
         if definition.family not in {"simple_recognition", "quiet_presence"}:
             reasons.append("boundary_blocks_move")

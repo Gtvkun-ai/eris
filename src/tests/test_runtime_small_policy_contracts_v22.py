@@ -3,11 +3,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from runtime.acceptance_types import AcceptanceResult, GateVerdict
-from runtime.ambient_silence_policy import (
-    ambient_silence_cooldown_seconds,
-    muse_directive_active,
-    should_hold_ambient_silence,
-)
 from runtime.cognition.normalization import (
     compact,
     contains_phrase,
@@ -28,46 +23,6 @@ def test_acceptance_result_only_accepts_pass() -> None:
     assert AcceptanceResult(GateVerdict.PASS).accepted is True
     for verdict in (GateVerdict.CONSTRAINED_RERUN, GateVerdict.DOMAIN_FALLBACK, GateVerdict.BLOCK):
         assert AcceptanceResult(verdict, reasons=("reason",)).accepted is False
-
-
-def test_ambient_policy_modes_and_focus() -> None:
-    assert muse_directive_active(ns(mode="pattern_muse")) is True
-    assert muse_directive_active(ns(mode=None)) is False
-    snapshot = ns(active_window_kind="coding")
-    assert ambient_silence_cooldown_seconds(snapshot, ns(mode="resource_guard")) == 0
-    assert ambient_silence_cooldown_seconds(snapshot, ns(mode="pattern_muse")) == 60
-    assert ambient_silence_cooldown_seconds(snapshot, ns(mode="ordinary")) == 60
-    assert ambient_silence_cooldown_seconds(ns(active_window_kind="documentation"), ns(mode="ordinary")) == 60
-    assert ambient_silence_cooldown_seconds(ns(active_window_kind="communication"), ns(mode="ordinary")) == 40
-    assert ambient_silence_cooldown_seconds(ns(active_window_kind="entertainment"), ns(mode="ordinary")) == 50
-    assert ambient_silence_cooldown_seconds(ns(active_window_kind="other"), ns(mode="system_watch")) == 50
-    assert ambient_silence_cooldown_seconds(ns(active_window_kind="other"), ns(mode="ordinary")) == 40
-
-
-def test_ambient_hold_exemptions_and_cooldown() -> None:
-    snapshot = ns(active_window_kind="other")
-    ordinary = ns(mode="ordinary")
-    assert should_hold_ambient_silence(
-        snapshot=snapshot, ti_report=ordinary, last_text="x", last_autonomous_spoken_at=90,
-        speech_intent="user_requested", now=100,
-    ) == (False, "")
-    assert should_hold_ambient_silence(
-        snapshot=snapshot, ti_report=ordinary, last_text="", last_autonomous_spoken_at=90, now=100,
-    ) == (False, "")
-    assert should_hold_ambient_silence(
-        snapshot=snapshot, ti_report=ns(mode="pattern_muse"), last_text="x",
-        last_autonomous_spoken_at=90, now=100,
-    ) == (False, "muse_exempt")
-    assert should_hold_ambient_silence(
-        snapshot=snapshot, ti_report=ns(mode="resource_guard"), last_text="x",
-        last_autonomous_spoken_at=90, now=100,
-    ) == (False, "")
-    assert should_hold_ambient_silence(
-        snapshot=snapshot, ti_report=ordinary, last_text="x", last_autonomous_spoken_at=90, now=100,
-    ) == (True, "cooldown=40s")
-    assert should_hold_ambient_silence(
-        snapshot=snapshot, ti_report=ordinary, last_text="x", last_autonomous_spoken_at=10, now=100,
-    ) == (False, "")
 
 
 def test_conversation_lane_full_and_fast_paths() -> None:

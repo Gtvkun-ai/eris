@@ -34,12 +34,14 @@ class EngagementInteractionPolicy:
         policy = engagement.continuity
         baseline = engagement.last_assistant_at or engagement.started_at
         since_output = max(0.0, now - baseline)
-        user_quiet = seconds_since_user >= policy.minimum_user_silence_seconds
+        # V66: cadence của engagement dựa vào nhịp output của Eris, không đòi
+        # user phải im đủ N giây mới được chủ động.
+        cadence_open = True
         event_due = bool(
             significant is not None
             and significant.importance >= self.signal_importance_threshold
             and since_output >= policy.minimum_event_gap_seconds
-            and user_quiet
+            and cadence_open
         )
 
         # Terminal state still deserves one final delivery. Excluding completed
@@ -78,11 +80,11 @@ class EngagementInteractionPolicy:
 
         if not engagement.active or engagement.focus == FocusMode.SUSPENDED:
             return InteractionDecision(reason="engagement_inactive")
-        if bool(telemetry.get("user_busy", False) or telemetry.get("interaction_busy", False)):
+        if bool(telemetry.get("interaction_busy", False)):
             return InteractionDecision(
                 engagement_id=engagement.engagement_id,
                 engagement_kind=engagement.kind,
-                reason="user_busy",
+                reason="interaction_busy",
                 priority=engagement.priority,
                 anchor_kind=f"engagement:{engagement.kind}",
                 seconds_since_engagement_output=since_output,
@@ -108,13 +110,13 @@ class EngagementInteractionPolicy:
             cadence_enabled
             and state_cadence_seconds > 0.0
             and not bool(engagement.domain_state.get("event_driven_only", False))
-            and user_quiet
+            and cadence_open
             and since_output >= state_cadence_seconds
         )
         event_driven_only = bool(engagement.domain_state.get("event_driven_only", False))
         generic_cadence_enabled = cadence_enabled and not event_driven_only
-        cadence_due = bool(generic_cadence_enabled and user_quiet and since_output >= policy.desired_interval_seconds)
-        maximum_due = bool(generic_cadence_enabled and user_quiet and since_output >= policy.maximum_quiet_seconds)
+        cadence_due = bool(generic_cadence_enabled and cadence_open and since_output >= policy.desired_interval_seconds)
+        maximum_due = bool(generic_cadence_enabled and cadence_open and since_output >= policy.maximum_quiet_seconds)
 
         if initiative in {InitiativeMode.MONITORING, InitiativeMode.SILENT_UNTIL_NEEDED} and not event_due:
             return InteractionDecision(

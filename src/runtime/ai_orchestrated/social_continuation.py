@@ -24,6 +24,7 @@ from .atomic_state import SQLiteAtomicStateStore, SQLiteStateTransaction
 from .social_candidate import SocialSpeechCandidate
 from .affordance import ExecutiveAffordance
 from .social_plan import normalize_afterbeat, normalize_exposure
+from cortex.subject.expression_commitment import commitment_payload
 
 
 CONTINUATION_STATE_SCHEMA = "eris.social_continuation_state.v1"
@@ -365,6 +366,19 @@ class SocialContinuationRuntime:
                 return None
             _, _, _, ticket = ranked[0]
             candidate = self._candidate_for(ticket)
+            # V66: afterbeat / exposure recovery đã được state owner duy trì như
+            # một ý định xã hội thật của Eris, không còn là generic opportunity.
+            # Vì vậy affordance mang commitment typed ngay từ source; Neuro chỉ
+            # chọn cách hiện thực hóa, không tái bỏ phiếu SILENCE.
+            commitment = commitment_payload(
+                origin="social_continuation",
+                source_id=ticket.ticket_id,
+                semantic_target=candidate.topic,
+                motive=candidate.speech_act,
+                pressure=max(candidate.urgency, candidate.relevance),
+                freshness=candidate.confidence,
+                persistence=1.0 if ticket.lane == "afterbeat" else 0.82,
+            )
             return ExecutiveAffordance(
                 affordance_id=f"social_continuation:{ticket.ticket_id}:v{ticket.version}",
                 owner="social_continuation",
@@ -373,7 +387,7 @@ class SocialContinuationRuntime:
                 claim_required=True,
                 expires_at=ticket.expires_at,
                 claim_key=ticket.ticket_id,
-                metadata={"lane": ticket.lane},
+                metadata={"lane": ticket.lane, "expression_commitment": commitment},
             )
 
     def claim_affordance(

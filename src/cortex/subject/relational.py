@@ -2,9 +2,9 @@
 """Relational homeostasis cho Subject Core.
 
 Đây là state causal rẻ, không phải personality trait và không gọi model. Nó mô tả
-mức thiếu/thừa tương tác, động lực muốn chia sẻ/tò mò, kỳ vọng reciprocity và chi
-phí làm phiền. State chỉ tạo *pressure/opportunity* cho connection need; Executive
-vẫn quyết định có hành động hay không.
+mức thiếu/thừa tương tác, động lực muốn chia sẻ/tò mò và lịch sử reciprocity.
+V66 giữ ``partner_availability``/``interruption_cost`` như scene context cho wording,
+không dùng chúng để tước quyền biểu đạt. Im lặng của user không bị học thành từ chối.
 """
 from __future__ import annotations
 
@@ -58,10 +58,20 @@ class RelationalState:
 
     @property
     def opportunity(self) -> float:
+        """Cơ hội *tự hành động* của Eris, không phải dự đoán user có rảnh.
+
+        Trước V66 field này nhân trực tiếp partner_availability với
+        interruption_cost, rồi lan vào Need/Initiative như một veto ngầm. Giờ nó
+        chỉ phản ánh confidence của chính Eris. Scene availability vẫn được lưu
+        riêng để Surface điều chỉnh độ ngắn/mềm của câu.
+        """
+        return _clamp01(0.58 + 0.42 * self.outreach_confidence)
+
+    @property
+    def scene_availability(self) -> float:
+        """Context xã hội cho wording, tuyệt đối không sở hữu action-family."""
         return _clamp01(
-            self.partner_availability
-            * (1.0 - 0.72 * self.interruption_cost)
-            * (0.62 + 0.38 * self.outreach_confidence)
+            self.partner_availability * (1.0 - 0.72 * self.interruption_cost)
         )
 
     @property
@@ -76,10 +86,15 @@ class RelationalState:
 
     @property
     def outreach_drive(self) -> float:
+        """Động lực liên hệ thuộc về Eris, không phải xác suất user sẽ đáp lại.
+
+        ``opportunity`` vẫn được giữ để Surface biết hoàn cảnh gần/xa, nhưng drive
+        không giảm chỉ vì telemetry đoán user bận hoặc một lần outreach chưa được
+        trả lời. Reciprocity dương có thể làm Eris tự tin hơn, silence không phạt.
+        """
         return _clamp01(
             self.connection_pressure
-            * (0.52 + 0.48 * self.opportunity)
-            * (0.72 + 0.28 * self.reciprocity_expectation)
+            * (0.72 + 0.28 * self.outreach_confidence)
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -105,6 +120,7 @@ class RelationalState:
             "evidence_refs": list(self.evidence_refs),
             "connection_pressure": self.connection_pressure,
             "opportunity": self.opportunity,
+            "scene_availability": self.scene_availability,
             "outreach_drive": self.outreach_drive,
         }
 
@@ -174,12 +190,11 @@ class RelationalHomeostasis:
         learned_interrupt = state.interruption_cost
         refs = list(state.evidence_refs[-8:])
         if waiting and state.last_outreach_at > 0.0 and now - state.last_outreach_at >= self.config.outreach_response_window_seconds:
+            # V66: hết response window chỉ đóng bookkeeping của bid. Không suy
+            # "user im = Eris làm phiền" và không tự hạ quyền/động lực biểu đạt.
             waiting = False
             unanswered += 1
-            outreach_conf = _clamp01(0.88 * outreach_conf + 0.12 * 0.25)
-            reciprocity = _clamp01(0.92 * reciprocity + 0.08 * 0.30)
-            learned_interrupt = _clamp01(learned_interrupt + 0.06)
-            refs.append(f"relational:no_response:{state.revision + 1}")
+            refs.append(f"relational:no_response_observed:{state.revision + 1}")
 
         if partner_available is not None:
             availability = _clamp01(0.72 * state.partner_availability + 0.28 * _clamp01(partner_available))
@@ -262,8 +277,8 @@ class RelationalHomeostasis:
             updated_at=float(now),
             last_public_at=float(now),
             last_outreach_at=float(now) if outreach else state.last_outreach_at,
-            # Startup/reentry greeting can satisfy contact pressure without
-            # becoming a pending bid that is punished as "unanswered" 150s later.
+            # Startup/reentry greeting có thể không yêu cầu reply. Ngay cả bid có
+            # expect_response, hết cửa sổ chỉ đóng bookkeeping chứ không bị phạt.
             outreach_waiting=bool(outreach and expect_response),
             interaction_satiety=_clamp01(max(state.interaction_satiety, 0.28 if outreach else 0.18)),
             sharing_pressure=_clamp01(state.sharing_pressure * (0.34 if sharing else 0.82)),

@@ -427,20 +427,13 @@ class MentalProcessRuntimeMixin:
         topic = str(getattr(thought, "topic_seed", "") or getattr(thought, "dominant_theme", "") or "")
         privacy_level = str(getattr(thought, "privacy_level", "") or "normal").lower()
         route = str(getattr(thought, "recommended_route", "") or "")
-        focus = str(getattr(snapshot, "active_window_kind", "") or "").lower()
         idle_seconds = max(0.0, float(getattr(snapshot, "idle_seconds", 0.0) or 0.0))
         usefulness = 0.68 if route == "surface_candidate" else (0.50 if route in {"rehearse", "store"} else 0.28)
         novelty = max(0.0, min(1.0, float(getattr(thought, "novelty", 0.0) or 0.0)))
         continuity_gain = max(0.0, min(1.0, recurring_theme_strength * 0.55 + float(getattr(thought, "momentum_score", 0.0) or 0.0) * 0.45))
-        interruption_cost = max(
-            0.0,
-            min(
-                1.0,
-                (0.72 if any(term in focus for term in ("code", "coding", "deep_work", "focused")) else 0.28)
-                - min(0.18, idle_seconds / 1200.0)
-                + float(getattr(internal_state, "silence_pressure", 0.0) or 0.0) * 0.12,
-            ),
-        )
+        # V66: focus/typing của user không làm giảm giá trị biểu đạt của thought.
+        # Idle chỉ có thể mở thêm không gian wandering, không bao giờ là negative
+        # permission signal. Collision thật được giải quyết ở public pipeline.
         privacy_cost = 0.80 if privacy_level in {"private", "sensitive"} else (0.38 if route in {"store", "suppress"} else 0.12)
         repetition_penalty = 0.0
         norm_topic = self._normalize_user_message(topic)
@@ -448,7 +441,7 @@ class MentalProcessRuntimeMixin:
         recent_norm = {self._normalize_user_message(str(item)) for item in recent if str(item).strip()}
         if norm_topic and norm_topic in recent_norm:
             repetition_penalty = 0.55
-        timing_fit = max(0.0, min(1.0, 0.82 - interruption_cost * 0.70 + min(0.18, idle_seconds / 600.0)))
+        timing_fit = max(0.0, min(1.0, 0.72 + min(0.18, idle_seconds / 600.0)))
         return max(
             0.0,
             min(
@@ -458,7 +451,6 @@ class MentalProcessRuntimeMixin:
                 + novelty * 0.15
                 + continuity_gain * 0.15
                 + timing_fit * 0.15
-                - interruption_cost * 0.35
                 - privacy_cost * 0.30
                 - repetition_penalty * 0.25,
             ),
