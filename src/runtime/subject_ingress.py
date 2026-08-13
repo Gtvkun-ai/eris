@@ -77,6 +77,11 @@ class SubjectIngress:
             if isinstance(context.get("life_horizon"), Mapping)
             else {}
         )
+        persistent_individual = (
+            context.get("persistent_individual")
+            if isinstance(context.get("persistent_individual"), Mapping)
+            else {}
+        )
         explicit_proposals = []
         repair_proposal = context.get("conversation_repair_proposal")
         if isinstance(repair_proposal, Mapping):
@@ -121,6 +126,8 @@ class SubjectIngress:
                     # expression boundary đọc deterministic, không parse prompt.
                     "conversation_courtesy": dict(courtesy),
                     "life_horizon": dict(life_horizon),
+                    # V76: ecology/relational-plan/self-model projection typed.
+                    "persistent_individual": dict(persistent_individual),
                     "courtesy_hold": bool(courtesy.get("courtesy_hold", courtesy.get("effective_wait", False))),
                     "awaiting_user_answer": bool(courtesy.get("awaiting_user_answer", False)),
                     "pending_question_id": str(courtesy.get("pending_question_id", "") or ""),
@@ -256,6 +263,11 @@ class SubjectIngress:
             if isinstance(context.get("life_horizon"), Mapping)
             else {}
         )
+        persistent_individual = (
+            context.get("persistent_individual")
+            if isinstance(context.get("persistent_individual"), Mapping)
+            else {}
+        )
         relational_pressure = float(relational.get("connection_pressure", 0.0) or 0.0)
         relational_opportunity = float(relational.get("opportunity", 0.0) or 0.0)
 
@@ -302,6 +314,8 @@ class SubjectIngress:
                     "causal_discourse": dict(causal_discourse),
                     "conversation_courtesy": dict(courtesy),
                     "life_horizon": dict(life_horizon),
+                    # V76: ecology/relational-plan/self-model projection typed.
+                    "persistent_individual": dict(persistent_individual),
                     "courtesy_hold": bool(courtesy.get("courtesy_hold", courtesy.get("effective_wait", False))),
                     "awaiting_user_answer": bool(courtesy.get("awaiting_user_answer", False)),
                     "pending_question_id": str(courtesy.get("pending_question_id", "") or ""),

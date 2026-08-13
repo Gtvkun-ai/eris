@@ -37,6 +37,8 @@ MATERIAL_KINDS = {
     "small_contact",
     "self_reflection",
     "hunch",
+    # V76: đoạn kể/ẩn dụ được đánh dấu imagination, không được giả thành ký ức thật.
+    "story_fragment",
 }
 
 # Mapping này chỉ phục vụ compatibility với CognitiveEvent/ConcernStore cũ.
@@ -56,6 +58,7 @@ MATERIAL_TO_EVENT_KIND = {
     "small_contact": "thought",
     "self_reflection": "self_reflection",
     "hunch": "speculation",
+    "story_fragment": "thought",
 }
 
 MATERIAL_TO_EPISTEMIC = {
@@ -72,6 +75,7 @@ MATERIAL_TO_EPISTEMIC = {
     "small_contact": "bounded_inference",
     "self_reflection": "opinion",
     "hunch": "speculation",
+    "story_fragment": "imagination",
 }
 
 # Motive runtime-owned vẫn dùng vocabulary cũ ở boundary để không phá Subject.
@@ -307,7 +311,7 @@ def derive_causal_motives(context: Mapping[str, Any], *, now: float | None = Non
             source_refs=(cause_id,),
             allowed_material_kinds=(
                 "reaction", "opinion", "association", "question", "playful_impulse",
-                "small_contact", "hunch", "observation",
+                "small_contact", "hunch", "observation", "story_fragment",
             ),
             generation_budget=2 if index == len(recent_user[-3:]) - 1 else 1,
             relationship_modulation=connection,
@@ -325,10 +329,17 @@ def derive_causal_motives(context: Mapping[str, Any], *, now: float | None = Non
         extension = _compact(trajectory.get("last_assistant_extension", trajectory.get("last_assistant_text", "")), 420)
         revision = max(0, int(trajectory.get("revision", 0) or 0))
         momentum = _clamp01(trajectory.get("momentum", 0.0))
+        energy = _clamp01(min(1.0, float(trajectory.get("energy", 0.0) or 0.0)))
+        lifecycle_state = _compact(trajectory.get("lifecycle_state", "developing"), 24).lower()
+        private_budget = max(0, int(trajectory.get("private_budget", 0) or 0))
+        external_epoch = int(float(trajectory.get("last_external_input_at", 0.0) or 0.0))
         engagement = _clamp01(trajectory.get("user_engagement", 0.0))
         depth = max(0, int(trajectory.get("depth", 0) or 0))
         development_mode = _compact(trajectory.get("development_mode", "deepen"), 24).lower()
-        if topic_id and focus and momentum >= 0.34:
+        if (
+            topic_id and focus and momentum >= 0.20 and energy > 0.04 and private_budget > 0
+            and lifecycle_state not in {"satiated", "dormant"}
+        ):
             semantic_focus = (
                 f"topic_id={topic_id}; current_focus={focus}; "
                 f"root_focus={root or focus}; prior_eris_extension={extension or '<none>'}; "
@@ -342,7 +353,9 @@ def derive_causal_motives(context: Mapping[str, Any], *, now: float | None = Non
                     if str(item or "").strip()
                 )
             )[:8]
-            cause_id = f"trajectory:{topic_id}:r{revision}"
+            # V76: budget không được reset chỉ vì assistant commit tăng revision.
+            # Epoch chỉ đổi khi có external/user input mới thật.
+            cause_id = f"trajectory:{topic_id}:e{external_epoch or revision}"
             motives.append(CausalMotive(
                 cause_id=cause_id,
                 cause_kind="conversation_trajectory",
@@ -350,15 +363,15 @@ def derive_causal_motives(context: Mapping[str, Any], *, now: float | None = Non
                 semantic_focus=_compact(semantic_focus, 1200),
                 why_now=(
                     f"conversation_trajectory_active:{topic_id}:depth={depth}:"
-                    f"momentum={momentum:.2f}:engagement={engagement:.2f}"
+                    f"momentum={momentum:.2f}:energy={energy:.2f}:engagement={engagement:.2f}:life={lifecycle_state}"
                 ),
                 strength=_clamp01(0.66 + 0.22 * momentum + 0.08 * engagement),
                 source_refs=tuple(dict.fromkeys((*refs, f"trajectory:{topic_id}")))[:10],
                 allowed_material_kinds=(
                     "reaction", "opinion", "association", "unfinished_thought",
-                    "hunch", "self_reflection", "question",
+                    "hunch", "self_reflection", "question", "story_fragment",
                 ),
-                generation_budget=2,
+                generation_budget=max(1, min(2, private_budget)),
                 relationship_modulation=connection,
                 development_required=True,
                 allowed_development_modes=("deepen", "connect", "reinterpret", "test", "personalize"),
@@ -412,7 +425,7 @@ def derive_causal_motives(context: Mapping[str, Any], *, now: float | None = Non
             strength=strength,
             source_refs=(cid,),
             allowed_material_kinds=(
-                "unfinished_thought", "opinion", "association", "question", "hunch", "self_reflection",
+                "unfinished_thought", "opinion", "association", "question", "hunch", "self_reflection", "story_fragment",
             ),
             generation_budget=2 if (mutation_count > 0 or attractor >= 0.55) else 1,
             relationship_modulation=connection,

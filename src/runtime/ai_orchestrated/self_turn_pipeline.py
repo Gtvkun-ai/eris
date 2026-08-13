@@ -471,6 +471,17 @@ class SelfTurnPipeline:
         except Exception as exc:
             planner_snapshot["life_horizon"] = {}
             host.logger.debug("[life-horizon-v74] autonomous projection failed: %s", exc)
+        # V76: Persistent Individual Core đưa Interaction Ecology + Relational Plan
+        # vào autonomous snapshot. Đây là context/bias, không phải quyền ép nói.
+        try:
+            from runtime.persistent_individual import ensure_persistent_individual_runtime
+            individual_runtime = ensure_persistent_individual_runtime(host)
+            planner_snapshot["persistent_individual"] = individual_runtime.projection_for_host(
+                host, now=now, context_key="autonomous"
+            )
+        except Exception as exc:
+            planner_snapshot["persistent_individual"] = {}
+            host.logger.debug("[persistent-individual-v76] autonomous projection failed: %s", exc)
         # V44: chỉ một urge đã có nội dung mới được quyền đánh thức cognition vì
         # "muốn nói". Connection pressure trừu tượng không còn tự biến thành wake.
         expression_urge_runtime = getattr(host, "expression_urge_runtime", None)
@@ -1686,6 +1697,13 @@ class SelfTurnPipeline:
                 if callable(getattr(getattr(self.host, "life_horizon_manager", None), "snapshot", None))
                 else {}
             ),
+            "persistent_individual": (
+                getattr(self.host, "persistent_individual_runtime", None).projection_for_host(
+                    self.host, now=perception.now, context_key="autonomous"
+                )
+                if callable(getattr(getattr(self.host, "persistent_individual_runtime", None), "projection_for_host", None))
+                else {}
+            ),
             "seconds_since_user": context.seconds_since_user,
             "seconds_since_assistant": context.seconds_since_assistant,
             "self_context": context.self_context.to_dict(),
@@ -1731,6 +1749,9 @@ class SelfTurnPipeline:
                 "conversation_handoff is authoritative for unfinished conversational obligations and who owns the next move; "
                 "conversation_courtesy is a hard turn-taking boundary: when awaiting_user_answer=true, do not create another public speech turn. "
                 "life_horizon carries H0-H4 goal context and may change priority, but it is not speech authority. "
+                "persistent_individual is V76 authoritative interaction context: respect interaction_ecology, active relational_plan, "
+                "question/public fatigue and operational_self_model. A question is not the default way to express curiosity. "
+                "response_expectation=none creates no reply debt, and private thought is allowed to remain private or die. "
                 "an empty current user_text in autonomous mode does NOT erase a pending user request. "
                 "When shared_semantic_context.packet exists, use its foreground/facts/options as the stable scene baseline; "
                 "do not reinterpret raw OCR into a competing story."

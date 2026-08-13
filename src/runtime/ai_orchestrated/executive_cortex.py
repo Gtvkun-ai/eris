@@ -32,6 +32,7 @@ from cortex.subject.neuro_control import (
 from runtime.life_horizon import ensure_life_horizon_manager
 from runtime.horizon_arbiter import HorizonArbiter
 from runtime.review_lock import ReviewLock
+from runtime.interaction_ecology import classify_interaction_mode, response_expectation_for_mode
 
 from actions.capability_registry import (
     validate_capability_arguments,
@@ -858,6 +859,110 @@ class ExecutiveCortex:
             semantic_commitments=commitments[:8],
         )
 
+    @staticmethod
+    def _persistent_individual_from_frame(frame: SubjectDeliberationFrame) -> dict[str, Any]:
+        observation_context = dict(getattr(getattr(frame, "observation", None), "context", {}) or {})
+        runtime_context = observation_context.get("runtime_context")
+        runtime_context = dict(runtime_context) if isinstance(runtime_context, Mapping) else {}
+        value = runtime_context.get("persistent_individual")
+        return dict(value) if isinstance(value, Mapping) else {}
+
+    @classmethod
+    def _apply_interaction_ecology_appraisal(
+        cls,
+        frame: SubjectDeliberationFrame,
+        appraisal: NeuroSemanticAppraisal,
+    ) -> NeuroSemanticAppraisal:
+        """V76: chấm *cách hiện diện*, không chỉ semantic topic.
+
+        Logic này cố ý deterministic. LLM critic có thể đánh giá nội dung hay/dở,
+        nhưng không được quên rằng ASK lặp liên tục tạo fatigue còn COMMENT/MUTTER
+        response_expectation=none không tạo nợ trả lời. Task/repair luôn được nới.
+        """
+        root = cls._persistent_individual_from_frame(frame)
+        if not root:
+            return appraisal
+        ecology = root.get("interaction_ecology")
+        ecology = dict(ecology) if isinstance(ecology, Mapping) else {}
+        plan = root.get("relational_plan")
+        plan = dict(plan) if isinstance(plan, Mapping) else {}
+        self_model = root.get("operational_self_model")
+        self_model = dict(self_model) if isinstance(self_model, Mapping) else {}
+        if not ecology:
+            return appraisal
+
+        qfat = _clamp01(ecology.get("question_fatigue", 0.0))
+        pfat = _clamp01(ecology.get("public_fatigue", 0.0))
+        streak = max(0, int(ecology.get("unsolicited_streak", 0) or 0))
+        qsince = max(0, int(ecology.get("questions_since_user_contribution", 0) or 0))
+        habituation = dict(ecology.get("mode_habituation", {}) or {})
+        preferred = set(str(x) for x in (plan.get("effective_preferred_modes", ()) or ())) if plan.get("active") else set()
+        avoided = set(str(x) for x in (plan.get("avoid_modes", ()) or ())) if plan.get("active") else set()
+        over_q = _clamp01(self_model.get("over_questioning", 0.0))
+
+        mapped: list[ChoiceSemanticAppraisal] = []
+        for item in appraisal.choices:
+            if item.index < 0 or item.index >= len(frame.coalitions):
+                mapped.append(item)
+                continue
+            coalition = frame.coalitions[item.index]
+            action = str(getattr(coalition, "action_kind", "") or "").strip().lower()
+            args = dict(getattr(coalition, "arguments", {}) or {})
+            act = str(args.get("speech_act", "") or "").strip().lower()
+            kind = str(args.get("candidate_kind", "") or "").strip().lower()
+            target = _compact(args.get("semantic_target", ""), 1000)
+            mode = classify_interaction_mode(
+                speech_act=act, candidate_kind=kind, action_kind=action, text=target
+            )
+            expectation = str(args.get("response_expectation", "") or "").strip().lower() or response_expectation_for_mode(mode, speech_act=act)
+
+            if action in {"silence", "body_only"}:
+                boost = min(0.24, 0.18 * max(qfat, pfat))
+                mapped.append(replace(
+                    item,
+                    motive_validity=_clamp01(item.motive_validity + boost),
+                    reversibility=_clamp01(max(item.reversibility, 0.92)),
+                ))
+                continue
+
+            multiplier = 1.0
+            hab = _clamp01(habituation.get(mode, 0.0))
+            multiplier *= max(0.34, 1.0 - 0.55 * hab)
+            if mode == "ask":
+                multiplier *= max(0.12, 1.0 - 0.78 * qfat)
+                multiplier *= max(0.48, 1.0 - 0.30 * over_q)
+                if qsince >= 2:
+                    multiplier *= 0.22
+            if streak > 0 and mode not in {"task", "repair"}:
+                multiplier *= max(0.20, 1.0 - 0.26 * streak)
+            if mode in preferred:
+                multiplier *= 1.24
+            if mode in avoided:
+                multiplier *= 0.28
+            if expectation == "invited":
+                multiplier *= 0.88
+            elif expectation == "required" and mode not in {"task", "repair"}:
+                multiplier *= 0.60
+            if pfat >= 0.88 and mode not in {"task", "repair", "screen_react"}:
+                multiplier = min(multiplier, 0.12)
+
+            mapped.append(replace(
+                item,
+                motive_validity=_clamp01(item.motive_validity * multiplier),
+                continuity_fit=_clamp01(item.continuity_fit * (0.92 + 0.08 * min(1.0, multiplier))),
+            ))
+
+        commitments = tuple(dict.fromkeys((*appraisal.semantic_commitments,
+            "respect_interaction_ecology",
+            "questions_are_not_default_connection",
+            "response_expectation_none_creates_no_reply_debt",
+        )))
+        return replace(
+            appraisal, choices=tuple(mapped),
+            reason=f"interaction_ecology_v76:qfat={qfat:.2f}:pfat={pfat:.2f}:streak={streak}:" + _compact(appraisal.reason, 360),
+            semantic_commitments=commitments[:8],
+        )
+
     @classmethod
     def _apply_conversation_handoff_appraisal(
         cls,
@@ -1049,7 +1154,8 @@ class ExecutiveCortex:
             review_conditions=("remote_semantic_appraisal_unavailable",),
         )
         appraisal = self._apply_conversation_handoff_appraisal(frame, appraisal)
-        return self._apply_conversation_trajectory_appraisal(frame, appraisal)
+        appraisal = self._apply_conversation_trajectory_appraisal(frame, appraisal)
+        return self._apply_interaction_ecology_appraisal(frame, appraisal)
 
     def _appraise_autonomous_frame(
         self,
@@ -1070,6 +1176,8 @@ class ExecutiveCortex:
             "continuity_fit asks whether the semantic target remains coherent with the current thread, not whether ERIS should be quiet. "
             "runtime_context.conversation_handoff is AUTHORITATIVE for unfinished user requests, repair_needed and next_move_owner. "
             "runtime_context.conversation_trajectory is the authoritative semantic spine of the current topic. When it is active with high momentum, "
+            "runtime_context.persistent_individual contains Interaction Ecology and any multi-turn Relational Plan. Questions are not the default social action; "
+            "respect question fatigue, public pacing, response_expectation and plan-preferred COMMENT/MUTTER/SCREEN_REACT/STORY/SILENCE modes. "
             "score trajectory-linked DEEPEN/CONNECT/BRANCH material above unrelated random_chat novelty; do not infer that every idle tick needs a new topic. "
             "In autonomous mode user_text is intentionally empty; NEVER infer from that empty field that there is no pending user request. "
             "If the handoff says next_move_owner=eris, score candidates that actually fulfill its unresolved_intent/pending_shared_goal as higher continuity and motive. "
@@ -1147,7 +1255,8 @@ class ExecutiveCortex:
             )[:8],
         )
         appraisal = self._apply_conversation_handoff_appraisal(frame, appraisal)
-        return self._apply_conversation_trajectory_appraisal(frame, appraisal)
+        appraisal = self._apply_conversation_trajectory_appraisal(frame, appraisal)
+        return self._apply_interaction_ecology_appraisal(frame, appraisal)
 
     def review_subject_frame(
         self,

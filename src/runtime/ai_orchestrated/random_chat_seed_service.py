@@ -271,7 +271,9 @@ class RandomChatSeedGenerator:
             "requested_material_kind chỉ là hình dạng ưu tiên trong allowed_material_kinds của motive; nếu không có material thật, "
             "trả decision=none. Không đổi nguyên nhân chỉ để thỏa quota diversity. "
             "Material có thể là observation, opinion, association, memory_callback, unfinished_thought, desire, plan, reaction, "
-            "question, playful_impulse, small_contact, self_reflection hoặc hunch. Đây là mental object, không phải lời thoại hoàn chỉnh. "
+            "question, playful_impulse, small_contact, self_reflection, hunch hoặc story_fragment. Đây là mental object, không phải lời thoại hoàn chỉnh. "
+            "story_fragment là truyện/ẩn dụ/tình huống tưởng tượng ngắn để company/chill; phải giữ epistemic_mode=imagination, "
+            "không được kể như ký ức thật của ERIS hay sự kiện thật của user. "
             "small_contact là hợp lệ khi nó bám vào semantic_focus thật; không tạo check-in chung chung để lấp im lặng. "
             "question chỉ dùng khi có một gap cụ thể và phải khai expected_update: state/model nào của ERIS có thể đổi nếu user trả lời. "
             "Nếu expected_update rỗng, ưu tiên observation/opinion/reaction thay vì hỏi cho có hội thoại. "
@@ -955,7 +957,7 @@ class RandomChatSeedReservoir:
             "association": 0.90, "small_contact": 0.86, "playful_impulse": 0.84,
             "hunch": 0.82, "question": 0.80, "memory_callback": 0.92,
             "unfinished_thought": 0.88, "desire": 0.84, "plan": 0.82,
-            "self_reflection": 0.78,
+            "self_reflection": 0.78, "story_fragment": 0.87,
         }
         return max(
             allowed,

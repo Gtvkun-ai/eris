@@ -779,6 +779,12 @@ class AIChatOrchestrator:
         courtesy_runtime.observe_user_turn(turn_ref=turn_id, now=cycle_start)
         life_horizon_manager = ensure_life_horizon_manager(host)
         life_horizon_manager.observe_user_turn(turn_ref=turn_id, now=cycle_start)
+        # V76: cập nhật state cá thể/nhịp tương tác ngay khi user có turn.
+        from runtime.persistent_individual import ensure_persistent_individual_runtime
+        persistent_individual_runtime = ensure_persistent_individual_runtime(host)
+        persistent_individual_runtime.observe_user_turn(
+            user_text, turn_ref=turn_id, context_key="direct_chat", now=cycle_start
+        )
         _ledger_for_handoff = host._ensure_session_turn_ledger()
         _prior_turns_for_handoff = _ledger_for_handoff.recent_turns(
             before_index=user_turn.index, limit=8
@@ -1073,6 +1079,9 @@ class AIChatOrchestrator:
             "conversation_trajectory": trajectory_state.to_dict(),
             "conversation_courtesy": courtesy_runtime.runtime_context(now=cycle_start),
             "life_horizon": life_horizon_manager.refresh_from_runtime(now=cycle_start).to_dict(),
+            "persistent_individual": persistent_individual_runtime.projection_for_host(
+                host, now=cycle_start, context_key="direct_chat"
+            ),
             "causal_discourse": {
                 "self_caused_reaction_probability": handoff_state.self_caused_reaction_probability,
                 "repair_needed": handoff_state.repair_needed,
@@ -1126,6 +1135,9 @@ class AIChatOrchestrator:
         planning_snapshot["conversation_trajectory"] = trajectory_state.to_dict()
         planning_snapshot["conversation_courtesy"] = courtesy_runtime.runtime_context(now=cycle_start)
         planning_snapshot["life_horizon"] = life_horizon_manager.refresh_from_runtime(now=cycle_start).to_dict()
+        planning_snapshot["persistent_individual"] = persistent_individual_runtime.projection_for_host(
+            host, now=cycle_start, context_key="direct_chat"
+        )
         planning_snapshot["causal_discourse"] = {
             "self_caused_reaction_probability": handoff_state.self_caused_reaction_probability,
             "repair_needed": handoff_state.repair_needed,
@@ -2097,16 +2109,24 @@ class AIChatOrchestrator:
                     speech_act=_assistant_act_value,
                     now=time.time(),
                 )
+                _individual_receipt = persistent_individual_runtime.observe_assistant_commit(
+                    public_text, speech_act=_assistant_act_value, autonomous=False,
+                    context_key="direct_chat", now=time.time(),
+                )
+                _response_expectation = str(_individual_receipt.get("response_expectation", "") or "")
                 trajectory_runtime.observe_assistant_commit(
                     public_text,
                     turn_ref=_assistant_ref,
                     turn_index=_assistant_turn_index,
                     speech_act=_assistant_act_value,
+                    response_expectation=_response_expectation,
+                    autonomous=False,
                     now=time.time(),
                 )
                 handoff_runtime.note_self_commitment(public_text, now=time.time())
                 courtesy_runtime.observe_assistant_commit(
-                    public_text, speech_act=_assistant_act_value, turn_ref=_assistant_ref, now=time.time()
+                    public_text, speech_act=_assistant_act_value, response_expectation=_response_expectation,
+                    turn_ref=_assistant_ref, now=time.time()
                 )
                 life_horizon_manager.observe_assistant_commit(
                     speech_act=_assistant_act_value, turn_ref=_assistant_ref, now=time.time()
@@ -2608,12 +2628,21 @@ class AIAutonomousOrchestrator:
                 speech_act=_auto_speech_act,
                 now=time.time(),
             )
+            from runtime.persistent_individual import ensure_persistent_individual_runtime
+            _persistent_runtime = ensure_persistent_individual_runtime(host)
+            _individual_receipt = _persistent_runtime.observe_assistant_commit(
+                public_text, speech_act=_auto_speech_act, autonomous=True,
+                context_key="autonomous", now=time.time(),
+            )
+            _response_expectation = str(_individual_receipt.get("response_expectation", "") or "")
             from runtime.conversation_trajectory import ensure_conversation_trajectory_runtime
             ensure_conversation_trajectory_runtime(host).observe_assistant_commit(
                 public_text,
                 turn_ref=_auto_turn_ref,
                 turn_index=_auto_turn_index,
                 speech_act=_auto_speech_act,
+                response_expectation=_response_expectation,
+                autonomous=True,
                 now=time.time(),
             )
             _handoff_runtime.note_self_commitment(public_text, now=time.time())
@@ -2626,6 +2655,7 @@ class AIAutonomousOrchestrator:
             ensure_conversation_courtesy(host).observe_assistant_commit(
                 public_text,
                 speech_act=str(getattr(decision, "speech_act", "") or ""),
+                response_expectation=_response_expectation,
                 turn_ref=_auto_ref,
                 now=time.time(),
             )
@@ -2735,6 +2765,21 @@ class AIAutonomousOrchestrator:
                 )
             except Exception as exc:
                 _orchestrator_boundary_note(host, "startup.conversation_trajectory_prime", exc)
+            # V76: startup là re-entry appraisal, tuyệt đối không tự chiếm một
+            # public turn. State chỉ ghi khoảng cách từ lần mở trước + daypart để
+            # autonomous planner có thể comment/mutter/silence theo ngữ cảnh sau đó.
+            try:
+                from runtime.persistent_individual import ensure_persistent_individual_runtime
+                startup_view = ensure_persistent_individual_runtime(host).note_startup(now=time.time())
+                host.logger.info(
+                    "[persistent-individual-v76] startup gap=%.1fs late_night=%s short_return=%s opening=%s",
+                    float(startup_view.get("reentry_gap_seconds", 0.0) or 0.0),
+                    bool(startup_view.get("late_night", False)),
+                    bool(startup_view.get("short_return", False)),
+                    ",".join(startup_view.get("opening_modes", ()) or ()),
+                )
+            except Exception as exc:
+                _orchestrator_boundary_note(host, "startup.persistent_individual_prime", exc)
             host.logger.info(
                 "[architecture C startup] continuity primed rev=%s owner=%s pressure=%.2f pending=%s public_greeting=disabled",
                 handoff.revision,

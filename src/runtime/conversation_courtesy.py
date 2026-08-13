@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Conversation Courtesy Contract cho ERIS V74.
+"""Conversation Courtesy Contract V76 cho ERIS.
 
 Nếu ERIS vừa đặt câu hỏi cần câu trả lời, autonomous speech phải nhường lượt cho
 user. Đây là quyền giữ lượt hội thoại, không phải một heuristic "user có vẻ bận".
@@ -37,6 +37,7 @@ class CourtesyState:
     awaiting_user_answer: bool = False
     pending_question_id: str = ""
     pending_speech_act: str = ""
+    response_expectation: str = "none"
     question_text: str = ""
     asked_at: float = 0.0
     timeout_seconds: float = 180.0
@@ -97,13 +98,18 @@ class ConversationCourtesyContract:
         text: str,
         *,
         speech_act: str = "",
+        response_expectation: str = "",
         turn_ref: str = "",
         now: float | None = None,
     ) -> CourtesyState:
         current = float(now or time.time())
         clean = _compact(text, 1200)
         act = _compact(speech_act, 120).lower()
-        asks = bool(act in _QUESTION_ACTS or (clean and clean.rstrip().endswith("?")))
+        expectation = _compact(response_expectation, 24).lower()
+        if expectation not in {"required", "invited", "none"}:
+            expectation = "required" if bool(act in _QUESTION_ACTS or (clean and clean.rstrip().endswith("?"))) else "none"
+        # V76: punctuation không còn tự tạo reply debt nếu upstream đã gán NONE.
+        asks = expectation in {"required", "invited"}
         with self._lock:
             prior = self._state
             if asks:
@@ -111,6 +117,7 @@ class ConversationCourtesyContract:
                     awaiting_user_answer=True,
                     pending_question_id=_compact(turn_ref or f"assistant-question:{prior.revision + 1}", 220),
                     pending_speech_act=act or "question",
+                    response_expectation=expectation,
                     question_text=clean,
                     asked_at=current,
                     timeout_seconds=prior.timeout_seconds,
@@ -137,6 +144,7 @@ class ConversationCourtesyContract:
             "awaiting_user_answer": state.effective_wait(now=now),
             "courtesy_hold": state.effective_wait(now=now),
             "pending_question_id": state.pending_question_id,
+            "response_expectation": state.response_expectation,
             "courtesy_revision": state.revision,
         }
 

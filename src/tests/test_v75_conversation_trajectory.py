@@ -92,7 +92,7 @@ def test_trajectory_creates_separate_causal_motive_after_chat_reply() -> None:
     }
     motives = derive_causal_motives(ctx, now=102.0)
     trajectory = next(item for item in motives if item.cause_kind == "conversation_trajectory")
-    assert trajectory.cause_id.startswith(f"trajectory:{rt.snapshot().topic_id}:r")
+    assert trajectory.cause_id.startswith(f"trajectory:{rt.snapshot().topic_id}:e")
     assert trajectory.motive_kind == "continue_conversation_trajectory"
     assert trajectory.development_required is True
     assert "không mở chủ đề ngẫu nhiên" in trajectory.semantic_focus

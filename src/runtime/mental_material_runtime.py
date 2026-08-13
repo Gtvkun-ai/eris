@@ -55,7 +55,11 @@ def _material_speech_act(kind: str, *, expected_update: Sequence[str] = ()) -> s
     if kind == "memory_callback":
         return "memory_callback"
     if kind == "small_contact":
-        return "contextual_small_contact"
+        # V76: micro-presence không mặc định là một social probe. Surface có thể
+        # nói một câu lèm bèm/comment ngắn và không tạo nợ phản hồi.
+        return "ambient_mutter"
+    if kind == "story_fragment":
+        return "story_fragment"
     if kind == "plan":
         return "share_intention"
     if kind == "desire":
@@ -87,6 +91,7 @@ def _legacy_motive(motive_kind: str, material_kind: str = "") -> str:
         "plan": "want_to_express",
         "desire": "want_to_express",
         "self_reflection": "want_to_express",
+        "story_fragment": "want_to_share",
     }
     if material_kind in by_material:
         return by_material[material_kind]
@@ -263,6 +268,22 @@ class MentalMaterialRuntime:
             freshness=1.0,
         )
         self._materials[material.material_id] = material
+
+        # V76: một development seed bám ConversationTrajectory là private work
+        # thật và phải tiêu private budget/energy ngay khi material sinh. Nếu không
+        # ghi receipt này, "private_budget" chỉ đẹp trong JSON còn seed worker vẫn
+        # có thể nhai chủ đề như bò nhai lại, một thành tựu không ai yêu cầu.
+        if material.cause_kind == "conversation_trajectory":
+            note_private = getattr(
+                getattr(self.host, "conversation_trajectory_runtime", None),
+                "observe_private_development", None,
+            )
+            if callable(note_private):
+                try:
+                    note_private(semantic_gain=material.development_score, now=current)
+                except Exception as exc:
+                    self._log("debug", "[conversation-trajectory-v76] private development receipt degraded: %s", exc)
+
         self._log(
             "info",
             "[mental material] born id=%s kind=%s cause=%s motive=%s strength=%.2f quality=%.2f rumination=%s development=%s/%.2f content=%s",
@@ -406,6 +427,7 @@ class MentalMaterialRuntime:
                     "playful_impulse": "playful_probe",
                     "self_reflection": "self_reflection",
                     "hunch": "speculation",
+                    "story_fragment": "thought",
                     "opinion": "opinion",
                 }.get(material.material_kind, "thought"),
                 seed_epistemic_mode=material.epistemic_mode,
