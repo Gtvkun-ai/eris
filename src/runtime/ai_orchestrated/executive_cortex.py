@@ -713,8 +713,147 @@ class ExecutiveCortex:
         # salience. Task/capability speech already carries stronger typed evidence.
         return bool(
             arguments.get("seed_id")
-            or kind in {"random_chat", "social_check_in", "casual_curiosity", "playful_prompt", "inner_thought"}
-            or source in {"random_chat_seed", "subject_initiative", "relational"}
+            or kind in {
+                "random_chat", "social_check_in", "casual_curiosity", "playful_prompt", "inner_thought",
+                "conversation_repair", "continuation", "followup_reminder",
+            }
+            or source in {"random_chat_seed", "subject_initiative", "relational", "conversation_handoff"}
+        )
+
+    @staticmethod
+    def _conversation_handoff_from_frame(frame: SubjectDeliberationFrame) -> dict[str, Any]:
+        """Lấy handoff typed mà Subject đã đóng vào observation context.
+
+        V71 cố ý không đọc raw chat history ở đây. Executive chỉ dùng state đã
+        được discourse runtime hợp nhất, nhờ vậy direct chat và autonomous không
+        tự tạo hai phiên bản khác nhau về việc "hai người đang ở đâu".
+        """
+        observation_context = dict(getattr(getattr(frame, "observation", None), "context", {}) or {})
+        runtime_context = observation_context.get("runtime_context")
+        runtime_context = dict(runtime_context) if isinstance(runtime_context, Mapping) else {}
+        handoff = runtime_context.get("conversation_handoff")
+        return dict(handoff) if isinstance(handoff, Mapping) else {}
+
+    @classmethod
+    def _apply_conversation_handoff_appraisal(
+        cls,
+        frame: SubjectDeliberationFrame,
+        appraisal: NeuroSemanticAppraisal,
+    ) -> NeuroSemanticAppraisal:
+        """Buộc semantic appraisal tôn trọng continuity state authoritative.
+
+        Model vẫn được quyền chấm semantic dimensions, nhưng nó không được làm mất
+        một yêu cầu dang dở chỉ vì autonomous turn có ``user_text=""``. Đây không
+        phải hard-coded winner: handoff chỉ tăng/giảm motive + continuity của các
+        candidate dựa trên typed ownership/repair state, sau đó Neuro vẫn cạnh tranh.
+        """
+        handoff = cls._conversation_handoff_from_frame(frame)
+        if not handoff:
+            return appraisal
+        owner = str(handoff.get("next_move_owner", "") or "").strip().lower()
+        pressure = _clamp01(handoff.get("continuity_pressure", 0.0))
+        repair_needed = bool(handoff.get("repair_needed", False))
+        pending_goal = _compact(handoff.get("pending_shared_goal", ""), 520)
+        unresolved = _compact(handoff.get("unresolved_intent", ""), 520)
+        if owner != "eris" or pressure < 0.55 or not (repair_needed or pending_goal or unresolved):
+            return appraisal
+
+        mapped: list[ChoiceSemanticAppraisal] = []
+        aligned_indices: list[int] = []
+        for item in appraisal.choices:
+            if item.index < 0 or item.index >= len(frame.coalitions):
+                mapped.append(item)
+                continue
+            coalition = frame.coalitions[item.index]
+            action = str(getattr(coalition, "action_kind", "") or "").strip().lower()
+            args = dict(getattr(coalition, "arguments", {}) or {})
+            speech_act = str(args.get("speech_act", "") or "").strip().lower()
+            kind = str(args.get("candidate_kind", "") or "").strip().lower()
+            source = str(args.get("source_owner", "") or "").strip().lower()
+
+            repair_aligned = repair_needed and (
+                source == "conversation_handoff"
+                or kind == "conversation_repair"
+                or speech_act in {
+                    "causal_repair", "clarify", "clarification", "repair",
+                    "self_clarification", "continuation",
+                }
+            )
+            goal_aligned = (not repair_needed) and bool(pending_goal or unresolved) and (
+                speech_act == "resume_shared_goal"
+                or (source == "subject_initiative" and kind in {"followup_reminder", "continuation"})
+                or source == "conversation_handoff"
+            )
+            aligned = bool(repair_aligned or goal_aligned)
+            if aligned:
+                aligned_indices.append(item.index)
+                # Handoff không chọn câu thay Neuro. Nó chỉ khẳng định rằng đây là
+                # candidate thực sự trả món nợ hội thoại mà runtime đang giữ.
+                motive = max(item.motive_validity, 0.72 + 0.26 * pressure)
+                continuity = max(item.continuity_fit, 0.78 + 0.20 * pressure)
+                mapped.append(replace(
+                    item,
+                    motive_validity=_clamp01(motive),
+                    continuity_fit=_clamp01(continuity),
+                ))
+                continue
+
+            if action == "speak":
+                # Speech không liên quan vẫn được phép thắng nếu giá trị khác đủ
+                # mạnh, nhưng phải trả đúng continuity debt. Eris có thể lì, không
+                # được phép quên mình đang nợ gì.
+                penalty = (0.68 if repair_needed else 0.48) * pressure
+                mapped.append(replace(
+                    item,
+                    motive_validity=max(0.04, item.motive_validity * (1.0 - penalty)),
+                    continuity_fit=max(0.04, item.continuity_fit * (1.0 - min(0.82, penalty + 0.12))),
+                ))
+            elif action in {"silence", "body_only"} and aligned_indices:
+                # Khi đã có typed candidate giải quyết handoff, im lặng không còn
+                # được nhận continuity bonus chỉ vì autonomous input text đang rỗng.
+                mapped.append(replace(
+                    item,
+                    motive_validity=min(item.motive_validity, 0.30),
+                    continuity_fit=min(item.continuity_fit, 0.38),
+                ))
+            else:
+                mapped.append(item)
+
+        # Pass hai để hạ silence/body_only nếu candidate aligned nằm phía sau trong
+        # tuple. Tránh phụ thuộc thứ tự coalition, một bug rất ngớ ngẩn nhưng dễ có.
+        if aligned_indices:
+            remapped: list[ChoiceSemanticAppraisal] = []
+            for item in mapped:
+                action = ""
+                if 0 <= item.index < len(frame.coalitions):
+                    action = str(getattr(frame.coalitions[item.index], "action_kind", "") or "").strip().lower()
+                if action in {"silence", "body_only"}:
+                    item = replace(
+                        item,
+                        motive_validity=min(item.motive_validity, 0.30 if repair_needed else 0.38),
+                        continuity_fit=min(item.continuity_fit, 0.34 if repair_needed else 0.44),
+                    )
+                remapped.append(item)
+            mapped = remapped
+
+        if not aligned_indices:
+            # Không có candidate trả handoff thì không ép một speech sai thắng. Giữ
+            # appraisal nguyên để pipeline có thể WAIT và materialize ở vòng sau.
+            return appraisal
+
+        commitments = tuple(dict.fromkeys((
+            *appraisal.semantic_commitments,
+            "preserve_authoritative_conversation_handoff",
+            *( ("repair_previous_eris_move_before_topic_drift",) if repair_needed else ("fulfill_pending_shared_goal_before_unrelated_internal_speech",) ),
+        )))
+        return replace(
+            appraisal,
+            choices=tuple(mapped),
+            reason=(
+                f"handoff_authority_v71:{'repair' if repair_needed else 'pending_goal'}:"
+                + _compact(appraisal.reason, 430)
+            ),
+            semantic_commitments=commitments[:8],
         )
 
     def _local_autonomous_semantic_appraisal(
@@ -775,7 +914,7 @@ class ExecutiveCortex:
                 epistemic_support=epistemic,
                 reversibility=reversible,
             ))
-        return NeuroSemanticAppraisal(
+        appraisal = NeuroSemanticAppraisal(
             choices=tuple(choices),
             boundary_pressure=boundary,
             interruption_cost=interruption,
@@ -785,6 +924,7 @@ class ExecutiveCortex:
             cognitive_requests=("reduce_intrusion",) if interruption >= 0.55 else (),
             review_conditions=("remote_semantic_appraisal_unavailable",),
         )
+        return self._apply_conversation_handoff_appraisal(frame, appraisal)
 
     def _appraise_autonomous_frame(
         self,
@@ -803,6 +943,10 @@ class ExecutiveCortex:
             "the measurements into one final competition. motive_validity asks whether there is a concrete reason to act now, "
             "not merely a scheduler opportunity. novelty asks whether the semantic content adds something nontrivial. "
             "continuity_fit asks whether the semantic target remains coherent with the current thread, not whether ERIS should be quiet. "
+            "runtime_context.conversation_handoff is AUTHORITATIVE for unfinished user requests, repair_needed and next_move_owner. "
+            "In autonomous mode user_text is intentionally empty; NEVER infer from that empty field that there is no pending user request. "
+            "If the handoff says next_move_owner=eris, score candidates that actually fulfill its unresolved_intent/pending_shared_goal as higher continuity and motive. "
+            "If repair_needed=true, prefer a typed conversation_repair/causal_repair candidate over unrelated self-reflection; causal hypotheses remain uncertain premises, not facts. "
             "boundary_pressure is high ONLY for an explicit user quiet/closure boundary or an active turn collision with direct runtime evidence. "
             "User silence, low familiarity, low response rate, generic cooldown, or merely appearing busy are NOT boundaries. "
             "interruption_cost is ONLY turn-collision cost; ordinary quiet has zero interruption cost. epistemic_support is support for the "
@@ -859,7 +1003,7 @@ class ExecutiveCortex:
             ))
         if len(seen) != len(frame.coalitions):
             return None
-        return NeuroSemanticAppraisal(
+        appraisal = NeuroSemanticAppraisal(
             choices=tuple(choices),
             boundary_pressure=_clamp01(raw.get("boundary_pressure", 0.0)),
             interruption_cost=_clamp01(raw.get("interruption_cost", 0.0)),
@@ -875,6 +1019,7 @@ class ExecutiveCortex:
                 _compact(item, 180).lower() for item in raw.get("review_conditions", ()) if _compact(item, 180)
             )[:8],
         )
+        return self._apply_conversation_handoff_appraisal(frame, appraisal)
 
     def review_subject_frame(
         self,

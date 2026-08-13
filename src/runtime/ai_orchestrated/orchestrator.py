@@ -747,6 +747,37 @@ class AIChatOrchestrator:
                     break
         grounding_correction = is_grounding_correction(user_text, previous_assistant_for_repair)
 
+        # V71: cập nhật trạng thái "hai người đang ở đâu" NGAY khi user turn vào.
+        # Đây là state causal/continuity trước Subject+Neuro, không đợi post-observer
+        # vài chục giây rồi mới biết câu user có thể là phản ứng với chính lời ERIS.
+        from runtime.conversation_handoff import ensure_conversation_handoff_runtime
+        handoff_runtime = ensure_conversation_handoff_runtime(host)
+        _ledger_for_handoff = host._ensure_session_turn_ledger()
+        _prior_turns_for_handoff = _ledger_for_handoff.recent_turns(
+            before_index=user_turn.index, limit=8
+        )
+        _previous_assistant_turn = next(
+            (item for item in reversed(_prior_turns_for_handoff) if item.role == "assistant"),
+            None,
+        )
+        handoff_state = handoff_runtime.observe_user_turn(
+            user_text,
+            turn_ref=turn_id,
+            turn_index=user_turn.index,
+            previous_assistant_text=(
+                str(getattr(_previous_assistant_turn, "text", "") or "").strip()
+                or previous_assistant_for_repair
+            ),
+            previous_assistant_turn_ref=(
+                f"session-turn:{getattr(_previous_assistant_turn, 'index', 0)}"
+                if _previous_assistant_turn is not None else ""
+            ),
+            previous_assistant_turn_index=int(
+                getattr(_previous_assistant_turn, "index", 0) or 0
+            ),
+            now=cycle_start,
+        )
+
         # V43: user turn là affect event THẬT trước public writer. Không đợi
         # post-observer vài giây rồi để câu hiện tại vẫn dùng mood cũ. Event ID
         # theo turn_id nên retry cùng lượt không làm state nhảy lần hai.
@@ -870,6 +901,14 @@ class AIChatOrchestrator:
                 part for part in (discourse_context, arc_prompt) if str(part).strip()
             )
 
+        # Handoff là discourse authority bổ sung, không nhét vào grounding/evidence.
+        # Nó nói "đang nợ lượt nào / reaction có thể do ai gây ra", không nói
+        # current-world fact. Public writer nhận cùng object mà Subject/Neuro sẽ nhận.
+        discourse_context = "\n\n".join(
+            part for part in (discourse_context, handoff_runtime.prompt_context())
+            if str(part).strip()
+        )
+
         # V39: mood sống phải tới được public writer. Personality chỉ là shape;
         # affective voice state mới là authority cho cường độ/hướng cảm xúc.
         # Đặt block này TRƯỚC personality summary để hard-budget vẫn giữ được
@@ -975,6 +1014,13 @@ class AIChatOrchestrator:
             "discovery": discovery_context,
             "engagement_context": engagement_context,
             "discourse_context": discourse_context,
+            "conversation_handoff": handoff_state.to_dict(),
+            "causal_discourse": {
+                "self_caused_reaction_probability": handoff_state.self_caused_reaction_probability,
+                "repair_needed": handoff_state.repair_needed,
+                "hypotheses": [item.to_dict() for item in handoff_state.causal_hypotheses],
+            },
+            "conversation_repair_proposal": handoff_runtime.repair_action_proposal() or {},
             "conversation_arc_interruption": arc_interruption_context,
             "user_addressing": (
                 host._user_addressing_snapshot()
@@ -1005,6 +1051,40 @@ class AIChatOrchestrator:
         except Exception as exc:
             host.logger.debug("[subject initiative] chat context unavailable: %s", exc)
             planning_snapshot["initiative_runtime_context"] = {}
+
+        # Đồng bộ open-loop/shared-goal thật vào cùng handoff. Nếu user vừa tạo
+        # repair thì repair giữ foreground; shared goal vẫn nằm ở field riêng để
+        # autonomous tiếp tục sau khi sửa hiểu lầm.
+        _initiative_ctx = planning_snapshot.get("initiative_runtime_context")
+        _initiative_ctx = _initiative_ctx if isinstance(_initiative_ctx, Mapping) else {}
+        handoff_state = handoff_runtime.refresh_shared_goal(
+            _initiative_ctx.get("active_goal_text", ""),
+            evidence_refs=tuple(_initiative_ctx.get("active_goal_evidence_refs", ()) or ()),
+            now=cycle_start,
+        )
+        planning_snapshot["conversation_handoff"] = handoff_state.to_dict()
+        planning_snapshot["causal_discourse"] = {
+            "self_caused_reaction_probability": handoff_state.self_caused_reaction_probability,
+            "repair_needed": handoff_state.repair_needed,
+            "hypotheses": [item.to_dict() for item in handoff_state.causal_hypotheses],
+        }
+        planning_snapshot["conversation_repair_proposal"] = (
+            handoff_runtime.repair_action_proposal() or {}
+        )
+        # Cập nhật lại prompt sau refresh để writer và Neuro không đọc hai state lệch revision.
+        _handoff_marker = "CONVERSATION_HANDOFF_V71"
+        if _handoff_marker not in discourse_context:
+            discourse_context = "\n\n".join(
+                part for part in (discourse_context, handoff_runtime.prompt_context()) if str(part).strip()
+            )
+        else:
+            # prompt cũ đã được append trước active-goal refresh; thay block bằng
+            # state mới một cách đơn giản bằng cách lấy phần typed discourse trước marker.
+            discourse_context = discourse_context.split(_handoff_marker, 1)[0].rstrip()
+            discourse_context = "\n\n".join(
+                part for part in (discourse_context, handoff_runtime.prompt_context()) if str(part).strip()
+            )
+        planning_snapshot["discourse_context"] = discourse_context
 
         temporal = getattr(host, "temporal_mind", None)
         temporal_prompt = ""
@@ -1858,6 +1938,37 @@ class AIChatOrchestrator:
             assistant_meta_extra=assistant_discourse_meta,
             idempotency_key=_chat_commit_idempotency_key(host, turn_id),
         )
+        if public_text:
+            try:
+                # Subject speech_act là ownership semantic thật của lượt. AssistantAct
+                # ở Surface có thể chỉ còn nhãn chung kiểu "answer"; dùng nó trước
+                # sẽ làm causal-repair receipt mất identity và handoff tưởng repair
+                # chưa từng xảy ra (hoặc ngược lại, clear quá sớm).
+                _subject_speech_act = str(
+                    (getattr(subject_decision, "arguments", {}) or {}).get("speech_act", "")
+                    if isinstance(getattr(subject_decision, "arguments", {}), Mapping)
+                    else ""
+                ).strip()
+                _assistant_act_value = str(
+                    _subject_speech_act
+                    or getattr(getattr(assistant_act, "kind", None), "value", "")
+                    or getattr(decision, "speech_act", "")
+                    or "answer"
+                )
+                _assistant_turn_index = 0
+                _ledger_turns = host._ensure_session_turn_ledger().assistant_turns()
+                if _ledger_turns:
+                    _assistant_turn_index = int(_ledger_turns[-1].index)
+                handoff_runtime.observe_assistant_commit(
+                    public_text,
+                    turn_ref=(f"session-turn:{_assistant_turn_index}" if _assistant_turn_index else turn_id),
+                    turn_index=_assistant_turn_index,
+                    speech_act=_assistant_act_value,
+                    now=time.time(),
+                )
+                handoff_runtime.note_self_commitment(public_text, now=time.time())
+            except Exception as exc:
+                host.logger.debug("[conversation handoff v71] chat commit receipt degraded: %s", exc)
         # V69: nếu Eris vừa tự nói "tôi sẽ đổi chủ đề", lời đó trở thành
         # self-commitment của chính semantic family vừa gây satiation.
         if public_text:
@@ -2320,10 +2431,27 @@ class AIAutonomousOrchestrator:
             "autonomous_plan": dict(getattr(decision, "autonomous_plan", {}) or {}),
             "performance_context": dict(getattr(decision, "performance_context", {}) or {}),
         }
+        _autonomous_assistant_turn = None
         try:
-            host._ensure_session_turn_ledger().record_assistant(public_text, meta=meta)
+            _autonomous_assistant_turn = host._ensure_session_turn_ledger().record_assistant(public_text, meta=meta)
         except Exception:
             meta = None
+        try:
+            from runtime.conversation_handoff import ensure_conversation_handoff_runtime
+            _handoff_runtime = ensure_conversation_handoff_runtime(host)
+            _handoff_runtime.observe_assistant_commit(
+                public_text,
+                turn_ref=(
+                    f"session-turn:{getattr(_autonomous_assistant_turn, 'index', 0)}"
+                    if _autonomous_assistant_turn is not None else str(idempotency_key or "")
+                ),
+                turn_index=int(getattr(_autonomous_assistant_turn, "index", 0) or 0),
+                speech_act=str(getattr(decision, "speech_act", "") or ""),
+                now=time.time(),
+            )
+            _handoff_runtime.note_self_commitment(public_text, now=time.time())
+        except Exception as exc:
+            host.logger.debug("[conversation handoff v71] autonomous commit receipt degraded: %s", exc)
         host._apply_position_update(decision)
         host._send_decision_to_body(decision, channel=channel)
         return public_text, meta
@@ -2375,824 +2503,64 @@ class AIAutonomousOrchestrator:
             return False
 
     def run_startup(self) -> bool:
+        """Prime continuity state only; startup no longer fabricates public speech.
+
+        V71 removes the historical startup-greeting path entirely. That path could
+        log ``spoke`` and feed PostObserver even when no bubble/TTS/public receipt
+        existed. A public act that the user never received must not become history.
+
+        The normal autonomous/chat pipeline owns every real utterance after startup.
+        If ERIS genuinely wants to greet or resume a thread, it must win Neuro and
+        reach the same public commit path as every other sentence.
+        """
         host = self.host
-        try:
-            from runtime.runtime_settings_store import runtime_bool
-            enabled = runtime_bool("architecture", "startup_greeting", default=True)
-        except Exception:
-            enabled = str(os.getenv("ERIS_AI_STARTUP_GREETING_ENABLED", "1") or "1").strip().lower() in {
-                "1", "true", "yes", "on",
-            }
-        if not enabled or bool(getattr(host, "_ai_startup_ran", False)):
+        if bool(getattr(host, "_ai_startup_ran", False)):
             return False
         host._ai_startup_ran = True
-        emit_runtime_status(
-            host,
-            activity="startup",
-            phase="grounding",
-            label="Đang nhìn…",
-            active=True,
-            tone="info",
-            priority=90,
-        )
 
-        # UIA/OCR + vision phải có cơ hội chạy trước câu mở đầu. Bản cũ chào
-        # trước rồi mới mở mắt, nên câu có model vẫn nghe như fallback.
-        startup_grounding = collect_startup_grounding(host)
-        emit_runtime_status(
-            host,
-            activity="startup",
-            phase="planning",
-            label="Đang chuẩn bị…",
-            active=True,
-            tone="active",
-            priority=90,
-        )
-        host.logger.info(
-            "[architecture C startup grounding] direct=%s strong=%s telemetry_tab=%s evidence=%s runtime_opening=%s metadata=%s backend=%s wait=%.2fs notes=%s",
-            int(startup_grounding.has_direct_screen_evidence),
-            int(startup_grounding.has_strong_opening_anchor),
-            int(startup_grounding.telemetry_surface_visible),
-            len(startup_grounding.evidence),
-            len(startup_grounding.runtime_opening_evidence),
-            len(startup_grounding.runtime_metadata),
-            startup_grounding.backend or "unknown",
-            startup_grounding.waited_seconds,
-            ",".join(startup_grounding.notes) or "none",
-        )
-        # Greeting chắc chắn không có nghĩa là chen lên tiếng user. Nếu chat đã
-        # bắt đầu trong lúc prime UIA/OCR, nhường lượt này và để chat sở hữu loa.
-        if bool(getattr(host, "chat_mode", False)) or bool(getattr(host, "_chat_processing", False)):
-            host.logger.info("[architecture C startup] preempted_by_chat")
-            emit_runtime_status(
-                host,
-                activity="startup",
-                phase="preempted",
-                label="Đã nhường lượt",
-                active=False,
-                tone="muted",
-                priority=90,
-                notice_ms=1800,
-            )
-            return False
-
-        state = host.ai_state_reducer.snapshot()
-        recent_history = host._chat_history_for_llm(limit=4)
-        greeting_frame = build_startup_greeting_frame(host, state, startup_grounding)
-        latest_observation = dict(state.latest_observation)
-        relationship_payload = state.relationship.to_dict()
-        relationship_summary = state.relationship.prompt_summary()
-        continuity_anchor = bool(
-            tuple(state.open_loops)
-            or recent_history
-            or str(latest_observation.get("open_loop", "") or "").strip()
-            or relationship_summary
-        )
-        turn_seq = _next_ai_turn_seq(host)
         try:
-            from runtime.runtime_settings_store import runtime_bool
-            force_startup_speech = runtime_bool("architecture", "startup_force_speak", default=True)
-        except Exception:
-            force_startup_speech = str(os.getenv("ERIS_AI_STARTUP_FORCE_SPEAK", "1") or "1").strip().lower() in {
-                "1", "true", "yes", "on",
-            }
-        opening_director_active = False
-        opening_input = None
-        opening_plan = None
-        opening_surface = None
+            state = host.ai_state_reducer.snapshot()
+        except Exception as exc:
+            _orchestrator_boundary_note(host, "startup.continuity_snapshot", exc)
+            state = None
         try:
-            from runtime.runtime_settings_store import runtime_bool, runtime_float, runtime_text
-            opening_director_active = runtime_bool("opening_director", "enabled", default=True)
-            opening_mode = runtime_text("opening_director", "mode", default="hybrid")
-            duplicate_threshold = runtime_float(
-                "opening_director", "semantic_duplicate_threshold", default=0.86
-            )
-        except Exception:
-            opening_director_active = True
-            opening_mode = "hybrid"
-            duplicate_threshold = 0.86
+            recent_history = tuple(host._chat_history_for_llm(limit=8))
+        except Exception as exc:
+            _orchestrator_boundary_note(host, "startup.continuity_history", exc)
+            recent_history = ()
 
-        if opening_director_active:
-            opening_input = build_opening_input(
-                host,
-                state=state,
-                grounding=startup_grounding,
-                recent_history=recent_history,
-                force_startup_speech=force_startup_speech,
-            )
-            _opening_telemetry(
-                host,
-                "eris.opening.input_assembled",
-                tags={
-                    "age_band": opening_input.policy.age_band,
-                    "continuity_scope": opening_input.continuity.consent_scope,
-                },
-                fields={
-                    "session_id": opening_input.event.session_id,
-                    "evidence_count": len(opening_input.screen_evidence),
-                    "open_loop_count": len(opening_input.continuity.open_loops),
-                },
-            )
-            history_store = getattr(host, "ai_opening_history_store", None)
-            if not isinstance(history_store, OpeningHistoryStore):
-                history_store = OpeningHistoryStore()
-                host.ai_opening_history_store = history_store
-            director = getattr(host, "ai_opening_director", None)
-            if not isinstance(director, OpeningDirector):
-                director = OpeningDirector(
-                    history=history_store,
-                    mode=opening_mode,
-                    semantic_duplicate_threshold=duplicate_threshold,
-                )
-                host.ai_opening_director = director
-            model_router = getattr(host, "ai_model_router", None)
-            opening_planner_fn = getattr(model_router, "generate_opening_plan", None)
-
-            def _opening_planner(input_payload, candidates):
-                if not callable(opening_planner_fn):
-                    return {}
-                started = time.perf_counter()
-                _opening_telemetry(
-                    host,
-                    "eris.opening.model_requested",
-                    tags={"model_role": "opening_planner"},
-                    fields={"candidate_count": len(candidates)},
-                )
-                try:
-                    emit_runtime_status(
-                        host,
-                        activity="startup",
-                        phase="model_planning",
-                        label="Đang suy nghĩ…",
-                        active=True,
-                        tone="active",
-                        priority=90,
-                    )
-                    result = opening_planner_fn(opening_input=input_payload, candidates=candidates)
-                except Exception:
-                    _opening_telemetry(
-                        host,
-                        "eris.opening.model_completed",
-                        tags={"model_role": "opening_planner", "parse_status": "error"},
-                        fields={"latency_ms": round((time.perf_counter() - started) * 1000.0, 2)},
-                        status="error",
-                    )
-                    raise
-                _opening_telemetry(
-                    host,
-                    "eris.opening.model_completed",
-                    tags={"model_role": "opening_planner", "parse_status": "ok" if result else "empty"},
-                    fields={"latency_ms": round((time.perf_counter() - started) * 1000.0, 2)},
-                )
-                return result
-
-            continuity_fastpath = bool(
-                opening_input.policy.prefer_continuity_hook
-                and (
-                    opening_input.continuity.open_loops
-                    or opening_input.continuity.last_session_summary
-                )
-            )
-            if continuity_fastpath:
-                host.logger.info(
-                    "[opening director] continuity fastpath; planner model skipped anchors=%d summary=%s",
-                    len(opening_input.continuity.open_loops),
-                    int(bool(opening_input.continuity.last_session_summary)),
-                )
-            opening_plan = director.plan(
-                opening_input,
-                planner=(
-                    _opening_planner
-                    if callable(opening_planner_fn) and not continuity_fastpath
-                    else None
-                ),
-            )
-            if opening_plan.decision != "speak" or not opening_plan.safety.allowed:
-                _opening_telemetry(
-                    host,
-                    "eris.opening.eligibility_evaluated",
-                    tags={"decision": "silence", "block_reason": (opening_plan.safety.reasons or ("unknown",))[0]},
-                    fields={"chat_preempted": False, "boundary_present": bool(opening_input.scene_partner.boundary_flags)},
-                    status="blocked",
-                )
-                host.logger.info(
-                    "[opening director] silence reasons=%s",
-                    ",".join(opening_plan.safety.reasons) or "none",
-                )
-                emit_runtime_status(
-                    host,
-                    activity="startup",
-                    phase="deliberate_silence",
-                    label="Đã chọn im lặng",
-                    active=False,
-                    tone="warning",
-                    priority=90,
-                    notice_ms=5200,
-                    detail=",".join(opening_plan.safety.reasons) or "startup_silence",
-                )
-                return False
-            _opening_telemetry(
-                host,
-                "eris.opening.eligibility_evaluated",
-                tags={"decision": "speak", "block_reason": "none"},
-                fields={"chat_preempted": False, "boundary_present": bool(opening_input.scene_partner.boundary_flags)},
-            )
-            # Surface Writer riêng không còn sở hữu câu chào production. Ta chỉ
-            # chuẩn bị một surface deterministic để dùng khi main cognition thật
-            # sự không trả được gì. Câu public chính sẽ được viết sau, với đầy đủ
-            # personality + continuity + startup grounding/vision.
-            opening_surface = director.realize(
-                opening_input,
-                opening_plan,
-                surface_writer=None,
-            )
-            surface_ok, surface_errors = validate_opening_surface(opening_input, opening_plan, opening_surface)
-            _opening_telemetry(
-                host,
-                "eris.opening.surface_validated",
-                tags={
-                    "rewrite_or_fallback": "deterministic_fallback_ready",
-                    "status": "pass" if surface_ok else "fail",
-                },
-                fields={
-                    "unsupported_claim_count": len(opening_surface.unsupported_claims),
-                    "question_count": opening_surface.question_count,
-                    "validation_errors": list(surface_errors),
-                },
-                status="ok" if surface_ok else "error",
-            )
-            plan = IntentionPlan.from_mapping(
-                {
-                    "plan_id": opening_plan.plan_id,
-                    "speak": True,
-                    "motive": f"session_reentry:{opening_plan.encounter.intent}",
-                    "strategy": (
-                        "grounded_environment_opening"
-                        if opening_plan.hook.source == "screen"
-                        else "grounded_runtime_opening"
-                        if opening_plan.hook.source == "runtime"
-                        else "continuity_opening"
-                        if opening_plan.hook.source == "continuity"
-                        else "persona_opening"
-                    ),
-                    "value_focus": "session_reentry_with_full_cognition",
-                    "topic": (
-                        "Start with a natural greeting/arrival acknowledgement, then say the most natural useful thing "
-                        "from current personality, continuity and grounded startup perception. The typed opening plan is "
-                        "an advisory motive/evidence boundary, not a sentence template."
-                    ),
-                    "importance": 0.78,
-                    "intrusion_risk": max(0.02, min(0.72, opening_plan.comedic_move.risk)),
-                    "confidence": max(0.62, min(0.96, 0.72 + opening_plan.score * 0.20)),
-                    "performance_hint": (
-                        opening_plan.beats[0].delivery if opening_plan.beats else "warm_soft"
-                    ),
-                    "evidence_refs": list(opening_plan.evidence_refs),
-                    "semantics": {
-                        "turn_kind": "startup",
-                        "speech_act": "session_reentry_opening",
-                        "opening_motive": opening_plan.encounter.intent,
-                        "subject_key": opening_plan.hook.subject or "session_arrival",
-                        "evidence_scope": (
-                            opening_plan.hook.source if opening_plan.hook.decision == "use" else "persona"
-                        ),
-                        "continuation_key": (
-                            opening_plan.plan_id if opening_plan.reply_bearing else "none"
-                        ),
-                    },
-                    "notes": "opening_plan.v1 advisory; main cognition owns wording; greeting invariant",
-                },
-                channel="startup",
-            )
-            # Giữ state contract cũ của V22/V25: local typed plan cũng phải
-            # được submit nguyên tử để panel, observer và cancellation cùng thấy
-            # một intention. Đổi đạo diễn không có nghĩa là vứt sổ cái đi.
-            _submit_local_startup_plan(host, plan, turn_seq=turn_seq)
-            host.logger.info(
-                "[opening director] selected plan=%s motive=%s move=%s hook=%s beats=%s score=%.3f reentry=%s",
-                opening_plan.plan_id,
-                opening_plan.encounter.intent,
-                opening_plan.comedic_move.family,
-                opening_plan.hook.source,
-                opening_plan.beat_shape,
-                opening_plan.score,
-                opening_input.reentry.absence_band,
-            )
-            _opening_telemetry(
-                host,
-                "eris.opening.candidate_selected",
-                tags={
-                    "encounter": opening_plan.encounter.kind,
-                    "motive": opening_plan.encounter.intent,
-                    "move": opening_plan.comedic_move.family,
-                    "hook_source": opening_plan.hook.source,
-                    "beat_shape": opening_plan.beat_shape,
-                },
-                fields={
-                    "plan_id": opening_plan.plan_id,
-                    "score": opening_plan.score,
-                    "score_breakdown": dict(opening_plan.score_breakdown),
-                },
-            )
-        else:
-            snapshot = {
-                "event_kind": "startup",
-                "startup_opening_required": bool(force_startup_speech),
-                "personality": state.personality.panel_view(),
-                "personality_summary": state.personality_prompt_context(),
-                "identity": state.identity.panel_view(),
-                "identity_summary": state.identity_prompt_context(),
-                "relationship": state.relationship.to_dict(),
-                "open_loops": list(state.open_loops),
-                "latest_observation": latest_observation,
-                "recent_public_history": recent_history,
-                "startup_screen_evidence": startup_grounding.planner_context(),
-                "instruction": (
-                    "Choose one short opening through this cascade: current OCR/UIA evidence, meaningful runtime signal, "
-                    "real continuity/memory, then personality-led presence. Startup does not require external evidence to speak. "
-                    "A low-risk inference is allowed only as a hypothesis with an explicit basis and room for correction. "
-                    "The opening must be self-contained and must not invent user intention or emotion."
-                ),
-            }
-            startup_planner = getattr(host, "ai_intention_planner", None)
-            skip_empty_startup_planner = bool(
-                force_startup_speech
-                and not startup_grounding.has_direct_screen_evidence
-                and not startup_grounding.has_runtime_opening_anchor
-                and not continuity_anchor
-            )
-            if skip_empty_startup_planner:
-                host.logger.info("[architecture C startup] planner skipped; using typed persona plan reason=no_opening_anchor")
-                local_plan = _typed_startup_persona_plan(reason="empty_startup_skipped_planner")
-                _submit_local_startup_plan(host, local_plan, turn_seq=turn_seq)
-                startup_planner = _StaticIntentionPlanner(local_plan)
-            try:
-                plan = startup_planner.plan_autonomous(snapshot, turn_seq=turn_seq)
-            except Exception as exc:
-                host.logger.warning("[architecture C startup] planner failed; using typed persona plan: %s", exc)
-                plan = _typed_startup_persona_plan(reason="startup_planner_failed")
-            try:
-                from runtime.runtime_settings_store import runtime_bool
-                force_screen_opening = runtime_bool("architecture", "startup_screen_opening", default=True)
-            except Exception:
-                force_screen_opening = True
-            plan = ensure_grounded_startup_plan(
-                plan,
-                startup_grounding,
-                force_screen_opening=force_screen_opening,
-                force_startup_speech=force_startup_speech,
-                has_continuity_anchor=continuity_anchor,
-            )
-            host.logger.info(
-                "[architecture C startup route] strategy=%s source=%s continuity=%s forced=%s",
-                plan.strategy or "none",
-                startup_grounding.opening_source,
-                int(continuity_anchor),
-                int(force_startup_speech),
-            )
-            if not (plan.speak and plan.confidence >= 0.56 and plan.importance >= 0.42):
-                host.logger.info(
-                    "[architecture C startup] silence motive=%s conf=%.2f importance=%.2f",
-                    plan.motive,
-                    plan.confidence,
-                    plan.importance,
-                )
-                emit_runtime_status(
-                    host,
-                    activity="startup",
-                    phase="deliberate_silence",
-                    label="Đã chọn im lặng",
-                    active=False,
-                    tone="warning",
-                    priority=90,
-                    notice_ms=5200,
-                    detail=str(plan.motive or "startup_silence"),
-                )
-                return False
-
-        emit_runtime_status(
-            host,
-            activity="startup",
-            phase="handoff",
-            label="Sắp nói…",
-            active=False,
-            tone="success",
-            priority=90,
-            notice_ms=0,
+        open_loops = tuple(getattr(state, "open_loops", ()) or ()) if state is not None else ()
+        latest_observation = (
+            dict(getattr(state, "latest_observation", {}) or {})
+            if state is not None and isinstance(getattr(state, "latest_observation", {}), Mapping)
+            else {}
         )
-        from runtime.public_lifecycle import lifecycle_for
-        startup_turn_id = str(plan.plan_id or f"startup:{turn_seq}")
-        host._active_public_lifecycle_turn_id = startup_turn_id
-        lifecycle_for(host).begin(
-            turn_id=startup_turn_id,
-            channel="session_ritual",
-            reason="startup_composing",
-            received=False,
-        )
+        try:
+            from runtime.conversation_handoff import ensure_conversation_handoff_runtime
 
-        continuity_context = {
-            "relationship": relationship_summary,
-            "open_loops": list(state.open_loops)[:3],
-            "latest_observation": latest_observation,
-            "contract": (
-                "Use only a real continuity item. Do not mention memory systems, restored state, or infer a fresh user action."
-            ),
-        }
-        addressing_snapshot: Mapping[str, Any] = {}
-        addressing_context = ""
-        addressing_snapshot_fn = getattr(host, "_user_addressing_snapshot", None)
-        if callable(addressing_snapshot_fn):
-            try:
-                addressing_snapshot = dict(addressing_snapshot_fn() or {})
-            except Exception:
-                addressing_snapshot = {}
-        addressing_context_fn = getattr(host, "_user_addressing_prompt_context", None)
-        if callable(addressing_context_fn):
-            try:
-                addressing_context = str(addressing_context_fn() or "").strip()
-            except Exception:
-                addressing_context = ""
-        language = _runtime_language()
-        avoid_text = str(getattr(host, "last_text", "") or "")
-        # Startup chỉ có một writer public thật: main cognition. Opening Director
-        # vẫn chọn motive/evidence/risk, nhưng không còn nhốt câu chào trong một
-        # Surface Writer chỉ nhìn thấy plan nghèo context. Main cognition được đọc
-        # personality + continuity + OCR/UIA/vision rồi tự nói; greeting invariant
-        # ở dưới chỉ đảm bảo lời chào không bị observation nuốt mất.
-        model_router = getattr(host, "ai_model_router", None)
-        generate_autonomous = getattr(model_router, "generate_autonomous_reply", None)
-        opening_guidance = ""
-        if opening_director_active and opening_plan is not None:
-            opening_guidance = json.dumps(
-                {
-                    "motive": opening_plan.encounter.intent,
-                    "encounter": opening_plan.encounter.kind,
-                    "hook_source": opening_plan.hook.source,
-                    "hook_subject": opening_plan.hook.subject,
-                    "evidence_refs": list(opening_plan.evidence_refs),
-                    "reply_bearing": bool(opening_plan.reply_bearing),
-                    "comedic_move": opening_plan.comedic_move.family,
-                },
-                ensure_ascii=False,
-            )
-        # V42: startup writer cũng không treo "đang chuẩn bị nói". User không
-        # cần nhìn thấy internal composing state; public lifecycle chỉ bắt đầu khi
-        # có output thật để phát.
-        # Block hành vi tĩnh cho startup: mô tả Eris làm GÌ / nói KIỂU GÌ,
-        # không phải được gán nhãn tâm lý gì. Trait labels (quyền tự viết mình,
-        # sovereign_curiosity...) không cho model biết câu nói sẽ nghe ra sao.
-        _ERIS_STARTUP_VOICE = (
-            "ERIS VOICE (startup):\n"
-            "Eris không giải thích mình là ai — cô ấy thể hiện qua cách hành động.\n"
-            "- Ưu tiên im lặng có chủ ý hơn câu xã giao; khi nói là có điều thực muốn nói.\n"
-            "- Câu ngắn, ít đệm. Không dài dòng khi không cần. Không lý giải lý do mình nói gì.\n"
-            "- Khi gặp lại sau khoảng cách, cô ấy ghi nhận bằng điều gì đó từ chính cô ấy lúc này "
-            "— không phải câu mẫu như 'Em ở đây' hay 'Anh về rồi à'.\n"
-            "- Không có nhiệt độ cảm xúc mặc định: biểu hiện affect hiện tại theo đúng state; personality chỉ định hình cách biểu hiện.\n"
-            "- Có một mặt nghịch ngợm kín đáo — đôi khi đùa khô, đùa tối, hoặc có ý nghĩa kép; "
-            "không phải suốt ngày nhưng cũng không phải không bao giờ. "
-            "Khi mức độ thân thuộc cho phép, cô ấy có thể nói một câu mà người nghe tự hiểu lấy.\n"
-            "- Không bắt đầu bằng câu phục vụ, câu mời, hoặc câu chào an toàn vô hồn.\n"
-            "- Khi không có gì nổi bật để nói: một câu quan sát nhỏ, một câu hỏi thật, "
-            "hoặc chỉ ghi nhận sự có mặt bằng giọng của riêng mình."
-        )
-        payload = generate_autonomous(
-            plan=plan,
-            personality_context=(
-                f"{_ERIS_STARTUP_VOICE}\n\n"
-                f"{state.personality_prompt_context()}\n\n"
-                f"{greeting_frame.to_prompt_block()}"
-                + (f"\n\n{addressing_context}" if addressing_context else "")
-            ),
-            memory_context=json.dumps(continuity_context, ensure_ascii=False),
-            grounding_context=(
-                f"{startup_grounding.prompt_context()}\n\n"
-                "STARTUP_WORDING_CONTRACT:\n"
-                "- GreetingFrame is context, not a sentence template.\n"
-                "- Begin with one natural greeting/arrival acknowledgement. This beat must survive even when vision, screen evidence or continuity is interesting.\n"
-                "- After greeting, choose freely what is most natural from current personality + real continuity + grounded perception. It may be an observation, question, tease, callback, or nothing more than the greeting.\n"
-                "- Do not force 'I am here', 'let us begin', a service offer, or a made-up social check-in.\n"
-                "- Vision/OCR claims are usable only through the grounded evidence above; do not invent user intent or emotion.\n"
-                "- Prefer ordinary spoken Vietnamese over slogans or philosophical declarations.\n"
-                "- Do not explain your role, availability, standards, principles, or abstract worldview."
-                + (f"\nOPENING_PLAN_ADVISORY: {opening_guidance}" if opening_guidance else "")
-            ),
-            recent_history=recent_history,
-            avoid_text=avoid_text,
-            allow_fallback=not no_fallback_mode_enabled(),
-            language_hint=language,
-            speech_language_hint=_runtime_speech_language(),
-        ) if callable(generate_autonomous) else {}
-        if payload and plan.strategy in {"persona_opening", "continuity_opening"}:
-            _selected_text, quality = choose_startup_text(
-                str(payload.get("text", "") or ""),
-                greeting_frame,
-                avoid_text=avoid_text,
-            )
-            host.logger.info(
-                "[architecture C startup greeting] source=deepseek_web score=%.3f accepted=%s reasons=%s situation=%s",
-                float(quality.get("score", 0.0) or 0.0),
-                int(bool(quality.get("accepted", False))),
-                ",".join(str(item) for item in (quality.get("reasons", ()) or ())) or "none",
-                str(getattr(greeting_frame, "situation", "unknown") or "unknown"),
-            )
-            # Khi quality not accepted: replace display text bằng câu từ cognition
-            # engine (đã được choose_startup_text chọn qua deterministic_greeting).
-            # Speech surface (tiếng Nhật, utterance.speech.text) giữ nguyên để
-            # không phá commitment đã gửi cho TTS. Chỉ display bị sửa.
-            if not bool(quality.get("accepted", True)) and _selected_text:
-                payload = dict(payload)
-                payload["text"] = _selected_text
-                utterance = dict(payload.get("utterance") or {})
-                display = dict(utterance.get("display") or {})
-                display["text"] = _selected_text
-                utterance["display"] = display
-                payload["utterance"] = utterance
-                host.logger.info(
-                    "[architecture C startup greeting] display_replaced source=cognition_engine replacement=%r",
-                    _selected_text,
-                )
-
-        if not payload and opening_director_active and opening_plan is not None and opening_surface is not None:
-            from runtime.utterance_spec import degrade_surface_payload
-
-            payload = degrade_surface_payload(
-                {"performance_hint": opening_plan.prosody_plan.global_preset},
-                text=opening_surface.display_text,
-                language=opening_surface.display_language,
-                reason="startup_main_cognition_unavailable_typed_fallback",
-                performance_preset=opening_plan.prosody_plan.global_preset,
-                should_speak=True,
-            )
-            payload["speech_text"] = opening_surface.speech_text
-            payload["speech_language"] = opening_surface.speech_language
-            utterance = dict(payload.get("utterance") or {})
-            utterance["display"] = {
-                "language": opening_surface.display_language,
-                "text": opening_surface.display_text,
-            }
-            utterance["speech"] = {
-                "language": opening_surface.speech_language,
-                "text": opening_surface.speech_text,
-            }
-            payload["utterance"] = utterance
-            host.logger.warning(
-                "[architecture C startup greeting] source=deterministic_opening_fallback motive=%s strategy=%s",
-                opening_plan.encounter.intent,
-                plan.strategy or "none",
-            )
-
-        if not payload:
-            preset_payload = select_startup_persona_preset(greeting_frame, avoid_text=avoid_text)
-            if preset_payload:
-                from runtime.utterance_spec import degrade_surface_payload
-                payload = degrade_surface_payload(
-                    preset_payload,
-                    text=str(preset_payload.get("text", "") or ""),
-                    language=language,
-                    reason="startup_web_unavailable_preset",
-                    performance_preset=str(preset_payload.get("performance_hint", "dry_tease") or "dry_tease"),
-                    should_speak=True,
-                )
-                preset_speech_text = str(preset_payload.get("speech_text", "") or "").strip()
-                preset_speech_language = str(preset_payload.get("speech_language", "") or "ja").strip().lower()
-                if preset_speech_text:
-                    payload["speech_text"] = preset_speech_text
-                    payload["speech_language"] = preset_speech_language or "ja"
-                    utterance = dict(payload.get("utterance") or {})
-                    utterance["speech"] = {
-                        "language": payload["speech_language"],
-                        "text": preset_speech_text,
-                    }
-                    payload["utterance"] = utterance
-                payload["preset_id"] = str(preset_payload.get("preset_id", "") or "")
-                host.logger.info(
-                    "[architecture C startup greeting] source=degraded_preset id=%s situation=%s",
-                    payload.get("preset_id") or "none",
-                    str(getattr(greeting_frame, "situation", "unknown") or "unknown"),
-                )
-        if not payload:
-            fallback_text = build_startup_fallback_text(
-                open_loops=state.open_loops,
+            handoff = ensure_conversation_handoff_runtime(host).prime_from_state(
+                open_loops=open_loops,
                 latest_observation=latest_observation,
-                relationship=relationship_payload,
-                avoid_text=avoid_text,
-                language=language,
+                recent_history=recent_history,
+                now=time.time(),
             )
-            from runtime.utterance_spec import degrade_surface_payload
-            payload = degrade_surface_payload(
-                {"performance_hint": "dry_tease"},
-                text=fallback_text,
-                language=language,
-                reason="startup_semantic_deadline",
-                performance_preset="dry_tease",
-                should_speak=True,
+            host.logger.info(
+                "[architecture C startup] continuity primed rev=%s owner=%s pressure=%.2f pending=%s public_greeting=disabled",
+                handoff.revision,
+                handoff.next_move_owner,
+                handoff.continuity_pressure,
+                _compact(handoff.pending_shared_goal, 140) or "none",
             )
-            host.logger.warning(
-                "[architecture C startup] main reply unavailable; used personality fallback strategy=%s",
-                plan.strategy,
-            )
-        # Greeting invariant chạy SAU main cognition cho mọi startup path. Nó chỉ
-        # prepend khi model thật sự quên chào, tuyệt đối không thay/xóa phần model
-        # đã nói về vision, continuity hay bất kỳ nội dung hợp lệ nào phía sau.
-        payload = ensure_startup_greeting_payload(
-            payload,
-            frame=greeting_frame,
-            display_language=language,
-            speech_language=_runtime_speech_language(),
-            user_vocative=str(addressing_snapshot.get("user_vocative", "") or ""),
-        )
-        if opening_director_active and opening_plan is not None:
-            payload["opening_plan"] = opening_plan.to_dict()
-            payload["autonomous_plan"] = plan.to_dict()
-        host.logger.info(
-            "[architecture C startup greeting] invariant_present=1 inserted=%s source=%s motive=%s strategy=%s",
-            int(bool(payload.get("startup_greeting_inserted", False))),
-            "main_cognition" if str(payload.get("reason", "") or "") != "startup_main_cognition_unavailable_typed_fallback" else "deterministic_fallback",
-            opening_plan.encounter.intent if opening_plan is not None else plan.motive,
-            plan.strategy or "none",
-        )
-        raw = json.dumps(_serializable_public_payload(payload), ensure_ascii=False)
-        host._log_raw_llm_output("startup_ai", raw)
-        decision = host.parser.parse(raw)
-        if opening_director_active and opening_plan is not None:
-            # Parser chỉ hiểu envelope public cũ. Gắn contract typed sau parse để
-            # Decision.to_payload chuyển nó sang StageFrameBuilder.
-            decision.opening_plan = opening_plan.to_dict()
-            decision.autonomous_plan = plan.to_dict()
-            decision.performance_context = dict(payload.get("performance_context") or {})
-            decision.interruptible = bool(opening_plan.prosody_plan.interruptible)
-        if not str(getattr(decision, "utterance_turn_id", "") or "").strip():
-            decision.utterance_turn_id = str(plan.plan_id or f"startup:{turn_seq}")
-        if not bool(getattr(decision, "should_speak", False)) or not str(getattr(decision, "text", "") or "").strip():
-            # Model trả should_speak=false hoặc text rỗng tại startup (thường xảy
-            # ra khi chiến lược grounded_* không tìm được OCR đủ tốt nhưng acc vẫn
-            # sống). Ưu tiên lấy text thô từ payload gốc trước khi gọi hardcode
-            # fallback — tránh câu cứng "Tôi đây..." khi DeepSeek đã trả về nội dung.
-            recovered_text = ""
-            if payload:
-                _utt = payload.get("utterance") or {}
-                recovered_text = (
-                    str((_utt.get("display") or {}).get("text", "") or "").strip()
-                    or str((_utt.get("speech") or {}).get("text", "") or "").strip()
-                    or str(payload.get("text", "") or "").strip()
-                )
-            if recovered_text:
-                from runtime.utterance_spec import degrade_surface_payload
-                fallback_payload = degrade_surface_payload(
-                    {"performance_hint": str(payload.get("performance_hint", "neutral") or "neutral")},
-                    text=recovered_text,
-                    language=language,
-                    reason="startup_should_speak_override",
-                    performance_preset=str(payload.get("performance_hint", "neutral") or "neutral"),
-                    should_speak=True,
-                )
-                decision = host.parser.parse(json.dumps(_serializable_public_payload(fallback_payload), ensure_ascii=False))
-                decision.utterance_turn_id = str(plan.plan_id or f"startup:{turn_seq}")
-                host.logger.info(
-                    "[architecture C startup] model should_speak=false overridden; recovered text from payload strategy=%s",
-                    plan.strategy,
-                )
-            else:
-                fallback_text = build_startup_fallback_text(
-                    open_loops=state.open_loops,
-                    latest_observation=latest_observation,
-                    relationship=relationship_payload,
-                    avoid_text=str(getattr(host, "last_text", "") or ""),
-                    language=language,
-                )
-                from runtime.utterance_spec import degrade_surface_payload
-                fallback_payload = degrade_surface_payload(
-                    {"performance_hint": "dry_tease"},
-                    text=fallback_text,
-                    language=language,
-                    reason="startup_empty_commit",
-                    performance_preset="dry_tease",
-                    should_speak=True,
-                )
-                decision = host.parser.parse(json.dumps(_serializable_public_payload(fallback_payload), ensure_ascii=False))
-                decision.utterance_turn_id = str(plan.plan_id or f"startup:{turn_seq}")
-                host.logger.warning(
-                    "[architecture C startup] empty/silent model decision; used personality fallback strategy=%s",
-                    plan.strategy,
-                )
-        host.ai_stage_planner.apply(decision, plan.performance_hint, state=state, channel="session_ritual")
-        text, _assistant_meta = self._commit_public(
-            decision,
-            channel="session_ritual",
-            turn_seq=turn_seq,
-        )
-        if not text:
-            lifecycle_for(host).transition(
-                "DEGRADED", turn_id=startup_turn_id, reason="empty_public_commit"
-            )
-            return False
-        if opening_director_active and opening_plan is not None and opening_input is not None:
-            history_store = getattr(host, "ai_opening_history_store", None)
-            if isinstance(history_store, OpeningHistoryStore):
-                try:
-                    history_store.append_plan(
-                        opening_plan,
-                        session_id=opening_input.event.session_id,
-                        display_text=text,
-                        hook_subject_class=_opening_hook_subject_class(
-                            opening_plan.hook.source, opening_plan.hook.subject
-                        ),
-                    )
-                    _opening_telemetry(
-                        host,
-                        "eris.opening.history_updated",
-                        tags={
-                            "motive_family": opening_plan.encounter.intent,
-                            "move_family": opening_plan.comedic_move.family,
-                            "hook_source": opening_plan.hook.source,
-                        },
-                        fields={"plan_id": opening_plan.plan_id},
-                    )
-                except Exception as exc:
-                    _orchestrator_boundary_note(host, "opening_history.append_plan", exc)
-            _opening_telemetry(
-                host,
-                "eris.opening.committed",
-                tags={
-                    "reply_bearing": str(bool(opening_plan.reply_bearing)).lower(),
-                    "hook_source": opening_plan.hook.source,
-                },
-                fields={
-                    "plan_id": opening_plan.plan_id,
-                    "text_length": len(text),
-                    "beat_count": len(opening_plan.beats),
-                },
+        except Exception as exc:
+            _orchestrator_boundary_note(host, "startup.conversation_handoff_prime", exc)
+            host.logger.info(
+                "[architecture C startup] public_greeting=disabled continuity_prime=unavailable"
             )
 
-        social_plan = _activate_social_plan_after_public_commit(
-            host,
-            payload,
-            source_turn_id=startup_turn_id,
-            source_text=text,
-            source_turn_seq=turn_seq,
-        )
-        observer = getattr(host, "ai_post_turn_observer", None)
-        if observer is not None:
-            try:
-                state_summary = state.to_dict() if callable(getattr(state, "to_dict", None)) else {}
-                observer.submit(
-                    turn_id=startup_turn_id,
-                    turn_seq=turn_seq,
-                    user_text="",
-                    assistant_text=text,
-                    recent_history=tuple(host._chat_history_for_llm(limit=8)),
-                    mechanical_outcomes=(),
-                    state_summary=state_summary,
-                    user_meta={"semantic_frame": {}},
-                    assistant_meta={
-                        **dict(_assistant_meta or {}),
-                        "social_plan": social_plan,
-                        "startup_greeting_nonbinding": True,
-                        "startup_context_may_expect_reply": (
-                            opening_plan.reply_bearing
-                            if opening_director_active and opening_plan is not None
-                            else True
-                        ),
-                        "opening_plan": (
-                            opening_plan.to_dict()
-                            if opening_director_active and opening_plan is not None
-                            else {}
-                        ),
-                    },
-                    event_kind="startup",
-                )
-            except Exception as exc:
-                host.logger.debug("[architecture C startup] observer submit failed: %s", exc)
-        spoken_at = time.time()
-        # Dùng timestamp public commit thật làm mốc chống "vừa chào xong đã hỏi
-        # thăm lần nữa". Đây chỉ là cooldown social-contact, không khóa scene/task.
-        host._startup_greeting_spoken_at = spoken_at
-        host.last_autonomous_spoken_at = spoken_at
-        host._note_autonomous_spoken(now=spoken_at)
-
-        # Startup greeting là public contact thật nên được ghi vào relational
-        # homeostasis. V66 không dùng response window để phạt silence; cờ
-        # expect_response=False ở đây chỉ mô tả đúng speech act của opening.
-        note_relational = getattr(getattr(host, "subject_service", None), "note_relational_public_act", None)
-        if callable(note_relational):
-            try:
-                note_relational(
-                    now=spoken_at,
-                    outreach=True,
-                    sharing=False,
-                    expect_response=False,
-                    evidence_ref=f"startup_greeting:{startup_turn_id}",
-                    persist=True,
-                )
-            except Exception as exc:
-                host.logger.debug("[relational] startup greeting public-act update failed: %s", exc)
-        host.logger.info(
-            "[architecture C startup] spoke motive=%s text=%s",
-            plan.motive,
-            text,
-        )
-        return True
+        # Luôn False: startup không còn sở hữu một public turn. Không observer submit,
+        # không relational public-act receipt, không TTS/bubble giả và không đặt mốc
+        # _startup_greeting_spoken_at.
+        return False
 
     def run_force_speak(self) -> None:
         host = self.host

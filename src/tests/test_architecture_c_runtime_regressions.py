@@ -989,7 +989,7 @@ def test_startup_without_any_evidence_forces_persona_plan_when_enabled() -> None
     assert "own attitude" in forced.topic
 
 
-def test_empty_startup_context_skips_main_planner(monkeypatch) -> None:
+def test_startup_primes_continuity_without_fake_public_turn(monkeypatch) -> None:
     import json
     from types import SimpleNamespace
 
@@ -1065,10 +1065,14 @@ def test_empty_startup_context_skips_main_planner(monkeypatch) -> None:
     runtime = AIAutonomousOrchestrator(host)
     runtime._commit_public = lambda decision, *, channel, turn_seq: (decision.text, {"channel": channel})
 
-    assert runtime.run_startup() is True
+    # V71: startup không còn sở hữu public speech. Nó chỉ prime continuity;
+    # mọi lời thật phải đi qua chat/self-turn public pipeline để có bubble + TTS.
+    assert runtime.run_startup() is False
     assert planner.calls == 0
-    assert submitted
-    assert host.last_autonomous_spoken_at > 0
+    assert submitted == []
+    assert sent == []
+    assert not hasattr(host, "last_autonomous_spoken_at")
+    assert hasattr(host, "conversation_handoff_runtime")
 
 
 def test_startup_runtime_signal_beats_persona_when_screen_is_empty() -> None:

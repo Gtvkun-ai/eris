@@ -52,6 +52,23 @@ class SubjectIngress:
             if isinstance(context.get("initiative_runtime_context"), Mapping)
             else {}
         )
+        handoff = (
+            context.get("conversation_handoff")
+            if isinstance(context.get("conversation_handoff"), Mapping)
+            else {}
+        )
+        causal_discourse = (
+            context.get("causal_discourse")
+            if isinstance(context.get("causal_discourse"), Mapping)
+            else {}
+        )
+        explicit_proposals = []
+        repair_proposal = context.get("conversation_repair_proposal")
+        if isinstance(repair_proposal, Mapping):
+            # V71: causal repair là typed action proposal đã có evidence. Subject
+            # Core được quyền cân nhắc nó như một hành động thật thay vì chỉ thấy
+            # nhãn cảm xúc rồi hỏi user một câu context-free.
+            explicit_proposals.append(dict(repair_proposal))
         return WorldObservation(
             observation_id=f"user-turn:{turn_id}:{uuid.uuid4()}",
             subject_id=self.service.config.subject_id,
@@ -69,6 +86,7 @@ class SubjectIngress:
                 "relational_significance": 0.76,
                 "uncertainty": uncertainty,
                 "primary_interpretation": "người dùng chủ động mở một lượt hội thoại công khai",
+                "action_proposals": tuple(explicit_proposals),
                 "runtime_context": {
                     "memory_available": bool(context.get("memory_available")),
                     "engagement_active": bool((context.get("engagement_context") or {}).get("active", False))
@@ -78,6 +96,11 @@ class SubjectIngress:
                         dict(item) for item in tuple(context.get("active_concerns", ()) or ())[:6]
                         if isinstance(item, Mapping)
                     ),
+                    # V71: hai object này là state giữa hai người, không phải
+                    # long-term memory. Đưa thẳng vào runtime_context để cả Subject
+                    # và Neuro semantic critic nhìn cùng một handoff authoritative.
+                    "conversation_handoff": dict(handoff),
+                    "causal_discourse": dict(causal_discourse),
                     **dict(initiative_runtime),
                 },
             },
@@ -185,6 +208,16 @@ class SubjectIngress:
             if isinstance(context.get("initiative_runtime_context"), Mapping)
             else {}
         )
+        handoff = (
+            context.get("conversation_handoff")
+            if isinstance(context.get("conversation_handoff"), Mapping)
+            else {}
+        )
+        causal_discourse = (
+            context.get("causal_discourse")
+            if isinstance(context.get("causal_discourse"), Mapping)
+            else {}
+        )
         relational_pressure = float(relational.get("connection_pressure", 0.0) or 0.0)
         relational_opportunity = float(relational.get("opportunity", 0.0) or 0.0)
 
@@ -226,6 +259,8 @@ class SubjectIngress:
                         dict(item) for item in tuple(context.get("active_concerns", ()) or ())[:6]
                         if isinstance(item, Mapping)
                     ),
+                    "conversation_handoff": dict(handoff),
+                    "causal_discourse": dict(causal_discourse),
                     **dict(initiative_runtime),
                 },
             },

@@ -424,6 +424,26 @@ class SelfTurnPipeline:
         # Subject có lý do chủ động.
         initiative_runtime_context = build_initiative_runtime_context(host)
         planner_snapshot["initiative_runtime_context"] = dict(initiative_runtime_context)
+
+        # V71: autonomous không được "quên" user request chỉ vì user_text hiện tại
+        # rỗng. Handoff giữ owner của lượt kế tiếp + open-loop thật và đi vào cùng
+        # Subject/Neuro frame với rumination/initiative candidates.
+        try:
+            from runtime.conversation_handoff import ensure_conversation_handoff_runtime
+            handoff_runtime = ensure_conversation_handoff_runtime(host)
+            handoff_state = handoff_runtime.refresh_shared_goal(
+                initiative_runtime_context.get("active_goal_text", ""),
+                evidence_refs=tuple(initiative_runtime_context.get("active_goal_evidence_refs", ()) or ()),
+                now=now,
+            )
+            planner_snapshot["conversation_handoff"] = handoff_state.to_dict()
+            planner_snapshot["causal_discourse"] = {
+                "self_caused_reaction_probability": handoff_state.self_caused_reaction_probability,
+                "repair_needed": handoff_state.repair_needed,
+                "hypotheses": [item.to_dict() for item in handoff_state.causal_hypotheses],
+            }
+        except Exception as exc:
+            host.logger.debug("[conversation handoff v71] autonomous projection failed: %s", exc)
         # V44: chỉ một urge đã có nội dung mới được quyền đánh thức cognition vì
         # "muốn nói". Connection pressure trừu tượng không còn tự biến thành wake.
         expression_urge_runtime = getattr(host, "expression_urge_runtime", None)
@@ -1570,6 +1590,11 @@ class SelfTurnPipeline:
             "open_loops": list(state.open_loops),
             "latest_observation": dict(state.latest_observation),
             "recent_public_history": context.recent_history,
+            "conversation_handoff": (
+                getattr(self.host, "conversation_handoff_runtime", None).to_dict()
+                if callable(getattr(getattr(self.host, "conversation_handoff_runtime", None), "to_dict", None))
+                else {}
+            ),
             "seconds_since_user": context.seconds_since_user,
             "seconds_since_assistant": context.seconds_since_assistant,
             "self_context": context.self_context.to_dict(),
@@ -1612,6 +1637,8 @@ class SelfTurnPipeline:
                 "Raw OCR/window titles are mechanical deltas, never public facts unless vision_grounding contains "
                 "a grounded non-stale claim with evidence ids. Social chat may be non-factual and require no screen anchor. "
                 "When engagement_context.active=true, preserve its objective and do not switch to unrelated banter. "
+                "conversation_handoff is authoritative for unfinished conversational obligations and who owns the next move; "
+                "an empty current user_text in autonomous mode does NOT erase a pending user request. "
                 "When shared_semantic_context.packet exists, use its foreground/facts/options as the stable scene baseline; "
                 "do not reinterpret raw OCR into a competing story."
             ),
