@@ -10,6 +10,7 @@ trúc cũ nơi seed hợp lệ gần như mặc định là một candidate hộ
 """
 from __future__ import annotations
 
+import hashlib
 import time
 from typing import Any, Mapping, Sequence
 
@@ -106,12 +107,60 @@ class MentalMaterialRuntime:
         self.host = host
         self.logger = logger or getattr(host, "logger", None)
         self._materials: dict[str, MentalMaterial] = {}
+        self._answered_user_events: dict[str, float] = {}
         self._last_log_signature = ""
 
     def _log(self, level: str, message: str, *args: Any) -> None:
         fn = getattr(self.logger, level, None) if self.logger is not None else None
         if callable(fn):
             fn(message, *args)
+
+    @staticmethod
+    def _user_event_cause_ids(user_text: str, turn_id: str = "") -> tuple[str, ...]:
+        clean = _compact(user_text, 1200)
+        keys: list[str] = []
+        normalized_turn = str(turn_id or "").strip()
+        if normalized_turn:
+            keys.append(f"user_event:{normalized_turn}")
+        if clean:
+            digest = hashlib.sha256(clean.encode("utf-8", errors="replace")).hexdigest()[:20]
+            keys.append(f"user_event:{digest}")
+        return tuple(dict.fromkeys(keys))
+
+    def mark_user_event_answered(
+        self,
+        user_text: str,
+        *,
+        turn_id: str = "",
+        now: float | None = None,
+    ) -> tuple[str, ...]:
+        """Consume public-expression ownership for one foreground user turn.
+
+        Material may still exist and be inspected privately. Only its route into
+        concern/expression affordances is closed, preventing a post-reply seed
+        from surfacing as a second answer to the same user message.
+        """
+
+        current = float(now or time.time())
+        keys = self._user_event_cause_ids(user_text, turn_id)
+        for key in keys:
+            self._answered_user_events[key] = current
+        # Session-local bounded ledger. 30 minutes is well beyond material TTL but
+        # prevents an old cause id from living forever in long-running sessions.
+        cutoff = current - 1800.0
+        for key, timestamp in tuple(self._answered_user_events.items()):
+            if timestamp < cutoff:
+                self._answered_user_events.pop(key, None)
+        if keys:
+            self._log("info", "[mental material] consumed user event public floor causes=%s", ",".join(keys))
+        return keys
+
+    def _public_route_consumed(self, material: MentalMaterial) -> bool:
+        return bool(
+            material.cause_kind == "user_event"
+            and material.cause_id
+            and material.cause_id in self._answered_user_events
+        )
 
     def ingest_seed(self, seed: Any, *, now: float | None = None) -> dict[str, Any] | None:
         """Nhận material seed đã validate; không tự biến nó thành speech candidate."""
@@ -235,6 +284,11 @@ class MentalMaterialRuntime:
         # 0.2 không nên khiến scheduler chạy vòng nặng chỉ vì nó tồn tại.
         pulls: list[float] = []
         for item in self._materials.values():
+            if self._public_route_consumed(item):
+                # Thought vẫn ở material field để private cognition/audit nhìn thấy,
+                # nhưng foreground reply đã tiêu thụ quyền đánh thức public lane.
+                pulls.append(0.0)
+                continue
             # V70: worker đã quay lại concern nhưng chỉ restate thì material được
             # giữ private để audit/awareness, không được tạo wake loop chỉ vì
             # expression_pull legacy vẫn cao. Insight hợp lệ hoặc material mới
@@ -276,9 +330,15 @@ class MentalMaterialRuntime:
             if state == "fading":
                 continue
             valid_development = bool(material.development_score >= 0.62)
+            public_route_consumed = self._public_route_consumed(material)
             # Nếu concern đã consummate và worker chỉ paraphrase, material vẫn
             # được tồn tại private nhưng không được lẻn sang expression lane.
-            expression_allowed = not material.development_required or valid_development
+            # Tương tự, user_event đã có foreground reply không được promote sang
+            # concern/expression để tự sinh một câu trả lời public thứ hai.
+            expression_allowed = (
+                (not material.development_required or valid_development)
+                and not public_route_consumed
+            )
 
             common = dict(
                 decision="candidate",
@@ -366,6 +426,7 @@ class MentalMaterialRuntime:
                         "cause_kind": material.cause_kind,
                         "lifecycle_state": state,
                         "expression_ready": False,
+                        "public_route_consumed": public_route_consumed,
                     },
                 ))
                 # Affordance có thể xuất hiện lại ở tick sau, nhưng CognitiveEvent
@@ -396,6 +457,7 @@ class MentalMaterialRuntime:
                         "cause_kind": material.cause_kind,
                         "lifecycle_state": state,
                         "expression_ready": True,
+                        "public_route_consumed": public_route_consumed,
                         "expected_update": list(material.expected_update),
                     },
                 ))

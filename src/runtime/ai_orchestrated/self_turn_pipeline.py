@@ -1171,7 +1171,7 @@ class SelfTurnPipeline:
             # V66: Surface failure không được viết ngược thành "Eris quyết định
             # im". Commitment vẫn sống; ta chỉ ghi lỗi realization và defer một
             # nhịp để writer có context mới.
-            if surface_reason == "surface_duplicate_recent_utterance" and subject_decision is not None:
+            if surface_reason.startswith("surface_") and subject_decision is not None:
                 urge_id = str(subject_decision.arguments.get("expression_urge_id", "") or "").strip()
                 urge_runtime = getattr(host, "expression_urge_runtime", None)
                 note_failure = getattr(urge_runtime, "note_realization_failure", None)
@@ -1180,7 +1180,10 @@ class SelfTurnPipeline:
                         note_failure(urge_id, reason=surface_reason, now=time.time())
                     except Exception as exc:
                         host.logger.debug("[expression urge] realization receipt degraded: %s", exc)
-                gate_reason = "expression_realization_deferred:duplicate_recent_utterance"
+                if surface_reason == "surface_duplicate_recent_utterance":
+                    gate_reason = "expression_realization_deferred:duplicate_recent_utterance"
+                else:
+                    gate_reason = f"expression_realization_deferred:{surface_reason}"
             self._release_seed_lease(candidate, reason=gate_reason)
             self._defer_claimed_continuation(
                 plan, reason=gate_reason,

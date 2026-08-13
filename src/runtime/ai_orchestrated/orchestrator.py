@@ -2262,6 +2262,17 @@ class AIChatOrchestrator:
                 _orchestrator_boundary_note(host, "chat_ttft.observe", exc)
         if memory_text:
             host._append_chat_history("assistant", memory_text, invalid=False)
+        # Một foreground reply đã tiêu thụ quyền public của user event này.
+        # Associative/rumination vẫn được giữ private, nhưng không được quay lại
+        # vài giây sau như một "reply thứ hai" cho cùng câu user.
+        if public_text:
+            material_runtime = getattr(host, "mental_material_runtime", None)
+            mark_answered = getattr(material_runtime, "mark_user_event_answered", None)
+            if callable(mark_answered):
+                try:
+                    mark_answered(user_text, turn_id=turn_id, now=time.time())
+                except Exception as exc:
+                    host.logger.debug("[mental material] user event consume failed: %s", exc)
         assistant_meta: dict[str, Any] | None = None
         if bool(getattr(decision, "should_speak", False)) and public_text:
             assistant_meta = {
@@ -2396,6 +2407,18 @@ class AIAutonomousOrchestrator:
         except Exception as exc:
             _orchestrator_boundary_note(host, "autonomous_surface.seal", exc)
         if not public_text:
+            return "", None
+        clock = getattr(host, "interaction_clock", None)
+        if (
+            str(channel or "").strip().lower() == "autonomous"
+            and clock is not None
+            and bool(getattr(clock, "speech_floor_busy", False))
+        ):
+            host.logger.info(
+                "[autonomous floor] speech deferred while public audio busy owner=%s text=%r",
+                str(getattr(clock, "audio_floor_turn_id", "") or "<pending>"),
+                public_text[:120],
+            )
             return "", None
         host.last_text = public_text
         # Startup/autonomous là public assistant turn thật, không phải hiệu ứng

@@ -31,6 +31,11 @@ def _dispatch_mode() -> str:
     return active_stage_profile().dispatch_mode
 
 
+def _max_transcript_chars() -> int:
+    from runtime.tts_budget import GLOBAL_TTS_REQUEST_BUDGET
+    return max(48, int(GLOBAL_TTS_REQUEST_BUDGET.max_transcript_chars))
+
+
 def _task_manager_enabled() -> bool:
     env_value = os.environ.get("ERIS_TTS_TASK_MANAGER", "").strip().lower()
     if env_value:
@@ -170,16 +175,23 @@ class StageDispatcher:
             if os.environ.get("ERIS_TTS_SEGMENT_DISPATCH", "").strip()
             else str(getattr(self._profile(), "dispatch_mode", "inline") or "inline")
         )
-        # Hội thoại mặc định ưu tiên một clip liên tục. Metadata Voice Director
-        # không được tự ý biến câu nói thành nhiều WAV rời, vì ranh giới thiết bị
-        # giữa các clip dễ tạo tiếng cụt/drop. Chỉ queued khi người vận hành bật
-        # ERIS_TTS_SEGMENT_DISPATCH=queued một cách rõ ràng.
+        # Hội thoại mặc định ưu tiên một clip liên tục, NHƯNG hard provider
+        # transcript budget có quyền cao hơn continuity. Trước đây pipeline đã
+        # chia câu an toàn rồi dispatcher dán tất cả lại thành >260 chars, tự
+        # tạo lỗi transcript_too_long và kéo fallback TTS hàng chục giây.
         dispatch_frames = frame_list
         if dispatch_mode == "inline":
-            joined_frame = _inline_frame(frame_list)
-            if joined_frame is None:
-                return False
-            dispatch_frames = [joined_frame]
+            joined_text = _join_tts_segments(frame_list)
+            if len(joined_text) <= _max_transcript_chars():
+                joined_frame = _inline_frame(frame_list)
+                if joined_frame is None:
+                    return False
+                dispatch_frames = [joined_frame]
+            else:
+                # Giữ logical segments đã được StageOutputPipeline chia. Manager
+                # sẽ prefetch/queue chúng; tuyệt đối không join lại vượt budget.
+                dispatch_mode = "queued"
+                dispatch_frames = frame_list
 
         manager_enabled = (
             bool(os.environ.get("ERIS_TTS_TASK_MANAGER", "").strip().lower() not in {"0", "false", "off", "no", "none"})

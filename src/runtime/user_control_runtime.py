@@ -265,9 +265,26 @@ class UserControlRuntimeMixin:
             if clock is not None:
                 timestamp = float(getattr(event, "timestamp", time.time()) or time.time())
                 if event.type == "audio_playback_started":
-                    clock.mark_audio_started(timestamp)
+                    clock.mark_audio_started(timestamp, turn_id=str(getattr(event, "turn_id", "") or ""))
                 else:
-                    clock.mark_audio_finished(timestamp)
+                    # Internal TTS lifecycle đã biết segment_count và là authority
+                    # cho floor. Frontend done của segment đầu không được nhả turn
+                    # khi segment sau vẫn pending. Chỉ dùng frontend edge làm fallback
+                    # khi không có bằng chứng đây là một segment trung gian.
+                    last_tts = getattr(self, "last_tts_event", {})
+                    intermediate = False
+                    if isinstance(last_tts, dict):
+                        same_turn = str(last_tts.get("turn_id", "") or "") == str(getattr(event, "turn_id", "") or "")
+                        try:
+                            intermediate = bool(
+                                same_turn
+                                and int(last_tts.get("segment_count", 1) or 1) > 1
+                                and int(last_tts.get("segment_id", 0) or 0) < int(last_tts.get("segment_count", 1) or 1) - 1
+                            )
+                        except (TypeError, ValueError):
+                            intermediate = False
+                    if not intermediate:
+                        clock.mark_audio_finished(timestamp, turn_id=str(getattr(event, "turn_id", "") or ""))
                     social_continuation_runtime = getattr(self, "ai_social_continuation_runtime", None)
                     if social_continuation_runtime is not None:
                         try:

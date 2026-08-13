@@ -728,6 +728,9 @@ class ExpressionUrgeRuntime:
         current = float(now or time.time())
         urge.surface_duplicate_blocks += 1
         urge.surface_blocked_until = 0.0
+        urge.echo_count += 1
+        urge.freshness = clamp01(urge.freshness * 0.86)
+        urge.base_strength = clamp01(urge.base_strength * 0.97)
         urge.updated_at = current
         self._log(
             "info",

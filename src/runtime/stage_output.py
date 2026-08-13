@@ -43,9 +43,11 @@ def _min_split_chars(profile: object | None = None) -> int:
 
 def _max_segment_chars() -> int:
     from runtime.runtime_settings_store import runtime_int
-    # Gemini TTS ổn định hơn với nhịp 45–90 ký tự. Câu dài được chia trước
-    # provider thay vì đẩy một blob rồi trách key pool vì nghệ thuật kể chuyện.
-    return max(48, min(320, runtime_int("stage", "max_tts_segment_chars", default=88)))
+    from runtime.tts_budget import GLOBAL_TTS_REQUEST_BUDGET
+    # Gemini TTS ổn định hơn với nhịp 45–90 ký tự. Hard provider budget là trần
+    # tuyệt đối dù panel/operator đặt segment_chars cao hơn.
+    configured = max(48, min(320, runtime_int("stage", "max_tts_segment_chars", default=88)))
+    return min(configured, max(48, int(GLOBAL_TTS_REQUEST_BUDGET.max_transcript_chars)))
 
 
 def _split_long_piece(text: str, max_chars: int) -> list[str]:
@@ -148,7 +150,14 @@ class SentenceSegmenter:
             hard_chunks.extend(_split_long_piece(part, _max_segment_chars()))
 
         balanced = _rebalance_to_limit(hard_chunks, _max_segments(self.profile))
-        return tuple(item for item in balanced if item)
+        # max_segments là preference sân khấu, không phải giấy phép vượt hard TTS
+        # budget. Nếu rebalance gộp quá tay, tách lại và chấp nhận nhiều segment
+        # hơn thay vì gửi một transcript provider chắc chắn từ chối.
+        hard_limit = _max_segment_chars()
+        safe: list[str] = []
+        for item in balanced:
+            safe.extend(_split_long_piece(item, hard_limit))
+        return tuple(item for item in safe if item)
 
 
 class StageOutputPipeline:
@@ -179,6 +188,11 @@ class StageOutputPipeline:
         """
 
         copied = dict(delivery or {})
+        voice_segment = copied.get("voice_director_segment")
+        if isinstance(voice_segment, dict) and index > 0:
+            voice_segment = dict(voice_segment)
+            voice_segment["vocalization"] = "none"
+            copied["voice_director_segment"] = voice_segment
         active = copied.get("active_beat")
         if isinstance(active, dict):
             active = dict(active)
@@ -273,7 +287,14 @@ class StageOutputPipeline:
 
         directed = self._voice_director_frames(frame)
         if directed:
-            return directed
+            from runtime.tts_budget import GLOBAL_TTS_REQUEST_BUDGET
+            hard_limit = max(48, int(GLOBAL_TTS_REQUEST_BUDGET.max_transcript_chars))
+            if all(len(str(item.tts_text or "")) <= hard_limit for item in directed):
+                return directed
+            # Voice Director chỉ đổi delivery metadata. Nếu transcript vượt hard
+            # provider budget, giữ metadata đó rồi tiếp tục qua sentence splitter
+            # thay vì trả sớm một frame mà ElevenLabs chắc chắn từ chối.
+            frame = directed[0]
 
         # Autonomous/opening act đã có speech beat do Stage Director đặt. Ưu
         # tiên beat này hơn sentence splitter tổng quát để điểm rơi không bị chia
@@ -286,12 +307,17 @@ class StageOutputPipeline:
             if isinstance(beat, dict) and str(beat.get("kind", "")) == "speech" and str(beat.get("text", "")).strip()
         ]
         from runtime.tts_engine import _tts_provider
+        from runtime.tts_budget import GLOBAL_TTS_REQUEST_BUDGET
         explicit_opening = bool(
             speech_beats
             and str(act.get("opportunity_kind", "")).strip().lower() == "startup"
             and str(act.get("cadence", "")).strip().lower() == "opening_directed"
         )
-        if _tts_provider() == "elevenlabs" and not explicit_opening:
+        if (
+            _tts_provider() == "elevenlabs"
+            and not explicit_opening
+            and len(str(frame.tts_text or "")) <= int(GLOBAL_TTS_REQUEST_BUDGET.max_transcript_chars)
+        ):
             return (frame,)
         if speech_beats:
             frames: list[StageFrame] = []

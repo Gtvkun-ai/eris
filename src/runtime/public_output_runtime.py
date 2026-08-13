@@ -103,6 +103,23 @@ class PublicOutputRuntimeMixin:
 
     def _send_decision_to_body(self, decision: Decision, *, channel: str | None = None) -> None:
         channel_name = str(channel or "").strip().lower()
+        # Public audio là một floor có owner. Autonomous vẫn được cognition ở
+        # background, nhưng tuyệt đối không được materialize một câu mới khi
+        # chat/session speech đang synthesize hoặc phát. User barge-in đi đường
+        # incoming/VoiceManager và vẫn có quyền supersede floor này.
+        clock = getattr(self, "interaction_clock", None)
+        if (
+            channel_name == "autonomous"
+            and clock is not None
+            and bool(getattr(clock, "speech_floor_busy", False))
+            and bool(getattr(decision, "should_speak", False))
+        ):
+            self.logger.info(
+                "[stage ownership] deferred autonomous speech while audio floor busy owner=%s text=%r",
+                str(getattr(clock, "audio_floor_turn_id", "") or "<pending>"),
+                str(getattr(decision, "text", "") or "")[:120],
+            )
+            return
         if channel_name and self._stage_channel_blocked(channel_name):
             self.logger.info(
                 "[stage ownership] suppressed channel=%s text=%r",
@@ -455,6 +472,55 @@ class PublicOutputRuntimeMixin:
 
         def handle_tts_event(event, event_stage_frame):
             event_type = str(getattr(event, "type", "") or "").strip().lower()
+            event_turn_id = str(
+                getattr(event, "turn_id", "")
+                or getattr(event_stage_frame, "turn_id", "")
+                or stage_frame.turn_id
+                or ""
+            )
+            clock = getattr(self, "interaction_clock", None)
+            if clock is not None:
+                try:
+                    try:
+                        event_segment_id = int(
+                            getattr(event, "segment_id", getattr(event_stage_frame, "segment_id", 0)) or 0
+                        )
+                    except (TypeError, ValueError):
+                        event_segment_id = 0
+                    known_segment_ids = []
+                    for item in tuple(getattr(event, "turn_segments", ()) or ()):
+                        if isinstance(item, dict):
+                            try:
+                                known_segment_ids.append(int(item.get("segment_id", 0) or 0))
+                            except (TypeError, ValueError):
+                                pass
+                    if not known_segment_ids:
+                        for item in stage_frames:
+                            try:
+                                known_segment_ids.append(int(getattr(item, "segment_id", 0) or 0))
+                            except (TypeError, ValueError):
+                                pass
+                    final_segment = not known_segment_ids or event_segment_id >= max(known_segment_ids)
+
+                    if event_type in {"audio_prepare", "audio_queued", "audio_buffer_ready"}:
+                        clock.mark_audio_pending(turn_id=event_turn_id)
+                    elif event_type == "audio_start":
+                        clock.mark_audio_started(turn_id=event_turn_id)
+                    elif event_type == "audio_done":
+                        if final_segment:
+                            clock.mark_audio_finished(turn_id=event_turn_id)
+                        else:
+                            # Giữ floor xuyên qua gap giữa các segment cùng turn.
+                            clock.mark_audio_pending(turn_id=event_turn_id)
+                    elif event_type == "audio_failed":
+                        if final_segment:
+                            clock.mark_audio_finished(turn_id=event_turn_id)
+                        else:
+                            clock.mark_audio_pending(turn_id=event_turn_id)
+                    elif event_type == "audio_cancelled":
+                        clock.mark_audio_finished(turn_id=event_turn_id)
+                except Exception as clock_exc:
+                    self.logger.debug("[interaction-clock] audio lifecycle update failed: %s", clock_exc)
             live2d_edge = {
                 "audio_start": "audio_playback_started",
                 "audio_done": "audio_playback_done",
@@ -528,6 +594,12 @@ class PublicOutputRuntimeMixin:
                     turn_id=stage_frame.turn_id,
                     reason="tts_dispatch",
                 )
+                clock = getattr(self, "interaction_clock", None)
+                if clock is not None:
+                    try:
+                        clock.mark_audio_pending(turn_id=str(stage_frame.turn_id or ""))
+                    except Exception as clock_exc:
+                        self.logger.debug("[interaction-clock] audio pending mark failed: %s", clock_exc)
                 try:
                     from runtime.ai_orchestrated.autonomous_trace import append_autonomous_trace
                     append_autonomous_trace("tts_dispatch", {
@@ -564,6 +636,12 @@ class PublicOutputRuntimeMixin:
                 has_scheduled_tts = False
 
         if not has_scheduled_tts:
+            clock = getattr(self, "interaction_clock", None)
+            if clock is not None:
+                try:
+                    clock.mark_audio_finished(turn_id=str(stage_frame.turn_id or ""))
+                except Exception:
+                    pass
             send_text_payload("no_tts" if sync_text else "immediate")
         # Mọi lời ERIS thốt ra (autonomous, force_speak, session_ritual...) đều
         # ghi vào bộ đệm hội thoại hợp nhất để lượt chat/autonomous sau nối mạch.
