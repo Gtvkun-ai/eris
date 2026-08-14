@@ -516,8 +516,9 @@ class RemoteModelProcessManager:
         model_name = str(os.environ.get("ERIS_PRIVATE_RESIDUE_CURATOR_MODEL", DEFAULT_OPEN_MODEL_ID) or DEFAULT_OPEN_MODEL_ID).strip()
 
         if provider == "gemini":
+            pool = get_key_pool("gemini")
             remote_provider = _normalize_remote_provider(os.environ.get("ERIS_REMOTE_PROVIDER", "deepseek"))
-            api_key = get_secret("ERIS_PRIVATE_RESIDUE_CURATOR_API_KEY", "GEMINI_API_KEY")
+            api_key = get_secret("ERIS_PRIVATE_RESIDUE_CURATOR_API_KEY", "GEMINI_API_KEY") or _bootstrap_pool_key(pool)
             if not api_key and remote_provider == "gemini":
                 api_key = get_secret("ERIS_REMOTE_API_KEY")
             if not api_key:

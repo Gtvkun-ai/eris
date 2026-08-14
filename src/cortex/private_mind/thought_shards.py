@@ -101,6 +101,9 @@ class ThoughtShardStore:
         self._last_reflection_at = 0.0
         self._last_shard_writer: dict[str, Any] = {}
         self._last_reflection_writer: dict[str, Any] = {}
+        # V82: lời bình riêng cho Identity panel, được sinh trong CÙNG lượt Gemma
+        # thought-shards để không mở thêm model call. Chỉ nhận nếu cite atom thật.
+        self._observer_comment: dict[str, Any] = {}
         self._loaded = False
         self._load()
 
@@ -196,6 +199,27 @@ class ThoughtShardStore:
                     # reinforcement không làm phình history nhưng vẫn giữ shard sống.
                     self._slots[slot]["created_at"] = float(previous.get("created_at", current) or current)
                     applied += 1
+            observer_raw = output.get("observer_comment")
+            if isinstance(observer_raw, Mapping):
+                observer_text = _short(observer_raw.get("text"), 420)
+                observer_atom_ids = [
+                    str(x)
+                    for x in (observer_raw.get("atom_ids") or observer_raw.get("source_ids") or [])
+                    if str(x) in atom_index
+                ][:16]
+                if observer_text and observer_atom_ids:
+                    source_ids: list[str] = []
+                    for atom_id in observer_atom_ids:
+                        source_ids.extend(str(x) for x in (atom_index[atom_id].get("source_ids") or []) if str(x))
+                    self._observer_comment = {
+                        "text": observer_text,
+                        "atom_ids": observer_atom_ids,
+                        "source_ids": list(dict.fromkeys(source_ids))[:24],
+                        "updated_at": round(current, 3),
+                        "writer": dict(writer_meta or {}),
+                        "provenance": "gemma_micro_cognition",
+                    }
+
             self._last_refresh_at = current
             if signature:
                 self._last_signature = str(signature)
@@ -331,6 +355,7 @@ class ThoughtShardStore:
                 "last_reflection_at": round(float(self._last_reflection_at or 0.0), 3),
                 "shard_writer": dict(self._last_shard_writer),
                 "reflection_writer": dict(self._last_reflection_writer),
+                "observer_comment": dict(self._observer_comment),
             }
 
     # ---------------------------------------------------------------- internal
@@ -371,9 +396,11 @@ class ThoughtShardStore:
             self._last_reflection_at = float(data.get("last_reflection_at", 0.0) or 0.0)
             self._last_shard_writer = dict(data.get("last_shard_writer") or {}) if isinstance(data.get("last_shard_writer"), Mapping) else {}
             self._last_reflection_writer = dict(data.get("last_reflection_writer") or {}) if isinstance(data.get("last_reflection_writer"), Mapping) else {}
+            self._observer_comment = dict(data.get("observer_comment") or {}) if isinstance(data.get("observer_comment"), Mapping) else {}
         except Exception as exc:
             self._log("warning", "Thought shard store load failed, starting fresh: %s", exc)
             self._slots, self._history, self._reflections = {}, [], []
+            self._observer_comment = {}
 
     def _persist_locked(self) -> None:
         if not self.config.enabled:
@@ -386,6 +413,7 @@ class ThoughtShardStore:
             "last_reflection_at": round(float(self._last_reflection_at or 0.0), 3),
             "last_shard_writer": dict(self._last_shard_writer),
             "last_reflection_writer": dict(self._last_reflection_writer),
+            "observer_comment": dict(self._observer_comment),
             "slots": self._slots,
             "history": self._history,
             "reflections": self._reflections,

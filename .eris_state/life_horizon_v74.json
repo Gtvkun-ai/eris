@@ -1,0 +1,126 @@
+{
+  "schema": "eris.life_horizon.state.v74",
+  "revision": 24,
+  "goals": [
+    {
+      "goal_id": "h2.private_project.project.derived.ec06365b7c5ae381",
+      "level": "H2",
+      "title": "Điều tra concern lặp lại",
+      "description": "Mối bận tâm lặp lại này cần bằng chứng mới hoặc một hành động kiểm tra nào để tiến triển?",
+      "status": "dormant",
+      "strength": 0.25,
+      "progress": 0.0,
+      "parent_goal_id": "",
+      "deadline_at": 0.0,
+      "source_refs": [
+        "concern.d5ef58573046ec36"
+      ],
+      "evidence_refs": [
+        "dossier.user.history.0",
+        "dossier.user.history.2",
+        "dossier.user.history.5",
+        "dossier.user.history.7",
+        "dossier.runtime.state",
+        "dossier.runtime.thought_stream",
+        "dossier.runtime.private_state",
+        "epi_6f25e6a2bedf"
+      ],
+      "tags": [
+        "private_project"
+      ],
+      "updated_at": 1786719386.206075,
+      "created_at": 1786698780.4020934
+    },
+    {
+      "goal_id": "h2.private_project.project.derived.40f98e52a0f3d658",
+      "level": "H2",
+      "title": "Điều tra concern lặp lại",
+      "description": "Mối bận tâm lặp lại này cần bằng chứng mới hoặc một hành động kiểm tra nào để tiến triển?",
+      "status": "active",
+      "strength": 0.6710207421402347,
+      "progress": 0.0,
+      "parent_goal_id": "",
+      "deadline_at": 0.0,
+      "source_refs": [
+        "concern.772b027a06abb05f"
+      ],
+      "evidence_refs": [
+        "dossier.user.history.0",
+        "dossier.user.history.2",
+        "dossier.user.history.4",
+        "dossier.user.history.6",
+        "dossier.runtime.state",
+        "dossier.runtime.thought_stream",
+        "dossier.runtime.private_state",
+        "epi_6f25e6a2bedf"
+      ],
+      "tags": [
+        "private_project"
+      ],
+      "updated_at": 1786719386.206075,
+      "created_at": 1786698780.4020934
+    },
+    {
+      "goal_id": "h4.private_anchor.anchor.derived.8c5d56a27d61b95e",
+      "level": "H4",
+      "title": "Recurring private concern",
+      "description": "Mối bận tâm lặp lại này cần bằng chứng mới hoặc một hành động kiểm tra nào để tiến triển?",
+      "status": "dormant",
+      "strength": 0.07691995318103752,
+      "progress": 0.0,
+      "parent_goal_id": "",
+      "deadline_at": 0.0,
+      "source_refs": [
+        "concern.d5ef58573046ec36"
+      ],
+      "evidence_refs": [
+        "dossier.user.history.0",
+        "dossier.user.history.2",
+        "dossier.user.history.5",
+        "dossier.user.history.7",
+        "dossier.runtime.state",
+        "dossier.runtime.thought_stream",
+        "dossier.runtime.private_state",
+        "epi_6f25e6a2bedf"
+      ],
+      "tags": [
+        "private_anchor",
+        "private_agenda"
+      ],
+      "updated_at": 1786719386.206075,
+      "created_at": 1786698780.4020934
+    },
+    {
+      "goal_id": "h4.private_anchor.anchor.derived.d2c7fef18711df18",
+      "level": "H4",
+      "title": "Recurring private concern",
+      "description": "Mối bận tâm lặp lại này cần bằng chứng mới hoặc một hành động kiểm tra nào để tiến triển?",
+      "status": "active",
+      "strength": 0.5838903770366047,
+      "progress": 0.0,
+      "parent_goal_id": "",
+      "deadline_at": 0.0,
+      "source_refs": [
+        "concern.772b027a06abb05f"
+      ],
+      "evidence_refs": [
+        "dossier.user.history.0",
+        "dossier.user.history.2",
+        "dossier.user.history.4",
+        "dossier.user.history.6",
+        "dossier.runtime.state",
+        "dossier.runtime.thought_stream",
+        "dossier.runtime.private_state",
+        "epi_6f25e6a2bedf"
+      ],
+      "tags": [
+        "private_anchor",
+        "private_agenda"
+      ],
+      "updated_at": 1786719386.206075,
+      "created_at": 1786698780.4020934
+    }
+  ],
+  "milestones": [],
+  "next_actions": []
+}

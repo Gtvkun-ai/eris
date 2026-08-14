@@ -651,7 +651,11 @@ class ScreenVisionRuntimeMixin:
         note: SemanticSceneNote | None = None
         trace = ""
         compressor = getattr(self, "vision_semantic_compressor", None)
-        can_use_compressor = callable(getattr(compressor, "compress", None))
+        can_use_compressor = False
+        if compressor is not None and callable(getattr(compressor, "compress", None)):
+            config = getattr(compressor, "config", None)
+            if config is None or getattr(config, "enabled", True):
+                can_use_compressor = True
 
         signal_snapshot = None
         if snapshot is not None:

@@ -696,9 +696,6 @@ class ChatCycleMixin:
         )
         return True
 
-    def _chat_main_vision_enabled(self) -> bool:
-        raw = os.environ.get("ERIS_CHAT_MAIN_VISION", "0").strip().lower()
-        return raw in {"1", "true", "yes", "on", "always"}
 
     def _capture_screen_frame_for_chat(self, user_text: str, *, previous_public_turn=None) -> str:
         screen_latency_started = time.perf_counter()
@@ -754,7 +751,6 @@ class ChatCycleMixin:
         self._chat_screen_capture_present = False
         self._chat_screen_capture_interpreted = False
 
-        force_chat_vision = self._chat_main_vision_enabled()
         pending_force_vision = self._consume_next_turn_vision(user_text=user_text)
         _screen_latency_mark("pending")
         previous_assistant_text = self._previous_assistant_text_for_screen_route(previous_public_turn)
@@ -811,7 +807,7 @@ class ChatCycleMixin:
         _screen_latency_mark("reroute")
         route_mode = str(getattr(route, "mode", "none") or "none") if route is not None else "none"
         if route is None or (route_mode == "none" and explicit_or_inherited_request):
-            if route is None and not explicit_or_inherited_request and not force_chat_vision and not pending_force_vision:
+            if route is None and not explicit_or_inherited_request and not pending_force_vision:
                 self.logger.debug("[screen route] mode=none reason=no_screen_reference")
                 # Không return sớm khỏi grounding: ambient OCR vẫn được đọc trực
                 # tiếp từ ScreenEvidenceStore trong _chat_source_grounding_screen_facts.
@@ -897,8 +893,7 @@ class ChatCycleMixin:
 
         mode = str(getattr(route, "mode", "none") or "none")
         should_capture_now = bool(
-            force_chat_vision
-            or pending_force_vision
+            pending_force_vision
             or (mode == "vision" and bool(getattr(route, "needs_visual", False)))
         )
 
@@ -913,8 +908,6 @@ class ChatCycleMixin:
 
         if not should_capture_now:
             return _screen_latency_finish("no_capture")
-        if mode != "vision" and force_chat_vision:
-            self.logger.info("[vision chat] forcing main vision despite route mode=%s", mode)
 
         capture_fn = getattr(getattr(self, "telemetry_service", None), "capture_screen_frame_data_uri", None)
         if not callable(capture_fn):

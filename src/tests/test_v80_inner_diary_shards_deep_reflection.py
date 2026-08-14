@@ -237,3 +237,42 @@ def test_deep_writer_uses_store_history_not_five_field_rewrite(tmp_path):
     assert "pattern kéo dài" in voice["phan_tich"]
     assert adapter.packet["history"]
     assert store.snapshot(now=141.0)["deep_reflection"]["writer"]["owner"] == "deepseek_worker"
+
+
+def test_v82_gemma_identity_observer_comment_requires_real_atoms(tmp_path):
+    store = _store(tmp_path)
+    packet = _packet()
+    applied = store.apply_shard_output(
+        {
+            "updates": [],
+            "observer_comment": {
+                "text": "Cô ấy đang giữ khoảng im này có chủ đích, nhưng vẫn để ý việc mình có chen ngang hay không.",
+                "atom_ids": ["a:judgment", "a:concern"],
+            },
+        },
+        packet=packet,
+        writer_meta={"owner": "gemma_micro_cognition", "model": "gemma-test"},
+        signature="observer-sig",
+        now=100.0,
+    )
+    assert applied == 0
+    snap = store.snapshot(now=101.0)
+    assert snap["observer_comment"]["text"].startswith("Cô ấy")
+    assert snap["observer_comment"]["atom_ids"] == ["a:judgment", "a:concern"]
+    assert snap["observer_comment"]["provenance"] == "gemma_micro_cognition"
+
+    rejected = _store(tmp_path / "reject")
+    rejected.apply_shard_output(
+        {
+            "updates": [],
+            "observer_comment": {
+                "text": "Một lời bình không có bằng chứng.",
+                "atom_ids": ["missing"],
+            },
+        },
+        packet=packet,
+        writer_meta={"owner": "gemma_micro_cognition"},
+        signature="observer-bad",
+        now=100.0,
+    )
+    assert rejected.snapshot(now=101.0)["observer_comment"] == {}

@@ -636,7 +636,13 @@ class RuntimePrivateMindModelAdapter:
         updates = parsed.get("updates")
         if not isinstance(updates, list):
             return None
-        return {"updates": updates[:10]}
+        payload: dict[str, Any] = {"updates": updates[:10]}
+        # V82: dùng cùng lượt Gemma micro-cognition để viết một lời bình ngắn
+        # cho Identity panel. Không mở thêm model call, không tăng một lane latency.
+        observer_comment = parsed.get("observer_comment")
+        if isinstance(observer_comment, Mapping):
+            payload["observer_comment"] = dict(observer_comment)
+        return payload
 
     def _thought_shard_messages(self, packet: Mapping[str, Any]) -> list[dict[str, str]]:
         user_content = json.dumps(to_plain(dict(packet)), ensure_ascii=False)
@@ -653,7 +659,9 @@ class RuntimePrivateMindModelAdapter:
                     "text viết ngôi thứ nhất tự nhiên, tiếng Việt, tối đa khoảng 160 ký tự, không văn vẻ cưỡng bức, không hỏi user trừ khi WANT thật sự là một câu muốn hỏi. "
                     "now = điều đang hiện hữu trong đầu; next = hướng nghiêng sắp tới; concern = điều đang bận tâm; "
                     "reflection = nhận xét nhỏ vừa hình thành; want = điều muốn nói/làm nhưng chưa chắc sẽ public. "
-                    "Trả đúng JSON object có updates."
+                    "Ngoài updates, hãy viết observer_comment cho Identity panel: 1-2 câu ngắn ở ngôi thứ ba, như một biên tập viên đang nhìn Eris từ bên ngoài; "
+                    "diễn giải pattern nổi bật, không đọc số, không văn vẻ quá tay, không chẩn đoán, và PHẢI cite atom_ids thật. "
+                    "Nếu chưa đủ vật liệu thì để text rỗng và atom_ids rỗng. Trả đúng JSON object."
                 ),
             },
             {"role": "user", "content": user_content},
@@ -676,6 +684,14 @@ class RuntimePrivateMindModelAdapter:
                         },
                         "required": ["slot", "text", "atom_ids"],
                     },
+                },
+                "observer_comment": {
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string"},
+                        "atom_ids": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["text", "atom_ids"],
                 },
             },
             "required": ["updates"],

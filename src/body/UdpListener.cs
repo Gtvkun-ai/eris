@@ -4218,6 +4218,10 @@ public partial class UdpListener : Node2D
 				SavePrivateMindState();
 				if (_privateMindPanel != null && _privateMindPanel.Visible)
 					RefreshPrivateMindPanel();
+				// V82 Identity dùng Gemma observer_comment/thought-shards từ private mind.
+				// Refresh panel đang mở để lời bình đổi ngay, không phải chờ identity_runtime packet kế tiếp.
+				if (_depthPanel != null && _depthPanel.Visible)
+					RefreshDepthPanel();
 			}
 		}
 		TryCaptureIdentityRuntimeBlock(raw);
