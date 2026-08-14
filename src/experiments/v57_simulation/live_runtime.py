@@ -27,8 +27,8 @@ from llm.process_manager import RemoteModelProcessManager
 from memory.memory_cognition import MemoryCognitionCore
 from parser_grounding import DecisionParser
 from runtime.architecture_flags import (
-    background_tutor_enabled, inner_diary_model_enabled, legacy_model_lanes_enabled,
-    private_residue_curator_enabled,
+    background_tutor_enabled, inner_diary_model_enabled, inner_diary_thought_shards_enabled,
+    inner_diary_deep_reflection_enabled, legacy_model_lanes_enabled, private_residue_curator_enabled,
 )
 from runtime.coordinator import RuntimeCoordinator
 from runtime.memory_semantic_parser_adapter import build_runtime_memory_semantic_parser
@@ -260,8 +260,8 @@ class LiveRuntimeHarness:
         social_fallback = manager.build_social_fallback_client() if social_enabled and legacy_model_lanes_enabled() else None
         inner = manager.build_inner_client()
         executive = manager.build_executive_client()
-        diary = manager.build_diary_client() if inner_diary_model_enabled() else None
-        residue_curator = manager.build_residue_curator_client() if private_residue_curator_enabled() else None
+        diary = manager.build_diary_client() if inner_diary_model_enabled() and inner_diary_deep_reflection_enabled() else None
+        residue_curator = manager.build_residue_curator_client() if private_residue_curator_enabled() or inner_diary_thought_shards_enabled() else None
         seed = manager.build_seed_client()
         raw_surface = manager.build_surface_client()
         surface = ProviderCallProbe(raw_surface, lane="surface") if raw_surface is not None else None

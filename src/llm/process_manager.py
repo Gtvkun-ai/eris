@@ -480,12 +480,12 @@ class RemoteModelProcessManager:
         return self.build_deepseek_worker_client("inner")
 
     def build_diary_client(self):
-        """Chọn đúng MỘT worker DeepSeek hiện có để viết Inner Diary.
+        """Chọn một DeepSeek worker cho V80 Deep Reflection.
 
-        Không tạo role thứ tám chỉ để khoe sơ đồ kiến trúc. Mặc định dùng role
-        ``inner``; có thể chuyển sang một role hiện có bằng
-        ``ERIS_INNER_DIARY_WORKER_ROLE``. Sai role thì fallback về ``inner`` và
-        ghi log rõ ràng.
+        V80 không dùng DeepSeek để điền 5 ô Inner Diary nữa. Worker này chỉ chạy
+        thưa để tổng hợp pattern/lesson từ lịch sử Gemma thought-shard. Giữ tên
+        ``diary_client`` để tương thích wiring cũ, khỏi đổi nửa repository chỉ vì
+        con người cuối cùng cũng chịu phân công lao động hợp lý.
         """
 
         requested = str(os.environ.get("ERIS_INNER_DIARY_WORKER_ROLE", "inner") or "inner").strip().lower()
@@ -499,15 +499,15 @@ class RemoteModelProcessManager:
             normalized = "inner"
         client = self.build_deepseek_worker_client(normalized)
         if client is not None:
-            self.logger.info("Inner Diary owner: DeepSeek worker role=%s", normalized)
+            self.logger.info("Inner Diary Deep Reflection owner: DeepSeek worker role=%s", normalized)
         return client
 
     def build_residue_curator_client(self):
-        """Dựng Gemma riêng cho Residue Curator của PrivateMind/Inner Diary.
+        """Dựng Gemma private lane cho Thought Shards + Residue Curator.
 
-        Mặc định dùng Gemma qua Gemini API. Lane này chỉ gom/dedupe/nén residue,
-        không sở hữu public speech hay identity. Thiếu key thì trả None; runtime
-        vẫn giữ residue và dùng deterministic consolidation thay vì mượn worker khác.
+        Gemma nuôi 5 micro-thought live và gom/dedupe residue. Nó không có quyền
+        public speech hay apply identity. Thiếu key thì residue vẫn retention theo
+        deterministic fallback, còn 5 shard dùng raw-state fallback ở renderer.
         """
         apply_secrets_to_environ()
         if not self._env_flag("ERIS_PRIVATE_RESIDUE_CURATOR_ENABLED", "1"):
@@ -522,7 +522,7 @@ class RemoteModelProcessManager:
                 api_key = get_secret("ERIS_REMOTE_API_KEY")
             if not api_key:
                 self.logger.info(
-                    "Residue Curator Gemma chua co key; deterministic retention van hoat dong."
+                    "Gemma private lane chua co key; residue retention + raw diary fallback van hoat dong."
                 )
                 return None
             base_url = str(os.environ.get(
@@ -536,7 +536,7 @@ class RemoteModelProcessManager:
                     model_name=model_name,
                     key_pool=get_key_pool("gemini"),
                 )
-                self.logger.info("Residue Curator san sang: Gemma model=%s", model_name)
+                self.logger.info("Gemma Thought-Shards/Residue san sang: model=%s", model_name)
                 return client
             except ValueError as exc:
                 self.logger.warning("Khong dung duoc Gemma Residue Curator: %s", exc)

@@ -2456,7 +2456,7 @@ public partial class UdpListener : Node2D
 		var titleLabel = CreateUiLabel("Inner Diary", 30, new Color(0.62f, 0.10f, 0.36f));
 		titleCol.AddChild(titleLabel);
 
-		var subtitleLabel = CreateUiLabel("Nhật ký nội tâm do một DeepSeek worker viết từ state đã rút gọn; không chứa raw chain-of-thought.", 13, new Color(0.74f, 0.46f, 0.60f));
+		var subtitleLabel = CreateUiLabel("5 mảnh sống do Gemma cập nhật; DeepSeek chỉ suy ngẫm sâu khi đủ vật liệu. Không chứa raw chain-of-thought.", 13, new Color(0.74f, 0.46f, 0.60f));
 		titleCol.AddChild(subtitleLabel);
 		_privateMindFreshnessLabel = CreateUiLabel("chưa có snapshot", 11, new Color(0.64f, 0.44f, 0.56f));
 		titleCol.AddChild(_privateMindFreshnessLabel);
@@ -4553,37 +4553,50 @@ public partial class UdpListener : Node2D
 		{
 			using JsonDocument doc = JsonDocument.Parse(json);
 			JsonElement root = doc.RootElement;
-			JsonElement writer = default;
+			JsonElement deepWriter = default;
+			JsonElement shardWriter = default;
+
 			if (root.ValueKind == JsonValueKind.Object
 				&& root.TryGetProperty("inner_diary", out JsonElement diary)
-				&& diary.ValueKind == JsonValueKind.Object
-				&& diary.TryGetProperty("writer", out JsonElement diaryWriter)
-				&& diaryWriter.ValueKind == JsonValueKind.Object)
+				&& diary.ValueKind == JsonValueKind.Object)
 			{
-				writer = diaryWriter;
-			}
-			else if (root.ValueKind == JsonValueKind.Object
-				&& root.TryGetProperty("inner_diary_contract", out JsonElement contract)
-				&& contract.ValueKind == JsonValueKind.Object
-				&& contract.TryGetProperty("writer", out JsonElement contractWriter)
-				&& contractWriter.ValueKind == JsonValueKind.Object)
-			{
-				writer = contractWriter;
+				if (diary.TryGetProperty("writer", out JsonElement writerEl) && writerEl.ValueKind == JsonValueKind.Object)
+					deepWriter = writerEl;
+				if (diary.TryGetProperty("thought_shards", out JsonElement shards)
+					&& shards.ValueKind == JsonValueKind.Object
+					&& shards.TryGetProperty("writer", out JsonElement shardWriterEl)
+					&& shardWriterEl.ValueKind == JsonValueKind.Object)
+					shardWriter = shardWriterEl;
 			}
 
-			if (writer.ValueKind != JsonValueKind.Object)
-				return "";
-			string role = writer.TryGetProperty("role", out JsonElement roleEl) && roleEl.ValueKind == JsonValueKind.String
-				? roleEl.GetString() ?? ""
-				: "";
-			string model = writer.TryGetProperty("model", out JsonElement modelEl) && modelEl.ValueKind == JsonValueKind.String
-				? modelEl.GetString() ?? ""
-				: "";
-			if (!string.IsNullOrWhiteSpace(role) && !string.IsNullOrWhiteSpace(model))
-				return $"DeepSeek {role} · {model}";
-			if (!string.IsNullOrWhiteSpace(role))
-				return $"DeepSeek {role}";
-			return model;
+			if (root.ValueKind == JsonValueKind.Object
+				&& root.TryGetProperty("inner_diary_contract", out JsonElement contract)
+				&& contract.ValueKind == JsonValueKind.Object)
+			{
+				if (deepWriter.ValueKind != JsonValueKind.Object
+					&& contract.TryGetProperty("writer", out JsonElement contractWriter)
+					&& contractWriter.ValueKind == JsonValueKind.Object)
+					deepWriter = contractWriter;
+				if (shardWriter.ValueKind != JsonValueKind.Object
+					&& contract.TryGetProperty("shard_writer", out JsonElement contractShardWriter)
+					&& contractShardWriter.ValueKind == JsonValueKind.Object)
+					shardWriter = contractShardWriter;
+			}
+
+			var parts = new List<string>();
+			if (shardWriter.ValueKind == JsonValueKind.Object)
+			{
+				string model = shardWriter.TryGetProperty("model", out JsonElement m) && m.ValueKind == JsonValueKind.String ? m.GetString() ?? "" : "";
+				if (!string.IsNullOrWhiteSpace(model)) parts.Add($"Gemma shards · {model}");
+			}
+			if (deepWriter.ValueKind == JsonValueKind.Object)
+			{
+				string role = deepWriter.TryGetProperty("role", out JsonElement r) && r.ValueKind == JsonValueKind.String ? r.GetString() ?? "" : "";
+				string model = deepWriter.TryGetProperty("model", out JsonElement m) && m.ValueKind == JsonValueKind.String ? m.GetString() ?? "" : "";
+				if (!string.IsNullOrWhiteSpace(role) && !string.IsNullOrWhiteSpace(model)) parts.Add($"DeepSeek reflection · {role} · {model}");
+				else if (!string.IsNullOrWhiteSpace(model)) parts.Add($"DeepSeek reflection · {model}");
+			}
+			return string.Join(" | ", parts);
 		}
 		catch
 		{

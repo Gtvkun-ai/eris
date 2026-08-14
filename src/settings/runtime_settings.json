@@ -11,7 +11,9 @@
     "inner_diary_model_enabled": true,
     "background_tutor_enabled": false,
     "event_trace_enabled": true,
-    "private_residue_curator_enabled": true
+    "private_residue_curator_enabled": true,
+    "inner_diary_thought_shards_enabled": true,
+    "inner_diary_deep_reflection_enabled": true
   },
   "chat": {
     "language": "ja",
