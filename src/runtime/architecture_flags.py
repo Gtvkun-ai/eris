@@ -38,8 +38,12 @@ def legacy_model_lanes_enabled() -> bool:
 
 
 def inner_diary_model_enabled() -> bool:
-    """Cho inner diary gọi model riêng (mặc định tắt; renderer local vẫn còn)."""
-    return _flag("inner_diary_model_enabled", "ERIS_INNER_DIARY_MODEL_ENABLED", False)
+    """Cho inner diary gọi model riêng. V79 bật mặc định để diary không bị đói state."""
+    return _flag("inner_diary_model_enabled", "ERIS_INNER_DIARY_MODEL_ENABLED", True)
+
+def private_residue_curator_enabled() -> bool:
+    """Bật Gemma Residue Curator; thiếu credential vẫn giữ deterministic retention."""
+    return _flag("private_residue_curator_enabled", "ERIS_PRIVATE_RESIDUE_CURATOR_ENABLED", True)
 
 
 def background_tutor_enabled() -> bool:
@@ -62,6 +66,6 @@ def is_public_intent_owner(owner: object) -> bool:
 __all__ = [
     "PUBLIC_INTENT_OWNERS", "is_public_intent_owner",
     "private_cognition_surface_export_enabled", "surface_cross_worker_fallback_enabled",
-    "legacy_model_lanes_enabled", "inner_diary_model_enabled", "background_tutor_enabled",
+    "legacy_model_lanes_enabled", "inner_diary_model_enabled", "private_residue_curator_enabled", "background_tutor_enabled",
     "event_trace_enabled",
 ]

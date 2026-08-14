@@ -43,6 +43,7 @@ from cortex.existential_anchor import AnchorSystem
 from cortex.private_mind.contracts import SurfaceCandidate, ThoughtFragment, to_plain
 from cortex.private_mind.inner_diary_renderer import InnerDiaryRenderer
 from cortex.private_mind.inner_diary_writer import InnerDiaryWriter
+from cortex.private_mind.residue_curator import DiaryResidueStore
 from eris_secrets import apply_secrets_to_environ
 from runtime.private_mind_model_adapter import PrivateMindAdapterPool, RuntimePrivateMindModelAdapter
 from runtime.live2d_affect_bridge import emit_runtime_affect
@@ -105,6 +106,9 @@ class PrivateMindLoop:
         self.surface_valve = resolve_dependency(surface_valve, lambda: SurfaceValve())
         # Dòng suy nghĩ liên tục: nhớ mạch nghĩ cũ, nối tiếp thay vì nghĩ lại từ đầu.
         self.continuity = resolve_dependency(continuity_store, lambda: ThoughtContinuityStore.from_env(logger=logger))
+        # V79: spool riêng cho mảnh cognition bị suppress/packed và stimulus bị
+        # coalesce. Nó tồn tại qua restart để Inner Diary không phụ thuộc tick cuối.
+        self.residue_store = DiaryResidueStore.from_env(logger=logger)
         self.last_tick_at = 0.0
         self.last_result: PrivateMindTickResult | None = None
         self._last_trigger_signature = ""
@@ -117,8 +121,9 @@ class PrivateMindLoop:
         # Không fallback sang lane khác theo mặc định; thiếu worker thì renderer dùng
         # dữ kiện thô, trung thực hơn việc companion âm thầm giả làm nhật ký.
         from runtime.architecture_flags import inner_diary_model_enabled
-        # Inner diary mặc định chỉ render từ state đã có. Model call riêng là lane
-        # migration, phải bật rõ ràng; không âm thầm mượn PrivateMind/companion.
+        # V79: model writer của Inner Diary bật mặc định. Vẫn giữ owner riêng và
+        # không âm thầm mượn companion; nếu worker bận/lỗi, renderer dùng state
+        # thô + residue retention và writer thử lại sau throttle.
         diary_adapter = getattr(model_adapter, "diary_adapter", None) if inner_diary_model_enabled() else None
         if inner_diary_model_enabled() and diary_adapter is None and callable(getattr(model_adapter, "write_inner_diary", None)):
             diary_adapter = model_adapter
@@ -287,6 +292,9 @@ class PrivateMindLoop:
         try:
             dossier.metadata["recent_thoughts"] = self.continuity.recent_for_prompt()
             dossier.metadata["unresolved_threads"] = self.continuity.unresolved_for_prompt()
+            # Những stimulus từng bị coalesce/busy được đưa trở lại như evidence
+            # "chưa xử lý", không giả thành thought đã xảy ra.
+            dossier.metadata["residue_continuity"] = self.residue_store.continuity_for_prompt(now=now)
         except Exception as exc:
             self._boundary_note("continuity.prompt_projection", exc)
         from runtime.inference_broker import inference_context
@@ -304,6 +312,17 @@ class PrivateMindLoop:
             },
         ):
             fragments = self.evaluator_pipeline.evaluate(dossier)
+        if not fragments:
+            post_api = self._model_api_status()
+            last_error = str(post_api.get("last_error", "") or "").casefold()
+            if "busy" in last_error or "roleworkerbusy" in last_error:
+                self.capture_unprocessed_stimulus(
+                    text=self._dossier_residue_text(dossier),
+                    reason="deepseek_inner_busy",
+                    source_ids=dossier.evidence_ids,
+                    salience=0.62,
+                    now=now,
+                )
         # Nghĩ-bổ-sung cho mạch dang dở: CHỈ khi không có bằng chứng mới nào và có
         # thread đến hạn khơi lại (cooldown lớn + đủ áp lực). Đây không phải nhịp đồng hồ.
         if not fragments and self.continuity.has_followup_due():
@@ -367,6 +386,17 @@ class PrivateMindLoop:
                     surface_candidate_queue.append(impulse)
                     while len(surface_candidate_queue) > 12:
                         surface_candidate_queue.pop(0)
+
+        # V79: mọi cognition thật được giữ như residue trước khi tick kết thúc.
+        # Public silence/suppression không còn đồng nghĩa với private amnesia.
+        self._capture_tick_residue(
+            fragments=fragments,
+            judgment=judgment,
+            filtered_candidate=candidate,
+            now=now,
+        )
+        self._maybe_consolidate_residue(now=now)
+
         result = PrivateMindTickResult(
             dossier=dossier,
             fragments=fragments,
@@ -401,6 +431,178 @@ class PrivateMindLoop:
         )
         self._log_tick(result)
         return result
+
+    # ---------------------------------------------------------------- residue
+
+    def capture_residue(
+        self,
+        *,
+        kind: str,
+        text: Any,
+        source_ids: Iterable[Any] = (),
+        salience: float = 0.5,
+        provenance: str = "private_runtime",
+        lane_hint: str = "diary",
+        metadata: Mapping[str, Any] | None = None,
+        now: float | None = None,
+    ) -> str:
+        try:
+            return self.residue_store.capture(
+                kind=kind,
+                text=text,
+                source_ids=tuple(source_ids or ()),
+                salience=salience,
+                provenance=provenance,
+                lane_hint=lane_hint,
+                metadata=metadata,
+                now=now,
+            )
+        except Exception as exc:
+            self._boundary_note("residue.capture", exc)
+            return ""
+
+    def capture_unprocessed_stimulus(
+        self,
+        *,
+        text: Any,
+        reason: str,
+        source_ids: Iterable[Any] = (),
+        salience: float = 0.55,
+        metadata: Mapping[str, Any] | None = None,
+        now: float | None = None,
+    ) -> str:
+        try:
+            return self.residue_store.capture_unprocessed_stimulus(
+                text=text,
+                source_ids=tuple(source_ids or ()),
+                reason=reason,
+                salience=salience,
+                metadata=metadata,
+                now=now,
+            )
+        except Exception as exc:
+            self._boundary_note("residue.capture_unprocessed", exc)
+            return ""
+
+    def capture_suppressed_public_candidate(
+        self,
+        candidate: Any = None,
+        *,
+        text: str = "",
+        reason: str = "governor_silence",
+        now: float | None = None,
+    ) -> str:
+        payload = candidate.to_dict() if callable(getattr(candidate, "to_dict", None)) else {}
+        if not isinstance(payload, Mapping):
+            payload = {}
+        content = (
+            text
+            or str(payload.get("topic") or payload.get("topic_seed") or payload.get("text") or "")
+            or str(getattr(candidate, "topic", "") or getattr(candidate, "topic_seed", "") or "")
+        )
+        refs = payload.get("evidence_refs") or payload.get("evidence_ids") or ()
+        confidence = payload.get("confidence", getattr(candidate, "confidence", 0.55))
+        return self.capture_residue(
+            kind="suppressed_public_candidate",
+            text=content,
+            source_ids=tuple(refs or ()),
+            salience=max(0.5, min(0.9, float(confidence or 0.55))),
+            provenance=f"public_suppressed:{reason}",
+            lane_hint="diary",
+            metadata={"reason": str(reason or "")[:120]},
+            now=now,
+        )
+
+    def _capture_tick_residue(self, *, fragments: Iterable[Any], judgment: Any, filtered_candidate: Any, now: float) -> None:
+        for fragment in tuple(fragments or ()):
+            claim = str(getattr(fragment, "claim", "") or "")
+            if not claim:
+                continue
+            self.capture_residue(
+                kind="private_fragment",
+                text=claim,
+                source_ids=tuple(getattr(fragment, "evidence_ids", ()) or ()) + (str(getattr(fragment, "id", "") or ""),),
+                salience=max(float(getattr(fragment, "score", 0.0) or 0.0), float(getattr(fragment, "pressure", 0.0) or 0.0)),
+                provenance=f"deepseek_fragment:{str(getattr(fragment, 'source', '') or 'unknown')}",
+                lane_hint="diary",
+                now=now,
+            )
+        if judgment is not None:
+            dominant = str(getattr(judgment, "dominant_judgment", "") or "")
+            if dominant:
+                self.capture_residue(
+                    kind="private_judgment",
+                    text=dominant,
+                    source_ids=tuple(getattr(judgment, "evidence_ids", ()) or ()),
+                    salience=max(float(getattr(judgment, "confidence", 0.0) or 0.0), float(getattr(judgment, "pressure", 0.0) or 0.0)),
+                    provenance="inner_synthesis",
+                    lane_hint="diary",
+                    now=now,
+                )
+            raw_surface = getattr(judgment, "surface_candidate", None)
+            if raw_surface is not None and filtered_candidate is None:
+                payload = raw_surface.to_dict() if callable(getattr(raw_surface, "to_dict", None)) else {}
+                content = str(payload.get("topic_seed") or payload.get("text") or getattr(raw_surface, "topic_seed", "") or "")
+                if content:
+                    self.capture_residue(
+                        kind="suppressed_private_candidate",
+                        text=content,
+                        source_ids=tuple(payload.get("evidence_ids") or ()),
+                        salience=max(0.55, float(getattr(judgment, "pressure", 0.0) or 0.0)),
+                        provenance="private_surface_valve_suppressed",
+                        lane_hint="diary",
+                        now=now,
+                    )
+
+    def _maybe_consolidate_residue(self, *, now: float) -> None:
+        if not self.residue_store.should_curate(now=now):
+            return
+        packet = self.residue_store.curator_packet(limit=24)
+        if not packet.get("items"):
+            return
+        curate_fn = getattr(self.model_adapter, "curate_residue", None)
+        meta_fn = getattr(self.model_adapter, "residue_metadata", None)
+        curator_meta = meta_fn() if callable(meta_fn) else {"configured": False, "model": ""}
+        curated = None
+        if callable(curate_fn) and bool(curator_meta.get("configured", False)):
+            try:
+                from runtime.inference_broker import inference_context
+                with inference_context(
+                    "private_residue_curator",
+                    optional=True,
+                    timeout_seconds=45.0,
+                    cancel_scope="background:private_residue",
+                    coalesce_key="private_residue:latest_batch",
+                    metadata={"items": len(packet.get("items", []))},
+                ):
+                    curated = curate_fn(packet)
+            except Exception as exc:
+                curator_meta = dict(curator_meta)
+                curator_meta["error"] = f"{type(exc).__name__}:{exc}"[:160]
+                self._boundary_note("residue.curator", exc)
+        if isinstance(curated, Mapping):
+            applied = self.residue_store.apply_curator_output(curated, curator_meta=curator_meta, now=now)
+            if applied:
+                return
+        # Gemma vắng/lỗi/không có decision hợp lệ: vẫn giữ cognition thật, nhưng
+        # tuyệt đối không biến unprocessed stimulus thành diary.
+        self.residue_store.deterministic_consolidate(now=now)
+
+    @staticmethod
+    def _dossier_residue_text(dossier: Any) -> str:
+        if dossier is None:
+            return ""
+        turns = tuple(getattr(dossier, "recent_user_turns", ()) or ())
+        for turn in reversed(turns):
+            if isinstance(turn, Mapping):
+                text = str(turn.get("text") or "").strip()
+                if text:
+                    return text[:420]
+        for value in (getattr(dossier, "current_task", ""), getattr(dossier, "active_goal", "")):
+            text = str(value or "").strip()
+            if text:
+                return text[:420]
+        return ""
 
     def _trigger_signature(
         self,
@@ -542,8 +744,10 @@ class PrivateMindLoop:
                 else None
             ),
         }
+        residue_snapshot = self.residue_store.snapshot()
         retained = {
             "concerns": list(self.concern_store.snapshots(limit=8)),
+            "diary_entries": list(residue_snapshot.get("diary_entries", [])),
             "speech_bias": to_plain(getattr(self.mutation_bus.bias_state, "speech_bias", {})),
             "thought_pressure": round(float(getattr(self.mutation_bus.bias_state, "thought_stream_pressure", 0.0) or 0.0), 3),
             "inquiry_plan": to_plain(getattr(self.mutation_bus.bias_state, "inquiry_plan", [])[-8:]),
@@ -606,6 +810,7 @@ class PrivateMindLoop:
             "future_bias": future_bias,
             "surface_queue": surface_queue_payload,
             "speech_silence_reason": {},
+            "diary_residue": residue_snapshot,
             "debug_api": debug_api,
         }
         digest = {
@@ -617,6 +822,7 @@ class PrivateMindLoop:
             "menu": menu,
             **menu,
             "affect": dict(getattr(self, "_affect_snapshot", {}) or {}),
+            "diary_residue": residue_snapshot,
             "debug": to_plain(getattr(result, "debug", {}) if result is not None else {}),
         }
         digest["generated_at"] = round(time.time(), 3)
@@ -664,10 +870,24 @@ class PrivateMindLoop:
             return {"api_degraded": True, "api_invalid_json": False, "last_error": "debug_status_failed", "api_degraded_cause": ""}
         last_error = str(status.get("last_error", "") or "") if isinstance(status, Mapping) else ""
         degraded_cause = str(status.get("degraded_cause", "") or "") if isinstance(status, Mapping) else ""
+        # Pool có streak riêng cho từng mini-evaluator. Nếu một fragment bị
+        # DROP_IF_BUSY nhưng synthesis vẫn ổn, top-level last_error có thể rỗng;
+        # quét nested status để residue spool biết đã có stimulus chưa xử lý.
+        nested_errors: list[str] = []
+        if isinstance(status, Mapping):
+            fragments = status.get("fragments")
+            if isinstance(fragments, Mapping):
+                for item in fragments.values():
+                    if isinstance(item, Mapping):
+                        err = str(item.get("last_error", "") or "")
+                        if err:
+                            nested_errors.append(err)
+        busy_error = next((err for err in nested_errors if "busy" in err.casefold()), "")
+        effective_error = busy_error or last_error
         return {
-            "api_degraded": bool(last_error),
-            "api_invalid_json": "invalid_json" in last_error,
-            "last_error": last_error,
+            "api_degraded": bool(last_error or nested_errors),
+            "api_invalid_json": "invalid_json" in effective_error,
+            "last_error": effective_error,
             "api_degraded_cause": degraded_cause,
         }
 

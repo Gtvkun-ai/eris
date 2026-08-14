@@ -15,6 +15,7 @@ from llm import LlmService
 from llm.process_manager import RemoteModelProcessManager
 from runtime.architecture_flags import (
     background_tutor_enabled, inner_diary_model_enabled, legacy_model_lanes_enabled,
+    private_residue_curator_enabled,
 )
 from memory.memory_cognition import MemoryCognitionCore
 from parser_grounding import DecisionParser
@@ -124,6 +125,10 @@ class AttentionOverseer:
         inner_client = self.process_manager.build_inner_client()
         executive_client = self.process_manager.build_executive_client()
         diary_client = self.process_manager.build_diary_client() if inner_diary_model_enabled() else None
+        residue_curator_client = (
+            self.process_manager.build_residue_curator_client()
+            if private_residue_curator_enabled() else None
+        )
         seed_client = self.process_manager.build_seed_client()
         surface_client = self.process_manager.build_surface_client()
         research_client = self.process_manager.build_research_client() if background_tutor_enabled() else None
@@ -145,6 +150,7 @@ class AttentionOverseer:
             critic_client=social_critic_client,
             inner_client=inner_client,
             diary_client=diary_client,
+            residue_curator_client=residue_curator_client,
             seed_client=seed_client,
             surface_client=surface_client,
             executive_client=executive_client,
@@ -161,6 +167,7 @@ class AttentionOverseer:
                 ("critic", getattr(self.llm_service, "critic_client", None)),
                 ("inner", getattr(self.llm_service, "inner_client", None)),
                 ("diary", getattr(self.llm_service, "diary_client", None)),
+                ("residue_curator", getattr(self.llm_service, "residue_curator_client", None)),
                 ("seed", getattr(self.llm_service, "seed_client", None)),
                 ("surface", getattr(self.llm_service, "surface_client", None)),
                 ("executive", getattr(self.llm_service, "executive_client", None)),

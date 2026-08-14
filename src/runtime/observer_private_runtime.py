@@ -51,10 +51,14 @@ class ObserverPrivateRuntimeMixin:
         if schedule_lock is None:
             schedule_lock = threading.RLock()
             self._private_mind_schedule_lock = schedule_lock
+        dropped_latest = None
         with schedule_lock:
             self._private_mind_generation = int(getattr(self, "_private_mind_generation", 0) or 0) + 1
+            dropped_latest = getattr(self, "_private_mind_latest_tick_kwargs", None)
             self._private_mind_dirty = False
             self._private_mind_latest_tick_kwargs = None
+        if isinstance(dropped_latest, dict):
+            self._capture_private_mind_unprocessed_kwargs(dropped_latest, reason="user_preempted_pending_snapshot")
 
         pending = getattr(self, "_private_mind_future", None)
         if pending is not None and not pending.done():
@@ -313,9 +317,15 @@ class ObserverPrivateRuntimeMixin:
         # Future đang chạy: coalesce mọi cập nhật vào đúng snapshot mới nhất.
         pending = getattr(self, "_private_mind_future", None)
         if pending is not None and not pending.done():
+            overwritten = None
             with schedule_lock:
+                overwritten = getattr(self, "_private_mind_latest_tick_kwargs", None)
                 self._private_mind_latest_tick_kwargs = tick_kwargs
                 self._private_mind_dirty = True
+            if isinstance(overwritten, dict):
+                self._capture_private_mind_unprocessed_kwargs(
+                    overwritten, reason="singleflight_coalesced_overwritten"
+                )
             return
 
         # --- Tạo executor lần đầu ---
@@ -385,6 +395,41 @@ class ObserverPrivateRuntimeMixin:
             self._private_mind_future_generation = None
             self._observer_boundary_note("private_mind.submit", exc)
 
+
+    def _capture_private_mind_unprocessed_kwargs(self, kwargs: dict, *, reason: str) -> None:
+        """Giữ dấu stimulus bị single-flight làm rơi, nhưng không gọi nó là thought."""
+        loop = getattr(self, "private_mind_loop", None)
+        capture = getattr(loop, "capture_unprocessed_stimulus", None)
+        if not callable(capture):
+            return
+        text = str(kwargs.get("user_text") or "").strip()
+        observer = kwargs.get("observer_frame")
+        if not text and observer is not None:
+            text = str(
+                getattr(observer, "summary", "")
+                or getattr(observer, "event", "")
+                or getattr(observer, "activity_intent", "")
+                or ""
+            ).strip()
+        snapshot = kwargs.get("snapshot")
+        if not text and snapshot is not None:
+            text = str(
+                getattr(snapshot, "active_window_title", "")
+                or getattr(snapshot, "active_app", "")
+                or ""
+            ).strip()
+        if not text:
+            return
+        try:
+            capture(
+                text=text[:420],
+                reason=reason,
+                source_ids=(),
+                salience=0.56,
+                metadata={"channel": str(kwargs.get("channel") or "autonomous")},
+            )
+        except Exception as exc:
+            self._observer_boundary_note("private_mind.capture_unprocessed", exc)
 
     def _apply_private_mind_tick_result(self, result, *, daemon) -> None:
         """Apply kết quả tick PrivateMind sau khi background thread hoàn tất."""

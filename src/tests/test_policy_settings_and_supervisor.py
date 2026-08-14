@@ -186,7 +186,7 @@ def test_runtime_settings_v4_migrates_typed_policy_blocks() -> None:
     )
 
     assert changed is True
-    assert migrated["version"] == 17
+    assert migrated["version"] == 18
     assert migrated["public_turn"]["reply_window_seconds"] == 30.0
     assert migrated["public_turn"]["collision_grace_seconds"] == 2.5
     assert "default_block_seconds" not in migrated["public_turn"]

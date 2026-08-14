@@ -325,6 +325,20 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
     conversation_topic_closed = bool(getattr(handoff_state, "topic_closed", False))
     conversation_move_hint = str(getattr(handoff_state, "conversation_move_hint", "") or "")
 
+    # V77: motive generator được nhìn self-process TRƯỚC khi materialize social
+    # candidate. Nếu không, kiến trúc vẫn là "candidate trước, self sửa điểm sau".
+    # Dùng projection typed, không cho LLM tự diễn giải private state raw.
+    continuous_self: dict[str, Any] = {}
+    individual_runtime = getattr(host, "persistent_individual_runtime", None)
+    project_individual = getattr(individual_runtime, "projection_for_host", None)
+    if callable(project_individual):
+        try:
+            _individual_view = project_individual(host, now=current, context_key="initiative")
+            _self_view = _individual_view.get("continuous_self") if isinstance(_individual_view, Mapping) else {}
+            continuous_self = dict(_self_view) if isinstance(_self_view, Mapping) else {}
+        except Exception:
+            continuous_self = {}
+
     # Các tín hiệu dưới đây chỉ lấy từ projection đã có. Không có projection thì
     # để 0, tuyệt đối không bịa "user hiểu sai Eris" chỉ để kiếm chủ đề nói.
     return {
@@ -387,6 +401,11 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
         # bao giờ ghi key này.
         "explicit_quiet_request": not bool(autonomous_expression_enabled),
         "expression_authority": "self_owned",
+        # V77: operational self-process. Chỉ projection bounded, không phải chain-of-thought.
+        "continuous_self": continuous_self,
+        "continuous_self_public_pressure": _clamp01(continuous_self.get("public_action_pressure", 0.0)),
+        "continuous_self_private_pressure": _clamp01(continuous_self.get("private_cognition_pressure", 0.0)),
+        "continuous_self_orientation": str(continuous_self.get("orientation", "") or ""),
     }
 
 
@@ -409,6 +428,15 @@ def _candidate_from_intention(
     runtime_context = dict(runtime_context or {})
     topic_closed = bool(runtime_context.get("conversation_topic_closed", False))
     user_unknown = _clamp01(runtime_context.get("user_model_uncertainty", 0.72), 0.72)
+    self_view = runtime_context.get("continuous_self")
+    self_view = dict(self_view) if isinstance(self_view, Mapping) else {}
+    self_public = _clamp01(self_view.get("public_action_pressure", 0.0)) if self_view else 1.0
+    self_orientation = str(self_view.get("orientation", "") or "")
+    # Tò mò chỉ thành user_probe khi self-process có lý do public đủ mạnh.
+    # Information gap tự nó không phải quyền phỏng vấn user.
+    if kind == "understand_user" and self_view:
+        if self_public < 0.46 or self_orientation in {"quiet_recovery", "quiet_company", "quiet_presence", "private_concern"}:
+            return None
     if kind == "understand_user" and not (topic_closed or user_unknown >= 0.58):
         return None
     if kind == "connect" and target != "relationship_continuity":
@@ -558,6 +586,99 @@ def _candidate_from_intention(
 
 
 
+def _continuous_self_affordance(
+    runtime_context: Mapping[str, Any], *, revision: int, now: float
+) -> ExecutiveAffordance | None:
+    """Materialize đúng *một* action opportunity từ self-process V77.
+
+    Đây là cầu SELF->MOTIVE->CANDIDATE. Nó không tự nói: Neuro/Courtesy/Ecology vẫn
+    có quyền chọn silence. Candidate chỉ xuất hiện khi commitment/thought có causal
+    provenance và public_action_pressure đủ cao.
+    """
+    self_view = runtime_context.get("continuous_self")
+    self_view = dict(self_view) if isinstance(self_view, Mapping) else {}
+    if not self_view:
+        return None
+    pressure = _clamp01(self_view.get("public_action_pressure", 0.0))
+    if pressure < 0.44:
+        return None
+    orientation = str(self_view.get("orientation", "") or "")
+    if orientation in {"quiet_recovery", "private_concern"} and pressure < 0.62:
+        return None
+
+    commitment = self_view.get("active_commitment")
+    commitment = dict(commitment) if isinstance(commitment, Mapping) else {}
+    thought = self_view.get("top_unfinished_thought")
+    thought = dict(thought) if isinstance(thought, Mapping) else {}
+
+    candidate_kind = ""
+    speech_act = ""
+    topic = ""
+    refs: tuple[str, ...] = ()
+    tone = "warm_low_pressure"
+
+    if commitment:
+        goal_kind = str(commitment.get("goal_kind", "") or "")
+        cid = str(commitment.get("commitment_id", "") or "")
+        preferred = tuple(str(x) for x in (commitment.get("preferred_modes", ()) or ()) if str(x))
+        if goal_kind == "mood_lift":
+            candidate_kind = "relational_plan_step"
+            speech_act = "ambient_mutter" if "mutter" in preferred else "ambient_comment"
+            topic = (
+                "Take one small, low-demand step toward making the user's atmosphere lighter. "
+                "Prefer a playful observation, tiny tease, or relaxed mutter. Do not ask a question, "
+                "do not demand a reaction, and do not invent facts about the screen/user."
+            )
+            tone = "playful_restrained"
+        elif goal_kind == "keep_company":
+            candidate_kind = "relational_plan_step"
+            speech_act = "ambient_mutter"
+            topic = (
+                "Provide one brief piece of quiet company: a low-demand mutter/comment that can stand alone. "
+                "No question and no obligation for the user to reply. Silence remains acceptable if wording would be filler."
+            )
+            tone = "familiar_relaxed"
+        elif goal_kind == "reduce_questions":
+            return None  # Đây là inhibition plan, không phải motive để nói thêm.
+        if candidate_kind:
+            refs = (f"continuous-self:{cid or goal_kind}",)
+    elif thought and _clamp01(thought.get("pressure", 0.0)) >= 0.52 and _clamp01(thought.get("semantic_gain_ema", 0.0)) >= 0.34:
+        tid = str(thought.get("thought_id", "") or "")
+        topic = str(thought.get("summary", "") or "")
+        if not topic:
+            return None
+        candidate_kind = "inner_thought"
+        speech_act = "share_self_originated_thought"
+        refs = (f"continuous-self:{tid}",)
+        tone = "reflective_low_pressure"
+    else:
+        return None
+
+    candidate = SocialSpeechCandidate(
+        decision="candidate", kind=candidate_kind, topic=topic, speech_act=speech_act,
+        anchor_type="internal", anchor_id=refs[0] if refs else "continuous-self",
+        evidence_refs=refs or ("continuous-self:v77",), requires_grounding=False,
+        confidence=_clamp01(0.52 + 0.28 * pressure), relevance=max(0.42, pressure),
+        urgency=_clamp01(0.18 + 0.50 * pressure), tone=tone,
+        reason=f"continuous_self_v77:{orientation}:public_pressure={pressure:.2f}",
+        source="continuous_self", seed_id="", eris_motive_kind="carry_self_state",
+        eris_motive_why_now="persistent self-state has a current commitment/thought and enough public-action pressure",
+        personal_stake=pressure, authenticity=1.0, uncertainty=0.30,
+        seed_intrusion_risk=_clamp01(0.18 + 0.18 * (1.0 - pressure)),
+        face_risk=0.10, recovery_available=True,
+        expression_commitment=commitment_payload(
+            origin="continuous_self", source_id=refs[0] if refs else "continuous-self:v77",
+            semantic_target=topic, motive="carry_self_state", pressure=pressure,
+            freshness=1.0, persistence=_clamp01(self_view.get("continuity_strength", pressure)),
+        ),
+    )
+    return ExecutiveAffordance(
+        affordance_id=f"continuous-self:{revision}:{abs(hash((candidate_kind, refs))) % 100000}",
+        owner="continuous_self", revision=revision, candidate=candidate, claim_required=False,
+        expires_at=float(now) + 45.0, metadata={"motivational_provenance": True, "v77": True},
+    )
+
+
 def coalesce_contact_probe_affordances(
     affordances: Sequence[Any],
     *,
@@ -666,8 +787,16 @@ def build_subject_initiative_affordances(
             metadata={**dict(candidate.metadata), "initiative_control": control.to_dict()},
         )
         output.append(candidate)
-    # Không có content-bound intention thì không tạo preview social. Connection
-    # pressure vẫn còn trong Subject state và sẽ tăng lực cho urge có nội dung.
+    # V77: nếu Subject intention không có content nhưng self-process đang giữ một
+    # commitment/thought có provenance, cho đúng MỘT candidate vào competition.
+    # Đây không phải preview social chung chung; public_action_pressure và plan
+    # hiện tại là causal source. Neuro vẫn có thể chọn silence.
+    if len(output) < 4:
+        self_candidate = _continuous_self_affordance(runtime_context, revision=revision, now=now)
+        if self_candidate is not None:
+            output.append(self_candidate)
+
+    # Không có content-bound intention/self motive thì không tạo preview social.
     return tuple(output[:4])
 
 

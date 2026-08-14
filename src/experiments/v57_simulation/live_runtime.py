@@ -26,7 +26,10 @@ from llm.client import GeminiClient, OpenAICompatibleClient
 from llm.process_manager import RemoteModelProcessManager
 from memory.memory_cognition import MemoryCognitionCore
 from parser_grounding import DecisionParser
-from runtime.architecture_flags import background_tutor_enabled, inner_diary_model_enabled, legacy_model_lanes_enabled
+from runtime.architecture_flags import (
+    background_tutor_enabled, inner_diary_model_enabled, legacy_model_lanes_enabled,
+    private_residue_curator_enabled,
+)
 from runtime.coordinator import RuntimeCoordinator
 from runtime.memory_semantic_parser_adapter import build_runtime_memory_semantic_parser
 
@@ -258,6 +261,7 @@ class LiveRuntimeHarness:
         inner = manager.build_inner_client()
         executive = manager.build_executive_client()
         diary = manager.build_diary_client() if inner_diary_model_enabled() else None
+        residue_curator = manager.build_residue_curator_client() if private_residue_curator_enabled() else None
         seed = manager.build_seed_client()
         raw_surface = manager.build_surface_client()
         surface = ProviderCallProbe(raw_surface, lane="surface") if raw_surface is not None else None
@@ -270,7 +274,7 @@ class LiveRuntimeHarness:
             escalation_client=escalation, social_parser_client=social_parser,
             social_critic_client=social_critic, social_fallback_client=social_fallback,
             observer_client=social_parser, critic_client=social_critic, inner_client=inner,
-            diary_client=diary, seed_client=seed, surface_client=surface,
+            diary_client=diary, residue_curator_client=residue_curator, seed_client=seed, surface_client=surface,
             executive_client=executive, research_client=research, tutor_client=tutor,
             curator_client=curator, logger=self.logger,
         )

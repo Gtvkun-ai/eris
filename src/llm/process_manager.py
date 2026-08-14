@@ -502,6 +502,67 @@ class RemoteModelProcessManager:
             self.logger.info("Inner Diary owner: DeepSeek worker role=%s", normalized)
         return client
 
+    def build_residue_curator_client(self):
+        """Dựng Gemma riêng cho Residue Curator của PrivateMind/Inner Diary.
+
+        Mặc định dùng Gemma qua Gemini API. Lane này chỉ gom/dedupe/nén residue,
+        không sở hữu public speech hay identity. Thiếu key thì trả None; runtime
+        vẫn giữ residue và dùng deterministic consolidation thay vì mượn worker khác.
+        """
+        apply_secrets_to_environ()
+        if not self._env_flag("ERIS_PRIVATE_RESIDUE_CURATOR_ENABLED", "1"):
+            return None
+        provider = str(os.environ.get("ERIS_PRIVATE_RESIDUE_CURATOR_PROVIDER", "gemini") or "gemini").strip().lower()
+        model_name = str(os.environ.get("ERIS_PRIVATE_RESIDUE_CURATOR_MODEL", DEFAULT_OPEN_MODEL_ID) or DEFAULT_OPEN_MODEL_ID).strip()
+
+        if provider == "gemini":
+            remote_provider = _normalize_remote_provider(os.environ.get("ERIS_REMOTE_PROVIDER", "deepseek"))
+            api_key = get_secret("ERIS_PRIVATE_RESIDUE_CURATOR_API_KEY", "GEMINI_API_KEY")
+            if not api_key and remote_provider == "gemini":
+                api_key = get_secret("ERIS_REMOTE_API_KEY")
+            if not api_key:
+                self.logger.info(
+                    "Residue Curator Gemma chua co key; deterministic retention van hoat dong."
+                )
+                return None
+            base_url = str(os.environ.get(
+                "ERIS_PRIVATE_RESIDUE_CURATOR_BASE_URL",
+                "https://generativelanguage.googleapis.com/v1beta",
+            ) or "https://generativelanguage.googleapis.com/v1beta").strip()
+            try:
+                client = GeminiClient(
+                    base_url=base_url,
+                    api_key=api_key,
+                    model_name=model_name,
+                    key_pool=get_key_pool("gemini"),
+                )
+                self.logger.info("Residue Curator san sang: Gemma model=%s", model_name)
+                return client
+            except ValueError as exc:
+                self.logger.warning("Khong dung duoc Gemma Residue Curator: %s", exc)
+                return None
+
+        # Có thể override sang OpenAI-compatible cho deployment riêng, nhưng
+        # không có implicit fallback: user yêu cầu một curator rõ owner.
+        base_url = str(os.environ.get("ERIS_PRIVATE_RESIDUE_CURATOR_BASE_URL", "") or "").strip()
+        api_key = get_secret("ERIS_PRIVATE_RESIDUE_CURATOR_API_KEY")
+        if not (base_url and api_key and model_name):
+            self.logger.info("Residue Curator provider=%s chua du cau hinh.", provider)
+            return None
+        try:
+            client = OpenAICompatibleClient(
+                base_url=base_url,
+                api_key=api_key,
+                model_name=model_name,
+                key_pool=None,
+                provider_circuit_id=f"{base_url.rstrip('/')}#residue_curator",
+            )
+            self.logger.info("Residue Curator san sang: provider=%s model=%s", provider, model_name)
+            return client
+        except ValueError as exc:
+            self.logger.warning("Khong dung duoc Residue Curator: %s", exc)
+            return None
+
     def build_seed_client(self):
         """Dựng worker ``seed`` riêng cho premise chạy nền.
 

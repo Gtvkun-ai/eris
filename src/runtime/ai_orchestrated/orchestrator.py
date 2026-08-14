@@ -783,7 +783,8 @@ class AIChatOrchestrator:
         from runtime.persistent_individual import ensure_persistent_individual_runtime
         persistent_individual_runtime = ensure_persistent_individual_runtime(host)
         persistent_individual_runtime.observe_user_turn(
-            user_text, turn_ref=turn_id, context_key="direct_chat", now=cycle_start
+            user_text, turn_ref=turn_id, context_key="direct_chat",
+            trajectory=trajectory_state.to_dict(), now=cycle_start
         )
         _ledger_for_handoff = host._ensure_session_turn_ledger()
         _prior_turns_for_handoff = _ledger_for_handoff.recent_turns(

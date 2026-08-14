@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Persistent Individual Core V76.
+"""Persistent Individual Core V77.
 
 Đây là lớp hợp nhất state dài hạn cho *cách Eris tồn tại cạnh user*, không thay thế
 các subsystem giàu có đã có (PersistentInternalState, ActiveConcern, Life-Horizon,
@@ -35,10 +35,11 @@ from runtime.interaction_ecology import (
 )
 from runtime.relational_plan import RelationalPlanManager
 from runtime.temporal_memory_policy import project_records
+from runtime.continuous_self_dynamics import ContinuousSelfDynamics, ContinuousSelfState
 
 
-INDIVIDUAL_SCHEMA = "eris.persistent_individual.v76"
-STATE_VERSION = 1
+INDIVIDUAL_SCHEMA = "eris.persistent_individual.v77"
+STATE_VERSION = 2
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -159,6 +160,9 @@ class PersistentIndividualState:
     self_model: OperationalSelfModel = field(default_factory=OperationalSelfModel)
     habits: list[HabitPrototype] = field(default_factory=list)
     relational_plans: dict[str, Any] = field(default_factory=dict)
+    # V77: self-process liên tục nằm trong cùng persistent authority, không phải
+    # một JSON island mới. Nhờ vậy restart giữ causal history của chính ERIS.
+    continuous_self: ContinuousSelfState = field(default_factory=ContinuousSelfState)
     last_context_key: str = ""
     last_public_mode: str = ""
     last_public_autonomous: bool = False
@@ -179,6 +183,7 @@ class PersistentIndividualState:
             "self_model": self.self_model.to_dict(),
             "habits": [item.to_dict() for item in self.habits[-64:]],
             "relational_plans": dict(self.relational_plans or {}),
+            "continuous_self": self.continuous_self.to_dict(),
             "last_context_key": self.last_context_key,
             "last_public_mode": self.last_public_mode,
             "last_public_autonomous": self.last_public_autonomous,
@@ -203,6 +208,9 @@ class PersistentIndividualState:
             self_model=OperationalSelfModel.from_dict(data.get("self_model") if isinstance(data.get("self_model"), Mapping) else {}),
             habits=[HabitPrototype.from_dict(row) for row in (data.get("habits", ()) or ()) if isinstance(row, Mapping)][-64:],
             relational_plans=dict(data.get("relational_plans", {}) or {}),
+            continuous_self=ContinuousSelfState.from_dict(
+                data.get("continuous_self") if isinstance(data.get("continuous_self"), Mapping) else {}
+            ),
             last_context_key=str(data.get("last_context_key", "") or ""),
             last_public_mode=str(data.get("last_public_mode", "") or ""),
             last_public_autonomous=bool(data.get("last_public_autonomous", False)),
@@ -215,19 +223,23 @@ class PersistentIndividualState:
 
 
 class PersistentIndividualRuntime:
-    """Authority duy nhất cho state V76, persist JSON atomic."""
+    """Authority duy nhất cho state V77, persist JSON atomic và migrate V76."""
 
     def __init__(self, *, path: Path | None = None, logger: Any = None) -> None:
-        self.path = path or (default_eris_home() / "state" / "persistent_individual_v76.json")
+        self.path = path or (default_eris_home() / "state" / "persistent_individual_v77.json")
+        self.legacy_path = (default_eris_home() / "state" / "persistent_individual_v76.json") if path is None else None
         self.logger = logger
         self._lock = threading.RLock()
         self.state = self._load()
         self.ecology = InteractionEcologyRuntime(self.state.ecology, logger=logger)
         self.plans = RelationalPlanManager.from_dict(self.state.relational_plans, logger=logger)
+        self.self_dynamics = ContinuousSelfDynamics(self.state.continuous_self, logger=logger)
+        self.continuous_self_enabled = _env_flag("ERIS_V77_CONTINUOUS_SELF", True)
         # Short-term ecology/plans chạy mặc định. Hai cơ chế có thể làm ERIS drift
         # qua tuần/tháng được ship cùng patch nhưng mặc định OFF để rollout có thể rollback.
         self.self_model_learning_enabled = _env_flag("ERIS_V76_SELF_MODEL_LEARNING", False)
         self.habit_learning_enabled = _env_flag("ERIS_V76_HABIT_LEARNING", False)
+        self._last_continuous_checkpoint_at = 0.0
 
     def note_startup(self, *, now: float | None = None) -> dict[str, Any]:
         current = float(now or time.time())
@@ -250,7 +262,7 @@ class PersistentIndividualRuntime:
         late_night = hour >= 1 and hour <= 5
         short_return = 0 < reentry_gap_seconds <= 3 * 3600
         return {
-            "schema": "eris.startup_appraisal.v76",
+            "schema": "eris.startup_appraisal.v77",
             "local_hour": hour,
             "reentry_gap_seconds": round(float(reentry_gap_seconds), 3),
             "late_night": late_night,
@@ -269,6 +281,7 @@ class PersistentIndividualRuntime:
         *,
         turn_ref: str = "",
         context_key: str = "",
+        trajectory: Mapping[str, Any] | None = None,
         now: float | None = None,
     ) -> dict[str, Any]:
         current = float(now or time.time())
@@ -294,6 +307,14 @@ class PersistentIndividualRuntime:
 
             self.ecology.observe_user_turn(now=current)
             plan = self.plans.observe_user_turn(clean, turn_ref=turn_ref, now=current)
+            if self.continuous_self_enabled:
+                # User turn là external support thật. Chỉ đây/evidence typed mới
+                # được phép recharge commitment; assistant speech thì không.
+                trajectory_view = dict(trajectory or {})
+                self.self_dynamics.observe_user_turn(
+                    clean, turn_ref=turn_ref, relational_plan=self.plans.projection(now=current),
+                    trajectory=trajectory_view, now=current,
+                )
             self.state.last_user_at = current
             if self.self_model_learning_enabled or self.habit_learning_enabled:
                 self._learn_direct_feedback(clean, now=current)
@@ -329,6 +350,10 @@ class PersistentIndividualRuntime:
                 now=current,
             )
             self.plans.observe_public_action(mode=mode, autonomous=autonomous, now=current)
+            if self.continuous_self_enabled:
+                self.self_dynamics.observe_public_action(
+                    mode=mode, autonomous=autonomous, response_expectation=expectation, now=current
+                )
             self.state.last_public_mode = mode
             self.state.last_public_autonomous = bool(autonomous)
             self.state.last_public_at = current
@@ -393,15 +418,49 @@ class PersistentIndividualRuntime:
         )
         # Operational self-model chỉ là bias nhỏ. Nó không được quyền hard-block
         # task/repair. Tự nhận ra mình hay hỏi quá phải dẫn tới inhibition thật.
+        multiplier = bias.multiplier
+        reason = bias.reason
         if bias.mode == MODE_ASK and self.state.self_model.over_questioning >= 0.45:
             factor = max(0.40, 1.0 - 0.34 * self.state.self_model.over_questioning)
-            return EcologyCandidateBias(
-                bias.mode, bias.response_expectation,
-                multiplier=max(0.03, bias.multiplier * factor),
-                hard_suppress=bias.hard_suppress,
-                reason=f"{bias.reason},self_model_over_questioning={self.state.self_model.over_questioning:.2f}",
-            )
-        return bias
+            multiplier *= factor
+            reason = f"{reason},self_model_over_questioning={self.state.self_model.over_questioning:.2f}"
+        if self.continuous_self_enabled:
+            self_bias = self.self_dynamics.action_bias(mode=bias.mode, action_kind=action_kind)
+            multiplier *= self_bias.multiplier
+            reason = f"{reason},{self_bias.reason}"
+        return EcologyCandidateBias(
+            bias.mode, bias.response_expectation, multiplier=max(0.03, min(1.80, multiplier)),
+            hard_suppress=bias.hard_suppress, reason=reason,
+        )
+
+    def observe_private_development(
+        self,
+        *,
+        summary: str,
+        material_kind: str = "",
+        cause_kind: str = "",
+        source_refs: Sequence[str] = (),
+        semantic_gain: float = 0.0,
+        topic_id: str = "",
+        now: float | None = None,
+    ) -> dict[str, Any]:
+        """Receipt cho private cognition V77.
+
+        Thought có quyền tiếp tục, cạn hoặc chết trong private. Method này không
+        tạo ExpressionUrge và không coi việc "nghĩ ra" là lý do bắt buộc phải nói.
+        """
+        current = float(now or time.time())
+        with self._lock:
+            if self.continuous_self_enabled:
+                self.self_dynamics.observe_private_development(
+                    summary=summary, material_kind=material_kind, cause_kind=cause_kind,
+                    source_refs=source_refs, semantic_gain=semantic_gain, topic_id=topic_id, now=current,
+                )
+            self._sync_substates()
+            self._touch(current)
+            self._journal("private_development", {"kind": material_kind, "cause": cause_kind, "gain": round(float(semantic_gain or 0.0), 3)}, now=current)
+            self._save()
+            return self.self_dynamics.projection(now=current) if self.continuous_self_enabled else {}
 
     def curiosity_ask_value(
         self,
@@ -453,7 +512,7 @@ class PersistentIndividualRuntime:
             records = ()
 
         # Source hiện tại đã có PersistentInternalState + EndogenousDriveEngine.
-        # V76 không tạo drive store thứ hai, chỉ bridge state sẵn có vào một
+        # V77 vẫn không tạo drive store thứ hai, chỉ bridge state sẵn có vào một
         # projection thống nhất để planner không phải nhìn 5 subsystem như 5 vũ trụ.
         existing_internal: dict[str, Any] = {}
         endogenous: dict[str, Any] = {}
@@ -481,9 +540,29 @@ class PersistentIndividualRuntime:
         except Exception:
             endogenous = {}
 
+        active_concerns: Sequence[Mapping[str, Any]] = ()
+        trajectory: Mapping[str, Any] = {}
+        try:
+            concern_runtime = getattr(host, "active_concern_runtime", None)
+            snapshot_fn = getattr(concern_runtime, "snapshot", None)
+            if callable(snapshot_fn):
+                active_concerns = tuple(snapshot_fn(now=now, limit=6) or ())
+        except Exception:
+            active_concerns = ()
+        try:
+            trajectory_runtime = getattr(host, "conversation_trajectory_runtime", None)
+            snapshot_fn = getattr(trajectory_runtime, "snapshot", None)
+            if callable(snapshot_fn):
+                trajectory_state = snapshot_fn(now=now)
+                to_dict = getattr(trajectory_state, "to_dict", None)
+                trajectory = dict(to_dict() or {}) if callable(to_dict) else {}
+        except Exception:
+            trajectory = {}
+
         return self.projection(
             now=now, context_key=context_key, memory_records=records,
             existing_internal=existing_internal, endogenous=endogenous,
+            active_concerns=active_concerns, trajectory=trajectory,
         )
 
     def projection(
@@ -494,12 +573,29 @@ class PersistentIndividualRuntime:
         memory_records: Sequence[Any] = (),
         existing_internal: Mapping[str, Any] | None = None,
         endogenous: Mapping[str, Any] | None = None,
+        active_concerns: Sequence[Mapping[str, Any]] = (),
+        trajectory: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         current = float(now or time.time())
         with self._lock:
             ecology = self.ecology.projection(now=current)
             plan = self.plans.projection(now=current)
             habits = self._habit_projection(context_key or self._context_key(now=current), now=current)
+            continuous_self = {}
+            if self.continuous_self_enabled:
+                self.self_dynamics.tick(
+                    now=current, persistent_internal=existing_internal, endogenous=endogenous,
+                    interaction_ecology=ecology, relational_plan=plan, trajectory=trajectory or {},
+                    active_concerns=active_concerns,
+                )
+                continuous_self = self.self_dynamics.projection(now=current)
+                self._sync_substates()
+                # Idle self-process phải sống qua restart. Checkpoint tối đa 1 lần/phút
+                # để không biến mỗi cheap tick thành một disk write.
+                if current - self._last_continuous_checkpoint_at >= 60.0:
+                    self._touch(current)
+                    self._save()
+                    self._last_continuous_checkpoint_at = current
             return {
                 "schema": INDIVIDUAL_SCHEMA,
                 "revision": self.state.revision,
@@ -508,9 +604,11 @@ class PersistentIndividualRuntime:
                 "continuous_state_bridge": {
                     "persistent_internal": dict(existing_internal or {}),
                     "endogenous_drives": dict(endogenous or {}),
-                    "rule": "Reuse existing InternalState/EndogenousDrive as drives; V76 does not duplicate them.",
+                    "rule": "Reuse existing InternalState/EndogenousDrive as drives; V77 does not duplicate them.",
                 },
                 "operational_self_model": self.state.self_model.to_dict(),
+                "continuous_self": continuous_self,
+                "continuous_self_enabled": self.continuous_self_enabled,
                 "learning_flags": {
                     "self_model_learning": self.self_model_learning_enabled,
                     "habit_learning": self.habit_learning_enabled,
@@ -521,8 +619,8 @@ class PersistentIndividualRuntime:
                     "schema": "eris.temporal_memory_policy.v76", "records": []
                 },
                 "behavior_contract": (
-                    "STATE->MOTIVE->PLAN->INTERACTION_MODE->CANDIDATES->NEURO. "
-                    "Do not turn curiosity into a question by default. Public speech is one possible action, not the endpoint of private thought."
+                    "OBSERVATION->CONTINUOUS_SELF->MOTIVE/COMMITMENT->PLAN->INTERACTION_MODE->CANDIDATES->NEURO->OUTCOME->SELF. "
+                    "Private pressure and public pressure are separate. Do not turn curiosity into a question by default; public speech spends pressure and is not the endpoint of private thought."
                 ),
             }
 
@@ -599,6 +697,7 @@ class PersistentIndividualRuntime:
     def _sync_substates(self) -> None:
         self.state.ecology = self.ecology.state
         self.state.relational_plans = self.plans.to_dict()
+        self.state.continuous_self = self.self_dynamics.state
 
     def _touch(self, now: float) -> None:
         self.state.revision += 1
@@ -609,12 +708,20 @@ class PersistentIndividualRuntime:
         self.state.journal = self.state.journal[-120:]
 
     def _load(self) -> PersistentIndividualState:
-        try:
-            if self.path.is_file() and self.path.stat().st_size > 0:
-                raw = json.loads(self.path.read_text(encoding="utf-8"))
-                return PersistentIndividualState.from_dict(raw)
-        except Exception as exc:
-            self._log("warning", "[persistent-individual-v76] load degraded: %s", exc)
+        # V77 đổi filename nhưng migrate V76 tự động để không "tái sinh" một ERIS
+        # mới chỉ vì upgrade. Khi caller truyền path test/custom thì không đoán path.
+        candidates = [self.path]
+        if self.legacy_path is not None and self.legacy_path not in candidates:
+            candidates.append(self.legacy_path)
+        for candidate in candidates:
+            try:
+                if candidate.is_file() and candidate.stat().st_size > 0:
+                    raw = json.loads(candidate.read_text(encoding="utf-8"))
+                    state = PersistentIndividualState.from_dict(raw)
+                    state.version = STATE_VERSION
+                    return state
+            except Exception as exc:
+                self._log("warning", "[persistent-individual-v77] load degraded path=%s: %s", candidate, exc)
         now = time.time()
         return PersistentIndividualState(created_at=now, updated_at=now)
 
@@ -623,7 +730,7 @@ class PersistentIndividualRuntime:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_json(self.path, self.state.to_dict())
         except Exception as exc:
-            self._log("warning", "[persistent-individual-v76] save degraded: %s", exc)
+            self._log("warning", "[persistent-individual-v77] save degraded: %s", exc)
 
     def _log(self, level: str, message: str, *args: Any) -> None:
         fn = getattr(self.logger, level, None)

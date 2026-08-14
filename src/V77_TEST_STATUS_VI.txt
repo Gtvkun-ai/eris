@@ -1,0 +1,49 @@
+ERIS V77 CONTINUOUS SELF DYNAMICS - TEST STATUS
+==============================================
+
+1) PY_COMPILE
+PASS
+- runtime/continuous_self_dynamics.py
+- runtime/persistent_individual.py
+- runtime/mental_material_runtime.py
+- runtime/subject_initiative_runtime.py
+- runtime/ai_orchestrated/orchestrator.py
+- runtime/ai_orchestrated/executive_cortex.py
+- runtime/ai_orchestrated/self_turn_pipeline.py
+
+2) TARGETED REGRESSION V74 + V75 + V76 + V77
+Lệnh:
+pytest -q tests/test_v77_continuous_self_dynamics.py tests/test_v76_persistent_individual_core.py tests/test_v75_conversation_trajectory.py tests/test_v74_life_horizon_full.py
+
+Kết quả:
+39 passed
+
+V77 test gồm:
+- commitment sống qua nhiều tick mà không tự recharge;
+- public speech tiêu pressure;
+- private thought có thể settled/dormant mà không surface;
+- state thay đổi sau 2 giờ silence;
+- private pressure cao nhưng public pressure thấp;
+- persistence/restart giữ continuous self;
+- Executive ưu tiên silence khi public pressure thấp;
+- direct user turn không bị self-state suppress;
+- self-process có thể tạo một plan-step candidate không hỏi user;
+- public pressure thấp thì không tạo public candidate.
+
+3) FULL SUITE PARITY CHECK
+Đã chạy cùng lệnh trên V76 base và V77:
+pytest -q --maxfail=20
+
+V76 base: 509 passed, 20 failed
+V77:      509 passed, 20 failed
+
+20 failure đầu là cùng nhóm failure có sẵn ở base V76; V77 không thêm failure mới trong parity run này.
+Do full suite base vốn không sạch, KHÔNG ghi V77 là "full suite pass".
+
+4) CẦN TEST THỰC TẾ TIẾP
+- soak user-im 2h / 8h / 24h;
+- restart nhiều phiên;
+- plan 30-90 phút như mood_lift/keep_company;
+- đếm autonomous speech/h, question rate, silence quality;
+- kiểm tra self-state không tự nuôi từ assistant output;
+- longitudinal simulation trước khi bật self-model/habit learning.

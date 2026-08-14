@@ -142,12 +142,37 @@ class PublicOutputRuntimeMixin:
                 raw_expression = behavior_meta.get("identity_expression")
                 if isinstance(raw_expression, Mapping):
                     expression = dict(raw_expression)
+            # Identity panel V78 đọc projection đúng của V74/V77 thay vì tự
+            # suy từ mood/discovery legacy. Nếu projection lỗi, panel vẫn chạy
+            # với contract cũ vì hai block này chỉ là dữ liệu bổ sung.
+            life_horizon_view = {}
+            individual_view = {}
+            try:
+                horizon = getattr(self, "life_horizon_manager", None)
+                snapshot_fn = getattr(horizon, "snapshot", None)
+                if callable(snapshot_fn):
+                    horizon_snapshot = snapshot_fn(now=time.time())
+                    to_dict = getattr(horizon_snapshot, "to_dict", None)
+                    if callable(to_dict):
+                        life_horizon_view = dict(to_dict() or {})
+            except Exception as exc:
+                self.logger.debug("[identity-panel] life horizon projection failed: %s", exc)
+            try:
+                individual = getattr(self, "persistent_individual_runtime", None)
+                projection_fn = getattr(individual, "projection_for_host", None)
+                if callable(projection_fn):
+                    individual_view = dict(projection_fn(self, now=time.time()) or {})
+            except Exception as exc:
+                self.logger.debug("[identity-panel] persistent individual projection failed: %s", exc)
+
             ai_panel = build_ai_panel_payload(
                 self.ai_state_reducer.snapshot(),
                 getattr(self, "ai_discovery_runtime", None),
                 getattr(self, "ai_initiative_controller", None),
                 getattr(self, "ai_identity_consolidator", None),
                 expression,
+                life_horizon=life_horizon_view,
+                persistent_individual=individual_view,
             )
             payload.update(ai_panel)
             private_digest = dict(ai_panel.get("private_mind_digest", {}) or {})

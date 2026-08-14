@@ -9,8 +9,8 @@ public partial class UdpListener : Node2D
 	// Panel cũ "Chiều sâu" từng phụ thuộc Ni/Fe/ToM legacy. Từ Architecture C v7 semantic cutover,
 	// nó trở thành bảng Identity & Life Runtime, đọc đúng một contract
 	// identity_runtime. Tên method/field cũ được giữ để không làm vỡ UdpListener.
-	private static readonly Vector2 DepthPanelMinSize = new(1400f, 820f);
-	private const float DepthPanelMargin = 8f;
+	private static readonly Vector2 DepthPanelMinSize = new(1180f, 720f);
+	private const float DepthPanelMargin = 16f;
 
 	private Panel _depthPanel;
 	private Button _contextDepthButton;
@@ -142,27 +142,27 @@ public partial class UdpListener : Node2D
 		root.AddThemeConstantOverride("separation", 9);
 		_depthPanel.AddChild(root);
 
-		var header = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 64f) };
+		var header = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 56f) };
 		header.AddThemeConstantOverride("separation", 12);
 		root.AddChild(header);
 
-		header.AddChild(NewIconBadge(IdentityAsset("identity_brand.png"), "♥", new Vector2(62f, 50f), IdentityPink, false));
+		header.AddChild(NewIconBadge(IdentityAsset("identity_brand.png"), "♥", new Vector2(52f, 42f), IdentityPink, false));
 
 		var titleBlock = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
 		titleBlock.AddThemeConstantOverride("separation", -1);
-		_depthTitleLabel = NewLabel("IDENTITY & LIFE RUNTIME", 23, new Color(0.45f, 0.15f, 0.31f), true);
+		_depthTitleLabel = NewLabel("IDENTITY & LIFE", 21, new Color(0.45f, 0.15f, 0.31f), true);
 		_depthTitleLabel.ClipText = true;
-		_depthStatusLabel = NewLabel("Architecture C  •  chờ identity_runtime", 10, IdentityMuted, false);
+		_depthStatusLabel = NewLabel("Bản sắc · hướng sống · phát triển dài hạn", 10, IdentityMuted, false);
 		_depthStatusLabel.ClipText = true;
 		titleBlock.AddChild(_depthTitleLabel);
 		titleBlock.AddChild(_depthStatusLabel);
 		header.AddChild(titleBlock);
 
 		_depthLearningChip = NewChip("LEARNING ?", new Color(0.93f, 0.99f, 0.96f), IdentityGreen);
-		_depthLearningChip.CustomMinimumSize = new Vector2(172f, 34f);
+		_depthLearningChip.CustomMinimumSize = new Vector2(148f, 30f);
 		_depthLearningChip.SizeFlagsHorizontal = Control.SizeFlags.ShrinkEnd;
 		_depthTurnChip = NewChip("TURN 0 · STATE 0", new Color(0.95f, 0.97f, 1f), IdentityBlue);
-		_depthTurnChip.CustomMinimumSize = new Vector2(172f, 34f);
+		_depthTurnChip.CustomMinimumSize = new Vector2(148f, 30f);
 		_depthTurnChip.SizeFlagsHorizontal = Control.SizeFlags.ShrinkEnd;
 		header.AddChild(_depthLearningChip);
 		header.AddChild(_depthTurnChip);
@@ -181,11 +181,11 @@ public partial class UdpListener : Node2D
 		tabs.AddThemeConstantOverride("separation", 2);
 		root.AddChild(tabs);
 		_depthTabButtons.Clear();
+		// V78: Identity panel chỉ giữ đúng nghề của nó. Mood/PrivateMind/Memory/Discovery
+		// đã có panel riêng, vì vậy màn này chỉ còn bản sắc và phát triển dài hạn.
 		AddDepthTab(tabs, "overview", "Tổng quan", IdentityAsset("identity_tab_overview.png"), "▦");
-		AddDepthTab(tabs, "identity", "Giá trị & động cơ", IdentityAsset("identity_tab_values.png"), "♡");
-		AddDepthTab(tabs, "relationship", "Quan hệ & belief", IdentityAsset("identity_tab_relationship.png"), "♧");
-		AddDepthTab(tabs, "discovery", "Discovery & chủ động", IdentityAsset("identity_tab_discovery.png"), "✧");
-		AddDepthTab(tabs, "audit", "Ledger & imprint", IdentityAsset("identity_tab_ledger.png"), "▤");
+		AddDepthTab(tabs, "identity", "Bản sắc", IdentityAsset("identity_tab_values.png"), "♡");
+		AddDepthTab(tabs, "development", "Phát triển", IdentityAsset("identity_tab_ledger.png"), "↗");
 
 		var scroll = new ScrollContainer
 		{
@@ -224,7 +224,7 @@ public partial class UdpListener : Node2D
 		scroll.GetVScrollBar().ValueChanged += _ => UpdateDepthScrollDecor();
 		scroll.Resized += UpdateDepthScrollDecor;
 
-		// Action dock tách thao tác bảo trì khỏi nội dung sống; reset được gom về một cụm riêng.
+		// Footer chỉ giữ hai thao tác thuộc đúng Identity panel; reset của panel khác không đặt ở đây.
 		var actionDock = new PanelContainer
 		{
 			CustomMinimumSize = new Vector2(0f, 58f),
@@ -244,26 +244,18 @@ public partial class UdpListener : Node2D
 		controls.AddThemeConstantOverride("separation", 8);
 		actionPad.AddChild(controls);
 
-		_depthFreezeButton = NewFooterButton("Đóng băng học", IdentityAsset("identity_action_freeze.png"), "❄", ToggleIdentityLearning, IdentityBlue);
-		_depthFreezeButton.CustomMinimumSize = new Vector2(184f, 42f);
+		_depthFreezeButton = NewFooterButton("Tạm dừng học", IdentityAsset("identity_action_freeze.png"), "❄", ToggleIdentityLearning, IdentityBlue);
+		_depthFreezeButton.CustomMinimumSize = new Vector2(168f, 40f);
 		controls.AddChild(_depthFreezeButton);
 
 		var exportButton = NewFooterButton("Xuất snapshot", IdentityAsset("identity_action_export.png"), "⇩", () => SendIdentityControl("snapshot"), IdentityBlue);
-		exportButton.CustomMinimumSize = new Vector2(174f, 42f);
+		exportButton.CustomMinimumSize = new Vector2(162f, 40f);
 		controls.AddChild(exportButton);
 
 		controls.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
-		controls.AddChild(NewActionDivider());
-
-		var resetMood = NewFooterButton("Reset mood", IdentityAsset("identity_action_reset_mood.png"), "☺", () => SendIdentityControl("reset_mood"), IdentityPink);
-		resetMood.CustomMinimumSize = new Vector2(148f, 42f);
-		controls.AddChild(resetMood);
-		var resetRelationship = NewFooterButton("Reset quan hệ", IdentityAsset("identity_action_reset_relationship.png"), "♧", () => SendIdentityControl("reset_relationship"), IdentityAccent);
-		resetRelationship.CustomMinimumSize = new Vector2(154f, 42f);
-		controls.AddChild(resetRelationship);
-		var resetDiscovery = NewFooterButton("Reset discovery", IdentityAsset("identity_action_reset_discovery.png"), "✦", () => SendIdentityControl("reset_discovery"), IdentityOrange);
-		resetDiscovery.CustomMinimumSize = new Vector2(164f, 42f);
-		controls.AddChild(resetDiscovery);
+		var hint = NewLabel("Các reset chuyên biệt nằm ở panel tương ứng.", 9, IdentityMuted, false);
+		hint.VerticalAlignment = VerticalAlignment.Center;
+		controls.AddChild(hint);
 
 		BuildDepthScrollDecoration();
 		RefreshDepthTabStyle();
@@ -582,20 +574,20 @@ public partial class UdpListener : Node2D
 			_depthLearningChip.Text = _depthLearningEnabled ? "LEARNING NORMAL" : "OBSERVE ONLY";
 			_depthLearningChip.AddThemeColorOverride("font_color", _depthLearningEnabled ? new Color(0.22f, 0.55f, 0.36f) : new Color(0.78f, 0.34f, 0.23f));
 			if (_depthFreezeButton != null)
-				_depthFreezeButton.Text = _depthLearningEnabled ? "Đóng băng học" : "Mở lại học";
+				_depthFreezeButton.Text = _depthLearningEnabled ? "Tạm dừng học" : "Tiếp tục học";
 
 			string architecture = ReadString(root, "architecture");
-			_depthStatusLabel.Text = string.IsNullOrWhiteSpace(architecture)
-				? "ai_orchestrated · compatibility snapshot"
-				: architecture.Replace("ai_orchestrated.", "v");
+			JsonElement individualRuntime = Obj(root, "individual_runtime");
+			string individualSchema = ReadString(individualRuntime, "schema");
+			_depthStatusLabel.Text = !string.IsNullOrWhiteSpace(individualSchema)
+				? "V77 persistent individual · live snapshot"
+				: string.IsNullOrWhiteSpace(architecture) ? "identity runtime · compatibility" : architecture.Replace("ai_orchestrated.", "v");
 
 			switch (_depthActiveTab)
 			{
-				case "identity": RenderIdentityTab(root); break;
-				case "relationship": RenderRelationshipTab(root); break;
-				case "discovery": RenderDiscoveryTab(root); break;
-				case "audit": RenderAuditTab(root); break;
-				default: RenderOverviewTab(root); break;
+				case "identity": RenderElegantIdentityTab(root); break;
+				case "development": RenderElegantDevelopmentTab(root); break;
+				default: RenderElegantOverviewTab(root); break;
 			}
 			Callable.From(UpdateDepthScrollDecor).CallDeferred();
 			ResetDepthScrollIfNeeded();
@@ -605,6 +597,307 @@ public partial class UdpListener : Node2D
 			AddInfoCard("Không đọc được snapshot", new[] { ex.Message, "Raw state vẫn được giữ để gói sau có thể sửa lại." });
 			ResetDepthScrollIfNeeded();
 		}
+	}
+
+
+	// ─────────────────────────────────────────────────────────────────────
+	// V78 ELEGANT IDENTITY PANEL
+	// Mục tiêu: cực ít nhiễu nhưng vẫn đủ để hiểu "Eris là ai và đang đổi ra sao".
+	// Không hiển thị mood, private thought, memory user, discovery hoặc Neuro trace
+	// vì các phần đó đã có panel chuyên trách.
+	// ─────────────────────────────────────────────────────────────────────
+	private void RenderElegantOverviewTab(JsonElement root)
+	{
+		if (_depthContentList == null) return;
+		JsonElement individual = Obj(root, "individual_runtime");
+		JsonElement selfModel = Obj(individual, "operational_self_model");
+		JsonElement continuous = Obj(individual, "continuous_self");
+		JsonElement horizon = Obj(root, "life_horizon");
+
+		var hero = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, CustomMinimumSize = new Vector2(0f, 150f) };
+		hero.AddThemeConstantOverride("separation", 14);
+		_depthContentList.AddChild(hero);
+
+		var identityCard = NewIdentityCard("Bản sắc hiện tại", IdentityAsset("identity_values_orb.png"), "♡", IdentityPink, 150f);
+		identityCard.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		identityCard.SizeFlagsStretchRatio = 1.15f;
+		hero.AddChild(identityCard);
+		var identityBox = (VBoxContainer)identityCard.GetChild(0);
+		string identityLine = BuildIdentityHeadline(root);
+		var headline = NewLabel(identityLine, 18, IdentityInk, true);
+		headline.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		identityBox.AddChild(headline);
+		identityBox.AddChild(NewLabel(BuildIdentitySubline(root, selfModel), 10, IdentityMuted, false));
+		float continuity = ReadFloat(continuous, "continuity_strength");
+		if (continuous.ValueKind == JsonValueKind.Object)
+			AddMetricBar(identityBox, "Liên tục", continuity, IdentityPink);
+
+		var lifeCard = NewIdentityCard("Hướng sống", IdentityAsset("identity_motive_orbit.png"), "↗", IdentityPurple, 150f);
+		lifeCard.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		lifeCard.SizeFlagsStretchRatio = 1.35f;
+		hero.AddChild(lifeCard);
+		var lifeBox = (VBoxContainer)lifeCard.GetChild(0);
+		int goalCount = AddActiveHorizonGoals(lifeBox, horizon, 3);
+		if (goalCount == 0)
+			lifeBox.AddChild(NewLabel("Chưa có H3/H4 đủ rõ. Panel để trống thay vì dựng mục tiêu giả.", 10, IdentityMuted, false));
+
+		var lower = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, CustomMinimumSize = new Vector2(0f, 290f) };
+		lower.AddThemeConstantOverride("separation", 14);
+		_depthContentList.AddChild(lower);
+
+		var valuesCard = NewIdentityCard("Giá trị nổi bật", IdentityAsset("identity_tab_values.png"), "◇", IdentityAccent, 280f);
+		valuesCard.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		lower.AddChild(valuesCard);
+		var valuesBox = (VBoxContainer)valuesCard.GetChild(0);
+		int values = AddTopScoreBars(valuesBox, Arr(root, "values_top"), 5, IdentityPink);
+		if (values == 0) valuesBox.AddChild(NewLabel("Chưa có giá trị nổi bật.", 10, IdentityMuted, false));
+
+		var growthCard = NewIdentityCard("Phát triển dài hạn", IdentityAsset("identity_tab_ledger.png"), "↗", IdentityBlue, 280f);
+		growthCard.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		lower.AddChild(growthCard);
+		var growthBox = (VBoxContainer)growthCard.GetChild(0);
+		AddGrowthSnapshot(growthBox, root, individual);
+	}
+
+	private void RenderElegantIdentityTab(JsonElement root)
+	{
+		if (_depthContentList == null) return;
+		JsonElement individual = Obj(root, "individual_runtime");
+		JsonElement selfModel = Obj(individual, "operational_self_model");
+
+		var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, CustomMinimumSize = new Vector2(0f, 330f) };
+		row.AddThemeConstantOverride("separation", 14);
+		_depthContentList.AddChild(row);
+
+		var valuesCard = NewIdentityCard("Giá trị cốt lõi", IdentityAsset("identity_values_orb.png"), "◇", IdentityPink, 325f);
+		valuesCard.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		row.AddChild(valuesCard);
+		var valuesBox = (VBoxContainer)valuesCard.GetChild(0);
+		int values = AddTopScoreBars(valuesBox, Arr(root, "values_top"), 7, IdentityPink);
+		if (values == 0) valuesBox.AddChild(NewLabel("Chưa có dữ liệu giá trị.", 10, IdentityMuted, false));
+
+		var motivesCard = NewIdentityCard("Động cơ nền", IdentityAsset("identity_motive_orbit.png"), "✦", IdentityPurple, 325f);
+		motivesCard.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		row.AddChild(motivesCard);
+		var motivesBox = (VBoxContainer)motivesCard.GetChild(0);
+		int motives = AddTopScoreBars(motivesBox, Arr(root, "motives_top"), 7, IdentityPurple);
+		if (motives == 0) motivesBox.AddChild(NewLabel("Chưa có động cơ nền đủ nổi.", 10, IdentityMuted, false));
+
+		var selfCard = NewIdentityCard("Self-model vận hành", IdentityAsset("identity_card_motive.png"), "◎", IdentityBlue, 250f);
+		_depthContentList.AddChild(selfCard);
+		var selfBox = (VBoxContainer)selfCard.GetChild(0);
+		if (selfModel.ValueKind != JsonValueKind.Object)
+		{
+			selfBox.AddChild(NewLabel("V77 chưa gửi operational_self_model; đang dùng compatibility snapshot.", 10, IdentityMuted, false));
+			return;
+		}
+		var selfGrid = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		selfGrid.AddThemeConstantOverride("separation", 18);
+		selfBox.AddChild(selfGrid);
+		var left = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		var right = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		selfGrid.AddChild(left); selfGrid.AddChild(right);
+		AddMetricBar(left, "Chịu im lặng", ReadFloat(selfModel, "silence_tolerance"), IdentityGreen);
+		AddMetricBar(left, "Comment tự nhiên", ReadFloat(selfModel, "ambient_comment_comfort"), IdentityPink);
+		AddMetricBar(left, "Nhạy với sửa sai", ReadFloat(selfModel, "correction_sensitivity"), IdentityBlue);
+		AddInverseMetricBar(right, "Hay hỏi quá", ReadFloat(selfModel, "over_questioning"), IdentityOrange);
+		AddInverseMetricBar(right, "Hay đổi chủ đề", ReadFloat(selfModel, "topic_drift_tendency"), IdentityOrange);
+		AddInverseMetricBar(right, "Hay nói quá", ReadFloat(selfModel, "over_talking"), IdentityOrange);
+	}
+
+	private void RenderElegantDevelopmentTab(JsonElement root)
+	{
+		if (_depthContentList == null) return;
+		JsonElement individual = Obj(root, "individual_runtime");
+		JsonElement learningFlags = Obj(individual, "learning_flags");
+		JsonElement audit = Obj(root, "audit_runtime");
+		JsonElement persistence = Obj(audit, "persistence");
+
+		var summary = NewIdentityCard("Nhịp phát triển", IdentityAsset("identity_tab_ledger.png"), "↗", IdentityBlue, 128f);
+		_depthContentList.AddChild(summary);
+		var summaryBox = (VBoxContainer)summary.GetChild(0);
+		var chips = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		chips.AddThemeConstantOverride("separation", 8);
+		summaryBox.AddChild(chips);
+		chips.AddChild(NewPill($"Identity r{ReadInt(individual, "revision")}", IdentityBlue, false));
+		chips.AddChild(NewPill(ReadBool(learningFlags, "self_model_learning", false) ? "Self-model học" : "Self-model khóa", ReadBool(learningFlags, "self_model_learning", false) ? IdentityGreen : IdentityMuted, false));
+		chips.AddChild(NewPill(ReadBool(learningFlags, "habit_learning", false) ? "Thói quen học" : "Thói quen khóa", ReadBool(learningFlags, "habit_learning", false) ? IdentityGreen : IdentityMuted, false));
+		string persistState = ReadString(persistence, "state");
+		chips.AddChild(NewPill(string.IsNullOrWhiteSpace(persistState) ? "Snapshot —" : $"Snapshot {PrettyIdentityKey(persistState)}", IdentityPurple, false));
+		var note = NewLabel("Chỉ hiển thị thay đổi persistent. Event tức thời đã thuộc Inner Diary/Emotion/Discovery.", 10, IdentityMuted, false);
+		note.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		summaryBox.AddChild(note);
+
+		var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, CustomMinimumSize = new Vector2(0f, 330f) };
+		row.AddThemeConstantOverride("separation", 14);
+		_depthContentList.AddChild(row);
+
+		var trendCard = NewIdentityCard("Xu hướng gần đây", IdentityAsset("identity_card_timeline.png"), "⌁", IdentityPink, 325f);
+		trendCard.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		row.AddChild(trendCard);
+		var trendBox = (VBoxContainer)trendCard.GetChild(0);
+		int trendCount = AddDevelopmentTrend(trendBox, Arr(root, "recent_personality_trajectory"), 7);
+		if (trendCount == 0) trendBox.AddChild(NewLabel("Chưa có thay đổi đủ thật để vẽ xu hướng.", 10, IdentityMuted, false));
+
+		var imprintCard = NewIdentityCard("Dấu in đã hình thành", IdentityAsset("identity_emergent_value.png"), "◆", IdentityPurple, 325f);
+		imprintCard.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		row.AddChild(imprintCard);
+		var imprintBox = (VBoxContainer)imprintCard.GetChild(0);
+		int imprintCount = AddImprintSummary(imprintBox, Arr(root, "imprints"), 6);
+		if (imprintCount == 0) imprintBox.AddChild(NewLabel("Chưa có imprint đủ mạnh. Không dựng dấu in từ candidate.", 10, IdentityMuted, false));
+
+		JsonElement horizon = Obj(root, "life_horizon");
+		var goals = NewIdentityCard("Mục tiêu dài hạn đang sống", IdentityAsset("identity_card_stage.png"), "◎", IdentityAccent, 180f);
+		_depthContentList.AddChild(goals);
+		var goalsBox = (VBoxContainer)goals.GetChild(0);
+		if (AddActiveHorizonGoals(goalsBox, horizon, 5) == 0)
+			goalsBox.AddChild(NewLabel("Không có H3/H4 active.", 10, IdentityMuted, false));
+	}
+
+	private string BuildIdentityHeadline(JsonElement root)
+	{
+		JsonElement values = Arr(root, "values_top");
+		var names = new List<string>();
+		if (values.ValueKind == JsonValueKind.Array)
+		{
+			foreach (JsonElement item in values.EnumerateArray())
+			{
+				string key = PrettyIdentityKey(ReadString(item, "key"));
+				if (!string.IsNullOrWhiteSpace(key) && key != "—") names.Add(key);
+				if (names.Count >= 3) break;
+			}
+		}
+		return names.Count > 0 ? string.Join(" · ", names) : "Bản sắc đang ổn định";
+	}
+
+	private string BuildIdentitySubline(JsonElement root, JsonElement selfModel)
+	{
+		JsonElement individual = Obj(root, "individual_runtime");
+		string schema = ReadString(individual, "schema");
+		if (!string.IsNullOrWhiteSpace(schema))
+		{
+			float silence = ReadFloat(selfModel, "silence_tolerance");
+			float ambient = ReadFloat(selfModel, "ambient_comment_comfort");
+			return $"Self liên tục · chịu im {silence:0%} · presence nhẹ {ambient:0%}";
+		}
+		return "Compatibility identity snapshot";
+	}
+
+	private int AddTopScoreBars(VBoxContainer parent, JsonElement array, int limit, Color accent)
+	{
+		if (array.ValueKind != JsonValueKind.Array) return 0;
+		int count = 0;
+		foreach (JsonElement item in array.EnumerateArray())
+		{
+			string key = ReadString(item, "key");
+			float value = ReadFirstFloat(item, "value", "strength");
+			if (string.IsNullOrWhiteSpace(key)) continue;
+			AddMetricBar(parent, TrimForPanel(PrettyIdentityKey(key), 23), value, count == 0 ? accent : new Color(accent.R, accent.G, accent.B, 0.80f));
+			if (++count >= limit) break;
+		}
+		return count;
+	}
+
+	private void AddInverseMetricBar(VBoxContainer parent, string label, float tendency, Color accent)
+	{
+		// Thanh dài = kiểm soát tốt hơn, giúp nhìn một phát thay vì phải hiểu "score xấu".
+		AddMetricBar(parent, label, 1f - Mathf.Clamp(tendency, 0f, 1f), accent);
+	}
+
+	private int AddActiveHorizonGoals(VBoxContainer parent, JsonElement horizon, int limit)
+	{
+		JsonElement goals = Arr(horizon, "goals");
+		if (goals.ValueKind != JsonValueKind.Array) return 0;
+		var rows = new List<(string level, string title, float strength, float progress)>();
+		foreach (JsonElement goal in goals.EnumerateArray())
+		{
+			string status = ReadString(goal, "status");
+			string level = ReadString(goal, "level").ToUpperInvariant();
+			if (!string.Equals(status, "active", StringComparison.OrdinalIgnoreCase)) continue;
+			if (level != "H3" && level != "H4") continue;
+			string title = ReadString(goal, "title");
+			if (string.IsNullOrWhiteSpace(title)) continue;
+			rows.Add((level, title, ReadFloat(goal, "strength"), ReadFloat(goal, "progress")));
+		}
+		rows.Sort((a, b) => b.strength.CompareTo(a.strength));
+		int count = 0;
+		foreach (var row in rows)
+		{
+			var line = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 32f) };
+			line.AddThemeConstantOverride("separation", 8);
+			line.AddChild(NewPill(row.level, row.level == "H4" ? IdentityPink : IdentityPurple, false));
+			var label = NewLabel(TrimForPanel(row.title, 62), 11, IdentityInk, true);
+			label.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+			label.TooltipText = row.title;
+			line.AddChild(label);
+			line.AddChild(NewLabel(row.progress > 0f ? $"{row.progress:0%}" : "", 10, IdentityMuted, true));
+			parent.AddChild(line);
+			if (++count >= limit) break;
+		}
+		return count;
+	}
+
+	private void AddGrowthSnapshot(VBoxContainer parent, JsonElement root, JsonElement individual)
+	{
+		JsonElement selfModel = Obj(individual, "operational_self_model");
+		JsonElement flags = Obj(individual, "learning_flags");
+		AddMetricBar(parent, "Chịu im lặng", ReadFloat(selfModel, "silence_tolerance"), IdentityGreen);
+		AddMetricBar(parent, "Presence nhẹ", ReadFloat(selfModel, "ambient_comment_comfort"), IdentityPink);
+		AddInverseMetricBar(parent, "Giữ chủ đề", ReadFloat(selfModel, "topic_drift_tendency"), IdentityBlue);
+		var row = new HBoxContainer();
+		row.AddThemeConstantOverride("separation", 7);
+		row.AddChild(NewPill(ReadBool(flags, "self_model_learning", false) ? "Self học" : "Self khóa", ReadBool(flags, "self_model_learning", false) ? IdentityGreen : IdentityMuted, false));
+		row.AddChild(NewPill(ReadBool(flags, "habit_learning", false) ? "Habit học" : "Habit khóa", ReadBool(flags, "habit_learning", false) ? IdentityGreen : IdentityMuted, false));
+		parent.AddChild(row);
+		JsonElement trajectory = Arr(root, "recent_personality_trajectory");
+		parent.AddChild(NewLabel(trajectory.ValueKind == JsonValueKind.Array && trajectory.GetArrayLength() > 0 ? $"{trajectory.GetArrayLength()} thay đổi gần đây đã được ghi." : "Chưa có thay đổi persistent gần đây.", 10, IdentityMuted, false));
+	}
+
+	private int AddDevelopmentTrend(VBoxContainer parent, JsonElement trajectory, int limit)
+	{
+		if (trajectory.ValueKind != JsonValueKind.Array) return 0;
+		var items = new List<JsonElement>();
+		foreach (JsonElement item in trajectory.EnumerateArray()) items.Add(item);
+		items.Reverse();
+		int count = 0;
+		foreach (JsonElement item in items)
+		{
+			string trait = ReadString(item, "trait");
+			float delta = ReadFloat(item, "applied_delta");
+			if (string.IsNullOrWhiteSpace(trait) || Mathf.Abs(delta) < 0.000001f) continue;
+			var line = new VBoxContainer();
+			line.AddThemeConstantOverride("separation", 2);
+			var title = new HBoxContainer();
+			title.AddChild(NewLabel(TrimForPanel(PrettyIdentityKey(trait), 26), 10, IdentityInk, true));
+			title.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
+			string direction = delta > 0f ? "tăng" : "giảm";
+			title.AddChild(NewLabel(direction, 9, delta > 0f ? IdentityGreen : IdentityOrange, true));
+			line.AddChild(title);
+			var bar = new ProgressBar { MinValue = 0, MaxValue = 1, Value = Mathf.Clamp(Mathf.Abs(delta) * 20f, 0.04f, 1f), ShowPercentage = false, CustomMinimumSize = new Vector2(0f, 7f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+			bar.AddThemeStyleboxOverride("background", RoundedBarStyle(new Color(0.96f, 0.92f, 0.94f), 5));
+			bar.AddThemeStyleboxOverride("fill", RoundedBarStyle(delta > 0f ? IdentityGreen : IdentityOrange, 5));
+			bar.TooltipText = $"Delta thực: {delta:+0.0000;-0.0000;0.0000}";
+			line.AddChild(bar);
+			parent.AddChild(line);
+			if (++count >= limit) break;
+		}
+		return count;
+	}
+
+	private int AddImprintSummary(VBoxContainer parent, JsonElement imprints, int limit)
+	{
+		if (imprints.ValueKind != JsonValueKind.Array) return 0;
+		int count = 0;
+		foreach (JsonElement item in imprints.EnumerateArray())
+		{
+			string theme = ReadString(item, "theme");
+			if (string.IsNullOrWhiteSpace(theme)) continue;
+			float strength = ReadFloat(item, "strength");
+			if (strength < 0.18f) continue;
+			AddMetricBar(parent, TrimForPanel(PrettyIdentityKey(theme), 24), strength, strength >= 0.62f ? IdentityPurple : IdentityBlue);
+			if (++count >= limit) break;
+		}
+		return count;
 	}
 
 	private void RenderOverviewTab(JsonElement root)

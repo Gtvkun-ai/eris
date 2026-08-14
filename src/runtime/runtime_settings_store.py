@@ -26,7 +26,7 @@ from runtime.workspace_manager import default_eris_home
 
 
 _DEFAULT_SETTINGS: dict[str, Any] = {
-    "version": 17,
+    "version": 18,
     "architecture": {
         "mode": "ai_orchestrated",
         "startup_greeting": True,
@@ -41,7 +41,8 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "private_cognition_surface_export": False,
         "surface_cross_worker_fallback": False,
         "legacy_model_lanes_enabled": False,
-        "inner_diary_model_enabled": False,
+        "inner_diary_model_enabled": True,
+        "private_residue_curator_enabled": True,
         "background_tutor_enabled": False,
         "event_trace_enabled": True,
     },
@@ -357,6 +358,7 @@ _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
     ("architecture", "surface_cross_worker_fallback"): ("ERIS_SURFACE_REALIZER_COMPANION_FALLBACK", "bool"),
     ("architecture", "legacy_model_lanes_enabled"): ("ERIS_LEGACY_MODEL_LANES_ENABLED", "bool"),
     ("architecture", "inner_diary_model_enabled"): ("ERIS_INNER_DIARY_MODEL_ENABLED", "bool"),
+    ("architecture", "private_residue_curator_enabled"): ("ERIS_PRIVATE_RESIDUE_CURATOR_ENABLED", "bool"),
     ("architecture", "background_tutor_enabled"): ("ERIS_BACKGROUND_TUTOR_ENABLED", "bool"),
     ("architecture", "event_trace_enabled"): ("ERIS_PUBLIC_EVENT_TRACE_ENABLED", "bool"),
     ("architecture", "mode"): ("ERIS_RUNTIME_ARCHITECTURE", "str"),
@@ -993,6 +995,17 @@ class RuntimeSettingsStore:
             if preference_updated > 0 and old_requested is not None:
                 initiative["enabled"] = True
             out["initiative"] = initiative
+            migrated = True
+
+        if version < 18:
+            # V79: Inner Diary model lane trở thành mặc định hoạt động. Giá trị
+            # false cũ phần lớn là default migration chứ không phải user opt-out,
+            # nên nâng schema này bật nó một lần. Sau migration user vẫn có thể
+            # tắt lại bằng Settings/env nếu thật sự muốn.
+            architecture = dict(out.get("architecture") or {}) if isinstance(out.get("architecture"), Mapping) else {}
+            architecture["inner_diary_model_enabled"] = True
+            architecture.setdefault("private_residue_curator_enabled", True)
+            out["architecture"] = architecture
             migrated = True
 
         out["version"] = target_version

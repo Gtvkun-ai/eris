@@ -471,7 +471,7 @@ class SelfTurnPipeline:
         except Exception as exc:
             planner_snapshot["life_horizon"] = {}
             host.logger.debug("[life-horizon-v74] autonomous projection failed: %s", exc)
-        # V76: Persistent Individual Core đưa Interaction Ecology + Relational Plan
+        # V77: Persistent Individual Core đưa Interaction Ecology + Relational Plan + Continuous Self
         # vào autonomous snapshot. Đây là context/bias, không phải quyền ép nói.
         try:
             from runtime.persistent_individual import ensure_persistent_individual_runtime
@@ -481,7 +481,7 @@ class SelfTurnPipeline:
             )
         except Exception as exc:
             planner_snapshot["persistent_individual"] = {}
-            host.logger.debug("[persistent-individual-v76] autonomous projection failed: %s", exc)
+            host.logger.debug("[persistent-individual-v77] autonomous projection failed: %s", exc)
         # V44: chỉ một urge đã có nội dung mới được quyền đánh thức cognition vì
         # "muốn nói". Connection pressure trừu tượng không còn tự biến thành wake.
         expression_urge_runtime = getattr(host, "expression_urge_runtime", None)
@@ -1034,6 +1034,9 @@ class SelfTurnPipeline:
         )
 
         if decision.action is InitiativeAction.NO_OP:
+            self._capture_suppressed_private_residue(
+                candidate=candidate, planner_snapshot=planner_snapshot, reason=decision.reason, now=now
+            )
             release_candidate = candidate
             self._release_seed_lease(release_candidate, reason=decision.reason)
             self._defer_claimed_continuation(
@@ -1046,6 +1049,9 @@ class SelfTurnPipeline:
                 plan=plan, context=context, activity=activity, gate_reason=decision.reason,
             )
         if decision.action is InitiativeAction.BODY_ONLY:
+            self._capture_suppressed_private_residue(
+                candidate=candidate, planner_snapshot=planner_snapshot, reason=decision.reason, now=now
+            )
             release_candidate = candidate
             self._release_seed_lease(release_candidate, reason=decision.reason)
             self._defer_claimed_continuation(
@@ -1072,6 +1078,9 @@ class SelfTurnPipeline:
 
         speech_intent = decision.speech_intent
         if speech_intent is None:
+            self._capture_suppressed_private_residue(
+                candidate=candidate, planner_snapshot=planner_snapshot, reason="missing_speech_intent", now=now
+            )
             self._release_seed_lease(candidate, reason="missing_speech_intent")
             return self._finish_silence(
                 plan=plan, context=context, activity=activity, gate_reason="missing_speech_intent",
@@ -1749,9 +1758,10 @@ class SelfTurnPipeline:
                 "conversation_handoff is authoritative for unfinished conversational obligations and who owns the next move; "
                 "conversation_courtesy is a hard turn-taking boundary: when awaiting_user_answer=true, do not create another public speech turn. "
                 "life_horizon carries H0-H4 goal context and may change priority, but it is not speech authority. "
-                "persistent_individual is V76 authoritative interaction context: respect interaction_ecology, active relational_plan, "
-                "question/public fatigue and operational_self_model. A question is not the default way to express curiosity. "
-                "response_expectation=none creates no reply debt, and private thought is allowed to remain private or die. "
+                "persistent_individual is V77 authoritative interaction context: respect interaction_ecology, active relational_plan, "
+                "operational_self_model and continuous_self. continuous_self separates private_cognition_pressure from public_action_pressure; "
+                "high private thought pressure is NOT permission to speak. A question is not the default way to express curiosity. "
+                "response_expectation=none creates no reply debt, assistant speech cannot recharge its own motive, and private thought may remain private or die. "
                 "an empty current user_text in autonomous mode does NOT erase a pending user request. "
                 "When shared_semantic_context.packet exists, use its foreground/facts/options as the stable scene baseline; "
                 "do not reinterpret raw OCR into a competing story."
@@ -2049,6 +2059,52 @@ class SelfTurnPipeline:
 
     # V18 không còn planner model-owned tự quyết speak/silence trong Surface.
     # Candidate model -> governor -> realizer đã thay đường đó ở run().
+
+    def _capture_suppressed_private_residue(
+        self,
+        *,
+        candidate: Any,
+        planner_snapshot: Mapping[str, Any],
+        reason: str,
+        now: float,
+    ) -> None:
+        """Giữ candidate/urge bị governor chặn cho private diary, không public hóa."""
+        loop = getattr(self.host, "private_mind_loop", None)
+        if loop is None:
+            return
+        capture_candidate = getattr(loop, "capture_suppressed_public_candidate", None)
+        if candidate is not None and callable(capture_candidate):
+            try:
+                capture_candidate(candidate, reason=reason, now=now)
+                return
+            except Exception as exc:
+                self.host.logger.debug("[private residue] candidate capture failed: %s", exc)
+        # Khi Neuro/Subject chọn silence trước khi materialize candidate, expression
+        # urge vẫn là cognition thật đã tồn tại. Nhặt đúng top urge, không suy diễn.
+        urges = planner_snapshot.get("expression_urges")
+        top = urges[0] if isinstance(urges, list) and urges and isinstance(urges[0], Mapping) else {}
+        text = str(
+            top.get("content")
+            or top.get("text")
+            or top.get("topic")
+            or top.get("topic_seed")
+            or ""
+        ).strip()
+        capture = getattr(loop, "capture_residue", None)
+        if text and callable(capture):
+            try:
+                capture(
+                    kind="suppressed_expression_urge",
+                    text=text[:420],
+                    source_ids=tuple(top.get("evidence_refs") or top.get("evidence_ids") or ()),
+                    salience=max(0.5, min(0.9, float(top.get("pressure", top.get("priority", 0.55)) or 0.55))),
+                    provenance=f"autonomous_governor_suppressed:{reason}",
+                    lane_hint="diary",
+                    metadata={"reason": reason},
+                    now=now,
+                )
+            except Exception as exc:
+                self.host.logger.debug("[private residue] urge capture failed: %s", exc)
 
     def _claim_selected_affordance(
         self,

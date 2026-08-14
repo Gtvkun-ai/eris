@@ -105,6 +105,8 @@ class PrivateMindModelAdapterConfig:
     max_tokens_fragment: int = field(default_factory=lambda: max(128, int(os.getenv("ERIS_PRIVATE_MIND_FRAGMENT_TOKENS", "700") or 700)))
     max_tokens_judgment: int = field(default_factory=lambda: max(256, int(os.getenv("ERIS_PRIVATE_MIND_JUDGMENT_TOKENS", "900") or 900)))
     max_tokens_diary: int = field(default_factory=lambda: max(256, int(os.getenv("ERIS_INNER_DIARY_AI_TOKENS", "640") or 640)))
+    # Gemma residue curator chỉ làm gom/dedupe/nén, không phải cognition owner.
+    max_tokens_residue: int = field(default_factory=lambda: max(256, int(os.getenv("ERIS_PRIVATE_RESIDUE_CURATOR_TOKENS", "700") or 700)))
     transient_max_retries: int = field(default_factory=lambda: max(0, int(os.getenv("ERIS_PRIVATE_MIND_TRANSIENT_RETRIES", "1") or 1)))
     transient_backoff_base: float = field(default_factory=lambda: max(0.1, _as_float(os.getenv("ERIS_PRIVATE_MIND_TRANSIENT_BACKOFF", "0.5"), 0.5)))
     transient_cooldown_threshold: int = field(default_factory=lambda: max(1, int(os.getenv("ERIS_PRIVATE_MIND_TRANSIENT_THRESHOLD", "2") or 2)))
@@ -673,6 +675,75 @@ class RuntimePrivateMindModelAdapter:
             },
             "propertyOrdering": ["hien_tai", "tuong_lai", "ban_tam", "phan_tich", "muon_noi", "memory_echo"],
             "required": ["hien_tai"],
+        }
+
+    def curate_residue(self, packet: Mapping[str, Any]) -> Mapping[str, Any] | None:
+        """Gom/nén residue bằng dedicated Gemma curator.
+
+        Đây KHÔNG phải writer và không được tạo thought mới. Mỗi decision bắt
+        buộc phải trỏ về residue id thật trong packet. ``unprocessed_stimulus``
+        chỉ được giữ làm continuity hoặc bỏ, không được nâng thành diary.
+        """
+        messages = self._residue_curator_messages(packet)
+        result = self._tracked_chat_json(
+            messages,
+            max_tokens=self.config.max_tokens_residue,
+            response_schema=self._residue_curator_schema(),
+        )
+        if not result.ok:
+            if result.error not in {"invalid_json_cooldown", "transient_cooldown"}:
+                self._log("warning", "[Residue Curator] failed error=%s", result.error)
+            return None
+        parsed = dict(result.parsed)
+        decisions = parsed.get("decisions")
+        if not isinstance(decisions, list):
+            return None
+        return {"decisions": decisions[:12]}
+
+    def _residue_curator_messages(self, packet: Mapping[str, Any]) -> list[dict[str, str]]:
+        user_content = json.dumps(to_plain(dict(packet)), ensure_ascii=False)
+        if len(user_content) > 12000:
+            user_content = user_content[:12000]
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "Bạn là Residue Curator của ERIS. Bạn KHÔNG phải Eris, KHÔNG viết thêm suy nghĩ mới, "
+                    "KHÔNG suy diễn dữ kiện mới. Nhiệm vụ duy nhất: gom các residue trùng ý, bỏ noise, "
+                    "và nén trung thành thành diary/continuity candidate. Mỗi decision PHẢI dùng residue_ids "
+                    "có thật trong input. action chỉ là diary, continuity, hoặc discard. "
+                    "unprocessed_stimulus chưa từng được cognition xử lý nên CHỈ được continuity/discard, "
+                    "tuyệt đối không diary. diary chỉ dùng khi có ít nhất một residue cognition thật như "
+                    "private_fragment/private_judgment/suppressed_private_candidate/suppressed_public_candidate/"
+                    "suppressed_expression_urge/packed_fragment. text phải ngắn, giữ đúng nghĩa nguồn, không thêm fact. "
+                    "kind cho diary chỉ là current/reflection/concern/future/desire. "
+                    "Trả đúng JSON object có trường decisions; tối đa 6 decisions."
+                ),
+            },
+            {"role": "user", "content": user_content},
+        ]
+
+    def _residue_curator_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "decisions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "residue_ids": {"type": "array", "items": {"type": "string"}},
+                            "action": {"type": "string", "enum": ["diary", "continuity", "discard"]},
+                            "kind": {"type": "string", "enum": ["current", "reflection", "concern", "future", "desire"]},
+                            "text": {"type": "string"},
+                            "confidence": {"type": "number"},
+                            "novelty": {"type": "number"},
+                        },
+                        "required": ["residue_ids", "action", "text"],
+                    },
+                }
+            },
+            "required": ["decisions"],
         }
 
     # ------------------------------------------------------------------
@@ -1719,6 +1790,27 @@ class PrivateMindAdapterPool:
             strict_client_attr=True,
         )
 
+        # Residue curator là Gemma riêng. Nó không được mượn inner/companion nếu
+        # credential thiếu; khi vắng, DiaryResidueStore dùng deterministic fallback.
+        residue_client = getattr(llm_service, "residue_curator_client", None) if llm_service is not None else None
+        residue_config = self._config
+        if residue_client is not None:
+            residue_config = replace(
+                self._config,
+                enabled=True,
+                provider=str(os.getenv("ERIS_PRIVATE_RESIDUE_CURATOR_PROVIDER", "gemini") or "gemini").strip().lower(),
+                model=str(getattr(residue_client, "model_name", self._config.model) or self._config.model),
+                base_url=str(getattr(residue_client, "base_url", self._config.base_url) or self._config.base_url),
+                api_key="worker-managed",
+            )
+        self._residue_adapter = RuntimePrivateMindModelAdapter(
+            config=residue_config,
+            llm_service=llm_service,
+            logger=logger,
+            client_attr="residue_curator_client",
+            strict_client_attr=True,
+        )
+
     @classmethod
     def from_env(cls, *, llm_service: Any = None, logger: Any = None) -> "PrivateMindAdapterPool | None":
         apply_secrets_to_environ()
@@ -1745,8 +1837,9 @@ class PrivateMindAdapterPool:
             # tránh hiểu nhầm "fragment×5" đi cùng provider với synthesis.
             frag_cfg = PrivateMindModelAdapterConfig.fragment_overlay_from_env(config)
             diary_meta = pool.diary_metadata()
+            residue_meta = pool.residue_metadata()
             fn(
-                "[PrivateMind API] ready fragment(%s/%s)×%d + synthesis(%s/%s)×1 + diary(role=%s model=%s configured=%d)×1",
+                "[PrivateMind API] ready fragment(%s/%s)×%d + synthesis(%s/%s)×1 + diary(role=%s model=%s configured=%d)×1 + residue(model=%s configured=%d)×1",
                 frag_cfg.provider,
                 frag_cfg.model,
                 len(_EVALUATOR_ROLES),
@@ -1755,6 +1848,8 @@ class PrivateMindAdapterPool:
                 diary_meta.get("role", ""),
                 diary_meta.get("model", ""),
                 int(bool(diary_meta.get("configured", False))),
+                residue_meta.get("model", ""),
+                int(bool(residue_meta.get("configured", False))),
             )
         return pool
 
@@ -1770,12 +1865,26 @@ class PrivateMindAdapterPool:
     def diary_adapter(self) -> RuntimePrivateMindModelAdapter:
         return self._diary_adapter
 
+    @property
+    def residue_adapter(self) -> RuntimePrivateMindModelAdapter:
+        return self._residue_adapter
+
     def diary_metadata(self) -> dict[str, Any]:
         client = getattr(self._llm_service, "diary_client", None) if self._llm_service is not None else None
         return {
             "owner": "deepseek_worker",
             "role": str(getattr(client, "worker_role", "") or ""),
             "provider": "deepseek" if client is not None else "",
+            "model": str(getattr(client, "model_name", "") or ""),
+            "configured": bool(client is not None),
+        }
+
+    def residue_metadata(self) -> dict[str, Any]:
+        client = getattr(self._llm_service, "residue_curator_client", None) if self._llm_service is not None else None
+        return {
+            "owner": "gemma_residue_curator",
+            "role": "residue_curator",
+            "provider": str(os.getenv("ERIS_PRIVATE_RESIDUE_CURATOR_PROVIDER", "gemini") or "gemini").strip().lower() if client is not None else "",
             "model": str(getattr(client, "model_name", "") or ""),
             "configured": bool(client is not None),
         }
@@ -1797,6 +1906,9 @@ class PrivateMindAdapterPool:
         payload["_writer"] = self.diary_metadata()
         return payload
 
+    def curate_residue(self, packet: Mapping[str, Any]) -> Any:
+        return self._residue_adapter.curate_residue(packet)
+
     def debug_status(self) -> dict[str, Any]:
         """Aggregate status của tất cả adapter trong pool."""
         fragment_statuses = {
@@ -1805,13 +1917,15 @@ class PrivateMindAdapterPool:
         }
         synthesis_status = self._synthesis_adapter.debug_status()
         diary_status = self._diary_adapter.debug_status()
+        residue_status = self._residue_adapter.debug_status()
         # Tổng hợp calls/tokens
-        total_calls = synthesis_status.get("calls", 0) + diary_status.get("calls", 0) + sum(
+        total_calls = synthesis_status.get("calls", 0) + diary_status.get("calls", 0) + residue_status.get("calls", 0) + sum(
             s.get("calls", 0) for s in fragment_statuses.values()
         )
         total_tokens = (
             synthesis_status.get("usage", {}).get("total_tokens", 0)
             + diary_status.get("usage", {}).get("total_tokens", 0)
+            + residue_status.get("usage", {}).get("total_tokens", 0)
             + sum(
                 s.get("usage", {}).get("total_tokens", 0) for s in fragment_statuses.values()
             )
@@ -1823,7 +1937,7 @@ class PrivateMindAdapterPool:
             "model": synthesis_status.get("model", ""),
             "api_key_configured": synthesis_status.get("api_key_configured", False),
             "api_degraded": synthesis_status.get("api_degraded", False) or any(
-                s.get("api_degraded", False) for s in fragment_statuses.values()
+                st.get("api_degraded", False) for st in fragment_statuses.values()
             ),
             "degraded_cause": synthesis_status.get("degraded_cause", ""),
             "calls": total_calls,
@@ -1833,6 +1947,7 @@ class PrivateMindAdapterPool:
             "synthesis_json_cooldown_until": synthesis_status.get("synthesis_json_cooldown_until", 0.0),
             "synthesis": synthesis_status,
             "diary": {**diary_status, **self.diary_metadata()},
+            "residue_curator": {**residue_status, **self.residue_metadata()},
             "fragments": fragment_statuses,
             "usage": {
                 "total_tokens": total_tokens,

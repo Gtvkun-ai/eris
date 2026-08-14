@@ -284,6 +284,29 @@ class MentalMaterialRuntime:
                 except Exception as exc:
                     self._log("debug", "[conversation-trajectory-v76] private development receipt degraded: %s", exc)
 
+        # V77: mọi mental material có nội dung đều có thể thay đổi self-process
+        # private. Receipt này KHÔNG sinh speech; nó chỉ cho UnfinishedThought có
+        # lịch sử phát triển/cạn dần xuyên nhiều tick.
+        try:
+            from runtime.persistent_individual import ensure_persistent_individual_runtime
+            _individual = ensure_persistent_individual_runtime(self.host)
+            _topic_id = ""
+            for _ref in material.source_refs:
+                if str(_ref).startswith("trajectory:"):
+                    _topic_id = str(_ref).split(":", 1)[1]
+                    break
+            _individual.observe_private_development(
+                summary=material.content,
+                material_kind=material.material_kind,
+                cause_kind=material.cause_kind,
+                source_refs=material.source_refs,
+                semantic_gain=material.development_score,
+                topic_id=_topic_id,
+                now=current,
+            )
+        except Exception as exc:
+            self._log("debug", "[continuous-self-v77] private development receipt degraded: %s", exc)
+
         self._log(
             "info",
             "[mental material] born id=%s kind=%s cause=%s motive=%s strength=%.2f quality=%.2f rumination=%s development=%s/%.2f content=%s",

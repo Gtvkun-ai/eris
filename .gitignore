@@ -22,9 +22,8 @@ dist/
 .env
 .env.*
 !.env.example
-config/secrets.json
-config/secrets_manifest.json
-config/secret_versions/
+config/
+memory_core/
 
 # Runtime state and generated output
 logs/

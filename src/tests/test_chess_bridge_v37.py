@@ -262,7 +262,7 @@ def test_slang_starts_chess_engagement() -> None:
 def test_settings_v13_migrate_chess_bridge_defaults(monkeypatch) -> None:
     migrated, changed = RuntimeSettingsStore._migrate_payload({"version": 13})
     assert changed is True
-    assert migrated["version"] == 16
+    assert migrated["version"] == 18
     assert migrated["chess_bridge"]["port"] == 8765
 
     monkeypatch.setenv("ERIS_CHESS_BRIDGE_PORT", "8877")

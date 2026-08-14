@@ -964,6 +964,100 @@ class ExecutiveCortex:
         )
 
     @classmethod
+    def _apply_continuous_self_appraisal(
+        cls,
+        frame: SubjectDeliberationFrame,
+        appraisal: NeuroSemanticAppraisal,
+    ) -> NeuroSemanticAppraisal:
+        """V77: biến self-process thành bias trước Neuro, không thành hard winner.
+
+        Chỉ áp mạnh ở autonomous opportunity. Direct user turn vẫn phải được trả lời
+        theo task/repair/semantic intent của user, không để "tôi đang mệt" giả lập
+        trở thành lý do né một yêu cầu thật. Private cognition có thể cao trong khi
+        public_action_pressure thấp; khi đó silence được tăng utility.
+        """
+        observation = getattr(frame, "observation", None)
+        if str(getattr(observation, "kind", "") or "") == "user_turn":
+            return appraisal
+        root = cls._persistent_individual_from_frame(frame)
+        self_state = root.get("continuous_self") if isinstance(root, Mapping) else None
+        self_state = dict(self_state) if isinstance(self_state, Mapping) else {}
+        if not self_state:
+            return appraisal
+
+        public_pressure = _clamp01(self_state.get("public_action_pressure", 0.0))
+        private_pressure = _clamp01(self_state.get("private_cognition_pressure", 0.0))
+        social_availability = _clamp01(self_state.get("social_availability", 0.5), 0.5)
+        orientation = str(self_state.get("orientation", "") or "")
+        commitment = self_state.get("active_commitment")
+        commitment = dict(commitment) if isinstance(commitment, Mapping) else {}
+        preferred = set(str(x) for x in (commitment.get("preferred_modes", ()) or ()))
+        avoided = set(str(x) for x in (commitment.get("avoid_modes", ()) or ()))
+
+        mapped: list[ChoiceSemanticAppraisal] = []
+        for item in appraisal.choices:
+            if item.index < 0 or item.index >= len(frame.coalitions):
+                mapped.append(item)
+                continue
+            coalition = frame.coalitions[item.index]
+            action = str(getattr(coalition, "action_kind", "") or "").strip().lower()
+            args = dict(getattr(coalition, "arguments", {}) or {})
+            act = str(args.get("speech_act", "") or "").strip().lower()
+            kind = str(args.get("candidate_kind", "") or "").strip().lower()
+            target = _compact(args.get("semantic_target", ""), 1000)
+            mode = classify_interaction_mode(
+                speech_act=act, candidate_kind=kind, action_kind=action, text=target
+            )
+
+            if action in {"silence", "body_only"}:
+                # Khi self-process không có lý do public đủ mạnh, silence là hành
+                # động tích cực chứ không phải candidate thất bại.
+                boost = min(0.32, 0.10 + 0.30 * (1.0 - public_pressure))
+                if private_pressure >= 0.52:
+                    boost += 0.04  # nghĩ tiếp trong private, không cần phát loa.
+                mapped.append(replace(
+                    item,
+                    motive_validity=_clamp01(item.motive_validity + boost),
+                    reversibility=_clamp01(max(item.reversibility, 0.94)),
+                ))
+                continue
+
+            if mode in {"task", "repair"}:
+                mapped.append(item)
+                continue
+
+            multiplier = 0.48 + 0.78 * public_pressure
+            if social_availability < 0.34:
+                multiplier *= 0.66
+            if mode in preferred:
+                multiplier *= 1.24
+            if mode in avoided:
+                multiplier *= 0.26
+            if mode == "ask" and public_pressure < 0.48:
+                multiplier *= 0.52
+            if orientation in {"quiet_presence", "quiet_company", "quiet_recovery", "private_concern"}:
+                if mode not in {"screen_react", "mutter", "comment"}:
+                    multiplier *= 0.72
+
+            mapped.append(replace(
+                item,
+                motive_validity=_clamp01(item.motive_validity * max(0.05, min(1.55, multiplier))),
+                continuity_fit=_clamp01(item.continuity_fit * (0.94 + 0.06 * min(1.0, multiplier))),
+            ))
+
+        commitments = tuple(dict.fromkeys((*appraisal.semantic_commitments,
+            "respect_continuous_self_state",
+            "private_cognition_does_not_imply_public_speech",
+            "assistant_output_cannot_self_recharge_motive",
+        )))
+        return replace(
+            appraisal, choices=tuple(mapped),
+            reason=(f"continuous_self_v77:{orientation}:public={public_pressure:.2f}:"
+                    f"private={private_pressure:.2f}:" + _compact(appraisal.reason, 330)),
+            semantic_commitments=commitments[:8],
+        )
+
+    @classmethod
     def _apply_conversation_handoff_appraisal(
         cls,
         frame: SubjectDeliberationFrame,
@@ -1155,7 +1249,8 @@ class ExecutiveCortex:
         )
         appraisal = self._apply_conversation_handoff_appraisal(frame, appraisal)
         appraisal = self._apply_conversation_trajectory_appraisal(frame, appraisal)
-        return self._apply_interaction_ecology_appraisal(frame, appraisal)
+        appraisal = self._apply_interaction_ecology_appraisal(frame, appraisal)
+        return self._apply_continuous_self_appraisal(frame, appraisal)
 
     def _appraise_autonomous_frame(
         self,
@@ -1176,7 +1271,9 @@ class ExecutiveCortex:
             "continuity_fit asks whether the semantic target remains coherent with the current thread, not whether ERIS should be quiet. "
             "runtime_context.conversation_handoff is AUTHORITATIVE for unfinished user requests, repair_needed and next_move_owner. "
             "runtime_context.conversation_trajectory is the authoritative semantic spine of the current topic. When it is active with high momentum, "
-            "runtime_context.persistent_individual contains Interaction Ecology and any multi-turn Relational Plan. Questions are not the default social action; "
+            "runtime_context.persistent_individual contains Interaction Ecology, multi-turn Relational Plan, and V77 continuous_self. "
+            "continuous_self is operational causal state, NOT a consciousness claim: private_cognition_pressure may be high while public_action_pressure is low. "
+            "Questions are not the default social action; "
             "respect question fatigue, public pacing, response_expectation and plan-preferred COMMENT/MUTTER/SCREEN_REACT/STORY/SILENCE modes. "
             "score trajectory-linked DEEPEN/CONNECT/BRANCH material above unrelated random_chat novelty; do not infer that every idle tick needs a new topic. "
             "In autonomous mode user_text is intentionally empty; NEVER infer from that empty field that there is no pending user request. "
@@ -1256,7 +1353,8 @@ class ExecutiveCortex:
         )
         appraisal = self._apply_conversation_handoff_appraisal(frame, appraisal)
         appraisal = self._apply_conversation_trajectory_appraisal(frame, appraisal)
-        return self._apply_interaction_ecology_appraisal(frame, appraisal)
+        appraisal = self._apply_interaction_ecology_appraisal(frame, appraisal)
+        return self._apply_continuous_self_appraisal(frame, appraisal)
 
     def review_subject_frame(
         self,

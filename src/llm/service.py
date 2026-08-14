@@ -142,6 +142,7 @@ class LlmService:
         critic_client=None,
         inner_client=None,
         diary_client=None,
+        residue_curator_client=None,
         research_client=None,
         tutor_client=None,
         curator_client=None,
@@ -164,6 +165,9 @@ class LlmService:
         # diary chưa cấu hình, renderer dùng dữ kiện thô thay vì để một lane khác
         # âm thầm viết nhật ký hộ rồi ownership lại hóa thành truyện trinh thám.
         self.diary_client = diary_client
+        # Gemma Residue Curator chỉ gom/dedupe/nén private residue. Không fallback
+        # sang worker khác để tránh biến một lane sổ sách thành cognition owner.
+        self.residue_curator_client = residue_curator_client
         # Worker seed chỉ tạo premise semantic chạy nền trên port riêng. Không
         # fallback sang companion/surface: thiếu lane này thì reservoir tắt.
         self.seed_client = seed_client

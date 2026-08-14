@@ -284,6 +284,16 @@ class InnerDiaryRenderer:
         concerns = _as_list(menu.get("open_concerns") or _as_dict(retained).get("concerns"))
         future_bias = _as_dict(menu.get("future_bias") or digest.get("future_bias"))
         resolved = _as_list(menu.get("recently_resolved") or digest.get("recently_resolved"))
+        residue = _as_dict(menu.get("diary_residue") or digest.get("diary_residue"))
+        diary_entries = _as_list(retained.get("diary_entries") or residue.get("diary_entries"))
+        retained_by_kind: dict[str, list[dict[str, Any]]] = {}
+        for raw in diary_entries[:12]:
+            item = _as_dict(raw)
+            text = _short(item.get("text"), 220)
+            if not text:
+                continue
+            kind = str(item.get("kind") or "reflection").strip().lower()
+            retained_by_kind.setdefault(kind, []).append(item)
 
         future_text = self._future_thought(future_bias)
         voice = _as_dict(voice)
@@ -307,7 +317,12 @@ class InnerDiaryRenderer:
         })
 
         # Suy nghĩ hiện tại — ưu tiên giọng Eris, fallback judgment thô.
-        hien_tai = _voice("hien_tai") or _short(current.get("dominant_judgment"), 160)
+        retained_current = retained_by_kind.get("current", [])
+        hien_tai = (
+            _voice("hien_tai")
+            or _short(current.get("dominant_judgment"), 160)
+            or (_short(retained_current[0].get("text"), 180) if retained_current else "")
+        )
         if hien_tai:
             sections.append({
                 "title": "Suy nghĩ hiện tại",
@@ -316,7 +331,12 @@ class InnerDiaryRenderer:
             })
 
         # Suy nghĩ tương lai
-        tuong_lai = _voice("tuong_lai") or future_text
+        retained_future = retained_by_kind.get("future", [])
+        tuong_lai = (
+            _voice("tuong_lai")
+            or future_text
+            or (_short(retained_future[0].get("text"), 180) if retained_future else "")
+        )
         if tuong_lai:
             sections.append({
                 "title": "Suy nghĩ tương lai",
@@ -344,6 +364,10 @@ class InnerDiaryRenderer:
                 except Exception:
                     badge = ""
                 concern_items.append({"text": theme, "badge": badge})
+            for item in retained_by_kind.get("concern", [])[:2]:
+                text = _short(item.get("text"), 160)
+                if text and all(self._norm_line(x.get("text")) != self._norm_line(text) for x in concern_items):
+                    concern_items.append({"text": text, "badge": str(item.get("state") or "")})
             if concern_items:
                 sections.append({
                     "title": "Đang bận tâm",
@@ -371,6 +395,10 @@ class InnerDiaryRenderer:
                 except Exception:
                     badge = ""
                 notice_items.append({"text": claim, "badge": badge})
+            for item in retained_by_kind.get("reflection", [])[:3]:
+                text = _short(item.get("text"), 180)
+                if text and all(self._norm_line(x.get("text")) != self._norm_line(text) for x in notice_items):
+                    notice_items.append({"text": text, "badge": str(item.get("state") or "")})
             if notice_items:
                 sections.append({
                     "title": "Phân tích gần đây",
@@ -387,6 +415,10 @@ class InnerDiaryRenderer:
                 or "",
                 120,
             )
+        if not muon_noi:
+            retained_desire = retained_by_kind.get("desire", [])
+            if retained_desire:
+                muon_noi = _short(retained_desire[0].get("text"), 180)
         if muon_noi:
             sections.append({
                 "title": "Muốn nói",
@@ -432,4 +464,9 @@ class InnerDiaryRenderer:
             "emotion_board": emotion_board,
             "memory_echo": memory_echo,
             "writer": writer,
+            "residue": {
+                "retained_count": len(diary_entries),
+                "pending_count": int(residue.get("pending_count", 0) or 0),
+                "curator": _as_dict(residue.get("curator")),
+            },
         }

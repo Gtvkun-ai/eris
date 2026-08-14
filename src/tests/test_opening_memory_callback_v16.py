@@ -128,7 +128,7 @@ def test_settings_v16_enables_startup_memory_callback() -> None:
         {"version": 15, "opening_director": {"cross_session_personalization": False}}
     )
     assert changed is True
-    assert migrated["version"] == 17
+    assert migrated["version"] == 18
     assert migrated["opening_director"]["startup_memory_callback"] is True
     assert migrated["opening_director"]["prefer_continuity_hook"] is True
     assert migrated["opening_director"]["cross_session_personalization"] is False

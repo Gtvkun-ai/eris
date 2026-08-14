@@ -668,6 +668,8 @@ def build_ai_panel_payload(
     initiative: Any | None = None,
     consolidator: Any | None = None,
     expression: Mapping[str, Any] | None = None,
+    life_horizon: Mapping[str, Any] | None = None,
+    persistent_individual: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     appraisal = state.appraisal
     relation = state.relationship
@@ -680,6 +682,10 @@ def build_ai_panel_payload(
     initiative_view = _view(initiative)
     consolidator_view = _view(consolidator)
     expression_view = dict(expression or {})
+    # V78 panel bridge: Identity & Life chỉ cần projection dài hạn thuộc đúng
+    # trách nhiệm của panel này. Không kéo mood/private diary/memory raw sang đây.
+    life_horizon_view = dict(life_horizon or {})
+    individual_view = dict(persistent_individual or {})
 
     valence = max(-1.0, min(1.0, appraisal.pleasantness * 2.0 - 1.0))
     arousal = max(appraisal.pressure, appraisal.irritation, appraisal.novelty * 0.65)
@@ -691,7 +697,7 @@ def build_ai_panel_payload(
         primary_relationship = dict(relationships.get("primary_user", {}) or {})
 
     identity_runtime = {
-        "schema": "eris.identity_runtime.panel.v1",
+        "schema": "eris.identity_runtime.panel.v2",
         "architecture": AI_RUNTIME_VERSION,
         "state_version": state.version,
         "turn_seq": state.last_applied_turn_seq,
@@ -700,6 +706,12 @@ def build_ai_panel_payload(
             "enabled": bool(state.identity_learning_enabled),
             "mode": "normal" if state.identity_learning_enabled else "observe_only",
         },
+        # Hai projection mới là authority cho UI V77+:
+        # - life_horizon: hướng sống/mục tiêu H0-H4;
+        # - individual_runtime: self-model, habit và continuous-self dài hạn.
+        # Body chỉ trình bày, không tự suy diễn từ telemetry legacy.
+        "life_horizon": life_horizon_view,
+        "individual_runtime": individual_view,
         "summary": {
             "mood": mood,
             "valence": round(valence, 4),

@@ -1,5 +1,5 @@
 {
-  "version": 15,
+  "version": 18,
   "architecture": {
     "mode": "ai_orchestrated",
     "startup_greeting": true,
@@ -8,9 +8,10 @@
     "private_cognition_surface_export": false,
     "surface_cross_worker_fallback": false,
     "legacy_model_lanes_enabled": false,
-    "inner_diary_model_enabled": false,
+    "inner_diary_model_enabled": true,
     "background_tutor_enabled": false,
-    "event_trace_enabled": true
+    "event_trace_enabled": true,
+    "private_residue_curator_enabled": true
   },
   "chat": {
     "language": "ja",

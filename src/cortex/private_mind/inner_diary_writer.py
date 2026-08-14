@@ -66,12 +66,12 @@ class InnerDiaryWriter:
         self.fallback_adapter = fallback_adapter
         self.enabled = _env_flag("ERIS_INNER_DIARY_AI", True) if enabled is None else bool(enabled)
         self.throttle_seconds = (
-            max(15.0, _env_float("ERIS_INNER_DIARY_AI_SEC", 120.0))
+            max(15.0, _env_float("ERIS_INNER_DIARY_AI_SEC", 60.0))
             if throttle_seconds is None
             else max(0.0, float(throttle_seconds))
         )
         self.logger = logger
-        self.startup_grace_seconds = max(0.0, _env_float("ERIS_INNER_DIARY_STARTUP_GRACE_SEC", 60.0))
+        self.startup_grace_seconds = max(0.0, _env_float("ERIS_INNER_DIARY_STARTUP_GRACE_SEC", 20.0))
         self._created_at = time.time()
         self._last_call_at: float = 0.0
         self._last_signature: str = ""
@@ -152,24 +152,43 @@ class InnerDiaryWriter:
         future_bias = _as_dict(menu.get("future_bias") or digest.get("future_bias"))
         concerns = _as_list(menu.get("open_concerns") or _as_dict(retained).get("concerns"))
         surface_queue = _as_list(menu.get("surface_queue") or digest.get("surface_queue"))
+        residue = _as_dict(menu.get("diary_residue") or digest.get("diary_residue"))
+        diary_entries = _as_list(retained.get("diary_entries") or residue.get("diary_entries"))
+
+        retained_by_kind: dict[str, list[str]] = {}
+        for raw in diary_entries[:10]:
+            item = _as_dict(raw)
+            text = _short(item.get("text"), 180)
+            kind = str(item.get("kind") or "reflection").strip().lower()
+            if text:
+                retained_by_kind.setdefault(kind, []).append(text)
 
         concern_lines = []
         for c in [_as_dict(x) for x in concerns[:4]]:
             theme = _short(c.get("theme"), 160)
             if theme:
                 concern_lines.append(theme)
+        for text in retained_by_kind.get("concern", [])[:2]:
+            if text not in concern_lines:
+                concern_lines.append(text)
 
         fragment_lines = []
         for f in [_as_dict(x) for x in _as_list(temporary.get("fragments"))[:4]]:
             claim = _short(f.get("claim"), 160)
             if claim:
                 fragment_lines.append(claim)
+        for text in retained_by_kind.get("reflection", [])[:3]:
+            if text not in fragment_lines:
+                fragment_lines.append(text)
 
         future_lines = []
         for item in _as_list(future_bias.get("inquiry_plan"))[:3]:
             text = item.get("question") or item.get("text") or item.get("topic") if isinstance(item, Mapping) else item
             text = _short(text, 140)
             if text:
+                future_lines.append(text)
+        for text in retained_by_kind.get("future", [])[:2]:
+            if text not in future_lines:
                 future_lines.append(text)
         if not future_lines:
             sb = _as_dict(future_bias.get("speech_bias"))
@@ -184,6 +203,9 @@ class InnerDiaryWriter:
             seed = _short(s.get("topic_seed") or s.get("text") or s.get("seed"), 140)
             if seed:
                 surface_lines.append(seed)
+        for text in retained_by_kind.get("desire", [])[:2]:
+            if text not in surface_lines:
+                surface_lines.append(text)
 
         dossier = _as_dict(menu.get("evidence_dossier") or digest.get("evidence_dossier"))
         memory_echoes: list[dict[str, str]] = []
@@ -197,13 +219,28 @@ class InnerDiaryWriter:
                 "source": _short(hit.get("source"), 80),
             })
 
+        current_text = _short(current.get("dominant_judgment"), 240)
+        if not current_text:
+            current_text = next(iter(retained_by_kind.get("current", [])), "")
         return {
-            "hien_tai": _short(current.get("dominant_judgment"), 240),
-            "ban_tam": concern_lines,
-            "phan_tich": fragment_lines,
-            "tuong_lai": future_lines,
-            "muon_noi": surface_lines,
+            "hien_tai": current_text,
+            "ban_tam": concern_lines[:6],
+            "phan_tich": fragment_lines[:7],
+            "tuong_lai": future_lines[:5],
+            "muon_noi": surface_lines[:5],
             "memory_echoes": memory_echoes,
+            # Cho writer thấy retention đã được curator xác thực; nó vẫn chỉ được
+            # rewrite, không được thêm fact ngoài các dòng này.
+            "retained_entries": [
+                {
+                    "kind": str(_as_dict(item).get("kind") or "reflection"),
+                    "text": _short(_as_dict(item).get("text"), 180),
+                    "state": str(_as_dict(item).get("state") or "active"),
+                    "provenance": _as_list(_as_dict(item).get("provenance"))[:4],
+                }
+                for item in diary_entries[:8]
+                if _short(_as_dict(item).get("text"), 180)
+            ],
         }
 
     def _signature(self, facts: Mapping[str, Any]) -> str:
