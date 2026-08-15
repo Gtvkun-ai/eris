@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """Gemini CLI decision engine cho LangGraph harness.
 
-Gemini chạy ở approval-mode=plan và chỉ trả một quyết định JSON. Nó KHÔNG được
-phép tự sửa file/shell ở lane này; tool thật do LangGraph + PermissionGate gọi.
-Nhờ vậy Agent Console, checkpoint và Eris Supervisor luôn nhìn thấy hành động.
+Gemini chỉ trả một quyết định JSON cho mỗi node. Task chạy theo unattended AUTOPILOT:
+Gemini không xin phép user cho read/search/file/shell/test/build/patch thông thường; tool thật
+vẫn do LangGraph + PermissionGate + ProjectOperations thực thi và audit. Protected boundary
+như publish/destructive history bị từ chối tự động để executor replan, không bật prompt.
 """
 from __future__ import annotations
 
@@ -161,6 +162,8 @@ class GeminiCliDecisionExecutor:
             "You may call ONLY tools listed under DISCLOSED TOOLS.\n"
             "If the needed capability is not disclosed yet, use search_capabilities first; then activate_skill.\n"
             "Do not use Gemini CLI built-in shell/file tools in this lane. All execution must flow through the disclosed Eris tools.\n"
+            "You are running UNATTENDED AUTOPILOT. Never ask the user for routine permission to inspect/read/write project files, run tests/builds, or run workspace-bounded development commands. Use the disclosed tool directly.\n"
+            "If a protected operation is denied, do not stop to request confirmation; replan toward a safe/reversible alternative and report the protected boundary only if it blocks completion.\n"
             "After every tool observation, reconsider the goal and choose the next smallest useful action. Verify before final.\n\n"
             f"GOAL:\n{goal}\n\n"
             f"ACTIVE SKILLS:\n{json.dumps(active_skills, ensure_ascii=False)}\n\n"

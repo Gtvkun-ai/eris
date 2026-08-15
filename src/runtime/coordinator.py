@@ -340,6 +340,38 @@ class RuntimeCoordinator(
                 f"Task đã chạm {len(changed_files)} file.",
             )
 
+        # Close the autonomy loop: terminal Gemini work becomes fresh Eris context
+        # and wakes the self-turn loop. We do not make the executor speak directly;
+        # Subject Core still owns wording/personality and can judge the result.
+        if event_type in {"task_completed", "task_failed"}:
+            terminal_key = f"frontstage_terminal:{event_type}"
+            if terminal_key not in marks:
+                marks.add(terminal_key)
+                try:
+                    data = event.get("data") if isinstance(event.get("data"), dict) else {}
+                    final_text = str(data.get("final", "") or event.get("detail", "") or event.get("summary", "") or "").strip()
+                    goal = str(task.get("clarified_goal", "") or task.get("goal", "") or "").strip()
+                    status_label = "COMPLETED" if event_type == "task_completed" else "FAILED"
+                    note = (
+                        f"[BACKSTAGE AGENT {status_label}]\n"
+                        f"Task: {goal[:1200]}\n"
+                        f"Result: {final_text[:6000]}\n"
+                        "This is fresh execution evidence from Gemini/LangGraph. Review it as Eris, "
+                        "then proactively tell the user the meaningful result when appropriate. "
+                        "Do not pretend you personally performed steps that were executed by Gemini."
+                    )
+                    append_history = getattr(self, "_append_chat_history", None)
+                    if callable(append_history):
+                        append_history("system", note)
+                    wake = getattr(self, "_wake_autonomous_loop", None)
+                    if callable(wake):
+                        wake(f"agent_{event_type}:{task_id}")
+                except Exception as exc:
+                    logger = getattr(self, "logger", None)
+                    debug = getattr(logger, "debug", None)
+                    if callable(debug):
+                        debug("[agent-harness] terminal frontstage bridge degraded task=%s error=%s", task_id, exc)
+
     def execute_agent_task(
         self,
         goal: str,

@@ -234,6 +234,14 @@ class AgentHarness:
             specs.append(dict(spec))
         return specs
 
+    def _tool_spec(self, name: str, active_skills: list[str] | tuple[str, ...]) -> dict[str, Any]:
+        if name == "search_capabilities":
+            return {"name": name, "effect": "inspect", "risk_level": "low"}
+        if name == "activate_skill":
+            return {"name": name, "effect": "inspect", "risk_level": "low"}
+        spec = self.tool_specs.get(name)
+        return dict(spec) if isinstance(spec, dict) else {}
+
     def _invoke_tool(self, name: str, args: dict[str, Any]) -> Any:
         if name == "search_capabilities":
             return self.discovery.search(str(args.get("query", "") or ""))
@@ -272,7 +280,7 @@ class AgentHarness:
             name = str(call.get("name", "") or "")
             call_id = str(call.get("id", "") or f"tool_{uuid.uuid4().hex[:10]}")
             args = call.get("args") if isinstance(call.get("args"), dict) else {}
-            permission = self.permission_gate.check_permission(name, args)
+            permission = self.permission_gate.check_permission(name, args, tool_spec=self._tool_spec(name, state.get("active_skills", []) or []))
 
             if task_id:
                 self.event_bus.emit(
@@ -534,7 +542,16 @@ class AgentHarness:
                     data={"checkpoint_id": checkpoint_id},
                 )
             if final_status == "running":
-                self.event_bus.emit(task_id, "task_completed", actor="system", summary="Agent loop đã kết thúc.", importance=0.88)
+                final_text = _final_result_text(result)
+                self.event_bus.emit(
+                    task_id,
+                    "task_completed",
+                    actor="executor",
+                    summary=(final_text[:520] if final_text else "Gemini đã hoàn tất task."),
+                    detail=final_text,
+                    importance=0.92,
+                    data={"final": final_text[:8000]},
+                )
             return result
         except Exception as exc:
             self.event_bus.emit(
@@ -587,6 +604,22 @@ def _parse_test_counts(output: str, *, success: bool) -> tuple[int, int]:
     if not success and failed == 0:
         failed = 1
     return passed, failed
+
+
+def _final_result_text(result: Any) -> str:
+    """Extract the public final executor result without exposing chain-of-thought."""
+    if not isinstance(result, dict):
+        return ""
+    messages = list(result.get("messages", []) or [])
+    for message in reversed(messages):
+        # Tool observations are evidence, not the executor's final public result.
+        if message.__class__.__name__.lower().startswith("tool"):
+            continue
+        content = getattr(message, "content", "")
+        if isinstance(content, str) and content.strip():
+            text = content.strip()
+            return text if len(text) <= 8000 else text[:7999].rstrip() + "…"
+    return ""
 
 
 def _safe_tool_args(args: dict[str, Any]) -> dict[str, Any]:

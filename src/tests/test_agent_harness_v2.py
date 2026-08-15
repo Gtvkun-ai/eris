@@ -22,12 +22,30 @@ def test_skill_search_is_progressive_and_activation_reveals_tools():
     assert "Desktop Awareness" in activated
 
 
-def test_permission_gate_blocks_dangerous_git_subcommands():
+def test_permission_gate_autopilot_runs_routine_dev_without_asking():
     gate = PermissionGate()
+    assert gate.unattended is True
+    assert gate.check_permission("project_read_file", {"path": "src/a.py"}) == Permission.ALLOW
+    assert gate.check_permission("project_apply_patch", {"patch": "x"}) == Permission.ALLOW
+    assert gate.check_permission("project_run_tests", {"command": "pytest -q"}) == Permission.ALLOW
     assert gate.check_permission("project_run_command", {"command": "git status"}) == Permission.ALLOW
-    assert gate.check_permission("project_run_command", {"command": "git commit -am x"}) == Permission.ASK
+    assert gate.check_permission("project_run_command", {"command": "git commit -am x"}) == Permission.ALLOW
+    assert gate.check_permission("project_run_command", {"command": "git checkout feature-x"}) == Permission.ALLOW
+    assert gate.check_permission("launch_app", {"app": "code"}) == Permission.ALLOW
+    assert gate.check_permission("open_url", {"url": "https://example.com"}) == Permission.ALLOW
+    assert gate.check_permission("workspace_switch", {"project_id": "x"}) == Permission.ALLOW
+
+
+def test_permission_gate_autopilot_denies_protected_boundary_instead_of_prompting():
+    gate = PermissionGate()
     assert gate.check_permission("project_run_command", {"command": "git push origin main"}) == Permission.DENY
     assert gate.check_permission("project_run_command", {"command": "git reset --hard HEAD~1"}) == Permission.DENY
+    assert gate.check_permission("project_run_command", {"command": "git clean -fd"}) == Permission.DENY
+    assert gate.check_permission("project_run_command", {"command": "npm publish"}) == Permission.DENY
+    assert gate.check_permission("future_untyped_danger", {}) == Permission.DENY
+    assert gate.check_permission(
+        "future_read_tool", {}, tool_spec={"effect": "read", "risk_level": "low"}
+    ) == Permission.ALLOW
 
 
 def test_gemini_decision_parser_handles_fenced_json():
@@ -246,3 +264,50 @@ def test_inspect_mode_discloses_no_write_or_control_tools():
     assert "project_read_file" in names
     assert "project_apply_patch" not in names
     assert "project_run_tests" not in names
+
+
+def test_autopilot_interactive_profile_can_still_be_enabled_for_debugging():
+    gate = PermissionGate(mode="interactive")
+    assert gate.unattended is False
+    # Unknown future tool remains explicitly gated in interactive debug mode.
+    assert gate.check_permission("future_untyped_tool", {}) == Permission.ASK
+
+
+def test_terminal_agent_event_wakes_eris_frontstage(tmp_path):
+    from runtime.coordinator import RuntimeCoordinator
+    from runtime.agent_harness.task_store import AgentTaskStore
+    from runtime.agent_harness.supervisor_bridge import AgentSupervisorBridge
+
+    store = AgentTaskStore(tmp_path / "agent_tasks.json")
+    task_id = store.create_task("fix routing")['task_id']
+    store.update_task(task_id, clarified_goal="fix routing")
+
+    class _Events:
+        def emit(self, task_id, event_type, **kwargs):
+            return store.append_event(task_id, event_type, **kwargs)
+
+    coordinator = object.__new__(RuntimeCoordinator)
+    coordinator.agent_task_store = store
+    coordinator.agent_supervisor = AgentSupervisorBridge(store=store, event_bus=_Events())
+    coordinator._agent_supervisor_marks = {}
+    coordinator.logger = None
+    history = []
+    wakes = []
+    coordinator._append_chat_history = lambda role, content, **kwargs: history.append((role, content))
+    coordinator._wake_autonomous_loop = lambda reason="": wakes.append(reason)
+
+    event = store.append_event(
+        task_id,
+        "task_completed",
+        actor="executor",
+        summary="done",
+        detail="Fixed routing and tests pass.",
+        data={"final": "Fixed routing and tests pass."},
+    )
+    event["task_id"] = task_id
+    coordinator._supervise_agent_event(event)
+
+    assert history and history[-1][0] == "system"
+    assert "BACKSTAGE AGENT COMPLETED" in history[-1][1]
+    assert "Fixed routing" in history[-1][1]
+    assert wakes and wakes[-1].startswith("agent_task_completed:")

@@ -201,6 +201,9 @@ public partial class UdpListener
         _agentConsoleTasksToggleButton.TooltipText = "Mở lịch sử task";
         row.AddChild(_agentConsoleTasksToggleButton);
 
+        var autopilot = AgentConsoleTinyStatus("AUTOPILOT", AgentConsolePink);
+        autopilot.TooltipText = "Task chạy unattended; thao tác dev thường không dừng xin quyền.";
+        row.AddChild(autopilot);
         _agentConsoleExecutorLabel = AgentConsoleTinyStatus("EXECUTOR · —", AgentConsoleGreen);
         row.AddChild(_agentConsoleExecutorLabel);
         _agentConsoleStatusLabel = AgentConsoleTinyStatus("IDLE", AgentConsoleMuted);
