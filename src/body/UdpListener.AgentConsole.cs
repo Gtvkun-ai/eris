@@ -30,6 +30,8 @@ public partial class UdpListener
         public string Status { get; set; } = "queued";
         public string Executor { get; set; } = "gemini";
         public string Model { get; set; } = "";
+        public string Source { get; set; } = "";
+        public string TaskMode { get; set; } = "execute";
         public int CurrentStep { get; set; }
         public int PendingControls { get; set; }
         public string CheckpointId { get; set; } = "";
@@ -78,6 +80,8 @@ public partial class UdpListener
     private Label _agentConsoleSkillsLabel;
     private Button _agentConsoleTasksToggleButton;
     private Button _agentConsoleInspectorToggleButton;
+    private Button _agentConsoleNewTaskButton;
+    private Button _agentConsoleComposerSendButton;
     private Button _agentConsoleFilterAllButton;
     private Button _agentConsoleFilterConversationButton;
     private Button _agentConsoleFilterToolsButton;
@@ -97,6 +101,7 @@ public partial class UdpListener
     private ulong _agentLastPacketMs;
     private bool _agentConsoleTaskDrawerVisible;
     private bool _agentConsoleInspectorVisible;
+    private bool _agentConsoleNewTaskMode;
     private bool _agentConsoleAutoFollow = true;
     private string _agentConsoleEventFilter = "all";
 
@@ -186,6 +191,11 @@ public partial class UdpListener
         _agentConsoleTaskMetaLabel = AgentConsoleLabel("Gemini ↔ Eris · execution session", 10, AgentConsoleMuted);
         titles.AddChild(_agentConsoleTaskMetaLabel);
         row.AddChild(titles);
+
+        _agentConsoleNewTaskButton = AgentConsoleButton("＋ Task mới", ToggleAgentNewTaskMode, primary: true);
+        _agentConsoleNewTaskButton.CustomMinimumSize = new Vector2(108f, 38f);
+        _agentConsoleNewTaskButton.TooltipText = "Giao task trực tiếp cho Gemini";
+        row.AddChild(_agentConsoleNewTaskButton);
 
         _agentConsoleTasksToggleButton = AgentConsoleQuietButton("Công việc", ToggleAgentTaskDrawer, 92f);
         _agentConsoleTasksToggleButton.TooltipText = "Mở lịch sử task";
@@ -479,11 +489,11 @@ public partial class UdpListener
             ClearButtonEnabled = true,
         };
         StyleAgentConsoleInput(_agentConsoleDirectiveInput);
-        _agentConsoleDirectiveInput.TextSubmitted += _ => SendAgentDirective();
+        _agentConsoleDirectiveInput.TextSubmitted += _ => SubmitAgentComposer();
         composerRow.AddChild(_agentConsoleDirectiveInput);
-        var send = AgentConsoleButton("Gửi  ➤", SendAgentDirective, primary: true);
-        send.CustomMinimumSize = new Vector2(92f, 42f);
-        composerRow.AddChild(send);
+        _agentConsoleComposerSendButton = AgentConsoleButton("Gửi  ➤", SubmitAgentComposer, primary: true);
+        _agentConsoleComposerSendButton.CustomMinimumSize = new Vector2(92f, 42f);
+        composerRow.AddChild(_agentConsoleComposerSendButton);
         root.AddChild(composer);
 
         var actionRow = new HBoxContainer
@@ -507,6 +517,58 @@ public partial class UdpListener
         actionRow.AddChild(_agentConsoleControlStatusLabel);
         root.AddChild(actionRow);
         return root;
+    }
+
+    private void ToggleAgentNewTaskMode()
+    {
+        _agentConsoleNewTaskMode = !_agentConsoleNewTaskMode;
+        RefreshAgentComposerMode();
+        if (_agentConsoleNewTaskMode)
+            _agentConsoleDirectiveInput?.GrabFocus();
+    }
+
+    private void RefreshAgentComposerMode()
+    {
+        if (_agentConsoleDirectiveInput != null)
+        {
+            _agentConsoleDirectiveInput.Editable = _agentConsoleNewTaskMode
+                || (SelectedAgentTask() != null && !AgentTaskTerminal(SelectedAgentTask()?.Status ?? ""));
+            _agentConsoleDirectiveInput.PlaceholderText = _agentConsoleNewTaskMode
+                ? "Giao task mới cho Gemini...  ví dụ: debug capability routing, sửa root cause rồi chạy test"
+                : "Chỉ thị cho Gemini...  ví dụ: đừng tạo abstraction mới, tìm root cause trước";
+        }
+        if (_agentConsoleNewTaskButton != null)
+        {
+            _agentConsoleNewTaskButton.Text = _agentConsoleNewTaskMode ? "× Hủy task" : "＋ Task mới";
+            _agentConsoleNewTaskButton.TooltipText = _agentConsoleNewTaskMode
+                ? "Thoát chế độ tạo task mới"
+                : "Giao task trực tiếp cho Gemini";
+        }
+        if (_agentConsoleComposerSendButton != null)
+            _agentConsoleComposerSendButton.Text = _agentConsoleNewTaskMode ? "Chạy  ➤" : "Gửi  ➤";
+        if (_agentConsoleNewTaskMode)
+            SetAgentConsoleControlStatus("Đang tạo task mới · Gemini/LangGraph sẽ chạy độc lập, Eris vẫn giám sát.");
+    }
+
+    private void SubmitAgentComposer()
+    {
+        if (_agentConsoleNewTaskMode)
+            SendAgentNewTask();
+        else
+            SendAgentDirective();
+    }
+
+    private void SendAgentNewTask()
+    {
+        string text = (_agentConsoleDirectiveInput?.Text ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            SetAgentConsoleControlStatus("Mục tiêu task đang trống.", error: true);
+            return;
+        }
+        SendAgentControl("create_task", text: text);
+        if (_agentConsoleDirectiveInput != null)
+            _agentConsoleDirectiveInput.Text = "";
     }
 
     private void ToggleAgentTaskDrawer()
@@ -668,7 +730,7 @@ public partial class UdpListener
     {
         if (_chatSend == null)
             return;
-        if (action != "snapshot" && string.IsNullOrWhiteSpace(_agentSelectedTaskId))
+        if (action != "snapshot" && action != "create_task" && string.IsNullOrWhiteSpace(_agentSelectedTaskId))
         {
             SetAgentConsoleControlStatus("Chưa chọn task để điều khiển.", error: true);
             return;
@@ -685,6 +747,8 @@ public partial class UdpListener
         };
         if (!string.IsNullOrWhiteSpace(text))
             payload["text"] = text;
+        if (action == "create_task")
+            payload["task_mode"] = "execute";
         if (!string.IsNullOrWhiteSpace(checkpointId))
             payload["checkpoint_id"] = checkpointId;
 
@@ -696,7 +760,10 @@ public partial class UdpListener
         }
         _agentLastSnapshotRequestMs = Time.GetTicksMsec();
         if (!quiet)
-            SetAgentConsoleControlStatus(action == "snapshot" ? "Đang đồng bộ task..." : $"Đã gửi {action}; chờ AgentHarness nhận ở node boundary.");
+            SetAgentConsoleControlStatus(
+                action == "snapshot" ? "Đang đồng bộ task..."
+                : action == "create_task" ? "Đang tạo task Gemini mới..."
+                : $"Đã gửi {action}; chờ AgentHarness nhận ở node boundary.");
     }
 
     private bool TryHandleAgentConsolePacket(string raw)
@@ -737,8 +804,14 @@ public partial class UdpListener
             _agentLastPacketMs = Time.GetTicksMsec();
             string status = AgentReadJsonString(root, "status");
             string message = AgentReadJsonString(root, "message");
+            string ackAction = AgentReadJsonString(root, "action");
             if (root.TryGetProperty("agent_console", out JsonElement console) && console.ValueKind == JsonValueKind.Object)
                 ApplyAgentConsoleSnapshot(console);
+            if (status == "ok" && ackAction == "create_task")
+            {
+                _agentConsoleNewTaskMode = false;
+                RefreshAgentComposerMode();
+            }
             SetAgentConsoleControlStatus(
                 string.IsNullOrWhiteSpace(message) ? "Agent Console đã đồng bộ." : message,
                 error: status == "error");
@@ -814,6 +887,8 @@ public partial class UdpListener
         target.Status = source.Status;
         target.Executor = source.Executor;
         target.Model = source.Model;
+        target.Source = source.Source;
+        target.TaskMode = source.TaskMode;
         target.CurrentStep = source.CurrentStep;
         target.PendingControls = source.PendingControls;
         target.CheckpointId = source.CheckpointId;
@@ -847,6 +922,12 @@ public partial class UdpListener
         };
         if (string.IsNullOrWhiteSpace(task.Status)) task.Status = "queued";
         if (string.IsNullOrWhiteSpace(task.Executor)) task.Executor = "executor";
+        if (node.TryGetProperty("metadata", out JsonElement metadata) && metadata.ValueKind == JsonValueKind.Object)
+        {
+            task.Source = AgentReadJsonString(metadata, "source");
+            task.TaskMode = AgentReadJsonString(metadata, "task_mode");
+        }
+        if (string.IsNullOrWhiteSpace(task.TaskMode)) task.TaskMode = "execute";
 
         if (node.TryGetProperty("active_skills", out JsonElement skills) && skills.ValueKind == JsonValueKind.Array)
             foreach (JsonElement item in skills.EnumerateArray())
@@ -933,7 +1014,7 @@ public partial class UdpListener
             bool selected = string.Equals(task.TaskId, _agentSelectedTaskId, StringComparison.Ordinal);
             var button = new Button
             {
-                Text = $"{AgentStatusGlyph(task.Status)}  {CompactAgentText(task.Goal, 34)}\n     {AgentStatusLabel(task.Status)} · bước {task.CurrentStep}",
+                Text = $"{AgentStatusGlyph(task.Status)}  {CompactAgentText(task.Goal, 34)}\n     {AgentStatusLabel(task.Status)} · bước {task.CurrentStep} · {AgentTaskOriginLabel(task)}",
                 CustomMinimumSize = new Vector2(0f, 54f),
                 SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
                 Alignment = HorizontalAlignment.Left,
@@ -1196,6 +1277,8 @@ public partial class UdpListener
 
         var sb = new StringBuilder();
         sb.AppendLine($"Trạng thái   {AgentStatusLabel(task.Status)}");
+        sb.AppendLine($"Nguồn        {AgentTaskOriginLabel(task)}");
+        sb.AppendLine($"Mode         {(task.TaskMode == "inspect" ? "Inspect-only" : "Execute")}");
         sb.AppendLine($"Bước         {task.CurrentStep}");
         if (task.PendingControls > 0)
             sb.AppendLine($"Chỉ thị chờ  {task.PendingControls}");
@@ -1288,8 +1371,7 @@ public partial class UdpListener
             _agentConsoleStopButton.Disabled = !hasTask || AgentTaskTerminal(status);
         if (_agentConsoleRollbackButton != null)
             _agentConsoleRollbackButton.Disabled = !hasTask || string.IsNullOrWhiteSpace(task.CheckpointId);
-        if (_agentConsoleDirectiveInput != null)
-            _agentConsoleDirectiveInput.Editable = hasTask && !AgentTaskTerminal(status);
+        RefreshAgentComposerMode();
     }
 
     private AgentConsoleTaskView SelectedAgentTask()
@@ -1454,6 +1536,22 @@ public partial class UdpListener
             "clarification_requested" => "Cần hỏi user",
             _ => string.IsNullOrWhiteSpace(eventType) ? "Agent event" : eventType.Replace('_', ' '),
         };
+    }
+
+    private static string AgentTaskOriginLabel(AgentConsoleTaskView task)
+    {
+        if (task == null)
+            return "—";
+        string source = (task.Source ?? "").Trim().ToLowerInvariant();
+        string origin = source switch
+        {
+            "agent_console" => "Panel",
+            "eris_chat" => "Eris chat",
+            _ => string.IsNullOrWhiteSpace(source) ? "Agent" : source,
+        };
+        if (string.Equals(task.TaskMode, "inspect", StringComparison.OrdinalIgnoreCase))
+            return origin + " · Inspect";
+        return origin;
     }
 
     private static string AgentStatusGlyph(string status)

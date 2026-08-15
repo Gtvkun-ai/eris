@@ -1043,17 +1043,22 @@ class AIChatOrchestrator:
         grounding_context = str(getattr(grounding_report, "prompt_context", "") or "")
         grounding_context = _merge_previous_public_context(grounding_context, previous_public_context)
         agent_action = str(agent_execution_route.get("action", "none") or "none").strip().lower()
-        if agent_action == "execute":
+        if agent_action in {"execute", "consult"}:
             task_id_for_public = str(agent_execution_route.get("task_id", "") or "")
             start_status = str(agent_execution_route.get("start_status", "") or "")
+            is_consult = agent_action == "consult"
             grounding_context = "\n\n".join(part for part in (
                 grounding_context,
-                "AGENT_EXECUTION_V1: " + json.dumps({
+                "AGENT_EXECUTION_V2: " + json.dumps({
                     "action": "started" if start_status == "started" else "unavailable",
+                    "mode": "inspect" if is_consult else "execute",
                     "task_id": task_id_for_public,
                     "goal": str(agent_execution_route.get("goal", "") or "")[:1600],
                     "reason": str(agent_execution_route.get("reason", "") or ""),
                     "rule": (
+                        "A backstage Gemini/LangGraph inspect-only consultation has started. Acknowledge briefly; do not claim it changed files. "
+                        "The Agent Console shows live evidence and Eris remains the frontstage speaker."
+                        if is_consult else
                         "A backstage Gemini/LangGraph execution task has been started in parallel. "
                         "Acknowledge briefly and honestly; do not claim completion yet. The Agent Console shows live progress. "
                         "Do not launch a duplicate runtime capability for the same multi-step task."
@@ -1074,6 +1079,11 @@ class AIChatOrchestrator:
                     ),
                 }, ensure_ascii=False, separators=(",", ":")),
             ) if str(part).strip())
+        capability_self_context = str(agent_execution_route.get("self_model_context", "") or "").strip()
+        if capability_self_context:
+            grounding_context = "\n\n".join(
+                part for part in (grounding_context, capability_self_context) if str(part).strip()
+            )
         if semantic_prompt_context:
             grounding_context = "\n\n".join(
                 part for part in (grounding_context, semantic_prompt_context) if str(part).strip()
@@ -1319,7 +1329,7 @@ class AIChatOrchestrator:
         # khiến nhánh interactive capability selector đọc một local chưa được gán.
         executive = getattr(host, "ai_executive_cortex", None)
         agent_action_for_planner = str(agent_execution_route.get("action", "none") or "none").strip().lower()
-        if agent_action_for_planner in {"execute", "clarify"}:
+        if agent_action_for_planner in {"execute", "consult", "clarify"}:
             executive_directive = None
         elif executive is not None and bool(getattr(executive, "enabled", False)):
             try:
@@ -1340,6 +1350,7 @@ class AIChatOrchestrator:
                 "semantic_goal": "",
                 "reason": (
                     "agent_harness_owns_execution" if agent_action_for_planner == "execute"
+                    else "agent_harness_owns_consult" if agent_action_for_planner == "consult"
                     else "agent_ambiguity_requires_user" if agent_action_for_planner == "clarify"
                     else "executive_unavailable"
                 ),

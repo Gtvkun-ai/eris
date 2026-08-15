@@ -171,3 +171,78 @@ def test_supervisor_policy_advises_when_patch_happens_before_inspection(tmp_path
     assert "supervisor_advisory" in types
     controls = store.consume_controls(task_id)
     assert controls and controls[-1]["action"] == "directive"
+
+
+def test_capability_self_model_distinguishes_instant_long_and_ambiguous():
+    from runtime.agent_harness.capability_self_model import CapabilitySelfModel
+
+    class _Discovery:
+        capabilities = [
+            {"name": "coding-debug", "description": "inspect debug test code", "keywords": ["debug", "code"]},
+            {"name": "coding-modification", "description": "modify patch code", "keywords": ["patch", "refactor"]},
+        ]
+
+    class _Harness:
+        discovery = _Discovery()
+
+    model = CapabilitySelfModel(harness=_Harness(), harness_ready=True)
+
+    instant = model.assess("em biết tôi đang nghe nhạc gì không")
+    assert instant.lane == "instant"
+    assert "get_now_playing" in instant.matched_capabilities
+
+    long_task = model.assess("debug capability_route trong executive_cortex.py rồi sửa và chạy test")
+    assert long_task.lane == "long_execution"
+    assert long_task.executor == "gemini/langgraph"
+    assert long_task.can_modify is True
+
+    ambiguous = model.assess("làm agent ngon hơn đi")
+    assert ambiguous.lane == "clarify"
+    assert "Chốt nhánh" in ambiguous.clarification
+
+
+def test_chat_router_can_launch_inspect_only_consult_from_normal_chat():
+    from runtime.agent_harness.capability_self_model import CapabilitySelfModel
+    from runtime.agent_harness.chat_router import classify_agent_chat_route
+
+    class _Discovery:
+        capabilities = [
+            {"name": "coding-inspection", "description": "inspect repository code", "keywords": ["code", "routing"]},
+        ]
+
+    class _Harness:
+        discovery = _Discovery()
+
+    route = classify_agent_chat_route(
+        "soi kỹ xem routing trong executive_cortex.py có gì cấn không",
+        self_model=CapabilitySelfModel(harness=_Harness(), harness_ready=True),
+    )
+    assert route.action == "consult"
+    assert "INSPECT-ONLY" in route.goal
+
+
+def test_inspect_mode_discloses_no_write_or_control_tools():
+    import pytest
+    pytest.importorskip("langchain_core")
+    pytest.importorskip("langgraph")
+    from runtime.agent_harness.graph_builder import AgentHarness
+
+    harness = object.__new__(AgentHarness)
+
+    class _Loader:
+        def tools_for_skills(self, _skills):
+            return ["project_read_file", "project_apply_patch", "project_run_tests"]
+
+    harness.skill_loader = _Loader()
+    harness.tool_specs = {
+        "project_read_file": {"name": "project_read_file", "effect": "read", "input_schema": {}},
+        "project_apply_patch": {"name": "project_apply_patch", "effect": "write", "input_schema": {}},
+        "project_run_tests": {"name": "project_run_tests", "effect": "control", "input_schema": {}},
+    }
+    specs = harness._disclosed_tool_specs(["coding-inspection"], task_mode="inspect")
+    names = {item["name"] for item in specs}
+    assert "search_capabilities" in names
+    assert "activate_skill" in names
+    assert "project_read_file" in names
+    assert "project_apply_patch" not in names
+    assert "project_run_tests" not in names

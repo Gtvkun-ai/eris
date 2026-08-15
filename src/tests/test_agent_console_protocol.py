@@ -142,3 +142,44 @@ def test_event_bus_listener_receives_task_id_without_log_scraping(tmp_path):
     bus.emit(task_id, "tool_started", actor="tool", summary="read", data={"tool": "project_read_file"})
     assert seen and seen[0]["task_id"] == task_id
     assert seen[0]["type"] == "tool_started"
+
+
+def test_agent_control_create_task_starts_shared_harness_task(tmp_path):
+    from runtime.incoming_protocol_runtime import IncomingProtocolRuntimeMixin
+
+    sent = []
+    started = []
+
+    class _Runtime(IncomingProtocolRuntimeMixin):
+        logger = None
+
+        def __init__(self):
+            self.agent_task_store = AgentTaskStore(tmp_path / "agent_tasks.json")
+
+        def _send_runtime_json(self, payload, **_kwargs):
+            sent.append(payload)
+            return True
+
+        def start_agent_task_async(self, goal, **kwargs):
+            started.append((goal, kwargs))
+            task = self.agent_task_store.create_task(
+                goal,
+                task_id="task_panel_1",
+                executor="gemini-cli",
+                metadata={"source": "agent_console", "task_mode": kwargs.get("task_mode", "execute")},
+            )
+            self.agent_task_store.append_event(task["task_id"], "task_started", actor="system", summary=goal)
+            return {"status": "started", "task_id": task["task_id"]}
+
+    runtime = _Runtime()
+    runtime._handle_agent_control({
+        "type": "agent_control",
+        "action": "create_task",
+        "request_id": "req-1",
+        "text": "debug capability routing rồi chạy test",
+    })
+
+    assert started and started[0][0].startswith("debug capability")
+    assert started[0][1]["source"] == "agent_console"
+    assert sent and sent[-1]["status"] == "ok"
+    assert sent[-1]["agent_console"]["selected_task_id"] == "task_panel_1"

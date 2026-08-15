@@ -22,6 +22,8 @@ class AgentState(TypedDict, total=False):
     thread_id: str
     executor: str
     model: str
+    task_mode: str
+    source: str
     status: str
     active_skills: List[str]
     active_tools: List[str]

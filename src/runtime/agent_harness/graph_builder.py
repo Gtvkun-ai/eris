@@ -117,6 +117,7 @@ class AgentHarness:
         if directive_messages:
             messages.extend(directive_messages)
         injected = state.get("injected_context", "")
+        task_mode = str(state.get("task_mode", "execute") or "execute").strip().lower()
         step = int(state.get("step_count", 0) or 0) + 1
 
         if task_id:
@@ -130,17 +131,23 @@ class AgentHarness:
                 importance=0.34,
             )
 
+        mode_rule = (
+            "INSPECT-ONLY MODE: investigate and report evidence. Do not modify files, run write/control tools, or claim changes were made.\n"
+            if task_mode == "inspect"
+            else "EXECUTION MODE: you may use disclosed tools to inspect, modify, test, and verify within permission policy.\n"
+        )
         sys_msg = SystemMessage(content=(
             "You are the execution specialist inside Eris' unified agent harness.\n"
             "Do not roleplay Eris' social persona. Work on the task, use available tools, "
             "verify results, and expose concise action summaries rather than private reasoning.\n"
+            + mode_rule +
             f"Current Goal: {state.get('goal', '')}\n"
             f"Active Skills: {', '.join(state.get('active_skills', []) or [])}\n"
             f"\n--- INJECTED SKILL CONTEXT ---\n{injected}\n--- END SKILL CONTEXT ---\n"
         ))
 
         response = None
-        disclosed_tools = self._disclosed_tool_specs(state.get("active_skills", []) or [])
+        disclosed_tools = self._disclosed_tool_specs(state.get("active_skills", []) or [], task_mode=task_mode)
         invoke_with_tools = getattr(self.llm, "invoke_with_tools", None)
         if callable(invoke_with_tools):
             response = invoke_with_tools(
@@ -185,7 +192,12 @@ class AgentHarness:
                     )
         return patch
 
-    def _disclosed_tool_specs(self, active_skills: list[str] | tuple[str, ...]) -> list[dict[str, Any]]:
+    def _disclosed_tool_specs(
+        self,
+        active_skills: list[str] | tuple[str, ...],
+        *,
+        task_mode: str = "execute",
+    ) -> list[dict[str, Any]]:
         specs: list[dict[str, Any]] = [
             {
                 "name": "search_capabilities",
@@ -212,10 +224,14 @@ class AgentHarness:
                 "risk_level": "low",
             },
         ]
+        inspect_only = str(task_mode or "execute").strip().lower() == "inspect"
         for name in self.skill_loader.tools_for_skills(list(active_skills)):
             spec = self.tool_specs.get(name)
-            if isinstance(spec, dict):
-                specs.append(dict(spec))
+            if not isinstance(spec, dict):
+                continue
+            if inspect_only and str(spec.get("effect", "") or "").lower() not in {"observe", "inspect", "read"}:
+                continue
+            specs.append(dict(spec))
         return specs
 
     def _invoke_tool(self, name: str, args: dict[str, Any]) -> Any:
@@ -441,25 +457,49 @@ class AgentHarness:
         *,
         task_id: str = "",
         clarified_goal: str = "",
+        task_mode: str = "execute",
+        source: str = "eris_chat",
     ):
         """Start one task and project its lifecycle to Agent Console."""
+        normalized_mode = "inspect" if str(task_mode or "execute").strip().lower() == "inspect" else "execute"
+        normalized_source = str(source or "eris_chat").strip() or "eris_chat"
         task = self.task_store.create_task(
             clarified_goal or goal,
             task_id=task_id,
             executor=self.executor_name,
             model=self.model_name,
             thread_id=thread_id,
-            metadata={"original_goal": goal},
+            metadata={
+                "original_goal": goal,
+                "source": normalized_source,
+                "task_mode": normalized_mode,
+            },
         )
         task_id = str(task.get("task_id", ""))
-        self.task_store.update_task(task_id, clarified_goal=clarified_goal, status="running")
+        existing_metadata = dict(task.get("metadata", {}) or {})
+        existing_metadata.update({
+            "original_goal": goal,
+            "source": normalized_source,
+            "task_mode": normalized_mode,
+        })
+        self.task_store.update_task(
+            task_id,
+            clarified_goal=clarified_goal,
+            status="running",
+            metadata=existing_metadata,
+        )
         self.event_bus.emit(
             task_id,
             "task_started",
             actor="system",
             summary=clarified_goal or goal,
             importance=0.90,
-            data={"executor": self.executor_name, "model": self.model_name},
+            data={
+                "executor": self.executor_name,
+                "model": self.model_name,
+                "source": normalized_source,
+                "task_mode": normalized_mode,
+            },
         )
 
         config = {"configurable": {"thread_id": thread_id}}
@@ -469,6 +509,8 @@ class AgentHarness:
             "thread_id": thread_id,
             "executor": self.executor_name,
             "model": self.model_name,
+            "task_mode": normalized_mode,
+            "source": normalized_source,
             "status": "running",
             "messages": [HumanMessage(content=clarified_goal or goal)],
             "active_skills": [],

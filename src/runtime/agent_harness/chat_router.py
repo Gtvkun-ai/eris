@@ -18,7 +18,7 @@ import unicodedata
 
 @dataclass(frozen=True)
 class AgentChatRoute:
-    action: str = "none"  # none | execute | clarify
+    action: str = "none"  # none | execute | consult | clarify
     goal: str = ""
     reason: str = ""
     confidence: float = 0.0
@@ -90,6 +90,7 @@ def classify_agent_chat_route(
     user_text: str,
     *,
     previous_assistant_text: str = "",
+    self_model=None,
 ) -> AgentChatRoute:
     """Classify one direct user turn for the execution harness.
 
@@ -115,6 +116,44 @@ def classify_agent_chat_route(
             break
     if explicit:
         return AgentChatRoute("execute", _compact(explicit_goal), "explicit_agent_command", 1.0)
+
+    # Capability Self-Model gets first refusal after explicit commands.  This is
+    # the layer that knows whether Eris should use a cheap native action, ask
+    # Gemini to inspect, or hand off a long-running execution task.
+    assessment = None
+    if self_model is not None:
+        try:
+            assessment = self_model.assess(raw)
+        except Exception:
+            assessment = None
+    lane = str(getattr(assessment, "lane", "") or "").strip().lower()
+    if lane == "instant":
+        return AgentChatRoute(reason="self_model_instant_native", confidence=float(getattr(assessment, "confidence", 0.9) or 0.9))
+    if lane == "clarify":
+        return AgentChatRoute(
+            "clarify",
+            _compact(raw),
+            str(getattr(assessment, "reason", "self_model_ambiguity") or "self_model_ambiguity"),
+            float(getattr(assessment, "confidence", 0.86) or 0.86),
+            str(getattr(assessment, "clarification", "") or ""),
+        )
+    if lane == "consult":
+        goal = (
+            "INSPECT-ONLY backstage consultation. Do not modify files or run destructive/control tools. "
+            "Investigate the technical question, gather evidence, and return a concise finding for Eris.\n"
+            f"User context: {raw}"
+        )
+        return AgentChatRoute(
+            "consult", _compact(goal),
+            str(getattr(assessment, "reason", "technical_backstage_consult") or "technical_backstage_consult"),
+            float(getattr(assessment, "confidence", 0.78) or 0.78),
+        )
+    if lane == "long_execution":
+        return AgentChatRoute(
+            "execute", _compact(raw),
+            str(getattr(assessment, "reason", "self_model_long_execution") or "self_model_long_execution"),
+            float(getattr(assessment, "confidence", 0.86) or 0.86),
+        )
 
     # Questions about what Eris can do are conversation, not permission to start work.
     if _contains_any(folded, _CAPABILITY_QUERY) and not _contains_any(folded, _EXECUTION_VERBS):

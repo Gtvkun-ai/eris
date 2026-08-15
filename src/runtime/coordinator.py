@@ -165,6 +165,7 @@ class RuntimeCoordinator(
         # trên máy chưa cài optional LangGraph dependency.
         self.agent_harness = None
         self.agent_executor_backend = None
+        self.agent_capability_self_model = None
         self._agent_task_threads = {}
         self._agent_last_started_task_id = ""
         self.agent_default_workspace = ""
@@ -202,17 +203,42 @@ class RuntimeCoordinator(
                     logger=logger,
                 )
                 ok, reason = gemini.health()
+                from runtime.agent_harness.capability_self_model import CapabilitySelfModel
+                self.agent_capability_self_model = CapabilitySelfModel(
+                    harness=self.agent_harness,
+                    harness_ready=ok,
+                )
                 info = getattr(logger, "info", None)
                 if callable(info):
                     info(
                         "[agent-harness] ready graph=langgraph executor=gemini-cli health=%s detail=%s skills=%s tools=%s",
                         ok, reason, len(self.agent_harness.discovery.capabilities), len(native_tools.agent_ids()),
                     )
+                    info(
+                        "[capability-self] instant=%s long_skills=%s executor_ready=%s",
+                        len(self.agent_capability_self_model.instant_capabilities()),
+                        len(self.agent_capability_self_model.long_skills()),
+                        self.agent_capability_self_model.harness_ready,
+                    )
             except Exception as exc:
                 self.agent_harness = None
+                self.agent_capability_self_model = None
                 debug = getattr(logger, "debug", None)
                 if callable(debug):
                     debug("[agent-harness] unavailable: %s", exc)
+
+        # Self-model tồn tại ngay cả khi Gemini CLI/LangGraph đang unavailable.
+        # Eris vẫn phải biết các native capability nhanh của chính mình thay vì
+        # suy ra "không làm được" chỉ vì backstage executor đang chết.
+        if self.agent_capability_self_model is None:
+            try:
+                from runtime.agent_harness.capability_self_model import CapabilitySelfModel
+                self.agent_capability_self_model = CapabilitySelfModel(
+                    harness=None,
+                    harness_ready=False,
+                )
+            except Exception:
+                self.agent_capability_self_model = None
 
     def _supervise_agent_event(self, event: dict) -> None:
         """Deterministic first-line technical supervision for Gemini execution.
@@ -321,6 +347,8 @@ class RuntimeCoordinator(
         thread_id: str = "",
         clarified_goal: str = "",
         task_id: str = "",
+        task_mode: str = "execute",
+        source: str = "eris_chat",
     ):
         """Run one Unified Agent Harness task synchronously.
 
@@ -332,12 +360,28 @@ class RuntimeCoordinator(
             raise RuntimeError("agent_harness_unavailable")
         import uuid
         resolved_thread = str(thread_id or f"agent_{uuid.uuid4().hex[:12]}")
-        return harness.invoke(
-            goal,
-            thread_id=resolved_thread,
-            task_id=str(task_id or ""),
-            clarified_goal=clarified_goal,
-        )
+        import inspect
+        invoke = harness.invoke
+        kwargs = {
+            "thread_id": resolved_thread,
+            "task_id": str(task_id or ""),
+            "clarified_goal": clarified_goal,
+        }
+        try:
+            signature = inspect.signature(invoke)
+            parameters = signature.parameters
+            accepts_var_kwargs = any(
+                item.kind == inspect.Parameter.VAR_KEYWORD for item in parameters.values()
+            )
+            if accepts_var_kwargs or "task_mode" in parameters:
+                kwargs["task_mode"] = str(task_mode or "execute")
+            if accepts_var_kwargs or "source" in parameters:
+                kwargs["source"] = str(source or "eris_chat")
+        except (TypeError, ValueError):
+            # C-extension/mock callables may not expose a signature. Real AgentHarness
+            # does, so falling back to the legacy four arguments is safe here.
+            pass
+        return invoke(goal, **kwargs)
 
     def start_agent_task_async(
         self,
@@ -346,6 +390,8 @@ class RuntimeCoordinator(
         thread_id: str = "",
         clarified_goal: str = "",
         source_turn_id: str = "",
+        source: str = "eris_chat",
+        task_mode: str = "execute",
     ) -> dict:
         """Start Gemini/LangGraph in a daemon worker and return immediately.
 
@@ -392,14 +438,23 @@ class RuntimeCoordinator(
                     executor=executor,
                     model=model,
                     thread_id=resolved_thread,
-                    metadata={"source_turn_id": source_turn_id, "original_goal": goal},
+                    metadata={
+                        "source_turn_id": source_turn_id,
+                        "original_goal": goal,
+                        "source": str(source or "eris_chat"),
+                        "task_mode": str(task_mode or "execute"),
+                    },
                 )
                 store.update_task(task_id, clarified_goal=clarified_goal or goal)
                 supervisor = getattr(self, "agent_supervisor", None)
                 if supervisor is not None:
                     supervisor.comment(
                         task_id,
-                        "Tôi đang theo dõi task này. Nếu hướng thực thi phình, lặp lỗi hoặc vá trước khi hiểu root cause, tôi sẽ can thiệp.",
+                        (
+                            "Tôi đang theo dõi phiên consult này; Gemini chỉ được inspect, không được sửa workspace."
+                            if str(task_mode or "execute").lower() == "inspect"
+                            else "Tôi đang theo dõi task này. Nếu hướng thực thi phình, lặp lỗi hoặc vá trước khi hiểu root cause, tôi sẽ can thiệp."
+                        ),
                         importance=0.58,
                     )
             except Exception as exc:
@@ -415,6 +470,8 @@ class RuntimeCoordinator(
                     thread_id=resolved_thread,
                     clarified_goal=clarified_goal,
                     task_id=task_id,
+                    task_mode=task_mode,
+                    source=source,
                 )
             except Exception as exc:
                 logger = getattr(self, "logger", None)
@@ -439,6 +496,8 @@ class RuntimeCoordinator(
             "task_id": task_id,
             "thread_id": resolved_thread,
             "goal": clarified_goal or goal,
+            "source": str(source or "eris_chat"),
+            "task_mode": str(task_mode or "execute"),
         }
 
     def route_agent_user_turn(
@@ -455,9 +514,14 @@ class RuntimeCoordinator(
         """
         try:
             from runtime.agent_harness.chat_router import classify_agent_chat_route
+            self_model = getattr(self, "agent_capability_self_model", None)
+            refresh_self_model = getattr(self_model, "refresh", None)
+            if callable(refresh_self_model):
+                refresh_self_model()
             route = classify_agent_chat_route(
                 user_text,
                 previous_assistant_text=previous_assistant_text,
+                self_model=self_model,
             )
         except Exception as exc:
             return {
@@ -469,18 +533,32 @@ class RuntimeCoordinator(
             }
 
         payload = route.to_dict()
-        if route.action != "execute":
+        self_model = getattr(self, "agent_capability_self_model", None)
+        if self_model is not None:
+            try:
+                assessment = self_model.assess(user_text)
+                payload["self_model"] = assessment.to_dict()
+                if route.reason == "capability_query":
+                    payload["self_model_context"] = self_model.prompt_summary()
+            except Exception:
+                pass
+        if route.action not in {"execute", "consult"}:
             return payload
 
+        task_mode = "inspect" if route.action == "consult" else "execute"
         started = self.start_agent_task_async(
             route.goal or user_text,
             thread_id=turn_id,
             clarified_goal=route.goal or user_text,
             source_turn_id=turn_id,
+            source="eris_chat",
+            task_mode=task_mode,
         )
         payload.update({
             "task_id": str(started.get("task_id", "") or ""),
             "start_status": str(started.get("status", "") or ""),
             "start_reason": str(started.get("reason", "") or ""),
+            "task_mode": str(started.get("task_mode", task_mode) or task_mode),
+            "source": str(started.get("source", "eris_chat") or "eris_chat"),
         })
         return payload
