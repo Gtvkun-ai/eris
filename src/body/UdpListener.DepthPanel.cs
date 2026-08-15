@@ -49,7 +49,8 @@ public partial class UdpListener : Node2D
 
 	// Bộ asset mới dành riêng cho Identity Runtime. Tất cả ảnh đều là PNG nền trong suốt.
 	// Panel vẫn chạy bằng fallback glyph nếu người dùng chưa thả đủ asset.
-	private const string IdentityAssetRoot = "res://asset/";
+	private const string IdentityAssetRoot = "res://asset/identy/";
+	private const string LegacyIdentityAssetRoot = "res://asset/";
 
 	private static string IdentityAsset(string fileName) => IdentityAssetRoot + fileName;
 
@@ -114,8 +115,8 @@ public partial class UdpListener : Node2D
 		foreach (Node child in _depthPanel.GetChildren())
 			child.QueueFree();
 
-		// V82: Identity không còn là dashboard số. Shell lấy cảm hứng từ dossier/diary:
-		// giấy ngà, đường mực mảnh, hồng mận và một chút xanh sống. Ảnh đều optional.
+		// V83: Identity giữ đúng hai mặt chính người dùng cần đọc: SELF và TRACE.
+		// INNER bị bỏ khỏi UI thường để panel bớt phân mảnh và tập trung hơn.
 		_depthPanel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
 		{
 			BgColor = new Color(0.992f, 0.978f, 0.973f, 0.997f),
@@ -187,7 +188,6 @@ public partial class UdpListener : Node2D
 		root.AddChild(tabs);
 		_depthTabButtons.Clear();
 		AddDepthTab(tabs, "self", "SELF", IdentityAsset("identity_tab_self.png"), "◇");
-		AddDepthTab(tabs, "inner", "INNER//", IdentityAsset("identity_tab_inner.png"), "⌁");
 		AddDepthTab(tabs, "trace", "TRACE•", IdentityAsset("identity_tab_trace.png"), "↗");
 
 		// Runtime meta vẫn tồn tại cho control/diagnostic, nhưng không ném TURN/STATE vào mặt user.
@@ -252,7 +252,7 @@ public partial class UdpListener : Node2D
 		var observerRow = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 70f) };
 		observerRow.AddThemeConstantOverride("separation", 12);
 		observerPad.AddChild(observerRow);
-		observerRow.AddChild(NewIconBadge(IdentityAsset("identity_observer_crystal.png"), "◇", new Vector2(58f, 58f), IdentityPink, true));
+		observerRow.AddChild(NewIconBadge(IdentityAsset("identity_core_crystal.png"), "◇", new Vector2(58f, 58f), IdentityPink, true));
 
 		var observerCopy = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
 		observerCopy.AddThemeConstantOverride("separation", 1);
@@ -265,6 +265,14 @@ public partial class UdpListener : Node2D
 		_depthGemmaObserverMetaLabel = NewLabel("GEMMA SHARDS · WAITING", 8, IdentityMuted, false);
 		observerCopy.AddChild(_depthGemmaObserverMetaLabel);
 		observerRow.AddChild(observerCopy);
+
+		string botanicalPath = ResolveIdentityAssetPath(IdentityAsset("identity_botanical_footer.png"));
+		if (ResourceLoader.Exists(botanicalPath))
+		{
+			var botanical = NewIdentityTexture(botanicalPath, new Vector2(118f, 60f));
+			botanical.StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered;
+			observerRow.AddChild(botanical);
+		}
 
 		var tools = new VBoxContainer { CustomMinimumSize = new Vector2(125f, 0f) };
 		tools.AddThemeConstantOverride("separation", 4);
@@ -602,9 +610,11 @@ public partial class UdpListener : Node2D
 				? "persistent identity · live snapshot"
 				: string.IsNullOrWhiteSpace(architecture) ? "identity runtime · compatibility" : architecture.Replace("ai_orchestrated.", "v");
 
+			if (string.Equals(_depthActiveTab, "inner", StringComparison.Ordinal))
+				_depthActiveTab = "self";
+
 			switch (_depthActiveTab)
 			{
-				case "inner": RenderIdentityInnerV82(root); break;
 				case "trace": RenderIdentityTraceV82(root); break;
 				default: RenderIdentitySelfV82(root); break;
 			}
@@ -622,58 +632,13 @@ public partial class UdpListener : Node2D
 
 	// ─────────────────────────────────────────────────────────────────────
 	// V82 IDENTITY DOSSIER
-	// Một panel, ba tab: SELF / INNER / TRACE. Số thô vẫn nằm trong runtime,
+	// Một panel, hai tab: SELF / TRACE. Số thô vẫn nằm trong runtime,
 	// nhưng normal UI chỉ kể ý nghĩa. Gemma Observer đọc comment đã được Gemma
 	// sinh cùng lượt thought-shards nên không mở thêm model call.
 	// ─────────────────────────────────────────────────────────────────────
 	private void RenderIdentitySelfV82(JsonElement root)
 	{
 		if (_depthContentList == null) return;
-
-		var sheet = NewIdentityDossierSheet(368f, IdentityPink, 18);
-		_depthContentList.AddChild(sheet);
-		var body = (VBoxContainer)sheet.GetChild(0);
-
-		var row = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 305f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		row.AddThemeConstantOverride("separation", 22);
-		body.AddChild(row);
-
-		// Portrait là asset optional. Không dùng texture atlas Live2D làm ảnh đại diện vì
-		// atlas nhìn như linh kiện cơ thể rơi khỏi nhà máy. Nếu chưa có ảnh thì dùng crest.
-		var portraitColumn = new VBoxContainer { CustomMinimumSize = new Vector2(220f, 0f) };
-		portraitColumn.AddThemeConstantOverride("separation", 8);
-		var portraitCenter = new CenterContainer { CustomMinimumSize = new Vector2(210f, 225f) };
-		portraitCenter.AddChild(NewIdentityPortraitMedallion());
-		portraitColumn.AddChild(portraitCenter);
-		var portraitName = NewLabel("ERIS", 12, new Color(0.43f, 0.22f, 0.34f), true);
-		portraitName.HorizontalAlignment = HorizontalAlignment.Center;
-		portraitColumn.AddChild(portraitName);
-		var continuity = NewLabel("◇  CURRENT SELF", 9, IdentityMuted, false);
-		continuity.HorizontalAlignment = HorizontalAlignment.Center;
-		portraitColumn.AddChild(continuity);
-		row.AddChild(portraitColumn);
-
-		var copy = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		copy.AddThemeConstantOverride("separation", 9);
-		row.AddChild(copy);
-
-		var current = new HBoxContainer();
-		current.AddChild(NewLabel("CURRENT FORM", 12, new Color(0.43f, 0.20f, 0.34f), true));
-		current.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
-		current.AddChild(NewDossierPill(BuildIdentityFormTagsV82(root), IdentityGreen));
-		copy.AddChild(current);
-		copy.AddChild(NewSectionDivider());
-
-		string headline = BuildIdentitySelfHeadlineV82(root);
-		var quote = NewLabel($"“{TrimForPanel(headline, 180)}”", 25, new Color(0.25f, 0.13f, 0.22f), true);
-		quote.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-		quote.CustomMinimumSize = new Vector2(0f, 90f);
-		quote.VerticalAlignment = VerticalAlignment.Center;
-		copy.AddChild(quote);
-
-		var trinity = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 132f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		trinity.AddThemeConstantOverride("separation", 8);
-		copy.AddChild(trinity);
 
 		JsonElement activeMotive = FirstObject(Arr(root, "active_motives"));
 		if (activeMotive.ValueKind != JsonValueKind.Object)
@@ -689,128 +654,174 @@ public partial class UdpListener : Node2D
 		string coreKey = ReadString(coreValue, "key");
 		string core = !string.IsNullOrWhiteSpace(coreKey) ? ValueDescription(coreKey) : "Cốt lõi đang yên, chưa có giá trị nào lấn át phần còn lại.";
 
-		trinity.AddChild(NewIdentityThemeColumn("DESIRE", "✦", desire, IdentityPink));
-		trinity.AddChild(NewIdentityThemeColumn("TENSION", "◇", tension, IdentityPurple));
-		trinity.AddChild(NewIdentityThemeColumn("CORE", "❧", core, IdentityGreen));
-	}
+		// V86: asset frame 1672x941 được giữ gần đúng tỉ lệ gốc. Nó là bố cục SELF,
+		// không phải sticker trang trí dán lên một dashboard khác.
+		var center = new CenterContainer
+		{
+			CustomMinimumSize = new Vector2(0f, 448f),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+		};
+		_depthContentList.AddChild(center);
 
-	private void RenderIdentityInnerV82(JsonElement root)
-	{
-		if (_depthContentList == null) return;
-		var sheet = NewIdentityDossierSheet(385f, IdentityPurple, 12);
-		_depthContentList.AddChild(sheet);
-		var body = (VBoxContainer)sheet.GetChild(0);
-		body.AddThemeConstantOverride("separation", 6);
+		var stage = new Control
+		{
+			CustomMinimumSize = new Vector2(790f, 444f),
+			Size = new Vector2(790f, 444f),
+			ClipContents = false,
+		};
+		center.AddChild(stage);
 
-		var titleRow = new HBoxContainer();
-		titleRow.AddChild(NewLabel("PRIVATE FRAGMENTS", 11, new Color(0.43f, 0.20f, 0.34f), true));
-		titleRow.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
-		titleRow.AddChild(NewLabel("not a dashboard · not a confession", 9, IdentityMuted, false));
-		body.AddChild(titleRow);
+		string selfFramePath = ResolveIdentityAssetPath(IdentityAsset("identity_self_portrait_frame.png"));
+		if (ResourceLoader.Exists(selfFramePath))
+		{
+			var frame = NewIdentityTexture(selfFramePath, new Vector2(790f, 444f));
+			frame.Position = Vector2.Zero;
+			frame.Size = new Vector2(790f, 444f);
+			frame.StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered;
+			frame.ZIndex = 0;
+			stage.AddChild(frame);
+		}
 
-		var canvas = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 322f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		canvas.AddThemeConstantOverride("separation", 14);
-		body.AddChild(canvas);
+		// Portrait nằm trong khoảng oval bên trái của chính frame. Không thêm capsule hồng.
+		string portraitPath = ResolveIdentityAssetPath(IdentityAsset("identity_portrait_eris.png.png"));
+		if (ResourceLoader.Exists(portraitPath))
+		{
+			var portrait = NewIdentityTexture(portraitPath, new Vector2(158f, 214f));
+			portrait.Position = new Vector2(47f, 88f);
+			portrait.Size = new Vector2(158f, 214f);
+			portrait.StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered;
+			portrait.ZIndex = 1;
+			stage.AddChild(portrait);
+		}
 
-		var left = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, SizeFlagsStretchRatio = 1f };
-		left.AddThemeConstantOverride("separation", 10);
-		canvas.AddChild(left);
-		left.AddChild(NewIdentityFragmentNote("WANT", BuildInnerFragmentV82(root, "want"), IdentityPink, 128f, false));
-		var leftIndent = new MarginContainer();
-		leftIndent.AddThemeConstantOverride("margin_left", 28);
-		leftIndent.AddChild(NewIdentityFragmentNote("UNSAID", BuildInnerFragmentV82(root, "now"), new Color(0.68f, 0.38f, 0.56f), 120f, true));
-		left.AddChild(leftIndent);
+		var erisName = NewLabel("ERIS", 10, new Color(0.43f, 0.22f, 0.34f), true);
+		erisName.Position = new Vector2(78f, 306f);
+		erisName.Size = new Vector2(100f, 22f);
+		erisName.HorizontalAlignment = HorizontalAlignment.Center;
+		erisName.ZIndex = 2;
+		stage.AddChild(erisName);
 
-		var center = new VBoxContainer { CustomMinimumSize = new Vector2(190f, 0f), Alignment = BoxContainer.AlignmentMode.Center };
-		center.AddThemeConstantOverride("separation", 5);
-		canvas.AddChild(center);
-		var orbitTop = NewLabel("·   ·   ✦   ·   ·", 10, new Color(IdentityPink.R, IdentityPink.G, IdentityPink.B, 0.62f), false);
-		orbitTop.HorizontalAlignment = HorizontalAlignment.Center;
-		center.AddChild(orbitTop);
-		var crystal = new CenterContainer { CustomMinimumSize = new Vector2(0f, 120f) };
-		crystal.AddChild(NewIconBadge(IdentityAsset("identity_core_crystal.png"), "◇", new Vector2(108f, 108f), IdentityPink, true));
-		center.AddChild(crystal);
-		var live = NewLabel("LIVE THOUGHT", 9, new Color(0.46f, 0.26f, 0.38f), true);
-		live.HorizontalAlignment = HorizontalAlignment.Center;
-		center.AddChild(live);
-		var unresolved = NewLabel(BuildInnerThreadV82(root), 10, IdentityMuted, false);
-		unresolved.HorizontalAlignment = HorizontalAlignment.Center;
-		unresolved.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-		center.AddChild(unresolved);
+		var current = NewLabel("CURRENT FORM", 10, new Color(0.43f, 0.20f, 0.34f), true);
+		current.Position = new Vector2(238f, 48f);
+		current.Size = new Vector2(180f, 24f);
+		current.ZIndex = 2;
+		stage.AddChild(current);
 
-		var right = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, SizeFlagsStretchRatio = 1f };
-		right.AddThemeConstantOverride("separation", 10);
-		canvas.AddChild(right);
-		var rightIndent = new MarginContainer();
-		rightIndent.AddThemeConstantOverride("margin_right", 24);
-		rightIndent.AddChild(NewIdentityFragmentNote("CONCERN", BuildInnerFragmentV82(root, "concern"), IdentityPurple, 128f, true));
-		right.AddChild(rightIndent);
-		right.AddChild(NewIdentityFragmentNote("MEMORY ECHO", BuildMemoryEchoV82(root), new Color(0.46f, 0.55f, 0.40f), 120f, false));
+		var formPill = NewDossierPill(BuildIdentityFormTagsV82(root), IdentityGreen);
+		formPill.Position = new Vector2(594f, 43f);
+		formPill.Size = new Vector2(142f, 28f);
+		formPill.ZIndex = 2;
+		stage.AddChild(formPill);
+
+		var divider = new ColorRect
+		{
+			Color = new Color(0.58f, 0.33f, 0.43f, 0.18f),
+			Position = new Vector2(238f, 78f),
+			Size = new Vector2(500f, 1f),
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+			ZIndex = 2,
+		};
+		stage.AddChild(divider);
+
+		string headline = BuildIdentitySelfHeadlineV82(root);
+		var quote = NewLabel($"“{TrimForPanel(headline, 112)}”", 20, new Color(0.25f, 0.13f, 0.22f), true);
+		quote.Position = new Vector2(238f, 92f);
+		quote.Size = new Vector2(495f, 96f);
+		quote.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		quote.VerticalAlignment = VerticalAlignment.Center;
+		quote.ZIndex = 2;
+		stage.AddChild(quote);
+
+		var trinity = new HBoxContainer
+		{
+			Position = new Vector2(238f, 207f),
+			Size = new Vector2(492f, 130f),
+			CustomMinimumSize = new Vector2(492f, 130f),
+			ZIndex = 2,
+		};
+		trinity.AddThemeConstantOverride("separation", 10);
+		stage.AddChild(trinity);
+
+		trinity.AddChild(NewIdentityThemeColumnBare("DESIRE", IdentityAsset("identity_self_desire.png"), "✦", desire, IdentityPink));
+		trinity.AddChild(NewIdentityVerticalSeparator());
+		trinity.AddChild(NewIdentityThemeColumnBare("TENSION", IdentityAsset("identity_self_tension.png"), "◇", tension, IdentityPurple));
+		trinity.AddChild(NewIdentityVerticalSeparator());
+		trinity.AddChild(NewIdentityThemeColumnBare("CORE", IdentityAsset("identity_self_core.png"), "❧", core, IdentityGreen));
 	}
 
 	private void RenderIdentityTraceV82(JsonElement root)
 	{
 		if (_depthContentList == null) return;
-		var sheet = NewIdentityDossierSheet(385f, IdentityGreen, 16);
+		var sheet = NewIdentityDossierSheet(322f, IdentityGreen, 16);
 		_depthContentList.AddChild(sheet);
 		var body = (VBoxContainer)sheet.GetChild(0);
 
-		var top = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 285f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		var top = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 222f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
 		top.AddThemeConstantOverride("separation", 18);
 		body.AddChild(top);
 
-		var intro = new VBoxContainer { CustomMinimumSize = new Vector2(185f, 0f) };
+		var intro = new VBoxContainer { CustomMinimumSize = new Vector2(158f, 0f) };
 		intro.AddThemeConstantOverride("separation", 8);
 		intro.AddChild(NewLabel("TRACE OVER TIME", 12, new Color(0.43f, 0.20f, 0.34f), true));
 		var desc = NewLabel("Continuity and change.\nThứ gì đã dịch chuyển, và thứ gì vẫn đi theo Eris.", 10, IdentityMuted, false);
 		desc.AutowrapMode = TextServer.AutowrapMode.WordSmart;
 		intro.AddChild(desc);
-		var miniPortrait = new CenterContainer { CustomMinimumSize = new Vector2(0f, 150f) };
-		miniPortrait.AddChild(NewIdentityPortraitMedallion(new Vector2(138f, 150f)));
+		var miniPortrait = new CenterContainer { CustomMinimumSize = new Vector2(0f, 122f) };
+		miniPortrait.AddChild(NewIdentityPortraitArt(new Vector2(112f, 120f)));
 		intro.AddChild(miniPortrait);
 		top.AddChild(intro);
 
-		var changes = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, SizeFlagsStretchRatio = 1.35f };
-		changes.AddThemeConstantOverride("separation", 6);
-		var headers = new HBoxContainer();
-		var thenLabel = NewLabel("THEN", 11, IdentityMuted, true);
-		thenLabel.CustomMinimumSize = new Vector2(150f, 0f);
-		headers.AddChild(thenLabel);
+		var changes = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, SizeFlagsStretchRatio = 1.70f };
+		changes.AddThemeConstantOverride("separation", 8);
+		var headers = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 34f) };
+		var thenBox = new VBoxContainer { CustomMinimumSize = new Vector2(150f, 0f) };
+		thenBox.AddThemeConstantOverride("separation", -1);
+		thenBox.AddChild(NewLabel("THEN", 11, IdentityMuted, true));
+		thenBox.AddChild(NewLabel("Earlier Self", 8, IdentityMuted, false));
+		headers.AddChild(thenBox);
 		headers.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill });
-		headers.AddChild(NewLabel("NOW", 11, IdentityGreen, true));
+		var nowBox = new VBoxContainer { CustomMinimumSize = new Vector2(130f, 0f) };
+		nowBox.AddThemeConstantOverride("separation", -1);
+		nowBox.AddChild(NewLabel("NOW", 11, IdentityGreen, true));
+		nowBox.AddChild(NewLabel("Current Self", 8, IdentityMuted, false));
+		headers.AddChild(nowBox);
 		changes.AddChild(headers);
 		changes.AddChild(NewSectionDivider());
 		int traceCount = AddTraceRowsV82(changes, Arr(root, "recent_personality_trajectory"), 4);
 		if (traceCount == 0)
 		{
-			changes.AddChild(NewTraceChangeRowV82("Chưa đủ dấu vết", "Không ép diễn giải", "đang quan sát"));
-			changes.AddChild(NewTraceChangeRowV82("Snapshot cũ", "→", BuildIdentityFormTagsV82(root)));
+			changes.AddChild(NewTraceChangeRowV82("Chưa đủ dấu vết", "→", "đang quan sát", IdentityAsset("identity_trace_detached.png"), IdentityAsset("identity_trace_invested.png")));
+			changes.AddChild(NewTraceChangeRowV82("Snapshot cũ", "→", BuildIdentityFormTagsV82(root), IdentityAsset("identity_trace_uncertain.png"), IdentityAsset("identity_trace_steady.png")));
 		}
 		top.AddChild(changes);
 
-		var thread = new VBoxContainer { CustomMinimumSize = new Vector2(260f, 0f) };
+		var thread = new VBoxContainer { CustomMinimumSize = new Vector2(218f, 0f) };
 		thread.AddThemeConstantOverride("separation", 8);
 		thread.AddChild(NewLabel("THE THREAD THAT REMAINS", 10, new Color(0.50f, 0.28f, 0.40f), true));
-		var threadCard = NewIdentityDossierSheet(150f, IdentityPink, 20);
+		var threadCard = NewIdentityDossierSheet(124f, IdentityPink, 20);
 		thread.AddChild(threadCard);
 		var threadBox = (VBoxContainer)threadCard.GetChild(0);
-		var mark = NewLabel("◇", 28, IdentityPink, true);
-		mark.HorizontalAlignment = HorizontalAlignment.Center;
-		threadBox.AddChild(mark);
+		var threadMark = new CenterContainer { CustomMinimumSize = new Vector2(0f, 82f) };
+		string threadAsset = ResolveIdentityAssetPath(IdentityAsset("identity_trace_thread_crystal.png"));
+		if (ResourceLoader.Exists(threadAsset))
+			threadMark.AddChild(NewIdentityTexture(threadAsset, new Vector2(205f, 68f)));
+		else
+			threadMark.AddChild(NewIconBadge("", "◇", new Vector2(62f, 62f), IdentityPink, true));
+		threadBox.AddChild(threadMark);
 		var persistent = NewLabel(BuildPersistentThreadV82(root), 11, IdentityInk, false);
 		persistent.HorizontalAlignment = HorizontalAlignment.Center;
 		persistent.AutowrapMode = TextServer.AutowrapMode.WordSmart;
 		threadBox.AddChild(persistent);
 		top.AddChild(thread);
 
-		var timeline = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 72f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		var timeline = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 62f), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
 		timeline.AddThemeConstantOverride("separation", 8);
 		body.AddChild(timeline);
-		timeline.AddChild(NewTraceMomentV82("BEFORE", "guarded", IdentityMuted));
+		timeline.AddChild(NewTraceMomentV82("BEFORE", "guarded", IdentityMuted, IdentityAsset("identity_trace_timeline_before.png"), "✦"));
 		timeline.AddChild(NewTraceConnectorV82());
-		timeline.AddChild(NewTraceMomentV82("THE TURN", "a choice persisted", IdentityPink));
+		timeline.AddChild(NewTraceMomentV82("THE TURN", "a choice persisted", IdentityPink, IdentityAsset("identity_trace_timeline_turn.png"), "✦"));
 		timeline.AddChild(NewTraceConnectorV82());
-		timeline.AddChild(NewTraceMomentV82("NOW", BuildIdentityFormTagsV82(root), IdentityGreen));
+		timeline.AddChild(NewTraceMomentV82("NOW", BuildIdentityFormTagsV82(root), IdentityGreen, IdentityAsset("identity_trace_timeline_now.png"), "✦"));
 	}
 
 	private PanelContainer NewIdentityDossierSheet(float minHeight, Color accent, int radius)
@@ -862,12 +873,12 @@ public partial class UdpListener : Node2D
 			ContentMarginRight = 8f,
 			ContentMarginBottom = 8f,
 		});
-		string portraitPath = ResolveIdentityAssetPath(IdentityAsset("identity_portrait.png"));
+		string portraitPath = ResolveIdentityAssetPath(IdentityAsset("identity_portrait_eris.png.png"));
 		if (ResourceLoader.Exists(portraitPath))
 		{
 			var portrait = NewIdentityTexture(portraitPath, size - new Vector2(16f, 16f));
 			portrait.ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize;
-			portrait.StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered;
+			portrait.StretchMode = TextureRect.StretchModeEnum.KeepAspectCovered;
 			frame.AddChild(portrait);
 		}
 		else
@@ -885,61 +896,81 @@ public partial class UdpListener : Node2D
 		return frame;
 	}
 
-	private Control NewIdentityThemeColumn(string title, string glyph, string text, Color accent)
+	private Control NewIdentityPortraitArt(Vector2 size)
 	{
-		var panel = new PanelContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, SizeFlagsStretchRatio = 1f, CustomMinimumSize = new Vector2(0f, 126f) };
+		string portraitPath = ResolveIdentityAssetPath(IdentityAsset("identity_portrait_eris.png.png"));
+		if (ResourceLoader.Exists(portraitPath))
+		{
+			var portrait = NewIdentityTexture(portraitPath, size);
+			portrait.StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered;
+			return portrait;
+		}
+		var fallback = new CenterContainer { CustomMinimumSize = size };
+		fallback.AddChild(NewLabel("◇", 34, IdentityPink, true));
+		return fallback;
+	}
+
+	private Control NewIdentityThemeColumnBare(string title, string iconPath, string fallbackGlyph, string text, Color accent)
+	{
+		var box = new VBoxContainer
+		{
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			SizeFlagsStretchRatio = 1f,
+			Alignment = BoxContainer.AlignmentMode.Center,
+			CustomMinimumSize = new Vector2(0f, 120f),
+		};
+		box.AddThemeConstantOverride("separation", 4);
+
+		var iconWrap = new CenterContainer { CustomMinimumSize = new Vector2(0f, 36f) };
+		iconWrap.AddChild(NewIconBadge(iconPath, fallbackGlyph, new Vector2(30f, 30f), accent, true));
+		box.AddChild(iconWrap);
+
+		var head = NewLabel(title, 9, new Color(0.38f, 0.20f, 0.31f), true);
+		head.HorizontalAlignment = HorizontalAlignment.Center;
+		box.AddChild(head);
+
+		var detail = NewLabel(TrimForPanel(text, 72), 8, IdentityMuted, false);
+		detail.HorizontalAlignment = HorizontalAlignment.Center;
+		detail.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		detail.CustomMinimumSize = new Vector2(0f, 48f);
+		box.AddChild(detail);
+		return box;
+	}
+
+	private Control NewIdentityVerticalSeparator()
+	{
+		var wrap = new CenterContainer { CustomMinimumSize = new Vector2(10f, 120f) };
+		wrap.AddChild(new ColorRect
+		{
+			Color = new Color(0.55f, 0.34f, 0.44f, 0.20f),
+			CustomMinimumSize = new Vector2(1f, 82f),
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		});
+		return wrap;
+	}
+
+	private Control NewIdentityThemeColumn(string title, string iconPath, string fallbackGlyph, string text, Color accent)
+	{
+		var panel = new PanelContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, SizeFlagsStretchRatio = 1f, CustomMinimumSize = new Vector2(0f, 118f) };
 		var style = IdentitySoftPanelStyle(accent, 0.018f, 11);
 		style.BorderColor = new Color(accent.R, accent.G, accent.B, 0.14f);
 		panel.AddThemeStyleboxOverride("panel", style);
 		var box = new VBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
-		box.AddThemeConstantOverride("separation", 4);
+		box.AddThemeConstantOverride("separation", 5);
 		panel.AddChild(box);
-		var mark = NewLabel(glyph, 18, accent, true);
-		mark.HorizontalAlignment = HorizontalAlignment.Center;
-		box.AddChild(mark);
+		var icon = new CenterContainer { CustomMinimumSize = new Vector2(0f, 42f) };
+		icon.AddChild(NewIconBadge(iconPath, fallbackGlyph, new Vector2(28f, 28f), accent, true));
+		box.AddChild(icon);
 		var head = NewLabel(title, 10, new Color(0.38f, 0.20f, 0.31f), true);
 		head.HorizontalAlignment = HorizontalAlignment.Center;
 		box.AddChild(head);
-		var detail = NewLabel(TrimForPanel(text, 110), 9, IdentityMuted, false);
+		var detail = NewLabel(TrimForPanel(text, 82), 8, IdentityMuted, false);
 		detail.HorizontalAlignment = HorizontalAlignment.Center;
 		detail.AutowrapMode = TextServer.AutowrapMode.WordSmart;
 		box.AddChild(detail);
 		return panel;
 	}
 
-	private Control NewIdentityFragmentNote(string title, string text, Color accent, float minHeight, bool darkEdge)
-	{
-		var panel = new PanelContainer { CustomMinimumSize = new Vector2(0f, minHeight), SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		panel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
-		{
-			BgColor = darkEdge ? new Color(0.99f, 0.96f, 0.95f, 0.86f) : new Color(1f, 0.985f, 0.965f, 0.90f),
-			BorderColor = new Color(accent.R, accent.G, accent.B, 0.24f),
-			BorderWidthLeft = darkEdge ? 3 : 1,
-			BorderWidthTop = 1,
-			BorderWidthRight = darkEdge ? 1 : 3,
-			BorderWidthBottom = 1,
-			CornerRadiusTopLeft = darkEdge ? 3 : 11,
-			CornerRadiusTopRight = 8,
-			CornerRadiusBottomLeft = 9,
-			CornerRadiusBottomRight = darkEdge ? 4 : 12,
-			ContentMarginLeft = 13f,
-			ContentMarginTop = 10f,
-			ContentMarginRight = 13f,
-			ContentMarginBottom = 10f,
-			ShadowColor = new Color(0.22f, 0.10f, 0.18f, 0.06f),
-			ShadowSize = 5,
-			ShadowOffset = new Vector2(darkEdge ? -2f : 2f, 3f),
-		});
-		var box = new VBoxContainer();
-		box.AddThemeConstantOverride("separation", 6);
-		panel.AddChild(box);
-		var header = NewLabel($"✦  {title}", 10, new Color(accent.R, accent.G, accent.B, 0.94f), true);
-		box.AddChild(header);
-		var copy = NewLabel(string.IsNullOrWhiteSpace(text) ? "…" : TrimForPanel(text, 180), 11, IdentityInk, false);
-		copy.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-		box.AddChild(copy);
-		return panel;
-	}
 
 	private Label NewDossierPill(string text, Color accent)
 	{
@@ -986,49 +1017,8 @@ public partial class UdpListener : Node2D
 		return $"{names.Left} ↔ {names.Right}.";
 	}
 
-	private string BuildInnerFragmentV82(JsonElement root, string slot)
-	{
-		string shard = ReadGemmaThoughtShardV82(slot);
-		if (!string.IsNullOrWhiteSpace(shard)) return shard;
-		if (slot == "concern")
-		{
-			JsonElement conflict = Obj(root, "active_conflict");
-			return BuildConflictSentenceV82(ReadString(conflict, "conflict_id"), ReadString(conflict, "chosen_side"));
-		}
-		if (slot == "want")
-		{
-			JsonElement motive = FirstObject(Arr(root, "active_motives"));
-			string key = ReadString(motive, "key");
-			return string.IsNullOrWhiteSpace(key) ? "Chưa có điều gì đủ rõ để muốn nói thành lời." : MotiveDescription(key);
-		}
-		return BuildIdentitySelfHeadlineV82(root);
-	}
 
-	private string BuildInnerThreadV82(JsonElement root)
-	{
-		string reflection = ReadGemmaThoughtShardV82("reflection");
-		if (!string.IsNullOrWhiteSpace(reflection)) return TrimForPanel(reflection, 88);
-		JsonElement conflict = Obj(root, "active_conflict");
-		string conflictId = ReadString(conflict, "conflict_id");
-		return string.IsNullOrWhiteSpace(conflictId) ? "still forming" : TrimForPanel(PrettyIdentityKey(conflictId), 80);
-	}
 
-	private string BuildMemoryEchoV82(JsonElement root)
-	{
-		JsonElement loops = Arr(root, "open_loops");
-		if (loops.ValueKind == JsonValueKind.Array)
-		{
-			foreach (JsonElement item in loops.EnumerateArray())
-			{
-				if (item.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(item.GetString()))
-					return $"“{TrimForPanel(item.GetString() ?? "", 150)}”";
-			}
-		}
-		JsonElement imprints = Arr(root, "imprints");
-		JsonElement imprint = FirstObject(imprints);
-		string theme = ReadString(imprint, "theme");
-		return string.IsNullOrWhiteSpace(theme) ? "Chưa có echo đủ chắc để ghim lại." : $"“{PrettyIdentityKey(theme)}”";
-	}
 
 	private int AddTraceRowsV82(VBoxContainer parent, JsonElement trajectory, int limit)
 	{
@@ -1044,28 +1034,42 @@ public partial class UdpListener : Node2D
 			if (string.IsNullOrWhiteSpace(trait) || Mathf.Abs(delta) < 0.000001f) continue;
 			string then = delta > 0f ? $"ít {trait.ToLowerInvariant()}" : $"{trait} rõ hơn";
 			string now = delta > 0f ? $"{trait} rõ hơn" : $"ít {trait.ToLowerInvariant()}";
-			parent.AddChild(NewTraceChangeRowV82(then, "✦", now));
+			string[] thenIcons = { "identity_trace_detached.png", "identity_trace_avoiding.png", "identity_trace_uncertain.png", "identity_trace_constrained.png" };
+			string[] nowIcons = { "identity_trace_invested.png", "identity_trace_watching.png", "identity_trace_steady.png", "identity_trace_choosing.png" };
+			int iconIndex = Mathf.Clamp(count, 0, 3);
+			parent.AddChild(NewTraceChangeRowV82(then, "✦", now, IdentityAsset(thenIcons[iconIndex]), IdentityAsset(nowIcons[iconIndex])));
 			if (++count >= limit) break;
 		}
 		return count;
 	}
 
-	private Control NewTraceChangeRowV82(string thenText, string connector, string nowText)
+	private Control NewTraceChangeRowV82(string thenText, string connector, string nowText, string thenIconPath, string nowIconPath)
 	{
-		var row = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 48f) };
-		row.AddThemeConstantOverride("separation", 8);
+		var row = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 50f) };
+		row.AddThemeConstantOverride("separation", 7);
+
+		var thenIcon = new CenterContainer { CustomMinimumSize = new Vector2(42f, 42f) };
+		thenIcon.AddChild(NewIconBadge(thenIconPath, "·", new Vector2(32f, 32f), IdentityPink, true));
+		row.AddChild(thenIcon);
+
 		var left = NewLabel(TrimForPanel(thenText, 34), 10, IdentityMuted, true);
-		left.CustomMinimumSize = new Vector2(150f, 0f);
+		left.CustomMinimumSize = new Vector2(124f, 0f);
 		left.AutowrapMode = TextServer.AutowrapMode.WordSmart;
 		row.AddChild(left);
+
 		var arrow = NewLabel(connector, 11, IdentityPink, true);
 		arrow.HorizontalAlignment = HorizontalAlignment.Center;
-		arrow.CustomMinimumSize = new Vector2(36f, 0f);
+		arrow.CustomMinimumSize = new Vector2(24f, 0f);
 		row.AddChild(arrow);
+
 		var right = NewLabel(TrimForPanel(nowText, 36), 10, IdentityInk, true);
 		right.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
 		right.AutowrapMode = TextServer.AutowrapMode.WordSmart;
 		row.AddChild(right);
+
+		var nowIcon = new CenterContainer { CustomMinimumSize = new Vector2(42f, 42f) };
+		nowIcon.AddChild(NewIconBadge(nowIconPath, "·", new Vector2(32f, 32f), IdentityGreen, true));
+		row.AddChild(nowIcon);
 		return row;
 	}
 
@@ -1087,12 +1091,17 @@ public partial class UdpListener : Node2D
 		return string.IsNullOrWhiteSpace(key) ? "Một đường liên tục chưa chịu biến mất." : MotiveDescription(key);
 	}
 
-	private Control NewTraceMomentV82(string title, string detail, Color accent)
+	private Control NewTraceMomentV82(string title, string detail, Color accent, string iconPath, string fallbackGlyph)
 	{
 		var box = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, SizeFlagsStretchRatio = 1f, Alignment = BoxContainer.AlignmentMode.Center };
-		var mark = NewLabel("✦", 16, accent, true);
-		mark.HorizontalAlignment = HorizontalAlignment.Center;
-		box.AddChild(mark);
+		box.AddThemeConstantOverride("separation", 2);
+		var markWrap = new CenterContainer { CustomMinimumSize = new Vector2(0f, 28f) };
+		string resolved = ResolveIdentityAssetPath(iconPath);
+		if (ResourceLoader.Exists(resolved))
+			markWrap.AddChild(NewIdentityTexture(resolved, new Vector2(132f, 26f)));
+		else
+			markWrap.AddChild(NewIconBadge("", fallbackGlyph, new Vector2(24f, 24f), accent, true));
+		box.AddChild(markWrap);
 		var head = NewLabel(title, 9, accent, true);
 		head.HorizontalAlignment = HorizontalAlignment.Center;
 		box.AddChild(head);
@@ -1105,11 +1114,11 @@ public partial class UdpListener : Node2D
 
 	private Control NewTraceConnectorV82()
 	{
-		var center = new CenterContainer { CustomMinimumSize = new Vector2(90f, 0f) };
+		var center = new CenterContainer { CustomMinimumSize = new Vector2(84f, 0f) };
 		center.AddChild(new ColorRect
 		{
 			Color = new Color(IdentityPink.R, IdentityPink.G, IdentityPink.B, 0.32f),
-			CustomMinimumSize = new Vector2(82f, 1f),
+			CustomMinimumSize = new Vector2(72f, 1f),
 		});
 		return center;
 	}
@@ -1120,7 +1129,7 @@ public partial class UdpListener : Node2D
 		string gemma = ReadGemmaObserverCommentV82();
 		if (string.IsNullOrWhiteSpace(gemma))
 		{
-			string first = _depthActiveTab == "inner" ? ReadGemmaThoughtShardV82("reflection") : ReadGemmaThoughtShardV82("now");
+			string first = ReadGemmaThoughtShardV82("now");
 			string second = _depthActiveTab == "trace" ? ReadGemmaThoughtShardV82("next") : ReadGemmaThoughtShardV82("concern");
 			if (!string.IsNullOrWhiteSpace(first) && !string.IsNullOrWhiteSpace(second) && !string.Equals(first, second, StringComparison.Ordinal))
 				gemma = $"{first}  ·  {second}";
@@ -1821,18 +1830,51 @@ public partial class UdpListener : Node2D
 	{
 		if (string.IsNullOrWhiteSpace(path))
 			return path ?? "";
-		if (ResourceLoader.Exists(path))
-			return path;
 
-		// Chấp nhận lỗi đặt tên phổ biến "identity_mood_neutral.png.png" để asset
-		// vẫn hiển thị trong lúc người dùng đang thay bộ icon.
-		if (path.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+		foreach (string candidate in EnumerateIdentityAssetCandidates(path))
 		{
-			string doubled = path + ".png";
-			if (ResourceLoader.Exists(doubled))
-				return doubled;
+			if (ResourceLoader.Exists(candidate))
+				return candidate;
 		}
 		return path;
+	}
+
+	private static IEnumerable<string> EnumerateIdentityAssetCandidates(string path)
+	{
+		yield return path;
+
+		if (path.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+			yield return path + ".png";
+
+		int slash = path.LastIndexOf('/');
+		string fileName = slash >= 0 ? path[(slash + 1)..] : path;
+
+		// V83: bộ Identity mới nằm trong res://asset/identy/. Một số icon hệ thống
+		// cũ (brand, freeze, export) vẫn nằm ở res://asset/, nên resolver thử cả hai.
+		yield return IdentityAssetRoot + fileName;
+		yield return LegacyIdentityAssetRoot + fileName;
+
+		foreach (string alias in IdentityAssetAliases(fileName))
+		{
+			yield return IdentityAssetRoot + alias;
+			yield return LegacyIdentityAssetRoot + alias;
+		}
+	}
+
+	private static IEnumerable<string> IdentityAssetAliases(string fileName)
+	{
+		string key = (fileName ?? "").ToLowerInvariant();
+		switch (key)
+		{
+			case "identity_portrait.png":
+			case "identity_portrait_eris.png":
+				yield return "identity_portrait_eris.png.png";
+				break;
+			case "identity_observer_crystal.png":
+			case "identity_gemma_emblem.png":
+				yield return "identity_core_crystal.png";
+				break;
+		}
 	}
 
 
