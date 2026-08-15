@@ -48,3 +48,6 @@ cache/
 .DS_Store
 Thumbs.db
 
+# Third-party tools
+tools/WebAI-to-API/
+tools/WebAI-to-API-2/
