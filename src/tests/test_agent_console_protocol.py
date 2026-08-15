@@ -128,3 +128,17 @@ def test_dispatcher_exposes_agent_control_route():
     result = IncomingMessageDispatcher(_Owner()).dispatch({"type": "agent_control", "action": "snapshot"})
     assert result.handled is True
     assert calls and calls[0]["action"] == "snapshot"
+
+
+def test_event_bus_listener_receives_task_id_without_log_scraping(tmp_path):
+    from runtime.agent_harness.event_bus import AgentEventBus
+
+    store = AgentTaskStore(tmp_path / "agent_tasks.json")
+    task_id = store.create_task("inspect router")["task_id"]
+    seen = []
+    bus = AgentEventBus(store=store, port=65500)
+    bus._send = lambda payload: True
+    bus.add_listener(lambda event: seen.append(event))
+    bus.emit(task_id, "tool_started", actor="tool", summary="read", data={"tool": "project_read_file"})
+    assert seen and seen[0]["task_id"] == task_id
+    assert seen[0]["type"] == "tool_started"

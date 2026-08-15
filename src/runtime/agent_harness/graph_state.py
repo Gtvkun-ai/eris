@@ -24,6 +24,7 @@ class AgentState(TypedDict, total=False):
     model: str
     status: str
     active_skills: List[str]
+    active_tools: List[str]
     plan: Optional[str]
     injected_context: str
     pending_directives: List[str]

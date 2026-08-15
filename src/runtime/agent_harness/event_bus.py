@@ -25,6 +25,17 @@ class AgentEventBus:
         self.store = store or AgentTaskStore()
         self.target = (host, int(port))
         self.logger = logger
+        self._listeners: list[Any] = []
+
+    def add_listener(self, callback: Any) -> None:
+        if callable(callback) and callback not in self._listeners:
+            self._listeners.append(callback)
+
+    def remove_listener(self, callback: Any) -> None:
+        try:
+            self._listeners.remove(callback)
+        except ValueError:
+            pass
 
     def emit(
         self,
@@ -62,6 +73,15 @@ class AgentEventBus:
             },
         }
         self._send(packet)
+        listener_event = dict(event)
+        listener_event["task_id"] = task_id
+        for callback in tuple(self._listeners):
+            try:
+                callback(dict(listener_event))
+            except Exception as exc:
+                log = getattr(self.logger, "debug", None)
+                if callable(log):
+                    log("[agent-console] event listener failed: %s", exc)
         return event
 
     def send_snapshot(self, *, selected_task_id: str = "", request_id: str = "") -> None:

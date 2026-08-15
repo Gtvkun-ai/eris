@@ -147,10 +147,340 @@ class RuntimeCoordinator(
                 self.agent_event_bus,
                 logger=logger,
             )
+            self._agent_supervisor_marks = {}
+            add_listener = getattr(self.agent_event_bus, "add_listener", None)
+            if callable(add_listener):
+                add_listener(self._supervise_agent_event)
         except Exception as exc:
             self.agent_task_store = None
             self.agent_event_bus = None
             self.agent_supervisor = None
+            self._agent_supervisor_marks = {}
             debug = getattr(logger, "debug", None)
             if callable(debug):
                 debug("[agent-console] supervisor bridge unavailable: %s", exc)
+
+        # Agent Harness V2: Gemini chỉ quyết định tool call; side effect thật vẫn
+        # đi qua ActionExecutor/SandboxWorld. Import lazy để Eris vẫn boot được
+        # trên máy chưa cài optional LangGraph dependency.
+        self.agent_harness = None
+        self.agent_executor_backend = None
+        self._agent_task_threads = {}
+        self._agent_last_started_task_id = ""
+        self.agent_default_workspace = ""
+        if action_executor is not None:
+            try:
+                import os
+                from pathlib import Path
+                from runtime.agent_harness.gemini_cli_executor import GeminiCliDecisionExecutor
+                from runtime.agent_harness.graph_builder import AgentHarness
+                from runtime.agent_harness.native_tool_adapter import NativeCapabilityToolAdapter
+
+                source_root = Path(__file__).resolve().parents[1]
+                workspace_root = source_root
+                for candidate in (source_root, *source_root.parents):
+                    if (candidate / ".git").is_dir():
+                        workspace_root = candidate
+                        break
+                self.agent_default_workspace = str(workspace_root)
+                native_tools = NativeCapabilityToolAdapter(action_executor)
+                gemini = GeminiCliDecisionExecutor(
+                    workspace=workspace_root,
+                    model=os.environ.get("ERIS_GEMINI_AGENT_MODEL", "auto"),
+                    logger=logger,
+                )
+                self.agent_executor_backend = gemini
+                self.agent_harness = AgentHarness(
+                    gemini,
+                    str(source_root / "powers"),
+                    tool_registry=native_tools.registry(),
+                    tool_specs=native_tools.tool_specs(),
+                    task_store=self.agent_task_store,
+                    event_bus=self.agent_event_bus,
+                    executor_name="gemini-cli",
+                    model_name=gemini.model,
+                    logger=logger,
+                )
+                ok, reason = gemini.health()
+                info = getattr(logger, "info", None)
+                if callable(info):
+                    info(
+                        "[agent-harness] ready graph=langgraph executor=gemini-cli health=%s detail=%s skills=%s tools=%s",
+                        ok, reason, len(self.agent_harness.discovery.capabilities), len(native_tools.agent_ids()),
+                    )
+            except Exception as exc:
+                self.agent_harness = None
+                debug = getattr(logger, "debug", None)
+                if callable(debug):
+                    debug("[agent-harness] unavailable: %s", exc)
+
+    def _supervise_agent_event(self, event: dict) -> None:
+        """Deterministic first-line technical supervision for Gemini execution.
+
+        This is intentionally narrow: only intervene on observable anti-patterns
+        with low false-positive risk. Subject Core/model review can add richer
+        judgment later through the same AgentSupervisorBridge.
+        """
+        if not isinstance(event, dict):
+            return
+        event_type = str(event.get("type", "") or "").strip().lower()
+        if event_type.startswith("supervisor_") or event_type in {"user_directive", "directive_consumed"}:
+            return
+        task_id = str(event.get("task_id", "") or "").strip()
+        if not task_id:
+            # Events persisted by the store do not currently duplicate task_id;
+            # derive it by locating the matching event id in recent tasks.
+            event_id = str(event.get("event_id", "") or "")
+            store = getattr(self, "agent_task_store", None)
+            if store is not None and event_id:
+                snapshot = store.snapshot(task_limit=8, event_limit=40)
+                for task in snapshot.get("tasks", []):
+                    if any(str(item.get("event_id", "")) == event_id for item in task.get("events", [])):
+                        task_id = str(task.get("task_id", "") or "")
+                        break
+        if not task_id:
+            return
+
+        store = getattr(self, "agent_task_store", None)
+        supervisor = getattr(self, "agent_supervisor", None)
+        if store is None or supervisor is None:
+            return
+        task = store.get_task(task_id, event_limit=48)
+        if not isinstance(task, dict):
+            return
+        events = [item for item in task.get("events", []) if isinstance(item, dict)]
+        marks = self._agent_supervisor_marks.setdefault(task_id, set())
+
+        def _mark_once(key: str, instruction: str, reason: str) -> None:
+            if key in marks:
+                return
+            marks.add(key)
+            try:
+                supervisor.advisory(task_id, instruction, reason=reason)
+            except Exception:
+                marks.discard(key)
+
+        # Patch should follow evidence. If Gemini tries to write before it has
+        # inspected any project source, push it back toward root-cause work.
+        if event_type == "tool_started":
+            tool = str((event.get("data") or {}).get("tool", "") if isinstance(event.get("data"), dict) else "")
+            if tool == "project_apply_patch":
+                inspected = any(
+                    str((item.get("data") or {}).get("tool", "")) in {
+                        "project_read_file", "project_search_text", "project_find_symbol", "project_git_diff",
+                        "read_current_error", "inspect_runtime_log",
+                    }
+                    for item in events
+                    if isinstance(item.get("data"), dict)
+                )
+                if not inspected:
+                    _mark_once(
+                        "patch_before_inspection",
+                        "Dừng vá ngay. Đọc implementation/caller và evidence hiện có trước, rồi mới chọn patch nhỏ nhất.",
+                        "Gemini bắt đầu project_apply_patch trước khi có inspection evidence trong task.",
+                    )
+
+        # Repeated failures are a replan signal, not a retry invitation.
+        failed_tools = [
+            str((item.get("data") or {}).get("tool", ""))
+            for item in events
+            if str(item.get("type", "")) == "tool_failed" and isinstance(item.get("data"), dict)
+        ]
+        if len(failed_tools) >= 2 and failed_tools[-1] and failed_tools[-1] == failed_tools[-2]:
+            _mark_once(
+                f"repeat_fail:{failed_tools[-1]}",
+                f"Đừng retry {failed_tools[-1]} theo cùng cách. Đọc failure mới, đổi giả thuyết hoặc đổi tool rồi replan.",
+                "Cùng một tool vừa thất bại liên tiếp.",
+            )
+
+        test_failures = sum(
+            1 for item in events
+            if str(item.get("type", "")) == "test_result"
+            and isinstance(item.get("data"), dict)
+            and int((item.get("data") or {}).get("failed", 0) or 0) > 0
+        )
+        if test_failures >= 2:
+            _mark_once(
+                "repeated_test_failure",
+                "Hai vòng test đã fail. Dừng sửa nối tiếp theo triệu chứng; quay lại failure gần nhất và xác minh root cause trước patch tiếp.",
+                "Verification thất bại lặp lại trong cùng task.",
+            )
+
+        changed_files = list(task.get("changed_files", []) or [])
+        if len(changed_files) >= 10:
+            _mark_once(
+                "scope_expansion",
+                "Scope đang phình quá rộng. Kiểm tra lại xem có thể giải quyết bằng ít file hơn và tái sử dụng abstraction hiện hữu không.",
+                f"Task đã chạm {len(changed_files)} file.",
+            )
+
+    def execute_agent_task(
+        self,
+        goal: str,
+        *,
+        thread_id: str = "",
+        clarified_goal: str = "",
+        task_id: str = "",
+    ):
+        """Run one Unified Agent Harness task synchronously.
+
+        Chat normally uses ``start_agent_task_async`` so Gemini execution never
+        blocks the public reply. Tests/CLI can still call this synchronous entry.
+        """
+        harness = getattr(self, "agent_harness", None)
+        if harness is None:
+            raise RuntimeError("agent_harness_unavailable")
+        import uuid
+        resolved_thread = str(thread_id or f"agent_{uuid.uuid4().hex[:12]}")
+        return harness.invoke(
+            goal,
+            thread_id=resolved_thread,
+            task_id=str(task_id or ""),
+            clarified_goal=clarified_goal,
+        )
+
+    def start_agent_task_async(
+        self,
+        goal: str,
+        *,
+        thread_id: str = "",
+        clarified_goal: str = "",
+        source_turn_id: str = "",
+    ) -> dict:
+        """Start Gemini/LangGraph in a daemon worker and return immediately.
+
+        The task id is reserved before the thread starts, so the foreground
+        writer and Agent Console can refer to one stable execution session.
+        """
+        harness = getattr(self, "agent_harness", None)
+        if harness is None:
+            return {"status": "unavailable", "reason": "agent_harness_unavailable", "task_id": ""}
+
+        import threading
+        import uuid
+
+        # An explicit execution request authorizes selecting the current Eris
+        # workspace as context when no workspace is active yet. This does not
+        # modify files; it only makes the existing project tools dynamically live.
+        try:
+            manager = getattr(self, "workspace_manager", None)
+            active_record = getattr(manager, "active_record", None)
+            active = active_record() if callable(active_record) else None
+            default_workspace = str(getattr(self, "agent_default_workspace", "") or "").strip()
+            if active is None and manager is not None and default_workspace:
+                manager.join(default_workspace, activate=True)
+        except Exception as exc:
+            logger = getattr(self, "logger", None)
+            debug = getattr(logger, "debug", None)
+            if callable(debug):
+                debug("[agent-harness] default workspace activation degraded: %s", exc)
+
+        task_id = f"task_{uuid.uuid4().hex[:12]}"
+        resolved_thread = str(thread_id or source_turn_id or f"agent_{uuid.uuid4().hex[:12]}")
+        self._agent_last_started_task_id = task_id
+
+        # Reserve the task synchronously so Agent Console never races a just-
+        # started worker and shows an empty screen for the first snapshot.
+        store = getattr(self, "agent_task_store", None)
+        if store is not None:
+            try:
+                executor = str(getattr(harness, "executor_name", "gemini") or "gemini")
+                model = str(getattr(harness, "model_name", "") or "")
+                store.create_task(
+                    clarified_goal or goal,
+                    task_id=task_id,
+                    executor=executor,
+                    model=model,
+                    thread_id=resolved_thread,
+                    metadata={"source_turn_id": source_turn_id, "original_goal": goal},
+                )
+                store.update_task(task_id, clarified_goal=clarified_goal or goal)
+                supervisor = getattr(self, "agent_supervisor", None)
+                if supervisor is not None:
+                    supervisor.comment(
+                        task_id,
+                        "Tôi đang theo dõi task này. Nếu hướng thực thi phình, lặp lỗi hoặc vá trước khi hiểu root cause, tôi sẽ can thiệp.",
+                        importance=0.58,
+                    )
+            except Exception as exc:
+                logger = getattr(self, "logger", None)
+                debug = getattr(logger, "debug", None)
+                if callable(debug):
+                    debug("[agent-harness] precreate task degraded: %s", exc)
+
+        def _worker() -> None:
+            try:
+                self.execute_agent_task(
+                    goal,
+                    thread_id=resolved_thread,
+                    clarified_goal=clarified_goal,
+                    task_id=task_id,
+                )
+            except Exception as exc:
+                logger = getattr(self, "logger", None)
+                warning = getattr(logger, "warning", None)
+                if callable(warning):
+                    warning("[agent-harness] async task failed task=%s error=%s", task_id, exc)
+            finally:
+                try:
+                    self._agent_task_threads.pop(task_id, None)
+                except Exception:
+                    pass
+
+        thread = threading.Thread(
+            target=_worker,
+            name=f"eris-agent-{task_id[-6:]}",
+            daemon=True,
+        )
+        self._agent_task_threads[task_id] = thread
+        thread.start()
+        return {
+            "status": "started",
+            "task_id": task_id,
+            "thread_id": resolved_thread,
+            "goal": clarified_goal or goal,
+        }
+
+    def route_agent_user_turn(
+        self,
+        user_text: str,
+        *,
+        previous_assistant_text: str = "",
+        turn_id: str = "",
+    ) -> dict:
+        """Conservative foreground routing into the execution harness.
+
+        Returns a public-safe projection used by the normal Eris writer.  A
+        ``clarify`` route never starts Gemini; ``execute`` starts it in parallel.
+        """
+        try:
+            from runtime.agent_harness.chat_router import classify_agent_chat_route
+            route = classify_agent_chat_route(
+                user_text,
+                previous_assistant_text=previous_assistant_text,
+            )
+        except Exception as exc:
+            return {
+                "action": "none",
+                "goal": "",
+                "reason": f"router_error:{type(exc).__name__}",
+                "confidence": 0.0,
+                "clarification": "",
+            }
+
+        payload = route.to_dict()
+        if route.action != "execute":
+            return payload
+
+        started = self.start_agent_task_async(
+            route.goal or user_text,
+            thread_id=turn_id,
+            clarified_goal=route.goal or user_text,
+            source_turn_id=turn_id,
+        )
+        payload.update({
+            "task_id": str(started.get("task_id", "") or ""),
+            "start_status": str(started.get("status", "") or ""),
+            "start_reason": str(started.get("reason", "") or ""),
+        })
+        return payload

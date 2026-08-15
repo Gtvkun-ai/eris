@@ -748,6 +748,33 @@ class AIChatOrchestrator:
                     break
         grounding_correction = is_grounding_correction(user_text, previous_assistant_for_repair)
 
+        # Unified Agent Harness: direct chat may start a multi-step execution task,
+        # but only after the user turn is recorded and immediate public context is
+        # known. The worker runs in parallel; the foreground reply stays Eris.
+        agent_execution_route: dict[str, Any] = {
+            "action": "none", "goal": "", "reason": "not_evaluated",
+            "confidence": 0.0, "clarification": "",
+        }
+        route_agent_turn = getattr(host, "route_agent_user_turn", None)
+        if callable(route_agent_turn):
+            try:
+                candidate = route_agent_turn(
+                    user_text,
+                    previous_assistant_text=previous_assistant_for_repair,
+                    turn_id=turn_id,
+                )
+                if isinstance(candidate, Mapping):
+                    agent_execution_route = dict(candidate)
+                host.logger.info(
+                    "[agent-route] action=%s reason=%s confidence=%.2f task=%s",
+                    str(agent_execution_route.get("action", "none") or "none"),
+                    str(agent_execution_route.get("reason", "") or ""),
+                    float(agent_execution_route.get("confidence", 0.0) or 0.0),
+                    str(agent_execution_route.get("task_id", "") or ""),
+                )
+            except Exception as exc:
+                host.logger.warning("[agent-route] degraded: %s", exc)
+
         # V71: cập nhật trạng thái "hai người đang ở đâu" NGAY khi user turn vào.
         # Đây là state causal/continuity trước Subject+Neuro, không đợi post-observer
         # vài chục giây rồi mới biết câu user có thể là phản ứng với chính lời ERIS.
@@ -1015,6 +1042,38 @@ class AIChatOrchestrator:
                 )
         grounding_context = str(getattr(grounding_report, "prompt_context", "") or "")
         grounding_context = _merge_previous_public_context(grounding_context, previous_public_context)
+        agent_action = str(agent_execution_route.get("action", "none") or "none").strip().lower()
+        if agent_action == "execute":
+            task_id_for_public = str(agent_execution_route.get("task_id", "") or "")
+            start_status = str(agent_execution_route.get("start_status", "") or "")
+            grounding_context = "\n\n".join(part for part in (
+                grounding_context,
+                "AGENT_EXECUTION_V1: " + json.dumps({
+                    "action": "started" if start_status == "started" else "unavailable",
+                    "task_id": task_id_for_public,
+                    "goal": str(agent_execution_route.get("goal", "") or "")[:1600],
+                    "reason": str(agent_execution_route.get("reason", "") or ""),
+                    "rule": (
+                        "A backstage Gemini/LangGraph execution task has been started in parallel. "
+                        "Acknowledge briefly and honestly; do not claim completion yet. The Agent Console shows live progress. "
+                        "Do not launch a duplicate runtime capability for the same multi-step task."
+                    ),
+                }, ensure_ascii=False, separators=(",", ":")),
+            ) if str(part).strip())
+        elif agent_action == "clarify":
+            grounding_context = "\n\n".join(part for part in (
+                grounding_context,
+                "AGENT_AMBIGUITY_GATE_V1: " + json.dumps({
+                    "action": "ask_user_before_execution",
+                    "goal": str(agent_execution_route.get("goal", "") or "")[:1600],
+                    "reason": str(agent_execution_route.get("reason", "") or ""),
+                    "clarification_guidance": str(agent_execution_route.get("clarification", "") or "")[:1800],
+                    "rule": (
+                        "Do not execute or pretend to choose a branch. Ask one compact, concrete clarification that exposes the materially different paths. "
+                        "Prefer 2-4 meaningful options based on the immediately preceding conversation instead of a generic 'what do you want?'."
+                    ),
+                }, ensure_ascii=False, separators=(",", ":")),
+            ) if str(part).strip())
         if semantic_prompt_context:
             grounding_context = "\n\n".join(
                 part for part in (grounding_context, semantic_prompt_context) if str(part).strip()
@@ -1259,7 +1318,10 @@ class AIChatOrchestrator:
         # Dòng binding này từng tồn tại ở V16 nhưng bị rơi mất trong refactor V17,
         # khiến nhánh interactive capability selector đọc một local chưa được gán.
         executive = getattr(host, "ai_executive_cortex", None)
-        if executive is not None and bool(getattr(executive, "enabled", False)):
+        agent_action_for_planner = str(agent_execution_route.get("action", "none") or "none").strip().lower()
+        if agent_action_for_planner in {"execute", "clarify"}:
+            executive_directive = None
+        elif executive is not None and bool(getattr(executive, "enabled", False)):
             try:
                 executive_directive = executive.plan_interactive(
                     user_text, snapshot=planning_snapshot
@@ -1276,7 +1338,11 @@ class AIChatOrchestrator:
                 "capability_id": "",
                 "capability_arguments": {},
                 "semantic_goal": "",
-                "reason": "executive_unavailable",
+                "reason": (
+                    "agent_harness_owns_execution" if agent_action_for_planner == "execute"
+                    else "agent_ambiguity_requires_user" if agent_action_for_planner == "clarify"
+                    else "executive_unavailable"
+                ),
                 "confidence": 0.0,
             }
         )

@@ -35,6 +35,7 @@ class AgentHarness:
         powers_root: str,
         *,
         tool_registry: dict[str, Callable[..., Any]] | None = None,
+        tool_specs: dict[str, dict[str, Any]] | None = None,
         task_store: AgentTaskStore | None = None,
         event_bus: AgentEventBus | None = None,
         executor_name: str = "gemini",
@@ -46,6 +47,7 @@ class AgentHarness:
         self.skill_loader = SkillLoader(self.discovery)
         self.permission_gate = PermissionGate()
         self.tool_registry = dict(tool_registry or {})
+        self.tool_specs = dict(tool_specs or {})
         self.task_store = task_store or AgentTaskStore()
         self.event_bus = event_bus or AgentEventBus(self.task_store, logger=logger)
         self.executor_name = str(executor_name or "gemini")
@@ -138,9 +140,19 @@ class AgentHarness:
         ))
 
         response = None
-        invoke = getattr(self.llm, "invoke", None)
-        if callable(invoke):
-            response = invoke([sys_msg] + messages)
+        disclosed_tools = self._disclosed_tool_specs(state.get("active_skills", []) or [])
+        invoke_with_tools = getattr(self.llm, "invoke_with_tools", None)
+        if callable(invoke_with_tools):
+            response = invoke_with_tools(
+                [sys_msg] + messages,
+                tools=disclosed_tools,
+                goal=str(state.get("goal", "") or ""),
+                active_skills=list(state.get("active_skills", []) or []),
+            )
+        else:
+            invoke = getattr(self.llm, "invoke", None)
+            if callable(invoke):
+                response = invoke([sys_msg] + messages)
 
         patch: dict[str, Any] = {"step_count": step, **control_patch}
         if directive_messages:
@@ -162,15 +174,49 @@ class AgentHarness:
                         data={"tools": names[:12]},
                     )
                 else:
+                    final_text = str(getattr(response, "content", "") or "").strip()
                     self.event_bus.emit(
                         task_id,
                         "agent_summary",
                         actor="executor",
-                        summary="Executor đã hoàn tất lượt suy luận hiện tại mà không yêu cầu tool thêm.",
+                        summary=(final_text[:1200] if final_text else "Executor đã hoàn tất lượt suy luận hiện tại mà không yêu cầu tool thêm."),
                         step=step,
-                        importance=0.46,
+                        importance=0.62 if final_text else 0.46,
                     )
         return patch
+
+    def _disclosed_tool_specs(self, active_skills: list[str] | tuple[str, ...]) -> list[dict[str, Any]]:
+        specs: list[dict[str, Any]] = [
+            {
+                "name": "search_capabilities",
+                "description": "Search Eris Powers/Skills by the capability needed. Returns lightweight descriptions only.",
+                "input_schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                },
+                "effect": "inspect",
+                "risk_level": "low",
+            },
+            {
+                "name": "activate_skill",
+                "description": "Activate one discovered skill and reveal its instructions plus exact tool schemas.",
+                "input_schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {"skill_name": {"type": "string"}},
+                    "required": ["skill_name"],
+                },
+                "effect": "inspect",
+                "risk_level": "low",
+            },
+        ]
+        for name in self.skill_loader.tools_for_skills(list(active_skills)):
+            spec = self.tool_specs.get(name)
+            if isinstance(spec, dict):
+                specs.append(dict(spec))
+        return specs
 
     def _invoke_tool(self, name: str, args: dict[str, Any]) -> Any:
         if name == "search_capabilities":
@@ -200,6 +246,7 @@ class AgentHarness:
 
         out_messages: list[ToolMessage | HumanMessage] = list(directive_messages)
         active_skills = list(state.get("active_skills", []) or [])
+        active_tools = self.skill_loader.tools_for_skills(active_skills)
         injected_context = str(state.get("injected_context", "") or "")
         step = int(state.get("step_count", 0) or 0)
 
@@ -209,7 +256,7 @@ class AgentHarness:
             name = str(call.get("name", "") or "")
             call_id = str(call.get("id", "") or f"tool_{uuid.uuid4().hex[:10]}")
             args = call.get("args") if isinstance(call.get("args"), dict) else {}
-            permission = self.permission_gate.check_permission(name)
+            permission = self.permission_gate.check_permission(name, args)
 
             if task_id:
                 self.event_bus.emit(
@@ -248,11 +295,22 @@ class AgentHarness:
                 result = self._invoke_tool(name, args)
                 text = _tool_result_text(result)
                 out_messages.append(ToolMessage(content=text, tool_call_id=call_id))
+                if name == "search_capabilities" and task_id:
+                    self.event_bus.emit(
+                        task_id,
+                        "skill_search",
+                        actor="executor",
+                        summary=f"Đã tìm skill cho: {str(args.get('query', '') or '')[:180]}",
+                        detail=text,
+                        step=step,
+                        importance=0.58,
+                    )
                 if name == "activate_skill":
                     skill_name = str(args.get("skill_name", "") or "").strip()
                     if skill_name and not text.startswith("Error:"):
                         if skill_name not in active_skills:
                             active_skills.append(skill_name)
+                        active_tools = self.skill_loader.tools_for_skills(active_skills)
                         injected_context = (injected_context + "\n\n" + text).strip()
                         if task_id:
                             self.event_bus.emit(
@@ -274,6 +332,7 @@ class AgentHarness:
                         importance=0.48,
                         data={"tool": name},
                     )
+                    self._project_tool_result_events(task_id, name, result, step=step)
             except Exception as exc:
                 text = f"{type(exc).__name__}: {exc}"
                 out_messages.append(ToolMessage(content=text, tool_call_id=call_id))
@@ -291,10 +350,69 @@ class AgentHarness:
         patch: dict[str, Any] = {
             "messages": out_messages,
             "active_skills": active_skills,
+            "active_tools": active_tools,
             "injected_context": injected_context,
             **control_patch,
         }
         return patch
+
+    def _project_tool_result_events(self, task_id: str, name: str, result: Any, *, step: int) -> None:
+        """Project useful tool metadata into typed console events.
+
+        The timeline should show semantic facts (files changed, tests passed)
+        instead of forcing the Godot UI to parse arbitrary JSON/stdout.
+        """
+        if not task_id or not isinstance(result, dict):
+            return
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        success = bool(result.get("success", False))
+
+        if name == "project_apply_patch":
+            touched = data.get("touched_files") if isinstance(data.get("touched_files"), list) else []
+            for path in touched[:80]:
+                rel = str(path or "").strip()
+                if rel:
+                    self.event_bus.emit(
+                        task_id,
+                        "file_changed",
+                        actor="tool",
+                        summary=f"Đã thay đổi {rel}",
+                        step=step,
+                        importance=0.62,
+                        data={"path": rel, "tool": name},
+                    )
+
+        if name == "project_run_tests":
+            output = str(data.get("output", "") or "")
+            passed_count, failed_count = _parse_test_counts(output, success=success)
+            self.event_bus.emit(
+                task_id,
+                "test_result",
+                actor="tool",
+                summary=("Test đạt." if success else "Test chưa đạt."),
+                detail=output[-1800:],
+                step=step,
+                importance=0.78 if success else 0.92,
+                data={
+                    "passed": passed_count,
+                    "failed": failed_count,
+                    "summary": ("pass" if success else "fail") + f" · exit={data.get('exit_code', '')}",
+                    "exit_code": data.get("exit_code"),
+                },
+            )
+
+        if name == "project_git_diff":
+            diff = str(data.get("diff", "") or "")
+            if diff.strip():
+                self.event_bus.emit(
+                    task_id,
+                    "diff_observed",
+                    actor="tool",
+                    summary=f"Đã kiểm tra git diff ({len(diff)} ký tự).",
+                    step=step,
+                    importance=0.55,
+                    data={"chars": len(diff)},
+                )
 
     def _should_continue(self, state: AgentState) -> Literal["tools", "__end__"]:
         if str(state.get("status", "running") or "running") in {"paused", "stopped", "waiting_permission", "waiting_user"}:
@@ -354,6 +472,7 @@ class AgentHarness:
             "status": "running",
             "messages": [HumanMessage(content=clarified_goal or goal)],
             "active_skills": [],
+            "active_tools": [],
             "injected_context": "",
             "pending_directives": [],
             "rollback_requested": "",
@@ -401,6 +520,33 @@ class AgentHarness:
         return ""
 
 
+def _parse_test_counts(output: str, *, success: bool) -> tuple[int, int]:
+    """Best-effort counts for pytest/unittest style summaries."""
+    import re
+    text = str(output or "")[-5000:]
+    passed = 0
+    failed = 0
+    for pattern, target in (
+        (r"(?<![A-Za-z])(\d+)\s+passed", "passed"),
+        (r"(?<![A-Za-z])(\d+)\s+failed", "failed"),
+        (r"FAILED\s+\(", "failed_marker"),
+    ):
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        if target == "passed":
+            passed = int(match.group(1))
+        elif target == "failed":
+            failed = int(match.group(1))
+        elif failed == 0:
+            failed = 1
+    if success and passed == 0:
+        passed = 1
+    if not success and failed == 0:
+        failed = 1
+    return passed, failed
+
+
 def _safe_tool_args(args: dict[str, Any]) -> dict[str, Any]:
     """Keep UI metadata useful without dumping secrets or giant payloads."""
     safe: dict[str, Any] = {}
@@ -417,5 +563,12 @@ def _safe_tool_args(args: dict[str, Any]) -> dict[str, Any]:
 def _tool_result_text(result: Any) -> str:
     if result is None:
         return "OK"
-    text = str(result)
+    if isinstance(result, (dict, list, tuple)):
+        try:
+            import json
+            text = json.dumps(result, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            text = str(result)
+    else:
+        text = str(result)
     return text if len(text) <= 12000 else text[:11999].rstrip() + "…"
