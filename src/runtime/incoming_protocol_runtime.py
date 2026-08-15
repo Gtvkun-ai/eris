@@ -108,6 +108,111 @@ class IncomingProtocolRuntimeMixin:
                     debug("[phase7] panel delivery mark failed: %s", exc)
 
 
+    def _handle_agent_control(self, msg: dict) -> None:
+        """Control plane cho Agent Console (Body -> Brain).
+
+        Panel chỉ gửi intent có cấu trúc. Task store giữ intent đó cho AgentHarness
+        consume ở boundary giữa các node; UI không được tự sửa graph state.
+        """
+
+        from runtime.agent_harness.task_store import AgentTaskStore
+
+        action = str(msg.get("action", "snapshot") or "snapshot").strip().lower()
+        task_id = str(msg.get("task_id", "") or "").strip()
+        request_id = str(msg.get("request_id", "") or "").strip()
+        selected_task_id = task_id or str(msg.get("selected_task_id", "") or "").strip()
+        status = "ok"
+        message = "Agent Console đã đồng bộ."
+        try:
+            store = getattr(self, "agent_task_store", None) or AgentTaskStore()
+            if action == "snapshot":
+                pass
+            elif action in {"pause", "resume", "stop", "rollback", "directive"}:
+                if not task_id:
+                    raise ValueError("task_id_required")
+                task = store.get_task(task_id, event_limit=0)
+                if task is None:
+                    raise KeyError(f"unknown_agent_task:{task_id}")
+
+                text = str(msg.get("text", "") or "").strip()
+                checkpoint_id = str(msg.get("checkpoint_id", "") or "").strip()
+                control = store.enqueue_control(
+                    task_id,
+                    action,
+                    text=text,
+                    checkpoint_id=checkpoint_id,
+                    request_id=request_id,
+                )
+                if control is None:
+                    raise RuntimeError("agent_control_enqueue_failed")
+
+                if action == "directive":
+                    if not text:
+                        raise ValueError("directive_text_required")
+                    store.append_event(
+                        task_id,
+                        "user_directive",
+                        actor="user",
+                        summary=text,
+                        importance=0.92,
+                        data={"control_id": control.get("control_id", "")},
+                    )
+                    message = "Đã gửi chỉ thị vào task; executor sẽ nhận ở boundary kế tiếp."
+                elif action == "rollback":
+                    store.append_event(
+                        task_id,
+                        "rollback_requested",
+                        actor="user",
+                        summary=(
+                            f"Yêu cầu quay lại checkpoint {checkpoint_id}."
+                            if checkpoint_id else "Yêu cầu quay lại checkpoint gần nhất."
+                        ),
+                        importance=0.96,
+                        data={"checkpoint_id": checkpoint_id, "control_id": control.get("control_id", "")},
+                    )
+                    message = "Đã xếp yêu cầu rollback; AgentHarness sẽ xử lý ở điểm an toàn kế tiếp."
+                else:
+                    store.append_event(
+                        task_id,
+                        f"{action}_requested",
+                        actor="user",
+                        summary=f"Người dùng yêu cầu {action} task.",
+                        importance=0.86,
+                        data={"control_id": control.get("control_id", "")},
+                    )
+                    message = f"Đã gửi yêu cầu {action}."
+            else:
+                raise ValueError(f"unsupported_agent_action:{action}")
+
+            snapshot = store.snapshot(
+                selected_task_id=selected_task_id,
+                task_limit=12,
+                event_limit=48,
+            )
+        except Exception as exc:
+            status = "error"
+            message = str(exc)[:320]
+            try:
+                snapshot = AgentTaskStore().snapshot(
+                    selected_task_id=selected_task_id,
+                    task_limit=12,
+                    event_limit=32,
+                )
+            except Exception:
+                snapshot = {"version": "agent_console.v1", "selected_task_id": selected_task_id, "tasks": []}
+
+        self._send_runtime_json({
+            "type": "agent_console_ack",
+            "parse_mode": "agent_console_ack",
+            "should_speak": False,
+            "request_id": request_id,
+            "action": action,
+            "status": status,
+            "message": message,
+            "agent_console": snapshot,
+        }, channel="agent_console")
+
+
     def _handle_memory_panel_request(self, msg: dict) -> None:
         """Đọc/sửa Living User Memory qua panel Godot.
 

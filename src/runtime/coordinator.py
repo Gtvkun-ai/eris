@@ -132,3 +132,25 @@ class RuntimeCoordinator(
             action_executor=action_executor,
             memory_semantic_parser=memory_semantic_parser,
         )
+        # Agent Console là projection/control plane độc lập với cognition. Gắn bridge
+        # ở composition root để Subject Core có thể comment/advisory/redirect/veto
+        # executor mà không phải import LangGraph hay biết schema tool của Gemini.
+        try:
+            from runtime.agent_harness.task_store import AgentTaskStore
+            from runtime.agent_harness.event_bus import AgentEventBus
+            from runtime.agent_harness.supervisor_bridge import AgentSupervisorBridge
+
+            self.agent_task_store = AgentTaskStore()
+            self.agent_event_bus = AgentEventBus(self.agent_task_store, logger=logger)
+            self.agent_supervisor = AgentSupervisorBridge(
+                self.agent_task_store,
+                self.agent_event_bus,
+                logger=logger,
+            )
+        except Exception as exc:
+            self.agent_task_store = None
+            self.agent_event_bus = None
+            self.agent_supervisor = None
+            debug = getattr(logger, "debug", None)
+            if callable(debug):
+                debug("[agent-console] supervisor bridge unavailable: %s", exc)

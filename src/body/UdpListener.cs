@@ -167,7 +167,7 @@ public partial class UdpListener : Node2D
 	[Export] public float BubbleReadSeconds = 20f;
 	private ulong _bubbleHideAtMs = 0;
 	private Tween _textTween;
-	private static readonly Vector2 CharacterContextMenuMinSize = new(212f, 348f);
+	private static readonly Vector2 CharacterContextMenuMinSize = new(212f, 394f);
 	private static readonly Vector2 EmotionPanelMinSize = new(760f, 506f);
 	private static readonly Vector2 PrivateMindPanelMinSize = new(1040f, 624f);
 	private static readonly Vector2 SettingsPanelMinSize = new(1180f, 680f);
@@ -363,16 +363,9 @@ public partial class UdpListener : Node2D
 		};
 		GetNode<Control>("CanvasLayer/Control").AddChild(_privateMindPanel);
 		BuildPrivateMindPanelUi();
-		_depthPanel = new Panel
-		{
-			Name = "DepthPanel",
-			Visible = false,
-			CustomMinimumSize = Vector2.Zero,
-			Size = DepthPanelMinSize,
-			ZIndex = 98,
-		};
-		GetNode<Control>("CanvasLayer/Control").AddChild(_depthPanel);
-		BuildDepthPanelUi();
+		// Identity Runtime vẫn chạy ở backend, nhưng panel UI đã retire.
+		// Không tạo DepthPanel để tránh một màn hình ít giá trị nhưng tốn diện tích/bảo trì.
+		_depthPanel = null;
 		_settingsPanel = new Panel
 		{
 			Name = "SettingsPanel",
@@ -386,6 +379,7 @@ public partial class UdpListener : Node2D
 		_chatInput = GetNode<LineEdit>("CanvasLayer/Control/ChatPanel/HBoxContainer/LineEdit");
 		BuildChatPanelUi();
 		BuildConversationUi();
+		BuildAgentConsoleUi();
 	_chatSendButton.Pressed += OnSendPressed;
 	_chatCloseButton.Pressed += CloseChatPanel;
 	_contextChatButton.Pressed += OnContextChatPressed;
@@ -394,10 +388,10 @@ public partial class UdpListener : Node2D
 	_contextEmotionButton.Pressed += OnContextEmotionPressed;
 	if (_contextConversationHistoryButton != null)
 		_contextConversationHistoryButton.Pressed += OnContextConversationHistoryPressed;
+	if (_contextAgentConsoleButton != null)
+		_contextAgentConsoleButton.Pressed += OnContextAgentConsolePressed;
 	if (_contextPrivateMindButton != null)
 		_contextPrivateMindButton.Pressed += OnContextPrivateMindPressed;
-	if (_contextDepthButton != null)
-		_contextDepthButton.Pressed += OnContextDepthPressed;
 	if (_contextSettingsButton != null)
 		_contextSettingsButton.Pressed += OnContextSettingsPressed;
 	if (_contextExitButton != null)
@@ -414,8 +408,8 @@ public partial class UdpListener : Node2D
 		MakePanelDraggable(_privateMindPanel);
 		MakePanelDraggable(_chatPanel);
 		MakePanelDraggable(_conversationHistoryPanel);
+		MakePanelDraggable(_agentConsolePanel);
 		MakePanelDraggable(_tutorPanel);
-		MakePanelDraggable(_depthPanel);
 		MakePanelDraggable(_settingsPanel);
 		MakePanelDraggable(_memoryPanel);
 
@@ -515,10 +509,10 @@ public partial class UdpListener : Node2D
 			|| (_characterContextMenu?.Visible ?? false)
 			|| (_emotionPanel?.Visible ?? false)
 			|| (_privateMindPanel?.Visible ?? false)
-			|| (_depthPanel?.Visible ?? false)
 			|| (_settingsPanel?.Visible ?? false)
 			|| (_memoryPanel?.Visible ?? false)
 			|| (_conversationHistoryPanel?.Visible ?? false)
+			|| (_agentConsolePanel?.Visible ?? false)
 			|| _grabModeArmed
 			|| _isDraggingCharacter;
 
@@ -623,6 +617,7 @@ public partial class UdpListener : Node2D
 		TickMemoryPanelStatus();
 		TickRuntimePresencePanel();
 		TickConversationUi();
+		TickAgentConsole();
 
 		while (_udp.GetAvailablePacketCount() > 0)
 		{
@@ -738,9 +733,20 @@ public partial class UdpListener : Node2D
 				GetViewport().SetInputAsHandled();
 				return;
 			}
+			if (_agentConsolePanel != null && _agentConsolePanel.Visible && IsMouseOverControl(_agentConsolePanel, mouseEvent.Position))
+			{
+				GetViewport().SetInputAsHandled();
+				return;
+			}
 			if (_conversationHistoryPanel != null && _conversationHistoryPanel.Visible)
 			{
 				CloseConversationHistoryPanel();
+				GetViewport().SetInputAsHandled();
+				return;
+			}
+			if (_agentConsolePanel != null && _agentConsolePanel.Visible)
+			{
+				CloseAgentConsolePanel();
 				GetViewport().SetInputAsHandled();
 				return;
 			}
@@ -781,6 +787,11 @@ public partial class UdpListener : Node2D
 			if (_conversationHistoryPanel != null && _conversationHistoryPanel.Visible)
 			{
 				CloseConversationHistoryPanel();
+				GetViewport().SetInputAsHandled();
+			}
+			if (_agentConsolePanel != null && _agentConsolePanel.Visible)
+			{
+				CloseAgentConsolePanel();
 				GetViewport().SetInputAsHandled();
 			}
 
@@ -839,6 +850,15 @@ public partial class UdpListener : Node2D
 		)
 		{
 			CloseConversationHistoryPanel();
+		}
+		if (
+			mouseEvent.ButtonIndex == MouseButton.Left
+			&& _agentConsolePanel != null
+			&& _agentConsolePanel.Visible
+			&& !IsMouseOverControl(_agentConsolePanel, mouseEvent.Position)
+		)
+		{
+			CloseAgentConsolePanel();
 		}
 	}
 
@@ -1553,12 +1573,12 @@ public partial class UdpListener : Node2D
 				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
 				container.MoveChild(_contextConversationHistoryButton, Mathf.Max(0, closeIndex));
 			}
-			if (_contextDepthButton == null)
+			if (_contextAgentConsoleButton == null)
 			{
-				_contextDepthButton = new Button { Name = "DepthButton" };
-				container.AddChild(_contextDepthButton);
+				_contextAgentConsoleButton = new Button { Name = "AgentConsoleButton" };
+				container.AddChild(_contextAgentConsoleButton);
 				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
-				container.MoveChild(_contextDepthButton, Mathf.Max(0, closeIndex));
+				container.MoveChild(_contextAgentConsoleButton, Mathf.Max(0, closeIndex));
 			}
 			if (_contextMemoryButton == null)
 			{
@@ -1589,8 +1609,8 @@ public partial class UdpListener : Node2D
 		ConfigureContextMenuButton(_contextForceSpeakButton, "Nói ngay", "res://asset/Resource/force.png");
 		ConfigureContextMenuButton(_contextEmotionButton, "Khí sắc & hiện diện", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextConversationHistoryButton, "Lịch sử hội thoại", "res://asset/Resource/chat.png");
+		ConfigureContextMenuButton(_contextAgentConsoleButton, "Agent Console", "res://asset/Resource/chat.png");
 		ConfigureContextMenuButton(_contextPrivateMindButton, "Inner Diary", "res://asset/Resource/emotion.png");
-		ConfigureContextMenuButton(_contextDepthButton, "Identity Runtime", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextMemoryButton, "ERIS nhớ gì về bạn", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextSettingsButton, "Cài đặt", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextExitButton, "Thoát ERIS", "res://asset/Resource/exit.png");
@@ -4193,6 +4213,8 @@ public partial class UdpListener : Node2D
 			return;
 		if (TryHandleTutorEvent(raw))
 			return;
+		if (TryHandleAgentConsolePacket(raw))
+			return;
 		if (TryHandleMemoryPanelPacket(raw))
 			return;
 		var payload = _decisionParser.Parse(raw);
@@ -4218,10 +4240,7 @@ public partial class UdpListener : Node2D
 				SavePrivateMindState();
 				if (_privateMindPanel != null && _privateMindPanel.Visible)
 					RefreshPrivateMindPanel();
-				// V82 Identity dùng Gemma observer_comment/thought-shards từ private mind.
-				// Refresh panel đang mở để lời bình đổi ngay, không phải chờ identity_runtime packet kế tiếp.
-				if (_depthPanel != null && _depthPanel.Visible)
-					RefreshDepthPanel();
+				// Identity UI đã retire; private-mind state vẫn được persist cho cognition/debug khác.
 			}
 		}
 		TryCaptureIdentityRuntimeBlock(raw);
