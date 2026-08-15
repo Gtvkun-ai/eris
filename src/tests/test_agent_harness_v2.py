@@ -311,3 +311,123 @@ def test_terminal_agent_event_wakes_eris_frontstage(tmp_path):
     assert "BACKSTAGE AGENT COMPLETED" in history[-1][1]
     assert "Fixed routing" in history[-1][1]
     assert wakes and wakes[-1].startswith("agent_task_completed:")
+
+
+def test_workspace_manager_persists_favorites_and_scoped_task_binding(tmp_path):
+    from runtime.workspace_manager import WorkspaceManager
+
+    eris_home = tmp_path / "ErisLive"
+    alpha = tmp_path / "alpha"
+    beta = tmp_path / "beta"
+    alpha.mkdir()
+    beta.mkdir()
+
+    class _Owner:
+        runtime_settings = {"project_ops": {"eris_home": str(eris_home)}}
+
+    manager = WorkspaceManager(_Owner())
+    a = manager.join(str(alpha), activate=True)
+    b = manager.join(str(beta), activate=True)
+    manager.set_favorite(a.workspace_id, True)
+
+    snapshot = manager.workspace_snapshot()
+    assert snapshot["active_workspace_id"] == b.workspace_id
+    assert snapshot["workspaces"][0]["workspace_id"] == a.workspace_id
+    assert snapshot["workspaces"][0]["favorite"] is True
+
+    with manager.scoped_active(a.workspace_id):
+        assert manager.active_workspace_id == a.workspace_id
+        assert manager.active_path() == alpha.resolve()
+    # Tool-scoped activation must not steal the workspace selected in the panel.
+    assert manager.active_workspace_id == b.workspace_id
+
+    reloaded = WorkspaceManager(_Owner())
+    assert reloaded.active_workspace_id == b.workspace_id
+    assert a.workspace_id in reloaded.favorite_workspace_ids
+
+
+def test_gemini_executor_accepts_task_locked_workspace_without_mutating_default(tmp_path, monkeypatch):
+    import json
+    import subprocess
+    from runtime.agent_harness.gemini_cli_executor import GeminiCliDecisionExecutor
+
+    default_workspace = tmp_path / "default"
+    task_workspace = tmp_path / "task"
+    default_workspace.mkdir()
+    task_workspace.mkdir()
+    seen = {}
+
+    executor = GeminiCliDecisionExecutor(workspace=default_workspace, executable="gemini")
+    monkeypatch.setattr(executor, "health", lambda: (True, "gemini"))
+
+    def _run(cmd, **kwargs):
+        seen["cwd"] = kwargs.get("cwd")
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps({"response": json.dumps({"action": "final", "final": "done"})}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", _run)
+    import pytest
+    pytest.importorskip("langchain_core")
+    response = executor.invoke_with_tools([], tools=[], goal="inspect", workspace=task_workspace)
+    assert response.content == "done"
+    assert seen["cwd"] == str(task_workspace.resolve())
+    assert executor.workspace == default_workspace.resolve()
+
+
+def test_coordinator_binds_new_agent_task_to_selected_workspace(tmp_path):
+    from runtime.coordinator import RuntimeCoordinator
+    from runtime.workspace_manager import WorkspaceManager
+
+    eris_home = tmp_path / "ErisLive"
+    project = tmp_path / "repo"
+    project.mkdir()
+    seen = []
+
+    class _Settings:
+        runtime_settings = {"project_ops": {"eris_home": str(eris_home)}}
+
+    class _Harness:
+        executor_name = "gemini-cli"
+        model_name = "test"
+
+        def invoke(
+            self,
+            goal,
+            thread_id="",
+            task_id="",
+            clarified_goal="",
+            task_mode="execute",
+            source="eris_chat",
+            workspace_id="",
+            workspace_path="",
+            workspace_name="",
+        ):
+            seen.append({
+                "goal": goal,
+                "workspace_id": workspace_id,
+                "workspace_path": workspace_path,
+                "workspace_name": workspace_name,
+            })
+            return {"status": "done"}
+
+    coordinator = object.__new__(RuntimeCoordinator)
+    coordinator.agent_harness = _Harness()
+    coordinator.agent_task_store = None
+    coordinator.agent_supervisor = None
+    coordinator.workspace_manager = WorkspaceManager(_Settings())
+    record = coordinator.workspace_manager.join(str(project), activate=True)
+    coordinator.agent_default_workspace = ""
+    coordinator._agent_task_threads = {}
+    coordinator._agent_last_started_task_id = ""
+    coordinator.logger = None
+
+    started = coordinator.start_agent_task_async("fix repo", workspace_ref=record.workspace_id)
+    assert started["workspace_id"] == record.workspace_id
+    thread = coordinator._agent_task_threads.get(started["task_id"])
+    if thread is not None:
+        thread.join(timeout=2)
+    assert seen and seen[0]["workspace_path"] == str(project.resolve())

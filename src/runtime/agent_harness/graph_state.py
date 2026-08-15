@@ -24,6 +24,9 @@ class AgentState(TypedDict, total=False):
     model: str
     task_mode: str
     source: str
+    workspace_id: str
+    workspace_path: str
+    workspace_name: str
     status: str
     active_skills: List[str]
     active_tools: List[str]

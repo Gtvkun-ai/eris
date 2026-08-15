@@ -200,6 +200,7 @@ class RuntimeCoordinator(
                     event_bus=self.agent_event_bus,
                     executor_name="gemini-cli",
                     model_name=gemini.model,
+                    workspace_scope=lambda ref: self.workspace_manager.scoped_active(ref),
                     logger=logger,
                 )
                 ok, reason = gemini.health()
@@ -372,6 +373,40 @@ class RuntimeCoordinator(
                     if callable(debug):
                         debug("[agent-harness] terminal frontstage bridge degraded task=%s error=%s", task_id, exc)
 
+    def _resolve_agent_workspace(self, workspace_ref: str = "") -> dict:
+        """Resolve and activate one persistent workspace for a task.
+
+        The returned id/path is copied into task metadata and LangGraph state, so
+        later UI workspace switches cannot silently move an already-running task.
+        """
+        manager = getattr(self, "workspace_manager", None)
+        if manager is None:
+            return {"workspace_id": "", "workspace_path": "", "workspace_name": ""}
+
+        record = None
+        ref = str(workspace_ref or "").strip()
+        if ref:
+            try:
+                record = manager.switch(ref)
+            except Exception:
+                # Folder picker supplies a local path that may not have been
+                # registered yet. join() persists it and activates it.
+                record = manager.join(ref, activate=True)
+        else:
+            record = manager.active_record()
+            if record is None:
+                default_workspace = str(getattr(self, "agent_default_workspace", "") or "").strip()
+                if default_workspace:
+                    record = manager.join(default_workspace, activate=True)
+
+        if record is None:
+            return {"workspace_id": "", "workspace_path": "", "workspace_name": ""}
+        return {
+            "workspace_id": str(getattr(record, "workspace_id", "") or ""),
+            "workspace_path": str(getattr(record, "path", "") or ""),
+            "workspace_name": str(getattr(record, "display_name", "") or ""),
+        }
+
     def execute_agent_task(
         self,
         goal: str,
@@ -381,6 +416,9 @@ class RuntimeCoordinator(
         task_id: str = "",
         task_mode: str = "execute",
         source: str = "eris_chat",
+        workspace_id: str = "",
+        workspace_path: str = "",
+        workspace_name: str = "",
     ):
         """Run one Unified Agent Harness task synchronously.
 
@@ -409,6 +447,12 @@ class RuntimeCoordinator(
                 kwargs["task_mode"] = str(task_mode or "execute")
             if accepts_var_kwargs or "source" in parameters:
                 kwargs["source"] = str(source or "eris_chat")
+            if accepts_var_kwargs or "workspace_id" in parameters:
+                kwargs["workspace_id"] = str(workspace_id or "")
+            if accepts_var_kwargs or "workspace_path" in parameters:
+                kwargs["workspace_path"] = str(workspace_path or "")
+            if accepts_var_kwargs or "workspace_name" in parameters:
+                kwargs["workspace_name"] = str(workspace_name or "")
         except (TypeError, ValueError):
             # C-extension/mock callables may not expose a signature. Real AgentHarness
             # does, so falling back to the legacy four arguments is safe here.
@@ -424,6 +468,7 @@ class RuntimeCoordinator(
         source_turn_id: str = "",
         source: str = "eris_chat",
         task_mode: str = "execute",
+        workspace_ref: str = "",
     ) -> dict:
         """Start Gemini/LangGraph in a daemon worker and return immediately.
 
@@ -437,21 +482,20 @@ class RuntimeCoordinator(
         import threading
         import uuid
 
-        # An explicit execution request authorizes selecting the current Eris
-        # workspace as context when no workspace is active yet. This does not
-        # modify files; it only makes the existing project tools dynamically live.
+        # Snapshot workspace identity before the worker starts. The graph keeps
+        # this lock for the whole task even if the user changes the panel's active
+        # workspace while Gemini is still running.
         try:
-            manager = getattr(self, "workspace_manager", None)
-            active_record = getattr(manager, "active_record", None)
-            active = active_record() if callable(active_record) else None
-            default_workspace = str(getattr(self, "agent_default_workspace", "") or "").strip()
-            if active is None and manager is not None and default_workspace:
-                manager.join(default_workspace, activate=True)
+            workspace = self._resolve_agent_workspace(workspace_ref)
         except Exception as exc:
-            logger = getattr(self, "logger", None)
-            debug = getattr(logger, "debug", None)
-            if callable(debug):
-                debug("[agent-harness] default workspace activation degraded: %s", exc)
+            return {
+                "status": "unavailable",
+                "reason": f"workspace_unavailable:{type(exc).__name__}:{exc}",
+                "task_id": "",
+            }
+        workspace_id = str(workspace.get("workspace_id", "") or "")
+        workspace_path = str(workspace.get("workspace_path", "") or "")
+        workspace_name = str(workspace.get("workspace_name", "") or "")
 
         task_id = f"task_{uuid.uuid4().hex[:12]}"
         resolved_thread = str(thread_id or source_turn_id or f"agent_{uuid.uuid4().hex[:12]}")
@@ -475,6 +519,9 @@ class RuntimeCoordinator(
                         "original_goal": goal,
                         "source": str(source or "eris_chat"),
                         "task_mode": str(task_mode or "execute"),
+                        "workspace_id": workspace_id,
+                        "workspace_path": workspace_path,
+                        "workspace_name": workspace_name,
                     },
                 )
                 store.update_task(task_id, clarified_goal=clarified_goal or goal)
@@ -504,6 +551,9 @@ class RuntimeCoordinator(
                     task_id=task_id,
                     task_mode=task_mode,
                     source=source,
+                    workspace_id=workspace_id,
+                    workspace_path=workspace_path,
+                    workspace_name=workspace_name,
                 )
             except Exception as exc:
                 logger = getattr(self, "logger", None)
@@ -530,6 +580,9 @@ class RuntimeCoordinator(
             "goal": clarified_goal or goal,
             "source": str(source or "eris_chat"),
             "task_mode": str(task_mode or "execute"),
+            "workspace_id": workspace_id,
+            "workspace_path": workspace_path,
+            "workspace_name": workspace_name,
         }
 
     def route_agent_user_turn(

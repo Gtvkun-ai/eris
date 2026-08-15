@@ -18,12 +18,13 @@ import time
 import urllib.parse
 import uuid
 import zipfile
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
 ERIS_HOME_VERSION = "eris_home.v1.0"
-WORKSPACE_REGISTRY_VERSION = 1
+WORKSPACE_REGISTRY_VERSION = 2
 
 
 def default_eris_home() -> Path:
@@ -133,6 +134,52 @@ class WorkspaceManager:
         items = self._registry.get("workspaces", {})
         records = [_record_from_payload(value) for value in items.values() if isinstance(value, Mapping)]
         return tuple(sorted(records, key=lambda item: item.last_opened_at, reverse=True))
+
+    @property
+    def favorite_workspace_ids(self) -> tuple[str, ...]:
+        values = self._registry.get("favorite_workspace_ids", [])
+        if not isinstance(values, list):
+            return ()
+        known = self._registry.get("workspaces", {})
+        return tuple(str(value) for value in values if str(value) in known)
+
+    def set_favorite(self, workspace_ref: str, favorite: bool = True) -> WorkspaceRecord:
+        """Pin/unpin a registered workspace for one-click access in Agent Console."""
+        record = self._resolve_record(workspace_ref)
+        with self._lock:
+            favorites = [str(value) for value in self._registry.get("favorite_workspace_ids", [])]
+            favorites = [value for value in favorites if value != record.workspace_id]
+            if favorite:
+                favorites.insert(0, record.workspace_id)
+            self._registry["favorite_workspace_ids"] = favorites[:24]
+            self._save_registry()
+        return record
+
+    def workspace_snapshot(self, *, limit: int = 16) -> dict[str, Any]:
+        """Public UI projection: favorites first, then recently opened workspaces."""
+        active_id = self.active_workspace_id
+        favorites = set(self.favorite_workspace_ids)
+        records = list(self.list_workspaces())
+        records.sort(
+            key=lambda item: (
+                0 if item.workspace_id in favorites else 1,
+                -float(item.last_opened_at or 0.0),
+                item.display_name.casefold(),
+            )
+        )
+        payload = []
+        for record in records[: max(1, int(limit))]:
+            item = record.to_dict()
+            item["favorite"] = record.workspace_id in favorites
+            item["active"] = record.workspace_id == active_id
+            payload.append(item)
+        active = self.active_record()
+        return {
+            "active_workspace_id": active_id,
+            "active_workspace": active.to_dict() if active else None,
+            "favorite_workspace_ids": list(self.favorite_workspace_ids),
+            "workspaces": payload,
+        }
 
     def join(self, source: str, *, workspace_id: str = "", activate: bool = True) -> WorkspaceRecord:
         raw = str(source or "").strip().strip('"\'')
@@ -267,12 +314,34 @@ class WorkspaceManager:
         self._store_record(updated, activate=True)
         return updated
 
+    @contextmanager
+    def scoped_active(self, workspace_ref: str):
+        """Temporarily bind ProjectOperations to one task workspace.
+
+        This never persists or changes the workspace selected by the panel. The
+        manager lock is held for the scoped tool call, so a UI switch waits rather
+        than racing an executor and being accidentally restored afterward.
+        """
+        record = self._resolve_record(workspace_ref)
+        path = Path(record.path).expanduser().resolve()
+        if not path.is_dir():
+            raise FileNotFoundError(str(path))
+        with self._lock:
+            previous = str(self._registry.get("active_workspace_id", "") or "")
+            self._registry["active_workspace_id"] = record.workspace_id
+            try:
+                yield record
+            finally:
+                self._registry["active_workspace_id"] = previous
+
     def leave(self, workspace_ref: str = "", *, delete_managed_copy: bool = False) -> WorkspaceRecord:
         record = self._resolve_record(workspace_ref or self.active_workspace_id)
         with self._lock:
             workspaces = dict(self._registry.get("workspaces", {}))
             workspaces.pop(record.workspace_id, None)
             self._registry["workspaces"] = workspaces
+            favorites = [str(value) for value in self._registry.get("favorite_workspace_ids", [])]
+            self._registry["favorite_workspace_ids"] = [value for value in favorites if value != record.workspace_id]
             if self.active_workspace_id == record.workspace_id:
                 self._registry["active_workspace_id"] = ""
             self._save_registry()
@@ -312,6 +381,7 @@ class WorkspaceManager:
             "active_workspace_id": self.active_workspace_id,
             "active_workspace": active.to_dict() if active else None,
             "workspace_count": len(self._registry.get("workspaces", {})),
+            "favorite_workspace_count": len(self.favorite_workspace_ids),
             "implicit_source_repo": False,
         }
 
@@ -320,13 +390,19 @@ class WorkspaceManager:
             try:
                 payload = json.loads(self.registry_path.read_text(encoding="utf-8"))
                 if isinstance(payload, dict):
-                    payload.setdefault("version", WORKSPACE_REGISTRY_VERSION)
+                    payload["version"] = WORKSPACE_REGISTRY_VERSION
                     payload.setdefault("active_workspace_id", "")
                     payload.setdefault("workspaces", {})
+                    payload.setdefault("favorite_workspace_ids", [])
                     return payload
             except Exception as exc:
                 self._log("warning", "[workspace] registry lỗi, tạo mới: %s", exc)
-        payload = {"version": WORKSPACE_REGISTRY_VERSION, "active_workspace_id": "", "workspaces": {}}
+        payload = {
+            "version": WORKSPACE_REGISTRY_VERSION,
+            "active_workspace_id": "",
+            "workspaces": {},
+            "favorite_workspace_ids": [],
+        }
         _atomic_json_write(self.registry_path, payload)
         return payload
 

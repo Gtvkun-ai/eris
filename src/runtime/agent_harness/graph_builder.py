@@ -7,6 +7,8 @@ scraping model reasoning or stdout.
 from __future__ import annotations
 
 import uuid
+import threading
+from contextlib import nullcontext
 from typing import Any, Callable, Literal
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage, SystemMessage
@@ -40,6 +42,7 @@ class AgentHarness:
         event_bus: AgentEventBus | None = None,
         executor_name: str = "gemini",
         model_name: str = "",
+        workspace_scope: Callable[[str], Any] | None = None,
         logger: Any = None,
     ):
         self.llm = llm
@@ -52,6 +55,11 @@ class AgentHarness:
         self.event_bus = event_bus or AgentEventBus(self.task_store, logger=logger)
         self.executor_name = str(executor_name or "gemini")
         self.model_name = str(model_name or "")
+        self.workspace_scope = workspace_scope
+        # ProjectOperations reads the active WorkspaceManager record. Serialize only
+        # the tiny activate+tool critical section so concurrent Gemini tasks may
+        # reason in parallel without ever running a tool against the wrong repo.
+        self._workspace_tool_lock = threading.RLock()
         self.logger = logger
         self.checkpointer = MemorySaver()
         self.graph = self._build_graph()
@@ -142,6 +150,7 @@ class AgentHarness:
             "verify results, and expose concise action summaries rather than private reasoning.\n"
             + mode_rule +
             f"Current Goal: {state.get('goal', '')}\n"
+            f"Locked Workspace: {state.get('workspace_path', '') or '(none)'}\n"
             f"Active Skills: {', '.join(state.get('active_skills', []) or [])}\n"
             f"\n--- INJECTED SKILL CONTEXT ---\n{injected}\n--- END SKILL CONTEXT ---\n"
         ))
@@ -155,6 +164,7 @@ class AgentHarness:
                 tools=disclosed_tools,
                 goal=str(state.get("goal", "") or ""),
                 active_skills=list(state.get("active_skills", []) or []),
+                workspace=str(state.get("workspace_path", "") or "") or None,
             )
         else:
             invoke = getattr(self.llm, "invoke", None)
@@ -316,7 +326,15 @@ class AgentHarness:
                 continue
 
             try:
-                result = self._invoke_tool(name, args)
+                workspace_ref = str(state.get("workspace_id", "") or state.get("workspace_path", "") or "").strip()
+                # A running task owns its workspace for its lifetime. Workspace list
+                # is harmless, but switch/join/leave from inside the executor would
+                # invalidate every later observation and is therefore refused.
+                if workspace_ref and name in {"workspace_join", "workspace_switch", "workspace_leave"}:
+                    raise RuntimeError("task_workspace_locked: create/select workspace from Agent Console before starting the task")
+                scope = self.workspace_scope(workspace_ref) if workspace_ref and callable(self.workspace_scope) else nullcontext()
+                with self._workspace_tool_lock, scope:
+                    result = self._invoke_tool(name, args)
                 text = _tool_result_text(result)
                 out_messages.append(ToolMessage(content=text, tool_call_id=call_id))
                 if name == "search_capabilities" and task_id:
@@ -467,10 +485,16 @@ class AgentHarness:
         clarified_goal: str = "",
         task_mode: str = "execute",
         source: str = "eris_chat",
+        workspace_id: str = "",
+        workspace_path: str = "",
+        workspace_name: str = "",
     ):
         """Start one task and project its lifecycle to Agent Console."""
         normalized_mode = "inspect" if str(task_mode or "execute").strip().lower() == "inspect" else "execute"
         normalized_source = str(source or "eris_chat").strip() or "eris_chat"
+        normalized_workspace_id = str(workspace_id or "").strip()
+        normalized_workspace_path = str(workspace_path or "").strip()
+        normalized_workspace_name = str(workspace_name or "").strip()
         task = self.task_store.create_task(
             clarified_goal or goal,
             task_id=task_id,
@@ -481,6 +505,9 @@ class AgentHarness:
                 "original_goal": goal,
                 "source": normalized_source,
                 "task_mode": normalized_mode,
+                "workspace_id": normalized_workspace_id,
+                "workspace_path": normalized_workspace_path,
+                "workspace_name": normalized_workspace_name,
             },
         )
         task_id = str(task.get("task_id", ""))
@@ -489,6 +516,9 @@ class AgentHarness:
             "original_goal": goal,
             "source": normalized_source,
             "task_mode": normalized_mode,
+            "workspace_id": normalized_workspace_id,
+            "workspace_path": normalized_workspace_path,
+            "workspace_name": normalized_workspace_name,
         })
         self.task_store.update_task(
             task_id,
@@ -507,6 +537,9 @@ class AgentHarness:
                 "model": self.model_name,
                 "source": normalized_source,
                 "task_mode": normalized_mode,
+                "workspace_id": normalized_workspace_id,
+                "workspace_path": normalized_workspace_path,
+                "workspace_name": normalized_workspace_name,
             },
         )
 
@@ -519,6 +552,9 @@ class AgentHarness:
             "model": self.model_name,
             "task_mode": normalized_mode,
             "source": normalized_source,
+            "workspace_id": normalized_workspace_id,
+            "workspace_path": normalized_workspace_path,
+            "workspace_name": normalized_workspace_name,
             "status": "running",
             "messages": [HumanMessage(content=clarified_goal or goal)],
             "active_skills": [],

@@ -30,8 +30,6 @@ public partial class UdpListener
         public string Status { get; set; } = "queued";
         public string Executor { get; set; } = "gemini";
         public string Model { get; set; } = "";
-        public string Source { get; set; } = "";
-        public string TaskMode { get; set; } = "execute";
         public int CurrentStep { get; set; }
         public int PendingControls { get; set; }
         public string CheckpointId { get; set; } = "";
@@ -47,8 +45,10 @@ public partial class UdpListener
 
     // V3: visual pass bám mockup đã chốt. Agent Console giờ là execution UI thật,
     // không còn cảm giác admin dashboard pastel vô hồn.
-    private static readonly Vector2 AgentConsolePreferredSize = new(1120f, 720f);
-    private static readonly Vector2 AgentConsoleMinimumSize = new(900f, 590f);
+    private static readonly Vector2 AgentConsolePreferredSize = new(1440f, 820f);
+    private static readonly Vector2 AgentConsoleMinimumSize = new(920f, 620f);
+    private const float AgentConsoleViewportPaddingX = 40f;
+    private const float AgentConsoleViewportPaddingY = 44f;
     private static readonly Color AgentConsoleBg = new(0.973f, 0.977f, 0.985f, 0.995f);
     private static readonly Color AgentConsoleCard = new(0.996f, 0.998f, 1.0f, 0.985f);
     private static readonly Color AgentConsoleSoft = new(0.955f, 0.965f, 0.976f, 0.94f);
@@ -61,6 +61,8 @@ public partial class UdpListener
     private static readonly Color AgentConsoleGold = new(0.87f, 0.72f, 0.28f, 1f);
     private static readonly Color AgentConsoleBlue = new(0.41f, 0.51f, 0.98f, 1f);
     private static readonly Color AgentConsoleRed = new(0.95f, 0.32f, 0.42f, 1f);
+    private static readonly Color AgentConsoleSidebarBg = new(0.072f, 0.102f, 0.162f, 0.985f);
+    private static readonly Color AgentConsoleSidebarAccent = new(0.19f, 0.89f, 0.75f, 1f);
 
     private Button _contextAgentConsoleButton;
     private Panel _agentConsolePanel;
@@ -80,8 +82,6 @@ public partial class UdpListener
     private Label _agentConsoleSkillsLabel;
     private Button _agentConsoleTasksToggleButton;
     private Button _agentConsoleInspectorToggleButton;
-    private Button _agentConsoleNewTaskButton;
-    private Button _agentConsoleComposerSendButton;
     private Button _agentConsoleFilterAllButton;
     private Button _agentConsoleFilterConversationButton;
     private Button _agentConsoleFilterToolsButton;
@@ -94,14 +94,15 @@ public partial class UdpListener
     private Button _agentConsoleResumeButton;
     private Button _agentConsoleStopButton;
     private Button _agentConsoleRollbackButton;
+    private static Font _agentConsoleFontRegular;
+    private static Font _agentConsoleFontBold;
     private readonly List<AgentConsoleTaskView> _agentConsoleTasks = new();
     private string _agentSelectedTaskId = "";
     private string _agentLastRequestId = "";
     private ulong _agentLastSnapshotRequestMs;
     private ulong _agentLastPacketMs;
     private bool _agentConsoleTaskDrawerVisible;
-    private bool _agentConsoleInspectorVisible;
-    private bool _agentConsoleNewTaskMode;
+    private bool _agentConsoleInspectorVisible = true;
     private bool _agentConsoleAutoFollow = true;
     private string _agentConsoleEventFilter = "all";
 
@@ -114,25 +115,26 @@ public partial class UdpListener
         {
             Name = "AgentConsolePanel",
             Visible = false,
-            CustomMinimumSize = AgentConsoleMinimumSize,
+            CustomMinimumSize = Vector2.Zero,
             Size = AgentConsolePreferredSize,
             ZIndex = 100,
             ClipContents = true,
         };
         _agentConsolePanel.AddThemeStyleboxOverride("panel", AgentConsoleStyle(
-            AgentConsoleBg,
-            new Color(0.82f, 0.88f, 0.94f, 0.80f),
-            24,
+            new Color(0.985f, 0.989f, 0.995f, 0.995f),
+            new Color(0.84f, 0.88f, 0.93f, 0.88f),
+            30,
             1,
             shadow: true));
+        ApplyAgentConsoleTheme();
         GetNode<Control>("CanvasLayer/Control").AddChild(_agentConsolePanel);
 
         var margin = new MarginContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
         margin.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-        margin.AddThemeConstantOverride("margin_left", 22);
-        margin.AddThemeConstantOverride("margin_right", 22);
+        margin.AddThemeConstantOverride("margin_left", 24);
+        margin.AddThemeConstantOverride("margin_right", 24);
         margin.AddThemeConstantOverride("margin_top", 18);
-        margin.AddThemeConstantOverride("margin_bottom", 16);
+        margin.AddThemeConstantOverride("margin_bottom", 14);
         _agentConsolePanel.AddChild(margin);
 
         var root = new VBoxContainer
@@ -141,19 +143,105 @@ public partial class UdpListener
             SizeFlagsVertical = Control.SizeFlags.ExpandFill,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        root.AddThemeConstantOverride("separation", 12);
+        root.AddThemeConstantOverride("separation", 8);
         margin.AddChild(root);
 
         root.AddChild(BuildAgentConsoleHeader());
+        root.AddChild(BuildAgentWorkspaceStrip());
         root.AddChild(BuildAgentQuickSummary());
         root.AddChild(BuildAgentConsoleBody());
         root.AddChild(BuildAgentConsoleFooter());
         RefreshAgentConsole();
     }
 
+    private Control BuildAgentSidebar()
+    {
+        var panel = new PanelContainer
+        {
+            CustomMinimumSize = new Vector2(104f, 0f),
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        panel.AddThemeStyleboxOverride("panel", AgentConsoleStyle(
+            AgentConsoleSidebarBg,
+            new Color(AgentConsoleSidebarAccent.R, AgentConsoleSidebarAccent.G, AgentConsoleSidebarAccent.B, 0.22f),
+            24,
+            1,
+            shadow: false));
 
+        var margin = AgentConsoleMargin(14, 16, 14, 16);
+        panel.AddChild(margin);
+        var box = new VBoxContainer
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        box.AddThemeConstantOverride("separation", 18);
+        margin.AddChild(box);
 
+        var logoWrap = new CenterContainer { CustomMinimumSize = new Vector2(0f, 56f), MouseFilter = Control.MouseFilterEnum.Ignore };
+        var logo = new Label
+        {
+            Text = "◈",
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            CustomMinimumSize = new Vector2(54f, 54f),
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        logo.AddThemeFontSizeOverride("font_size", 28);
+        logo.AddThemeColorOverride("font_color", AgentConsoleSidebarAccent);
+        logo.AddThemeStyleboxOverride("normal", AgentConsoleStyle(
+            new Color(0.08f, 0.16f, 0.24f, 0.84f),
+            new Color(AgentConsoleSidebarAccent.R, AgentConsoleSidebarAccent.G, AgentConsoleSidebarAccent.B, 0.25f),
+            18,
+            1,
+            shadow: true));
+        logoWrap.AddChild(logo);
+        box.AddChild(logoWrap);
 
+        box.AddChild(BuildAgentSidebarNav("⌘", "Công việc", active: true));
+        box.AddChild(BuildAgentSidebarNav("◌", "Phiên"));
+        box.AddChild(BuildAgentSidebarNav("▦", "Tools"));
+        box.AddChild(BuildAgentSidebarNav("⌁", "Logs"));
+        box.AddChild(BuildAgentSidebarNav("⚙", "Cài đặt"));
+
+        box.AddChild(new Control { SizeFlagsVertical = Control.SizeFlags.ExpandFill, MouseFilter = Control.MouseFilterEnum.Ignore });
+
+        var status = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        status.AddThemeConstantOverride("separation", 3);
+        status.AddChild(AgentConsoleLabel("● Eris Online", 10, new Color(0.57f, 0.95f, 0.75f, 1f), bold: true));
+        status.AddChild(AgentConsoleLabel("v1.9.3", 9, new Color(0.60f, 0.72f, 0.82f, 0.90f)));
+        box.AddChild(status);
+        return panel;
+    }
+
+    private Control BuildAgentSidebarNav(string icon, string text, bool active = false)
+    {
+        var panel = new PanelContainer
+        {
+            CustomMinimumSize = new Vector2(0f, 44f),
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        panel.AddThemeStyleboxOverride("panel", AgentConsoleStyle(
+            active ? new Color(0.13f, 0.22f, 0.30f, 0.96f) : Colors.Transparent,
+            Colors.Transparent,
+            12,
+            0));
+
+        var margin = AgentConsoleMargin(10, 6, 10, 6);
+        panel.AddChild(margin);
+        var row = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        row.AddThemeConstantOverride("separation", 8);
+        margin.AddChild(row);
+
+        var iconLabel = AgentConsoleLabel(icon, 14, active ? AgentConsoleSidebarAccent : new Color(0.72f, 0.82f, 0.90f, 0.88f), bold: true);
+        iconLabel.CustomMinimumSize = new Vector2(18f, 0f);
+        row.AddChild(iconLabel);
+        var textLabel = AgentConsoleLabel(text, 11, active ? new Color(0.78f, 1f, 0.92f, 1f) : new Color(0.70f, 0.78f, 0.86f, 0.88f), bold: active);
+        row.AddChild(textLabel);
+        return panel;
+    }
 
     private Control BuildAgentConsoleHeader()
     {
@@ -162,59 +250,59 @@ public partial class UdpListener
             CustomMinimumSize = new Vector2(0f, 54f),
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        row.AddThemeConstantOverride("separation", 10);
+        row.AddThemeConstantOverride("separation", 12);
 
-        var emblem = new Label
+        var avatarShell = new PanelContainer
         {
-            Text = "◇",
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            CustomMinimumSize = new Vector2(44f, 44f),
+            CustomMinimumSize = new Vector2(48f, 48f),
             MouseFilter = Control.MouseFilterEnum.Ignore,
+            ClipContents = true,
         };
-        emblem.AddThemeFontSizeOverride("font_size", 21);
-        emblem.AddThemeColorOverride("font_color", new Color(0.30f, 0.78f, 0.66f, 1f));
-        emblem.AddThemeStyleboxOverride("normal", AgentConsoleStyle(
-            new Color(0.94f, 0.985f, 0.972f, 1f),
-            new Color(0.72f, 0.92f, 0.85f, 0.74f),
-            14,
+        avatarShell.AddThemeStyleboxOverride("panel", AgentConsoleStyle(
+            new Color(0.93f, 0.97f, 1f, 1f),
+            new Color(0.82f, 0.89f, 0.96f, 1f),
+            27,
             1));
-        row.AddChild(emblem);
+        TextureRect avatar = AgentConsoleAssetImage("identity_portrait_eris.png.png", new Vector2(48f, 48f), TextureRect.StretchModeEnum.KeepAspectCovered);
+        if (avatar != null)
+            avatarShell.AddChild(avatar);
+        else
+        {
+            var fallbackAvatar = AgentConsoleLabel("E", 24, new Color(0.33f, 0.52f, 0.96f, 1f), bold: true);
+            fallbackAvatar.HorizontalAlignment = HorizontalAlignment.Center;
+            fallbackAvatar.VerticalAlignment = VerticalAlignment.Center;
+            avatarShell.AddChild(fallbackAvatar);
+        }
+        row.AddChild(avatarShell);
 
-        var titles = new VBoxContainer
+        var titleBox = new VBoxContainer
         {
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        titles.AddThemeConstantOverride("separation", 0);
-        titles.AddChild(AgentConsoleLabel("Agent", 23, AgentConsoleInk, bold: true));
-        _agentConsoleTaskMetaLabel = AgentConsoleLabel("Gemini ↔ Eris · execution session", 10, AgentConsoleMuted);
-        titles.AddChild(_agentConsoleTaskMetaLabel);
-        row.AddChild(titles);
+        titleBox.AddThemeConstantOverride("separation", 3);
+        titleBox.AddChild(AgentConsoleLabel("Eris • Agent Console", 24, AgentConsoleInk, bold: true));
+        _agentConsoleTaskMetaLabel = AgentConsoleLabel("Gemini-powered AI companion", 10, AgentConsoleMuted);
+        titleBox.AddChild(_agentConsoleTaskMetaLabel);
+        titleBox.AddChild(AgentConsoleLabel("● Sẵn sàng", 10, AgentConsoleGreen, bold: true));
+        row.AddChild(titleBox);
 
-        _agentConsoleNewTaskButton = AgentConsoleButton("＋ Task mới", ToggleAgentNewTaskMode, primary: true);
-        _agentConsoleNewTaskButton.CustomMinimumSize = new Vector2(108f, 38f);
-        _agentConsoleNewTaskButton.TooltipText = "Giao task trực tiếp cho Gemini";
-        row.AddChild(_agentConsoleNewTaskButton);
-
-        _agentConsoleTasksToggleButton = AgentConsoleQuietButton("Công việc", ToggleAgentTaskDrawer, 92f);
-        _agentConsoleTasksToggleButton.TooltipText = "Mở lịch sử task";
-        row.AddChild(_agentConsoleTasksToggleButton);
-
-        var autopilot = AgentConsoleTinyStatus("AUTOPILOT", AgentConsolePink);
-        autopilot.TooltipText = "Task chạy unattended; thao tác dev thường không dừng xin quyền.";
+        var newTask = AgentConsoleButton("＋  Tạo task mới ✦", () =>
+        {
+            _agentConsoleDirectiveInput?.GrabFocus();
+            _agentConsoleDirectiveInput?.SelectAll();
+        }, primary: true);
+        newTask.CustomMinimumSize = new Vector2(148f, 42f);
+        row.AddChild(newTask);
+        row.AddChild(AgentConsoleQuietButton("▦  Workspaces", null, 112f));
+        var autopilot = AgentConsoleQuietButton("〰  AUTOPILOT", null, 112f);
+        autopilot.AddThemeColorOverride("font_color", AgentConsolePink);
         row.AddChild(autopilot);
-        _agentConsoleExecutorLabel = AgentConsoleTinyStatus("EXECUTOR · —", AgentConsoleGreen);
-        row.AddChild(_agentConsoleExecutorLabel);
-        _agentConsoleStatusLabel = AgentConsoleTinyStatus("IDLE", AgentConsoleMuted);
-        row.AddChild(_agentConsoleStatusLabel);
-
-        _agentConsoleInspectorToggleButton = AgentConsoleQuietButton("Chi tiết", ToggleAgentInspector, 82f);
+        row.AddChild(AgentConsoleQuietButton("〰  Trạng thái", null, 104f));
+        _agentConsoleInspectorToggleButton = AgentConsoleQuietButton("ⓘ  Chi tiết", ToggleAgentInspector, 98f);
         row.AddChild(_agentConsoleInspectorToggleButton);
-        var refresh = AgentConsoleQuietButton("↻", () => SendAgentControl("snapshot"), 38f);
-        refresh.TooltipText = "Đồng bộ task";
-        row.AddChild(refresh);
-        var close = CreateWindowControlButton("×", CloseAgentConsolePanel, 36f, 15);
+        row.AddChild(AgentConsoleQuietButton("⋯", () => SendAgentControl("snapshot"), 44f));
+        var close = CreateWindowControlButton("×", CloseAgentConsolePanel, 38f, 18);
         row.AddChild(close);
         return row;
     }
@@ -227,11 +315,7 @@ public partial class UdpListener
             SizeFlagsVertical = Control.SizeFlags.ExpandFill,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        body.AddThemeConstantOverride("separation", 12);
-
-        _agentConsoleTaskDrawer = BuildAgentTaskPane();
-        _agentConsoleTaskDrawer.Visible = _agentConsoleTaskDrawerVisible;
-        body.AddChild(_agentConsoleTaskDrawer);
+        body.AddThemeConstantOverride("separation", 16);
         body.AddChild(BuildAgentStreamPane());
         _agentConsoleInspectorDrawer = BuildAgentInspectorPane();
         _agentConsoleInspectorDrawer.Visible = _agentConsoleInspectorVisible;
@@ -294,17 +378,15 @@ public partial class UdpListener
     {
         var root = new VBoxContainer
         {
-            CustomMinimumSize = new Vector2(620f, 0f),
+            CustomMinimumSize = new Vector2(0f, 0f),
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             SizeFlagsVertical = Control.SizeFlags.ExpandFill,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        root.AddThemeConstantOverride("separation", 7);
+        root.AddThemeConstantOverride("separation", 0);
 
-        _agentConsoleTaskTitleLabel = AgentConsoleLabel("Chưa có task", 15, AgentConsoleInk, bold: true);
-        _agentConsoleTaskTitleLabel.ClipText = true;
-        _agentConsoleTaskTitleLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
-        root.AddChild(_agentConsoleTaskTitleLabel);
+        _agentConsoleTaskTitleLabel = AgentConsoleLabel("Chưa có task", 18, AgentConsoleInk, bold: true);
+        _agentConsoleTaskTitleLabel.Visible = false;
 
         var streamSurface = new PanelContainer
         {
@@ -313,11 +395,12 @@ public partial class UdpListener
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
         streamSurface.AddThemeStyleboxOverride("panel", AgentConsoleStyle(
-            AgentConsoleCard,
-            new Color(0.84f, 0.90f, 0.95f, 0.72f),
-            18,
-            1));
-        var streamMargin = AgentConsoleMargin(14, 10, 14, 10);
+            Colors.White,
+            new Color(0.88f, 0.91f, 0.96f, 0.95f),
+            22,
+            1,
+            shadow: true));
+        var streamMargin = AgentConsoleMargin(18, 14, 18, 14);
         streamSurface.AddChild(streamMargin);
         var streamBox = new VBoxContainer
         {
@@ -325,83 +408,192 @@ public partial class UdpListener
             SizeFlagsVertical = Control.SizeFlags.ExpandFill,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        streamBox.AddThemeConstantOverride("separation", 9);
+        streamBox.AddThemeConstantOverride("separation", 12);
         streamMargin.AddChild(streamBox);
         streamBox.AddChild(BuildAgentFilterBar());
-
         _agentConsoleEventScroll = new ScrollContainer
         {
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             SizeFlagsVertical = Control.SizeFlags.ExpandFill,
             HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
         };
+        ApplyHiddenScrollBarTheme(_agentConsoleEventScroll.GetVScrollBar());
         streamBox.AddChild(_agentConsoleEventScroll);
         _agentConsoleEventList = new VBoxContainer
         {
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+            CustomMinimumSize = new Vector2(0f, 360f),
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        _agentConsoleEventList.AddThemeConstantOverride("separation", 9);
+        _agentConsoleEventList.AddThemeConstantOverride("separation", 10);
         _agentConsoleEventScroll.AddChild(_agentConsoleEventList);
         root.AddChild(streamSurface);
         return root;
     }
 
-    private Control BuildAgentQuickSummary()
+    private Control BuildAgentWorkspaceStrip()
     {
-        var strip = new PanelContainer
+        var panel = new PanelContainer
         {
-            CustomMinimumSize = new Vector2(0f, 66f),
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        strip.AddThemeStyleboxOverride("panel", AgentConsoleStyle(
-            new Color(0.992f, 0.996f, 1f, 0.96f),
-            new Color(0.84f, 0.90f, 0.95f, 0.72f),
-            18,
-            1));
-        var margin = AgentConsoleMargin(12, 8, 12, 8);
-        strip.AddChild(margin);
+        panel.AddThemeStyleboxOverride("panel", AgentConsoleStyle(
+            Colors.White,
+            new Color(0.88f, 0.91f, 0.96f, 0.95f),
+            16,
+            1,
+            shadow: true));
+        var margin = AgentConsoleMargin(14, 9, 14, 9);
+        panel.AddChild(margin);
         var row = new HBoxContainer
         {
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        row.AddThemeConstantOverride("separation", 8);
+        row.AddThemeConstantOverride("separation", 14);
         margin.AddChild(row);
 
-        _agentConsoleStepLabel = AgentConsoleMetric("STEP", "—", AgentConsoleBlue);
-        _agentConsoleTestsLabel = AgentConsoleMetric("TESTS", "—", AgentConsoleGreen);
-        _agentConsoleFilesLabel = AgentConsoleMetric("FILES", "—", new Color(0.28f, 0.67f, 0.78f, 1f));
-        _agentConsoleCheckpointLabel = AgentConsoleMetric("CHECKPOINT", "—", AgentConsoleGreen);
-        _agentConsoleSkillsLabel = AgentConsoleMetric("SKILLS", "—", new Color(0.52f, 0.49f, 0.91f, 1f));
+        var left = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, MouseFilter = Control.MouseFilterEnum.Ignore };
+        left.AddThemeConstantOverride("separation", 6);
+        left.AddChild(AgentConsoleLabel("WORKSPACE", 9, AgentConsoleFaint, bold: true));
+        var workspaceRow = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        workspaceRow.AddThemeConstantOverride("separation", 10);
+        var workspaceSelect = AgentConsoleQuietButton("🗀  Eris-Core / build-beta  ▾", null, 250f);
+        workspaceSelect.Alignment = HorizontalAlignment.Left;
+        workspaceRow.AddChild(workspaceSelect);
+        workspaceRow.AddChild(AgentConsoleQuietButton("☆  Lưu", null, 72f));
+        workspaceRow.AddChild(AgentConsoleQuietButton("🗁  Mở thư mục", null, 112f));
+        left.AddChild(workspaceRow);
+        row.AddChild(left);
+
+        var divider = new VSeparator();
+        divider.Modulate = new Color(0.90f, 0.92f, 0.96f, 1f);
+        row.AddChild(divider);
+
+        var right = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, MouseFilter = Control.MouseFilterEnum.Ignore };
+        right.AddThemeConstantOverride("separation", 6);
+        right.AddChild(AgentConsoleLabel("WORKSPACE ĐÃ LƯU", 9, AgentConsoleFaint, bold: true));
+        var chips = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        chips.AddThemeConstantOverride("separation", 10);
+        chips.AddChild(AgentWorkspaceChip("●  Eris-Core / main", new Color(0.34f, 0.79f, 0.61f, 1f)));
+        chips.AddChild(AgentWorkspaceChip("✧  Research / eris-v2", new Color(0.56f, 0.56f, 0.94f, 1f)));
+        chips.AddChild(AgentWorkspaceChip("▣  Docs", new Color(0.64f, 0.66f, 0.77f, 1f)));
+        chips.AddChild(AgentWorkspaceChip("＋  Thêm", AgentConsoleFaint));
+        right.AddChild(chips);
+        row.AddChild(right);
+        return panel;
+    }
+
+    private Control AgentWorkspaceChip(string text, Color accent)
+    {
+        var button = AgentConsoleQuietButton(text, null, 124f);
+        button.AddThemeColorOverride("font_color", accent);
+        return button;
+    }
+
+    private Control AgentConsoleToolChip(string text, Color accent)
+    {
+        var button = AgentConsoleQuietButton(text, null, 36f);
+        button.CustomMinimumSize = new Vector2(36f, 32f);
+        button.AddThemeFontSizeOverride("font_size", 10);
+        button.AddThemeColorOverride("font_color", accent);
+        return button;
+    }
+
+    private TextureRect AgentConsoleAssetImage(string fileName, Vector2 size, TextureRect.StretchModeEnum stretchMode)
+    {
+        string path = ResolveIdentityAssetPath(IdentityAsset(fileName));
+        if (!ResourceLoader.Exists(path))
+            return null;
+        return new TextureRect
+        {
+            Texture = GD.Load<Texture2D>(path),
+            CustomMinimumSize = size,
+            Size = size,
+            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            StretchMode = stretchMode,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+    }
+
+    private void ApplyAgentConsoleTheme()
+    {
+        var theme = _agentConsolePanel.Theme ?? new Theme();
+        theme.DefaultFont = AgentConsoleFont(false);
+        _agentConsolePanel.Theme = theme;
+    }
+
+    private static Font AgentConsoleFont(bool bold)
+    {
+        if (bold)
+        {
+            _agentConsoleFontBold ??= new SystemFont
+            {
+                FontNames = new[] { "Segoe UI Semibold", "Segoe UI", "Inter", "Arial" },
+                FontWeight = 650,
+            };
+            return _agentConsoleFontBold;
+        }
+
+        _agentConsoleFontRegular ??= new SystemFont
+        {
+            FontNames = new[] { "Segoe UI", "Inter", "Arial" },
+            FontWeight = 400,
+        };
+        return _agentConsoleFontRegular;
+    }
+
+    private Control BuildAgentQuickSummary()
+    {
+        var row = new HBoxContainer
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        row.AddThemeConstantOverride("separation", 12);
+        _agentConsoleStepLabel = AgentConsoleMetric(@"STEP
+0 / 12", new Color(0.97f, 0.985f, 1f, 1f), new Color(0.26f, 0.47f, 0.96f, 1f));
+        _agentConsoleTestsLabel = AgentConsoleMetric(@"TESTS
+—
+Chưa chạy", new Color(0.97f, 0.995f, 0.98f, 1f), new Color(0.30f, 0.76f, 0.56f, 1f));
+        _agentConsoleFilesLabel = AgentConsoleMetric(@"FILES
+—
+Chưa thay đổi", Colors.White, new Color(0.36f, 0.52f, 0.96f, 1f));
+        _agentConsoleCheckpointLabel = AgentConsoleMetric(@"CHECKPOINT
+—
+Chưa thiết lập", new Color(1f, 0.985f, 0.97f, 1f), new Color(0.90f, 0.63f, 0.22f, 1f));
+        _agentConsoleSkillsLabel = AgentConsoleMetric(@"SKILLS
+8
+Sẵn sàng", new Color(0.987f, 0.975f, 1f, 1f), new Color(0.64f, 0.44f, 0.96f, 1f));
         row.AddChild(_agentConsoleStepLabel);
         row.AddChild(_agentConsoleTestsLabel);
         row.AddChild(_agentConsoleFilesLabel);
         row.AddChild(_agentConsoleCheckpointLabel);
         row.AddChild(_agentConsoleSkillsLabel);
-        return strip;
+        return row;
     }
 
     private Control BuildAgentFilterBar()
     {
         var row = new HBoxContainer
         {
-            CustomMinimumSize = new Vector2(0f, 40f),
+            CustomMinimumSize = new Vector2(0f, 44f),
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        row.AddThemeConstantOverride("separation", 6);
-        _agentConsoleFilterAllButton = AgentConsoleFilterButton("Tất cả", "all");
-        _agentConsoleFilterConversationButton = AgentConsoleFilterButton("Hội thoại", "conversation");
-        _agentConsoleFilterToolsButton = AgentConsoleFilterButton("Tools", "tools");
+        row.AddThemeConstantOverride("separation", 8);
+        _agentConsoleFilterAllButton = AgentConsoleFilterButton("◈  Timeline", "all");
+        _agentConsoleFilterConversationButton = AgentConsoleFilterButton("◌  Hội thoại", "conversation");
+        _agentConsoleFilterToolsButton = AgentConsoleFilterButton("⚒  Công cụ", "tools");
         row.AddChild(_agentConsoleFilterAllButton);
         row.AddChild(_agentConsoleFilterConversationButton);
         row.AddChild(_agentConsoleFilterToolsButton);
-        var spacer = new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, MouseFilter = Control.MouseFilterEnum.Ignore };
-        row.AddChild(spacer);
-        _agentConsoleFollowButton = AgentConsoleQuietButton("Theo dõi ●", ToggleAgentAutoFollow, 92f);
-        _agentConsoleFollowButton.TooltipText = "Tự cuộn xuống event mới";
+        row.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, MouseFilter = Control.MouseFilterEnum.Ignore });
+        row.AddChild(AgentConsoleQuietButton("Tất cả sự kiện  ▾", null, 136f));
+        row.AddChild(AgentConsoleQuietButton("⌕", null, 44f));
+        _agentConsoleFollowButton = AgentConsoleQuietButton("⇅", ToggleAgentAutoFollow, 44f);
         row.AddChild(_agentConsoleFollowButton);
         RefreshAgentFilterButtons();
         return row;
@@ -411,16 +603,17 @@ public partial class UdpListener
     {
         var panel = new PanelContainer
         {
-            CustomMinimumSize = new Vector2(265f, 0f),
+            CustomMinimumSize = new Vector2(400f, 0f),
             SizeFlagsVertical = Control.SizeFlags.ExpandFill,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
         panel.AddThemeStyleboxOverride("panel", AgentConsoleStyle(
-            new Color(0.991f, 0.996f, 1f, 0.98f),
-            new Color(0.84f, 0.90f, 0.95f, 0.72f),
-            18,
-            1));
-        var margin = AgentConsoleMargin(14, 12, 14, 12);
+            Colors.White,
+            new Color(0.88f, 0.91f, 0.96f, 0.95f),
+            22,
+            1,
+            shadow: true));
+        var margin = AgentConsoleMargin(18, 16, 18, 16);
         panel.AddChild(margin);
         var box = new VBoxContainer
         {
@@ -428,150 +621,139 @@ public partial class UdpListener
             SizeFlagsVertical = Control.SizeFlags.ExpandFill,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        box.AddThemeConstantOverride("separation", 9);
+        box.AddThemeConstantOverride("separation", 12);
         margin.AddChild(box);
 
         var top = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
-        var title = AgentConsoleLabel("Chi tiết phiên", 14, AgentConsoleInk, bold: true);
+        var title = AgentConsoleLabel("Phiên làm việc", 18, AgentConsoleInk, bold: true);
         title.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         top.AddChild(title);
-        top.AddChild(AgentConsoleQuietButton("×", ToggleAgentInspector, 30f));
+        top.AddChild(AgentConsoleLabel("● Sẵn sàng", 11, AgentConsoleGreen, bold: true));
+        top.AddChild(AgentConsoleQuietButton("⌃", ToggleAgentInspector, 34f));
         box.AddChild(top);
-        _agentConsoleInspectorLabel = AgentConsoleLabel("Chưa chọn task", 11, AgentConsoleInk, bold: true);
-        _agentConsoleInspectorLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        box.AddChild(_agentConsoleInspectorLabel);
-        var divider = new ColorRect { Color = new Color(0.86f, 0.90f, 0.95f, 0.80f), CustomMinimumSize = new Vector2(0f, 1f), MouseFilter = Control.MouseFilterEnum.Ignore };
-        box.AddChild(divider);
-        var scroll = new ScrollContainer
+
+        box.AddChild(AgentConsoleLabel("Tiến trình tổng quan", 13, AgentConsoleInk, bold: true));
+        var progress = new ProgressBar { MinValue = 0, MaxValue = 100, Value = 0, ShowPercentage = false, CustomMinimumSize = new Vector2(0f, 10f), MouseFilter = Control.MouseFilterEnum.Ignore };
+        progress.AddThemeStyleboxOverride("background", AgentConsoleStyle(new Color(0.93f,0.95f,0.98f,1f), Colors.Transparent, 5, 0));
+        progress.AddThemeStyleboxOverride("fill", AgentConsoleStyle(new Color(0.65f,0.76f,1f,1f), Colors.Transparent, 5, 0));
+        box.AddChild(progress);
+        var progressMeta = AgentConsoleLabel("Bước hoàn thành  0 / 12    Thời gian  00:00:00    Ước tính còn lại  —", 11, AgentConsoleMuted);
+        progressMeta.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        box.AddChild(progressMeta);
+
+        var detailScroll = new ScrollContainer
         {
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             SizeFlagsVertical = Control.SizeFlags.ExpandFill,
             HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+            VerticalScrollMode = ScrollContainer.ScrollMode.Auto,
+            ClipContents = true,
+            MouseFilter = Control.MouseFilterEnum.Stop,
         };
-        box.AddChild(scroll);
-        _agentConsoleInspectorDetailLabel = AgentConsoleLabel("", 10, AgentConsoleMuted);
+        ApplyHiddenScrollBarTheme(detailScroll.GetVScrollBar());
+        box.AddChild(detailScroll);
+
+        var detailBox = new VBoxContainer
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        detailBox.AddThemeConstantOverride("separation", 12);
+        detailScroll.AddChild(detailBox);
+
+        var section = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        section.AddThemeConstantOverride("separation", 6);
+        section.AddChild(AgentConsoleLabel("Workspace", 16, AgentConsoleInk, bold: true));
+        section.AddChild(AgentConsoleLabel("🗀  Eris-Core / build-beta", 13, AgentConsoleInk, bold: true));
+        section.AddChild(AgentConsoleLabel(@"Đường dẫn         ~/workspace/eris-core/build-beta
+Nhánh               main
+Cập nhật            2 phút trước", 11, AgentConsoleMuted));
+        detailBox.AddChild(section);
+
+        var taskSection = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        taskSection.AddThemeConstantOverride("separation", 6);
+        taskSection.AddChild(AgentConsoleLabel("Thông tin task", 16, AgentConsoleInk, bold: true));
+        _agentConsoleInspectorLabel = AgentConsoleLabel("Chưa chọn task", 12, AgentConsoleMuted, bold: false);
+        taskSection.AddChild(_agentConsoleInspectorLabel);
+        _agentConsoleInspectorDetailLabel = AgentConsoleLabel(@"Task ID            —
+Trạng thái         Chưa chạy
+Chế độ               Thủ công
+Tạo lúc              —
+Mô tả                 —", 11, AgentConsoleMuted);
         _agentConsoleInspectorDetailLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        _agentConsoleInspectorDetailLabel.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        scroll.AddChild(_agentConsoleInspectorDetailLabel);
+        taskSection.AddChild(_agentConsoleInspectorDetailLabel);
+        detailBox.AddChild(taskSection);
+
+        var toolSection = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        toolSection.AddThemeConstantOverride("separation", 8);
+        toolSection.AddChild(AgentConsoleLabel("Kỹ năng & Công cụ", 16, AgentConsoleInk, bold: true));
+        var chips = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        chips.AddThemeConstantOverride("separation", 8);
+        chips.AddChild(AgentConsoleToolChip("</>", new Color(0.36f,0.52f,0.96f,1f)));
+        chips.AddChild(AgentConsoleToolChip("☷", new Color(0.64f,0.66f,0.77f,1f)));
+        chips.AddChild(AgentConsoleToolChip("🗄", new Color(0.64f,0.66f,0.77f,1f)));
+        chips.AddChild(AgentConsoleToolChip("⌘", new Color(0.56f,0.44f,0.96f,1f)));
+        chips.AddChild(AgentConsoleToolChip("⌕", new Color(0.64f,0.66f,0.77f,1f)));
+        chips.AddChild(AgentConsoleToolChip("⚒", new Color(0.64f,0.66f,0.77f,1f)));
+        chips.AddChild(AgentConsoleToolChip("⊕2", new Color(0.64f,0.66f,0.77f,1f)));
+        toolSection.AddChild(chips);
+        detailBox.AddChild(toolSection);
         return panel;
     }
 
     private Control BuildAgentConsoleFooter()
     {
-        var root = new VBoxContainer
+        var panel = new PanelContainer
         {
-            CustomMinimumSize = new Vector2(0f, 88f),
+            CustomMinimumSize = new Vector2(0f, 62f),
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        root.AddThemeConstantOverride("separation", 7);
+        panel.AddThemeStyleboxOverride("panel", AgentConsoleStyle(
+            Colors.White,
+            new Color(0.88f, 0.91f, 0.96f, 0.95f),
+            22,
+            1,
+            shadow: true));
+        var margin = AgentConsoleMargin(14, 10, 14, 10);
+        panel.AddChild(margin);
+        var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, MouseFilter = Control.MouseFilterEnum.Ignore };
+        row.AddThemeConstantOverride("separation", 10);
+        margin.AddChild(row);
 
-        var composer = new PanelContainer
-        {
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        composer.AddThemeStyleboxOverride("panel", AgentConsoleStyle(
-            AgentConsoleCard,
-            new Color(0.84f, 0.90f, 0.95f, 0.76f),
-            16,
-            1));
-        var composerMargin = AgentConsoleMargin(9, 7, 8, 7);
-        composer.AddChild(composerMargin);
-        var composerRow = new HBoxContainer
-        {
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        composerRow.AddThemeConstantOverride("separation", 7);
-        composerMargin.AddChild(composerRow);
+        _agentConsolePauseButton = AgentConsoleQuietButton("Ⅱ  Tạm dừng", () => SendAgentControl("pause"), 116f);
+        _agentConsoleStopButton = AgentConsoleQuietButton("□  Dừng", () => SendAgentControl("stop"), 96f, danger: false);
+        _agentConsoleRollbackButton = AgentConsoleQuietButton("⟲  Rollback", () => SendAgentControl("rollback", checkpointId: SelectedAgentTask()?.CheckpointId ?? ""), 118f);
+        row.AddChild(_agentConsolePauseButton);
+        row.AddChild(_agentConsoleStopButton);
+        row.AddChild(_agentConsoleRollbackButton);
+
         _agentConsoleDirectiveInput = new LineEdit
         {
-            PlaceholderText = "Chỉ thị cho Gemini...  ví dụ: đừng tạo abstraction mới, tìm root cause trước",
+            PlaceholderText = "Chỉ thị cho Gemini... (ví dụ: 'Viết module xác thực người dùng')",
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             ClearButtonEnabled = true,
         };
         StyleAgentConsoleInput(_agentConsoleDirectiveInput);
-        _agentConsoleDirectiveInput.TextSubmitted += _ => SubmitAgentComposer();
-        composerRow.AddChild(_agentConsoleDirectiveInput);
-        _agentConsoleComposerSendButton = AgentConsoleButton("Gửi  ➤", SubmitAgentComposer, primary: true);
-        _agentConsoleComposerSendButton.CustomMinimumSize = new Vector2(92f, 42f);
-        composerRow.AddChild(_agentConsoleComposerSendButton);
-        root.AddChild(composer);
+        _agentConsoleDirectiveInput.TextSubmitted += _ => SendAgentDirective();
+        row.AddChild(_agentConsoleDirectiveInput);
 
-        var actionRow = new HBoxContainer
+        var send = AgentConsoleButton("Gửi ➤", SendAgentDirective, primary: true);
+        send.CustomMinimumSize = new Vector2(124f, 46f);
+        row.AddChild(send);
+        var statusRow = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        statusRow.AddThemeConstantOverride("separation", 8);
+        TextureRect botanical = AgentConsoleAssetImage("identity_botanical_footer.png", new Vector2(48f, 26f), TextureRect.StretchModeEnum.KeepAspectCentered);
+        if (botanical != null)
         {
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        actionRow.AddThemeConstantOverride("separation", 7);
-        _agentConsolePauseButton = AgentConsoleQuietButton("Ⅱ  Tạm dừng", () => SendAgentControl("pause"), 104f);
-        _agentConsoleResumeButton = AgentConsoleQuietButton("▶  Tiếp tục", () => SendAgentControl("resume"), 100f);
-        _agentConsoleStopButton = AgentConsoleQuietButton("■  Dừng", () => SendAgentControl("stop"), 82f, danger: true);
-        _agentConsoleRollbackButton = AgentConsoleQuietButton("↶  Rollback", () => SendAgentControl("rollback", checkpointId: SelectedAgentTask()?.CheckpointId ?? ""), 106f);
-        actionRow.AddChild(_agentConsolePauseButton);
-        actionRow.AddChild(_agentConsoleResumeButton);
-        actionRow.AddChild(_agentConsoleStopButton);
-        actionRow.AddChild(_agentConsoleRollbackButton);
-        var spacer = new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, MouseFilter = Control.MouseFilterEnum.Ignore };
-        actionRow.AddChild(spacer);
-        _agentConsoleControlStatusLabel = AgentConsoleLabel("Sẵn sàng.", 9, AgentConsoleFaint);
-        _agentConsoleControlStatusLabel.VerticalAlignment = VerticalAlignment.Center;
-        actionRow.AddChild(_agentConsoleControlStatusLabel);
-        root.AddChild(actionRow);
-        return root;
-    }
-
-    private void ToggleAgentNewTaskMode()
-    {
-        _agentConsoleNewTaskMode = !_agentConsoleNewTaskMode;
-        RefreshAgentComposerMode();
-        if (_agentConsoleNewTaskMode)
-            _agentConsoleDirectiveInput?.GrabFocus();
-    }
-
-    private void RefreshAgentComposerMode()
-    {
-        if (_agentConsoleDirectiveInput != null)
-        {
-            _agentConsoleDirectiveInput.Editable = _agentConsoleNewTaskMode
-                || (SelectedAgentTask() != null && !AgentTaskTerminal(SelectedAgentTask()?.Status ?? ""));
-            _agentConsoleDirectiveInput.PlaceholderText = _agentConsoleNewTaskMode
-                ? "Giao task mới cho Gemini...  ví dụ: debug capability routing, sửa root cause rồi chạy test"
-                : "Chỉ thị cho Gemini...  ví dụ: đừng tạo abstraction mới, tìm root cause trước";
+            botanical.Modulate = new Color(1f, 1f, 1f, 0.48f);
+            statusRow.AddChild(botanical);
         }
-        if (_agentConsoleNewTaskButton != null)
-        {
-            _agentConsoleNewTaskButton.Text = _agentConsoleNewTaskMode ? "× Hủy task" : "＋ Task mới";
-            _agentConsoleNewTaskButton.TooltipText = _agentConsoleNewTaskMode
-                ? "Thoát chế độ tạo task mới"
-                : "Giao task trực tiếp cho Gemini";
-        }
-        if (_agentConsoleComposerSendButton != null)
-            _agentConsoleComposerSendButton.Text = _agentConsoleNewTaskMode ? "Chạy  ➤" : "Gửi  ➤";
-        if (_agentConsoleNewTaskMode)
-            SetAgentConsoleControlStatus("Đang tạo task mới · Gemini/LangGraph sẽ chạy độc lập, Eris vẫn giám sát.");
-    }
-
-    private void SubmitAgentComposer()
-    {
-        if (_agentConsoleNewTaskMode)
-            SendAgentNewTask();
-        else
-            SendAgentDirective();
-    }
-
-    private void SendAgentNewTask()
-    {
-        string text = (_agentConsoleDirectiveInput?.Text ?? "").Trim();
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            SetAgentConsoleControlStatus("Mục tiêu task đang trống.", error: true);
-            return;
-        }
-        SendAgentControl("create_task", text: text);
-        if (_agentConsoleDirectiveInput != null)
-            _agentConsoleDirectiveInput.Text = "";
+        statusRow.AddChild(AgentConsoleLabel("Eris đang chờ chỉ thị của bạn     ●", 11, AgentConsoleMuted));
+        row.AddChild(statusRow);
+        _agentConsoleResumeButton = null;
+        _agentConsoleControlStatusLabel = AgentConsoleLabel("", 10, AgentConsoleFaint);
+        return panel;
     }
 
     private void ToggleAgentTaskDrawer()
@@ -624,17 +806,17 @@ public partial class UdpListener
     {
         if (button == null)
             return;
-        button.AddThemeColorOverride("font_color", active ? Colors.White : AgentConsoleMuted);
-        button.AddThemeColorOverride("font_hover_color", active ? Colors.White : AgentConsoleInk);
+        button.AddThemeColorOverride("font_color", active ? AgentConsolePink : AgentConsoleMuted);
+        button.AddThemeColorOverride("font_hover_color", active ? AgentConsolePink : AgentConsoleInk);
         button.AddThemeStyleboxOverride("normal", AgentConsoleStyle(
-            active ? new Color(0.16f, 0.20f, 0.27f, 0.98f) : new Color(0.965f, 0.975f, 0.99f, 0.94f),
             Colors.Transparent,
-            11,
+            Colors.Transparent,
+            8,
             0));
         button.AddThemeStyleboxOverride("hover", AgentConsoleStyle(
-            active ? new Color(0.19f, 0.23f, 0.30f, 1f) : new Color(0.93f, 0.96f, 1f, 1f),
+            new Color(0.98f,0.985f,0.995f,1f),
             Colors.Transparent,
-            11,
+            8,
             0));
     }
 
@@ -676,13 +858,19 @@ public partial class UdpListener
         if (_agentConsolePanel == null)
             return;
         Vector2 viewport = GetViewportRect().Size;
+        float availableWidth = Mathf.Max(520f, viewport.X - AgentConsoleViewportPaddingX * 2f);
+        float availableHeight = Mathf.Max(440f, viewport.Y - AgentConsoleViewportPaddingY * 2f);
         Vector2 target = new(
-            Mathf.Clamp(viewport.X - 100f, AgentConsoleMinimumSize.X, AgentConsolePreferredSize.X),
-            Mathf.Clamp(viewport.Y - 90f, AgentConsoleMinimumSize.Y, AgentConsolePreferredSize.Y));
+            Mathf.Min(AgentConsolePreferredSize.X, availableWidth),
+            Mathf.Min(AgentConsolePreferredSize.Y, availableHeight));
+        if (availableWidth >= AgentConsoleMinimumSize.X)
+            target.X = Mathf.Max(target.X, AgentConsoleMinimumSize.X);
+        if (availableHeight >= AgentConsoleMinimumSize.Y)
+            target.Y = Mathf.Max(target.Y, AgentConsoleMinimumSize.Y);
         _agentConsolePanel.Size = target;
         _agentConsolePanel.Position = new Vector2(
-            Mathf.Max(12f, (viewport.X - target.X) * 0.5f),
-            Mathf.Max(12f, (viewport.Y - target.Y) * 0.5f));
+            Mathf.Max(AgentConsoleViewportPaddingX, (viewport.X - target.X) * 0.5f),
+            Mathf.Max(AgentConsoleViewportPaddingY, (viewport.Y - target.Y) * 0.5f));
         _agentConsolePanel.Visible = true;
         _agentConsolePanel.MoveToFront();
         RefreshAgentConsole();
@@ -733,7 +921,7 @@ public partial class UdpListener
     {
         if (_chatSend == null)
             return;
-        if (action != "snapshot" && action != "create_task" && string.IsNullOrWhiteSpace(_agentSelectedTaskId))
+        if (action != "snapshot" && string.IsNullOrWhiteSpace(_agentSelectedTaskId))
         {
             SetAgentConsoleControlStatus("Chưa chọn task để điều khiển.", error: true);
             return;
@@ -750,8 +938,6 @@ public partial class UdpListener
         };
         if (!string.IsNullOrWhiteSpace(text))
             payload["text"] = text;
-        if (action == "create_task")
-            payload["task_mode"] = "execute";
         if (!string.IsNullOrWhiteSpace(checkpointId))
             payload["checkpoint_id"] = checkpointId;
 
@@ -763,10 +949,7 @@ public partial class UdpListener
         }
         _agentLastSnapshotRequestMs = Time.GetTicksMsec();
         if (!quiet)
-            SetAgentConsoleControlStatus(
-                action == "snapshot" ? "Đang đồng bộ task..."
-                : action == "create_task" ? "Đang tạo task Gemini mới..."
-                : $"Đã gửi {action}; chờ AgentHarness nhận ở node boundary.");
+            SetAgentConsoleControlStatus(action == "snapshot" ? "Đang đồng bộ task..." : $"Đã gửi {action}; chờ AgentHarness nhận ở node boundary.");
     }
 
     private bool TryHandleAgentConsolePacket(string raw)
@@ -807,14 +990,8 @@ public partial class UdpListener
             _agentLastPacketMs = Time.GetTicksMsec();
             string status = AgentReadJsonString(root, "status");
             string message = AgentReadJsonString(root, "message");
-            string ackAction = AgentReadJsonString(root, "action");
             if (root.TryGetProperty("agent_console", out JsonElement console) && console.ValueKind == JsonValueKind.Object)
                 ApplyAgentConsoleSnapshot(console);
-            if (status == "ok" && ackAction == "create_task")
-            {
-                _agentConsoleNewTaskMode = false;
-                RefreshAgentComposerMode();
-            }
             SetAgentConsoleControlStatus(
                 string.IsNullOrWhiteSpace(message) ? "Agent Console đã đồng bộ." : message,
                 error: status == "error");
@@ -890,8 +1067,6 @@ public partial class UdpListener
         target.Status = source.Status;
         target.Executor = source.Executor;
         target.Model = source.Model;
-        target.Source = source.Source;
-        target.TaskMode = source.TaskMode;
         target.CurrentStep = source.CurrentStep;
         target.PendingControls = source.PendingControls;
         target.CheckpointId = source.CheckpointId;
@@ -925,12 +1100,6 @@ public partial class UdpListener
         };
         if (string.IsNullOrWhiteSpace(task.Status)) task.Status = "queued";
         if (string.IsNullOrWhiteSpace(task.Executor)) task.Executor = "executor";
-        if (node.TryGetProperty("metadata", out JsonElement metadata) && metadata.ValueKind == JsonValueKind.Object)
-        {
-            task.Source = AgentReadJsonString(metadata, "source");
-            task.TaskMode = AgentReadJsonString(metadata, "task_mode");
-        }
-        if (string.IsNullOrWhiteSpace(task.TaskMode)) task.TaskMode = "execute";
 
         if (node.TryGetProperty("active_skills", out JsonElement skills) && skills.ValueKind == JsonValueKind.Array)
             foreach (JsonElement item in skills.EnumerateArray())
@@ -1017,7 +1186,7 @@ public partial class UdpListener
             bool selected = string.Equals(task.TaskId, _agentSelectedTaskId, StringComparison.Ordinal);
             var button = new Button
             {
-                Text = $"{AgentStatusGlyph(task.Status)}  {CompactAgentText(task.Goal, 34)}\n     {AgentStatusLabel(task.Status)} · bước {task.CurrentStep} · {AgentTaskOriginLabel(task)}",
+                Text = $"{AgentStatusGlyph(task.Status)}  {CompactAgentText(task.Goal, 34)}\n     {AgentStatusLabel(task.Status)} · bước {task.CurrentStep}",
                 CustomMinimumSize = new Vector2(0f, 54f),
                 SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
                 Alignment = HorizontalAlignment.Left,
@@ -1058,6 +1227,8 @@ public partial class UdpListener
         {
             _agentConsoleTaskTitleLabel.Text = "Chưa có task";
             _agentConsoleEventList.AddChild(BuildAgentEmptyState("Khi Gemini bắt đầu làm việc, tool, checkpoint và intervention của Eris sẽ xuất hiện ở timeline này."));
+            _agentConsoleEventList.AddChild(BuildAgentPreviewTimeline());
+            CallDeferred(nameof(ResetAgentConsoleEventScrollTop));
             return;
         }
 
@@ -1078,6 +1249,11 @@ public partial class UdpListener
                 ? "Task đã tồn tại nhưng chưa phát execution event."
                 : "Không có event nào khớp bộ lọc hiện tại.";
             _agentConsoleEventList.AddChild(BuildAgentEmptyState(message));
+            if (task.Events.Count == 0)
+            {
+                _agentConsoleEventList.AddChild(BuildAgentPreviewTimeline());
+                CallDeferred(nameof(ResetAgentConsoleEventScrollTop));
+            }
         }
     }
 
@@ -1094,29 +1270,29 @@ public partial class UdpListener
     private Control BuildAgentConversationEvent(AgentConsoleEventView ev)
     {
         Color accent = AgentActorColor(ev.Actor, ev.Type);
+        bool isEris = string.Equals(ev.Actor, "eris", StringComparison.OrdinalIgnoreCase)
+            || (ev.Type ?? "").StartsWith("supervisor_", StringComparison.Ordinal);
+        bool isUser = string.Equals(ev.Actor, "user", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(ev.Type, "user_directive", StringComparison.OrdinalIgnoreCase);
+
         var outer = new HBoxContainer
         {
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        outer.AddThemeConstantOverride("separation", 10);
+        outer.AddThemeConstantOverride("separation", 8);
 
-        var marker = new Label
+        // Eris và user lệch nhẹ sang phải để timeline có nhịp hội thoại thay vì
+        // một cột card giống nhau từ trên xuống dưới.
+        if (isEris || isUser)
         {
-            Text = AgentActorGlyph(ev.Actor, ev.Type),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            CustomMinimumSize = new Vector2(34f, 34f),
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        marker.AddThemeFontSizeOverride("font_size", 13);
-        marker.AddThemeColorOverride("font_color", accent);
-        marker.AddThemeStyleboxOverride("normal", AgentConsoleStyle(
-            new Color(accent.R, accent.G, accent.B, 0.10f),
-            new Color(accent.R, accent.G, accent.B, 0.25f),
-            17,
-            1));
-        outer.AddChild(marker);
+            var indent = new Control
+            {
+                CustomMinimumSize = new Vector2(isUser ? 72f : 34f, 0f),
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+            };
+            outer.AddChild(indent);
+        }
 
         var panel = new PanelContainer
         {
@@ -1124,35 +1300,44 @@ public partial class UdpListener
             MouseFilter = Control.MouseFilterEnum.Stop,
             MouseDefaultCursorShape = Control.CursorShape.PointingHand,
         };
+        Color bubble = isEris
+            ? new Color(1.0f, 0.955f, 0.973f, 0.96f)
+            : isUser
+                ? new Color(0.955f, 0.970f, 0.995f, 0.96f)
+                : new Color(0.968f, 0.982f, 0.973f, 0.96f);
         panel.AddThemeStyleboxOverride("panel", AgentConsoleStyle(
-            new Color(0.998f, 0.999f, 1f, 0.98f),
-            new Color(0.87f, 0.91f, 0.96f, 0.72f),
-            14,
+            bubble,
+            new Color(accent.R, accent.G, accent.B, ev.Importance >= 0.85f ? 0.34f : 0.18f),
+            13,
             1));
-        var margin = AgentConsoleMargin(12, 8, 12, 8);
+        var margin = AgentConsoleMargin(12, 9, 12, 9);
         panel.AddChild(margin);
         var box = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
-        box.AddThemeConstantOverride("separation", 3);
+        box.AddThemeConstantOverride("separation", 4);
         margin.AddChild(box);
+
         var top = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
         Label actorLabel = AgentConsoleLabel(AgentActorLabel(ev.Actor, ev.Type), 9, accent, bold: true);
         actorLabel.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         top.AddChild(actorLabel);
-        if (ev.CreatedAt > 0)
-            top.AddChild(AgentConsoleLabel(AgentTimeText(ev.CreatedAt), 8, AgentConsoleFaint));
+        if (ev.Step > 0)
+            top.AddChild(AgentConsoleLabel($"{ev.Step}", 8, AgentConsoleFaint));
         box.AddChild(top);
+
         Label summary = AgentConsoleLabel(
             string.IsNullOrWhiteSpace(ev.Summary) ? AgentEventLabel(ev.Type) : ev.Summary,
-            11,
+            12,
             AgentConsoleInk);
         summary.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         box.AddChild(summary);
+
         if (!string.IsNullOrWhiteSpace(ev.Detail))
         {
             Label detail = AgentConsoleLabel(CompactAgentText(ev.Detail, 300), 9, AgentConsoleMuted);
             detail.AutowrapMode = TextServer.AutowrapMode.WordSmart;
             box.AddChild(detail);
         }
+
         AgentConsoleEventView captured = ev;
         panel.GuiInput += input =>
         {
@@ -1165,23 +1350,21 @@ public partial class UdpListener
             }
         };
         outer.AddChild(panel);
+        if (!(isEris || isUser))
+        {
+            var rightBreathingRoom = new Control
+            {
+                CustomMinimumSize = new Vector2(38f, 0f),
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+            };
+            outer.AddChild(rightBreathingRoom);
+        }
         return outer;
     }
 
     private Control BuildAgentCompactEvent(AgentConsoleEventView ev)
     {
         Color accent = AgentActorColor(ev.Actor, ev.Type);
-        var outer = new HBoxContainer
-        {
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        outer.AddThemeConstantOverride("separation", 10);
-        var dot = AgentConsoleLabel("●", 8, accent, bold: true);
-        dot.CustomMinimumSize = new Vector2(34f, 0f);
-        dot.HorizontalAlignment = HorizontalAlignment.Center;
-        outer.AddChild(dot);
-
         var panel = new PanelContainer
         {
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
@@ -1189,20 +1372,24 @@ public partial class UdpListener
             MouseDefaultCursorShape = Control.CursorShape.PointingHand,
         };
         panel.AddThemeStyleboxOverride("panel", AgentConsoleStyle(
-            new Color(0.965f, 0.978f, 0.992f, 0.80f),
-            Colors.Transparent,
-            11,
-            0));
+            new Color(AgentConsoleSoft.R, AgentConsoleSoft.G, AgentConsoleSoft.B, 0.56f),
+            new Color(accent.R, accent.G, accent.B, 0.10f),
+            10,
+            1));
         var margin = AgentConsoleMargin(10, 6, 10, 6);
         panel.AddChild(margin);
         var row = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
         row.AddThemeConstantOverride("separation", 8);
         margin.AddChild(row);
+
+        Label dot = AgentConsoleLabel("●", 8, accent, bold: true);
+        dot.CustomMinimumSize = new Vector2(12f, 0f);
+        row.AddChild(dot);
         Label kind = AgentConsoleLabel(AgentEventLabel(ev.Type), 9, accent, bold: true);
-        kind.CustomMinimumSize = new Vector2(104f, 0f);
+        kind.CustomMinimumSize = new Vector2(92f, 0f);
         row.AddChild(kind);
         Label summary = AgentConsoleLabel(
-            string.IsNullOrWhiteSpace(ev.Summary) ? AgentActorLabel(ev.Actor, ev.Type) : CompactAgentText(ev.Summary, 220),
+            string.IsNullOrWhiteSpace(ev.Summary) ? AgentActorLabel(ev.Actor, ev.Type) : CompactAgentText(ev.Summary, 190),
             10,
             AgentConsoleInk);
         summary.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
@@ -1211,6 +1398,7 @@ public partial class UdpListener
         row.AddChild(summary);
         if (ev.Step > 0)
             row.AddChild(AgentConsoleLabel($"#{ev.Step}", 8, AgentConsoleFaint));
+
         AgentConsoleEventView captured = ev;
         panel.GuiInput += input =>
         {
@@ -1222,31 +1410,109 @@ public partial class UdpListener
                 GetViewport().SetInputAsHandled();
             }
         };
-        outer.AddChild(panel);
-        return outer;
+        return panel;
     }
 
     private Control BuildAgentEmptyState(string message)
     {
-        var margin = AgentConsoleMargin(16, 42, 16, 18);
+        var outer = new CenterContainer
+        {
+            CustomMinimumSize = new Vector2(0f, 235f),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        var box = new VBoxContainer { CustomMinimumSize = new Vector2(420f, 180f), MouseFilter = Control.MouseFilterEnum.Ignore };
+        box.AddThemeConstantOverride("separation", 8);
+        outer.AddChild(box);
+        TextureRect thread = AgentConsoleAssetImage("identity_trace_thread_crystal.png", new Vector2(250f, 92f), TextureRect.StretchModeEnum.KeepAspectCentered);
+        if (thread != null)
+        {
+            thread.Modulate = new Color(1f, 1f, 1f, 0.72f);
+            var imageWrap = new CenterContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+            imageWrap.AddChild(thread);
+            box.AddChild(imageWrap);
+        }
+        else
+        {
+            var icon = AgentConsoleLabel("◇", 48, new Color(0.97f, 0.68f, 0.84f, 1f), bold: true);
+            icon.HorizontalAlignment = HorizontalAlignment.Center;
+            box.AddChild(icon);
+        }
+        Label title = AgentConsoleLabel("Chưa có task đang chạy", 16, AgentConsoleInk, bold: true);
+        title.HorizontalAlignment = HorizontalAlignment.Center;
+        box.AddChild(title);
+        Label detail = AgentConsoleLabel(@"Hãy giao việc cho Eris. Gemini sẽ lập kế hoạch, sử dụng công cụ,
+chạy task và cập nhật tiến trình tại đây.", 11, AgentConsoleMuted);
+        detail.HorizontalAlignment = HorizontalAlignment.Center;
+        box.AddChild(detail);
+        var cta = AgentConsoleButton("＋  Tạo task mới", () => _agentConsoleDirectiveInput?.GrabFocus(), primary: false);
+        cta.CustomMinimumSize = new Vector2(146f, 38f);
+        var wrap = new CenterContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        wrap.AddChild(cta);
+        box.AddChild(wrap);
+        return outer;
+    }
+
+    private Control BuildAgentPreviewTimeline()
+    {
         var box = new VBoxContainer
         {
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        box.AddThemeConstantOverride("separation", 7);
-        margin.AddChild(box);
-        var icon = AgentConsoleLabel("◇", 24, new Color(0.56f, 0.67f, 0.82f, 1f), bold: true);
-        icon.HorizontalAlignment = HorizontalAlignment.Center;
-        box.AddChild(icon);
-        Label title = AgentConsoleLabel("Chưa có task đang chạy", 14, AgentConsoleInk, bold: true);
-        title.HorizontalAlignment = HorizontalAlignment.Center;
-        box.AddChild(title);
-        Label detail = AgentConsoleLabel(message, 10, AgentConsoleMuted);
-        detail.HorizontalAlignment = HorizontalAlignment.Center;
-        detail.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        box.AddChild(detail);
-        return margin;
+        box.AddThemeConstantOverride("separation", 8);
+        box.AddChild(BuildAgentPreviewRow("Gemini", "Đã khởi tạo phiên làm việc. Phân tích yêu cầu và lập kế hoạch...", AgentConsoleBlue, "14:32:10"));
+        box.AddChild(BuildAgentPreviewRow("Planner", "Đang chờ task để tạo kế hoạch bước tiếp theo.", new Color(0.56f, 0.44f, 0.96f, 1f), "14:32:11"));
+        box.AddChild(BuildAgentPreviewRow("Eris", "Sẵn sàng. Chờ xác nhận để bắt đầu thực thi.", AgentConsoleGreen, "14:32:12"));
+        box.AddChild(BuildAgentPreviewRow("Hệ thống", "Workspace: Eris-Core / build-beta đã được nạp.", AgentConsoleMuted, "14:32:12"));
+        return box;
+    }
+
+    private Control BuildAgentPreviewRow(string actor, string summary, Color accent, string time)
+    {
+        var row = new HBoxContainer
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        row.AddThemeConstantOverride("separation", 12);
+
+        var dotWrap = new CenterContainer
+        {
+            CustomMinimumSize = new Vector2(34f, 42f),
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        var dot = AgentConsoleLabel("●", 14, accent, bold: true);
+        dot.HorizontalAlignment = HorizontalAlignment.Center;
+        dotWrap.AddChild(dot);
+        row.AddChild(dotWrap);
+
+        var card = new PanelContainer
+        {
+            CustomMinimumSize = new Vector2(0f, 48f),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        card.AddThemeStyleboxOverride("panel", AgentConsoleStyle(
+            new Color(0.995f, 0.997f, 1f, 0.94f),
+            new Color(accent.R, accent.G, accent.B, 0.14f),
+            12,
+            1));
+        var margin = AgentConsoleMargin(14, 7, 14, 7);
+        card.AddChild(margin);
+        var lines = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        lines.AddThemeConstantOverride("separation", 2);
+        margin.AddChild(lines);
+
+        var top = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        top.AddChild(AgentConsoleLabel(actor, 10, accent, bold: true));
+        var spacer = new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, MouseFilter = Control.MouseFilterEnum.Ignore };
+        top.AddChild(spacer);
+        top.AddChild(AgentConsoleLabel(time, 9, AgentConsoleFaint));
+        lines.AddChild(top);
+        lines.AddChild(AgentConsoleLabel(summary, 10, AgentConsoleInk));
+        row.AddChild(card);
+        return row;
     }
 
     private void RefreshAgentInspectorForTask()
@@ -1259,9 +1525,11 @@ public partial class UdpListener
             _agentConsoleInspectorLabel.Text = "Chưa chọn task";
             _agentConsoleInspectorDetailLabel.Text = "";
             if (_agentConsoleTaskMetaLabel != null)
-                _agentConsoleTaskMetaLabel.Text = "Gemini ↔ Eris · execution session";
-            _agentConsoleExecutorLabel.Text = "—";
-            _agentConsoleStatusLabel.Text = "IDLE";
+                _agentConsoleTaskMetaLabel.Text = "Gemini-powered AI companion";
+            if (_agentConsoleExecutorLabel != null)
+                _agentConsoleExecutorLabel.Text = "—";
+            if (_agentConsoleStatusLabel != null)
+                _agentConsoleStatusLabel.Text = "IDLE";
             SetAgentQuickSummary(null);
             return;
         }
@@ -1269,19 +1537,23 @@ public partial class UdpListener
         _agentConsoleInspectorLabel.Text = CompactAgentText(task.Goal, 90);
         if (_agentConsoleTaskMetaLabel != null)
             _agentConsoleTaskMetaLabel.Text = $"{AgentStatusLabel(task.Status)} · {task.Events.Count} event · Gemini ↔ Eris";
-        _agentConsoleExecutorLabel.Text = CompactAgentText(
-            string.IsNullOrWhiteSpace(task.Model)
-                ? task.Executor.ToUpperInvariant()
-                : $"{task.Executor.ToUpperInvariant()} · {task.Model}",
-            24);
-        _agentConsoleStatusLabel.Text = AgentStatusLabel(task.Status).ToUpperInvariant();
-        _agentConsoleStatusLabel.AddThemeColorOverride("font_color", AgentStatusColor(task.Status));
+        if (_agentConsoleExecutorLabel != null)
+        {
+            _agentConsoleExecutorLabel.Text = CompactAgentText(
+                string.IsNullOrWhiteSpace(task.Model)
+                    ? task.Executor.ToUpperInvariant()
+                    : $"{task.Executor.ToUpperInvariant()} · {task.Model}",
+                24);
+        }
+        if (_agentConsoleStatusLabel != null)
+        {
+            _agentConsoleStatusLabel.Text = AgentStatusLabel(task.Status).ToUpperInvariant();
+            _agentConsoleStatusLabel.AddThemeColorOverride("font_color", AgentStatusColor(task.Status));
+        }
         SetAgentQuickSummary(task);
 
         var sb = new StringBuilder();
         sb.AppendLine($"Trạng thái   {AgentStatusLabel(task.Status)}");
-        sb.AppendLine($"Nguồn        {AgentTaskOriginLabel(task)}");
-        sb.AppendLine($"Mode         {(task.TaskMode == "inspect" ? "Inspect-only" : "Execute")}");
         sb.AppendLine($"Bước         {task.CurrentStep}");
         if (task.PendingControls > 0)
             sb.AppendLine($"Chỉ thị chờ  {task.PendingControls}");
@@ -1313,19 +1585,24 @@ public partial class UdpListener
             return;
         if (task == null)
         {
-            SetAgentMetric(_agentConsoleStepLabel, "STEP", "—", AgentConsoleBlue);
-            SetAgentMetric(_agentConsoleTestsLabel, "TESTS", "—", AgentConsoleGreen);
-            SetAgentMetric(_agentConsoleFilesLabel, "FILES", "—", new Color(0.28f, 0.67f, 0.78f, 1f));
-            SetAgentMetric(_agentConsoleCheckpointLabel, "CHECKPOINT", "—", AgentConsoleGreen);
-            SetAgentMetric(_agentConsoleSkillsLabel, "SKILLS", "—", new Color(0.52f, 0.49f, 0.91f, 1f));
+            _agentConsoleStepLabel.Text = "step\n—";
+            _agentConsoleTestsLabel.Text = "tests\n—";
+            _agentConsoleFilesLabel.Text = "files\n—";
+            _agentConsoleCheckpointLabel.Text = "checkpoint\n—";
+            _agentConsoleSkillsLabel.Text = "skills\n—";
             return;
         }
-        SetAgentMetric(_agentConsoleStepLabel, "STEP", task.CurrentStep.ToString(), AgentConsoleBlue);
-        string tests = task.TestsPassed == 0 && task.TestsFailed == 0 ? "—" : $"{task.TestsPassed} pass · {task.TestsFailed} fail";
-        SetAgentMetric(_agentConsoleTestsLabel, "TESTS", tests, task.TestsFailed > 0 ? AgentConsoleRed : AgentConsoleGreen);
-        SetAgentMetric(_agentConsoleFilesLabel, "FILES", $"{task.ChangedFiles.Count} changed", new Color(0.28f, 0.67f, 0.78f, 1f));
-        SetAgentMetric(_agentConsoleCheckpointLabel, "CHECKPOINT", string.IsNullOrWhiteSpace(task.CheckpointId) ? "—" : CompactAgentText(task.CheckpointId, 12), AgentConsoleGreen);
-        SetAgentMetric(_agentConsoleSkillsLabel, "SKILLS", task.ActiveSkills.Count == 0 ? "—" : CompactAgentText(string.Join(", ", task.ActiveSkills), 22), new Color(0.52f, 0.49f, 0.91f, 1f));
+        _agentConsoleStepLabel.Text = $"step\n{task.CurrentStep} / {Math.Max(task.CurrentStep, 24)}";
+        _agentConsoleTestsLabel.Text = task.TestsPassed == 0 && task.TestsFailed == 0
+            ? "tests\n—"
+            : $"tests\n{task.TestsPassed} passed   {task.TestsFailed} failed";
+        _agentConsoleFilesLabel.Text = $"files\n{task.ChangedFiles.Count} changed";
+        _agentConsoleCheckpointLabel.Text = string.IsNullOrWhiteSpace(task.CheckpointId)
+            ? "checkpoint\n—"
+            : $"checkpoint\n{CompactAgentText(task.CheckpointId, 14)}";
+        _agentConsoleSkillsLabel.Text = task.ActiveSkills.Count == 0
+            ? "skills\n—"
+            : $"skills\n{CompactAgentText(string.Join(", ", task.ActiveSkills), 28)}";
     }
 
     private void ShowAgentEventInspector(AgentConsoleEventView ev)
@@ -1374,7 +1651,8 @@ public partial class UdpListener
             _agentConsoleStopButton.Disabled = !hasTask || AgentTaskTerminal(status);
         if (_agentConsoleRollbackButton != null)
             _agentConsoleRollbackButton.Disabled = !hasTask || string.IsNullOrWhiteSpace(task.CheckpointId);
-        RefreshAgentComposerMode();
+        if (_agentConsoleDirectiveInput != null)
+            _agentConsoleDirectiveInput.Editable = hasTask && !AgentTaskTerminal(status);
     }
 
     private AgentConsoleTaskView SelectedAgentTask()
@@ -1396,9 +1674,24 @@ public partial class UdpListener
     {
         if (_agentConsoleEventScroll == null)
             return;
+        AgentConsoleTaskView task = SelectedAgentTask();
+        if (task == null || task.Events.Count == 0)
+        {
+            ResetAgentConsoleEventScrollTop();
+            return;
+        }
         VScrollBar bar = _agentConsoleEventScroll.GetVScrollBar();
         if (bar != null)
             bar.Value = bar.MaxValue;
+    }
+
+    private void ResetAgentConsoleEventScrollTop()
+    {
+        if (_agentConsoleEventScroll == null)
+            return;
+        VScrollBar bar = _agentConsoleEventScroll.GetVScrollBar();
+        if (bar != null)
+            bar.Value = 0;
     }
 
     private void SetAgentConsoleControlStatus(string text, bool error = false)
@@ -1500,10 +1793,10 @@ public partial class UdpListener
     private static Color AgentActorColor(string actor, string eventType)
     {
         string value = (actor ?? "").Trim().ToLowerInvariant();
-        if (value == "eris" || eventType.StartsWith("supervisor_", StringComparison.Ordinal)) return new Color(0.19f, 0.72f, 0.67f, 1f);
-        if (value == "executor" || value == "gemini") return new Color(0.43f, 0.48f, 0.95f, 1f);
-        if (value == "tool") return new Color(0.28f, 0.72f, 0.48f, 1f);
-        if (value == "user") return AgentConsolePink;
+        if (value == "eris" || eventType.StartsWith("supervisor_", StringComparison.Ordinal)) return AgentConsolePink;
+        if (value == "executor" || value == "gemini") return AgentConsoleGreen;
+        if (value == "tool") return AgentConsoleGold;
+        if (value == "user") return AgentConsoleBlue;
         if (eventType.Contains("failed", StringComparison.Ordinal) || eventType.Contains("veto", StringComparison.Ordinal)) return AgentConsoleRed;
         return AgentConsoleMuted;
     }
@@ -1522,10 +1815,6 @@ public partial class UdpListener
             "tool_started" => "Tool call",
             "tool_result" => "Observation",
             "tool_failed" => "Tool lỗi",
-            "file_changed" => "File changed",
-            "test_result" => "Tests",
-            "diff_observed" => "Git diff",
-            "directive_consumed" => "Directive accepted",
             "checkpoint_created" => "Checkpoint",
             "checkpoint_restored" => "Checkpoint restored",
             "rollback_requested" => "Rollback requested",
@@ -1539,22 +1828,6 @@ public partial class UdpListener
             "clarification_requested" => "Cần hỏi user",
             _ => string.IsNullOrWhiteSpace(eventType) ? "Agent event" : eventType.Replace('_', ' '),
         };
-    }
-
-    private static string AgentTaskOriginLabel(AgentConsoleTaskView task)
-    {
-        if (task == null)
-            return "—";
-        string source = (task.Source ?? "").Trim().ToLowerInvariant();
-        string origin = source switch
-        {
-            "agent_console" => "Panel",
-            "eris_chat" => "Eris chat",
-            _ => string.IsNullOrWhiteSpace(source) ? "Agent" : source,
-        };
-        if (string.Equals(task.TaskMode, "inspect", StringComparison.OrdinalIgnoreCase))
-            return origin + " · Inspect";
-        return origin;
     }
 
     private static string AgentStatusGlyph(string status)
@@ -1616,6 +1889,7 @@ public partial class UdpListener
             Text = text ?? "",
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
+        label.AddThemeFontOverride("font", AgentConsoleFont(bold));
         label.AddThemeFontSizeOverride("font_size", size);
         label.AddThemeColorOverride("font_color", color);
         if (bold)
@@ -1644,50 +1918,26 @@ public partial class UdpListener
         label.HorizontalAlignment = HorizontalAlignment.Center;
         label.VerticalAlignment = VerticalAlignment.Center;
         label.AddThemeStyleboxOverride("normal", AgentConsoleStyle(
-            new Color(0.985f, 0.992f, 0.998f, 0.98f),
+            Colors.White,
             new Color(0.86f, 0.91f, 0.96f, 0.72f),
             16,
             1));
         return label;
     }
 
-    private static Label AgentConsoleMetric(string title, string value, Color accent)
+    private static Label AgentConsoleMetric(string text, Color bg, Color accent)
     {
-        var label = AgentConsoleLabel($"{title}\n{value}", 10, AgentConsoleInk);
-        label.CustomMinimumSize = new Vector2(0f, 48f);
+        var label = AgentConsoleLabel(text, 13, AgentConsoleInk);
+        label.CustomMinimumSize = new Vector2(0f, 66f);
         label.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         label.VerticalAlignment = VerticalAlignment.Center;
         label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         label.AddThemeStyleboxOverride("normal", AgentConsoleStyle(
-            new Color(accent.R, accent.G, accent.B, 0.055f),
-            Colors.Transparent,
-            11,
-            0));
+            bg,
+            new Color(accent.R, accent.G, accent.B, 0.16f),
+            18,
+            1));
         return label;
-    }
-
-    private static void SetAgentMetric(Label label, string title, string value, Color accent)
-    {
-        if (label == null)
-            return;
-        label.Text = $"{title}\n{value}";
-        label.AddThemeColorOverride("font_color", AgentConsoleInk);
-        label.AddThemeStyleboxOverride("normal", AgentConsoleStyle(
-            new Color(accent.R, accent.G, accent.B, 0.055f),
-            Colors.Transparent,
-            11,
-            0));
-    }
-
-    private static string AgentActorGlyph(string actor, string eventType)
-    {
-        string normalized = (actor ?? "").Trim().ToLowerInvariant();
-        string type = (eventType ?? "").Trim().ToLowerInvariant();
-        if (normalized == "eris" || type.StartsWith("supervisor_", StringComparison.Ordinal)) return "◇";
-        if (normalized == "user" || type == "user_directive") return "●";
-        if (normalized is "executor" or "gemini") return "✦";
-        if (normalized == "tool" || type.StartsWith("tool_", StringComparison.Ordinal)) return "⌘";
-        return "·";
     }
 
     private static Button AgentConsoleQuietButton(string text, Action onPressed, float width, bool danger = false)
@@ -1696,25 +1946,46 @@ public partial class UdpListener
         var button = new Button
         {
             Text = text,
-            CustomMinimumSize = new Vector2(width, 34f),
+            CustomMinimumSize = new Vector2(width, 40f),
             FocusMode = Control.FocusModeEnum.None,
             MouseDefaultCursorShape = Control.CursorShape.PointingHand,
         };
-        button.AddThemeFontSizeOverride("font_size", 10);
+        button.AddThemeFontOverride("font", AgentConsoleFont(false));
+        button.AddThemeFontSizeOverride("font_size", 11);
+        button.AddThemeConstantOverride("h_separation", 8);
         button.AddThemeColorOverride("font_color", accent);
         button.AddThemeColorOverride("font_hover_color", danger ? AgentConsoleRed : AgentConsoleInk);
-        button.AddThemeColorOverride("font_disabled_color", new Color(AgentConsoleFaint.R, AgentConsoleFaint.G, AgentConsoleFaint.B, 0.42f));
-        button.AddThemeStyleboxOverride("normal", AgentConsoleStyle(
-            new Color(0.985f, 0.992f, 0.998f, 0.82f),
-            new Color(0.86f, 0.91f, 0.96f, 0.55f),
-            11,
-            1));
-        button.AddThemeStyleboxOverride("hover", AgentConsoleStyle(
-            danger ? new Color(1f, 0.95f, 0.96f, 1f) : new Color(0.95f, 0.98f, 1f, 1f),
-            danger ? new Color(AgentConsoleRed.R, AgentConsoleRed.G, AgentConsoleRed.B, 0.22f) : new Color(0.80f, 0.89f, 0.98f, 0.80f),
-            11,
-            1));
-        button.AddThemeStyleboxOverride("pressed", AgentConsoleStyle(new Color(accent.R, accent.G, accent.B, 0.08f), Colors.Transparent, 11, 0));
+        button.AddThemeColorOverride("font_disabled_color", new Color(AgentConsoleFaint.R, AgentConsoleFaint.G, AgentConsoleFaint.B, 0.45f));
+        StyleBoxFlat normal = AgentConsoleStyle(
+            Colors.White,
+            new Color(0.88f, 0.91f, 0.96f, 0.85f),
+            14,
+            1,
+            shadow: true);
+        normal.ShadowSize = 4;
+        normal.ShadowColor = new Color(0.12f, 0.16f, 0.24f, 0.055f);
+        normal.ContentMarginLeft = 12f;
+        normal.ContentMarginRight = 12f;
+        button.AddThemeStyleboxOverride("normal", normal);
+        StyleBoxFlat hover = AgentConsoleStyle(
+            new Color(0.985f, 0.989f, 0.997f, 1f),
+            new Color(0.72f, 0.80f, 0.92f, 0.90f),
+            14,
+            1,
+            shadow: true);
+        hover.ShadowSize = 6;
+        hover.ShadowColor = new Color(0.12f, 0.16f, 0.24f, 0.085f);
+        hover.ContentMarginLeft = 12f;
+        hover.ContentMarginRight = 12f;
+        button.AddThemeStyleboxOverride("hover", hover);
+        StyleBoxFlat pressed = AgentConsoleStyle(
+            new Color(accent.R, accent.G, accent.B, 0.08f),
+            new Color(accent.R, accent.G, accent.B, 0.20f),
+            14,
+            1);
+        pressed.ContentMarginLeft = 12f;
+        pressed.ContentMarginRight = 12f;
+        button.AddThemeStyleboxOverride("pressed", pressed);
         button.AddThemeStyleboxOverride("disabled", new StyleBoxEmpty());
         button.AddThemeStyleboxOverride("focus", new StyleBoxEmpty());
         if (onPressed != null)
@@ -1761,7 +2032,7 @@ public partial class UdpListener
 
     private static Button AgentConsoleButton(string text, Action onPressed, bool primary, bool danger = false)
     {
-        Color accent = danger ? AgentConsoleRed : (primary ? AgentConsolePink : AgentConsoleMuted);
+        Color accent = danger ? AgentConsoleRed : (primary ? AgentConsolePink : AgentConsolePink);
         var button = new Button
         {
             Text = text,
@@ -1769,14 +2040,22 @@ public partial class UdpListener
             FocusMode = Control.FocusModeEnum.None,
             MouseDefaultCursorShape = Control.CursorShape.PointingHand,
         };
+        button.AddThemeFontOverride("font", AgentConsoleFont(primary));
         StyleBoxFlat normal = AgentConsoleStyle(
-            primary ? new Color(0.96f, 0.33f, 0.60f, 0.98f) : new Color(1f, 1f, 1f, 0.90f),
-            primary ? new Color(0.96f, 0.33f, 0.60f, 0.90f) : new Color(accent.R, accent.G, accent.B, 0.24f),
+            primary ? new Color(0.96f, 0.29f, 0.60f, 0.98f) : new Color(1f, 0.96f, 0.98f, 0.98f),
+            new Color(accent.R, accent.G, accent.B, primary ? 0.88f : 0.28f),
             16,
             1,
             shadow: primary);
+        normal.ContentMarginLeft = primary ? 18f : 14f;
+        normal.ContentMarginRight = primary ? 18f : 14f;
+        normal.ShadowSize = primary ? 12 : 4;
+        normal.ShadowColor = primary
+            ? new Color(0.82f, 0.12f, 0.42f, 0.22f)
+            : new Color(0.20f, 0.15f, 0.22f, 0.06f);
         StyleBoxFlat hover = (StyleBoxFlat)normal.Duplicate();
-        hover.BgColor = primary ? new Color(0.98f, 0.39f, 0.65f, 1f) : new Color(0.97f, 0.98f, 1f, 1f);
+        hover.BgColor = primary ? new Color(0.98f, 0.36f, 0.64f, 1f) : new Color(1f, 0.98f, 0.995f, 1f);
+        hover.BorderColor = new Color(accent.R, accent.G, accent.B, primary ? 0.95f : 0.40f);
         StyleBoxFlat disabled = (StyleBoxFlat)normal.Duplicate();
         disabled.BgColor = new Color(0.96f, 0.94f, 0.95f, 0.46f);
         disabled.BorderColor = new Color(0.82f, 0.78f, 0.80f, 0.28f);
@@ -1785,10 +2064,11 @@ public partial class UdpListener
         button.AddThemeStyleboxOverride("pressed", hover);
         button.AddThemeStyleboxOverride("disabled", disabled);
         button.AddThemeStyleboxOverride("focus", new StyleBoxEmpty());
-        button.AddThemeColorOverride("font_color", primary ? Colors.White : accent);
-        button.AddThemeColorOverride("font_hover_color", primary ? Colors.White : AgentConsoleInk);
+        button.AddThemeColorOverride("font_color", primary ? Colors.White : AgentConsolePink);
+        button.AddThemeColorOverride("font_hover_color", primary ? Colors.White : AgentConsolePink);
         button.AddThemeColorOverride("font_disabled_color", new Color(0.55f, 0.50f, 0.52f, 0.42f));
         button.AddThemeFontSizeOverride("font_size", 12);
+        button.AddThemeConstantOverride("h_separation", 9);
         if (onPressed != null)
             button.Pressed += onPressed;
         return button;
@@ -1798,13 +2078,14 @@ public partial class UdpListener
     {
         if (input == null)
             return;
-        input.CustomMinimumSize = new Vector2(260f, 40f);
-        input.AddThemeFontSizeOverride("font_size", 11);
+        input.CustomMinimumSize = new Vector2(260f, 44f);
+        input.AddThemeFontOverride("font", AgentConsoleFont(false));
+        input.AddThemeFontSizeOverride("font_size", 12);
         input.AddThemeColorOverride("font_color", AgentConsoleInk);
-        input.AddThemeColorOverride("font_placeholder_color", new Color(AgentConsoleMuted.R, AgentConsoleMuted.G, AgentConsoleMuted.B, 0.68f));
+        input.AddThemeColorOverride("font_placeholder_color", new Color(AgentConsoleMuted.R, AgentConsoleMuted.G, AgentConsoleMuted.B, 0.72f));
         input.AddThemeStyleboxOverride("normal", AgentConsoleStyle(
-            new Color(0.985f, 0.990f, 0.997f, 0.92f), Colors.Transparent, 12, 0));
+            new Color(0.995f, 0.997f, 1f, 0.98f), new Color(0.84f, 0.89f, 0.95f, 0.82f), 16, 1));
         input.AddThemeStyleboxOverride("focus", AgentConsoleStyle(
-            new Color(1f, 1f, 1f, 1f), new Color(0.78f, 0.88f, 0.98f, 0.76f), 12, 1));
+            Colors.White, new Color(0.80f, 0.87f, 0.97f, 0.95f), 16, 1));
     }
 }

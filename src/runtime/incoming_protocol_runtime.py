@@ -127,6 +127,32 @@ class IncomingProtocolRuntimeMixin:
             store = getattr(self, "agent_task_store", None) or AgentTaskStore()
             if action == "snapshot":
                 pass
+            elif action in {"workspace_open", "workspace_switch", "workspace_favorite", "workspace_unfavorite"}:
+                manager = getattr(self, "workspace_manager", None)
+                if manager is None:
+                    raise RuntimeError("workspace_manager_unavailable")
+                if action == "workspace_open":
+                    source = str(msg.get("workspace_ref", "") or msg.get("text", "") or "").strip()
+                    if not source:
+                        raise ValueError("workspace_path_required")
+                    record = manager.join(source, activate=True)
+                    message = f"Đã mở workspace {record.display_name}."
+                elif action == "workspace_switch":
+                    ref = str(msg.get("workspace_ref", "") or "").strip()
+                    if not ref:
+                        raise ValueError("workspace_ref_required")
+                    record = manager.switch(ref)
+                    message = f"Đã chuyển sang workspace {record.display_name}."
+                else:
+                    ref = str(msg.get("workspace_ref", "") or "").strip()
+                    if not ref:
+                        raise ValueError("workspace_ref_required")
+                    favorite = action == "workspace_favorite"
+                    record = manager.set_favorite(ref, favorite=favorite)
+                    message = (
+                        f"Đã lưu {record.display_name} vào workspace thường dùng."
+                        if favorite else f"Đã bỏ ghim {record.display_name}."
+                    )
             elif action == "create_task":
                 text = str(msg.get("text", "") or "").strip()
                 if not text:
@@ -143,6 +169,7 @@ class IncomingProtocolRuntimeMixin:
                     source_turn_id=f"agent_console:{request_id or int(time.time() * 1000)}",
                     source="agent_console",
                     task_mode=task_mode,
+                    workspace_ref=str(msg.get("workspace_ref", "") or "").strip(),
                 )
                 if str(started.get("status", "") or "") != "started":
                     raise RuntimeError(str(started.get("reason", "agent_task_start_failed") or "agent_task_start_failed"))
@@ -214,6 +241,9 @@ class IncomingProtocolRuntimeMixin:
                 task_limit=12,
                 event_limit=48,
             )
+            manager = getattr(self, "workspace_manager", None)
+            if manager is not None:
+                snapshot["workspace_state"] = manager.workspace_snapshot(limit=16)
         except Exception as exc:
             status = "error"
             message = str(exc)[:320]

@@ -54,6 +54,7 @@ class GeminiCliDecisionExecutor:
         tools: list[dict[str, Any]],
         goal: str = "",
         active_skills: list[str] | None = None,
+        workspace: str | Path | None = None,
     ):
         # Import muộn để module health/parser vẫn test được khi optional LangGraph
         # dependencies chưa cài trong môi trường packaging.
@@ -63,7 +64,14 @@ class GeminiCliDecisionExecutor:
         if not ok:
             raise GeminiCliError(reason)
 
-        prompt = self._build_prompt(messages, tools=tools, goal=goal, active_skills=active_skills or [])
+        resolved_workspace = Path(workspace).expanduser().resolve() if workspace else self.workspace
+        prompt = self._build_prompt(
+            messages,
+            tools=tools,
+            goal=goal,
+            active_skills=active_skills or [],
+            workspace=resolved_workspace,
+        )
         cmd = [self.executable, "-p", prompt, "--output-format", "json", "--approval-mode", "plan", "-e", "none"]
         if self.model:
             cmd.extend(["-m", self.model])
@@ -71,7 +79,7 @@ class GeminiCliDecisionExecutor:
         try:
             completed = subprocess.run(
                 cmd,
-                cwd=str(self.workspace) if self.workspace else None,
+                cwd=str(resolved_workspace) if resolved_workspace else None,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -139,7 +147,15 @@ class GeminiCliDecisionExecutor:
             raise GeminiCliError("gemini_decision_must_be_object")
         return payload
 
-    def _build_prompt(self, messages: Iterable[Any], *, tools: list[dict[str, Any]], goal: str, active_skills: list[str]) -> str:
+    def _build_prompt(
+        self,
+        messages: Iterable[Any],
+        *,
+        tools: list[dict[str, Any]],
+        goal: str,
+        active_skills: list[str],
+        workspace: Path | None = None,
+    ) -> str:
         history: list[dict[str, str]] = []
         for msg in list(messages)[-24:]:
             role = getattr(msg, "type", msg.__class__.__name__).lower()
@@ -166,6 +182,8 @@ class GeminiCliDecisionExecutor:
             "If a protected operation is denied, do not stop to request confirmation; replan toward a safe/reversible alternative and report the protected boundary only if it blocks completion.\n"
             "After every tool observation, reconsider the goal and choose the next smallest useful action. Verify before final.\n\n"
             f"GOAL:\n{goal}\n\n"
+            f"LOCKED WORKSPACE:\n{str(workspace) if workspace else '(none)'}\n"
+            "This task is bound to that workspace. Do not switch projects mid-task.\n\n"
             f"ACTIVE SKILLS:\n{json.dumps(active_skills, ensure_ascii=False)}\n\n"
             f"DISCLOSED TOOLS:\n{json.dumps(tools, ensure_ascii=False, indent=2)}\n\n"
             f"RECENT GRAPH MESSAGES:\n{json.dumps(history, ensure_ascii=False)}\n\n"

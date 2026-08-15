@@ -183,3 +183,56 @@ def test_agent_control_create_task_starts_shared_harness_task(tmp_path):
     assert started[0][1]["source"] == "agent_console"
     assert sent and sent[-1]["status"] == "ok"
     assert sent[-1]["agent_console"]["selected_task_id"] == "task_panel_1"
+
+
+def test_agent_console_workspace_open_switch_and_favorite_are_persistent(tmp_path):
+    from runtime.incoming_protocol_runtime import IncomingProtocolRuntimeMixin
+    from runtime.workspace_manager import WorkspaceManager
+
+    project_a = tmp_path / "project-a"
+    project_b = tmp_path / "project-b"
+    project_a.mkdir()
+    project_b.mkdir()
+    eris_home = tmp_path / "ErisLive"
+    sent = []
+
+    class _OwnerSettings:
+        runtime_settings = {"project_ops": {"eris_home": str(eris_home)}}
+
+    class _Runtime(IncomingProtocolRuntimeMixin):
+        logger = None
+
+        def __init__(self):
+            self.agent_task_store = AgentTaskStore(tmp_path / "agent_tasks.json")
+            self.workspace_manager = WorkspaceManager(_OwnerSettings())
+
+        def _send_runtime_json(self, payload, **_kwargs):
+            sent.append(payload)
+            return True
+
+    runtime = _Runtime()
+    runtime._handle_agent_control({
+        "type": "agent_control",
+        "action": "workspace_open",
+        "request_id": "w1",
+        "workspace_ref": str(project_a),
+    })
+    first = runtime.workspace_manager.active_record()
+    assert first is not None
+    runtime._handle_agent_control({
+        "type": "agent_control",
+        "action": "workspace_favorite",
+        "request_id": "w2",
+        "workspace_ref": first.workspace_id,
+    })
+    runtime._handle_agent_control({
+        "type": "agent_control",
+        "action": "workspace_open",
+        "request_id": "w3",
+        "workspace_ref": str(project_b),
+    })
+
+    snapshot = sent[-1]["agent_console"]["workspace_state"]
+    assert snapshot["active_workspace"]["path"] == str(project_b.resolve())
+    favorites = [item for item in snapshot["workspaces"] if item["favorite"]]
+    assert favorites and favorites[0]["workspace_id"] == first.workspace_id
