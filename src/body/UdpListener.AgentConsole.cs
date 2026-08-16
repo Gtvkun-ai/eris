@@ -40,8 +40,28 @@ public partial class UdpListener
         public List<string> ActiveSkills { get; set; } = new();
         public List<string> ChangedFiles { get; set; } = new();
         public List<AgentConsoleEventView> Events { get; set; } = new();
+        public double CreatedAt { get; set; }
+        public double StartedAt { get; set; }
+        public double FinishedAt { get; set; }
         public double UpdatedAt { get; set; }
+        public string Source { get; set; } = "";
+        public string TaskMode { get; set; } = "execute";
+        public string WorkspaceId { get; set; } = "";
+        public string WorkspacePath { get; set; } = "";
+        public string WorkspaceName { get; set; } = "";
     }
+    private sealed class AgentWorkspaceView
+    {
+        public string WorkspaceId { get; set; } = "";
+        public string DisplayName { get; set; } = "";
+        public string Path { get; set; } = "";
+        public string SourceType { get; set; } = "";
+        public string Branch { get; set; } = "";
+        public bool Favorite { get; set; }
+        public bool Active { get; set; }
+        public double LastOpenedAt { get; set; }
+    }
+
 
     // V3: visual pass bám mockup đã chốt. Agent Console giờ là execution UI thật,
     // không còn cảm giác admin dashboard pastel vô hồn.
@@ -94,6 +114,27 @@ public partial class UdpListener
     private Button _agentConsoleResumeButton;
     private Button _agentConsoleStopButton;
     private Button _agentConsoleRollbackButton;
+    private Button _agentConsoleSendButton;
+    private Button _agentConsoleNewTaskButton;
+    private Button _agentConsoleWorkspaceToggleButton;
+    private Button _agentConsoleStatusToggleButton;
+    private Button _agentConsoleAutopilotButton;
+    private Control _agentConsoleWorkspaceStrip;
+    private OptionButton _agentConsoleWorkspaceSelect;
+    private Button _agentConsoleWorkspaceFavoriteButton;
+    private HBoxContainer _agentConsoleSavedWorkspaceList;
+    private FileDialog _agentConsoleWorkspaceDialog;
+    private OptionButton _agentConsoleTaskModeSelect;
+    private OptionButton _agentConsoleModelSelect;
+    private OptionButton _agentConsoleEventKindSelect;
+    private LineEdit _agentConsoleEventSearchInput;
+    private Button _agentConsoleEventSearchToggle;
+    private ProgressBar _agentConsoleProgressBar;
+    private Label _agentConsoleProgressMetaLabel;
+    private Label _agentConsoleInspectorWorkspaceLabel;
+    private Label _agentConsoleInspectorWorkspaceMetaLabel;
+    private VBoxContainer _agentConsoleInspectorSkillsList;
+    private Button _agentConsoleInspectorOpenWorkspaceButton;
     private static Font _agentConsoleFontRegular;
     private static Font _agentConsoleFontBold;
     private readonly List<AgentConsoleTaskView> _agentConsoleTasks = new();
@@ -102,9 +143,15 @@ public partial class UdpListener
     private ulong _agentLastSnapshotRequestMs;
     private ulong _agentLastPacketMs;
     private bool _agentConsoleTaskDrawerVisible;
+    private bool _agentConsoleWorkspaceVisible = true;
     private bool _agentConsoleInspectorVisible = true;
     private bool _agentConsoleAutoFollow = true;
+    private bool _agentConsoleCreatingTask;
     private string _agentConsoleEventFilter = "all";
+    private string _agentConsoleEventKindFilter = "all";
+    private readonly List<AgentWorkspaceView> _agentConsoleWorkspaces = new();
+    private string _agentConsoleActiveWorkspaceId = "";
+    private string _agentConsoleWorkspaceUiSignature = "";
 
     private void BuildAgentConsoleUi()
     {
@@ -147,10 +194,13 @@ public partial class UdpListener
         margin.AddChild(root);
 
         root.AddChild(BuildAgentConsoleHeader());
-        root.AddChild(BuildAgentWorkspaceStrip());
+        _agentConsoleWorkspaceStrip = BuildAgentWorkspaceStrip();
+        _agentConsoleWorkspaceStrip.Visible = _agentConsoleWorkspaceVisible;
+        root.AddChild(_agentConsoleWorkspaceStrip);
         root.AddChild(BuildAgentQuickSummary());
         root.AddChild(BuildAgentConsoleBody());
         root.AddChild(BuildAgentConsoleFooter());
+        BuildAgentWorkspaceDialog();
         RefreshAgentConsole();
     }
 
@@ -287,21 +337,23 @@ public partial class UdpListener
         titleBox.AddChild(AgentConsoleLabel("● Sẵn sàng", 10, AgentConsoleGreen, bold: true));
         row.AddChild(titleBox);
 
-        var newTask = AgentConsoleButton("＋  Tạo task mới ✦", () =>
-        {
-            _agentConsoleDirectiveInput?.GrabFocus();
-            _agentConsoleDirectiveInput?.SelectAll();
-        }, primary: true);
-        newTask.CustomMinimumSize = new Vector2(148f, 42f);
-        row.AddChild(newTask);
-        row.AddChild(AgentConsoleQuietButton("▦  Workspaces", null, 112f));
-        var autopilot = AgentConsoleQuietButton("〰  AUTOPILOT", null, 112f);
-        autopilot.AddThemeColorOverride("font_color", AgentConsolePink);
-        row.AddChild(autopilot);
-        row.AddChild(AgentConsoleQuietButton("〰  Trạng thái", null, 104f));
+        _agentConsoleNewTaskButton = AgentConsoleButton("＋  Tạo task mới ✦", EnterAgentNewTaskMode, primary: true);
+        _agentConsoleNewTaskButton.CustomMinimumSize = new Vector2(148f, 42f);
+        row.AddChild(_agentConsoleNewTaskButton);
+
+        _agentConsoleWorkspaceToggleButton = AgentConsoleQuietButton("▦  Workspaces", ToggleAgentWorkspaceStrip, 112f);
+        row.AddChild(_agentConsoleWorkspaceToggleButton);
+
+        _agentConsoleAutopilotButton = AgentConsoleQuietButton("〰  AUTOPILOT", ShowAgentAutopilotStatus, 112f);
+        _agentConsoleAutopilotButton.AddThemeColorOverride("font_color", AgentConsolePink);
+        row.AddChild(_agentConsoleAutopilotButton);
+
+        _agentConsoleStatusToggleButton = AgentConsoleQuietButton("〰  Trạng thái", ToggleAgentTaskDrawer, 104f);
+        row.AddChild(_agentConsoleStatusToggleButton);
+
         _agentConsoleInspectorToggleButton = AgentConsoleQuietButton("ⓘ  Chi tiết", ToggleAgentInspector, 98f);
         row.AddChild(_agentConsoleInspectorToggleButton);
-        row.AddChild(AgentConsoleQuietButton("⋯", () => SendAgentControl("snapshot"), 44f));
+        row.AddChild(AgentConsoleQuietButton("↻", () => SendAgentControl("snapshot"), 44f));
         var close = CreateWindowControlButton("×", CloseAgentConsolePanel, 38f, 18);
         row.AddChild(close);
         return row;
@@ -316,6 +368,11 @@ public partial class UdpListener
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
         body.AddThemeConstantOverride("separation", 16);
+
+        _agentConsoleTaskDrawer = BuildAgentTaskPane();
+        _agentConsoleTaskDrawer.Visible = _agentConsoleTaskDrawerVisible;
+        body.AddChild(_agentConsoleTaskDrawer);
+
         body.AddChild(BuildAgentStreamPane());
         _agentConsoleInspectorDrawer = BuildAgentInspectorPane();
         _agentConsoleInspectorDrawer.Visible = _agentConsoleInspectorVisible;
@@ -442,29 +499,38 @@ public partial class UdpListener
         panel.AddThemeStyleboxOverride("panel", AgentConsoleStyle(
             Colors.White,
             new Color(0.88f, 0.91f, 0.96f, 0.95f),
-            16,
+            22,
             1,
             shadow: true));
-        var margin = AgentConsoleMargin(14, 9, 14, 9);
+        var margin = AgentConsoleMargin(16, 10, 16, 10);
         panel.AddChild(margin);
         var row = new HBoxContainer
         {
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        row.AddThemeConstantOverride("separation", 14);
+        row.AddThemeConstantOverride("separation", 16);
         margin.AddChild(row);
 
         var left = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, MouseFilter = Control.MouseFilterEnum.Ignore };
-        left.AddThemeConstantOverride("separation", 6);
+        left.AddThemeConstantOverride("separation", 5);
         left.AddChild(AgentConsoleLabel("WORKSPACE", 9, AgentConsoleFaint, bold: true));
         var workspaceRow = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
-        workspaceRow.AddThemeConstantOverride("separation", 10);
-        var workspaceSelect = AgentConsoleQuietButton("🗀  Eris-Core / build-beta  ▾", null, 250f);
-        workspaceSelect.Alignment = HorizontalAlignment.Left;
-        workspaceRow.AddChild(workspaceSelect);
-        workspaceRow.AddChild(AgentConsoleQuietButton("☆  Lưu", null, 72f));
-        workspaceRow.AddChild(AgentConsoleQuietButton("🗁  Mở thư mục", null, 112f));
+        workspaceRow.AddThemeConstantOverride("separation", 8);
+
+        _agentConsoleWorkspaceSelect = new OptionButton
+        {
+            CustomMinimumSize = new Vector2(250f, 38f),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            FocusMode = Control.FocusModeEnum.None,
+        };
+        StyleAgentConsoleOptionButton(_agentConsoleWorkspaceSelect);
+        _agentConsoleWorkspaceSelect.ItemSelected += OnAgentWorkspaceSelected;
+        workspaceRow.AddChild(_agentConsoleWorkspaceSelect);
+
+        _agentConsoleWorkspaceFavoriteButton = AgentConsoleQuietButton("☆  Lưu", ToggleAgentWorkspaceFavorite, 76f);
+        workspaceRow.AddChild(_agentConsoleWorkspaceFavoriteButton);
+        workspaceRow.AddChild(AgentConsoleQuietButton("🗁  Mở thư mục", ShowAgentWorkspaceDialog, 116f));
         left.AddChild(workspaceRow);
         row.AddChild(left);
 
@@ -473,20 +539,16 @@ public partial class UdpListener
         row.AddChild(divider);
 
         var right = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, MouseFilter = Control.MouseFilterEnum.Ignore };
-        right.AddThemeConstantOverride("separation", 6);
+        right.AddThemeConstantOverride("separation", 5);
         right.AddChild(AgentConsoleLabel("WORKSPACE ĐÃ LƯU", 9, AgentConsoleFaint, bold: true));
-        var chips = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
-        chips.AddThemeConstantOverride("separation", 10);
-        chips.AddChild(AgentWorkspaceChip("●  Eris-Core / main", new Color(0.34f, 0.79f, 0.61f, 1f)));
-        chips.AddChild(AgentWorkspaceChip("✧  Research / eris-v2", new Color(0.56f, 0.56f, 0.94f, 1f)));
-        chips.AddChild(AgentWorkspaceChip("▣  Docs", new Color(0.64f, 0.66f, 0.77f, 1f)));
-        chips.AddChild(AgentWorkspaceChip("＋  Thêm", AgentConsoleFaint));
-        right.AddChild(chips);
+        _agentConsoleSavedWorkspaceList = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        _agentConsoleSavedWorkspaceList.AddThemeConstantOverride("separation", 8);
+        right.AddChild(_agentConsoleSavedWorkspaceList);
         row.AddChild(right);
         return panel;
     }
 
-    private Control AgentWorkspaceChip(string text, Color accent)
+    private Button AgentWorkspaceChip(string text, Color accent)
     {
         var button = AgentConsoleQuietButton(text, null, 124f);
         button.AddThemeColorOverride("font_color", accent);
@@ -554,7 +616,8 @@ public partial class UdpListener
         };
         row.AddThemeConstantOverride("separation", 12);
         _agentConsoleStepLabel = AgentConsoleMetric(@"STEP
-0 / 12", new Color(0.97f, 0.985f, 1f, 1f), new Color(0.26f, 0.47f, 0.96f, 1f));
+—
+Chưa chạy", new Color(0.97f, 0.985f, 1f, 1f), new Color(0.26f, 0.47f, 0.96f, 1f));
         _agentConsoleTestsLabel = AgentConsoleMetric(@"TESTS
 —
 Chưa chạy", new Color(0.97f, 0.995f, 0.98f, 1f), new Color(0.30f, 0.76f, 0.56f, 1f));
@@ -565,8 +628,8 @@ Chưa thay đổi", Colors.White, new Color(0.36f, 0.52f, 0.96f, 1f));
 —
 Chưa thiết lập", new Color(1f, 0.985f, 0.97f, 1f), new Color(0.90f, 0.63f, 0.22f, 1f));
         _agentConsoleSkillsLabel = AgentConsoleMetric(@"SKILLS
-8
-Sẵn sàng", new Color(0.987f, 0.975f, 1f, 1f), new Color(0.64f, 0.44f, 0.96f, 1f));
+—
+Chờ task", new Color(0.987f, 0.975f, 1f, 1f), new Color(0.64f, 0.44f, 0.96f, 1f));
         row.AddChild(_agentConsoleStepLabel);
         row.AddChild(_agentConsoleTestsLabel);
         row.AddChild(_agentConsoleFilesLabel);
@@ -577,12 +640,15 @@ Sẵn sàng", new Color(0.987f, 0.975f, 1f, 1f), new Color(0.64f, 0.44f, 0.96f, 
 
     private Control BuildAgentFilterBar()
     {
-        var row = new HBoxContainer
+        var root = new VBoxContainer
         {
             CustomMinimumSize = new Vector2(0f, 44f),
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
+        root.AddThemeConstantOverride("separation", 6);
+
+        var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, MouseFilter = Control.MouseFilterEnum.Ignore };
         row.AddThemeConstantOverride("separation", 8);
         _agentConsoleFilterAllButton = AgentConsoleFilterButton("◈  Timeline", "all");
         _agentConsoleFilterConversationButton = AgentConsoleFilterButton("◌  Hội thoại", "conversation");
@@ -591,12 +657,38 @@ Sẵn sàng", new Color(0.987f, 0.975f, 1f, 1f), new Color(0.64f, 0.44f, 0.96f, 
         row.AddChild(_agentConsoleFilterConversationButton);
         row.AddChild(_agentConsoleFilterToolsButton);
         row.AddChild(new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, MouseFilter = Control.MouseFilterEnum.Ignore });
-        row.AddChild(AgentConsoleQuietButton("Tất cả sự kiện  ▾", null, 136f));
-        row.AddChild(AgentConsoleQuietButton("⌕", null, 44f));
-        _agentConsoleFollowButton = AgentConsoleQuietButton("⇅", ToggleAgentAutoFollow, 44f);
+
+        _agentConsoleEventKindSelect = new OptionButton { CustomMinimumSize = new Vector2(148f, 36f), FocusMode = Control.FocusModeEnum.None };
+        StyleAgentConsoleOptionButton(_agentConsoleEventKindSelect);
+        _agentConsoleEventKindSelect.AddItem("Tất cả sự kiện");
+        _agentConsoleEventKindSelect.AddItem("Quan trọng");
+        _agentConsoleEventKindSelect.AddItem("Lỗi / cảnh báo");
+        _agentConsoleEventKindSelect.AddItem("Thay đổi file");
+        _agentConsoleEventKindSelect.AddItem("Tests");
+        _agentConsoleEventKindSelect.ItemSelected += OnAgentEventKindSelected;
+        row.AddChild(_agentConsoleEventKindSelect);
+
+        _agentConsoleEventSearchToggle = AgentConsoleQuietButton("⌕", ToggleAgentEventSearch, 42f);
+        row.AddChild(_agentConsoleEventSearchToggle);
+        _agentConsoleFollowButton = AgentConsoleQuietButton("⇅", ToggleAgentAutoFollow, 42f);
+        _agentConsoleFollowButton.TooltipText = "Theo dõi event mới";
         row.AddChild(_agentConsoleFollowButton);
+        root.AddChild(row);
+
+        _agentConsoleEventSearchInput = new LineEdit
+        {
+            PlaceholderText = "Tìm trong timeline: tool, file, lỗi, checkpoint...",
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            Visible = false,
+            ClearButtonEnabled = true,
+        };
+        StyleAgentConsoleInput(_agentConsoleEventSearchInput);
+        _agentConsoleEventSearchInput.CustomMinimumSize = new Vector2(0f, 36f);
+        _agentConsoleEventSearchInput.TextChanged += _ => RebuildAgentEventStream();
+        root.AddChild(_agentConsoleEventSearchInput);
+
         RefreshAgentFilterButtons();
-        return row;
+        return root;
     }
 
     private PanelContainer BuildAgentInspectorPane()
@@ -628,18 +720,27 @@ Sẵn sàng", new Color(0.987f, 0.975f, 1f, 1f), new Color(0.64f, 0.44f, 0.96f, 
         var title = AgentConsoleLabel("Phiên làm việc", 18, AgentConsoleInk, bold: true);
         title.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         top.AddChild(title);
-        top.AddChild(AgentConsoleLabel("● Sẵn sàng", 11, AgentConsoleGreen, bold: true));
+        _agentConsoleStatusLabel = AgentConsoleLabel("● Sẵn sàng", 11, AgentConsoleGreen, bold: true);
+        top.AddChild(_agentConsoleStatusLabel);
         top.AddChild(AgentConsoleQuietButton("⌃", ToggleAgentInspector, 34f));
         box.AddChild(top);
 
         box.AddChild(AgentConsoleLabel("Tiến trình tổng quan", 13, AgentConsoleInk, bold: true));
-        var progress = new ProgressBar { MinValue = 0, MaxValue = 100, Value = 0, ShowPercentage = false, CustomMinimumSize = new Vector2(0f, 10f), MouseFilter = Control.MouseFilterEnum.Ignore };
-        progress.AddThemeStyleboxOverride("background", AgentConsoleStyle(new Color(0.93f,0.95f,0.98f,1f), Colors.Transparent, 5, 0));
-        progress.AddThemeStyleboxOverride("fill", AgentConsoleStyle(new Color(0.65f,0.76f,1f,1f), Colors.Transparent, 5, 0));
-        box.AddChild(progress);
-        var progressMeta = AgentConsoleLabel("Bước hoàn thành  0 / 12    Thời gian  00:00:00    Ước tính còn lại  —", 11, AgentConsoleMuted);
-        progressMeta.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        box.AddChild(progressMeta);
+        _agentConsoleProgressBar = new ProgressBar
+        {
+            MinValue = 0,
+            MaxValue = 100,
+            Value = 0,
+            ShowPercentage = false,
+            CustomMinimumSize = new Vector2(0f, 10f),
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        _agentConsoleProgressBar.AddThemeStyleboxOverride("background", AgentConsoleStyle(new Color(0.93f,0.95f,0.98f,1f), Colors.Transparent, 5, 0));
+        _agentConsoleProgressBar.AddThemeStyleboxOverride("fill", AgentConsoleStyle(new Color(0.65f,0.76f,1f,1f), Colors.Transparent, 5, 0));
+        box.AddChild(_agentConsoleProgressBar);
+        _agentConsoleProgressMetaLabel = AgentConsoleLabel("Chưa có task đang chạy.", 11, AgentConsoleMuted);
+        _agentConsoleProgressMetaLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        box.AddChild(_agentConsoleProgressMetaLabel);
 
         var detailScroll = new ScrollContainer
         {
@@ -653,33 +754,33 @@ Sẵn sàng", new Color(0.987f, 0.975f, 1f, 1f), new Color(0.64f, 0.44f, 0.96f, 
         ApplyHiddenScrollBarTheme(detailScroll.GetVScrollBar());
         box.AddChild(detailScroll);
 
-        var detailBox = new VBoxContainer
-        {
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        detailBox.AddThemeConstantOverride("separation", 12);
+        var detailBox = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, MouseFilter = Control.MouseFilterEnum.Ignore };
+        detailBox.AddThemeConstantOverride("separation", 14);
         detailScroll.AddChild(detailBox);
 
-        var section = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
-        section.AddThemeConstantOverride("separation", 6);
-        section.AddChild(AgentConsoleLabel("Workspace", 16, AgentConsoleInk, bold: true));
-        section.AddChild(AgentConsoleLabel("🗀  Eris-Core / build-beta", 13, AgentConsoleInk, bold: true));
-        section.AddChild(AgentConsoleLabel(@"Đường dẫn         ~/workspace/eris-core/build-beta
-Nhánh               main
-Cập nhật            2 phút trước", 11, AgentConsoleMuted));
-        detailBox.AddChild(section);
+        var workspaceSection = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        workspaceSection.AddThemeConstantOverride("separation", 6);
+        var workspaceTop = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        var workspaceTitle = AgentConsoleLabel("Workspace", 16, AgentConsoleInk, bold: true);
+        workspaceTitle.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        workspaceTop.AddChild(workspaceTitle);
+        _agentConsoleInspectorOpenWorkspaceButton = AgentConsoleQuietButton("Mở thư mục", OpenSelectedTaskWorkspace, 98f);
+        workspaceTop.AddChild(_agentConsoleInspectorOpenWorkspaceButton);
+        workspaceSection.AddChild(workspaceTop);
+        _agentConsoleInspectorWorkspaceLabel = AgentConsoleLabel("Chưa khóa workspace", 13, AgentConsoleInk, bold: true);
+        workspaceSection.AddChild(_agentConsoleInspectorWorkspaceLabel);
+        _agentConsoleInspectorWorkspaceMetaLabel = AgentConsoleLabel("—", 11, AgentConsoleMuted);
+        _agentConsoleInspectorWorkspaceMetaLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        workspaceSection.AddChild(_agentConsoleInspectorWorkspaceMetaLabel);
+        detailBox.AddChild(workspaceSection);
 
         var taskSection = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
         taskSection.AddThemeConstantOverride("separation", 6);
         taskSection.AddChild(AgentConsoleLabel("Thông tin task", 16, AgentConsoleInk, bold: true));
-        _agentConsoleInspectorLabel = AgentConsoleLabel("Chưa chọn task", 12, AgentConsoleMuted, bold: false);
+        _agentConsoleInspectorLabel = AgentConsoleLabel("Chưa chọn task", 12, AgentConsoleMuted);
+        _agentConsoleInspectorLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         taskSection.AddChild(_agentConsoleInspectorLabel);
-        _agentConsoleInspectorDetailLabel = AgentConsoleLabel(@"Task ID            —
-Trạng thái         Chưa chạy
-Chế độ               Thủ công
-Tạo lúc              —
-Mô tả                 —", 11, AgentConsoleMuted);
+        _agentConsoleInspectorDetailLabel = AgentConsoleLabel("—", 11, AgentConsoleMuted);
         _agentConsoleInspectorDetailLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         taskSection.AddChild(_agentConsoleInspectorDetailLabel);
         detailBox.AddChild(taskSection);
@@ -687,16 +788,9 @@ Mô tả                 —", 11, AgentConsoleMuted);
         var toolSection = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
         toolSection.AddThemeConstantOverride("separation", 8);
         toolSection.AddChild(AgentConsoleLabel("Kỹ năng & Công cụ", 16, AgentConsoleInk, bold: true));
-        var chips = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
-        chips.AddThemeConstantOverride("separation", 8);
-        chips.AddChild(AgentConsoleToolChip("</>", new Color(0.36f,0.52f,0.96f,1f)));
-        chips.AddChild(AgentConsoleToolChip("☷", new Color(0.64f,0.66f,0.77f,1f)));
-        chips.AddChild(AgentConsoleToolChip("🗄", new Color(0.64f,0.66f,0.77f,1f)));
-        chips.AddChild(AgentConsoleToolChip("⌘", new Color(0.56f,0.44f,0.96f,1f)));
-        chips.AddChild(AgentConsoleToolChip("⌕", new Color(0.64f,0.66f,0.77f,1f)));
-        chips.AddChild(AgentConsoleToolChip("⚒", new Color(0.64f,0.66f,0.77f,1f)));
-        chips.AddChild(AgentConsoleToolChip("⊕2", new Color(0.64f,0.66f,0.77f,1f)));
-        toolSection.AddChild(chips);
+        _agentConsoleInspectorSkillsList = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        _agentConsoleInspectorSkillsList.AddThemeConstantOverride("separation", 6);
+        toolSection.AddChild(_agentConsoleInspectorSkillsList);
         detailBox.AddChild(toolSection);
         return panel;
     }
@@ -715,44 +809,55 @@ Mô tả                 —", 11, AgentConsoleMuted);
             22,
             1,
             shadow: true));
-        var margin = AgentConsoleMargin(14, 10, 14, 10);
+        var margin = AgentConsoleMargin(14, 8, 14, 8);
         panel.AddChild(margin);
         var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, MouseFilter = Control.MouseFilterEnum.Ignore };
-        row.AddThemeConstantOverride("separation", 10);
+        row.AddThemeConstantOverride("separation", 8);
         margin.AddChild(row);
 
-        _agentConsolePauseButton = AgentConsoleQuietButton("Ⅱ  Tạm dừng", () => SendAgentControl("pause"), 116f);
-        _agentConsoleStopButton = AgentConsoleQuietButton("□  Dừng", () => SendAgentControl("stop"), 96f, danger: false);
-        _agentConsoleRollbackButton = AgentConsoleQuietButton("⟲  Rollback", () => SendAgentControl("rollback", checkpointId: SelectedAgentTask()?.CheckpointId ?? ""), 118f);
+        _agentConsolePauseButton = AgentConsoleQuietButton("Ⅱ  Tạm dừng", () => SendAgentControl("pause"), 106f);
+        _agentConsoleResumeButton = AgentConsoleQuietButton("▶  Tiếp tục", () => SendAgentControl("resume"), 106f);
+        _agentConsoleStopButton = AgentConsoleQuietButton("□  Dừng", () => SendAgentControl("stop"), 86f);
+        _agentConsoleRollbackButton = AgentConsoleQuietButton("⟲  Rollback", () => SendAgentControl("rollback", checkpointId: SelectedAgentTask()?.CheckpointId ?? ""), 108f);
         row.AddChild(_agentConsolePauseButton);
+        row.AddChild(_agentConsoleResumeButton);
         row.AddChild(_agentConsoleStopButton);
         row.AddChild(_agentConsoleRollbackButton);
 
+        _agentConsoleTaskModeSelect = new OptionButton { CustomMinimumSize = new Vector2(104f, 42f), FocusMode = Control.FocusModeEnum.None };
+        StyleAgentConsoleOptionButton(_agentConsoleTaskModeSelect);
+        _agentConsoleTaskModeSelect.AddItem("Execute");
+        _agentConsoleTaskModeSelect.AddItem("Inspect");
+        _agentConsoleTaskModeSelect.Visible = false;
+        row.AddChild(_agentConsoleTaskModeSelect);
+
+        _agentConsoleModelSelect = new OptionButton { CustomMinimumSize = new Vector2(160f, 42f), FocusMode = Control.FocusModeEnum.None };
+        StyleAgentConsoleOptionButton(_agentConsoleModelSelect);
+        _agentConsoleModelSelect.AddItem("gemini-3-flash", 0);
+        _agentConsoleModelSelect.AddItem("gemini-exp", 1);
+        _agentConsoleModelSelect.AddItem("playwright/gemini-3-flash", 2);
+        _agentConsoleModelSelect.AddItem("atlas/gemini-2.5-pro", 3);
+        _agentConsoleModelSelect.Visible = false;
+        row.AddChild(_agentConsoleModelSelect);
+
         _agentConsoleDirectiveInput = new LineEdit
         {
-            PlaceholderText = "Chỉ thị cho Gemini... (ví dụ: 'Viết module xác thực người dùng')",
+            PlaceholderText = "Chỉ thị cho Gemini...",
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             ClearButtonEnabled = true,
         };
         StyleAgentConsoleInput(_agentConsoleDirectiveInput);
-        _agentConsoleDirectiveInput.TextSubmitted += _ => SendAgentDirective();
+        _agentConsoleDirectiveInput.TextSubmitted += _ => SubmitAgentComposer();
         row.AddChild(_agentConsoleDirectiveInput);
 
-        var send = AgentConsoleButton("Gửi ➤", SendAgentDirective, primary: true);
-        send.CustomMinimumSize = new Vector2(124f, 46f);
-        row.AddChild(send);
-        var statusRow = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
-        statusRow.AddThemeConstantOverride("separation", 8);
-        TextureRect botanical = AgentConsoleAssetImage("identity_botanical_footer.png", new Vector2(48f, 26f), TextureRect.StretchModeEnum.KeepAspectCentered);
-        if (botanical != null)
-        {
-            botanical.Modulate = new Color(1f, 1f, 1f, 0.48f);
-            statusRow.AddChild(botanical);
-        }
-        statusRow.AddChild(AgentConsoleLabel("Eris đang chờ chỉ thị của bạn     ●", 11, AgentConsoleMuted));
-        row.AddChild(statusRow);
-        _agentConsoleResumeButton = null;
-        _agentConsoleControlStatusLabel = AgentConsoleLabel("", 10, AgentConsoleFaint);
+        _agentConsoleSendButton = AgentConsoleButton("Gửi ➤", SubmitAgentComposer, primary: true);
+        _agentConsoleSendButton.CustomMinimumSize = new Vector2(116f, 46f);
+        row.AddChild(_agentConsoleSendButton);
+
+        _agentConsoleControlStatusLabel = AgentConsoleLabel("", 9, AgentConsoleFaint);
+        _agentConsoleControlStatusLabel.CustomMinimumSize = new Vector2(155f, 0f);
+        _agentConsoleControlStatusLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        row.AddChild(_agentConsoleControlStatusLabel);
         return panel;
     }
 
@@ -761,6 +866,8 @@ Mô tả                 —", 11, AgentConsoleMuted);
         _agentConsoleTaskDrawerVisible = !_agentConsoleTaskDrawerVisible;
         if (_agentConsoleTaskDrawer != null)
             _agentConsoleTaskDrawer.Visible = _agentConsoleTaskDrawerVisible;
+        if (_agentConsoleStatusToggleButton != null)
+            _agentConsoleStatusToggleButton.Text = _agentConsoleTaskDrawerVisible ? "〰  Đóng task" : "〰  Trạng thái";
     }
 
     private void ToggleAgentInspector()
@@ -769,7 +876,7 @@ Mô tả                 —", 11, AgentConsoleMuted);
         if (_agentConsoleInspectorDrawer != null)
             _agentConsoleInspectorDrawer.Visible = _agentConsoleInspectorVisible;
         if (_agentConsoleInspectorToggleButton != null)
-            _agentConsoleInspectorToggleButton.Text = _agentConsoleInspectorVisible ? "Chi tiết" : "Chi tiết";
+            _agentConsoleInspectorToggleButton.Text = _agentConsoleInspectorVisible ? "ⓘ  Chi tiết" : "ⓘ  Mở chi tiết";
     }
 
     private void ToggleAgentAutoFollow()
@@ -841,6 +948,37 @@ Mô tả                 —", 11, AgentConsoleMuted);
         return true;
     }
 
+    private static bool AgentEventMatchesKind(AgentConsoleEventView ev, string kind)
+    {
+        if (ev == null || string.IsNullOrWhiteSpace(kind) || kind == "all")
+            return true;
+        string type = (ev.Type ?? "").Trim().ToLowerInvariant();
+        if (kind == "important")
+            return ev.Importance >= 0.75f;
+        if (kind == "errors")
+            return type.Contains("fail", StringComparison.Ordinal)
+                || type.Contains("error", StringComparison.Ordinal)
+                || type.Contains("veto", StringComparison.Ordinal)
+                || type.Contains("permission", StringComparison.Ordinal)
+                || ev.Importance >= 0.90f;
+        if (kind == "files")
+            return type.Contains("file", StringComparison.Ordinal)
+                || type.Contains("diff", StringComparison.Ordinal)
+                || type.Contains("patch", StringComparison.Ordinal);
+        if (kind == "tests")
+            return type.Contains("test", StringComparison.Ordinal);
+        return true;
+    }
+
+    private static bool AgentEventMatchesSearch(AgentConsoleEventView ev, string query)
+    {
+        string needle = (query ?? "").Trim();
+        if (ev == null || string.IsNullOrWhiteSpace(needle))
+            return true;
+        string haystack = string.Join("\n", new[] { ev.Type, ev.Actor, ev.Summary, ev.Detail, ev.DataText });
+        return haystack.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
     private void OnContextAgentConsolePressed()
     {
         _bodyAutonomy?.RecordUserInteraction();
@@ -904,6 +1042,182 @@ Mô tả                 —", 11, AgentConsoleMuted);
         }
     }
 
+    private void BuildAgentWorkspaceDialog()
+    {
+        if (_agentConsoleWorkspaceDialog != null || _agentConsolePanel == null)
+            return;
+        _agentConsoleWorkspaceDialog = new FileDialog
+        {
+            Title = "Chọn workspace cho Eris",
+            Access = FileDialog.AccessEnum.Filesystem,
+            FileMode = FileDialog.FileModeEnum.OpenDir,
+            Size = new Vector2I(860, 600),
+        };
+        _agentConsoleWorkspaceDialog.DirSelected += path =>
+        {
+            string selected = (path ?? "").Trim();
+            if (!string.IsNullOrWhiteSpace(selected))
+                SendAgentControl("workspace_open", workspaceRef: selected);
+        };
+        _agentConsolePanel.AddChild(_agentConsoleWorkspaceDialog);
+    }
+
+    private void ShowAgentWorkspaceDialog()
+    {
+        BuildAgentWorkspaceDialog();
+        _agentConsoleWorkspaceDialog?.PopupCentered(new Vector2I(860, 600));
+    }
+
+    private void ToggleAgentWorkspaceStrip()
+    {
+        _agentConsoleWorkspaceVisible = !_agentConsoleWorkspaceVisible;
+        if (_agentConsoleWorkspaceStrip != null)
+            _agentConsoleWorkspaceStrip.Visible = _agentConsoleWorkspaceVisible;
+        if (_agentConsoleWorkspaceToggleButton != null)
+            _agentConsoleWorkspaceToggleButton.Text = _agentConsoleWorkspaceVisible ? "▦  Workspaces" : "▦  Workspaces";
+    }
+
+    private void ShowAgentAutopilotStatus()
+    {
+        SetAgentConsoleControlStatus("AUTOPILOT: read/search/patch/test/build/shell dev chạy tự động; protected boundary bị chặn.");
+    }
+
+    private void EnterAgentNewTaskMode()
+    {
+        _agentConsoleCreatingTask = true;
+        if (_agentConsoleTaskModeSelect != null)
+            _agentConsoleTaskModeSelect.Visible = true;
+        if (_agentConsoleModelSelect != null)
+            _agentConsoleModelSelect.Visible = true;
+        if (_agentConsoleSendButton != null)
+            _agentConsoleSendButton.Text = "Tạo Task ✦";
+        if (_agentConsoleDirectiveInput != null)
+        {
+            _agentConsoleDirectiveInput.Editable = true;
+            _agentConsoleDirectiveInput.PlaceholderText = "Mục tiêu hoặc yêu cầu sửa lỗi...";
+            _agentConsoleDirectiveInput.GrabFocus();
+        }
+        SetAgentConsoleControlStatus("Task mới sẽ khóa workspace đang chọn và chạy bằng Gemini autopilot.");
+        RefreshAgentConsoleControls();
+    }
+
+    private void ExitAgentNewTaskMode()
+    {
+        _agentConsoleCreatingTask = false;
+        if (_agentConsoleTaskModeSelect != null)
+            _agentConsoleTaskModeSelect.Visible = false;
+        if (_agentConsoleModelSelect != null)
+            _agentConsoleModelSelect.Visible = false;
+        if (_agentConsoleSendButton != null)
+            _agentConsoleSendButton.Text = "Gửi ➤";
+        if (_agentConsoleDirectiveInput != null)
+            _agentConsoleDirectiveInput.PlaceholderText = "Chỉ thị cho Gemini...";
+        RefreshAgentConsoleControls();
+    }
+
+    private void SubmitAgentComposer()
+    {
+        string text = (_agentConsoleDirectiveInput?.Text ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            SetAgentConsoleControlStatus(_agentConsoleCreatingTask ? "Mục tiêu task đang trống." : "Chỉ thị đang trống.", error: true);
+            return;
+        }
+
+        if (_agentConsoleCreatingTask || SelectedAgentTask() == null)
+        {
+            string mode = (_agentConsoleTaskModeSelect?.Selected ?? 0) == 1 ? "inspect" : "execute";
+            string model = "gemini-3-flash";
+            if (_agentConsoleModelSelect != null)
+                model = _agentConsoleModelSelect.GetItemText(_agentConsoleModelSelect.Selected);
+
+            SendAgentControl(
+                "create_task",
+                text: text,
+                workspaceRef: _agentConsoleActiveWorkspaceId,
+                taskMode: mode,
+                model: model);
+            if (_agentConsoleDirectiveInput != null)
+                _agentConsoleDirectiveInput.Text = "";
+            ExitAgentNewTaskMode();
+            return;
+        }
+
+        SendAgentDirective();
+    }
+
+    private void OnAgentWorkspaceSelected(long index)
+    {
+        int selected = (int)index;
+        if (selected < 0 || selected >= _agentConsoleWorkspaces.Count)
+            return;
+        AgentWorkspaceView workspace = _agentConsoleWorkspaces[selected];
+        if (!string.IsNullOrWhiteSpace(workspace.WorkspaceId)
+            && !string.Equals(workspace.WorkspaceId, _agentConsoleActiveWorkspaceId, StringComparison.Ordinal))
+            SendAgentControl("workspace_switch", workspaceRef: workspace.WorkspaceId);
+    }
+
+    private void ToggleAgentWorkspaceFavorite()
+    {
+        AgentWorkspaceView active = ActiveAgentWorkspace();
+        if (active == null)
+        {
+            SetAgentConsoleControlStatus("Chưa có workspace để lưu.", error: true);
+            return;
+        }
+        SendAgentControl(active.Favorite ? "workspace_unfavorite" : "workspace_favorite", workspaceRef: active.WorkspaceId);
+    }
+
+    private AgentWorkspaceView ActiveAgentWorkspace()
+    {
+        foreach (AgentWorkspaceView item in _agentConsoleWorkspaces)
+            if (string.Equals(item.WorkspaceId, _agentConsoleActiveWorkspaceId, StringComparison.Ordinal))
+                return item;
+        return null;
+    }
+
+    private void OpenSelectedTaskWorkspace()
+    {
+        AgentConsoleTaskView task = SelectedAgentTask();
+        string path = task?.WorkspacePath ?? "";
+        if (string.IsNullOrWhiteSpace(path))
+            path = ActiveAgentWorkspace()?.Path ?? "";
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            SetAgentConsoleControlStatus("Task chưa có workspace để mở.", error: true);
+            return;
+        }
+        Error error = OS.ShellOpen(path);
+        SetAgentConsoleControlStatus(error == Error.Ok ? $"Đã mở {path}" : $"Không mở được workspace: {error}", error: error != Error.Ok);
+    }
+
+    private void OnAgentEventKindSelected(long index)
+    {
+        _agentConsoleEventKindFilter = index switch
+        {
+            1 => "important",
+            2 => "errors",
+            3 => "files",
+            4 => "tests",
+            _ => "all",
+        };
+        RebuildAgentEventStream();
+    }
+
+    private void ToggleAgentEventSearch()
+    {
+        if (_agentConsoleEventSearchInput == null)
+            return;
+        _agentConsoleEventSearchInput.Visible = !_agentConsoleEventSearchInput.Visible;
+        if (_agentConsoleEventSearchInput.Visible)
+            _agentConsoleEventSearchInput.GrabFocus();
+        else if (!string.IsNullOrWhiteSpace(_agentConsoleEventSearchInput.Text))
+        {
+            _agentConsoleEventSearchInput.Text = "";
+            RebuildAgentEventStream();
+        }
+    }
+
     private void SendAgentDirective()
     {
         string text = (_agentConsoleDirectiveInput?.Text ?? "").Trim();
@@ -912,16 +1226,31 @@ Mô tả                 —", 11, AgentConsoleMuted);
             SetAgentConsoleControlStatus("Chỉ thị đang trống.", error: true);
             return;
         }
+        if (SelectedAgentTask() == null)
+        {
+            EnterAgentNewTaskMode();
+            SubmitAgentComposer();
+            return;
+        }
         SendAgentControl("directive", text: text);
         if (_agentConsoleDirectiveInput != null)
             _agentConsoleDirectiveInput.Text = "";
     }
 
-    private void SendAgentControl(string action, string text = "", string checkpointId = "", bool quiet = false)
+    private void SendAgentControl(
+        string action,
+        string text = "",
+        string checkpointId = "",
+        bool quiet = false,
+        string workspaceRef = "",
+        string taskMode = "",
+        string model = "")
     {
         if (_chatSend == null)
             return;
-        if (action != "snapshot" && string.IsNullOrWhiteSpace(_agentSelectedTaskId))
+        string normalized = (action ?? "").Trim().ToLowerInvariant();
+        bool taskRequired = normalized is "pause" or "resume" or "stop" or "rollback" or "directive";
+        if (taskRequired && string.IsNullOrWhiteSpace(_agentSelectedTaskId))
         {
             SetAgentConsoleControlStatus("Chưa chọn task để điều khiển.", error: true);
             return;
@@ -931,15 +1260,21 @@ Mô tả                 —", 11, AgentConsoleMuted);
         var payload = new Dictionary<string, object>
         {
             ["type"] = "agent_control",
-            ["action"] = action,
+            ["action"] = normalized,
             ["request_id"] = _agentLastRequestId,
-            ["task_id"] = _agentSelectedTaskId,
+            ["task_id"] = taskRequired ? _agentSelectedTaskId : "",
             ["selected_task_id"] = _agentSelectedTaskId,
         };
         if (!string.IsNullOrWhiteSpace(text))
             payload["text"] = text;
         if (!string.IsNullOrWhiteSpace(checkpointId))
             payload["checkpoint_id"] = checkpointId;
+        if (!string.IsNullOrWhiteSpace(workspaceRef))
+            payload["workspace_ref"] = workspaceRef;
+        if (!string.IsNullOrWhiteSpace(taskMode))
+            payload["task_mode"] = taskMode;
+        if (!string.IsNullOrWhiteSpace(model))
+            payload["model"] = model;
 
         Error error = _chatSend.PutPacket(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload)));
         if (error != Error.Ok)
@@ -949,7 +1284,19 @@ Mô tả                 —", 11, AgentConsoleMuted);
         }
         _agentLastSnapshotRequestMs = Time.GetTicksMsec();
         if (!quiet)
-            SetAgentConsoleControlStatus(action == "snapshot" ? "Đang đồng bộ task..." : $"Đã gửi {action}; chờ AgentHarness nhận ở node boundary.");
+        {
+            string status = normalized switch
+            {
+                "create_task" => "Đã giao task; đang chờ Gemini khởi tạo phiên.",
+                "workspace_open" => "Đang đăng ký workspace...",
+                "workspace_switch" => "Đang chuyển workspace...",
+                "workspace_favorite" => "Đang lưu workspace thường dùng...",
+                "workspace_unfavorite" => "Đang bỏ ghim workspace...",
+                "snapshot" => "Đang đồng bộ Agent Console...",
+                _ => $"Đã gửi {normalized}; executor sẽ nhận ở node boundary.",
+            };
+            SetAgentConsoleControlStatus(status);
+        }
     }
 
     private bool TryHandleAgentConsolePacket(string raw)
@@ -1032,6 +1379,107 @@ Mô tả                 —", 11, AgentConsoleMuted);
             _agentSelectedTaskId = _agentConsoleTasks[0].TaskId;
         if (SelectedAgentTask() == null && _agentConsoleTasks.Count > 0)
             _agentSelectedTaskId = _agentConsoleTasks[0].TaskId;
+
+        if (console.TryGetProperty("workspace_state", out JsonElement workspaceState)
+            && workspaceState.ValueKind == JsonValueKind.Object)
+            ApplyAgentWorkspaceSnapshot(workspaceState);
+    }
+
+    private void ApplyAgentWorkspaceSnapshot(JsonElement state)
+    {
+        _agentConsoleActiveWorkspaceId = AgentReadJsonString(state, "active_workspace_id");
+        _agentConsoleWorkspaces.Clear();
+        if (state.TryGetProperty("workspaces", out JsonElement items) && items.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement node in items.EnumerateArray())
+            {
+                if (node.ValueKind != JsonValueKind.Object)
+                    continue;
+                var workspace = new AgentWorkspaceView
+                {
+                    WorkspaceId = AgentReadJsonString(node, "workspace_id"),
+                    DisplayName = AgentReadJsonString(node, "display_name"),
+                    Path = AgentReadJsonString(node, "path"),
+                    SourceType = AgentReadJsonString(node, "source_type"),
+                    Branch = AgentReadJsonString(node, "default_branch"),
+                    Favorite = AgentReadJsonBool(node, "favorite"),
+                    Active = AgentReadJsonBool(node, "active"),
+                    LastOpenedAt = AgentReadJsonDouble(node, "last_opened_at"),
+                };
+                if (!string.IsNullOrWhiteSpace(workspace.WorkspaceId))
+                    _agentConsoleWorkspaces.Add(workspace);
+            }
+        }
+        RefreshAgentWorkspaceUi();
+    }
+
+    private void RefreshAgentWorkspaceUi()
+    {
+        var signatureBuilder = new StringBuilder(_agentConsoleActiveWorkspaceId);
+        foreach (AgentWorkspaceView item in _agentConsoleWorkspaces)
+            signatureBuilder.Append('|').Append(item.WorkspaceId).Append(':').Append(item.DisplayName).Append(':').Append(item.Branch).Append(':').Append(item.Favorite).Append(':').Append(item.Active);
+        string signature = signatureBuilder.ToString();
+        if (string.Equals(signature, _agentConsoleWorkspaceUiSignature, StringComparison.Ordinal)
+            && _agentConsoleWorkspaceSelect != null
+            && _agentConsoleWorkspaceSelect.ItemCount > 0
+            && _agentConsoleSavedWorkspaceList != null
+            && _agentConsoleSavedWorkspaceList.GetChildCount() > 0)
+            return;
+        _agentConsoleWorkspaceUiSignature = signature;
+
+        if (_agentConsoleWorkspaceSelect != null)
+        {
+            _agentConsoleWorkspaceSelect.ItemSelected -= OnAgentWorkspaceSelected;
+            _agentConsoleWorkspaceSelect.Clear();
+            int selectedIndex = -1;
+            for (int i = 0; i < _agentConsoleWorkspaces.Count; i++)
+            {
+                AgentWorkspaceView workspace = _agentConsoleWorkspaces[i];
+                string branch = string.IsNullOrWhiteSpace(workspace.Branch) ? "" : $" / {workspace.Branch}";
+                _agentConsoleWorkspaceSelect.AddItem($"🗀  {workspace.DisplayName}{branch}");
+                if (workspace.Active || string.Equals(workspace.WorkspaceId, _agentConsoleActiveWorkspaceId, StringComparison.Ordinal))
+                    selectedIndex = i;
+            }
+            if (_agentConsoleWorkspaces.Count == 0)
+            {
+                _agentConsoleWorkspaceSelect.AddItem("Chưa có workspace");
+                _agentConsoleWorkspaceSelect.Disabled = true;
+            }
+            else
+            {
+                _agentConsoleWorkspaceSelect.Disabled = false;
+                _agentConsoleWorkspaceSelect.Selected = Math.Max(0, selectedIndex);
+            }
+            _agentConsoleWorkspaceSelect.ItemSelected += OnAgentWorkspaceSelected;
+        }
+
+        AgentWorkspaceView active = ActiveAgentWorkspace();
+        if (_agentConsoleWorkspaceFavoriteButton != null)
+        {
+            _agentConsoleWorkspaceFavoriteButton.Disabled = active == null;
+            _agentConsoleWorkspaceFavoriteButton.Text = active?.Favorite == true ? "★  Đã lưu" : "☆  Lưu";
+        }
+
+        if (_agentConsoleSavedWorkspaceList != null)
+        {
+            ClearAgentChildren(_agentConsoleSavedWorkspaceList);
+            int count = 0;
+            foreach (AgentWorkspaceView workspace in _agentConsoleWorkspaces)
+            {
+                if (!workspace.Favorite || count >= 4)
+                    continue;
+                string workspaceId = workspace.WorkspaceId;
+                var chip = AgentWorkspaceChip(
+                    $"{(workspace.Active ? "●" : "✧")}  {CompactAgentText(workspace.DisplayName, 20)}",
+                    workspace.Active ? AgentConsoleGreen : AgentConsoleMuted);
+                chip.Pressed += () => SendAgentControl("workspace_switch", workspaceRef: workspaceId);
+                _agentConsoleSavedWorkspaceList.AddChild(chip);
+                count++;
+            }
+            var add = AgentWorkspaceChip("＋  Thêm", AgentConsoleFaint);
+            add.Pressed += ShowAgentWorkspaceDialog;
+            _agentConsoleSavedWorkspaceList.AddChild(add);
+        }
     }
 
     private AgentConsoleTaskView UpsertAgentTask(JsonElement node, bool replaceEvents)
@@ -1076,7 +1524,15 @@ Mô tả                 —", 11, AgentConsoleMuted);
         target.TestsSummary = source.TestsSummary;
         target.ActiveSkills = source.ActiveSkills;
         target.ChangedFiles = source.ChangedFiles;
+        target.CreatedAt = source.CreatedAt;
+        target.StartedAt = source.StartedAt;
+        target.FinishedAt = source.FinishedAt;
         target.UpdatedAt = source.UpdatedAt;
+        target.Source = source.Source;
+        target.TaskMode = source.TaskMode;
+        target.WorkspaceId = source.WorkspaceId;
+        target.WorkspacePath = source.WorkspacePath;
+        target.WorkspaceName = source.WorkspaceName;
     }
 
     private AgentConsoleTaskView ParseAgentTask(JsonElement node)
@@ -1096,6 +1552,9 @@ Mô tả                 —", 11, AgentConsoleMuted);
             PendingControls = AgentReadJsonInt(node, "pending_controls"),
             CheckpointId = AgentReadJsonString(node, "checkpoint_id"),
             CheckpointCount = AgentReadJsonInt(node, "checkpoint_count"),
+            CreatedAt = AgentReadJsonDouble(node, "created_at"),
+            StartedAt = AgentReadJsonDouble(node, "started_at"),
+            FinishedAt = AgentReadJsonDouble(node, "finished_at"),
             UpdatedAt = AgentReadJsonDouble(node, "updated_at"),
         };
         if (string.IsNullOrWhiteSpace(task.Status)) task.Status = "queued";
@@ -1115,15 +1574,22 @@ Mô tả                 —", 11, AgentConsoleMuted);
             task.TestsFailed = AgentReadJsonInt(tests, "failed");
             task.TestsSummary = AgentReadJsonString(tests, "summary");
         }
-        if (node.TryGetProperty("events", out JsonElement events) && events.ValueKind == JsonValueKind.Array)
+        if (node.TryGetProperty("metadata", out JsonElement metadata) && metadata.ValueKind == JsonValueKind.Object)
         {
+            task.Source = AgentReadJsonString(metadata, "source");
+            task.TaskMode = AgentReadJsonString(metadata, "task_mode");
+            task.WorkspaceId = AgentReadJsonString(metadata, "workspace_id");
+            task.WorkspacePath = AgentReadJsonString(metadata, "workspace_path");
+            task.WorkspaceName = AgentReadJsonString(metadata, "workspace_name");
+        }
+        if (string.IsNullOrWhiteSpace(task.TaskMode)) task.TaskMode = "execute";
+        if (node.TryGetProperty("events", out JsonElement events) && events.ValueKind == JsonValueKind.Array)
             foreach (JsonElement eventNode in events.EnumerateArray())
             {
                 AgentConsoleEventView ev = ParseAgentEvent(eventNode);
                 if (ev != null)
                     task.Events.Add(ev);
             }
-        }
         return task;
     }
 
@@ -1163,6 +1629,7 @@ Mô tả                 —", 11, AgentConsoleMuted);
     {
         if (_agentConsoleTaskList == null || _agentConsoleEventList == null)
             return;
+        RefreshAgentWorkspaceUi();
         RebuildAgentTaskList();
         RebuildAgentEventStream();
         RefreshAgentInspectorForTask();
@@ -1174,7 +1641,7 @@ Mô tả                 —", 11, AgentConsoleMuted);
         ClearAgentChildren(_agentConsoleTaskList);
         if (_agentConsoleTasks.Count == 0)
         {
-            var empty = AgentConsoleLabel("Chưa có task. Task mới sẽ xuất hiện ở đây khi AgentHarness bắt đầu chạy.", 10, AgentConsoleMuted);
+            var empty = AgentConsoleLabel("Chưa có task. Bấm Tạo task mới hoặc giao việc dài hạn từ chat Eris.", 10, AgentConsoleMuted);
             empty.AutowrapMode = TextServer.AutowrapMode.WordSmart;
             _agentConsoleTaskList.AddChild(empty);
             return;
@@ -1184,26 +1651,29 @@ Mô tả                 —", 11, AgentConsoleMuted);
         {
             AgentConsoleTaskView captured = task;
             bool selected = string.Equals(task.TaskId, _agentSelectedTaskId, StringComparison.Ordinal);
+            string mode = string.Equals(task.TaskMode, "inspect", StringComparison.OrdinalIgnoreCase) ? "inspect" : "execute";
+            string source = string.IsNullOrWhiteSpace(task.Source) ? "agent" : task.Source.Replace('_', ' ');
             var button = new Button
             {
-                Text = $"{AgentStatusGlyph(task.Status)}  {CompactAgentText(task.Goal, 34)}\n     {AgentStatusLabel(task.Status)} · bước {task.CurrentStep}",
-                CustomMinimumSize = new Vector2(0f, 54f),
+                Text = $"{AgentStatusGlyph(task.Status)}  {CompactAgentText(task.Goal, 36)}\n     {AgentStatusLabel(task.Status)} · {mode} · {source}",
+                CustomMinimumSize = new Vector2(0f, 60f),
                 SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
                 Alignment = HorizontalAlignment.Left,
                 FocusMode = Control.FocusModeEnum.None,
                 MouseDefaultCursorShape = Control.CursorShape.PointingHand,
             };
+            button.AddThemeFontOverride("font", AgentConsoleFont(false));
             button.AddThemeFontSizeOverride("font_size", 10);
             button.AddThemeColorOverride("font_color", selected ? AgentConsoleInk : AgentConsoleMuted);
             StyleBoxFlat normal = AgentConsoleStyle(
-                selected ? new Color(1f, 1f, 1f, 0.86f) : Colors.Transparent,
-                selected ? new Color(AgentConsolePink.R, AgentConsolePink.G, AgentConsolePink.B, 0.18f) : Colors.Transparent,
-                10,
+                selected ? new Color(1f, 0.975f, 0.99f, 0.94f) : Colors.Transparent,
+                selected ? new Color(AgentConsolePink.R, AgentConsolePink.G, AgentConsolePink.B, 0.22f) : Colors.Transparent,
+                12,
                 selected ? 1 : 0);
             StyleBoxFlat hover = AgentConsoleStyle(
-                new Color(1f, 1f, 1f, 0.72f),
-                new Color(AgentConsoleBorder.R, AgentConsoleBorder.G, AgentConsoleBorder.B, 0.42f),
-                10,
+                new Color(1f, 1f, 1f, 0.82f),
+                new Color(AgentConsoleBorder.R, AgentConsoleBorder.G, AgentConsoleBorder.B, 0.48f),
+                12,
                 1);
             button.AddThemeStyleboxOverride("normal", normal);
             button.AddThemeStyleboxOverride("hover", hover);
@@ -1212,6 +1682,7 @@ Mô tả                 —", 11, AgentConsoleMuted);
             button.Pressed += () =>
             {
                 _agentSelectedTaskId = captured.TaskId;
+                ExitAgentNewTaskMode();
                 RefreshAgentConsole();
                 SendAgentControl("snapshot", quiet: true);
             };
@@ -1226,19 +1697,22 @@ Mô tả                 —", 11, AgentConsoleMuted);
         if (task == null)
         {
             _agentConsoleTaskTitleLabel.Text = "Chưa có task";
-            _agentConsoleEventList.AddChild(BuildAgentEmptyState("Khi Gemini bắt đầu làm việc, tool, checkpoint và intervention của Eris sẽ xuất hiện ở timeline này."));
-            _agentConsoleEventList.AddChild(BuildAgentPreviewTimeline());
+            _agentConsoleEventList.AddChild(BuildAgentEmptyState("Giao việc từ chat Eris hoặc tạo task trực tiếp tại đây. Timeline sẽ chỉ hiển thị event thật."));
             CallDeferred(nameof(ResetAgentConsoleEventScrollTop));
             return;
         }
 
         _agentConsoleTaskTitleLabel.Text = string.IsNullOrWhiteSpace(task.ClarifiedGoal) ? task.Goal : task.ClarifiedGoal;
-        int start = Math.Max(0, task.Events.Count - 160);
+        int start = Math.Max(0, task.Events.Count - 200);
         int rendered = 0;
         for (int i = start; i < task.Events.Count; i++)
         {
             AgentConsoleEventView ev = task.Events[i];
             if (!AgentEventMatchesFilter(ev, _agentConsoleEventFilter))
+                continue;
+            if (!AgentEventMatchesKind(ev, _agentConsoleEventKindFilter))
+                continue;
+            if (!AgentEventMatchesSearch(ev, _agentConsoleEventSearchInput?.Text ?? ""))
                 continue;
             _agentConsoleEventList.AddChild(BuildAgentEventCard(ev));
             rendered++;
@@ -1246,14 +1720,10 @@ Mô tả                 —", 11, AgentConsoleMuted);
         if (rendered == 0)
         {
             string message = task.Events.Count == 0
-                ? "Task đã tồn tại nhưng chưa phát execution event."
-                : "Không có event nào khớp bộ lọc hiện tại.";
+                ? "Task đã được tạo. Đang chờ event đầu tiên từ AgentHarness."
+                : "Không có event nào khớp bộ lọc / tìm kiếm hiện tại.";
             _agentConsoleEventList.AddChild(BuildAgentEmptyState(message));
-            if (task.Events.Count == 0)
-            {
-                _agentConsoleEventList.AddChild(BuildAgentPreviewTimeline());
-                CallDeferred(nameof(ResetAgentConsoleEventScrollTop));
-            }
+            CallDeferred(nameof(ResetAgentConsoleEventScrollTop));
         }
     }
 
@@ -1445,7 +1915,7 @@ Mô tả                 —", 11, AgentConsoleMuted);
 chạy task và cập nhật tiến trình tại đây.", 11, AgentConsoleMuted);
         detail.HorizontalAlignment = HorizontalAlignment.Center;
         box.AddChild(detail);
-        var cta = AgentConsoleButton("＋  Tạo task mới", () => _agentConsoleDirectiveInput?.GrabFocus(), primary: false);
+        var cta = AgentConsoleButton("＋  Tạo task mới", EnterAgentNewTaskMode, primary: false);
         cta.CustomMinimumSize = new Vector2(146f, 38f);
         var wrap = new CenterContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
         wrap.AddChild(cta);
@@ -1453,130 +1923,114 @@ chạy task và cập nhật tiến trình tại đây.", 11, AgentConsoleMuted)
         return outer;
     }
 
-    private Control BuildAgentPreviewTimeline()
-    {
-        var box = new VBoxContainer
-        {
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        box.AddThemeConstantOverride("separation", 8);
-        box.AddChild(BuildAgentPreviewRow("Gemini", "Đã khởi tạo phiên làm việc. Phân tích yêu cầu và lập kế hoạch...", AgentConsoleBlue, "14:32:10"));
-        box.AddChild(BuildAgentPreviewRow("Planner", "Đang chờ task để tạo kế hoạch bước tiếp theo.", new Color(0.56f, 0.44f, 0.96f, 1f), "14:32:11"));
-        box.AddChild(BuildAgentPreviewRow("Eris", "Sẵn sàng. Chờ xác nhận để bắt đầu thực thi.", AgentConsoleGreen, "14:32:12"));
-        box.AddChild(BuildAgentPreviewRow("Hệ thống", "Workspace: Eris-Core / build-beta đã được nạp.", AgentConsoleMuted, "14:32:12"));
-        return box;
-    }
 
-    private Control BuildAgentPreviewRow(string actor, string summary, Color accent, string time)
-    {
-        var row = new HBoxContainer
-        {
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        row.AddThemeConstantOverride("separation", 12);
 
-        var dotWrap = new CenterContainer
-        {
-            CustomMinimumSize = new Vector2(34f, 42f),
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        var dot = AgentConsoleLabel("●", 14, accent, bold: true);
-        dot.HorizontalAlignment = HorizontalAlignment.Center;
-        dotWrap.AddChild(dot);
-        row.AddChild(dotWrap);
 
-        var card = new PanelContainer
-        {
-            CustomMinimumSize = new Vector2(0f, 48f),
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        card.AddThemeStyleboxOverride("panel", AgentConsoleStyle(
-            new Color(0.995f, 0.997f, 1f, 0.94f),
-            new Color(accent.R, accent.G, accent.B, 0.14f),
-            12,
-            1));
-        var margin = AgentConsoleMargin(14, 7, 14, 7);
-        card.AddChild(margin);
-        var lines = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
-        lines.AddThemeConstantOverride("separation", 2);
-        margin.AddChild(lines);
-
-        var top = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
-        top.AddChild(AgentConsoleLabel(actor, 10, accent, bold: true));
-        var spacer = new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, MouseFilter = Control.MouseFilterEnum.Ignore };
-        top.AddChild(spacer);
-        top.AddChild(AgentConsoleLabel(time, 9, AgentConsoleFaint));
-        lines.AddChild(top);
-        lines.AddChild(AgentConsoleLabel(summary, 10, AgentConsoleInk));
-        row.AddChild(card);
-        return row;
-    }
 
     private void RefreshAgentInspectorForTask()
     {
         AgentConsoleTaskView task = SelectedAgentTask();
         if (_agentConsoleInspectorLabel == null || _agentConsoleInspectorDetailLabel == null)
             return;
+
         if (task == null)
         {
             _agentConsoleInspectorLabel.Text = "Chưa chọn task";
-            _agentConsoleInspectorDetailLabel.Text = "";
+            _agentConsoleInspectorDetailLabel.Text = "Tạo task mới hoặc chọn một task trong Trạng thái.";
             if (_agentConsoleTaskMetaLabel != null)
                 _agentConsoleTaskMetaLabel.Text = "Gemini-powered AI companion";
-            if (_agentConsoleExecutorLabel != null)
-                _agentConsoleExecutorLabel.Text = "—";
             if (_agentConsoleStatusLabel != null)
-                _agentConsoleStatusLabel.Text = "IDLE";
+            {
+                _agentConsoleStatusLabel.Text = "● Sẵn sàng";
+                _agentConsoleStatusLabel.AddThemeColorOverride("font_color", AgentConsoleGreen);
+            }
+            AgentWorkspaceView active = ActiveAgentWorkspace();
+            if (_agentConsoleInspectorWorkspaceLabel != null)
+                _agentConsoleInspectorWorkspaceLabel.Text = active == null ? "Chưa có workspace" : active.DisplayName;
+            if (_agentConsoleInspectorWorkspaceMetaLabel != null)
+                _agentConsoleInspectorWorkspaceMetaLabel.Text = active == null
+                    ? "Mở một thư mục để dùng làm workspace mặc định."
+                    : $"{active.Path}\nNhánh: {(string.IsNullOrWhiteSpace(active.Branch) ? "—" : active.Branch)} · active";
+            if (_agentConsoleInspectorOpenWorkspaceButton != null)
+                _agentConsoleInspectorOpenWorkspaceButton.Disabled = active == null;
+            if (_agentConsoleProgressBar != null)
+                _agentConsoleProgressBar.Value = 0;
+            if (_agentConsoleProgressMetaLabel != null)
+                _agentConsoleProgressMetaLabel.Text = "Chưa có task đang chạy.";
+            RefreshAgentInspectorSkills(null);
             SetAgentQuickSummary(null);
             return;
         }
 
-        _agentConsoleInspectorLabel.Text = CompactAgentText(task.Goal, 90);
+        _agentConsoleInspectorLabel.Text = CompactAgentText(task.Goal, 150);
         if (_agentConsoleTaskMetaLabel != null)
-            _agentConsoleTaskMetaLabel.Text = $"{AgentStatusLabel(task.Status)} · {task.Events.Count} event · Gemini ↔ Eris";
-        if (_agentConsoleExecutorLabel != null)
-        {
-            _agentConsoleExecutorLabel.Text = CompactAgentText(
-                string.IsNullOrWhiteSpace(task.Model)
-                    ? task.Executor.ToUpperInvariant()
-                    : $"{task.Executor.ToUpperInvariant()} · {task.Model}",
-                24);
-        }
+            _agentConsoleTaskMetaLabel.Text = $"{AgentStatusLabel(task.Status)} · {task.Events.Count} event · {task.Executor}";
         if (_agentConsoleStatusLabel != null)
         {
-            _agentConsoleStatusLabel.Text = AgentStatusLabel(task.Status).ToUpperInvariant();
+            _agentConsoleStatusLabel.Text = $"● {AgentStatusLabel(task.Status)}";
             _agentConsoleStatusLabel.AddThemeColorOverride("font_color", AgentStatusColor(task.Status));
         }
         SetAgentQuickSummary(task);
 
+        string workspaceName = string.IsNullOrWhiteSpace(task.WorkspaceName) ? "Không khóa workspace" : task.WorkspaceName;
+        if (_agentConsoleInspectorWorkspaceLabel != null)
+            _agentConsoleInspectorWorkspaceLabel.Text = workspaceName;
+        if (_agentConsoleInspectorWorkspaceMetaLabel != null)
+        {
+            var ws = new StringBuilder();
+            ws.AppendLine(string.IsNullOrWhiteSpace(task.WorkspacePath) ? "—" : task.WorkspacePath);
+            if (!string.IsNullOrWhiteSpace(task.WorkspaceId)) ws.AppendLine($"ID: {task.WorkspaceId}");
+            ws.Append($"Task locked: {(string.IsNullOrWhiteSpace(task.WorkspacePath) ? "không" : "có")}");
+            _agentConsoleInspectorWorkspaceMetaLabel.Text = ws.ToString();
+        }
+        if (_agentConsoleInspectorOpenWorkspaceButton != null)
+            _agentConsoleInspectorOpenWorkspaceButton.Disabled = string.IsNullOrWhiteSpace(task.WorkspacePath);
+
+        double started = task.StartedAt > 0 ? task.StartedAt : task.CreatedAt;
+        double end = task.FinishedAt > 0 ? task.FinishedAt : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
+        double elapsed = started > 0 ? Math.Max(0, end - started) : 0;
+        double progress = AgentTaskProgressEstimate(task);
+        if (_agentConsoleProgressBar != null)
+            _agentConsoleProgressBar.Value = progress;
+        if (_agentConsoleProgressMetaLabel != null)
+            _agentConsoleProgressMetaLabel.Text = $"Ước tính {progress:0}% · bước {task.CurrentStep} · {AgentDurationText(elapsed)} · {AgentStatusLabel(task.Status)}";
+
         var sb = new StringBuilder();
-        sb.AppendLine($"Trạng thái   {AgentStatusLabel(task.Status)}");
-        sb.AppendLine($"Bước         {task.CurrentStep}");
-        if (task.PendingControls > 0)
-            sb.AppendLine($"Chỉ thị chờ  {task.PendingControls}");
+        sb.AppendLine($"Task ID          {task.TaskId}");
+        sb.AppendLine($"Nguồn            {(string.IsNullOrWhiteSpace(task.Source) ? "—" : task.Source)}");
+        sb.AppendLine($"Chế độ           {(string.Equals(task.TaskMode, "inspect", StringComparison.OrdinalIgnoreCase) ? "Inspect-only" : "Execute / Autopilot")}");
+        sb.AppendLine($"Executor         {task.Executor}{(string.IsNullOrWhiteSpace(task.Model) ? "" : $" · {task.Model}")}");
+        sb.AppendLine($"Trạng thái       {AgentStatusLabel(task.Status)}");
+        sb.AppendLine($"Bước             {task.CurrentStep}");
+        if (task.CreatedAt > 0) sb.AppendLine($"Tạo lúc           {AgentDateTimeText(task.CreatedAt)}");
+        if (task.StartedAt > 0) sb.AppendLine($"Bắt đầu           {AgentDateTimeText(task.StartedAt)}");
+        if (task.FinishedAt > 0) sb.AppendLine($"Kết thúc          {AgentDateTimeText(task.FinishedAt)}");
+        if (task.PendingControls > 0) sb.AppendLine($"Chỉ thị chờ       {task.PendingControls}");
         sb.AppendLine();
-        sb.AppendLine($"Checkpoint   {(string.IsNullOrWhiteSpace(task.CheckpointId) ? "—" : task.CheckpointId)}");
-        sb.AppendLine($"Đã lưu       {task.CheckpointCount}");
-        sb.AppendLine();
-        sb.AppendLine($"Tests        {task.TestsPassed} pass · {task.TestsFailed} fail");
-        if (!string.IsNullOrWhiteSpace(task.TestsSummary))
-            sb.AppendLine(task.TestsSummary);
-        sb.AppendLine();
-        sb.AppendLine("Skills");
-        if (task.ActiveSkills.Count == 0)
-            sb.AppendLine("  — chưa activate");
-        else
-            foreach (string skill in task.ActiveSkills)
-                sb.AppendLine($"  • {skill}");
-        sb.AppendLine();
-        sb.AppendLine($"Files changed  {task.ChangedFiles.Count}");
-        int from = Math.Max(0, task.ChangedFiles.Count - 10);
-        for (int i = from; i < task.ChangedFiles.Count; i++)
-            sb.AppendLine($"  • {task.ChangedFiles[i]}");
+        sb.AppendLine($"Tests             {task.TestsPassed} pass · {task.TestsFailed} fail");
+        if (!string.IsNullOrWhiteSpace(task.TestsSummary)) sb.AppendLine(task.TestsSummary);
+        sb.AppendLine($"Files changed     {task.ChangedFiles.Count}");
+        sb.AppendLine($"Checkpoint        {(string.IsNullOrWhiteSpace(task.CheckpointId) ? "—" : task.CheckpointId)}");
         _agentConsoleInspectorDetailLabel.Text = sb.ToString().TrimEnd();
+        RefreshAgentInspectorSkills(task);
+    }
+
+    private void RefreshAgentInspectorSkills(AgentConsoleTaskView task)
+    {
+        if (_agentConsoleInspectorSkillsList == null)
+            return;
+        ClearAgentChildren(_agentConsoleInspectorSkillsList);
+        if (task == null || task.ActiveSkills.Count == 0)
+        {
+            _agentConsoleInspectorSkillsList.AddChild(AgentConsoleLabel("Chưa activate skill nào.", 10, AgentConsoleMuted));
+            return;
+        }
+        int shown = 0;
+        foreach (string skill in task.ActiveSkills)
+        {
+            if (shown++ >= 10) break;
+            _agentConsoleInspectorSkillsList.AddChild(AgentConsoleChip(CompactAgentText(skill, 36), AgentConsoleBlue));
+        }
     }
 
     private void SetAgentQuickSummary(AgentConsoleTaskView task)
@@ -1585,24 +2039,26 @@ chạy task và cập nhật tiến trình tại đây.", 11, AgentConsoleMuted)
             return;
         if (task == null)
         {
-            _agentConsoleStepLabel.Text = "step\n—";
-            _agentConsoleTestsLabel.Text = "tests\n—";
-            _agentConsoleFilesLabel.Text = "files\n—";
-            _agentConsoleCheckpointLabel.Text = "checkpoint\n—";
-            _agentConsoleSkillsLabel.Text = "skills\n—";
+            _agentConsoleStepLabel.Text = "STEP\n—\nChưa chạy";
+            _agentConsoleTestsLabel.Text = "TESTS\n—\nChưa chạy";
+            _agentConsoleFilesLabel.Text = "FILES\n—\nChưa thay đổi";
+            _agentConsoleCheckpointLabel.Text = "CHECKPOINT\n—\nChưa thiết lập";
+            _agentConsoleSkillsLabel.Text = "SKILLS\n—\nChờ task";
             return;
         }
-        _agentConsoleStepLabel.Text = $"step\n{task.CurrentStep} / {Math.Max(task.CurrentStep, 24)}";
+        _agentConsoleStepLabel.Text = $"STEP\n{task.CurrentStep}\n{AgentStatusLabel(task.Status)}";
         _agentConsoleTestsLabel.Text = task.TestsPassed == 0 && task.TestsFailed == 0
-            ? "tests\n—"
-            : $"tests\n{task.TestsPassed} passed   {task.TestsFailed} failed";
-        _agentConsoleFilesLabel.Text = $"files\n{task.ChangedFiles.Count} changed";
+            ? "TESTS\n—\nChưa chạy"
+            : $"TESTS\n{task.TestsPassed}✓  {task.TestsFailed}×\n{CompactAgentText(task.TestsSummary, 22)}";
+        _agentConsoleFilesLabel.Text = task.ChangedFiles.Count == 0
+            ? "FILES\n—\nChưa thay đổi"
+            : $"FILES\n{task.ChangedFiles.Count}\nĐã thay đổi";
         _agentConsoleCheckpointLabel.Text = string.IsNullOrWhiteSpace(task.CheckpointId)
-            ? "checkpoint\n—"
-            : $"checkpoint\n{CompactAgentText(task.CheckpointId, 14)}";
+            ? "CHECKPOINT\n—\nChưa thiết lập"
+            : $"CHECKPOINT\n{CompactAgentText(task.CheckpointId, 14)}\n{task.CheckpointCount} bản lưu";
         _agentConsoleSkillsLabel.Text = task.ActiveSkills.Count == 0
-            ? "skills\n—"
-            : $"skills\n{CompactAgentText(string.Join(", ", task.ActiveSkills), 28)}";
+            ? "SKILLS\n—\nĐang discovery"
+            : $"SKILLS\n{task.ActiveSkills.Count}\n{CompactAgentText(string.Join(", ", task.ActiveSkills), 24)}";
     }
 
     private void ShowAgentEventInspector(AgentConsoleEventView ev)
@@ -1637,22 +2093,28 @@ chạy task và cập nhật tiến trình tại đây.", 11, AgentConsoleMuted)
         AgentConsoleTaskView task = SelectedAgentTask();
         bool hasTask = task != null;
         string status = task?.Status ?? "";
+        bool terminal = AgentTaskTerminal(status);
+
         if (_agentConsolePauseButton != null)
         {
             _agentConsolePauseButton.Visible = status != "paused";
-            _agentConsolePauseButton.Disabled = !hasTask || AgentTaskTerminal(status);
+            _agentConsolePauseButton.Disabled = _agentConsoleCreatingTask || !hasTask || terminal || status != "running";
         }
         if (_agentConsoleResumeButton != null)
         {
             _agentConsoleResumeButton.Visible = status == "paused";
-            _agentConsoleResumeButton.Disabled = !hasTask || status != "paused";
+            _agentConsoleResumeButton.Disabled = _agentConsoleCreatingTask || !hasTask || status != "paused";
         }
         if (_agentConsoleStopButton != null)
-            _agentConsoleStopButton.Disabled = !hasTask || AgentTaskTerminal(status);
+            _agentConsoleStopButton.Disabled = _agentConsoleCreatingTask || !hasTask || terminal;
         if (_agentConsoleRollbackButton != null)
-            _agentConsoleRollbackButton.Disabled = !hasTask || string.IsNullOrWhiteSpace(task.CheckpointId);
+            _agentConsoleRollbackButton.Disabled = _agentConsoleCreatingTask || !hasTask || string.IsNullOrWhiteSpace(task?.CheckpointId);
+        if (_agentConsoleTaskModeSelect != null)
+            _agentConsoleTaskModeSelect.Visible = _agentConsoleCreatingTask;
         if (_agentConsoleDirectiveInput != null)
-            _agentConsoleDirectiveInput.Editable = hasTask && !AgentTaskTerminal(status);
+            _agentConsoleDirectiveInput.Editable = _agentConsoleCreatingTask || (hasTask && !terminal);
+        if (_agentConsoleSendButton != null)
+            _agentConsoleSendButton.Disabled = !_agentConsoleCreatingTask && (!hasTask || terminal);
     }
 
     private AgentConsoleTaskView SelectedAgentTask()
@@ -1751,6 +2213,15 @@ chạy task và cập nhật tiến trình tại đây.", 11, AgentConsoleMuted)
         return int.TryParse(node.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out value) ? value : 0;
     }
 
+    private static bool AgentReadJsonBool(JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out JsonElement node))
+            return false;
+        if (node.ValueKind == JsonValueKind.True) return true;
+        if (node.ValueKind == JsonValueKind.False) return false;
+        return bool.TryParse(node.ToString(), out bool value) && value;
+    }
+
     private static double AgentReadJsonDouble(JsonElement root, string name)
     {
         if (!root.TryGetProperty(name, out JsonElement node))
@@ -1758,6 +2229,38 @@ chạy task và cập nhật tiến trình tại đây.", 11, AgentConsoleMuted)
         if (node.ValueKind == JsonValueKind.Number && node.TryGetDouble(out double value))
             return value;
         return double.TryParse(node.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out value) ? value : 0.0;
+    }
+
+    private static double AgentTaskProgressEstimate(AgentConsoleTaskView task)
+    {
+        if (task == null) return 0.0;
+        string status = (task.Status ?? "").ToLowerInvariant();
+        if (status == "completed") return 100.0;
+        if (status is "failed" or "stopped") return 100.0;
+        if (status == "queued") return 3.0;
+        double byStep = 8.0 + Math.Min(82.0, Math.Max(0, task.CurrentStep) * 7.0);
+        if (status == "paused") return Math.Min(92.0, byStep);
+        return Math.Min(92.0, byStep);
+    }
+
+    private static string AgentDurationText(double seconds)
+    {
+        TimeSpan span = TimeSpan.FromSeconds(Math.Max(0, seconds));
+        if (span.TotalHours >= 1)
+            return $"{(int)span.TotalHours:00}:{span.Minutes:00}:{span.Seconds:00}";
+        return $"{span.Minutes:00}:{span.Seconds:00}";
+    }
+
+    private static string AgentDateTimeText(double unix)
+    {
+        try
+        {
+            return DateTimeOffset.FromUnixTimeMilliseconds((long)(unix * 1000.0)).ToLocalTime().ToString("dd/MM HH:mm:ss", CultureInfo.InvariantCulture);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return "—";
+        }
     }
 
     private static string AgentTimeText(double unix)
@@ -2072,6 +2575,32 @@ chạy task và cập nhật tiến trình tại đây.", 11, AgentConsoleMuted)
         if (onPressed != null)
             button.Pressed += onPressed;
         return button;
+    }
+
+    private static void StyleAgentConsoleOptionButton(OptionButton option)
+    {
+        if (option == null)
+            return;
+        option.AddThemeFontOverride("font", AgentConsoleFont(false));
+        option.AddThemeFontSizeOverride("font_size", 11);
+        option.AddThemeColorOverride("font_color", AgentConsoleInk);
+        option.AddThemeColorOverride("font_hover_color", AgentConsoleInk);
+        option.AddThemeStyleboxOverride("normal", AgentConsoleStyle(
+            new Color(0.995f, 0.997f, 1f, 0.98f),
+            new Color(0.84f, 0.89f, 0.95f, 0.82f),
+            14,
+            1));
+        option.AddThemeStyleboxOverride("hover", AgentConsoleStyle(
+            Colors.White,
+            new Color(0.78f, 0.86f, 0.97f, 0.95f),
+            14,
+            1));
+        option.AddThemeStyleboxOverride("pressed", AgentConsoleStyle(
+            Colors.White,
+            new Color(0.78f, 0.86f, 0.97f, 0.95f),
+            14,
+            1));
+        option.AddThemeStyleboxOverride("focus", new StyleBoxEmpty());
     }
 
     private static void StyleAgentConsoleInput(LineEdit input)

@@ -231,6 +231,55 @@ class AgentTaskStore:
                 "summary": self._compact_text(data.get("summary", event.get("summary", "")), 500),
             }
 
+    def execution_projection(self, task_id: str) -> dict[str, Any]:
+        """Small rollbackable UI projection, separate from immutable event history."""
+        with self._lock:
+            task = self._find_locked(task_id)
+            if task is None:
+                return {}
+            return {
+                "current_step": int(task.get("current_step", 0) or 0),
+                "active_skills": list(task.get("active_skills") or []),
+                "changed_files": list(task.get("changed_files") or []),
+                "tests": dict(task.get("tests") or {}),
+                "checkpoint_id": str(task.get("checkpoint_id", "") or ""),
+                "checkpoint_count": int(task.get("checkpoint_count", 0) or 0),
+            }
+
+    def restore_execution_projection(
+        self,
+        task_id: str,
+        projection: dict[str, Any],
+        *,
+        checkpoint_id: str = "",
+    ) -> dict[str, Any] | None:
+        """Restore task counters/state while preserving the audit/event timeline."""
+        if not isinstance(projection, dict):
+            return None
+        with self._lock:
+            task = self._find_locked(task_id)
+            if task is None:
+                return None
+            task["current_step"] = max(0, int(projection.get("current_step", 0) or 0))
+            task["active_skills"] = [str(x) for x in list(projection.get("active_skills") or [])][-24:]
+            task["changed_files"] = [str(x) for x in list(projection.get("changed_files") or [])][-120:]
+            tests = projection.get("tests") if isinstance(projection.get("tests"), dict) else {}
+            task["tests"] = {
+                "passed": int(tests.get("passed", 0) or 0),
+                "failed": int(tests.get("failed", 0) or 0),
+                "summary": self._compact_text(tests.get("summary", ""), 500),
+            }
+            task["checkpoint_id"] = str(checkpoint_id or projection.get("checkpoint_id", "") or "")
+            # Count is historical, so never decrease it during rollback.
+            task["checkpoint_count"] = max(
+                int(task.get("checkpoint_count", 0) or 0),
+                int(projection.get("checkpoint_count", 0) or 0),
+            )
+            task["status"] = "running"
+            task["updated_at"] = self._now()
+            self._save_locked()
+            return dict(task)
+
     def enqueue_control(
         self,
         task_id: str,

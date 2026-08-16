@@ -1,7 +1,18 @@
 {
   "name": "coding-inspection",
   "description": "Điều tra repo theo từng bước: list/search/read symbol, xem Git diff, trạng thái project, log và file đang chọn trước khi quyết định sửa.",
-  "keywords": ["code", "repo", "inspect", "search", "symbol", "file", "git diff", "architecture", "đọc code", "tìm code"],
+  "keywords": [
+    "code",
+    "repo",
+    "inspect",
+    "search",
+    "symbol",
+    "file",
+    "git diff",
+    "architecture",
+    "đọc code",
+    "tìm code"
+  ],
   "tools": [
     "project_list_files",
     "project_read_file",
@@ -12,5 +23,10 @@
     "inspect_selected_file",
     "inspect_runtime_log",
     "read_current_error"
-  ]
+  ],
+  "mode": "consult",
+  "latency": "seconds to minutes",
+  "workspace_required": true,
+  "risk_level": "low",
+  "reversible": true
 }

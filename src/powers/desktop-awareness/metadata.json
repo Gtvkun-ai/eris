@@ -1,7 +1,18 @@
 {
   "name": "desktop-awareness",
   "description": "Quan sát trạng thái desktop hiện tại: app active, text UI, media đang phát, thời gian và file/project đang được nhìn tới.",
-  "keywords": ["desktop", "media", "music", "now playing", "active app", "screen", "UI", "màn hình", "đang nghe nhạc", "cửa sổ"],
+  "keywords": [
+    "desktop",
+    "media",
+    "music",
+    "now playing",
+    "active app",
+    "screen",
+    "UI",
+    "màn hình",
+    "đang nghe nhạc",
+    "cửa sổ"
+  ],
   "tools": [
     "get_local_time",
     "get_now_playing",
@@ -9,5 +20,10 @@
     "read_visible_ui_text",
     "inspect_selected_file",
     "get_project_status"
-  ]
+  ],
+  "mode": "instant",
+  "latency": "<3s",
+  "workspace_required": false,
+  "risk_level": "low",
+  "reversible": true
 }

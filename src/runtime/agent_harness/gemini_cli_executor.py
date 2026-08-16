@@ -1,20 +1,17 @@
 # -*- coding: utf-8 -*-
-"""Gemini CLI decision engine cho LangGraph harness.
+"""Gemini API decision engine cho LangGraph harness.
 
-Gemini chỉ trả một quyết định JSON cho mỗi node. Task chạy theo unattended AUTOPILOT:
-Gemini không xin phép user cho read/search/file/shell/test/build/patch thông thường; tool thật
-vẫn do LangGraph + PermissionGate + ProjectOperations thực thi và audit. Protected boundary
-như publish/destructive history bị từ chối tự động để executor replan, không bật prompt.
+Tận dụng WebAI-to-API chạy local (localhost:8081) để gọi model không tốn phí,
+thay vì dùng subprocess CLI hay gọi thẳng Google API.
 """
 from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import re
-import shutil
-import subprocess
 import uuid
+import requests
+from pathlib import Path
 from typing import Any, Iterable
 
 
@@ -28,24 +25,28 @@ class GeminiCliDecisionExecutor:
         *,
         workspace: str | Path | None = None,
         model: str = "",
-        executable: str = "",
+        executable: str = "", # Giữ nguyên signature cho coordinator
         timeout: int | None = None,
         logger: Any = None,
     ) -> None:
         self.workspace = Path(workspace).resolve() if workspace else None
         self.model = str(model or os.environ.get("ERIS_GEMINI_AGENT_MODEL", "auto")).strip() or "auto"
-        self.executable = str(executable or os.environ.get("ERIS_GEMINI_CLI", "gemini")).strip() or "gemini"
+        if self.model == "auto":
+            self.model = "gemini-3-flash" # Default cua WebAI-to-API
+            
+        self.api_base = os.environ.get("ERIS_WEBAI_URL", "http://localhost:8081/v1").rstrip("/")
         self.timeout = int(timeout or os.environ.get("ERIS_GEMINI_AGENT_TIMEOUT", "120") or 120)
         self.logger = logger
 
     def health(self) -> tuple[bool, str]:
-        resolved = shutil.which(self.executable)
-        if resolved:
-            return True, resolved
-        path = Path(self.executable)
-        if path.exists():
-            return True, str(path)
-        return False, "gemini_cli_not_found"
+        # Kiem tra xem WebAI-to-API co dang chay khong
+        try:
+            resp = requests.get(f"{self.api_base}/models", timeout=5)
+            if resp.status_code == 200:
+                return True, f"webai_api_ready ({self.api_base})"
+        except requests.exceptions.RequestException:
+            pass
+        return False, f"webai_api_not_found_at_{self.api_base}"
 
     def invoke_with_tools(
         self,
@@ -56,8 +57,6 @@ class GeminiCliDecisionExecutor:
         active_skills: list[str] | None = None,
         workspace: str | Path | None = None,
     ):
-        # Import muộn để module health/parser vẫn test được khi optional LangGraph
-        # dependencies chưa cài trong môi trường packaging.
         from langchain_core.messages import AIMessage
 
         ok, reason = self.health()
@@ -72,35 +71,27 @@ class GeminiCliDecisionExecutor:
             active_skills=active_skills or [],
             workspace=resolved_workspace,
         )
-        cmd = [self.executable, "-p", prompt, "--output-format", "json", "--approval-mode", "plan", "-e", "none"]
-        if self.model:
-            cmd.extend(["-m", self.model])
+
+        url = f"{self.api_base}/chat/completions"
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.0,
+        }
 
         try:
-            completed = subprocess.run(
-                cmd,
-                cwd=str(resolved_workspace) if resolved_workspace else None,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=max(15, self.timeout),
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise GeminiCliError(f"gemini_cli_spawn_failed:{type(exc).__name__}:{exc}") from exc
-
-        stdout = (completed.stdout or "").strip()
-        stderr = (completed.stderr or "").strip()
-        if completed.returncode != 0:
-            raise GeminiCliError(f"gemini_cli_exit_{completed.returncode}:{(stderr or stdout)[:1200]}")
-
+            resp = requests.post(url, json=payload, timeout=self.timeout)
+            resp.raise_for_status()
+            data = resp.json()
+        except requests.exceptions.RequestException as exc:
+            raise GeminiCliError(f"webai_api_failed:{type(exc).__name__}:{exc}") from exc
+            
         try:
-            envelope = json.loads(stdout)
-        except json.JSONDecodeError as exc:
-            raise GeminiCliError(f"gemini_cli_invalid_json:{stdout[:1200]}") from exc
-        response_text = str(envelope.get("response", "") or "").strip()
-        decision = self.parse_decision(response_text)
+            text = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError):
+            raise GeminiCliError(f"webai_api_invalid_response:{json.dumps(data)}")
+
+        decision = self.parse_decision(text)
 
         action = str(decision.get("action", "final") or "final").lower()
         summary = str(decision.get("summary", "") or "").strip()
@@ -121,11 +112,11 @@ class GeminiCliDecisionExecutor:
                     "id": f"gemini_{uuid.uuid4().hex[:12]}",
                     "type": "tool_call",
                 }],
-                additional_kwargs={"gemini_cli_stats": envelope.get("stats", {})},
+                additional_kwargs={"gemini_cli_stats": data.get("usage", {})},
             )
 
-        final = str(decision.get("final", "") or summary or response_text).strip()
-        return AIMessage(content=final, additional_kwargs={"gemini_cli_stats": envelope.get("stats", {})})
+        final = str(decision.get("final", "") or summary or text).strip()
+        return AIMessage(content=final, additional_kwargs={"gemini_cli_stats": data.get("usage", {})})
 
     @staticmethod
     def parse_decision(text: str) -> dict[str, Any]:
@@ -177,7 +168,7 @@ class GeminiCliDecisionExecutor:
             "Choose at most ONE tool per turn so LangGraph can checkpoint after every observation.\n"
             "You may call ONLY tools listed under DISCLOSED TOOLS.\n"
             "If the needed capability is not disclosed yet, use search_capabilities first; then activate_skill.\n"
-            "Do not use Gemini CLI built-in shell/file tools in this lane. All execution must flow through the disclosed Eris tools.\n"
+            "Do not use built-in shell/file tools in this lane. All execution must flow through the disclosed Eris tools.\n"
             "You are running UNATTENDED AUTOPILOT. Never ask the user for routine permission to inspect/read/write project files, run tests/builds, or run workspace-bounded development commands. Use the disclosed tool directly.\n"
             "If a protected operation is denied, do not stop to request confirmation; replan toward a safe/reversible alternative and report the protected boundary only if it blocks completion.\n"
             "After every tool observation, reconsider the goal and choose the next smallest useful action. Verify before final.\n\n"
@@ -190,6 +181,5 @@ class GeminiCliDecisionExecutor:
             f"DECISION CONTRACT:\n{json.dumps(contract, ensure_ascii=False, indent=2)}\n"
             "For action=tool, provide tool_call. For action=final, provide final and omit tool_call."
         )
-
 
 __all__ = ["GeminiCliDecisionExecutor", "GeminiCliError"]

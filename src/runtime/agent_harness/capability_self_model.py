@@ -1,19 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Capability self-model for Eris.
+"""Runtime capability self-model for Eris.
 
-This is intentionally *not* another tool registry.  The capability registry is
-still the source of truth for concrete native tools; this module projects that
-truth into the decisions Eris actually needs in conversation:
-
-- instant: a small native action/observation can finish in one step;
-- consult: ask the backstage Gemini agent to inspect/reason without modifying;
-- long_execution: hand a multi-step goal to Gemini/LangGraph;
-- clarify: multiple materially different execution paths are still open;
-- conversation: no executor is needed.
-
-Having a model of one's own reach is more useful than owning 46 tools and then
-announcing that one has no connection to the computer.  We have already tried
-that genre of comedy.
+The registry says which concrete capabilities exist.  This module answers the
+more useful operational question: what can Eris do *now*, how long will it take,
+how risky/reversible is it, does it require a workspace, and should Eris do it
+natively or delegate it to Gemini/LangGraph.
 """
 from __future__ import annotations
 
@@ -23,6 +14,27 @@ import unicodedata
 from typing import Any
 
 from actions.capability_registry import iter_public_capabilities
+
+
+@dataclass(frozen=True)
+class CapabilityProfile:
+    capability_id: str
+    description: str
+    effect: str
+    risk_level: str
+    health: str
+    health_reason: str
+    available: bool
+    latency_class: str
+    estimated_time: str
+    cost_class: str
+    executor: str
+    workspace_required: bool
+    reversible: bool
+    can_modify: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -103,16 +115,35 @@ _SPECIFIC = (
 
 
 class CapabilitySelfModel:
-    """Small, refreshable projection of what Eris can do *now*."""
+    """Refreshable, health-aware projection of Eris' operational reach."""
 
     def __init__(self, *, harness: Any = None, harness_ready: bool | None = None) -> None:
         self.harness = harness
         self._harness_ready_override = harness_ready
+        self._native: dict[str, Any] = {}
+        self._profiles: dict[str, CapabilityProfile] = {}
+        self._skills: dict[str, dict[str, Any]] = {}
+        self._runtime_revision = 0
         self.refresh()
 
     def refresh(self) -> None:
+        try:
+            from actions.capability_runtime import runtime_capability_snapshot
+            runtime = runtime_capability_snapshot(refresh=False)
+        except Exception:
+            runtime = {}
+        statuses = dict(runtime.get("statuses", {}) or {}) if isinstance(runtime, dict) else {}
+        self._runtime_revision = int(runtime.get("revision", 0) or 0) if isinstance(runtime, dict) else 0
+
         capabilities = tuple(iter_public_capabilities(include_unavailable=True))
         self._native = {cap.id: cap for cap in capabilities if cap.callable}
+        self._profiles = {}
+        for cap_id, cap in self._native.items():
+            status = statuses.get(cap_id) if isinstance(statuses.get(cap_id), dict) else {}
+            available = bool(status.get("available", getattr(cap, "live_available", False)))
+            reason = str(status.get("reason", "") or "")
+            self._profiles[cap_id] = self._build_profile(cap, available=available, reason=reason)
+
         discovery = getattr(self.harness, "discovery", None)
         raw_skills = list(getattr(discovery, "capabilities", []) or [])
         self._skills = {
@@ -127,51 +158,120 @@ class CapabilitySelfModel:
             return bool(self._harness_ready_override)
         return self.harness is not None
 
+    def profile(self, capability_id: str) -> CapabilityProfile | None:
+        return self._profiles.get(str(capability_id or "").strip())
+
+    def capability_profiles(self, *, include_unavailable: bool = True) -> tuple[CapabilityProfile, ...]:
+        values = list(self._profiles.values())
+        if not include_unavailable:
+            values = [item for item in values if item.available]
+        return tuple(sorted(values, key=lambda item: (not item.available, item.latency_class, item.capability_id)))
+
+    def skill_profiles(self) -> tuple[dict[str, Any], ...]:
+        results: list[dict[str, Any]] = []
+        harness_specs = dict(getattr(self.harness, "tool_specs", {}) or {}) if self.harness is not None else {}
+        for name, item in self._skills.items():
+            tools = [str(x) for x in item.get("tools", []) if str(x).strip()]
+            tool_health: list[bool] = []
+            for tool in tools:
+                profile = self._profiles.get(tool)
+                if profile is not None:
+                    tool_health.append(profile.available)
+                elif tool in harness_specs:
+                    tool_health.append(True)
+            available_tools = sum(1 for value in tool_health if value)
+            health = "ready" if tools and available_tools == len(tools) else "degraded" if available_tools else "unavailable"
+            if not self.harness_ready:
+                health = "unavailable"
+            results.append({
+                "name": name,
+                "description": str(item.get("description", "") or ""),
+                "mode": str(item.get("mode", "long") or "long"),
+                "latency": str(item.get("latency", "minutes") or "minutes"),
+                "workspace_required": bool(item.get("workspace_required", any(tool.startswith("project_") for tool in tools))),
+                "risk_level": str(item.get("risk_level", "medium") or "medium"),
+                "tools": tools,
+                "available_tools": available_tools,
+                "tool_count": len(tools),
+                "health": health,
+                "executor": "gemini/langgraph",
+            })
+        return tuple(sorted(results, key=lambda item: (item["health"] != "ready", item["name"])))
+
+    def catalog(self, query: str = "", *, include_unavailable: bool = True, limit: int = 40) -> dict[str, Any]:
+        folded = _fold(query)
+        caps = []
+        for profile in self.capability_profiles(include_unavailable=include_unavailable):
+            if folded:
+                haystack = _fold(f"{profile.capability_id} {profile.description} {profile.effect} {profile.executor}")
+                if not all(token in haystack for token in folded.split() if len(token) > 1):
+                    continue
+            caps.append(profile.to_dict())
+        skills = []
+        for item in self.skill_profiles():
+            if folded:
+                haystack = _fold(" ".join([item["name"], item["description"], *item["tools"]]))
+                if not any(token in haystack for token in folded.split() if len(token) > 1):
+                    continue
+            skills.append(dict(item))
+        return {
+            "runtime_revision": self._runtime_revision,
+            "harness_ready": self.harness_ready,
+            "capabilities": caps[: max(1, int(limit))],
+            "skills": skills[: max(1, int(limit))],
+        }
+
     def instant_capabilities(self) -> tuple[str, ...]:
-        result = []
-        for cap_id in _INSTANT_CUES:
-            cap = self._native.get(cap_id)
-            if cap is not None and bool(getattr(cap, "live_available", False)):
-                result.append(cap_id)
-        return tuple(result)
+        return tuple(
+            cap_id for cap_id in _INSTANT_CUES
+            if (self._profiles.get(cap_id) is not None and self._profiles[cap_id].available)
+        )
 
     def long_skills(self) -> tuple[str, ...]:
-        return tuple(sorted(self._skills)) if self.harness_ready else ()
+        if not self.harness_ready:
+            return ()
+        return tuple(item["name"] for item in self.skill_profiles() if item["health"] != "unavailable")
 
     def prompt_summary(self) -> str:
+        self.refresh()
+        ready = [p for p in self._profiles.values() if p.available]
+        unavailable = [p for p in self._profiles.values() if not p.available]
         instant = self.instant_capabilities()
         skills = self.long_skills()
-        instant_text = ", ".join(instant[:18]) if instant else "none currently healthy"
-        skills_text = ", ".join(skills[:12]) if skills else "Gemini/LangGraph unavailable"
+        unavailable_text = ", ".join(f"{p.capability_id}:{p.health_reason or 'unavailable'}" for p in unavailable[:6]) or "none"
         return (
             "CAPABILITY SELF MODEL: "
-            f"instant_native=[{instant_text}]; "
+            f"runtime_revision={self._runtime_revision}; ready={len(ready)} unavailable={len(unavailable)}; "
+            f"instant_native=[{', '.join(instant[:16]) or 'none'}]; "
             f"long_executor={'gemini/langgraph' if self.harness_ready else 'unavailable'}; "
-            f"long_skills=[{skills_text}]. "
-            "Use native capabilities for one-step work; use Gemini/LangGraph for multi-step technical work; "
-            "ask the user before execution when several materially different targets remain open."
+            f"long_skills=[{', '.join(skills[:12]) or 'none'}]; "
+            f"unavailable_reasons=[{unavailable_text}]. "
+            "Prefer healthy low-latency native capabilities for one-step work. Delegate multi-step technical work to the long executor. "
+            "A project capability requires a locked workspace; do not claim a capability is usable when its health says unavailable."
         )
 
     def assess(self, user_text: str) -> CapabilitySelfAssessment:
+        self.refresh()
         folded = _fold(user_text)
         if not folded:
             return CapabilitySelfAssessment()
 
         matched_instant: list[str] = []
         for cap_id, cues in _INSTANT_CUES.items():
-            cap = self._native.get(cap_id)
-            if cap is None or not bool(getattr(cap, "live_available", False)):
+            profile = self._profiles.get(cap_id)
+            if profile is None or not profile.available:
                 continue
             if _contains_any(folded, cues):
                 matched_instant.append(cap_id)
         if matched_instant:
+            profiles = [self._profiles[x] for x in matched_instant]
             return CapabilitySelfAssessment(
                 lane="instant",
                 reason="healthy_single_step_capability",
                 confidence=0.94,
-                estimated_time="< 3s",
+                estimated_time=max((p.estimated_time for p in profiles), key=len, default="< 3s"),
                 executor="eris-native",
-                can_modify=any(str(getattr(self._native[x], "effect", "")) in {"write", "control"} for x in matched_instant),
+                can_modify=any(p.can_modify for p in profiles),
                 matched_capabilities=tuple(matched_instant[:6]),
             )
 
@@ -248,6 +348,32 @@ class CapabilitySelfModel:
             matched_skills=matched_skills,
         )
 
+    def _build_profile(self, cap: Any, *, available: bool, reason: str) -> CapabilityProfile:
+        cap_id = str(getattr(cap, "id", "") or "")
+        effect = str(getattr(cap, "effect", "inspect") or "inspect").lower()
+        risk = str(getattr(cap, "risk_level", "low") or "low").lower()
+        latency_class, estimated = _latency_for(cap_id, effect)
+        workspace_required = cap_id.startswith("project_")
+        reversible = effect in {"observe", "inspect", "read"} or cap_id in {
+            "project_apply_patch", "project_rollback", "copy_text", "set_volume", "play_pause_media",
+        }
+        return CapabilityProfile(
+            capability_id=cap_id,
+            description=str(getattr(cap, "description_vi", "") or ""),
+            effect=effect,
+            risk_level=risk,
+            health="ready" if available else "unavailable",
+            health_reason=reason or ("runtime_ready" if available else "runtime_unavailable"),
+            available=bool(available),
+            latency_class=latency_class,
+            estimated_time=estimated,
+            cost_class="low" if latency_class == "instant" else "medium" if latency_class in {"fast", "medium"} else "high",
+            executor="eris-native",
+            workspace_required=workspace_required,
+            reversible=reversible,
+            can_modify=effect in {"write", "control"},
+        )
+
     def _match_skills(self, folded_query: str) -> tuple[str, ...]:
         if not self._skills:
             return ()
@@ -267,4 +393,16 @@ class CapabilitySelfModel:
         return tuple(name for _score, name in ranked[:5])
 
 
-__all__ = ["CapabilitySelfAssessment", "CapabilitySelfModel"]
+def _latency_for(capability_id: str, effect: str) -> tuple[str, str]:
+    if capability_id == "project_execute_task":
+        return "long", "minutes"
+    if capability_id in {"project_run_tests", "project_run_command", "project_package_patch"}:
+        return "medium", "seconds to minutes"
+    if capability_id.startswith("project_") or capability_id.startswith("workspace_"):
+        return "fast", "1-10s"
+    if effect in {"observe", "inspect", "read"}:
+        return "instant", "< 3s"
+    return "fast", "< 10s"
+
+
+__all__ = ["CapabilityProfile", "CapabilitySelfAssessment", "CapabilitySelfModel"]

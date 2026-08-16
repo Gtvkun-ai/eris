@@ -44,6 +44,13 @@ class CapabilityDiscovery:
                 "description": description,
                 "keywords": [str(x).strip() for x in meta.get("keywords", []) if str(x).strip()],
                 "tools": [str(x).strip() for x in meta.get("tools", []) if str(x).strip()],
+                # Operational metadata feeds Eris' self-model and the Agent Console,
+                # while search still exposes only name+description until activation.
+                "mode": str(meta.get("mode", "long") or "long"),
+                "latency": str(meta.get("latency", "minutes") or "minutes"),
+                "workspace_required": bool(meta.get("workspace_required", False)),
+                "risk_level": str(meta.get("risk_level", "medium") or "medium"),
+                "reversible": bool(meta.get("reversible", True)),
                 "path": str(Path(root)),
             })
         return sorted(results, key=lambda item: item["name"])

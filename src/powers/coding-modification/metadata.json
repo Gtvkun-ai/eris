@@ -1,7 +1,17 @@
 {
   "name": "coding-modification",
   "description": "Sửa code có kiểm soát: apply patch nhỏ, chạy test, xem diff, rollback khi sai và package đúng các file thay đổi.",
-  "keywords": ["edit", "patch", "modify", "refactor", "fix", "rollback", "package", "sửa code", "thay đổi code"],
+  "keywords": [
+    "edit",
+    "patch",
+    "modify",
+    "refactor",
+    "fix",
+    "rollback",
+    "package",
+    "sửa code",
+    "thay đổi code"
+  ],
   "tools": [
     "project_apply_patch",
     "project_run_tests",
@@ -11,5 +21,10 @@
     "project_package_patch",
     "project_read_file",
     "project_search_text"
-  ]
+  ],
+  "mode": "long",
+  "latency": "minutes",
+  "workspace_required": true,
+  "risk_level": "high",
+  "reversible": true
 }

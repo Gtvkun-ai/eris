@@ -163,6 +163,7 @@ class IncomingProtocolRuntimeMixin:
                 task_mode = str(msg.get("task_mode", "execute") or "execute").strip().lower()
                 if task_mode not in {"execute", "inspect"}:
                     task_mode = "execute"
+                model = str(msg.get("model", "") or "").strip()
                 started = starter(
                     text,
                     clarified_goal=text,
@@ -170,6 +171,7 @@ class IncomingProtocolRuntimeMixin:
                     source="agent_console",
                     task_mode=task_mode,
                     workspace_ref=str(msg.get("workspace_ref", "") or "").strip(),
+                    model=model,
                 )
                 if str(started.get("status", "") or "") != "started":
                     raise RuntimeError(str(started.get("reason", "agent_task_start_failed") or "agent_task_start_failed"))
@@ -188,15 +190,30 @@ class IncomingProtocolRuntimeMixin:
 
                 text = str(msg.get("text", "") or "").strip()
                 checkpoint_id = str(msg.get("checkpoint_id", "") or "").strip()
-                control = store.enqueue_control(
-                    task_id,
-                    action,
-                    text=text,
-                    checkpoint_id=checkpoint_id,
-                    request_id=request_id,
-                )
-                if control is None:
-                    raise RuntimeError("agent_control_enqueue_failed")
+                task_status = str(task.get("status", "") or "").strip().lower()
+                terminal = task_status in {"completed", "failed", "stopped"}
+
+                # A terminal task has no worker left to consume queued controls.
+                # Rollback it synchronously through AgentHarness instead of adding
+                # a request that would sit in TaskStore forever looking important.
+                if action == "rollback" and terminal:
+                    harness = getattr(self, "agent_harness", None)
+                    restore = getattr(harness, "restore_task_checkpoint", None)
+                    if not callable(restore):
+                        raise RuntimeError("agent_terminal_rollback_unavailable")
+                    record = restore(task_id, checkpoint_id or "latest")
+                    message = f"Đã rollback task về checkpoint {record.graph_checkpoint_id}."
+                    control = None
+                else:
+                    control = store.enqueue_control(
+                        task_id,
+                        action,
+                        text=text,
+                        checkpoint_id=checkpoint_id,
+                        request_id=request_id,
+                    )
+                    if control is None:
+                        raise RuntimeError("agent_control_enqueue_failed")
 
                 if action == "directive":
                     if not text:
@@ -211,18 +228,19 @@ class IncomingProtocolRuntimeMixin:
                     )
                     message = "Đã gửi chỉ thị vào task; executor sẽ nhận ở boundary kế tiếp."
                 elif action == "rollback":
-                    store.append_event(
-                        task_id,
-                        "rollback_requested",
-                        actor="user",
-                        summary=(
-                            f"Yêu cầu quay lại checkpoint {checkpoint_id}."
-                            if checkpoint_id else "Yêu cầu quay lại checkpoint gần nhất."
-                        ),
-                        importance=0.96,
-                        data={"checkpoint_id": checkpoint_id, "control_id": control.get("control_id", "")},
-                    )
-                    message = "Đã xếp yêu cầu rollback; AgentHarness sẽ xử lý ở điểm an toàn kế tiếp."
+                    if not terminal:
+                        store.append_event(
+                            task_id,
+                            "rollback_requested",
+                            actor="user",
+                            summary=(
+                                f"Yêu cầu quay lại checkpoint {checkpoint_id}."
+                                if checkpoint_id else "Yêu cầu quay lại checkpoint gần nhất."
+                            ),
+                            importance=0.96,
+                            data={"checkpoint_id": checkpoint_id, "control_id": control.get("control_id", "")},
+                        )
+                        message = "Đã xếp yêu cầu rollback; AgentHarness sẽ xử lý ở điểm an toàn kế tiếp."
                 else:
                     store.append_event(
                         task_id,

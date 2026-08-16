@@ -1,6 +1,6 @@
 {
   "schema": "eris.life_horizon.state.v74",
-  "revision": 598,
+  "revision": 634,
   "goals": [
     {
       "goal_id": "h2.private_project.project.derived.ec06365b7c5ae381",
@@ -28,7 +28,7 @@
       "tags": [
         "private_project"
       ],
-      "updated_at": 1786802599.1920543,
+      "updated_at": 1786807883.593342,
       "created_at": 1786698780.4020934
     },
     {
@@ -37,7 +37,7 @@
       "title": "Điều tra concern lặp lại",
       "description": "Mối bận tâm lặp lại này cần bằng chứng mới hoặc một hành động kiểm tra nào để tiến triển?",
       "status": "dormant",
-      "strength": 0.5173189872591788,
+      "strength": 0.5143931786580591,
       "progress": 0.0,
       "parent_goal_id": "",
       "deadline_at": 0.0,
@@ -57,7 +57,7 @@
       "tags": [
         "private_project"
       ],
-      "updated_at": 1786802599.1920543,
+      "updated_at": 1786807883.593342,
       "created_at": 1786698780.4020934
     },
     {
@@ -66,7 +66,7 @@
       "title": "Recurring private concern",
       "description": "Mối bận tâm lặp lại này cần bằng chứng mới hoặc một hành động kiểm tra nào để tiến triển?",
       "status": "dormant",
-      "strength": 0.05626072677737866,
+      "strength": 0.05576604699326444,
       "progress": 0.0,
       "parent_goal_id": "",
       "deadline_at": 0.0,
@@ -87,7 +87,7 @@
         "private_anchor",
         "private_agenda"
       ],
-      "updated_at": 1786802599.1920543,
+      "updated_at": 1786807883.593342,
       "created_at": 1786698780.4020934
     },
     {
@@ -117,7 +117,7 @@
         "private_anchor",
         "private_agenda"
       ],
-      "updated_at": 1786802599.1920543,
+      "updated_at": 1786807883.593342,
       "created_at": 1786698780.4020934
     },
     {
@@ -146,7 +146,7 @@
       "tags": [
         "private_project"
       ],
-      "updated_at": 1786802599.1920543,
+      "updated_at": 1786807883.593342,
       "created_at": 1786765759.7189965
     },
     {
@@ -155,7 +155,7 @@
       "title": "Recurring private concern",
       "description": "Mối bận tâm lặp lại này cần bằng chứng mới hoặc một hành động kiểm tra nào để tiến triển?",
       "status": "dormant",
-      "strength": 0.0765292337702899,
+      "strength": 0.07545433321773821,
       "progress": 0.0,
       "parent_goal_id": "",
       "deadline_at": 0.0,
@@ -176,7 +176,7 @@
         "private_anchor",
         "private_agenda"
       ],
-      "updated_at": 1786802599.1920543,
+      "updated_at": 1786807883.593342,
       "created_at": 1786765759.7189965
     }
   ],

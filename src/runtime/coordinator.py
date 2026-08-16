@@ -469,6 +469,7 @@ class RuntimeCoordinator(
         source: str = "eris_chat",
         task_mode: str = "execute",
         workspace_ref: str = "",
+        model: str = "",
     ) -> dict:
         """Start Gemini/LangGraph in a daemon worker and return immediately.
 
@@ -507,12 +508,19 @@ class RuntimeCoordinator(
         if store is not None:
             try:
                 executor = str(getattr(harness, "executor_name", "gemini") or "gemini")
-                model = str(getattr(harness, "model_name", "") or "")
+                model_name = str(getattr(harness, "model_name", "") or "")
+                
+                if model:
+                    model_name = model
+                    if harness.executor is not None and hasattr(harness.executor, "model"):
+                        harness.executor.model = model
+                    harness.model_name = model
+
                 store.create_task(
                     clarified_goal or goal,
                     task_id=task_id,
                     executor=executor,
-                    model=model,
+                    model=model_name,
                     thread_id=resolved_thread,
                     metadata={
                         "source_turn_id": source_turn_id,

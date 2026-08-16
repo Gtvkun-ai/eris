@@ -236,3 +236,48 @@ def test_agent_console_workspace_open_switch_and_favorite_are_persistent(tmp_pat
     assert snapshot["active_workspace"]["path"] == str(project_b.resolve())
     favorites = [item for item in snapshot["workspaces"] if item["favorite"]]
     assert favorites and favorites[0]["workspace_id"] == first.workspace_id
+
+
+def test_terminal_task_rollback_is_restored_immediately_not_queued(tmp_path):
+    from types import SimpleNamespace
+    from runtime.incoming_protocol_runtime import IncomingProtocolRuntimeMixin
+
+    sent = []
+    restored = []
+
+    class _Harness:
+        def restore_task_checkpoint(self, task_id, checkpoint_id="latest"):
+            restored.append((task_id, checkpoint_id))
+            return SimpleNamespace(graph_checkpoint_id="cp-terminal-1")
+
+    class _Runtime(IncomingProtocolRuntimeMixin):
+        logger = None
+
+        def __init__(self):
+            self.agent_task_store = AgentTaskStore(tmp_path / "agent_tasks.json")
+            self.agent_harness = _Harness()
+
+        def _send_runtime_json(self, payload, **_kwargs):
+            sent.append(payload)
+            return True
+
+    runtime = _Runtime()
+    task = runtime.agent_task_store.create_task(
+        "finished task",
+        task_id="task_terminal",
+        metadata={"workspace_path": str(tmp_path)},
+    )
+    runtime.agent_task_store.append_event(task["task_id"], "task_completed", actor="executor", summary="done")
+
+    runtime._handle_agent_control({
+        "type": "agent_control",
+        "action": "rollback",
+        "task_id": task["task_id"],
+        "checkpoint_id": "cp-terminal-1",
+        "request_id": "rb-terminal",
+    })
+
+    assert restored == [("task_terminal", "cp-terminal-1")]
+    assert runtime.agent_task_store.consume_controls("task_terminal") == []
+    assert sent[-1]["status"] == "ok"
+    assert "cp-terminal-1" in sent[-1]["message"]

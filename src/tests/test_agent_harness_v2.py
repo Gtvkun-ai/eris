@@ -431,3 +431,130 @@ def test_coordinator_binds_new_agent_task_to_selected_workspace(tmp_path):
     if thread is not None:
         thread.join(timeout=2)
     assert seen and seen[0]["workspace_path"] == str(project.resolve())
+
+
+def test_workspace_checkpoint_store_restores_git_worktree_index_and_projection(tmp_path):
+    import subprocess
+    from runtime.agent_harness.workspace_checkpoint_store import WorkspaceCheckpointStore
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "eris@test.local"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Eris Test"], cwd=repo, check=True)
+    (repo / "a.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "a.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
+
+    # Snapshot contains both staged and unstaged state plus an untracked file.
+    (repo / "a.txt").write_text("staged\n", encoding="utf-8")
+    subprocess.run(["git", "add", "a.txt"], cwd=repo, check=True)
+    (repo / "a.txt").write_text("unstaged\n", encoding="utf-8")
+    (repo / "note.txt").write_text("checkpoint\n", encoding="utf-8")
+
+    store = WorkspaceCheckpointStore(tmp_path / "checkpoints")
+    record = store.capture(
+        task_id="task_x",
+        checkpoint_id="cp_x",
+        thread_id="thread_x",
+        workspace_path=str(repo),
+        step=4,
+        reason="before:project_apply_patch",
+        task_projection={"current_step": 4, "changed_files": ["a.txt"]},
+    )
+    assert record.snapshot_mode == "git"
+    assert record.complete is True
+
+    # Move the repository into a materially different future state.
+    (repo / "a.txt").write_text("future\n", encoding="utf-8")
+    (repo / "note.txt").write_text("future-note\n", encoding="utf-8")
+    (repo / "future.txt").write_text("delete-me\n", encoding="utf-8")
+
+    restored = store.restore(task_id="task_x", checkpoint_id="cp_x", workspace_path=str(repo))
+    assert restored.checkpoint_id == "cp_x"
+    assert (repo / "a.txt").read_text(encoding="utf-8") == "unstaged\n"
+    assert (repo / "note.txt").read_text(encoding="utf-8") == "checkpoint\n"
+    assert not (repo / "future.txt").exists()
+    staged = subprocess.run(["git", "diff", "--cached", "--", "a.txt"], cwd=repo, capture_output=True, text=True, check=True).stdout
+    unstaged = subprocess.run(["git", "diff", "--", "a.txt"], cwd=repo, capture_output=True, text=True, check=True).stdout
+    assert "+staged" in staged
+    assert "+unstaged" in unstaged
+    assert store.load_projection(restored)["current_step"] == 4
+
+
+def test_task_store_restores_execution_projection_without_erasing_audit(tmp_path):
+    from runtime.agent_harness.task_store import AgentTaskStore
+
+    store = AgentTaskStore(tmp_path / "tasks.json")
+    task_id = store.create_task("fix repo")["task_id"]
+    store.update_task(
+        task_id,
+        current_step=3,
+        active_skills=["coding-debug"],
+        changed_files=["a.py"],
+        tests={"passed": 2, "failed": 0, "summary": "ok"},
+    )
+    projection = store.execution_projection(task_id)
+    store.append_event(task_id, "file_changed", data={"path": "b.py"})
+    store.update_task(task_id, current_step=9, tests={"passed": 0, "failed": 1, "summary": "fail"})
+    before_events = len(store.get_task(task_id, event_limit=100)["events"])
+
+    store.restore_execution_projection(task_id, projection, checkpoint_id="cp3")
+    task = store.get_task(task_id, event_limit=100)
+    assert task["current_step"] == 3
+    assert task["changed_files"] == ["a.py"]
+    assert task["tests"]["passed"] == 2
+    assert task["checkpoint_id"] == "cp3"
+    assert len(task["events"]) == before_events
+
+
+def test_capability_self_model_exposes_operational_profiles_and_skill_health():
+    from runtime.agent_harness.capability_self_model import CapabilitySelfModel
+
+    class _Discovery:
+        capabilities = [
+            {
+                "name": "coding-verification",
+                "description": "verify test diff",
+                "keywords": ["verify"],
+                "tools": ["project_run_tests", "project_git_diff"],
+                "mode": "long",
+                "latency": "seconds to minutes",
+                "workspace_required": True,
+                "risk_level": "medium",
+            }
+        ]
+
+    class _Harness:
+        discovery = _Discovery()
+        tool_specs = {
+            "project_run_tests": {"name": "project_run_tests"},
+            "project_git_diff": {"name": "project_git_diff"},
+            "inspect_capability_catalog": {"name": "inspect_capability_catalog"},
+        }
+
+    model = CapabilitySelfModel(harness=_Harness(), harness_ready=True)
+    profile = model.profile("project_run_tests")
+    assert profile is not None
+    assert profile.workspace_required is True
+    assert profile.executor == "eris-native"
+    assert profile.latency_class == "medium"
+    catalog = model.catalog("project", include_unavailable=True)
+    assert catalog["harness_ready"] is True
+    assert any(item["capability_id"] == "project_run_tests" for item in catalog["capabilities"])
+    skills = model.skill_profiles()
+    assert skills and skills[0]["executor"] == "gemini/langgraph"
+
+
+def test_new_depth_skills_are_progressive_and_reveal_real_tools():
+    discovery = CapabilityDiscovery(str(ROOT / "powers"))
+    search = discovery.search("capability health latency")
+    assert "agent-self-awareness" in search
+    assert "inspect_capability_catalog" not in search
+    activated = SkillLoader(discovery).activate_skill("agent-self-awareness")
+    assert "inspect_capability_catalog" in activated
+    assert "inspect_capability_health" in activated
+
+    recovery = SkillLoader(discovery).activate_skill("safe-recovery")
+    assert "list_task_checkpoints" in recovery
+    assert "git reset --hard" in recovery

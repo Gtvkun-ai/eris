@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import uuid
 import threading
+import time
 from contextlib import nullcontext
+from pathlib import Path
 from typing import Any, Callable, Literal
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage, SystemMessage
@@ -21,6 +23,7 @@ from .capability_discovery import CapabilityDiscovery
 from .skill_loader import SkillLoader
 from .task_store import AgentTaskStore
 from .event_bus import AgentEventBus
+from .workspace_checkpoint_store import WorkspaceCheckpointStore
 
 
 class AgentHarness:
@@ -52,6 +55,9 @@ class AgentHarness:
         self.tool_registry = dict(tool_registry or {})
         self.tool_specs = dict(tool_specs or {})
         self.task_store = task_store or AgentTaskStore()
+        self.tool_specs.update(self._builtin_tool_specs())
+        state_path = Path(getattr(self.task_store, "path", Path(".eris_state") / "agent_console" / "tasks.json"))
+        self.workspace_checkpoints = WorkspaceCheckpointStore(state_path.parent / "workspace_checkpoints")
         self.event_bus = event_bus or AgentEventBus(self.task_store, logger=logger)
         self.executor_name = str(executor_name or "gemini")
         self.model_name = str(model_name or "")
@@ -63,6 +69,79 @@ class AgentHarness:
         self.logger = logger
         self.checkpointer = MemorySaver()
         self.graph = self._build_graph()
+
+    @staticmethod
+    def _builtin_tool_specs() -> dict[str, dict[str, Any]]:
+        return {
+            "inspect_capability_catalog": {
+                "name": "inspect_capability_catalog",
+                "description": "Inspect Eris' live capability self-model with health, latency, risk, reversibility, executor and workspace requirements.",
+                "input_schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "query": {"type": "string"},
+                        "include_unavailable": {"type": "boolean"},
+                    },
+                },
+                "effect": "inspect",
+                "risk_level": "low",
+                "workspace_required": False,
+                "estimated_time": "<1s",
+                "reversible": True,
+            },
+            "list_task_checkpoints": {
+                "name": "list_task_checkpoints",
+                "description": "List atomic LangGraph + filesystem checkpoints for the current Agent task.",
+                "input_schema": {"type": "object", "additionalProperties": False, "properties": {}},
+                "effect": "inspect",
+                "risk_level": "low",
+                "workspace_required": False,
+                "estimated_time": "<1s",
+                "reversible": True,
+            },
+        }
+
+    def _executor_ready(self) -> bool:
+        health = getattr(self.llm, "health", None)
+        if not callable(health):
+            return True
+        try:
+            ready, _reason = health()
+            return bool(ready)
+        except Exception:
+            return False
+
+    def _inspect_capability_catalog(self, args: dict[str, Any]) -> dict[str, Any]:
+        from .capability_self_model import CapabilitySelfModel
+
+        model = CapabilitySelfModel(harness=self, harness_ready=self._executor_ready())
+        return model.catalog(
+            str(args.get("query", "") or ""),
+            include_unavailable=bool(args.get("include_unavailable", True)),
+            limit=48,
+        )
+
+    def _list_task_checkpoints(self, task_id: str) -> dict[str, Any]:
+        records = self.workspace_checkpoints.list(task_id, limit=48)
+        return {
+            "task_id": task_id,
+            "count": len(records),
+            "checkpoints": [
+                {
+                    "checkpoint_id": item.checkpoint_id,
+                    "step": item.step,
+                    "created_at": item.created_at,
+                    "snapshot_mode": item.snapshot_mode,
+                    "complete": item.complete,
+                    "workspace_path": item.workspace_path,
+                    "reason": item.reason,
+                    "bytes_archived": item.bytes_archived,
+                    "warnings": list(item.warnings),
+                }
+                for item in records
+            ],
+        }
 
     def _consume_controls(self, state: AgentState) -> tuple[dict[str, Any], list[HumanMessage]]:
         task_id = str(state.get("task_id", "") or "")
@@ -118,7 +197,7 @@ class AgentHarness:
         task_id = str(state.get("task_id", "") or "")
         control_patch, directive_messages = self._consume_controls(state)
         status = str(control_patch.get("status", state.get("status", "running")) or "running")
-        if status in {"paused", "stopped"}:
+        if status in {"paused", "stopped"} or str(control_patch.get("rollback_requested", "") or "").strip():
             return control_patch
 
         messages = list(state.get("messages", []) or [])
@@ -150,6 +229,7 @@ class AgentHarness:
             "verify results, and expose concise action summaries rather than private reasoning.\n"
             + mode_rule +
             f"Current Goal: {state.get('goal', '')}\n"
+            f"Current Task ID: {task_id or '(none)'}\n"
             f"Locked Workspace: {state.get('workspace_path', '') or '(none)'}\n"
             f"Active Skills: {', '.join(state.get('active_skills', []) or [])}\n"
             f"\n--- INJECTED SKILL CONTEXT ---\n{injected}\n--- END SKILL CONTEXT ---\n"
@@ -252,22 +332,166 @@ class AgentHarness:
         spec = self.tool_specs.get(name)
         return dict(spec) if isinstance(spec, dict) else {}
 
-    def _invoke_tool(self, name: str, args: dict[str, Any]) -> Any:
+    def _invoke_tool(self, name: str, args: dict[str, Any], *, task_id: str = "") -> Any:
         if name == "search_capabilities":
             return self.discovery.search(str(args.get("query", "") or ""))
         if name == "activate_skill":
             return self.skill_loader.activate_skill(str(args.get("skill_name", "") or ""))
+        if name == "inspect_capability_catalog":
+            return self._inspect_capability_catalog(args)
+        if name == "list_task_checkpoints":
+            return self._list_task_checkpoints(task_id)
         tool = self.tool_registry.get(name)
         if tool is None:
             raise KeyError(f"unknown_tool:{name}")
         return tool(**args)
+
+    def _should_snapshot_before_tool(self, name: str, spec: dict[str, Any]) -> bool:
+        effect = str(spec.get("effect", "") or "").lower()
+        return bool(name.startswith("project_") and effect in {"write", "control"})
+
+    def _ensure_atomic_checkpoint(self, state: AgentState, *, tool_name: str, step: int) -> str:
+        task_id = str(state.get("task_id", "") or "")
+        thread_id = str(state.get("thread_id", "") or "")
+        workspace_path = str(state.get("workspace_path", "") or "")
+        if not task_id or not thread_id or not workspace_path:
+            return ""
+        config = {"configurable": {"thread_id": thread_id}}
+        checkpoint_id = self._current_checkpoint_id(config)
+        if not checkpoint_id:
+            self.event_bus.emit(
+                task_id,
+                "checkpoint_degraded",
+                actor="system",
+                summary="Không lấy được LangGraph checkpoint trước side effect; filesystem snapshot không được quảng cáo là atomic.",
+                step=step,
+                importance=0.90,
+                data={"tool": tool_name, "workspace_path": workspace_path},
+            )
+            return ""
+        try:
+            self.workspace_checkpoints.resolve(task_id=task_id, checkpoint_id=checkpoint_id)
+            return checkpoint_id
+        except (FileNotFoundError, KeyError):
+            pass
+        projection_fn = getattr(self.task_store, "execution_projection", None)
+        projection = projection_fn(task_id) if callable(projection_fn) else {}
+        record = self.workspace_checkpoints.capture(
+            task_id=task_id,
+            checkpoint_id=checkpoint_id,
+            thread_id=thread_id,
+            workspace_path=workspace_path,
+            step=step,
+            reason=f"before:{tool_name}",
+            task_projection=projection,
+        )
+        self.event_bus.emit(
+            task_id,
+            "checkpoint_created",
+            actor="system",
+            summary=(
+                f"Atomic checkpoint {checkpoint_id} đã lưu trước {tool_name}."
+                if record.complete else
+                f"Checkpoint {checkpoint_id} đã lưu trước {tool_name}, nhưng filesystem snapshot bị degraded."
+            ),
+            step=step,
+            importance=0.72 if record.complete else 0.92,
+            data={
+                "checkpoint_id": checkpoint_id,
+                "filesystem_snapshot": record.snapshot_mode,
+                "complete": record.complete,
+                "bytes_archived": record.bytes_archived,
+                "warnings": list(record.warnings),
+                "tool": tool_name,
+            },
+        )
+        return checkpoint_id
+
+    def _restore_atomic_checkpoint(
+        self,
+        *,
+        task_id: str,
+        checkpoint_id: str,
+        thread_id: str,
+        workspace_path: str,
+    ):
+        with self._workspace_tool_lock:
+            record = self.workspace_checkpoints.restore(
+                task_id=task_id,
+                checkpoint_id=checkpoint_id or "latest",
+                workspace_path=workspace_path,
+            )
+        projection = self.workspace_checkpoints.load_projection(record)
+        restore_projection = getattr(self.task_store, "restore_execution_projection", None)
+        if callable(restore_projection):
+            restore_projection(task_id, projection, checkpoint_id=record.graph_checkpoint_id)
+        self.event_bus.emit(
+            task_id,
+            "checkpoint_restored",
+            actor="system",
+            summary=f"Đã rollback graph + workspace về checkpoint {record.graph_checkpoint_id}.",
+            importance=0.97,
+            data={
+                "checkpoint_id": record.graph_checkpoint_id,
+                "filesystem_snapshot": record.snapshot_mode,
+                "complete": record.complete,
+                "workspace_path": record.workspace_path,
+                "step": record.step,
+            },
+        )
+        return record
+
+    def restore_task_checkpoint(self, task_id: str, checkpoint_id: str = "latest"):
+        """Restore a persisted task checkpoint outside a live worker.
+
+        Running tasks consume rollback at a LangGraph node boundary so the graph
+        can branch from the exact checkpoint. Terminal tasks have no worker left
+        to consume controls, so the control plane may call this method directly.
+        In that case filesystem + task projection are restored to the same stored
+        graph checkpoint and the task is left stopped, never falsely resumable.
+        """
+        task = self.task_store.get_task(str(task_id or "").strip(), event_limit=0)
+        if task is None:
+            raise KeyError(f"unknown_agent_task:{task_id}")
+        metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+        workspace_path = str(metadata.get("workspace_path", "") or "").strip()
+        thread_id = str(task.get("thread_id", "") or task_id).strip()
+        if not workspace_path:
+            raise RuntimeError("task_workspace_unavailable")
+        record = self._restore_atomic_checkpoint(
+            task_id=str(task_id),
+            checkpoint_id=str(checkpoint_id or "latest"),
+            thread_id=thread_id,
+            workspace_path=workspace_path,
+        )
+        # There is no live graph worker to continue from this branch. Keep the
+        # restored files/projection truthful and visibly terminal. A future
+        # explicit restart/resume feature can branch from record.graph_checkpoint_id.
+        self.task_store.update_task(
+            str(task_id),
+            status="stopped",
+            finished_at=time.time(),
+            checkpoint_id=record.graph_checkpoint_id,
+        )
+        self.event_bus.emit(
+            str(task_id),
+            "task_stopped",
+            actor="system",
+            summary=(
+                f"Task đã rollback về checkpoint {record.graph_checkpoint_id}. "
+                "Không có worker đang chạy nên task được giữ ở trạng thái stopped."
+            ),
+            importance=0.88,
+            data={"checkpoint_id": record.graph_checkpoint_id, "reason": "terminal_rollback"},
+        )
+        return record
 
     def _tool_execution_node(self, state: AgentState) -> dict:
         """Execute LLM tool calls with permission checks and typed UI events."""
         task_id = str(state.get("task_id", "") or "")
         control_patch, directive_messages = self._consume_controls(state)
         status = str(control_patch.get("status", state.get("status", "running")) or "running")
-        if status in {"paused", "stopped"}:
+        if status in {"paused", "stopped"} or str(control_patch.get("rollback_requested", "") or "").strip():
             return {**control_patch, "messages": directive_messages} if directive_messages else control_patch
 
         messages = list(state.get("messages", []) or [])
@@ -326,6 +550,9 @@ class AgentHarness:
                 continue
 
             try:
+                tool_spec = self._tool_spec(name, state.get("active_skills", []) or [])
+                if self._should_snapshot_before_tool(name, tool_spec):
+                    self._ensure_atomic_checkpoint(state, tool_name=name, step=step)
                 workspace_ref = str(state.get("workspace_id", "") or state.get("workspace_path", "") or "").strip()
                 # A running task owns its workspace for its lifetime. Workspace list
                 # is harmless, but switch/join/leave from inside the executor would
@@ -334,7 +561,7 @@ class AgentHarness:
                     raise RuntimeError("task_workspace_locked: create/select workspace from Agent Console before starting the task")
                 scope = self.workspace_scope(workspace_ref) if workspace_ref and callable(self.workspace_scope) else nullcontext()
                 with self._workspace_tool_lock, scope:
-                    result = self._invoke_tool(name, args)
+                    result = self._invoke_tool(name, args, task_id=task_id)
                 text = _tool_result_text(result)
                 out_messages.append(ToolMessage(content=text, tool_call_id=call_id))
                 if name == "search_capabilities" and task_id:
@@ -457,6 +684,8 @@ class AgentHarness:
                 )
 
     def _should_continue(self, state: AgentState) -> Literal["tools", "__end__"]:
+        if str(state.get("rollback_requested", "") or "").strip():
+            return "__end__"
         if str(state.get("status", "running") or "running") in {"paused", "stopped", "waiting_permission", "waiting_user"}:
             return "__end__"
         messages = state.get("messages", []) or []
@@ -543,7 +772,8 @@ class AgentHarness:
             },
         )
 
-        config = {"configurable": {"thread_id": thread_id}}
+        base_config = {"configurable": {"thread_id": thread_id}}
+        config = dict(base_config)
         initial_state: AgentState = {
             "goal": clarified_goal or goal,
             "task_id": task_id,
@@ -565,18 +795,78 @@ class AgentHarness:
             "step_count": 0,
         }
         try:
-            result = self.graph.invoke(initial_state, config)
-            final_status = str((result or {}).get("status", "running") or "running") if isinstance(result, dict) else "running"
-            checkpoint_id = self._current_checkpoint_id(config)
-            if checkpoint_id:
-                self.event_bus.emit(
-                    task_id,
-                    "checkpoint_created",
-                    actor="system",
-                    summary=f"Đã lưu LangGraph checkpoint {checkpoint_id}.",
-                    importance=0.52,
-                    data={"checkpoint_id": checkpoint_id},
-                )
+            graph_input: dict[str, Any] | AgentState = initial_state
+            result: dict[str, Any] | Any = {}
+            final_status = "running"
+            while True:
+                # A rollback branches execution from the requested persisted graph
+                # checkpoint *after* restoring the matching filesystem/UI projection.
+                pending_rollback = ""
+                if isinstance(graph_input, dict):
+                    pending_rollback = str(graph_input.get("rollback_requested", "") or "").strip()
+                if pending_rollback:
+                    try:
+                        record = self._restore_atomic_checkpoint(
+                            task_id=task_id,
+                            checkpoint_id=pending_rollback,
+                            thread_id=thread_id,
+                            workspace_path=normalized_workspace_path,
+                        )
+                    except Exception as exc:
+                        self.event_bus.emit(
+                            task_id,
+                            "rollback_failed",
+                            actor="system",
+                            summary=f"Không rollback được checkpoint {pending_rollback}: {type(exc).__name__}: {exc}",
+                            importance=0.96,
+                            data={"checkpoint_id": pending_rollback, "error": type(exc).__name__},
+                        )
+                        config = dict(base_config)
+                        graph_input = {
+                            "status": "running",
+                            "rollback_requested": "",
+                            "messages": [HumanMessage(content=(
+                                "[ROLLBACK UNAVAILABLE] The requested checkpoint could not be restored. "
+                                "Continue from the current state, inspect the latest evidence, and choose a safe alternative rather than retrying the rollback blindly."
+                            ))],
+                        }
+                    else:
+                        config = {"configurable": {"thread_id": thread_id, "checkpoint_id": record.graph_checkpoint_id}}
+                        graph_input = {
+                            "status": "running",
+                            "rollback_requested": "",
+                            "messages": [HumanMessage(content=(
+                                "[ATOMIC ROLLBACK RESTORED]\n"
+                                "Graph state and workspace were restored to the selected checkpoint. "
+                                "Do not blindly repeat the reverted action. Reassess the goal from the restored evidence and choose the next safest useful step."
+                            ))],
+                        }
+
+                result = self.graph.invoke(graph_input, config)
+                # Any invocation branched from an old checkpoint writes a new latest
+                # state on the same thread. Subsequent calls should follow that tip.
+                config = dict(base_config)
+                final_status = str((result or {}).get("status", "running") or "running") if isinstance(result, dict) else "running"
+
+                rollback_after_step = str((result or {}).get("rollback_requested", "") or "").strip() if isinstance(result, dict) else ""
+                if rollback_after_step:
+                    graph_input = {"rollback_requested": rollback_after_step}
+                    continue
+
+                if final_status != "paused":
+                    break
+
+                # Pause is a real long-lived state, not END disguised as a button.
+                # The worker stays alive and resumes the same LangGraph thread when
+                # the UI sends resume. Reusing thread_id preserves checkpointed state.
+                resume_patch = self._wait_for_resume(task_id)
+                if resume_patch is None:
+                    final_status = "stopped"
+                    if isinstance(result, dict):
+                        result["status"] = "stopped"
+                    break
+                graph_input = resume_patch
+
             if final_status == "running":
                 final_text = _final_result_text(result)
                 self.event_bus.emit(
@@ -598,6 +888,75 @@ class AgentHarness:
                 importance=1.0,
             )
             raise
+
+    def _wait_for_resume(self, task_id: str) -> dict[str, Any] | None:
+        """Wait while a task is paused without losing directives or graph state.
+
+        Returns a small state patch for the next invocation on the same thread.
+        ``None`` means the user stopped the task while paused.
+        """
+        pending_messages: list[HumanMessage] = []
+        rollback_requested = ""
+        while True:
+            time.sleep(0.20)
+            controls = self.task_store.consume_controls(task_id)
+            if not controls:
+                continue
+            for control in controls:
+                action = str(control.get("action", "") or "").strip().lower()
+                if action == "directive":
+                    directive = str(control.get("text", "") or "").strip()
+                    if directive:
+                        pending_messages.append(HumanMessage(content=(
+                            "[RUNTIME DIRECTIVE RECEIVED WHILE PAUSED]\n" + directive
+                        )))
+                        self.event_bus.emit(
+                            task_id,
+                            "directive_consumed",
+                            actor="executor",
+                            summary="Đã giữ chỉ thị mới; Gemini sẽ replan ngay khi resume.",
+                            importance=0.82,
+                        )
+                elif action == "rollback":
+                    checkpoint_id = str(control.get("checkpoint_id", "") or "").strip()
+                    rollback_requested = checkpoint_id or "latest"
+                    self.event_bus.emit(
+                        task_id,
+                        "rollback_queued",
+                        actor="system",
+                        summary=(
+                            f"Rollback đã xếp hàng tới checkpoint {checkpoint_id}."
+                            if checkpoint_id else "Rollback đã xếp hàng tới checkpoint gần nhất."
+                        ),
+                        importance=0.95,
+                        data={"checkpoint_id": checkpoint_id},
+                    )
+                elif action == "stop":
+                    self.event_bus.emit(
+                        task_id,
+                        "task_stopped",
+                        actor="system",
+                        summary="Task đã dừng trong khi đang pause.",
+                        importance=0.95,
+                    )
+                    return None
+                elif action == "resume":
+                    self.event_bus.emit(
+                        task_id,
+                        "task_resumed",
+                        actor="system",
+                        summary="Task tiếp tục từ checkpoint của cùng LangGraph thread.",
+                        importance=0.76,
+                    )
+                    patch: dict[str, Any] = {"status": "running"}
+                    if pending_messages:
+                        patch["messages"] = pending_messages
+                    if rollback_requested:
+                        patch["rollback_requested"] = rollback_requested
+                    return patch
+                elif action == "pause":
+                    # Idempotent while already paused.
+                    continue
 
     def _current_checkpoint_id(self, config: dict[str, Any]) -> str:
         getter = getattr(self.graph, "get_state", None)

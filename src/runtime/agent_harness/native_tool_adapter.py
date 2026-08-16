@@ -45,6 +45,7 @@ class NativeCapabilityToolAdapter:
 
     def tool_specs(self, capability_ids: Iterable[str] | None = None) -> dict[str, dict[str, Any]]:
         allowed = set(capability_ids or self.agent_ids())
+        resolved_caps = {cap.id: cap for cap in iter_public_capabilities(include_unavailable=True)}
         specs: dict[str, dict[str, Any]] = {}
         for cap_id in allowed:
             cap = capability_definition(cap_id)
@@ -53,12 +54,33 @@ class NativeCapabilityToolAdapter:
             dynamic_project = cap.id.startswith("project_") or cap.id.startswith("workspace_")
             if not cap.live_available and not dynamic_project:
                 continue
+            try:
+                from actions.capability_runtime import capability_runtime_reason
+                health_reason = capability_runtime_reason(cap.id)
+            except Exception:
+                health_reason = "runtime_snapshot_unavailable"
+            effect = str(cap.effect or "inspect").lower()
+            if cap.id == "project_execute_task":
+                estimated_time = "minutes"
+            elif cap.id in {"project_run_tests", "project_run_command", "project_package_patch"}:
+                estimated_time = "seconds to minutes"
+            elif cap.id.startswith("project_") or cap.id.startswith("workspace_"):
+                estimated_time = "1-10s"
+            else:
+                estimated_time = "<3s" if effect in {"observe", "inspect", "read"} else "<10s"
             specs[cap.id] = {
                 "name": cap.id,
                 "description": cap.description_vi,
                 "input_schema": capability_input_schema(cap.id),
                 "effect": cap.effect,
                 "risk_level": cap.risk_level,
+                "available": bool(getattr(resolved_caps.get(cap.id), "live_available", cap.live_available)),
+                "health_reason": health_reason,
+                "workspace_required": cap.id.startswith("project_"),
+                "estimated_time": estimated_time,
+                "reversible": effect in {"observe", "inspect", "read"} or cap.id in {
+                    "project_apply_patch", "project_rollback", "copy_text", "set_volume", "play_pause_media",
+                },
             }
         return specs
 
