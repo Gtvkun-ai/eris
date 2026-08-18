@@ -365,3 +365,107 @@ def test_prompt_context_uses_semantic_state_not_raw_reasoning(tmp_path):
     assert '"phase":"testing"' in rendered
     assert "runtime/parser.py" in rendered
     assert "chain-of-thought" in rendered
+
+
+def test_live_ide_rpc_roundtrip_uses_connected_vscode_context(tmp_path):
+    import threading
+    from websockets.sync.client import connect
+    from runtime.agent_service.ide_rpc import IdeRpcBroker
+
+    store = AgentTaskStore(tmp_path / "tasks.json")
+    bus = AgentEventBus(store=store, legacy_udp=False)
+    store.create_task(
+        "inspect live problems",
+        task_id="rpc-1",
+        thread_id="thread-rpc",
+        session_id="session-rpc",
+    )
+    broker = IdeRpcBroker(bus, default_timeout=2.0)
+    service = AgentWebSocketService(
+        store=store,
+        event_bus=bus,
+        start_task=lambda goal, **kwargs: {"status": "started", "task_id": "unused"},
+        resume_task=lambda task_id, **kwargs: {"status": "resuming", "task_id": task_id},
+        control_task=lambda task_id, **kwargs: {"status": "queued", "task_id": task_id},
+        ide_rpc=broker,
+        port=0,
+        discovery_path=tmp_path / "discovery.json",
+    )
+    assert service.start()
+    try:
+        with connect(service.endpoint, open_timeout=3) as ws:
+            ws.send(json.dumps({
+                "type": "session.hello",
+                "token": service.token,
+                "sessionId": "session-rpc",
+                "client": "test-client",
+                "lastEventSeq": store.latest_event_seq(),
+                "capabilities": ["context.problems"],
+            }))
+            assert json.loads(ws.recv(timeout=3))["type"] == "session.ready"
+            assert json.loads(ws.recv(timeout=3))["type"] == "event.replay.end"
+
+            holder: dict[str, object] = {}
+
+            def _request():
+                holder["result"] = broker.request("rpc-1", "ide.getProblems", {"scope": "workspace"})
+
+            worker = threading.Thread(target=_request)
+            worker.start()
+            request = json.loads(ws.recv(timeout=3))
+            assert request["type"] == "ide.request"
+            assert request["payload"]["method"] == "ide.getProblems"
+            request_id = request["payload"]["requestId"]
+
+            ws.send(json.dumps({
+                "type": "ide.response",
+                "taskId": "rpc-1",
+                "requestId": request_id,
+                "method": "ide.getProblems",
+                "success": True,
+                "data": {"items": [{"path": "runtime/a.py", "message": "boom"}]},
+            }))
+            worker.join(timeout=3)
+            assert not worker.is_alive()
+            result = holder["result"]
+            assert isinstance(result, dict)
+            assert result["success"] is True
+            assert result["data"]["items"][0]["path"] == "runtime/a.py"
+    finally:
+        service.stop()
+
+
+def test_changeset_projection_persists_accept_and_protocol(tmp_path):
+    store = AgentTaskStore(tmp_path / "tasks.json")
+    store.create_task("patch", task_id="cs-1", thread_id="thread-cs", session_id="session-cs")
+    created = store.append_event(
+        "cs-1",
+        "changeset_created",
+        summary="Patch 2 files",
+        data={
+            "change_set_id": "op-42",
+            "operation_id": "op-42",
+            "checkpoint_id": "cp-before",
+            "files": ["a.py", "b.py"],
+            "status": "pending",
+        },
+    )
+    task = store.get_task("cs-1", event_limit=0)
+    assert task["change_sets"][0]["status"] == "pending"
+    assert task["change_sets"][0]["checkpoint_id"] == "cp-before"
+
+    packets = project_agent_event({**created, "task_id": "cs-1", "thread_id": "thread-cs", "session_id": "session-cs"})
+    assert packets[0]["type"] == "changeset.created"
+    assert packets[0]["payload"]["changeSetId"] == "op-42"
+
+    accepted = store.append_event(
+        "cs-1",
+        "changeset_accepted",
+        summary="accepted",
+        data={"change_set_id": "op-42", "operation_id": "op-42", "files": ["a.py", "b.py"]},
+    )
+    task = store.get_task("cs-1", event_limit=0)
+    assert task["change_sets"][0]["status"] == "accepted"
+    update = project_agent_event({**accepted, "task_id": "cs-1", "thread_id": "thread-cs", "session_id": "session-cs"})
+    assert update[0]["type"] == "changeset.updated"
+    assert update[0]["payload"]["status"] == "accepted"

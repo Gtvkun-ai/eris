@@ -1,18 +1,10 @@
 import * as crypto from 'node:crypto';
-import * as fs from 'node:fs/promises';
-import * as os from 'node:os';
-import * as path from 'node:path';
 import * as vscode from 'vscode';
 import WebSocket from 'ws';
+import { ErisServiceManager } from './serviceManager';
 
 type JsonRecord = Record<string, any>;
 
-interface DiscoveryRecord {
-  protocol: string;
-  endpoint: string;
-  token: string;
-  pid?: number;
-}
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected';
 
@@ -34,7 +26,10 @@ export class ErisClient implements vscode.Disposable {
   readonly onEvent = this.eventEmitter.event;
   readonly onStateChanged = this.stateEmitter.event;
 
-  constructor(private readonly extensionContext: vscode.ExtensionContext) {
+  constructor(
+    private readonly extensionContext: vscode.ExtensionContext,
+    private readonly serviceManager: ErisServiceManager,
+  ) {
     // Session/cursor phải theo VS Code workspace window. Dùng globalState sẽ làm
     // hai cửa sổ repo khác nhau nhận chung event và còn có thể skip replay của nhau.
     const persisted = extensionContext.workspaceState.get<string>('eris.sessionId', '').trim();
@@ -59,7 +54,16 @@ export class ErisClient implements vscode.Disposable {
       this.closeSocket();
     }
     this.intentionalClose = false;
-    this.connectPromise = this.doConnect().finally(() => {
+    this.connectPromise = this.doConnect().catch((error) => {
+      // Auto-start có thể fail trước khi WebSocket tồn tại. Nếu chỉ reconnect ở
+      // socket.on('close'), lần lỗi bootstrap đầu tiên sẽ để sidebar kẹt Connecting.
+      this.ready = false;
+      this.setState('disconnected');
+      if (!this.intentionalClose) {
+        this.scheduleReconnect();
+      }
+      throw error;
+    }).finally(() => {
       this.connectPromise = undefined;
     });
     return this.connectPromise;
@@ -67,7 +71,7 @@ export class ErisClient implements vscode.Disposable {
 
   private async doConnect(): Promise<void> {
     this.setState('connecting');
-    const discovery = await this.readDiscovery();
+    const discovery = await this.serviceManager.ensureStarted();
     await new Promise<void>((resolve, reject) => {
       const socket = new WebSocket(discovery.endpoint, { handshakeTimeout: 5000 });
       this.socket = socket;
@@ -95,6 +99,7 @@ export class ErisClient implements vscode.Disposable {
             'context.problems',
             'context.git',
             'context.workspace',
+            'context.openEditors',
             'context.terminal.recent',
             'editor.openFile',
             'editor.openDiff',
@@ -196,6 +201,7 @@ export class ErisClient implements vscode.Disposable {
     text = '',
     checkpointId = '',
     context: Record<string, unknown> = {},
+    changeSetId = '',
   ): Promise<void> {
     await this.connect();
     this.send({
@@ -205,6 +211,7 @@ export class ErisClient implements vscode.Disposable {
       action,
       text,
       checkpointId,
+      changeSetId,
       context,
     });
   }
@@ -228,29 +235,32 @@ export class ErisClient implements vscode.Disposable {
     });
   }
 
+  async reportIdeResponse(
+    taskId: string,
+    requestId: string,
+    method: string,
+    success: boolean,
+    data: unknown = {},
+    error = '',
+  ): Promise<void> {
+    await this.connect();
+    this.send({
+      type: 'ide.response',
+      protocol: 'eris.ide.v2',
+      taskId,
+      requestId,
+      method,
+      success,
+      data,
+      error,
+    });
+  }
+
   private send(payload: JsonRecord): void {
     if (!this.ready || this.socket?.readyState !== WebSocket.OPEN) {
       throw new Error('eris_service_not_connected');
     }
     this.socket.send(JSON.stringify(payload));
-  }
-
-  private async readDiscovery(): Promise<DiscoveryRecord> {
-    const override = process.env.ERIS_AGENT_SERVICE_DISCOVERY?.trim();
-    const discoveryPath = override
-      ? path.resolve(override)
-      : path.join(os.homedir(), '.eris', 'agent_service.json');
-    let raw: string;
-    try {
-      raw = await fs.readFile(discoveryPath, 'utf8');
-    } catch {
-      throw new Error(`Không thấy Eris Service discovery file: ${discoveryPath}`);
-    }
-    const payload = JSON.parse(raw) as DiscoveryRecord;
-    if (payload.protocol !== 'eris.ide.v2' || !payload.endpoint || !payload.token) {
-      throw new Error('Eris Service discovery file không hợp lệ.');
-    }
-    return payload;
   }
 
   private scheduleReconnect(): void {

@@ -1,9 +1,11 @@
 import * as vscode from 'vscode';
 import { ErisChatPanel } from './chatPanel';
-import { captureIdeContext } from './contextBridge';
+import { captureIdeContext, resolveIdeContextRequest } from './contextBridge';
 import { WorkspaceDiffProvider } from './diffProvider';
+import { executeEditorCommand } from './editorBridge';
 import { ConnectionState, ErisClient } from './erisClient';
 import { TerminalContextObserver } from './terminalObserver';
+import { ErisServiceManager } from './serviceManager';
 
 type SidebarKind = 'command' | 'group' | 'task' | 'chat' | 'skill' | 'status';
 interface SidebarNode {
@@ -172,15 +174,45 @@ class ErisSidebarProvider implements vscode.TreeDataProvider<SidebarNode>, vscod
 }
 
 export function activate(context: vscode.ExtensionContext): void {
-  const client = new ErisClient(context);
+  const serviceManager = new ErisServiceManager(context);
+  const client = new ErisClient(context, serviceManager);
   const sidebar = new ErisSidebarProvider();
   const terminalObserver = new TerminalContextObserver();
   const diffProvider = new WorkspaceDiffProvider();
-  context.subscriptions.push(client, sidebar, terminalObserver, diffProvider);
+  context.subscriptions.push(serviceManager, client, sidebar, terminalObserver, diffProvider);
   context.subscriptions.push(vscode.window.registerTreeDataProvider('eris.sidebar', sidebar));
   context.subscriptions.push(client.onStateChanged((state) => sidebar.setState(state)));
   context.subscriptions.push(client.onEvent((event) => {
     sidebar.observeEvent(event);
+
+    // Live IDE RPC/editor actions phải hoạt động ngay cả khi Chat Panel chưa mở.
+    // Nếu gắn handler vào Webview, task background sau restart sẽ timeout rất vô duyên.
+    if (event?.type === 'ide.request') {
+      const payload = event.payload ?? {};
+      const requestId = String(payload.requestId ?? '');
+      const method = String(payload.method ?? '');
+      void resolveIdeContextRequest(
+        method,
+        payload.params && typeof payload.params === 'object' ? payload.params : {},
+        terminalObserver,
+      ).then((data) => client.reportIdeResponse(
+        String(event.taskId ?? ''), requestId, method, true, data, '',
+      )).catch((error) => client.reportIdeResponse(
+        String(event.taskId ?? ''), requestId, method, false, {}, String(error),
+      ).catch(() => undefined));
+      return;
+    }
+    if (event?.type === 'editor.command') {
+      const payload = event.payload ?? {};
+      const requestId = String(payload.requestId ?? '');
+      const command = String(payload.command ?? '');
+      void executeEditorCommand(payload, diffProvider).then((message) => client.reportEditorCommandResult(
+        String(event.taskId ?? ''), requestId, command, true, message,
+      )).catch((error) => client.reportEditorCommandResult(
+        String(event.taskId ?? ''), requestId, command, false, String(error),
+      ).catch(() => undefined));
+      return;
+    }
     if (event?.type === 'session.ready') {
       // Chỉ recover task VS Code của đúng session. Nếu Python process vừa restart,
       // status vẫn là running trong SQLite nhưng worker cũ đã chết. Control plane
@@ -225,6 +257,34 @@ export function activate(context: vscode.ExtensionContext): void {
       void vscode.window.showErrorMessage(String(error));
     }
   }));
+
+  context.subscriptions.push(vscode.commands.registerCommand('eris.serviceStart', async () => {
+    try {
+      await serviceManager.ensureStarted();
+      await client.connect(true);
+      await client.requestTasks();
+      void vscode.window.showInformationMessage('Eris Service đã sẵn sàng.');
+    } catch (error) {
+      serviceManager.showLogs();
+      void vscode.window.showErrorMessage(String(error));
+    }
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand('eris.serviceRestart', async () => {
+    try {
+      await serviceManager.restart();
+      await client.connect(true);
+      await client.requestTasks();
+      void vscode.window.showInformationMessage('Eris Service đã restart.');
+    } catch (error) {
+      serviceManager.showLogs();
+      void vscode.window.showErrorMessage(String(error));
+    }
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand('eris.serviceStop', async () => {
+    await serviceManager.stopOwned();
+    void vscode.window.showInformationMessage('Đã dừng Eris process do VS Code launch.');
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand('eris.serviceLogs', () => serviceManager.showLogs()));
 
   // Kết nối sớm để sidebar phản ánh service thật. Python chưa chạy thì extension
   // vẫn sống và client tự reconnect, không biến IDE thành con tin của backend.

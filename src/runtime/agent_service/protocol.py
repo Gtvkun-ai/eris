@@ -83,6 +83,29 @@ def project_agent_event(event: dict[str, Any]) -> list[dict[str, Any]]:
             "success": bool(data.get("success", False)),
             "message": str(data.get("message", "") or summary),
         })]
+    if kind == "ide_request":
+        return [base("ide.request", {
+            "requestId": str(data.get("requestId", "") or ""),
+            "method": str(data.get("method", "") or ""),
+            "params": dict(data.get("params") or {}) if isinstance(data.get("params"), dict) else {},
+        })]
+    if kind == "changeset_created":
+        return [base("changeset.created", {
+            "changeSetId": str(data.get("change_set_id", data.get("operation_id", "")) or ""),
+            "operationId": str(data.get("operation_id", "") or ""),
+            "checkpointId": str(data.get("checkpoint_id", "") or ""),
+            "files": list(data.get("files") or []) if isinstance(data.get("files"), list) else [],
+            "status": str(data.get("status", "pending") or "pending"),
+            "summary": summary,
+        })]
+    if kind in {"changeset_accepted", "changeset_reverted"}:
+        return [base("changeset.updated", {
+            "changeSetId": str(data.get("change_set_id", data.get("operation_id", "")) or ""),
+            "operationId": str(data.get("operation_id", "") or ""),
+            "status": "accepted" if kind == "changeset_accepted" else "reverted",
+            "files": list(data.get("files") or []) if isinstance(data.get("files"), list) else [],
+            "summary": summary,
+        })]
     if kind == "test_result":
         return [base("activity.update", {
             "label": "Tests",
@@ -96,6 +119,7 @@ def project_agent_event(event: dict[str, Any]) -> list[dict[str, Any]]:
         "agent_status", "agent_plan", "tool_started", "tool_result", "tool_failed",
         "skill_search", "skill_activated", "checkpoint_created", "checkpoint_restored",
         "supervisor_comment", "supervisor_advisory", "supervisor_redirect", "supervisor_veto",
+        "supervisor_ask_user", "supervisor_stop",
         "task_paused", "task_resumed", "interrupt_resume_requested", "rollback_requested",
         "rollback_queued", "rollback_failed",
     }:

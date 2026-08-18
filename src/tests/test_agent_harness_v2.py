@@ -48,6 +48,14 @@ def test_permission_gate_autopilot_denies_protected_boundary_instead_of_promptin
     ) == Permission.ALLOW
 
 
+def test_permission_gate_asks_only_for_material_side_effects():
+    gate = PermissionGate()
+    assert gate.check_permission("project_run_command", {"command": "npm install lodash"}) == Permission.ASK
+    assert gate.check_permission("project_run_command", {"command": "alembic upgrade head"}) == Permission.ASK
+    assert gate.check_permission("project_run_command", {"command": "git rebase main"}) == Permission.ASK
+    assert gate.check_permission("project_run_command", {"command": "npm test"}) == Permission.ALLOW
+
+
 def test_gemini_decision_parser_handles_fenced_json():
     payload = GeminiCliDecisionExecutor.parse_decision(
         '```json\n{"action":"tool","summary":"check media","tool_call":{"name":"get_now_playing","args":{}}}\n```'
@@ -156,7 +164,7 @@ def test_native_adapter_keeps_dynamic_project_tools_mounted_before_workspace():
     assert "project_run_tests" in specs
 
 
-def test_supervisor_policy_advises_when_patch_happens_before_inspection(tmp_path):
+def test_supervisor_policy_redirects_when_patch_happens_before_inspection(tmp_path):
     from runtime.coordinator import RuntimeCoordinator
     from runtime.agent_harness.task_store import AgentTaskStore
     from runtime.agent_harness.supervisor_bridge import AgentSupervisorBridge
@@ -186,9 +194,10 @@ def test_supervisor_policy_advises_when_patch_happens_before_inspection(tmp_path
 
     snapshot = store.snapshot(selected_task_id=task_id)
     types = [item["type"] for item in snapshot["tasks"][0]["events"]]
-    assert "supervisor_advisory" in types
+    assert "supervisor_redirect" in types
     controls = store.consume_controls(task_id)
     assert controls and controls[-1]["action"] == "directive"
+    assert controls[-1]["data"]["kind"] == "redirect"
 
 
 def test_capability_self_model_distinguishes_instant_long_and_ambiguous():

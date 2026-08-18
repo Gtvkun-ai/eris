@@ -2,7 +2,7 @@
   "name": "eris-vscode",
   "displayName": "Eris",
   "description": "VS Code client cho Eris Service và LangGraph agent.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "gtvk",
   "engines": {
     "vscode": "^1.100.0"
@@ -15,7 +15,11 @@
     "onView:eris.sidebar",
     "onCommand:eris.openChat",
     "onCommand:eris.newChat",
-    "onCommand:eris.openTask"
+    "onCommand:eris.openTask",
+    "onCommand:eris.serviceStart",
+    "onCommand:eris.serviceRestart",
+    "onCommand:eris.serviceStop",
+    "onCommand:eris.serviceLogs"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -35,6 +39,22 @@
       {
         "command": "eris.openTask",
         "title": "Eris: Open Task"
+      },
+      {
+        "command": "eris.serviceStart",
+        "title": "Eris: Start Service"
+      },
+      {
+        "command": "eris.serviceRestart",
+        "title": "Eris: Restart Service"
+      },
+      {
+        "command": "eris.serviceStop",
+        "title": "Eris: Stop Managed Service"
+      },
+      {
+        "command": "eris.serviceLogs",
+        "title": "Eris: Show Service Logs"
       }
     ],
     "viewsContainers": {
@@ -53,6 +73,26 @@
           "name": "Eris"
         }
       ]
+    },
+    "configuration": {
+      "title": "Eris",
+      "properties": {
+        "eris.service.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Tự khởi động Eris khi VS Code cần kết nối nhưng service chưa chạy."
+        },
+        "eris.service.installRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Thư mục cài Eris chứa run_eris.bat/run_eris.sh. Chỉ cần đặt một lần nếu auto-detect không thấy."
+        },
+        "eris.service.launchCommand": {
+          "type": "string",
+          "default": "",
+          "description": "Lệnh launch Eris tùy chỉnh. Khi có giá trị, lệnh này được ưu tiên hơn auto-detect launcher."
+        }
+      }
     }
   },
   "scripts": {

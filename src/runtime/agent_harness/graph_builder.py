@@ -51,6 +51,7 @@ class AgentHarness:
         workspace_scope: Callable[[str], Any] | None = None,
         checkpoint_path: str | None = None,
         checkpointer: Any = None,
+        ide_rpc: Any = None,
         logger: Any = None,
     ):
         self.llm = llm
@@ -67,6 +68,7 @@ class AgentHarness:
         self.executor_name = str(executor_name or "gemini")
         self.model_name = str(model_name or "")
         self.workspace_scope = workspace_scope
+        self.ide_rpc = ide_rpc
         # ProjectOperations reads the active WorkspaceManager record. Serialize only
         # the tiny activate+tool critical section so concurrent Gemini tasks may
         # reason in parallel without ever running a tool against the wrong repo.
@@ -167,6 +169,48 @@ class AgentHarness:
                 "workspace_required": False,
                 "estimated_time": "<1s",
                 "reversible": True,
+            },
+            "ide_get_current_file": {
+                "name": "ide_get_current_file",
+                "description": "Read the live current editor/file context from VS Code at the moment this tool runs.",
+                "input_schema": {"type": "object", "additionalProperties": False, "properties": {"include_excerpt": {"type": "boolean"}}},
+                "effect": "read", "risk_level": "low", "workspace_required": False, "estimated_time": "<2s", "reversible": True,
+            },
+            "ide_get_selection": {
+                "name": "ide_get_selection",
+                "description": "Read the user's current VS Code selection and cursor position live.",
+                "input_schema": {"type": "object", "additionalProperties": False, "properties": {}},
+                "effect": "read", "risk_level": "low", "workspace_required": False, "estimated_time": "<2s", "reversible": True,
+            },
+            "ide_get_problems": {
+                "name": "ide_get_problems",
+                "description": "Read current VS Code diagnostics/problems live. Use after edits/builds instead of relying on stale message context.",
+                "input_schema": {"type": "object", "additionalProperties": False, "properties": {"scope": {"type": "string", "enum": ["current", "workspace"]}}},
+                "effect": "read", "risk_level": "low", "workspace_required": False, "estimated_time": "<2s", "reversible": True,
+            },
+            "ide_get_git_state": {
+                "name": "ide_get_git_state",
+                "description": "Read live VS Code Git branch/change summary and bounded diff.",
+                "input_schema": {"type": "object", "additionalProperties": False, "properties": {}},
+                "effect": "read", "risk_level": "low", "workspace_required": True, "estimated_time": "<3s", "reversible": True,
+            },
+            "ide_get_terminal_recent": {
+                "name": "ide_get_terminal_recent",
+                "description": "Read recent semantic terminal command/output captured by VS Code Shell Integration.",
+                "input_schema": {"type": "object", "additionalProperties": False, "properties": {}},
+                "effect": "read", "risk_level": "low", "workspace_required": False, "estimated_time": "<2s", "reversible": True,
+            },
+            "ide_get_open_editors": {
+                "name": "ide_get_open_editors",
+                "description": "List files/editors currently open in the connected VS Code window.",
+                "input_schema": {"type": "object", "additionalProperties": False, "properties": {}},
+                "effect": "read", "risk_level": "low", "workspace_required": False, "estimated_time": "<2s", "reversible": True,
+            },
+            "ide_get_workspace_info": {
+                "name": "ide_get_workspace_info",
+                "description": "Read live VS Code workspace folders, trust state and active workspace information.",
+                "input_schema": {"type": "object", "additionalProperties": False, "properties": {}},
+                "effect": "read", "risk_level": "low", "workspace_required": False, "estimated_time": "<2s", "reversible": True,
             },
         }
 
@@ -478,6 +522,19 @@ class AgentHarness:
             specs.append(dict(self.tool_specs["editor_open_diff"]))
         if "editor.showSourceControl" in client_caps:
             specs.append(dict(self.tool_specs["editor_show_source_control"]))
+        ide_rpc_specs = {
+            "context.current": "ide_get_current_file",
+            "context.selection": "ide_get_selection",
+            "context.problems": "ide_get_problems",
+            "context.git": "ide_get_git_state",
+            "context.terminal.recent": "ide_get_terminal_recent",
+            "context.openEditors": "ide_get_open_editors",
+            "context.workspace": "ide_get_workspace_info",
+        }
+        if self.ide_rpc is not None:
+            for capability, spec_name in ide_rpc_specs.items():
+                if capability in client_caps:
+                    specs.append(dict(self.tool_specs[spec_name]))
         inspect_only = str(task_mode or "execute").strip().lower() == "inspect"
         for name in self.skill_loader.tools_for_skills(list(active_skills)):
             spec = self.tool_specs.get(name)
@@ -553,6 +610,19 @@ class AgentHarness:
                 summary="Mở Source Control trong VS Code.", importance=0.42, data=payload,
             )
             return {"success": True, "status": "queued", "data": payload}
+        ide_methods = {
+            "ide_get_current_file": "ide.getCurrentFile",
+            "ide_get_selection": "ide.getSelection",
+            "ide_get_problems": "ide.getProblems",
+            "ide_get_git_state": "ide.getGitState",
+            "ide_get_terminal_recent": "ide.getTerminalRecent",
+            "ide_get_open_editors": "ide.getOpenEditors",
+            "ide_get_workspace_info": "ide.getWorkspaceInfo",
+        }
+        if name in ide_methods:
+            if not task_id or self.ide_rpc is None:
+                raise RuntimeError("ide_rpc_unavailable")
+            return self.ide_rpc.request(task_id, ide_methods[name], args)
         tool = self.tool_registry.get(name)
         if tool is None:
             raise KeyError(f"unknown_tool:{name}")
@@ -1030,6 +1100,25 @@ class AgentHarness:
                         },
                     )
 
+            if success and operation_id and touched:
+                task = self.task_store.get_task(task_id, event_limit=0) or {}
+                checkpoint_id = str(task.get("checkpoint_id", "") or "")
+                self.event_bus.emit(
+                    task_id,
+                    "changeset_created",
+                    actor="tool",
+                    summary=f"ChangeSet {operation_id}: {len(touched)} file chờ accept/revert.",
+                    step=step,
+                    importance=0.74,
+                    data={
+                        "change_set_id": operation_id,
+                        "operation_id": operation_id,
+                        "checkpoint_id": checkpoint_id,
+                        "files": [str(item) for item in touched[:120]],
+                        "status": "pending",
+                    },
+                )
+
         if name == "project_run_tests":
             output = str(data.get("output", "") or "")
             passed_count, failed_count = _parse_test_counts(output, success=success)
@@ -1285,6 +1374,64 @@ class AgentHarness:
             workspace_path=workspace_path,
             graph_input=graph_input,
         )
+
+    def accept_change_set(self, task_id: str, change_set_id: str) -> dict[str, Any]:
+        """Đánh dấu ChangeSet đã được user/Eris chấp nhận, không sửa Git history."""
+        task = self.task_store.get_task(str(task_id or "").strip(), event_limit=0)
+        if task is None:
+            raise KeyError("task_not_found")
+        wanted = str(change_set_id or "").strip()
+        rows = [item for item in task.get("change_sets", []) if isinstance(item, dict)]
+        item = next((row for row in rows if str(row.get("change_set_id", "")) == wanted), None)
+        if item is None:
+            raise KeyError("changeset_not_found")
+        if str(item.get("status", "pending") or "pending") == "reverted":
+            raise RuntimeError("changeset_already_reverted")
+        self.event_bus.emit(
+            str(task_id), "changeset_accepted", actor="user",
+            summary=f"Đã accept ChangeSet {wanted}.", importance=0.72,
+            data={
+                "change_set_id": wanted,
+                "operation_id": str(item.get("operation_id", "") or wanted),
+                "files": list(item.get("files") or []),
+            },
+        )
+        return {"status": "accepted", "change_set_id": wanted, "files": list(item.get("files") or [])}
+
+    def revert_change_set(self, task_id: str, change_set_id: str) -> dict[str, Any]:
+        """Revert ChangeSet pending mới nhất bằng snapshot ProjectOperations.
+
+        Không cho revert một patch cũ khi phía sau còn patch pending mới hơn vì snapshot
+        file-level có thể đè mất thay đổi sau. Với case phức tạp dùng atomic checkpoint rollback.
+        """
+        task_id = str(task_id or "").strip()
+        task = self.task_store.get_task(task_id, event_limit=0)
+        if task is None:
+            raise KeyError("task_not_found")
+        latest = self.task_store.latest_pending_change_set(task_id)
+        if latest is None:
+            raise RuntimeError("no_pending_changeset")
+        wanted = str(change_set_id or latest.get("change_set_id", "") or "").strip()
+        if wanted != str(latest.get("change_set_id", "") or ""):
+            raise RuntimeError("changeset_not_latest_pending_use_checkpoint_rollback")
+        operation_id = str(latest.get("operation_id", "") or wanted)
+        workspace_meta = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+        workspace_ref = str(workspace_meta.get("workspace_id", "") or workspace_meta.get("workspace_path", "") or "").strip()
+        scope = self.workspace_scope(workspace_ref) if workspace_ref and callable(self.workspace_scope) else nullcontext()
+        with self._workspace_tool_lock, scope:
+            result = self._invoke_tool("project_rollback", {"operation_id": operation_id}, task_id=task_id)
+        if isinstance(result, dict) and not bool(result.get("success", False)):
+            raise RuntimeError(str(result.get("message", "changeset_revert_failed") or "changeset_revert_failed"))
+        self.event_bus.emit(
+            task_id, "changeset_reverted", actor="user",
+            summary=f"Đã revert ChangeSet {wanted} bằng snapshot operation.", importance=0.94,
+            data={
+                "change_set_id": wanted,
+                "operation_id": operation_id,
+                "files": list(latest.get("files") or []),
+            },
+        )
+        return {"status": "reverted", "change_set_id": wanted, "files": list(latest.get("files") or [])}
 
     def stop_task(self, task_id: str, *, reason: str = "user") -> bool:
         """Dừng projection task kể cả khi hiện không còn worker để consume control."""

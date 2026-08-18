@@ -49,6 +49,7 @@ class AgentWebSocketService:
         resume_task: Callable[..., dict[str, Any]],
         control_task: Callable[..., dict[str, Any]] | None = None,
         capability_catalog: Callable[[], dict[str, Any]] | None = None,
+        ide_rpc: Any = None,
         host: str = "127.0.0.1",
         port: int | None = None,
         discovery_path: str | os.PathLike[str] | None = None,
@@ -60,6 +61,7 @@ class AgentWebSocketService:
         self.resume_task = resume_task
         self.control_task = control_task
         self.capability_catalog = capability_catalog
+        self.ide_rpc = ide_rpc
         self.host = "127.0.0.1" if str(host or "").strip() not in {"127.0.0.1", "localhost", "::1"} else str(host)
         env_port = str(os.getenv("ERIS_AGENT_WS_PORT", "") or "").strip()
         self.port = int(port if port is not None else (env_port or 0))
@@ -126,6 +128,14 @@ class AgentWebSocketService:
         return True
 
     def stop(self) -> None:
+        # Đánh thức mọi live IDE RPC đang chờ để shutdown không phải ngồi hết timeout.
+        broker = getattr(self, "ide_rpc", None)
+        cancel_all = getattr(broker, "cancel_all", None)
+        if callable(cancel_all):
+            try:
+                cancel_all("agent_service_stopped")
+            except Exception:
+                pass
         server = self._server
         if server is not None:
             try:
@@ -390,6 +400,7 @@ class AgentWebSocketService:
                 action=action,
                 text=str(message.get("text", "") or ""),
                 checkpoint_id=str(message.get("checkpointId", "") or ""),
+                change_set_id=str(message.get("changeSetId", "") or ""),
                 source="vscode",
                 ide_context=ide_context,
             )
@@ -414,6 +425,37 @@ class AgentWebSocketService:
                     "message": str(message.get("message", "") or "")[:1200],
                 },
             )
+            return
+        if kind == "ide.response":
+            task_id = str(message.get("taskId", "") or "").strip()
+            if self._task_for_client(client, task_id, event_limit=0) is None:
+                return
+            request_id = str(message.get("requestId", "") or "").strip()
+            success = bool(message.get("success", False))
+            broker = self.ide_rpc
+            resolved = bool(
+                broker is not None
+                and callable(getattr(broker, "resolve", None))
+                and broker.resolve(
+                    request_id,
+                    success=success,
+                    data=message.get("data"),
+                    error=str(message.get("error", "") or ""),
+                )
+            )
+            if resolved:
+                self.event_bus.emit(
+                    task_id,
+                    "ide_response",
+                    actor="vscode",
+                    summary=("VS Code đã trả semantic context." if success else "VS Code không trả được semantic context."),
+                    importance=0.24 if success else 0.62,
+                    data={
+                        "requestId": request_id,
+                        "method": str(message.get("method", "") or "")[:120],
+                        "success": success,
+                    },
+                )
             return
         self._send(client, {"type": "error", "code": "unsupported_type", "messageType": kind})
 
@@ -459,6 +501,11 @@ class AgentWebSocketService:
                 # Replay có cùng session boundary với live broadcast. Legacy task
                 # chưa có session_id vẫn được thấy để migration không mất dữ liệu.
                 if event_session and event_session != client.session_id:
+                    continue
+                # RPC/editor command là request side-effect theo thời điểm thật.
+                # Replay chúng sau reconnect có thể mở file lần hai hoặc trả lời một
+                # requestId mà broker cũ đã chết. State/message/artifact vẫn replay.
+                if str(event.get("type", "") or "") in {"ide_request", "editor_command"}:
                     continue
                 for packet in project_agent_event(event):
                     self._send(client, packet)
@@ -514,7 +561,7 @@ class AgentWebSocketService:
             "brain": [],
             "protocol": [
                 "session.create", "message.user", "interrupt.resolve", "event.replay",
-                "task.control", "task.list", "task.get", "thread.history", "editor.command.result",
+                "task.control", "task.list", "task.get", "thread.history", "editor.command.result", "ide.response",
             ],
         }
 

@@ -1,7 +1,8 @@
 import * as crypto from 'node:crypto';
 import * as vscode from 'vscode';
 import { captureIdeContext, currentWorkspaceRef } from './contextBridge';
-import { WorkspaceDiffProvider, resolveWorkspaceFile } from './diffProvider';
+import { WorkspaceDiffProvider } from './diffProvider';
+import { executeEditorCommand, openWorkspaceFile } from './editorBridge';
 import { ErisClient } from './erisClient';
 import { TerminalContextObserver } from './terminalObserver';
 
@@ -129,6 +130,7 @@ export class ErisChatPanel implements vscode.Disposable {
           String(message.text ?? ''),
           String(message.checkpointId ?? ''),
           await this.ideContext(),
+          String(message.changeSetId ?? ''),
         );
         return;
       }
@@ -177,21 +179,9 @@ export class ErisChatPanel implements vscode.Disposable {
       await this.panel.webview.postMessage(event);
       return;
     }
-    if (type === 'editor.command') {
-      const payload = event.payload ?? {};
-      const command = String(payload.command ?? '');
-      const requestId = String(payload.requestId ?? '');
-      try {
-        const resultMessage = await executeEditorCommand(payload, this.diffProvider);
-        await this.client.reportEditorCommandResult(
-          String(event.taskId ?? ''), requestId, command, true, resultMessage,
-        );
-      } catch (error) {
-        await this.client.reportEditorCommandResult(
-          String(event.taskId ?? ''), requestId, command, false, String(error),
-        ).catch(() => undefined);
-        await this.panel.webview.postMessage({ type: 'client.error', message: String(error) });
-      }
+    // Hai event này được xử lý ở extension host toàn cục, kể cả khi Chat Panel
+    // chưa từng mở. Panel không được tạo một response thứ hai.
+    if (type === 'ide.request' || type === 'editor.command') {
       return;
     }
     await this.panel.webview.postMessage(event);
@@ -362,6 +352,26 @@ export class ErisChatPanel implements vscode.Disposable {
     node.querySelector('[data-action="rollback"]').onclick=()=>activeTaskId&&vscode.postMessage({type:'task.control',taskId:activeTaskId,action:'rollback'});
     timeline.appendChild(node); scroll();
   }
+  function addChangeSet(event) {
+    const payload=event.payload ?? {}; const id=String(payload.changeSetId ?? payload.operationId ?? ''); if(!id)return;
+    const files=Array.isArray(payload.files)?payload.files:[]; const status=String(payload.status ?? 'pending');
+    const node=document.createElement('section'); node.className='artifact'; node.dataset.changeSetId=id;
+    node.innerHTML='<div class="artifact-head"><span class="meta">ChangeSet · '+esc(status)+'</span><code>'+esc(id)+'</code></div>'
+      +'<p>'+esc(files.slice(0,5).join(' · '))+(files.length>5?' · +'+(files.length-5):'')+'</p>'
+      +'<div class="artifact-actions"><button data-action="accept">Accept</button><button data-action="revert">Revert ChangeSet</button></div>';
+    const accept=node.querySelector('[data-action="accept"]'); const revert=node.querySelector('[data-action="revert"]');
+    if(status!=='pending'){accept.disabled=true;revert.disabled=true;}
+    accept.onclick=()=>activeTaskId&&vscode.postMessage({type:'task.control',taskId:activeTaskId,action:'accept_changeset',changeSetId:id});
+    revert.onclick=()=>activeTaskId&&vscode.postMessage({type:'task.control',taskId:activeTaskId,action:'revert_changeset',changeSetId:id});
+    timeline.appendChild(node); scroll();
+  }
+  function updateChangeSet(event) {
+    const payload=event.payload ?? {}; const id=String(payload.changeSetId ?? payload.operationId ?? ''); if(!id)return;
+    const node=[...document.querySelectorAll('[data-change-set-id]')].reverse().find(n=>n.dataset.changeSetId===id);
+    if(!node){addChangeSet(event);return;}
+    const meta=node.querySelector('.meta'); if(meta)meta.textContent='ChangeSet · '+String(payload.status ?? 'updated');
+    for(const button of node.querySelectorAll('button'))button.disabled=true;
+  }
   function renderEvent(event) {
     if (!event || !remember(event)) return;
     if (event.taskId) activeTaskId=String(event.taskId);
@@ -373,6 +383,8 @@ export class ErisChatPanel implements vscode.Disposable {
     if (event.type==='interrupt.request') { addInterrupt(event); return; }
     if (event.type==='interrupt.resolved') { pendingInterrupts.delete(String(event.taskId??'')); return; }
     if (event.type==='artifact.modified'||event.type==='artifact.created') { addArtifact(event); return; }
+    if (event.type==='changeset.created') { addChangeSet(event); return; }
+    if (event.type==='changeset.updated') { updateChangeSet(event); return; }
     if (event.type==='artifact.diff') { addActivity({taskId:event.taskId,type:'activity.diff',payload:{label:event.payload?.summary??'Đã đọc Git diff',status:'completed'}}); return; }
     if (event.type==='editor.result') { addActivity({taskId:event.taskId,type:'activity.editor',payload:{label:event.payload?.message??event.payload?.command??'VS Code command',status:event.payload?.success?'completed':'failed'}}); }
   }
@@ -416,40 +428,4 @@ export class ErisChatPanel implements vscode.Disposable {
       this.disposables.pop()?.dispose();
     }
   }
-}
-
-async function executeEditorCommand(
-  payload: Record<string, unknown>,
-  diffProvider: WorkspaceDiffProvider,
-): Promise<string> {
-  const command = String(payload.command ?? payload.type ?? '');
-  if (command === 'editor.openFile') {
-    await openWorkspaceFile(String(payload.path ?? ''), Number(payload.line ?? 1), Number(payload.column ?? 1));
-    return `Đã mở ${String(payload.path ?? '')}`;
-  }
-  if (command === 'editor.openDiff') {
-    await diffProvider.openDiff(String(payload.path ?? ''), String(payload.diff ?? ''));
-    return `Đã mở diff ${String(payload.path ?? '')}`;
-  }
-  if (command === 'editor.focusProblems') {
-    await vscode.commands.executeCommand('workbench.actions.view.problems');
-    return 'Đã focus Problems';
-  }
-  if (command === 'editor.showSourceControl') {
-    await vscode.commands.executeCommand('workbench.view.scm');
-    return 'Đã mở Source Control';
-  }
-  throw new Error(`Editor command không được hỗ trợ: ${command}`);
-}
-
-async function openWorkspaceFile(filePath: string, line = 1, column = 1): Promise<void> {
-  const uri = await resolveWorkspaceFile(filePath);
-  if (!uri) {
-    throw new Error(`Eris không tìm thấy file trong workspace: ${filePath}`);
-  }
-  const document = await vscode.workspace.openTextDocument(uri);
-  const editor = await vscode.window.showTextDocument(document, { preview: true, preserveFocus: false });
-  const position = new vscode.Position(Math.max(0, line - 1), Math.max(0, column - 1));
-  editor.selection = new vscode.Selection(position, position);
-  editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenterIfOutsideViewport);
 }

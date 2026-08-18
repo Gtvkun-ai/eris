@@ -18,10 +18,11 @@ from typing import Any, Iterable
 
 from .coding_state import initial_coding_state, merge_coding_state, normalize_coding_state
 
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 _MAX_TASKS = 60
 _MAX_EVENTS_PER_TASK = 360
 _MAX_CONTROLS_PER_TASK = 80
+_MAX_CHANGESETS_PER_TASK = 48
 
 
 def default_agent_console_state_path() -> Path:
@@ -91,6 +92,8 @@ class AgentTaskStore:
                     task.get("coding_state"),
                     objective=str(task.get("clarified_goal", "") or task.get("goal", "") or ""),
                 )
+                raw_sets = task.get("change_sets") if isinstance(task.get("change_sets"), list) else []
+                task["change_sets"] = [dict(item) for item in raw_sets[-_MAX_CHANGESETS_PER_TASK:] if isinstance(item, dict)]
 
             return {
                 "version": _SCHEMA_VERSION,
@@ -157,6 +160,7 @@ class AgentTaskStore:
                 "current_step": 0,
                 "active_skills": [],
                 "changed_files": [],
+                "change_sets": [],
                 "tests": {"passed": 0, "failed": 0, "summary": ""},
                 # State semantic nhỏ để VS Code/Eris main hiểu executor đang làm gì
                 # mà không phải parse stdout/tool JSON hay chạm chain-of-thought.
@@ -177,7 +181,7 @@ class AgentTaskStore:
     def update_task(self, task_id: str, **fields: Any) -> dict[str, Any] | None:
         allowed = {
             "goal", "clarified_goal", "status", "executor", "model", "started_at", "finished_at",
-            "current_step", "active_skills", "changed_files", "tests", "coding_state", "checkpoint_id",
+            "current_step", "active_skills", "changed_files", "change_sets", "tests", "coding_state", "checkpoint_id",
             "checkpoint_count", "metadata", "thread_id", "session_id", "pending_interrupt", "last_event_seq",
         }
         with self._lock:
@@ -337,6 +341,33 @@ class AgentTaskStore:
                 if current_phase in {"", "queued", "starting"}:
                     semantic_patch["phase"] = "modifying"
                 task["coding_state"] = merge_coding_state(task.get("coding_state"), semantic_patch)
+        elif kind == "changeset_created":
+            change_set_id = str(data.get("change_set_id", data.get("operation_id", "")) or "").strip()
+            if change_set_id:
+                rows = [dict(item) for item in task.get("change_sets", []) if isinstance(item, dict)]
+                current = next((item for item in rows if str(item.get("change_set_id", "")) == change_set_id), None)
+                payload = {
+                    "change_set_id": change_set_id,
+                    "operation_id": str(data.get("operation_id", "") or change_set_id),
+                    "checkpoint_id": str(data.get("checkpoint_id", "") or ""),
+                    "files": [str(item) for item in (data.get("files") or []) if str(item or "").strip()][:120],
+                    "status": str(data.get("status", "pending") or "pending"),
+                    "created_at": now,
+                    "updated_at": now,
+                }
+                if current is None:
+                    rows.append(payload)
+                else:
+                    current.update(payload)
+                task["change_sets"] = rows[-_MAX_CHANGESETS_PER_TASK:]
+        elif kind in {"changeset_accepted", "changeset_reverted"}:
+            change_set_id = str(data.get("change_set_id", data.get("operation_id", "")) or "").strip()
+            rows = [dict(item) for item in task.get("change_sets", []) if isinstance(item, dict)]
+            for item in rows:
+                if str(item.get("change_set_id", "")) == change_set_id:
+                    item["status"] = "accepted" if kind == "changeset_accepted" else "reverted"
+                    item["updated_at"] = now
+            task["change_sets"] = rows[-_MAX_CHANGESETS_PER_TASK:]
         elif kind == "test_result":
             passed = int(data.get("passed", 0) or 0)
             failed = int(data.get("failed", 0) or 0)
@@ -366,6 +397,7 @@ class AgentTaskStore:
                 "current_step": int(task.get("current_step", 0) or 0),
                 "active_skills": list(task.get("active_skills") or []),
                 "changed_files": list(task.get("changed_files") or []),
+                "change_sets": [dict(item) for item in task.get("change_sets", []) if isinstance(item, dict)],
                 "tests": dict(task.get("tests") or {}),
                 "coding_state": normalize_coding_state(
                     task.get("coding_state"), objective=str(task.get("clarified_goal", "") or task.get("goal", "") or "")
@@ -391,6 +423,10 @@ class AgentTaskStore:
             task["current_step"] = max(0, int(projection.get("current_step", 0) or 0))
             task["active_skills"] = [str(x) for x in list(projection.get("active_skills") or [])][-24:]
             task["changed_files"] = [str(x) for x in list(projection.get("changed_files") or [])][-120:]
+            task["change_sets"] = [
+                dict(item) for item in list(projection.get("change_sets") or [])
+                if isinstance(item, dict)
+            ][-_MAX_CHANGESETS_PER_TASK:]
             tests = projection.get("tests") if isinstance(projection.get("tests"), dict) else {}
             task["tests"] = {
                 "passed": int(tests.get("passed", 0) or 0),
@@ -578,6 +614,17 @@ class AgentTaskStore:
                     break
             return rows
 
+    def latest_pending_change_set(self, task_id: str) -> dict[str, Any] | None:
+        """Lấy ChangeSet pending mới nhất để revert không đạp lên patch mới hơn."""
+        with self._lock:
+            task = self._find_locked(task_id)
+            if task is None:
+                return None
+            for item in reversed(task.get("change_sets", []) or []):
+                if isinstance(item, dict) and str(item.get("status", "pending") or "pending") == "pending":
+                    return dict(item)
+        return None
+
     def get_task(self, task_id: str, *, event_limit: int = 100) -> dict[str, Any] | None:
         with self._lock:
             task = self._find_locked(task_id)
@@ -651,6 +698,24 @@ class AgentTaskStore:
                 result["data"] = {
                     "chars": int(data.get("chars", 0) or 0),
                     "diff": AgentTaskStore._compact_text(data.get("diff", ""), 16000),
+                }
+                return result
+
+            if kind in {"changeset_created", "changeset_accepted", "changeset_reverted"}:
+                result["data"] = {
+                    "change_set_id": AgentTaskStore._compact_text(data.get("change_set_id", data.get("operation_id", "")), 160),
+                    "operation_id": AgentTaskStore._compact_text(data.get("operation_id", ""), 160),
+                    "checkpoint_id": AgentTaskStore._compact_text(data.get("checkpoint_id", ""), 220),
+                    "status": AgentTaskStore._compact_text(data.get("status", ""), 40),
+                    "files": [AgentTaskStore._compact_text(item, 700) for item in (data.get("files") or [])[:120]],
+                }
+                return result
+
+            if kind == "ide_request":
+                result["data"] = {
+                    "requestId": AgentTaskStore._compact_text(data.get("requestId", ""), 160),
+                    "method": AgentTaskStore._compact_text(data.get("method", ""), 120),
+                    "params": dict(data.get("params") or {}) if isinstance(data.get("params"), dict) else {},
                 }
                 return result
 

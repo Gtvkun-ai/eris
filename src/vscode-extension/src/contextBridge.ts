@@ -20,71 +20,68 @@ function relativePath(uri: vscode.Uri): string {
   return path.relative(folder.uri.fsPath, uri.fsPath).replaceAll('\\', '/');
 }
 
-/**
- * Lấy context semantic trực tiếp từ VS Code thay vì OCR giao diện IDE.
- * Payload luôn bị giới hạn để log/diff lớn không nuốt sạch prompt của agent.
- */
-export async function captureIdeContext(terminalObserver?: TerminalContextObserver): Promise<Record<string, unknown>> {
+function workspaceInfo(): Record<string, unknown> {
   const editor = vscode.window.activeTextEditor;
   const folders = vscode.workspace.workspaceFolders ?? [];
   const activeFolder = editor ? vscode.workspace.getWorkspaceFolder(editor.document.uri) : folders[0];
-
-  const context: Record<string, unknown> = {
-    capturedAt: Date.now(),
-    workspace: {
-      active: activeFolder?.uri.fsPath ?? '',
-      trusted: vscode.workspace.isTrusted,
-      folders: folders.map((folder) => ({ name: folder.name, path: folder.uri.fsPath })),
-    },
-    terminal: terminalObserver?.snapshot() ?? {
-      active: vscode.window.activeTerminal?.name ?? '',
-      terminals: vscode.window.terminals.map((terminal) => terminal.name),
-      outputAvailable: false,
-      recent: [],
-    },
+  return {
+    active: activeFolder?.uri.fsPath ?? '',
+    trusted: vscode.workspace.isTrusted,
+    folders: folders.map((folder) => ({ name: folder.name, path: folder.uri.fsPath })),
   };
+}
 
-  // Workspace Trust là boundary thật. Webview không được tự quyết định lúc nào
-  // nó có quyền lấy source code, diagnostics hay Git diff.
-  if (!vscode.workspace.isTrusted) {
-    context.restricted = 'workspace_untrusted';
-    return context;
+function currentFileContext(includeExcerpt = true): Record<string, unknown> {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    return { available: false };
   }
-
-  if (editor) {
-    const document = editor.document;
-    const selection = editor.selection;
-    const cursor = selection.active;
-    const selectedText = document.getText(selection);
-    const radius = 120;
-    const startLine = Math.max(0, cursor.line - radius);
-    const endLine = Math.min(document.lineCount - 1, cursor.line + radius);
-    const excerpt = document.getText(new vscode.Range(
+  const document = editor.document;
+  const selection = editor.selection;
+  const cursor = selection.active;
+  const radius = 120;
+  const startLine = Math.max(0, cursor.line - radius);
+  const endLine = Math.min(document.lineCount - 1, cursor.line + radius);
+  const excerpt = includeExcerpt
+    ? document.getText(new vscode.Range(
       new vscode.Position(startLine, 0),
       document.lineAt(endLine).range.end,
-    ));
+    ))
+    : '';
+  return {
+    available: true,
+    path: relativePath(document.uri),
+    absolutePath: document.uri.fsPath,
+    languageId: document.languageId,
+    version: document.version,
+    dirty: document.isDirty,
+    cursor: { line: cursor.line + 1, column: cursor.character + 1 },
+    excerptStartLine: startLine + 1,
+    excerpt: clip(excerpt),
+  };
+}
 
-    context.current = {
-      path: relativePath(document.uri),
-      absolutePath: document.uri.fsPath,
-      languageId: document.languageId,
-      version: document.version,
-      dirty: document.isDirty,
-      cursor: { line: cursor.line + 1, column: cursor.character + 1 },
-      excerptStartLine: startLine + 1,
-      excerpt: clip(excerpt),
-    };
-    context.selection = {
-      empty: selection.isEmpty,
-      start: { line: selection.start.line + 1, column: selection.start.character + 1 },
-      end: { line: selection.end.line + 1, column: selection.end.character + 1 },
-      text: clip(selectedText, 12_000),
-    };
+function selectionContext(): Record<string, unknown> {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    return { available: false, empty: true, text: '' };
   }
+  const selection = editor.selection;
+  return {
+    available: true,
+    path: relativePath(editor.document.uri),
+    empty: selection.isEmpty,
+    start: { line: selection.start.line + 1, column: selection.start.character + 1 },
+    end: { line: selection.end.line + 1, column: selection.end.character + 1 },
+    text: clip(editor.document.getText(selection), 12_000),
+  };
+}
 
+function problemsContext(scope: 'current' | 'workspace' = 'current'): Record<string, unknown> {
+  const editor = vscode.window.activeTextEditor;
   const diagnostics: Array<Record<string, unknown>> = [];
   const counts = { error: 0, warning: 0, information: 0, hint: 0 };
-  const diagnosticEntries = editor
+  const diagnosticEntries = scope === 'current' && editor
     ? [[editor.document.uri, vscode.languages.getDiagnostics(editor.document.uri)] as const]
     : vscode.languages.getDiagnostics();
   for (const [uri, items] of diagnosticEntries) {
@@ -111,17 +108,107 @@ export async function captureIdeContext(terminalObserver?: TerminalContextObserv
       break;
     }
   }
-  context.problems = {
-    counts,
-    truncated: diagnostics.length >= DIAGNOSTIC_LIMIT,
-    items: diagnostics,
+  return { scope, counts, truncated: diagnostics.length >= DIAGNOSTIC_LIMIT, items: diagnostics };
+}
+
+function openEditorsContext(): Record<string, unknown> {
+  const active = vscode.window.activeTextEditor?.document.uri;
+  const seen = new Set<string>();
+  const editors: Array<Record<string, unknown>> = [];
+  for (const group of vscode.window.tabGroups.all) {
+    for (const tab of group.tabs) {
+      const input = tab.input as any;
+      const uri: vscode.Uri | undefined = input?.uri ?? input?.modified ?? input?.original;
+      if (!uri || uri.scheme !== 'file') {
+        continue;
+      }
+      const key = uri.toString();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      editors.push({
+        path: relativePath(uri),
+        active: Boolean(active && active.toString() === key),
+        preview: Boolean(tab.isPreview),
+        dirty: Boolean(tab.isDirty),
+        pinned: Boolean(tab.isPinned),
+      });
+      if (editors.length >= 60) {
+        return { count: editors.length, truncated: true, editors };
+      }
+    }
+  }
+  return { count: editors.length, truncated: false, editors };
+}
+
+/**
+ * Lấy context semantic trực tiếp từ VS Code thay vì OCR giao diện IDE.
+ * Payload luôn bị giới hạn để log/diff lớn không nuốt sạch prompt của agent.
+ */
+export async function captureIdeContext(terminalObserver?: TerminalContextObserver): Promise<Record<string, unknown>> {
+  const context: Record<string, unknown> = {
+    capturedAt: Date.now(),
+    workspace: workspaceInfo(),
+    terminal: terminalObserver?.snapshot() ?? {
+      active: vscode.window.activeTerminal?.name ?? '',
+      terminals: vscode.window.terminals.map((terminal) => terminal.name),
+      outputAvailable: false,
+      recent: [],
+    },
   };
 
-  context.git = await captureGitContext(editor?.document.uri);
+  // Workspace Trust là boundary thật. Webview không được tự quyết định lúc nào
+  // nó có quyền lấy source code, diagnostics hay Git diff.
+  if (!vscode.workspace.isTrusted) {
+    context.restricted = 'workspace_untrusted';
+    return context;
+  }
+
+  const current = currentFileContext(true);
+  if (current.available) {
+    context.current = current;
+    context.selection = selectionContext();
+  }
+  context.problems = problemsContext('current');
+  context.git = await captureGitContext(vscode.window.activeTextEditor?.document.uri);
+  context.openEditors = openEditorsContext();
   return context;
 }
 
-async function captureGitContext(activeUri?: vscode.Uri): Promise<Record<string, unknown>> {
+/**
+ * Resolve một live IDE RPC từ Python. Đây là đường hai chiều: Gemini có thể hỏi
+ * VS Code lại ở phút thứ 5 của task thay vì sống bằng snapshot từ lúc user bấm Send.
+ */
+export async function resolveIdeContextRequest(
+  method: string,
+  params: Record<string, unknown> = {},
+  terminalObserver?: TerminalContextObserver,
+): Promise<Record<string, unknown>> {
+  if (!vscode.workspace.isTrusted && method !== 'ide.getWorkspaceInfo') {
+    throw new Error('workspace_untrusted');
+  }
+  switch (method) {
+    case 'ide.getCurrentFile':
+      return currentFileContext(params.include_excerpt !== false && params.includeExcerpt !== false);
+    case 'ide.getSelection':
+      return selectionContext();
+    case 'ide.getProblems':
+      return problemsContext(String(params.scope ?? 'current') === 'workspace' ? 'workspace' : 'current');
+    case 'ide.getGitState':
+      return captureGitContext(vscode.window.activeTextEditor?.document.uri);
+    case 'ide.getTerminalRecent':
+      return terminalObserver?.snapshot() ?? { outputAvailable: false, recent: [] };
+    case 'ide.getOpenEditors':
+      return openEditorsContext();
+    case 'ide.getWorkspaceInfo':
+      return workspaceInfo();
+    default:
+      throw new Error(`IDE RPC không được hỗ trợ: ${method}`);
+  }
+}
+
+export async function captureGitContext(activeUri?: vscode.Uri): Promise<Record<string, unknown>> {
   try {
     const extension = vscode.extensions.getExtension('vscode.git');
     if (!extension) {
@@ -152,7 +239,6 @@ async function captureGitContext(activeUri?: vscode.Uri): Promise<Record<string,
         const relativeActive = activeUri && root
           ? path.relative(root, activeUri.fsPath).replaceAll('\\', '/')
           : undefined;
-        // File đang mở thường có signal tốt nhất; nếu không có thì lấy diff repo.
         diff = String(relativeActive ? await repo.diffWithHEAD(relativeActive) : await repo.diffWithHEAD());
         if (!diff.trim() && relativeActive) {
           diff = String(await repo.diffWithHEAD());

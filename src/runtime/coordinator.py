@@ -165,6 +165,7 @@ class RuntimeCoordinator(
         # trên máy chưa cài optional LangGraph dependency.
         self.agent_harness = None
         self.agent_ws_service = None
+        self.agent_ide_rpc = None
         self.agent_executor_backend = None
         self.agent_capability_self_model = None
         self._agent_task_threads = {}
@@ -186,6 +187,8 @@ class RuntimeCoordinator(
                         break
                 self.agent_default_workspace = str(workspace_root)
                 native_tools = NativeCapabilityToolAdapter(action_executor)
+                from runtime.agent_service.ide_rpc import IdeRpcBroker
+                self.agent_ide_rpc = IdeRpcBroker(self.agent_event_bus, logger=logger)
                 gemini = GeminiCliDecisionExecutor(
                     workspace=workspace_root,
                     model=os.environ.get("ERIS_GEMINI_AGENT_MODEL", "auto"),
@@ -202,6 +205,7 @@ class RuntimeCoordinator(
                     executor_name="gemini-cli",
                     model_name=gemini.model,
                     workspace_scope=lambda ref: self.workspace_manager.scoped_active(ref),
+                    ide_rpc=self.agent_ide_rpc,
                     logger=logger,
                 )
                 ok, reason = gemini.health()
@@ -236,12 +240,14 @@ class RuntimeCoordinator(
                         resume_task=self.resume_agent_task_async,
                         control_task=self.control_agent_task,
                         capability_catalog=self._agent_ws_capability_catalog,
+                        ide_rpc=self.agent_ide_rpc,
                         logger=logger,
                     )
                     if service.start():
                         self.agent_ws_service = service
             except Exception as exc:
                 self.agent_harness = None
+                self.agent_ide_rpc = None
                 self.agent_capability_self_model = None
                 debug = getattr(logger, "debug", None)
                 if callable(debug):
@@ -297,12 +303,19 @@ class RuntimeCoordinator(
         events = [item for item in task.get("events", []) if isinstance(item, dict)]
         marks = self._agent_supervisor_marks.setdefault(task_id, set())
 
-        def _mark_once(key: str, instruction: str, reason: str) -> None:
+        def _mark_once(key: str, instruction: str, reason: str, *, mode: str = "advisory") -> None:
+            # Các anti-pattern kỹ thuật đã quan sát được phải tác động vào executor thật,
+            # không chỉ biến thành một dòng status đẹp mắt rồi bị Gemini phớt lờ.
             if key in marks:
                 return
             marks.add(key)
             try:
-                supervisor.advisory(task_id, instruction, reason=reason)
+                if mode == "redirect":
+                    supervisor.reconsider(task_id, instruction, reason=reason)
+                elif mode == "stop":
+                    supervisor.stop(task_id, reason, instruction=instruction)
+                else:
+                    supervisor.advisory(task_id, instruction, reason=reason)
             except Exception:
                 marks.discard(key)
 
@@ -324,6 +337,7 @@ class RuntimeCoordinator(
                         "patch_before_inspection",
                         "Dừng vá ngay. Đọc implementation/caller và evidence hiện có trước, rồi mới chọn patch nhỏ nhất.",
                         "Gemini bắt đầu project_apply_patch trước khi có inspection evidence trong task.",
+                        mode="redirect",
                     )
 
         # Repeated failures are a replan signal, not a retry invitation.
@@ -337,6 +351,7 @@ class RuntimeCoordinator(
                 f"repeat_fail:{failed_tools[-1]}",
                 f"Đừng retry {failed_tools[-1]} theo cùng cách. Đọc failure mới, đổi giả thuyết hoặc đổi tool rồi replan.",
                 "Cùng một tool vừa thất bại liên tiếp.",
+                mode="redirect",
             )
 
         test_failures = sum(
@@ -350,6 +365,7 @@ class RuntimeCoordinator(
                 "repeated_test_failure",
                 "Hai vòng test đã fail. Dừng sửa nối tiếp theo triệu chứng; quay lại failure gần nhất và xác minh root cause trước patch tiếp.",
                 "Verification thất bại lặp lại trong cùng task.",
+                mode="redirect",
             )
 
         changed_files = list(task.get("changed_files", []) or [])
@@ -358,6 +374,7 @@ class RuntimeCoordinator(
                 "scope_expansion",
                 "Scope đang phình quá rộng. Kiểm tra lại xem có thể giải quyết bằng ít file hơn và tái sử dụng abstraction hiện hữu không.",
                 f"Task đã chạm {len(changed_files)} file.",
+                mode="redirect",
             )
 
         # Close the autonomy loop: terminal Gemini work becomes fresh Eris context
@@ -742,6 +759,7 @@ class RuntimeCoordinator(
         action: str,
         text: str = "",
         checkpoint_id: str = "",
+        change_set_id: str = "",
         source: str = "vscode",
         ide_context: dict | None = None,
     ) -> dict:
@@ -823,7 +841,23 @@ class RuntimeCoordinator(
             except Exception as exc:
                 return {"status": "failed", "reason": f"rollback_failed:{type(exc).__name__}:{exc}", "task_id": task_id}
 
-        if action not in {"pause", "resume", "stop", "directive", "choice", "rollback"}:
+        if action == "accept_changeset":
+            try:
+                result = harness.accept_change_set(task_id, change_set_id)
+                return {"task_id": task_id, **dict(result or {})}
+            except Exception as exc:
+                return {"status": "failed", "reason": f"changeset_accept_failed:{type(exc).__name__}:{exc}", "task_id": task_id}
+
+        if action == "revert_changeset":
+            if worker_alive:
+                return {"status": "busy", "reason": "pause_task_before_changeset_revert", "task_id": task_id}
+            try:
+                result = harness.revert_change_set(task_id, change_set_id)
+                return {"task_id": task_id, **dict(result or {})}
+            except Exception as exc:
+                return {"status": "failed", "reason": f"changeset_revert_failed:{type(exc).__name__}:{exc}", "task_id": task_id}
+
+        if action not in {"pause", "resume", "stop", "directive", "choice", "rollback", "accept_changeset", "revert_changeset"}:
             return {"status": "rejected", "reason": "unsupported_action", "task_id": task_id}
         control = store.enqueue_control(
             task_id,

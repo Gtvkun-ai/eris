@@ -5,9 +5,10 @@ Default là unattended AUTOPILOT: một task đã được user/Eris giao thì c
 phát triển bình thường phải chạy liền mạch. Read/search/open file/patch/test/build,
 workspace switching và project shell không được biến thành chuỗi hộp thoại xin phép.
 
-Boundary bảo vệ vẫn tồn tại, nhưng ở autopilot nó FAIL-CLOSED thay vì ASK: publish
-ra ngoài, phá dữ liệu/history hoặc command hệ thống nguy hiểm bị DENY để Gemini tự
-replan. Như vậy agent không đứng chết ở ``waiting_permission`` lúc chủ máy đi ngủ.
+Boundary bảo vệ vẫn tồn tại theo ba tầng: thao tác coding thường ngày AUTO, side
+effect hiếm nhưng hợp lệ (cài dependency/migration/history rewrite) ASK bằng LangGraph
+interrupt, còn publish/credential/destructive host command bị BLOCK. Vì thế mở file,
+patch và test không hỏi lặt vặt nhưng autopilot cũng không được giả làm root daemon.
 """
 from __future__ import annotations
 
@@ -90,6 +91,13 @@ class PermissionGate:
             if command_policy is not None:
                 return self._resolve_interactive(command_policy)
 
+        if name == "workspace_join":
+            source = str(args.get("source", "") or "").strip().lower()
+            if source.startswith(("http://", "https://", "git@", "ssh://")):
+                return Permission.ASK
+        if name == "workspace_leave" and bool(args.get("delete_managed_copy", False)):
+            return Permission.ASK
+
         if name in self.tool_policies:
             return self._resolve_interactive(self.tool_policies[name])
         for key, policy in self.tool_policies.items():
@@ -111,21 +119,13 @@ class PermissionGate:
         return Permission.DENY if self.unattended else Permission.ASK
 
     def _resolve_interactive(self, policy: Permission) -> Permission:
-        # Production autopilot must never stall on ASK. A protected action is
-        # denied and Gemini receives the observation so it can replan.
-        if self.unattended and policy == Permission.ASK:
-            return Permission.DENY
+        # ASK giờ là boundary có chủ đích, không phải default cho mọi tool. Graph
+        # interrupt sẽ checkpoint và nhả worker nên một prompt hiếm không gây polling.
         return policy
 
     @staticmethod
     def _command_policy(command: str) -> Permission | None:
-        """Protect only destructive/external boundaries; normal shell is automatic.
-
-        ``project_run_command`` itself already executes with ``shell=False``, an
-        executable allowlist and workspace-root guards in ProjectOperations, so
-        this layer does not duplicate that sandbox. It only catches semantic
-        actions we never want unattended execution to cross.
-        """
+        """Phân command thành AUTO / ASK / BLOCK theo side-effect semantic."""
         text = str(command or "").strip()
         if not text:
             return Permission.DENY
@@ -136,37 +136,55 @@ class PermissionGate:
         lowered = [part.strip('"\'').lower() for part in parts]
         if not lowered:
             return Permission.DENY
-
         exe = lowered[0].removesuffix(".exe")
 
-        # Host/data destructive operations are not a permission prompt. They are
-        # simply outside unattended agent authority.
+        # Host/data destructive command không thuộc quyền coding agent.
         if exe in {
             "rm", "rmdir", "del", "erase", "format", "diskpart", "shutdown", "reboot",
-            "poweroff", "halt", "mkfs", "dd",
+            "poweroff", "halt", "mkfs", "dd", "reg", "regedit", "takeown", "icacls",
         }:
             return Permission.DENY
 
-        # Local git work is automatic. Publishing or destructive history rewrite
-        # is not. This preserves the long-standing Eris rule: no autonomous push.
+        # Git local read/commit là bình thường; publish bị block, rewrite/xóa history
+        # là tình huống hiếm nhưng đôi khi hợp lệ nên phải hỏi đúng một lần.
         if exe == "git" and len(lowered) > 1:
             sub = lowered[1]
             if sub == "push":
                 return Permission.DENY
             if sub == "clean":
-                return Permission.DENY
+                return Permission.ALLOW if any(flag in lowered for flag in {"-n", "--dry-run"}) else Permission.DENY
             if sub == "rebase":
-                return Permission.DENY
+                return Permission.ASK
             if sub == "reset" and "--hard" in lowered:
                 return Permission.DENY
-            # status/diff/log/add/commit/merge/checkout/switch/restore/etc. flow.
+            if sub == "reset" and any(flag in lowered for flag in {"--merge", "--keep"}):
+                return Permission.ASK
+            if sub == "restore" and "--staged" not in lowered:
+                return Permission.ASK
+            if sub == "checkout" and "--" in lowered:
+                return Permission.ASK
             return Permission.ALLOW
 
-        # Common package/container publication boundaries. Builds/install/test
-        # remain automatic; only publishing out of the workspace is blocked.
+        # Cài/gỡ dependency thay đổi lockfile và có thể chạy lifecycle scripts/network.
+        # Build/test/lint không rơi vào nhánh này nên vẫn AUTO.
+        package_mutators = {
+            "npm": {"install", "i", "add", "uninstall", "remove", "rm", "update"},
+            "pnpm": {"install", "i", "add", "remove", "rm", "update"},
+            "yarn": {"add", "remove", "install", "upgrade"},
+            "pip": {"install", "uninstall"},
+            "pip3": {"install", "uninstall"},
+            "poetry": {"add", "remove", "install", "update"},
+            "uv": {"add", "remove", "sync", "pip"},
+            "cargo": {"add", "remove", "install", "uninstall"},
+            "dotnet": {"add", "remove", "tool"},
+        }
+        if exe in package_mutators and len(lowered) > 1 and lowered[1] in package_mutators[exe]:
+            return Permission.ASK
+
+        # Publish luôn block, kể cả khi package manager không đi qua nhánh trên.
         if exe in {"npm", "pnpm"} and len(lowered) > 1 and lowered[1] == "publish":
             return Permission.DENY
-        if exe == "yarn" and any(token == "publish" for token in lowered[1:3]):
+        if exe == "yarn" and "publish" in lowered[1:3]:
             return Permission.DENY
         if exe == "twine" and len(lowered) > 1 and lowered[1] == "upload":
             return Permission.DENY
@@ -175,8 +193,19 @@ class PermissionGate:
         if exe == "gh" and len(lowered) > 2 and lowered[1:3] in (["release", "create"], ["pr", "merge"]):
             return Permission.DENY
 
-        # Everything else is delegated to the existing ProjectOperations sandbox
-        # and executable allowlist with no second confirmation layer.
+        # Migration có thể mutate DB thật dù command trông giống tooling local.
+        joined = " ".join(lowered)
+        migration_markers = (
+            "alembic upgrade", "alembic downgrade", "prisma migrate", "manage.py migrate",
+            "django-admin migrate", "rails db:migrate", "sequelize db:migrate", "typeorm migration:run",
+        )
+        if any(marker in joined for marker in migration_markers):
+            return Permission.ASK
+
+        # Download/network shell trực tiếp không cần thiết cho coding loop bình thường.
+        if exe in {"curl", "wget", "scp", "ftp", "sftp"}:
+            return Permission.ASK
+
         return Permission.ALLOW
 
     def set_policy(self, action_name: str, permission: Permission):

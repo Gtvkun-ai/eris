@@ -112,6 +112,10 @@ def tool_start_patch(name: str, args: dict[str, Any] | None = None) -> dict[str,
         phase = "testing" if tool == "project_run_tests" else "executing"
     elif tool.startswith("editor_"):
         phase = "navigating"
+    elif tool.startswith("ide_get_"):
+        # Live IDE RPC là inspection semantic tại thời điểm hiện tại, không phải
+        # snapshot context cũ từ lúc user vừa gửi message.
+        phase = "investigating"
     elif tool == "ask_user_choice":
         phase = "waiting_user"
     patch: dict[str, Any] = {
@@ -196,6 +200,13 @@ def human_tool_label(name: str, args: dict[str, Any] | None = None) -> str:
         "editor_open_diff": "Đang mở diff trong VS Code",
         "editor_focus_problems": "Đang mở Problems",
         "editor_show_source_control": "Đang mở Source Control",
+        "ide_get_current_file": "Đang lấy file hiện tại từ VS Code",
+        "ide_get_selection": "Đang lấy selection hiện tại",
+        "ide_get_problems": "Đang đọc Problems hiện tại",
+        "ide_get_git_state": "Đang đọc Git state hiện tại",
+        "ide_get_terminal_recent": "Đang đọc terminal gần nhất",
+        "ide_get_open_editors": "Đang đọc các editor đang mở",
+        "ide_get_workspace_info": "Đang đọc workspace hiện tại",
         "search_capabilities": "Đang tìm capability",
         "activate_skill": "Đang kích hoạt skill",
         "ask_user_choice": "Đang chờ lựa chọn của người dùng",
