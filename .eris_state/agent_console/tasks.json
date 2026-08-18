@@ -380,6 +380,508 @@
         "workspace_path": "C:\\Users\\Gtvkun\\Documents\\GitHub\\eris",
         "workspace_name": "eris"
       }
+    },
+    {
+      "task_id": "task_c1fcd15bcdfe",
+      "thread_id": "agent_console:agent-10757-2960559092",
+      "goal": "xin chào",
+      "clarified_goal": "xin chào",
+      "status": "failed",
+      "executor": "gemini-cli",
+      "model": "gemini-3-flash",
+      "created_at": 1787020774.7227137,
+      "updated_at": 1787020790.1413164,
+      "started_at": 1787020774.73205,
+      "finished_at": 1787020790.1413164,
+      "current_step": 1,
+      "active_skills": [],
+      "changed_files": [],
+      "tests": {
+        "passed": 0,
+        "failed": 0,
+        "summary": ""
+      },
+      "checkpoint_id": "",
+      "checkpoint_count": 0,
+      "events": [
+        {
+          "event_id": "ae_b8a01bb356cd4b",
+          "type": "task_started",
+          "actor": "system",
+          "summary": "xin chào",
+          "detail": "",
+          "step": 0,
+          "importance": 0.9,
+          "created_at": 1787020774.73205,
+          "data": {
+            "executor": "gemini-cli",
+            "model": "gemini-3-flash",
+            "source": "agent_console",
+            "task_mode": "execute",
+            "workspace_id": "eris-2",
+            "workspace_path": "C:\\Users\\Gtvkun\\Documents\\eris",
+            "workspace_name": "eris"
+          }
+        },
+        {
+          "event_id": "ae_7ec8a68af01d4a",
+          "type": "agent_status",
+          "actor": "executor",
+          "summary": "Executor đang quyết định bước tiếp theo.",
+          "detail": "",
+          "step": 1,
+          "importance": 0.34,
+          "created_at": 1787020774.7629852,
+          "data": {}
+        },
+        {
+          "event_id": "ae_92584e34cac446",
+          "type": "task_failed",
+          "actor": "system",
+          "summary": "Agent loop lỗi: GeminiCliError: webai_api_failed:HTTPError:400 Client Error: Bad Request for url: http://localhost:8081/v1/chat/completions",
+          "detail": "",
+          "step": 1,
+          "importance": 1.0,
+          "created_at": 1787020790.1413164,
+          "data": {}
+        }
+      ],
+      "controls": [],
+      "metadata": {
+        "original_goal": "xin chào",
+        "source": "agent_console",
+        "task_mode": "execute",
+        "workspace_id": "eris-2",
+        "workspace_path": "C:\\Users\\Gtvkun\\Documents\\eris",
+        "workspace_name": "eris"
+      }
+    },
+    {
+      "task_id": "task_e9d726e6a091",
+      "thread_id": "agent_console:agent-15164-2974086774",
+      "goal": "xin chào",
+      "clarified_goal": "xin chào",
+      "status": "failed",
+      "executor": "gemini-cli",
+      "model": "playwright/gemini-3.1-pro",
+      "created_at": 1787021238.750121,
+      "updated_at": 1787021337.6596458,
+      "started_at": 1787021238.758888,
+      "finished_at": 1787021337.6596458,
+      "current_step": 1,
+      "active_skills": [],
+      "changed_files": [],
+      "tests": {
+        "passed": 0,
+        "failed": 0,
+        "summary": ""
+      },
+      "checkpoint_id": "",
+      "checkpoint_count": 0,
+      "events": [
+        {
+          "event_id": "ae_3cca39c664a548",
+          "type": "task_started",
+          "actor": "system",
+          "summary": "xin chào",
+          "detail": "",
+          "step": 0,
+          "importance": 0.9,
+          "created_at": 1787021238.758888,
+          "data": {
+            "executor": "gemini-cli",
+            "model": "playwright/gemini-3.1-pro",
+            "source": "agent_console",
+            "task_mode": "execute",
+            "workspace_id": "eris",
+            "workspace_path": "C:\\Users\\Gtvkun\\Documents\\GitHub\\eris",
+            "workspace_name": "eris"
+          }
+        },
+        {
+          "event_id": "ae_13ea51416cbe4a",
+          "type": "agent_status",
+          "actor": "executor",
+          "summary": "Executor đang quyết định bước tiếp theo.",
+          "detail": "",
+          "step": 1,
+          "importance": 0.34,
+          "created_at": 1787021238.778318,
+          "data": {}
+        },
+        {
+          "event_id": "ae_79cb1aa03ff34a",
+          "type": "task_failed",
+          "actor": "system",
+          "summary": "Agent loop lỗi: GeminiCliError: webai_api_failed:HTTPError:504 Server Error: Gateway Timeout for url: http://localhost:8081/v1/chat/completions",
+          "detail": "",
+          "step": 1,
+          "importance": 1.0,
+          "created_at": 1787021337.6596458,
+          "data": {}
+        }
+      ],
+      "controls": [],
+      "metadata": {
+        "original_goal": "xin chào",
+        "source": "agent_console",
+        "task_mode": "execute",
+        "workspace_id": "eris",
+        "workspace_path": "C:\\Users\\Gtvkun\\Documents\\GitHub\\eris",
+        "workspace_name": "eris"
+      }
+    },
+    {
+      "task_id": "task_a28c5d4a274d",
+      "thread_id": "agent_console:agent-35768-832654874",
+      "goal": "xin chào",
+      "clarified_goal": "xin chào",
+      "status": "completed",
+      "executor": "gemini-cli",
+      "model": "gemini-3-pro",
+      "created_at": 1787022035.8582697,
+      "updated_at": 1787022051.3606381,
+      "started_at": 1787022035.865428,
+      "finished_at": 1787022051.3606381,
+      "current_step": 1,
+      "active_skills": [],
+      "changed_files": [],
+      "tests": {
+        "passed": 0,
+        "failed": 0,
+        "summary": ""
+      },
+      "checkpoint_id": "",
+      "checkpoint_count": 0,
+      "events": [
+        {
+          "event_id": "ae_d84b513e32a241",
+          "type": "task_started",
+          "actor": "system",
+          "summary": "xin chào",
+          "detail": "",
+          "step": 0,
+          "importance": 0.9,
+          "created_at": 1787022035.865428,
+          "data": {
+            "executor": "gemini-cli",
+            "model": "gemini-3-pro",
+            "source": "agent_console",
+            "task_mode": "execute",
+            "workspace_id": "eris",
+            "workspace_path": "C:\\Users\\Gtvkun\\Documents\\GitHub\\eris",
+            "workspace_name": "eris"
+          }
+        },
+        {
+          "event_id": "ae_add3f97486c543",
+          "type": "agent_status",
+          "actor": "executor",
+          "summary": "Executor đang quyết định bước tiếp theo.",
+          "detail": "",
+          "step": 1,
+          "importance": 0.34,
+          "created_at": 1787022035.8828642,
+          "data": {}
+        },
+        {
+          "event_id": "ae_c84805c638be42",
+          "type": "agent_summary",
+          "actor": "executor",
+          "summary": "Xin chào.",
+          "detail": "",
+          "step": 1,
+          "importance": 0.62,
+          "created_at": 1787022051.3535757,
+          "data": {}
+        },
+        {
+          "event_id": "ae_2c30f24c77304b",
+          "type": "task_completed",
+          "actor": "executor",
+          "summary": "Xin chào.",
+          "detail": "Xin chào.",
+          "step": 1,
+          "importance": 0.92,
+          "created_at": 1787022051.3606381,
+          "data": {
+            "final": "Xin chào."
+          }
+        }
+      ],
+      "controls": [],
+      "metadata": {
+        "original_goal": "xin chào",
+        "source": "agent_console",
+        "task_mode": "execute",
+        "workspace_id": "eris",
+        "workspace_path": "C:\\Users\\Gtvkun\\Documents\\GitHub\\eris",
+        "workspace_name": "eris"
+      }
+    },
+    {
+      "task_id": "task_18dcd351bfb1",
+      "thread_id": "agent_console:agent-61907-2396057572",
+      "goal": "bạn có thể làm được gì",
+      "clarified_goal": "bạn có thể làm được gì",
+      "status": "completed",
+      "executor": "gemini-cli",
+      "model": "gemini-3-pro",
+      "created_at": 1787022085.0493443,
+      "updated_at": 1787022141.3764982,
+      "started_at": 1787022085.0686097,
+      "finished_at": 1787022141.3764982,
+      "current_step": 1,
+      "active_skills": [],
+      "changed_files": [],
+      "tests": {
+        "passed": 0,
+        "failed": 0,
+        "summary": ""
+      },
+      "checkpoint_id": "",
+      "checkpoint_count": 0,
+      "events": [
+        {
+          "event_id": "ae_2d4220e6a6934d",
+          "type": "task_started",
+          "actor": "system",
+          "summary": "bạn có thể làm được gì",
+          "detail": "",
+          "step": 0,
+          "importance": 0.9,
+          "created_at": 1787022085.0686097,
+          "data": {
+            "executor": "gemini-cli",
+            "model": "gemini-3-pro",
+            "source": "agent_console",
+            "task_mode": "execute",
+            "workspace_id": "eris",
+            "workspace_path": "C:\\Users\\Gtvkun\\Documents\\GitHub\\eris",
+            "workspace_name": "eris"
+          }
+        },
+        {
+          "event_id": "ae_e9a3fb835d8b42",
+          "type": "agent_status",
+          "actor": "executor",
+          "summary": "Executor đang quyết định bước tiếp theo.",
+          "detail": "",
+          "step": 1,
+          "importance": 0.34,
+          "created_at": 1787022085.0974288,
+          "data": {}
+        },
+        {
+          "event_id": "ae_7ac2a149029b4f",
+          "type": "agent_summary",
+          "actor": "executor",
+          "summary": "Với tư cách là Gemini Executor, tôi có thể tự động thực thi các tác vụ lập trình, kiểm thử và quản lý tệp trong không gian làm việc hiện tại (C:\\Users\\Gtvkun\\Documents\\GitHub\\eris). Hiện tại, tôi có thể sử dụng 'search_capabilities' để tìm kiếm các kỹ năng cần thiết và 'activate_skill' để kích hoạt chúng nhằm hoàn thành các yêu cầu cụ thể. Hãy cung cấp một nhiệm vụ chi tiết để tôi bắt đầu thực thi.",
+          "detail": "",
+          "step": 1,
+          "importance": 0.62,
+          "created_at": 1787022141.3700855,
+          "data": {}
+        },
+        {
+          "event_id": "ae_c0b776d0181f4c",
+          "type": "task_completed",
+          "actor": "executor",
+          "summary": "Với tư cách là Gemini Executor, tôi có thể tự động thực thi các tác vụ lập trình, kiểm thử và quản lý tệp trong không gian làm việc hiện tại (C:\\Users\\Gtvkun\\Documents\\GitHub\\eris). Hiện tại, tôi có thể sử dụng 'search_capabilities' để tìm kiếm các kỹ năng cần thiết và 'activate_skill' để kích hoạt chúng nhằm hoàn thành các yêu cầu cụ thể. Hãy cung cấp một nhiệm vụ chi tiết để tôi bắt đầu thực thi.",
+          "detail": "Với tư cách là Gemini Executor, tôi có thể tự động thực thi các tác vụ lập trình, kiểm thử và quản lý tệp trong không gian làm việc hiện tại (C:\\Users\\Gtvkun\\Documents\\GitHub\\eris). Hiện tại, tôi có thể sử dụng 'search_capabilities' để tìm kiếm các kỹ năng cần thiết và 'activate_skill' để kích hoạt chúng nhằm hoàn thành các yêu cầu cụ thể. Hãy cung cấp một nhiệm vụ chi tiết để tôi bắt đầu thực thi.",
+          "step": 1,
+          "importance": 0.92,
+          "created_at": 1787022141.3764982,
+          "data": {
+            "final": "Với tư cách là Gemini Executor, tôi có thể tự động thực thi các tác vụ lập trình, kiểm thử và quản lý tệp trong không gian làm việc hiện tại (C:\\Users\\Gtvkun\\Documents\\GitHub\\eris). Hiện tại, tôi có thể sử dụng 'search_capabilities' để tìm kiếm các kỹ năng cần thiết và 'activate_skill' để kích hoạt chúng nhằm hoàn thành các yêu cầu cụ thể. Hãy cung cấp một nhiệm vụ chi tiết để tôi bắt đầu thực thi."
+          }
+        }
+      ],
+      "controls": [],
+      "metadata": {
+        "original_goal": "bạn có thể làm được gì",
+        "source": "agent_console",
+        "task_mode": "execute",
+        "workspace_id": "eris",
+        "workspace_path": "C:\\Users\\Gtvkun\\Documents\\GitHub\\eris",
+        "workspace_name": "eris"
+      }
+    },
+    {
+      "task_id": "task_499c6b93bd5d",
+      "thread_id": "agent_console:agent-79015-2014058036",
+      "goal": "alo",
+      "clarified_goal": "alo",
+      "status": "completed",
+      "executor": "gemini-cli",
+      "model": "gemini-3-pro",
+      "created_at": 1787022096.4033177,
+      "updated_at": 1787022111.8232563,
+      "started_at": 1787022096.4159465,
+      "finished_at": 1787022111.8232563,
+      "current_step": 1,
+      "active_skills": [],
+      "changed_files": [],
+      "tests": {
+        "passed": 0,
+        "failed": 0,
+        "summary": ""
+      },
+      "checkpoint_id": "",
+      "checkpoint_count": 0,
+      "events": [
+        {
+          "event_id": "ae_e6efc31ca9b941",
+          "type": "task_started",
+          "actor": "system",
+          "summary": "alo",
+          "detail": "",
+          "step": 0,
+          "importance": 0.9,
+          "created_at": 1787022096.4159465,
+          "data": {
+            "executor": "gemini-cli",
+            "model": "gemini-3-pro",
+            "source": "agent_console",
+            "task_mode": "execute",
+            "workspace_id": "eris",
+            "workspace_path": "C:\\Users\\Gtvkun\\Documents\\GitHub\\eris",
+            "workspace_name": "eris"
+          }
+        },
+        {
+          "event_id": "ae_7e22d830b63549",
+          "type": "agent_status",
+          "actor": "executor",
+          "summary": "Executor đang quyết định bước tiếp theo.",
+          "detail": "",
+          "step": 1,
+          "importance": 0.34,
+          "created_at": 1787022096.4229722,
+          "data": {}
+        },
+        {
+          "event_id": "ae_a0c61498758a46",
+          "type": "agent_summary",
+          "actor": "executor",
+          "summary": "Alo. Execution specialist ready. Please provide an actionable goal within the locked workspace.",
+          "detail": "",
+          "step": 1,
+          "importance": 0.62,
+          "created_at": 1787022111.7961133,
+          "data": {}
+        },
+        {
+          "event_id": "ae_42546decefd845",
+          "type": "task_completed",
+          "actor": "executor",
+          "summary": "Alo. Execution specialist ready. Please provide an actionable goal within the locked workspace.",
+          "detail": "Alo. Execution specialist ready. Please provide an actionable goal within the locked workspace.",
+          "step": 1,
+          "importance": 0.92,
+          "created_at": 1787022111.8232563,
+          "data": {
+            "final": "Alo. Execution specialist ready. Please provide an actionable goal within the locked workspace."
+          }
+        }
+      ],
+      "controls": [],
+      "metadata": {
+        "original_goal": "alo",
+        "source": "agent_console",
+        "task_mode": "execute",
+        "workspace_id": "eris",
+        "workspace_path": "C:\\Users\\Gtvkun\\Documents\\GitHub\\eris",
+        "workspace_name": "eris"
+      }
+    },
+    {
+      "task_id": "task_902cf8afa2c1",
+      "thread_id": "agent_console:agent-11766-2656571175",
+      "goal": "xin chào",
+      "clarified_goal": "xin chào",
+      "status": "completed",
+      "executor": "gemini-cli",
+      "model": "gemini-3-pro",
+      "created_at": 1787023433.1232767,
+      "updated_at": 1787023504.987132,
+      "started_at": 1787023433.137766,
+      "finished_at": 1787023504.987132,
+      "current_step": 1,
+      "active_skills": [],
+      "changed_files": [],
+      "tests": {
+        "passed": 0,
+        "failed": 0,
+        "summary": ""
+      },
+      "checkpoint_id": "",
+      "checkpoint_count": 0,
+      "events": [
+        {
+          "event_id": "ae_6e876f4130e84a",
+          "type": "task_started",
+          "actor": "system",
+          "summary": "xin chào",
+          "detail": "",
+          "step": 0,
+          "importance": 0.9,
+          "created_at": 1787023433.137766,
+          "data": {
+            "executor": "gemini-cli",
+            "model": "gemini-3-pro",
+            "source": "agent_console",
+            "task_mode": "execute",
+            "workspace_id": "eris",
+            "workspace_path": "C:\\Users\\Gtvkun\\Documents\\GitHub\\eris",
+            "workspace_name": "eris"
+          }
+        },
+        {
+          "event_id": "ae_cd78fb185f2240",
+          "type": "agent_status",
+          "actor": "executor",
+          "summary": "Executor đang quyết định bước tiếp theo.",
+          "detail": "",
+          "step": 1,
+          "importance": 0.34,
+          "created_at": 1787023433.1595707,
+          "data": {}
+        },
+        {
+          "event_id": "ae_98d149ac24b143",
+          "type": "agent_summary",
+          "actor": "executor",
+          "summary": "Xin chào! Tôi có thể giúp gì cho bạn trong workspace C:\\Users\\Gtvkun\\Documents\\GitHub\\eris hôm nay?",
+          "detail": "",
+          "step": 1,
+          "importance": 0.62,
+          "created_at": 1787023504.9805048,
+          "data": {}
+        },
+        {
+          "event_id": "ae_28bde5e73b9942",
+          "type": "task_completed",
+          "actor": "executor",
+          "summary": "Xin chào! Tôi có thể giúp gì cho bạn trong workspace C:\\Users\\Gtvkun\\Documents\\GitHub\\eris hôm nay?",
+          "detail": "Xin chào! Tôi có thể giúp gì cho bạn trong workspace C:\\Users\\Gtvkun\\Documents\\GitHub\\eris hôm nay?",
+          "step": 1,
+          "importance": 0.92,
+          "created_at": 1787023504.987132,
+          "data": {
+            "final": "Xin chào! Tôi có thể giúp gì cho bạn trong workspace C:\\Users\\Gtvkun\\Documents\\GitHub\\eris hôm nay?"
+          }
+        }
+      ],
+      "controls": [],
+      "metadata": {
+        "original_goal": "xin chào",
+        "source": "agent_console",
+        "task_mode": "execute",
+        "workspace_id": "eris",
+        "workspace_path": "C:\\Users\\Gtvkun\\Documents\\GitHub\\eris",
+        "workspace_name": "eris"
+      }
     }
   ]
 }

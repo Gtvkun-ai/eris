@@ -368,6 +368,31 @@ class AgentTaskStore:
             result["detail"] = detail[:1599].rstrip() + "…"
         data = result.get("data")
         if isinstance(data, dict):
+            # Choice cards are UI protocol, not debug payload. Preserve their
+            # structure even when the original LLM text is verbose; clamp each
+            # field instead of collapsing the whole object into {truncated:true}.
+            if str(result.get("type", "") or "") == "clarification_requested":
+                raw_options = data.get("options") if isinstance(data.get("options"), list) else []
+                options = []
+                for index, item in enumerate(raw_options[:5]):
+                    if not isinstance(item, dict):
+                        continue
+                    label = AgentTaskStore._compact_text(item.get("label", ""), 120)
+                    if not label:
+                        continue
+                    options.append({
+                        "id": AgentTaskStore._compact_text(item.get("id", "") or f"option_{index + 1}", 64),
+                        "label": label,
+                        "description": AgentTaskStore._compact_text(item.get("description", ""), 160),
+                        "value": AgentTaskStore._compact_text(item.get("value", "") or label, 220),
+                    })
+                result["data"] = {
+                    "question": AgentTaskStore._compact_text(data.get("question", result.get("summary", "")), 500),
+                    "options": options,
+                    "allow_other": bool(data.get("allow_other", True)),
+                }
+                return result
+
             try:
                 encoded = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
             except (TypeError, ValueError):

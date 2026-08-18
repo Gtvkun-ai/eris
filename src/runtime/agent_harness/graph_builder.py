@@ -155,18 +155,25 @@ class AgentHarness:
         directive_messages: list[HumanMessage] = []
         for control in controls:
             action = str(control.get("action", "") or "").lower()
-            if action == "directive":
+            if action in {"directive", "choice"}:
                 text = str(control.get("text", "") or "").strip()
                 if text:
-                    directive_messages.append(HumanMessage(content=(
-                        "[RUNTIME DIRECTIVE FROM USER/ERIS SUPERVISOR]\n" + text
-                    )))
+                    prefix = (
+                        "[USER CHOICE FROM ERIS CONSOLE]\n"
+                        if action == "choice"
+                        else "[RUNTIME DIRECTIVE FROM USER/ERIS SUPERVISOR]\n"
+                    )
+                    directive_messages.append(HumanMessage(content=prefix + text))
                     self.event_bus.emit(
                         task_id,
-                        "directive_consumed",
+                        "choice_consumed" if action == "choice" else "directive_consumed",
                         actor="executor",
-                        summary="Executor đã nhận chỉ thị mới và sẽ replan từ trạng thái hiện tại.",
-                        importance=0.82,
+                        summary=(
+                            "Executor đã nhận lựa chọn của người dùng và sẽ tiếp tục từ quyết định đó."
+                            if action == "choice"
+                            else "Executor đã nhận chỉ thị mới và sẽ replan từ trạng thái hiện tại."
+                        ),
+                        importance=0.86 if action == "choice" else 0.82,
                     )
             elif action == "pause":
                 patch["status"] = "paused"
@@ -227,6 +234,8 @@ class AgentHarness:
             "You are the execution specialist inside Eris' unified agent harness.\n"
             "Do not roleplay Eris' social persona. Work on the task, use available tools, "
             "verify results, and expose concise action summaries rather than private reasoning.\n"
+            "When the task genuinely needs a user decision, call ask_user_choice with 2-5 concise options instead of inventing a preference. "
+            "Do not ask for confirmation for routine reversible work.\n"
             + mode_rule +
             f"Current Goal: {state.get('goal', '')}\n"
             f"Current Task ID: {task_id or '(none)'}\n"
@@ -313,6 +322,37 @@ class AgentHarness:
                 "effect": "inspect",
                 "risk_level": "low",
             },
+            {
+                "name": "ask_user_choice",
+                "description": "Pause the current task and present a compact multiple-choice decision in Eris Console. Use only when user intent is genuinely required.",
+                "input_schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "question": {"type": "string"},
+                        "options": {
+                            "type": "array",
+                            "minItems": 2,
+                            "maxItems": 5,
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "label": {"type": "string"},
+                                    "description": {"type": "string"},
+                                    "value": {"type": "string"},
+                                },
+                                "required": ["label"],
+                            },
+                        },
+                        "allow_other": {"type": "boolean"},
+                    },
+                    "required": ["question", "options"],
+                },
+                "effect": "inspect",
+                "risk_level": "low",
+            },
         ]
         inspect_only = str(task_mode or "execute").strip().lower() == "inspect"
         for name in self.skill_loader.tools_for_skills(list(active_skills)):
@@ -329,6 +369,8 @@ class AgentHarness:
             return {"name": name, "effect": "inspect", "risk_level": "low"}
         if name == "activate_skill":
             return {"name": name, "effect": "inspect", "risk_level": "low"}
+        if name == "ask_user_choice":
+            return {"name": name, "effect": "inspect", "risk_level": "low", "workspace_required": False}
         spec = self.tool_specs.get(name)
         return dict(spec) if isinstance(spec, dict) else {}
 
@@ -514,6 +556,61 @@ class AgentHarness:
             name = str(call.get("name", "") or "")
             call_id = str(call.get("id", "") or f"tool_{uuid.uuid4().hex[:10]}")
             args = call.get("args") if isinstance(call.get("args"), dict) else {}
+
+            if name == "ask_user_choice":
+                question = str(args.get("question", "") or "").strip()[:1200]
+                raw_options = args.get("options") if isinstance(args.get("options"), list) else []
+                options: list[dict[str, str]] = []
+                for index, item in enumerate(raw_options[:5]):
+                    if not isinstance(item, dict):
+                        continue
+                    label = str(item.get("label", "") or "").strip()[:240]
+                    if not label:
+                        continue
+                    option_id = str(item.get("id", "") or "").strip()[:80] or f"option_{index + 1}"
+                    description = str(item.get("description", "") or "").strip()[:700]
+                    value = str(item.get("value", "") or "").strip()[:1600] or label
+                    options.append({
+                        "id": option_id,
+                        "label": label,
+                        "description": description,
+                        "value": value,
+                    })
+                if not question or len(options) < 2:
+                    text = "ask_user_choice requires a question and at least two valid options."
+                    out_messages.append(ToolMessage(content=text, tool_call_id=call_id))
+                    if task_id:
+                        self.event_bus.emit(
+                            task_id,
+                            "tool_failed",
+                            actor="tool",
+                            summary=text,
+                            step=step,
+                            importance=0.86,
+                            data={"tool": name},
+                        )
+                    continue
+
+                text = "Waiting for the user to choose one of the presented options in Eris Console."
+                out_messages.append(ToolMessage(content=text, tool_call_id=call_id))
+                control_patch["status"] = "waiting_user"
+                if task_id:
+                    self.event_bus.emit(
+                        task_id,
+                        "clarification_requested",
+                        actor="executor",
+                        summary=question,
+                        detail="Chọn một phương án bên dưới để Gemini tiếp tục task.",
+                        step=step,
+                        importance=0.98,
+                        data={
+                            "question": question,
+                            "options": options,
+                            "allow_other": bool(args.get("allow_other", True)),
+                        },
+                    )
+                break
+
             permission = self.permission_gate.check_permission(name, args, tool_spec=self._tool_spec(name, state.get("active_skills", []) or []))
 
             if task_id:
@@ -853,6 +950,16 @@ class AgentHarness:
                     graph_input = {"rollback_requested": rollback_after_step}
                     continue
 
+                if final_status == "waiting_user":
+                    user_patch = self._wait_for_user_input(task_id)
+                    if user_patch is None:
+                        final_status = "stopped"
+                        if isinstance(result, dict):
+                            result["status"] = "stopped"
+                        break
+                    graph_input = user_patch
+                    continue
+
                 if final_status != "paused":
                     break
 
@@ -889,6 +996,73 @@ class AgentHarness:
             )
             raise
 
+    def _wait_for_user_input(self, task_id: str) -> dict[str, Any] | None:
+        """Keep a waiting-user task alive until the Console sends a choice/directive.
+
+        This is deliberately the same long-lived worker model as pause: LangGraph
+        state remains checkpointed and the task does not fake completion while a
+        decision card is visible in the UI.
+        """
+        rollback_requested = ""
+        while True:
+            time.sleep(0.20)
+            controls = self.task_store.consume_controls(task_id)
+            if not controls:
+                continue
+            for control in controls:
+                action = str(control.get("action", "") or "").strip().lower()
+                if action in {"choice", "directive"}:
+                    text = str(control.get("text", "") or "").strip()
+                    if not text:
+                        continue
+                    prefix = (
+                        "[USER CHOICE FROM ERIS CONSOLE]\n"
+                        if action == "choice"
+                        else "[USER FOLLOW-UP FROM ERIS CONSOLE]\n"
+                    )
+                    self.event_bus.emit(
+                        task_id,
+                        "task_resumed",
+                        actor="system",
+                        summary="Đã nhận lựa chọn; Gemini tiếp tục task." if action == "choice" else "Đã nhận trả lời; Gemini tiếp tục task.",
+                        importance=0.82,
+                    )
+                    patch: dict[str, Any] = {
+                        "status": "running",
+                        "messages": [HumanMessage(content=prefix + text)],
+                    }
+                    if rollback_requested:
+                        patch["rollback_requested"] = rollback_requested
+                    return patch
+                if action == "rollback":
+                    checkpoint_id = str(control.get("checkpoint_id", "") or "").strip()
+                    rollback_requested = checkpoint_id or "latest"
+                    self.event_bus.emit(
+                        task_id,
+                        "rollback_queued",
+                        actor="system",
+                        summary=(
+                            f"Rollback đã xếp hàng tới checkpoint {checkpoint_id}."
+                            if checkpoint_id else "Rollback đã xếp hàng tới checkpoint gần nhất."
+                        ),
+                        importance=0.95,
+                        data={"checkpoint_id": checkpoint_id},
+                    )
+                    return {"status": "running", "rollback_requested": rollback_requested}
+                if action == "stop":
+                    self.event_bus.emit(
+                        task_id,
+                        "task_stopped",
+                        actor="system",
+                        summary="Task đã dừng trong khi chờ lựa chọn của người dùng.",
+                        importance=0.95,
+                    )
+                    return None
+                if action in {"pause", "resume"}:
+                    # A choice card already represents a waiting state; these controls
+                    # do not dismiss it without actual user content.
+                    continue
+
     def _wait_for_resume(self, task_id: str) -> dict[str, Any] | None:
         """Wait while a task is paused without losing directives or graph state.
 
@@ -904,18 +1078,21 @@ class AgentHarness:
                 continue
             for control in controls:
                 action = str(control.get("action", "") or "").strip().lower()
-                if action == "directive":
+                if action in {"directive", "choice"}:
                     directive = str(control.get("text", "") or "").strip()
                     if directive:
-                        pending_messages.append(HumanMessage(content=(
-                            "[RUNTIME DIRECTIVE RECEIVED WHILE PAUSED]\n" + directive
-                        )))
+                        prefix = (
+                            "[USER CHOICE RECEIVED WHILE PAUSED]\n"
+                            if action == "choice"
+                            else "[RUNTIME DIRECTIVE RECEIVED WHILE PAUSED]\n"
+                        )
+                        pending_messages.append(HumanMessage(content=prefix + directive))
                         self.event_bus.emit(
                             task_id,
-                            "directive_consumed",
+                            "choice_consumed" if action == "choice" else "directive_consumed",
                             actor="executor",
-                            summary="Đã giữ chỉ thị mới; Gemini sẽ replan ngay khi resume.",
-                            importance=0.82,
+                            summary="Đã giữ lựa chọn mới; Gemini sẽ replan ngay khi resume." if action == "choice" else "Đã giữ chỉ thị mới; Gemini sẽ replan ngay khi resume.",
+                            importance=0.84 if action == "choice" else 0.82,
                         )
                 elif action == "rollback":
                     checkpoint_id = str(control.get("checkpoint_id", "") or "").strip()

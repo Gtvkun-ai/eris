@@ -181,7 +181,7 @@ class IncomingProtocolRuntimeMixin:
                     if task_mode == "inspect"
                     else "Đã giao task mới cho Gemini."
                 )
-            elif action in {"pause", "resume", "stop", "rollback", "directive"}:
+            elif action in {"pause", "resume", "stop", "rollback", "directive", "choice"}:
                 if not task_id:
                     raise ValueError("task_id_required")
                 task = store.get_task(task_id, event_limit=0)
@@ -189,9 +189,13 @@ class IncomingProtocolRuntimeMixin:
                     raise KeyError(f"unknown_agent_task:{task_id}")
 
                 text = str(msg.get("text", "") or "").strip()
+                choice_id = str(msg.get("choice_id", "") or "").strip()
+                choice_event_id = str(msg.get("choice_event_id", "") or "").strip()
                 checkpoint_id = str(msg.get("checkpoint_id", "") or "").strip()
                 task_status = str(task.get("status", "") or "").strip().lower()
                 terminal = task_status in {"completed", "failed", "stopped"}
+                if action in {"directive", "choice"} and not text:
+                    raise ValueError("choice_text_required" if action == "choice" else "directive_text_required")
 
                 # A terminal task has no worker left to consume queued controls.
                 # Rollback it synchronously through AgentHarness instead of adding
@@ -211,13 +215,15 @@ class IncomingProtocolRuntimeMixin:
                         text=text,
                         checkpoint_id=checkpoint_id,
                         request_id=request_id,
+                        data={
+                            "choice_id": choice_id,
+                            "choice_event_id": choice_event_id,
+                        } if action == "choice" else None,
                     )
                     if control is None:
                         raise RuntimeError("agent_control_enqueue_failed")
 
                 if action == "directive":
-                    if not text:
-                        raise ValueError("directive_text_required")
                     store.append_event(
                         task_id,
                         "user_directive",
@@ -227,6 +233,20 @@ class IncomingProtocolRuntimeMixin:
                         data={"control_id": control.get("control_id", "")},
                     )
                     message = "Đã gửi chỉ thị vào task; executor sẽ nhận ở boundary kế tiếp."
+                elif action == "choice":
+                    store.append_event(
+                        task_id,
+                        "user_choice",
+                        actor="user",
+                        summary=text,
+                        importance=0.96,
+                        data={
+                            "control_id": control.get("control_id", ""),
+                            "choice_id": choice_id,
+                            "choice_event_id": choice_event_id,
+                        },
+                    )
+                    message = "Đã gửi lựa chọn; Gemini sẽ tiếp tục từ đúng phiên đang chờ."
                 elif action == "rollback":
                     if not terminal:
                         store.append_event(

@@ -32,7 +32,7 @@ class GeminiCliDecisionExecutor:
         self.workspace = Path(workspace).resolve() if workspace else None
         self.model = str(model or os.environ.get("ERIS_GEMINI_AGENT_MODEL", "auto")).strip() or "auto"
         if self.model == "auto":
-            self.model = "gemini-3-flash" # Default cua WebAI-to-API
+            self.model = "gemini-3-pro"  # WebAPI backend (config.conf: backend=webapi)
             
         self.api_base = os.environ.get("ERIS_WEBAI_URL", "http://localhost:8081/v1").rstrip("/")
         self.timeout = int(timeout or os.environ.get("ERIS_GEMINI_AGENT_TIMEOUT", "120") or 120)

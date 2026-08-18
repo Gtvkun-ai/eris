@@ -282,6 +282,9 @@ public sealed class UdpDecisionParser
 				|| envelopeType.StartsWith("maintenance_", StringComparison.Ordinal)
 				|| envelopeType.StartsWith("settings_", StringComparison.Ordinal)
 				|| string.Equals(envelopeType, "panel_state_update", StringComparison.Ordinal)
+				// Coding-agent events vẫn có thể đi chung UDP lane trong giai đoạn chuyển tiếp,
+				// nhưng Godot body không còn Agent Console UI nên chỉ coi chúng là control traffic.
+				|| string.Equals(envelopeType, "agent_event", StringComparison.Ordinal)
 				|| envelopeType.EndsWith("_ack", StringComparison.Ordinal);
 			if (isControlEnvelope)
 				shouldSpeak = false;
