@@ -6,6 +6,7 @@ import { executeEditorCommand } from './editorBridge';
 import { ConnectionState, ErisClient } from './erisClient';
 import { TerminalContextObserver } from './terminalObserver';
 import { ErisServiceManager } from './serviceManager';
+import { runErisSelfTest } from './selfTest';
 
 type SidebarKind = 'command' | 'group' | 'task' | 'chat' | 'skill' | 'status';
 interface SidebarNode {
@@ -159,6 +160,7 @@ class ErisSidebarProvider implements vscode.TreeDataProvider<SidebarNode>, vscod
         icon: 'tools',
         children: skillChildren.length ? skillChildren : [{ kind: 'status', label: 'Chưa nhận catalog', icon: 'circle-outline' }],
       },
+      { kind: 'command', label: 'Run Self Test', icon: 'beaker', command: 'eris.selfTest' },
       {
         kind: 'status',
         label: `Service: ${this.state}`,
@@ -258,6 +260,10 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }));
 
+  context.subscriptions.push(vscode.commands.registerCommand('eris.selfTest', () => runErisSelfTest(
+    client, serviceManager, terminalObserver,
+  )));
+
   context.subscriptions.push(vscode.commands.registerCommand('eris.serviceStart', async () => {
     try {
       await serviceManager.ensureStarted();
@@ -286,9 +292,13 @@ export function activate(context: vscode.ExtensionContext): void {
   }));
   context.subscriptions.push(vscode.commands.registerCommand('eris.serviceLogs', () => serviceManager.showLogs()));
 
-  // Kết nối sớm để sidebar phản ánh service thật. Python chưa chạy thì extension
-  // vẫn sống và client tự reconnect, không biến IDE thành con tin của backend.
-  void client.connect().then(() => client.requestTasks()).catch(() => undefined);
+  // Không tự chạy auto-connect vô hạn khi autoStart đã bị tắt hoặc launcher không
+  // tồn tại. Để người dùng chủ động restart/start service khi cần, thay vì buộc
+  // extension lặp lại liên tục.
+  const autoStart = vscode.workspace.getConfiguration('eris.service').get<boolean>('autoStart', true);
+  if (autoStart) {
+    void client.connect().then(() => client.requestTasks()).catch(() => undefined);
+  }
 }
 
 export function deactivate(): void {

@@ -1,6 +1,5 @@
 import * as crypto from 'node:crypto';
 import * as vscode from 'vscode';
-import WebSocket from 'ws';
 import { ErisServiceManager } from './serviceManager';
 
 type JsonRecord = Record<string, any>;
@@ -16,9 +15,10 @@ export class ErisClient implements vscode.Disposable {
   private socket?: WebSocket;
   private state: ConnectionState = 'disconnected';
   private ready = false;
-  private reconnectTimer?: NodeJS.Timeout;
+  private reconnectTimer?: ReturnType<typeof setTimeout>;
   private intentionalClose = false;
   private connectPromise?: Promise<void>;
+  private reconnectAttempts = 0;
   private readonly sessionId: string;
   private readonly eventEmitter = new vscode.EventEmitter<JsonRecord>();
   private readonly stateEmitter = new vscode.EventEmitter<ConnectionState>();
@@ -55,11 +55,11 @@ export class ErisClient implements vscode.Disposable {
     }
     this.intentionalClose = false;
     this.connectPromise = this.doConnect().catch((error) => {
-      // Auto-start có thể fail trước khi WebSocket tồn tại. Nếu chỉ reconnect ở
-      // socket.on('close'), lần lỗi bootstrap đầu tiên sẽ để sidebar kẹt Connecting.
+      // Không cứ reconnect vô hạn khi service chưa sẵn sàng, launcher sai, hoặc
+      // autoStart bị tắt. Giới hạn thử lại để extension không biến thành loop vô tận.
       this.ready = false;
       this.setState('disconnected');
-      if (!this.intentionalClose) {
+      if (!this.intentionalClose && this.reconnectAttempts < 3) {
         this.scheduleReconnect();
       }
       throw error;
@@ -73,7 +73,10 @@ export class ErisClient implements vscode.Disposable {
     this.setState('connecting');
     const discovery = await this.serviceManager.ensureStarted();
     await new Promise<void>((resolve, reject) => {
-      const socket = new WebSocket(discovery.endpoint, { handshakeTimeout: 5000 });
+      // VS Code 1.100+ chạy extension host trên Node hiện đại; dùng WebSocket
+      // chuẩn của runtime để extension không phải kéo thêm package `ws` chỉ cho
+      // một kết nối localhost. Ít dependency hơn = đóng gói/test đỡ khổ hơn.
+      const socket = new WebSocket(discovery.endpoint);
       this.socket = socket;
       let settled = false;
       const fail = (error: Error) => {
@@ -84,7 +87,8 @@ export class ErisClient implements vscode.Disposable {
       };
       const timeout = setTimeout(() => fail(new Error('eris_service_handshake_timeout')), 7000);
 
-      socket.on('open', () => {
+      socket.addEventListener('open', () => {
+        this.resetReconnectState();
         const lastEventSeq = this.extensionContext.workspaceState.get<number>('eris.lastEventSeq', 0);
         socket.send(JSON.stringify({
           type: 'session.hello',
@@ -109,9 +113,10 @@ export class ErisClient implements vscode.Disposable {
         }));
       });
 
-      socket.on('message', (raw) => {
+      socket.addEventListener('message', (event) => {
         try {
-          const message = JSON.parse(raw.toString()) as JsonRecord;
+          const raw = typeof event.data === 'string' ? event.data : String(event.data ?? '');
+          const message = JSON.parse(raw) as JsonRecord;
           if (message.type === 'session.ready') {
             clearTimeout(timeout);
             this.ready = true;
@@ -134,11 +139,11 @@ export class ErisClient implements vscode.Disposable {
         }
       });
 
-      socket.on('error', (error) => {
+      socket.addEventListener('error', () => {
         clearTimeout(timeout);
-        fail(error);
+        fail(new Error('eris_service_websocket_error'));
       });
-      socket.on('close', () => {
+      socket.addEventListener('close', () => {
         clearTimeout(timeout);
         this.ready = false;
         this.setState('disconnected');
@@ -264,12 +269,16 @@ export class ErisClient implements vscode.Disposable {
   }
 
   private scheduleReconnect(): void {
+    if (this.reconnectAttempts >= 3) {
+      return;
+    }
+    this.reconnectAttempts += 1;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
     }
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined;
-      void this.connect().catch(() => this.scheduleReconnect());
+      void this.connect().catch(() => undefined);
     }, 1500);
   }
 
@@ -283,6 +292,14 @@ export class ErisClient implements vscode.Disposable {
       }
     }
     this.socket = undefined;
+  }
+
+  private resetReconnectState(): void {
+    this.reconnectAttempts = 0;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
   }
 
   private setState(state: ConnectionState): void {
