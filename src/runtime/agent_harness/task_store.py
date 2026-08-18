@@ -16,7 +16,9 @@ import uuid
 from pathlib import Path
 from typing import Any, Iterable
 
-_SCHEMA_VERSION = 2
+from .coding_state import initial_coding_state, merge_coding_state, normalize_coding_state
+
+_SCHEMA_VERSION = 3
 _MAX_TASKS = 60
 _MAX_EVENTS_PER_TASK = 360
 _MAX_CONTROLS_PER_TASK = 80
@@ -80,6 +82,16 @@ class AgentTaskStore:
                 declared_next = int(payload.get("next_event_seq", 0) or 0)
             except (TypeError, ValueError):
                 declared_next = 0
+            # MIGRATION V3: mọi task có semantic coding_state. Đây là telemetry
+            # công khai của execution, không phải chain-of-thought của model.
+            for task in tasks:
+                if not isinstance(task, dict):
+                    continue
+                task["coding_state"] = normalize_coding_state(
+                    task.get("coding_state"),
+                    objective=str(task.get("clarified_goal", "") or task.get("goal", "") or ""),
+                )
+
             return {
                 "version": _SCHEMA_VERSION,
                 "next_event_seq": max(max_seq + 1, declared_next, 1),
@@ -146,6 +158,9 @@ class AgentTaskStore:
                 "active_skills": [],
                 "changed_files": [],
                 "tests": {"passed": 0, "failed": 0, "summary": ""},
+                # State semantic nhỏ để VS Code/Eris main hiểu executor đang làm gì
+                # mà không phải parse stdout/tool JSON hay chạm chain-of-thought.
+                "coding_state": initial_coding_state(goal),
                 "checkpoint_id": "",
                 "checkpoint_count": 0,
                 "last_event_seq": 0,
@@ -162,7 +177,7 @@ class AgentTaskStore:
     def update_task(self, task_id: str, **fields: Any) -> dict[str, Any] | None:
         allowed = {
             "goal", "clarified_goal", "status", "executor", "model", "started_at", "finished_at",
-            "current_step", "active_skills", "changed_files", "tests", "checkpoint_id",
+            "current_step", "active_skills", "changed_files", "tests", "coding_state", "checkpoint_id",
             "checkpoint_count", "metadata", "thread_id", "session_id", "pending_interrupt", "last_event_seq",
         }
         with self._lock:
@@ -174,6 +189,10 @@ class AgentTaskStore:
                     continue
                 if key in {"goal", "clarified_goal"}:
                     value = self._compact_text(value, 2000)
+                elif key == "coding_state":
+                    value = normalize_coding_state(
+                        value, objective=str(task.get("clarified_goal", "") or task.get("goal", "") or "")
+                    )
                 task[key] = value
             task["updated_at"] = self._now()
             self._save_locked()
@@ -231,28 +250,60 @@ class AgentTaskStore:
         if kind == "task_started":
             task["status"] = "running"
             task["started_at"] = task.get("started_at") or now
+            task["coding_state"] = merge_coding_state(
+                task.get("coding_state"),
+                {"phase": "starting", "waiting_for": "", "blocker": ""},
+                objective=str(task.get("clarified_goal", "") or task.get("goal", "") or ""),
+            )
         elif kind == "task_completed":
             task["status"] = "completed"
             task["finished_at"] = now
+            task["coding_state"] = merge_coding_state(
+                task.get("coding_state"),
+                {"phase": "completed", "current_action": "", "waiting_for": "", "blocker": "", "next_action": ""},
+                objective=str(task.get("clarified_goal", "") or task.get("goal", "") or ""),
+            )
         elif kind == "task_failed":
             task["status"] = "failed"
             task["finished_at"] = now
+            task["coding_state"] = merge_coding_state(
+                task.get("coding_state"),
+                {"phase": "failed", "current_action": "", "blocker": str(event.get("summary", "") or "Task failed")},
+                objective=str(task.get("clarified_goal", "") or task.get("goal", "") or ""),
+            )
         elif kind == "task_paused":
             task["status"] = "paused"
+            task["coding_state"] = merge_coding_state(task.get("coding_state"), {"phase": "paused", "waiting_for": "resume"})
         elif kind == "task_resumed":
             task["status"] = "running"
+            task["coding_state"] = merge_coding_state(task.get("coding_state"), {"phase": "resuming", "waiting_for": "", "blocker": ""})
         elif kind == "task_stopped":
             task["status"] = "stopped"
             task["finished_at"] = now
+            task["coding_state"] = merge_coding_state(task.get("coding_state"), {"phase": "stopped", "current_action": "", "waiting_for": ""})
         elif kind == "permission_requested":
             task["status"] = "waiting_permission"
             task["pending_interrupt"] = dict(data or {})
+            task["coding_state"] = merge_coding_state(task.get("coding_state"), {
+                "phase": "waiting_permission", "waiting_for": "user_permission",
+                "current_action": str(data.get("question", "") or event.get("summary", "") or ""),
+            })
         elif kind in {"clarification_requested", "interrupt_requested"}:
             task["status"] = "waiting_user"
             task["pending_interrupt"] = dict(data or {})
+            task["coding_state"] = merge_coding_state(task.get("coding_state"), {
+                "phase": "waiting_user", "waiting_for": "user_choice",
+                "current_action": str(data.get("question", "") or event.get("summary", "") or ""),
+            })
         elif kind == "interrupt_resolved":
             task["status"] = "running"
             task["pending_interrupt"] = {}
+            task["coding_state"] = merge_coding_state(task.get("coding_state"), {"phase": "resuming", "waiting_for": "", "current_action": ""})
+        elif kind == "coding_state":
+            task["coding_state"] = merge_coding_state(
+                task.get("coding_state"), data,
+                objective=str(task.get("clarified_goal", "") or task.get("goal", "") or ""),
+            )
         elif kind in {"checkpoint_created", "checkpoint_restored"}:
             checkpoint_id = str(data.get("checkpoint_id", "") or "")
             if checkpoint_id:
@@ -273,12 +324,37 @@ class AgentTaskStore:
                 if path not in files:
                     files.append(path)
                 task["changed_files"] = files[-120:]
+                semantic_files = list((task.get("coding_state") or {}).get("files_modified") or [])
+                if path not in semantic_files:
+                    semantic_files.append(path)
+                semantic_patch: dict[str, Any] = {
+                    "current_file": path,
+                    "files_modified": semantic_files[-80:],
+                }
+                # GraphBuilder thường đã phát coding_state=verifying trước event
+                # artifact này. Chỉ suy ra phase khi event tới từ producer cũ.
+                current_phase = str((task.get("coding_state") or {}).get("phase", "") or "")
+                if current_phase in {"", "queued", "starting"}:
+                    semantic_patch["phase"] = "modifying"
+                task["coding_state"] = merge_coding_state(task.get("coding_state"), semantic_patch)
         elif kind == "test_result":
-            task["tests"] = {
-                "passed": int(data.get("passed", 0) or 0),
-                "failed": int(data.get("failed", 0) or 0),
-                "summary": self._compact_text(data.get("summary", event.get("summary", "")), 500),
+            passed = int(data.get("passed", 0) or 0)
+            failed = int(data.get("failed", 0) or 0)
+            summary = self._compact_text(data.get("summary", event.get("summary", "")), 500)
+            task["tests"] = {"passed": passed, "failed": failed, "summary": summary}
+            semantic_patch = {
+                "test_state": {
+                    "status": "failed" if failed else "passed",
+                    "passed": passed,
+                    "failed": failed,
+                    "summary": summary,
+                },
+                "blocker": summary if failed else "",
             }
+            current_phase = str((task.get("coding_state") or {}).get("phase", "") or "")
+            if current_phase in {"", "queued", "starting", "testing"}:
+                semantic_patch["phase"] = "blocked" if failed else "verifying"
+            task["coding_state"] = merge_coding_state(task.get("coding_state"), semantic_patch)
 
     def execution_projection(self, task_id: str) -> dict[str, Any]:
         """Small rollbackable UI projection, separate from immutable event history."""
@@ -291,6 +367,9 @@ class AgentTaskStore:
                 "active_skills": list(task.get("active_skills") or []),
                 "changed_files": list(task.get("changed_files") or []),
                 "tests": dict(task.get("tests") or {}),
+                "coding_state": normalize_coding_state(
+                    task.get("coding_state"), objective=str(task.get("clarified_goal", "") or task.get("goal", "") or "")
+                ),
                 "checkpoint_id": str(task.get("checkpoint_id", "") or ""),
                 "checkpoint_count": int(task.get("checkpoint_count", 0) or 0),
             }
@@ -318,6 +397,9 @@ class AgentTaskStore:
                 "failed": int(tests.get("failed", 0) or 0),
                 "summary": self._compact_text(tests.get("summary", ""), 500),
             }
+            task["coding_state"] = normalize_coding_state(
+                projection.get("coding_state"), objective=str(task.get("clarified_goal", "") or task.get("goal", "") or "")
+            )
             task["checkpoint_id"] = str(checkpoint_id or projection.get("checkpoint_id", "") or "")
             # Count is historical, so never decrease it during rollback.
             task["checkpoint_count"] = max(
@@ -375,6 +457,11 @@ class AgentTaskStore:
             self._save_locked()
             return pending
 
+
+    def latest_event_seq(self) -> int:
+        """Cursor event lớn nhất đã persist, tiện cho reconnect/test client."""
+        with self._lock:
+            return max(0, int(self._data.get("next_event_seq", 1) or 1) - 1)
 
     def events_since(
         self,
@@ -443,6 +530,31 @@ class AgentTaskStore:
                 return self._public_task(task, event_limit=event_limit)
         return None
 
+    def tasks_for_thread(
+        self,
+        thread_id: str,
+        *,
+        session_id: str = "",
+        limit: int = 24,
+        event_limit: int = 160,
+    ) -> list[dict[str, Any]]:
+        """Lịch sử một chat thread theo thứ tự thời gian để Webview restore thật."""
+        wanted_thread = str(thread_id or "").strip()
+        wanted_session = str(session_id or "").strip()
+        if not wanted_thread:
+            return []
+        cap = max(1, min(100, int(limit or 24)))
+        with self._lock:
+            rows: list[dict[str, Any]] = []
+            for task in self._data.get("tasks", []):
+                if not isinstance(task, dict) or str(task.get("thread_id", "") or "") != wanted_thread:
+                    continue
+                task_session = str(task.get("session_id", "") or "")
+                if wanted_session and task_session not in {"", wanted_session}:
+                    continue
+                rows.append(self._public_task(task, event_limit=event_limit))
+            return rows[-cap:]
+
     def list_tasks(
         self,
         *,
@@ -492,6 +604,9 @@ class AgentTaskStore:
     @staticmethod
     def _public_task(task: dict[str, Any], *, event_limit: int) -> dict[str, Any]:
         public = {k: v for k, v in task.items() if k not in {"controls", "events"}}
+        public["coding_state"] = normalize_coding_state(
+            task.get("coding_state"), objective=str(task.get("clarified_goal", "") or task.get("goal", "") or "")
+        )
         events = list(task.get("events") or [])
         selected = events[-max(0, event_limit):] if event_limit else []
         public["events"] = [AgentTaskStore._public_event(item) for item in selected if isinstance(item, dict)]
@@ -508,10 +623,41 @@ class AgentTaskStore:
             result["detail"] = detail[:1599].rstrip() + "…"
         data = result.get("data")
         if isinstance(data, dict):
+            kind = str(result.get("type", "") or "")
+
+            # Các event này chính là contract của IDE, không phải raw debug data.
+            # Generic truncation cũ từng biến diff/message thành {truncated:true}
+            # sau reconnect, tức live thì đẹp còn mở lại chat thì mất ruột.
+            if kind == "user_message":
+                result["data"] = {
+                    "content": AgentTaskStore._compact_text(data.get("content", result.get("summary", "")), 8000),
+                    "source": AgentTaskStore._compact_text(data.get("source", ""), 80),
+                }
+                return result
+            if kind == "task_completed":
+                result["data"] = {
+                    "final": AgentTaskStore._compact_text(data.get("final", result.get("detail", result.get("summary", ""))), 8000),
+                }
+                return result
+            if kind == "file_changed":
+                result["data"] = {
+                    "path": AgentTaskStore._compact_text(data.get("path", ""), 700),
+                    "tool": AgentTaskStore._compact_text(data.get("tool", ""), 120),
+                    "operation_id": AgentTaskStore._compact_text(data.get("operation_id", ""), 160),
+                    "diff": AgentTaskStore._compact_text(data.get("diff", ""), 16000),
+                }
+                return result
+            if kind == "diff_observed":
+                result["data"] = {
+                    "chars": int(data.get("chars", 0) or 0),
+                    "diff": AgentTaskStore._compact_text(data.get("diff", ""), 16000),
+                }
+                return result
+
             # Choice cards are UI protocol, not debug payload. Preserve their
             # structure even when the original LLM text is verbose; clamp each
             # field instead of collapsing the whole object into {truncated:true}.
-            if str(result.get("type", "") or "") in {"clarification_requested", "interrupt_requested"}:
+            if str(result.get("type", "") or "") in {"clarification_requested", "interrupt_requested", "permission_requested"}:
                 raw_options = data.get("options") if isinstance(data.get("options"), list) else []
                 options = []
                 for index, item in enumerate(raw_options[:5]):
@@ -529,7 +675,9 @@ class AgentTaskStore:
                 result["data"] = {
                     "question": AgentTaskStore._compact_text(data.get("question", result.get("summary", "")), 500),
                     "options": options,
-                    "allow_other": bool(data.get("allow_other", True)),
+                    "allow_other": bool(data.get("allowOther", data.get("allow_other", True))),
+                    "reason": AgentTaskStore._compact_text(data.get("reason", ""), 80),
+                    "toolCallId": AgentTaskStore._compact_text(data.get("toolCallId", data.get("tool_call_id", "")), 120),
                 }
                 return result
 

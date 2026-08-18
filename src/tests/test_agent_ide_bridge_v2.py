@@ -154,9 +154,18 @@ def test_websocket_service_handshake_routes_new_message_and_restores_tasks(tmp_p
                 "content": "chọn hướng A nhưng sửa tối thiểu",
                 "context": {"current": {"path": "runtime/bar.py"}},
             }))
-            ack = json.loads(ws.recv(timeout=3))
-            assert ack["type"] == "message.accepted"
+            second_received = []
+            deadline = time.time() + 3
+            while time.time() < deadline:
+                packet = json.loads(ws.recv(timeout=3))
+                second_received.append(packet)
+                if packet.get("type") == "message.accepted":
+                    break
+            ack = next(item for item in second_received if item.get("type") == "message.accepted")
             assert ack["continued"] is True
+            # Backend persist user message thành event thật; UI không cần tự bịa
+            # bubble optimistic rồi hy vọng history khớp sau reconnect.
+            assert any(item.get("type") == "message.user" for item in second_received)
             assert resumed and resumed[-1][0] == "task-ws-1"
             assert resumed[-1][1]["response"]["text"].startswith("chọn hướng A")
             # Resume nhận snapshot editor mới chứ không mắc kẹt ở context lúc task bắt đầu.
@@ -164,3 +173,195 @@ def test_websocket_service_handshake_routes_new_message_and_restores_tasks(tmp_p
             assert resumed[-1][1]["response"]["ideContext"]["client"]["sessionId"] == "session-vscode"
     finally:
         service.stop()
+
+
+def test_task_store_projects_semantic_coding_state_and_thread_history(tmp_path):
+    store = AgentTaskStore(tmp_path / "tasks.json")
+    store.create_task("sửa parser", task_id="semantic-1", thread_id="thread-sem", session_id="session-sem")
+    store.append_event(
+        "semantic-1",
+        "coding_state",
+        summary="Đang đọc parser.py",
+        data={
+            "phase": "inspecting",
+            "current_action": "Đọc parser và diagnostics",
+            "current_file": "runtime/parser.py",
+            "files_inspected": ["runtime/parser.py"],
+            "next_action": "Chạy test parser",
+        },
+    )
+    store.append_event(
+        "semantic-1",
+        "test_result",
+        summary="Test chưa đạt",
+        data={"passed": 4, "failed": 1, "summary": "4 passed, 1 failed"},
+    )
+    long_diff = "diff --git a/runtime/parser.py b/runtime/parser.py\n" + ("+changed\n" * 700)
+    store.append_event(
+        "semantic-1",
+        "file_changed",
+        summary="Đã sửa parser",
+        data={"path": "runtime/parser.py", "diff": long_diff},
+    )
+
+    task = store.get_task("semantic-1", event_limit=0)
+    assert task is not None
+    state = task["coding_state"]
+    assert state["current_file"] == "runtime/parser.py"
+    assert "runtime/parser.py" in state["files_inspected"]
+    assert "runtime/parser.py" in state["files_modified"]
+    assert state["test_state"]["failed"] == 1
+
+    history = store.tasks_for_thread("thread-sem", session_id="session-sem", event_limit=50)
+    assert len(history) == 1
+    assert [event["type"] for event in history[0]["events"]] == [
+        "coding_state", "test_result", "file_changed"
+    ]
+    # Diff semantic phải sống qua public projection/reconnect, không bị generic
+    # debug truncation biến thành {truncated:true}.
+    assert history[0]["events"][-1]["data"]["diff"].startswith("diff --git")
+    assert len(history[0]["events"][-1]["data"]["diff"]) > 3500
+
+
+def test_protocol_projects_user_coding_diff_and_editor_result():
+    common = {
+        "event_id": "evt", "seq": 10, "task_id": "t", "thread_id": "th",
+        "session_id": "s", "created_at": 1.0,
+    }
+    user = project_agent_event({**common, "type": "user_message", "data": {"content": "fix bug"}})
+    assert user[0]["type"] == "message.user"
+    assert user[0]["payload"]["content"] == "fix bug"
+
+    coding = project_agent_event({
+        **common, "type": "coding_state",
+        "data": {"phase": "testing", "current_file": "a.py"},
+    })
+    assert coding[0]["type"] == "coding.state"
+    assert coding[0]["payload"]["phase"] == "testing"
+
+    diff = project_agent_event({
+        **common, "type": "diff_observed", "summary": "git diff",
+        "data": {"chars": 12, "diff": "diff --git a/a.py b/a.py"},
+    })
+    assert diff[0]["type"] == "artifact.diff"
+    assert diff[0]["payload"]["diff"].startswith("diff --git")
+
+    editor = project_agent_event({
+        **common, "type": "editor_result", "summary": "opened",
+        "data": {"requestId": "ide1", "command": "editor.openDiff", "success": True},
+    })
+    assert editor[0]["type"] == "editor.result"
+    assert editor[0]["payload"]["success"] is True
+
+
+def test_websocket_history_editor_ack_and_session_boundary(tmp_path):
+    from websockets.sync.client import connect
+
+    store = AgentTaskStore(tmp_path / "tasks.json")
+    bus = AgentEventBus(store=store, legacy_udp=False)
+    own = store.create_task("own", task_id="own-1", thread_id="thread-own", session_id="session-own")
+    bus.emit(own["task_id"], "user_message", summary="own", data={"content": "own"})
+    bus.emit(own["task_id"], "coding_state", summary="inspect", data={"phase": "inspecting"})
+    other = store.create_task("other", task_id="other-1", thread_id="thread-other", session_id="session-other")
+    bus.emit(other["task_id"], "user_message", summary="secret", data={"content": "secret"})
+
+    service = AgentWebSocketService(
+        store=store,
+        event_bus=bus,
+        start_task=lambda goal, **kwargs: {"status": "started", "task_id": "unused"},
+        resume_task=lambda task_id, **kwargs: {"status": "resuming", "task_id": task_id},
+        control_task=lambda task_id, **kwargs: {"status": "queued", "task_id": task_id},
+        port=0,
+        discovery_path=tmp_path / "discovery.json",
+    )
+    assert service.start()
+    try:
+        with connect(service.endpoint, open_timeout=3) as ws:
+            ws.send(json.dumps({
+                "type": "session.hello", "token": service.token, "sessionId": "session-own",
+                "client": "test-client", "lastEventSeq": store.latest_event_seq(),
+                "capabilities": ["editor.openDiff"],
+            }))
+            assert json.loads(ws.recv(timeout=3))["type"] == "session.ready"
+            assert json.loads(ws.recv(timeout=3))["type"] == "event.replay.end"
+
+            ws.send(json.dumps({"type": "thread.history", "threadId": "thread-own"}))
+            history = json.loads(ws.recv(timeout=3))
+            assert history["type"] == "thread.history"
+            assert any(item["type"] == "message.user" for item in history["events"])
+            assert any(item["type"] == "coding.state" for item in history["events"])
+
+            ws.send(json.dumps({"type": "task.get", "taskId": "other-1"}))
+            denied = json.loads(ws.recv(timeout=3))
+            assert denied["type"] == "error"
+            assert denied["code"] == "task_not_found"
+
+            ws.send(json.dumps({
+                "type": "editor.command.result", "taskId": "own-1", "requestId": "ide-1",
+                "command": "editor.openDiff", "success": True, "message": "opened",
+            }))
+            editor_result = json.loads(ws.recv(timeout=3))
+            assert editor_result["type"] == "editor.result"
+            assert editor_result["payload"]["requestId"] == "ide-1"
+    finally:
+        service.stop()
+
+
+def test_coordinator_recovers_stale_running_task_instead_of_queueing_forever(tmp_path):
+    from runtime.coordinator import RuntimeCoordinator
+
+    store = AgentTaskStore(tmp_path / "tasks.json")
+    store.create_task("recover me", task_id="stale-1", thread_id="thread-stale", session_id="session-stale")
+    store.update_task("stale-1", status="running")
+
+    class _Harness:
+        def stop_task(self, task_id, reason=""):
+            return {"status": "stopped", "task_id": task_id, "reason": reason}
+
+    coordinator = object.__new__(RuntimeCoordinator)
+    coordinator.agent_harness = _Harness()
+    coordinator.agent_task_store = store
+    coordinator._agent_task_threads = {}
+    captured = []
+    coordinator.resume_agent_task_async = lambda task_id, **kwargs: captured.append((task_id, kwargs)) or {
+        "status": "resuming", "task_id": task_id
+    }
+
+    result = RuntimeCoordinator.control_agent_task(
+        coordinator,
+        "stale-1",
+        action="resume",
+        source="vscode",
+        ide_context={"current": {"path": "runtime/foo.py"}},
+    )
+    assert result["status"] == "resuming"
+    assert captured[0][0] == "stale-1"
+    assert captured[0][1]["ide_context"]["current"]["path"] == "runtime/foo.py"
+    assert store.consume_controls("stale-1") == []
+
+
+def test_prompt_context_uses_semantic_state_not_raw_reasoning(tmp_path):
+    from runtime.prompt_context_builder import PromptContextBuilderMixin
+
+    store = AgentTaskStore(tmp_path / "tasks.json")
+    store.create_task("fix parser", task_id="prompt-1", thread_id="thread-p", session_id="session-p")
+    store.append_event(
+        "prompt-1",
+        "coding_state",
+        summary="semantic",
+        data={
+            "phase": "testing",
+            "current_action": "Đang chạy parser tests",
+            "current_file": "runtime/parser.py",
+            "files_modified": ["runtime/parser.py"],
+            "test_state": {"status": "running", "passed": 0, "failed": 0},
+        },
+    )
+
+    holder = object.__new__(PromptContextBuilderMixin)
+    holder.agent_task_store = store
+    rendered = PromptContextBuilderMixin._agent_execution_prompt_context(holder)
+    assert "BACKSTAGE_AGENT_RUNTIME_V3" in rendered
+    assert '"phase":"testing"' in rendered
+    assert "runtime/parser.py" in rendered
+    assert "chain-of-thought" in rendered

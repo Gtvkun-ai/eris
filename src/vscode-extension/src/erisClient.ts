@@ -18,7 +18,7 @@ export type ConnectionState = 'disconnected' | 'connecting' | 'connected';
 
 /**
  * Socket nằm ở extension host, tuyệt đối không nằm trong Webview.
- * Nhờ vậy HTML chat không có quyền đọc token, file system hay workspace API.
+ * HTML chat vì thế không thể đọc token, file system hay VS Code API trực tiếp.
  */
 export class ErisClient implements vscode.Disposable {
   private socket?: WebSocket;
@@ -35,10 +35,12 @@ export class ErisClient implements vscode.Disposable {
   readonly onStateChanged = this.stateEmitter.event;
 
   constructor(private readonly extensionContext: vscode.ExtensionContext) {
-    const persisted = extensionContext.globalState.get<string>('eris.sessionId', '').trim();
+    // Session/cursor phải theo VS Code workspace window. Dùng globalState sẽ làm
+    // hai cửa sổ repo khác nhau nhận chung event và còn có thể skip replay của nhau.
+    const persisted = extensionContext.workspaceState.get<string>('eris.sessionId', '').trim();
     this.sessionId = persisted || `vscode_${crypto.randomUUID()}`;
     if (!persisted) {
-      void extensionContext.globalState.update('eris.sessionId', this.sessionId);
+      void extensionContext.workspaceState.update('eris.sessionId', this.sessionId);
     }
   }
 
@@ -79,7 +81,7 @@ export class ErisClient implements vscode.Disposable {
       const timeout = setTimeout(() => fail(new Error('eris_service_handshake_timeout')), 7000);
 
       socket.on('open', () => {
-        const lastEventSeq = this.extensionContext.globalState.get<number>('eris.lastEventSeq', 0);
+        const lastEventSeq = this.extensionContext.workspaceState.get<number>('eris.lastEventSeq', 0);
         socket.send(JSON.stringify({
           type: 'session.hello',
           protocol: 'eris.ide.v2',
@@ -93,9 +95,11 @@ export class ErisClient implements vscode.Disposable {
             'context.problems',
             'context.git',
             'context.workspace',
-            'context.terminal',
+            'context.terminal.recent',
             'editor.openFile',
+            'editor.openDiff',
             'editor.focusProblems',
+            'editor.showSourceControl',
           ],
         }));
       });
@@ -112,9 +116,12 @@ export class ErisClient implements vscode.Disposable {
               resolve();
             }
           }
-          const seq = Number(message.seq ?? 0);
+          const seq = Number(message.seq ?? message.lastEventSeq ?? 0);
           if (Number.isFinite(seq) && seq > 0) {
-            void this.extensionContext.globalState.update('eris.lastEventSeq', seq);
+            const previous = this.extensionContext.workspaceState.get<number>('eris.lastEventSeq', 0);
+            if (seq > previous) {
+              void this.extensionContext.workspaceState.update('eris.lastEventSeq', seq);
+            }
           }
           this.eventEmitter.fire(message);
         } catch (error) {
@@ -138,6 +145,26 @@ export class ErisClient implements vscode.Disposable {
         }
       });
     });
+  }
+
+  async createThread(threadId: string): Promise<void> {
+    await this.connect();
+    this.send({ type: 'session.create', protocol: 'eris.ide.v2', threadId });
+  }
+
+  async requestTasks(): Promise<void> {
+    await this.connect();
+    this.send({ type: 'task.list', protocol: 'eris.ide.v2' });
+  }
+
+  async requestTask(taskId: string): Promise<void> {
+    await this.connect();
+    this.send({ type: 'task.get', protocol: 'eris.ide.v2', taskId });
+  }
+
+  async requestThreadHistory(threadId: string): Promise<void> {
+    await this.connect();
+    this.send({ type: 'thread.history', protocol: 'eris.ide.v2', threadId });
   }
 
   async sendUserMessage(content: string, args: {
@@ -182,6 +209,25 @@ export class ErisClient implements vscode.Disposable {
     });
   }
 
+  async reportEditorCommandResult(
+    taskId: string,
+    requestId: string,
+    command: string,
+    success: boolean,
+    message = '',
+  ): Promise<void> {
+    await this.connect();
+    this.send({
+      type: 'editor.command.result',
+      protocol: 'eris.ide.v2',
+      taskId,
+      requestId,
+      command,
+      success,
+      message,
+    });
+  }
+
   private send(payload: JsonRecord): void {
     if (!this.ready || this.socket?.readyState !== WebSocket.OPEN) {
       throw new Error('eris_service_not_connected');
@@ -223,7 +269,7 @@ export class ErisClient implements vscode.Disposable {
       try {
         this.socket.close();
       } catch {
-        // Socket đang chết thì thôi, không cần biến shutdown thành một nghi lễ.
+        // Socket đã chết thì thôi, shutdown không cần thêm một nghi lễ nữa.
       }
     }
     this.socket = undefined;

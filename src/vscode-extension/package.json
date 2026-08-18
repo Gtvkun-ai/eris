@@ -2,16 +2,20 @@
   "name": "eris-vscode",
   "displayName": "Eris",
   "description": "VS Code client cho Eris Service và LangGraph agent.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "gtvk",
   "engines": {
     "vscode": "^1.100.0"
   },
-  "categories": ["Other", "Machine Learning"],
+  "categories": [
+    "Other",
+    "Machine Learning"
+  ],
   "activationEvents": [
     "onView:eris.sidebar",
     "onCommand:eris.openChat",
-    "onCommand:eris.newChat"
+    "onCommand:eris.newChat",
+    "onCommand:eris.openTask"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -27,6 +31,10 @@
       {
         "command": "eris.reconnect",
         "title": "Eris: Reconnect Service"
+      },
+      {
+        "command": "eris.openTask",
+        "title": "Eris: Open Task"
       }
     ],
     "viewsContainers": {

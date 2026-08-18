@@ -196,24 +196,76 @@ class AgentWebSocketService:
         if kind == "event.replay":
             self._replay(client, int(message.get("lastEventSeq", 0) or 0))
             return
+        if kind == "session.create":
+            thread_id = str(message.get("threadId", "") or "").strip() or f"thread_{secrets.token_hex(8)}"
+            self._send(client, {
+                "type": "session.created",
+                "protocol": "eris.ide.v2",
+                "sessionId": client.session_id,
+                "threadId": thread_id,
+                "timestamp": time.time(),
+            })
+            return
+        if kind == "task.list":
+            self._send(client, {
+                "type": "task.list",
+                "protocol": "eris.ide.v2",
+                "sessionId": client.session_id,
+                "tasks": self.store.list_tasks(session_id=client.session_id, limit=50, event_limit=0),
+            })
+            return
+        if kind == "task.get":
+            task_id = str(message.get("taskId", "") or "").strip()
+            task = self._task_for_client(client, task_id, event_limit=240)
+            if task is None:
+                self._send(client, {"type": "error", "code": "task_not_found", "taskId": task_id})
+                return
+            self._send(client, {
+                "type": "task.detail",
+                "protocol": "eris.ide.v2",
+                "sessionId": client.session_id,
+                "task": task,
+            })
+            return
+        if kind == "thread.history":
+            thread_id = str(message.get("threadId", "") or "").strip()
+            tasks = self.store.tasks_for_thread(
+                thread_id, session_id=client.session_id, limit=40, event_limit=240
+            )
+            packets: list[dict[str, Any]] = []
+            for task in tasks:
+                task_id = str(task.get("task_id", "") or "")
+                task_thread = str(task.get("thread_id", "") or "")
+                task_session = str(task.get("session_id", "") or "")
+                for event in task.get("events", []) or []:
+                    if not isinstance(event, dict):
+                        continue
+                    envelope = dict(event)
+                    envelope["task_id"] = task_id
+                    envelope["thread_id"] = task_thread
+                    envelope["session_id"] = task_session
+                    packets.extend(project_agent_event(envelope))
+            packets.sort(key=lambda item: (float(item.get("timestamp", 0.0) or 0.0), int(item.get("seq", 0) or 0)))
+            self._send(client, {
+                "type": "thread.history",
+                "protocol": "eris.ide.v2",
+                "sessionId": client.session_id,
+                "threadId": thread_id,
+                "tasks": [{k: v for k, v in task.items() if k != "events"} for task in tasks],
+                "events": packets[-700:],
+            })
+            return
         if kind == "message.user":
             content = str(message.get("content", "") or "").strip()
             if not content:
                 self._send(client, {"type": "error", "code": "message_empty"})
                 return
             thread_id = str(message.get("threadId", "") or "").strip() or client.session_id
-            context = message.get("context") if isinstance(message.get("context"), dict) else {}
-            context = dict(context)
-            context["client"] = {
-                "name": client.client_name,
-                "sessionId": client.session_id,
-                "capabilities": sorted(client.capabilities),
-            }
+            context = self._with_client_context(client, message.get("context"))
 
             # Một chat thread chỉ có một task active. Tin nhắn mới trong lúc graph
             # đang chờ trở thành resume/directive thay vì tạo graph thứ hai đè lên
-            # cùng checkpoint namespace. Đây là khác biệt giữa hội thoại thật và
-            # một nút "run agent" khoác áo chat.
+            # cùng checkpoint namespace.
             active = self.store.latest_task_for_thread(
                 thread_id,
                 session_id=client.session_id,
@@ -223,6 +275,14 @@ class AgentWebSocketService:
             if active is not None:
                 task_id = str(active.get("task_id", "") or "")
                 active_status = str(active.get("status", "") or "").strip().lower()
+                self.event_bus.emit(
+                    task_id,
+                    "user_message",
+                    actor="user",
+                    summary=content[:1200],
+                    importance=0.72,
+                    data={"content": content[:8000], "source": "vscode"},
+                )
                 if active_status in {"waiting_user", "waiting_permission"}:
                     result = self.resume_task(
                         task_id,
@@ -231,8 +291,6 @@ class AgentWebSocketService:
                             "value": content,
                             "text": content,
                             "source": "vscode_chat",
-                            # User có thể vừa sửa file trong lúc graph đang pause. Resume
-                            # phải mang context mới, không tái dùng snapshot đã già.
                             "ideContext": context,
                         },
                         source="vscode",
@@ -246,6 +304,8 @@ class AgentWebSocketService:
                         ide_context=context,
                     )
                 elif callable(self.control_task):
+                    # control_agent_task tự phân biệt worker đang sống hay task running
+                    # mồ côi sau restart; trường hợp sau sẽ recover LangGraph checkpoint.
                     result = self.control_task(
                         task_id,
                         action="directive",
@@ -276,12 +336,23 @@ class AgentWebSocketService:
                 ide_context=context,
                 source="vscode",
             )
+            task_id = str(started.get("task_id", "") or "")
+            # start_task reserve task đồng bộ trước khi worker chạy; nếu backend cũ
+            # chưa tự ghi user_message thì gateway ghi để history vẫn đầy đủ.
+            if task_id:
+                recent = self.store.get_task(task_id, event_limit=8) or {}
+                has_user = any(str(item.get("type", "") or "") == "user_message" for item in recent.get("events", []) or [])
+                if not has_user:
+                    self.event_bus.emit(
+                        task_id, "user_message", actor="user", summary=content[:1200], importance=0.72,
+                        data={"content": content[:8000], "source": "vscode"},
+                    )
             self._send(client, {
                 "type": "message.accepted",
                 "protocol": "eris.ide.v2",
                 "sessionId": client.session_id,
                 "threadId": thread_id,
-                "taskId": str(started.get("task_id", "") or ""),
+                "taskId": task_id,
                 "status": str(started.get("status", "") or ""),
                 "reason": str(started.get("reason", "") or ""),
                 "continued": False,
@@ -289,10 +360,16 @@ class AgentWebSocketService:
             return
         if kind == "interrupt.resolve":
             task_id = str(message.get("taskId", "") or "").strip()
-            if not task_id:
-                self._send(client, {"type": "error", "code": "task_id_required"})
+            task = self._task_for_client(client, task_id, event_limit=0)
+            if task is None:
+                self._send(client, {"type": "error", "code": "task_not_found", "taskId": task_id})
                 return
             response = message.get("response")
+            if isinstance(response, dict):
+                response = dict(response)
+                ide_context = response.get("ideContext")
+                if isinstance(ide_context, dict):
+                    response["ideContext"] = self._with_client_context(client, ide_context)
             resumed = self.resume_task(task_id, response=response, source="vscode")
             self._send(client, {
                 "type": "interrupt.accepted",
@@ -303,15 +380,11 @@ class AgentWebSocketService:
             return
         if kind == "task.control" and callable(self.control_task):
             task_id = str(message.get("taskId", "") or "").strip()
+            if self._task_for_client(client, task_id, event_limit=0) is None:
+                self._send(client, {"type": "error", "code": "task_not_found", "taskId": task_id})
+                return
             action = str(message.get("action", "") or "").strip().lower()
-            ide_context = message.get("context") if isinstance(message.get("context"), dict) else {}
-            if ide_context:
-                ide_context = dict(ide_context)
-                ide_context["client"] = {
-                    "name": client.client_name,
-                    "sessionId": client.session_id,
-                    "capabilities": sorted(client.capabilities),
-                }
+            ide_context = self._with_client_context(client, message.get("context"))
             result = self.control_task(
                 task_id,
                 action=action,
@@ -322,28 +395,81 @@ class AgentWebSocketService:
             )
             self._send(client, {"type": "task.control.ack", "taskId": task_id, "action": action, **dict(result or {})})
             return
+        if kind == "editor.command.result":
+            task_id = str(message.get("taskId", "") or "").strip()
+            if self._task_for_client(client, task_id, event_limit=0) is None:
+                return
+            success = bool(message.get("success", False))
+            command = str(message.get("command", "") or "")
+            self.event_bus.emit(
+                task_id,
+                "editor_result",
+                actor="vscode",
+                summary=(f"VS Code đã thực hiện {command}." if success else f"VS Code không thực hiện được {command}."),
+                importance=0.38 if success else 0.72,
+                data={
+                    "requestId": str(message.get("requestId", "") or ""),
+                    "command": command,
+                    "success": success,
+                    "message": str(message.get("message", "") or "")[:1200],
+                },
+            )
+            return
         self._send(client, {"type": "error", "code": "unsupported_type", "messageType": kind})
+
+    def _with_client_context(self, client: _Client, raw: Any) -> dict[str, Any]:
+        context = dict(raw) if isinstance(raw, dict) else {}
+        context["client"] = {
+            "name": client.client_name,
+            "sessionId": client.session_id,
+            "capabilities": sorted(client.capabilities),
+        }
+        return context
+
+    def _task_for_client(self, client: _Client, task_id: str, *, event_limit: int = 0) -> dict[str, Any] | None:
+        """Enforce session boundary cho read/control, không chỉ cho broadcast/replay."""
+        task_id = str(task_id or "").strip()
+        if not task_id:
+            return None
+        task = self.store.get_task(task_id, event_limit=event_limit)
+        if task is None:
+            return None
+        owner = str(task.get("session_id", "") or "")
+        if owner and owner != client.session_id:
+            return None
+        return task
 
     def _on_agent_event(self, event: dict[str, Any]) -> None:
         for packet in project_agent_event(event):
             self._broadcast(packet)
 
     def _replay(self, client: _Client, last_seq: int) -> None:
-        events = self.store.events_since(last_seq, limit=1000)
-        delivered_seq = last_seq
-        for event in events:
-            event_session = str(event.get("session_id", "") or "")
-            # Replay phải có cùng boundary với live broadcast. Nếu không, một IDE
-            # session reconnect có thể nhìn thấy task riêng của session khác.
-            if event_session and event_session != client.session_id:
-                continue
-            delivered_seq = max(delivered_seq, int(event.get("seq", 0) or 0))
-            for packet in project_agent_event(event):
-                self._send(client, packet)
+        # Cursor phải tiến qua *mọi* event đã scan, kể cả event thuộc session khác.
+        # Nếu chỉ tăng khi event được gửi, 1000 event của session B có thể làm
+        # session A reconnect mãi ở cùng một cửa sổ và không bao giờ tới event mới.
+        cursor = max(0, int(last_seq or 0))
+        scanned = 0
+        while scanned < 10_000:
+            events = self.store.events_since(cursor, limit=1000)
+            if not events:
+                break
+            for event in events:
+                cursor = max(cursor, int(event.get("seq", 0) or 0))
+                event_session = str(event.get("session_id", "") or "")
+                # Replay có cùng session boundary với live broadcast. Legacy task
+                # chưa có session_id vẫn được thấy để migration không mất dữ liệu.
+                if event_session and event_session != client.session_id:
+                    continue
+                for packet in project_agent_event(event):
+                    self._send(client, packet)
+            scanned += len(events)
+            if len(events) < 1000:
+                break
         self._send(client, {
             "type": "event.replay.end",
             "protocol": "eris.ide.v2",
-            "lastEventSeq": delivered_seq,
+            "seq": cursor,
+            "lastEventSeq": cursor,
         })
 
     def _broadcast(self, packet: dict[str, Any]) -> None:
@@ -384,7 +510,13 @@ class AgentWebSocketService:
                     return payload
             except Exception:
                 pass
-        return {"brain": [], "protocol": ["message.user", "interrupt.resolve", "event.replay", "task.control"]}
+        return {
+            "brain": [],
+            "protocol": [
+                "session.create", "message.user", "interrupt.resolve", "event.replay",
+                "task.control", "task.list", "task.get", "thread.history", "editor.command.result",
+            ],
+        }
 
     def _write_discovery(self) -> None:
         self.discovery_path.parent.mkdir(parents=True, exist_ok=True)

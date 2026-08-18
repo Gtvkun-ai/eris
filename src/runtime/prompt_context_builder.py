@@ -147,19 +147,22 @@ class PromptContextBuilderMixin:
         return self._build_thought_stream_context()
 
     def _agent_execution_prompt_context(self) -> str:
-        """Chiếu trạng thái coding agent vào Subject Core bằng typed telemetry.
+        """Chiếu semantic coding state vào Subject Core, tuyệt đối không phải CoT.
 
-        Đây không phải stdout hay suy đoán từ màn hình. Nó cho Eris main biết task
-        nào đang chạy trong VS Code, đang chờ user ở đâu và đã chạm file/test nào.
+        Eris main cần biết executor đang làm *việc gì* (file nào, test ra sao, đang
+        chờ gì) để phối hợp hoặc nói với user. Nó không cần và không nên nhận
+        reasoning nội bộ dài dòng của Gemini.
         """
         store = getattr(self, "agent_task_store", None)
         list_tasks = getattr(store, "list_tasks", None)
         if not callable(list_tasks):
             return ""
         try:
+            from runtime.agent_harness.coding_state import compact_for_prompt
             tasks = list_tasks(limit=8, event_limit=0)
         except Exception:
             return ""
+
         active = []
         for task in tasks:
             if not isinstance(task, dict):
@@ -174,20 +177,18 @@ class PromptContextBuilderMixin:
                 "thread_id": str(task.get("thread_id", "") or ""),
                 "source": str(metadata.get("source", "") or ""),
                 "status": status,
-                "goal": str(task.get("clarified_goal", "") or task.get("goal", "") or "")[:900],
                 "workspace": str(metadata.get("workspace_name", "") or metadata.get("workspace_path", "") or "")[:500],
-                "step": int(task.get("current_step", 0) or 0),
-                "changed_files": [str(item)[:300] for item in list(task.get("changed_files", []) or [])[-12:]],
-                "tests": dict(task.get("tests") or {}),
+                "ide_capabilities": [str(item)[:120] for item in list(metadata.get("ide_capabilities") or [])[:40]],
+                "coding_state": compact_for_prompt(task.get("coding_state")),
                 "pending_question": str(pending.get("question", "") or "")[:700],
             })
         if not active:
             return ""
         return (
-            "BACKSTAGE_AGENT_RUNTIME_V2:\n"
+            "BACKSTAGE_AGENT_RUNTIME_V3:\n"
             + json.dumps(active, ensure_ascii=False, separators=(",", ":"))
-            + "\nRULE: Đây là execution telemetry thật của Eris Service. Có thể dùng để biết mình đang chạy/đợi coding task; "
-              "không được bịa bước chưa xuất hiện trong telemetry và không khởi chạy task trùng."
+            + "\nRULE: Đây là semantic execution telemetry thật của Eris Service, không phải chain-of-thought. "
+              "Dùng nó để biết coding task đang chạy/chờ gì; không bịa bước chưa có và không tạo task trùng."
         )
 
     def _build_memory_context(self, snapshot=None, memory_resonance=None) -> str:

@@ -34,6 +34,8 @@ def project_agent_event(event: dict[str, Any]) -> list[dict[str, Any]]:
             "payload": dict(payload or {}),
         }
 
+    if kind == "user_message":
+        return [base("message.user", {"content": str(data.get("content", "") or summary), "source": str(data.get("source", "") or "")})]
     if kind == "task_started":
         return [base("activity.start", {"label": summary or "Đang bắt đầu task", "status": "running"})]
     if kind == "task_completed":
@@ -61,9 +63,26 @@ def project_agent_event(event: dict[str, Any]) -> list[dict[str, Any]]:
         return [base("artifact.modified", {
             "path": str(data.get("path", "") or ""),
             "summary": summary,
+            "operationId": str(data.get("operation_id", "") or ""),
+            "diff": str(data.get("diff", "") or ""),
         })]
+    if kind == "diff_observed":
+        return [base("artifact.diff", {
+            "summary": summary,
+            "chars": int(data.get("chars", 0) or 0),
+            "diff": str(data.get("diff", "") or ""),
+        })]
+    if kind == "coding_state":
+        return [base("coding.state", data)]
     if kind == "editor_command":
         return [base("editor.command", data)]
+    if kind == "editor_result":
+        return [base("editor.result", {
+            "requestId": str(data.get("requestId", "") or ""),
+            "command": str(data.get("command", "") or ""),
+            "success": bool(data.get("success", False)),
+            "message": str(data.get("message", "") or summary),
+        })]
     if kind == "test_result":
         return [base("activity.update", {
             "label": "Tests",
@@ -78,7 +97,7 @@ def project_agent_event(event: dict[str, Any]) -> list[dict[str, Any]]:
         "skill_search", "skill_activated", "checkpoint_created", "checkpoint_restored",
         "supervisor_comment", "supervisor_advisory", "supervisor_redirect", "supervisor_veto",
         "task_paused", "task_resumed", "interrupt_resume_requested", "rollback_requested",
-        "rollback_queued", "rollback_failed", "diff_observed",
+        "rollback_queued", "rollback_failed",
     }:
         status = "running"
         if kind in {"tool_failed", "rollback_failed"}:

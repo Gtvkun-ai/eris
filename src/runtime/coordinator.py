@@ -524,6 +524,15 @@ class RuntimeCoordinator(
         workspace_id = str(workspace.get("workspace_id", "") or "")
         workspace_path = str(workspace.get("workspace_path", "") or "")
         workspace_name = str(workspace.get("workspace_name", "") or "")
+        ide_client = (ide_context or {}).get("client") if isinstance(ide_context, dict) else {}
+        ide_client = ide_client if isinstance(ide_client, dict) else {}
+        raw_ide_capabilities = ide_client.get("capabilities")
+        if not isinstance(raw_ide_capabilities, (list, tuple, set)):
+            raw_ide_capabilities = []
+        ide_capabilities = [
+            str(item).strip() for item in list(raw_ide_capabilities)[:80]
+            if str(item or "").strip()
+        ]
 
         task_id = f"task_{uuid.uuid4().hex[:12]}"
         resolved_thread = str(thread_id or source_turn_id or f"agent_{uuid.uuid4().hex[:12]}")
@@ -561,6 +570,9 @@ class RuntimeCoordinator(
                         "workspace_id": workspace_id,
                         "workspace_path": workspace_path,
                         "workspace_name": workspace_name,
+                        # Main Eris đọc catalog nhỏ này để biết VS Code side hiện
+                        # thực sự làm được gì; không cần đoán từ tên frontend.
+                        "ide_capabilities": ide_capabilities,
                     },
                 )
                 store.update_task(task_id, clarified_goal=clarified_goal or goal)
@@ -574,6 +586,25 @@ class RuntimeCoordinator(
                             else "Tôi đang theo dõi task này. Nếu hướng thực thi phình, lặp lỗi hoặc vá trước khi hiểu root cause, tôi sẽ can thiệp."
                         ),
                         importance=0.58,
+                    )
+
+                # Ghi message của user trước khi worker khởi chạy. Nhờ vậy history của
+                # VS Code có thứ tự ổn định: user -> activity/tool -> assistant, không
+                # phụ thuộc thread scheduler thắng thua trong vài mili-giây đầu tiên.
+                event_bus = getattr(self, "agent_event_bus", None)
+                if event_bus is not None:
+                    event_bus.emit(
+                        task_id,
+                        "user_message",
+                        actor="user",
+                        summary=str(goal or "")[:4000],
+                        importance=0.95,
+                        data={
+                            "content": str(goal or ""),
+                            "thread_id": resolved_thread,
+                            "session_id": str(session_id or ""),
+                            "source": str(source or "eris_chat"),
+                        },
                     )
             except Exception as exc:
                 logger = getattr(self, "logger", None)
@@ -645,6 +676,24 @@ class RuntimeCoordinator(
         task = store.get_task(task_id)
         if task is None:
             return {"status": "not_found", "reason": "task_not_found", "task_id": task_id}
+
+        # Capability của IDE có thể thay đổi sau reconnect/update extension. Persist
+        # snapshot mới nhất vào public task metadata để Eris main và executor cùng
+        # nhìn một contract thay vì mỗi bên tự tưởng tượng khả năng của bên kia.
+        if isinstance(ide_context, dict):
+            client_info = ide_context.get("client") if isinstance(ide_context.get("client"), dict) else {}
+            raw_caps = client_info.get("capabilities")
+            if not isinstance(raw_caps, (list, tuple, set)):
+                raw_caps = []
+            caps = [
+                str(item).strip() for item in list(raw_caps)[:80]
+                if str(item or "").strip()
+            ]
+            if caps:
+                metadata = dict(task.get("metadata") or {})
+                metadata["ide_capabilities"] = caps
+                store.update_task(task_id, metadata=metadata)
+                task["metadata"] = metadata
 
         active = self._agent_task_threads.get(task_id)
         if active is not None and active.is_alive():
@@ -735,6 +784,9 @@ class RuntimeCoordinator(
                 ide_context=dict(ide_context or {}),
             )
 
+        worker = self._agent_task_threads.get(task_id)
+        worker_alive = bool(worker is not None and worker.is_alive())
+
         if status == "paused" and action in {"resume", "directive"}:
             return self.resume_agent_task_async(
                 task_id,
@@ -744,10 +796,27 @@ class RuntimeCoordinator(
                 ide_context=dict(ide_context or {}),
             )
 
-        if action == "stop" and status in {"waiting_user", "waiting_permission", "paused"}:
+        # Sau khi Eris Service/VS Code restart, SQLite có thể còn task=running
+        # trong khi daemon worker cũ đã chết cùng process. Cho phép resume trực
+        # tiếp checkpoint thay vì để UI mắc kẹt ở một task "đang chạy" ma.
+        if status == "running" and not worker_alive and action in {"resume", "directive"}:
+            return self.resume_agent_task_async(
+                task_id,
+                response=None,
+                source=source,
+                directive=text,
+                ide_context=dict(ide_context or {}),
+            )
+
+        # Resume là idempotent khi worker thật vẫn còn sống. Extension có thể gửi
+        # recover trên mỗi reconnect mà không vô tình nhét control thừa vào graph.
+        if status == "running" and worker_alive and action == "resume":
+            return {"status": "running", "reason": "task_worker_already_active", "task_id": task_id}
+
+        if action == "stop" and (status in {"waiting_user", "waiting_permission", "paused"} or (status == "running" and not worker_alive)):
             return harness.stop_task(task_id, reason=f"control:{source}")
 
-        if action == "rollback" and (not self._agent_task_threads.get(task_id) or not self._agent_task_threads[task_id].is_alive()):
+        if action == "rollback" and not worker_alive:
             try:
                 restored = harness.restore_task_checkpoint(task_id, checkpoint_id or "latest")
                 return {"status": "rolled_back", "task_id": task_id, "checkpoint": restored}
@@ -793,9 +862,31 @@ class RuntimeCoordinator(
                 brain = []
         return {
             "brain": brain,
-            "protocol": ["message.user", "interrupt.resolve", "event.replay", "task.control"],
-            "editorCommands": ["editor.openFile", "editor.focusProblems"],
-            "contextProviders": ["current", "selection", "problems", "git", "workspace", "terminal"],
+            "protocol": [
+                "session.create",
+                "message.user",
+                "interrupt.resolve",
+                "event.replay",
+                "task.control",
+                "task.list",
+                "task.get",
+                "thread.history",
+                "editor.command.result",
+            ],
+            "editorCommands": [
+                "editor.openFile",
+                "editor.openDiff",
+                "editor.focusProblems",
+                "editor.showSourceControl",
+            ],
+            "contextProviders": [
+                "current",
+                "selection",
+                "problems",
+                "git",
+                "workspace",
+                "terminal.recent",
+            ],
         }
 
     def route_agent_user_turn(

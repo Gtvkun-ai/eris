@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { TerminalContextObserver } from './terminalObserver';
 
 const TEXT_LIMIT = 16_000;
 const DIAGNOSTIC_LIMIT = 80;
@@ -21,9 +22,9 @@ function relativePath(uri: vscode.Uri): string {
 
 /**
  * Lấy context semantic trực tiếp từ VS Code thay vì OCR giao diện IDE.
- * Payload luôn có giới hạn kích thước để một file/log khổng lồ không nhấn chìm prompt.
+ * Payload luôn bị giới hạn để log/diff lớn không nuốt sạch prompt của agent.
  */
-export async function captureIdeContext(): Promise<Record<string, unknown>> {
+export async function captureIdeContext(terminalObserver?: TerminalContextObserver): Promise<Record<string, unknown>> {
   const editor = vscode.window.activeTextEditor;
   const folders = vscode.workspace.workspaceFolders ?? [];
   const activeFolder = editor ? vscode.workspace.getWorkspaceFolder(editor.document.uri) : folders[0];
@@ -33,22 +34,18 @@ export async function captureIdeContext(): Promise<Record<string, unknown>> {
     workspace: {
       active: activeFolder?.uri.fsPath ?? '',
       trusted: vscode.workspace.isTrusted,
-      folders: folders.map((folder) => ({
-        name: folder.name,
-        path: folder.uri.fsPath,
-      })),
+      folders: folders.map((folder) => ({ name: folder.name, path: folder.uri.fsPath })),
     },
-    terminal: {
+    terminal: terminalObserver?.snapshot() ?? {
       active: vscode.window.activeTerminal?.name ?? '',
       terminals: vscode.window.terminals.map((terminal) => terminal.name),
-      // VS Code API không cho extension đọc lịch sử buffer terminal một cách chuẩn.
-      // Không bịa output; backend chỉ biết terminal nào đang tồn tại.
       outputAvailable: false,
+      recent: [],
     },
   };
 
-  // Không trích code/diagnostics/Git từ workspace chưa được VS Code trust.
-  // Boundary này nằm ở extension API, không dựa vào việc Webview "ngoan".
+  // Workspace Trust là boundary thật. Webview không được tự quyết định lúc nào
+  // nó có quyền lấy source code, diagnostics hay Git diff.
   if (!vscode.workspace.isTrusted) {
     context.restricted = 'workspace_untrusted';
     return context;
@@ -86,14 +83,20 @@ export async function captureIdeContext(): Promise<Record<string, unknown>> {
   }
 
   const diagnostics: Array<Record<string, unknown>> = [];
+  const counts = { error: 0, warning: 0, information: 0, hint: 0 };
   const diagnosticEntries = editor
     ? [[editor.document.uri, vscode.languages.getDiagnostics(editor.document.uri)] as const]
     : vscode.languages.getDiagnostics();
   for (const [uri, items] of diagnosticEntries) {
     for (const item of items) {
+      const severityName = String(vscode.DiagnosticSeverity[item.severity] ?? 'Unknown');
+      const key = severityName.toLowerCase() as keyof typeof counts;
+      if (key in counts) {
+        counts[key] += 1;
+      }
       diagnostics.push({
         path: relativePath(uri),
-        severity: vscode.DiagnosticSeverity[item.severity],
+        severity: severityName,
         message: clip(item.message, 1200),
         source: item.source ?? '',
         code: typeof item.code === 'object' ? item.code.value : (item.code ?? ''),
@@ -108,7 +111,11 @@ export async function captureIdeContext(): Promise<Record<string, unknown>> {
       break;
     }
   }
-  context.problems = diagnostics;
+  context.problems = {
+    counts,
+    truncated: diagnostics.length >= DIAGNOSTIC_LIMIT,
+    items: diagnostics,
+  };
 
   context.git = await captureGitContext(editor?.document.uri);
   return context;
@@ -138,6 +145,23 @@ async function captureGitContext(activeUri?: vscode.Uri): Promise<Record<string,
       ...(state.indexChanges ?? []),
       ...(state.mergeChanges ?? []),
     ];
+
+    let diff = '';
+    try {
+      if (typeof repo.diffWithHEAD === 'function') {
+        const relativeActive = activeUri && root
+          ? path.relative(root, activeUri.fsPath).replaceAll('\\', '/')
+          : undefined;
+        // File đang mở thường có signal tốt nhất; nếu không có thì lấy diff repo.
+        diff = String(relativeActive ? await repo.diffWithHEAD(relativeActive) : await repo.diffWithHEAD());
+        if (!diff.trim() && relativeActive) {
+          diff = String(await repo.diffWithHEAD());
+        }
+      }
+    } catch {
+      diff = '';
+    }
+
     return {
       available: true,
       root,
@@ -149,6 +173,8 @@ async function captureGitContext(activeUri?: vscode.Uri): Promise<Record<string,
           : String(change.uri?.fsPath ?? ''),
         status: change.status,
       })),
+      diff: clip(diff, TEXT_LIMIT),
+      diffTruncated: diff.length > TEXT_LIMIT,
     };
   } catch (error) {
     return { available: false, error: String(error) };

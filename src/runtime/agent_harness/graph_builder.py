@@ -26,6 +26,7 @@ from .task_store import AgentTaskStore
 from .event_bus import AgentEventBus
 from .workspace_checkpoint_store import WorkspaceCheckpointStore
 from .checkpointing import DurableSqliteCheckpointer, default_langgraph_checkpoint_path
+from .coding_state import tool_start_patch, tool_result_patch, human_tool_label
 
 
 class AgentHarness:
@@ -142,6 +143,31 @@ class AgentHarness:
                 "estimated_time": "<1s",
                 "reversible": True,
             },
+            "editor_open_diff": {
+                "name": "editor_open_diff",
+                "description": "Open the native VS Code diff for a workspace file (baseline vs current working tree).",
+                "input_schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+                "effect": "control",
+                "risk_level": "low",
+                "workspace_required": True,
+                "estimated_time": "<1s",
+                "reversible": True,
+            },
+            "editor_show_source_control": {
+                "name": "editor_show_source_control",
+                "description": "Focus VS Code Source Control so the user can inspect current changes.",
+                "input_schema": {"type": "object", "additionalProperties": False, "properties": {}},
+                "effect": "control",
+                "risk_level": "low",
+                "workspace_required": False,
+                "estimated_time": "<1s",
+                "reversible": True,
+            },
         }
 
     def _executor_ready(self) -> bool:
@@ -184,6 +210,28 @@ class AgentHarness:
                 for item in records
             ],
         }
+
+    def _emit_coding_state(
+        self,
+        task_id: str,
+        patch: dict[str, Any],
+        *,
+        step: int | None = None,
+        importance: float = 0.46,
+    ) -> None:
+        """Publish semantic execution telemetry, tuyệt đối không publish chain-of-thought."""
+        if not task_id or not isinstance(patch, dict) or not patch:
+            return
+        label = str(patch.get("current_action", "") or patch.get("phase", "") or "Coding state updated")
+        self.event_bus.emit(
+            task_id,
+            "coding_state",
+            actor="executor",
+            summary=label[:600],
+            step=step,
+            importance=importance,
+            data=dict(patch),
+        )
 
     def _consume_controls(self, state: AgentState) -> tuple[dict[str, Any], list[HumanMessage]]:
         task_id = str(state.get("task_id", "") or "")
@@ -332,6 +380,13 @@ class AgentHarness:
                         importance=0.56,
                         data={"tools": names[:12]},
                     )
+                    first_call = next((call for call in tool_calls if isinstance(call, dict)), {})
+                    first_name = str(first_call.get("name", "") or "") if isinstance(first_call, dict) else ""
+                    first_args = first_call.get("args") if isinstance(first_call, dict) and isinstance(first_call.get("args"), dict) else {}
+                    semantic = tool_start_patch(first_name, first_args) if first_name else {"phase": "planning"}
+                    semantic["next_action"] = human_tool_label(first_name, first_args) if first_name else ", ".join(names[:3])
+                    semantic["current_action"] = "Đang lập bước thực thi"
+                    self._emit_coding_state(task_id, semantic, step=step)
                 else:
                     final_text = str(getattr(response, "content", "") or "").strip()
                     self.event_bus.emit(
@@ -342,6 +397,12 @@ class AgentHarness:
                         step=step,
                         importance=0.62 if final_text else 0.46,
                     )
+                    self._emit_coding_state(task_id, {
+                        "phase": "summarizing",
+                        "current_action": "Đang tổng kết kết quả",
+                        "last_summary": final_text[:900],
+                        "next_action": "",
+                    }, step=step, importance=0.40)
         return patch
 
     def _disclosed_tool_specs(
@@ -413,6 +474,10 @@ class AgentHarness:
             specs.append(dict(self.tool_specs["editor_open_file"]))
         if "editor.focusProblems" in client_caps:
             specs.append(dict(self.tool_specs["editor_focus_problems"]))
+        if "editor.openDiff" in client_caps:
+            specs.append(dict(self.tool_specs["editor_open_diff"]))
+        if "editor.showSourceControl" in client_caps:
+            specs.append(dict(self.tool_specs["editor_show_source_control"]))
         inspect_only = str(task_mode or "execute").strip().lower() == "inspect"
         for name in self.skill_loader.tools_for_skills(list(active_skills)):
             spec = self.tool_specs.get(name)
@@ -447,6 +512,7 @@ class AgentHarness:
                 raise RuntimeError("editor_command_requires_task")
             payload = {
                 "command": "editor.openFile",
+                "requestId": f"ide_{uuid.uuid4().hex[:12]}",
                 "path": str(args.get("path", "") or "").strip(),
                 "line": max(1, int(args.get("line", 1) or 1)),
                 "column": max(1, int(args.get("column", 1) or 1)),
@@ -459,10 +525,32 @@ class AgentHarness:
         if name == "editor_focus_problems":
             if not task_id:
                 raise RuntimeError("editor_command_requires_task")
-            payload = {"command": "editor.focusProblems"}
+            payload = {"command": "editor.focusProblems", "requestId": f"ide_{uuid.uuid4().hex[:12]}"}
             self.event_bus.emit(
                 task_id, "editor_command", actor="executor",
                 summary="Mở Problems trong VS Code.", importance=0.44, data=payload,
+            )
+            return {"success": True, "status": "queued", "data": payload}
+        if name == "editor_open_diff":
+            if not task_id:
+                raise RuntimeError("editor_command_requires_task")
+            payload = {
+                "command": "editor.openDiff",
+                "requestId": f"ide_{uuid.uuid4().hex[:12]}",
+                "path": str(args.get("path", "") or "").strip(),
+            }
+            self.event_bus.emit(
+                task_id, "editor_command", actor="executor",
+                summary=f"Mở diff {payload['path']}", importance=0.50, data=payload,
+            )
+            return {"success": True, "status": "queued", "data": payload}
+        if name == "editor_show_source_control":
+            if not task_id:
+                raise RuntimeError("editor_command_requires_task")
+            payload = {"command": "editor.showSourceControl", "requestId": f"ide_{uuid.uuid4().hex[:12]}"}
+            self.event_bus.emit(
+                task_id, "editor_command", actor="executor",
+                summary="Mở Source Control trong VS Code.", importance=0.42, data=payload,
             )
             return {"success": True, "status": "queued", "data": payload}
         tool = self.tool_registry.get(name)
@@ -817,6 +905,7 @@ class AgentHarness:
                     importance=0.42,
                     data={"tool": name, "args": _safe_tool_args(args)},
                 )
+                self._emit_coding_state(task_id, tool_start_patch(name, args), step=step)
 
             try:
                 tool_spec = self._tool_spec(name, state.get("active_skills", []) or [])
@@ -870,7 +959,8 @@ class AgentHarness:
                         importance=0.48,
                         data={"tool": name},
                     )
-                    self._project_tool_result_events(task_id, name, result, step=step)
+                    self._emit_coding_state(task_id, tool_result_patch(name, args, result), step=step)
+                    self._project_tool_result_events(task_id, name, result, args=args, step=step)
             except Exception as exc:
                 text = f"{type(exc).__name__}: {exc}"
                 out_messages.append(ToolMessage(content=text, tool_call_id=call_id))
@@ -884,6 +974,14 @@ class AgentHarness:
                         importance=0.88,
                         data={"tool": name},
                     )
+                    self._emit_coding_state(task_id, {
+                        "phase": "blocked",
+                        "current_action": "",
+                        "last_tool": name,
+                        "last_summary": text[:900],
+                        "blocker": text[:900],
+                        "next_action": "Replan từ lỗi tool quan sát được.",
+                    }, step=step, importance=0.76)
 
         patch: dict[str, Any] = {
             "messages": out_messages,
@@ -896,7 +994,9 @@ class AgentHarness:
             patch["ide_context"] = permission_resume_context
         return patch
 
-    def _project_tool_result_events(self, task_id: str, name: str, result: Any, *, step: int) -> None:
+    def _project_tool_result_events(
+        self, task_id: str, name: str, result: Any, *, args: dict[str, Any] | None = None, step: int
+    ) -> None:
         """Project useful tool metadata into typed console events.
 
         The timeline should show semantic facts (files changed, tests passed)
@@ -908,7 +1008,9 @@ class AgentHarness:
         success = bool(result.get("success", False))
 
         if name == "project_apply_patch":
-            touched = data.get("touched_files") if isinstance(data.get("touched_files"), list) else []
+            touched = _coerce_listish(data.get("touched_files"))
+            raw_patch = str((args or {}).get("patch", "") or "")
+            operation_id = str(data.get("project_operation_id", "") or "")
             for path in touched[:80]:
                 rel = str(path or "").strip()
                 if rel:
@@ -919,7 +1021,13 @@ class AgentHarness:
                         summary=f"Đã thay đổi {rel}",
                         step=step,
                         importance=0.62,
-                        data={"path": rel, "tool": name},
+                        data={
+                            "path": rel,
+                            "tool": name,
+                            "operation_id": operation_id,
+                            # Diff card chỉ cần patch của file này, giới hạn kích thước.
+                            "diff": _extract_file_patch(raw_patch, rel)[:16000],
+                        },
                     )
 
         if name == "project_run_tests":
@@ -951,7 +1059,7 @@ class AgentHarness:
                     summary=f"Đã kiểm tra git diff ({len(diff)} ký tự).",
                     step=step,
                     importance=0.55,
-                    data={"chars": len(diff)},
+                    data={"chars": len(diff), "diff": diff[:16000]},
                 )
 
     def _should_continue(self, state: AgentState) -> Literal["tools", "__end__"]:
@@ -1055,6 +1163,13 @@ class AgentHarness:
                 "workspace_name": normalized_workspace_name,
             },
         )
+        self._emit_coding_state(task_id, {
+            "objective": clarified_goal or goal,
+            "phase": "planning",
+            "current_action": "Đang đọc task và chọn bước đầu tiên",
+            "waiting_for": "",
+            "blocker": "",
+        }, step=0, importance=0.55)
 
         initial_state: AgentState = {
             "goal": clarified_goal or goal,
@@ -1140,6 +1255,26 @@ class AgentHarness:
                 actor="system",
                 summary="Task tiếp tục từ checkpoint của cùng LangGraph thread.",
                 importance=0.76,
+            )
+        elif status == "running":
+            # Sau process restart có thể còn task=running nhưng worker cũ đã chết.
+            # LangGraph SQLite mới là authority: invoke(None) tiếp tục từ checkpoint
+            # gần nhất thay vì tạo graph mới hoặc để control queue mồ côi.
+            graph_input = None
+            if str(directive or "").strip() or clean_resume_context:
+                patch: dict[str, Any] = {"status": "running", "rollback_requested": ""}
+                if str(directive or "").strip():
+                    patch["messages"] = [HumanMessage(content="[RUNTIME DIRECTIVE AFTER RECOVERY]\n" + str(directive).strip())]
+                if clean_resume_context:
+                    patch["ide_context"] = clean_resume_context
+                graph_input = patch
+            self.event_bus.emit(
+                task_id,
+                "task_resumed",
+                actor="system",
+                summary="Đang khôi phục task running từ LangGraph checkpoint sau khi worker cũ không còn.",
+                importance=0.88,
+                data={"recovery": True},
             )
         else:
             raise RuntimeError(f"agent_task_not_waiting:{status or 'unknown'}")
@@ -1247,6 +1382,12 @@ class AgentHarness:
                         importance=0.98,
                         data=payload,
                     )
+                    self._emit_coding_state(task_id, {
+                        "phase": "waiting_permission" if waiting_status == "waiting_permission" else "waiting_user",
+                        "current_action": str(payload.get("question", "") or "Đang chờ người dùng"),
+                        "waiting_for": "user_permission" if waiting_status == "waiting_permission" else "user_choice",
+                        "next_action": "Resume đúng checkpoint sau khi có phản hồi.",
+                    }, step=int(payload.get("step", 0) or 0), importance=0.82)
                     public = dict(result) if isinstance(result, dict) else {}
                     public["status"] = waiting_status
                     public["interrupt"] = payload
@@ -1264,6 +1405,14 @@ class AgentHarness:
 
                 if final_status == "running":
                     final_text = _final_result_text(result)
+                    self._emit_coding_state(task_id, {
+                        "phase": "completed",
+                        "current_action": "",
+                        "waiting_for": "",
+                        "next_action": "",
+                        "blocker": "",
+                        "last_summary": final_text[:900],
+                    }, importance=0.70)
                     self.event_bus.emit(
                         task_id,
                         "task_completed",
@@ -1275,6 +1424,12 @@ class AgentHarness:
                     )
                 return result
         except Exception as exc:
+            self._emit_coding_state(task_id, {
+                "phase": "failed",
+                "current_action": "",
+                "blocker": f"{type(exc).__name__}: {exc}"[:900],
+                "waiting_for": "",
+            }, importance=0.90)
             self.event_bus.emit(
                 task_id,
                 "task_failed",
@@ -1306,6 +1461,48 @@ class AgentHarness:
             return ""
         return ""
 
+
+
+def _coerce_listish(value: Any) -> list[str]:
+    """ProjectOperations serialize data qua ActionExecutionResult nên list có thể thành JSON string."""
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item or "").strip()]
+    if isinstance(value, tuple):
+        return [str(item) for item in value if str(item or "").strip()]
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            parsed = None
+        if isinstance(parsed, list):
+            return [str(item) for item in parsed if str(item or "").strip()]
+        return [item.strip() for item in text.split(",") if item.strip()]
+    return []
+
+
+def _extract_file_patch(patch_text: str, path: str) -> str:
+    """Tách chunk unified diff của một file để artifact card không lặp cả patch lớn."""
+    text = str(patch_text or "")
+    wanted = str(path or "").replace("\\", "/").lstrip("./")
+    if not text.strip() or not wanted:
+        return ""
+    lines = text.splitlines()
+    starts = [i for i, line in enumerate(lines) if line.startswith("diff --git ")]
+    if starts:
+        starts.append(len(lines))
+        for a, b in zip(starts, starts[1:]):
+            chunk = lines[a:b]
+            header = chunk[0].replace("\\", "/") if chunk else ""
+            if f"a/{wanted}" in header or f"b/{wanted}" in header or header.endswith(" " + wanted):
+                return "\n".join(chunk)
+    # Fallback cho patch không có diff --git header.
+    markers = (f"+++ b/{wanted}", f"+++ {wanted}", f"--- a/{wanted}", f"--- {wanted}")
+    if any(marker in text.replace("\\", "/") for marker in markers):
+        return text
+    return ""
 
 
 def _normalize_choice_request(args: dict[str, Any]) -> tuple[str, list[dict[str, str]]]:

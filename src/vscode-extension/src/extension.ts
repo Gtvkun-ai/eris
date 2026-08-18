@@ -1,17 +1,22 @@
 import * as vscode from 'vscode';
 import { ErisChatPanel } from './chatPanel';
+import { captureIdeContext } from './contextBridge';
+import { WorkspaceDiffProvider } from './diffProvider';
 import { ConnectionState, ErisClient } from './erisClient';
+import { TerminalContextObserver } from './terminalObserver';
 
-type SidebarKind = 'command' | 'group' | 'task' | 'skill' | 'status';
+type SidebarKind = 'command' | 'group' | 'task' | 'chat' | 'skill' | 'status';
 interface SidebarNode {
   kind: SidebarKind;
   label: string;
   description?: string;
   command?: string;
+  args?: unknown[];
   icon?: string;
   children?: SidebarNode[];
 }
 
+/** Sidebar chỉ là navigation/status. Chat/task detail nằm ở Webview bên editor. */
 class ErisSidebarProvider implements vscode.TreeDataProvider<SidebarNode>, vscode.Disposable {
   private readonly changed = new vscode.EventEmitter<SidebarNode | undefined | void>();
   readonly onDidChangeTreeData = this.changed.event;
@@ -25,10 +30,12 @@ class ErisSidebarProvider implements vscode.TreeDataProvider<SidebarNode>, vscod
   }
 
   observeEvent(event: any): void {
-    if (event?.type === 'session.ready') {
-      this.tasks = Array.isArray(event.tasks) ? event.tasks : [];
+    if (event?.type === 'session.ready' || event?.type === 'task.list') {
+      this.tasks = Array.isArray(event.tasks) ? event.tasks : this.tasks;
       const brain = event.capabilities?.brain;
-      this.skills = Array.isArray(brain?.skills) ? brain.skills : [];
+      if (Array.isArray(brain?.skills)) {
+        this.skills = brain.skills;
+      }
       this.changed.fire();
       return;
     }
@@ -36,21 +43,34 @@ class ErisSidebarProvider implements vscode.TreeDataProvider<SidebarNode>, vscod
     if (!taskId) {
       return;
     }
-    const task = this.tasks.find((item) => String(item?.task_id ?? '') === taskId);
+    let task = this.tasks.find((item) => String(item?.task_id ?? '') === taskId);
     if (!task) {
-      if (event.type === 'activity.start') {
-        this.tasks.unshift({ task_id: taskId, goal: event.payload?.label ?? 'Agent task', status: 'running' });
-        this.tasks = this.tasks.slice(0, 24);
-        this.changed.fire();
-      }
-      return;
+      task = {
+        task_id: taskId,
+        thread_id: String(event?.threadId ?? ''),
+        goal: String(event?.type === 'message.user' ? (event?.payload?.content ?? 'Agent task') : (event?.payload?.label ?? 'Agent task')),
+        status: 'running',
+        coding_state: {},
+      };
+      this.tasks.unshift(task);
+      this.tasks = this.tasks.slice(0, 50);
     }
-    if (event.type === 'activity.end') {
+    if (event.type === 'message.user' && !task.goal) {
+      task.goal = String(event.payload?.content ?? 'Agent task');
+    } else if (event.type === 'coding.state') {
+      task.coding_state = { ...(task.coding_state ?? {}), ...(event.payload ?? {}) };
+      task.status = task.coding_state?.phase === 'waiting_user' ? 'waiting_user' : (task.status || 'running');
+    } else if (event.type === 'activity.end') {
       task.status = String(event.payload?.status ?? 'completed');
     } else if (event.type === 'interrupt.request') {
       task.status = event.payload?.reason === 'tool_permission' ? 'waiting_permission' : 'waiting_user';
+    } else if (event.type === 'interrupt.resolved') {
+      task.status = 'running';
     } else if (String(event.type).startsWith('activity.')) {
-      task.status = String(event.payload?.status ?? task.status ?? 'running');
+      const status = String(event.payload?.status ?? '');
+      if (status) {
+        task.status = status;
+      }
     }
     this.changed.fire();
   }
@@ -65,7 +85,7 @@ class ErisSidebarProvider implements vscode.TreeDataProvider<SidebarNode>, vscod
       item.iconPath = new vscode.ThemeIcon(element.icon);
     }
     if (element.command) {
-      item.command = { command: element.command, title: element.label };
+      item.command = { command: element.command, title: element.label, arguments: element.args };
     }
     return item;
   }
@@ -77,13 +97,35 @@ class ErisSidebarProvider implements vscode.TreeDataProvider<SidebarNode>, vscod
     if (element) {
       return [];
     }
-    const taskChildren = this.tasks.slice(0, 12).map((task): SidebarNode => ({
-      kind: 'task',
-      label: String(task.goal ?? task.clarified_goal ?? 'Agent task').slice(0, 70),
+
+    const uniqueThreads = new Map<string, any>();
+    for (const task of this.tasks) {
+      const thread = String(task?.thread_id ?? '');
+      if (thread && !uniqueThreads.has(thread)) {
+        uniqueThreads.set(thread, task);
+      }
+    }
+    const chatChildren = [...uniqueThreads.values()].slice(0, 12).map((task): SidebarNode => ({
+      kind: 'chat',
+      label: String(task.goal ?? task.clarified_goal ?? 'Chat').slice(0, 64),
       description: String(task.status ?? ''),
-      icon: task.status === 'completed' ? 'pass' : task.status === 'failed' ? 'error' : 'run',
-      command: 'eris.openChat',
+      icon: 'comment-discussion',
+      command: 'eris.openTask',
+      args: [String(task.task_id ?? ''), String(task.thread_id ?? '')],
     }));
+    const taskChildren = this.tasks.slice(0, 16).map((task): SidebarNode => {
+      const coding = task.coding_state ?? {};
+      const detail = String(coding.current_action ?? task.status ?? '');
+      const status = String(task.status ?? '');
+      return {
+        kind: 'task',
+        label: String(task.goal ?? task.clarified_goal ?? 'Agent task').slice(0, 64),
+        description: detail.slice(0, 42),
+        icon: status === 'completed' ? 'pass' : status === 'failed' ? 'error' : status.includes('waiting') ? 'question' : 'run',
+        command: 'eris.openTask',
+        args: [String(task.task_id ?? ''), String(task.thread_id ?? '')],
+      };
+    });
     const skillChildren = this.skills.slice(0, 18).map((skill): SidebarNode => ({
       kind: 'skill',
       label: String(skill.name ?? skill.skill_name ?? 'skill'),
@@ -91,9 +133,16 @@ class ErisSidebarProvider implements vscode.TreeDataProvider<SidebarNode>, vscod
       icon: 'tools',
       command: 'eris.openChat',
     }));
+
     return [
       { kind: 'command', label: 'New Chat', icon: 'add', command: 'eris.newChat' },
-      { kind: 'command', label: 'Current Chat', icon: 'comment-discussion', command: 'eris.openChat' },
+      {
+        kind: 'group',
+        label: 'Chats',
+        description: chatChildren.length ? `${chatChildren.length}` : 'empty',
+        icon: 'comment-discussion',
+        children: chatChildren.length ? chatChildren : [{ kind: 'status', label: 'Chưa có hội thoại', icon: 'circle-outline' }],
+      },
       {
         kind: 'group',
         label: 'Plans',
@@ -125,29 +174,61 @@ class ErisSidebarProvider implements vscode.TreeDataProvider<SidebarNode>, vscod
 export function activate(context: vscode.ExtensionContext): void {
   const client = new ErisClient(context);
   const sidebar = new ErisSidebarProvider();
-  context.subscriptions.push(client, sidebar);
+  const terminalObserver = new TerminalContextObserver();
+  const diffProvider = new WorkspaceDiffProvider();
+  context.subscriptions.push(client, sidebar, terminalObserver, diffProvider);
   context.subscriptions.push(vscode.window.registerTreeDataProvider('eris.sidebar', sidebar));
   context.subscriptions.push(client.onStateChanged((state) => sidebar.setState(state)));
-  context.subscriptions.push(client.onEvent((event) => sidebar.observeEvent(event)));
+  context.subscriptions.push(client.onEvent((event) => {
+    sidebar.observeEvent(event);
+    if (event?.type === 'session.ready') {
+      // Chỉ recover task VS Code của đúng session. Nếu Python process vừa restart,
+      // status vẫn là running trong SQLite nhưng worker cũ đã chết. Control plane
+      // phía backend phân biệt được case đó và resume checkpoint; worker còn sống
+      // thì resume là no-op idempotent.
+      const tasks = Array.isArray(event.tasks) ? event.tasks : [];
+      const recoverable = tasks.filter((task: any) =>
+        String(task?.status ?? '') === 'running'
+        && String(task?.session_id ?? '') === String(event.sessionId ?? '')
+        && String(task?.metadata?.source ?? '') === 'vscode',
+      );
+      if (recoverable.length) {
+        void captureIdeContext(terminalObserver).then(async (ideContext) => {
+          for (const task of recoverable) {
+            await client.controlTask(String(task.task_id ?? ''), 'resume', '', '', ideContext);
+          }
+        }).catch(() => undefined);
+      }
+    }
+  }));
 
-  const openChat = () => ErisChatPanel.show(context.extensionUri, client, context);
+  const openChat = () => ErisChatPanel.show(
+    context.extensionUri,
+    client,
+    context,
+    terminalObserver,
+    diffProvider,
+  );
   context.subscriptions.push(vscode.commands.registerCommand('eris.openChat', openChat));
   context.subscriptions.push(vscode.commands.registerCommand('eris.newChat', () => {
-    const panel = openChat();
-    panel.newChat();
+    openChat().newChat();
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand('eris.openTask', (taskId: string, threadId: string) => {
+    openChat().selectTask(taskId, threadId);
   }));
   context.subscriptions.push(vscode.commands.registerCommand('eris.reconnect', async () => {
     try {
       await client.connect(true);
+      await client.requestTasks();
       void vscode.window.showInformationMessage('Eris Service đã kết nối lại.');
     } catch (error) {
       void vscode.window.showErrorMessage(String(error));
     }
   }));
 
-  // Kết nối sớm để sidebar phản ánh trạng thái thật, nhưng extension vẫn sống nếu
-  // Python service chưa chạy. Khi service xuất hiện, client sẽ reconnect tự động.
-  void client.connect().catch(() => undefined);
+  // Kết nối sớm để sidebar phản ánh service thật. Python chưa chạy thì extension
+  // vẫn sống và client tự reconnect, không biến IDE thành con tin của backend.
+  void client.connect().then(() => client.requestTasks()).catch(() => undefined);
 }
 
 export function deactivate(): void {
