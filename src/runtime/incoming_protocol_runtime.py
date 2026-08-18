@@ -197,10 +197,47 @@ class IncomingProtocolRuntimeMixin:
                 if action in {"directive", "choice"} and not text:
                     raise ValueError("choice_text_required" if action == "choice" else "directive_text_required")
 
+                # LangGraph interrupt thật đã nhả worker. Với task đang chờ user,
+                # phải resume checkpoint trực tiếp; enqueue như kiến trúc UDP cũ sẽ
+                # tạo một control không còn worker nào thức để consume.
+                direct_resume = False
+                controller = getattr(self, "control_agent_task", None)
+                resumer = getattr(self, "resume_agent_task_async", None)
+                if callable(controller) and task_status in {"waiting_user", "waiting_permission", "paused"} and action in {"stop", "rollback"}:
+                    result = controller(
+                        task_id,
+                        action=action,
+                        text=text,
+                        checkpoint_id=checkpoint_id,
+                        source="agent_console",
+                    )
+                    result_status = str(result.get("status", "") or "")
+                    if result_status in {"failed", "rejected", "unavailable", "not_found"}:
+                        raise RuntimeError(str(result.get("reason", "agent_control_failed") or "agent_control_failed"))
+                    control = None
+                    direct_resume = True
+                elif callable(resumer) and task_status in {"waiting_user", "waiting_permission"} and action in {"choice", "directive", "resume"}:
+                    response = {
+                        "choiceId": choice_id or ("other" if action == "directive" else "resume"),
+                        "text": text,
+                        "value": text,
+                        "source": "agent_console",
+                    }
+                    resumed = resumer(task_id, response=response, source="agent_console")
+                    if str(resumed.get("status", "") or "") not in {"resuming", "started"}:
+                        raise RuntimeError(str(resumed.get("reason", "agent_resume_failed") or "agent_resume_failed"))
+                    direct_resume = True
+                    control = None
+                elif callable(resumer) and task_status == "paused" and action in {"resume", "directive"}:
+                    resumed = resumer(task_id, response=None, source="agent_console", directive=text)
+                    if str(resumed.get("status", "") or "") not in {"resuming", "started"}:
+                        raise RuntimeError(str(resumed.get("reason", "agent_resume_failed") or "agent_resume_failed"))
+                    direct_resume = True
+                    control = None
                 # A terminal task has no worker left to consume queued controls.
                 # Rollback it synchronously through AgentHarness instead of adding
                 # a request that would sit in TaskStore forever looking important.
-                if action == "rollback" and terminal:
+                elif action == "rollback" and terminal:
                     harness = getattr(self, "agent_harness", None)
                     restore = getattr(harness, "restore_task_checkpoint", None)
                     if not callable(restore):
@@ -223,6 +260,7 @@ class IncomingProtocolRuntimeMixin:
                     if control is None:
                         raise RuntimeError("agent_control_enqueue_failed")
 
+                control_id = str((control or {}).get("control_id", "") or "")
                 if action == "directive":
                     store.append_event(
                         task_id,
@@ -230,9 +268,9 @@ class IncomingProtocolRuntimeMixin:
                         actor="user",
                         summary=text,
                         importance=0.92,
-                        data={"control_id": control.get("control_id", "")},
+                        data={"control_id": control_id, "resume_mode": "langgraph" if direct_resume else "queued"},
                     )
-                    message = "Đã gửi chỉ thị vào task; executor sẽ nhận ở boundary kế tiếp."
+                    message = ("Đã resume LangGraph với chỉ thị mới." if direct_resume else "Đã gửi chỉ thị vào task; executor sẽ nhận ở boundary kế tiếp.")
                 elif action == "choice":
                     store.append_event(
                         task_id,
@@ -241,12 +279,13 @@ class IncomingProtocolRuntimeMixin:
                         summary=text,
                         importance=0.96,
                         data={
-                            "control_id": control.get("control_id", ""),
+                            "control_id": control_id,
                             "choice_id": choice_id,
+                            "resume_mode": "langgraph" if direct_resume else "queued",
                             "choice_event_id": choice_event_id,
                         },
                     )
-                    message = "Đã gửi lựa chọn; Gemini sẽ tiếp tục từ đúng phiên đang chờ."
+                    message = "Đã gửi lựa chọn; LangGraph tiếp tục từ đúng checkpoint đang chờ."
                 elif action == "rollback":
                     if not terminal:
                         store.append_event(
@@ -258,7 +297,7 @@ class IncomingProtocolRuntimeMixin:
                                 if checkpoint_id else "Yêu cầu quay lại checkpoint gần nhất."
                             ),
                             importance=0.96,
-                            data={"checkpoint_id": checkpoint_id, "control_id": control.get("control_id", "")},
+                            data={"checkpoint_id": checkpoint_id, "control_id": control_id},
                         )
                         message = "Đã xếp yêu cầu rollback; AgentHarness sẽ xử lý ở điểm an toàn kế tiếp."
                 else:
@@ -268,7 +307,7 @@ class IncomingProtocolRuntimeMixin:
                         actor="user",
                         summary=f"Người dùng yêu cầu {action} task.",
                         importance=0.86,
-                        data={"control_id": control.get("control_id", "")},
+                        data={"control_id": control_id, "resume_mode": "langgraph" if direct_resume else "queued"},
                     )
                     message = f"Đã gửi yêu cầu {action}."
             else:

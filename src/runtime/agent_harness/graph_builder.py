@@ -6,6 +6,7 @@ scraping model reasoning or stdout.
 """
 from __future__ import annotations
 
+import json
 import uuid
 import threading
 import time
@@ -15,7 +16,7 @@ from typing import Any, Callable, Literal
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import Command, interrupt
 
 from .graph_state import AgentState
 from .permission_gate import PermissionGate, Permission
@@ -24,6 +25,7 @@ from .skill_loader import SkillLoader
 from .task_store import AgentTaskStore
 from .event_bus import AgentEventBus
 from .workspace_checkpoint_store import WorkspaceCheckpointStore
+from .checkpointing import DurableSqliteCheckpointer, default_langgraph_checkpoint_path
 
 
 class AgentHarness:
@@ -46,6 +48,8 @@ class AgentHarness:
         executor_name: str = "gemini",
         model_name: str = "",
         workspace_scope: Callable[[str], Any] | None = None,
+        checkpoint_path: str | None = None,
+        checkpointer: Any = None,
         logger: Any = None,
     ):
         self.llm = llm
@@ -67,7 +71,16 @@ class AgentHarness:
         # reason in parallel without ever running a tool against the wrong repo.
         self._workspace_tool_lock = threading.RLock()
         self.logger = logger
-        self.checkpointer = MemorySaver()
+        # Checkpoint graph phải sống qua restart; MemorySaver chỉ phù hợp test/demo.
+        self._checkpoint_runtime = None
+        if checkpointer is not None:
+            self.checkpointer = checkpointer
+            self.checkpoint_path = ""
+        else:
+            resolved_checkpoint = Path(checkpoint_path).expanduser().resolve() if checkpoint_path else default_langgraph_checkpoint_path(self.task_store)
+            self._checkpoint_runtime = DurableSqliteCheckpointer(resolved_checkpoint)
+            self.checkpointer = self._checkpoint_runtime.saver
+            self.checkpoint_path = str(resolved_checkpoint)
         self.graph = self._build_graph()
 
     @staticmethod
@@ -95,6 +108,35 @@ class AgentHarness:
                 "description": "List atomic LangGraph + filesystem checkpoints for the current Agent task.",
                 "input_schema": {"type": "object", "additionalProperties": False, "properties": {}},
                 "effect": "inspect",
+                "risk_level": "low",
+                "workspace_required": False,
+                "estimated_time": "<1s",
+                "reversible": True,
+            },
+            "editor_open_file": {
+                "name": "editor_open_file",
+                "description": "Ask the connected VS Code client to open a workspace file and optionally reveal a line.",
+                "input_schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "path": {"type": "string"},
+                        "line": {"type": "integer", "minimum": 1},
+                        "column": {"type": "integer", "minimum": 1},
+                    },
+                    "required": ["path"],
+                },
+                "effect": "control",
+                "risk_level": "low",
+                "workspace_required": True,
+                "estimated_time": "<1s",
+                "reversible": True,
+            },
+            "editor_focus_problems": {
+                "name": "editor_focus_problems",
+                "description": "Ask the connected VS Code client to focus the Problems panel.",
+                "input_schema": {"type": "object", "additionalProperties": False, "properties": {}},
+                "effect": "control",
                 "risk_level": "low",
                 "workspace_required": False,
                 "estimated_time": "<1s",
@@ -156,6 +198,10 @@ class AgentHarness:
         for control in controls:
             action = str(control.get("action", "") or "").lower()
             if action in {"directive", "choice"}:
+                control_data = control.get("data") if isinstance(control.get("data"), dict) else {}
+                fresh_ide_context = control_data.get("ide_context") if isinstance(control_data.get("ide_context"), dict) else {}
+                if fresh_ide_context:
+                    patch["ide_context"] = _compact_ide_context(fresh_ide_context)
                 text = str(control.get("text", "") or "").strip()
                 if text:
                     prefix = (
@@ -211,6 +257,8 @@ class AgentHarness:
         if directive_messages:
             messages.extend(directive_messages)
         injected = state.get("injected_context", "")
+        ide_context = _compact_ide_context(state.get("ide_context"))
+        ide_context_text = json.dumps(ide_context, ensure_ascii=False, separators=(",", ":")) if ide_context else "{}"
         task_mode = str(state.get("task_mode", "execute") or "execute").strip().lower()
         step = int(state.get("step_count", 0) or 0) + 1
 
@@ -241,11 +289,16 @@ class AgentHarness:
             f"Current Task ID: {task_id or '(none)'}\n"
             f"Locked Workspace: {state.get('workspace_path', '') or '(none)'}\n"
             f"Active Skills: {', '.join(state.get('active_skills', []) or [])}\n"
+            f"IDE Context (structured, may be partial): {ide_context_text}\n"
             f"\n--- INJECTED SKILL CONTEXT ---\n{injected}\n--- END SKILL CONTEXT ---\n"
         ))
 
         response = None
-        disclosed_tools = self._disclosed_tool_specs(state.get("active_skills", []) or [], task_mode=task_mode)
+        disclosed_tools = self._disclosed_tool_specs(
+            state.get("active_skills", []) or [],
+            task_mode=task_mode,
+            ide_context=ide_context,
+        )
         invoke_with_tools = getattr(self.llm, "invoke_with_tools", None)
         if callable(invoke_with_tools):
             response = invoke_with_tools(
@@ -296,6 +349,7 @@ class AgentHarness:
         active_skills: list[str] | tuple[str, ...],
         *,
         task_mode: str = "execute",
+        ide_context: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         specs: list[dict[str, Any]] = [
             {
@@ -324,7 +378,7 @@ class AgentHarness:
             },
             {
                 "name": "ask_user_choice",
-                "description": "Pause the current task and present a compact multiple-choice decision in Eris Console. Use only when user intent is genuinely required.",
+                "description": "Pause the current LangGraph task and ask the connected Eris client for a compact multiple-choice decision. Use only when user intent is genuinely required.",
                 "input_schema": {
                     "type": "object",
                     "additionalProperties": False,
@@ -354,6 +408,11 @@ class AgentHarness:
                 "risk_level": "low",
             },
         ]
+        client_caps = _ide_client_capabilities(ide_context)
+        if "editor.openFile" in client_caps:
+            specs.append(dict(self.tool_specs["editor_open_file"]))
+        if "editor.focusProblems" in client_caps:
+            specs.append(dict(self.tool_specs["editor_focus_problems"]))
         inspect_only = str(task_mode or "execute").strip().lower() == "inspect"
         for name in self.skill_loader.tools_for_skills(list(active_skills)):
             spec = self.tool_specs.get(name)
@@ -383,6 +442,29 @@ class AgentHarness:
             return self._inspect_capability_catalog(args)
         if name == "list_task_checkpoints":
             return self._list_task_checkpoints(task_id)
+        if name == "editor_open_file":
+            if not task_id:
+                raise RuntimeError("editor_command_requires_task")
+            payload = {
+                "command": "editor.openFile",
+                "path": str(args.get("path", "") or "").strip(),
+                "line": max(1, int(args.get("line", 1) or 1)),
+                "column": max(1, int(args.get("column", 1) or 1)),
+            }
+            self.event_bus.emit(
+                task_id, "editor_command", actor="executor",
+                summary=f"Mở file {payload['path']}", importance=0.52, data=payload,
+            )
+            return {"success": True, "status": "queued", "data": payload}
+        if name == "editor_focus_problems":
+            if not task_id:
+                raise RuntimeError("editor_command_requires_task")
+            payload = {"command": "editor.focusProblems"}
+            self.event_bus.emit(
+                task_id, "editor_command", actor="executor",
+                summary="Mở Problems trong VS Code.", importance=0.44, data=payload,
+            )
+            return {"success": True, "status": "queued", "data": payload}
         tool = self.tool_registry.get(name)
         if tool is None:
             raise KeyError(f"unknown_tool:{name}")
@@ -550,6 +632,148 @@ class AgentHarness:
         injected_context = str(state.get("injected_context", "") or "")
         step = int(state.get("step_count", 0) or 0)
 
+        # HUMAN-IN-THE-LOOP THẬT: ask_user_choice phải interrupt trước mọi
+        # side effect trong node. LangGraph sẽ checkpoint rồi trả control về caller;
+        # worker không ngồi polling. Khi resume, node chạy lại và interrupt() trả về
+        # response đã được client gửi qua Command(resume=...).
+        choice_call = next(
+            (item for item in tool_calls if isinstance(item, dict) and str(item.get("name", "") or "") == "ask_user_choice"),
+            None,
+        )
+        if isinstance(choice_call, dict):
+            choice_resume_context: dict[str, Any] = {}
+            call_id = str(choice_call.get("id", "") or f"tool_{uuid.uuid4().hex[:10]}")
+            args = choice_call.get("args") if isinstance(choice_call.get("args"), dict) else {}
+            question, options = _normalize_choice_request(args)
+            if not question or len(options) < 2:
+                text = "ask_user_choice requires a question and at least two valid options."
+                out_messages.append(ToolMessage(content=text, tool_call_id=call_id))
+                if task_id:
+                    self.event_bus.emit(
+                        task_id, "tool_failed", actor="tool", summary=text, step=step,
+                        importance=0.86, data={"tool": "ask_user_choice"},
+                    )
+            else:
+                resume_value = interrupt({
+                    "type": "interrupt.request",
+                    "reason": "user_choice",
+                    "taskId": task_id,
+                    "threadId": str(state.get("thread_id", "") or ""),
+                    "toolCallId": call_id,
+                    "question": question,
+                    "options": options,
+                    "allowOther": bool(args.get("allow_other", True)),
+                    "step": step,
+                })
+                choice_resume_context = _resume_ide_context(resume_value)
+                selected = _choice_resume_text(resume_value, options)
+                out_messages.append(ToolMessage(
+                    content=("User decision: " + selected) if selected else "User resumed without a textual choice.",
+                    tool_call_id=call_id,
+                ))
+                if task_id:
+                    self.event_bus.emit(
+                        task_id,
+                        "interrupt_resolved",
+                        actor="user",
+                        summary=selected or "Người dùng đã tiếp tục task.",
+                        step=step,
+                        importance=0.92,
+                        data={"tool": "ask_user_choice", "tool_call_id": call_id},
+                    )
+
+            # Provider yêu cầu mỗi tool_call có một ToolMessage. Các call còn lại
+            # được defer để model replan sau quyết định, tránh side effect chạy lại
+            # khi node được LangGraph replay lúc resume.
+            for pending in tool_calls:
+                if not isinstance(pending, dict) or pending is choice_call:
+                    continue
+                pending_id = str(pending.get("id", "") or f"tool_{uuid.uuid4().hex[:10]}")
+                pending_name = str(pending.get("name", "") or "tool")
+                out_messages.append(ToolMessage(
+                    content=f"Deferred {pending_name}: reissue this tool after incorporating the user decision.",
+                    tool_call_id=pending_id,
+                ))
+            choice_patch: dict[str, Any] = {
+                "messages": out_messages,
+                "active_skills": active_skills,
+                "active_tools": active_tools,
+                "injected_context": injected_context,
+                **control_patch,
+            }
+            if choice_resume_context:
+                choice_patch["ide_context"] = choice_resume_context
+            return choice_patch
+
+        # Permission ASK cũng dùng interrupt thật. Nếu node có nhiều tool call,
+        # chỉ call đầu tiên cần quyền được xử lý; các ASK còn lại bị defer để model
+        # re-issue sau, tránh một resume vô tình cấp quyền cho cả cụm side effect.
+        permission_call = None
+        for candidate in tool_calls:
+            if not isinstance(candidate, dict):
+                continue
+            candidate_name = str(candidate.get("name", "") or "")
+            candidate_args = candidate.get("args") if isinstance(candidate.get("args"), dict) else {}
+            if self.permission_gate.check_permission(
+                candidate_name,
+                candidate_args,
+                tool_spec=self._tool_spec(candidate_name, state.get("active_skills", []) or []),
+            ) == Permission.ASK:
+                permission_call = candidate
+                break
+
+        approved_permission_call_id = ""
+        denied_permission_call_id = ""
+        permission_resume_context: dict[str, Any] = {}
+        if isinstance(permission_call, dict):
+            permission_call_id = str(permission_call.get("id", "") or f"tool_{uuid.uuid4().hex[:10]}")
+            # Một số provider test không gắn id. Ghi id ổn định vào call để vòng
+            # execute phía dưới không sinh một UUID khác sau khi interrupt resume.
+            permission_call["id"] = permission_call_id
+            permission_name = str(permission_call.get("name", "") or "tool")
+            permission_args = permission_call.get("args") if isinstance(permission_call.get("args"), dict) else {}
+            resume_value = interrupt({
+                "type": "permission.request",
+                "reason": "tool_permission",
+                "taskId": task_id,
+                "threadId": str(state.get("thread_id", "") or ""),
+                "toolCallId": permission_call_id,
+                "question": f"Cho phép Eris chạy {permission_name}?",
+                "options": [
+                    {"id": "allow_once", "label": "Cho phép một lần", "description": "Chỉ áp dụng cho tool call này."},
+                    {"id": "deny", "label": "Không cho phép", "description": "Bỏ tool này và để agent chọn hướng khác."},
+                ],
+                "allowOther": False,
+                "tool": permission_name,
+                "args": _safe_tool_args(permission_args),
+                "step": step,
+            })
+            permission_resume_context = _resume_ide_context(resume_value)
+            if _permission_resume_allowed(resume_value):
+                approved_permission_call_id = permission_call_id
+                if task_id:
+                    self.event_bus.emit(
+                        task_id,
+                        "interrupt_resolved",
+                        actor="user",
+                        summary=f"Người dùng cho phép chạy {permission_name} một lần.",
+                        step=step,
+                        importance=0.94,
+                        data={"tool": permission_name, "tool_call_id": permission_call_id, "permission": "allow_once"},
+                    )
+            else:
+                denied_permission_call_id = permission_call_id
+                if task_id:
+                    self.event_bus.emit(
+                        task_id,
+                        "interrupt_resolved",
+                        actor="user",
+                        summary=f"Người dùng từ chối quyền chạy {permission_name}.",
+                        step=step,
+                        importance=0.94,
+                        data={"tool": permission_name, "tool_call_id": permission_call_id, "permission": "deny"},
+                    )
+
         for call in tool_calls:
             if not isinstance(call, dict):
                 continue
@@ -557,61 +781,31 @@ class AgentHarness:
             call_id = str(call.get("id", "") or f"tool_{uuid.uuid4().hex[:10]}")
             args = call.get("args") if isinstance(call.get("args"), dict) else {}
 
-            if name == "ask_user_choice":
-                question = str(args.get("question", "") or "").strip()[:1200]
-                raw_options = args.get("options") if isinstance(args.get("options"), list) else []
-                options: list[dict[str, str]] = []
-                for index, item in enumerate(raw_options[:5]):
-                    if not isinstance(item, dict):
-                        continue
-                    label = str(item.get("label", "") or "").strip()[:240]
-                    if not label:
-                        continue
-                    option_id = str(item.get("id", "") or "").strip()[:80] or f"option_{index + 1}"
-                    description = str(item.get("description", "") or "").strip()[:700]
-                    value = str(item.get("value", "") or "").strip()[:1600] or label
-                    options.append({
-                        "id": option_id,
-                        "label": label,
-                        "description": description,
-                        "value": value,
-                    })
-                if not question or len(options) < 2:
-                    text = "ask_user_choice requires a question and at least two valid options."
-                    out_messages.append(ToolMessage(content=text, tool_call_id=call_id))
-                    if task_id:
-                        self.event_bus.emit(
-                            task_id,
-                            "tool_failed",
-                            actor="tool",
-                            summary=text,
-                            step=step,
-                            importance=0.86,
-                            data={"tool": name},
-                        )
-                    continue
+            permission = self.permission_gate.check_permission(name, args, tool_spec=self._tool_spec(name, state.get("active_skills", []) or []))
 
-                text = "Waiting for the user to choose one of the presented options in Eris Console."
-                out_messages.append(ToolMessage(content=text, tool_call_id=call_id))
-                control_patch["status"] = "waiting_user"
+            if permission == Permission.DENY:
+                result = f"Denied by PermissionGate: {name}"
+                out_messages.append(ToolMessage(content=result, tool_call_id=call_id))
                 if task_id:
+                    self.event_bus.emit(task_id, "tool_failed", actor="tool", summary=result, step=step, importance=0.94, data={"tool": name})
+                continue
+            if permission == Permission.ASK and call_id != approved_permission_call_id:
+                if call_id == denied_permission_call_id:
+                    result = f"Permission denied by user: {name}"
+                else:
+                    result = f"Deferred {name}: request permission again after the current decision."
+                out_messages.append(ToolMessage(content=result, tool_call_id=call_id))
+                if task_id and call_id == denied_permission_call_id:
                     self.event_bus.emit(
                         task_id,
-                        "clarification_requested",
-                        actor="executor",
-                        summary=question,
-                        detail="Chọn một phương án bên dưới để Gemini tiếp tục task.",
+                        "tool_failed",
+                        actor="tool",
+                        summary=f"Người dùng không cấp quyền cho {name}.",
                         step=step,
-                        importance=0.98,
-                        data={
-                            "question": question,
-                            "options": options,
-                            "allow_other": bool(args.get("allow_other", True)),
-                        },
+                        importance=0.86,
+                        data={"tool": name, "reason": "permission_denied"},
                     )
-                break
-
-            permission = self.permission_gate.check_permission(name, args, tool_spec=self._tool_spec(name, state.get("active_skills", []) or []))
+                continue
 
             if task_id:
                 self.event_bus.emit(
@@ -623,28 +817,6 @@ class AgentHarness:
                     importance=0.42,
                     data={"tool": name, "args": _safe_tool_args(args)},
                 )
-
-            if permission == Permission.DENY:
-                result = f"Denied by PermissionGate: {name}"
-                out_messages.append(ToolMessage(content=result, tool_call_id=call_id))
-                if task_id:
-                    self.event_bus.emit(task_id, "tool_failed", actor="tool", summary=result, step=step, importance=0.94, data={"tool": name})
-                continue
-            if permission == Permission.ASK:
-                result = f"Permission required before executing: {name}"
-                out_messages.append(ToolMessage(content=result, tool_call_id=call_id))
-                control_patch["status"] = "waiting_permission"
-                if task_id:
-                    self.event_bus.emit(
-                        task_id,
-                        "permission_requested",
-                        actor="system",
-                        summary=f"Cần quyền trước khi chạy {name}.",
-                        step=step,
-                        importance=0.96,
-                        data={"tool": name, "args": _safe_tool_args(args)},
-                    )
-                continue
 
             try:
                 tool_spec = self._tool_spec(name, state.get("active_skills", []) or [])
@@ -720,6 +892,8 @@ class AgentHarness:
             "injected_context": injected_context,
             **control_patch,
         }
+        if permission_resume_context:
+            patch["ide_context"] = permission_resume_context
         return patch
 
     def _project_tool_result_events(self, task_id: str, name: str, result: Any, *, step: int) -> None:
@@ -811,22 +985,31 @@ class AgentHarness:
         clarified_goal: str = "",
         task_mode: str = "execute",
         source: str = "eris_chat",
+        session_id: str = "",
         workspace_id: str = "",
         workspace_path: str = "",
         workspace_name: str = "",
+        ide_context: dict[str, Any] | None = None,
     ):
-        """Start one task and project its lifecycle to Agent Console."""
+        """Bắt đầu một task mới trên LangGraph thread bền vững.
+
+        Khi gặp ``interrupt()`` hàm trả về ngay với status ``waiting_user``;
+        worker được giải phóng hoàn toàn. Client sẽ gọi ``resume_task`` sau.
+        """
         normalized_mode = "inspect" if str(task_mode or "execute").strip().lower() == "inspect" else "execute"
         normalized_source = str(source or "eris_chat").strip() or "eris_chat"
+        normalized_session = str(session_id or "").strip()
         normalized_workspace_id = str(workspace_id or "").strip()
         normalized_workspace_path = str(workspace_path or "").strip()
         normalized_workspace_name = str(workspace_name or "").strip()
+        clean_context = _compact_ide_context(ide_context)
         task = self.task_store.create_task(
             clarified_goal or goal,
             task_id=task_id,
             executor=self.executor_name,
             model=self.model_name,
             thread_id=thread_id,
+            session_id=normalized_session,
             metadata={
                 "original_goal": goal,
                 "source": normalized_source,
@@ -850,6 +1033,9 @@ class AgentHarness:
             task_id,
             clarified_goal=clarified_goal,
             status="running",
+            thread_id=thread_id,
+            session_id=normalized_session,
+            pending_interrupt={},
             metadata=existing_metadata,
         )
         self.event_bus.emit(
@@ -863,18 +1049,18 @@ class AgentHarness:
                 "model": self.model_name,
                 "source": normalized_source,
                 "task_mode": normalized_mode,
+                "session_id": normalized_session,
                 "workspace_id": normalized_workspace_id,
                 "workspace_path": normalized_workspace_path,
                 "workspace_name": normalized_workspace_name,
             },
         )
 
-        base_config = {"configurable": {"thread_id": thread_id}}
-        config = dict(base_config)
         initial_state: AgentState = {
             "goal": clarified_goal or goal,
             "task_id": task_id,
             "thread_id": thread_id,
+            "session_id": normalized_session,
             "executor": self.executor_name,
             "model": self.model_name,
             "task_mode": normalized_mode,
@@ -882,6 +1068,7 @@ class AgentHarness:
             "workspace_id": normalized_workspace_id,
             "workspace_path": normalized_workspace_path,
             "workspace_name": normalized_workspace_name,
+            "ide_context": clean_context,
             "status": "running",
             "messages": [HumanMessage(content=clarified_goal or goal)],
             "active_skills": [],
@@ -891,13 +1078,109 @@ class AgentHarness:
             "rollback_requested": "",
             "step_count": 0,
         }
+        return self._drive_graph_task(
+            task_id=task_id,
+            thread_id=thread_id,
+            workspace_path=normalized_workspace_path,
+            graph_input=initial_state,
+        )
+
+    def resume_task(
+        self,
+        task_id: str,
+        response: Any = None,
+        *,
+        directive: str = "",
+        ide_context: dict[str, Any] | None = None,
+    ):
+        """Resume task đã interrupt/pause mà không cần worker polling sống nền.
+
+        ``waiting_user`` dùng đúng ``Command(resume=...)`` và cùng ``thread_id``.
+        ``paused`` là pause ở node boundary nên re-enter bằng state patch thường.
+        """
+        task_id = str(task_id or "").strip()
+        task = self.task_store.get_task(task_id, event_limit=0)
+        if task is None:
+            raise KeyError(f"unknown_agent_task:{task_id}")
+        status = str(task.get("status", "") or "").strip().lower()
+        if status in {"completed", "failed", "stopped"}:
+            raise RuntimeError(f"agent_task_terminal:{status}")
+
+        thread_id = str(task.get("thread_id", "") or task_id).strip()
+        metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+        workspace_path = str(metadata.get("workspace_path", "") or "").strip()
+
+        clean_resume_context = _compact_ide_context(ide_context)
+
+        if status in {"waiting_user", "waiting_permission"}:
+            # Nếu caller truyền context riêng mà response chưa có, gắn vào payload
+            # resume. interrupt() sẽ đọc nó ở đúng node đang chờ.
+            if clean_resume_context and isinstance(response, dict) and not isinstance(response.get("ideContext"), dict):
+                response = {**response, "ideContext": clean_resume_context}
+            self.event_bus.emit(
+                task_id,
+                "interrupt_resume_requested",
+                actor="user",
+                summary="Đã nhận phản hồi; đang resume đúng LangGraph checkpoint.",
+                importance=0.82,
+            )
+            graph_input: Any = Command(resume=response)
+        elif status == "paused":
+            messages: list[HumanMessage] = []
+            if str(directive or "").strip():
+                messages.append(HumanMessage(content="[RUNTIME DIRECTIVE AFTER PAUSE]\n" + str(directive).strip()))
+            graph_input = {"status": "running", "rollback_requested": ""}
+            if messages:
+                graph_input["messages"] = messages
+            if clean_resume_context:
+                graph_input["ide_context"] = clean_resume_context
+            self.event_bus.emit(
+                task_id,
+                "task_resumed",
+                actor="system",
+                summary="Task tiếp tục từ checkpoint của cùng LangGraph thread.",
+                importance=0.76,
+            )
+        else:
+            raise RuntimeError(f"agent_task_not_waiting:{status or 'unknown'}")
+
+        return self._drive_graph_task(
+            task_id=task_id,
+            thread_id=thread_id,
+            workspace_path=workspace_path,
+            graph_input=graph_input,
+        )
+
+    def stop_task(self, task_id: str, *, reason: str = "user") -> bool:
+        """Dừng projection task kể cả khi hiện không còn worker để consume control."""
+        task = self.task_store.get_task(str(task_id or "").strip(), event_limit=0)
+        if task is None:
+            return False
+        if str(task.get("status", "") or "") in {"completed", "failed", "stopped"}:
+            return True
+        self.event_bus.emit(
+            str(task_id),
+            "task_stopped",
+            actor="system",
+            summary="Task đã dừng theo control plane.",
+            importance=0.95,
+            data={"reason": str(reason or "user")},
+        )
+        return True
+
+    def _drive_graph_task(
+        self,
+        *,
+        task_id: str,
+        thread_id: str,
+        workspace_path: str,
+        graph_input: Any,
+    ):
+        """Chạy graph cho tới END, pause boundary, rollback hoặc interrupt thật."""
+        base_config = {"configurable": {"thread_id": thread_id}}
+        config = dict(base_config)
         try:
-            graph_input: dict[str, Any] | AgentState = initial_state
-            result: dict[str, Any] | Any = {}
-            final_status = "running"
             while True:
-                # A rollback branches execution from the requested persisted graph
-                # checkpoint *after* restoring the matching filesystem/UI projection.
                 pending_rollback = ""
                 if isinstance(graph_input, dict):
                     pending_rollback = str(graph_input.get("rollback_requested", "") or "").strip()
@@ -907,7 +1190,7 @@ class AgentHarness:
                             task_id=task_id,
                             checkpoint_id=pending_rollback,
                             thread_id=thread_id,
-                            workspace_path=normalized_workspace_path,
+                            workspace_path=workspace_path,
                         )
                     except Exception as exc:
                         self.event_bus.emit(
@@ -924,68 +1207,73 @@ class AgentHarness:
                             "rollback_requested": "",
                             "messages": [HumanMessage(content=(
                                 "[ROLLBACK UNAVAILABLE] The requested checkpoint could not be restored. "
-                                "Continue from the current state, inspect the latest evidence, and choose a safe alternative rather than retrying the rollback blindly."
+                                "Continue from the current state and choose a safe alternative."
                             ))],
                         }
                     else:
-                        config = {"configurable": {"thread_id": thread_id, "checkpoint_id": record.graph_checkpoint_id}}
+                        config = {"configurable": {
+                            "thread_id": thread_id,
+                            "checkpoint_id": record.graph_checkpoint_id,
+                        }}
                         graph_input = {
                             "status": "running",
                             "rollback_requested": "",
                             "messages": [HumanMessage(content=(
                                 "[ATOMIC ROLLBACK RESTORED]\n"
                                 "Graph state and workspace were restored to the selected checkpoint. "
-                                "Do not blindly repeat the reverted action. Reassess the goal from the restored evidence and choose the next safest useful step."
+                                "Reassess before attempting another side effect."
                             ))],
                         }
 
                 result = self.graph.invoke(graph_input, config)
-                # Any invocation branched from an old checkpoint writes a new latest
-                # state on the same thread. Subsequent calls should follow that tip.
                 config = dict(base_config)
-                final_status = str((result or {}).get("status", "running") or "running") if isinstance(result, dict) else "running"
 
+                interrupt_values = _extract_interrupt_values(result)
+                if interrupt_values:
+                    payload = _normalize_interrupt_payload(
+                        interrupt_values[0], task_id=task_id, thread_id=thread_id
+                    )
+                    kind = str(payload.get("type", "interrupt.request") or "interrupt.request")
+                    waiting_status = "waiting_permission" if kind == "permission.request" else "waiting_user"
+                    event_type = "permission_requested" if waiting_status == "waiting_permission" else "interrupt_requested"
+                    self.task_store.update_task(task_id, status=waiting_status, pending_interrupt=payload)
+                    self.event_bus.emit(
+                        task_id,
+                        event_type,
+                        actor="executor",
+                        summary=str(payload.get("question", "") or payload.get("message", "") or "Cần phản hồi của người dùng."),
+                        detail="LangGraph đã checkpoint và nhả worker; task sẽ resume bằng Command(resume=...).",
+                        step=int(payload.get("step", 0) or 0),
+                        importance=0.98,
+                        data=payload,
+                    )
+                    public = dict(result) if isinstance(result, dict) else {}
+                    public["status"] = waiting_status
+                    public["interrupt"] = payload
+                    return public
+
+                final_status = str((result or {}).get("status", "running") or "running") if isinstance(result, dict) else "running"
                 rollback_after_step = str((result or {}).get("rollback_requested", "") or "").strip() if isinstance(result, dict) else ""
                 if rollback_after_step:
                     graph_input = {"rollback_requested": rollback_after_step}
                     continue
 
-                if final_status == "waiting_user":
-                    user_patch = self._wait_for_user_input(task_id)
-                    if user_patch is None:
-                        final_status = "stopped"
-                        if isinstance(result, dict):
-                            result["status"] = "stopped"
-                        break
-                    graph_input = user_patch
-                    continue
+                # Pause/stop là boundary state: worker kết thúc ngay, không sleep loop.
+                if final_status in {"paused", "stopped", "waiting_user", "waiting_permission"}:
+                    return result
 
-                if final_status != "paused":
-                    break
-
-                # Pause is a real long-lived state, not END disguised as a button.
-                # The worker stays alive and resumes the same LangGraph thread when
-                # the UI sends resume. Reusing thread_id preserves checkpointed state.
-                resume_patch = self._wait_for_resume(task_id)
-                if resume_patch is None:
-                    final_status = "stopped"
-                    if isinstance(result, dict):
-                        result["status"] = "stopped"
-                    break
-                graph_input = resume_patch
-
-            if final_status == "running":
-                final_text = _final_result_text(result)
-                self.event_bus.emit(
-                    task_id,
-                    "task_completed",
-                    actor="executor",
-                    summary=(final_text[:520] if final_text else "Gemini đã hoàn tất task."),
-                    detail=final_text,
-                    importance=0.92,
-                    data={"final": final_text[:8000]},
-                )
-            return result
+                if final_status == "running":
+                    final_text = _final_result_text(result)
+                    self.event_bus.emit(
+                        task_id,
+                        "task_completed",
+                        actor="executor",
+                        summary=(final_text[:520] if final_text else "Gemini đã hoàn tất task."),
+                        detail=final_text,
+                        importance=0.92,
+                        data={"final": final_text[:8000]},
+                    )
+                return result
         except Exception as exc:
             self.event_bus.emit(
                 task_id,
@@ -996,144 +1284,12 @@ class AgentHarness:
             )
             raise
 
-    def _wait_for_user_input(self, task_id: str) -> dict[str, Any] | None:
-        """Keep a waiting-user task alive until the Console sends a choice/directive.
-
-        This is deliberately the same long-lived worker model as pause: LangGraph
-        state remains checkpointed and the task does not fake completion while a
-        decision card is visible in the UI.
-        """
-        rollback_requested = ""
-        while True:
-            time.sleep(0.20)
-            controls = self.task_store.consume_controls(task_id)
-            if not controls:
-                continue
-            for control in controls:
-                action = str(control.get("action", "") or "").strip().lower()
-                if action in {"choice", "directive"}:
-                    text = str(control.get("text", "") or "").strip()
-                    if not text:
-                        continue
-                    prefix = (
-                        "[USER CHOICE FROM ERIS CONSOLE]\n"
-                        if action == "choice"
-                        else "[USER FOLLOW-UP FROM ERIS CONSOLE]\n"
-                    )
-                    self.event_bus.emit(
-                        task_id,
-                        "task_resumed",
-                        actor="system",
-                        summary="Đã nhận lựa chọn; Gemini tiếp tục task." if action == "choice" else "Đã nhận trả lời; Gemini tiếp tục task.",
-                        importance=0.82,
-                    )
-                    patch: dict[str, Any] = {
-                        "status": "running",
-                        "messages": [HumanMessage(content=prefix + text)],
-                    }
-                    if rollback_requested:
-                        patch["rollback_requested"] = rollback_requested
-                    return patch
-                if action == "rollback":
-                    checkpoint_id = str(control.get("checkpoint_id", "") or "").strip()
-                    rollback_requested = checkpoint_id or "latest"
-                    self.event_bus.emit(
-                        task_id,
-                        "rollback_queued",
-                        actor="system",
-                        summary=(
-                            f"Rollback đã xếp hàng tới checkpoint {checkpoint_id}."
-                            if checkpoint_id else "Rollback đã xếp hàng tới checkpoint gần nhất."
-                        ),
-                        importance=0.95,
-                        data={"checkpoint_id": checkpoint_id},
-                    )
-                    return {"status": "running", "rollback_requested": rollback_requested}
-                if action == "stop":
-                    self.event_bus.emit(
-                        task_id,
-                        "task_stopped",
-                        actor="system",
-                        summary="Task đã dừng trong khi chờ lựa chọn của người dùng.",
-                        importance=0.95,
-                    )
-                    return None
-                if action in {"pause", "resume"}:
-                    # A choice card already represents a waiting state; these controls
-                    # do not dismiss it without actual user content.
-                    continue
-
-    def _wait_for_resume(self, task_id: str) -> dict[str, Any] | None:
-        """Wait while a task is paused without losing directives or graph state.
-
-        Returns a small state patch for the next invocation on the same thread.
-        ``None`` means the user stopped the task while paused.
-        """
-        pending_messages: list[HumanMessage] = []
-        rollback_requested = ""
-        while True:
-            time.sleep(0.20)
-            controls = self.task_store.consume_controls(task_id)
-            if not controls:
-                continue
-            for control in controls:
-                action = str(control.get("action", "") or "").strip().lower()
-                if action in {"directive", "choice"}:
-                    directive = str(control.get("text", "") or "").strip()
-                    if directive:
-                        prefix = (
-                            "[USER CHOICE RECEIVED WHILE PAUSED]\n"
-                            if action == "choice"
-                            else "[RUNTIME DIRECTIVE RECEIVED WHILE PAUSED]\n"
-                        )
-                        pending_messages.append(HumanMessage(content=prefix + directive))
-                        self.event_bus.emit(
-                            task_id,
-                            "choice_consumed" if action == "choice" else "directive_consumed",
-                            actor="executor",
-                            summary="Đã giữ lựa chọn mới; Gemini sẽ replan ngay khi resume." if action == "choice" else "Đã giữ chỉ thị mới; Gemini sẽ replan ngay khi resume.",
-                            importance=0.84 if action == "choice" else 0.82,
-                        )
-                elif action == "rollback":
-                    checkpoint_id = str(control.get("checkpoint_id", "") or "").strip()
-                    rollback_requested = checkpoint_id or "latest"
-                    self.event_bus.emit(
-                        task_id,
-                        "rollback_queued",
-                        actor="system",
-                        summary=(
-                            f"Rollback đã xếp hàng tới checkpoint {checkpoint_id}."
-                            if checkpoint_id else "Rollback đã xếp hàng tới checkpoint gần nhất."
-                        ),
-                        importance=0.95,
-                        data={"checkpoint_id": checkpoint_id},
-                    )
-                elif action == "stop":
-                    self.event_bus.emit(
-                        task_id,
-                        "task_stopped",
-                        actor="system",
-                        summary="Task đã dừng trong khi đang pause.",
-                        importance=0.95,
-                    )
-                    return None
-                elif action == "resume":
-                    self.event_bus.emit(
-                        task_id,
-                        "task_resumed",
-                        actor="system",
-                        summary="Task tiếp tục từ checkpoint của cùng LangGraph thread.",
-                        importance=0.76,
-                    )
-                    patch: dict[str, Any] = {"status": "running"}
-                    if pending_messages:
-                        patch["messages"] = pending_messages
-                    if rollback_requested:
-                        patch["rollback_requested"] = rollback_requested
-                    return patch
-                elif action == "pause":
-                    # Idempotent while already paused.
-                    continue
+    def close(self) -> None:
+        """Đóng SQLite connection khi runtime shutdown/reload."""
+        runtime = self._checkpoint_runtime
+        self._checkpoint_runtime = None
+        if runtime is not None:
+            runtime.close()
 
     def _current_checkpoint_id(self, config: dict[str, Any]) -> str:
         getter = getattr(self.graph, "get_state", None)
@@ -1150,6 +1306,140 @@ class AgentHarness:
             return ""
         return ""
 
+
+
+def _normalize_choice_request(args: dict[str, Any]) -> tuple[str, list[dict[str, str]]]:
+    """Chuẩn hóa payload choice trước khi đưa vào LangGraph interrupt."""
+    question = str(args.get("question", "") or "").strip()[:1200]
+    raw_options = args.get("options") if isinstance(args.get("options"), list) else []
+    options: list[dict[str, str]] = []
+    for index, item in enumerate(raw_options[:5]):
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label", "") or "").strip()[:240]
+        if not label:
+            continue
+        option_id = str(item.get("id", "") or "").strip()[:80] or f"option_{index + 1}"
+        description = str(item.get("description", "") or "").strip()[:700]
+        value = str(item.get("value", "") or "").strip()[:1600] or label
+        options.append({
+            "id": option_id,
+            "label": label,
+            "description": description,
+            "value": value,
+        })
+    return question, options
+
+
+def _choice_resume_text(response: Any, options: list[dict[str, str]]) -> str:
+    """Biến response từ VS Code/legacy UI thành observation ngắn cho LLM."""
+    if isinstance(response, dict):
+        choice_id = str(
+            response.get("choiceId", "")
+            or response.get("choice_id", "")
+            or response.get("id", "")
+            or ""
+        ).strip()
+        explicit = str(
+            response.get("value", "")
+            or response.get("text", "")
+            or response.get("custom", "")
+            or ""
+        ).strip()
+        if explicit:
+            return explicit[:2000]
+        if choice_id:
+            for option in options:
+                if str(option.get("id", "") or "") == choice_id:
+                    return str(option.get("value", "") or option.get("label", "") or "")[:2000]
+            return choice_id[:2000]
+    if response is None:
+        return ""
+    return str(response).strip()[:2000]
+
+
+def _resume_ide_context(response: Any) -> dict[str, Any]:
+    """Lấy IDE context mới đi kèm phản hồi interrupt, nếu client có gửi."""
+    if not isinstance(response, dict):
+        return {}
+    raw = response.get("ideContext") if isinstance(response.get("ideContext"), dict) else response.get("ide_context")
+    return _compact_ide_context(raw) if isinstance(raw, dict) else {}
+
+
+def _permission_resume_allowed(response: Any) -> bool:
+    """Chuẩn hóa phản hồi permission từ Choice Card/legacy client."""
+    if isinstance(response, dict):
+        value = str(
+            response.get("choiceId", "")
+            or response.get("choice_id", "")
+            or response.get("value", "")
+            or response.get("text", "")
+            or ""
+        ).strip().lower()
+    else:
+        value = str(response or "").strip().lower()
+    return value in {"allow", "allow_once", "yes", "y", "ok", "approve", "approved", "cho phép", "dong y", "đồng ý"}
+
+
+def _extract_interrupt_values(result: Any) -> list[Any]:
+    """Đọc interrupt ở cả output V1 dict lẫn GraphOutput mới hơn."""
+    raw = None
+    if isinstance(result, dict):
+        raw = result.get("__interrupt__")
+    if raw is None:
+        raw = getattr(result, "interrupts", None)
+    if raw is None:
+        return []
+    if not isinstance(raw, (list, tuple)):
+        raw = [raw]
+    values: list[Any] = []
+    for item in raw:
+        values.append(getattr(item, "value", item))
+    return values
+
+
+def _normalize_interrupt_payload(value: Any, *, task_id: str, thread_id: str) -> dict[str, Any]:
+    if isinstance(value, dict):
+        payload = dict(value)
+    else:
+        payload = {"question": str(value or "")}
+    payload.setdefault("type", "interrupt.request")
+    payload.setdefault("taskId", task_id)
+    payload.setdefault("threadId", thread_id)
+    return _compact_jsonish(payload, depth=0)
+
+
+def _compact_ide_context(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    compact = _compact_jsonish(value, depth=0)
+    return compact if isinstance(compact, dict) else {}
+
+
+def _compact_jsonish(value: Any, *, depth: int) -> Any:
+    """Giữ context checkpointable và không để client nhét payload vô hạn."""
+    if depth > 5:
+        return "[truncated-depth]"
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value if len(value) <= 5000 else value[:4999].rstrip() + "…"
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for key, item in list(value.items())[:64]:
+            out[str(key)[:120]] = _compact_jsonish(item, depth=depth + 1)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [_compact_jsonish(item, depth=depth + 1) for item in list(value)[:80]]
+    return str(value)[:1000]
+
+
+def _ide_client_capabilities(ide_context: dict[str, Any] | None) -> set[str]:
+    if not isinstance(ide_context, dict):
+        return set()
+    client = ide_context.get("client") if isinstance(ide_context.get("client"), dict) else {}
+    raw = client.get("capabilities") if isinstance(client.get("capabilities"), list) else []
+    return {str(item).strip() for item in raw if str(item).strip()}
 
 def _parse_test_counts(output: str, *, success: bool) -> tuple[int, int]:
     """Best-effort counts for pytest/unittest style summaries."""

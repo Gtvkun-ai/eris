@@ -81,6 +81,20 @@ from screen import build_screen_text_runtime
 class CoordinatorShutdownMixin:
     def stop(self):
         self.running = False
+        # IDE gateway giữ socket/thread riêng. Dừng nó trước khi tháo runtime để
+        # client không nhận thêm event trong lúc các subsystem đang shutdown.
+        agent_ws = getattr(self, "agent_ws_service", None)
+        if agent_ws is not None:
+            try:
+                agent_ws.stop()
+            except Exception as exc:
+                self.logger.debug("[agent-ws] stop error: %s", exc)
+        agent_harness = getattr(self, "agent_harness", None)
+        if agent_harness is not None:
+            try:
+                agent_harness.close()
+            except Exception as exc:
+                self.logger.debug("[agent-harness] close error: %s", exc)
         worker = getattr(self, "screen_text_worker", None)
         if worker is not None:
             try:

@@ -1,0 +1,64 @@
+{
+  "name": "eris-vscode",
+  "displayName": "Eris",
+  "description": "VS Code client cho Eris Service và LangGraph agent.",
+  "version": "0.1.0",
+  "publisher": "gtvk",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": ["Other", "Machine Learning"],
+  "activationEvents": [
+    "onView:eris.sidebar",
+    "onCommand:eris.openChat",
+    "onCommand:eris.newChat"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "eris.openChat",
+        "title": "Eris: Open Chat"
+      },
+      {
+        "command": "eris.newChat",
+        "title": "Eris: New Chat"
+      },
+      {
+        "command": "eris.reconnect",
+        "title": "Eris: Reconnect Service"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "eris",
+          "title": "Eris",
+          "icon": "media/eris.svg"
+        }
+      ]
+    },
+    "views": {
+      "eris": [
+        {
+          "id": "eris.sidebar",
+          "name": "Eris"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.100.0",
+    "@types/ws": "^8.5.13",
+    "typescript": "^5.8.0"
+  }
+}

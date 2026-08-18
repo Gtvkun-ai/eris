@@ -13,8 +13,10 @@ dependencies = [
 
 [project.optional-dependencies]
 agent = [
-  "langgraph>=0.6",
+  "langgraph>=1.1",
+  "langgraph-checkpoint-sqlite>=3.0",
   "langchain-core>=0.3",
+  "websockets>=14,<18",
 ]
 dev = [
   "pytest>=8.0",

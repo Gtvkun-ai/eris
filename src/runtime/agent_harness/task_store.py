@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Iterable
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _MAX_TASKS = 60
 _MAX_EVENTS_PER_TASK = 360
 _MAX_CONTROLS_PER_TASK = 80
@@ -39,7 +39,7 @@ class AgentTaskStore:
         self._data = self._load()
 
     def _empty(self) -> dict[str, Any]:
-        return {"version": _SCHEMA_VERSION, "tasks": []}
+        return {"version": _SCHEMA_VERSION, "next_event_seq": 1, "tasks": []}
 
     def _load(self) -> dict[str, Any]:
         try:
@@ -51,7 +51,40 @@ class AgentTaskStore:
             tasks = payload.get("tasks")
             if not isinstance(tasks, list):
                 tasks = []
-            return {"version": _SCHEMA_VERSION, "tasks": tasks[-_MAX_TASKS:]}
+            tasks = tasks[-_MAX_TASKS:]
+
+            # MIGRATION V2: event seq là cursor tăng đơn điệu cho WS replay.
+            # State V1 cũ không có seq nên ta gán tiếp từ seq lớn nhất đã thấy;
+            # không rewrite file ngay lúc boot để tránh I/O không cần thiết.
+            max_seq = 0
+            missing: list[dict[str, Any]] = []
+            for task in tasks:
+                if not isinstance(task, dict):
+                    continue
+                for event in task.get("events", []) or []:
+                    if not isinstance(event, dict):
+                        continue
+                    try:
+                        seq = int(event.get("seq", 0) or 0)
+                    except (TypeError, ValueError):
+                        seq = 0
+                    if seq > 0:
+                        max_seq = max(max_seq, seq)
+                    else:
+                        missing.append(event)
+            for event in sorted(missing, key=lambda item: (float(item.get("created_at", 0.0) or 0.0), str(item.get("event_id", "")))):
+                max_seq += 1
+                event["seq"] = max_seq
+
+            try:
+                declared_next = int(payload.get("next_event_seq", 0) or 0)
+            except (TypeError, ValueError):
+                declared_next = 0
+            return {
+                "version": _SCHEMA_VERSION,
+                "next_event_seq": max(max_seq + 1, declared_next, 1),
+                "tasks": tasks,
+            }
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
             return self._empty()
 
@@ -87,6 +120,7 @@ class AgentTaskStore:
         executor: str = "gemini",
         model: str = "",
         thread_id: str = "",
+        session_id: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         with self._lock:
@@ -98,6 +132,7 @@ class AgentTaskStore:
             task = {
                 "task_id": task_id,
                 "thread_id": str(thread_id or task_id),
+                "session_id": str(session_id or ""),
                 "goal": self._compact_text(goal, 2000),
                 "clarified_goal": "",
                 "status": "queued",
@@ -113,6 +148,8 @@ class AgentTaskStore:
                 "tests": {"passed": 0, "failed": 0, "summary": ""},
                 "checkpoint_id": "",
                 "checkpoint_count": 0,
+                "last_event_seq": 0,
+                "pending_interrupt": {},
                 "events": [],
                 "controls": [],
                 "metadata": dict(metadata or {}),
@@ -126,7 +163,7 @@ class AgentTaskStore:
         allowed = {
             "goal", "clarified_goal", "status", "executor", "model", "started_at", "finished_at",
             "current_step", "active_skills", "changed_files", "tests", "checkpoint_id",
-            "checkpoint_count", "metadata", "thread_id",
+            "checkpoint_count", "metadata", "thread_id", "session_id", "pending_interrupt", "last_event_seq",
         }
         with self._lock:
             task = self._find_locked(task_id)
@@ -159,8 +196,14 @@ class AgentTaskStore:
             task = self._find_locked(task_id)
             if task is None:
                 return None
+            try:
+                seq = int(self._data.get("next_event_seq", 1) or 1)
+            except (TypeError, ValueError):
+                seq = 1
+            self._data["next_event_seq"] = seq + 1
             event = {
                 "event_id": str(event_id or "").strip() or f"ae_{uuid.uuid4().hex[:14]}",
+                "seq": seq,
                 "type": str(event_type or "agent_status"),
                 "actor": str(actor or "system"),
                 "summary": self._compact_text(summary, 1600),
@@ -174,6 +217,7 @@ class AgentTaskStore:
             events.append(event)
             task["events"] = events[-_MAX_EVENTS_PER_TASK:]
             task["updated_at"] = event["created_at"]
+            task["last_event_seq"] = seq
             if step is not None:
                 task["current_step"] = max(int(task.get("current_step", 0) or 0), int(step))
             self._project_event_locked(task, event)
@@ -202,8 +246,13 @@ class AgentTaskStore:
             task["finished_at"] = now
         elif kind == "permission_requested":
             task["status"] = "waiting_permission"
-        elif kind == "clarification_requested":
+            task["pending_interrupt"] = dict(data or {})
+        elif kind in {"clarification_requested", "interrupt_requested"}:
             task["status"] = "waiting_user"
+            task["pending_interrupt"] = dict(data or {})
+        elif kind == "interrupt_resolved":
+            task["status"] = "running"
+            task["pending_interrupt"] = {}
         elif kind in {"checkpoint_created", "checkpoint_restored"}:
             checkpoint_id = str(data.get("checkpoint_id", "") or "")
             if checkpoint_id:
@@ -326,6 +375,97 @@ class AgentTaskStore:
             self._save_locked()
             return pending
 
+
+    def events_since(
+        self,
+        seq: int,
+        *,
+        task_id: str = "",
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Trả event theo cursor tăng đơn điệu để WS reconnect chỉ replay delta.
+
+        Đây là projection đọc thuần; lịch sử task vẫn là nguồn audit chính.
+        """
+        try:
+            after = max(0, int(seq))
+        except (TypeError, ValueError):
+            after = 0
+        cap = max(1, min(2000, int(limit or 500)))
+        wanted_task = str(task_id or "").strip()
+        with self._lock:
+            rows: list[dict[str, Any]] = []
+            for task in self._data.get("tasks", []):
+                if not isinstance(task, dict):
+                    continue
+                current_task_id = str(task.get("task_id", "") or "")
+                if wanted_task and current_task_id != wanted_task:
+                    continue
+                for event in task.get("events", []) or []:
+                    if not isinstance(event, dict):
+                        continue
+                    try:
+                        event_seq = int(event.get("seq", 0) or 0)
+                    except (TypeError, ValueError):
+                        event_seq = 0
+                    if event_seq <= after:
+                        continue
+                    item = self._public_event(event)
+                    item["task_id"] = current_task_id
+                    item["thread_id"] = str(task.get("thread_id", "") or "")
+                    item["session_id"] = str(task.get("session_id", "") or "")
+                    rows.append(item)
+            rows.sort(key=lambda item: int(item.get("seq", 0) or 0))
+            return rows[:cap]
+
+    def latest_task_for_thread(
+        self,
+        thread_id: str,
+        *,
+        session_id: str = "",
+        statuses: Iterable[str] | None = None,
+        event_limit: int = 0,
+    ) -> dict[str, Any] | None:
+        """Tìm task mới nhất của một chat thread để tránh chạy hai graph chồng nhau."""
+        wanted_thread = str(thread_id or "").strip()
+        wanted_session = str(session_id or "").strip()
+        allowed = {str(item or "").strip().lower() for item in (statuses or []) if str(item or "").strip()}
+        if not wanted_thread:
+            return None
+        with self._lock:
+            for task in reversed(self._data.get("tasks", [])):
+                if not isinstance(task, dict) or str(task.get("thread_id", "") or "") != wanted_thread:
+                    continue
+                if wanted_session and str(task.get("session_id", "") or "") not in {"", wanted_session}:
+                    continue
+                if allowed and str(task.get("status", "") or "").strip().lower() not in allowed:
+                    continue
+                return self._public_task(task, event_limit=event_limit)
+        return None
+
+    def list_tasks(
+        self,
+        *,
+        session_id: str = "",
+        limit: int = 24,
+        event_limit: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Danh sách task gọn cho IDE restore state sau reconnect/restart."""
+        wanted_session = str(session_id or "").strip()
+        cap = max(1, min(100, int(limit or 24)))
+        with self._lock:
+            rows: list[dict[str, Any]] = []
+            for task in reversed(self._data.get("tasks", [])):
+                if not isinstance(task, dict):
+                    continue
+                task_session = str(task.get("session_id", "") or "")
+                if wanted_session and task_session not in {"", wanted_session}:
+                    continue
+                rows.append(self._public_task(task, event_limit=event_limit))
+                if len(rows) >= cap:
+                    break
+            return rows
+
     def get_task(self, task_id: str, *, event_limit: int = 100) -> dict[str, Any] | None:
         with self._lock:
             task = self._find_locked(task_id)
@@ -371,7 +511,7 @@ class AgentTaskStore:
             # Choice cards are UI protocol, not debug payload. Preserve their
             # structure even when the original LLM text is verbose; clamp each
             # field instead of collapsing the whole object into {truncated:true}.
-            if str(result.get("type", "") or "") == "clarification_requested":
+            if str(result.get("type", "") or "") in {"clarification_requested", "interrupt_requested"}:
                 raw_options = data.get("options") if isinstance(data.get("options"), list) else []
                 options = []
                 for index, item in enumerate(raw_options[:5]):

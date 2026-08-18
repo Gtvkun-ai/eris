@@ -1042,6 +1042,17 @@ class AIChatOrchestrator:
                 )
         grounding_context = str(getattr(grounding_report, "prompt_context", "") or "")
         grounding_context = _merge_previous_public_context(grounding_context, previous_public_context)
+        build_agent_runtime_context = getattr(host, "_agent_execution_prompt_context", None)
+        if callable(build_agent_runtime_context):
+            try:
+                agent_runtime_context = str(build_agent_runtime_context() or "")
+            except Exception as exc:
+                agent_runtime_context = ""
+                host.logger.debug("[agent-harness] prompt context failed: %s", exc)
+            if agent_runtime_context:
+                grounding_context = "\n\n".join(
+                    part for part in (grounding_context, agent_runtime_context) if str(part).strip()
+                )
         agent_action = str(agent_execution_route.get("action", "none") or "none").strip().lower()
         if agent_action in {"execute", "consult"}:
             task_id_for_public = str(agent_execution_route.get("task_id", "") or "")

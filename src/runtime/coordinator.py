@@ -164,6 +164,7 @@ class RuntimeCoordinator(
         # đi qua ActionExecutor/SandboxWorld. Import lazy để Eris vẫn boot được
         # trên máy chưa cài optional LangGraph dependency.
         self.agent_harness = None
+        self.agent_ws_service = None
         self.agent_executor_backend = None
         self.agent_capability_self_model = None
         self._agent_task_threads = {}
@@ -221,6 +222,24 @@ class RuntimeCoordinator(
                         len(self.agent_capability_self_model.long_skills()),
                         self.agent_capability_self_model.harness_ready,
                     )
+
+                # IDE gateway chạy cùng Eris Service nhưng hoàn toàn tách khỏi Webview.
+                # Extension chỉ đọc discovery file rồi handshake bằng token localhost.
+                ws_enabled = str(os.environ.get("ERIS_AGENT_WS_ENABLED", "1") or "1").strip().lower()
+                if ws_enabled not in {"0", "false", "no", "off"}:
+                    from runtime.agent_service import AgentWebSocketService
+
+                    service = AgentWebSocketService(
+                        store=self.agent_task_store,
+                        event_bus=self.agent_event_bus,
+                        start_task=self.start_agent_task_async,
+                        resume_task=self.resume_agent_task_async,
+                        control_task=self.control_agent_task,
+                        capability_catalog=self._agent_ws_capability_catalog,
+                        logger=logger,
+                    )
+                    if service.start():
+                        self.agent_ws_service = service
             except Exception as exc:
                 self.agent_harness = None
                 self.agent_capability_self_model = None
@@ -416,9 +435,11 @@ class RuntimeCoordinator(
         task_id: str = "",
         task_mode: str = "execute",
         source: str = "eris_chat",
+        session_id: str = "",
         workspace_id: str = "",
         workspace_path: str = "",
         workspace_name: str = "",
+        ide_context: dict | None = None,
     ):
         """Run one Unified Agent Harness task synchronously.
 
@@ -447,6 +468,10 @@ class RuntimeCoordinator(
                 kwargs["task_mode"] = str(task_mode or "execute")
             if accepts_var_kwargs or "source" in parameters:
                 kwargs["source"] = str(source or "eris_chat")
+            if accepts_var_kwargs or "session_id" in parameters:
+                kwargs["session_id"] = str(session_id or "")
+            if accepts_var_kwargs or "ide_context" in parameters:
+                kwargs["ide_context"] = dict(ide_context or {})
             if accepts_var_kwargs or "workspace_id" in parameters:
                 kwargs["workspace_id"] = str(workspace_id or "")
             if accepts_var_kwargs or "workspace_path" in parameters:
@@ -467,9 +492,11 @@ class RuntimeCoordinator(
         clarified_goal: str = "",
         source_turn_id: str = "",
         source: str = "eris_chat",
+        session_id: str = "",
         task_mode: str = "execute",
         workspace_ref: str = "",
         model: str = "",
+        ide_context: dict | None = None,
     ) -> dict:
         """Start Gemini/LangGraph in a daemon worker and return immediately.
 
@@ -512,8 +539,11 @@ class RuntimeCoordinator(
                 
                 if model:
                     model_name = model
-                    if harness.executor is not None and hasattr(harness.executor, "model"):
-                        harness.executor.model = model
+                    # Backend hiện tại nằm ở harness.llm. Giữ tương thích với mock/
+                    # executor cũ nhưng không giả định thuộc tính ``executor`` tồn tại.
+                    backend = getattr(harness, "llm", getattr(harness, "executor", None))
+                    if backend is not None and hasattr(backend, "model"):
+                        backend.model = model
                     harness.model_name = model
 
                 store.create_task(
@@ -522,6 +552,7 @@ class RuntimeCoordinator(
                     executor=executor,
                     model=model_name,
                     thread_id=resolved_thread,
+                    session_id=str(session_id or ""),
                     metadata={
                         "source_turn_id": source_turn_id,
                         "original_goal": goal,
@@ -559,9 +590,11 @@ class RuntimeCoordinator(
                     task_id=task_id,
                     task_mode=task_mode,
                     source=source,
+                    session_id=session_id,
                     workspace_id=workspace_id,
                     workspace_path=workspace_path,
                     workspace_name=workspace_name,
+                    ide_context=dict(ide_context or {}),
                 )
             except Exception as exc:
                 logger = getattr(self, "logger", None)
@@ -587,10 +620,182 @@ class RuntimeCoordinator(
             "thread_id": resolved_thread,
             "goal": clarified_goal or goal,
             "source": str(source or "eris_chat"),
+            "session_id": str(session_id or ""),
             "task_mode": str(task_mode or "execute"),
             "workspace_id": workspace_id,
             "workspace_path": workspace_path,
             "workspace_name": workspace_name,
+        }
+
+    def resume_agent_task_async(
+        self,
+        task_id: str,
+        *,
+        response=None,
+        source: str = "vscode",
+        directive: str = "",
+        ide_context: dict | None = None,
+    ) -> dict:
+        """Resume đúng LangGraph thread đã checkpoint mà không giữ worker polling."""
+        harness = getattr(self, "agent_harness", None)
+        store = getattr(self, "agent_task_store", None)
+        task_id = str(task_id or "").strip()
+        if harness is None or store is None:
+            return {"status": "unavailable", "reason": "agent_harness_unavailable", "task_id": task_id}
+        task = store.get_task(task_id)
+        if task is None:
+            return {"status": "not_found", "reason": "task_not_found", "task_id": task_id}
+
+        active = self._agent_task_threads.get(task_id)
+        if active is not None and active.is_alive():
+            return {"status": "busy", "reason": "task_worker_active", "task_id": task_id}
+
+        status = str(task.get("status", "") or "")
+        if status not in {"waiting_user", "waiting_permission", "paused", "running"}:
+            return {"status": status or "unavailable", "reason": "task_not_resumable", "task_id": task_id}
+
+        import threading
+
+        def _worker() -> None:
+            try:
+                harness.resume_task(
+                    task_id,
+                    response=response,
+                    directive=str(directive or ""),
+                    ide_context=dict(ide_context or {}),
+                )
+            except Exception as exc:
+                logger = getattr(self, "logger", None)
+                warning = getattr(logger, "warning", None)
+                if callable(warning):
+                    warning("[agent-harness] async resume failed task=%s error=%s", task_id, exc)
+            finally:
+                self._agent_task_threads.pop(task_id, None)
+
+        thread = threading.Thread(
+            target=_worker,
+            name=f"eris-agent-resume-{task_id[-6:]}",
+            daemon=True,
+        )
+        self._agent_task_threads[task_id] = thread
+        thread.start()
+        return {
+            "status": "resuming",
+            "task_id": task_id,
+            "thread_id": str(task.get("thread_id", "") or ""),
+            "source": str(source or "vscode"),
+        }
+
+    def control_agent_task(
+        self,
+        task_id: str,
+        *,
+        action: str,
+        text: str = "",
+        checkpoint_id: str = "",
+        source: str = "vscode",
+        ide_context: dict | None = None,
+    ) -> dict:
+        """Control plane chung cho VS Code và Agent Console legacy."""
+        harness = getattr(self, "agent_harness", None)
+        store = getattr(self, "agent_task_store", None)
+        task_id = str(task_id or "").strip()
+        action = str(action or "").strip().lower()
+        if harness is None or store is None:
+            return {"status": "unavailable", "reason": "agent_harness_unavailable"}
+        task = store.get_task(task_id)
+        if task is None:
+            return {"status": "not_found", "reason": "task_not_found"}
+        status = str(task.get("status", "") or "")
+
+        # Interrupt thật không có worker ngủ chờ. Lựa chọn/directive phải resume
+        # checkpoint trực tiếp thay vì nhét vào queue mà chẳng còn ai consume.
+        if status in {"waiting_user", "waiting_permission"} and action in {"choice", "directive", "resume"}:
+            response = {
+                "choiceId": str(text or "") if action == "choice" else "other",
+                "text": str(text or ""),
+                "value": str(text or ""),
+                "source": str(source or "vscode"),
+                # Mang snapshot IDE mới nhất vào lần resume để graph không tiếp tục
+                # bằng context đã cũ từ trước lúc người dùng sửa/chọn trong editor.
+                "ideContext": dict(ide_context or {}),
+            }
+            if action == "resume" and not text:
+                response = {
+                    "choiceId": "resume",
+                    "text": "",
+                    "value": "",
+                    "source": str(source or "vscode"),
+                    "ideContext": dict(ide_context or {}),
+                }
+            return self.resume_agent_task_async(
+                task_id,
+                response=response,
+                source=source,
+                ide_context=dict(ide_context or {}),
+            )
+
+        if status == "paused" and action in {"resume", "directive"}:
+            return self.resume_agent_task_async(
+                task_id,
+                response=None,
+                source=source,
+                directive=text,
+                ide_context=dict(ide_context or {}),
+            )
+
+        if action == "stop" and status in {"waiting_user", "waiting_permission", "paused"}:
+            return harness.stop_task(task_id, reason=f"control:{source}")
+
+        if action == "rollback" and (not self._agent_task_threads.get(task_id) or not self._agent_task_threads[task_id].is_alive()):
+            try:
+                restored = harness.restore_task_checkpoint(task_id, checkpoint_id or "latest")
+                return {"status": "rolled_back", "task_id": task_id, "checkpoint": restored}
+            except Exception as exc:
+                return {"status": "failed", "reason": f"rollback_failed:{type(exc).__name__}:{exc}", "task_id": task_id}
+
+        if action not in {"pause", "resume", "stop", "directive", "choice", "rollback"}:
+            return {"status": "rejected", "reason": "unsupported_action", "task_id": task_id}
+        control = store.enqueue_control(
+            task_id,
+            action,
+            text=str(text or ""),
+            checkpoint_id=str(checkpoint_id or ""),
+            data={
+                "source": str(source or "vscode"),
+                "ide_context": dict(ide_context or {}),
+            },
+        )
+        if control is None:
+            return {"status": "failed", "reason": "control_enqueue_failed", "task_id": task_id}
+        event_bus = getattr(self, "agent_event_bus", None)
+        if event_bus is not None:
+            event_bus.emit(
+                task_id,
+                "user_directive" if action == "directive" else f"{action}_requested",
+                actor="user",
+                summary=str(text or "") or f"Người dùng yêu cầu {action} task.",
+                importance=0.88,
+                data={"control_id": str(control.get("control_id", "") or ""), "source": str(source or "vscode")},
+            )
+        return {"status": "queued", "task_id": task_id, "control_id": str(control.get("control_id", "") or "")}
+
+    def _agent_ws_capability_catalog(self) -> dict:
+        """Catalog nhỏ cho handshake IDE; không buộc frontend hiểu nội bộ cognition."""
+        brain = []
+        self_model = getattr(self, "agent_capability_self_model", None)
+        if self_model is not None:
+            try:
+                payload = self_model.catalog(include_unavailable=False, limit=64)
+                if isinstance(payload, dict):
+                    brain = payload
+            except Exception:
+                brain = []
+        return {
+            "brain": brain,
+            "protocol": ["message.user", "interrupt.resolve", "event.replay", "task.control"],
+            "editorCommands": ["editor.openFile", "editor.focusProblems"],
+            "contextProviders": ["current", "selection", "problems", "git", "workspace", "terminal"],
         }
 
     def route_agent_user_turn(

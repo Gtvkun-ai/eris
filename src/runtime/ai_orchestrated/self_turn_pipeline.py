@@ -1544,6 +1544,19 @@ class SelfTurnPipeline:
         memory_context = host._merge_conversation_context(
             host._build_memory_context(perception.snapshot, memory_resonance=memory_resonance)
         )
+        # Autonomous Eris cũng phải biết backstage coding task đang sống/chờ gì,
+        # nếu không VS Code và "não main" lại thành hai thực thể lịch sự giả vờ không quen nhau.
+        build_agent_runtime_context = getattr(host, "_agent_execution_prompt_context", None)
+        if callable(build_agent_runtime_context):
+            try:
+                agent_runtime_context = str(build_agent_runtime_context() or "")
+            except Exception as exc:
+                agent_runtime_context = ""
+                host.logger.debug("[agent-harness] autonomous context failed: %s", exc)
+            if agent_runtime_context:
+                memory_context = "\n\n".join(
+                    part for part in (memory_context, agent_runtime_context) if str(part).strip()
+                )
         shared_semantic_context: Mapping[str, Any] = {}
         semantic_prompt_context = ""
         semantic_tutor = getattr(host, "semantic_tutor_runtime", None)
