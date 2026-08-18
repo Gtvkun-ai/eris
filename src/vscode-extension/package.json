@@ -1,8 +1,8 @@
 {
   "name": "eris-vscode",
   "displayName": "Eris",
-  "description": "VS Code client cho Eris Service và LangGraph agent.",
-  "version": "0.3.1",
+  "description": "Eris coding agent trong VS Code Panel + @eris native Chat, dùng Eris Service/LangGraph.",
+  "version": "0.4.0",
   "publisher": "gtvk",
   "engines": {
     "vscode": "^1.100.0"
@@ -12,7 +12,9 @@
     "Machine Learning"
   ],
   "activationEvents": [
-    "onView:eris.sidebar",
+    "onView:eris.chatView",
+    "onView:eris.navigator",
+    "onChatParticipant:gtvk.eris",
     "onCommand:eris.openChat",
     "onCommand:eris.newChat",
     "onCommand:eris.openTask",
@@ -63,19 +65,28 @@
       }
     ],
     "viewsContainers": {
-      "activitybar": [
+      "panel": [
         {
-          "id": "eris",
+          "id": "eris.panel",
           "title": "Eris",
           "icon": "media/eris.svg"
         }
       ]
     },
     "views": {
-      "eris": [
+      "eris.panel": [
         {
-          "id": "eris.sidebar",
-          "name": "Eris"
+          "type": "webview",
+          "id": "eris.chatView",
+          "name": "Chat",
+          "contextualTitle": "Eris",
+          "visibility": "visible"
+        },
+        {
+          "id": "eris.navigator",
+          "name": "Chats · Plans · Skills",
+          "contextualTitle": "Eris Navigator",
+          "visibility": "collapsed"
         }
       ]
     },
@@ -98,7 +109,30 @@
           "description": "Lệnh launch Eris tùy chỉnh. Khi có giá trị, lệnh này được ưu tiên hơn auto-detect launcher."
         }
       }
-    }
+    },
+    "chatParticipants": [
+      {
+        "id": "gtvk.eris",
+        "name": "eris",
+        "fullName": "Eris",
+        "description": "Hỏi Eris về code, giao task hoặc tiếp tục task LangGraph hiện tại.",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "fix",
+            "description": "Tìm root cause, sửa code và kiểm chứng"
+          },
+          {
+            "name": "inspect",
+            "description": "Điều tra vấn đề nhưng chưa sửa file"
+          },
+          {
+            "name": "plan",
+            "description": "Lập kế hoạch thực thi, không tạo side effect"
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "compile": "tsc -p ./",

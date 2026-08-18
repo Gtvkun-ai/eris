@@ -2,43 +2,25 @@ import * as crypto from 'node:crypto';
 import * as vscode from 'vscode';
 import { captureIdeContext, currentWorkspaceRef } from './contextBridge';
 import { WorkspaceDiffProvider } from './diffProvider';
-import { executeEditorCommand, openWorkspaceFile } from './editorBridge';
+import { openWorkspaceFile } from './editorBridge';
 import { ErisClient } from './erisClient';
 import { TerminalContextObserver } from './terminalObserver';
 
 /**
- * Chat Panel chỉ render và gửi intent. File/socket/terminal vẫn nằm ở extension
- * host, tránh biến Webview thành một trang HTML có chìa khóa cả workspace.
+ * Webview chính của Eris nằm trong một View Container ở Panel của VS Code.
+ * Nhờ vậy tab `Eris` đứng cùng tầng với Chat/Codex thay vì chiếm Activity Bar
+ * riêng. Webview vẫn chỉ render/gửi intent; socket/file/terminal nằm ở host.
  */
-export class ErisChatPanel implements vscode.Disposable {
-  private static current?: ErisChatPanel;
+export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposable {
+  static readonly viewType = 'eris.chatView';
+
   private readonly disposables: vscode.Disposable[] = [];
+  private readonly viewDisposables: vscode.Disposable[] = [];
+  private view?: vscode.WebviewView;
   private threadId: string;
   private activeTaskId = '';
 
-  static show(
-    extensionUri: vscode.Uri,
-    client: ErisClient,
-    context: vscode.ExtensionContext,
-    terminalObserver: TerminalContextObserver,
-    diffProvider: WorkspaceDiffProvider,
-  ): ErisChatPanel {
-    if (this.current) {
-      this.current.panel.reveal(vscode.ViewColumn.Beside, true);
-      return this.current;
-    }
-    const panel = vscode.window.createWebviewPanel(
-      'eris.chat',
-      'Eris',
-      { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
-      { enableScripts: true, retainContextWhenHidden: true },
-    );
-    this.current = new ErisChatPanel(panel, extensionUri, client, context, terminalObserver, diffProvider);
-    return this.current;
-  }
-
-  private constructor(
-    private readonly panel: vscode.WebviewPanel,
+  constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly client: ErisClient,
     private readonly extensionContext: vscode.ExtensionContext,
@@ -50,32 +32,63 @@ export class ErisChatPanel implements vscode.Disposable {
     if (!persisted) {
       void extensionContext.workspaceState.update('eris.currentThreadId', this.threadId);
     }
-    panel.webview.html = this.html(panel.webview);
+
+    // Listener backend sống ở provider, không phụ thuộc iframe đang visible hay
+    // đã bị VS Code deallocate. Khi view mở lại, history sẽ dựng UI từ state thật.
     this.disposables.push(
-      panel.onDidDispose(() => this.dispose()),
-      panel.webview.onDidReceiveMessage((message) => void this.onWebviewMessage(message)),
       client.onEvent((event) => void this.onAgentEvent(event)),
-      client.onStateChanged((state) => {
-        void panel.webview.postMessage({ type: 'connection', state });
+      client.onStateChanged((state) => void this.post({ type: 'connection', state })),
+    );
+  }
+
+  resolveWebviewView(view: vscode.WebviewView): void {
+    this.clearViewDisposables();
+    this.view = view;
+    view.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [this.extensionUri],
+    };
+    view.webview.html = this.html(view.webview);
+    view.description = 'LangGraph coding agent';
+
+    this.viewDisposables.push(
+      view.webview.onDidReceiveMessage((message) => void this.onWebviewMessage(message)),
+      view.onDidDispose(() => {
+        if (this.view === view) {
+          this.view = undefined;
+        }
+        this.clearViewDisposables();
       }),
     );
+
+    void this.post({ type: 'connection', state: this.client.connectionState });
     void this.client.connect().then(async () => {
       await this.client.createThread(this.threadId);
       await this.client.requestThreadHistory(this.threadId);
     }).catch((error) => {
-      void this.panel.webview.postMessage({ type: 'client.error', message: String(error) });
+      void this.post({ type: 'client.error', message: String(error) });
     });
+  }
+
+  /** Hiện đúng tab Eris trong Panel. VS Code tự nhớ vị trí user đã kéo panel. */
+  async show(preserveFocus = false): Promise<void> {
+    if (this.view) {
+      this.view.show(preserveFocus);
+      return;
+    }
+    await vscode.commands.executeCommand(`${ErisChatPanel.viewType}.focus`);
+    (this.view as vscode.WebviewView | undefined)?.show(preserveFocus);
   }
 
   newChat(): void {
     this.threadId = `thread_${crypto.randomUUID()}`;
     this.activeTaskId = '';
     void this.extensionContext.workspaceState.update('eris.currentThreadId', this.threadId);
-    void this.panel.webview.postMessage({ type: 'chat.reset' });
+    void this.post({ type: 'chat.reset' });
     void this.client.createThread(this.threadId).catch(() => undefined);
   }
 
-  selectTask(taskId: string, threadId: string): void {
+  async selectTask(taskId: string, threadId: string): Promise<void> {
     const resolvedThread = String(threadId ?? '').trim();
     if (!resolvedThread) {
       return;
@@ -83,10 +96,10 @@ export class ErisChatPanel implements vscode.Disposable {
     this.threadId = resolvedThread;
     this.activeTaskId = String(taskId ?? '').trim();
     void this.extensionContext.workspaceState.update('eris.currentThreadId', this.threadId);
-    this.panel.reveal(vscode.ViewColumn.Beside, true);
-    void this.panel.webview.postMessage({ type: 'chat.reset', preserveTask: this.activeTaskId });
-    void this.client.requestThreadHistory(this.threadId).catch((error) => {
-      void this.panel.webview.postMessage({ type: 'client.error', message: String(error) });
+    await this.show(false);
+    await this.post({ type: 'chat.reset', preserveTask: this.activeTaskId });
+    await this.client.requestThreadHistory(this.threadId).catch((error) => {
+      void this.post({ type: 'client.error', message: String(error) });
     });
   }
 
@@ -150,7 +163,7 @@ export class ErisChatPanel implements vscode.Disposable {
         this.newChat();
       }
     } catch (error) {
-      await this.panel.webview.postMessage({ type: 'client.error', message: String(error) });
+      await this.post({ type: 'client.error', message: String(error) });
     }
   }
 
@@ -160,9 +173,11 @@ export class ErisChatPanel implements vscode.Disposable {
       this.activeTaskId = String(event.taskId);
     }
     if (type === 'session.ready') {
-      await this.panel.webview.postMessage({ type: 'connection', state: 'connected' });
+      await this.post({ type: 'connection', state: 'connected' });
       await this.client.createThread(this.threadId);
-      await this.client.requestThreadHistory(this.threadId);
+      if (this.view) {
+        await this.client.requestThreadHistory(this.threadId);
+      }
       return;
     }
     if (type === 'thread.history') {
@@ -176,15 +191,32 @@ export class ErisChatPanel implements vscode.Disposable {
       if (active?.task_id) {
         this.activeTaskId = String(active.task_id);
       }
-      await this.panel.webview.postMessage(event);
+      await this.post(event);
       return;
     }
-    // Hai event này được xử lý ở extension host toàn cục, kể cả khi Chat Panel
-    // chưa từng mở. Panel không được tạo một response thứ hai.
+    // Hai event này được xử lý ở extension host toàn cục, kể cả khi Eris Panel
+    // chưa từng mở. Webview không được tạo một response thứ hai.
     if (type === 'ide.request' || type === 'editor.command') {
       return;
     }
-    await this.panel.webview.postMessage(event);
+    await this.post(event);
+  }
+
+  private async post(message: unknown): Promise<boolean> {
+    if (!this.view) {
+      return false;
+    }
+    try {
+      return await this.view.webview.postMessage(message);
+    } catch {
+      return false;
+    }
+  }
+
+  private clearViewDisposables(): void {
+    while (this.viewDisposables.length) {
+      this.viewDisposables.pop()?.dispose();
+    }
   }
 
   private html(webview: vscode.Webview): string {
@@ -420,12 +452,12 @@ export class ErisChatPanel implements vscode.Disposable {
 </html>`;
   }
 
+
   dispose(): void {
-    if (ErisChatPanel.current === this) {
-      ErisChatPanel.current = undefined;
-    }
+    this.clearViewDisposables();
     while (this.disposables.length) {
       this.disposables.pop()?.dispose();
     }
+    this.view = undefined;
   }
 }

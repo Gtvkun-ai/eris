@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ErisChatPanel } from './chatPanel';
+import { registerErisChatParticipant } from './chatParticipant';
 import { captureIdeContext, resolveIdeContextRequest } from './contextBridge';
 import { WorkspaceDiffProvider } from './diffProvider';
 import { executeEditorCommand } from './editorBridge';
@@ -19,7 +20,7 @@ interface SidebarNode {
   children?: SidebarNode[];
 }
 
-/** Sidebar chỉ là navigation/status. Chat/task detail nằm ở Webview bên editor. */
+/** Navigator phụ nằm trong tab Eris ở Panel; Chat chính là Webview View cùng container. */
 class ErisSidebarProvider implements vscode.TreeDataProvider<SidebarNode>, vscode.Disposable {
   private readonly changed = new vscode.EventEmitter<SidebarNode | undefined | void>();
   readonly onDidChangeTreeData = this.changed.event;
@@ -181,8 +182,17 @@ export function activate(context: vscode.ExtensionContext): void {
   const sidebar = new ErisSidebarProvider();
   const terminalObserver = new TerminalContextObserver();
   const diffProvider = new WorkspaceDiffProvider();
-  context.subscriptions.push(serviceManager, client, sidebar, terminalObserver, diffProvider);
-  context.subscriptions.push(vscode.window.registerTreeDataProvider('eris.sidebar', sidebar));
+  const chatPanel = new ErisChatPanel(
+    context.extensionUri, client, context, terminalObserver, diffProvider,
+  );
+  context.subscriptions.push(serviceManager, client, sidebar, terminalObserver, diffProvider, chatPanel);
+  context.subscriptions.push(vscode.window.registerWebviewViewProvider(
+    ErisChatPanel.viewType,
+    chatPanel,
+    { webviewOptions: { retainContextWhenHidden: true } },
+  ));
+  context.subscriptions.push(vscode.window.registerTreeDataProvider('eris.navigator', sidebar));
+  registerErisChatParticipant(context, client, terminalObserver);
   context.subscriptions.push(client.onStateChanged((state) => sidebar.setState(state)));
   context.subscriptions.push(client.onEvent((event) => {
     sidebar.observeEvent(event);
@@ -236,19 +246,14 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }));
 
-  const openChat = () => ErisChatPanel.show(
-    context.extensionUri,
-    client,
-    context,
-    terminalObserver,
-    diffProvider,
-  );
+  const openChat = () => chatPanel.show(false);
   context.subscriptions.push(vscode.commands.registerCommand('eris.openChat', openChat));
-  context.subscriptions.push(vscode.commands.registerCommand('eris.newChat', () => {
-    openChat().newChat();
+  context.subscriptions.push(vscode.commands.registerCommand('eris.newChat', async () => {
+    await chatPanel.show(false);
+    chatPanel.newChat();
   }));
-  context.subscriptions.push(vscode.commands.registerCommand('eris.openTask', (taskId: string, threadId: string) => {
-    openChat().selectTask(taskId, threadId);
+  context.subscriptions.push(vscode.commands.registerCommand('eris.openTask', async (taskId: string, threadId: string) => {
+    await chatPanel.selectTask(taskId, threadId);
   }));
   context.subscriptions.push(vscode.commands.registerCommand('eris.reconnect', async () => {
     try {
