@@ -2036,14 +2036,14 @@ public partial class UdpListener : Node2D
 		string provider = NormalizeProviderProfileKey(RemoteApiProvider);
 		string baseUrl = (RemoteApiBaseUrl ?? "").Trim();
 		string model = (RemoteApiModelName ?? "").Trim();
-		if (provider == "openai_compatible" && baseUrl.Contains("groq.com", StringComparison.OrdinalIgnoreCase))
+		if (provider == "openai_compatible" && (baseUrl.Contains("groq.com", StringComparison.OrdinalIgnoreCase) || baseUrl.Contains("shopaikey.com", StringComparison.OrdinalIgnoreCase)))
 		{
-			RemoteApiBaseUrl = "https://api.shopaikey.com/v1";
+			RemoteApiBaseUrl = "http://127.0.0.1:8081/v1";
 			if (string.IsNullOrWhiteSpace(model)
 				|| model.Contains("qwen", StringComparison.OrdinalIgnoreCase)
 				|| model.StartsWith("llama", StringComparison.OrdinalIgnoreCase)
-				|| model.Contains("gemini", StringComparison.OrdinalIgnoreCase))
-				RemoteApiModelName = "gpt-5.6-terra";
+				|| model.Contains("gpt-", StringComparison.OrdinalIgnoreCase))
+				RemoteApiModelName = "playwright/gemini/gemini-3.1-pro";
 		}
 	}
 
@@ -2506,11 +2506,12 @@ public partial class UdpListener : Node2D
 			if (string.IsNullOrWhiteSpace(RemoteApiBaseUrl)
 				|| RemoteApiBaseUrl.Contains("googleapis", StringComparison.OrdinalIgnoreCase)
 				|| RemoteApiBaseUrl.Contains("groq.com", StringComparison.OrdinalIgnoreCase))
-				RemoteApiBaseUrl = "https://api-v2.shopaikey.com/v1";
+				RemoteApiBaseUrl = "http://127.0.0.1:8081/v1";
 			if (string.IsNullOrWhiteSpace(RemoteApiModelName)
 				|| RemoteApiModelName.Contains("gemini", StringComparison.OrdinalIgnoreCase)
-				|| RemoteApiModelName.StartsWith("llama", StringComparison.OrdinalIgnoreCase))
-				RemoteApiModelName = "gpt-5.6-terra";
+				|| RemoteApiModelName.StartsWith("llama", StringComparison.OrdinalIgnoreCase)
+				|| RemoteApiModelName.Contains("gpt-", StringComparison.OrdinalIgnoreCase))
+				RemoteApiModelName = "playwright/gemini/gemini-3.1-pro";
 			RemoteApiProvider = "openai_compatible";
 			return;
 		}

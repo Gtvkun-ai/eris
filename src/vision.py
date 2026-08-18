@@ -75,6 +75,7 @@ class AttentionOverseer:
             logger=self.process_logger,
             project_root=project_root,
         )
+        self.webai_procs = self._start_webai_daemons(project_root)
         self.ds2api_procs = self._start_ds2api_daemons(project_root)
         self.llm_client = self.process_manager.build_client(
             model_path=model_path,
@@ -254,6 +255,66 @@ class AttentionOverseer:
         except Exception:
             return True
 
+    def _start_webai_daemons(self, project_root: str) -> list:
+        enabled = os.environ.get("ERIS_WEBAI_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
+        if not enabled:
+            return []
+
+        python_exe = os.path.join(project_root, ".venv", "Scripts", "python.exe")
+        if not os.path.exists(python_exe):
+            return []
+
+        procs = []
+        creationflags = 0x08000000 if os.name == "nt" else 0
+
+        for port, subdir in [(8081, "WebAI-to-API"), (8082, "WebAI-to-API-2")]:
+            work_dir = os.path.join(project_root, "tools", subdir)
+            run_script = os.path.join(work_dir, "src", "run.py")
+            if not os.path.exists(run_script):
+                continue
+
+            already_running = False
+            try:
+                res = urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=3.0)
+                if getattr(res, "status", None) == 200:
+                    already_running = True
+            except Exception:
+                pass
+
+            if already_running:
+                self.logger.info("WebAI-to-API port %d: already running, reuse.", port)
+                continue
+
+            self.logger.info("Starting WebAI-to-API instance on port %d...", port)
+            try:
+                proc = subprocess.Popen(
+                    [python_exe, run_script, "--host", "0.0.0.0", "--port", str(port)],
+                    cwd=work_dir,
+                    env=os.environ.copy(),
+                    creationflags=creationflags,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                started = False
+                for _ in range(15):
+                    time.sleep(0.5)
+                    try:
+                        hc = urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=2.0)
+                        if getattr(hc, "status", None) == 200:
+                            started = True
+                            break
+                    except Exception:
+                        continue
+                if started:
+                    self.logger.info("WebAI-to-API daemon started on port %d (PID=%s).", port, getattr(proc, "pid", "?"))
+                else:
+                    self.logger.warning("WebAI-to-API daemon spawned (PID=%s) on port %d, but health check timed out.", getattr(proc, "pid", "?"), port)
+                procs.append(proc)
+            except Exception as exc:
+                self.logger.error("Failed to start WebAI-to-API instance on port %d: %s", port, exc)
+
+        return procs
+
     def _start_ds2api_daemons(self, project_root: str) -> list:
         """Start một hoặc nhiều Whale2API instance, mỗi cái trên một port riêng.
 
@@ -392,6 +453,18 @@ class AttentionOverseer:
                     except Exception:
                         pass
             self.ds2api_procs = []
+        if hasattr(self, "webai_procs") and self.webai_procs:
+            self.logger.info("Stopping WebAI-to-API daemons (%d instance(s))...", len(self.webai_procs))
+            for proc in self.webai_procs:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=3)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+            self.webai_procs = []
 
     def run_loop(self):
         self.coordinator.run_loop()

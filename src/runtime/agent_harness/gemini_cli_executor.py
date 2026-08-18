@@ -83,9 +83,12 @@ class GeminiCliDecisionExecutor:
             resp = requests.post(url, json=payload, timeout=self.timeout)
             resp.raise_for_status()
             data = resp.json()
+        except requests.exceptions.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == 401:
+                raise GeminiCliError("Lỗi 401: Cookie Google của WebAI-to-API đã hết hạn/sai. Vui lòng mở http://localhost:8081 để cập nhật lại Cookie.") from exc
+            raise GeminiCliError(f"webai_api_failed:{type(exc).__name__}:{exc}") from exc
         except requests.exceptions.RequestException as exc:
             raise GeminiCliError(f"webai_api_failed:{type(exc).__name__}:{exc}") from exc
-            
         try:
             text = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError):

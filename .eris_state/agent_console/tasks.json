@@ -230,6 +230,156 @@
         "workspace_path": "C:\\Users\\Gtvkun\\Documents\\GitHub\\eris",
         "workspace_name": ""
       }
+    },
+    {
+      "task_id": "task_0050f7180f68",
+      "thread_id": "agent_console:agent-35455-572535734",
+      "goal": "xin chào",
+      "clarified_goal": "xin chào",
+      "status": "failed",
+      "executor": "gemini-cli",
+      "model": "gemini-3-flash",
+      "created_at": 1786856164.528307,
+      "updated_at": 1786856168.6699765,
+      "started_at": 1786856164.5402637,
+      "finished_at": 1786856168.6699765,
+      "current_step": 1,
+      "active_skills": [],
+      "changed_files": [],
+      "tests": {
+        "passed": 0,
+        "failed": 0,
+        "summary": ""
+      },
+      "checkpoint_id": "",
+      "checkpoint_count": 0,
+      "events": [
+        {
+          "event_id": "ae_6f295ec698eb4d",
+          "type": "task_started",
+          "actor": "system",
+          "summary": "xin chào",
+          "detail": "",
+          "step": 0,
+          "importance": 0.9,
+          "created_at": 1786856164.5402637,
+          "data": {
+            "executor": "gemini-cli",
+            "model": "gemini-3-flash",
+            "source": "agent_console",
+            "task_mode": "execute",
+            "workspace_id": "eris",
+            "workspace_path": "C:\\Users\\Gtvkun\\Documents\\GitHub\\eris",
+            "workspace_name": "eris"
+          }
+        },
+        {
+          "event_id": "ae_5f9195d646294d",
+          "type": "agent_status",
+          "actor": "executor",
+          "summary": "Executor đang quyết định bước tiếp theo.",
+          "detail": "",
+          "step": 1,
+          "importance": 0.34,
+          "created_at": 1786856164.579609,
+          "data": {}
+        },
+        {
+          "event_id": "ae_77d31cfd357f4e",
+          "type": "task_failed",
+          "actor": "system",
+          "summary": "Agent loop lỗi: GeminiCliError: webai_api_not_found_at_http://localhost:8081/v1",
+          "detail": "",
+          "step": 1,
+          "importance": 1.0,
+          "created_at": 1786856168.6699765,
+          "data": {}
+        }
+      ],
+      "controls": [],
+      "metadata": {
+        "original_goal": "xin chào",
+        "source": "agent_console",
+        "task_mode": "execute",
+        "workspace_id": "eris",
+        "workspace_path": "C:\\Users\\Gtvkun\\Documents\\GitHub\\eris",
+        "workspace_name": "eris"
+      }
+    },
+    {
+      "task_id": "task_550b633c5b61",
+      "thread_id": "agent_console:agent-30314-2984315820",
+      "goal": "alo",
+      "clarified_goal": "alo",
+      "status": "failed",
+      "executor": "gemini-cli",
+      "model": "gemini-3-flash",
+      "created_at": 1786856627.5685873,
+      "updated_at": 1786856631.7171152,
+      "started_at": 1786856627.5764148,
+      "finished_at": 1786856631.7171152,
+      "current_step": 1,
+      "active_skills": [],
+      "changed_files": [],
+      "tests": {
+        "passed": 0,
+        "failed": 0,
+        "summary": ""
+      },
+      "checkpoint_id": "",
+      "checkpoint_count": 0,
+      "events": [
+        {
+          "event_id": "ae_1e3845a4d04f4e",
+          "type": "task_started",
+          "actor": "system",
+          "summary": "alo",
+          "detail": "",
+          "step": 0,
+          "importance": 0.9,
+          "created_at": 1786856627.5764148,
+          "data": {
+            "executor": "gemini-cli",
+            "model": "gemini-3-flash",
+            "source": "agent_console",
+            "task_mode": "execute",
+            "workspace_id": "eris",
+            "workspace_path": "C:\\Users\\Gtvkun\\Documents\\GitHub\\eris",
+            "workspace_name": "eris"
+          }
+        },
+        {
+          "event_id": "ae_5760e14ad89746",
+          "type": "agent_status",
+          "actor": "executor",
+          "summary": "Executor đang quyết định bước tiếp theo.",
+          "detail": "",
+          "step": 1,
+          "importance": 0.34,
+          "created_at": 1786856627.5942252,
+          "data": {}
+        },
+        {
+          "event_id": "ae_a3f58a0b929b40",
+          "type": "task_failed",
+          "actor": "system",
+          "summary": "Agent loop lỗi: GeminiCliError: webai_api_failed:HTTPError:401 Client Error: Unauthorized for url: http://localhost:8081/v1/chat/completions",
+          "detail": "",
+          "step": 1,
+          "importance": 1.0,
+          "created_at": 1786856631.7171152,
+          "data": {}
+        }
+      ],
+      "controls": [],
+      "metadata": {
+        "original_goal": "alo",
+        "source": "agent_console",
+        "task_mode": "execute",
+        "workspace_id": "eris",
+        "workspace_path": "C:\\Users\\Gtvkun\\Documents\\GitHub\\eris",
+        "workspace_name": "eris"
+      }
     }
   ]
 }
