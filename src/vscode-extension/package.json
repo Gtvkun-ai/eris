@@ -1,8 +1,8 @@
 {
   "name": "eris-vscode",
   "displayName": "Eris",
-  "description": "Eris coding agent trong VS Code Panel + @eris native Chat, dùng Eris Service/LangGraph.",
-  "version": "0.4.0",
+  "description": "Eris coding agent: clean single-Webview IDE workspace với multi-session tabs, file/image attachments và LangGraph.",
+  "version": "0.7.0",
   "publisher": "gtvk",
   "engines": {
     "vscode": "^1.100.0"
@@ -12,8 +12,7 @@
     "Machine Learning"
   ],
   "activationEvents": [
-    "onView:eris.chatView",
-    "onView:eris.navigator",
+    "onView:eris.mainView",
     "onChatParticipant:gtvk.eris",
     "onCommand:eris.openChat",
     "onCommand:eris.newChat",
@@ -33,11 +32,13 @@
       },
       {
         "command": "eris.newChat",
-        "title": "Eris: New Chat"
+        "title": "Eris: New Chat",
+        "icon": "$(add)"
       },
       {
         "command": "eris.reconnect",
-        "title": "Eris: Reconnect Service"
+        "title": "Eris: Reconnect Service",
+        "icon": "$(refresh)"
       },
       {
         "command": "eris.openTask",
@@ -61,32 +62,27 @@
       },
       {
         "command": "eris.selfTest",
-        "title": "Eris: Run Self Test"
+        "title": "Eris: Run Self Test",
+        "icon": "$(beaker)"
       }
     ],
     "viewsContainers": {
-      "panel": [
+      "activitybar": [
         {
-          "id": "eris.panel",
+          "id": "eris.agentSidebar",
           "title": "Eris",
           "icon": "media/eris.svg"
         }
       ]
     },
     "views": {
-      "eris.panel": [
+      "eris.agentSidebar": [
         {
           "type": "webview",
-          "id": "eris.chatView",
-          "name": "Chat",
+          "id": "eris.mainView",
+          "name": "Eris",
           "contextualTitle": "Eris",
           "visibility": "visible"
-        },
-        {
-          "id": "eris.navigator",
-          "name": "Chats · Plans · Skills",
-          "contextualTitle": "Eris Navigator",
-          "visibility": "collapsed"
         }
       ]
     },

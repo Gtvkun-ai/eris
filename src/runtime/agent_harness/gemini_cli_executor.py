@@ -6,7 +6,9 @@ thay vì dùng subprocess CLI hay gọi thẳng Google API.
 """
 from __future__ import annotations
 
+import base64
 import json
+import mimetypes
 import os
 import re
 import uuid
@@ -56,6 +58,7 @@ class GeminiCliDecisionExecutor:
         goal: str = "",
         active_skills: list[str] | None = None,
         workspace: str | Path | None = None,
+        ide_context: dict[str, Any] | None = None,
     ):
         from langchain_core.messages import AIMessage
 
@@ -73,9 +76,17 @@ class GeminiCliDecisionExecutor:
         )
 
         url = f"{self.api_base}/chat/completions"
+        image_parts = self._image_content_parts(ide_context or {})
+        content: Any = prompt
+        if image_parts:
+            # WebAI-to-API là OpenAI-compatible. Chỉ khi user thực sự attach ảnh
+            # mới chuyển message sang multimodal; task text bình thường giữ payload
+            # cũ để không tăng overhead hay làm backend non-vision khó chịu.
+            content = [{"type": "text", "text": prompt}, *image_parts]
+
         payload = {
             "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [{"role": "user", "content": content}],
             "temperature": 0.0,
         }
 
@@ -120,6 +131,46 @@ class GeminiCliDecisionExecutor:
 
         final = str(decision.get("final", "") or summary or text).strip()
         return AIMessage(content=final, additional_kwargs={"gemini_cli_stats": data.get("usage", {})})
+
+    @staticmethod
+    def _image_content_parts(ide_context: dict[str, Any]) -> list[dict[str, Any]]:
+        """Build bounded OpenAI-compatible image_url parts from explicit user attachments.
+
+        Extension Host already copied pasted images to local storage and only sends
+        paths after a user gesture. We still re-check type/size here because crossing
+        a process boundary is not a good place to develop optimism.
+        """
+        raw = ide_context.get("attachments") if isinstance(ide_context, dict) else None
+        attachments = raw if isinstance(raw, list) else []
+        parts: list[dict[str, Any]] = []
+        allowed_mime = {"image/png", "image/jpeg", "image/webp", "image/gif"}
+        for item in attachments[:8]:
+            if not isinstance(item, dict) or str(item.get("kind", "")) != "image":
+                continue
+            file_path = Path(str(item.get("path", "") or "")).expanduser()
+            try:
+                resolved = file_path.resolve(strict=True)
+                size = resolved.stat().st_size
+            except (OSError, RuntimeError):
+                continue
+            if size <= 0 or size > 8 * 1024 * 1024:
+                continue
+            declared = str(item.get("mime", "") or "").lower().strip()
+            guessed = str(mimetypes.guess_type(resolved.name)[0] or "").lower()
+            mime = declared if declared in allowed_mime else guessed
+            if mime not in allowed_mime:
+                continue
+            try:
+                encoded = base64.b64encode(resolved.read_bytes()).decode("ascii")
+            except OSError:
+                continue
+            parts.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{encoded}"},
+            })
+            if len(parts) >= 4:
+                break
+        return parts
 
     @staticmethod
     def parse_decision(text: str) -> dict[str, Any]:

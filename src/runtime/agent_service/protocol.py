@@ -35,7 +35,14 @@ def project_agent_event(event: dict[str, Any]) -> list[dict[str, Any]]:
         }
 
     if kind == "user_message":
-        return [base("message.user", {"content": str(data.get("content", "") or summary), "source": str(data.get("source", "") or "")})]
+        attachments = data.get("attachments") if isinstance(data.get("attachments"), list) else []
+        return [base("message.user", {
+            "content": str(data.get("content", "") or summary),
+            "source": str(data.get("source", "") or ""),
+            # Chỉ project metadata an toàn cho UI/history; absolute path không cần
+            # lộ ra Webview sau khi Extension Host đã resolve attachment.
+            "attachments": [dict(item) for item in attachments[:8] if isinstance(item, dict)],
+        })]
     if kind == "task_started":
         return [base("activity.start", {"label": summary or "Đang bắt đầu task", "status": "running"})]
     if kind == "task_completed":

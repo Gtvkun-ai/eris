@@ -1,0 +1,170 @@
+{
+  "name": "eris-vscode",
+  "displayName": "Eris",
+  "description": "Eris coding agent trong VS Code Primary Sidebar kiểu Cline + @eris native Chat, dùng Eris Service/LangGraph.",
+  "version": "0.5.0",
+  "publisher": "gtvk",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning"
+  ],
+  "activationEvents": [
+    "onView:eris.chat",
+    "onView:eris.navigatorView",
+    "onChatParticipant:gtvk.eris",
+    "onCommand:eris.openChat",
+    "onCommand:eris.newChat",
+    "onCommand:eris.openTask",
+    "onCommand:eris.serviceStart",
+    "onCommand:eris.serviceRestart",
+    "onCommand:eris.serviceStop",
+    "onCommand:eris.serviceLogs",
+    "onCommand:eris.selfTest"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "eris.openChat",
+        "title": "Eris: Open Chat"
+      },
+      {
+        "command": "eris.newChat",
+        "title": "Eris: New Chat",
+        "icon": "$(add)"
+      },
+      {
+        "command": "eris.reconnect",
+        "title": "Eris: Reconnect Service",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "eris.openTask",
+        "title": "Eris: Open Task"
+      },
+      {
+        "command": "eris.serviceStart",
+        "title": "Eris: Start Service"
+      },
+      {
+        "command": "eris.serviceRestart",
+        "title": "Eris: Restart Service"
+      },
+      {
+        "command": "eris.serviceStop",
+        "title": "Eris: Stop Managed Service"
+      },
+      {
+        "command": "eris.serviceLogs",
+        "title": "Eris: Show Service Logs"
+      },
+      {
+        "command": "eris.selfTest",
+        "title": "Eris: Run Self Test",
+        "icon": "$(beaker)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "eris.sidebar",
+          "title": "Eris",
+          "icon": "media/eris.svg"
+        }
+      ]
+    },
+    "views": {
+      "eris.sidebar": [
+        {
+          "type": "webview",
+          "id": "eris.chat",
+          "name": "Chat",
+          "contextualTitle": "Eris",
+          "visibility": "visible"
+        },
+        {
+          "id": "eris.navigatorView",
+          "name": "Chats · Plans · Skills",
+          "contextualTitle": "Eris Navigator",
+          "visibility": "collapsed"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Eris",
+      "properties": {
+        "eris.service.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Tự khởi động Eris khi VS Code cần kết nối nhưng service chưa chạy."
+        },
+        "eris.service.installRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Thư mục cài Eris chứa run_eris.bat/run_eris.sh. Chỉ cần đặt một lần nếu auto-detect không thấy."
+        },
+        "eris.service.launchCommand": {
+          "type": "string",
+          "default": "",
+          "description": "Lệnh launch Eris tùy chỉnh. Khi có giá trị, lệnh này được ưu tiên hơn auto-detect launcher."
+        }
+      }
+    },
+    "chatParticipants": [
+      {
+        "id": "gtvk.eris",
+        "name": "eris",
+        "fullName": "Eris",
+        "description": "Hỏi Eris về code, giao task hoặc tiếp tục task LangGraph hiện tại.",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "fix",
+            "description": "Tìm root cause, sửa code và kiểm chứng"
+          },
+          {
+            "name": "inspect",
+            "description": "Điều tra vấn đề nhưng chưa sửa file"
+          },
+          {
+            "name": "plan",
+            "description": "Lập kế hoạch thực thi, không tạo side effect"
+          }
+        ]
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "eris.newChat",
+          "when": "view == eris.chat",
+          "group": "navigation@1"
+        },
+        {
+          "command": "eris.reconnect",
+          "when": "view == eris.chat",
+          "group": "navigation@2"
+        },
+        {
+          "command": "eris.selfTest",
+          "when": "view == eris.chat",
+          "group": "navigation@3"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile",
+    "package:vsix": "python package_vsix.py"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.100.0",
+    "typescript": "^5.8.0"
+  }
+}

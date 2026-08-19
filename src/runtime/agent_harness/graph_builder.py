@@ -399,6 +399,9 @@ class AgentHarness:
                 goal=str(state.get("goal", "") or ""),
                 active_skills=list(state.get("active_skills", []) or []),
                 workspace=str(state.get("workspace_path", "") or "") or None,
+                # Attachment ảnh đi riêng vào OpenAI-compatible multimodal payload.
+                # Không nhét base64 vào checkpoint/system prompt rồi tự cắt cụt nó.
+                ide_context=ide_context,
             )
         else:
             invoke = getattr(self.llm, "invoke", None)

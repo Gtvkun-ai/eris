@@ -155,9 +155,9 @@ export class ErisServiceManager implements vscode.Disposable {
       } catch (error) {
         lastError = error;
       }
-      if (child.exitCode !== null) {
-        break;
-      }
+      // run_eris.bat có thể chỉ bootstrap rồi thoát trong khi Python runtime còn
+      // đang khởi động. Không coi launcher exit là service chết; discovery file
+      // mới là source of truth. Nếu launch thật sự lỗi, timeout sẽ trả log rõ ràng.
       await delay(250);
     }
     await this.stopOwned();
@@ -181,11 +181,26 @@ export class ErisServiceManager implements vscode.Disposable {
       };
     }
 
+    const launcherName = process.platform === 'win32' ? 'run_eris.bat' : 'run_eris.sh';
+    // Workspace khi code Eris thường có thể đang mở ở src/, body/ hoặc một folder
+    // con sâu hơn. Quét vài ancestor để user không phải tự chạy run_eris.bat chỉ
+    // vì VS Code đang mở không đúng root một cấp.
+    const workspaceRoots: string[] = [];
+    if (firstWorkspace) {
+      let current = path.resolve(firstWorkspace);
+      for (let depth = 0; depth < 6; depth += 1) {
+        workspaceRoots.push(current);
+        const parent = path.dirname(current);
+        if (parent === current) {
+          break;
+        }
+        current = parent;
+      }
+    }
     const candidates = unique([
-      configuredRoot ? path.join(configuredRoot, process.platform === 'win32' ? 'run_eris.bat' : 'run_eris.sh') : '',
-      firstWorkspace ? path.join(firstWorkspace, process.platform === 'win32' ? 'run_eris.bat' : 'run_eris.sh') : '',
-      firstWorkspace ? path.join(path.dirname(firstWorkspace), process.platform === 'win32' ? 'run_eris.bat' : 'run_eris.sh') : '',
-      process.platform === 'win32' ? path.join(os.homedir(), 'Documents', 'eris', 'run_eris.bat') : path.join(os.homedir(), 'eris', 'run_eris.sh'),
+      configuredRoot ? path.join(configuredRoot, launcherName) : '',
+      ...workspaceRoots.map((root) => path.join(root, launcherName)),
+      process.platform === 'win32' ? path.join(os.homedir(), 'Documents', 'eris', launcherName) : path.join(os.homedir(), 'eris', launcherName),
     ]);
     for (const candidate of candidates) {
       if (await exists(candidate)) {

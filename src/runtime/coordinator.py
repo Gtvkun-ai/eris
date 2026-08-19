@@ -621,6 +621,20 @@ class RuntimeCoordinator(
                             "thread_id": resolved_thread,
                             "session_id": str(session_id or ""),
                             "source": str(source or "eris_chat"),
+                            # Attachment bytes/path vẫn nằm trong ide_context cho executor;
+                            # event history chỉ cần metadata để UI render chip đẹp và an toàn.
+                            "attachments": [
+                                {
+                                    "id": str(item.get("id", "") or "")[:120],
+                                    "kind": str(item.get("kind", "file") or "file")[:24],
+                                    "name": str(item.get("name", "attachment") or "attachment")[:240],
+                                    "mime": str(item.get("mime", "") or "")[:120],
+                                    "size": int(item.get("size", 0) or 0),
+                                    "relativePath": str(item.get("relativePath", "") or "")[:600],
+                                }
+                                for item in (ide_context.get("attachments") if isinstance(ide_context, dict) and isinstance(ide_context.get("attachments"), list) else [])[:8]
+                                if isinstance(item, dict)
+                            ],
                         },
                     )
             except Exception as exc:

@@ -272,6 +272,18 @@ class AgentWebSocketService:
                 return
             thread_id = str(message.get("threadId", "") or "").strip() or client.session_id
             context = self._with_client_context(client, message.get("context"))
+            raw_attachments = context.get("attachments") if isinstance(context.get("attachments"), list) else []
+            public_attachments = [
+                {
+                    "id": str(item.get("id", "") or "")[:120],
+                    "kind": str(item.get("kind", "file") or "file")[:24],
+                    "name": str(item.get("name", "attachment") or "attachment")[:240],
+                    "mime": str(item.get("mime", "") or "")[:120],
+                    "size": int(item.get("size", 0) or 0),
+                    "relativePath": str(item.get("relativePath", "") or "")[:600],
+                }
+                for item in raw_attachments[:8] if isinstance(item, dict)
+            ]
 
             # Một chat thread chỉ có một task active. Tin nhắn mới trong lúc graph
             # đang chờ trở thành resume/directive thay vì tạo graph thứ hai đè lên
@@ -291,7 +303,7 @@ class AgentWebSocketService:
                     actor="user",
                     summary=content[:1200],
                     importance=0.72,
-                    data={"content": content[:8000], "source": "vscode"},
+                    data={"content": content[:8000], "source": "vscode", "attachments": public_attachments},
                 )
                 if active_status in {"waiting_user", "waiting_permission"}:
                     result = self.resume_task(
@@ -355,7 +367,7 @@ class AgentWebSocketService:
                 if not has_user:
                     self.event_bus.emit(
                         task_id, "user_message", actor="user", summary=content[:1200], importance=0.72,
-                        data={"content": content[:8000], "source": "vscode"},
+                        data={"content": content[:8000], "source": "vscode", "attachments": public_attachments},
                     )
             self._send(client, {
                 "type": "message.accepted",

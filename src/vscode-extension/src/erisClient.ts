@@ -105,6 +105,8 @@ export class ErisClient implements vscode.Disposable {
             'context.workspace',
             'context.openEditors',
             'context.terminal.recent',
+            'context.attachments.file',
+            'context.attachments.image',
             'editor.openFile',
             'editor.openDiff',
             'editor.focusProblems',
