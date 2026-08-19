@@ -30,7 +30,8 @@ type ComposerAttachment = {
   excerpt?: string;
 };
 
-const SESSION_KEY = 'eris.openSessions.v3';
+const SESSION_KEY = 'eris.openSessions.v4';
+const LEGACY_SESSION_KEY = 'eris.openSessions.v3';
 const CURRENT_THREAD_KEY = 'eris.currentThreadId';
 const MAX_OPEN_SESSIONS = 8;
 const MAX_ATTACHMENTS = 8;
@@ -61,8 +62,8 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
     private readonly terminalObserver: TerminalContextObserver,
     private readonly diffProvider: WorkspaceDiffProvider,
   ) {
-    this.sessions = this.loadSessions();
     const persisted = extensionContext.workspaceState.get<string>(CURRENT_THREAD_KEY, '').trim();
+    this.sessions = this.loadSessions(persisted);
     const existing = this.sessions.find((item) => item.threadId === persisted);
     if (existing) {
       this.threadId = existing.threadId;
@@ -125,6 +126,9 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
   }
 
   newChat(): void {
+    // Khi user mở session mới, task terminal ở background chuyển về History thay
+    // vì tiếp tục chiếm chỗ trên tab bar như các build 0.7.x.
+    this.sessions = this.sessions.filter((item) => !['done', 'failed'].includes(item.status));
     const session = this.createLocalSession();
     this.threadId = session.threadId;
     this.activeTaskId = '';
@@ -132,7 +136,7 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
     this.persistSessions();
     void this.extensionContext.workspaceState.update(CURRENT_THREAD_KEY, this.threadId);
     void this.postSessions();
-    void this.post({ type: 'chat.reset', threadId: this.threadId });
+    void this.post({ type: 'chat.reset', threadId: this.threadId, reason: 'new' });
     void this.client.createThread(this.threadId).catch(() => undefined);
   }
 
@@ -145,8 +149,13 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
     await this.selectThread(resolvedThread, String(taskId ?? '').trim());
   }
 
-  private loadSessions(): SessionTab[] {
-    const raw = this.extensionContext.workspaceState.get<any[]>(SESSION_KEY, []);
+  private loadSessions(preferredThreadId = ''): SessionTab[] {
+    // Chỉ restore tab nền còn sống. Tab done/failed cũ được giữ trong backend/history
+    // nhưng không dồn trở lại thanh tab mỗi lần reconnect/reload. Tab terminal đang
+    // được user đứng ở đó vẫn được giữ để họ xem kết quả/lỗi nếu muốn.
+    const current = this.extensionContext.workspaceState.get<any[]>(SESSION_KEY, []);
+    const legacy = this.extensionContext.workspaceState.get<any[]>(LEGACY_SESSION_KEY, []);
+    const raw = Array.isArray(current) && current.length ? current : legacy;
     if (!Array.isArray(raw)) {
       return [];
     }
@@ -167,7 +176,10 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
         taskId: String(item?.taskId ?? '').trim() || undefined,
       });
     }
-    return sessions.slice(-MAX_OPEN_SESSIONS);
+    const openSessions = sessions.filter((item) =>
+      item.threadId === preferredThreadId || !['done', 'failed'].includes(item.status),
+    );
+    return openSessions.slice(-MAX_OPEN_SESSIONS);
   }
 
   private createLocalSession(title = 'New Session'): SessionTab {
@@ -251,7 +263,7 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
     this.persistSessions();
     await this.extensionContext.workspaceState.update(CURRENT_THREAD_KEY, this.threadId);
     await this.postSessions();
-    await this.post({ type: 'chat.reset', threadId: this.threadId, preserveTask: this.activeTaskId });
+    await this.post({ type: 'chat.reset', threadId: this.threadId, preserveTask: this.activeTaskId, reason: 'select' });
     await this.client.createThread(this.threadId).catch(() => undefined);
     await this.client.requestThreadHistory(this.threadId).catch((error) => {
       void this.post({ type: 'service.error', message: String(error) });
@@ -272,7 +284,7 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
       this.persistSessions();
       await this.extensionContext.workspaceState.update(CURRENT_THREAD_KEY, this.threadId);
       await this.postSessions();
-      await this.post({ type: 'chat.reset', threadId: this.threadId });
+      await this.post({ type: 'chat.reset', threadId: this.threadId, reason: 'new' });
       await this.client.createThread(this.threadId).catch(() => undefined);
       return;
     }
@@ -307,10 +319,14 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
     const type = String(message?.type ?? '');
     try {
       if (type === 'sendMessage') {
-        const content = String(message.content ?? '').trim();
-        if (!content) {
+        const rawContent = String(message.content ?? '').trim();
+        const attachmentIds: string[] = Array.isArray(message.attachmentIds) ? message.attachmentIds.map((value: unknown) => String(value)) : [];
+        if (!rawContent && !attachmentIds.length) {
           return;
         }
+        // Kiro-style composer cho phép gửi riêng ảnh/file. Backend vẫn cần một
+        // user turn có text, nên dùng instruction trung tính thay vì chặn Send.
+        const content = rawContent || 'Hãy xem các tệp hoặc ảnh đính kèm và phản hồi theo ngữ cảnh hiện tại.';
         if (!vscode.workspace.isTrusted) {
           throw new Error('Workspace chưa được Trust trong VS Code; Eris sẽ không đọc/chạy code ở đây.');
         }
@@ -324,7 +340,6 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
         await this.postSessions();
 
         const context = await this.ideContext(Array.isArray(message.contextKeys) ? message.contextKeys : undefined);
-        const attachmentIds: string[] = Array.isArray(message.attachmentIds) ? message.attachmentIds.map((value: unknown) => String(value)) : [];
         const resolvedAttachments: ComposerAttachment[] = attachmentIds
           .map((id: string) => this.attachments.get(id))
           .filter((item: ComposerAttachment | undefined): item is ComposerAttachment => Boolean(item));
@@ -341,6 +356,7 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
           }));
         }
 
+        context.webaiModel = String(message.model ?? '');
         await this.client.sendUserMessage(content, {
           threadId: this.threadId,
           taskMode: message.taskMode === 'inspect' ? 'inspect' : 'execute',
@@ -697,348 +713,666 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Eris</title>
   <style>
-    :root { color-scheme: light dark; --eris-accent: var(--vscode-focusBorder); }
-    * { box-sizing:border-box; }
-    html,body { width:100%; height:100%; }
-    body { margin:0; overflow:hidden; color:var(--vscode-foreground); background:var(--vscode-sideBar-background); font:13px/1.45 var(--vscode-font-family); }
-    button,select,input,textarea { font:inherit; color:inherit; }
-    button { cursor:pointer; }
-    .shell { height:100vh; display:grid; grid-template-rows:36px auto minmax(0,1fr) auto; }
-    .session-strip { display:flex; align-items:center; gap:4px; min-width:0; padding:5px 6px; border-bottom:1px solid var(--vscode-sideBar-border,var(--vscode-panel-border)); }
-    .session-tabs { min-width:0; flex:1; display:flex; gap:4px; overflow:auto hidden; scrollbar-width:none; }
-    .session-tabs::-webkit-scrollbar { display:none; }
-    .session-tab { flex:none; max-width:150px; height:26px; display:flex; align-items:center; gap:5px; padding:0 7px; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--vscode-descriptionForeground); }
-    .session-tab:hover { background:var(--vscode-toolbar-hoverBackground); color:var(--vscode-foreground); }
-    .session-tab.active { border-color:var(--vscode-widget-border,var(--vscode-panel-border)); background:var(--vscode-editor-background); color:var(--vscode-foreground); }
-    .session-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .session-state { width:6px; height:6px; flex:none; border-radius:50%; background:var(--vscode-descriptionForeground); opacity:.55; }
-    .session-state.running { background:var(--vscode-progressBar-background); opacity:1; box-shadow:0 0 0 2px color-mix(in srgb,var(--vscode-progressBar-background) 20%,transparent); }
-    .session-state.waiting { background:var(--vscode-editorWarning-foreground); opacity:1; }
-    .session-state.done { background:var(--vscode-testing-iconPassed); opacity:1; }
-    .session-state.failed { background:var(--vscode-testing-iconFailed); opacity:1; }
-    .close-tab { flex:none; border:0; padding:0; width:14px; height:14px; line-height:12px; border-radius:3px; background:transparent; color:var(--vscode-descriptionForeground); opacity:0; }
-    .session-tab:hover .close-tab,.session-tab.active .close-tab { opacity:.75; }
-    .close-tab:hover { background:var(--vscode-toolbar-hoverBackground); opacity:1; }
-    .icon-btn { flex:none; width:26px; height:26px; display:grid; place-items:center; padding:0; border:0; border-radius:5px; background:transparent; font-size:15px; }
-    .icon-btn:hover { background:var(--vscode-toolbar-hoverBackground); }
-    .connection { display:none; align-items:center; gap:7px; padding:4px 9px 5px; color:var(--vscode-descriptionForeground); font-size:11px; border-bottom:1px solid var(--vscode-sideBar-border,var(--vscode-panel-border)); }
-    .connection.visible { display:flex; }
-    .connection .dot { width:6px; height:6px; border-radius:50%; background:var(--vscode-testing-iconFailed); }
-    .connection button { margin-left:auto; border:0; padding:2px 4px; background:transparent; color:var(--vscode-textLink-foreground); }
-    .connection button:hover { text-decoration:underline; }
-    .viewport { min-height:0; position:relative; overflow:hidden; }
-    .chat { height:100%; display:flex; flex-direction:column; min-height:0; }
-    .timeline { min-height:0; flex:1; overflow:auto; padding:14px 12px 28px; }
-    .empty { min-height:100%; display:grid; place-items:center; padding:20px 8px; }
-    .empty-inner { width:100%; max-width:330px; text-align:center; }
-    .spark { font-size:20px; line-height:1; color:var(--eris-accent); margin-bottom:9px; }
-    .empty h2 { margin:0; font-size:16px; font-weight:650; }
-    .empty p { max-width:290px; margin:5px auto 16px; color:var(--vscode-descriptionForeground); font-size:11px; }
-    .mode-cards { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-    .mode-card { min-width:0; text-align:left; border:1px solid var(--vscode-widget-border,var(--vscode-panel-border)); border-radius:8px; padding:10px; background:var(--vscode-editor-background); }
-    .mode-card:hover { border-color:var(--vscode-focusBorder); }
-    .mode-card.selected { border-color:var(--eris-accent); box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--eris-accent) 45%,transparent); }
-    .mode-card strong { display:block; font-size:11px; }
-    .mode-card span { display:block; margin-top:3px; color:var(--vscode-descriptionForeground); font-size:10px; line-height:1.35; }
-    .message { margin:0 0 17px; white-space:pre-wrap; overflow-wrap:anywhere; }
-    .message .role { margin-bottom:4px; color:var(--vscode-descriptionForeground); font-size:10px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; }
-    .message.user { margin-left:18px; padding:8px 10px; border-radius:8px; background:var(--vscode-input-background); border:1px solid var(--vscode-input-border,var(--vscode-panel-border)); }
-    .message.assistant { margin-right:8px; }
-    .work-card { margin:5px 0 14px; border:1px solid var(--vscode-widget-border,var(--vscode-panel-border)); border-radius:8px; background:color-mix(in srgb,var(--vscode-editor-background) 72%,transparent); overflow:hidden; }
-    .work-card summary { list-style:none; display:flex; align-items:center; gap:7px; min-height:34px; padding:7px 9px; cursor:pointer; color:var(--vscode-descriptionForeground); font-size:11px; }
-    .work-card summary::-webkit-details-marker { display:none; }
-    .work-card summary:hover { color:var(--vscode-foreground); background:var(--vscode-toolbar-hoverBackground); }
-    .work-dot { width:7px; height:7px; flex:none; border-radius:50%; background:var(--vscode-progressBar-background); }
-    .work-card.done .work-dot { background:var(--vscode-testing-iconPassed); }
-    .work-card.failed .work-dot { background:var(--vscode-testing-iconFailed); }
-    .work-label { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .work-count { flex:none; font-size:10px; opacity:.8; }
-    .work-body { border-top:1px solid var(--vscode-widget-border,var(--vscode-panel-border)); padding:6px 9px 8px; }
-    .activity { display:flex; gap:7px; padding:2px 0; color:var(--vscode-descriptionForeground); font-size:10px; }
-    .activity .mark { width:12px; text-align:center; flex:none; }
-    .task-actions { display:flex; flex-wrap:wrap; gap:3px; margin-top:6px; }
-    .ghost-btn { border:0; border-radius:5px; padding:3px 6px; background:transparent; color:var(--vscode-descriptionForeground); font-size:10px; }
-    .ghost-btn:hover { color:var(--vscode-foreground); background:var(--vscode-toolbar-hoverBackground); }
-    .artifact,.interrupt { margin:7px 0 14px; border:1px solid var(--vscode-widget-border,var(--vscode-panel-border)); border-radius:8px; padding:9px; background:var(--vscode-editor-background); }
-    .artifact-head { display:flex; align-items:center; gap:7px; min-width:0; }
-    .artifact-head code { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; }
-    .pill { flex:none; padding:1px 5px; border:1px solid var(--vscode-widget-border,var(--vscode-panel-border)); border-radius:999px; color:var(--vscode-descriptionForeground); font-size:9px; }
-    .artifact-actions { display:flex; flex-wrap:wrap; gap:4px; margin-top:7px; }
-    .artifact-actions button,.choice { border:1px solid var(--vscode-widget-border,var(--vscode-panel-border)); background:transparent; border-radius:6px; padding:5px 7px; }
-    .artifact-actions button:hover,.choice:hover { background:var(--vscode-toolbar-hoverBackground); }
-    .interrupt h3 { margin:0 0 4px; font-size:12px; }
-    .interrupt p { margin:0 0 8px; color:var(--vscode-descriptionForeground); font-size:10px; }
-    .choices { display:grid; gap:6px; }
-    .choice { text-align:left; }
-    .choice strong,.choice span { display:block; }
-    .choice span { margin-top:2px; color:var(--vscode-descriptionForeground); font-size:10px; }
-    .other-row { display:flex; gap:5px; margin-top:2px; }
-    .other-row input { min-width:0; flex:1; color:var(--vscode-input-foreground); background:var(--vscode-input-background); border:1px solid var(--vscode-input-border,var(--vscode-panel-border)); border-radius:6px; padding:6px; outline:0; }
-    .notice { display:none; margin:0 12px 8px; padding:6px 8px; border-radius:6px; background:var(--vscode-inputValidation-errorBackground); border:1px solid var(--vscode-inputValidation-errorBorder); color:var(--vscode-inputValidation-errorForeground); font-size:10px; }
-    .notice.visible { display:block; }
-    .composer-wrap { position:relative; padding:7px 8px 9px; border-top:1px solid var(--vscode-sideBar-border,var(--vscode-panel-border)); background:var(--vscode-sideBar-background); }
-    .attachments { display:none; gap:5px; overflow:auto hidden; padding:0 1px 6px; scrollbar-width:none; }
-    .attachments.visible { display:flex; }
-    .attachments::-webkit-scrollbar { display:none; }
-    .attach-chip { flex:none; max-width:190px; display:flex; align-items:center; gap:5px; padding:3px 6px; border:1px solid var(--vscode-widget-border,var(--vscode-panel-border)); border-radius:6px; background:var(--vscode-editor-background); font-size:10px; }
-    .attach-chip img { width:18px; height:18px; object-fit:cover; border-radius:3px; }
-    .attach-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .attach-remove { border:0; padding:0; background:transparent; color:var(--vscode-descriptionForeground); }
-    .composer { border:1px solid var(--vscode-input-border,var(--vscode-widget-border,var(--vscode-panel-border))); border-radius:9px; background:var(--vscode-input-background); overflow:hidden; transition:border-color .12s ease; }
-    .composer:focus-within { border-color:var(--vscode-focusBorder); }
-    textarea { width:100%; min-height:44px; max-height:140px; resize:none; overflow:auto; padding:8px 9px 2px; color:var(--vscode-input-foreground); background:transparent; border:0; outline:0; }
-    .composer-bar { display:flex; align-items:center; gap:3px; padding:3px 5px 5px; }
-    .composer-tool { height:26px; min-width:26px; border:0; border-radius:5px; padding:0 6px; background:transparent; color:var(--vscode-descriptionForeground); font-size:11px; }
-    .composer-tool:hover { color:var(--vscode-foreground); background:var(--vscode-toolbar-hoverBackground); }
-    .mode-select { border:0; border-radius:5px; padding:3px 4px; color:var(--vscode-descriptionForeground); background:transparent; font-size:10px; }
-    .send { margin-left:auto; width:27px; height:27px; display:grid; place-items:center; border:0; border-radius:7px; color:var(--vscode-button-foreground); background:var(--vscode-button-background); font-size:15px; }
-    .send:hover { background:var(--vscode-button-hoverBackground); }
-    .context-popover,.menu-popover { display:none; position:absolute; z-index:20; left:8px; bottom:51px; width:min(275px,calc(100% - 16px)); border:1px solid var(--vscode-widget-border,var(--vscode-panel-border)); border-radius:8px; padding:6px; background:var(--vscode-menu-background,var(--vscode-editor-background)); box-shadow:0 8px 28px rgba(0,0,0,.25); }
-    .context-popover.visible,.menu-popover.visible { display:block; }
-    .context-row,.menu-row { width:100%; display:flex; align-items:center; gap:8px; border:0; border-radius:5px; padding:6px; background:transparent; text-align:left; font-size:11px; }
-    .context-row:hover,.menu-row:hover { background:var(--vscode-list-hoverBackground); }
-    .context-row input { margin:0; }
-    .menu-popover { left:auto; right:7px; bottom:auto; top:34px; width:190px; }
-    .menu-sep { height:1px; margin:4px 2px; background:var(--vscode-widget-border,var(--vscode-panel-border)); }
-    .drawer { display:none; position:absolute; inset:0; z-index:15; flex-direction:column; background:var(--vscode-sideBar-background); }
-    .drawer.visible { display:flex; }
-    .drawer-head { display:flex; align-items:center; gap:8px; min-height:38px; padding:5px 9px; border-bottom:1px solid var(--vscode-sideBar-border,var(--vscode-panel-border)); }
-    .drawer-head strong { flex:1; }
-    .drawer-body { min-height:0; flex:1; overflow:auto; padding:7px; }
-    .drawer-card { width:100%; text-align:left; border:1px solid transparent; border-radius:7px; padding:8px; margin-bottom:2px; background:transparent; }
-    .drawer-card:hover { background:var(--vscode-list-hoverBackground); }
-    .drawer-card strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; }
-    .drawer-card span { display:block; margin-top:2px; color:var(--vscode-descriptionForeground); font-size:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .drop-overlay { display:none; position:absolute; inset:8px; z-index:40; place-items:center; border:1px dashed var(--vscode-focusBorder); border-radius:10px; background:color-mix(in srgb,var(--vscode-sideBar-background) 88%,transparent); color:var(--vscode-foreground); font-size:12px; pointer-events:none; }
-    .drop-overlay.visible { display:grid; }
-    code { font-family:var(--vscode-editor-font-family); }
-    @media (max-width:300px) { .mode-cards { grid-template-columns:1fr; } .session-tab { max-width:120px; } }
+    :root {
+      color-scheme: light dark;
+      --accent: var(--vscode-focusBorder);
+      --border: var(--vscode-widget-border, var(--vscode-panel-border));
+      --muted: var(--vscode-descriptionForeground);
+      --bg: var(--vscode-sideBar-background);
+      --input-bg: var(--vscode-input-background);
+      --fast: 120ms;
+      --normal: 180ms;
+      --ease: cubic-bezier(.2,.75,.25,1);
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; }
+    body { overflow: hidden; color: var(--vscode-foreground); background: var(--bg); font: 13px/1.5 var(--vscode-font-family); }
+    button, select, input, textarea { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    .shell { height: 100vh; display: grid; grid-template-rows: auto auto minmax(0,1fr) auto; }
+
+    /* Session tabs */
+    .session-strip { display: flex; align-items: center; gap: 4px; padding: 4px 6px 3px; border-bottom: 1px solid var(--border); min-height: 36px; }
+    .session-tabs-wrap { position: relative; min-width: 0; flex: 1; overflow: hidden; }
+    .session-tabs { display: flex; gap: 3px; overflow: auto hidden; scrollbar-width: none; scroll-behavior: smooth; }
+    .session-tabs::-webkit-scrollbar { display: none; }
+    .session-indicator { position: absolute; bottom: 0; left: 0; height: 2px; width: 0; border-radius: 999px; background: var(--accent); transition: transform var(--normal) var(--ease), width var(--normal) var(--ease), opacity var(--fast) ease; opacity: 0; pointer-events: none; }
+    .session-tab { position: relative; flex: none; max-width: 150px; height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 7px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); transition: background var(--fast) ease, color var(--fast) ease; }
+    .session-tab:hover { background: var(--vscode-toolbar-hoverBackground); color: var(--vscode-foreground); }
+    .session-tab.active { background: color-mix(in srgb, var(--vscode-toolbar-hoverBackground) 68%, transparent); color: var(--vscode-foreground); }
+    .session-tab.tab-enter { animation: tabIn var(--normal) var(--ease) both; }
+    .session-tab.tab-closing { pointer-events: none; opacity: 0; transform: scale(.94); transition: opacity var(--fast) ease, transform var(--fast) ease; }
+    .session-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+    .session-state { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--muted); opacity: .4; }
+    .session-state.running { background: var(--vscode-progressBar-background); opacity: 1; animation: pulse 1.8s ease-in-out infinite; }
+    .session-state.waiting { background: var(--vscode-editorWarning-foreground); opacity: 1; }
+    .session-state.done { background: var(--vscode-testing-iconPassed); opacity: .9; }
+    .session-state.failed { background: var(--vscode-testing-iconFailed); opacity: .9; }
+    .close-tab { flex: none; border: 0; padding: 0; width: 15px; height: 15px; line-height: 13px; border-radius: 4px; background: transparent; color: var(--muted); opacity: 0; transition: opacity var(--fast) ease, background var(--fast) ease; }
+    .session-tab:hover .close-tab, .session-tab.active .close-tab { opacity: .72; }
+    .close-tab:hover { background: var(--vscode-toolbar-hoverBackground); opacity: 1; }
+    .icon-btn { flex: none; width: 27px; height: 27px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 15px; transition: background var(--fast) ease, color var(--fast) ease; }
+    .icon-btn:hover { background: var(--vscode-toolbar-hoverBackground); color: var(--vscode-foreground); }
+
+    /* Connection */
+    .connection { max-height: 0; opacity: 0; overflow: hidden; display: flex; align-items: center; gap: 7px; padding: 0 9px; color: var(--muted); font-size: 11px; border-bottom: 0 solid transparent; transform: translateY(-3px); transition: max-height var(--normal) var(--ease), opacity var(--fast) ease, transform var(--normal) var(--ease), padding var(--normal) var(--ease); }
+    .connection.visible { max-height: 32px; opacity: 1; padding: 4px 9px 5px; border-bottom-width: 1px; border-bottom-color: var(--border); transform: none; }
+    .connection .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--vscode-testing-iconFailed); }
+    .connection.connecting .dot { background: var(--vscode-progressBar-background); animation: pulse 1.4s ease-in-out infinite; }
+    .connection button { margin-left: auto; border: 0; padding: 2px 4px; background: transparent; color: var(--vscode-textLink-foreground); }
+    .connection button:hover { text-decoration: underline; }
+
+    /* Layout */
+    .viewport { min-height: 0; position: relative; overflow: hidden; }
+    .chat { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+    .timeline { min-height: 0; flex: 1; overflow-y: auto; padding: 16px 12px 24px; }
+    .timeline.anim-left { animation: slideInLeft var(--normal) var(--ease) both; }
+    .timeline.anim-right { animation: slideInRight var(--normal) var(--ease) both; }
+
+    /* Chat bubbles */
+    .msg { display: flex; gap: 9px; margin-bottom: 16px; animation: msgIn var(--fast) var(--ease) both; }
+    .msg-user { flex-direction: row-reverse; }
+    .msg-assistant { flex-direction: row; align-items: flex-start; }
+    .avatar { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent); margin-top: 2px; }
+    .avatar-spacer { flex: none; width: 26px; }
+    .msg-body { min-width: 0; max-width: calc(100% - 40px); display: flex; flex-direction: column; gap: 5px; }
+    .msg-user .msg-body { align-items: flex-end; }
+    .msg-assistant .msg-body { align-items: flex-start; }
+    .msg-role { font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+    .bubble { padding: 9px 12px; border-radius: 14px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; font-size: 13px; }
+    .msg-user .bubble { background: color-mix(in srgb, var(--accent) 12%, var(--input-bg)); border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border)); border-bottom-right-radius: 4px; }
+    .msg-assistant .bubble { background: var(--vscode-editor-background); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+    .bubble:empty { display: none; }
+    .bubble.streaming::after { content: '\u2588'; display: inline-block; margin-left: 1px; color: var(--accent); animation: blink 1s steps(2,end) infinite; }
+    .msg-attachments { display: flex; flex-wrap: wrap; gap: 4px; }
+    .attach-chip-sm { display: flex; align-items: center; gap: 4px; padding: 2px 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--vscode-editor-background); font-size: 10px; color: var(--muted); }
+
+    /* Activity feed (replaces work-card) */
+    .activity-feed { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: color-mix(in srgb, var(--vscode-editor-background) 55%, transparent); font-size: 11px; width: 100%; }
+    .feed-summary { display: flex; align-items: center; gap: 6px; padding: 6px 9px; cursor: pointer; color: var(--muted); list-style: none; user-select: none; }
+    .feed-summary::-webkit-details-marker { display: none; }
+    .feed-summary:hover { background: var(--vscode-toolbar-hoverBackground); color: var(--vscode-foreground); }
+    .feed-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--vscode-progressBar-background); animation: pulse 1.6s ease-in-out infinite; }
+    .activity-feed.done .feed-dot { background: var(--vscode-testing-iconPassed); animation: none; }
+    .activity-feed.failed .feed-dot { background: var(--vscode-testing-iconFailed); animation: none; }
+    .feed-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .feed-count { flex: none; min-width: 16px; padding: 0 3px; border-radius: 999px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); text-align: center; font-size: 9px; }
+    .feed-count:empty { display: none; }
+    .feed-rows { border-top: 1px solid var(--border); padding: 5px 8px 7px; display: flex; flex-direction: column; gap: 2px; }
+    .feed-row { display: flex; gap: 6px; color: var(--muted); padding: 1px 2px; animation: rowIn var(--fast) var(--ease) both; }
+    .feed-row .fmark { width: 12px; text-align: center; flex: none; font-size: 10px; }
+    .feed-row .ftext { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+    /* Reasoning strip */
+    .reasoning-block { border-left: 2px solid color-mix(in srgb, var(--accent) 38%, transparent); padding: 5px 10px; background: color-mix(in srgb, var(--accent) 5%, transparent); border-radius: 0 6px 6px 0; font-size: 11px; color: var(--muted); animation: msgIn var(--fast) var(--ease) both; width: 100%; }
+    .reasoning-label { font-size: 9px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: color-mix(in srgb, var(--accent) 65%, var(--muted)); margin-bottom: 2px; display: block; }
+    .reasoning-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.4; }
+
+    /* Task controls */
+    .task-controls { display: flex; flex-wrap: wrap; gap: 3px; }
+    .ctrl-btn { border: 0; border-radius: 5px; padding: 3px 7px; background: transparent; color: var(--muted); font-size: 10px; transition: background var(--fast) ease, color var(--fast) ease; }
+    .ctrl-btn:hover { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground); }
+
+    /* Interrupt */
+    .interrupt { margin: 2px 0 14px; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--vscode-editor-background); animation: msgIn var(--fast) var(--ease) both; }
+    .interrupt h3 { margin: 0 0 4px; font-size: 12px; }
+    .interrupt p { margin: 0 0 8px; color: var(--muted); font-size: 10px; }
+    .choices { display: grid; gap: 5px; }
+    .choice { text-align: left; border: 1px solid var(--border); background: transparent; border-radius: 7px; padding: 6px 8px; transition: background var(--fast) ease, border-color var(--fast) ease; }
+    .choice:hover { background: var(--vscode-toolbar-hoverBackground); border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+    .choice strong, .choice span { display: block; }
+    .choice span { margin-top: 2px; color: var(--muted); font-size: 10px; }
+    .other-row { display: flex; gap: 5px; margin-top: 4px; }
+    .other-row input { min-width: 0; flex: 1; background: var(--input-bg); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, var(--border)); border-radius: 6px; padding: 5px 7px; outline: 0; }
+    .ghost-btn { border: 0; padding: 4px 8px; border-radius: 5px; background: transparent; color: var(--muted); transition: background var(--fast) ease, color var(--fast) ease; }
+    .ghost-btn:hover { background: var(--vscode-toolbar-hoverBackground); color: var(--vscode-foreground); }
+
+    /* Artifact */
+    .artifact { margin: 2px 0 10px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--vscode-editor-background); animation: msgIn var(--fast) var(--ease) both; font-size: 11px; }
+    .artifact-head { display: flex; align-items: center; gap: 6px; min-width: 0; margin-bottom: 6px; }
+    .pill { flex: none; padding: 1px 5px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 9px; }
+    .artifact-head code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--vscode-editor-font-family); }
+    .artifact-actions { display: flex; gap: 4px; }
+    .artifact-actions button { border: 1px solid var(--border); background: transparent; border-radius: 5px; padding: 4px 7px; font-size: 10px; transition: background var(--fast) ease; }
+    .artifact-actions button:hover { background: var(--vscode-toolbar-hoverBackground); }
+
+    /* Empty state */
+    .empty { min-height: 100%; display: grid; place-items: center; padding: 20px 8px; }
+    .empty-inner { width: 100%; max-width: 310px; text-align: center; animation: fadeUp 240ms var(--ease) both; }
+    .spark { width: 30px; height: 30px; margin: 0 auto 10px; display: grid; place-items: center; font-size: 20px; color: var(--accent); filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent) 28%, transparent)); animation: float 2.8s ease-in-out infinite; }
+    .empty h2 { margin: 0; font-size: 15px; font-weight: 650; }
+    .empty p { max-width: 270px; margin: 5px auto 16px; color: var(--muted); font-size: 11px; }
+    .mode-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .mode-card { position: relative; text-align: left; border: 1px solid var(--border); border-radius: 9px; padding: 10px; background: color-mix(in srgb, var(--vscode-editor-background) 80%, transparent); transition: border-color var(--fast) ease, transform var(--fast) ease; }
+    .mode-card:hover { border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); transform: translateY(-1px); }
+    .mode-card.selected { border-color: var(--accent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent); }
+    .mode-card strong { display: block; font-size: 11px; }
+    .mode-card span { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; line-height: 1.35; }
+
+    /* Notice */
+    .notice { pointer-events: none; opacity: 0; transform: translateY(4px); margin: 0 12px 8px; max-height: 0; overflow: hidden; padding: 0 8px; border-radius: 7px; background: var(--vscode-inputValidation-errorBackground); border: 0 solid var(--vscode-inputValidation-errorBorder); color: var(--vscode-inputValidation-errorForeground); font-size: 10px; transition: opacity var(--fast) ease, transform var(--fast) ease, max-height var(--normal) var(--ease), padding var(--normal) var(--ease); }
+    .notice.visible { pointer-events: auto; opacity: 1; transform: none; max-height: 72px; padding: 6px 8px; border-width: 1px; }
+
+    /* Composer */
+    .composer-wrap { position: relative; padding: 7px 8px 9px; border-top: 1px solid var(--border); background: var(--bg); }
+    .attachments { display: flex; gap: 5px; overflow: auto hidden; max-height: 0; opacity: 0; padding: 0 1px; scrollbar-width: none; transition: max-height var(--normal) var(--ease), opacity var(--fast) ease, padding var(--normal) var(--ease); }
+    .attachments.visible { max-height: 38px; opacity: 1; padding-bottom: 6px; }
+    .attachments::-webkit-scrollbar { display: none; }
+    .attach-chip { flex: none; max-width: 190px; display: flex; align-items: center; gap: 5px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--vscode-editor-background); font-size: 10px; animation: chipIn var(--fast) var(--ease) both; }
+    .attach-chip.removing { animation: chipOut 110ms ease forwards; }
+    .attach-chip img { width: 18px; height: 18px; object-fit: cover; border-radius: 3px; }
+    .attach-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .attach-remove { border: 0; padding: 0; background: transparent; color: var(--muted); }
+    .composer-box { border: 1px solid var(--vscode-input-border, var(--border)); border-radius: 10px; background: var(--input-bg); overflow: hidden; transition: border-color var(--fast) ease, box-shadow var(--fast) ease; }
+    .composer-box:focus-within { border-color: var(--vscode-focusBorder); box-shadow: 0 0 0 1px color-mix(in srgb, var(--vscode-focusBorder) 18%, transparent); }
+    textarea { width: 100%; min-height: 40px; max-height: 140px; resize: none; overflow: auto; padding: 8px 9px 1px; color: var(--vscode-input-foreground); background: transparent; border: 0; outline: 0; }
+    .composer-bar { display: flex; align-items: center; gap: 3px; padding: 3px 5px 5px; }
+    .c-tool { height: 26px; min-width: 26px; border: 0; border-radius: 5px; padding: 0 6px; background: transparent; color: var(--muted); font-size: 11px; transition: background var(--fast) ease, color var(--fast) ease; }
+    .c-tool:hover { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground); }
+    .bar-select { border: 0; border-radius: 5px; padding: 3px 5px; color: var(--muted); background: transparent; font-size: 10px; cursor: pointer; transition: background var(--fast) ease, color var(--fast) ease; }
+    .bar-select:hover { background: var(--vscode-toolbar-hoverBackground); color: var(--vscode-foreground); }
+    .send { margin-left: auto; width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 8px; color: var(--vscode-disabledForeground); background: color-mix(in srgb, var(--vscode-button-background) 28%, transparent); font-size: 15px; transform: scale(.96); transition: background var(--fast) ease, color var(--fast) ease, transform var(--fast) ease, box-shadow var(--fast) ease; }
+    .send.ready { color: var(--vscode-button-foreground); background: var(--vscode-button-background); transform: none; box-shadow: 0 2px 8px color-mix(in srgb, var(--vscode-button-background) 20%, transparent); }
+    .send.ready:hover { background: var(--vscode-button-hoverBackground); transform: translateY(-1px); }
+
+    /* Popovers */
+    .context-popover, .menu-popover { visibility: hidden; pointer-events: none; opacity: 0; transform: translateY(5px) scale(.98); position: absolute; z-index: 20; left: 8px; bottom: 51px; width: min(275px, calc(100% - 16px)); border: 1px solid var(--border); border-radius: 8px; padding: 6px; background: var(--vscode-menu-background, var(--vscode-editor-background)); box-shadow: 0 8px 28px rgba(0,0,0,.25); transition: opacity var(--fast) ease, transform var(--fast) ease, visibility 0s linear var(--fast); }
+    .context-popover.visible, .menu-popover.visible { visibility: visible; pointer-events: auto; opacity: 1; transform: none; transition-delay: 0s; }
+    .context-row, .menu-row { width: 100%; display: flex; align-items: center; gap: 8px; border: 0; border-radius: 5px; padding: 6px; background: transparent; text-align: left; font-size: 11px; }
+    .context-row:hover, .menu-row:hover { background: var(--vscode-list-hoverBackground); }
+    .context-row input { margin: 0; }
+    .menu-popover { left: auto; right: 7px; bottom: auto; top: 34px; width: 190px; transform-origin: top right; }
+    .menu-sep { height: 1px; margin: 4px 2px; background: var(--border); }
+
+    /* Drawer */
+    .drawer { visibility: hidden; pointer-events: none; position: absolute; inset: 0; z-index: 15; display: flex; flex-direction: column; background: var(--bg); opacity: 0; transform: translateX(12px); transition: opacity var(--normal) ease, transform var(--normal) var(--ease), visibility 0s linear var(--normal); }
+    .drawer.visible { visibility: visible; pointer-events: auto; opacity: 1; transform: none; transition-delay: 0s; }
+    .drawer-head { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 5px 9px; border-bottom: 1px solid var(--border); }
+    .drawer-head strong { flex: 1; }
+    .drawer-body { min-height: 0; flex: 1; overflow: auto; padding: 7px; }
+    .drawer-card { width: 100%; text-align: left; border: 1px solid transparent; border-radius: 7px; padding: 8px; margin-bottom: 2px; background: transparent; animation: rowIn var(--fast) var(--ease) both; }
+    .drawer-card:hover { background: var(--vscode-list-hoverBackground); }
+    .drawer-card strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+    .drawer-card span { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .drop-overlay { visibility: hidden; opacity: 0; transform: scale(.985); position: absolute; inset: 8px; z-index: 40; display: grid; place-items: center; border: 1px dashed var(--vscode-focusBorder); border-radius: 10px; background: color-mix(in srgb, var(--bg) 88%, transparent); font-size: 12px; pointer-events: none; transition: opacity var(--fast) ease, transform var(--fast) ease, visibility 0s linear var(--fast); }
+    .drop-overlay.visible { visibility: visible; opacity: 1; transform: none; transition-delay: 0s; }
+
+    @keyframes tabIn { from { opacity: 0; transform: translateY(-3px) scale(.97); } }
+    @keyframes msgIn { from { opacity: 0; transform: translateY(5px); } }
+    @keyframes rowIn { from { opacity: 0; transform: translateX(-4px); } }
+    @keyframes chipIn { from { opacity: 0; transform: scale(.94); } }
+    @keyframes chipOut { to { opacity: 0; transform: scale(.92); max-width: 0; padding-left: 0; padding-right: 0; margin: 0; } }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(6px) scale(.99); } }
+    @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+    @keyframes blink { 0%,45% { opacity: .8; } 46%,100% { opacity: .15; } }
+    @keyframes slideInLeft { from { opacity: 0; transform: translateX(-10px); } }
+    @keyframes slideInRight { from { opacity: 0; transform: translateX(10px); } }
+    @media (max-width: 280px) { .mode-cards { grid-template-columns: 1fr; } .session-tab { max-width: 110px; } }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; } }
   </style>
 </head>
 <body>
-  <div class="shell">
-    <div class="session-strip">
+<div class="shell">
+  <div class="session-strip">
+    <div class="session-tabs-wrap">
       <div id="sessionTabs" class="session-tabs"></div>
-      <button id="newChat" class="icon-btn" title="New Session">＋</button>
-      <button id="menuButton" class="icon-btn" title="More">⋯</button>
+      <span id="sessionIndicator" class="session-indicator"></span>
     </div>
-
-    <div id="connection" class="connection">
-      <span class="dot"></span><span id="connectionText">Service offline</span>
-      <button id="reconnect">Reconnect</button>
-    </div>
-
-    <main class="viewport">
-      <section class="chat">
-        <div id="timeline" class="timeline"></div>
-        <div id="notice" class="notice"></div>
-      </section>
-
-      <section id="drawer" class="drawer">
-        <div class="drawer-head"><button id="drawerBack" class="icon-btn">‹</button><strong id="drawerTitle">History</strong></div>
-        <div id="drawerBody" class="drawer-body"></div>
-      </section>
-
-      <div id="menuPopover" class="menu-popover">
-        <button class="menu-row" data-menu="new">＋ New Session</button>
-        <button class="menu-row" data-menu="history">◷ Recent chats</button>
-        <button class="menu-row" data-menu="tasks">✓ Tasks</button>
-        <button class="menu-row" data-menu="skills">⌘ Skills</button>
-        <div class="menu-sep"></div>
-        <button class="menu-row" data-menu="source">⌁ Source Control</button>
-        <button class="menu-row" data-menu="test">⚗ Run Self Test</button>
-        <button class="menu-row" data-menu="reconnect">↻ Reconnect</button>
-        <button class="menu-row" data-menu="settings">⚙ Settings</button>
-      </div>
-
-      <div id="dropOverlay" class="drop-overlay">Drop files or images to attach</div>
-    </main>
-
-    <footer class="composer-wrap">
-      <div id="attachments" class="attachments"></div>
-      <div class="composer">
-        <textarea id="input" rows="1" placeholder="Ask Eris about your code…"></textarea>
-        <div class="composer-bar">
-          <button id="attach" class="composer-tool" title="Attach files or images">＋</button>
-          <button id="contextButton" class="composer-tool" title="Context">#</button>
-          <select id="mode" class="mode-select" title="Agent mode"><option value="execute">Agent</option><option value="inspect">Inspect only</option></select>
-          <button id="send" class="send" title="Send">↑</button>
-        </div>
-      </div>
-      <div id="contextPopover" class="context-popover">
-        <label class="context-row"><input type="checkbox" value="current" checked /> Current file</label>
-        <label class="context-row"><input type="checkbox" value="selection" checked /> Selection</label>
-        <label class="context-row"><input type="checkbox" value="problems" checked /> Problems</label>
-        <label class="context-row"><input type="checkbox" value="git" checked /> Git changes</label>
-        <label class="context-row"><input type="checkbox" value="terminal" /> Terminal recent</label>
-        <label class="context-row"><input type="checkbox" value="openEditors" /> Open editors</label>
-      </div>
-    </footer>
+    <button id="newChat" class="icon-btn" title="New Session">\uFF0B</button>
+    <button id="menuButton" class="icon-btn" title="More">\u22EF</button>
   </div>
+  <div id="connection" class="connection">
+    <span class="dot"></span><span id="connectionText">Service offline</span>
+    <button id="reconnect">Reconnect</button>
+  </div>
+  <main class="viewport">
+    <section class="chat">
+      <div id="timeline" class="timeline"></div>
+      <div id="notice" class="notice"></div>
+    </section>
+    <section id="drawer" class="drawer">
+      <div class="drawer-head"><button id="drawerBack" class="icon-btn">\u2039</button><strong id="drawerTitle">History</strong></div>
+      <div id="drawerBody" class="drawer-body"></div>
+    </section>
+    <div id="menuPopover" class="menu-popover">
+      <button class="menu-row" data-menu="new">\uFF0B New Session</button>
+      <button class="menu-row" data-menu="history">\u25F7 Recent chats</button>
+      <button class="menu-row" data-menu="tasks">\u2713 Tasks</button>
+      <button class="menu-row" data-menu="skills">\u2318 Skills</button>
+      <div class="menu-sep"></div>
+      <button class="menu-row" data-menu="source">\u2341 Source Control</button>
+      <button class="menu-row" data-menu="test">\u2697 Run Self Test</button>
+      <button class="menu-row" data-menu="reconnect">\u21BB Reconnect</button>
+      <button class="menu-row" data-menu="settings">\u2699 Settings</button>
+    </div>
+    <div id="dropOverlay" class="drop-overlay">Drop files or images to attach</div>
+  </main>
+  <footer class="composer-wrap">
+    <div id="attachments" class="attachments"></div>
+    <div class="composer-box">
+      <textarea id="input" rows="1" placeholder="Ask Eris about your code\u2026"></textarea>
+      <div class="composer-bar">
+        <button id="attach" class="c-tool" title="Attach files or images">\uFF0B</button>
+        <button id="contextButton" class="c-tool" title="Context">#</button>
+        <select id="mode" class="bar-select" title="Agent mode"><option value="execute">Agent</option><option value="inspect">Inspect only</option></select>
+        <select id="modelSelect" class="bar-select" title="WebAI model">
+          <option value="gemini-3-flash">Flash</option>
+          <option value="gemini-3-pro">Pro</option>
+          <option value="gemini-3-flash-thinking">Thinking</option>
+        </select>
+        <button id="send" class="send" title="Send">\u2191</button>
+      </div>
+    </div>
+    <div id="contextPopover" class="context-popover">
+      <label class="context-row"><input type="checkbox" value="current" checked /> Current file</label>
+      <label class="context-row"><input type="checkbox" value="selection" checked /> Selection</label>
+      <label class="context-row"><input type="checkbox" value="problems" checked /> Problems</label>
+      <label class="context-row"><input type="checkbox" value="git" checked /> Git changes</label>
+      <label class="context-row"><input type="checkbox" value="terminal" /> Terminal recent</label>
+      <label class="context-row"><input type="checkbox" value="openEditors" /> Open editors</label>
+    </div>
+  </footer>
+</div>
 
 <script nonce="${nonce}">
-  const vscode=acquireVsCodeApi();
-  const timeline=document.getElementById('timeline');
-  const input=document.getElementById('input');
-  const sessionTabs=document.getElementById('sessionTabs');
-  const attachmentBox=document.getElementById('attachments');
-  const notice=document.getElementById('notice');
-  const drawer=document.getElementById('drawer');
-  const drawerBody=document.getElementById('drawerBody');
-  const drawerTitle=document.getElementById('drawerTitle');
-  const menuPopover=document.getElementById('menuPopover');
-  const contextPopover=document.getElementById('contextPopover');
-  let activeThreadId='';
-  let activeTaskId='';
-  let sessions=[];
-  let catalogTasks=[];
-  let catalogSkills=[];
-  let streamNode=null;
-  let selectedMode='execute';
-  const rendered=new Set();
-  const pendingInterrupts=new Set();
-  const attachmentState=new Map();
-  const workCards=new Map();
+const vscode=acquireVsCodeApi();
+const timeline=document.getElementById('timeline');
+const input=document.getElementById('input');
+const sessionTabs=document.getElementById('sessionTabs');
+const sessionIndicator=document.getElementById('sessionIndicator');
+const connection=document.getElementById('connection');
+const sendButton=document.getElementById('send');
+const attachmentBox=document.getElementById('attachments');
+const notice=document.getElementById('notice');
+const drawer=document.getElementById('drawer');
+const drawerBody=document.getElementById('drawerBody');
+const drawerTitle=document.getElementById('drawerTitle');
+const menuPopover=document.getElementById('menuPopover');
+const contextPopover=document.getElementById('contextPopover');
+const modelSelect=document.getElementById('modelSelect');
 
-  const esc=(value)=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-  const clip=(value,n=80)=>{const text=String(value??'').replace(/\s+/g,' ').trim();return text.length>n?text.slice(0,n-1)+'…':text;};
-  const scroll=()=>{requestAnimationFrame(()=>{timeline.scrollTop=timeline.scrollHeight;});};
-  const fmtBytes=(n)=>{const v=Number(n||0);if(v<1024)return v+' B';if(v<1048576)return Math.round(v/102.4)/10+' KB';return Math.round(v/104857.6)/10+' MB';};
-  const eventKey=(e)=>String(e?.eventId??e?.event_id??'')||[e?.type,e?.taskId,e?.seq,e?.timestamp].join(':');
-  function remember(e){const k=eventKey(e);if(!k)return true;if(rendered.has(k))return false;rendered.add(k);if(rendered.size>2500){const first=rendered.values().next().value;rendered.delete(first);}return true;}
+let activeThreadId='';
+let activeTaskId='';
+let sessions=[];
+let catalogTasks=[];
+let catalogSkills=[];
+let selectedMode='execute';
+let selectedModel=(vscode.getState()&&vscode.getState().model)||'gemini-3-flash';
+const rendered=new Set();
+const pendingInterrupts=new Set();
+const attachmentState=new Map();
+const taskGroups=new Map();
+const knownTabs=new Set();
+let pendingSwitchDirection=0;
+let awaitingThreadHistory=false;
+let deferredEvents=[];
 
-  function renderSessions(){
-    sessionTabs.innerHTML='';
-    for(const session of sessions){
-      const tab=document.createElement('button');tab.className='session-tab'+(session.threadId===activeThreadId?' active':'');tab.title=session.title||'New Session';
-      const dot=document.createElement('span');dot.className='session-state '+String(session.status||'idle');
-      const title=document.createElement('span');title.className='session-title';title.textContent=session.title||'New Session';
-      const close=document.createElement('button');close.className='close-tab';close.textContent='×';close.title='Close';close.onclick=(ev)=>{ev.stopPropagation();vscode.postMessage({type:'session.close',threadId:session.threadId});};
-      tab.append(dot,title,close);tab.onclick=()=>vscode.postMessage({type:'session.select',threadId:session.threadId});sessionTabs.appendChild(tab);
-    }
-    requestAnimationFrame(()=>sessionTabs.querySelector('.active')?.scrollIntoView({block:'nearest',inline:'nearest'}));
+modelSelect.value=selectedModel;
+modelSelect.onchange=function(e){selectedModel=e.target.value;vscode.setState(Object.assign({},vscode.getState(),{model:selectedModel}));};
+
+const esc=function(v){return String(v==null?'':v).replace(/[&<>"']/g,function(ch){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch];});};
+const clip=function(v,n){n=n||80;var t=String(v==null?'':v).replace(/\\s+/g,' ').trim();return t.length<=n?t:t.slice(0,n-1)+'\u2026';};
+const scroll=function(){requestAnimationFrame(function(){timeline.scrollTop=timeline.scrollHeight;});};
+const fmtBytes=function(n){var v=Number(n||0);if(v<1024)return v+' B';if(v<1048576)return Math.round(v/102.4)/10+' KB';return Math.round(v/104857.6)/10+' MB';};
+const eventKey=function(e){return String(e&&e.eventId!=null?e.eventId:e&&e.event_id!=null?e.event_id:'')||[e&&e.type,e&&e.taskId,e&&e.seq,e&&e.timestamp].join(':');};
+function remember(e){var k=eventKey(e);if(!k)return true;if(rendered.has(k))return false;rendered.add(k);if(rendered.size>2500){var f=rendered.values().next().value;rendered.delete(f);}return true;}
+
+function updateSessionIndicator(){
+  var active=sessionTabs.querySelector('.session-tab.active');
+  if(!active){sessionIndicator.style.opacity='0';return;}
+  var left=active.offsetLeft-sessionTabs.scrollLeft;
+  sessionIndicator.style.width=active.offsetWidth+'px';
+  sessionIndicator.style.transform='translateX('+left+'px)';
+  sessionIndicator.style.opacity='1';
+}
+function selectSessionFromUi(threadId){
+  var ci=sessions.findIndex(function(s){return s.threadId===activeThreadId;});
+  var ni=sessions.findIndex(function(s){return s.threadId===threadId;});
+  pendingSwitchDirection=ni===ci?0:(ni>ci?1:-1);
+  awaitingThreadHistory=true;
+  vscode.postMessage({type:'session.select',threadId:threadId});
+}
+function renderSessions(){
+  sessionTabs.innerHTML='';
+  var liveIds=new Set(sessions.map(function(s){return String(s.threadId||'');}));
+  for(var k of [...knownTabs])if(!liveIds.has(k))knownTabs.delete(k);
+  for(var session of sessions){
+    var tab=document.createElement('button');
+    var isFresh=!knownTabs.has(session.threadId);
+    tab.className='session-tab'+(session.threadId===activeThreadId?' active':'')+(isFresh?' tab-enter':'');
+    tab.dataset.threadId=session.threadId;
+    tab.title=session.title||'New Session';
+    var dot=document.createElement('span');dot.className='session-state '+String(session.status||'idle');
+    var title=document.createElement('span');title.className='session-title';title.textContent=session.title||'New Session';
+    var close=document.createElement('button');close.className='close-tab';close.textContent='\xD7';close.title='Close';
+    (function(tid,t){close.onclick=function(ev){ev.stopPropagation();t.classList.add('tab-closing');setTimeout(function(){vscode.postMessage({type:'session.close',threadId:tid});},110);};})(session.threadId,tab);
+    tab.append(dot,title,close);
+    (function(tid){tab.onclick=function(){selectSessionFromUi(tid);};})(session.threadId);
+    sessionTabs.appendChild(tab);knownTabs.add(session.threadId);
   }
-
-  function emptyHtml(){return '<div class="empty" id="chatEmpty"><div class="empty-inner"><div class="spark">✦</div><h2>What are we building today?</h2><p>Chat about code, inspect a problem, or let Eris work through a task with your IDE context.</p><div class="mode-cards"><button class="mode-card" data-empty-mode="inspect"><strong>Quick Chat</strong><span>Explore, explain and inspect without changing files.</span></button><button class="mode-card selected" data-empty-mode="execute"><strong>Agent Task</strong><span>Plan, edit, run tests and iterate autonomously.</span></button></div></div></div>';}
-  function ensureEmpty(){if(!timeline.children.length){timeline.innerHTML=emptyHtml();bindEmptyModes();}}
-  function removeEmpty(){document.getElementById('chatEmpty')?.remove();}
-  function bindEmptyModes(){for(const card of timeline.querySelectorAll('[data-empty-mode]'))card.onclick=()=>{selectedMode=card.dataset.emptyMode||'execute';document.getElementById('mode').value=selectedMode;for(const c of timeline.querySelectorAll('[data-empty-mode]'))c.classList.toggle('selected',c===card);input.focus();};}
-  function resetTimeline(){timeline.innerHTML='';rendered.clear();pendingInterrupts.clear();workCards.clear();streamNode=null;activeTaskId='';ensureEmpty();}
-
-  function addMessage(role,content,attachments=[]){
-    removeEmpty();const node=document.createElement('article');node.className='message '+role;const roleNode=document.createElement('div');roleNode.className='role';roleNode.textContent=role==='user'?'You':'Eris';const body=document.createElement('div');body.textContent=String(content??'');node.append(roleNode,body);
-    if(Array.isArray(attachments)&&attachments.length){const row=document.createElement('div');row.className='attachments visible';row.style.padding='7px 0 0';for(const item of attachments.slice(0,8)){const chip=document.createElement('div');chip.className='attach-chip';chip.innerHTML='<span>'+(String(item.kind||'')==='image'?'▧':'▤')+'</span><span class="attach-name">'+esc(item.name||item.relativePath||'attachment')+'</span>';chip.title=(item.relativePath||item.name||'attachment')+' · '+fmtBytes(item.size);row.appendChild(chip);}node.appendChild(row);}
-    timeline.appendChild(node);scroll();return node;
-  }
-
-  function getWorkCard(taskId){
-    const key=String(taskId||activeTaskId||'task');if(workCards.has(key))return workCards.get(key);
-    removeEmpty();const card=document.createElement('details');card.className='work-card';card.dataset.taskId=key;card.innerHTML='<summary><span class="work-dot"></span><span class="work-label">Working…</span><span class="work-count"></span></summary><div class="work-body"><div class="work-events"></div><div class="task-actions"><button class="ghost-btn" data-control="pause">Pause</button><button class="ghost-btn" data-control="resume">Resume</button><button class="ghost-btn" data-control="rollback">Rollback</button><button class="ghost-btn" data-control="stop">Stop</button></div></div>';
-    for(const button of card.querySelectorAll('[data-control]'))button.onclick=()=>vscode.postMessage({type:'task.control',taskId:key,action:button.dataset.control});
-    timeline.appendChild(card);workCards.set(key,card);scroll();return card;
-  }
-
-  function updateWork(taskId,label,status,detail){
-    const card=getWorkCard(taskId);const clean=String(status||'running');card.classList.toggle('done',clean==='completed'||clean==='done');card.classList.toggle('failed',clean==='failed'||clean==='stopped');
-    if(label)card.querySelector('.work-label').textContent=clip(label,90);
-    if(detail){const list=card.querySelector('.work-events');const row=document.createElement('div');row.className='activity';row.innerHTML='<span class="mark">'+(clean==='failed'?'×':clean==='completed'?'✓':'·')+'</span><span>'+esc(detail)+'</span>';list.appendChild(row);while(list.children.length>14)list.firstChild.remove();card.querySelector('.work-count').textContent=list.children.length?String(list.children.length):'';}
-    if(clean==='completed'||clean==='failed'||clean==='stopped')card.open=false;
-  }
-
-  function addActivity(event){const p=event.payload??{};const label=String(p.label??p.detail??event.type??'Working');const detail=String(p.detail??p.label??'');updateWork(event.taskId,label,p.status??(event.type==='activity.end'?'completed':'running'),detail);}
-  function mergeCoding(payload){const title=payload.current_action||payload.next_action||payload.phase||'Working';const file=payload.current_file?(' · '+payload.current_file):'';updateWork(activeTaskId,String(title)+file,payload.status||'running','');}
-
-  function disableChoices(node){for(const control of node.querySelectorAll('button,input'))control.disabled=true;}
-  function addInterrupt(event){
-    removeEmpty();const key=String(event.taskId??activeTaskId??'');if(key&&pendingInterrupts.has(key))return;if(key)pendingInterrupts.add(key);
-    const p=event.payload??{};const node=document.createElement('section');node.className='interrupt';node.innerHTML='<h3>'+esc(p.question||'Eris needs a decision')+'</h3><p>The task is checkpointed and will resume from here.</p><div class="choices" role="listbox"></div>';const choices=node.querySelector('.choices');
-    for(const option of(p.options??[])){const b=document.createElement('button');b.className='choice';b.innerHTML='<strong>'+esc(option.label??option.id)+'</strong>'+(option.description||option.desc?'<span>'+esc(option.description??option.desc)+'</span>':'');b.onclick=()=>{disableChoices(node);if(key)pendingInterrupts.delete(key);vscode.postMessage({type:'interrupt.resolve',taskId:event.taskId,response:{choiceId:String(option.id??''),value:String(option.value??option.label??''),text:String(option.label??'')}});};choices.appendChild(b);}
-    if(p.allowOther!==false){const row=document.createElement('div');row.className='other-row';const field=document.createElement('input');field.placeholder='Other direction…';const b=document.createElement('button');b.className='ghost-btn';b.textContent='Send';const submit=()=>{const value=field.value.trim();if(!value)return;disableChoices(node);if(key)pendingInterrupts.delete(key);vscode.postMessage({type:'interrupt.resolve',taskId:event.taskId,response:{choiceId:'other',value,text:value}});};b.onclick=submit;field.onkeydown=e=>{if(e.key==='Enter')submit();};row.append(field,b);choices.appendChild(row);}
-    timeline.appendChild(node);scroll();
-  }
-
-  function addArtifact(event){const p=event.payload??{};const filePath=String(p.path??'');if(!filePath)return;removeEmpty();const node=document.createElement('section');node.className='artifact';node.innerHTML='<div class="artifact-head"><span class="pill">Modified</span><code>'+esc(filePath)+'</code></div><div class="artifact-actions"><button data-action="open">Open</button><button data-action="diff">Diff</button></div>';node.querySelector('[data-action="open"]').onclick=()=>vscode.postMessage({type:'openArtifact',path:filePath});node.querySelector('[data-action="diff"]').onclick=()=>vscode.postMessage({type:'openDiff',path:filePath,diff:String(p.diff??'')});timeline.appendChild(node);scroll();}
-  function addChangeSet(event){const p=event.payload??{};const id=String(p.changeSetId??p.operationId??'');if(!id)return;removeEmpty();const files=Array.isArray(p.files)?p.files:[];const status=String(p.status??'pending');const node=document.createElement('section');node.className='artifact';node.dataset.changeSetId=id;node.innerHTML='<div class="artifact-head"><span class="pill">ChangeSet · '+esc(status)+'</span><code>'+esc(files.slice(0,3).join(' · ')||id)+'</code></div><div class="artifact-actions"><button data-action="accept">Accept</button><button data-action="revert">Revert</button></div>';const accept=node.querySelector('[data-action="accept"]');const revert=node.querySelector('[data-action="revert"]');if(status!=='pending'){accept.disabled=true;revert.disabled=true;}accept.onclick=()=>activeTaskId&&vscode.postMessage({type:'task.control',taskId:activeTaskId,action:'accept_changeset',changeSetId:id});revert.onclick=()=>activeTaskId&&vscode.postMessage({type:'task.control',taskId:activeTaskId,action:'revert_changeset',changeSetId:id});timeline.appendChild(node);scroll();}
-  function updateChangeSet(event){const p=event.payload??{};const id=String(p.changeSetId??p.operationId??'');const node=[...document.querySelectorAll('[data-change-set-id]')].reverse().find(n=>n.dataset.changeSetId===id);if(!node){addChangeSet(event);return;}const pill=node.querySelector('.pill');if(pill)pill.textContent='ChangeSet · '+String(p.status??'updated');for(const b of node.querySelectorAll('button'))b.disabled=true;}
-
-  function renderEvent(event){
-    if(!event||!remember(event))return;if(event.taskId)activeTaskId=String(event.taskId);
-    if(event.type==='message.user'){addMessage('user',event.payload?.content??'',event.payload?.attachments??[]);return;}
-    if(event.type==='message.assistant'){addMessage('assistant',event.payload?.content??'');streamNode=null;return;}
-    if(event.type==='message.assistant.delta'){removeEmpty();if(!streamNode)streamNode=addMessage('assistant','');streamNode.lastElementChild.textContent+=String(event.payload?.delta??'');scroll();return;}
-    if(event.type==='coding.state'){mergeCoding(event.payload??{});return;}
-    if(String(event.type).startsWith('activity.')){addActivity(event);return;}
-    if(event.type==='interrupt.request'){addInterrupt(event);return;}
-    if(event.type==='interrupt.resolved'){pendingInterrupts.delete(String(event.taskId??''));return;}
-    if(event.type==='artifact.modified'||event.type==='artifact.created'){addArtifact(event);return;}
-    if(event.type==='changeset.created'){addChangeSet(event);return;}
-    if(event.type==='changeset.updated'){updateChangeSet(event);return;}
-    if(event.type==='editor.result'){updateWork(event.taskId,event.payload?.message??event.payload?.command??'VS Code',event.payload?.success?'completed':'failed',event.payload?.message??'');}
-  }
-
-  function renderAttachments(){
-    attachmentBox.innerHTML='';attachmentBox.classList.toggle('visible',attachmentState.size>0);
-    for(const item of attachmentState.values()){
-      const chip=document.createElement('div');chip.className='attach-chip';if(item.preview){const img=document.createElement('img');img.src=item.preview;chip.appendChild(img);}const icon=document.createElement('span');icon.textContent=item.kind==='image'?'▧':'▤';const name=document.createElement('span');name.className='attach-name';name.textContent=item.name;name.title=(item.relativePath||item.name)+' · '+fmtBytes(item.size);const remove=document.createElement('button');remove.className='attach-remove';remove.textContent='×';remove.onclick=()=>{attachmentState.delete(item.id);renderAttachments();vscode.postMessage({type:'attachment.remove',id:item.id});};chip.append(icon,name,remove);attachmentBox.appendChild(chip);
-    }
-  }
-
-  function contextKeys(){return [...contextPopover.querySelectorAll('input:checked')].map(n=>n.value);}
-  function resizeInput(){input.style.height='auto';input.style.height=Math.min(140,Math.max(44,input.scrollHeight))+'px';}
-  function send(){const content=input.value.trim();if(!content)return;const ids=[...attachmentState.keys()];input.value='';resizeInput();streamNode=null;hidePopovers();vscode.postMessage({type:'sendMessage',content,taskMode:document.getElementById('mode').value,attachmentIds:ids,contextKeys:contextKeys()});}
-  function hidePopovers(){menuPopover.classList.remove('visible');contextPopover.classList.remove('visible');}
-  function showNotice(message){notice.textContent=String(message||'');notice.classList.toggle('visible',Boolean(message));if(message)setTimeout(()=>notice.classList.remove('visible'),7000);}
-
-  function renderDrawer(kind){
-    drawer.classList.add('visible');menuPopover.classList.remove('visible');drawerBody.innerHTML='';
-    if(kind==='history'){
-      drawerTitle.textContent='Recent chats';for(const session of [...sessions].sort((a,b)=>b.updatedAt-a.updatedAt)){const b=document.createElement('button');b.className='drawer-card';b.innerHTML='<strong>'+esc(session.title||'New Session')+'</strong><span>'+esc(session.status||'idle')+'</span>';b.onclick=()=>{drawer.classList.remove('visible');vscode.postMessage({type:'session.select',threadId:session.threadId});};drawerBody.appendChild(b);}return;
-    }
-    if(kind==='tasks'){
-      drawerTitle.textContent='Tasks';if(!catalogTasks.length){drawerBody.innerHTML='<div class="empty"><div class="empty-inner"><p>No tasks yet.</p></div></div>';return;}for(const task of [...catalogTasks].reverse()){const b=document.createElement('button');b.className='drawer-card';b.innerHTML='<strong>'+esc(task.clarified_goal||task.goal||task.task_id||'Task')+'</strong><span>'+esc(String(task.status||'idle')+(task.coding_state?.current_file?' · '+task.coding_state.current_file:''))+'</span>';b.onclick=()=>{drawer.classList.remove('visible');vscode.postMessage({type:'session.select',threadId:String(task.thread_id||'')});};drawerBody.appendChild(b);}return;
-    }
-    drawerTitle.textContent='Skills';if(!catalogSkills.length){drawerBody.innerHTML='<div class="empty"><div class="empty-inner"><p>No skill catalog from service.</p></div></div>';return;}for(const skill of catalogSkills){const b=document.createElement('div');b.className='drawer-card';b.innerHTML='<strong>'+esc(skill.label||skill.name||skill.id||'Skill')+'</strong><span>'+esc(skill.description||skill.summary||'')+'</span>';drawerBody.appendChild(b);}
-  }
-
-  document.getElementById('newChat').onclick=()=>vscode.postMessage({type:'newChat'});
-  document.getElementById('menuButton').onclick=(e)=>{e.stopPropagation();contextPopover.classList.remove('visible');menuPopover.classList.toggle('visible');};
-  document.getElementById('reconnect').onclick=()=>vscode.postMessage({type:'reconnect'});
-  document.getElementById('attach').onclick=()=>vscode.postMessage({type:'attachment.pick'});
-  document.getElementById('contextButton').onclick=(e)=>{e.stopPropagation();menuPopover.classList.remove('visible');contextPopover.classList.toggle('visible');};
-  document.getElementById('send').onclick=send;
-  document.getElementById('mode').onchange=(e)=>{selectedMode=e.target.value;for(const c of timeline.querySelectorAll('[data-empty-mode]'))c.classList.toggle('selected',c.dataset.emptyMode===selectedMode);};
-  document.getElementById('drawerBack').onclick=()=>drawer.classList.remove('visible');
-  for(const row of document.querySelectorAll('[data-menu]'))row.onclick=()=>{const action=row.dataset.menu;hidePopovers();if(action==='new')vscode.postMessage({type:'newChat'});else if(['history','tasks','skills'].includes(action))renderDrawer(action);else if(action==='source')vscode.postMessage({type:'showSourceControl'});else if(action==='test')vscode.postMessage({type:'selfTest'});else if(action==='reconnect')vscode.postMessage({type:'reconnect'});else if(action==='settings')vscode.postMessage({type:'settings'});};
-  input.addEventListener('input',resizeInput);input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
-  document.addEventListener('click',()=>hidePopovers());menuPopover.onclick=e=>e.stopPropagation();contextPopover.onclick=e=>e.stopPropagation();
-
-  // Paste/drop image trực tiếp vào composer. File picker native vẫn là đường chuẩn
-  // cho source files; webview chỉ gửi bytes khi user chủ động paste/drop.
-  async function ingestFiles(files){for(const file of [...files].slice(0,8)){if(file.type.startsWith('image/')){const reader=new FileReader();reader.onload=()=>vscode.postMessage({type:'attachment.image',name:file.name||'image.png',dataUrl:String(reader.result||'')});reader.readAsDataURL(file);}}}
-  input.addEventListener('paste',e=>{const files=[...(e.clipboardData?.files||[])];if(files.some(f=>f.type.startsWith('image/'))){e.preventDefault();void ingestFiles(files);}});
-  let dragDepth=0;document.addEventListener('dragenter',e=>{if(e.dataTransfer?.types?.includes('Files')){dragDepth++;document.getElementById('dropOverlay').classList.add('visible');}});document.addEventListener('dragleave',()=>{dragDepth=Math.max(0,dragDepth-1);if(!dragDepth)document.getElementById('dropOverlay').classList.remove('visible');});document.addEventListener('dragover',e=>{if(e.dataTransfer?.types?.includes('Files'))e.preventDefault();});document.addEventListener('drop',e=>{dragDepth=0;document.getElementById('dropOverlay').classList.remove('visible');if(e.dataTransfer?.files?.length){e.preventDefault();void ingestFiles(e.dataTransfer.files);}});
-
-  window.addEventListener('message',({data:event})=>{
-    if(event.type==='session.tabs'){sessions=Array.isArray(event.sessions)?event.sessions:[];activeThreadId=String(event.activeThreadId||'');renderSessions();return;}
-    if(event.type==='chat.reset'){resetTimeline();activeThreadId=String(event.threadId||activeThreadId);activeTaskId=String(event.preserveTask||'');drawer.classList.remove('visible');return;}
-    if(event.type==='connection'){
-      const connected=event.state==='connected';const connecting=event.state==='connecting';document.getElementById('connection').classList.toggle('visible',!connected);document.getElementById('connectionText').textContent=connecting?'Connecting to Eris Service…':'Service offline';return;
-    }
-    if(event.type==='service.error'){return;}
-    if(event.type==='attachment.add'){const item={...(event.attachment||{}),preview:event.preview||''};if(item.id){attachmentState.set(item.id,item);renderAttachments();}return;}
-    if(event.type==='attachments.clear'){attachmentState.clear();renderAttachments();return;}
-    if(event.type==='session.ready'){catalogTasks=Array.isArray(event.tasks)?event.tasks:catalogTasks;catalogSkills=Array.isArray(event.capabilities?.brain?.skills)?event.capabilities.brain.skills:catalogSkills;return;}
-    if(event.type==='task.list'){catalogTasks=Array.isArray(event.tasks)?event.tasks:[];return;}
-    if(event.type==='thread.history'){
-      resetTimeline();const tasks=Array.isArray(event.tasks)?event.tasks:[];catalogTasks=[...new Map([...catalogTasks,...tasks].map(t=>[String(t?.task_id||''),t])).values()];const task=[...tasks].reverse().find(t=>['queued','running','paused','waiting_user','waiting_permission'].includes(String(t?.status||'')))??tasks.at(-1);if(task?.task_id)activeTaskId=String(task.task_id);for(const item of(event.events||[]))renderEvent(item);if(task&&(task.status==='waiting_user'||task.status==='waiting_permission')&&task.pending_interrupt)addInterrupt({taskId:task.task_id,payload:task.pending_interrupt,eventId:'restore:'+String(task.task_id)});ensureEmpty();return;
-    }
-    if(event.type==='task.detail'){if(event.task){catalogTasks=[...new Map([...catalogTasks,event.task].map(t=>[String(t?.task_id||''),t])).values()];}return;}
-    if(event.type==='message.accepted'){activeTaskId=String(event.taskId||activeTaskId);return;}
-    if(event.type==='client.error'||event.type==='error'){showNotice(event.message||event.code||'Eris service error');return;}
-    renderEvent(event);
+  requestAnimationFrame(function(){
+    var a=sessionTabs.querySelector('.active');
+    if(a)a.scrollIntoView({block:'nearest',inline:'nearest'});
+    requestAnimationFrame(updateSessionIndicator);
   });
+}
 
-  ensureEmpty();resizeInput();
+function emptyHtml(){return '<div class="empty" id="chatEmpty"><div class="empty-inner"><div class="spark">\u2726</div><h2>What are we building today?</h2><p>Chat about code, inspect a problem, or let Eris work through a task.</p><div class="mode-cards"><button class="mode-card" data-empty-mode="inspect"><strong>Quick Chat</strong><span>Explore and inspect without changing files.</span></button><button class="mode-card selected" data-empty-mode="execute"><strong>Agent Task</strong><span>Plan, edit, run tests and iterate autonomously.</span></button></div></div></div>';}
+function ensureEmpty(){if(!timeline.children.length){timeline.innerHTML=emptyHtml();bindEmptyModes();}}
+function removeEmpty(){var e=document.getElementById('chatEmpty');if(e)e.remove();}
+function bindEmptyModes(){for(var card of timeline.querySelectorAll('[data-empty-mode]'))(function(c){c.onclick=function(){selectedMode=c.dataset.emptyMode||'execute';document.getElementById('mode').value=selectedMode;for(var x of timeline.querySelectorAll('[data-empty-mode]'))x.classList.toggle('selected',x===c);input.focus();};})(card);}
+function clearTimeline(showEmpty){if(showEmpty===undefined)showEmpty=true;timeline.innerHTML='';rendered.clear();pendingInterrupts.clear();taskGroups.clear();activeTaskId='';if(showEmpty)ensureEmpty();}
+function animateTimelineIn(direction){
+  direction=direction||0;
+  timeline.classList.remove('anim-left','anim-right');
+  if(!direction)return;
+  void timeline.offsetWidth;
+  timeline.classList.add(direction>0?'anim-right':'anim-left');
+  setTimeout(function(){timeline.classList.remove('anim-left','anim-right');},220);
+}
+
+/* ---- Messages ---- */
+function addUserMessage(content,attachments){
+  attachments=attachments||[];
+  removeEmpty();
+  var msg=document.createElement('div');msg.className='msg msg-user';
+  var body=document.createElement('div');body.className='msg-body';
+  var role=document.createElement('div');role.className='msg-role';role.textContent='You';
+  var bubble=document.createElement('div');bubble.className='bubble';bubble.textContent=String(content==null?'':content);
+  body.append(role,bubble);
+  if(Array.isArray(attachments)&&attachments.length){
+    var row=document.createElement('div');row.className='msg-attachments';
+    for(var item of attachments.slice(0,8)){
+      var chip=document.createElement('div');chip.className='attach-chip-sm';
+      chip.textContent=(String(item.kind||'')==='image'?'\u25A7 ':'\u25A4 ')+(item.name||item.relativePath||'attachment');
+      row.appendChild(chip);
+    }
+    body.appendChild(row);
+  }
+  var spacer=document.createElement('div');spacer.className='avatar-spacer';
+  msg.append(body,spacer);
+  /* Fix ordering: if Eris group for current task already exists in DOM
+     (activity events arrived before message.user in history replay),
+     insert user bubble BEFORE it so conversation reads top-to-bottom */
+  var existingGroup=taskGroups.has(String(activeTaskId||'main'))?taskGroups.get(String(activeTaskId||'main')).groupEl:null;
+  if(existingGroup&&existingGroup.parentNode===timeline){
+    timeline.insertBefore(msg,existingGroup);
+  } else {
+    timeline.appendChild(msg);
+  }
+  scroll();
+}
+
+function getTaskGroup(taskId){
+  var key=String(taskId||activeTaskId||'main');
+  if(taskGroups.has(key))return taskGroups.get(key);
+  removeEmpty();
+  var group=document.createElement('div');group.className='msg msg-assistant';group.dataset.taskId=key;
+  var avatar=document.createElement('div');avatar.className='avatar';avatar.textContent='E';
+  var body=document.createElement('div');body.className='msg-body';
+  var role=document.createElement('div');role.className='msg-role';role.textContent='Eris';
+  /* reasoning */
+  var reasoning=document.createElement('div');reasoning.className='reasoning-block';reasoning.style.display='none';
+  var rLabel=document.createElement('span');rLabel.className='reasoning-label';rLabel.textContent='Thinking';
+  var rText=document.createElement('div');rText.className='reasoning-text';
+  reasoning.append(rLabel,rText);
+  /* bubble — hidden until text arrives (no empty black square) */
+  var bubble=document.createElement('div');bubble.className='bubble';
+  /* activity feed */
+  var feed=document.createElement('details');feed.className='activity-feed';feed.style.display='none';feed.open=true;
+  var feedSum=document.createElement('summary');feedSum.className='feed-summary';
+  feedSum.innerHTML='<span class="feed-dot"></span><span class="feed-label">Working\u2026</span><span class="feed-count"></span>';
+  var feedRows=document.createElement('div');feedRows.className='feed-rows';
+  feed.append(feedSum,feedRows);
+  /* controls — hidden by default, shown only when task is running */
+  var controls=document.createElement('div');controls.className='task-controls';controls.style.display='none';
+  controls.innerHTML='<button class="ctrl-btn" data-control="pause">Pause</button><button class="ctrl-btn" data-control="resume">Resume</button><button class="ctrl-btn" data-control="rollback">Rollback</button><button class="ctrl-btn" data-control="stop">Stop</button>';
+  for(var btn of controls.querySelectorAll('[data-control]'))(function(b,k){b.onclick=function(){vscode.postMessage({type:'task.control',taskId:k,action:b.dataset.control});};})(btn,key);
+  body.append(role,reasoning,bubble,feed,controls);
+  group.append(avatar,body);
+  timeline.appendChild(group);
+  var entry={groupEl:group,bubbleEl:bubble,feedEl:feed,feedRowsEl:feedRows,feedLabelEl:feedSum.querySelector('.feed-label'),feedCountEl:feedSum.querySelector('.feed-count'),reasoningEl:reasoning,reasoningTextEl:rText,controlsEl:controls,rowCount:0};
+  taskGroups.set(key,entry);
+  scroll();
+  return entry;
+}
+
+function addActivity(event){
+  var p=event.payload||{};
+  var taskId=String(event.taskId||activeTaskId||'');
+  var label=String(p.label!=null?p.label:p.detail!=null?p.detail:event.type||'Working');
+  var detail=String(p.detail!=null?p.detail:p.label!=null?p.label:'');
+  var status=String(p.status!=null?p.status:(event.type==='activity.end'?'completed':'running'));
+  var entry=getTaskGroup(taskId);
+  entry.feedEl.style.display='';
+  if(label)entry.feedLabelEl.textContent=clip(label,60);
+  var done=status==='completed'||status==='done';
+  var failed=status==='failed'||status==='stopped';
+  entry.feedEl.classList.toggle('done',done);
+  entry.feedEl.classList.toggle('failed',failed);
+  entry.controlsEl.style.display=(done||failed)?'none':'flex';
+  if(done||failed)entry.feedEl.open=false;
+  if(detail){
+    var row=document.createElement('div');row.className='feed-row';
+    var mark=done?'\u2713':failed?'\xD7':'\xB7';
+    row.innerHTML='<span class="fmark">'+mark+'</span><span class="ftext">'+esc(detail)+'</span>';
+    entry.feedRowsEl.appendChild(row);
+    while(entry.feedRowsEl.children.length>20)entry.feedRowsEl.firstChild.remove();
+    entry.rowCount=entry.feedRowsEl.children.length;
+    entry.feedCountEl.textContent=entry.rowCount?String(entry.rowCount):'';
+  }
+  scroll();
+}
+
+function mergeCoding(event){
+  var p=event.payload||{};
+  var taskId=String(event.taskId||activeTaskId||'');
+  var title=p.current_action||p.next_action||p.phase||'Working';
+  var file=p.current_file?(' \xB7 '+p.current_file):'';
+  var status=p.status||'running';
+  var entry=getTaskGroup(taskId);
+  entry.feedEl.style.display='';
+  entry.feedLabelEl.textContent=clip(String(title)+file,60);
+  if(p.current_action||p.next_action){
+    var parts=[p.current_action,p.next_action].filter(Boolean).join(' \u2192 ');
+    entry.reasoningEl.style.display='';
+    entry.reasoningTextEl.textContent=parts;
+  }
+  var done=status==='completed'||status==='done';
+  var failed=status==='failed'||status==='stopped';
+  entry.feedEl.classList.toggle('done',done);
+  entry.feedEl.classList.toggle('failed',failed);
+  entry.controlsEl.style.display=(done||failed)?'none':'flex';
+}
+
+function disableChoices(node){for(var c of node.querySelectorAll('button,input'))c.disabled=true;}
+function addInterrupt(event){
+  removeEmpty();
+  var key=String(event.taskId!=null?event.taskId:activeTaskId!=null?activeTaskId:'');
+  if(key&&pendingInterrupts.has(key))return;if(key)pendingInterrupts.add(key);
+  var p=event.payload||{};
+  var node=document.createElement('div');node.className='interrupt';
+  node.innerHTML='<h3>'+esc(p.question||'Eris needs a decision')+'</h3><p>The task is checkpointed and will resume from here.</p><div class="choices" role="listbox"></div>';
+  var choices=node.querySelector('.choices');
+  for(var option of(p.options||[]))(function(opt){
+    var b=document.createElement('button');b.className='choice';
+    b.innerHTML='<strong>'+esc(opt.label!=null?opt.label:opt.id)+'</strong>'+(opt.description||opt.desc?'<span>'+esc(opt.description!=null?opt.description:opt.desc)+'</span>':'');
+    b.onclick=function(){disableChoices(node);if(key)pendingInterrupts.delete(key);vscode.postMessage({type:'interrupt.resolve',taskId:event.taskId,response:{choiceId:String(opt.id!=null?opt.id:''),value:String(opt.value!=null?opt.value:opt.label!=null?opt.label:''),text:String(opt.label!=null?opt.label:'')}});};
+    choices.appendChild(b);
+  })(option);
+  if(p.allowOther!==false){
+    var row=document.createElement('div');row.className='other-row';
+    var field=document.createElement('input');field.placeholder='Other direction\u2026';
+    var sb=document.createElement('button');sb.className='ghost-btn';sb.textContent='Send';
+    var submit=function(){var v=field.value.trim();if(!v)return;disableChoices(node);if(key)pendingInterrupts.delete(key);vscode.postMessage({type:'interrupt.resolve',taskId:event.taskId,response:{choiceId:'other',value:v,text:v}});};
+    sb.onclick=submit;field.onkeydown=function(e){if(e.key==='Enter')submit();};
+    row.append(field,sb);choices.appendChild(row);
+  }
+  timeline.appendChild(node);scroll();
+}
+
+function addArtifact(event){
+  var p=event.payload||{};var filePath=String(p.path!=null?p.path:'');if(!filePath)return;
+  removeEmpty();
+  var node=document.createElement('div');node.className='artifact';
+  node.innerHTML='<div class="artifact-head"><span class="pill">Modified</span><code>'+esc(filePath)+'</code></div><div class="artifact-actions"><button data-action="open">Open</button><button data-action="diff">Diff</button></div>';
+  node.querySelector('[data-action="open"]').onclick=function(){vscode.postMessage({type:'openArtifact',path:filePath});};
+  node.querySelector('[data-action="diff"]').onclick=function(){vscode.postMessage({type:'openDiff',path:filePath,diff:String(p.diff!=null?p.diff:'')});};
+  timeline.appendChild(node);scroll();
+}
+function addChangeSet(event){
+  var p=event.payload||{};var id=String(p.changeSetId!=null?p.changeSetId:p.operationId!=null?p.operationId:'');if(!id)return;
+  removeEmpty();var files=Array.isArray(p.files)?p.files:[];var status=String(p.status!=null?p.status:'pending');
+  var node=document.createElement('div');node.className='artifact';node.dataset.changeSetId=id;
+  node.innerHTML='<div class="artifact-head"><span class="pill">ChangeSet \xB7 '+esc(status)+'</span><code>'+esc(files.slice(0,3).join(' \xB7 ')||id)+'</code></div><div class="artifact-actions"><button data-action="accept">Accept</button><button data-action="revert">Revert</button></div>';
+  var accept=node.querySelector('[data-action="accept"]');var revert=node.querySelector('[data-action="revert"]');
+  if(status!=='pending'){accept.disabled=true;revert.disabled=true;}
+  accept.onclick=function(){if(activeTaskId)vscode.postMessage({type:'task.control',taskId:activeTaskId,action:'accept_changeset',changeSetId:id});};
+  revert.onclick=function(){if(activeTaskId)vscode.postMessage({type:'task.control',taskId:activeTaskId,action:'revert_changeset',changeSetId:id});};
+  timeline.appendChild(node);scroll();
+}
+function updateChangeSet(event){
+  var p=event.payload||{};var id=String(p.changeSetId!=null?p.changeSetId:p.operationId!=null?p.operationId:'');
+  var nodes=[...document.querySelectorAll('[data-change-set-id]')].reverse();
+  var node=nodes.find(function(n){return n.dataset.changeSetId===id;});
+  if(!node){addChangeSet(event);return;}
+  var pill=node.querySelector('.pill');if(pill)pill.textContent='ChangeSet \xB7 '+String(p.status!=null?p.status:'updated');
+  for(var b of node.querySelectorAll('button'))b.disabled=true;
+}
+
+function renderEvent(event){
+  if(!event||!remember(event))return;
+  if(event.taskId)activeTaskId=String(event.taskId);
+  if(event.type==='message.user'){addUserMessage(event.payload&&event.payload.content!=null?event.payload.content:'',event.payload&&event.payload.attachments?event.payload.attachments:[]);return;}
+  if(event.type==='message.assistant'){
+    var entry=getTaskGroup(String(event.taskId||activeTaskId||'main'));
+    entry.bubbleEl.textContent=String(event.payload&&event.payload.content!=null?event.payload.content:'');
+    entry.bubbleEl.classList.remove('streaming');
+    if(!entry.reasoningTextEl.textContent)entry.reasoningEl.style.display='none';
+    return;
+  }
+  if(event.type==='message.assistant.delta'){
+    removeEmpty();
+    var dEntry=getTaskGroup(String(event.taskId||activeTaskId||'main'));
+    dEntry.bubbleEl.textContent+=String(event.payload&&event.payload.delta!=null?event.payload.delta:'');
+    dEntry.bubbleEl.classList.add('streaming');
+    scroll();return;
+  }
+  if(event.type==='coding.state'){mergeCoding(event);return;}
+  if(String(event.type).startsWith('activity.')){addActivity(event);return;}
+  if(event.type==='interrupt.request'){addInterrupt(event);return;}
+  if(event.type==='interrupt.resolved'){pendingInterrupts.delete(String(event.taskId!=null?event.taskId:''));return;}
+  if(event.type==='artifact.modified'||event.type==='artifact.created'){addArtifact(event);return;}
+  if(event.type==='changeset.created'){addChangeSet(event);return;}
+  if(event.type==='changeset.updated'){updateChangeSet(event);return;}
+  if(event.type==='editor.result'){addActivity({type:'activity.update',taskId:event.taskId,payload:{detail:event.payload&&event.payload.message?event.payload.message:event.payload&&event.payload.command?event.payload.command:'VS Code',status:event.payload&&event.payload.success?'completed':'failed'}});}
+}
+
+function renderHistory(event){
+  var direction=pendingSwitchDirection;
+  function paint(){
+    clearTimeline(false);
+    var tasks=Array.isArray(event.tasks)?event.tasks:[];
+    catalogTasks=[...new Map([...catalogTasks,...tasks].map(function(t){return[String(t&&t.task_id?t.task_id:''),t];})).values()];
+    var task=[...tasks].reverse().find(function(t){return['queued','running','paused','waiting_user','waiting_permission'].includes(String(t&&t.status?t.status:''));});
+    if(!task)task=tasks[tasks.length-1];
+    if(task&&task.task_id)activeTaskId=String(task.task_id);
+    for(var item of(event.events||[]))renderEvent(item);
+    if(task&&(task.status==='waiting_user'||task.status==='waiting_permission')&&task.pending_interrupt)addInterrupt({taskId:task.task_id,payload:task.pending_interrupt,eventId:'restore:'+String(task.task_id)});
+    ensureEmpty();awaitingThreadHistory=false;pendingSwitchDirection=0;animateTimelineIn(direction);
+    var queued=deferredEvents;deferredEvents=[];for(var qe of queued)renderEvent(qe);
+  }
+  if(direction)setTimeout(paint,95);else paint();
+}
+
+function renderAttachments(){
+  attachmentBox.innerHTML='';attachmentBox.classList.toggle('visible',attachmentState.size>0);
+  for(var item of attachmentState.values()){
+    var chip=document.createElement('div');chip.className='attach-chip';
+    if(item.preview){var img=document.createElement('img');img.src=item.preview;chip.appendChild(img);}
+    var icon=document.createElement('span');icon.textContent=item.kind==='image'?'\u25A7':'\u25A4';
+    var name=document.createElement('span');name.className='attach-name';name.textContent=item.name;name.title=(item.relativePath||item.name)+' \xB7 '+fmtBytes(item.size);
+    var rm=document.createElement('button');rm.className='attach-remove';rm.textContent='\xD7';
+    (function(id,c){rm.onclick=function(){c.classList.add('removing');setTimeout(function(){attachmentState.delete(id);renderAttachments();vscode.postMessage({type:'attachment.remove',id:id});},100);};})(item.id,chip);
+    chip.append(icon,name,rm);attachmentBox.appendChild(chip);
+  }
+  updateComposerState();
+}
+function contextKeys(){return [...contextPopover.querySelectorAll('input:checked')].map(function(n){return n.value;});}
+function updateComposerState(){var ready=Boolean(input.value.trim())||attachmentState.size>0;sendButton.classList.toggle('ready',ready);}
+function resizeInput(){input.style.height='auto';input.style.height=Math.min(140,Math.max(40,input.scrollHeight))+'px';updateComposerState();}
+function send(){var content=input.value.trim();var ids=[...attachmentState.keys()];if(!content&&!ids.length)return;input.value='';resizeInput();hidePopovers();vscode.postMessage({type:'sendMessage',content:content,taskMode:document.getElementById('mode').value,model:selectedModel,attachmentIds:ids,contextKeys:contextKeys()});}
+function hidePopovers(){menuPopover.classList.remove('visible');contextPopover.classList.remove('visible');}
+function showNotice(message){notice.textContent=String(message||'');notice.classList.toggle('visible',Boolean(message));if(message)setTimeout(function(){notice.classList.remove('visible');},7000);}
+
+function renderDrawer(kind){
+  drawer.classList.add('visible');menuPopover.classList.remove('visible');drawerBody.innerHTML='';
+  if(kind==='history'){
+    drawerTitle.textContent='Recent chats';
+    var byThread=new Map();
+    for(var session of sessions)byThread.set(String(session.threadId||''),{threadId:String(session.threadId||''),title:session.title||'New Session',status:session.status||'idle',updatedAt:Number(session.updatedAt||0)});
+    for(var task of catalogTasks){var tid=String(task.thread_id||task.threadId||'');if(!tid)continue;var ex=byThread.get(tid)||{};byThread.set(tid,{threadId:tid,title:ex.title||task.clarified_goal||task.goal||'Previous session',status:String(task.status||ex.status||'idle'),updatedAt:Math.max(Number(ex.updatedAt||0),Number(task.updated_at||0)*(Number(task.updated_at||0)<10000000000?1000:1))});}
+    var history=[...byThread.values()].sort(function(a,b){return b.updatedAt-a.updatedAt;});
+    if(!history.length){drawerBody.innerHTML='<div class="empty"><div class="empty-inner"><p>No previous chats.</p></div></div>';return;}
+    for(var item of history)(function(i){var b=document.createElement('button');b.className='drawer-card';b.innerHTML='<strong>'+esc(i.title||'Previous session')+'</strong><span>'+esc(i.status||'idle')+'</span>';b.onclick=function(){drawer.classList.remove('visible');selectSessionFromUi(i.threadId);};drawerBody.appendChild(b);})(item);
+    return;
+  }
+  if(kind==='tasks'){
+    drawerTitle.textContent='Tasks';if(!catalogTasks.length){drawerBody.innerHTML='<div class="empty"><div class="empty-inner"><p>No tasks yet.</p></div></div>';return;}
+    for(var t of [...catalogTasks].reverse())(function(task){var b=document.createElement('button');b.className='drawer-card';b.innerHTML='<strong>'+esc(task.clarified_goal||task.goal||task.task_id||'Task')+'</strong><span>'+esc(String(task.status||'idle')+(task.coding_state&&task.coding_state.current_file?' \xB7 '+task.coding_state.current_file:''))+'</span>';b.onclick=function(){drawer.classList.remove('visible');selectSessionFromUi(String(task.thread_id||''));};drawerBody.appendChild(b);})(t);
+    return;
+  }
+  drawerTitle.textContent='Skills';if(!catalogSkills.length){drawerBody.innerHTML='<div class="empty"><div class="empty-inner"><p>No skill catalog from service.</p></div></div>';return;}
+  for(var skill of catalogSkills){var b=document.createElement('div');b.className='drawer-card';b.innerHTML='<strong>'+esc(skill.label||skill.name||skill.id||'Skill')+'</strong><span>'+esc(skill.description||skill.summary||'')+'</span>';drawerBody.appendChild(b);}
+}
+
+document.getElementById('newChat').onclick=function(){vscode.postMessage({type:'newChat'});}
+document.getElementById('menuButton').onclick=function(e){e.stopPropagation();contextPopover.classList.remove('visible');menuPopover.classList.toggle('visible');};
+document.getElementById('reconnect').onclick=function(){vscode.postMessage({type:'reconnect'});};
+document.getElementById('attach').onclick=function(){vscode.postMessage({type:'attachment.pick'});};
+document.getElementById('contextButton').onclick=function(e){e.stopPropagation();menuPopover.classList.remove('visible');contextPopover.classList.toggle('visible');};
+document.getElementById('send').onclick=send;
+document.getElementById('mode').onchange=function(e){selectedMode=e.target.value;for(var c of timeline.querySelectorAll('[data-empty-mode]'))c.classList.toggle('selected',c.dataset.emptyMode===selectedMode);};
+document.getElementById('drawerBack').onclick=function(){drawer.classList.remove('visible');};
+for(var dmrow of document.querySelectorAll('[data-menu]'))(function(row){row.onclick=function(){var a=row.dataset.menu;hidePopovers();if(a==='new')vscode.postMessage({type:'newChat'});else if(a==='history'||a==='tasks'||a==='skills')renderDrawer(a);else if(a==='source')vscode.postMessage({type:'showSourceControl'});else if(a==='test')vscode.postMessage({type:'selfTest'});else if(a==='reconnect')vscode.postMessage({type:'reconnect'});else if(a==='settings')vscode.postMessage({type:'settings'});};})(dmrow);
+input.addEventListener('input',resizeInput);
+input.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
+document.addEventListener('click',function(){hidePopovers();});
+menuPopover.onclick=function(e){e.stopPropagation();};
+contextPopover.onclick=function(e){e.stopPropagation();};
+sessionTabs.addEventListener('scroll',updateSessionIndicator,{passive:true});
+window.addEventListener('resize',updateSessionIndicator);
+
+async function ingestFiles(files){for(var file of [...files].slice(0,8)){if(file.type.startsWith('image/')){(function(f){var reader=new FileReader();reader.onload=function(){vscode.postMessage({type:'attachment.image',name:f.name||'image.png',dataUrl:String(reader.result||'')});};reader.readAsDataURL(f);})(file);}}} 
+input.addEventListener('paste',function(e){var files=[...(e.clipboardData&&e.clipboardData.files||[])];if(files.some(function(f){return f.type.startsWith('image/');})){e.preventDefault();ingestFiles(files);}});
+var dragDepth=0;
+document.addEventListener('dragenter',function(e){if(e.dataTransfer&&e.dataTransfer.types&&e.dataTransfer.types.includes('Files')){dragDepth++;document.getElementById('dropOverlay').classList.add('visible');}});
+document.addEventListener('dragleave',function(){dragDepth=Math.max(0,dragDepth-1);if(!dragDepth)document.getElementById('dropOverlay').classList.remove('visible');});
+document.addEventListener('dragover',function(e){if(e.dataTransfer&&e.dataTransfer.types&&e.dataTransfer.types.includes('Files'))e.preventDefault();});
+document.addEventListener('drop',function(e){dragDepth=0;document.getElementById('dropOverlay').classList.remove('visible');if(e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files.length){e.preventDefault();ingestFiles(e.dataTransfer.files);}});
+
+window.addEventListener('message',function(ev){
+  var event=ev.data;
+  if(event.type==='session.tabs'){sessions=Array.isArray(event.sessions)?event.sessions:[];activeThreadId=String(event.activeThreadId||'');renderSessions();return;}
+  if(event.type==='chat.reset'){activeThreadId=String(event.threadId||activeThreadId);activeTaskId=String(event.preserveTask||'');drawer.classList.remove('visible');if(event.reason==='new'){var d=pendingSwitchDirection||1;clearTimeline(false);ensureEmpty();animateTimelineIn(d);awaitingThreadHistory=false;pendingSwitchDirection=0;deferredEvents=[];}return;}
+  if(event.type==='connection'){var connected=event.state==='connected';var connecting=event.state==='connecting';connection.classList.toggle('visible',!connected);connection.classList.toggle('connecting',connecting);document.getElementById('connectionText').textContent=connecting?'Connecting to Eris Service\u2026':'Service offline';return;}
+  if(event.type==='service.error'){return;}
+  if(event.type==='attachment.add'){var att=Object.assign({},event.attachment||{},{preview:event.preview||''});if(att.id){attachmentState.set(att.id,att);renderAttachments();}return;}
+  if(event.type==='attachments.clear'){attachmentState.clear();renderAttachments();return;}
+  if(event.type==='session.ready'){catalogTasks=Array.isArray(event.tasks)?event.tasks:catalogTasks;catalogSkills=Array.isArray(event.capabilities&&event.capabilities.brain&&event.capabilities.brain.skills?event.capabilities.brain.skills:null)?event.capabilities.brain.skills:catalogSkills;return;}
+  if(event.type==='task.list'){catalogTasks=Array.isArray(event.tasks)?event.tasks:[];return;}
+  if(event.type==='thread.history'){renderHistory(event);return;}
+  if(event.type==='task.detail'){if(event.task){catalogTasks=[...new Map([...catalogTasks,event.task].map(function(t){return[String(t&&t.task_id?t.task_id:''),t];})).values()];}return;}
+  if(event.type==='message.accepted'){activeTaskId=String(event.taskId||activeTaskId);return;}
+  if(event.type==='client.error'||event.type==='error'){showNotice(event.message||event.code||'Eris service error');return;}
+  if(awaitingThreadHistory){deferredEvents.push(event);return;}
+  renderEvent(event);
+});
+
+ensureEmpty();
+resizeInput();
 </script>
 </body>
 </html>`;

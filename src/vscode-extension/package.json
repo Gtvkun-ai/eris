@@ -2,7 +2,7 @@
   "name": "eris-vscode",
   "displayName": "Eris",
   "description": "Eris coding agent: clean single-Webview IDE workspace với multi-session tabs, file/image attachments và LangGraph.",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "publisher": "gtvk",
   "engines": {
     "vscode": "^1.100.0"
