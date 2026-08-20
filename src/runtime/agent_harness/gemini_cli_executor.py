@@ -37,7 +37,14 @@ class GeminiCliDecisionExecutor:
             self.model = "gemini-3-pro"  # WebAPI backend (config.conf: backend=webapi)
             
         self.api_base = os.environ.get("ERIS_WEBAI_URL", "http://localhost:8081/v1").rstrip("/")
-        self.timeout = int(timeout or os.environ.get("ERIS_GEMINI_AGENT_TIMEOUT", "120") or 120)
+        # Đây là read-timeout của một lượt model, không phải deadline của cả task.
+        # 120s quá ngắn cho WebAI/Gemini khi prompt code lớn; task dài đã có
+        # cancellation/permission lifecycle ở LangGraph nên cho model đủ thời gian trả lời.
+        self.timeout = int(timeout or os.environ.get("ERIS_GEMINI_AGENT_TIMEOUT", "300") or 300)
+        self.max_tool_calls = max(1, min(
+            int(os.environ.get("ERIS_GEMINI_AGENT_MAX_TOOL_CALLS", "4") or 4),
+            8,
+        ))
         self.logger = logger
 
     def health(self) -> tuple[bool, str]:
@@ -91,7 +98,9 @@ class GeminiCliDecisionExecutor:
         }
 
         try:
-            resp = requests.post(url, json=payload, timeout=self.timeout)
+            # Connect fail nhanh, nhưng đừng giết một inference hợp lệ chỉ vì model
+            # mất hơn hai phút. requests tuple = (connect timeout, read timeout).
+            resp = requests.post(url, json=payload, timeout=(10, self.timeout))
             resp.raise_for_status()
             data = resp.json()
         except requests.exceptions.HTTPError as exc:
@@ -110,22 +119,54 @@ class GeminiCliDecisionExecutor:
         action = str(decision.get("action", "final") or "final").lower()
         summary = str(decision.get("summary", "") or "").strip()
         if action == "tool":
-            call = decision.get("tool_call") if isinstance(decision.get("tool_call"), dict) else {}
-            name = str(call.get("name", "") or "").strip()
-            args = call.get("args") if isinstance(call.get("args"), dict) else {}
-            if not name:
+            raw_calls = decision.get("tool_calls")
+            if isinstance(raw_calls, list):
+                calls = [item for item in raw_calls if isinstance(item, dict)]
+            else:
+                legacy = decision.get("tool_call")
+                calls = [legacy] if isinstance(legacy, dict) else []
+            if not calls:
                 raise GeminiCliError("gemini_decision_missing_tool_name")
-            allowed = {str(item.get("name", "")) for item in tools if isinstance(item, dict)}
-            if name not in allowed:
-                raise GeminiCliError(f"gemini_requested_undisclosed_tool:{name}")
+
+            disclosed = {
+                str(item.get("name", "") or ""): item
+                for item in tools
+                if isinstance(item, dict) and str(item.get("name", "") or "").strip()
+            }
+            normalized: list[dict[str, Any]] = []
+            for call in calls[: self.max_tool_calls]:
+                name = str(call.get("name", "") or "").strip()
+                args = call.get("args") if isinstance(call.get("args"), dict) else {}
+                if not name:
+                    raise GeminiCliError("gemini_decision_missing_tool_name")
+                if name not in disclosed:
+                    raise GeminiCliError(f"gemini_requested_undisclosed_tool:{name}")
+                normalized.append({"name": name, "args": args})
+
+            # Batching chỉ dành cho quan sát độc lập. Side effect vẫn đúng triết lý
+            # checkpoint-per-action: chạy một write/control/exec rồi model phải nhìn
+            # observation mới trước khi quyết định tiếp. Nhờ vậy ta giảm round-trip
+            # đọc file/search mà không biến autopilot thành máy bắn patch mù.
+            read_effects = {"observe", "inspect", "read"}
+            if len(normalized) > 1:
+                batch_is_read_only = all(
+                    str(disclosed[item["name"]].get("effect", "inspect") or "inspect").lower() in read_effects
+                    and item["name"] != "ask_user_choice"
+                    for item in normalized
+                )
+                if not batch_is_read_only:
+                    normalized = normalized[:1]
+
+            tool_calls = [{
+                "name": item["name"],
+                "args": item["args"],
+                "id": f"gemini_{uuid.uuid4().hex[:12]}",
+                "type": "tool_call",
+            } for item in normalized]
+            names = ", ".join(item["name"] for item in normalized)
             return AIMessage(
-                content=summary or f"Use tool {name}.",
-                tool_calls=[{
-                    "name": name,
-                    "args": args,
-                    "id": f"gemini_{uuid.uuid4().hex[:12]}",
-                    "type": "tool_call",
-                }],
+                content=summary or f"Use tool(s): {names}.",
+                tool_calls=tool_calls,
                 additional_kwargs={"gemini_cli_stats": data.get("usage", {})},
             )
 
@@ -212,14 +253,15 @@ class GeminiCliDecisionExecutor:
         contract = {
             "action": "tool | final",
             "summary": "short public-safe execution summary, no private chain of thought",
-            "tool_call": {"name": "exact disclosed tool name", "args": {}},
+            "tool_calls": [{"name": "exact disclosed tool name", "args": {}}],
             "final": "final task result when no more tools are needed",
         }
         return (
             "You are Gemini Executor, the backstage execution specialist inside Eris.\n"
             "Return ONLY one JSON object matching DECISION CONTRACT. No markdown.\n"
             "Never roleplay Eris and never expose private chain-of-thought.\n"
-            "Choose at most ONE tool per turn so LangGraph can checkpoint after every observation.\n"
+            f"You may batch up to {self.max_tool_calls} INDEPENDENT read/inspect/observe tools in one turn. "
+            "For any write/control/execute tool or ask_user_choice, choose exactly ONE tool so LangGraph can checkpoint after the side effect.\n"
             "You may call ONLY tools listed under DISCLOSED TOOLS.\n"
             "If the needed capability is not disclosed yet, use search_capabilities first; then activate_skill.\n"
             "Do not use built-in shell/file tools in this lane. All execution must flow through the disclosed Eris tools.\n"
@@ -233,7 +275,7 @@ class GeminiCliDecisionExecutor:
             f"DISCLOSED TOOLS:\n{json.dumps(tools, ensure_ascii=False, indent=2)}\n\n"
             f"RECENT GRAPH MESSAGES:\n{json.dumps(history, ensure_ascii=False)}\n\n"
             f"DECISION CONTRACT:\n{json.dumps(contract, ensure_ascii=False, indent=2)}\n"
-            "For action=tool, provide tool_call. For action=final, provide final and omit tool_call."
+            "For action=tool, provide tool_calls (an array). For action=final, provide final and omit tool_calls."
         )
 
 __all__ = ["GeminiCliDecisionExecutor", "GeminiCliError"]

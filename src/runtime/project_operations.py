@@ -32,7 +32,7 @@ from actions.contracts import ActionExecutionResult, ActionExecutionStatus
 from llm.json_sanitizer import extract_last_valid_json_object, strip_reasoning_envelope
 from runtime.workspace_manager import WorkspaceManager, extract_workspace_source
 
-PROJECT_OPERATIONS_VERSION = "project_operations.v1.1"
+PROJECT_OPERATIONS_VERSION = "project_operations.v1.2"
 
 
 _READ_ONLY_PROJECT_CAPABILITIES = frozenset({
@@ -163,6 +163,9 @@ PROJECT_CAPABILITY_CONTRACTS: dict[str, ProjectCapabilityContract] = {
     "project_find_symbol": ProjectCapabilityContract(
         "project_find_symbol", "tìm symbol", "tìm class/function/symbol theo tên", "project.find_symbol", "low"
     ),
+    "project_semantic_search": ProjectCapabilityContract(
+        "project_semantic_search", "tìm kiếm ngữ nghĩa", "truy vấn AST vector bằng ngôn ngữ tự nhiên (LanceDB)", "project.semantic_search", "low"
+    ),
     "project_git_diff": ProjectCapabilityContract(
         "project_git_diff", "xem diff project", "đọc git diff hiện tại", "project.git_diff", "low"
     ),
@@ -248,6 +251,7 @@ class ProjectOperationsRuntime:
             "project_read_file": self._read_file,
             "project_search_text": self._search_text,
             "project_find_symbol": self._find_symbol,
+            "project_semantic_search": self._semantic_search,
             "project_git_diff": self._git_diff,
             "project_apply_patch": self._apply_patch,
             "project_run_tests": self._run_tests,
@@ -427,40 +431,145 @@ class ProjectOperationsRuntime:
         if not query:
             raise ValueError("Thiếu query tìm kiếm.")
         regex_mode = bool(payload.get("regex", False))
+        limit = max(1, min(int(payload.get("limit", 200) or 200), 1000))
         matcher = re.compile(query, re.I) if regex_mode else None
+
+        # Literal search dùng ripgrep khi có sẵn. Repo lớn mà Python mở từng file
+        # rồi split toàn bộ chỉ để tìm một chuỗi là một cách khá sáng tạo để đốt SSD.
         matches: list[dict[str, Any]] = []
-        for rel in self._iter_files():
-            if len(matches) >= 200:
-                break
-            path = self._guard().resolve(rel)
-            if path.suffix.lower() not in self._TEXT_EXTENSIONS:
-                continue
-            try:
-                for line_no, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
-                    hit = bool(matcher.search(line)) if matcher else query.lower() in line.lower()
-                    if hit:
-                        matches.append({"path": rel, "line": line_no, "text": line.strip()[:360]})
-                        if len(matches) >= 200:
-                            break
-            except OSError:
-                continue
-        evidence = (self._evidence(_hash_id("search", query), "project_search", f"query={query[:80]} matches={len(matches)}"),)
+        engine = "python"
+        if not regex_mode and shutil.which("rg"):
+            matches = self._search_text_ripgrep(query, limit=limit)
+            engine = "ripgrep"
+        else:
+            needle = query.lower()
+            for rel in self._iter_files():
+                if len(matches) >= limit:
+                    break
+                path = self._guard().resolve(rel)
+                if path.suffix.lower() not in self._TEXT_EXTENSIONS:
+                    continue
+                try:
+                    with path.open("r", encoding="utf-8", errors="replace") as handle:
+                        for line_no, line in enumerate(handle, 1):
+                            hit = bool(matcher.search(line)) if matcher else needle in line.lower()
+                            if hit:
+                                matches.append({"path": rel, "line": line_no, "text": line.strip()[:360]})
+                                if len(matches) >= limit:
+                                    break
+                except OSError:
+                    continue
+        evidence = (self._evidence(
+            _hash_id("search", query), "project_search",
+            f"query={query[:80]} matches={len(matches)} engine={engine} limit={limit}",
+        ),)
         return self._success(operation_id, "project_search_text", started,
             f"Tôi tìm thấy {len(matches)} vị trí khớp trong project.", evidence,
-            {"verification_key": "project_search_text", "query": query, "matches": matches, "count": len(matches)})
+            {"verification_key": "project_search_text", "query": query, "matches": matches,
+             "count": len(matches), "limit": limit, "engine": engine})
+
+    def _search_text_ripgrep(self, query: str, *, limit: int) -> list[dict[str, Any]]:
+        root = self._project_root()
+        args = [
+            "rg", "--line-number", "--no-heading", "--color", "never",
+            "--fixed-strings", "--ignore-case", "--hidden", "--no-ignore",
+        ]
+        for ignored in sorted(self._IGNORED_DIRS):
+            args.extend(["--glob", f"!**/{ignored}/**"])
+        for extension in sorted(self._TEXT_EXTENSIONS):
+            args.extend(["--glob", f"*{extension}"])
+        args.extend(["--", query, "."])
+
+        matches: list[dict[str, Any]] = []
+        process: subprocess.Popen[str] | None = None
+        try:
+            process = subprocess.Popen(
+                args, cwd=str(root), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                text=True, encoding="utf-8", errors="replace", shell=False,
+            )
+            if process.stdout is None:
+                return []
+            for raw in process.stdout:
+                line = raw.rstrip("\r\n")
+                parts = line.split(":", 2)
+                if len(parts) != 3:
+                    continue
+                rel, line_no_text, text = parts
+                try:
+                    line_no = int(line_no_text)
+                except ValueError:
+                    continue
+                rel = rel.removeprefix("./").replace("\\", "/")
+                try:
+                    safe_rel = self._guard().relative(self._guard().resolve(rel, must_exist=True))
+                except (OSError, RuntimeError, ValueError):
+                    continue
+                matches.append({"path": safe_rel, "line": line_no, "text": text.strip()[:360]})
+                if len(matches) >= limit:
+                    process.terminate()
+                    break
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
+            return matches
+        except OSError:
+            return []
+        finally:
+            if process is not None and process.poll() is None:
+                process.kill()
 
     def _find_symbol(self, operation_id: str, action_input: str) -> ProjectActionResult:
         payload = _parse_payload(action_input)
         symbol = str(payload.get("symbol", payload.get("query", payload.get("value", action_input))) or "").strip()
         if not symbol:
             raise ValueError("Thiếu tên symbol.")
+        limit = max(1, min(int(payload.get("limit", 200) or 200), 500))
         pattern = rf"^\s*(?:async\s+def|def|class|func|function|interface|enum|struct)\s+{re.escape(symbol)}\b|\b{re.escape(symbol)}\s*\("
-        result = self._search_text(operation_id, json.dumps({"query": pattern, "regex": True}, ensure_ascii=False))
+        result = self._search_text(operation_id, json.dumps({
+            "query": pattern, "regex": True, "limit": limit,
+        }, ensure_ascii=False))
         result.capability_id = "project_find_symbol"
         result.data["verification_key"] = "project_find_symbol"
         result.data["symbol"] = symbol
+        result.data["limit"] = limit
+        result.public_text = f"Tôi tìm thấy {result.data.get('count', 0)} vị trí liên quan symbol {symbol}."
         result.public_text = f"Tôi tìm thấy {result.data.get('count', 0)} vị trí liên quan symbol {symbol}."
         return result
+
+    def _get_semantic_indexer(self) -> Any:
+        if getattr(self, "_semantic_indexer", None) is None:
+            try:
+                from runtime.agent_harness.semantic_indexer import SemanticIndexer
+            except ImportError as e:
+                raise RuntimeError(f"Lỗi nạp SemanticIndexer: {e}. Cần pip install lancedb tree-sitter sentence-transformers")
+            
+            root = self._active_project_root()
+            if not root:
+                raise RuntimeError("Chưa có active workspace để index.")
+            self._semantic_indexer = SemanticIndexer(str(root))
+        return self._semantic_indexer
+
+    def _semantic_search(self, operation_id: str, action_input: str) -> ProjectActionResult:
+        started = time.time()
+        payload = _parse_payload(action_input)
+        query = str(payload.get("query", payload.get("value", action_input)) or "").strip()
+        if not query:
+            raise ValueError("Thiếu query cho semantic search.")
+        
+        limit = max(1, min(int(payload.get("limit", 5) or 5), 20))
+        indexer = self._get_semantic_indexer()
+        
+        if payload.get("reindex", False):
+            indexer.index_workspace(force=False)
+            
+        results = indexer.search(query, limit=limit)
+        
+        evidence = (self._evidence(_hash_id("semantic_search", query), "project_semantic_search", f"query={query[:50]}"),)
+        return self._success(operation_id, "project_semantic_search", started,
+            f"Tìm thấy {len(results)} đoạn code liên quan.", evidence,
+            {"verification_key": "project_semantic_search", "query": query, "results": results})
 
     def _git_diff(self, operation_id: str, action_input: str) -> ProjectActionResult:
         started = time.time(); payload = _parse_payload(action_input)
@@ -807,12 +916,18 @@ class ProjectOperationsRuntime:
 
     def _iter_files(self) -> list[str]:
         root = self._project_root(); out: list[str] = []
-        for path in root.rglob("*"):
-            if any(part in self._IGNORED_DIRS for part in path.relative_to(root).parts):
-                continue
-            if path.is_file():
-                out.append(path.relative_to(root).as_posix())
-        return sorted(out)
+        # os.walk cho phép prune directory trước khi descend. rglob cũ vẫn đi sâu
+        # vào node_modules/.git rồi mới lọc từng path, repo lớn sẽ chậm vô ích.
+        for current, dirs, files in os.walk(root):
+            dirs[:] = sorted(name for name in dirs if name not in self._IGNORED_DIRS)
+            base = Path(current)
+            for name in sorted(files):
+                path = base / name
+                try:
+                    out.append(path.relative_to(root).as_posix())
+                except ValueError:
+                    continue
+        return out
 
     def _operation_dir(self, operation_id: str, *, create: bool = True) -> Path:
         safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", operation_id)
@@ -933,7 +1048,13 @@ class ProjectOperationsRuntime:
         if (root / "pytest.ini").exists() or (root / "pyproject.toml").exists() or (root / "tests").is_dir():
             return [os.getenv("PYTHON", "python"), "-m", "pytest", "-q"]
         if (root / "package.json").exists():
-            return ["npm", "test", "--", "--runInBand"]
+            if (root / "pnpm-lock.yaml").exists():
+                return ["pnpm", "test"]
+            if (root / "yarn.lock").exists():
+                return ["yarn", "test"]
+            # --runInBand là flag của Jest, không phải npm. Ép nó vào mọi project
+            # khiến Mocha/Vitest/custom scripts hỏng dù package.json hoàn toàn đúng.
+            return ["npm", "test"]
         raise FileNotFoundError("Không nhận diện được test command mặc định.")
 
     def _command_args(self, command: Any) -> list[str]:

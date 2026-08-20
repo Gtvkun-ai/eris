@@ -6,7 +6,7 @@ import { ErisClient } from './erisClient';
 import { TerminalContextObserver } from './terminalObserver';
 
 const PARTICIPANT_ID = 'gtvk.eris';
-const TURN_TIMEOUT_MS = 5 * 60_000;
+const INACTIVITY_TIMEOUT_MS = 40 * 60_000;
 
 interface ErisChatResult extends vscode.ChatResult {
   metadata: {
@@ -175,6 +175,7 @@ async function runBackendTurn(
     let finished = false;
     let streamedText = '';
     let completionTimer: ReturnType<typeof setTimeout> | undefined;
+    let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
     const progressSeen = new Set<string>();
 
     const finish = (status: string) => {
@@ -196,7 +197,9 @@ async function runBackendTurn(
     const cleanup = () => {
       listener.dispose();
       cancelListener.dispose();
-      clearTimeout(timeout);
+      if (inactivityTimer) {
+        clearTimeout(inactivityTimer);
+      }
       if (completionTimer) {
         clearTimeout(completionTimer);
       }
@@ -208,6 +211,16 @@ async function runBackendTurn(
       }
       progressSeen.add(clean);
       stream.progress(clean);
+    };
+    const armInactivityWatchdog = () => {
+      if (inactivityTimer) {
+        clearTimeout(inactivityTimer);
+      }
+      inactivityTimer = setTimeout(() => {
+        fail(new Error(
+          'Eris không phát tiến độ trong 40 phút. Native Chat đã ngừng chờ; task backend có thể vẫn còn và có thể xem trong Eris Panel.',
+        ));
+      }, INACTIVITY_TIMEOUT_MS);
     };
 
     const listener = client.onEvent((event: any) => {
@@ -226,6 +239,9 @@ async function runBackendTurn(
       if (!taskId && eventTask) {
         taskId = eventTask;
       }
+      // Đây là inactivity watchdog, không còn là deadline cứng cho cả turn.
+      // Task code 10-30 phút vẫn sống miễn backend còn phát event tiến độ.
+      armInactivityWatchdog();
 
       const type = String(event?.type ?? '');
       const payload = event?.payload ?? {};
@@ -298,9 +314,7 @@ async function runBackendTurn(
       }
       finish('cancelled');
     });
-    const timeout = setTimeout(() => {
-      fail(new Error('Eris native chat timeout sau 5 phút. Task vẫn có thể xem trong Eris Panel.'));
-    }, TURN_TIMEOUT_MS);
+    armInactivityWatchdog();
 
     void client.sendUserMessage(content, {
       threadId,

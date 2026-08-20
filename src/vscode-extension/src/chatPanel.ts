@@ -142,6 +142,23 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
     void this.client.createThread(this.threadId).catch(() => undefined);
   }
 
+  /**
+   * Gửi feedback ẩn danh từ hệ thống (LSP diagnostics self-healing) về agent.
+   */
+  async sendSystemFeedback(content: string): Promise<void> {
+    if (!content.trim()) return;
+    try {
+      const ideContext = await captureIdeContext(this.terminalObserver);
+      await this.client.sendUserMessage(content, {
+        threadId: this.threadId,
+        taskMode: 'execute',
+        context: ideContext,
+      });
+    } catch (error) {
+      console.error('Lỗi khi gửi system feedback:', error);
+    }
+  }
+
   async selectTask(taskId: string, threadId: string): Promise<void> {
     const resolvedThread = String(threadId ?? '').trim();
     if (!resolvedThread) {

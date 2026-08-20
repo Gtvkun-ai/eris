@@ -1,6 +1,13 @@
 import * as vscode from 'vscode';
 import { WorkspaceDiffProvider, resolveWorkspaceFile } from './diffProvider';
 
+const addedLineDecoration = vscode.window.createTextEditorDecorationType({
+  backgroundColor: 'rgba(46, 160, 67, 0.2)',
+  isWholeLine: true,
+});
+
+export const recentlyModifiedFiles = new Map<string, number>();
+
 /**
  * Thực thi editor action ở extension host, không ở Webview.
  * Agent chỉ gửi intent typed; quyền file/editor vẫn nằm trong VS Code boundary.
@@ -17,6 +24,42 @@ export async function executeEditorCommand(
   if (command === 'editor.openDiff') {
     await diffProvider.openDiff(String(payload.path ?? ''), String(payload.diff ?? ''));
     return `Đã mở diff ${String(payload.path ?? '')}`;
+  }
+  if (command === 'editor.applyNewContent') {
+    const filePath = String(payload.path ?? '');
+    const newContent = String(payload.content ?? '');
+    const uri = await resolveWorkspaceFile(filePath);
+    if (!uri) throw new Error(`Eris không tìm thấy file: ${filePath}`);
+    const document = await vscode.workspace.openTextDocument(uri);
+    const edit = new vscode.WorkspaceEdit();
+    const fullRange = new vscode.Range(
+      document.positionAt(0),
+      document.positionAt(document.getText().length)
+    );
+    edit.replace(uri, fullRange, newContent);
+    await vscode.workspace.applyEdit(edit);
+    
+    // Lưu file để giữ sync với Python backend, 
+    // user vẫn có thể Undo (Ctrl+Z) sau khi save.
+    await document.save();
+    
+    // Lưu vết để self-healing bằng LSP (nếu có lỗi ngay sau khi sửa)
+    recentlyModifiedFiles.set(document.uri.fsPath, Date.now());
+    
+    // Mở file ra cho user thấy thay đổi
+    const editor = await vscode.window.showTextDocument(document, { preview: true, preserveFocus: false });
+    
+    // Highlight file đã sửa (Composer-like inline view)
+    const endLine = document.lineCount - 1;
+    const range = new vscode.Range(0, 0, endLine, document.lineAt(endLine).text.length);
+    editor.setDecorations(addedLineDecoration, [range]);
+    
+    // Xoá highlight sau 5 giây để không làm phiền
+    setTimeout(() => {
+      editor.setDecorations(addedLineDecoration, []);
+    }, 5000);
+
+    return `Đã apply và lưu ${filePath}`;
   }
   if (command === 'editor.focusProblems') {
     await vscode.commands.executeCommand('workbench.actions.view.problems');

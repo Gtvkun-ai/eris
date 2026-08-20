@@ -1102,6 +1102,26 @@ class AgentHarness:
                             "diff": _extract_file_patch(raw_patch, rel)[:16000],
                         },
                     )
+                    
+                    # Phát event editor.applyNewContent để VS Code Extension cập nhật UI (Composer-like)
+                    if success:
+                        workspace_meta = self.task_store.get_task(task_id, event_limit=0).get("metadata", {})
+                        workspace_path = str(workspace_meta.get("workspace_path", "") or "")
+                        if workspace_path:
+                            try:
+                                with open(Path(workspace_path) / rel, "r", encoding="utf-8") as f:
+                                    content = f.read()
+                                self.event_bus.emit(
+                                    task_id,
+                                    "editor_command",
+                                    actor="tool",
+                                    summary=f"Cập nhật UI cho file {rel}",
+                                    step=step,
+                                    importance=0.0,
+                                    data={"command": "editor.applyNewContent", "path": rel, "content": content}
+                                )
+                            except Exception:
+                                pass
 
             if success and operation_id and touched:
                 task = self.task_store.get_task(task_id, event_limit=0) or {}

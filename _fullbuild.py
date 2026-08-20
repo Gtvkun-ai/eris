@@ -200,24 +200,31 @@ for src, dst in deploy_pairs:
     print("  [OK] " + os.path.basename(dst) + "  md5=" + md5_short(dst))
 
 # Tao _start_webai.bat -- helper khoi dong WebAI-to-API (co buoc sync cookie tu gemini.json)
-webai_dir      = os.path.join(REPO, "tools", "WebAI-to-API")
-sync_script    = os.path.join(webai_dir, "_sync_webai_cookies.py")
+webai_src = os.path.join(REPO, "tools", "WebAI-to-API")
+webai_dst = os.path.join(OUT, "tools", "WebAI-to-API")
+if os.path.exists(webai_src):
+    print("  Deploying WebAI-to-API to build...")
+    shutil.copytree(webai_src, webai_dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns(".git", "__pycache__", ".venv"))
+
 start_webai_path = os.path.join(OUT, "_start_webai.bat")
 start_webai_content = (
     "@echo off\r\n"
-    "cd /d \"" + webai_dir + "\"\r\n"
+    "cd /d \"%~dp0tools\\WebAI-to-API\"\r\n"
     "set PYTHONUTF8=1\r\n"
     "set PYTHONIOENCODING=utf-8\r\n"
+    "set \"HF_HOME=%~dp0.cache\\huggingface\"\r\n"
+    "set \"XDG_CACHE_HOME=%~dp0.cache\"\r\n"
+    "set \"ERIS_AGENT_SERVICE_DISCOVERY=%~dp0.eris_state\\agent_service.json\"\r\n"
     "\r\n"
     "echo [WebAI] Syncing cookies from gemini.json...\r\n"
-    "\"" + VENV_PY + "\" _sync_webai_cookies.py\r\n"
+    "\"%~dp0.venv\\Scripts\\python.exe\" _sync_webai_cookies.py\r\n"
     "\r\n"
     "echo [WebAI] Starting server on port 8081...\r\n"
-    "\"" + VENV_PY + "\" src\\run.py --host 0.0.0.0 --port 8081\r\n"
+    "\"%~dp0.venv\\Scripts\\python.exe\" src\\run.py --host 0.0.0.0 --port 8081\r\n"
 )
 with open(start_webai_path, "wb") as fh:
     fh.write(start_webai_content.encode("ascii"))
-print("  [OK] _start_webai.bat  (WebAI launcher helper + cookie sync)")
+print("  [OK] _start_webai.bat  (WebAI launcher helper + cookie sync + portable env)")
 
 # Deploy embedding_model directory to build directory if present
 embed_src = os.path.join(REPO, "embedding_model")
@@ -268,6 +275,13 @@ if os.path.exists(ds2api_src):
             except (PermissionError, OSError):
                 print("  [SKIP] whale2api " + fn + "  (file dang bi lock boi process dang chay -- skip)")
 
+# Copy .venv to build output
+venv_src = os.path.join(REPO, ".venv")
+venv_dst = os.path.join(OUT, ".venv")
+if os.path.exists(venv_src):
+    print("  Deploying .venv (Python Environment) to build... This may take a while.")
+    shutil.copytree(venv_src, venv_dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__", "pip-cache"))
+    print("  [OK] .venv deployed")
 
 # Generate run_eris.bat cho build output (CRLF, dung _start_webai.bat helper)
 bat_path     = os.path.join(OUT, "run_eris.bat")
@@ -283,8 +297,11 @@ bat_lines = [
     "title Eris Launcher",
     "cd /d \"%~dp0\"",
     "",
-    "set \"VENV_PY=" + VENV_PY + "\"",
-    "set \"PATH=" + venv_scripts + ";%PATH%\"",
+    "set \"VENV_PY=%~dp0.venv\\Scripts\\python.exe\"",
+    "set \"PATH=%~dp0.venv\\Scripts;%PATH%\"",
+    "set \"HF_HOME=%~dp0.cache\\huggingface\"",
+    "set \"XDG_CACHE_HOME=%~dp0.cache\"",
+    "set \"ERIS_AGENT_SERVICE_DISCOVERY=%~dp0.eris_state\\agent_service.json\"",
     "",
     "echo.",
     "echo  ===============================================",

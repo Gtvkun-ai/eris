@@ -469,6 +469,31 @@ class AgentWebSocketService:
                     },
                 )
             return
+        if kind == "editor.document.saved":
+            path_str = str(message.get("path", "") or "").strip()
+            content = str(message.get("content", "") or "")
+            if path_str and content:
+                def _update_index() -> None:
+                    try:
+                        from runtime.agent_harness.semantic_indexer import SemanticIndexer
+                        from pathlib import Path
+                        workspace_root = Path(path_str).parent
+                        while workspace_root.parent != workspace_root:
+                            if (workspace_root / ".git").exists() or (workspace_root / ".eris").exists() or (workspace_root / "package.json").exists():
+                                break
+                            workspace_root = workspace_root.parent
+                        
+                        indexer = SemanticIndexer(str(workspace_root))
+                        try:
+                            rel = Path(path_str).relative_to(workspace_root)
+                            indexer.update_file(str(rel).replace("\\", "/"), content)
+                        except ValueError:
+                            pass
+                    except Exception as e:
+                        self._log("warning", "[agent-ws] Lỗi khi update semantic index: %s", e)
+                threading.Thread(target=_update_index, daemon=True).start()
+            return
+
         self._send(client, {"type": "error", "code": "unsupported_type", "messageType": kind})
 
     def _with_client_context(self, client: _Client, raw: Any) -> dict[str, Any]:

@@ -263,6 +263,16 @@ export class ErisClient implements vscode.Disposable {
     });
   }
 
+  async reportDocumentSaved(path: string, content: string): Promise<void> {
+    await this.connect();
+    this.send({
+      type: 'editor.document.saved',
+      protocol: 'eris.ide.v2',
+      path,
+      content,
+    });
+  }
+
   private send(payload: JsonRecord): void {
     if (!this.ready || this.socket?.readyState !== WebSocket.OPEN) {
       throw new Error('eris_service_not_connected');

@@ -50,6 +50,43 @@ export function activate(context: vscode.ExtensionContext): void {
     { webviewOptions: { retainContextWhenHidden: true } },
   ));
 
+  // Gửi file update xuống backend khi user lưu file (cho Codebase Indexing)
+  context.subscriptions.push(vscode.workspace.onDidSaveTextDocument((document) => {
+    if (!vscode.workspace.isTrusted || document.uri.scheme !== 'file') return;
+    const fsPath = document.uri.fsPath;
+    if (fsPath.includes('.eris') || fsPath.includes('.git') || fsPath.includes('node_modules') || fsPath.includes('__pycache__')) return;
+    
+    // Gửi nội dung mới xuống backend
+    client.reportDocumentSaved(fsPath, document.getText()).catch(() => {});
+  }));
+
+  // Lắng nghe LSP Diagnostics (Self-Healing Phase 3)
+  const { recentlyModifiedFiles } = require('./editorBridge');
+  const path = require('node:path');
+  
+  context.subscriptions.push(vscode.languages.onDidChangeDiagnostics((e) => {
+    for (const uri of e.uris) {
+      if (uri.scheme !== 'file') continue;
+      const lastModified = recentlyModifiedFiles.get(uri.fsPath);
+      // Nếu file vừa được AI sửa trong vòng 15 giây qua
+      if (lastModified && Date.now() - lastModified < 15000) {
+        const diagnostics = vscode.languages.getDiagnostics(uri)
+          .filter(d => d.severity === vscode.DiagnosticSeverity.Error); // Chỉ lấy Error, bỏ qua Warning
+        
+        if (diagnostics.length > 0) {
+          // Xóa ngay lập tức để tránh loop gửi liên tục khi typing
+          recentlyModifiedFiles.delete(uri.fsPath);
+          
+          const errorText = diagnostics.map(d => `Dòng ${d.range.start.line + 1}: ${d.message}`).join('\\n');
+          const prompt = `Hệ thống phát hiện lỗi LSP sau khi bạn chỉnh sửa file \`${path.basename(uri.fsPath)}\`:\\n\\n${errorText}\\n\\nHãy kiểm tra và sửa lại lỗi này ngay nhé.`;
+          
+          // Gửi ẩn danh về cho Eris
+          chatPanel.sendSystemFeedback(prompt).catch(() => {});
+        }
+      }
+    }
+  }));
+
   // @eris trong native Chat vẫn là đường tắt nhẹ; full task UI nằm ở Sidebar.
   registerErisChatParticipant(context, client, terminalObserver);
 
