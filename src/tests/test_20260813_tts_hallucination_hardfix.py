@@ -249,3 +249,91 @@ def test_task_manager_plays_five_segments_without_cancel_or_drop():
     assert starts == [0, 1, 2, 3, 4]
     assert dones == [0, 1, 2, 3, 4]
     assert cancelled == []
+
+
+def test_three_segment_turn_prefetches_all_three_by_default():
+    from runtime.tts_task_manager import _dispatch_policy
+
+    tasks = [_task(i, "đoạn cần phát liền mạch " * 8) for i in range(3)]
+    policy = _dispatch_policy(tasks, prefetch_workers=1, max_prefetch_segments=8)
+
+    assert policy.strategy == "prefetch"
+    assert policy.workers == 3
+
+
+
+def test_three_segment_turn_is_prebuffered_before_first_playback():
+    import threading
+    import time
+    from runtime.tts_task_manager import TtsTaskManager
+
+    synth_done = {}
+    playback_started = []
+    lock = threading.Lock()
+
+    class Backend:
+        def synthesize(self, text, **kwargs):
+            index = int(text.rsplit(" ", 1)[-1])
+            time.sleep((index + 1) * 0.02)
+            with lock:
+                synth_done[index] = time.monotonic()
+            return b"RIFF" + b"\x00" * 80
+
+        def play_audio(self, wav_bytes, stop_event, on_started=None):
+            with lock:
+                playback_started.append(time.monotonic())
+            if on_started:
+                on_started()
+            time.sleep(0.005)
+
+    frames = [
+        SimpleNamespace(
+            turn_id="turn:prebuffer",
+            segment_id=i,
+            tts_text=f"segment {i}",
+            interruptible=True,
+            audio_asset="",
+            prosody_style="neutral",
+            prosody_notes="",
+            delivery={},
+        )
+        for i in range(3)
+    ]
+    manager = TtsTaskManager(prefetch_workers=1, max_prefetch_segments=8)
+    assert manager.dispatch_frames(
+        frames,
+        backend=Backend(),
+        valence=0.0,
+        arousal=0.3,
+        stance="neutral",
+    ) is True
+    assert manager.wait_until_idle(timeout=2.0) is True
+
+    assert set(synth_done) == {0, 1, 2}
+    assert playback_started
+    # Clip 0 chỉ được mở loa sau khi cả cửa sổ 0..2 đã sẵn sàng, nên không còn
+    # cảnh clip 0 đọc xong rồi đợi clip 1/2 synth như log lỗi trước đó.
+    assert playback_started[0] >= max(synth_done.values())
+
+def test_elevenlabs_budget_keeps_normal_long_reply_in_one_clip():
+    from runtime.stage_contracts import StageFrame
+    from runtime.stage_output import StageOutputPipeline
+    from runtime.stage_profiles import stage_profile
+    from runtime.tts_budget import GLOBAL_TTS_REQUEST_BUDGET
+
+    # Xấp xỉ kích thước câu trong log 17:41:48: dài hơn limit Gemini cũ nhưng
+    # vẫn là một utterance rất bình thường đối với ElevenLabs.
+    text = (
+        "À, ý em là việc đứng ngoài quan sát vòng lặp vẫn chưa đủ. "
+        "Cái quyết định nằm ở chỗ cách nhìn đó có đủ sức khiến vòng thực sự xê dịch hay vỡ ra không, "
+        "chứ không chỉ là một góc nhìn khác. Nếu nó chỉ là khung cửa mới mà ta vẫn đứng yên, "
+        "thì vòng lặp vẫn quay. Nói ngắn gọn, đứng ngoài mà không đổi được cơ chế thì vẫn chỉ là một vòng khác."
+    )
+    assert len(text) > GLOBAL_TTS_REQUEST_BUDGET.max_transcript_chars
+    assert len(text) <= GLOBAL_TTS_REQUEST_BUDGET.transcript_limit("elevenlabs")
+
+    frames = StageOutputPipeline(profile=stage_profile("conversation")).frames_for_tts(
+        StageFrame(turn_id="chat:regression", segment_id=0, tts_text=text)
+    )
+    assert len(frames) == 1
+    assert frames[0].tts_text == text

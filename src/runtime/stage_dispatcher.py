@@ -33,7 +33,14 @@ def _dispatch_mode() -> str:
 
 def _max_transcript_chars() -> int:
     from runtime.tts_budget import GLOBAL_TTS_REQUEST_BUDGET
-    return max(48, int(GLOBAL_TTS_REQUEST_BUDGET.max_transcript_chars))
+    try:
+        from runtime.tts_engine import _tts_provider
+        provider = _tts_provider()
+    except Exception:
+        provider = ""
+    # Dispatcher phải dùng đúng limit của provider hiện tại. Nếu dùng limit
+    # Gemini 260 cho ElevenLabs, câu bình thường bị xé thành 2–3 clip vô ích.
+    return GLOBAL_TTS_REQUEST_BUDGET.transcript_limit(provider)
 
 
 def _task_manager_enabled() -> bool:

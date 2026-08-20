@@ -196,7 +196,9 @@ def test_eleven_stream_uses_single_clip_metadata(monkeypatch):
     assert captured["headers"]["xi-api-key"] == "test-key"
     assert captured["params"] == {"output_format": "pcm_24000"}
     assert captured["json"]["language_code"] == "ja"
-    assert captured["json"]["apply_language_text_normalization"] is True
+    # Transcript Nhật đã được SpeechLocalizer chuẩn hoá. Bật normalization lần
+    # hai ở ElevenLabs làm tăng latency đáng kể nên mặc định phải tắt.
+    assert captured["json"]["apply_language_text_normalization"] is False
     assert "previous_text" not in captured["json"]
     assert "next_text" not in captured["json"]
     assert captured["json"]["text"].startswith("[warmly]")

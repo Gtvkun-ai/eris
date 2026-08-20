@@ -315,6 +315,9 @@ class TtsTaskManager:
         localization_failure_seen = False
         emotion_signature = ""
         try:
+            # Không phát segment 0 ngay khi nó vừa xong nếu segment 1/2 vẫn còn
+            # đang dịch/synth. Đây chính là pattern tạo khoảng chết trong log.
+            self._prebuffer_window(tasks, futures, cancel_event=cancel_event)
             for task in tasks:
                 if cancel_event.is_set():
                     break
@@ -527,6 +530,34 @@ class TtsTaskManager:
                 continue
         raise RuntimeError("cancelled_while_waiting_for_synth")
 
+    def _prebuffer_window(
+        self,
+        tasks: list[TtsSegmentTask],
+        futures: dict[tuple[str, int], Future[bytes]],
+        *,
+        cancel_event: threading.Event,
+    ) -> None:
+        """Đợi một cửa sổ audio sẵn sàng trước khi mở loa.
+
+        Đây là lớp chống dead-air: với lượt 2–3 segment, cả lượt được synth song
+        song rồi mới phát segment đầu. Ta đổi vài giây chờ *trước khi nói* lấy
+        một câu nói liền mạch, thay vì Eris mở miệng rồi đứng hình 5 giây giữa câu.
+        Lượt dài hơn chỉ prebuffer ba segment đầu để không đội startup vô hạn.
+        """
+        if len(tasks) <= 1:
+            return
+        target = min(len(tasks), _prebuffer_segments())
+        for task in tasks[:target]:
+            future = futures.get(task.key)
+            if future is None:
+                continue
+            while not future.done():
+                if cancel_event.wait(0.05):
+                    raise RuntimeError("cancelled_while_prebuffering")
+        logger.debug(
+            "[tts-task-manager] prebuffer ready=%d/%d", target, len(tasks)
+        )
+
     def _buffer_ready_callback(
         self,
         task: TtsSegmentTask,
@@ -700,11 +731,13 @@ def _dispatch_policy(
     # producing seq=1 cancellation and several seconds of synthesis dead air.
     if segment_count > 1:
         configured_workers = min(prefetch_workers or _prefetch_workers(), max(1, segment_count))
-        # A segmented remote turn needs at least two synth requests in flight;
-        # otherwise the next clip starts synthesizing only after the previous
-        # one has consumed most of its playback time. Cap the automatic boost at
-        # three to avoid turning one sentence into a provider burst.
-        workers = min(max(2, configured_workers), min(3, segment_count))
+        from runtime.tts_budget import GLOBAL_TTS_REQUEST_BUDGET
+
+        # Segment đã là phương án bất đắc dĩ. Khi đã phải chia, synth tối đa ba
+        # mảnh đầu cùng lúc để clip sau sẵn sàng trước lúc clip trước phát xong.
+        # max_concurrency vẫn là van an toàn cho provider/account pool.
+        concurrency_cap = max(1, int(GLOBAL_TTS_REQUEST_BUDGET.max_concurrency))
+        workers = min(segment_count, concurrency_cap, max(3, configured_workers))
         pressure_reasons: list[str] = []
         if segment_count > max_segments:
             pressure_reasons.append(f"segments={segment_count}>{max_segments}")
@@ -712,11 +745,9 @@ def _dispatch_policy(
             pressure_reasons.append(f"chars={total_chars}>{max_chars}")
         if any(len(task.text) > max_single for task in tasks):
             pressure_reasons.append(f"single_segment>{max_single}")
-        # Under unusually large turns, reduce burst concurrency instead of
-        # abandoning the lossless manager path. The output pipeline still owns
-        # the hard per-request transcript limit.
-        if pressure_reasons:
-            workers = min(workers, 2)
+        # Không hạ về 2 worker chỉ vì tổng ký tự lớn. Chính việc hạ worker từng
+        # làm segment 3 phải đợi segment 1 phát gần xong mới bắt đầu synth. Rate
+        # limit đã có broker/circuit/account-pool chịu trách nhiệm riêng.
         forced_note = ";forced_inline_ignored_for_segmented_turn" if mode in {"inline", "join"} else ""
         reason = ";".join(pressure_reasons) or f"segments={segment_count};chars={total_chars}"
         return TtsDispatchPolicy(strategy="prefetch", workers=max(1, workers), reason=reason + forced_note)
@@ -726,6 +757,14 @@ def _dispatch_policy(
 
     workers = min(prefetch_workers or _prefetch_workers(), 1)
     return TtsDispatchPolicy(strategy="prefetch", workers=max(1, workers), reason=f"segments=1;chars={total_chars}")
+
+
+def _prebuffer_segments() -> int:
+    raw = os.environ.get("ERIS_TTS_PREFETCH_PREBUFFER_SEGMENTS", "3").strip()
+    try:
+        return max(1, min(6, int(raw)))
+    except ValueError:
+        return 3
 
 
 def _max_prefetch_segments() -> int:

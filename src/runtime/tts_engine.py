@@ -814,6 +814,7 @@ def _synthesize_elevenlabs_wav(
         transcript=text,
         prompt=rendered_text,
         style_text=json.dumps(segment, ensure_ascii=False, separators=(",", ":")),
+        provider="elevenlabs",
     )
 
     auth_type, token, pool_account_id = _get_elevenlabs_token(
@@ -880,9 +881,11 @@ def _synthesize_elevenlabs_wav(
 
     if auth_type == "bearer":
         url = "https://api.us.elevenlabs.io/v1/text-to-dialogue/stream"
-        params = {}
+        # PCM 24 kHz đi thẳng vào pipeline hiện tại, tránh decode MP3 trung gian
+        # và chuẩn bị sẵn đường cho playback streaming sau này.
+        params = {"output_format": "pcm_24000"}
         headers = {
-            "Accept": "audio/mpeg",
+            "Accept": "application/octet-stream",
             "Content-Type": "application/json",
             "Origin": "https://elevenlabs.io",
             "Referer": "https://elevenlabs.io/",
@@ -918,7 +921,9 @@ def _synthesize_elevenlabs_wav(
         if lang in {"vi", "ja", "en"}:
             payload["language_code"] = lang
         if lang == "ja":
-            payload["apply_language_text_normalization"] = True
+            payload["apply_language_text_normalization"] = str(
+                os.environ.get("ERIS_ELEVENLABS_JA_TEXT_NORMALIZATION", "0") or "0"
+            ).strip().lower() in {"1", "true", "yes", "on"}
         previous_text = str(segment.get("previous_text", "") or "").strip()
         next_text = str(segment.get("next_text", "") or "").strip()
         if previous_text:
@@ -992,15 +997,30 @@ def _synthesize_elevenlabs_wav(
                                 pass
                         raise RuntimeError(f"ElevenLabs HTTP {response.status_code}: {detail}")
                     chunks: list[bytes] = []
+                    started_at = time.monotonic()
+                    first_chunk_ms: float | None = None
+                    response_headers = getattr(response, "headers", {}) or {}
+                    content_type = str(getattr(response_headers, "get", lambda *_: "")("Content-Type", "") or "").lower()
                     for chunk in response.iter_content(chunk_size=16 * 1024):
                         _raise_if_tts_cancelled(cancel_event, authority_check)
                         if cancel_token is not None:
                             cancel_token.raise_if_cancelled(broker_request)
                         if chunk:
+                            if first_chunk_ms is None:
+                                first_chunk_ms = (time.monotonic() - started_at) * 1000.0
                             chunks.append(chunk)
-                return b"".join(chunks)
+                    total_ms = (time.monotonic() - started_at) * 1000.0
+                    logger.debug(
+                        "[TTS/ElevenLabs] stream buffered first_byte=%.0fms total=%.0fms bytes=%d type=%s",
+                        float(first_chunk_ms or total_ms), total_ms, sum(len(item) for item in chunks), content_type or "unknown",
+                    )
+                return b"".join(chunks), content_type
 
-            pcm = GLOBAL_INFERENCE_BROKER.run(broker_request, call_tts_provider)
+            audio_result = GLOBAL_INFERENCE_BROKER.run(broker_request, call_tts_provider)
+        if isinstance(audio_result, tuple) and len(audio_result) == 2:
+            pcm, response_content_type = audio_result
+        else:
+            pcm, response_content_type = audio_result, ""
         if not pcm:
             raise RuntimeError("ElevenLabs returned empty audio")
         if _tts_breaker_enabled():
@@ -1013,7 +1033,8 @@ def _synthesize_elevenlabs_wav(
             except Exception:
                 pass
 
-        if auth_type == "bearer":
+        if auth_type == "bearer" and ("mpeg" in response_content_type or "mp3" in response_content_type):
+            # Một số gateway bearer cũ có thể bỏ qua output_format và vẫn trả MP3.
             return _mp3_bytes_to_wav_bytes(pcm)
 
         return _pcm24_to_wav_bytes(pcm)
@@ -1596,6 +1617,7 @@ def _synthesize_wav(
         transcript=fallback_text,
         prompt=prompt,
         style_text="",
+        provider="gemini",
     )
     tts_budget_plan = None
 
@@ -2211,7 +2233,7 @@ def _translate_to_japanese(text: str, api_key: str) -> str:
             model=localizer_model_name(),
             prompt=prompt,
             lane="tts_localizer",
-            output_tokens=256,
+            output_tokens=max(256, min(1024, len(str(text or "")) + 192)),
             coalesce_key=stable_work_key("tts_translate", text),
             config={
                 "system_instruction": (
@@ -2223,7 +2245,7 @@ def _translate_to_japanese(text: str, api_key: str) -> str:
                     "only Japanese, with no quotes, notes, explanations, or romanization."
                 ),
                 "temperature": 0.15,
-                "max_output_tokens": 128,
+                "max_output_tokens": max(256, min(1024, len(str(text or "")) + 192)),
             },
         )
         translated = (response.text or "").strip()

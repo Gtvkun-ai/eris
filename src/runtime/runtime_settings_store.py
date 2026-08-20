@@ -179,7 +179,9 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         # Conversation profile dùng manager để một request synth cũ bị user hủy
         # không chặn TTS của turn mới ở cùng worker tuần tự.
         "tts_task_manager": True,
-        "prefetch_workers": 1,
+        # Ba worker chỉ được dùng khi turn thật sự có nhiều segment. Với một
+        # clip bình thường executor vẫn chỉ submit một request.
+        "prefetch_workers": 3,
         "max_tts_segments": 8,
         "min_split_chars": 58,
         "show_plan_enabled": True,

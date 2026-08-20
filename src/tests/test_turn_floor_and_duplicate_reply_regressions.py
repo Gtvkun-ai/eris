@@ -128,9 +128,11 @@ def test_inline_dispatch_never_rejoins_logical_segments_past_provider_budget() -
         def begin_speech_turn(self, _turn_id: str) -> int:
             return 1
 
-    limit = GLOBAL_TTS_REQUEST_BUDGET.max_transcript_chars
-    first = "a" * min(150, limit - 10)
-    second = "b" * min(150, limit - 10)
+    # Repo mặc định dùng ElevenLabs; regression phải kiểm đúng hard-limit của
+    # provider hiện tại thay vì hard-code limit Gemini cũ 260 ký tự.
+    limit = GLOBAL_TTS_REQUEST_BUDGET.transcript_limit("elevenlabs")
+    first = "a" * min(460, limit - 10)
+    second = "b" * min(460, limit - 10)
     assert len(first) + 1 + len(second) > limit
 
     tts = FakeTts()
@@ -146,7 +148,7 @@ def test_inline_dispatch_never_rejoins_logical_segments_past_provider_budget() -
 
 
 def test_stage_output_prefers_extra_segments_over_provider_limit_violation() -> None:
-    limit = GLOBAL_TTS_REQUEST_BUDGET.max_transcript_chars
+    limit = GLOBAL_TTS_REQUEST_BUDGET.transcript_limit("elevenlabs")
     frame = StageFrame(
         turn_id="very-long",
         segment_id=0,

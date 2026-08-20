@@ -41,13 +41,33 @@ def _min_split_chars(profile: object | None = None) -> int:
     return max(24, min(120, int(getattr(profile, "min_split_chars", 58) or 58)))
 
 
+def _provider_transcript_limit() -> int:
+    from runtime.tts_budget import GLOBAL_TTS_REQUEST_BUDGET
+    try:
+        from runtime.tts_engine import _tts_provider
+        provider = _tts_provider()
+    except Exception:
+        provider = ""
+    return GLOBAL_TTS_REQUEST_BUDGET.transcript_limit(provider)
+
+
 def _max_segment_chars() -> int:
     from runtime.runtime_settings_store import runtime_int
-    from runtime.tts_budget import GLOBAL_TTS_REQUEST_BUDGET
-    # Gemini TTS ổn định hơn với nhịp 45–90 ký tự. Hard provider budget là trần
-    # tuyệt đối dù panel/operator đặt segment_chars cao hơn.
-    configured = max(48, min(320, runtime_int("stage", "max_tts_segment_chars", default=88)))
-    return min(configured, max(48, int(GLOBAL_TTS_REQUEST_BUDGET.max_transcript_chars)))
+    try:
+        from runtime.tts_engine import _tts_provider
+        provider = _tts_provider()
+    except Exception:
+        provider = ""
+
+    hard_limit = _provider_transcript_limit()
+    configured = max(48, min(1200, runtime_int("stage", "max_tts_segment_chars", default=88)))
+
+    # 88 ký tự hợp với Gemini nhưng quá vụn với ElevenLabs. Khi buộc phải chia
+    # một turn > hard-limit, dùng chunk lớn hơn để giảm số request mạng và giữ
+    # nhịp nói. Giá trị panel lớn hơn vẫn được tôn trọng.
+    if str(provider).strip().lower() == "elevenlabs":
+        configured = max(configured, min(420, hard_limit))
+    return min(configured, hard_limit)
 
 
 def _split_long_piece(text: str, max_chars: int) -> list[str]:
@@ -287,8 +307,7 @@ class StageOutputPipeline:
 
         directed = self._voice_director_frames(frame)
         if directed:
-            from runtime.tts_budget import GLOBAL_TTS_REQUEST_BUDGET
-            hard_limit = max(48, int(GLOBAL_TTS_REQUEST_BUDGET.max_transcript_chars))
+            hard_limit = _provider_transcript_limit()
             if all(len(str(item.tts_text or "")) <= hard_limit for item in directed):
                 return directed
             # Voice Director chỉ đổi delivery metadata. Nếu transcript vượt hard
@@ -307,7 +326,6 @@ class StageOutputPipeline:
             if isinstance(beat, dict) and str(beat.get("kind", "")) == "speech" and str(beat.get("text", "")).strip()
         ]
         from runtime.tts_engine import _tts_provider
-        from runtime.tts_budget import GLOBAL_TTS_REQUEST_BUDGET
         explicit_opening = bool(
             speech_beats
             and str(act.get("opportunity_kind", "")).strip().lower() == "startup"
@@ -316,7 +334,7 @@ class StageOutputPipeline:
         if (
             _tts_provider() == "elevenlabs"
             and not explicit_opening
-            and len(str(frame.tts_text or "")) <= int(GLOBAL_TTS_REQUEST_BUDGET.max_transcript_chars)
+            and len(str(frame.tts_text or "")) <= _provider_transcript_limit()
         ):
             return (frame,)
         if speech_beats:

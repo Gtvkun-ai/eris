@@ -192,6 +192,17 @@ def _raise_if_cancelled(cancel_event=None, authority_check: Callable[[], bool] |
         raise SpeechLocalizationCancelled("speech_localization_cancelled")
 
 
+def _localizer_output_tokens(text: str) -> int:
+    """Budget output động cho bản dịch Nhật.
+
+    Hard-code 128 token từng đủ cho mẩu 50–80 ký tự, nhưng khi ElevenLabs giữ
+    cả utterance trong một clip thì localizer cũng phải được phép trả đủ câu.
+    Chặn ở 1024 để một request lỗi không nuốt budget vô hạn.
+    """
+    clean = str(text or "").strip()
+    return max(256, min(1024, len(clean) + 192))
+
+
 class SpeechLocalizer:
     """Dịch/style câu public thành transcript TTS đúng language contract."""
 
@@ -311,7 +322,7 @@ class SpeechLocalizer:
                     provider_name,
                     lane="speech_localizer",
                     prompt_tokens=estimated_prompt,
-                    requested_output_tokens=256,
+                    requested_output_tokens=_localizer_output_tokens(budgeted_text),
                     optional_pass=False,
                 )
                 if not plan.allowed:
@@ -368,6 +379,7 @@ class SpeechLocalizer:
                     system_instruction=system_instruction,
                     prompt=prompt,
                     timeout_seconds=_localizer_timeout_seconds(),
+                    max_output_tokens=_localizer_output_tokens(budgeted_text),
                 )
                 rescue_out = _clean_translation_output(_response_text(rescue_response))
                 rescue_out = _apply_signature_surface(rescue_out, policy)
@@ -479,6 +491,7 @@ class SpeechLocalizer:
                                 system_instruction=system_instruction,
                                 prompt=prompt,
                                 timeout_seconds=_localizer_timeout_seconds(),
+                                max_output_tokens=_localizer_output_tokens(budgeted_text),
                             )
                         else:
                             from google import genai
@@ -490,7 +503,7 @@ class SpeechLocalizer:
                                 config={
                                     "system_instruction": system_instruction,
                                     "temperature": 0.15,
-                                    "max_output_tokens": 128,
+                                    "max_output_tokens": _localizer_output_tokens(budgeted_text),
                                 },
                             )
                         if cancel_token is not None:
@@ -638,6 +651,7 @@ def _translate_with_deepseek_api(
     system_instruction: str,
     prompt: str,
     timeout_seconds: float,
+    max_output_tokens: int = 384,
 ) -> dict[str, object]:
     import requests
 
@@ -652,7 +666,7 @@ def _translate_with_deepseek_api(
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.15,
-        "max_tokens": 128,
+        "max_tokens": max(128, min(1024, int(max_output_tokens or 384))),
         "thinking": {"type": "disabled"},
     }
     response = requests.post(

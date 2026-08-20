@@ -38,6 +38,8 @@ const MAX_ATTACHMENTS = 8;
 const MAX_PASTED_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_TEXT_ATTACHMENT_BYTES = 256 * 1024;
 const MAX_ATTACHMENT_EXCERPT = 12_000;
+const NEW_SESSION_LABEL = 'Phiên mới';
+const PREVIOUS_SESSION_LABEL = 'Phiên trước';
 
 /**
  * Một Webview duy nhất kiểu coding agent. Multi-chat, attachment và task progress
@@ -91,7 +93,7 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
       localResourceRoots: [this.extensionUri, this.extensionContext.globalStorageUri],
     };
     view.webview.html = this.html(view.webview);
-    view.description = 'Eris coding agent';
+    view.description = 'Trợ lý lập trình Eris';
 
     this.viewDisposables.push(
       view.webview.onDidReceiveMessage((message) => void this.onWebviewMessage(message)),
@@ -145,7 +147,7 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
     if (!resolvedThread) {
       return;
     }
-    this.ensureSession(resolvedThread, 'Previous session');
+    this.ensureSession(resolvedThread, PREVIOUS_SESSION_LABEL);
     await this.selectThread(resolvedThread, String(taskId ?? '').trim());
   }
 
@@ -170,7 +172,7 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
       const status = String(item?.status ?? 'idle') as SessionStatus;
       sessions.push({
         threadId,
-        title: String(item?.title ?? 'New Session').trim() || 'New Session',
+        title: String(item?.title ?? NEW_SESSION_LABEL).trim() || NEW_SESSION_LABEL,
         updatedAt: Number(item?.updatedAt ?? Date.now()) || Date.now(),
         status: ['idle', 'running', 'waiting', 'done', 'failed'].includes(status) ? status : 'idle',
         taskId: String(item?.taskId ?? '').trim() || undefined,
@@ -182,7 +184,7 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
     return openSessions.slice(-MAX_OPEN_SESSIONS);
   }
 
-  private createLocalSession(title = 'New Session'): SessionTab {
+  private createLocalSession(title = NEW_SESSION_LABEL): SessionTab {
     const session: SessionTab = {
       threadId: `thread_${crypto.randomUUID()}`,
       title,
@@ -194,10 +196,10 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
   }
 
   private ensureCurrentSession(): void {
-    this.ensureSession(this.threadId, 'New Session');
+    this.ensureSession(this.threadId, NEW_SESSION_LABEL);
   }
 
-  private ensureSession(threadId: string, title = 'New Session'): SessionTab {
+  private ensureSession(threadId: string, title = NEW_SESSION_LABEL): SessionTab {
     let session = this.sessions.find((item) => item.threadId === threadId);
     if (!session) {
       session = { threadId, title, updatedAt: Date.now(), status: 'idle' };
@@ -246,7 +248,7 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
   private titleFromContent(content: string): string {
     const oneLine = content.replace(/\s+/g, ' ').trim();
     if (!oneLine) {
-      return 'New Session';
+      return NEW_SESSION_LABEL;
     }
     return oneLine.length <= 34 ? oneLine : `${oneLine.slice(0, 33).trimEnd()}…`;
   }
@@ -331,7 +333,7 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
           throw new Error('Workspace chưa được Trust trong VS Code; Eris sẽ không đọc/chạy code ở đây.');
         }
         const session = this.ensureSession(this.threadId);
-        if (session.title === 'New Session') {
+        if (session.title === NEW_SESSION_LABEL) {
           session.title = this.titleFromContent(content);
         }
         session.status = 'running';
@@ -445,7 +447,7 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
       canSelectFiles: true,
       canSelectFolders: false,
       canSelectMany: true,
-      openLabel: 'Attach to Eris',
+      openLabel: 'Đính kèm vào Eris',
     });
     if (!uris?.length) {
       return;
@@ -605,7 +607,7 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
       if (type === 'message.user') {
         const content = String(event.payload?.content ?? '').trim();
         const current = this.ensureSession(eventThread);
-        if (current.title === 'New Session' && content) {
+        if (current.title === NEW_SESSION_LABEL && content) {
           patch.title = this.titleFromContent(content);
         }
         patch.status = 'running';
@@ -655,7 +657,7 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
   }
 
   private sessionTitleFromTask(task: any, fallback: string): string {
-    if (fallback && fallback !== 'New Session' && fallback !== 'Previous session') {
+    if (fallback && fallback !== NEW_SESSION_LABEL && fallback !== PREVIOUS_SESSION_LABEL) {
       return fallback;
     }
     const goal = String(task?.clarified_goal ?? task?.goal ?? '').trim();
@@ -731,12 +733,14 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
     button { cursor: pointer; }
     .shell { height: 100vh; display: grid; grid-template-rows: auto auto minmax(0,1fr) auto; }
 
-    /* Session tabs */
-    .session-strip { display: flex; align-items: center; gap: 4px; padding: 4px 6px 3px; border-bottom: 1px solid var(--border); min-height: 36px; }
-    .session-tabs-wrap { position: relative; min-width: 0; flex: 1; overflow: hidden; }
-    .session-tabs { display: flex; gap: 3px; overflow: auto hidden; scrollbar-width: none; scroll-behavior: smooth; }
-    .session-tabs::-webkit-scrollbar { display: none; }
-    .session-indicator { position: absolute; bottom: 0; left: 0; height: 2px; width: 0; border-radius: 999px; background: var(--accent); transition: transform var(--normal) var(--ease), width var(--normal) var(--ease), opacity var(--fast) ease; opacity: 0; pointer-events: none; }
+    /* === Compact header bar (thay thế tab strip) === */
+    .session-strip { display: flex; align-items: center; gap: 4px; padding: 5px 8px 5px; border-bottom: 1px solid var(--border); min-height: 34px; }
+    /* Tabs bị ẩn — sessions managed qua menu */
+    .session-tabs-wrap { display: none; }
+    .session-tabs { display: none; }
+    .session-indicator { display: none; }
+    /* Active session title ở giữa header */
+    .session-header-title { flex: 1; min-width: 0; font-size: 11.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); text-align: left; padding: 0 4px; }
     .session-tab { position: relative; flex: none; max-width: 150px; height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 7px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); transition: background var(--fast) ease, color var(--fast) ease; }
     .session-tab:hover { background: var(--vscode-toolbar-hoverBackground); color: var(--vscode-foreground); }
     .session-tab.active { background: color-mix(in srgb, var(--vscode-toolbar-hoverBackground) 68%, transparent); color: var(--vscode-foreground); }
@@ -770,7 +774,7 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
     .timeline.anim-right { animation: slideInRight var(--normal) var(--ease) both; }
 
     /* Chat bubbles */
-    .msg { display: flex; gap: 9px; margin-bottom: 16px; animation: msgIn var(--fast) var(--ease) both; }
+    .msg { display: flex; gap: 9px; margin-bottom: 20px; animation: msgIn var(--fast) var(--ease) both; }
     .msg-user { flex-direction: row-reverse; }
     .msg-assistant { flex-direction: row; align-items: flex-start; }
     .avatar { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent); margin-top: 2px; }
@@ -787,26 +791,25 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
     .msg-attachments { display: flex; flex-wrap: wrap; gap: 4px; }
     .attach-chip-sm { display: flex; align-items: center; gap: 4px; padding: 2px 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--vscode-editor-background); font-size: 10px; color: var(--muted); }
 
-    /* Activity feed (replaces work-card) */
-    .activity-feed { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: color-mix(in srgb, var(--vscode-editor-background) 55%, transparent); font-size: 11px; width: 100%; }
-    .feed-summary { display: flex; align-items: center; gap: 6px; padding: 6px 9px; cursor: pointer; color: var(--muted); list-style: none; user-select: none; }
-    .feed-summary::-webkit-details-marker { display: none; }
-    .feed-summary:hover { background: var(--vscode-toolbar-hoverBackground); color: var(--vscode-foreground); }
+    /* Activity feed — status line only while running, hidden when done */
+    .activity-feed { font-size: 11px; width: 100%; }
+    .activity-feed.done .feed-summary,
+    .activity-feed.failed .feed-summary { display: none; }
+    .feed-summary { display: flex; align-items: center; gap: 6px; padding: 3px 0 5px; color: var(--muted); user-select: none; }
     .feed-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--vscode-progressBar-background); animation: pulse 1.6s ease-in-out infinite; }
     .activity-feed.done .feed-dot { background: var(--vscode-testing-iconPassed); animation: none; }
     .activity-feed.failed .feed-dot { background: var(--vscode-testing-iconFailed); animation: none; }
     .feed-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .feed-count { flex: none; min-width: 16px; padding: 0 3px; border-radius: 999px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); text-align: center; font-size: 9px; }
-    .feed-count:empty { display: none; }
-    .feed-rows { border-top: 1px solid var(--border); padding: 5px 8px 7px; display: flex; flex-direction: column; gap: 2px; }
-    .feed-row { display: flex; gap: 6px; color: var(--muted); padding: 1px 2px; animation: rowIn var(--fast) var(--ease) both; }
-    .feed-row .fmark { width: 12px; text-align: center; flex: none; font-size: 10px; }
-    .feed-row .ftext { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .feed-count { display: none; }
+    /* Show rows live while running; hide when done (answer goes to bubble) */
+    .feed-rows { display: flex; flex-direction: column; gap: 2px; padding: 2px 0; }
+    .activity-feed.done .feed-rows,
+    .activity-feed.failed .feed-rows { display: none; }
+    .feed-row { display: flex; align-items: baseline; gap: 6px; color: var(--muted); padding: 1px 0; animation: rowIn var(--fast) var(--ease) both; }
+    .feed-row .fmark { width: 12px; text-align: center; flex: none; font-size: 10px; opacity: 0.6; }
+    .feed-row .ftext { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; font-size: 11px; }
 
-    /* Reasoning strip */
-    .reasoning-block { border-left: 2px solid color-mix(in srgb, var(--accent) 38%, transparent); padding: 5px 10px; background: color-mix(in srgb, var(--accent) 5%, transparent); border-radius: 0 6px 6px 0; font-size: 11px; color: var(--muted); animation: msgIn var(--fast) var(--ease) both; width: 100%; }
-    .reasoning-label { font-size: 9px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: color-mix(in srgb, var(--accent) 65%, var(--muted)); margin-bottom: 2px; display: block; }
-    .reasoning-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.4; }
+
 
     /* Task controls */
     .task-controls { display: flex; flex-wrap: wrap; gap: 3px; }
@@ -863,9 +866,9 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
     .attach-chip img { width: 18px; height: 18px; object-fit: cover; border-radius: 3px; }
     .attach-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .attach-remove { border: 0; padding: 0; background: transparent; color: var(--muted); }
-    .composer-box { border: 1px solid var(--vscode-input-border, var(--border)); border-radius: 10px; background: var(--input-bg); overflow: hidden; transition: border-color var(--fast) ease, box-shadow var(--fast) ease; }
+    .composer-box { border: 1px solid var(--vscode-input-border, var(--border)); border-radius: 10px; background: var(--input-bg); overflow: visible; transition: border-color var(--fast) ease, box-shadow var(--fast) ease; }
     .composer-box:focus-within { border-color: var(--vscode-focusBorder); box-shadow: 0 0 0 1px color-mix(in srgb, var(--vscode-focusBorder) 18%, transparent); }
-    textarea { width: 100%; min-height: 40px; max-height: 140px; resize: none; overflow: auto; padding: 8px 9px 1px; color: var(--vscode-input-foreground); background: transparent; border: 0; outline: 0; }
+    textarea { width: 100%; min-height: 52px; max-height: 160px; resize: none; overflow: auto; padding: 11px 12px 2px; color: var(--vscode-input-foreground); background: transparent; border: 0; outline: 0; line-height: 1.6; }
     .composer-bar { display: flex; align-items: center; gap: 3px; padding: 3px 5px 5px; }
     .c-tool { height: 26px; min-width: 26px; border: 0; border-radius: 5px; padding: 0 6px; background: transparent; color: var(--muted); font-size: 11px; transition: background var(--fast) ease, color var(--fast) ease; }
     .c-tool:hover { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground); }
@@ -882,6 +885,21 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
     .context-row:hover, .menu-row:hover { background: var(--vscode-list-hoverBackground); }
     .context-row input { margin: 0; }
     .menu-popover { left: auto; right: 7px; bottom: auto; top: 34px; width: 190px; transform-origin: top right; }
+    .select-wrap { position: relative; }
+    .select-btn { position: relative; display: inline-flex; align-items: center; gap: 6px; min-width: 70px; justify-content: center; white-space: nowrap; }
+    .select-btn::after { content: '▾'; font-size: 9px; color: color-mix(in srgb, var(--muted) 80%, var(--accent) 20%); transform: translateY(-.5px); }
+    .select-btn.active { color: var(--vscode-foreground); border-color: color-mix(in srgb, var(--accent) 40%, transparent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+    .select-popover { visibility: hidden; pointer-events: none; opacity: 0; transform: translateY(5px) scale(.98); position: absolute; z-index: 40; right: 0; bottom: calc(100% + 10px); min-width: 124px; max-width: 156px; border: 1px solid var(--border); border-radius: 12px; padding: 4px; background: var(--vscode-menu-background, var(--vscode-editor-background)); box-shadow: 0 14px 34px rgba(0,0,0,.28); transition: opacity var(--fast) ease, transform var(--fast) ease, visibility 0s linear var(--fast); }
+    .select-popover.visible { visibility: visible; pointer-events: auto; opacity: 1; transform: none; transition-delay: 0s; }
+    .select-option { width: 100%; text-align: left; border: 1px solid transparent; background: transparent; color: inherit; border-radius: 10px; padding: 7px 9px; display: grid; grid-template-columns: auto 1fr auto; gap: 7px; align-items: center; }
+    .select-option + .select-option { margin-top: 4px; }
+    .select-option:hover { background: rgba(127,212,142,.10); border-color: rgba(127,212,142,.18); }
+    .select-option.active { background: rgba(127,212,142,.12); border-color: rgba(127,212,142,.34); }
+    .select-icon { width: 16px; text-align: center; color: var(--accent); opacity: .95; }
+    .select-copy strong { display: block; font-size: 11px; font-weight: 600; line-height: 1.2; }
+    .select-copy span { display: none; }
+    .select-check { opacity: 0; color: var(--accent); }
+    .select-option.active .select-check { opacity: 1; }
     .menu-sep { height: 1px; margin: 4px 2px; background: var(--border); }
 
     /* Drawer */
@@ -911,16 +929,280 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
     @keyframes slideInRight { from { opacity: 0; transform: translateX(10px); } }
     @media (max-width: 280px) { .mode-cards { grid-template-columns: 1fr; } .session-tab { max-width: 110px; } }
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; } }
+
+    /* Green organic polish pass -------------------------------------------------
+       Ưu tiên mood xanh lá + bớt cảm giác công nghiệp. Chỉ override thị giác,
+       không đổi luồng event/task hiện có để tránh phát sinh bug hành vi. */
+    :root {
+      --eris-green: #7fd48e;
+      --eris-green-2: #52b86c;
+      --eris-green-3: #2a7d43;
+      --eris-moss: rgba(127, 212, 142, 0.14);
+      --eris-moss-strong: rgba(127, 212, 142, 0.22);
+      --eris-panel: color-mix(in srgb, var(--vscode-sideBar-background) 92%, #102116 8%);
+      --accent: var(--eris-green);
+      --border: color-mix(in srgb, var(--vscode-widget-border, var(--vscode-panel-border)) 78%, var(--eris-green) 22%);
+      --muted: color-mix(in srgb, var(--vscode-descriptionForeground) 88%, #a6ccb0 12%);
+      --bg: var(--eris-panel);
+      --input-bg: color-mix(in srgb, var(--vscode-input-background) 82%, #112118 18%);
+    }
+    body {
+      background:
+        radial-gradient(circle at 14% 11%, rgba(108, 194, 122, 0.10), transparent 18%),
+        radial-gradient(circle at 86% 72%, rgba(64, 142, 84, 0.10), transparent 22%),
+        linear-gradient(180deg, color-mix(in srgb, var(--eris-panel) 88%, #0a120d 12%), var(--eris-panel));
+    }
+    .shell::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at left center, rgba(127,212,142,.06), transparent 28%),
+        radial-gradient(circle at right 28%, rgba(127,212,142,.04), transparent 24%);
+      opacity: .9;
+    }
+    .session-strip {
+      gap: 6px;
+      padding: 7px 9px 6px;
+      border-bottom-color: color-mix(in srgb, var(--border) 72%, var(--eris-green) 28%);
+      background: linear-gradient(180deg, rgba(127, 212, 142, 0.035), transparent 82%);
+    }
+    .session-indicator { height: 1px; background: linear-gradient(90deg, transparent, var(--eris-green), transparent); }
+    .session-tab {
+      max-width: 168px;
+      height: 30px;
+      padding: 0 10px;
+      border: 1px solid transparent;
+      border-radius: 10px;
+      color: color-mix(in srgb, var(--muted) 92%, #cfe8d5 8%);
+    }
+    .session-tab:hover {
+      background: color-mix(in srgb, var(--eris-moss) 72%, transparent);
+      border-color: color-mix(in srgb, var(--eris-green) 26%, transparent);
+      color: var(--vscode-foreground);
+    }
+    .session-tab.active {
+      background: linear-gradient(180deg, rgba(127,212,142,.18), rgba(127,212,142,.10));
+      border-color: color-mix(in srgb, var(--eris-green) 42%, transparent);
+      color: #e4f7e8;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+    }
+    .close-tab { border-radius: 999px; }
+    .icon-btn {
+      width: 28px; height: 28px; border-radius: 9px;
+      color: color-mix(in srgb, var(--muted) 92%, #cde3d3 8%);
+    }
+    .icon-btn:hover {
+      background: color-mix(in srgb, var(--eris-moss) 88%, transparent);
+      color: #e4f7e8;
+    }
+    .connection {
+      font-size: 11px;
+      gap: 8px;
+      color: color-mix(in srgb, var(--muted) 92%, #dceee0 8%);
+    }
+    .connection.visible {
+      max-height: 34px;
+      padding: 6px 11px 6px;
+      border-bottom-color: color-mix(in srgb, var(--border) 76%, var(--eris-green) 24%);
+      background: linear-gradient(180deg, rgba(127,212,142,.04), transparent 88%);
+    }
+    .connection .dot { box-shadow: 0 0 0 4px rgba(255, 96, 96, 0.08); }
+    .connection button {
+      border-radius: 999px;
+      padding: 2px 8px;
+      color: var(--eris-green);
+    }
+    .connection button:hover {
+      text-decoration: none;
+      background: color-mix(in srgb, var(--eris-moss) 88%, transparent);
+    }
+    .timeline { padding: 22px 14px 28px; }
+    .msg { margin-bottom: 22px; }
+    .msg-assistant, .msg-user { gap: 0; }
+    .avatar, .avatar-spacer, .msg-role { display: none; }
+    /* User bubble: full-width, khong gioi han 420px */
+    .msg-user .msg-body { max-width: 88%; gap: 6px; }
+    /* Assistant: full width, khong bubble */
+    .msg-assistant .msg-body { max-width: 100%; gap: 0; }
+    .msg-user .bubble {
+      background: linear-gradient(180deg, rgba(90, 176, 110, 0.30), rgba(66, 128, 81, 0.20));
+      border-color: rgba(127, 212, 142, 0.34);
+      color: #eefaf0;
+      border-bottom-right-radius: 5px;
+    }
+    /* Assistant: bỏ hết bubble styling, thay bằng left accent line như Claude */
+    .msg-assistant .bubble {
+      background: transparent;
+      border: none;
+      border-radius: 0;
+      padding: 2px 0 4px 14px;
+      border-left: 2px solid rgba(127, 212, 142, 0.28);
+      color: color-mix(in srgb, var(--vscode-foreground) 97%, #effaf2 3%);
+      line-height: 1.65;
+      font-size: 13px;
+    }
+    .msg-assistant .bubble.streaming {
+      border-left-color: rgba(127, 212, 142, 0.55);
+    }
+    .attach-chip-sm, .attach-chip, .artifact, .interrupt {
+      background: linear-gradient(180deg, rgba(14,23,18,.88), rgba(16,26,20,.84));
+      border-color: color-mix(in srgb, var(--border) 72%, var(--eris-green) 28%);
+    }
+    /* Activity feed — green polish: dim status line while running */
+    .activity-feed:not(.done):not(.failed) .feed-dot { background: var(--eris-green-2); }
+    .activity-feed:not(.done):not(.failed) .feed-label { color: color-mix(in srgb, var(--muted) 88%, #d5e8d8 12%); }
+
+    .empty { padding: 12px 8px 26px; }
+    .empty-inner {
+      position: relative;
+      max-width: 330px;
+      padding: 28px 18px 20px;
+      border-radius: 24px;
+      background: linear-gradient(180deg, rgba(12,20,15,.60), rgba(12,20,15,.26));
+      border: 1px solid rgba(127,212,142,.12);
+      backdrop-filter: blur(2px);
+      overflow: hidden;
+    }
+    .empty-inner::before,
+    .empty-inner::after {
+      content: '';
+      position: absolute;
+      inset: auto;
+      width: 94px; height: 94px;
+      border-radius: 50%;
+      border: 1px solid rgba(127,212,142,.09);
+      filter: blur(.2px);
+      pointer-events: none;
+    }
+    .empty-inner::before { left: -28px; bottom: -34px; }
+    .empty-inner::after { right: -36px; top: -26px; width: 76px; height: 76px; }
+    .spark {
+      position: relative;
+      width: 58px; height: 58px;
+      margin: 0 auto 14px;
+      border-radius: 50%;
+      color: transparent;
+      background:
+        radial-gradient(circle at center, rgba(127,212,142,.24) 0 26%, transparent 27%),
+        radial-gradient(circle at center, rgba(127,212,142,.14) 0 54%, transparent 55%),
+        radial-gradient(circle at center, rgba(127,212,142,.10) 0 78%, transparent 79%);
+      box-shadow: inset 0 0 0 1px rgba(127,212,142,.16), 0 0 22px rgba(71,155,88,.10);
+      animation: float 3.2s ease-in-out infinite;
+      filter: none;
+    }
+    .spark::before,
+    .spark::after {
+      content: '';
+      position: absolute;
+      border-radius: 999px;
+      background: linear-gradient(180deg, rgba(127,212,142,.90), rgba(89,173,104,.62));
+      box-shadow: 0 0 12px rgba(127,212,142,.18);
+    }
+    .spark::before { width: 12px; height: 24px; left: 19px; top: 10px; transform: rotate(-24deg); }
+    .spark::after { width: 12px; height: 18px; right: 18px; top: 17px; transform: rotate(32deg); }
+    .empty h2 { font-size: 20px; letter-spacing: -.02em; }
+    .empty p { max-width: 290px; margin: 7px auto 18px; font-size: 11.5px; line-height: 1.5; }
+    .mode-cards { gap: 10px; }
+    .mode-card {
+      border-radius: 14px;
+      padding: 12px 12px 11px;
+      background: linear-gradient(180deg, rgba(15,25,18,.90), rgba(17,28,21,.82));
+      border-color: color-mix(in srgb, var(--border) 80%, rgba(127,212,142,.20) 20%);
+    }
+    .mode-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      background: linear-gradient(135deg, rgba(127,212,142,.10), transparent 42%);
+      opacity: .9;
+      pointer-events: none;
+    }
+    .mode-card.selected {
+      border-color: rgba(127,212,142,.54);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.04), 0 10px 26px rgba(18,42,24,.24);
+    }
+    .composer-wrap {
+      padding: 10px 10px 12px;
+      border-top-color: color-mix(in srgb, var(--border) 72%, var(--eris-green) 28%);
+      background: linear-gradient(180deg, rgba(127,212,142,.02), transparent 24%), var(--bg);
+    }
+    .composer-box {
+      border-radius: 18px;
+      border-color: color-mix(in srgb, var(--border) 72%, var(--eris-green) 28%);
+      background: linear-gradient(180deg, rgba(25,36,29,.94), rgba(28,38,31,.90));
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.02);
+    }
+    .composer-box:focus-within {
+      border-color: rgba(127,212,142,.58);
+      box-shadow: 0 0 0 1px rgba(127,212,142,.22), 0 8px 28px rgba(16,39,23,.18);
+    }
+    textarea { min-height: 52px; padding: 12px 12px 4px; }
+    textarea::placeholder { color: color-mix(in srgb, var(--muted) 90%, #d7eadb 10%); }
+    .composer-bar { gap: 6px; padding: 6px 8px 8px; }
+    .c-tool, .bar-select {
+      height: 28px;
+      padding: 0 10px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      background: rgba(127,212,142,.04);
+      color: color-mix(in srgb, var(--muted) 86%, #dceee0 14%);
+    }
+    .bar-select {
+      appearance: none;
+      -webkit-appearance: none;
+      min-width: 68px;
+      padding-right: 22px;
+      background-image:
+        linear-gradient(45deg, transparent 50%, rgba(127,212,142,.70) 50%),
+        linear-gradient(135deg, rgba(127,212,142,.70) 50%, transparent 50%);
+      background-position:
+        calc(100% - 13px) calc(50% - 1px),
+        calc(100% - 8px) calc(50% - 1px);
+      background-size: 5px 5px, 5px 5px;
+      background-repeat: no-repeat;
+    }
+    .c-tool:hover, .bar-select:hover {
+      color: #eefaf0;
+      border-color: rgba(127,212,142,.22);
+      background-color: rgba(127,212,142,.10);
+    }
+    .send {
+      width: 34px; height: 34px; border-radius: 12px;
+      background: rgba(127,212,142,.10);
+      color: rgba(205, 231, 212, .42);
+      font-size: 16px;
+    }
+    .send.ready {
+      background: linear-gradient(180deg, var(--eris-green), var(--eris-green-2));
+      color: #0d1810;
+      box-shadow: 0 10px 24px rgba(32, 88, 45, .24), inset 0 1px 0 rgba(255,255,255,.24);
+    }
+    .send.ready:hover { background: linear-gradient(180deg, #92df9f, #66c57a); }
+    .context-popover, .menu-popover {
+      border-radius: 14px;
+      padding: 8px;
+      border-color: color-mix(in srgb, var(--border) 70%, var(--eris-green) 30%);
+      background: linear-gradient(180deg, rgba(18,30,22,.98), rgba(15,24,18,.96));
+      box-shadow: 0 18px 38px rgba(5, 10, 7, .42);
+    }
+    .menu-row, .context-row {
+      border-radius: 9px;
+    }
+    .menu-row:hover, .context-row:hover {
+      background: rgba(127,212,142,.10);
+    }
+
   </style>
 </head>
 <body>
 <div class="shell">
   <div class="session-strip">
-    <div class="session-tabs-wrap">
-      <div id="sessionTabs" class="session-tabs"></div>
-      <span id="sessionIndicator" class="session-indicator"></span>
-    </div>
-    <button id="newChat" class="icon-btn" title="New Session">\uFF0B</button>
+    <span id="sessionHeaderTitle" class="session-header-title">Eris</span>
+    <div style="display:none"><div id="sessionTabs" class="session-tabs"></div><span id="sessionIndicator" class="session-indicator"></span></div>
+    <button id="newChat" class="icon-btn" title="Phien moi">\uFF0B</button>
     <button id="menuButton" class="icon-btn" title="More">\u22EF</button>
   </div>
   <div id="connection" class="connection">
@@ -956,22 +1238,31 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
       <div class="composer-bar">
         <button id="attach" class="c-tool" title="Attach files or images">\uFF0B</button>
         <button id="contextButton" class="c-tool" title="Context">#</button>
-        <select id="mode" class="bar-select" title="Agent mode"><option value="execute">Agent</option><option value="inspect">Inspect only</option></select>
-        <select id="modelSelect" class="bar-select" title="WebAI model">
-          <option value="gemini-3-flash">Flash</option>
-          <option value="gemini-3-pro">Pro</option>
-          <option value="gemini-3-flash-thinking">Thinking</option>
-        </select>
-        <button id="send" class="send" title="Send">\u2191</button>
+        <div class="select-wrap">
+          <button id="modeButton" class="c-tool select-btn" title="Chế độ tác vụ" aria-haspopup="listbox" aria-expanded="false">Tác vụ</button>
+          <div id="modePopover" class="select-popover" role="listbox" aria-label="Chế độ tác vụ">
+            <button class="select-option" type="button" data-mode-option="execute"><span class="select-icon">◈</span><span class="select-copy"><strong>Tác vụ</strong></span><span class="select-check">✓</span></button>
+            <button class="select-option" type="button" data-mode-option="inspect"><span class="select-icon">⌕</span><span class="select-copy"><strong>Chỉ xem</strong></span><span class="select-check">✓</span></button>
+          </div>
+        </div>
+        <div class="select-wrap">
+          <button id="modelButton" class="c-tool select-btn" title="Mô hình WebAI" aria-haspopup="listbox" aria-expanded="false">Flash</button>
+          <div id="modelPopover" class="select-popover" role="listbox" aria-label="Mô hình WebAI">
+            <button class="select-option" type="button" data-model-option="gemini-3-flash"><span class="select-icon">⚡</span><span class="select-copy"><strong>Flash</strong></span><span class="select-check">✓</span></button>
+            <button class="select-option" type="button" data-model-option="gemini-3-pro"><span class="select-icon">◆</span><span class="select-copy"><strong>Pro</strong></span><span class="select-check">✓</span></button>
+            <button class="select-option" type="button" data-model-option="gemini-3-flash-thinking"><span class="select-icon">✦</span><span class="select-copy"><strong>Suy luận</strong></span><span class="select-check">✓</span></button>
+          </div>
+        </div>
+        <button id="send" class="send" title="Gửi">\u2191</button>
       </div>
     </div>
     <div id="contextPopover" class="context-popover">
-      <label class="context-row"><input type="checkbox" value="current" checked /> Current file</label>
-      <label class="context-row"><input type="checkbox" value="selection" checked /> Selection</label>
-      <label class="context-row"><input type="checkbox" value="problems" checked /> Problems</label>
-      <label class="context-row"><input type="checkbox" value="git" checked /> Git changes</label>
-      <label class="context-row"><input type="checkbox" value="terminal" /> Terminal recent</label>
-      <label class="context-row"><input type="checkbox" value="openEditors" /> Open editors</label>
+      <label class="context-row"><input type="checkbox" value="current" checked /> File hiện tại</label>
+      <label class="context-row"><input type="checkbox" value="selection" checked /> Vùng chọn</label>
+      <label class="context-row"><input type="checkbox" value="problems" checked /> Lỗi / cảnh báo</label>
+      <label class="context-row"><input type="checkbox" value="git" checked /> Thay đổi Git</label>
+      <label class="context-row"><input type="checkbox" value="terminal" /> Terminal gần đây</label>
+      <label class="context-row"><input type="checkbox" value="openEditors" /> Tab đang mở</label>
     </div>
   </footer>
 </div>
@@ -991,7 +1282,12 @@ const drawerBody=document.getElementById('drawerBody');
 const drawerTitle=document.getElementById('drawerTitle');
 const menuPopover=document.getElementById('menuPopover');
 const contextPopover=document.getElementById('contextPopover');
-const modelSelect=document.getElementById('modelSelect');
+const modeButton=document.getElementById('modeButton');
+const modelButton=document.getElementById('modelButton');
+const modePopover=document.getElementById('modePopover');
+const modelPopover=document.getElementById('modelPopover');
+const NEW_SESSION_LABEL='Phiên mới';
+const PREVIOUS_SESSION_LABEL='Phiên trước';
 
 let activeThreadId='';
 let activeTaskId='';
@@ -1009,8 +1305,24 @@ let pendingSwitchDirection=0;
 let awaitingThreadHistory=false;
 let deferredEvents=[];
 
-modelSelect.value=selectedModel;
-modelSelect.onchange=function(e){selectedModel=e.target.value;vscode.setState(Object.assign({},vscode.getState(),{model:selectedModel}));};
+const MODEL_LABELS={
+  'gemini-3-flash':'Flash',
+  'gemini-3-pro':'Pro',
+  'gemini-3-flash-thinking':'Suy luận'
+};
+const MODE_LABELS={execute:'Tác vụ',inspect:'Chỉ xem'};
+function syncModeUi(){
+  modeButton.textContent=MODE_LABELS[selectedMode]||'Tác vụ';
+  for(var opt of document.querySelectorAll('[data-mode-option]'))opt.classList.toggle('active',opt.dataset.modeOption===selectedMode);
+  modeButton.classList.toggle('active',modePopover.classList.contains('visible'));
+  modeButton.setAttribute('aria-expanded', String(modePopover.classList.contains('visible')));
+}
+function syncModelUi(){
+  modelButton.textContent=MODEL_LABELS[selectedModel]||'Flash';
+  for(var opt of document.querySelectorAll('[data-model-option]'))opt.classList.toggle('active',opt.dataset.modelOption===selectedModel);
+  modelButton.classList.toggle('active',modelPopover.classList.contains('visible'));
+  modelButton.setAttribute('aria-expanded', String(modelPopover.classList.contains('visible')));
+}
 
 const esc=function(v){return String(v==null?'':v).replace(/[&<>"']/g,function(ch){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch];});};
 const clip=function(v,n){n=n||80;var t=String(v==null?'':v).replace(/\\s+/g,' ').trim();return t.length<=n?t:t.slice(0,n-1)+'\u2026';};
@@ -1043,9 +1355,9 @@ function renderSessions(){
     var isFresh=!knownTabs.has(session.threadId);
     tab.className='session-tab'+(session.threadId===activeThreadId?' active':'')+(isFresh?' tab-enter':'');
     tab.dataset.threadId=session.threadId;
-    tab.title=session.title||'New Session';
+    tab.title=session.title||NEW_SESSION_LABEL;
     var dot=document.createElement('span');dot.className='session-state '+String(session.status||'idle');
-    var title=document.createElement('span');title.className='session-title';title.textContent=session.title||'New Session';
+    var title=document.createElement('span');title.className='session-title';title.textContent=session.title||NEW_SESSION_LABEL;
     var close=document.createElement('button');close.className='close-tab';close.textContent='\xD7';close.title='Close';
     (function(tid,t){close.onclick=function(ev){ev.stopPropagation();t.classList.add('tab-closing');setTimeout(function(){vscode.postMessage({type:'session.close',threadId:tid});},110);};})(session.threadId,tab);
     tab.append(dot,title,close);
@@ -1057,12 +1369,22 @@ function renderSessions(){
     if(a)a.scrollIntoView({block:'nearest',inline:'nearest'});
     requestAnimationFrame(updateSessionIndicator);
   });
+  // Update compact header title
+  var headerTitle=document.getElementById('sessionHeaderTitle');
+  if(headerTitle){
+    var active=sessions.find(function(s){return s.threadId===activeThreadId;});
+    var label=active?active.title||NEW_SESSION_LABEL:'Eris';
+    var status=active?String(active.status||'idle'):'idle';
+    var statusIcon=status==='running'?'\u25CF ':status==='waiting'?'\u25CB ':status==='done'?'\u2713 ':status==='failed'?'\u2715 ':'';
+    headerTitle.textContent=(statusIcon||'')+label;
+    headerTitle.title=label;
+  }
 }
 
-function emptyHtml(){return '<div class="empty" id="chatEmpty"><div class="empty-inner"><div class="spark">\u2726</div><h2>What are we building today?</h2><p>Chat about code, inspect a problem, or let Eris work through a task.</p><div class="mode-cards"><button class="mode-card" data-empty-mode="inspect"><strong>Quick Chat</strong><span>Explore and inspect without changing files.</span></button><button class="mode-card selected" data-empty-mode="execute"><strong>Agent Task</strong><span>Plan, edit, run tests and iterate autonomously.</span></button></div></div></div>';}
+function emptyHtml(){return '<div class="empty" id="chatEmpty"><div class="empty-inner"><div class="spark">✦</div><h2>Eris</h2><p>Một góc xanh nhỏ để nói chuyện, rà lỗi và đẩy task code đi tiếp.</p><div class="mode-cards"><button class="mode-card" data-empty-mode="inspect"><strong>Chat nhanh</strong><span>Hỏi, giải thích và soi code mà không sửa file.</span></button><button class="mode-card selected" data-empty-mode="execute"><strong>Tác vụ</strong><span>Lập kế hoạch, sửa code, chạy test và lặp tự động.</span></button></div></div></div>';}
 function ensureEmpty(){if(!timeline.children.length){timeline.innerHTML=emptyHtml();bindEmptyModes();}}
 function removeEmpty(){var e=document.getElementById('chatEmpty');if(e)e.remove();}
-function bindEmptyModes(){for(var card of timeline.querySelectorAll('[data-empty-mode]'))(function(c){c.onclick=function(){selectedMode=c.dataset.emptyMode||'execute';document.getElementById('mode').value=selectedMode;for(var x of timeline.querySelectorAll('[data-empty-mode]'))x.classList.toggle('selected',x===c);input.focus();};})(card);}
+function bindEmptyModes(){for(var card of timeline.querySelectorAll('[data-empty-mode]'))(function(c){c.onclick=function(){selectedMode=c.dataset.emptyMode||'execute';syncModeUi();for(var x of timeline.querySelectorAll('[data-empty-mode]'))x.classList.toggle('selected',x===c);input.focus();};})(card);}
 function clearTimeline(showEmpty){if(showEmpty===undefined)showEmpty=true;timeline.innerHTML='';rendered.clear();pendingInterrupts.clear();taskGroups.clear();activeTaskId='';if(showEmpty)ensureEmpty();}
 function animateTimelineIn(direction){
   direction=direction||0;
@@ -1079,7 +1401,7 @@ function addUserMessage(content,attachments){
   removeEmpty();
   var msg=document.createElement('div');msg.className='msg msg-user';
   var body=document.createElement('div');body.className='msg-body';
-  var role=document.createElement('div');role.className='msg-role';role.textContent='You';
+  var role=document.createElement('div');role.className='msg-role';role.textContent='Bạn';
   var bubble=document.createElement('div');bubble.className='bubble';bubble.textContent=String(content==null?'':content);
   body.append(role,bubble);
   if(Array.isArray(attachments)&&attachments.length){
@@ -1113,16 +1435,12 @@ function getTaskGroup(taskId){
   var avatar=document.createElement('div');avatar.className='avatar';avatar.textContent='E';
   var body=document.createElement('div');body.className='msg-body';
   var role=document.createElement('div');role.className='msg-role';role.textContent='Eris';
-  /* reasoning */
-  var reasoning=document.createElement('div');reasoning.className='reasoning-block';reasoning.style.display='none';
-  var rLabel=document.createElement('span');rLabel.className='reasoning-label';rLabel.textContent='Thinking';
-  var rText=document.createElement('div');rText.className='reasoning-text';
-  reasoning.append(rLabel,rText);
+
   /* bubble — hidden until text arrives (no empty black square) */
   var bubble=document.createElement('div');bubble.className='bubble';
-  /* activity feed */
-  var feed=document.createElement('details');feed.className='activity-feed';feed.style.display='none';feed.open=true;
-  var feedSum=document.createElement('summary');feedSum.className='feed-summary';
+  /* activity feed — simple status line, no expand/collapse */
+  var feed=document.createElement('div');feed.className='activity-feed';feed.style.display='none';
+  var feedSum=document.createElement('div');feedSum.className='feed-summary';
   feedSum.innerHTML='<span class="feed-dot"></span><span class="feed-label">Working\u2026</span><span class="feed-count"></span>';
   var feedRows=document.createElement('div');feedRows.className='feed-rows';
   feed.append(feedSum,feedRows);
@@ -1130,10 +1448,10 @@ function getTaskGroup(taskId){
   var controls=document.createElement('div');controls.className='task-controls';controls.style.display='none';
   controls.innerHTML='<button class="ctrl-btn" data-control="pause">Pause</button><button class="ctrl-btn" data-control="resume">Resume</button><button class="ctrl-btn" data-control="rollback">Rollback</button><button class="ctrl-btn" data-control="stop">Stop</button>';
   for(var btn of controls.querySelectorAll('[data-control]'))(function(b,k){b.onclick=function(){vscode.postMessage({type:'task.control',taskId:k,action:b.dataset.control});};})(btn,key);
-  body.append(role,reasoning,bubble,feed,controls);
+  body.append(role,bubble,feed,controls);
   group.append(avatar,body);
   timeline.appendChild(group);
-  var entry={groupEl:group,bubbleEl:bubble,feedEl:feed,feedRowsEl:feedRows,feedLabelEl:feedSum.querySelector('.feed-label'),feedCountEl:feedSum.querySelector('.feed-count'),reasoningEl:reasoning,reasoningTextEl:rText,controlsEl:controls,rowCount:0};
+  var entry={groupEl:group,bubbleEl:bubble,feedEl:feed,feedRowsEl:feedRows,feedLabelEl:feedSum.querySelector('.feed-label'),feedCountEl:feedSum.querySelector('.feed-count'),controlsEl:controls,rowCount:0};
   taskGroups.set(key,entry);
   scroll();
   return entry;
@@ -1153,7 +1471,7 @@ function addActivity(event){
   entry.feedEl.classList.toggle('done',done);
   entry.feedEl.classList.toggle('failed',failed);
   entry.controlsEl.style.display=(done||failed)?'none':'flex';
-  if(done||failed)entry.feedEl.open=false;
+  // Append row BEFORE changing open state so browser doesn't re-open details
   if(detail){
     var row=document.createElement('div');row.className='feed-row';
     var mark=done?'\u2713':failed?'\xD7':'\xB7';
@@ -1162,6 +1480,20 @@ function addActivity(event){
     while(entry.feedRowsEl.children.length>20)entry.feedRowsEl.firstChild.remove();
     entry.rowCount=entry.feedRowsEl.children.length;
     entry.feedCountEl.textContent=entry.rowCount?String(entry.rowCount):'';
+  }
+  // When done: promote last row text to bubble (Claude-style clean response)
+  if(done||failed){
+    var rows=entry.feedRowsEl.children;
+    var lastText='';
+    // Grab last non-empty row text (no unicode comparison needed)
+    for(var i=rows.length-1;i>=0;i--){
+      var ft=rows[i].querySelector('.ftext');
+      var txt=ft?(ft.textContent||ft.innerText||'').trim():'';
+      if(txt){lastText=txt;break;}
+    }
+    if(lastText&&!entry.bubbleEl.textContent){
+      entry.bubbleEl.textContent=lastText;
+    }
   }
   scroll();
 }
@@ -1176,9 +1508,7 @@ function mergeCoding(event){
   entry.feedEl.style.display='';
   entry.feedLabelEl.textContent=clip(String(title)+file,60);
   if(p.current_action||p.next_action){
-    var parts=[p.current_action,p.next_action].filter(Boolean).join(' \u2192 ');
-    entry.reasoningEl.style.display='';
-    entry.reasoningTextEl.textContent=parts;
+    // reasoning removed — steps shown in activity feed instead
   }
   var done=status==='completed'||status==='done';
   var failed=status==='failed'||status==='stopped';
@@ -1250,7 +1580,6 @@ function renderEvent(event){
     var entry=getTaskGroup(String(event.taskId||activeTaskId||'main'));
     entry.bubbleEl.textContent=String(event.payload&&event.payload.content!=null?event.payload.content:'');
     entry.bubbleEl.classList.remove('streaming');
-    if(!entry.reasoningTextEl.textContent)entry.reasoningEl.style.display='none';
     return;
   }
   if(event.type==='message.assistant.delta'){
@@ -1303,8 +1632,8 @@ function renderAttachments(){
 function contextKeys(){return [...contextPopover.querySelectorAll('input:checked')].map(function(n){return n.value;});}
 function updateComposerState(){var ready=Boolean(input.value.trim())||attachmentState.size>0;sendButton.classList.toggle('ready',ready);}
 function resizeInput(){input.style.height='auto';input.style.height=Math.min(140,Math.max(40,input.scrollHeight))+'px';updateComposerState();}
-function send(){var content=input.value.trim();var ids=[...attachmentState.keys()];if(!content&&!ids.length)return;input.value='';resizeInput();hidePopovers();vscode.postMessage({type:'sendMessage',content:content,taskMode:document.getElementById('mode').value,model:selectedModel,attachmentIds:ids,contextKeys:contextKeys()});}
-function hidePopovers(){menuPopover.classList.remove('visible');contextPopover.classList.remove('visible');}
+function send(){var content=input.value.trim();var ids=[...attachmentState.keys()];if(!content&&!ids.length)return;input.value='';resizeInput();hidePopovers();vscode.postMessage({type:'sendMessage',content:content,taskMode:selectedMode,model:selectedModel,attachmentIds:ids,contextKeys:contextKeys()});}
+function hidePopovers(){menuPopover.classList.remove('visible');contextPopover.classList.remove('visible');modePopover.classList.remove('visible');modelPopover.classList.remove('visible');syncModeUi();syncModelUi();}
 function showNotice(message){notice.textContent=String(message||'');notice.classList.toggle('visible',Boolean(message));if(message)setTimeout(function(){notice.classList.remove('visible');},7000);}
 
 function renderDrawer(kind){
@@ -1312,11 +1641,11 @@ function renderDrawer(kind){
   if(kind==='history'){
     drawerTitle.textContent='Recent chats';
     var byThread=new Map();
-    for(var session of sessions)byThread.set(String(session.threadId||''),{threadId:String(session.threadId||''),title:session.title||'New Session',status:session.status||'idle',updatedAt:Number(session.updatedAt||0)});
-    for(var task of catalogTasks){var tid=String(task.thread_id||task.threadId||'');if(!tid)continue;var ex=byThread.get(tid)||{};byThread.set(tid,{threadId:tid,title:ex.title||task.clarified_goal||task.goal||'Previous session',status:String(task.status||ex.status||'idle'),updatedAt:Math.max(Number(ex.updatedAt||0),Number(task.updated_at||0)*(Number(task.updated_at||0)<10000000000?1000:1))});}
+    for(var session of sessions)byThread.set(String(session.threadId||''),{threadId:String(session.threadId||''),title:session.title||NEW_SESSION_LABEL,status:session.status||'idle',updatedAt:Number(session.updatedAt||0)});
+    for(var task of catalogTasks){var tid=String(task.thread_id||task.threadId||'');if(!tid)continue;var ex=byThread.get(tid)||{};byThread.set(tid,{threadId:tid,title:ex.title||task.clarified_goal||task.goal||PREVIOUS_SESSION_LABEL,status:String(task.status||ex.status||'idle'),updatedAt:Math.max(Number(ex.updatedAt||0),Number(task.updated_at||0)*(Number(task.updated_at||0)<10000000000?1000:1))});}
     var history=[...byThread.values()].sort(function(a,b){return b.updatedAt-a.updatedAt;});
     if(!history.length){drawerBody.innerHTML='<div class="empty"><div class="empty-inner"><p>No previous chats.</p></div></div>';return;}
-    for(var item of history)(function(i){var b=document.createElement('button');b.className='drawer-card';b.innerHTML='<strong>'+esc(i.title||'Previous session')+'</strong><span>'+esc(i.status||'idle')+'</span>';b.onclick=function(){drawer.classList.remove('visible');selectSessionFromUi(i.threadId);};drawerBody.appendChild(b);})(item);
+    for(var item of history)(function(i){var b=document.createElement('button');b.className='drawer-card';b.innerHTML='<strong>'+esc(i.title||PREVIOUS_SESSION_LABEL)+'</strong><span>'+esc(i.status||'idle')+'</span>';b.onclick=function(){drawer.classList.remove('visible');selectSessionFromUi(i.threadId);};drawerBody.appendChild(b);})(item);
     return;
   }
   if(kind==='tasks'){
@@ -1329,12 +1658,15 @@ function renderDrawer(kind){
 }
 
 document.getElementById('newChat').onclick=function(){vscode.postMessage({type:'newChat'});}
-document.getElementById('menuButton').onclick=function(e){e.stopPropagation();contextPopover.classList.remove('visible');menuPopover.classList.toggle('visible');};
+document.getElementById('menuButton').onclick=function(e){e.stopPropagation();contextPopover.classList.remove('visible');modePopover.classList.remove('visible');modelPopover.classList.remove('visible');menuPopover.classList.toggle('visible');};
 document.getElementById('reconnect').onclick=function(){vscode.postMessage({type:'reconnect'});};
 document.getElementById('attach').onclick=function(){vscode.postMessage({type:'attachment.pick'});};
-document.getElementById('contextButton').onclick=function(e){e.stopPropagation();menuPopover.classList.remove('visible');contextPopover.classList.toggle('visible');};
+document.getElementById('contextButton').onclick=function(e){e.stopPropagation();menuPopover.classList.remove('visible');modePopover.classList.remove('visible');modelPopover.classList.remove('visible');contextPopover.classList.toggle('visible');};
+modeButton.onclick=function(e){e.stopPropagation();menuPopover.classList.remove('visible');contextPopover.classList.remove('visible');modelPopover.classList.remove('visible');modePopover.classList.toggle('visible');syncModeUi();syncModelUi();};
+modelButton.onclick=function(e){e.stopPropagation();menuPopover.classList.remove('visible');contextPopover.classList.remove('visible');modePopover.classList.remove('visible');modelPopover.classList.toggle('visible');syncModeUi();syncModelUi();};
+for(var modeOpt of document.querySelectorAll('[data-mode-option]'))(function(btn){btn.onclick=function(e){e.stopPropagation();selectedMode=btn.dataset.modeOption||'execute';for(var c of timeline.querySelectorAll('[data-empty-mode]'))c.classList.toggle('selected',c.dataset.emptyMode===selectedMode);hidePopovers();input.focus();};})(modeOpt);
+for(var modelOpt of document.querySelectorAll('[data-model-option]'))(function(btn){btn.onclick=function(e){e.stopPropagation();selectedModel=btn.dataset.modelOption||'gemini-3-flash';vscode.setState(Object.assign({},vscode.getState(),{model:selectedModel}));hidePopovers();input.focus();};})(modelOpt);
 document.getElementById('send').onclick=send;
-document.getElementById('mode').onchange=function(e){selectedMode=e.target.value;for(var c of timeline.querySelectorAll('[data-empty-mode]'))c.classList.toggle('selected',c.dataset.emptyMode===selectedMode);};
 document.getElementById('drawerBack').onclick=function(){drawer.classList.remove('visible');};
 for(var dmrow of document.querySelectorAll('[data-menu]'))(function(row){row.onclick=function(){var a=row.dataset.menu;hidePopovers();if(a==='new')vscode.postMessage({type:'newChat'});else if(a==='history'||a==='tasks'||a==='skills')renderDrawer(a);else if(a==='source')vscode.postMessage({type:'showSourceControl'});else if(a==='test')vscode.postMessage({type:'selfTest'});else if(a==='reconnect')vscode.postMessage({type:'reconnect'});else if(a==='settings')vscode.postMessage({type:'settings'});};})(dmrow);
 input.addEventListener('input',resizeInput);
@@ -1344,6 +1676,10 @@ menuPopover.onclick=function(e){e.stopPropagation();};
 contextPopover.onclick=function(e){e.stopPropagation();};
 sessionTabs.addEventListener('scroll',updateSessionIndicator,{passive:true});
 window.addEventListener('resize',updateSessionIndicator);
+syncModeUi();
+syncModelUi();
+modePopover.onclick=function(e){e.stopPropagation();};
+modelPopover.onclick=function(e){e.stopPropagation();};
 
 async function ingestFiles(files){for(var file of [...files].slice(0,8)){if(file.type.startsWith('image/')){(function(f){var reader=new FileReader();reader.onload=function(){vscode.postMessage({type:'attachment.image',name:f.name||'image.png',dataUrl:String(reader.result||'')});};reader.readAsDataURL(f);})(file);}}} 
 input.addEventListener('paste',function(e){var files=[...(e.clipboardData&&e.clipboardData.files||[])];if(files.some(function(f){return f.type.startsWith('image/');})){e.preventDefault();ingestFiles(files);}});

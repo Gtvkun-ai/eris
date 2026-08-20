@@ -32,9 +32,8 @@ _CONVERSATION = StageRuntimeProfile(
     # thể bắt đầu ngay dù HTTP request của turn cũ chưa chịu trả về. Worker legacy
     # tuần tự từng khiến một request đã bị hủy vẫn chặn giọng của câu kế tiếp.
     task_manager_enabled=True,
-    # Keep the historical per-turn profile value for compatibility. TaskManager
-    # promotes multi-segment turns to a small 2-3 worker synthesis window so
-    # ordinary single-clip turns remain unchanged.
+    # Giữ profile value cũ để tương thích cấu hình. TaskManager sẽ tự nâng
+    # multi-segment turn lên tối đa ba worker; lượt một clip không đổi hành vi.
     prefetch_workers=1,
     max_tts_segments=8,
     min_split_chars=58,
