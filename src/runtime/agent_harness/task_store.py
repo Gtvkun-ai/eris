@@ -682,8 +682,11 @@ class AgentTaskStore:
                 }
                 return result
             if kind == "task_completed":
+                # Final answer là dữ liệu public cần replay lossless sau reconnect.
+                # Chỉ detail/summary debug mới bị compact; nếu cắt final ở đây thì
+                # live chat và history sẽ cho hai câu trả lời khác nhau.
                 result["data"] = {
-                    "final": AgentTaskStore._compact_text(data.get("final", result.get("detail", result.get("summary", ""))), 8000),
+                    "final": str(data.get("final", result.get("detail", result.get("summary", ""))) or ""),
                 }
                 return result
             if kind == "file_changed":

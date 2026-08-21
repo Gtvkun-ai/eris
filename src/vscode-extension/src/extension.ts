@@ -53,6 +53,9 @@ export function activate(context: vscode.ExtensionContext): void {
   // Gửi file update xuống backend khi user lưu file (cho Codebase Indexing)
   context.subscriptions.push(vscode.workspace.onDidSaveTextDocument((document) => {
     if (!vscode.workspace.isTrusted || document.uri.scheme !== 'file') return;
+    // Index update chỉ gửi khi agent vốn đã online. Save file không được biến
+    // thành trigger bí mật để launch full Eris ở background.
+    if (client.connectionState !== 'connected') return;
     const fsPath = document.uri.fsPath;
     if (fsPath.includes('.eris') || fsPath.includes('.git') || fsPath.includes('node_modules') || fsPath.includes('__pycache__')) return;
     
@@ -196,12 +199,9 @@ export function activate(context: vscode.ExtensionContext): void {
   }));
   context.subscriptions.push(vscode.commands.registerCommand('eris.serviceLogs', () => serviceManager.showLogs()));
 
-  // Auto-start chỉ lo backend. Activity Bar icon/Webview do manifest đóng góp nên
-  // dù Python hỏng, user vẫn luôn mở được Eris để thấy trạng thái và self-test.
-  const autoStart = vscode.workspace.getConfiguration('eris.service').get<boolean>('autoStart', true);
-  if (autoStart) {
-    void client.connect().then(() => client.requestTasks()).catch(() => undefined);
-  }
+  // Không auto-connect khi activate extension. `eris.service.autoStart` từ đây
+  // có nghĩa là được phép launch backend ON-DEMAND khi user thực sự gửi task.
+  // Vì vậy chỉ mở VS Code / mở Sidebar / save file đều không bật Eris.
 }
 
 export function deactivate(): void {

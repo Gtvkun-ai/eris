@@ -18,6 +18,11 @@ PACKAGE = ROOT / "package.json"
 DIST = ROOT / "dist"
 MEDIA = ROOT / "media"
 
+# Chỉ đóng gói asset thực sự được extension sử dụng.
+# media/chatPanel.js là UI legacy. Webview 0.13 chỉ đóng gói shell mới
+# eris-chat.css/js để không tồn tại hai presentation layer cùng lúc trong VSIX.
+MEDIA_ALLOWLIST = {"eris.svg", "eris-chat.css", "eris-chat.js"}
+
 
 def main() -> int:
     if not PACKAGE.is_file():
@@ -40,6 +45,7 @@ def main() -> int:
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="json" ContentType="application/json" />
   <Default Extension="js" ContentType="application/javascript" />
+  <Default Extension="css" ContentType="text/css" />
   <Default Extension="map" ContentType="application/json" />
   <Default Extension="svg" ContentType="image/svg+xml" />
   <Default Extension="vsixmanifest" ContentType="text/xml" />
@@ -70,12 +76,19 @@ def main() -> int:
         archive.writestr("[Content_Types].xml", content_types)
         archive.writestr("extension.vsixmanifest", manifest)
         archive.write(PACKAGE, "extension/package.json")
-        for base in (DIST, MEDIA):
-            if not base.exists():
-                continue
-            for path in sorted(item for item in base.rglob("*") if item.is_file()):
+        # dist/ là mã đã compile nên đóng gói toàn bộ.
+        if DIST.exists():
+            for path in sorted(item for item in DIST.rglob("*") if item.is_file()):
                 rel = path.relative_to(ROOT).as_posix()
                 archive.write(path, f"extension/{rel}")
+
+        # media/ được allowlist rõ ràng để không vô tình mang UI/asset cũ vào VSIX.
+        if MEDIA.exists():
+            for media_name in sorted(MEDIA_ALLOWLIST):
+                path = MEDIA / media_name
+                if path.is_file():
+                    rel = path.relative_to(ROOT).as_posix()
+                    archive.write(path, f"extension/{rel}")
 
     print(output)
     return 0

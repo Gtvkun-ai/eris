@@ -418,14 +418,31 @@ class AgentHarness:
             if task_id:
                 if tool_calls:
                     names = [str(call.get("name", "tool")) for call in tool_calls if isinstance(call, dict)]
+
+                    # UI chỉ nên nhận kế hoạch ở mức ngữ nghĩa. Tên tool thô vẫn được
+                    # giữ trong data để debug/audit, nhưng không còn bị phơi ra thành
+                    # chuỗi kiểu "search_capabilities, search_capabilities...".
+                    semantic_steps: list[str] = []
+                    for call in tool_calls:
+                        if not isinstance(call, dict):
+                            continue
+                        call_name = str(call.get("name", "tool") or "tool")
+                        call_args = call.get("args") if isinstance(call.get("args"), dict) else {}
+                        label = human_tool_label(call_name, call_args)
+                        if label and label not in semantic_steps:
+                            semantic_steps.append(label)
+                    plan_summary = "Đang chuẩn bị bước thực thi"
+                    if semantic_steps:
+                        plan_summary += ": " + "; ".join(semantic_steps[:3])
+
                     self.event_bus.emit(
                         task_id,
                         "agent_plan",
                         actor="executor",
-                        summary="Bước kế tiếp: " + ", ".join(names[:6]),
+                        summary=plan_summary,
                         step=step,
                         importance=0.56,
-                        data={"tools": names[:12]},
+                        data={"tools": names[:12], "semantic_steps": semantic_steps[:6]},
                     )
                     first_call = next((call for call in tool_calls if isinstance(call, dict)), {})
                     first_name = str(first_call.get("name", "") or "") if isinstance(first_call, dict) else ""
@@ -899,7 +916,8 @@ class AgentHarness:
                 "taskId": task_id,
                 "threadId": str(state.get("thread_id", "") or ""),
                 "toolCallId": permission_call_id,
-                "question": f"Cho phép Eris chạy {permission_name}?",
+                # User duyệt hành động có nghĩa, không phải tên RPC nội bộ.
+                "question": f"Cho phép Eris thực hiện: {human_tool_label(permission_name, permission_args)}?",
                 "options": [
                     {"id": "allow_once", "label": "Cho phép một lần", "description": "Chỉ áp dụng cho tool call này."},
                     {"id": "deny", "label": "Không cho phép", "description": "Bỏ tool này và để agent chọn hướng khác."},
@@ -1590,7 +1608,10 @@ class AgentHarness:
                         summary=(final_text[:520] if final_text else "Gemini đã hoàn tất task."),
                         detail=final_text,
                         importance=0.92,
-                        data={"final": final_text[:8000]},
+                        # Public answer là output của user, không phải telemetry.
+                        # Không cắt 8k ở đây; summary/coding_state phía trên đã có
+                        # budget riêng cho observability.
+                        data={"final": final_text},
                     )
                 return result
         except Exception as exc:
@@ -1846,8 +1867,9 @@ def _final_result_text(result: Any) -> str:
             continue
         content = getattr(message, "content", "")
         if isinstance(content, str) and content.strip():
-            text = content.strip()
-            return text if len(text) <= 8000 else text[:7999].rstrip() + "…"
+            # Giữ nguyên public answer. Truncation nếu cần chỉ áp dụng cho
+            # telemetry/summary, không áp dụng lên câu trả lời mà user đọc.
+            return content.strip()
     return ""
 
 

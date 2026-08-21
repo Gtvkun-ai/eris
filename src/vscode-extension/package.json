@@ -1,8 +1,8 @@
 {
   "name": "eris-vscode",
   "displayName": "Eris",
-  "description": "Eris coding agent với dropdown popover gọn, bung ra ngoài composer trong VS Code.",
-  "version": "0.10.11",
+  "description": "Eris coding agent cho VS Code với webview mới, activity semantic, plan/changes rõ ràng và backend khởi động on-demand.",
+  "version": "0.13.1",
   "publisher": "gtvk",
   "engines": {
     "vscode": "^1.100.0"
@@ -92,7 +92,7 @@
         "eris.service.autoStart": {
           "type": "boolean",
           "default": true,
-          "description": "Tự khởi động Eris khi VS Code cần kết nối nhưng service chưa chạy."
+          "description": "Cho phép Eris tự khởi động backend khi bạn thực sự gửi task. Mở VS Code, mở Sidebar hoặc save file sẽ không tự bật Eris."
         },
         "eris.service.installRoot": {
           "type": "string",

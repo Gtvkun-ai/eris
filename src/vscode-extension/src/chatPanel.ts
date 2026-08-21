@@ -6,6 +6,7 @@ import { WorkspaceDiffProvider } from './diffProvider';
 import { openWorkspaceFile } from './editorBridge';
 import { ErisClient } from './erisClient';
 import { TerminalContextObserver } from './terminalObserver';
+import { renderChatWebviewHtml } from './webviewHtml';
 
 type SessionStatus = 'idle' | 'running' | 'waiting' | 'done' | 'failed';
 
@@ -107,15 +108,26 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
 
     void this.post({ type: 'connection', state: this.client.connectionState });
     void this.postSessions();
-    void this.client.connect().then(async () => {
+    void this.postComposerContext();
+
+    // Mở Sidebar không được đánh thức full Eris. Nếu client đã connected từ một
+    // tác vụ khác thì hydrate history bình thường; còn disconnected là trạng thái
+    // dormant hợp lệ. Lần gửi message đầu tiên mới gọi connect() on-demand.
+    if (this.client.connectionState === 'connected') {
+      void this.hydrateRemoteState();
+    }
+  }
+
+  private async hydrateRemoteState(): Promise<void> {
+    try {
       await this.client.createThread(this.threadId);
       await this.client.requestThreadHistory(this.threadId);
       await this.client.requestTasks();
-    }).catch((error) => {
-      // Connection lỗi là trạng thái service, không phải một message chat. Đừng
-      // biến conversation thành bãi log chỉ vì backend chưa bật.
-      void this.post({ type: 'service.error', message: String(error) });
-    });
+    } catch (error) {
+      // Hydrate chỉ là tiện ích khi backend đã sẵn sàng. UI local vẫn phải mở
+      // được kể cả service vừa tắt giữa chừng.
+      await this.post({ type: 'service.error', message: String(error) });
+    }
   }
 
   async show(preserveFocus = false): Promise<void> {
@@ -139,7 +151,9 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
     void this.extensionContext.workspaceState.update(CURRENT_THREAD_KEY, this.threadId);
     void this.postSessions();
     void this.post({ type: 'chat.reset', threadId: this.threadId, reason: 'new' });
-    void this.client.createThread(this.threadId).catch(() => undefined);
+    if (this.client.connectionState === 'connected') {
+      void this.client.createThread(this.threadId).catch(() => undefined);
+    }
   }
 
   /**
@@ -147,6 +161,9 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
    */
   async sendSystemFeedback(content: string): Promise<void> {
     if (!content.trim()) return;
+    // LSP self-healing là background assist. Nó không có quyền tự bật Eris chỉ
+    // vì user vừa gõ/sửa một file khi chưa dùng coding agent.
+    if (this.client.connectionState !== 'connected') return;
     try {
       const ideContext = await captureIdeContext(this.terminalObserver);
       await this.client.sendUserMessage(content, {
@@ -304,7 +321,9 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
       await this.extensionContext.workspaceState.update(CURRENT_THREAD_KEY, this.threadId);
       await this.postSessions();
       await this.post({ type: 'chat.reset', threadId: this.threadId, reason: 'new' });
-      await this.client.createThread(this.threadId).catch(() => undefined);
+      if (this.client.connectionState === 'connected') {
+        await this.client.createThread(this.threadId).catch(() => undefined);
+      }
       return;
     }
     this.persistSessions();
@@ -332,6 +351,63 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
       }
     }
     return result;
+  }
+
+  /**
+   * Composer chỉ cần biết "đang gắn context gì", không cần nhận nguyên source/diff.
+   * Giữ dữ liệu nhạy cảm và payload lớn ở Extension Host; Webview chỉ thấy metadata.
+   */
+  private async postComposerContext(): Promise<void> {
+    try {
+      const raw = await captureIdeContext(this.terminalObserver);
+      const current = raw.current && typeof raw.current === 'object' ? raw.current as Record<string, any> : {};
+      const selection = raw.selection && typeof raw.selection === 'object' ? raw.selection as Record<string, any> : {};
+      const problems = raw.problems && typeof raw.problems === 'object' ? raw.problems as Record<string, any> : {};
+      const git = raw.git && typeof raw.git === 'object' ? raw.git as Record<string, any> : {};
+      const openEditors = raw.openEditors && typeof raw.openEditors === 'object' ? raw.openEditors as Record<string, any> : {};
+      const terminal = raw.terminal && typeof raw.terminal === 'object' ? raw.terminal as Record<string, any> : {};
+      const workspace = raw.workspace && typeof raw.workspace === 'object' ? raw.workspace as Record<string, any> : {};
+      const startLine = Number(selection?.start?.line ?? 0) || 0;
+      const endLine = Number(selection?.end?.line ?? 0) || 0;
+      const counts = problems.counts && typeof problems.counts === 'object' ? problems.counts as Record<string, any> : {};
+      const folders = Array.isArray(workspace.folders) ? workspace.folders : [];
+
+      await this.post({
+        type: 'composer.context',
+        context: {
+          workspace: { names: folders.map((item: any) => String(item?.name ?? '')).filter(Boolean).slice(0, 4) },
+          current: {
+            available: Boolean(current.available),
+            path: String(current.path ?? ''),
+            languageId: String(current.languageId ?? ''),
+            dirty: Boolean(current.dirty),
+            cursor: current.cursor ?? {},
+          },
+          selection: {
+            available: Boolean(selection.available),
+            empty: selection.empty !== false,
+            path: String(selection.path ?? ''),
+            startLine,
+            endLine,
+            lineCount: startLine && endLine ? Math.max(1, endLine - startLine + 1) : 0,
+          },
+          problems: {
+            error: Number(counts.error ?? 0) || 0,
+            warning: Number(counts.warning ?? 0) || 0,
+          },
+          git: {
+            available: Boolean(git.available),
+            branch: String(git.branch ?? ''),
+            changeCount: Array.isArray(git.changes) ? git.changes.length : 0,
+          },
+          terminal: { active: String(terminal.active ?? '') },
+          openEditors: { count: Number(openEditors.count ?? 0) || 0 },
+        },
+      });
+    } catch {
+      // Context chip là affordance, không được phép làm hỏng chat khi Git/LSP lỗi.
+      await this.post({ type: 'composer.context', context: {} });
+    }
   }
 
   private async onWebviewMessage(message: any): Promise<void> {
@@ -398,6 +474,14 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
       }
       if (type === 'attachment.pick') {
         await this.pickAttachments();
+        return;
+      }
+      if (type === 'context.refresh') {
+        await this.postComposerContext();
+        return;
+      }
+      if (type === 'clipboard.write') {
+        await vscode.env.clipboard.writeText(String(message.text ?? ''));
         return;
       }
       if (type === 'attachment.image') {
@@ -716,1075 +800,9 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
   }
 
   private html(webview: vscode.Webview): string {
-    const nonce = crypto.randomBytes(16).toString('base64');
-    const csp = [
-      `default-src 'none'`,
-      `style-src ${webview.cspSource} 'unsafe-inline'`,
-      `script-src 'nonce-${nonce}'`,
-      `img-src ${webview.cspSource} data:`,
-    ].join('; ');
-
-    return /* html */ `<!doctype html>
-<html lang="vi">
-<head>
-  <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="${csp}" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Eris</title>
-  <style>
-    :root {
-      color-scheme: light dark;
-      --accent: var(--vscode-focusBorder);
-      --border: var(--vscode-widget-border, var(--vscode-panel-border));
-      --muted: var(--vscode-descriptionForeground);
-      --bg: var(--vscode-sideBar-background);
-      --input-bg: var(--vscode-input-background);
-      --fast: 120ms;
-      --normal: 180ms;
-      --ease: cubic-bezier(.2,.75,.25,1);
-    }
-    *, *::before, *::after { box-sizing: border-box; }
-    html, body { width: 100%; height: 100%; margin: 0; }
-    body { overflow: hidden; color: var(--vscode-foreground); background: var(--bg); font: 13px/1.5 var(--vscode-font-family); }
-    button, select, input, textarea { font: inherit; color: inherit; }
-    button { cursor: pointer; }
-    .shell { height: 100vh; display: grid; grid-template-rows: auto auto minmax(0,1fr) auto; }
-
-    /* === Compact header bar (thay thế tab strip) === */
-    .session-strip { display: flex; align-items: center; gap: 4px; padding: 5px 8px 5px; border-bottom: 1px solid var(--border); min-height: 34px; }
-    /* Tabs bị ẩn — sessions managed qua menu */
-    .session-tabs-wrap { display: none; }
-    .session-tabs { display: none; }
-    .session-indicator { display: none; }
-    /* Active session title ở giữa header */
-    .session-header-title { flex: 1; min-width: 0; font-size: 11.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); text-align: left; padding: 0 4px; }
-    .session-tab { position: relative; flex: none; max-width: 150px; height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 7px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); transition: background var(--fast) ease, color var(--fast) ease; }
-    .session-tab:hover { background: var(--vscode-toolbar-hoverBackground); color: var(--vscode-foreground); }
-    .session-tab.active { background: color-mix(in srgb, var(--vscode-toolbar-hoverBackground) 68%, transparent); color: var(--vscode-foreground); }
-    .session-tab.tab-enter { animation: tabIn var(--normal) var(--ease) both; }
-    .session-tab.tab-closing { pointer-events: none; opacity: 0; transform: scale(.94); transition: opacity var(--fast) ease, transform var(--fast) ease; }
-    .session-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-    .session-state { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--muted); opacity: .4; }
-    .session-state.running { background: var(--vscode-progressBar-background); opacity: 1; animation: pulse 1.8s ease-in-out infinite; }
-    .session-state.waiting { background: var(--vscode-editorWarning-foreground); opacity: 1; }
-    .session-state.done { background: var(--vscode-testing-iconPassed); opacity: .9; }
-    .session-state.failed { background: var(--vscode-testing-iconFailed); opacity: .9; }
-    .close-tab { flex: none; border: 0; padding: 0; width: 15px; height: 15px; line-height: 13px; border-radius: 4px; background: transparent; color: var(--muted); opacity: 0; transition: opacity var(--fast) ease, background var(--fast) ease; }
-    .session-tab:hover .close-tab, .session-tab.active .close-tab { opacity: .72; }
-    .close-tab:hover { background: var(--vscode-toolbar-hoverBackground); opacity: 1; }
-    .icon-btn { flex: none; width: 27px; height: 27px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 15px; transition: background var(--fast) ease, color var(--fast) ease; }
-    .icon-btn:hover { background: var(--vscode-toolbar-hoverBackground); color: var(--vscode-foreground); }
-
-    /* Connection */
-    .connection { max-height: 0; opacity: 0; overflow: hidden; display: flex; align-items: center; gap: 7px; padding: 0 9px; color: var(--muted); font-size: 11px; border-bottom: 0 solid transparent; transform: translateY(-3px); transition: max-height var(--normal) var(--ease), opacity var(--fast) ease, transform var(--normal) var(--ease), padding var(--normal) var(--ease); }
-    .connection.visible { max-height: 32px; opacity: 1; padding: 4px 9px 5px; border-bottom-width: 1px; border-bottom-color: var(--border); transform: none; }
-    .connection .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--vscode-testing-iconFailed); }
-    .connection.connecting .dot { background: var(--vscode-progressBar-background); animation: pulse 1.4s ease-in-out infinite; }
-    .connection button { margin-left: auto; border: 0; padding: 2px 4px; background: transparent; color: var(--vscode-textLink-foreground); }
-    .connection button:hover { text-decoration: underline; }
-
-    /* Layout */
-    .viewport { min-height: 0; position: relative; overflow: hidden; }
-    .chat { height: 100%; display: flex; flex-direction: column; min-height: 0; }
-    .timeline { min-height: 0; flex: 1; overflow-y: auto; padding: 16px 12px 24px; }
-    .timeline.anim-left { animation: slideInLeft var(--normal) var(--ease) both; }
-    .timeline.anim-right { animation: slideInRight var(--normal) var(--ease) both; }
-
-    /* Chat bubbles */
-    .msg { display: flex; gap: 9px; margin-bottom: 20px; animation: msgIn var(--fast) var(--ease) both; }
-    .msg-user { flex-direction: row-reverse; }
-    .msg-assistant { flex-direction: row; align-items: flex-start; }
-    .avatar { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent); margin-top: 2px; }
-    .avatar-spacer { flex: none; width: 26px; }
-    .msg-body { min-width: 0; max-width: calc(100% - 40px); display: flex; flex-direction: column; gap: 5px; }
-    .msg-user .msg-body { align-items: flex-end; }
-    .msg-assistant .msg-body { align-items: flex-start; }
-    .msg-role { font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
-    .bubble { padding: 9px 12px; border-radius: 14px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; font-size: 13px; }
-    .msg-user .bubble { background: color-mix(in srgb, var(--accent) 12%, var(--input-bg)); border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border)); border-bottom-right-radius: 4px; }
-    .msg-assistant .bubble { background: var(--vscode-editor-background); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
-    .bubble:empty { display: none; }
-    .bubble.streaming::after { content: '\u2588'; display: inline-block; margin-left: 1px; color: var(--accent); animation: blink 1s steps(2,end) infinite; }
-    .msg-attachments { display: flex; flex-wrap: wrap; gap: 4px; }
-    .attach-chip-sm { display: flex; align-items: center; gap: 4px; padding: 2px 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--vscode-editor-background); font-size: 10px; color: var(--muted); }
-
-    /* Activity feed — status line only while running, hidden when done */
-    .activity-feed { font-size: 11px; width: 100%; }
-    .activity-feed.done .feed-summary,
-    .activity-feed.failed .feed-summary { display: none; }
-    .feed-summary { display: flex; align-items: center; gap: 6px; padding: 3px 0 5px; color: var(--muted); user-select: none; }
-    .feed-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--vscode-progressBar-background); animation: pulse 1.6s ease-in-out infinite; }
-    .activity-feed.done .feed-dot { background: var(--vscode-testing-iconPassed); animation: none; }
-    .activity-feed.failed .feed-dot { background: var(--vscode-testing-iconFailed); animation: none; }
-    .feed-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .feed-count { display: none; }
-    /* Show rows live while running; hide when done (answer goes to bubble) */
-    .feed-rows { display: flex; flex-direction: column; gap: 2px; padding: 2px 0; }
-    .activity-feed.done .feed-rows,
-    .activity-feed.failed .feed-rows { display: none; }
-    .feed-row { display: flex; align-items: baseline; gap: 6px; color: var(--muted); padding: 1px 0; animation: rowIn var(--fast) var(--ease) both; }
-    .feed-row .fmark { width: 12px; text-align: center; flex: none; font-size: 10px; opacity: 0.6; }
-    .feed-row .ftext { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; font-size: 11px; }
-
-
-
-    /* Task controls */
-    .task-controls { display: flex; flex-wrap: wrap; gap: 3px; }
-    .ctrl-btn { border: 0; border-radius: 5px; padding: 3px 7px; background: transparent; color: var(--muted); font-size: 10px; transition: background var(--fast) ease, color var(--fast) ease; }
-    .ctrl-btn:hover { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground); }
-
-    /* Interrupt */
-    .interrupt { margin: 2px 0 14px; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--vscode-editor-background); animation: msgIn var(--fast) var(--ease) both; }
-    .interrupt h3 { margin: 0 0 4px; font-size: 12px; }
-    .interrupt p { margin: 0 0 8px; color: var(--muted); font-size: 10px; }
-    .choices { display: grid; gap: 5px; }
-    .choice { text-align: left; border: 1px solid var(--border); background: transparent; border-radius: 7px; padding: 6px 8px; transition: background var(--fast) ease, border-color var(--fast) ease; }
-    .choice:hover { background: var(--vscode-toolbar-hoverBackground); border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
-    .choice strong, .choice span { display: block; }
-    .choice span { margin-top: 2px; color: var(--muted); font-size: 10px; }
-    .other-row { display: flex; gap: 5px; margin-top: 4px; }
-    .other-row input { min-width: 0; flex: 1; background: var(--input-bg); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, var(--border)); border-radius: 6px; padding: 5px 7px; outline: 0; }
-    .ghost-btn { border: 0; padding: 4px 8px; border-radius: 5px; background: transparent; color: var(--muted); transition: background var(--fast) ease, color var(--fast) ease; }
-    .ghost-btn:hover { background: var(--vscode-toolbar-hoverBackground); color: var(--vscode-foreground); }
-
-    /* Artifact */
-    .artifact { margin: 2px 0 10px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--vscode-editor-background); animation: msgIn var(--fast) var(--ease) both; font-size: 11px; }
-    .artifact-head { display: flex; align-items: center; gap: 6px; min-width: 0; margin-bottom: 6px; }
-    .pill { flex: none; padding: 1px 5px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 9px; }
-    .artifact-head code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--vscode-editor-font-family); }
-    .artifact-actions { display: flex; gap: 4px; }
-    .artifact-actions button { border: 1px solid var(--border); background: transparent; border-radius: 5px; padding: 4px 7px; font-size: 10px; transition: background var(--fast) ease; }
-    .artifact-actions button:hover { background: var(--vscode-toolbar-hoverBackground); }
-
-    /* Empty state */
-    .empty { min-height: 100%; display: grid; place-items: center; padding: 20px 8px; }
-    .empty-inner { width: 100%; max-width: 310px; text-align: center; animation: fadeUp 240ms var(--ease) both; }
-    .spark { width: 30px; height: 30px; margin: 0 auto 10px; display: grid; place-items: center; font-size: 20px; color: var(--accent); filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent) 28%, transparent)); animation: float 2.8s ease-in-out infinite; }
-    .empty h2 { margin: 0; font-size: 15px; font-weight: 650; }
-    .empty p { max-width: 270px; margin: 5px auto 16px; color: var(--muted); font-size: 11px; }
-    .mode-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    .mode-card { position: relative; text-align: left; border: 1px solid var(--border); border-radius: 9px; padding: 10px; background: color-mix(in srgb, var(--vscode-editor-background) 80%, transparent); transition: border-color var(--fast) ease, transform var(--fast) ease; }
-    .mode-card:hover { border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); transform: translateY(-1px); }
-    .mode-card.selected { border-color: var(--accent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent); }
-    .mode-card strong { display: block; font-size: 11px; }
-    .mode-card span { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; line-height: 1.35; }
-
-    /* Notice */
-    .notice { pointer-events: none; opacity: 0; transform: translateY(4px); margin: 0 12px 8px; max-height: 0; overflow: hidden; padding: 0 8px; border-radius: 7px; background: var(--vscode-inputValidation-errorBackground); border: 0 solid var(--vscode-inputValidation-errorBorder); color: var(--vscode-inputValidation-errorForeground); font-size: 10px; transition: opacity var(--fast) ease, transform var(--fast) ease, max-height var(--normal) var(--ease), padding var(--normal) var(--ease); }
-    .notice.visible { pointer-events: auto; opacity: 1; transform: none; max-height: 72px; padding: 6px 8px; border-width: 1px; }
-
-    /* Composer */
-    .composer-wrap { position: relative; padding: 7px 8px 9px; border-top: 1px solid var(--border); background: var(--bg); }
-    .attachments { display: flex; gap: 5px; overflow: auto hidden; max-height: 0; opacity: 0; padding: 0 1px; scrollbar-width: none; transition: max-height var(--normal) var(--ease), opacity var(--fast) ease, padding var(--normal) var(--ease); }
-    .attachments.visible { max-height: 38px; opacity: 1; padding-bottom: 6px; }
-    .attachments::-webkit-scrollbar { display: none; }
-    .attach-chip { flex: none; max-width: 190px; display: flex; align-items: center; gap: 5px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--vscode-editor-background); font-size: 10px; animation: chipIn var(--fast) var(--ease) both; }
-    .attach-chip.removing { animation: chipOut 110ms ease forwards; }
-    .attach-chip img { width: 18px; height: 18px; object-fit: cover; border-radius: 3px; }
-    .attach-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .attach-remove { border: 0; padding: 0; background: transparent; color: var(--muted); }
-    .composer-box { border: 1px solid var(--vscode-input-border, var(--border)); border-radius: 10px; background: var(--input-bg); overflow: visible; transition: border-color var(--fast) ease, box-shadow var(--fast) ease; }
-    .composer-box:focus-within { border-color: var(--vscode-focusBorder); box-shadow: 0 0 0 1px color-mix(in srgb, var(--vscode-focusBorder) 18%, transparent); }
-    textarea { width: 100%; min-height: 52px; max-height: 160px; resize: none; overflow: auto; padding: 11px 12px 2px; color: var(--vscode-input-foreground); background: transparent; border: 0; outline: 0; line-height: 1.6; }
-    .composer-bar { display: flex; align-items: center; gap: 3px; padding: 3px 5px 5px; }
-    .c-tool { height: 26px; min-width: 26px; border: 0; border-radius: 5px; padding: 0 6px; background: transparent; color: var(--muted); font-size: 11px; transition: background var(--fast) ease, color var(--fast) ease; }
-    .c-tool:hover { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground); }
-    .bar-select { border: 0; border-radius: 5px; padding: 3px 5px; color: var(--muted); background: transparent; font-size: 10px; cursor: pointer; transition: background var(--fast) ease, color var(--fast) ease; }
-    .bar-select:hover { background: var(--vscode-toolbar-hoverBackground); color: var(--vscode-foreground); }
-    .send { margin-left: auto; width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 8px; color: var(--vscode-disabledForeground); background: color-mix(in srgb, var(--vscode-button-background) 28%, transparent); font-size: 15px; transform: scale(.96); transition: background var(--fast) ease, color var(--fast) ease, transform var(--fast) ease, box-shadow var(--fast) ease; }
-    .send.ready { color: var(--vscode-button-foreground); background: var(--vscode-button-background); transform: none; box-shadow: 0 2px 8px color-mix(in srgb, var(--vscode-button-background) 20%, transparent); }
-    .send.ready:hover { background: var(--vscode-button-hoverBackground); transform: translateY(-1px); }
-
-    /* Popovers */
-    .context-popover, .menu-popover { visibility: hidden; pointer-events: none; opacity: 0; transform: translateY(5px) scale(.98); position: absolute; z-index: 20; left: 8px; bottom: 51px; width: min(275px, calc(100% - 16px)); border: 1px solid var(--border); border-radius: 8px; padding: 6px; background: var(--vscode-menu-background, var(--vscode-editor-background)); box-shadow: 0 8px 28px rgba(0,0,0,.25); transition: opacity var(--fast) ease, transform var(--fast) ease, visibility 0s linear var(--fast); }
-    .context-popover.visible, .menu-popover.visible { visibility: visible; pointer-events: auto; opacity: 1; transform: none; transition-delay: 0s; }
-    .context-row, .menu-row { width: 100%; display: flex; align-items: center; gap: 8px; border: 0; border-radius: 5px; padding: 6px; background: transparent; text-align: left; font-size: 11px; }
-    .context-row:hover, .menu-row:hover { background: var(--vscode-list-hoverBackground); }
-    .context-row input { margin: 0; }
-    .menu-popover { left: auto; right: 7px; bottom: auto; top: 34px; width: 190px; transform-origin: top right; }
-    .select-wrap { position: relative; }
-    .select-btn { position: relative; display: inline-flex; align-items: center; gap: 6px; min-width: 70px; justify-content: center; white-space: nowrap; }
-    .select-btn::after { content: '▾'; font-size: 9px; color: color-mix(in srgb, var(--muted) 80%, var(--accent) 20%); transform: translateY(-.5px); }
-    .select-btn.active { color: var(--vscode-foreground); border-color: color-mix(in srgb, var(--accent) 40%, transparent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
-    .select-popover { visibility: hidden; pointer-events: none; opacity: 0; transform: translateY(5px) scale(.98); position: absolute; z-index: 40; right: 0; bottom: calc(100% + 10px); min-width: 124px; max-width: 156px; border: 1px solid var(--border); border-radius: 12px; padding: 4px; background: var(--vscode-menu-background, var(--vscode-editor-background)); box-shadow: 0 14px 34px rgba(0,0,0,.28); transition: opacity var(--fast) ease, transform var(--fast) ease, visibility 0s linear var(--fast); }
-    .select-popover.visible { visibility: visible; pointer-events: auto; opacity: 1; transform: none; transition-delay: 0s; }
-    .select-option { width: 100%; text-align: left; border: 1px solid transparent; background: transparent; color: inherit; border-radius: 10px; padding: 7px 9px; display: grid; grid-template-columns: auto 1fr auto; gap: 7px; align-items: center; }
-    .select-option + .select-option { margin-top: 4px; }
-    .select-option:hover { background: rgba(127,212,142,.10); border-color: rgba(127,212,142,.18); }
-    .select-option.active { background: rgba(127,212,142,.12); border-color: rgba(127,212,142,.34); }
-    .select-icon { width: 16px; text-align: center; color: var(--accent); opacity: .95; }
-    .select-copy strong { display: block; font-size: 11px; font-weight: 600; line-height: 1.2; }
-    .select-copy span { display: none; }
-    .select-check { opacity: 0; color: var(--accent); }
-    .select-option.active .select-check { opacity: 1; }
-    .menu-sep { height: 1px; margin: 4px 2px; background: var(--border); }
-
-    /* Drawer */
-    .drawer { visibility: hidden; pointer-events: none; position: absolute; inset: 0; z-index: 15; display: flex; flex-direction: column; background: var(--bg); opacity: 0; transform: translateX(12px); transition: opacity var(--normal) ease, transform var(--normal) var(--ease), visibility 0s linear var(--normal); }
-    .drawer.visible { visibility: visible; pointer-events: auto; opacity: 1; transform: none; transition-delay: 0s; }
-    .drawer-head { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 5px 9px; border-bottom: 1px solid var(--border); }
-    .drawer-head strong { flex: 1; }
-    .drawer-body { min-height: 0; flex: 1; overflow: auto; padding: 7px; }
-    .drawer-card { width: 100%; text-align: left; border: 1px solid transparent; border-radius: 7px; padding: 8px; margin-bottom: 2px; background: transparent; animation: rowIn var(--fast) var(--ease) both; }
-    .drawer-card:hover { background: var(--vscode-list-hoverBackground); }
-    .drawer-card strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-    .drawer-card span { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-    .drop-overlay { visibility: hidden; opacity: 0; transform: scale(.985); position: absolute; inset: 8px; z-index: 40; display: grid; place-items: center; border: 1px dashed var(--vscode-focusBorder); border-radius: 10px; background: color-mix(in srgb, var(--bg) 88%, transparent); font-size: 12px; pointer-events: none; transition: opacity var(--fast) ease, transform var(--fast) ease, visibility 0s linear var(--fast); }
-    .drop-overlay.visible { visibility: visible; opacity: 1; transform: none; transition-delay: 0s; }
-
-    @keyframes tabIn { from { opacity: 0; transform: translateY(-3px) scale(.97); } }
-    @keyframes msgIn { from { opacity: 0; transform: translateY(5px); } }
-    @keyframes rowIn { from { opacity: 0; transform: translateX(-4px); } }
-    @keyframes chipIn { from { opacity: 0; transform: scale(.94); } }
-    @keyframes chipOut { to { opacity: 0; transform: scale(.92); max-width: 0; padding-left: 0; padding-right: 0; margin: 0; } }
-    @keyframes fadeUp { from { opacity: 0; transform: translateY(6px) scale(.99); } }
-    @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
-    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
-    @keyframes blink { 0%,45% { opacity: .8; } 46%,100% { opacity: .15; } }
-    @keyframes slideInLeft { from { opacity: 0; transform: translateX(-10px); } }
-    @keyframes slideInRight { from { opacity: 0; transform: translateX(10px); } }
-    @media (max-width: 280px) { .mode-cards { grid-template-columns: 1fr; } .session-tab { max-width: 110px; } }
-    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; } }
-
-    /* Green organic polish pass -------------------------------------------------
-       Ưu tiên mood xanh lá + bớt cảm giác công nghiệp. Chỉ override thị giác,
-       không đổi luồng event/task hiện có để tránh phát sinh bug hành vi. */
-    :root {
-      --eris-green: #7fd48e;
-      --eris-green-2: #52b86c;
-      --eris-green-3: #2a7d43;
-      --eris-moss: rgba(127, 212, 142, 0.14);
-      --eris-moss-strong: rgba(127, 212, 142, 0.22);
-      --eris-panel: color-mix(in srgb, var(--vscode-sideBar-background) 92%, #102116 8%);
-      --accent: var(--eris-green);
-      --border: color-mix(in srgb, var(--vscode-widget-border, var(--vscode-panel-border)) 78%, var(--eris-green) 22%);
-      --muted: color-mix(in srgb, var(--vscode-descriptionForeground) 88%, #a6ccb0 12%);
-      --bg: var(--eris-panel);
-      --input-bg: color-mix(in srgb, var(--vscode-input-background) 82%, #112118 18%);
-    }
-    body {
-      background:
-        radial-gradient(circle at 14% 11%, rgba(108, 194, 122, 0.10), transparent 18%),
-        radial-gradient(circle at 86% 72%, rgba(64, 142, 84, 0.10), transparent 22%),
-        linear-gradient(180deg, color-mix(in srgb, var(--eris-panel) 88%, #0a120d 12%), var(--eris-panel));
-    }
-    .shell::before {
-      content: '';
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      background:
-        radial-gradient(circle at left center, rgba(127,212,142,.06), transparent 28%),
-        radial-gradient(circle at right 28%, rgba(127,212,142,.04), transparent 24%);
-      opacity: .9;
-    }
-    .session-strip {
-      gap: 6px;
-      padding: 7px 9px 6px;
-      border-bottom-color: color-mix(in srgb, var(--border) 72%, var(--eris-green) 28%);
-      background: linear-gradient(180deg, rgba(127, 212, 142, 0.035), transparent 82%);
-    }
-    .session-indicator { height: 1px; background: linear-gradient(90deg, transparent, var(--eris-green), transparent); }
-    .session-tab {
-      max-width: 168px;
-      height: 30px;
-      padding: 0 10px;
-      border: 1px solid transparent;
-      border-radius: 10px;
-      color: color-mix(in srgb, var(--muted) 92%, #cfe8d5 8%);
-    }
-    .session-tab:hover {
-      background: color-mix(in srgb, var(--eris-moss) 72%, transparent);
-      border-color: color-mix(in srgb, var(--eris-green) 26%, transparent);
-      color: var(--vscode-foreground);
-    }
-    .session-tab.active {
-      background: linear-gradient(180deg, rgba(127,212,142,.18), rgba(127,212,142,.10));
-      border-color: color-mix(in srgb, var(--eris-green) 42%, transparent);
-      color: #e4f7e8;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
-    }
-    .close-tab { border-radius: 999px; }
-    .icon-btn {
-      width: 28px; height: 28px; border-radius: 9px;
-      color: color-mix(in srgb, var(--muted) 92%, #cde3d3 8%);
-    }
-    .icon-btn:hover {
-      background: color-mix(in srgb, var(--eris-moss) 88%, transparent);
-      color: #e4f7e8;
-    }
-    .connection {
-      font-size: 11px;
-      gap: 8px;
-      color: color-mix(in srgb, var(--muted) 92%, #dceee0 8%);
-    }
-    .connection.visible {
-      max-height: 34px;
-      padding: 6px 11px 6px;
-      border-bottom-color: color-mix(in srgb, var(--border) 76%, var(--eris-green) 24%);
-      background: linear-gradient(180deg, rgba(127,212,142,.04), transparent 88%);
-    }
-    .connection .dot { box-shadow: 0 0 0 4px rgba(255, 96, 96, 0.08); }
-    .connection button {
-      border-radius: 999px;
-      padding: 2px 8px;
-      color: var(--eris-green);
-    }
-    .connection button:hover {
-      text-decoration: none;
-      background: color-mix(in srgb, var(--eris-moss) 88%, transparent);
-    }
-    .timeline { padding: 22px 14px 28px; }
-    .msg { margin-bottom: 22px; }
-    .msg-assistant, .msg-user { gap: 0; }
-    .avatar, .avatar-spacer, .msg-role { display: none; }
-    /* User bubble: full-width, khong gioi han 420px */
-    .msg-user .msg-body { max-width: 88%; gap: 6px; }
-    /* Assistant: full width, khong bubble */
-    .msg-assistant .msg-body { max-width: 100%; gap: 0; }
-    .msg-user .bubble {
-      background: linear-gradient(180deg, rgba(90, 176, 110, 0.30), rgba(66, 128, 81, 0.20));
-      border-color: rgba(127, 212, 142, 0.34);
-      color: #eefaf0;
-      border-bottom-right-radius: 5px;
-    }
-    /* Assistant: bỏ hết bubble styling, thay bằng left accent line như Claude */
-    .msg-assistant .bubble {
-      background: transparent;
-      border: none;
-      border-radius: 0;
-      padding: 2px 0 4px 14px;
-      border-left: 2px solid rgba(127, 212, 142, 0.28);
-      color: color-mix(in srgb, var(--vscode-foreground) 97%, #effaf2 3%);
-      line-height: 1.65;
-      font-size: 13px;
-    }
-    .msg-assistant .bubble.streaming {
-      border-left-color: rgba(127, 212, 142, 0.55);
-    }
-    .attach-chip-sm, .attach-chip, .artifact, .interrupt {
-      background: linear-gradient(180deg, rgba(14,23,18,.88), rgba(16,26,20,.84));
-      border-color: color-mix(in srgb, var(--border) 72%, var(--eris-green) 28%);
-    }
-    /* Activity feed — green polish: dim status line while running */
-    .activity-feed:not(.done):not(.failed) .feed-dot { background: var(--eris-green-2); }
-    .activity-feed:not(.done):not(.failed) .feed-label { color: color-mix(in srgb, var(--muted) 88%, #d5e8d8 12%); }
-
-    .empty { padding: 12px 8px 26px; }
-    .empty-inner {
-      position: relative;
-      max-width: 330px;
-      padding: 28px 18px 20px;
-      border-radius: 24px;
-      background: linear-gradient(180deg, rgba(12,20,15,.60), rgba(12,20,15,.26));
-      border: 1px solid rgba(127,212,142,.12);
-      backdrop-filter: blur(2px);
-      overflow: hidden;
-    }
-    .empty-inner::before,
-    .empty-inner::after {
-      content: '';
-      position: absolute;
-      inset: auto;
-      width: 94px; height: 94px;
-      border-radius: 50%;
-      border: 1px solid rgba(127,212,142,.09);
-      filter: blur(.2px);
-      pointer-events: none;
-    }
-    .empty-inner::before { left: -28px; bottom: -34px; }
-    .empty-inner::after { right: -36px; top: -26px; width: 76px; height: 76px; }
-    .spark {
-      position: relative;
-      width: 58px; height: 58px;
-      margin: 0 auto 14px;
-      border-radius: 50%;
-      color: transparent;
-      background:
-        radial-gradient(circle at center, rgba(127,212,142,.24) 0 26%, transparent 27%),
-        radial-gradient(circle at center, rgba(127,212,142,.14) 0 54%, transparent 55%),
-        radial-gradient(circle at center, rgba(127,212,142,.10) 0 78%, transparent 79%);
-      box-shadow: inset 0 0 0 1px rgba(127,212,142,.16), 0 0 22px rgba(71,155,88,.10);
-      animation: float 3.2s ease-in-out infinite;
-      filter: none;
-    }
-    .spark::before,
-    .spark::after {
-      content: '';
-      position: absolute;
-      border-radius: 999px;
-      background: linear-gradient(180deg, rgba(127,212,142,.90), rgba(89,173,104,.62));
-      box-shadow: 0 0 12px rgba(127,212,142,.18);
-    }
-    .spark::before { width: 12px; height: 24px; left: 19px; top: 10px; transform: rotate(-24deg); }
-    .spark::after { width: 12px; height: 18px; right: 18px; top: 17px; transform: rotate(32deg); }
-    .empty h2 { font-size: 20px; letter-spacing: -.02em; }
-    .empty p { max-width: 290px; margin: 7px auto 18px; font-size: 11.5px; line-height: 1.5; }
-    
-    /* New styles for expandable tool activity items */
-    details.tool-activity-item {
-      margin-bottom: 4px;
-      border: 1px solid rgba(127, 212, 142, 0.15);
-      border-radius: 6px;
-      background: rgba(12, 20, 15, 0.4);
-      overflow: hidden;
-    }
-    details.tool-activity-item > summary {
-      padding: 6px 10px;
-      font-size: 11px;
-      font-weight: bold;
-      color: color-mix(in srgb, var(--vscode-foreground) 90%, #7fd48e 10%);
-      cursor: pointer;
-      user-select: none;
-      background: rgba(127, 212, 142, 0.05);
-      white-space: nowrap;
-      text-overflow: ellipsis;
-      overflow: hidden;
-    }
-    details.tool-activity-item > summary:hover {
-      background: rgba(127, 212, 142, 0.1);
-    }
-    details.tool-activity-item > pre.tool-activity-data {
-      margin: 0;
-      padding: 8px 10px;
-      font-size: 10.5px;
-      line-height: 1.4;
-      white-space: pre-wrap;
-      word-break: break-all;
-      color: color-mix(in srgb, var(--vscode-foreground) 75%, transparent 25%);
-      background: transparent;
-      border-top: 1px solid rgba(127, 212, 142, 0.1);
-    }
-
-    .mode-cards { gap: 10px; }
-    .mode-card {
-      border-radius: 14px;
-      padding: 12px 12px 11px;
-      background: linear-gradient(180deg, rgba(15,25,18,.90), rgba(17,28,21,.82));
-      border-color: color-mix(in srgb, var(--border) 80%, rgba(127,212,142,.20) 20%);
-    }
-    .mode-card::before {
-      content: '';
-      position: absolute;
-      inset: 0;
-      border-radius: inherit;
-      background: linear-gradient(135deg, rgba(127,212,142,.10), transparent 42%);
-      opacity: .9;
-      pointer-events: none;
-    }
-    .mode-card.selected {
-      border-color: rgba(127,212,142,.54);
-      box-shadow: inset 0 1px 0 rgba(255,255,255,.04), 0 10px 26px rgba(18,42,24,.24);
-    }
-    .composer-wrap {
-      padding: 10px 10px 12px;
-      border-top-color: color-mix(in srgb, var(--border) 72%, var(--eris-green) 28%);
-      background: linear-gradient(180deg, rgba(127,212,142,.02), transparent 24%), var(--bg);
-    }
-    .composer-box {
-      border-radius: 18px;
-      border-color: color-mix(in srgb, var(--border) 72%, var(--eris-green) 28%);
-      background: linear-gradient(180deg, rgba(25,36,29,.94), rgba(28,38,31,.90));
-      box-shadow: inset 0 1px 0 rgba(255,255,255,.02);
-    }
-    .composer-box:focus-within {
-      border-color: rgba(127,212,142,.58);
-      box-shadow: 0 0 0 1px rgba(127,212,142,.22), 0 8px 28px rgba(16,39,23,.18);
-    }
-    textarea { min-height: 52px; padding: 12px 12px 4px; }
-    textarea::placeholder { color: color-mix(in srgb, var(--muted) 90%, #d7eadb 10%); }
-    .composer-bar { gap: 6px; padding: 6px 8px 8px; }
-    .c-tool, .bar-select {
-      height: 28px;
-      padding: 0 10px;
-      border-radius: 999px;
-      border: 1px solid transparent;
-      background: rgba(127,212,142,.04);
-      color: color-mix(in srgb, var(--muted) 86%, #dceee0 14%);
-    }
-    .bar-select {
-      appearance: none;
-      -webkit-appearance: none;
-      min-width: 68px;
-      padding-right: 22px;
-      background-image:
-        linear-gradient(45deg, transparent 50%, rgba(127,212,142,.70) 50%),
-        linear-gradient(135deg, rgba(127,212,142,.70) 50%, transparent 50%);
-      background-position:
-        calc(100% - 13px) calc(50% - 1px),
-        calc(100% - 8px) calc(50% - 1px);
-      background-size: 5px 5px, 5px 5px;
-      background-repeat: no-repeat;
-    }
-    .c-tool:hover, .bar-select:hover {
-      color: #eefaf0;
-      border-color: rgba(127,212,142,.22);
-      background-color: rgba(127,212,142,.10);
-    }
-    .send {
-      width: 34px; height: 34px; border-radius: 12px;
-      background: rgba(127,212,142,.10);
-      color: rgba(205, 231, 212, .42);
-      font-size: 16px;
-    }
-    .send.ready {
-      background: linear-gradient(180deg, var(--eris-green), var(--eris-green-2));
-      color: #0d1810;
-      box-shadow: 0 10px 24px rgba(32, 88, 45, .24), inset 0 1px 0 rgba(255,255,255,.24);
-    }
-    .send.ready:hover { background: linear-gradient(180deg, #92df9f, #66c57a); }
-    .context-popover, .menu-popover {
-      border-radius: 14px;
-      padding: 8px;
-      border-color: color-mix(in srgb, var(--border) 70%, var(--eris-green) 30%);
-      background: linear-gradient(180deg, rgba(18,30,22,.98), rgba(15,24,18,.96));
-      box-shadow: 0 18px 38px rgba(5, 10, 7, .42);
-    }
-    .menu-row, .context-row {
-      border-radius: 9px;
-    }
-    .menu-row:hover, .context-row:hover {
-      background: rgba(127,212,142,.10);
-    }
-
-  </style>
-</head>
-<body>
-<div class="shell">
-  <div class="session-strip">
-    <span id="sessionHeaderTitle" class="session-header-title">Eris</span>
-    <div style="display:none"><div id="sessionTabs" class="session-tabs"></div><span id="sessionIndicator" class="session-indicator"></span></div>
-    <button id="newChat" class="icon-btn" title="Phien moi">\uFF0B</button>
-    <button id="menuButton" class="icon-btn" title="More">\u22EF</button>
-  </div>
-  <div id="connection" class="connection">
-    <span class="dot"></span><span id="connectionText">Service offline</span>
-    <button id="reconnect">Reconnect</button>
-  </div>
-  <main class="viewport">
-    <section class="chat">
-      <div id="timeline" class="timeline"></div>
-      <div id="notice" class="notice"></div>
-    </section>
-    <section id="drawer" class="drawer">
-      <div class="drawer-head"><button id="drawerBack" class="icon-btn">\u2039</button><strong id="drawerTitle">History</strong></div>
-      <div id="drawerBody" class="drawer-body"></div>
-    </section>
-    <div id="menuPopover" class="menu-popover">
-      <button class="menu-row" data-menu="new">\uFF0B New Session</button>
-      <button class="menu-row" data-menu="history">\u25F7 Recent chats</button>
-      <button class="menu-row" data-menu="tasks">\u2713 Tasks</button>
-      <button class="menu-row" data-menu="skills">\u2318 Skills</button>
-      <div class="menu-sep"></div>
-      <button class="menu-row" data-menu="source">\u2341 Source Control</button>
-      <button class="menu-row" data-menu="test">\u2697 Run Self Test</button>
-      <button class="menu-row" data-menu="reconnect">\u21BB Reconnect</button>
-      <button class="menu-row" data-menu="settings">\u2699 Settings</button>
-    </div>
-    <div id="dropOverlay" class="drop-overlay">Drop files or images to attach</div>
-  </main>
-  <footer class="composer-wrap">
-    <div id="attachments" class="attachments"></div>
-    <div class="composer-box">
-      <textarea id="input" rows="1" placeholder="Ask Eris about your code\u2026"></textarea>
-      <div class="composer-bar">
-        <button id="attach" class="c-tool" title="Attach files or images">\uFF0B</button>
-        <button id="contextButton" class="c-tool" title="Context">#</button>
-        <div class="select-wrap">
-          <button id="modeButton" class="c-tool select-btn" title="Chế độ tác vụ" aria-haspopup="listbox" aria-expanded="false">Tác vụ</button>
-          <div id="modePopover" class="select-popover" role="listbox" aria-label="Chế độ tác vụ">
-            <button class="select-option" type="button" data-mode-option="execute"><span class="select-icon">◈</span><span class="select-copy"><strong>Tác vụ</strong></span><span class="select-check">✓</span></button>
-            <button class="select-option" type="button" data-mode-option="inspect"><span class="select-icon">⌕</span><span class="select-copy"><strong>Chỉ xem</strong></span><span class="select-check">✓</span></button>
-          </div>
-        </div>
-        <div class="select-wrap">
-          <button id="modelButton" class="c-tool select-btn" title="Mô hình WebAI" aria-haspopup="listbox" aria-expanded="false">Flash</button>
-          <div id="modelPopover" class="select-popover" role="listbox" aria-label="Mô hình WebAI">
-            <button class="select-option" type="button" data-model-option="gemini-3-flash"><span class="select-icon">⚡</span><span class="select-copy"><strong>Flash</strong></span><span class="select-check">✓</span></button>
-            <button class="select-option" type="button" data-model-option="gemini-3-pro"><span class="select-icon">◆</span><span class="select-copy"><strong>Pro</strong></span><span class="select-check">✓</span></button>
-            <button class="select-option" type="button" data-model-option="gemini-3-flash-thinking"><span class="select-icon">✦</span><span class="select-copy"><strong>Suy luận</strong></span><span class="select-check">✓</span></button>
-          </div>
-        </div>
-        <button id="send" class="send" title="Gửi">\u2191</button>
-      </div>
-    </div>
-    <div id="contextPopover" class="context-popover">
-      <label class="context-row"><input type="checkbox" value="current" checked /> File hiện tại</label>
-      <label class="context-row"><input type="checkbox" value="selection" checked /> Vùng chọn</label>
-      <label class="context-row"><input type="checkbox" value="problems" checked /> Lỗi / cảnh báo</label>
-      <label class="context-row"><input type="checkbox" value="git" checked /> Thay đổi Git</label>
-      <label class="context-row"><input type="checkbox" value="terminal" /> Terminal gần đây</label>
-      <label class="context-row"><input type="checkbox" value="openEditors" /> Tab đang mở</label>
-    </div>
-  </footer>
-</div>
-
-<script nonce="${nonce}">
-const vscode=acquireVsCodeApi();
-const timeline=document.getElementById('timeline');
-const input=document.getElementById('input');
-const sessionTabs=document.getElementById('sessionTabs');
-const sessionIndicator=document.getElementById('sessionIndicator');
-const connection=document.getElementById('connection');
-const sendButton=document.getElementById('send');
-const attachmentBox=document.getElementById('attachments');
-const notice=document.getElementById('notice');
-const drawer=document.getElementById('drawer');
-const drawerBody=document.getElementById('drawerBody');
-const drawerTitle=document.getElementById('drawerTitle');
-const menuPopover=document.getElementById('menuPopover');
-const contextPopover=document.getElementById('contextPopover');
-const modeButton=document.getElementById('modeButton');
-const modelButton=document.getElementById('modelButton');
-const modePopover=document.getElementById('modePopover');
-const modelPopover=document.getElementById('modelPopover');
-const NEW_SESSION_LABEL='Phiên mới';
-const PREVIOUS_SESSION_LABEL='Phiên trước';
-
-let activeThreadId='';
-let activeTaskId='';
-let sessions=[];
-let catalogTasks=[];
-let catalogSkills=[];
-let selectedMode='execute';
-let selectedModel=(vscode.getState()&&vscode.getState().model)||'gemini-3-flash';
-const rendered=new Set();
-const pendingInterrupts=new Set();
-const attachmentState=new Map();
-const taskGroups=new Map();
-const knownTabs=new Set();
-let pendingSwitchDirection=0;
-let awaitingThreadHistory=false;
-let deferredEvents=[];
-
-const MODEL_LABELS={
-  'gemini-3-flash':'Flash',
-  'gemini-3-pro':'Pro',
-  'gemini-3-flash-thinking':'Suy luận'
-};
-const MODE_LABELS={execute:'Tác vụ',inspect:'Chỉ xem'};
-function syncModeUi(){
-  modeButton.textContent=MODE_LABELS[selectedMode]||'Tác vụ';
-  for(var opt of document.querySelectorAll('[data-mode-option]'))opt.classList.toggle('active',opt.dataset.modeOption===selectedMode);
-  modeButton.classList.toggle('active',modePopover.classList.contains('visible'));
-  modeButton.setAttribute('aria-expanded', String(modePopover.classList.contains('visible')));
-}
-function syncModelUi(){
-  modelButton.textContent=MODEL_LABELS[selectedModel]||'Flash';
-  for(var opt of document.querySelectorAll('[data-model-option]'))opt.classList.toggle('active',opt.dataset.modelOption===selectedModel);
-  modelButton.classList.toggle('active',modelPopover.classList.contains('visible'));
-  modelButton.setAttribute('aria-expanded', String(modelPopover.classList.contains('visible')));
-}
-
-const esc=function(v){return String(v==null?'':v).replace(/[&<>"']/g,function(ch){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch];});};
-const clip=function(v,n){n=n||80;var t=String(v==null?'':v).replace(/\\s+/g,' ').trim();return t.length<=n?t:t.slice(0,n-1)+'\u2026';};
-const scroll=function(){requestAnimationFrame(function(){timeline.scrollTop=timeline.scrollHeight;});};
-const fmtBytes=function(n){var v=Number(n||0);if(v<1024)return v+' B';if(v<1048576)return Math.round(v/102.4)/10+' KB';return Math.round(v/104857.6)/10+' MB';};
-const eventKey=function(e){return String(e&&e.eventId!=null?e.eventId:e&&e.event_id!=null?e.event_id:'')||[e&&e.type,e&&e.taskId,e&&e.seq,e&&e.timestamp].join(':');};
-function remember(e){var k=eventKey(e);if(!k)return true;if(rendered.has(k))return false;rendered.add(k);if(rendered.size>2500){var f=rendered.values().next().value;rendered.delete(f);}return true;}
-
-function updateSessionIndicator(){
-  var active=sessionTabs.querySelector('.session-tab.active');
-  if(!active){sessionIndicator.style.opacity='0';return;}
-  var left=active.offsetLeft-sessionTabs.scrollLeft;
-  sessionIndicator.style.width=active.offsetWidth+'px';
-  sessionIndicator.style.transform='translateX('+left+'px)';
-  sessionIndicator.style.opacity='1';
-}
-function selectSessionFromUi(threadId){
-  var ci=sessions.findIndex(function(s){return s.threadId===activeThreadId;});
-  var ni=sessions.findIndex(function(s){return s.threadId===threadId;});
-  pendingSwitchDirection=ni===ci?0:(ni>ci?1:-1);
-  awaitingThreadHistory=true;
-  vscode.postMessage({type:'session.select',threadId:threadId});
-}
-function renderSessions(){
-  sessionTabs.innerHTML='';
-  var liveIds=new Set(sessions.map(function(s){return String(s.threadId||'');}));
-  for(var k of [...knownTabs])if(!liveIds.has(k))knownTabs.delete(k);
-  for(var session of sessions){
-    var tab=document.createElement('button');
-    var isFresh=!knownTabs.has(session.threadId);
-    tab.className='session-tab'+(session.threadId===activeThreadId?' active':'')+(isFresh?' tab-enter':'');
-    tab.dataset.threadId=session.threadId;
-    tab.title=session.title||NEW_SESSION_LABEL;
-    var dot=document.createElement('span');dot.className='session-state '+String(session.status||'idle');
-    var title=document.createElement('span');title.className='session-title';title.textContent=session.title||NEW_SESSION_LABEL;
-    var close=document.createElement('button');close.className='close-tab';close.textContent='\xD7';close.title='Close';
-    (function(tid,t){close.onclick=function(ev){ev.stopPropagation();t.classList.add('tab-closing');setTimeout(function(){vscode.postMessage({type:'session.close',threadId:tid});},110);};})(session.threadId,tab);
-    tab.append(dot,title,close);
-    (function(tid){tab.onclick=function(){selectSessionFromUi(tid);};})(session.threadId);
-    sessionTabs.appendChild(tab);knownTabs.add(session.threadId);
-  }
-  requestAnimationFrame(function(){
-    var a=sessionTabs.querySelector('.active');
-    if(a)a.scrollIntoView({block:'nearest',inline:'nearest'});
-    requestAnimationFrame(updateSessionIndicator);
-  });
-  // Update compact header title
-  var headerTitle=document.getElementById('sessionHeaderTitle');
-  if(headerTitle){
-    var active=sessions.find(function(s){return s.threadId===activeThreadId;});
-    var label=active?active.title||NEW_SESSION_LABEL:'Eris';
-    var status=active?String(active.status||'idle'):'idle';
-    var statusIcon=status==='running'?'\u25CF ':status==='waiting'?'\u25CB ':status==='done'?'\u2713 ':status==='failed'?'\u2715 ':'';
-    headerTitle.textContent=(statusIcon||'')+label;
-    headerTitle.title=label;
-  }
-}
-
-function emptyHtml(){return '<div class="empty" id="chatEmpty"><div class="empty-inner"><div class="spark">✦</div><h2>Eris</h2><p>Một góc xanh nhỏ để nói chuyện, rà lỗi và đẩy task code đi tiếp.</p><div class="mode-cards"><button class="mode-card" data-empty-mode="inspect"><strong>Chat nhanh</strong><span>Hỏi, giải thích và soi code mà không sửa file.</span></button><button class="mode-card selected" data-empty-mode="execute"><strong>Tác vụ</strong><span>Lập kế hoạch, sửa code, chạy test và lặp tự động.</span></button></div></div></div>';}
-function ensureEmpty(){if(!timeline.children.length){timeline.innerHTML=emptyHtml();bindEmptyModes();}}
-function removeEmpty(){var e=document.getElementById('chatEmpty');if(e)e.remove();}
-function bindEmptyModes(){for(var card of timeline.querySelectorAll('[data-empty-mode]'))(function(c){c.onclick=function(){selectedMode=c.dataset.emptyMode||'execute';syncModeUi();for(var x of timeline.querySelectorAll('[data-empty-mode]'))x.classList.toggle('selected',x===c);input.focus();};})(card);}
-function clearTimeline(showEmpty){if(showEmpty===undefined)showEmpty=true;timeline.innerHTML='';rendered.clear();pendingInterrupts.clear();taskGroups.clear();activeTaskId='';if(showEmpty)ensureEmpty();}
-function animateTimelineIn(direction){
-  direction=direction||0;
-  timeline.classList.remove('anim-left','anim-right');
-  if(!direction)return;
-  void timeline.offsetWidth;
-  timeline.classList.add(direction>0?'anim-right':'anim-left');
-  setTimeout(function(){timeline.classList.remove('anim-left','anim-right');},220);
-}
-
-/* ---- Messages ---- */
-function addUserMessage(content,attachments){
-  attachments=attachments||[];
-  removeEmpty();
-  var msg=document.createElement('div');msg.className='msg msg-user';
-  var body=document.createElement('div');body.className='msg-body';
-  var role=document.createElement('div');role.className='msg-role';role.textContent='Bạn';
-  var bubble=document.createElement('div');bubble.className='bubble';bubble.textContent=String(content==null?'':content);
-  body.append(role,bubble);
-  if(Array.isArray(attachments)&&attachments.length){
-    var row=document.createElement('div');row.className='msg-attachments';
-    for(var item of attachments.slice(0,8)){
-      var chip=document.createElement('div');chip.className='attach-chip-sm';
-      chip.textContent=(String(item.kind||'')==='image'?'\u25A7 ':'\u25A4 ')+(item.name||item.relativePath||'attachment');
-      row.appendChild(chip);
-    }
-    body.appendChild(row);
-  }
-  var spacer=document.createElement('div');spacer.className='avatar-spacer';
-  msg.append(body,spacer);
-  /* Fix ordering: if Eris group for current task already exists in DOM
-     (activity events arrived before message.user in history replay),
-     insert user bubble BEFORE it so conversation reads top-to-bottom */
-  var existingGroup=taskGroups.has(String(activeTaskId||'main'))?taskGroups.get(String(activeTaskId||'main')).groupEl:null;
-  if(existingGroup&&existingGroup.parentNode===timeline){
-    timeline.insertBefore(msg,existingGroup);
-  } else {
-    timeline.appendChild(msg);
-  }
-  scroll();
-}
-
-function getTaskGroup(taskId){
-  var key=String(taskId||activeTaskId||'main');
-  if(taskGroups.has(key))return taskGroups.get(key);
-  removeEmpty();
-  var group=document.createElement('div');group.className='msg msg-assistant';group.dataset.taskId=key;
-  var avatar=document.createElement('div');avatar.className='avatar';avatar.textContent='E';
-  var body=document.createElement('div');body.className='msg-body';
-  var role=document.createElement('div');role.className='msg-role';role.textContent='Eris';
-
-  /* bubble — hidden until text arrives (no empty black square) */
-  var bubble=document.createElement('div');bubble.className='bubble';
-  /* activity feed — simple status line, no expand/collapse */
-  var feed=document.createElement('div');feed.className='activity-feed';feed.style.display='none';
-  var feedSum=document.createElement('div');feedSum.className='feed-summary';
-  feedSum.innerHTML='<span class="feed-dot"></span><span class="feed-label">Working\u2026</span><span class="feed-count"></span>';
-  var feedRows=document.createElement('div');feedRows.className='feed-rows';
-  feed.append(feedSum,feedRows);
-  /* controls — hidden by default, shown only when task is running */
-  var controls=document.createElement('div');controls.className='task-controls';controls.style.display='none';
-  controls.innerHTML='<button class="ctrl-btn" data-control="pause">Pause</button><button class="ctrl-btn" data-control="resume">Resume</button><button class="ctrl-btn" data-control="rollback">Rollback</button><button class="ctrl-btn" data-control="stop">Stop</button>';
-  for(var btn of controls.querySelectorAll('[data-control]'))(function(b,k){b.onclick=function(){vscode.postMessage({type:'task.control',taskId:k,action:b.dataset.control});};})(btn,key);
-  body.append(role,bubble,feed,controls);
-  group.append(avatar,body);
-  timeline.appendChild(group);
-  var entry={groupEl:group,bubbleEl:bubble,feedEl:feed,feedRowsEl:feedRows,feedLabelEl:feedSum.querySelector('.feed-label'),feedCountEl:feedSum.querySelector('.feed-count'),controlsEl:controls,rowCount:0};
-  taskGroups.set(key,entry);
-  scroll();
-  return entry;
-}
-
-function addActivity(event){
-  var p=event.payload||{};
-  var taskId=String(event.taskId||activeTaskId||'');
-  var label=String(p.label!=null?p.label:p.detail!=null?p.detail:event.type||'Working');
-  var detail=String(p.detail!=null?p.detail:p.label!=null?p.label:'');
-  var status=String(p.status!=null?p.status:(event.type==='activity.end'?'completed':'running'));
-  var entry=getTaskGroup(taskId);
-  entry.feedEl.style.display='';
-  if(label)entry.feedLabelEl.textContent=clip(label,60);
-  var done=status==='completed'||status==='done';
-  var failed=status==='failed'||status==='stopped';
-  entry.feedEl.classList.toggle('done',done);
-  entry.feedEl.classList.toggle('failed',failed);
-  entry.controlsEl.style.display=(done||failed)?'none':'flex';
-  // Append row BEFORE changing open state so browser doesn't re-open details
-  if(detail){
-    var row=document.createElement('div');row.className='feed-row';
-    var mark=done?'\u2713':failed?'\xD7':'\xB7';
-    row.innerHTML='<span class="fmark">'+mark+'</span><span class="ftext">'+esc(detail)+'</span>';
-    entry.feedRowsEl.appendChild(row);
-    while(entry.feedRowsEl.children.length>50)entry.feedRowsEl.firstChild.remove();
-    entry.rowCount=entry.feedRowsEl.children.length;
-    entry.feedCountEl.textContent=entry.rowCount?String(entry.rowCount):'';
-  }
-  
-  // Render tool execution data persistently
-  var data=p.data&&typeof p.data==='object'?p.data:null;
-  if (data && Object.keys(data).length) {
-      var detailsNode = document.createElement('details');
-      detailsNode.className = 'tool-activity-item';
-      var summaryHtml = '<summary>⚡ ' + esc(label);
-      if (detail && detail !== label) summaryHtml += ' <span style="opacity:0.6;font-weight:normal">· ' + esc(detail) + '</span>';
-      summaryHtml += '</summary>';
-      detailsNode.innerHTML = summaryHtml + '<pre class="tool-activity-data">' + esc(JSON.stringify(data, null, 2)) + '</pre>';
-      
-      // Prevent duplicates by checking if we already rendered this exact data block
-      var msgBody = entry.groupEl.querySelector('.msg-body');
-      var dedupeKey = detailsNode.innerHTML;
-      if (!entry.thinkingSeen) entry.thinkingSeen = new Set();
-      if (!entry.thinkingSeen.has(dedupeKey)) {
-          entry.thinkingSeen.add(dedupeKey);
-          msgBody.insertBefore(detailsNode, entry.feedEl);
-      }
-  }
-  // When done: promote last row text to bubble (Claude-style clean response)
-  if(done||failed){
-    var rows=entry.feedRowsEl.children;
-    var lastText='';
-    // Grab last non-empty row text (no unicode comparison needed)
-    for(var i=rows.length-1;i>=0;i--){
-      var ft=rows[i].querySelector('.ftext');
-      var txt=ft?(ft.textContent||ft.innerText||'').trim():'';
-      if(txt){lastText=txt;break;}
-    }
-    if(lastText&&!entry.bubbleEl.textContent){
-      entry.bubbleEl.textContent=lastText;
-    }
-  }
-  scroll();
-}
-
-function mergeCoding(event){
-  var p=event.payload||{};
-  var taskId=String(event.taskId||activeTaskId||'');
-  var title=p.current_action||p.next_action||p.phase||'Working';
-  var file=p.current_file?(' \xB7 '+p.current_file):'';
-  var status=p.status||'running';
-  var entry=getTaskGroup(taskId);
-  entry.feedEl.style.display='';
-  entry.feedLabelEl.textContent=clip(String(title)+file,60);
-  if(p.current_action||p.next_action){
-    // reasoning removed — steps shown in activity feed instead
-  }
-  var done=status==='completed'||status==='done';
-  var failed=status==='failed'||status==='stopped';
-  entry.feedEl.classList.toggle('done',done);
-  entry.feedEl.classList.toggle('failed',failed);
-  entry.controlsEl.style.display=(done||failed)?'none':'flex';
-}
-
-function disableChoices(node){for(var c of node.querySelectorAll('button,input'))c.disabled=true;}
-function addInterrupt(event){
-  removeEmpty();
-  var key=String(event.taskId!=null?event.taskId:activeTaskId!=null?activeTaskId:'');
-  if(key&&pendingInterrupts.has(key))return;if(key)pendingInterrupts.add(key);
-  var p=event.payload||{};
-  var node=document.createElement('div');node.className='interrupt';
-  node.innerHTML='<h3>'+esc(p.question||'Eris needs a decision')+'</h3><p>The task is checkpointed and will resume from here.</p><div class="choices" role="listbox"></div>';
-  var choices=node.querySelector('.choices');
-  for(var option of(p.options||[]))(function(opt){
-    var b=document.createElement('button');b.className='choice';
-    b.innerHTML='<strong>'+esc(opt.label!=null?opt.label:opt.id)+'</strong>'+(opt.description||opt.desc?'<span>'+esc(opt.description!=null?opt.description:opt.desc)+'</span>':'');
-    b.onclick=function(){disableChoices(node);if(key)pendingInterrupts.delete(key);vscode.postMessage({type:'interrupt.resolve',taskId:event.taskId,response:{choiceId:String(opt.id!=null?opt.id:''),value:String(opt.value!=null?opt.value:opt.label!=null?opt.label:''),text:String(opt.label!=null?opt.label:'')}});};
-    choices.appendChild(b);
-  })(option);
-  if(p.allowOther!==false){
-    var row=document.createElement('div');row.className='other-row';
-    var field=document.createElement('input');field.placeholder='Other direction\u2026';
-    var sb=document.createElement('button');sb.className='ghost-btn';sb.textContent='Send';
-    var submit=function(){var v=field.value.trim();if(!v)return;disableChoices(node);if(key)pendingInterrupts.delete(key);vscode.postMessage({type:'interrupt.resolve',taskId:event.taskId,response:{choiceId:'other',value:v,text:v}});};
-    sb.onclick=submit;field.onkeydown=function(e){if(e.key==='Enter')submit();};
-    row.append(field,sb);choices.appendChild(row);
-  }
-  timeline.appendChild(node);scroll();
-}
-
-function addArtifact(event){
-  var p=event.payload||{};var filePath=String(p.path!=null?p.path:'');if(!filePath)return;
-  removeEmpty();
-  var node=document.createElement('div');node.className='artifact';
-  node.innerHTML='<div class="artifact-head"><span class="pill">Modified</span><code>'+esc(filePath)+'</code></div><div class="artifact-actions"><button data-action="open">Open</button><button data-action="diff">Diff</button></div>';
-  node.querySelector('[data-action="open"]').onclick=function(){vscode.postMessage({type:'openArtifact',path:filePath});};
-  node.querySelector('[data-action="diff"]').onclick=function(){vscode.postMessage({type:'openDiff',path:filePath,diff:String(p.diff!=null?p.diff:'')});};
-  timeline.appendChild(node);scroll();
-}
-function addChangeSet(event){
-  var p=event.payload||{};var id=String(p.changeSetId!=null?p.changeSetId:p.operationId!=null?p.operationId:'');if(!id)return;
-  removeEmpty();var files=Array.isArray(p.files)?p.files:[];var status=String(p.status!=null?p.status:'pending');
-  var node=document.createElement('div');node.className='artifact';node.dataset.changeSetId=id;
-  node.innerHTML='<div class="artifact-head"><span class="pill">ChangeSet \xB7 '+esc(status)+'</span><code>'+esc(files.slice(0,3).join(' \xB7 ')||id)+'</code></div><div class="artifact-actions"><button data-action="accept">Accept</button><button data-action="revert">Revert</button></div>';
-  var accept=node.querySelector('[data-action="accept"]');var revert=node.querySelector('[data-action="revert"]');
-  if(status!=='pending'){accept.disabled=true;revert.disabled=true;}
-  accept.onclick=function(){if(activeTaskId)vscode.postMessage({type:'task.control',taskId:activeTaskId,action:'accept_changeset',changeSetId:id});};
-  revert.onclick=function(){if(activeTaskId)vscode.postMessage({type:'task.control',taskId:activeTaskId,action:'revert_changeset',changeSetId:id});};
-  timeline.appendChild(node);scroll();
-}
-function updateChangeSet(event){
-  var p=event.payload||{};var id=String(p.changeSetId!=null?p.changeSetId:p.operationId!=null?p.operationId:'');
-  var nodes=[...document.querySelectorAll('[data-change-set-id]')].reverse();
-  var node=nodes.find(function(n){return n.dataset.changeSetId===id;});
-  if(!node){addChangeSet(event);return;}
-  var pill=node.querySelector('.pill');if(pill)pill.textContent='ChangeSet \xB7 '+String(p.status!=null?p.status:'updated');
-  for(var b of node.querySelectorAll('button'))b.disabled=true;
-}
-
-function renderEvent(event){
-  if(!event||!remember(event))return;
-  if(event.taskId)activeTaskId=String(event.taskId);
-  if(event.type==='message.user'){addUserMessage(event.payload&&event.payload.content!=null?event.payload.content:'',event.payload&&event.payload.attachments?event.payload.attachments:[]);return;}
-  if(event.type==='message.assistant'){
-    var entry=getTaskGroup(String(event.taskId||activeTaskId||'main'));
-    entry.bubbleEl.textContent=String(event.payload&&event.payload.content!=null?event.payload.content:'');
-    entry.bubbleEl.classList.remove('streaming');
-    return;
-  }
-  if(event.type==='message.assistant.delta'){
-    removeEmpty();
-    var dEntry=getTaskGroup(String(event.taskId||activeTaskId||'main'));
-    dEntry.bubbleEl.textContent+=String(event.payload&&event.payload.delta!=null?event.payload.delta:'');
-    dEntry.bubbleEl.classList.add('streaming');
-    scroll();return;
-  }
-  if(event.type==='coding.state'){mergeCoding(event);return;}
-  if(String(event.type).startsWith('activity.')){addActivity(event);return;}
-  if(event.type==='interrupt.request'){addInterrupt(event);return;}
-  if(event.type==='interrupt.resolved'){pendingInterrupts.delete(String(event.taskId!=null?event.taskId:''));return;}
-  if(event.type==='artifact.modified'||event.type==='artifact.created'){addArtifact(event);return;}
-  if(event.type==='changeset.created'){addChangeSet(event);return;}
-  if(event.type==='changeset.updated'){updateChangeSet(event);return;}
-  if(event.type==='editor.result'){addActivity({type:'activity.update',taskId:event.taskId,payload:{detail:event.payload&&event.payload.message?event.payload.message:event.payload&&event.payload.command?event.payload.command:'VS Code',status:event.payload&&event.payload.success?'completed':'failed'}});}
-}
-
-function renderHistory(event){
-  var direction=pendingSwitchDirection;
-  function paint(){
-    clearTimeline(false);
-    var tasks=Array.isArray(event.tasks)?event.tasks:[];
-    catalogTasks=[...new Map([...catalogTasks,...tasks].map(function(t){return[String(t&&t.task_id?t.task_id:''),t];})).values()];
-    var task=[...tasks].reverse().find(function(t){return['queued','running','paused','waiting_user','waiting_permission'].includes(String(t&&t.status?t.status:''));});
-    if(!task)task=tasks[tasks.length-1];
-    if(task&&task.task_id)activeTaskId=String(task.task_id);
-    for(var item of(event.events||[]))renderEvent(item);
-    if(task&&(task.status==='waiting_user'||task.status==='waiting_permission')&&task.pending_interrupt)addInterrupt({taskId:task.task_id,payload:task.pending_interrupt,eventId:'restore:'+String(task.task_id)});
-    ensureEmpty();awaitingThreadHistory=false;pendingSwitchDirection=0;animateTimelineIn(direction);
-    var queued=deferredEvents;deferredEvents=[];for(var qe of queued)renderEvent(qe);
-  }
-  if(direction)setTimeout(paint,95);else paint();
-}
-
-function renderAttachments(){
-  attachmentBox.innerHTML='';attachmentBox.classList.toggle('visible',attachmentState.size>0);
-  for(var item of attachmentState.values()){
-    var chip=document.createElement('div');chip.className='attach-chip';
-    if(item.preview){var img=document.createElement('img');img.src=item.preview;chip.appendChild(img);}
-    var icon=document.createElement('span');icon.textContent=item.kind==='image'?'\u25A7':'\u25A4';
-    var name=document.createElement('span');name.className='attach-name';name.textContent=item.name;name.title=(item.relativePath||item.name)+' \xB7 '+fmtBytes(item.size);
-    var rm=document.createElement('button');rm.className='attach-remove';rm.textContent='\xD7';
-    (function(id,c){rm.onclick=function(){c.classList.add('removing');setTimeout(function(){attachmentState.delete(id);renderAttachments();vscode.postMessage({type:'attachment.remove',id:id});},100);};})(item.id,chip);
-    chip.append(icon,name,rm);attachmentBox.appendChild(chip);
-  }
-  updateComposerState();
-}
-function contextKeys(){return [...contextPopover.querySelectorAll('input:checked')].map(function(n){return n.value;});}
-function updateComposerState(){var ready=Boolean(input.value.trim())||attachmentState.size>0;sendButton.classList.toggle('ready',ready);}
-function resizeInput(){input.style.height='auto';input.style.height=Math.min(140,Math.max(40,input.scrollHeight))+'px';updateComposerState();}
-function send(){var content=input.value.trim();var ids=[...attachmentState.keys()];if(!content&&!ids.length)return;input.value='';resizeInput();hidePopovers();vscode.postMessage({type:'sendMessage',content:content,taskMode:selectedMode,model:selectedModel,attachmentIds:ids,contextKeys:contextKeys()});}
-function hidePopovers(){menuPopover.classList.remove('visible');contextPopover.classList.remove('visible');modePopover.classList.remove('visible');modelPopover.classList.remove('visible');syncModeUi();syncModelUi();}
-function showNotice(message){notice.textContent=String(message||'');notice.classList.toggle('visible',Boolean(message));if(message)setTimeout(function(){notice.classList.remove('visible');},7000);}
-
-function renderDrawer(kind){
-  drawer.classList.add('visible');menuPopover.classList.remove('visible');drawerBody.innerHTML='';
-  if(kind==='history'){
-    drawerTitle.textContent='Recent chats';
-    var byThread=new Map();
-    for(var session of sessions)byThread.set(String(session.threadId||''),{threadId:String(session.threadId||''),title:session.title||NEW_SESSION_LABEL,status:session.status||'idle',updatedAt:Number(session.updatedAt||0)});
-    for(var task of catalogTasks){var tid=String(task.thread_id||task.threadId||'');if(!tid)continue;var ex=byThread.get(tid)||{};byThread.set(tid,{threadId:tid,title:ex.title||task.clarified_goal||task.goal||PREVIOUS_SESSION_LABEL,status:String(task.status||ex.status||'idle'),updatedAt:Math.max(Number(ex.updatedAt||0),Number(task.updated_at||0)*(Number(task.updated_at||0)<10000000000?1000:1))});}
-    var history=[...byThread.values()].sort(function(a,b){return b.updatedAt-a.updatedAt;});
-    if(!history.length){drawerBody.innerHTML='<div class="empty"><div class="empty-inner"><p>No previous chats.</p></div></div>';return;}
-    for(var item of history)(function(i){var b=document.createElement('button');b.className='drawer-card';b.innerHTML='<strong>'+esc(i.title||PREVIOUS_SESSION_LABEL)+'</strong><span>'+esc(i.status||'idle')+'</span>';b.onclick=function(){drawer.classList.remove('visible');selectSessionFromUi(i.threadId);};drawerBody.appendChild(b);})(item);
-    return;
-  }
-  if(kind==='tasks'){
-    drawerTitle.textContent='Tasks';if(!catalogTasks.length){drawerBody.innerHTML='<div class="empty"><div class="empty-inner"><p>No tasks yet.</p></div></div>';return;}
-    for(var t of [...catalogTasks].reverse())(function(task){var b=document.createElement('button');b.className='drawer-card';b.innerHTML='<strong>'+esc(task.clarified_goal||task.goal||task.task_id||'Task')+'</strong><span>'+esc(String(task.status||'idle')+(task.coding_state&&task.coding_state.current_file?' \xB7 '+task.coding_state.current_file:''))+'</span>';b.onclick=function(){drawer.classList.remove('visible');selectSessionFromUi(String(task.thread_id||''));};drawerBody.appendChild(b);})(t);
-    return;
-  }
-  drawerTitle.textContent='Skills';if(!catalogSkills.length){drawerBody.innerHTML='<div class="empty"><div class="empty-inner"><p>No skill catalog from service.</p></div></div>';return;}
-  for(var skill of catalogSkills){var b=document.createElement('div');b.className='drawer-card';b.innerHTML='<strong>'+esc(skill.label||skill.name||skill.id||'Skill')+'</strong><span>'+esc(skill.description||skill.summary||'')+'</span>';drawerBody.appendChild(b);}
-}
-
-document.getElementById('newChat').onclick=function(){vscode.postMessage({type:'newChat'});}
-document.getElementById('menuButton').onclick=function(e){e.stopPropagation();contextPopover.classList.remove('visible');modePopover.classList.remove('visible');modelPopover.classList.remove('visible');menuPopover.classList.toggle('visible');};
-document.getElementById('reconnect').onclick=function(){vscode.postMessage({type:'reconnect'});};
-document.getElementById('attach').onclick=function(){vscode.postMessage({type:'attachment.pick'});};
-document.getElementById('contextButton').onclick=function(e){e.stopPropagation();menuPopover.classList.remove('visible');modePopover.classList.remove('visible');modelPopover.classList.remove('visible');contextPopover.classList.toggle('visible');};
-modeButton.onclick=function(e){e.stopPropagation();menuPopover.classList.remove('visible');contextPopover.classList.remove('visible');modelPopover.classList.remove('visible');modePopover.classList.toggle('visible');syncModeUi();syncModelUi();};
-modelButton.onclick=function(e){e.stopPropagation();menuPopover.classList.remove('visible');contextPopover.classList.remove('visible');modePopover.classList.remove('visible');modelPopover.classList.toggle('visible');syncModeUi();syncModelUi();};
-for(var modeOpt of document.querySelectorAll('[data-mode-option]'))(function(btn){btn.onclick=function(e){e.stopPropagation();selectedMode=btn.dataset.modeOption||'execute';for(var c of timeline.querySelectorAll('[data-empty-mode]'))c.classList.toggle('selected',c.dataset.emptyMode===selectedMode);hidePopovers();input.focus();};})(modeOpt);
-for(var modelOpt of document.querySelectorAll('[data-model-option]'))(function(btn){btn.onclick=function(e){e.stopPropagation();selectedModel=btn.dataset.modelOption||'gemini-3-flash';vscode.setState(Object.assign({},vscode.getState(),{model:selectedModel}));hidePopovers();input.focus();};})(modelOpt);
-document.getElementById('send').onclick=send;
-document.getElementById('drawerBack').onclick=function(){drawer.classList.remove('visible');};
-for(var dmrow of document.querySelectorAll('[data-menu]'))(function(row){row.onclick=function(){var a=row.dataset.menu;hidePopovers();if(a==='new')vscode.postMessage({type:'newChat'});else if(a==='history'||a==='tasks'||a==='skills')renderDrawer(a);else if(a==='source')vscode.postMessage({type:'showSourceControl'});else if(a==='test')vscode.postMessage({type:'selfTest'});else if(a==='reconnect')vscode.postMessage({type:'reconnect'});else if(a==='settings')vscode.postMessage({type:'settings'});};})(dmrow);
-input.addEventListener('input',resizeInput);
-input.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
-document.addEventListener('click',function(){hidePopovers();});
-menuPopover.onclick=function(e){e.stopPropagation();};
-contextPopover.onclick=function(e){e.stopPropagation();};
-sessionTabs.addEventListener('scroll',updateSessionIndicator,{passive:true});
-window.addEventListener('resize',updateSessionIndicator);
-syncModeUi();
-syncModelUi();
-modePopover.onclick=function(e){e.stopPropagation();};
-modelPopover.onclick=function(e){e.stopPropagation();};
-
-async function ingestFiles(files){for(var file of [...files].slice(0,8)){if(file.type.startsWith('image/')){(function(f){var reader=new FileReader();reader.onload=function(){vscode.postMessage({type:'attachment.image',name:f.name||'image.png',dataUrl:String(reader.result||'')});};reader.readAsDataURL(f);})(file);}}} 
-input.addEventListener('paste',function(e){var files=[...(e.clipboardData&&e.clipboardData.files||[])];if(files.some(function(f){return f.type.startsWith('image/');})){e.preventDefault();ingestFiles(files);}});
-var dragDepth=0;
-document.addEventListener('dragenter',function(e){if(e.dataTransfer&&e.dataTransfer.types&&e.dataTransfer.types.includes('Files')){dragDepth++;document.getElementById('dropOverlay').classList.add('visible');}});
-document.addEventListener('dragleave',function(){dragDepth=Math.max(0,dragDepth-1);if(!dragDepth)document.getElementById('dropOverlay').classList.remove('visible');});
-document.addEventListener('dragover',function(e){if(e.dataTransfer&&e.dataTransfer.types&&e.dataTransfer.types.includes('Files'))e.preventDefault();});
-document.addEventListener('drop',function(e){dragDepth=0;document.getElementById('dropOverlay').classList.remove('visible');if(e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files.length){e.preventDefault();ingestFiles(e.dataTransfer.files);}});
-
-window.addEventListener('message',function(ev){
-  var event=ev.data;
-  if(event.type==='session.tabs'){sessions=Array.isArray(event.sessions)?event.sessions:[];activeThreadId=String(event.activeThreadId||'');renderSessions();return;}
-  if(event.type==='chat.reset'){activeThreadId=String(event.threadId||activeThreadId);activeTaskId=String(event.preserveTask||'');drawer.classList.remove('visible');if(event.reason==='new'){var d=pendingSwitchDirection||1;clearTimeline(false);ensureEmpty();animateTimelineIn(d);awaitingThreadHistory=false;pendingSwitchDirection=0;deferredEvents=[];}return;}
-  if(event.type==='connection'){var connected=event.state==='connected';var connecting=event.state==='connecting';connection.classList.toggle('visible',!connected);connection.classList.toggle('connecting',connecting);document.getElementById('connectionText').textContent=connecting?'Connecting to Eris Service\u2026':'Service offline';return;}
-  if(event.type==='service.error'){return;}
-  if(event.type==='attachment.add'){var att=Object.assign({},event.attachment||{},{preview:event.preview||''});if(att.id){attachmentState.set(att.id,att);renderAttachments();}return;}
-  if(event.type==='attachments.clear'){attachmentState.clear();renderAttachments();return;}
-  if(event.type==='session.ready'){catalogTasks=Array.isArray(event.tasks)?event.tasks:catalogTasks;catalogSkills=Array.isArray(event.capabilities&&event.capabilities.brain&&event.capabilities.brain.skills?event.capabilities.brain.skills:null)?event.capabilities.brain.skills:catalogSkills;return;}
-  if(event.type==='task.list'){catalogTasks=Array.isArray(event.tasks)?event.tasks:[];return;}
-  if(event.type==='thread.history'){renderHistory(event);return;}
-  if(event.type==='task.detail'){if(event.task){catalogTasks=[...new Map([...catalogTasks,event.task].map(function(t){return[String(t&&t.task_id?t.task_id:''),t];})).values()];}return;}
-  if(event.type==='message.accepted'){activeTaskId=String(event.taskId||activeTaskId);return;}
-  if(event.type==='client.error'||event.type==='error'){showNotice(event.message||event.code||'Eris service error');return;}
-  if(awaitingThreadHistory){deferredEvents.push(event);return;}
-  renderEvent(event);
-});
-
-ensureEmpty();
-resizeInput();
-</script>
-</body>
-</html>`;
+    // Presentation đã được tách khỏi Extension Host. chatPanel.ts chỉ còn
+    // orchestration/protocol, không chứa hàng nghìn dòng CSS/DOM runtime nữa.
+    return renderChatWebviewHtml(webview, this.extensionUri);
   }
 
   dispose(): void {

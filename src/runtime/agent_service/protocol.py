@@ -9,6 +9,48 @@ from __future__ import annotations
 from typing import Any
 
 
+# Nhãn semantic dùng chung cho các surface IDE. Tên tool thật vẫn nằm trong
+# payload.data để Developer Details/audit dùng khi cần, còn UI mặc định chỉ
+# thấy hành động mà con người hiểu được.
+_TOOL_LABELS: dict[str, str] = {
+    "project_list_files": "Đọc cấu trúc dự án",
+    "project_read_file": "Đọc file",
+    "project_search_text": "Tìm trong code",
+    "project_find_symbol": "Tìm symbol",
+    "project_git_diff": "Kiểm tra thay đổi Git",
+    "project_apply_patch": "Áp dụng thay đổi",
+    "project_run_tests": "Chạy kiểm thử",
+    "project_run_command": "Chạy lệnh dự án",
+    "editor_open_file": "Mở file trong VS Code",
+    "editor_open_diff": "Mở diff",
+    "editor_focus_problems": "Mở Problems",
+    "editor_show_source_control": "Mở Source Control",
+    "ide_get_current_file": "Đọc file hiện tại",
+    "ide_get_selection": "Đọc vùng chọn",
+    "ide_get_problems": "Đọc lỗi và cảnh báo",
+    "ide_get_git_state": "Đọc trạng thái Git",
+    "ide_get_terminal_recent": "Đọc terminal gần nhất",
+    "ide_get_open_editors": "Đọc các tab đang mở",
+    "ide_get_workspace_info": "Đọc thông tin workspace",
+    "search_capabilities": "Tìm capability phù hợp",
+    "activate_skill": "Nạp skill cần thiết",
+    "ask_user_choice": "Chờ quyết định của người dùng",
+}
+
+
+def _tool_label(data: dict[str, Any], fallback: str = "Thực thi công cụ") -> str:
+    tool = str(data.get("tool", "") or "").strip()
+    return _TOOL_LABELS.get(tool, fallback if not tool else tool.replace("_", " "))
+
+
+def _compact_detail(value: str, limit: int = 2400) -> str:
+    """Giới hạn telemetry gửi sang Webview; log gốc vẫn nằm ở event store."""
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
 def project_agent_event(event: dict[str, Any]) -> list[dict[str, Any]]:
     kind = str(event.get("type", "") or "")
     task_id = str(event.get("task_id", "") or "")
@@ -22,10 +64,15 @@ def project_agent_event(event: dict[str, Any]) -> list[dict[str, Any]]:
     data = dict(event.get("data") or {}) if isinstance(event.get("data"), dict) else {}
 
     def base(event_type: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        # Một internal event có thể chiếu thành nhiều semantic event. Ví dụ
+        # task_completed -> activity.end + message.assistant. Dùng cùng eventId
+        # khiến Webview dedupe mất message cuối. Gắn semantic type vào ID để mỗi
+        # packet có identity ổn định nhưng vẫn truy ngược được event gốc.
+        projected_event_id = f"{event_id}:{event_type}" if event_id else ""
         return {
             "type": event_type,
             "protocol": "eris.ide.v2",
-            "eventId": event_id,
+            "eventId": projected_event_id,
             "seq": seq,
             "taskId": task_id,
             "threadId": thread_id,
@@ -63,6 +110,10 @@ def project_agent_event(event: dict[str, Any]) -> list[dict[str, Any]]:
             "options": options,
             "allowOther": bool(data.get("allowOther", data.get("allow_other", True))),
             "toolCallId": str(data.get("toolCallId", data.get("tool_call_id", "")) or ""),
+            # Permission card cần biết side effect cụ thể để user duyệt có thông tin.
+            # Args ở đây đã đi qua _safe_tool_args trước khi được ghi vào event.
+            "tool": str(data.get("tool", "") or ""),
+            "args": dict(data.get("args") or {}) if isinstance(data.get("args"), dict) else {},
         })]
     if kind == "interrupt_resolved":
         return [base("interrupt.resolved", {"summary": summary})]
@@ -135,9 +186,44 @@ def project_agent_event(event: dict[str, Any]) -> list[dict[str, Any]]:
             status = "failed"
         elif kind == "task_paused":
             status = "paused"
+
+        # Projector chịu trách nhiệm biến internal event thành ngôn ngữ UI.
+        # Nhờ vậy cả custom panel lẫn @eris native chat đều không phải tự đoán
+        # ý nghĩa từ tên RPC/tool cấp thấp.
+        if kind == "agent_plan":
+            label = "Đang lập kế hoạch thực thi"
+        elif kind == "tool_started":
+            label = _tool_label(data)
+        elif kind == "tool_result":
+            label = _tool_label(data)
+            status = "completed"
+        elif kind == "tool_failed":
+            label = _tool_label(data, "Công cụ thất bại")
+        elif kind == "skill_search":
+            label = "Tìm capability phù hợp"
+        elif kind == "skill_activated":
+            label = "Đã nạp skill"
+            status = "completed"
+        elif kind == "checkpoint_created":
+            label = "Đã tạo checkpoint"
+            status = "completed"
+        elif kind == "checkpoint_restored":
+            label = "Đã khôi phục checkpoint"
+            status = "completed"
+        elif kind.startswith("supervisor_"):
+            label = "Eris đang rà lại hướng thực thi"
+        elif kind == "task_paused":
+            label = "Task đã tạm dừng"
+        elif kind == "task_resumed":
+            label = "Task đang tiếp tục"
+        elif kind.startswith("rollback_"):
+            label = "Đang khôi phục thay đổi"
+        else:
+            label = summary or "Đang xử lý"
+
         return [base("activity.update", {
-            "label": summary or kind,
-            "detail": detail,
+            "label": label,
+            "detail": _compact_detail(detail),
             "status": status,
             "kind": kind,
             "data": data,

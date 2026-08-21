@@ -469,3 +469,33 @@ def test_changeset_projection_persists_accept_and_protocol(tmp_path):
     update = project_agent_event({**accepted, "task_id": "cs-1", "thread_id": "thread-cs", "session_id": "session-cs"})
     assert update[0]["type"] == "changeset.updated"
     assert update[0]["payload"]["status"] == "accepted"
+
+
+def test_task_completed_projects_distinct_activity_and_final_message_ids():
+    """Một task_completed phải render được cả trạng thái lẫn câu trả lời cuối."""
+    final = "Xin chào! " + ("nội dung dài " * 900)
+    packets = project_agent_event({
+        "type": "task_completed",
+        "event_id": "evt-final",
+        "seq": 99,
+        "task_id": "task-final",
+        "thread_id": "thread-final",
+        "session_id": "session-final",
+        "created_at": 1.0,
+        "summary": "done",
+        "data": {"final": final},
+    })
+    assert [item["type"] for item in packets] == ["activity.end", "message.assistant"]
+    assert packets[0]["eventId"] != packets[1]["eventId"]
+    assert packets[1]["payload"]["content"] == final
+
+
+def test_task_store_replays_long_final_without_8k_truncation(tmp_path):
+    store = AgentTaskStore(tmp_path / "tasks.json")
+    task = store.create_task("long answer", task_id="long-1", thread_id="thread-long", session_id="session-long")
+    final = "A" * 20000
+    store.append_event(task["task_id"], "task_completed", summary="done", detail=final, data={"final": final})
+    restored = store.get_task(task["task_id"], event_limit=20)
+    assert restored is not None
+    event = restored["events"][-1]
+    assert event["data"]["final"] == final

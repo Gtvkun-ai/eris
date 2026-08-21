@@ -1,0 +1,384 @@
+/*
+ * Eris Webview 0.13
+ * -----------------
+ * Information hierarchy lấy tinh thần từ coding agent hiện đại: câu trả lời là
+ * document surface, activity được gom semantic, Changes là review surface, còn
+ * raw telemetry chỉ xuất hiện khi người dùng chủ động mở Chi tiết kỹ thuật.
+ */
+:root {
+  color-scheme: light dark;
+  --bg: var(--vscode-sideBar-background, var(--vscode-editor-background));
+  --fg: var(--vscode-foreground);
+  --muted: var(--vscode-descriptionForeground);
+  --border: color-mix(in srgb, var(--vscode-panel-border, var(--vscode-widget-border, #777)) 76%, transparent 24%);
+  --hairline: color-mix(in srgb, var(--border) 68%, transparent 32%);
+  --surface: color-mix(in srgb, var(--vscode-editor-background) 88%, var(--bg) 12%);
+  --surface-hover: var(--vscode-list-hoverBackground, color-mix(in srgb, var(--fg) 7%, transparent));
+  --input-bg: var(--vscode-input-background, var(--surface));
+  --accent: color-mix(in srgb, var(--vscode-focusBorder, #6fcf84) 62%, #79cf8b 38%);
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+  --accent-border: color-mix(in srgb, var(--accent) 32%, transparent);
+  --danger: var(--vscode-errorForeground, #f48771);
+  --warning: var(--vscode-editorWarning-foreground, #cca700);
+  --success: var(--vscode-testing-iconPassed, #73c991);
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 13px;
+  --fast: 120ms;
+  --normal: 180ms;
+}
+
+* { box-sizing: border-box; }
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+body {
+  font-family: var(--vscode-font-family, system-ui, sans-serif);
+  font-size: var(--vscode-font-size, 13px);
+  color: var(--fg);
+  background: var(--bg);
+}
+button, textarea, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: default; opacity: .55; }
+
+/* Không để Sidebar có horizontal scrollbar. Code block tự scroll bên trong. */
+.app-shell, .workspace, .conversation, .timeline, .msg, .msg-body, .markdown-body { min-width: 0; max-width: 100%; }
+.app-shell { height: 100%; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; overflow: hidden; }
+
+/* Header rất mỏng. Service status không chiếm branding. */
+.topbar {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 5px 10px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--bg);
+  position: relative;
+  z-index: 10;
+}
+.brand { min-width: 0; display: flex; align-items: center; gap: 8px; flex: 1; }
+.brand-mark {
+  width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center;
+  color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent-border);
+  font-size: 11px; flex: 0 0 auto;
+}
+.brand-copy { min-width: 0; display: grid; gap: 1px; line-height: 1.15; }
+.brand-copy strong { font-size: 11.5px; font-weight: 650; letter-spacing: .01em; }
+.brand-copy span { color: var(--muted); font-size: 10.5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.top-actions { display: flex; align-items: center; gap: 2px; }
+.icon-btn {
+  width: 28px; height: 28px; border: 0; border-radius: var(--radius-sm); display: grid; place-items: center;
+  color: var(--muted); background: transparent; font-size: 16px; line-height: 1;
+}
+.icon-btn:hover { color: var(--fg); background: var(--surface-hover); }
+.session-shadow { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
+
+.connection {
+  display: none;
+  min-height: 30px;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--muted);
+  font-size: 10.5px;
+  background: color-mix(in srgb, var(--accent) 5%, var(--bg));
+}
+.connection.visible { display: flex; }
+.connection button { margin-left: auto; border: 0; background: transparent; color: var(--vscode-textLink-foreground); padding: 2px 4px; }
+.connection.connecting button { display: none; }
+.connection-spinner {
+  width: 8px; height: 8px; border-radius: 50%; border: 1px solid var(--accent-border); border-top-color: var(--accent);
+  animation: spin .7s linear infinite;
+}
+
+.workspace { position: relative; min-height: 0; overflow: hidden; }
+.conversation { height: 100%; min-height: 0; position: relative; }
+.timeline {
+  height: 100%; overflow-y: auto; overflow-x: hidden;
+  padding: 18px 12px 28px;
+  scroll-behavior: smooth;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted) 35%, transparent) transparent;
+}
+.timeline.anim-left { animation: timelineLeft var(--normal) ease both; }
+.timeline.anim-right { animation: timelineRight var(--normal) ease both; }
+
+/* Empty state: ít chrome, nói rõ hai hành vi cốt lõi. */
+.empty { min-height: 100%; display: grid; place-items: center; padding: 24px 6px 70px; }
+.empty-inner { width: min(100%, 430px); text-align: left; }
+.empty .spark {
+  width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center;
+  color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent-border); margin-bottom: 12px;
+}
+.empty h2 { margin: 0 0 5px; font-size: 18px; font-weight: 650; letter-spacing: -.015em; }
+.empty p { margin: 0; color: var(--muted); line-height: 1.55; }
+.mode-cards { display: grid; gap: 6px; margin-top: 16px; }
+.mode-card {
+  border: 1px solid var(--hairline); border-radius: var(--radius-md); background: transparent;
+  text-align: left; padding: 10px 11px; display: grid; gap: 3px;
+  transition: background var(--fast), border-color var(--fast), transform var(--fast);
+}
+.mode-card:hover { background: var(--surface-hover); border-color: var(--border); transform: translateY(-1px); }
+.mode-card.selected { border-color: var(--accent-border); background: var(--accent-soft); }
+.mode-card strong { font-size: 11.5px; font-weight: 620; }
+.mode-card span { color: var(--muted); font-size: 10.5px; line-height: 1.45; }
+
+/* Conversation hierarchy --------------------------------------------------- */
+.msg { width: 100%; display: flex; min-width: 0; margin-bottom: 18px; animation: msgIn var(--normal) ease both; }
+.msg-body { min-width: 0; }
+.msg-role { color: var(--muted); font-size: 10px; line-height: 1; margin-bottom: 6px; font-weight: 600; }
+
+.msg-user { justify-content: flex-end; padding-left: 12%; }
+.msg-user .msg-body { max-width: min(88%, 520px); display: flex; flex-direction: column; align-items: flex-end; }
+.msg-user .msg-role { display: none; }
+.msg-user .bubble {
+  max-width: 100%; padding: 8px 11px; border-radius: 13px 13px 4px 13px;
+  background: color-mix(in srgb, var(--vscode-button-background, #2f6540) 34%, var(--surface) 66%);
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--hairline));
+  line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.avatar-spacer { display: none; }
+.msg-attachments { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin-top: 5px; }
+.attach-chip-sm { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 9.5px; }
+
+.msg-assistant { align-items: flex-start; gap: 8px; }
+.msg-assistant .avatar {
+  width: 20px; height: 20px; margin-top: 1px; flex: 0 0 auto; border-radius: 7px;
+  display: grid; place-items: center; color: var(--accent); background: var(--accent-soft);
+  border: 1px solid var(--accent-border); font-size: 9px; font-weight: 700;
+}
+.msg-assistant .msg-body { flex: 1; width: calc(100% - 28px); }
+.msg-assistant .msg-role { color: var(--fg); font-size: 10.5px; margin-bottom: 7px; }
+.msg-assistant .bubble { width: 100%; min-width: 0; }
+.msg-assistant .bubble:empty { display: none; }
+
+/* Markdown là document surface, không phải bubble chatbot. */
+.markdown-body { line-height: 1.62; overflow-wrap: anywhere; word-break: normal; }
+.markdown-body > :first-child { margin-top: 0; }
+.markdown-body > :last-child { margin-bottom: 0; }
+.markdown-body p { margin: 0 0 11px; }
+.markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 {
+  color: var(--fg); font-weight: 650; line-height: 1.3; letter-spacing: -.01em;
+  margin: 18px 0 8px;
+}
+.markdown-body h1 { font-size: 16px; }
+.markdown-body h2 { font-size: 14px; }
+.markdown-body h3 { font-size: 12.5px; }
+.markdown-body h4 { font-size: 11.5px; }
+.markdown-body strong { font-weight: 650; }
+.markdown-body ul, .markdown-body ol { margin: 7px 0 12px; padding-left: 20px; }
+.markdown-body li { margin: 3px 0; }
+.markdown-body blockquote { margin: 10px 0; padding: 6px 10px; border-left: 2px solid var(--accent-border); color: var(--muted); }
+.markdown-body hr { border: 0; border-top: 1px solid var(--hairline); margin: 16px 0; }
+.markdown-body code {
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-size: .92em; padding: 1px 4px; border-radius: 4px;
+  background: color-mix(in srgb, var(--vscode-textCodeBlock-background, var(--surface)) 82%, transparent);
+}
+.markdown-body code.file-ref { cursor: pointer; color: var(--vscode-textLink-foreground); }
+.markdown-body code.file-ref:hover { text-decoration: underline; }
+.markdown-body pre {
+  position: relative; max-width: 100%; overflow: auto; margin: 10px 0 13px; padding: 29px 11px 10px;
+  border: 1px solid var(--hairline); border-radius: var(--radius-md); background: var(--vscode-textCodeBlock-background, var(--surface));
+}
+.markdown-body pre code { display: block; min-width: max-content; padding: 0; background: transparent; font-size: 11px; line-height: 1.55; }
+.code-lang { position: absolute; top: 6px; left: 9px; color: var(--muted); font-size: 9px; text-transform: lowercase; }
+.code-copy {
+  position: absolute; top: 4px; right: 5px; height: 22px; border: 0; border-radius: 5px;
+  padding: 0 7px; background: transparent; color: var(--muted); font-size: 9.5px;
+}
+.code-copy:hover { color: var(--fg); background: var(--surface-hover); }
+.markdown-body table { width: 100%; border-collapse: collapse; margin: 10px 0 13px; display: block; overflow-x: auto; }
+.markdown-body th, .markdown-body td { padding: 6px 8px; border-bottom: 1px solid var(--hairline); text-align: left; vertical-align: top; white-space: normal; }
+.markdown-body th { font-size: 10px; font-weight: 650; color: var(--muted); }
+
+/* Plan: nhẹ như checklist, không biến thành card trang trí. */
+.plan-block { display: none; margin: 0 0 8px; padding: 8px 9px; border-radius: var(--radius-md); background: color-mix(in srgb, var(--surface) 72%, transparent); }
+.plan-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; color: var(--muted); font-size: 9.5px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; }
+.plan-meta { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 400; }
+.plan-list { display: grid; gap: 4px; }
+.plan-row { display: grid; grid-template-columns: 15px minmax(0, 1fr); align-items: start; gap: 3px; color: var(--muted); font-size: 10.5px; line-height: 1.4; }
+.plan-row .plan-mark { width: 14px; text-align: center; }
+.plan-row.running { color: var(--fg); }
+.plan-row.running .plan-mark { color: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+.plan-row.done .plan-mark { color: var(--success); }
+.plan-row.failed, .plan-row.failed .plan-mark { color: var(--danger); }
+.plan-row.pending { opacity: .72; }
+
+/* Activity: một surface duy nhất, detail mở khi cần. */
+details.activity-feed { margin: 0 0 9px; padding: 0; border: 0; }
+details.activity-feed > summary {
+  min-height: 26px; list-style: none; display: grid; grid-template-columns: 10px minmax(0, 1fr) auto 12px;
+  align-items: center; gap: 6px; padding: 2px 2px; color: var(--muted); font-size: 10.5px; cursor: pointer; user-select: none;
+}
+details.activity-feed > summary::-webkit-details-marker { display: none; }
+.feed-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); animation: pulse 1.35s ease-in-out infinite; }
+.feed-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.feed-count { white-space: nowrap; color: color-mix(in srgb, var(--muted) 82%, transparent); font-size: 9.5px; }
+.feed-chevron { font-size: 13px; transition: transform var(--fast); }
+details.activity-feed[open] .feed-chevron { transform: rotate(90deg); }
+.activity-feed.done .feed-dot { background: var(--success); box-shadow: none; animation: none; }
+.activity-feed.failed .feed-dot { background: var(--danger); box-shadow: none; animation: none; }
+.activity-feed.paused .feed-dot { background: var(--warning); box-shadow: none; animation: none; }
+.feed-rows { display: grid; gap: 1px; margin: 2px 0 3px 7px; padding: 3px 0 2px 9px; border-left: 1px solid var(--hairline); }
+.feed-row { min-width: 0; display: grid; grid-template-columns: 13px minmax(0, 1fr) auto; gap: 4px; padding: 3px 0; color: var(--muted); font-size: 10px; line-height: 1.35; }
+.feed-row .fmark { text-align: center; }
+.feed-row .ftext { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.feed-row .fmeta { color: color-mix(in srgb, var(--muted) 70%, transparent); }
+.feed-row.done .fmark { color: var(--success); }
+.feed-row.failed, .feed-row.failed .fmark { color: var(--danger); }
+.developer-details { margin: 3px 0 0 16px; color: var(--muted); font-size: 9.5px; }
+.developer-details > summary { cursor: pointer; width: fit-content; }
+.developer-details pre { max-height: 220px; overflow: auto; padding: 7px; border-radius: 6px; background: var(--vscode-textCodeBlock-background, var(--surface)); font-size: 9px; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Legacy raw tool rows không được phép ló ra ngoài semantic activity. */
+details.tool-activity-item { display: none !important; }
+
+/* Error recovery */
+.issues-host:empty, .interrupt-host:empty { display: none; }
+.issues-host { display: grid; gap: 5px; margin: 0 0 8px; }
+.issue-row { display: grid; grid-template-columns: 16px minmax(0,1fr); gap: 6px; padding: 7px 8px; border-radius: 8px; background: color-mix(in srgb, var(--danger) 7%, transparent); }
+.issue-icon { color: var(--danger); }
+.issue-copy { min-width: 0; display: grid; gap: 2px; }
+.issue-copy strong { font-size: 10.5px; font-weight: 620; }
+.issue-copy span { color: var(--muted); font-size: 9.5px; overflow-wrap: anywhere; }
+.issue-row.recovered { background: color-mix(in srgb, var(--success) 7%, transparent); }
+.issue-row.recovered .issue-icon { color: var(--success); }
+
+/* Approval/clarification */
+.interrupt-host { display: grid; gap: 7px; margin-bottom: 9px; }
+.interrupt { padding: 10px; border: 1px solid var(--accent-border); border-radius: var(--radius-md); background: var(--accent-soft); }
+.interrupt.resolving { opacity: .7; }
+.interrupt-kicker { margin-bottom: 4px; color: var(--accent); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
+.interrupt h3 { margin: 0 0 4px; font-size: 11.5px; font-weight: 650; line-height: 1.4; }
+.interrupt p { margin: 0 0 8px; color: var(--muted); font-size: 10px; line-height: 1.45; }
+.permission-command { margin: 7px 0; padding: 7px 8px; border-radius: 7px; background: var(--vscode-textCodeBlock-background, var(--surface)); font-family: var(--vscode-editor-font-family, monospace); font-size: 9.5px; overflow-wrap: anywhere; }
+.choices { display: grid; gap: 4px; }
+.choice { text-align: left; border: 1px solid var(--hairline); border-radius: 7px; background: transparent; padding: 7px 8px; }
+.choice:hover { background: var(--surface-hover); border-color: var(--border); }
+.choice strong { display: block; font-size: 10.5px; }
+.choice span { display: block; color: var(--muted); font-size: 9.5px; margin-top: 2px; }
+.other-row { display: flex; gap: 5px; }
+.other-row input { min-width: 0; flex: 1; border: 1px solid var(--border); border-radius: 6px; background: var(--input-bg); padding: 6px 7px; outline: none; }
+.ghost-btn, .ctrl-btn { border: 1px solid var(--hairline); border-radius: 6px; background: transparent; padding: 5px 7px; font-size: 9.5px; }
+.ghost-btn:hover, .ctrl-btn:hover { background: var(--surface-hover); }
+
+/* Changes là review surface cấp một, nhưng dùng VS Code native diff khi mở. */
+.changes-block { margin: 10px 0 10px; border: 1px solid var(--hairline); border-radius: var(--radius-md); overflow: hidden; background: color-mix(in srgb, var(--surface) 62%, transparent); }
+.changes-head { min-height: 32px; display: flex; align-items: center; gap: 7px; padding: 5px 7px 5px 9px; border-bottom: 1px solid var(--hairline); }
+.changes-title { min-width: 0; display: flex; align-items: baseline; gap: 6px; }
+.changes-title strong { font-size: 10.5px; font-weight: 650; }
+.changes-meta { color: var(--muted); font-size: 9.5px; }
+.changes-review { margin-left: auto; border: 0; border-radius: 5px; background: transparent; color: var(--vscode-textLink-foreground); padding: 4px 6px; font-size: 9.5px; }
+.changes-review:hover { background: var(--surface-hover); }
+.changes-list { display: grid; }
+.change-row { min-width: 0; display: grid; grid-template-columns: 18px minmax(0,1fr) auto auto; align-items: center; gap: 5px; padding: 5px 7px; border-bottom: 1px solid var(--hairline); }
+.change-row:last-child { border-bottom: 0; }
+.change-status { color: var(--warning); font-size: 9px; font-weight: 700; text-align: center; }
+.change-status.added { color: var(--success); }
+.change-file { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--vscode-editor-font-family, monospace); font-size: 9.5px; }
+.change-stat { white-space: nowrap; font-size: 9px; }
+.change-stat .plus { color: var(--success); }
+.change-stat .minus { color: var(--danger); }
+.change-actions { display: flex; gap: 2px; }
+.change-actions button, .changeset-actions button { border: 0; border-radius: 5px; padding: 3px 5px; background: transparent; color: var(--muted); font-size: 9px; }
+.change-actions button:hover, .changeset-actions button:hover { background: var(--surface-hover); color: var(--fg); }
+.changeset-actions { min-height: 31px; display: flex; align-items: center; gap: 3px; padding: 5px 7px; border-top: 1px solid var(--hairline); }
+.changeset-state { margin-right: auto; color: var(--muted); font-size: 9.5px; }
+.changeset-actions button.primary { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
+.changeset-actions button.primary:hover { background: var(--vscode-button-hoverBackground); }
+
+.task-controls { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
+
+/* Composer --------------------------------------------------------------- */
+.composer-wrap { position: relative; padding: 7px 9px 9px; border-top: 1px solid var(--hairline); background: var(--bg); z-index: 12; }
+.attachments, .context-summary { display: none; min-width: 0; flex-wrap: wrap; gap: 4px; margin: 0 0 5px; }
+.attachments.visible, .context-summary.visible { display: flex; }
+.attach-chip, .context-chip {
+  min-width: 0; max-width: 100%; display: inline-flex; align-items: center; gap: 4px;
+  min-height: 23px; padding: 2px 6px; border: 1px solid var(--hairline); border-radius: 7px;
+  background: color-mix(in srgb, var(--surface) 78%, transparent); color: var(--muted); font-size: 9.5px;
+}
+.attach-chip img { width: 18px; height: 18px; object-fit: cover; border-radius: 4px; }
+.attach-name, .ctx-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attach-remove, .context-chip { border-color: var(--hairline); }
+.attach-remove { border: 0; background: transparent; color: var(--muted); padding: 0 1px; }
+.context-chip { cursor: pointer; }
+.context-chip.problem { border-color: color-mix(in srgb, var(--warning) 24%, var(--hairline)); }
+
+.composer-box { border: 1px solid var(--vscode-input-border, var(--border)); border-radius: var(--radius-lg); background: var(--input-bg); overflow: visible; transition: border-color var(--fast), box-shadow var(--fast); }
+.composer-box:focus-within { border-color: var(--vscode-focusBorder); box-shadow: 0 0 0 1px color-mix(in srgb, var(--vscode-focusBorder) 15%, transparent); }
+textarea { width: 100%; min-height: 46px; max-height: 140px; resize: none; overflow-y: auto; border: 0; outline: 0; background: transparent; color: var(--vscode-input-foreground); padding: 10px 11px 1px; line-height: 1.5; }
+textarea::placeholder { color: var(--vscode-input-placeholderForeground); }
+.composer-bar { display: flex; align-items: center; gap: 2px; padding: 3px 4px 5px; min-width: 0; }
+.composer-action, .composer-select { height: 26px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); }
+.composer-action { min-width: 26px; padding: 0 6px; }
+.composer-select { max-width: 88px; padding: 0 7px; font-size: 9.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.composer-action:hover, .composer-select:hover, .composer-select.active { color: var(--fg); background: var(--surface-hover); }
+.send { margin-left: auto; width: 28px; height: 28px; flex: 0 0 auto; display: grid; place-items: center; border: 0; border-radius: 8px; color: var(--vscode-disabledForeground); background: color-mix(in srgb, var(--vscode-button-background) 22%, transparent); font-size: 14px; transition: background var(--fast), color var(--fast), transform var(--fast); }
+.send.ready { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
+.send.ready:hover { background: var(--vscode-button-hoverBackground); transform: translateY(-1px); }
+.send.stop { color: var(--vscode-button-foreground); background: color-mix(in srgb, var(--danger) 75%, var(--vscode-button-background) 25%); }
+
+/* Popovers */
+.popover { visibility: hidden; pointer-events: none; opacity: 0; transform: translateY(5px) scale(.985); position: absolute; z-index: 40; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--vscode-menu-background, var(--vscode-editor-background)); box-shadow: 0 12px 32px rgba(0,0,0,.28); transition: opacity var(--fast), transform var(--fast), visibility 0s linear var(--fast); }
+.popover.visible { visibility: visible; pointer-events: auto; opacity: 1; transform: none; transition-delay: 0s; }
+.menu-popover { top: 37px; right: 7px; width: 190px; padding: 5px; transform-origin: top right; }
+.menu-row { width: 100%; display: grid; grid-template-columns: 18px 1fr; align-items: center; gap: 5px; border: 0; border-radius: 6px; background: transparent; text-align: left; padding: 6px 7px; font-size: 10.5px; }
+.menu-row:hover { background: var(--vscode-list-hoverBackground); }
+.menu-row > span:first-child { color: var(--muted); text-align: center; }
+.menu-sep { height: 1px; background: var(--hairline); margin: 4px 2px; }
+.context-popover { left: 9px; bottom: 55px; width: min(280px, calc(100% - 18px)); padding: 6px; }
+.popover-title { padding: 5px 6px 7px; color: var(--muted); font-size: 9px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; }
+.context-row { min-height: 29px; display: flex; align-items: center; gap: 8px; border-radius: 6px; padding: 4px 6px; font-size: 10.5px; }
+.context-row:hover { background: var(--vscode-list-hoverBackground); }
+.context-row input { margin: 0; accent-color: var(--accent); }
+.select-wrap { position: relative; min-width: 0; }
+.select-popover {
+  position: fixed; left: 8px; top: 8px; right: auto; bottom: auto;
+  width: min(220px, calc(100vw - 16px)); max-width: calc(100vw - 16px);
+  padding: 5px; transform-origin: bottom center;
+}
+.select-option { width: 100%; display: grid; grid-template-columns: 18px minmax(0,1fr) 14px; gap: 5px; align-items: center; border: 1px solid transparent; border-radius: 7px; background: transparent; text-align: left; padding: 7px; }
+.select-option:hover { background: var(--vscode-list-hoverBackground); }
+.select-option.active { border-color: var(--accent-border); background: var(--accent-soft); }
+.select-icon { color: var(--accent); text-align: center; }
+.select-copy { min-width: 0; display: grid; gap: 1px; }
+.select-copy strong { font-size: 10.5px; font-weight: 620; }
+.select-copy small { color: var(--muted); font-size: 9px; }
+.select-check { opacity: 0; color: var(--accent); }
+.select-option.active .select-check { opacity: 1; }
+
+/* Drawer */
+.drawer { visibility: hidden; pointer-events: none; position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; background: var(--bg); opacity: 0; transform: translateX(12px); transition: opacity var(--normal), transform var(--normal), visibility 0s linear var(--normal); }
+.drawer.visible { visibility: visible; pointer-events: auto; opacity: 1; transform: none; transition-delay: 0s; }
+.drawer-head { min-height: 40px; display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-bottom: 1px solid var(--hairline); }
+.drawer-head strong { font-size: 11px; font-weight: 650; }
+.drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding: 7px; }
+.drawer-card { width: 100%; border: 0; border-radius: 7px; background: transparent; text-align: left; padding: 8px; }
+.drawer-card:hover { background: var(--vscode-list-hoverBackground); }
+.drawer-card strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; font-weight: 620; }
+.drawer-card span { display: block; margin-top: 2px; color: var(--muted); font-size: 9.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.notice { visibility: hidden; opacity: 0; position: absolute; left: 10px; right: 10px; bottom: 9px; z-index: 20; padding: 8px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--vscode-notifications-background, var(--surface)); box-shadow: 0 8px 24px rgba(0,0,0,.2); color: var(--fg); font-size: 10px; transform: translateY(4px); transition: opacity var(--fast), transform var(--fast), visibility 0s linear var(--fast); }
+.notice.visible { visibility: visible; opacity: 1; transform: none; transition-delay: 0s; }
+.drop-overlay { visibility: hidden; opacity: 0; position: absolute; inset: 8px; z-index: 50; display: grid; place-items: center; border: 1px dashed var(--vscode-focusBorder); border-radius: var(--radius-md); background: color-mix(in srgb, var(--bg) 91%, transparent); color: var(--muted); font-size: 11px; pointer-events: none; }
+.drop-overlay.visible { visibility: visible; opacity: 1; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .42; } }
+@keyframes msgIn { from { opacity: 0; transform: translateY(4px); } }
+@keyframes timelineLeft { from { opacity: 0; transform: translateX(-8px); } }
+@keyframes timelineRight { from { opacity: 0; transform: translateX(8px); } }
+
+@media (max-width: 320px) {
+  .timeline { padding-left: 9px; padding-right: 9px; }
+  .msg-user { padding-left: 5%; }
+  .model-wrap { display: none; }
+  .composer-select { max-width: 70px; }
+  .change-row { grid-template-columns: 16px minmax(0,1fr) auto; }
+  .change-actions { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
+}
