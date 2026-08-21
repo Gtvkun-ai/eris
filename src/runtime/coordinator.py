@@ -266,6 +266,21 @@ class RuntimeCoordinator(
             except Exception:
                 self.agent_capability_self_model = None
 
+        # Cline Bridge — Phase A shadow mode.
+        # ClineBridgeClient chạy song song với graph_builder agent loop để so sánh.
+        # Khi bridge không có (Node.js chưa cài, dist/ chưa build), Eris vẫn boot bình thường.
+        self.cline_bridge: object | None = None
+        try:
+            from runtime.agent_harness.cline_bridge_client import ClineBridgeClient
+            self.cline_bridge = ClineBridgeClient(auto_start=False)  # manual start khi cần
+            info = getattr(logger, "info", None)
+            if callable(info):
+                info("[cline-bridge] client initialized (bridge not started yet — call cline_bridge._ensure_started())")
+        except Exception as exc:
+            debug = getattr(logger, "debug", None)
+            if callable(debug):
+                debug("[cline-bridge] client unavailable: %s", exc)
+
     def _supervise_agent_event(self, event: dict) -> None:
         """Deterministic first-line technical supervision for Gemini execution.
 

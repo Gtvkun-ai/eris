@@ -1,0 +1,24 @@
+{
+  "name": "eris-cline-bridge",
+  "version": "0.1.0",
+  "description": "Cline SDK sidecar for Eris coding substrate",
+  "type": "module",
+  "main": "./dist/bridge.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/bridge.js",
+    "dev": "node --watch dist/bridge.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@cline/core": "0.0.77",
+    "@cline/agents": "0.0.77",
+    "@cline/shared": "0.0.77"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0"
+  }
+}
