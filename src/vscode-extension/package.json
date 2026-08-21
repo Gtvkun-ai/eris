@@ -2,7 +2,7 @@
   "name": "eris-vscode",
   "displayName": "Eris",
   "description": "Eris coding agent với dropdown popover gọn, bung ra ngoài composer trong VS Code.",
-  "version": "0.10.10",
+  "version": "0.10.11",
   "publisher": "gtvk",
   "engines": {
     "vscode": "^1.100.0"

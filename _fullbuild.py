@@ -138,7 +138,7 @@ for dp, _, fns in os.walk(src_build):
                 removed_py += 1
         # Xoa cac file tai lieu, batch va config dev trong src
         elif (
-            fn.endswith(".md") or
+            (fn.endswith(".md") and fn != "SKILL.md") or
             fn.endswith(".bat") or
             fn.endswith(".toml") or
             fn.endswith(".ini") or
@@ -173,6 +173,8 @@ deploy_pairs = [
      os.path.join(OUT,  "config", "elevenlabs_pool.db")),
     (os.path.join(REPO, "run_elevenlabs_pool_ui.bat"),
      os.path.join(OUT,  "run_elevenlabs_pool_ui.bat")),
+    (os.path.join(REPO, "setup_gemini_login.bat"),
+     os.path.join(OUT,  "setup_gemini_login.bat")),
     (os.path.join(REPO, "src", "settings", "runtime_settings.json"),
      os.path.join(OUT,  "src", "settings", "runtime_settings.json")),
 ]
@@ -215,6 +217,8 @@ start_webai_content = (
     "set \"HF_HOME=%~dp0.cache\\huggingface\"\r\n"
     "set \"XDG_CACHE_HOME=%~dp0.cache\"\r\n"
     "set \"ERIS_AGENT_SERVICE_DISCOVERY=%~dp0.eris_state\\agent_service.json\"\r\n"
+    "set \"ERIS_HOME=%~dp0.eris_home\"\r\n"
+    "set \"ERIS_STATE_DIR=%~dp0.eris_state\"\r\n"
     "\r\n"
     "echo [WebAI] Syncing cookies from gemini.json...\r\n"
     "\"%~dp0.venv\\Scripts\\python.exe\" _sync_webai_cookies.py\r\n"
@@ -302,6 +306,8 @@ bat_lines = [
     "set \"HF_HOME=%~dp0.cache\\huggingface\"",
     "set \"XDG_CACHE_HOME=%~dp0.cache\"",
     "set \"ERIS_AGENT_SERVICE_DISCOVERY=%~dp0.eris_state\\agent_service.json\"",
+    "set \"ERIS_HOME=%~dp0.eris_home\"",
+    "set \"ERIS_STATE_DIR=%~dp0.eris_state\"",
     "",
     "echo.",
     "echo  ===============================================",

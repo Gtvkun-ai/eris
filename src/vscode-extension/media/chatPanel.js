@@ -211,24 +211,62 @@
     function appendThinking(entry,text){
       if(!entry)return;var value=String(text==null?'':text).trim();if(!value)return;
       if(entry.thinkingSeen.has(value))return;entry.thinkingSeen.add(value);
-      entry.thinkingEl.hidden=false;entry.thinkingRawEl.classList.remove('thinking-empty');
-      entry.thinkingLines.push(value);if(entry.thinkingLines.length>80)entry.thinkingLines.shift();
-      entry.thinkingRawEl.textContent=entry.thinkingLines.join('\n');
+      entry.thinkingEl.hidden=false;
+      if(entry.thinkingRawEl.tagName === 'PRE'){
+          var newRaw = document.createElement('div');
+          newRaw.className = entry.thinkingRawEl.className;
+          entry.thinkingRawEl.parentNode.replaceChild(newRaw, entry.thinkingRawEl);
+          entry.thinkingRawEl = newRaw;
+      }
+      entry.thinkingRawEl.classList.remove('thinking-empty');
+      var itemDetails = document.createElement('details');
+      itemDetails.className = 'tool-activity-item';
+      var itemSummary = document.createElement('summary');
+      itemSummary.textContent = 'ℹ️ ' + value.split('\n')[0].substring(0, 80);
+      itemDetails.appendChild(itemSummary);
+      var pre = document.createElement('pre');
+      pre.className = 'tool-activity-data';
+      pre.textContent = value;
+      itemDetails.appendChild(pre);
+      entry.thinkingRawEl.appendChild(itemDetails);
       entry.controlsEl.classList.add('visible');refreshThinkingTitle(entry);
-    }
-    function activityRawText(event){
-      var p=event.payload||{};var bits=[];
-      var label=String(p.label!=null?p.label:'').trim();var detail=String(p.detail!=null?p.detail:'').trim();
-      if(label)bits.push(label);if(detail&&detail!==label)bits.push(detail);
-      var kind=String(p.kind!=null?p.kind:'').trim();var data=p.data&&typeof p.data==='object'?p.data:null;
-      if(data&&Object.keys(data).length){
-        try{var raw=JSON.stringify(data);if(raw.length>1800)raw=raw.slice(0,1799)+'…';bits.push(raw);}catch(_e){}
-      }else if(kind&&!bits.length)bits.push(kind);
-      return bits.join('\n');
     }
     function addActivity(event){
       var p=event.payload||{};var taskId=String(event.taskId||activeTaskId||'');var entry=getTaskGroup(taskId);
-      appendThinking(entry,activityRawText(event));
+      if(!entry)return;
+      var label=String(p.label!=null?p.label:'').trim();var detail=String(p.detail!=null?p.detail:'').trim();
+      var kind=String(p.kind!=null?p.kind:'').trim();var data=p.data&&typeof p.data==='object'?p.data:null;
+      var dedupeVal = label + detail + kind + (data ? JSON.stringify(data) : '');
+      if(!entry.thinkingSeen.has(dedupeVal)) {
+          entry.thinkingSeen.add(dedupeVal);
+          entry.thinkingEl.hidden=false;
+          if(entry.thinkingRawEl.tagName === 'PRE'){
+              var newRaw = document.createElement('div');
+              newRaw.className = entry.thinkingRawEl.className;
+              entry.thinkingRawEl.parentNode.replaceChild(newRaw, entry.thinkingRawEl);
+              entry.thinkingRawEl = newRaw;
+          }
+          entry.thinkingRawEl.classList.remove('thinking-empty');
+          var itemDetails = document.createElement('details');
+          itemDetails.className = 'tool-activity-item';
+          var itemSummary = document.createElement('summary');
+          itemSummary.textContent = '⚡ ' + (label || kind || 'Đang thực thi...');
+          if (detail && detail !== label) itemSummary.textContent += ' · ' + (detail.length > 80 ? detail.slice(0, 80) + '...' : detail);
+          itemDetails.appendChild(itemSummary);
+          if (data && Object.keys(data).length) {
+              var pre = document.createElement('pre');
+              pre.className = 'tool-activity-data';
+              pre.textContent = JSON.stringify(data, null, 2);
+              itemDetails.appendChild(pre);
+          } else if (detail.length > 80) {
+              var pre = document.createElement('pre');
+              pre.className = 'tool-activity-data';
+              pre.textContent = detail;
+              itemDetails.appendChild(pre);
+          }
+          entry.thinkingRawEl.appendChild(itemDetails);
+          entry.controlsEl.classList.add('visible');refreshThinkingTitle(entry);
+      }
       var status=String(p.status!=null?p.status:(event.type==='activity.end'?'completed':'running'));
       if(status==='completed'||status==='done')finishThinking(entry,'done');
       else if(status==='failed'||status==='stopped')finishThinking(entry,'failed');

@@ -1121,6 +1121,42 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
     .spark::after { width: 12px; height: 18px; right: 18px; top: 17px; transform: rotate(32deg); }
     .empty h2 { font-size: 20px; letter-spacing: -.02em; }
     .empty p { max-width: 290px; margin: 7px auto 18px; font-size: 11.5px; line-height: 1.5; }
+    
+    /* New styles for expandable tool activity items */
+    details.tool-activity-item {
+      margin-bottom: 4px;
+      border: 1px solid rgba(127, 212, 142, 0.15);
+      border-radius: 6px;
+      background: rgba(12, 20, 15, 0.4);
+      overflow: hidden;
+    }
+    details.tool-activity-item > summary {
+      padding: 6px 10px;
+      font-size: 11px;
+      font-weight: bold;
+      color: color-mix(in srgb, var(--vscode-foreground) 90%, #7fd48e 10%);
+      cursor: pointer;
+      user-select: none;
+      background: rgba(127, 212, 142, 0.05);
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      overflow: hidden;
+    }
+    details.tool-activity-item > summary:hover {
+      background: rgba(127, 212, 142, 0.1);
+    }
+    details.tool-activity-item > pre.tool-activity-data {
+      margin: 0;
+      padding: 8px 10px;
+      font-size: 10.5px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-all;
+      color: color-mix(in srgb, var(--vscode-foreground) 75%, transparent 25%);
+      background: transparent;
+      border-top: 1px solid rgba(127, 212, 142, 0.1);
+    }
+
     .mode-cards { gap: 10px; }
     .mode-card {
       border-radius: 14px;
@@ -1494,9 +1530,29 @@ function addActivity(event){
     var mark=done?'\u2713':failed?'\xD7':'\xB7';
     row.innerHTML='<span class="fmark">'+mark+'</span><span class="ftext">'+esc(detail)+'</span>';
     entry.feedRowsEl.appendChild(row);
-    while(entry.feedRowsEl.children.length>20)entry.feedRowsEl.firstChild.remove();
+    while(entry.feedRowsEl.children.length>50)entry.feedRowsEl.firstChild.remove();
     entry.rowCount=entry.feedRowsEl.children.length;
     entry.feedCountEl.textContent=entry.rowCount?String(entry.rowCount):'';
+  }
+  
+  // Render tool execution data persistently
+  var data=p.data&&typeof p.data==='object'?p.data:null;
+  if (data && Object.keys(data).length) {
+      var detailsNode = document.createElement('details');
+      detailsNode.className = 'tool-activity-item';
+      var summaryHtml = '<summary>⚡ ' + esc(label);
+      if (detail && detail !== label) summaryHtml += ' <span style="opacity:0.6;font-weight:normal">· ' + esc(detail) + '</span>';
+      summaryHtml += '</summary>';
+      detailsNode.innerHTML = summaryHtml + '<pre class="tool-activity-data">' + esc(JSON.stringify(data, null, 2)) + '</pre>';
+      
+      // Prevent duplicates by checking if we already rendered this exact data block
+      var msgBody = entry.groupEl.querySelector('.msg-body');
+      var dedupeKey = detailsNode.innerHTML;
+      if (!entry.thinkingSeen) entry.thinkingSeen = new Set();
+      if (!entry.thinkingSeen.has(dedupeKey)) {
+          entry.thinkingSeen.add(dedupeKey);
+          msgBody.insertBefore(detailsNode, entry.feedEl);
+      }
   }
   // When done: promote last row text to bubble (Claude-style clean response)
   if(done||failed){

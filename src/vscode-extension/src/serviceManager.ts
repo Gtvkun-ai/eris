@@ -25,15 +25,21 @@ export class ErisServiceManager implements vscode.Disposable {
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
-  discoveryPath(): string {
+  async discoveryPath(): Promise<string> {
     const override = process.env.ERIS_AGENT_SERVICE_DISCOVERY?.trim();
-    return override
-      ? path.resolve(override)
-      : path.join(os.homedir(), '.eris', 'agent_service.json');
+    if (override) {
+      return path.resolve(override);
+    }
+    try {
+      const launch = await this.resolveLaunch();
+      return path.join(launch.cwd, '.eris_state', 'agent_service.json');
+    } catch {
+      return path.join(os.homedir(), '.eris', 'agent_service.json');
+    }
   }
 
   async readDiscovery(): Promise<DiscoveryRecord> {
-    const discoveryPath = this.discoveryPath();
+    const discoveryPath = await this.discoveryPath();
     const raw = await fs.readFile(discoveryPath, 'utf8');
     const payload = JSON.parse(raw) as DiscoveryRecord;
     if (payload.protocol !== 'eris.ide.v2' || !payload.endpoint || !payload.token) {
@@ -50,14 +56,14 @@ export class ErisServiceManager implements vscode.Disposable {
       }
       // PID chết nhưng file còn nằm lại sau crash. Giữ file này chỉ khiến client
       // reconnect vào một cánh cửa đã bị xây tường kín.
-      await fs.unlink(this.discoveryPath()).catch(() => undefined);
+      await fs.unlink(await this.discoveryPath()).catch(() => undefined);
     } catch {
       // Không có discovery thì rơi xuống auto-start.
     }
 
     const config = vscode.workspace.getConfiguration('eris.service');
     if (!config.get<boolean>('autoStart', true)) {
-      throw new Error(`Không thấy Eris Service discovery file: ${this.discoveryPath()}`);
+      throw new Error(`Không thấy Eris Service discovery file: ${await this.discoveryPath()}`);
     }
     if (this.startPromise) {
       return this.startPromise;
@@ -80,7 +86,7 @@ export class ErisServiceManager implements vscode.Disposable {
       throw new Error('Eris hiện do process bên ngoài VS Code quản lý; extension không tự giết process đó.');
     }
     await this.stopOwned();
-    await fs.unlink(this.discoveryPath()).catch(() => undefined);
+    await fs.unlink(await this.discoveryPath()).catch(() => undefined);
     return this.launchAndWait();
   }
 
@@ -119,7 +125,7 @@ export class ErisServiceManager implements vscode.Disposable {
     const env = {
       ...process.env,
       ERIS_LAUNCHED_BY_VSCODE: '1',
-      ERIS_AGENT_SERVICE_DISCOVERY: this.discoveryPath(),
+      ERIS_AGENT_SERVICE_DISCOVERY: await this.discoveryPath(),
     };
     const child = spawn(launch.command, launch.args, {
       cwd: launch.cwd,

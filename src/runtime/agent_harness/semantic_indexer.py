@@ -67,8 +67,8 @@ class SemanticIndexer:
         self.parsers = {
             ".py": tree_sitter.Language(tree_sitter_python.language()),
             ".js": tree_sitter.Language(tree_sitter_javascript.language()),
-            ".ts": tree_sitter.Language(tree_sitter_typescript.language()),
-            ".tsx": tree_sitter.Language(tree_sitter_typescript.language()),
+            ".ts": tree_sitter.Language(tree_sitter_typescript.language_typescript()),
+            ".tsx": tree_sitter.Language(tree_sitter_typescript.language_tsx()),
         }
 
     def _get_cache_key(self, content: str) -> str:
