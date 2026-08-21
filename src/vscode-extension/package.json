@@ -1,8 +1,8 @@
 {
   "name": "eris-vscode",
   "displayName": "Eris",
-  "description": "Eris coding agent cho VS Code với webview mới, activity semantic, plan/changes rõ ràng và backend khởi động on-demand.",
-  "version": "0.13.1",
+  "description": "Eris coding agent cho VS Code với webview gọn hơn, cuộn message dài ổn định hơn, activity semantic rõ ràng và backend khởi động on-demand.",
+  "version": "0.13.2",
   "publisher": "gtvk",
   "engines": {
     "vscode": "^1.100.0"

@@ -29,6 +29,15 @@ class AgentState(TypedDict, total=False):
     workspace_path: str
     workspace_name: str
     ide_context: dict[str, Any]
+    # RepoContext được index toàn workspace trước khi agent bắt đầu quyết định.
+    # State chỉ giữ context pack đã nén + metadata task-near, không nhét toàn bộ source vào checkpoint.
+    repository_context: dict[str, Any]
+    context_ready: bool
+    resolved_targets: List[dict[str, Any]]
+    context_confidence: float
+    inspection_evidence: List[dict[str, Any]]
+    completion_gate_retry: bool
+    completion_gate_attempts: int
     status: str
     active_skills: List[str]
     active_tools: List[str]

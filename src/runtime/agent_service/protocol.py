@@ -179,7 +179,8 @@ def project_agent_event(event: dict[str, Any]) -> list[dict[str, Any]]:
         "supervisor_comment", "supervisor_advisory", "supervisor_redirect", "supervisor_veto",
         "supervisor_ask_user", "supervisor_stop",
         "task_paused", "task_resumed", "interrupt_resume_requested", "rollback_requested",
-        "rollback_queued", "rollback_failed",
+        "rollback_queued", "rollback_failed", "repository_context_started", "repository_context_ready",
+        "context_gate_blocked", "completion_gate_blocked",
     }:
         status = "running"
         if kind in {"tool_failed", "rollback_failed"}:
@@ -218,6 +219,15 @@ def project_agent_event(event: dict[str, Any]) -> list[dict[str, Any]]:
             label = "Task đang tiếp tục"
         elif kind.startswith("rollback_"):
             label = "Đang khôi phục thay đổi"
+        elif kind == "repository_context_started":
+            label = "Đang lập bản đồ repository"
+        elif kind == "repository_context_ready":
+            label = "Đã hiểu cấu trúc repository"
+            status = "completed"
+        elif kind == "context_gate_blocked":
+            label = "Đang bổ sung ngữ cảnh trước khi sửa"
+        elif kind == "completion_gate_blocked":
+            label = "Đang xác minh thay đổi trước khi hoàn tất"
         else:
             label = summary or "Đang xử lý"
 

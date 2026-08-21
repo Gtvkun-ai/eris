@@ -39,6 +39,7 @@ const knownTabs=new Set();
 let pendingSwitchDirection=0;
 let awaitingThreadHistory=false;
 let deferredEvents=[];
+let stickToBottom=true;
 
 const MODEL_LABELS={
   'gemini-3-flash':'Flash',
@@ -85,7 +86,8 @@ function placeOpenSelectPopovers(){
 
 const esc=function(v){return String(v==null?'':v).replace(/[&<>"']/g,function(ch){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch];});};
 const clip=function(v,n){n=n||80;var t=String(v==null?'':v).replace(/\s+/g,' ').trim();return t.length<=n?t:t.slice(0,n-1)+'…';};
-const scroll=function(){requestAnimationFrame(function(){timeline.scrollTop=timeline.scrollHeight;});};
+function isNearBottom(){return (timeline.scrollHeight-(timeline.scrollTop+timeline.clientHeight))<72;}
+const scroll=function(force){requestAnimationFrame(function(){if(force||stickToBottom){timeline.scrollTop=timeline.scrollHeight;}});};
 const fmtBytes=function(n){var v=Number(n||0);if(v<1024)return v+' B';if(v<1048576)return Math.round(v/102.4)/10+' KB';return Math.round(v/104857.6)/10+' MB';};
 
 /* Markdown renderer nhỏ, không dùng HTML thô từ model. Mọi text đều escape
@@ -178,7 +180,7 @@ function scheduleMarkdown(entry){
 const TOOL_LABELS={
   project_list_files:'Đọc cấu trúc dự án',project_read_file:'Đọc file',project_search_text:'Tìm trong code',project_find_symbol:'Tìm symbol',project_git_diff:'Kiểm tra thay đổi Git',project_apply_patch:'Áp dụng thay đổi',project_run_tests:'Chạy kiểm thử',project_run_command:'Chạy lệnh dự án',editor_open_file:'Mở file trong VS Code',editor_open_diff:'Mở diff',editor_focus_problems:'Mở Problems',editor_show_source_control:'Mở Source Control',ide_get_current_file:'Đọc file hiện tại',ide_get_selection:'Đọc vùng chọn',ide_get_problems:'Đọc lỗi và cảnh báo',ide_get_git_state:'Đọc trạng thái Git',ide_get_terminal_recent:'Đọc terminal gần nhất',ide_get_open_editors:'Đọc các tab đang mở',ide_get_workspace_info:'Đọc workspace',search_capabilities:'Tìm capability phù hợp',activate_skill:'Nạp skill cần thiết',ask_user_choice:'Chờ quyết định của bạn'
 };
-const KIND_LABELS={agent_plan:'Lập kế hoạch thực thi',skill_search:'Tìm capability phù hợp',skill_activated:'Nạp skill cần thiết',checkpoint_created:'Tạo checkpoint',checkpoint_restored:'Khôi phục checkpoint',supervisor_comment:'Eris rà lại hướng thực thi',supervisor_advisory:'Eris rà lại hướng thực thi',supervisor_redirect:'Eris đổi hướng thực thi',supervisor_veto:'Eris chặn hướng không phù hợp',task_paused:'Task đã tạm dừng',task_resumed:'Task đang tiếp tục',rollback_requested:'Khôi phục thay đổi',rollback_queued:'Khôi phục thay đổi',rollback_failed:'Khôi phục thất bại'};
+const KIND_LABELS={agent_plan:'Lập kế hoạch thực thi',skill_search:'Tìm capability phù hợp',skill_activated:'Nạp skill cần thiết',checkpoint_created:'Tạo checkpoint',checkpoint_restored:'Khôi phục checkpoint',repository_context_started:'Đọc và lập bản đồ repository',repository_context_ready:'Hiểu cấu trúc repository',context_gate_blocked:'Bổ sung ngữ cảnh trước khi sửa',completion_gate_blocked:'Xác minh thay đổi trước khi hoàn tất',supervisor_comment:'Eris rà lại hướng thực thi',supervisor_advisory:'Eris rà lại hướng thực thi',supervisor_redirect:'Eris đổi hướng thực thi',supervisor_veto:'Eris chặn hướng không phù hợp',task_paused:'Task đã tạm dừng',task_resumed:'Task đang tiếp tục',rollback_requested:'Khôi phục thay đổi',rollback_queued:'Khôi phục thay đổi',rollback_failed:'Khôi phục thất bại'};
 function toolNameFromPayload(p){var d=p&&p.data&&typeof p.data==='object'?p.data:{};return String(d.tool||d.name||'').trim();}
 function semanticToolLabel(tool){return TOOL_LABELS[tool]||String(tool||'Công cụ').replace(/_/g,' ');}
 function cleanActivityText(value){
@@ -336,8 +338,9 @@ function getTaskGroup(taskId){
     changesEl:changes,changesListEl:changes.querySelector('.changes-list'),changesMetaEl:changes.querySelector('.changes-meta'),changeSetEl:changes.querySelector('.changeset-actions'),
     markdownText:'',renderPending:false,status:'running',currentLabel:'Đang xử lý…',operationRows:new Map(),rawEvents:[],files:new Set(),changeFiles:new Map(),actionCount:0,startedAt:Date.now()
   };
-  taskGroups.set(key,entry);scroll();return entry;
+  taskGroups.set(key,entry);stickToBottom=true;scroll(true);return entry;
 }
+
 
 function recordRawEvent(entry,event){
   var p=event&&event.payload?event.payload:{};
@@ -438,6 +441,16 @@ function addActivity(event){
   if(kind==='skill_search'){
     /* search_capabilities đã có row tool riêng; event này chỉ giữ trong Developer Details. */
     updateActivitySummary(entry,'Đang tìm capability phù hợp','running');scroll();return;
+  }
+  if(kind==='repository_context_started'||kind==='repository_context_ready'){
+    var repoData=p.data&&typeof p.data==='object'?p.data:{};var repoReady=kind==='repository_context_ready';
+    var repoLabel=repoReady?'Đã hiểu cấu trúc repository':'Đang lập bản đồ repository';
+    var repoMeta=repoReady?([repoData.files?repoData.files+' file':'',repoData.symbols?repoData.symbols+' symbol':''].filter(Boolean).join(' · ')):'';
+    upsertOperation(entry,'repo-context',repoLabel,repoReady?'completed':'running',repoMeta,entry.operationRows.has('repo-context')?false:true);
+    updateActivitySummary(entry,repoLabel,repoReady?'running':'running');scroll();return;
+  }
+  if(kind==='context_gate_blocked'||kind==='completion_gate_blocked'){
+    var gateLabel=KIND_LABELS[kind];upsertOperation(entry,'context-gate',gateLabel,'running','',entry.operationRows.has('context-gate')?false:true);updateActivitySummary(entry,gateLabel,'running');scroll();return;
   }
   if(kind==='tool_started'){
     var startLabel=semanticToolLabel(tool);upsertOperation(entry,'tool:'+tool,startLabel,'running',toolSuffix(p),true);markPlanByLabel(entry,startLabel,'running');updateActivitySummary(entry,startLabel,'running');scroll();return;
@@ -559,14 +572,14 @@ function renderEvent(event){
   if(event.type==='message.assistant'){
     var entry=getTaskGroup(String(event.taskId||activeTaskId||'main'));
     entry.markdownText=String(event.payload&&event.payload.content!=null?event.payload.content:'');
-    scheduleMarkdown(entry);entry.bubbleEl.classList.remove('streaming');
+    scheduleMarkdown(entry);entry.bubbleEl.classList.remove('streaming');scroll();
     return;
   }
   if(event.type==='message.assistant.delta'){
     removeEmpty();
     var dEntry=getTaskGroup(String(event.taskId||activeTaskId||'main'));
     dEntry.markdownText+=String(event.payload&&event.payload.delta!=null?event.payload.delta:'');
-    scheduleMarkdown(dEntry);dEntry.bubbleEl.classList.add('streaming');
+    scheduleMarkdown(dEntry);dEntry.bubbleEl.classList.add('streaming');scroll();
     return;
   }
   if(event.type==='coding.state'){mergeCoding(event);return;}
@@ -590,7 +603,7 @@ function renderHistory(event){
     if(task&&task.task_id)activeTaskId=String(task.task_id);
     for(var item of(event.events||[]))renderEvent(item);
     if(task&&(task.status==='waiting_user'||task.status==='waiting_permission')&&task.pending_interrupt)addInterrupt({taskId:task.task_id,payload:task.pending_interrupt,eventId:'restore:'+String(task.task_id)});
-    ensureEmpty();awaitingThreadHistory=false;pendingSwitchDirection=0;animateTimelineIn(direction);
+    ensureEmpty();awaitingThreadHistory=false;pendingSwitchDirection=0;animateTimelineIn(direction);scroll(true);
     var queued=deferredEvents;deferredEvents=[];for(var qe of queued)renderEvent(qe);
   }
   if(direction)setTimeout(paint,95);else paint();
@@ -631,7 +644,7 @@ function updateComposerState(){
 function resizeInput(){input.style.height='auto';input.style.height=Math.min(140,Math.max(40,input.scrollHeight))+'px';updateComposerState();}
 function send(){
   if(isActiveTaskRunning()){var s=activeSession();var taskId=String(activeTaskId||(s&&s.taskId)||'');if(taskId)vscode.postMessage({type:'task.control',taskId:taskId,action:'stop'});return;}
-  var content=input.value.trim();var ids=[...attachmentState.keys()];if(!content&&!ids.length)return;input.value='';resizeInput();hidePopovers();vscode.postMessage({type:'sendMessage',content:content,taskMode:selectedMode,model:selectedModel,attachmentIds:ids,contextKeys:contextKeys()});
+  var content=input.value.trim();var ids=[...attachmentState.keys()];if(!content&&!ids.length)return;stickToBottom=true;input.value='';resizeInput();hidePopovers();vscode.postMessage({type:'sendMessage',content:content,taskMode:selectedMode,model:selectedModel,attachmentIds:ids,contextKeys:contextKeys()});
 }
 function hidePopovers(){menuPopover.classList.remove('visible');contextPopover.classList.remove('visible');modePopover.classList.remove('visible');modelPopover.classList.remove('visible');syncModeUi();syncModelUi();}
 function showNotice(message){notice.textContent=String(message||'');notice.classList.toggle('visible',Boolean(message));if(message)setTimeout(function(){notice.classList.remove('visible');},7000);}
@@ -676,6 +689,7 @@ document.addEventListener('click',function(){hidePopovers();});
 menuPopover.onclick=function(e){e.stopPropagation();};
 contextPopover.onclick=function(e){e.stopPropagation();};
 sessionTabs.addEventListener('scroll',updateSessionIndicator,{passive:true});
+timeline.addEventListener('scroll',function(){stickToBottom=isNearBottom();},{passive:true});
 window.addEventListener('resize',function(){updateSessionIndicator();requestAnimationFrame(placeOpenSelectPopovers);});
 syncModeUi();
 syncModelUi();
@@ -693,7 +707,7 @@ document.addEventListener('drop',function(e){dragDepth=0;document.getElementById
 window.addEventListener('message',function(ev){
   var event=ev.data;
   if(event.type==='session.tabs'){sessions=Array.isArray(event.sessions)?event.sessions:[];activeThreadId=String(event.activeThreadId||'');renderSessions();return;}
-  if(event.type==='chat.reset'){activeThreadId=String(event.threadId||activeThreadId);activeTaskId=String(event.preserveTask||'');drawer.classList.remove('visible');if(event.reason==='new'){var d=pendingSwitchDirection||1;clearTimeline(false);ensureEmpty();animateTimelineIn(d);awaitingThreadHistory=false;pendingSwitchDirection=0;deferredEvents=[];}return;}
+  if(event.type==='chat.reset'){activeThreadId=String(event.threadId||activeThreadId);activeTaskId=String(event.preserveTask||'');drawer.classList.remove('visible');if(event.reason==='new'){var d=pendingSwitchDirection||1;stickToBottom=true;clearTimeline(false);ensureEmpty();animateTimelineIn(d);awaitingThreadHistory=false;pendingSwitchDirection=0;deferredEvents=[];}return;}
   if(event.type==='connection'){
     var connected=event.state==='connected';var connecting=event.state==='connecting';
     // Backend chưa chạy là trạng thái dormant bình thường. Chỉ hiện status khi user

@@ -27,6 +27,8 @@ from .event_bus import AgentEventBus
 from .workspace_checkpoint_store import WorkspaceCheckpointStore
 from .checkpointing import DurableSqliteCheckpointer, default_langgraph_checkpoint_path
 from .coding_state import tool_start_patch, tool_result_patch, human_tool_label
+from .repository_context import RepositoryContextManager
+from .context_policy import context_gate_reason, requires_verified_change, tool_result_success
 
 
 class AgentHarness:
@@ -64,6 +66,9 @@ class AgentHarness:
         self.tool_specs.update(self._builtin_tool_specs())
         state_path = Path(getattr(self.task_store, "path", Path(".eris_state") / "agent_console" / "tasks.json"))
         self.workspace_checkpoints = WorkspaceCheckpointStore(state_path.parent / "workspace_checkpoints")
+        # RepoContext sống cạnh task/checkpoint state, không làm bẩn workspace user.
+        # Mỗi task luôn đi qua full inventory + incremental symbol/import index trước khi executor chạy.
+        self.repository_context = RepositoryContextManager(state_path.parent / "repository_context", logger=logger)
         self.event_bus = event_bus or AgentEventBus(self.task_store, logger=logger)
         self.executor_name = str(executor_name or "gemini")
         self.model_name = str(model_name or "")
@@ -351,6 +356,8 @@ class AgentHarness:
         injected = state.get("injected_context", "")
         ide_context = _compact_ide_context(state.get("ide_context"))
         ide_context_text = json.dumps(ide_context, ensure_ascii=False, separators=(",", ":")) if ide_context else "{}"
+        repository_context = state.get("repository_context") if isinstance(state.get("repository_context"), dict) else {}
+        repository_context_text = str(repository_context.get("context_pack", "") or "")
         task_mode = str(state.get("task_mode", "execute") or "execute").strip().lower()
         step = int(state.get("step_count", 0) or 0) + 1
 
@@ -382,6 +389,12 @@ class AgentHarness:
             f"Locked Workspace: {state.get('workspace_path', '') or '(none)'}\n"
             f"Active Skills: {', '.join(state.get('active_skills', []) or [])}\n"
             f"IDE Context (structured, may be partial): {ide_context_text}\n"
+            f"Repository Context Ready: {bool(state.get('context_ready', False))}\n"
+            f"Resolved Targets: {json.dumps(state.get('resolved_targets', []) or [], ensure_ascii=False)}\n"
+            f"Repository Context Confidence: {float(state.get('context_confidence', 0.0) or 0.0):.3f}\n"
+            f"\n--- PERSISTENT REPOSITORY CONTEXT ---\n{repository_context_text}\n--- END REPOSITORY CONTEXT ---\n"
+            "Repository rule: build decisions from the persistent repo map first, then deep-read task-relevant implementation/callers before modifying. "
+            "If a user path appears misspelled, resolve it against Resolved Targets instead of guessing a different module.\n"
             f"\n--- INJECTED SKILL CONTEXT ---\n{injected}\n--- END SKILL CONTEXT ---\n"
         ))
 
@@ -408,7 +421,7 @@ class AgentHarness:
             if callable(invoke):
                 response = invoke([sys_msg] + messages)
 
-        patch: dict[str, Any] = {"step_count": step, **control_patch}
+        patch: dict[str, Any] = {"step_count": step, "completion_gate_retry": False, **control_patch}
         if directive_messages:
             patch["messages"] = directive_messages
         if response is not None:
@@ -453,6 +466,52 @@ class AgentHarness:
                     self._emit_coding_state(task_id, semantic, step=step)
                 else:
                     final_text = str(getattr(response, "content", "") or "").strip()
+                    # Completion Gate: task có ý định sửa/tạo/xóa file không được phép
+                    # "nói là đã làm" khi task store chưa có artifact đã verify. Đây là
+                    # invariant máy móc, không còn phụ thuộc model nhớ câu "verify before final".
+                    task_snapshot = self.task_store.get_task(task_id, event_limit=0) or {}
+                    changed_files = [str(item) for item in (task_snapshot.get("changed_files") or []) if str(item or "").strip()]
+                    if task_mode == "execute" and requires_verified_change(str(state.get("goal", "") or "")) and not changed_files:
+                        attempts = int(state.get("completion_gate_attempts", 0) or 0) + 1
+                        self.event_bus.emit(
+                            task_id,
+                            "completion_gate_blocked",
+                            actor="system",
+                            summary="Chưa thể hoàn tất: task yêu cầu thay đổi nhưng chưa có artifact được xác minh.",
+                            step=step,
+                            importance=0.90,
+                            data={"attempt": attempts, "reason": "verified_change_missing"},
+                        )
+                        if attempts <= 2:
+                            patch.setdefault("messages", [])
+                            patch["messages"] = list(patch["messages"]) + [HumanMessage(content=(
+                                "[COMPLETION GATE] You attempted to finish a task that requires a file change, "
+                                "but no verified changed_files/artifact exists. Do not claim success. Re-enter the tool loop, "
+                                "inspect the relevant implementation if needed, perform the requested change through project tools, "
+                                "then verify the result before final."
+                            ))]
+                            patch["completion_gate_retry"] = True
+                            patch["completion_gate_attempts"] = attempts
+                            self._emit_coding_state(task_id, {
+                                "phase": "verifying",
+                                "current_action": "Đang kiểm tra bằng chứng thay đổi trước khi hoàn tất",
+                                "last_summary": "Completion Gate chặn final vì chưa có file change được xác minh.",
+                                "next_action": "Quay lại tool loop và tạo/verify artifact thật.",
+                            }, step=step, importance=0.72)
+                            return patch
+                        self.event_bus.emit(
+                            task_id,
+                            "task_failed",
+                            actor="system",
+                            summary="Task bị dừng vì executor liên tục kết luận thành công mà không có thay đổi được xác minh.",
+                            step=step,
+                            importance=0.98,
+                            data={"reason": "completion_gate_exhausted"},
+                        )
+                        patch["status"] = "failed"
+                        patch["completion_gate_attempts"] = attempts
+                        return patch
+
                     self.event_bus.emit(
                         task_id,
                         "agent_summary",
@@ -808,6 +867,7 @@ class AgentHarness:
         active_skills = list(state.get("active_skills", []) or [])
         active_tools = self.skill_loader.tools_for_skills(active_skills)
         injected_context = str(state.get("injected_context", "") or "")
+        inspection_evidence = [dict(item) for item in (state.get("inspection_evidence", []) or []) if isinstance(item, dict)]
         step = int(state.get("step_count", 0) or 0)
 
         # HUMAN-IN-THE-LOOP THẬT: ask_user_choice phải interrupt trước mọi
@@ -986,6 +1046,35 @@ class AgentHarness:
                     )
                 continue
 
+            gate_reason = context_gate_reason(
+                name,
+                args,
+                state=state,
+                inspection_evidence=inspection_evidence,
+            )
+            if gate_reason:
+                result = f"Context Gate blocked {name}: {gate_reason}"
+                out_messages.append(ToolMessage(content=result, tool_call_id=call_id))
+                if task_id:
+                    self.event_bus.emit(
+                        task_id,
+                        "context_gate_blocked",
+                        actor="system",
+                        summary="Chưa đủ ngữ cảnh để thực hiện side effect; Eris phải đọc code liên quan trước.",
+                        detail=gate_reason,
+                        step=step,
+                        importance=0.90,
+                        data={"tool": name, "reason": gate_reason},
+                    )
+                    self._emit_coding_state(task_id, {
+                        "phase": "investigating",
+                        "current_action": "Đang bổ sung ngữ cảnh repository trước khi sửa",
+                        "last_tool": name,
+                        "last_summary": gate_reason[:900],
+                        "next_action": "Đọc implementation/caller/dependency liên quan rồi thử lại.",
+                    }, step=step, importance=0.72)
+                continue
+
             if task_id:
                 self.event_bus.emit(
                     task_id,
@@ -1013,6 +1102,18 @@ class AgentHarness:
                     result = self._invoke_tool(name, args, task_id=task_id)
                 text = _tool_result_text(result)
                 out_messages.append(ToolMessage(content=text, tool_call_id=call_id))
+                if tool_result_success(result) and name in {
+                    "project_list_files", "project_read_file", "project_search_text", "project_find_symbol", "project_git_diff"
+                }:
+                    evidence = {"tool": name, "step": step}
+                    if name == "project_read_file":
+                        evidence["path"] = str(args.get("path", "") or "").replace("\\", "/")
+                    elif name == "project_search_text":
+                        evidence["query"] = str(args.get("query", "") or "")[:240]
+                    elif name == "project_find_symbol":
+                        evidence["symbol"] = str(args.get("symbol", "") or "")[:240]
+                    inspection_evidence.append(evidence)
+                    inspection_evidence = inspection_evidence[-120:]
                 if name == "search_capabilities" and task_id:
                     self.event_bus.emit(
                         task_id,
@@ -1079,6 +1180,7 @@ class AgentHarness:
             "active_skills": active_skills,
             "active_tools": active_tools,
             "injected_context": injected_context,
+            "inspection_evidence": inspection_evidence,
             **control_patch,
         }
         if permission_resume_context:
@@ -1192,11 +1294,14 @@ class AgentHarness:
                     data={"chars": len(diff), "diff": diff[:16000]},
                 )
 
-    def _should_continue(self, state: AgentState) -> Literal["tools", "__end__"]:
+    def _should_continue(self, state: AgentState) -> Literal["agent", "tools", "__end__"]:
         if str(state.get("rollback_requested", "") or "").strip():
             return "__end__"
-        if str(state.get("status", "running") or "running") in {"paused", "stopped", "waiting_permission", "waiting_user"}:
+        if str(state.get("status", "running") or "running") in {"paused", "stopped", "failed", "waiting_permission", "waiting_user"}:
             return "__end__"
+        # Completion Gate có thể đẩy một final thiếu evidence quay lại chính agent node.
+        if bool(state.get("completion_gate_retry", False)):
+            return "agent"
         messages = state.get("messages", []) or []
         if not messages:
             return "__end__"
@@ -1210,7 +1315,7 @@ class AgentHarness:
         workflow.add_node("agent", self._agent_node)
         workflow.add_node("tools", self._tool_execution_node)
         workflow.add_edge(START, "agent")
-        workflow.add_conditional_edges("agent", self._should_continue, {"tools": "tools", "__end__": END})
+        workflow.add_conditional_edges("agent", self._should_continue, {"agent": "agent", "tools": "tools", "__end__": END})
         workflow.add_edge("tools", "agent")
         return workflow.compile(checkpointer=self.checkpointer)
 
@@ -1293,10 +1398,89 @@ class AgentHarness:
                 "workspace_name": normalized_workspace_name,
             },
         )
+        repository_context: dict[str, Any] = {
+            "ready": False,
+            "context_pack": "",
+            "resolved_targets": [],
+            "target_files": [],
+            "confidence": 0.0,
+        }
+        if normalized_workspace_path:
+            self.event_bus.emit(
+                task_id,
+                "repository_context_started",
+                actor="system",
+                summary="Đang lập bản đồ toàn repository trước khi thực thi.",
+                importance=0.72,
+                data={"workspace_path": normalized_workspace_path},
+            )
+            self._emit_coding_state(task_id, {
+                "objective": clarified_goal or goal,
+                "phase": "investigating",
+                "current_action": "Đang index cấu trúc, symbol và dependency của workspace",
+                "waiting_for": "",
+                "blocker": "",
+            }, step=0, importance=0.62)
+            try:
+                repository_context = self.repository_context.ensure(
+                    normalized_workspace_path, clarified_goal or goal
+                )
+            except Exception as exc:
+                self.event_bus.emit(
+                    task_id,
+                    "task_failed",
+                    actor="system",
+                    summary=f"Không thể lập Repository Context: {type(exc).__name__}: {exc}",
+                    importance=0.98,
+                    data={"reason": "repository_context_failed"},
+                )
+                raise RuntimeError(f"repository_context_failed:{type(exc).__name__}:{exc}") from exc
+            if not bool(repository_context.get("ready", False)):
+                reason = str(repository_context.get("error", "repository_context_not_ready") or "repository_context_not_ready")
+                self.event_bus.emit(
+                    task_id,
+                    "task_failed",
+                    actor="system",
+                    summary=f"Repository Context chưa sẵn sàng: {reason}",
+                    importance=0.98,
+                    data={"reason": reason},
+                )
+                raise RuntimeError(reason)
+
+            stats = repository_context.get("stats") if isinstance(repository_context.get("stats"), dict) else {}
+            targets = repository_context.get("resolved_targets") if isinstance(repository_context.get("resolved_targets"), list) else []
+            self.event_bus.emit(
+                task_id,
+                "repository_context_ready",
+                actor="system",
+                summary=(
+                    f"Đã lập bản đồ repository: {int(stats.get('files', 0) or 0)} file, "
+                    f"{int(stats.get('symbols', 0) or 0)} symbol; đã ground vùng task liên quan."
+                ),
+                importance=0.78,
+                data={
+                    "files": int(stats.get("files", 0) or 0),
+                    "source_files": int(stats.get("source_files", 0) or 0),
+                    "symbols": int(stats.get("symbols", 0) or 0),
+                    "imports": int(stats.get("imports", 0) or 0),
+                    "changed": int(stats.get("changed", 0) or 0),
+                    "reused": int(stats.get("reused", 0) or 0),
+                    "confidence": float(repository_context.get("confidence", 0.0) or 0.0),
+                    "targets": targets[:8],
+                },
+            )
+            existing_metadata["repository_context"] = {
+                "version": str(repository_context.get("version", "") or ""),
+                "stats": stats,
+                "resolved_targets": targets[:8],
+                "confidence": float(repository_context.get("confidence", 0.0) or 0.0),
+            }
+            self.task_store.update_task(task_id, metadata=existing_metadata)
+
         self._emit_coding_state(task_id, {
             "objective": clarified_goal or goal,
             "phase": "planning",
-            "current_action": "Đang đọc task và chọn bước đầu tiên",
+            "current_action": "Đang lập kế hoạch từ Repository Context đã ground",
             "waiting_for": "",
             "blocker": "",
         }, step=0, importance=0.55)
@@ -1314,6 +1498,13 @@ class AgentHarness:
             "workspace_path": normalized_workspace_path,
             "workspace_name": normalized_workspace_name,
             "ide_context": clean_context,
+            "repository_context": repository_context,
+            "context_ready": bool(repository_context.get("ready", False)) if normalized_workspace_path else True,
+            "resolved_targets": list(repository_context.get("resolved_targets") or []),
+            "context_confidence": float(repository_context.get("confidence", 0.0) or 0.0),
+            "inspection_evidence": [],
+            "completion_gate_retry": False,
+            "completion_gate_attempts": 0,
             "status": "running",
             "messages": [HumanMessage(content=clarified_goal or goal)],
             "active_skills": [],
@@ -1854,6 +2045,8 @@ def _parse_test_counts(output: str, *, success: bool) -> tuple[int, int]:
     if not success and failed == 0:
         failed = 1
     return passed, failed
+
+
 
 
 def _final_result_text(result: Any) -> str:
