@@ -1,0 +1,28 @@
+[
+  {
+    "description": "Auto-format Python files after agent edits them",
+    "event": "PostToolUse",
+    "filter": {
+      "tool": ["write_to_file", "replace_in_file", "apply_diff"],
+      "path": ["**/*.py"]
+    },
+    "command": "python -m black --quiet \"{{input.path}}\" 2>&1 || true"
+  },
+  {
+    "description": "Auto-format TypeScript/JavaScript files after agent edits",
+    "event": "PostToolUse",
+    "filter": {
+      "tool": ["write_to_file", "replace_in_file", "apply_diff"],
+      "path": ["**/*.ts", "**/*.js", "**/*.tsx", "**/*.jsx"]
+    },
+    "command": "npx --yes prettier --write \"{{input.path}}\" 2>&1 || true"
+  },
+  {
+    "description": "Block dangerous shell commands (rm -rf, format, deltree)",
+    "event": "PreToolUse",
+    "filter": {
+      "tool": ["execute_command"]
+    },
+    "command": "echo \"{{input.command}}\" | grep -qiE \"rm -rf /|format [cC]:|deltree\" && exit 2 || exit 0"
+  }
+]

@@ -287,7 +287,90 @@ if os.path.exists(venv_src):
     shutil.copytree(venv_src, venv_dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__", "pip-cache"))
     print("  [OK] .venv deployed")
 
+# ── 4b. Deploy cline-bridge (build truoc, copy ca dist/ + node_modules) ──────
+banner("4b/5  --  Deploy cline-bridge (Cline SDK sidecar)")
+
+cline_src  = os.path.join(REPO, "cline-bridge")
+cline_dst  = os.path.join(OUT,  "cline-bridge")
+
+if os.path.exists(cline_src):
+    # Buoc 1: build TypeScript -> dist/ (phai co node trong PATH)
+    import subprocess
+    node_ok = False
+    try:
+        node_ver = subprocess.check_output(["node", "--version"], stderr=subprocess.STDOUT, cwd=cline_src).decode().strip()
+        print("  [OK] node " + node_ver)
+        node_ok = True
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        print("  [WARN] node not found in PATH -- skipping cline-bridge build step")
+        print("  [INFO] Machine can dich can cai Node.js >= 22")
+
+    if node_ok:
+        print("  Building cline-bridge (npm run build)...")
+        build_result = subprocess.run(
+            ["npm", "run", "build"],
+            cwd=cline_src,
+            capture_output=True,
+            text=True,
+            shell=True,
+        )
+        if build_result.returncode == 0:
+            print("  [OK] cline-bridge build OK")
+        else:
+            print("  [WARN] cline-bridge build exit=" + str(build_result.returncode))
+            print("  " + (build_result.stderr or build_result.stdout)[:400])
+
+    # Buoc 2: copy toan bo cline-bridge sang build (bao gom node_modules + dist)
+    print("  Copying cline-bridge -> build... (190MB node_modules, co the mat 1-2 phut)")
+    shutil.copytree(
+        cline_src, cline_dst,
+        dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns(".git", "__pycache__", "src", "tsconfig.json", "*.ts"),
+    )
+    print("  [OK] cline-bridge deployed (dist/ + node_modules/ + package.json)")
+else:
+    print("  [SKIP] cline-bridge directory not found: " + cline_src)
+
+# ── 4c. Deploy .eris/ (steering files, specs) ────────────────────────────────
+banner("4c/5  --  Deploy .eris/ (steering + specs)")
+
+eris_cfg_src = os.path.join(REPO, ".eris")
+eris_cfg_dst = os.path.join(OUT,  ".eris")
+
+if os.path.exists(eris_cfg_src):
+    shutil.copytree(eris_cfg_src, eris_cfg_dst, dirs_exist_ok=True)
+    # Dem files
+    n_steering = len(list(p for p in (eris_cfg_dst + "/steering").split() if os.path.exists(p))) if False else 0
+    try:
+        n_steering = sum(1 for _ in os.scandir(os.path.join(eris_cfg_dst, "steering"))) if os.path.exists(os.path.join(eris_cfg_dst, "steering")) else 0
+        n_specs    = sum(1 for _ in os.scandir(os.path.join(eris_cfg_dst, "specs")))    if os.path.exists(os.path.join(eris_cfg_dst, "specs"))    else 0
+    except Exception:
+        n_steering = n_specs = 0
+    print("  [OK] .eris/ deployed  (steering files: " + str(n_steering) + "  specs: " + str(n_specs) + ")")
+else:
+    print("  [SKIP] .eris/ not found in repo (se tao moi o may dich khi can)")
+
+# ── 4d. Deploy eris_setup.py + pool scripts ──────────────────────────────────
+banner("4d/5  --  Deploy setup wizard & pool scripts")
+
+ROOT_COPY = [
+    "eris_setup.py",
+    "_setup_gemini_pool_auth.bat",
+    "_start_gemini_pool.bat",
+    "run_gemini_web2api.bat",
+    "run_manager.bat",
+]
+for fn in ROOT_COPY:
+    src_f = os.path.join(REPO, fn)
+    dst_f = os.path.join(OUT, fn)
+    if os.path.exists(src_f):
+        shutil.copy2(src_f, dst_f)
+        print("  [OK] " + fn)
+    else:
+        print("  [SKIP] " + fn + " not found")
+
 # Generate run_eris.bat cho build output (CRLF, dung _start_webai.bat helper)
+
 bat_path     = os.path.join(OUT, "run_eris.bat")
 start_webai  = os.path.join(OUT, "_start_webai.bat")  # da tao o tren
 venv_scripts = os.path.dirname(VENV_PY)
@@ -336,6 +419,16 @@ bat_lines = [
     "    exit /b 1",
     ")",
     "start \"WebAI-to-API\" cmd /k \"%~dp0_start_webai.bat\"",
+    "",
+    ":: Step 1b: Start cline-bridge sidecar",
+    "if exist \"%~dp0cline-bridge\\dist\\bridge.js\" (",
+    "    echo [INFO]  Starting cline-bridge sidecar...",
+    "    start \"Cline Bridge\" cmd /c \"node \"%~dp0cline-bridge\\dist\\bridge.js\"\" ",
+    "    timeout /t 1 /nobreak >nul",
+    ") else (",
+    "    echo [WARN]  cline-bridge not found -- Cline features unavailable",
+    ")",
+    "",
     "",
     ":: Step 2: Wait for server (max 50s)",
     "echo [STEP 2/3] Waiting for server (max 50s)...",
@@ -387,14 +480,15 @@ if not all_deploy_ok:
 banner("5 / 5  --  Sanity check")
 
 must_exist = [
-    os.path.join(OUT, "src",    "vision.py"),
-    os.path.join(OUT, "src",    "actions",  "__init__.pyc"),
-    os.path.join(OUT, "src",    "llm",      "client.pyc"),
-    os.path.join(OUT, "src",    "llm",      "key_pool.pyc"),
-    os.path.join(OUT, "src",    "llm",      "process_manager.pyc"),
-    os.path.join(OUT, "src",    "runtime",  "coordinator.pyc"),
+    os.path.join(OUT, "src",          "vision.py"),
+    os.path.join(OUT, "src",          "actions",  "__init__.pyc"),
+    os.path.join(OUT, "src",          "llm",      "client.pyc"),
+    os.path.join(OUT, "src",          "llm",      "key_pool.pyc"),
+    os.path.join(OUT, "src",          "llm",      "process_manager.pyc"),
+    os.path.join(OUT, "src",          "runtime",  "coordinator.pyc"),
     os.path.join(OUT, ".env"),
-    os.path.join(OUT, "config", "secrets.json"),
+    os.path.join(OUT, "config",       "secrets.json"),
+    os.path.join(OUT, "cline-bridge", "dist",     "bridge.js"),
 ]
 
 all_ok = True

@@ -612,11 +612,7 @@ class RuntimeCoordinator(
                 if supervisor is not None:
                     supervisor.comment(
                         task_id,
-                        (
-                            "Tôi đang theo dõi phiên consult này; Gemini chỉ được inspect, không được sửa workspace."
-                            if str(task_mode or "execute").lower() == "inspect"
-                            else "Tôi đang theo dõi task này. Nếu hướng thực thi phình, lặp lỗi hoặc vá trước khi hiểu root cause, tôi sẽ can thiệp."
-                        ),
+                        "Tôi đang theo dõi task này. Nếu hướng thực thi phình, lặp lỗi hoặc vá trước khi hiểu root cause, tôi sẽ can thiệp.",
                         importance=0.58,
                     )
 
@@ -660,19 +656,144 @@ class RuntimeCoordinator(
 
         def _worker() -> None:
             try:
-                self.execute_agent_task(
-                    goal,
-                    thread_id=resolved_thread,
-                    clarified_goal=clarified_goal,
-                    task_id=task_id,
-                    task_mode=task_mode,
-                    source=source,
-                    session_id=session_id,
-                    workspace_id=workspace_id,
-                    workspace_path=workspace_path,
-                    workspace_name=workspace_name,
-                    ide_context=dict(ide_context or {}),
-                )
+                # --- Load steering files cho workspace ---
+                steering = ""
+                try:
+                    from runtime.agent_harness.steering_loader import load_steering
+                    steering = load_steering(workspace_path) if workspace_path else ""
+                except Exception as _se:
+                    pass
+
+                # --- Detect spec intent ---
+                spec_intent: str | None = None
+                spec_arg: str = ""
+                try:
+                    from runtime.agent_harness.spec_manager import detect_spec_intent
+                    spec_intent, spec_arg = detect_spec_intent(clarified_goal or goal)
+                except Exception:
+                    pass
+
+                # --- Build event relay cho Cline events ---
+                event_bus = getattr(self, "agent_event_bus", None)
+                store = getattr(self, "agent_task_store", None)
+
+                def _relay_cline_event(event: dict) -> None:
+                    """Chuyen Cline bridge event sang Eris agent event store."""
+                    try:
+                        etype = str(event.get("type", "") or "")
+                        payload = event.get("payload", {}) or {}
+
+                        if etype == "message.assistant.delta":
+                            delta = str(payload.get("delta", "") or "")
+                            # Bo qua JSON chunks tu Cline stream
+                            if delta and not delta.startswith("{"):
+                                if store:
+                                    store.append_event(
+                                        task_id, "assistant_delta",
+                                        actor="assistant", summary=delta[:200],
+                                        importance=0.3, data={"delta": delta},
+                                    )
+                        elif etype in ("task_completed", "task_failed"):
+                            final = str(payload.get("final", "") or "")
+                            ev_status = str(payload.get("status", etype) or etype)
+                            if event_bus:
+                                event_bus.emit(
+                                    task_id, "cline_finished",
+                                    actor="cline", summary=final[:300],
+                                    importance=0.95,
+                                    data={"status": ev_status, "final": final},
+                                )
+                        elif etype == "spec.task_start":
+                            if event_bus:
+                                event_bus.emit(
+                                    task_id, "spec_task_start",
+                                    actor="cline",
+                                    summary=f"[{payload.get('task_index')}/{payload.get('task_total')}] {payload.get('task_text', '')}",
+                                    importance=0.7,
+                                    data=payload,
+                                )
+                        elif etype == "spec.task_done":
+                            if event_bus:
+                                event_bus.emit(
+                                    task_id, "spec_task_done",
+                                    actor="cline",
+                                    summary=f"Done: {payload.get('task_text', '')[:120]}",
+                                    importance=0.8,
+                                    data=payload,
+                                )
+                    except Exception:
+                        pass
+
+                # --- Try Cline bridge first ---
+                bridge = getattr(self, "cline_bridge", None)
+                if bridge is None:
+                    try:
+                        from runtime.agent_harness.cline_bridge_client import ClineBridgeClient
+                        bridge = ClineBridgeClient(auto_start=True)
+                        self.cline_bridge = bridge  # cache
+                    except Exception:
+                        bridge = None
+
+                cline_ok = bridge is not None and bridge.is_available()
+
+                if cline_ok and spec_intent == "plan":
+                    # Tao spec file moi
+                    from runtime.agent_harness.spec_manager import create_spec
+                    if store:
+                        store.update_task(task_id, clarified_goal=f"[SPEC] {spec_arg}")
+                    create_spec(
+                        spec_arg, workspace_path, bridge,
+                        on_event=_relay_cline_event,
+                    )
+
+                elif cline_ok and spec_intent == "exec":
+                    # Execute spec co san
+                    from runtime.agent_harness.spec_manager import execute_spec
+                    if store:
+                        store.update_task(task_id, clarified_goal=f"[EXEC SPEC] {spec_arg}")
+                    execute_spec(
+                        spec_arg, workspace_path, bridge,
+                        on_event=_relay_cline_event,
+                        steering_context=steering,
+                    )
+
+                elif cline_ok and spec_intent == "list":
+                    # List specs
+                    from runtime.agent_harness.spec_manager import list_specs
+                    specs = list_specs(workspace_path)
+                    if event_bus:
+                        event_bus.emit(
+                            task_id, "spec_list",
+                            actor="cline", summary=f"{len(specs)} specs found",
+                            importance=0.6, data={"specs": specs},
+                        )
+
+                elif cline_ok:
+                    # Normal task -> Cline
+                    bridge.run_task_blocking(
+                        task_id=task_id,
+                        goal=clarified_goal or goal,
+                        workspace_path=workspace_path,
+                        steering_context=steering,
+                        on_event=_relay_cline_event,
+                    )
+
+                else:
+                    # Fallback: graph_builder
+                    self.execute_agent_task(
+                        goal,
+                        thread_id=resolved_thread,
+                        clarified_goal=clarified_goal,
+                        task_id=task_id,
+                        task_mode=task_mode,
+                        source=source,
+                        session_id=session_id,
+                        workspace_id=workspace_id,
+                        workspace_path=workspace_path,
+                        workspace_name=workspace_name,
+                        ide_context=dict(ide_context or {}),
+                    )
+
             except Exception as exc:
                 logger = getattr(self, "logger", None)
                 warning = getattr(logger, "warning", None)
@@ -997,7 +1118,7 @@ class RuntimeCoordinator(
         if route.action not in {"execute", "consult"}:
             return payload
 
-        task_mode = "inspect" if route.action == "consult" else "execute"
+        task_mode = "execute"
         started = self.start_agent_task_async(
             route.goal or user_text,
             thread_id=turn_id,

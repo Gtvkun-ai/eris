@@ -372,18 +372,13 @@ class AgentHarness:
                 importance=0.34,
             )
 
-        mode_rule = (
-            "INSPECT-ONLY MODE: investigate and report evidence. Do not modify files, run write/control tools, or claim changes were made.\n"
-            if task_mode == "inspect"
-            else "EXECUTION MODE: you may use disclosed tools to inspect, modify, test, and verify within permission policy.\n"
-        )
         sys_msg = SystemMessage(content=(
             "You are the execution specialist inside Eris' unified agent harness.\n"
             "Do not roleplay Eris' social persona. Work on the task, use available tools, "
             "verify results, and expose concise action summaries rather than private reasoning.\n"
             "When the task genuinely needs a user decision, call ask_user_choice with 2-5 concise options instead of inventing a preference. "
             "Do not ask for confirmation for routine reversible work.\n"
-            + mode_rule +
+            "EXECUTION MODE: you may use disclosed tools to inspect, modify, test, and verify within permission policy.\n"
             f"Current Goal: {state.get('goal', '')}\n"
             f"Current Task ID: {task_id or '(none)'}\n"
             f"Locked Workspace: {state.get('workspace_path', '') or '(none)'}\n"
@@ -614,12 +609,9 @@ class AgentHarness:
             for capability, spec_name in ide_rpc_specs.items():
                 if capability in client_caps:
                     specs.append(dict(self.tool_specs[spec_name]))
-        inspect_only = str(task_mode or "execute").strip().lower() == "inspect"
         for name in self.skill_loader.tools_for_skills(list(active_skills)):
             spec = self.tool_specs.get(name)
             if not isinstance(spec, dict):
-                continue
-            if inspect_only and str(spec.get("effect", "") or "").lower() not in {"observe", "inspect", "read"}:
                 continue
             specs.append(dict(spec))
         return specs

@@ -1,18 +1,15 @@
 /**
  * Eris Cline Runtime
  *
- * Tạo và quản lý Cline sessions qua createRuntimeHost() + startSession().
- * Mỗi CodingTask từ Eris Brain → một Cline session.
- * Events được relay về qua callback để bridge.ts forward sang Python.
+ * Tạo Cline sessions qua createRuntimeHost() + startSession().
+ * Provider config được inject trực tiếp vào session (không cần stored settings).
  *
- * API thực tế từ @cline/core 0.0.77:
- *   createRuntimeHost(ClineCoreOptions) → RuntimeHost
- *   host.startSession(StartSessionInput) → StartSessionResult (bao gồm result nếu non-interactive)
- *   host.subscribe(listener) → nhận CoreSessionEvent (chunk | agent_event | session_snapshot | ended | status)
- *   host.runTurn(SendSessionInput) → dùng cho interactive session
- *
- * Phase A: backendMode="local" (in-process, không cần hub daemon)
- * Phase C+: backendMode="hub" (session survive restart)
+ * Verified working config (2026-08-21):
+ *   providerId: 'openai-compatible'
+ *   baseUrl: 'http://localhost:8081/v1'  ← WebAI-to-API proxy
+ *   apiKey: 'webai-proxy'               ← proxy không validate
+ *   enableTools: true
+ *   systemPrompt: required string
  */
 
 import path from 'node:path';
@@ -21,15 +18,19 @@ import { buildSystemPromptInjection } from './context-provider.js';
 import { translateClineEvent, type ErisWsEvent } from './event-relay.js';
 import type { ErisRepoContext, ErisMemoryContext } from './context-provider.js';
 import type { CoreSessionEvent } from '@cline/core';
+import { createHookConfigFileExtension, resolveHooksConfigSearchPaths } from '@cline/core';
+
+// ─── Public types ──────────────────────────────────────────────────────────
 
 export interface CodingTaskInput {
   taskId: string;
   goal: string;
   workspacePath: string;
-  taskMode: 'execute' | 'inspect';
   repoContext?: ErisRepoContext | null;
   memoryContext?: ErisMemoryContext | null;
   model?: string;
+  /** Pool override: WebAI endpoint URL (e.g. http://127.0.0.1:8082/v1) */
+  baseUrl?: string;
 }
 
 export interface CodingTaskResult {
@@ -43,18 +44,56 @@ export interface CodingTaskResult {
 
 export type EventCallback = (event: ErisWsEvent) => void;
 
-/**
- * Resolve data directory cho Cline session storage.
- * Đặt trong ~/.eris/cline-sessions để tách khỏi workspace user.
- */
-function resolveDataDir(): string {
-  return path.join(os.homedir(), '.eris', 'cline-sessions');
+// ─── Provider resolution ────────────────────────────────────────────────────
+
+interface ProviderConfig {
+  /** Cline CoreSessionConfig fields */
+  providerId: string;
+  modelId: string;
+  apiKey: string;
+  baseUrl?: string;
 }
 
 /**
- * Chạy một Cline session cho CodingTask.
- * Trả về Promise<CodingTaskResult> khi agent hoàn tất (hoặc fail).
- * Events được emit realtime qua onEvent callback.
+ * Resolve provider từ env vars.
+ * Default: WebAI-to-API proxy (localhost:8081) — xác thực bằng cookie Google.
+ * Override: đặt ANTHROPIC_API_KEY hoặc GEMINI_API_KEY.
+ */
+function resolveProvider(modelOverride?: string, baseUrlOverride?: string): ProviderConfig {
+  const webaiBase = (baseUrlOverride ?? process.env['ERIS_WEBAI_URL'] ?? 'http://localhost:8081')
+    .replace(/\/v1\/?$/, '');
+  const model = modelOverride
+    ?? process.env['ERIS_CLINE_MODEL']
+    ?? process.env['ERIS_GEMINI_AGENT_MODEL']
+    ?? 'gemini-3-pro';
+
+  if (process.env['ANTHROPIC_API_KEY']) {
+    return {
+      providerId: 'anthropic',
+      modelId: process.env['ERIS_CLINE_MODEL'] ?? 'claude-sonnet-4-5',
+      apiKey: process.env['ANTHROPIC_API_KEY']!,
+    };
+  }
+
+  if (process.env['GEMINI_API_KEY']) {
+    return { providerId: 'gemini', modelId: model, apiKey: process.env['GEMINI_API_KEY']! };
+  }
+
+  // openai-compatible provider voi baseUrl /v1 works voi WebAI proxy
+  return {
+    providerId: 'openai-compatible',
+    modelId: model,
+    apiKey: 'webai-proxy',
+    baseUrl: `${webaiBase}/v1`,
+  };
+}
+
+// ─── Main task runner ───────────────────────────────────────────────────────
+
+/**
+ * Chạy một CodingTask qua Cline agent loop.
+ * Trả về CodingTaskResult khi agent hoàn tất, fail, hoặc stopped.
+ * Events được emit realtime qua onEvent.
  */
 export async function runCodingTask(
   input: CodingTaskInput,
@@ -62,53 +101,45 @@ export async function runCodingTask(
 ): Promise<CodingTaskResult> {
   const startMs = Date.now();
 
-  // Lazy import
+  // Lazy import — đảm bảo @cline/core có sẵn
   let createRuntimeHost: (typeof import('@cline/core'))['createRuntimeHost'];
   try {
     const mod = await import('@cline/core');
     createRuntimeHost = mod.createRuntimeHost;
   } catch (err) {
-    throw new Error(
-      `@cline/core not available. Run: npm install inside cline-bridge/\nOriginal: ${err}`,
-    );
+    throw new Error(`@cline/core unavailable. Run: npm install in cline-bridge/\n${err}`);
   }
 
-  // Build system prompt từ Eris context
+  // Build system prompt
   const contextInjection = buildSystemPromptInjection(
     input.repoContext ?? null,
     input.memoryContext ?? null,
   );
-
-  const modeInstruction =
-    input.taskMode === 'inspect'
-      ? 'INSPECT-ONLY MODE: read, analyze, and explain. Do NOT modify any files.'
-      : 'EXECUTION MODE: you may read, modify, run commands, and verify.';
-
-  const customInstructions = [
-    'You are a coding specialist working inside the Eris system.',
-    'Do NOT roleplay Eris\'s personality. Focus on the task.',
-    modeInstruction,
-    '',
+  const systemPrompt = [
+    'You are a coding specialist inside the Eris system.',
+    'Do NOT roleplay as Eris. Focus on the technical task.',
+    'You may use all available tools to read, modify, run commands, and verify.',
     contextInjection,
-  ]
-    .filter(Boolean)
-    .join('\n');
+  ].filter(Boolean).join('\n\n');
 
-  // Tạo RuntimeHost với local in-process backend
+  // Resolve provider — pool co the override ca model lan base URL
+  const provider = resolveProvider(input.model, input.baseUrl);
+
+  // Create RuntimeHost (local in-process)
   const host = await createRuntimeHost({
     clientName: 'eris-cline-bridge',
     backendMode: 'local',
-    dataDir: resolveDataDir(),
   } as Parameters<typeof createRuntimeHost>[0]);
 
+  // State
   const changedFiles: string[] = [];
   let finalText = '';
-  let taskStatus: 'completed' | 'failed' | 'stopped' = 'completed';
+  let taskStatus: CodingTaskResult['status'] = 'completed';
   let resolvedSessionId = '';
 
-  // Subscribe events TRƯỚC khi startSession
+  // Subscribe events TRƯỚC startSession
   const unsubscribe = host.subscribe((event: CoreSessionEvent) => {
-    const sessionId = resolvedSessionId;
+    const sid = resolvedSessionId;
 
     if (event.type === 'chunk') {
       const chunk = event.payload.chunk ?? '';
@@ -117,37 +148,32 @@ export async function runCodingTask(
           type: 'message.assistant.delta',
           taskId: input.taskId,
           eventId: `chunk_${Date.now()}`,
-          payload: { delta: chunk, sessionId },
+          payload: { delta: chunk, sessionId: sid },
           timestamp: new Date().toISOString(),
         });
       }
     } else if (event.type === 'agent_event') {
       const agentEvent = event.payload.event as Record<string, unknown>;
-      const agentEventName = String(agentEvent?.['name'] ?? '');
+      const name = String(agentEvent?.['name'] ?? '');
 
-      if (agentEventName === 'tool_call') {
+      if (name === 'tool_call') {
         const toolName = String(agentEvent?.['toolName'] ?? 'tool');
         const relayed = translateClineEvent('tool_start', { name: toolName }, input.taskId);
         if (relayed) onEvent(relayed);
-      } else if (agentEventName === 'tool_result') {
+      } else if (name === 'tool_result') {
         const toolName = String(agentEvent?.['toolName'] ?? 'tool');
-        const isError = Boolean(agentEvent?.['isError']);
-        const relayed = translateClineEvent(
-          'tool_finish',
-          { name: toolName, error: isError ? 'tool_error' : null },
-          input.taskId,
-        );
+        const isErr = Boolean(agentEvent?.['isError']);
+        const relayed = translateClineEvent('tool_finish', { name: toolName, error: isErr ? 'tool_error' : null }, input.taskId);
         if (relayed) onEvent(relayed);
-      } else if (agentEventName === 'agent_end') {
+      } else if (name === 'agent_end') {
         finalText = String(agentEvent?.['result'] ?? finalText);
       }
     } else if (event.type === 'status') {
-      const status = String(event.payload.status ?? '');
       onEvent({
         type: 'task.status',
         taskId: input.taskId,
         eventId: `status_${Date.now()}`,
-        payload: { status, sessionId },
+        payload: { status: event.payload.status, sessionId: sid },
         timestamp: new Date().toISOString(),
       });
     } else if (event.type === 'ended') {
@@ -157,29 +183,45 @@ export async function runCodingTask(
   });
 
   try {
-    // Cấu hình session
-    const startInput = {
+    const result = await host.startSession({
       config: {
         cwd: input.workspacePath,
-        customInstructions,
-        // Dùng model từ stored provider settings nếu không chỉ định
-        ...(input.model ? { model: input.model } : {}),
+        // Provider — verified working with WebAI-to-API proxy
+        providerId: provider.providerId,
+        modelId: provider.modelId,
+        apiKey: provider.apiKey,
+        ...(provider.baseUrl ? { baseUrl: provider.baseUrl } : {}),
+        // System prompt — required by CoreSessionConfig
+        systemPrompt,
+        // Runtime features
+        enableTools: true,
+        enableSpawnAgent: false,
+        enableAgentTeams: false,
+        // Disable checkpoint de tranh git dependency
+        checkpoint: { enabled: false },
       },
+      // Hooks: SDK tu doc .eris/hooks/*.json, tu chay shell command
+      extensions: [
+        createHookConfigFileExtension({
+          searchPaths: resolveHooksConfigSearchPaths([
+            path.join(input.workspacePath, '.eris', 'hooks'),
+          ]),
+        }),
+      ],
       prompt: input.goal,
-      interactive: false, // non-interactive: chạy đến khi xong tự động
+      interactive: false,
       source: 'eris' as const,
-    };
+    } as Parameters<typeof host.startSession>[0]);
 
-    const result = await host.startSession(startInput as Parameters<typeof host.startSession>[0]);
     resolvedSessionId = result.sessionId;
 
-    // Đọc session kết quả cuối cùng nếu có
+    // Lấy kết quả cuối từ AgentResult
     if (result.result) {
-      const agentResult = result.result as Record<string, unknown>;
-      finalText = String(agentResult['text'] ?? agentResult['result'] ?? finalText);
+      const r = result.result as Record<string, unknown>;
+      finalText = String(r['text'] ?? r['result'] ?? finalText);
     }
 
-    // Đọc messages để tìm changed files
+    // Scan messages để tìm file thay đổi
     try {
       const messages = await host.readSessionMessages(result.sessionId);
       for (const msg of messages) {
@@ -191,12 +233,12 @@ export async function runCodingTask(
         }
       }
     } catch {
-      // Non-critical
+      // non-critical
     }
 
     taskStatus = 'completed';
-    translateClineEvent('agent_done', { result: finalText }, input.taskId);
-    onEvent(translateClineEvent('agent_done', { result: finalText }, input.taskId)!);
+    const doneEvent = translateClineEvent('agent_done', { result: finalText }, input.taskId);
+    if (doneEvent) onEvent(doneEvent);
   } catch (err) {
     taskStatus = 'failed';
     finalText = String(err);
@@ -204,11 +246,7 @@ export async function runCodingTask(
     if (failEvent) onEvent(failEvent);
   } finally {
     unsubscribe();
-    try {
-      await host.dispose();
-    } catch {
-      // ignore dispose errors
-    }
+    try { await host.dispose(); } catch { /* ignore */ }
   }
 
   return {

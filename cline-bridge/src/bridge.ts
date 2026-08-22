@@ -115,8 +115,6 @@ const server = http.createServer(async (req, res) => {
     const taskId = String(body['task_id'] ?? `cline_${Date.now()}`);
     const goal = String(body['goal'] ?? '');
     const workspacePath = String(body['workspace_path'] ?? process.cwd());
-    const taskMode = String(body['task_mode'] ?? 'execute') as 'execute' | 'inspect';
-
     if (!goal) {
       json(res, 400, { error: 'goal required' });
       return;
@@ -126,10 +124,11 @@ const server = http.createServer(async (req, res) => {
       taskId,
       goal,
       workspacePath,
-      taskMode,
       repoContext: (body['repo_context'] as CodingTaskInput['repoContext']) ?? null,
       memoryContext: (body['memory_context'] as CodingTaskInput['memoryContext']) ?? null,
       model: body['model'] ? String(body['model']) : undefined,
+      // Pool routing: Python truyen base_url cu the (e.g. http://127.0.0.1:8082/v1)
+      baseUrl: body['base_url'] ? String(body['base_url']) : undefined,
     };
 
     const record: TaskRecord = {

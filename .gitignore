@@ -51,3 +51,10 @@ Thumbs.db
 # Third-party tools
 tools/WebAI-to-API/
 tools/WebAI-to-API-2/
+
+# cline-bridge build artifacts (node_modules + compiled dist)
+cline-bridge/node_modules/
+cline-bridge/dist/
+
+# Eris runtime data (specs duoc tao ra, khong phai steering)
+.eris/specs/

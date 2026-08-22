@@ -160,9 +160,7 @@ class IncomingProtocolRuntimeMixin:
                 starter = getattr(self, "start_agent_task_async", None)
                 if not callable(starter):
                     raise RuntimeError("agent_task_starter_unavailable")
-                task_mode = str(msg.get("task_mode", "execute") or "execute").strip().lower()
-                if task_mode not in {"execute", "inspect"}:
-                    task_mode = "execute"
+                task_mode = "execute"
                 model = str(msg.get("model", "") or "").strip()
                 started = starter(
                     text,
@@ -176,11 +174,7 @@ class IncomingProtocolRuntimeMixin:
                 if str(started.get("status", "") or "") != "started":
                     raise RuntimeError(str(started.get("reason", "agent_task_start_failed") or "agent_task_start_failed"))
                 selected_task_id = str(started.get("task_id", "") or "")
-                message = (
-                    "Đã giao phiên inspect mới cho Gemini."
-                    if task_mode == "inspect"
-                    else "Đã giao task mới cho Gemini."
-                )
+                message = "Đã giao task mới cho Gemini."
             elif action in {"pause", "resume", "stop", "rollback", "directive", "choice"}:
                 if not task_id:
                     raise ValueError("task_id_required")

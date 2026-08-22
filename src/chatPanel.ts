@@ -120,7 +120,7 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
         }
         await this.client.sendUserMessage(content, {
           threadId: this.threadId,
-          taskMode: message.taskMode === 'inspect' ? 'inspect' : 'execute',
+          taskMode: 'execute',
           workspaceRef: currentWorkspaceRef(),
           context: await this.ideContext(),
         });
@@ -319,7 +319,7 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
     <footer class="composer-wrap">
       <div class="composer">
         <textarea id="input" placeholder="Giao task, hỏi về code, hoặc yêu cầu Eris kiểm tra workspace…"></textarea>
-        <div class="composer-bar"><select id="mode"><option value="execute">Execute</option><option value="inspect">Inspect only</option></select><button id="pause">Pause</button><button id="resume">Resume</button><button id="rollback">Rollback</button><button id="stop">Stop</button><span class="spacer"></span><button id="send" class="send">Send</button></div>
+        <div class="composer-bar"><button id="pause">Pause</button><button id="resume">Resume</button><button id="rollback">Rollback</button><button id="stop">Stop</button><span class="spacer"></span><button id="send" class="send">Send</button></div>
       </div>
     </footer>
   </div>
@@ -441,7 +441,7 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
     if (event.type==='artifact.diff') { addActivity({taskId:event.taskId,type:'activity.diff',payload:{label:event.payload?.summary??'Đã đọc Git diff',status:'completed'}}); return; }
     if (event.type==='editor.result') { addActivity({taskId:event.taskId,type:'activity.editor',payload:{label:event.payload?.message??event.payload?.command??'VS Code command',status:event.payload?.success?'completed':'failed'}}); }
   }
-  function send() { const content=input.value.trim(); if(!content)return; input.value=''; streamNode=null; vscode.postMessage({type:'sendMessage',content,taskMode:document.getElementById('mode').value}); }
+  function send() { const content=input.value.trim(); if(!content)return; input.value=''; streamNode=null; vscode.postMessage({type:'sendMessage',content,taskMode:'execute'}); }
   function control(action) { if(activeTaskId)vscode.postMessage({type:'task.control',taskId:activeTaskId,action}); }
   document.getElementById('send').onclick=send;
   document.getElementById('newChat').onclick=()=>vscode.postMessage({type:'newChat'});

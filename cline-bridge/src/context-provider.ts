@@ -9,16 +9,18 @@
  */
 
 export interface ErisRepoContext {
-  /** Cây file structure, dependencies, main entry points */
+  /** Cay file structure, dependencies, main entry points */
   context_pack: string;
-  /** Resolved paths từ fuzzy path resolution */
+  /** Resolved paths tu fuzzy path resolution */
   resolved_targets?: string[];
-  /** Confidence score của context (0.0–1.0) */
+  /** Confidence score cua context (0.0-1.0) */
   confidence?: number;
   /** Workspace root path */
   workspace_path?: string;
-  /** Timestamp context được tạo */
+  /** Timestamp context duoc tao */
   generated_at?: string;
+  /** Steering files content (.eris/steering/*.md) */
+  steering?: string;
 }
 
 export interface ErisMemoryContext {
@@ -37,6 +39,15 @@ export function buildSystemPromptInjection(
   memoryCtx: ErisMemoryContext | null,
 ): string {
   const parts: string[] = [];
+
+  // Steering files inject truoc tiet (cao nhat trong context)
+  if (repoCtx?.steering?.trim()) {
+    parts.push(
+      '--- PROJECT STEERING (persistent rules, always follow) ---',
+      repoCtx.steering.trim(),
+      '--- END STEERING ---',
+    );
+  }
 
   if (repoCtx?.context_pack) {
     parts.push(
