@@ -293,6 +293,35 @@ banner("4b/5  --  Deploy cline-bridge (Cline SDK sidecar)")
 cline_src  = os.path.join(REPO, "cline-bridge")
 cline_dst  = os.path.join(OUT,  "cline-bridge")
 
+def try_copy_f(src, dst):
+    if os.path.exists(src):
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy2(src, dst)
+        print("  [OK] " + os.path.basename(dst))
+
+f_copy = [
+    "package.json"
+]
+for n in f_copy:
+    try_copy_f(os.path.join(REPO, "cline-bridge", n), os.path.join(OUT, "cline-bridge", n))
+
+# ── 4e. Deploy Assets & Voice Presets ────────────────────────────────────────
+banner("4e/5  --  Deploy Assets & Voice Presets")
+def _copy_heavy_dir(dirname: str) -> None:
+    src_dir = os.path.join(REPO, dirname)
+    dst_dir = os.path.join(OUT, dirname)
+    if os.path.exists(src_dir):
+        print(f"  Copying {dirname}/ -> build...")
+        if os.path.exists(dst_dir):
+            shutil.rmtree(dst_dir, onerror=remove_readonly)
+        shutil.copytree(src_dir, dst_dir, dirs_exist_ok=True, ignore=shutil.ignore_patterns(".git", "*.pyc"))
+        print(f"  [OK] {dirname}/ deployed")
+    else:
+        print(f"  [SKIP] {dirname}/ not found")
+
+_copy_heavy_dir("asset")
+_copy_heavy_dir("voice_presets")
+
 if os.path.exists(cline_src):
     # Buoc 1: build TypeScript -> dist/ (phai co node trong PATH)
     import subprocess
@@ -358,7 +387,15 @@ ROOT_COPY = [
     "_setup_gemini_pool_auth.bat",
     "_start_gemini_pool.bat",
     "run_gemini_web2api.bat",
-    "run_manager.bat",
+    "install_live2d_body.bat",
+    "requirements-live2d.txt",
+    "setup_tutor_browser.bat",
+    "tutor_login.bat",
+    "tutor_login.py",
+    "run_elevenlabs_pool_ui.bat",
+    "run_doctor.bat",
+    "run_smoke_test.bat",
+    "run_runtime.bat",
 ]
 for fn in ROOT_COPY:
     src_f = os.path.join(REPO, fn)

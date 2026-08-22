@@ -196,6 +196,27 @@ def install_dependencies() -> None:
         run(["node", "esbuild.js"], cwd=ext_dir)
         print(ok("VS Code extension built"))
 
+    # Live2D Dependencies
+    live2d_bat = ROOT / "install_live2d_body.bat"
+    if live2d_bat.exists():
+        print(info("Installing Live2D Python dependencies..."))
+        # Run it quietly, capturing output unless it fails
+        res = run(["cmd", "/c", str(live2d_bat)], cwd=ROOT, capture=True)
+        if res.returncode == 0:
+            print(ok("Live2D dependencies installed"))
+        else:
+            print(err("Live2D install failed. Output:\n" + res.stdout + res.stderr))
+            
+    # Tutor Browser Setup
+    tutor_bat = ROOT / "setup_tutor_browser.bat"
+    if tutor_bat.exists():
+        print(info("Installing Tutor Playwright Browser... (may take 1-2 mins)"))
+        res = run(["cmd", "/c", str(tutor_bat)], cwd=ROOT, capture=True)
+        if res.returncode == 0:
+            print(ok("Tutor Browser Chromium installed"))
+        else:
+            print(err("Tutor Browser install failed. Output:\n" + res.stdout + res.stderr))
+
     update_state("dependencies", {"done": True, "ts": time.time()})
     print()
     print(ok("Dependencies installed!"))
@@ -374,10 +395,29 @@ def setup_tts() -> None:
     print(ok("TTS setup done"))
 
 
-# ── 6. Full Build ─────────────────────────────────────────────────────────────
+# ── 6. Setup Tutor Auth ───────────────────────────────────────────────────────
+
+def setup_tutor() -> None:
+    banner("6 / 7 — Setup Tutor Auth (Playwright)")
+    tutor_dir = ROOT
+    tutor_bat = tutor_dir / "tutor_login.bat"
+
+    if tutor_bat.exists():
+        print(info("Running tutor_login.bat to authenticate..."))
+        print(info("Chung ta se mo Chromium de dang nhap. Hay doi den khi thay 'Saved state to tutor.json'."))
+        subprocess.run(["cmd", "/c", str(tutor_bat)], cwd=tutor_dir)
+        update_state("tutor_auth", {"ts": time.time()})
+        print()
+        print(ok("Tutor Auth setup done"))
+    else:
+        print(err("tutor_login.bat khong tim thay!"))
+        pause()
+
+
+# ── 7. Full Build ─────────────────────────────────────────────────────────────
 
 def full_build() -> None:
-    banner("6 / 6 — Full Build -> " + str(BUILD_OUT))
+    banner("7 / 7 — Full Build -> " + str(BUILD_OUT))
     print(info(f"Output: {BUILD_OUT}"))
     print(warn("Qua trinh nay mat 5-10 phut (copy .venv, node_modules, etc.)"))
     ch = input("\nBat dau build? [y/n]: ").strip().lower()
@@ -556,26 +596,28 @@ def main_menu() -> None:
         print(f"  [3] Setup DeepSeek accounts     {_status_tag('deepseek')}")
         print(f"  [4] Setup Gemini pool           {_status_tag('gemini_pool')}")
         print(f"  [5] Setup TTS (ElevenLabs)      {_status_tag('tts')}")
-        print(f"  [6] Full build -> {str(BUILD_OUT)[:25]}")
+        print(f"  [6] Setup Tutor Auth            {_status_tag('tutor_auth')}")
+        print(f"  [7] Full build -> {str(BUILD_OUT)[:25]}")
         print()
         print(f"  {BOLD}SERVICES{RESET}")
-        print(f"  [7] Start all services")
-        print(f"  [8] Health dashboard (live)")
-        print(f"  [9] Stop all")
+        print(f"  [8] Start all services")
+        print(f"  [9] Health dashboard (live)")
+        print(f"  [s] Stop all")
         print()
         print(f"  [0] Exit")
         print()
 
-        ch = input("Chon: ").strip()
+        ch = input("Chon: ").strip().lower()
         if ch == "1":   check_requirements()
         elif ch == "2": install_dependencies()
         elif ch == "3": setup_deepseek()
         elif ch == "4": setup_gemini_pool()
         elif ch == "5": setup_tts()
-        elif ch == "6": full_build()
-        elif ch == "7": start_all()
-        elif ch == "8": health_dashboard()
-        elif ch == "9": stop_all()
+        elif ch == "6": setup_tutor()
+        elif ch == "7": full_build()
+        elif ch == "8": start_all()
+        elif ch == "9": health_dashboard()
+        elif ch == "s": stop_all()
         elif ch == "0": break
         else:
             print(warn("Lua chon khong hop le"))
