@@ -22,6 +22,7 @@ import sys
 import threading
 import time
 import urllib.request
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -51,9 +52,6 @@ BUILD_OUT = Path(r"C:\Users\Gtvkun\Documents\eris")
 # Service ports
 PORTS = {
     "whale2api":    9090,
-    "webai_1":      8081,
-    "webai_2":      8082,
-    "webai_3":      8083,
     "cline_bridge": 7832,
     "tts_pool":     9091,
 }
@@ -256,91 +254,12 @@ def setup_deepseek() -> None:
         email = input("Email DeepSeek: ").strip()
         pwd   = input("Password: ").strip()
         if email and pwd:
-            accounts_file.parent.mkdir(parents=True, exist_ok=True)
-            with accounts_file.open("a", encoding="utf-8") as f:
-                f.write(f"\n{email},{pwd}")
-            print(ok(f"Da them: {email}"))
-            update_state("deepseek", {"accounts_file": str(accounts_file), "ts": time.time()})
+            with open(accounts_file, "a") as f:
+                f.write(f"{email},{pwd}\n")
+            print(ok("Da them vao accounts.csv"))
     elif ch == "v":
-        # Start whale2api briefly va test /models
-        print(info("Khoi dong whale2api de test..."))
-        proc = subprocess.Popen([str(exe)], cwd=whale_dir,
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(3)
-        alive = port_listening(PORTS["whale2api"])
-        proc.terminate()
-        print(ok(f"whale2api :9090 alive") if alive else err("whale2api khong start duoc"))
-
-    print()
-    print(ok("DeepSeek setup done"))
-
-
-# ── 4. Setup Gemini Playwright Pool ──────────────────────────────────────────
-
-def setup_gemini_pool() -> None:
-    banner("4 / 6 — Setup Gemini Playwright Pool (Code Executor)")
-    webai_dir  = ROOT / "tools" / "WebAI-to-API"
-    auth_base  = webai_dir / "runtime"
-    verify_py  = webai_dir / "verify_login.py"
-
-    if not webai_dir.exists():
-        print(err("tools/WebAI-to-API khong tim thay"))
-        pause()
-        return
-
-    # Quet cac slot hien co
-    slots = []
-    for d in sorted(auth_base.glob("auth-*")):
-        gem_json = d / "gemini.json"
-        slots.append({"dir": d, "name": d.name, "ok": gem_json.exists()})
-
-    print(f"Slots hien co: {len(slots)}")
-    for s in slots:
-        tag = ok(s["name"]) if s["ok"] else err(s["name"] + " (thieu gemini.json)")
-        print(f"   {tag}")
-
-    print()
-    print("Options:")
-    print("  [a] Them account moi (mo Chrome -> login -> luu auth)")
-    print("  [d] Xoa slot")
-    print("  [s] Skip")
-    ch = input("Chon: ").strip().lower()
-
-    if ch == "a":
-        next_slot = 1
-        existing_nums = []
-        for s in slots:
-            try:
-                existing_nums.append(int(s["name"].replace("auth-", "")))
-            except ValueError:
-                pass
-        while next_slot in existing_nums:
-            next_slot += 1
-
-        auth_dir = auth_base / f"auth-{next_slot}"
-        auth_dir.mkdir(parents=True, exist_ok=True)
-
-        print(info(f"Slot: auth-{next_slot} -> {auth_dir}"))
-        print(info("Se mo Chrome. Dang nhap Google account roi dong cua so."))
-        pause("Enter de bat dau...")
-
-        env = {**os.environ, "PLAYWRIGHT_AUTH_STATE_DIR": str(auth_dir)}
-        subprocess.run([str(VENV_PY), str(verify_py)], cwd=webai_dir, env=env)
-
-        gem_json = auth_dir / "gemini.json"
-        if gem_json.exists():
-            print(ok(f"auth-{next_slot} saved!"))
-        else:
-            print(warn("gemini.json khong duoc tao. Kiem tra lai login."))
-
-    elif ch == "d":
-        name = input("Ten slot can xoa (vi du: auth-2): ").strip()
-        target = auth_base / name
-        if target.exists():
-            shutil.rmtree(target)
-            print(ok(f"Da xoa: {name}"))
-        else:
-            print(warn(f"Khong tim thay: {name}"))
+        print("Chay poolui.exe ...")
+        subprocess.run([str(whale_dir / "poolui.exe")], cwd=whale_dir)
 
     # Cap nhat pool endpoints file
     _write_pool_endpoints()
@@ -414,10 +333,96 @@ def setup_tutor() -> None:
         pause()
 
 
-# ── 7. Full Build ─────────────────────────────────────────────────────────────
+# ── 7. Create Portable Python Runtime ─────────────────────────────────────────
+
+def create_portable_python() -> None:
+    banner("7 / 8 — Create Portable Python Runtime")
+    portable_dir = ROOT / "portable_python"
+    
+    if portable_dir.exists():
+        print(info(f"Thu muc {portable_dir.name} da ton tai. Dang xoa de tai lai..."))
+        try:
+            shutil.rmtree(portable_dir)
+        except Exception as e:
+            print(err(f"Khong the xoa thu muc cu: {e}"))
+            return
+            
+    portable_dir.mkdir(parents=True, exist_ok=True)
+    
+    python_version = "3.12.5"
+    zip_url = f"https://www.python.org/ftp/python/{python_version}/python-{python_version}-embed-amd64.zip"
+    zip_path = portable_dir / "python.zip"
+    
+    print(info(f"Dang tai Python {python_version} Embeddable..."))
+    try:
+        urllib.request.urlretrieve(zip_url, str(zip_path))
+        print(ok("Tai xong Python."))
+    except Exception as e:
+        print(err(f"Loi tai Python: {e}"))
+        return
+        
+    print(info("Dang giai nen..."))
+    try:
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(portable_dir)
+        zip_path.unlink()
+        print(ok("Giai nen thanh cong."))
+    except Exception as e:
+        print(err(f"Loi giai nen: {e}"))
+        return
+        
+    print(info("Dang cau hinh python312._pth (bat import site)..."))
+    pth_file = portable_dir / "python312._pth"
+    if pth_file.exists():
+        content = pth_file.read_text(encoding="utf-8")
+        content = content.replace("#import site", "import site")
+        pth_file.write_text(content, encoding="utf-8")
+        print(ok("Da bat import site."))
+    else:
+        print(warn("Khong tim thay file python312._pth"))
+        
+    print(info("Dang tai get-pip.py..."))
+    get_pip_url = "https://bootstrap.pypa.io/get-pip.py"
+    get_pip_path = portable_dir / "get-pip.py"
+    try:
+        urllib.request.urlretrieve(get_pip_url, str(get_pip_path))
+        print(ok("Tai xong get-pip.py."))
+    except Exception as e:
+        print(err(f"Loi tai get-pip.py: {e}"))
+        return
+        
+    python_exe = portable_dir / "python.exe"
+    
+    print(info("Dang cai dat pip..."))
+    res = subprocess.run([str(python_exe), str(get_pip_path)], cwd=portable_dir, capture_output=True, text=True)
+    if res.returncode == 0:
+        print(ok("Cai dat pip thanh cong."))
+    else:
+        print(err("Cai dat pip that bai:\n" + res.stdout + "\n" + res.stderr))
+        return
+        
+    req_file = ROOT / "requirements.txt"
+    if req_file.exists():
+        print(info("Dang cai dat thu vien tu requirements.txt... (Co the mat vai phut)"))
+        cmd = [str(python_exe), "-m", "pip", "install", "-r", str(req_file)]
+        res = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
+        if res.returncode == 0:
+            print(ok("Da cai dat xong tat ca thu vien."))
+        else:
+            print(err("Loi khi cai thu vien:\n" + res.stdout[-1000:] + "\n" + res.stderr[-1000:]))
+            return
+    else:
+        print(warn("Khong tim thay requirements.txt, bo qua cai thu vien."))
+        
+    update_state("portable_python", {"ts": time.time(), "version": python_version})
+    print()
+    print(ok("Portable Python Runtime da san sang!"))
+
+
+# ── 8. Full Build ─────────────────────────────────────────────────────────────
 
 def full_build() -> None:
-    banner("7 / 7 — Full Build -> " + str(BUILD_OUT))
+    banner("8 / 8 — Full Build -> " + str(BUILD_OUT))
     print(info(f"Output: {BUILD_OUT}"))
     print(warn("Qua trinh nay mat 5-10 phut (copy .venv, node_modules, etc.)"))
     ch = input("\nBat dau build? [y/n]: ").strip().lower()
@@ -459,25 +464,6 @@ def start_all() -> None:
         _procs.append(p)
         time.sleep(2)
 
-    # Gemini pool
-    auth_base = webai_dir / "runtime"
-    slots = sorted(d for d in auth_base.glob("auth-*") if (d / "gemini.json").exists())
-    port = 8081
-    for slot_dir in slots:
-        if not port_listening(port):
-            print(info(f"Starting WebAI {slot_dir.name} on :{port}..."))
-            env = {**os.environ,
-                   "PLAYWRIGHT_AUTH_STATE_DIR": str(slot_dir),
-                   "PLAYWRIGHT_HEADLESS": "true"}
-            p = subprocess.Popen(
-                [str(VENV_PY), "src/run.py", "--host", "127.0.0.1", "--port", str(port)],
-                cwd=webai_dir, env=env,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            _procs.append(p)
-        else:
-            print(ok(f"WebAI :{port} already running"))
-        port += 1
-
     # cline-bridge
     bridge_js = ROOT / "cline-bridge" / "dist" / "bridge.js"
     if bridge_js.exists() and not port_listening(PORTS["cline_bridge"]):
@@ -507,9 +493,6 @@ def stop_all() -> None:
 
 SERVICES = [
     ("whale2api  (Brain)",    "whale2api",    PORTS["whale2api"],    f"http://127.0.0.1:{PORTS['whale2api']}/v1/models"),
-    ("WebAI-1   (Gemini 1)",  "webai_1",      PORTS["webai_1"],     f"http://127.0.0.1:{PORTS['webai_1']}/v1/models"),
-    ("WebAI-2   (Gemini 2)",  "webai_2",      PORTS["webai_2"],     f"http://127.0.0.1:{PORTS['webai_2']}/v1/models"),
-    ("WebAI-3   (Gemini 3)",  "webai_3",      PORTS["webai_3"],     f"http://127.0.0.1:{PORTS['webai_3']}/v1/models"),
     ("Cline Bridge",          "cline_bridge", PORTS["cline_bridge"], f"http://127.0.0.1:{PORTS['cline_bridge']}/health"),
     ("TTS Pool",              "tts_pool",     PORTS["tts_pool"],    f"http://127.0.0.1:{PORTS['tts_pool']}/health"),
 ]
@@ -594,9 +577,9 @@ def main_menu() -> None:
         print(f"  [1] Check requirements          {_status_tag('requirements')}")
         print(f"  [2] Install dependencies        {_status_tag('dependencies')}")
         print(f"  [3] Setup DeepSeek accounts     {_status_tag('deepseek')}")
-        print(f"  [4] Setup Gemini pool           {_status_tag('gemini_pool')}")
-        print(f"  [5] Setup TTS (ElevenLabs)      {_status_tag('tts')}")
-        print(f"  [6] Setup Tutor Auth            {_status_tag('tutor_auth')}")
+        print(f"  [4] Setup TTS (ElevenLabs)      {_status_tag('tts')}")
+        print(f"  [5] Setup Tutor Auth            {_status_tag('tutor_auth')}")
+        print(f"  [6] Create Portable Python      {_status_tag('portable_python')}")
         print(f"  [7] Full build -> {str(BUILD_OUT)[:25]}")
         print()
         print(f"  {BOLD}SERVICES{RESET}")
@@ -611,9 +594,9 @@ def main_menu() -> None:
         if ch == "1":   check_requirements()
         elif ch == "2": install_dependencies()
         elif ch == "3": setup_deepseek()
-        elif ch == "4": setup_gemini_pool()
-        elif ch == "5": setup_tts()
-        elif ch == "6": setup_tutor()
+        elif ch == "4": setup_tts()
+        elif ch == "5": setup_tutor()
+        elif ch == "6": create_portable_python()
         elif ch == "7": full_build()
         elif ch == "8": start_all()
         elif ch == "9": health_dashboard()

@@ -71,6 +71,13 @@ if cur != exp:
 
 print("[OK] Python " + sys.version.split()[0] + "  --  " + sys.executable)
 
+ch = input("\nBat dau build? [y/n]: ").strip().lower()
+if ch != 'y':
+    print("Huy build.")
+    sys.exit(0)
+
+is_debug = input("Build ban Debug (Giu nguyen ma nguon .py)? [y/n]: ").strip().lower() == 'y'
+
 # ── 1. Xoa src/ cu, copy moi tu repo ─────────────────────────────────────────
 banner("1 / 5  --  Copy src/ tu repo")
 
@@ -102,29 +109,37 @@ n_py_before = count_ext(src_build, ".py")
 print("  File .py truoc compile: " + str(n_py_before))
 
 # ── 2. Compile TOAN BO .py -> .pyc (legacy: .pyc dat canh .py) ───────────────
-banner("2 / 5  --  Compile .py -> .pyc  [Python " + sys.version.split()[0] + "]")
+if not is_debug:
+    banner("2 / 5  --  Compile .py -> .pyc  [Python " + sys.version.split()[0] + "]")
 
-import importlib.util
-exp_magic = importlib.util.MAGIC_NUMBER[:2]
-print("  Magic bytes (venv " + sys.version.split()[0] + "): " + exp_magic.hex().upper())
+    import importlib.util
+    exp_magic = importlib.util.MAGIC_NUMBER[:2]
+    print("  Magic bytes (venv " + sys.version.split()[0] + "): " + exp_magic.hex().upper())
 
-ok = compileall.compile_dir(
-    src_build,
-    force=True,
-    quiet=1,       # 1 = chi hien loi, khong spam tung file
-    legacy=True,   # -b: dat .pyc canh .py (khong vao __pycache__)
-    optimize=0,
-)
+    ok = compileall.compile_dir(
+        src_build,
+        force=True,
+        quiet=1,       # 1 = chi hien loi, khong spam tung file
+        legacy=True,   # -b: dat .pyc canh .py (khong vao __pycache__)
+        optimize=0,
+    )
 
-if not ok:
-    print("[!] compileall bao loi -- kiem tra output phia tren.")
-    sys.exit(1)
+    if not ok:
+        print("[!] compileall bao loi -- kiem tra output phia tren.")
+        sys.exit(1)
 
-n_pyc = count_ext(src_build, ".pyc")
-print("  Compile xong: " + str(n_pyc) + " file .pyc")
+    n_pyc = count_ext(src_build, ".pyc")
+    print("  Compile xong: " + str(n_pyc) + " file .pyc")
+else:
+    import importlib.util
+    exp_magic = importlib.util.MAGIC_NUMBER[:2]
+    print("  [DEBUG MODE] Bo qua compile .pyc")
 
 # ── 3. Xoa .py goc (giu vision.py) va cac file dev/doc thua ──────────────────
-banner("3 / 5  --  Xoa .py goc va file dev/doc thua  (giu: " + ", ".join(sorted(KEEP_PY)) + ")")
+if not is_debug:
+    banner("3 / 5  --  Xoa .py goc va file dev/doc thua  (giu: " + ", ".join(sorted(KEEP_PY)) + ")")
+else:
+    banner("3 / 5  --  Xoa cac file dev/doc thua (Giu nguyen toan bo ma nguon .py)")
 
 removed_py = 0
 removed_dev = 0
@@ -133,7 +148,7 @@ for dp, _, fns in os.walk(src_build):
         fp = os.path.join(dp, fn)
         # Giu lai vision.py, xoa cac file .py khac
         if fn.endswith(".py"):
-            if fn not in KEEP_PY:
+            if not is_debug and fn not in KEEP_PY:
                 os.remove(fp)
                 removed_py += 1
         # Xoa cac file tai lieu, batch va config dev trong src
@@ -167,10 +182,6 @@ banner("4 / 5  --  Deploy .env + config/secrets.json + run_eris.bat")
 deploy_pairs = [
     (os.path.join(REPO, ".env"),
      os.path.join(OUT,  ".env")),
-    (os.path.join(REPO, "config", "secrets.json"),
-     os.path.join(OUT,  "config", "secrets.json")),
-    (os.path.join(REPO, "config", "elevenlabs_pool.db"),
-     os.path.join(OUT,  "config", "elevenlabs_pool.db")),
     (os.path.join(REPO, "run_elevenlabs_pool_ui.bat"),
      os.path.join(OUT,  "run_elevenlabs_pool_ui.bat")),
     (os.path.join(REPO, "setup_gemini_login.bat"),
@@ -179,8 +190,8 @@ deploy_pairs = [
      os.path.join(OUT,  "src", "settings", "runtime_settings.json")),
 ]
 
-# Copy optional root memory files if present in REPO
-for mem_fn in ["long_term_memory.json", "goal_memory.json", "goal_profiles.json"]:
+# Copy optional root config files if present in REPO
+for mem_fn in ["goal_profiles.json"]:
     src_mem = os.path.join(REPO, mem_fn)
     if os.path.isfile(src_mem):
         deploy_pairs.append((src_mem, os.path.join(OUT, mem_fn)))
@@ -221,10 +232,10 @@ start_webai_content = (
     "set \"ERIS_STATE_DIR=%~dp0.eris_state\"\r\n"
     "\r\n"
     "echo [WebAI] Syncing cookies from gemini.json...\r\n"
-    "\"%~dp0.venv\\Scripts\\python.exe\" _sync_webai_cookies.py\r\n"
+    "\"%~dp0python\\python.exe\" _sync_webai_cookies.py\r\n"
     "\r\n"
     "echo [WebAI] Starting server on port 8081...\r\n"
-    "\"%~dp0.venv\\Scripts\\python.exe\" src\\run.py --host 0.0.0.0 --port 8081\r\n"
+    "\"%~dp0python\\python.exe\" src\\run.py --host 0.0.0.0 --port 8081\r\n"
 )
 with open(start_webai_path, "wb") as fh:
     fh.write(start_webai_content.encode("ascii"))
@@ -270,7 +281,8 @@ ds2api_dst = os.path.join(OUT, "tools", "whale2api")
 if os.path.exists(ds2api_src):
     print("  Deploying whale2api binary and config to build...")
     os.makedirs(ds2api_dst, exist_ok=True)
-    for fn in ["whale2api.exe", "poolui.exe", ".env", "accounts.csv", "whale2api.db", "whale2api.db-shm", "whale2api.db-wal"]:
+    # KHONG COPY accounts.csv, .env, *.db de tranh ranh ri key cua dev
+    for fn in ["whale2api.exe", "poolui.exe"]:
         src_file = os.path.join(ds2api_src, fn)
         if os.path.exists(src_file):
             try:
@@ -279,13 +291,16 @@ if os.path.exists(ds2api_src):
             except (PermissionError, OSError):
                 print("  [SKIP] whale2api " + fn + "  (file dang bi lock boi process dang chay -- skip)")
 
-# Copy .venv to build output
-venv_src = os.path.join(REPO, ".venv")
-venv_dst = os.path.join(OUT, ".venv")
-if os.path.exists(venv_src):
-    print("  Deploying .venv (Python Environment) to build... This may take a while.")
-    shutil.copytree(venv_src, venv_dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__", "pip-cache"))
-    print("  [OK] .venv deployed")
+# Copy portable_python to build output
+portable_src = os.path.join(REPO, "portable_python")
+portable_dst = os.path.join(OUT, "python")
+if os.path.exists(portable_src):
+    print("  Deploying Portable Python Runtime to build... This may take a while.")
+    shutil.copytree(portable_src, portable_dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__", "pip-cache"))
+    print("  [OK] Portable Python deployed")
+else:
+    print("  [ERROR] portable_python not found. Please run 'eris_setup.py' -> 'Create Portable Python' first!")
+    sys.exit(1)
 
 # ── 4b. Deploy cline-bridge (build truoc, copy ca dist/ + node_modules) ──────
 banner("4b/5  --  Deploy cline-bridge (Cline SDK sidecar)")
@@ -351,11 +366,16 @@ if os.path.exists(cline_src):
 
     # Buoc 2: copy toan bo cline-bridge sang build (bao gom node_modules + dist)
     print("  Copying cline-bridge -> build... (190MB node_modules, co the mat 1-2 phut)")
-    shutil.copytree(
-        cline_src, cline_dst,
-        dirs_exist_ok=True,
-        ignore=shutil.ignore_patterns(".git", "__pycache__", "src", "tsconfig.json", "*.ts"),
-    )
+    try:
+        shutil.copytree(
+            cline_src, cline_dst,
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns(".git", "__pycache__", "src", "tsconfig.json", "*.ts"),
+        )
+    except shutil.Error as e:
+        print("  [WARN] Mot so file trong cline-bridge bi khoa (locked) khong the copy. Bo qua...")
+    except Exception as e:
+        print("  [WARN] Loi khi copy cline-bridge: " + str(e))
     print("  [OK] cline-bridge deployed (dist/ + node_modules/ + package.json)")
 else:
     print("  [SKIP] cline-bridge directory not found: " + cline_src)
@@ -421,8 +441,8 @@ bat_lines = [
     "title Eris Launcher",
     "cd /d \"%~dp0\"",
     "",
-    "set \"VENV_PY=%~dp0.venv\\Scripts\\python.exe\"",
-    "set \"PATH=%~dp0.venv\\Scripts;%PATH%\"",
+    "set \"VENV_PY=%~dp0python\\python.exe\"",
+    "set \"PATH=%~dp0python;%~dp0python\\Scripts;%PATH%\"",
     "set \"HF_HOME=%~dp0.cache\\huggingface\"",
     "set \"XDG_CACHE_HOME=%~dp0.cache\"",
     "set \"ERIS_AGENT_SERVICE_DISCOVERY=%~dp0.eris_state\\agent_service.json\"",
@@ -555,6 +575,37 @@ if os.path.isfile(sample_pyc):
     if not match:
         print("  [!] Magic mismatch! .pyc bi compile boi Python khac.")
         all_ok = False
+
+# ── 6. Inno Setup Package ──────────────────────────────────────────────────────
+banner("6 / 6  --  Inno Setup Package")
+
+possible_iscc = [
+    r"C:\Program Files\Inno Setup 7\ISCC.exe",
+    r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+    r"C:\Program Files\Inno Setup 6\ISCC.exe"
+]
+iscc_path = None
+for p in possible_iscc:
+    if os.path.exists(p):
+        iscc_path = p
+        break
+
+if not iscc_path:
+    print("  [WARN] Khong tim thay Inno Setup (ISCC.exe). Bo qua buoc dong goi (chua cai Inno Setup).")
+else:
+    iss_file = os.path.join(REPO, "installer", "Eris.iss")
+    if os.path.exists(iss_file):
+        print("  Dang tien hanh nen thanh file cai dat (co the mat 1-2 phut)...")
+        import subprocess
+        res = subprocess.run([iscc_path, iss_file], capture_output=True, text=True)
+        if res.returncode == 0:
+            print("  [OK] Dong goi Inno Setup thanh cong!")
+            print("  File cai dat: C:\\Users\\Gtvkun\\Documents\\eris_dist\\ErisSetup.exe")
+        else:
+            print("  [FAIL] Inno Setup bao loi:")
+            print("  " + (res.stderr or res.stdout)[:500])
+    else:
+        print("  [WARN] Khong tim thay file cau hinh: " + iss_file)
 
 # Tong ket
 print("")
