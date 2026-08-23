@@ -53,6 +53,7 @@ Thumbs.db
 # Third-party tools
 tools/WebAI-to-API/
 tools/WebAI-to-API-2/
+tools/reference-repos/
 tools/whale2api/*.exe
 tools/whale2api/accounts.csv
 tools/whale2api/data/
